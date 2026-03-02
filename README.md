@@ -1,1 +1,1 @@
-[MultiPlatformDJ]
+[MultiPlatformDJ] Software
