@@ -1,0 +1,39 @@
+# --- Build-Ordner ---
+build/
+bin/
+out/
+x64/
+Debug/
+Release/
+
+# --- CMake-Artefakte ---
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CMakeScripts/
+Makefile
+_CPack_Packages/
+CPackConfig.cmake
+CPackSourceConfig.cmake
+
+# --- IDE-spezifische Dateien ---
+.vscode/
+.vs/
+*.user
+*.suo
+*.sln
+*.vcxproj
+*.filters
+.idea/
+*.swp
+*.swo
+
+# --- Betriebssystem-Junk ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- JUCE-spezifisch ---
+# Die meisten JUCE-Artefakte liegen im build-Ordner, 
+# aber falls du den Projucer nutzt:
+JuceLibraryCode/
