@@ -37,6 +37,7 @@ qt_add_qml_module(${PROJECT_NAME}
     VERSION 1.0
     QML_FILES
         src/main.qml
+        src/TopHeader.qml
         src/EnlargedWaveform.qml
         src/OverallWaveform.qml
         src/DeckControl.qml

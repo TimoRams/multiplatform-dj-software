@@ -52,13 +52,24 @@ Window {
 
     ColumnLayout {
         anchors.fill: parent
-        spacing: 2
+        spacing: 0
+
+        // --------------------------------------------------------------------
+        // GLOBAL HEADER (Traktor-Style)
+        // --------------------------------------------------------------------
+        TopHeader {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 40
+            Layout.maximumHeight: 40
+            z: 10
+        }
 
         // Viewport wrapper: reserves the scaled height in the ColumnLayout.
         Item {
             Layout.fillWidth: true
             Layout.preferredHeight: window.baseUiHeight * window.uiScale
             Layout.maximumHeight: window.baseUiHeight * window.uiScale
+            Layout.topMargin: 2
 
             // Fixed-size design canvas; scaled down/up to match the window width.
             Item {
