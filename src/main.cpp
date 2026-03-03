@@ -1,6 +1,7 @@
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
 #include <iostream>
+#include <memory>
 
 // Qt Includes
 #include <QGuiApplication>
@@ -30,20 +31,21 @@ int main(int argc, char *argv[])
 
     juce::MessageManager::getInstance();
 
-    DjEngine deckA;
-    DjEngine deckB;
+    // DjEngines on the heap so we control their destruction order explicitly.
+    auto deckA = std::make_unique<DjEngine>();
+    auto deckB = std::make_unique<DjEngine>();
 
     // Cover art provider is owned by the QML engine after addImageProvider().
     auto* coverProvider = new CoverArtProvider();
-    deckA.setCoverArtProvider(coverProvider, "deckA");
-    deckB.setCoverArtProvider(coverProvider, "deckB");
+    deckA->setCoverArtProvider(coverProvider, "deckA");
+    deckB->setCoverArtProvider(coverProvider, "deckB");
 
     QQmlApplicationEngine engine;
 
     engine.addImageProvider("coverart", coverProvider);
 
-    engine.rootContext()->setContextProperty("deckA", &deckA);
-    engine.rootContext()->setContextProperty("deckB", &deckB);
+    engine.rootContext()->setContextProperty("deckA", deckA.get());
+    engine.rootContext()->setContextProperty("deckB", deckB.get());
 
     LibraryManager libraryManager;
     engine.rootContext()->setContextProperty("libraryManager", &libraryManager);
@@ -58,6 +60,19 @@ int main(int argc, char *argv[])
     engine.load(url);
 
     int ret = app.exec();
+
+    // ── Shutdown order (critical for avoiding JUCE assertion failures) ────────
+    // 1. Tear down the QML scene first — it holds raw pointers to the DjEngines
+    //    via context properties.  After this, no QML binding can touch them.
+    // 2. Destroy the DjEngines — each one tears down its AudioDeviceManager,
+    //    AudioTransportSource, WaveformAnalyzer etc. while the JUCE
+    //    MessageManager is still alive (required for clean device shutdown).
+    // 3. Clean up JUCE singletons last.
+    engine.rootContext()->setContextProperty("deckA", static_cast<QObject*>(nullptr));
+    engine.rootContext()->setContextProperty("deckB", static_cast<QObject*>(nullptr));
+
+    deckB.reset();
+    deckA.reset();
 
     juce::MessageManager::deleteInstance();
     juce::DeletedAtShutdown::deleteAll();

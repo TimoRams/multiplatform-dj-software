@@ -20,7 +20,9 @@ set(CMAKE_AUTOUIC ON)
 
 # TagLib für Cover-Art-Extraction
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(TAGLIB REQUIRED IMPORTED_TARGET taglib)
+pkg_check_modules(TAGLIB    REQUIRED IMPORTED_TARGET taglib)
+pkg_check_modules(AUBIO     REQUIRED IMPORTED_TARGET aubio)
+pkg_check_modules(KEYFINDER REQUIRED IMPORTED_TARGET libkeyfinder)
 
 add_subdirectory(libs/JUCE)
 
@@ -79,6 +81,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Quick
     Qt6::Quick3D
     PkgConfig::TAGLIB
+    PkgConfig::AUBIO
+    PkgConfig::KEYFINDER
 )
 
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)
