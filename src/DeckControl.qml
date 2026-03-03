@@ -235,10 +235,70 @@ Item {
                 }
             }
 
-            // Overview waveform
-            OverallWaveform {
-                engine: deck.engine
+            // Overview waveform + Tempo Fader
+            RowLayout {
                 Layout.fillWidth: true
+                Layout.preferredHeight: 80
+                spacing: 10
+
+                // Waveform (left side)
+                OverallWaveform {
+                    engine: deck.engine
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                }
+
+                // Tempo Fader (right side, vertical)
+                Rectangle {
+                    Layout.preferredWidth: 50
+                    Layout.fillHeight: true
+                    color: "#1a1a1a"
+                    border.color: "#333"
+                    border.width: 1
+                    radius: 4
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 5
+                        spacing: 2
+
+                        // Tempo label
+                        Text {
+                            Layout.alignment: Qt.AlignHCenter
+                            text: "TEMPO"
+                            color: "#aaaaaa"
+                            font.pixelSize: 9
+                            font.bold: true
+                        }
+
+                        // Vertical slider for tempo (±8%)
+                        Slider {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            orientation: Qt.Vertical
+                            from: -8
+                            to: 8
+                            value: 0
+                            stepSize: 0.5
+
+                            onValueChanged: {
+                                if (deck.engine) {
+                                    deck.engine.setTempoPercent(value)
+                                }
+                            }
+                        }
+
+                        // Percentage display
+                        Text {
+                            Layout.alignment: Qt.AlignHCenter
+                            text: (value >= 0 ? "+" : "") + value.toFixed(1) + "%"
+                            color: "#aaaaaa"
+                            font.pixelSize: 10
+                            font.bold: true
+                            font.family: "monospace"
+                        }
+                    }
+                }
             }
 
             // Controls (Play/Pause, Cue, Sync)

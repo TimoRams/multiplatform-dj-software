@@ -19,6 +19,7 @@ class DjEngine : public QObject
     Q_OBJECT
     Q_PROPERTY(float progress READ getProgress NOTIFY progressChanged)
     Q_PROPERTY(bool isPlaying READ isPlaying NOTIFY playingChanged)
+    Q_PROPERTY(double tempoPercent READ getTempoPercent WRITE setTempoPercent NOTIFY tempoChanged)
     Q_PROPERTY(TrackData* trackData READ getTrackData CONSTANT)
 
     Q_PROPERTY(QString trackTitle   READ trackTitle   NOTIFY trackMetadataChanged)
@@ -50,6 +51,7 @@ public:
     bool    hasTrack()      const { return m_hasTrack; }
     QString coverArtUrl()   const { return m_coverArtUrl; }
     bool    hasCoverArt()   const { return m_hasCoverArt; }
+    double  getTempoPercent() const { return m_tempoPercent; }
 
     void setCoverArtProvider(CoverArtProvider* provider, const QString& deckId);
 
@@ -57,10 +59,12 @@ public slots:
     void loadTrack(const QString& rawPath);
     void togglePlay();
     void setPosition(float progress);
+    void setTempoPercent(double percent);
 
 signals:
     void progressChanged();
     void playingChanged();
+    void tempoChanged();
     void trackLoaded();
     void trackMetadataChanged();
 
@@ -72,6 +76,7 @@ private:
     juce::AudioFormatManager formatManager;
     std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
     juce::AudioTransportSource transportSource;
+    std::unique_ptr<juce::ResamplingAudioSource> resamplingSource;
     juce::AudioSourcePlayer sourcePlayer;
 
     QTimer timer;
@@ -90,6 +95,9 @@ private:
     QString m_deckId;
     QString m_coverArtUrl;
     bool    m_hasCoverArt = false;
+
+    // Tempo control: ±8% range
+    double m_tempoPercent = 0.0;
 
     // m_latencySeconds is computed once after device init (output latency + buffer size).
     // m_snapPosition + m_snapClock enable sub-frame interpolation in getVisualPosition().

@@ -10,6 +10,7 @@
 #include <QRegularExpression>
 #include <juce_core/juce_core.h>
 #include <cstring>
+#include <algorithm>
 
 // Metadata utilities: normalise and query JUCE StringPairArray across all tag formats
 // (ID3v2, Vorbis comments, MP4 atoms, etc.).
@@ -130,7 +131,16 @@ DjEngine::DjEngine(QObject* parent) : QObject(parent)
     }
 
     deviceManager.addAudioCallback(&sourcePlayer);
-    sourcePlayer.setSource(&transportSource);
+    
+    // Create the resampling source that wraps the transport source.
+    // This allows us to control tempo/speed without changing the pitch.
+    resamplingSource = std::make_unique<juce::ResamplingAudioSource>(
+        &transportSource, 
+        false,  // deleteSourceWhenDeleted = false (we own transportSource separately)
+        2       // channels = 2 (stereo)
+    );
+    
+    sourcePlayer.setSource(resamplingSource.get());
 
     // Compute total hardware latency (output latency + current buffer size).
     // getVisualPosition() subtracts this from the transport read pointer so the
@@ -337,4 +347,28 @@ void DjEngine::onTimer()
     } else {
         m_snapValid = false;
     }
+}
+
+void DjEngine::setTempoPercent(double percent)
+{
+    // Clamp to ±8% range
+    percent = std::clamp(percent, -8.0, 8.0);
+    
+    if (m_tempoPercent == percent) return;
+    
+    m_tempoPercent = percent;
+    
+    // Calculate speed multiplier: 1.0 = 100% = normal speed
+    // +8% = 1.08, -8% = 0.92
+    double speedMultiplier = 1.0 + (percent / 100.0);
+    
+    // Apply to the resampling source for pitch-preserving tempo change
+    if (resamplingSource) {
+        resamplingSource->setResamplingRatio(speedMultiplier);
+    }
+    
+    qDebug() << "[DjEngine] Tempo set to" << percent << "%" 
+             << "(speed:" << speedMultiplier << "x)";
+    
+    emit tempoChanged();
 }
