@@ -1,0 +1,153 @@
+import QtQuick
+import QtQuick.Layouts
+import QtQuick.Controls
+import DJSoftware
+
+Window {
+    id: window
+    width: 1280
+    height: 800
+    visible: true
+    title: "Multiplatform DJ Software (Qt 6 + JUCE)"
+    color: "#1e1e19"
+
+    // Globaler Waveform-Zoom (beide Decks synchron, wie in Serato/Rekordbox)
+    property real waveformZoom: 3.0
+    readonly property real zoomMin: 0.8
+    readonly property real zoomMax: 12.0
+    readonly property real zoomFactor: 1.3
+
+    // Ctrl+ = Reinzoomen (mehr Detail, weniger Sekunden sichtbar)
+    Shortcut {
+        sequence: "Ctrl+="
+        onActivated: {
+            window.waveformZoom = Math.min(window.zoomMax, window.waveformZoom * window.zoomFactor)
+        }
+    }
+    Shortcut {
+        sequence: "Ctrl++"
+        onActivated: {
+            window.waveformZoom = Math.min(window.zoomMax, window.waveformZoom * window.zoomFactor)
+        }
+    }
+    // Ctrl- = Rauszoomen (weniger Detail, mehr Sekunden sichtbar)
+    Shortcut {
+        sequence: "Ctrl+-"
+        onActivated: {
+            window.waveformZoom = Math.max(window.zoomMin, window.waveformZoom / window.zoomFactor)
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // VIEWPORT SCALING
+    // Referenzbreite, auf die das gesamte obere UI-Design ausgelegt ist.
+    // uiScale passt alles proportional an, wenn das Fenster schmaler/breiter wird.
+    // -------------------------------------------------------------------------
+    readonly property real baseUiWidth: 1600
+    readonly property real uiScale: width / baseUiWidth
+
+    // Referenz height of the top section at baseUiWidth (waveforms + decks + mixer).
+    // Waveforms: 150 px  |  Decks: baseUiWidth / 3.8 ≈ 421 px  |  spacing: 4 px
+    readonly property real baseUiHeight: 150 + (baseUiWidth / 3.8) + 4
+
+    ColumnLayout {
+        anchors.fill: parent
+        spacing: 2
+
+        // Viewport wrapper: reserves the scaled height in the ColumnLayout.
+        Item {
+            Layout.fillWidth: true
+            Layout.preferredHeight: window.baseUiHeight * window.uiScale
+            Layout.maximumHeight: window.baseUiHeight * window.uiScale
+
+            // Fixed-size design canvas; scaled down/up to match the window width.
+            Item {
+                id: uiViewport
+                width:  window.baseUiWidth
+                height: window.baseUiHeight
+                scale:  window.uiScale
+                transformOrigin: Item.TopLeft
+
+                // ----------------------------------------------------------------
+                // OBERER BEREICH: SCROLLING WAVEFORMS
+                // ----------------------------------------------------------------
+                ColumnLayout {
+                    id: waveformSection
+                    anchors.top:   parent.top
+                    anchors.left:  parent.left
+                    anchors.right: parent.right
+                    height: 150
+                    spacing: 1
+
+                    EnlargedWaveform {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        engine: deckA
+                        backgroundColor: "#222"
+                        waveformZoom: window.waveformZoom
+                    }
+
+                    EnlargedWaveform {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        engine: deckB
+                        backgroundColor: "#252525"
+                        waveformZoom: window.waveformZoom
+                    }
+                }
+
+                // ----------------------------------------------------------------
+                // MITTLERER BEREICH: DECK A + MIXER + DECK B
+                // ----------------------------------------------------------------
+                RowLayout {
+                    id: deckRow
+                    anchors.top:    waveformSection.bottom
+                    anchors.bottom: parent.bottom
+                    anchors.left:   parent.left
+                    anchors.right:  parent.right
+                    anchors.topMargin: 2
+                    spacing: 2
+
+                    DeckControl {
+                        deckName: "A"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        engine: deckA
+                    }
+
+                    // MIXER PLATZHALTER
+                    Rectangle {
+                        Layout.preferredWidth: 160
+                        Layout.fillHeight: true
+                        color: "#1a1a1a"
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "Mixer\nSection"
+                            horizontalAlignment: Text.AlignHCenter
+                            color: "#777777"
+                            font.pixelSize: 13
+                            font.family: "Sans Serif"
+                        }
+                    }
+
+                    DeckControl {
+                        deckName: "B"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        engine: deckB
+                    }
+                }
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // UNTERER BEREICH: TRACK LIBRARY
+        // fillHeight: true → schluckt jeden vertikalen Restplatz.
+        // --------------------------------------------------------------------
+        Library {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+        }
+    }
+}
