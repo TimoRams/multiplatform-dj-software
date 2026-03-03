@@ -372,3 +372,74 @@ void DjEngine::setTempoPercent(double percent)
     
     emit tempoChanged();
 }
+
+void DjEngine::updateGain()
+{
+    // Apply combined gain (volume * trim) to the transport source
+    // In a real pro DJ mixer you'd use decibel curves, but linear works for a start.
+    transportSource.setGain(static_cast<float>(m_volume * m_trim));
+}
+
+void DjEngine::setVolume(double value)
+{
+    if (m_volume != value) {
+        m_volume = value;
+        updateGain();
+        emit volumeChanged();
+    }
+}
+
+void DjEngine::setTrim(double value)
+{
+    if (m_trim != value) {
+        m_trim = value;
+        updateGain();
+        emit trimChanged();
+    }
+}
+
+void DjEngine::setEqHigh(double value)
+{
+    if (m_eqHigh != value) {
+        m_eqHigh = value;
+        // In a real app, apply this to a JUCE IIRFilter
+        emit eqHighChanged();
+    }
+}
+
+void DjEngine::setEqMid(double value)
+{
+    if (m_eqMid != value) {
+        m_eqMid = value;
+        // In a real app, apply this to a JUCE IIRFilter
+        emit eqMidChanged();
+    }
+}
+
+void DjEngine::setEqLow(double value)
+{
+    if (m_eqLow != value) {
+        m_eqLow = value;
+        // In a real app, apply this to a JUCE IIRFilter
+        emit eqLowChanged();
+    }
+}
+
+void DjEngine::setFilter(double value)
+{
+    if (m_filter != value) {
+        m_filter = value;
+        // value < 0 -> Lowpass, value > 0 -> Highpass
+        emit filterChanged();
+    }
+}
+
+void DjEngine::setCueEnabled(bool value)
+{
+    if (m_cueEnabled != value) {
+        m_cueEnabled = value;
+        // In a real app, route this to a separate headphone/monitor audio output
+        emit cueEnabledChanged();
+    }
+}
+

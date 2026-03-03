@@ -126,20 +126,12 @@ Window {
                         engine: deckA
                     }
 
-                    // MIXER PLATZHALTER
-                    Rectangle {
-                        Layout.preferredWidth: 160
+                    // MIXER SECTION
+                    MixerSection {
+                        Layout.preferredWidth: 180
                         Layout.fillHeight: true
-                        color: "#1a1a1a"
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Mixer\nSection"
-                            horizontalAlignment: Text.AlignHCenter
-                            color: "#777777"
-                            font.pixelSize: 13
-                            font.family: "Sans Serif"
-                        }
+                        engineA: deckA
+                        engineB: deckB
                     }
 
                     DeckControl {

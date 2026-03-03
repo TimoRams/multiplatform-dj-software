@@ -31,6 +31,15 @@ class DjEngine : public QObject
     Q_PROPERTY(QString coverArtUrl  READ coverArtUrl  NOTIFY trackMetadataChanged)
     Q_PROPERTY(bool    hasCoverArt  READ hasCoverArt  NOTIFY trackMetadataChanged)
 
+    // Mixer Properties
+    Q_PROPERTY(double volume READ volume WRITE setVolume NOTIFY volumeChanged)
+    Q_PROPERTY(double trim READ trim WRITE setTrim NOTIFY trimChanged)
+    Q_PROPERTY(double eqHigh READ eqHigh WRITE setEqHigh NOTIFY eqHighChanged)
+    Q_PROPERTY(double eqMid READ eqMid WRITE setEqMid NOTIFY eqMidChanged)
+    Q_PROPERTY(double eqLow READ eqLow WRITE setEqLow NOTIFY eqLowChanged)
+    Q_PROPERTY(double filter READ filter WRITE setFilter NOTIFY filterChanged)
+    Q_PROPERTY(bool cueEnabled READ cueEnabled WRITE setCueEnabled NOTIFY cueEnabledChanged)
+
 public:
     explicit DjEngine(QObject* parent = nullptr);
     ~DjEngine() override;
@@ -53,6 +62,15 @@ public:
     bool    hasCoverArt()   const { return m_hasCoverArt; }
     double  getTempoPercent() const { return m_tempoPercent; }
 
+    // Mixer Getters
+    double volume() const { return m_volume; }
+    double trim() const { return m_trim; }
+    double eqHigh() const { return m_eqHigh; }
+    double eqMid() const { return m_eqMid; }
+    double eqLow() const { return m_eqLow; }
+    double filter() const { return m_filter; }
+    bool cueEnabled() const { return m_cueEnabled; }
+
     void setCoverArtProvider(CoverArtProvider* provider, const QString& deckId);
 
 public slots:
@@ -60,6 +78,15 @@ public slots:
     void togglePlay();
     void setPosition(float progress);
     void setTempoPercent(double percent);
+    
+    // Mixer Setters
+    void setVolume(double value);
+    void setTrim(double value);
+    void setEqHigh(double value);
+    void setEqMid(double value);
+    void setEqLow(double value);
+    void setFilter(double value);
+    void setCueEnabled(bool value);
 
 signals:
     void progressChanged();
@@ -67,6 +94,15 @@ signals:
     void tempoChanged();
     void trackLoaded();
     void trackMetadataChanged();
+    
+    // Mixer Signals
+    void volumeChanged();
+    void trimChanged();
+    void eqHighChanged();
+    void eqMidChanged();
+    void eqLowChanged();
+    void filterChanged();
+    void cueEnabledChanged();
 
 private slots:
     void onTimer();
@@ -98,6 +134,18 @@ private:
 
     // Tempo control: ±8% range
     double m_tempoPercent = 0.0;
+
+    // Mixer state
+    double m_volume = 0.8;
+    double m_trim = 1.0;
+    double m_eqHigh = 0.0;
+    double m_eqMid = 0.0;
+    double m_eqLow = 0.0;
+    double m_filter = 0.0;
+    bool m_cueEnabled = false;
+
+    // Updates the JUCE transport source gain based on volume and trim
+    void updateGain();
 
     // m_latencySeconds is computed once after device init (output latency + buffer size).
     // m_snapPosition + m_snapClock enable sub-frame interpolation in getVisualPosition().

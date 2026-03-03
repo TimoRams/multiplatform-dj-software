@@ -99,7 +99,7 @@ Rectangle {
             // Master Volume
             Row {
                 spacing: 8
-                anchors.verticalCenter: parent.verticalCenter
+                Layout.alignment: Qt.AlignVCenter
                 Text { 
                     text: "MASTER"
                     color: "#999"
@@ -168,7 +168,7 @@ Rectangle {
             // CPU / Audio Drop load meter
             Row {
                 spacing: 6
-                anchors.verticalCenter: parent.verticalCenter
+                Layout.alignment: Qt.AlignVCenter
                 Text { 
                     text: "AUDIO"
                     color: "#999"

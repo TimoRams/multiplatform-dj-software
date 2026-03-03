@@ -273,6 +273,7 @@ Item {
 
                         // Vertical slider for tempo (±8%)
                         Slider {
+                            id: tempoSlider
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             orientation: Qt.Vertical
@@ -291,7 +292,7 @@ Item {
                         // Percentage display
                         Text {
                             Layout.alignment: Qt.AlignHCenter
-                            text: (value >= 0 ? "+" : "") + value.toFixed(1) + "%"
+                            text: (tempoSlider.value >= 0 ? "+" : "") + tempoSlider.value.toFixed(1) + "%"
                             color: "#aaaaaa"
                             font.pixelSize: 10
                             font.bold: true
@@ -301,17 +302,16 @@ Item {
                 }
             }
 
-            // Controls (Play/Pause, Cue, Sync)
+            // Controls (Play/Pause, Cue, Sync + Quantize, Keylock, Slip)
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 10
                 
                 Button {
                     text: "PLAY"
-                    width: 80
-                    height: 40
+                    Layout.preferredWidth: 80
+                    Layout.preferredHeight: 40
                     palette.buttonText: "white"
-                    palette.button: "#444" 
                     background: Rectangle {
                         color: deck.engine && deck.engine.isPlaying ? "lightgreen" : "#444"
                         radius: 4
@@ -323,24 +323,69 @@ Item {
                 
                 Button {
                     text: "CUE"
-                    width: 60
-                    height: 40
+                    Layout.preferredWidth: 60
+                    Layout.preferredHeight: 40
+                    palette.buttonText: "white"
                     background: Rectangle { color: "#444"; radius: 4 }
                 }
                 
                 Button {
                     text: "SYNC"
-                    width: 60
-                    height: 40
-                    background: Rectangle { color: "#444"; radius: 4 }
+                    checkable: true
+                    Layout.preferredWidth: 60
+                    Layout.preferredHeight: 40
+                    palette.buttonText: checked ? "white" : "#aaa"
+                    background: Rectangle { 
+                        color: parent.checked ? "#3a8a3a" : "#444"
+                        border.color: parent.checked ? "#5cfa5c" : "transparent"
+                        border.width: parent.checked ? 1 : 0
+                        radius: 4 
+                    }
                 }
 
-                // Volume / pitch placeholder
-                Slider {
-                    Layout.fillWidth: true
-                    from: 0
-                    to: 100
-                    value: 80
+                // Spacer to push the other buttons to the right (if space allows), or just visually separate
+                Item { Layout.fillWidth: true }
+
+                Button {
+                    text: "QUANTIZE"
+                    checkable: true
+                    Layout.preferredWidth: 80
+                    Layout.preferredHeight: 40
+                    palette.buttonText: checked ? "white" : "#aaa"
+                    background: Rectangle { 
+                        color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
+                        border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
+                        border.width: 1
+                        radius: 4 
+                    }
+                }
+
+                Button {
+                    text: "KEYLOCK"
+                    checkable: true
+                    Layout.preferredWidth: 80
+                    Layout.preferredHeight: 40
+                    palette.buttonText: checked ? "white" : "#aaa"
+                    background: Rectangle { 
+                        color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
+                        border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
+                        border.width: 1
+                        radius: 4 
+                    }
+                }
+
+                Button {
+                    text: "SLIP"
+                    checkable: true
+                    Layout.preferredWidth: 60
+                    Layout.preferredHeight: 40
+                    palette.buttonText: checked ? "white" : "#aaa"
+                    background: Rectangle { 
+                        color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
+                        border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
+                        border.width: 1
+                        radius: 4 
+                    }
                 }
             }
             

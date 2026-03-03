@@ -44,6 +44,7 @@ qt_add_qml_module(${PROJECT_NAME}
         src/TrackInfoDisplay.qml
         src/Library.qml
         src/PerformancePads.qml
+        src/MixerSection.qml
 )
 
 target_sources(${PROJECT_NAME} PRIVATE
