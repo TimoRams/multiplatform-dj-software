@@ -108,11 +108,14 @@ private slots:
     void onTimer();
 
 private:
+    class MixerDspSource;
+
     juce::AudioDeviceManager deviceManager;
     juce::AudioFormatManager formatManager;
     std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
     juce::AudioTransportSource transportSource;
     std::unique_ptr<juce::ResamplingAudioSource> resamplingSource;
+    std::unique_ptr<MixerDspSource> mixerSource;
     juce::AudioSourcePlayer sourcePlayer;
 
     QTimer timer;

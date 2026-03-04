@@ -121,27 +121,27 @@ Rectangle {
 
                 MixerKnob { 
                     text: "TRIM"; from: 0; to: 2; knobValue: 1.0; 
-                    onKnobValueChanged: (val) => { if(engineA) engineA.trim = val; }
+                    onKnobValueChanged: { if(engineA) engineA.trim = knobValue; }
                 }
 
                 MixerKnob { 
                     text: "HIGH"; from: -1; to: 1; knobValue: 0; 
-                    onKnobValueChanged: (val) => { if(engineA) engineA.eqHigh = val; }
+                    onKnobValueChanged: { if(engineA) engineA.eqHigh = knobValue; }
                 }
 
                 MixerKnob { 
                     text: "MID"; from: -1; to: 1; knobValue: 0; 
-                    onKnobValueChanged: (val) => { if(engineA) engineA.eqMid = val; }
+                    onKnobValueChanged: { if(engineA) engineA.eqMid = knobValue; }
                 }
 
                 MixerKnob { 
                     text: "LOW"; from: -1; to: 1; knobValue: 0; 
-                    onKnobValueChanged: (val) => { if(engineA) engineA.eqLow = val; }
+                    onKnobValueChanged: { if(engineA) engineA.eqLow = knobValue; }
                 }
 
                 MixerKnob { 
                     text: "FILTER"; from: -1; to: 1; knobValue: 0; 
-                    onKnobValueChanged: (val) => { if(engineA) engineA.filter = val; }
+                    onKnobValueChanged: { if(engineA) engineA.filter = knobValue; }
                 }
 
                 Button {

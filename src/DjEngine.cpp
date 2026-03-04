@@ -9,8 +9,10 @@
 #include <QDateTime>
 #include <QRegularExpression>
 #include <juce_core/juce_core.h>
+#include <juce_dsp/juce_dsp.h>
 #include <cstring>
 #include <algorithm>
+#include <cmath>
 
 // Metadata utilities: normalise and query JUCE StringPairArray across all tag formats
 // (ID3v2, Vorbis comments, MP4 atoms, etc.).
@@ -108,6 +110,122 @@ double parseBpmString(const QString& raw) {
 
 } // anon namespace
 
+class DjEngine::MixerDspSource : public juce::AudioSource {
+public:
+    MixerDspSource(juce::AudioSource* inSource) : source(inSource) {}
+
+    void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override {
+        if (source) source->prepareToPlay(samplesPerBlockExpected, sampleRate);
+        
+        juce::dsp::ProcessSpec spec { sampleRate, static_cast<juce::uint32>(samplesPerBlockExpected), 2 };
+        lowEq.prepare(spec);
+        midEq.prepare(spec);
+        highEq.prepare(spec);
+        colorFilter.prepare(spec);
+        
+        m_sampleRate = sampleRate;
+        updateFilters();
+    }
+
+    void releaseResources() override {
+        if (source) source->releaseResources();
+    }
+
+    void getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill) override {
+        if (source) source->getNextAudioBlock(bufferToFill);
+
+        if (m_sampleRate <= 0.0 || bufferToFill.buffer->getNumChannels() == 0 || bufferToFill.numSamples == 0) return;
+
+        juce::dsp::AudioBlock<float> block(*bufferToFill.buffer);
+        auto slicedBlock = block.getSubBlock(bufferToFill.startSample, bufferToFill.numSamples);
+        juce::dsp::ProcessContextReplacing<float> context(slicedBlock);
+
+        // Map inputs directly. Note: QML trim goes 0..2.
+        // QML volume goes 0..1. Multiply both.
+        float gain = static_cast<float>(trimVal * faderVal);
+        if (std::abs(gain - 1.0f) > 0.001f) {
+            for (size_t ch = 0; ch < slicedBlock.getNumChannels(); ++ch) {
+                juce::FloatVectorOperations::multiply(slicedBlock.getChannelPointer(ch), gain, static_cast<int>(slicedBlock.getNumSamples()));
+            }
+        }
+
+        lowEq.process(context);
+        midEq.process(context);
+        highEq.process(context);
+        colorFilter.process(context);
+    }
+
+    void setTrim(float val) { trimVal = val; }
+    void setFader(float val) { faderVal = val; }
+
+    void setEq(float l, float m, float h) {
+        // -1 to +1 -> approx -32 dB to +6 dB (Pioneer DJM A9 is -infinity to +6)
+        lowVol = l;
+        midVol = m;
+        highVol = h;
+        // avoid continuous recomputation; just flag it or recompute directly
+        updateFilters();
+    }
+
+    void setFilterVal(float f) {
+        filterVal = f;
+        updateFilters();
+    }
+
+private:
+    float getDecibelsFromKnob(float kb) const {
+        if (kb < 0.0f) {
+            return kb * 32.0f; // -1 -> -32 dB (approx -inf / kill)
+        } else {
+            return kb * 6.0f;  // +1 -> +6 dB
+        }
+    }
+
+    void updateFilters() {
+        if (m_sampleRate <= 0) return;
+        
+        // Update EQs using standard DJ shelving/peak frequencies
+        *lowEq.state = *juce::dsp::IIR::Coefficients<float>::makeLowShelf(m_sampleRate, 250.0f, 0.707f, juce::Decibels::decibelsToGain(getDecibelsFromKnob(lowVol)));
+        *midEq.state = *juce::dsp::IIR::Coefficients<float>::makePeakFilter(m_sampleRate, 1000.0f, 0.707f, juce::Decibels::decibelsToGain(getDecibelsFromKnob(midVol)));
+        *highEq.state = *juce::dsp::IIR::Coefficients<float>::makeHighShelf(m_sampleRate, 2500.0f, 0.707f, juce::Decibels::decibelsToGain(getDecibelsFromKnob(highVol)));
+
+        // Color Filter (LPF/HPF combo)
+        if (std::abs(filterVal) < 0.05f) {
+            // Flat response / completely bypassed
+            // Since we can't 'bypass' perfectly, we just set a flat peak filter
+            *colorFilter.state = *juce::dsp::IIR::Coefficients<float>::makePeakFilter(m_sampleRate, 1000.0f, 0.707f, 1.0f);
+        } else if (filterVal < 0.0f) {
+            // Low Pass: sweep down from 20000 to ~80 Hz
+            // t goes from 1.0 down to 0
+            float t = 1.0f + filterVal;
+            float freq = 80.0f * std::pow(20000.0f / 80.0f, t);
+            *colorFilter.state = *juce::dsp::IIR::Coefficients<float>::makeLowPass(m_sampleRate, std::max(20.0f, freq), 1.2f);
+        } else {
+            // High Pass: sweep up from 20 to ~10000 Hz
+            float freq = 20.0f * std::pow(10000.0f / 20.0f, filterVal);
+            *colorFilter.state = *juce::dsp::IIR::Coefficients<float>::makeHighPass(m_sampleRate, std::max(20.0f, freq), 1.2f);
+        }
+    }
+
+    juce::AudioSource* source = nullptr;
+    double m_sampleRate = 0;
+
+    std::atomic<float> trimVal{1.0f};
+    std::atomic<float> faderVal{1.0f};
+    
+    // UI vals from -1 to 1
+    std::atomic<float> lowVol{0.0f};
+    std::atomic<float> midVol{0.0f};
+    std::atomic<float> highVol{0.0f};
+    std::atomic<float> filterVal{0.0f};
+
+    using FilterType = juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>, juce::dsp::IIR::Coefficients<float>>;
+    FilterType lowEq;
+    FilterType midEq;
+    FilterType highEq;
+    FilterType colorFilter;
+};
+
 DjEngine::DjEngine(QObject* parent) : QObject(parent)
 {
     m_trackData = new TrackData(this);
@@ -140,7 +258,12 @@ DjEngine::DjEngine(QObject* parent) : QObject(parent)
         2       // channels = 2 (stereo)
     );
     
-    sourcePlayer.setSource(resamplingSource.get());
+    // Create the mixer DSP source to apply EQ, Filter, and Gain based on Pioneer DJM A9.
+    mixerSource = std::make_unique<MixerDspSource>(resamplingSource.get());
+    mixerSource->setTrim(static_cast<float>(m_trim));
+    mixerSource->setFader(static_cast<float>(m_volume));
+
+    sourcePlayer.setSource(mixerSource.get());
 
     // Compute total hardware latency (output latency + current buffer size).
     // getVisualPosition() subtracts this from the transport read pointer so the
@@ -375,9 +498,10 @@ void DjEngine::setTempoPercent(double percent)
 
 void DjEngine::updateGain()
 {
-    // Apply combined gain (volume * trim) to the transport source
-    // In a real pro DJ mixer you'd use decibel curves, but linear works for a start.
-    transportSource.setGain(static_cast<float>(m_volume * m_trim));
+    if (mixerSource) {
+        mixerSource->setFader(static_cast<float>(m_volume));
+        mixerSource->setTrim(static_cast<float>(m_trim));
+    }
 }
 
 void DjEngine::setVolume(double value)
@@ -402,7 +526,7 @@ void DjEngine::setEqHigh(double value)
 {
     if (m_eqHigh != value) {
         m_eqHigh = value;
-        // In a real app, apply this to a JUCE IIRFilter
+        if (mixerSource) mixerSource->setEq(static_cast<float>(m_eqLow), static_cast<float>(m_eqMid), static_cast<float>(m_eqHigh));
         emit eqHighChanged();
     }
 }
@@ -411,7 +535,7 @@ void DjEngine::setEqMid(double value)
 {
     if (m_eqMid != value) {
         m_eqMid = value;
-        // In a real app, apply this to a JUCE IIRFilter
+        if (mixerSource) mixerSource->setEq(static_cast<float>(m_eqLow), static_cast<float>(m_eqMid), static_cast<float>(m_eqHigh));
         emit eqMidChanged();
     }
 }
@@ -420,7 +544,7 @@ void DjEngine::setEqLow(double value)
 {
     if (m_eqLow != value) {
         m_eqLow = value;
-        // In a real app, apply this to a JUCE IIRFilter
+        if (mixerSource) mixerSource->setEq(static_cast<float>(m_eqLow), static_cast<float>(m_eqMid), static_cast<float>(m_eqHigh));
         emit eqLowChanged();
     }
 }
@@ -429,7 +553,7 @@ void DjEngine::setFilter(double value)
 {
     if (m_filter != value) {
         m_filter = value;
-        // value < 0 -> Lowpass, value > 0 -> Highpass
+        if (mixerSource) mixerSource->setFilterVal(static_cast<float>(m_filter));
         emit filterChanged();
     }
 }
