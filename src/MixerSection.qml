@@ -25,10 +25,13 @@ Rectangle {
     }
 
     component MixerKnob: ColumnLayout {
+        id: knobRoot
         property alias text: label.text
         property alias from: dial.from
         property alias to: dial.to
         property alias knobValue: dial.value
+        property real knobSize: 26
+        property real defaultValue: (dial.from + dial.to) / 2
 
         spacing: 2
         Layout.alignment: Qt.AlignHCenter
@@ -44,23 +47,23 @@ Rectangle {
         Dial { 
             id: dial
             Layout.alignment: Qt.AlignHCenter
-            width: 32
-            height: 32
+            width: knobSize
+            height: knobSize
 
             background: Rectangle {
                 x: dial.width / 2 - width / 2
                 y: dial.height / 2 - height / 2
-                width: 32
-                height: 32
-                radius: 16
+                width: dial.width
+                height: dial.height
+                radius: width / 2
                 color: "transparent"
                 border.color: "transparent"
                 
-                // Actual visual background
                 Rectangle {
                     anchors.centerIn: parent
-                    width: 28; height: 28
-                    radius: 14
+                    width: parent.width * 0.85
+                    height: parent.height * 0.85
+                    radius: width / 2
                     color: "#222"
                     border.color: "#444"
                     border.width: 1
@@ -71,31 +74,35 @@ Rectangle {
                 id: handleItem
                 x: dial.background.x + dial.background.width / 2 - width / 2
                 y: dial.background.y + dial.background.height / 2 - height / 2
-                width: 28
-                height: 28
+                width: dial.width * 0.85
+                height: dial.height * 0.85
                 color: "transparent"
                 
-                // The indicator line
                 Rectangle {
                     color: "#aaa"
                     width: 2
-                    height: 9
+                    height: parent.height * 0.35
                     radius: 1
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.top: parent.top
-                    anchors.topMargin: 2
+                    anchors.topMargin: 1
                 }
                 
                 transform: [
-                    Translate {
-                        y: -14 + handleItem.height / 2
-                    },
                     Rotation {
                         angle: dial.angle
                         origin.x: handleItem.width / 2
                         origin.y: handleItem.height / 2
                     }
                 ]
+            }
+
+            TapHandler {
+                onDoubleTapped: {
+                    dial.enabled = false
+                    dial.value = knobRoot.defaultValue
+                    dial.enabled = true
+                }
             }
         }
     }
@@ -121,6 +128,7 @@ Rectangle {
 
                 MixerKnob { 
                     text: "TRIM"; from: 0; to: 2; knobValue: 1.0; 
+                    knobSize: 16
                     onKnobValueChanged: { if(engineA) engineA.trim = knobValue; }
                 }
 
@@ -160,11 +168,19 @@ Rectangle {
 
                 // Volume Fader A
                 Slider {
+                    id: volFaderA
                     Layout.fillHeight: true
                     Layout.alignment: Qt.AlignHCenter
                     orientation: Qt.Vertical
                     from: 0; to: 1.0; value: 0.8
                     onValueChanged: { mixer.volA = value; mixer.updateVolumes(); }
+                    TapHandler {
+                        onDoubleTapped: {
+                            volFaderA.enabled = false
+                            volFaderA.value = 1.0
+                            volFaderA.enabled = true
+                        }
+                    }
                 }
             }
 
@@ -176,6 +192,7 @@ Rectangle {
 
                 MixerKnob { 
                     text: "TRIM"; from: 0; to: 2; knobValue: 1.0; 
+                    knobSize: 16
                     onKnobValueChanged: { if(engineB) engineB.trim = knobValue; }
                 }
 
@@ -215,11 +232,19 @@ Rectangle {
 
                 // Volume Fader B
                 Slider {
+                    id: volFaderB
                     Layout.fillHeight: true
                     Layout.alignment: Qt.AlignHCenter
                     orientation: Qt.Vertical
                     from: 0; to: 1.0; value: 0.8
                     onValueChanged: { mixer.volB = value; mixer.updateVolumes(); }
+                    TapHandler {
+                        onDoubleTapped: {
+                            volFaderB.enabled = false
+                            volFaderB.value = 1.0
+                            volFaderB.enabled = true
+                        }
+                    }
                 }
             }
 
@@ -241,6 +266,13 @@ Rectangle {
             from: -1.0; to: 1.0; value: 0.0
             stepSize: 0.01
             onValueChanged: mixer.updateVolumes()
+            TapHandler {
+                onDoubleTapped: {
+                    crossfader.enabled = false
+                    crossfader.value = 0.0
+                    crossfader.enabled = true
+                }
+            }
         }
     }
 }

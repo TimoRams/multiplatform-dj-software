@@ -281,7 +281,13 @@ Item {
                             to: 8
                             value: 0
                             stepSize: 0.5
-
+                            TapHandler {
+                                onDoubleTapped: {
+                                    tempoSlider.enabled = false
+                                    tempoSlider.value = 0
+                                    tempoSlider.enabled = true
+                                }
+                            }
                             onValueChanged: {
                                 if (deck.engine) {
                                     deck.engine.setTempoPercent(value)
