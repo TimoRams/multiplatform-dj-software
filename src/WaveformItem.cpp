@@ -111,12 +111,13 @@ QSGNode* WaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
     {
         QVector<TrackData::FrequencyData> data = m_engine->getTrackData()->getWaveformData();
         int currentDataPoints = data.size();
-        float globalMax = m_engine->getTrackData()->getGlobalMaxPeak();
-        if (globalMax < 0.001f) globalMax = 0.001f;
 
         const float w = static_cast<float>(width());
         const float h = static_cast<float>(height());
-        const float midY = h / 2.0f;
+        // In rectified mode: baseline is at the bottom (h), bars grow upward.
+        // In normal mode:    baseline is at centre (h/2), bars grow up and down.
+        const float baseline = m_rectified ? h : h / 2.0f;
+        const float maxBarH  = m_rectified ? h : h / 2.0f;  // max reachable height
 
         float durationSeconds = m_engine->getDuration();
         if (durationSeconds <= 0.0f) durationSeconds = 1.0f;
@@ -146,10 +147,12 @@ QSGNode* WaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
 
         // Pixel binning: aggregate data points to pixel width.
         struct PixelBin {
-            float lowPeak = 0.0f;
-            float lowRms  = 0.0f;
-            float midRms  = 0.0f;
-            float highRms = 0.0f;
+            float lowPeak  = 0.0f;
+            float lowRms   = 0.0f;
+            float midPeak  = 0.0f;
+            float midRms   = 0.0f;
+            float highPeak = 0.0f;
+            float highRms  = 0.0f;
         };
         std::vector<PixelBin> bins(maxPixels);
 
@@ -165,7 +168,9 @@ QSGNode* WaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
             double sumLowRms = 0.0, sumMidRms = 0.0, sumHighRms = 0.0;
             int count = 0;
             for (int d = dataStart; d < dataEnd; ++d) {
-                if (data[d].lowPeak > bins[x].lowPeak) bins[x].lowPeak = data[d].lowPeak;
+                if (data[d].lowPeak  > bins[x].lowPeak)  bins[x].lowPeak  = data[d].lowPeak;
+                if (data[d].midPeak  > bins[x].midPeak)  bins[x].midPeak  = data[d].midPeak;
+                if (data[d].highPeak > bins[x].highPeak) bins[x].highPeak = data[d].highPeak;
                 sumLowRms  += data[d].lowRms;
                 sumMidRms  += data[d].midRms;
                 sumHighRms += data[d].highRms;
@@ -179,54 +184,59 @@ QSGNode* WaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
             }
         }
 
-        // Draw: global normalisation + pow(0.65) + attenuation factors.
+        // Normalise against globalMaxPeak so the waveform fills the available height.
+        float globalMax = m_engine->getTrackData()->getGlobalMaxPeak();
+        if (globalMax < 0.001f) globalMax = 0.001f;
+
+        // Draw: normalise values against globalMax, then multiply by bar height.
         for (int x = 0; x < maxPixels; ++x) {
             const float fx = static_cast<float>(x);
 
-            // Global normalisation (overview shows absolute dynamic structure).
-            // pow(0.65): more contrast than sqrt, keeps quiet passages visible.
-            auto normPow = [&](float v) {
-                return std::pow(std::min(1.0f, v / globalMax), 0.65f);
+            // Normalise + sqrt compression for visual balance
+            auto norm = [&](float v) {
+                return std::sqrt(std::min(1.0f, v / globalMax));
             };
 
-            float lowPeakN = normPow(bins[x].lowPeak);
-            float lowRmsN  = normPow(bins[x].lowRms);
-            float midN     = normPow(bins[x].midRms);
-            float highN    = normPow(bins[x].highRms);
+            float lowPeakN = norm(bins[x].lowPeak);
+            float lowRmsN  = norm(bins[x].lowRms);
+            float midPeakN = norm(bins[x].midPeak);
+            float midRmsN  = norm(bins[x].midRms);
+            float highPeakN = norm(bins[x].highPeak);
+            float highRmsN  = norm(bins[x].highRms);
 
-            // Minimum visibility: silent passages render as a hairline.
-            if (bins[x].lowPeak > 0.0001f) {
-                lowPeakN = std::max(lowPeakN, 0.02f);
-                lowRmsN  = std::max(lowRmsN,  0.01f);
-            }
-
-            // Attenuation factors:
-            //   LOW peak halo : 0.95 -> full headroom, bass dominates
-            //   LOW RMS core  : 0.88 -> slightly smaller than halo
-            //   MID           : 0.62 -> orange reaches at most 62% of bass height
-            //   HIGH          : 0.38 -> white strip is a thin needle
-            float lowPeakY = lowPeakN * midY * 0.95f;
-            float lowRmsY  = lowRmsN  * midY * 0.88f;
-            float midY_    = midN     * midY * 0.62f;
-            float highY_   = highN    * midY * 0.38f;
+            // Height mapping:
+            //   LOW peak halo  -> full height (bass dominates visually)
+            //   LOW RMS body   -> slightly smaller solid core
+            //   MID peak       -> orange reaches ~65% of bass
+            //   HIGH peak      -> white thin needle
+            float lowPeakY = lowPeakN * maxBarH;
+            float lowRmsY  = lowRmsN  * maxBarH;
+            float midY_    = midPeakN * maxBarH;
+            float highY_   = highPeakN * maxBarH;
 
             const int vIdx = x * 2;
 
+            // bottom vertex: baseline for rectified, baseline+bar for symmetric
+            const float lpBot = m_rectified ? baseline : baseline + lowPeakY;
+            const float lrBot = m_rectified ? baseline : baseline + lowRmsY;
+            const float mdBot = m_rectified ? baseline : baseline + midY_;
+            const float hiBot = m_rectified ? baseline : baseline + highY_;
+
             // Layer 0: LOW PEAK - dark blue halo (alpha 120)
-            lowPeakV[vIdx  ].set(fx, midY - lowPeakY,  30,  80, 220, 120);
-            lowPeakV[vIdx+1].set(fx, midY + lowPeakY,  30,  80, 220, 120);
+            lowPeakV[vIdx  ].set(fx, baseline - lowPeakY,  30,  80, 220, 120);
+            lowPeakV[vIdx+1].set(fx, lpBot,                30,  80, 220, 120);
 
             // Layer 1: LOW RMS - bright blue core (alpha 220)
-            lowRmsV[vIdx  ].set(fx, midY - lowRmsY,  60, 150, 255, 220);
-            lowRmsV[vIdx+1].set(fx, midY + lowRmsY,  60, 150, 255, 220);
+            lowRmsV[vIdx  ].set(fx, baseline - lowRmsY,  60, 150, 255, 220);
+            lowRmsV[vIdx+1].set(fx, lrBot,               60, 150, 255, 220);
 
             // Layer 2: MID - amber/orange (alpha 200)
-            midV[vIdx  ].set(fx, midY - midY_, 255, 140, 0, 200);
-            midV[vIdx+1].set(fx, midY + midY_, 255, 140, 0, 200);
+            midV[vIdx  ].set(fx, baseline - midY_, 255, 140, 0, 200);
+            midV[vIdx+1].set(fx, mdBot,            255, 140, 0, 200);
 
             // Layer 3: HIGH - white with slight blue tint (alpha 204)
-            highV[vIdx  ].set(fx, midY - highY_, 240, 240, 255, 204);
-            highV[vIdx+1].set(fx, midY + highY_, 240, 240, 255, 204);
+            highV[vIdx  ].set(fx, baseline - highY_, 240, 240, 255, 204);
+            highV[vIdx+1].set(fx, hiBot,             240, 240, 255, 204);
         }
 
         // Cursor / playhead

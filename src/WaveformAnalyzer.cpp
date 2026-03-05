@@ -37,49 +37,12 @@ void WaveformAnalyzer::stopAnalysis()
     stopThread(2000);
 }
 
-// Linkwitz-Riley 4th-order crossover (two cascaded Butterworth 2nd-order filters).
-// The three output bands sum back to the original signal without phase cancellation.
-struct LR4Crossover {
-    // Butterworth 2nd order, kaskadiert = LR4
-    juce::dsp::IIR::Filter<float> lp1, lp2, hp1, hp2;
-
-    void prepareLowPass(double sr, float freq) {
-        auto c = juce::dsp::IIR::Coefficients<float>::makeLowPass(sr, freq, 0.7071f);
-        lp1.coefficients = c;
-        lp2.coefficients = c;
-    }
-    void prepareHighPass(double sr, float freq) {
-        auto c = juce::dsp::IIR::Coefficients<float>::makeHighPass(sr, freq, 0.7071f);
-        hp1.coefficients = c;
-        hp2.coefficients = c;
-    }
-    void reset() { lp1.reset(); lp2.reset(); hp1.reset(); hp2.reset(); }
-
-    float processLP(float s) { return lp2.processSample(lp1.processSample(s)); }
-    float processHP(float s) { return hp2.processSample(hp1.processSample(s)); }
-};
-
-// Envelope follower with separate attack and release time constants.
-// Attack and release are expressed in milliseconds.
-struct EnvelopeFollower {
-    float state = 0.0f;
-    float attackCoef  = 0.0f;
-    float releaseCoef = 0.0f;
-
-    // attackMs / releaseMs in milliseconds
-    void prepare(double sampleRate, float attackMs, float releaseMs) {
-        attackCoef  = std::exp(-1.0f / (static_cast<float>(sampleRate) * attackMs  * 0.001f));
-        releaseCoef = std::exp(-1.0f / (static_cast<float>(sampleRate) * releaseMs * 0.001f));
-    }
-
-    float process(float rectified) {
-        float coef = rectified > state ? attackCoef : releaseCoef;
-        state = rectified + coef * (state - rectified);
-        return state;
-    }
-
-    void reset() { state = 0.0f; }
-};
+// Linkwitz-Riley 4th-order crossover (LR4, -24 dB/oct).
+// Uses juce::dsp::LinkwitzRileyFilter with the two-output processSample()
+// overload that returns phase-aligned LP and HP in one call.
+// Two filters are cascaded:
+//   xoverLow  (150 Hz):  splits mono → LOW + (MID+HIGH)
+//   xoverHigh (2500 Hz): splits (MID+HIGH) → MID + HIGH
 
 void WaveformAnalyzer::run()
 {
@@ -105,39 +68,46 @@ void WaveformAnalyzer::run()
     const int samplesPerBin = static_cast<int>(totalSamples / numPoints);
     if (samplesPerBin < 1) return;
 
-    // Stage 1: Linkwitz-Riley crossover (LR4, 24 dB/oct).
-    // Crossover frequencies: 200 Hz (bass/mid), 4000 Hz (mid/high).
-    const float freqLowMid  = 200.0f;
-    const float freqMidHigh = 4000.0f;
+    // -------------------------------------------------------------------------
+    // DSP-Kette: juce::dsp::LinkwitzRileyFilter 3-Band Crossover
+    //
+    //  1. CROSSOVER (LR4, -24 dB/oct)
+    //     xoverLow  @ 150 Hz:  mono → LOW  +  (MID+HIGH)
+    //     xoverHigh @ 2500 Hz: (MID+HIGH) → MID  +  HIGH
+    //
+    //  2. PEAK & RMS per band per block
+    //     Peak = max |sample| in the block  (transients, drum hits)
+    //     RMS  = sqrt(mean(sample²))        (sustained energy, body)
+    //
+    //  3. ASYMMETRIC GAIN WEIGHTING
+    //     LOW  × 1.5  →  bass visually dominates
+    //     MID  × 0.7  →  mids sit behind
+    //     HIGH × 0.3  →  highs are tiny spikes / nebel
+    // -------------------------------------------------------------------------
 
-    LR4Crossover xoverLow;   // LP at 200 Hz -> LOW band
-    LR4Crossover xoverMid;   // HP at 200 Hz then LP at 4 kHz -> MID band
-    LR4Crossover xoverHigh;  // HP at 4 kHz -> HIGH band
+    // Crossover filters (mono, 1 channel)
+    juce::dsp::LinkwitzRileyFilter<float> xoverLow;
+    xoverLow.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
+    xoverLow.setCutoffFrequency(150.0f);
 
-    xoverLow.prepareLowPass (sampleRate, freqLowMid);
-    xoverMid.prepareHighPass(sampleRate, freqLowMid);
-    xoverMid.prepareLowPass (sampleRate, freqMidHigh);  // lp1/lp2 for 4 kHz
-    xoverHigh.prepareHighPass(sampleRate, freqMidHigh);
-    xoverLow.reset(); xoverMid.reset(); xoverHigh.reset();
+    juce::dsp::LinkwitzRileyFilter<float> xoverHigh;
+    xoverHigh.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
+    xoverHigh.setCutoffFrequency(2500.0f);
 
-    // Stage 2: per-band envelope followers.
-    // Time constants tuned for typical DJ waveform aesthetics:
-    //   LOW:  attack 2 ms, release 80 ms  — sharp kick onset, visible bass sustain
-    //   MID:  attack 5 ms, release 120 ms — chord stabs and synth bodies
-    //   HIGH: attack 1 ms, release 40 ms  — hi-hats stay sharp, decay quickly
-    EnvelopeFollower envLow, envMid, envHigh, envFull;
-    envLow.prepare (sampleRate,  2.0f,  80.0f);
-    envMid.prepare (sampleRate,  5.0f, 120.0f);
-    envHigh.prepare(sampleRate,  1.0f,  40.0f);
-    envFull.prepare(sampleRate,  3.0f, 100.0f);
+    {
+        juce::dsp::ProcessSpec spec;
+        spec.sampleRate       = sampleRate;
+        spec.maximumBlockSize = static_cast<juce::uint32>(samplesPerBin);
+        spec.numChannels      = 1;
+        xoverLow.prepare(spec);
+        xoverHigh.prepare(spec);
+    }
 
-    // Stage 3: sample-accurate per-bin analysis.
-    // For each waveform bin (one x-pixel in the overview) we compute:
-    //   true peak  — absolute maximum of raw samples in the bin
-    //   envelope   — smoothed value of the envelope follower at bin end
-    //   rms        — root mean square of envelope values (for smooth rendering)
-    // The envelope follower runs sample-accurately across the entire track so
-    // it maintains its state correctly between bins.
+    // Gain factors per band
+    constexpr float gainLow  = 1.5f;
+    constexpr float gainMid  = 0.7f;
+    constexpr float gainHigh = 0.3f;
+
     float globalMaxPeak = 0.001f;
 
     const int batchSize = 100;
@@ -153,70 +123,63 @@ void WaveformAnalyzer::run()
         reader->read(&readBuf, 0, samplesPerBin,
                      static_cast<juce::int64>(bin) * samplesPerBin, true, false);
 
-        // Mono-Mix: sum all channels and divide.
         const int numCh = static_cast<int>(reader->numChannels);
 
-        float truePeakFull = 0.0f;
-        float truePeakLow  = 0.0f;
-        float truePeakMid  = 0.0f;
-        float truePeakHigh = 0.0f;
-
-        double sqSumFull = 0.0, sqSumLow = 0.0, sqSumMid = 0.0, sqSumHigh = 0.0;
-
-        float envValFull = 0.0f, envValLow = 0.0f, envValMid = 0.0f, envValHigh = 0.0f;
+        float peakLow = 0.0f, peakMid = 0.0f, peakHigh = 0.0f;
+        double sqSumLow = 0.0, sqSumMid = 0.0, sqSumHigh = 0.0;
 
         for (int s = 0; s < samplesPerBin; ++s)
         {
-            // Mono-Mix
+            // Mono-mix: average all channels
             float mono = 0.0f;
             for (int ch = 0; ch < numCh; ++ch)
                 mono += readBuf.getReadPointer(ch)[s];
             mono /= static_cast<float>(numCh);
 
-            // Stage 1: crossover
-            float sigLow   = xoverLow.processLP(mono);
-            float sigMidHP = xoverMid.processHP(mono);    // HP at 200 Hz
-            float sigMid   = xoverMid.processLP(sigMidHP); // then LP at 4 kHz
-            float sigHigh  = xoverHigh.processHP(mono);
+            // Stage 1: LR4 crossover
+            //   xoverLow splits mono → sigLow + sigMidHigh
+            //   xoverHigh splits sigMidHigh → sigMid + sigHigh
+            float sigLow, sigMidHigh;
+            xoverLow.processSample(0, mono, sigLow, sigMidHigh);
 
-            // Stage 2: rectify + envelope follower
-            float rectFull = std::abs(mono);
-            float rectLow  = std::abs(sigLow);
-            float rectMid  = std::abs(sigMid);
-            float rectHigh = std::abs(sigHigh);
+            float sigMid, sigHigh;
+            xoverHigh.processSample(0, sigMidHigh, sigMid, sigHigh);
 
-            envValFull = envFull.process(rectFull);
-            envValLow  = envLow.process(rectLow);
-            envValMid  = envMid.process(rectMid);
-            envValHigh = envHigh.process(rectHigh);
+            // Stage 2: rectify
+            float absLow  = std::abs(sigLow);
+            float absMid  = std::abs(sigMid);
+            float absHigh = std::abs(sigHigh);
 
-            // Stage 3a: true peak (raw signal, no envelope)
-            if (rectFull > truePeakFull) truePeakFull = rectFull;
-            if (rectLow  > truePeakLow)  truePeakLow  = rectLow;
-            if (rectMid  > truePeakMid)  truePeakMid  = rectMid;
-            if (rectHigh > truePeakHigh) truePeakHigh = rectHigh;
+            // Peak tracking
+            if (absLow  > peakLow)  peakLow  = absLow;
+            if (absMid  > peakMid)  peakMid  = absMid;
+            if (absHigh > peakHigh) peakHigh = absHigh;
 
-            // Stage 3b: RMS over envelope values
-            sqSumFull += envValFull * envValFull;
-            sqSumLow  += envValLow  * envValLow;
-            sqSumMid  += envValMid  * envValMid;
-            sqSumHigh += envValHigh * envValHigh;
+            // RMS accumulation
+            sqSumLow  += static_cast<double>(absLow  * absLow);
+            sqSumMid  += static_cast<double>(absMid  * absMid);
+            sqSumHigh += static_cast<double>(absHigh * absHigh);
         }
 
-        // Build the bin from accumulated values.
+        // RMS
         const float inv = 1.0f / static_cast<float>(samplesPerBin);
-        TrackData::WaveformBin wbin;
-        wbin.fullPeak = truePeakFull;
-        wbin.fullRms  = std::sqrt(static_cast<float>(sqSumFull) * inv);
-        wbin.lowPeak  = truePeakLow;
-        wbin.lowRms   = std::sqrt(static_cast<float>(sqSumLow)  * inv);
-        wbin.midPeak  = truePeakMid;
-        wbin.midRms   = std::sqrt(static_cast<float>(sqSumMid)  * inv);
-        wbin.highPeak = truePeakHigh;
-        wbin.highRms  = std::sqrt(static_cast<float>(sqSumHigh) * inv);
+        float rmsLow  = std::sqrt(static_cast<float>(sqSumLow)  * inv);
+        float rmsMid  = std::sqrt(static_cast<float>(sqSumMid)  * inv);
+        float rmsHigh = std::sqrt(static_cast<float>(sqSumHigh) * inv);
 
-        if (truePeakFull > globalMaxPeak) {
-            globalMaxPeak = truePeakFull;
+        // Stage 3: asymmetric gain weighting
+        TrackData::WaveformBin wbin;
+        wbin.lowPeak  = juce::jlimit(0.0f, 1.0f, peakLow  * gainLow);
+        wbin.lowRms   = juce::jlimit(0.0f, 1.0f, rmsLow   * gainLow);
+        wbin.midPeak  = juce::jlimit(0.0f, 1.0f, peakMid  * gainMid);
+        wbin.midRms   = juce::jlimit(0.0f, 1.0f, rmsMid   * gainMid);
+        wbin.highPeak = juce::jlimit(0.0f, 1.0f, peakHigh * gainHigh);
+        wbin.highRms  = juce::jlimit(0.0f, 1.0f, rmsHigh  * gainHigh);
+
+        // Track global max for renderer normalisation
+        float binMax = std::max({wbin.lowPeak, wbin.midPeak, wbin.highPeak});
+        if (binMax > globalMaxPeak) {
+            globalMaxPeak = binMax;
             m_trackData->setGlobalMaxPeak(globalMaxPeak);
         }
 

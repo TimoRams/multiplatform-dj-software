@@ -15,17 +15,16 @@ class TrackData : public QObject
     Q_PROPERTY(bool   isKeyAnalyzed READ isKeyAnalyzed    NOTIFY keyAnalyzed)
 
 public:
-    // Per time-window bin: two values per frequency band.
-    //   rms  = envelope-smoothed energy (forms the waveform body)
-    //   peak = absolute maximum in the bin (captures transients)
-    // Three bands from the Linkwitz-Riley crossover:
-    //   low  (<200 Hz)    bass
-    //   mid  (200-4k Hz)  mids
-    //   high (>4k Hz)     highs
-    // fullPeak / fullRms cover the full-band signal.
+    // Per-block bin (≈256 samples): Peak + RMS per frequency band.
+    //   Peak = absolute maximum of the rectified signal in the block (transients)
+    //   RMS  = root mean square over the block (sustained energy / body)
+    // Three bands from a juce::dsp::LinkwitzRileyFilter crossover:
+    //   low  (<150 Hz)       kick / subbass
+    //   mid  (150–2500 Hz)   snare, vocals, chords
+    //   high (>2500 Hz)      hi-hats, cymbals, air
+    // All values are pre-weighted with asymmetric gain factors:
+    //   LOW × 1.5  |  MID × 0.7  |  HIGH × 0.3
     struct WaveformBin {
-        float fullPeak = 0.0f;
-        float fullRms  = 0.0f;
         float lowPeak  = 0.0f;
         float lowRms   = 0.0f;
         float midPeak  = 0.0f;

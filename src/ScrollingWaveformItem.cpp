@@ -178,9 +178,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     // Step 1: Catmull-Rom interpolation per output pixel.
     struct ScrollPixel {
         float lowPeak = 0.0f, lowRms  = 0.0f;
-        float midRms  = 0.0f;
-        float highRms = 0.0f;
-        float fullPeak = 0.0f; // used for local normalisation
+        float midPeak = 0.0f, midRms  = 0.0f;
+        float highPeak = 0.0f, highRms = 0.0f;
     };
     std::vector<ScrollPixel> pixels(wInt);
 
@@ -196,18 +195,19 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
 
         pixels[x].lowPeak  = catmull(d0.lowPeak,  d1.lowPeak,  d2.lowPeak,  d3.lowPeak,  t);
         pixels[x].lowRms   = catmull(d0.lowRms,   d1.lowRms,   d2.lowRms,   d3.lowRms,   t);
+        pixels[x].midPeak  = catmull(d0.midPeak,  d1.midPeak,  d2.midPeak,  d3.midPeak,  t);
         pixels[x].midRms   = catmull(d0.midRms,   d1.midRms,   d2.midRms,   d3.midRms,   t);
+        pixels[x].highPeak = catmull(d0.highPeak, d1.highPeak, d2.highPeak, d3.highPeak, t);
         pixels[x].highRms  = catmull(d0.highRms,  d1.highRms,  d2.highRms,  d3.highRms,  t);
-        pixels[x].fullPeak = catmull(d0.fullPeak, d1.fullPeak, d2.fullPeak, d3.fullPeak, t);
     }
 
-    // Step 2: local normalisation (sliding max window).
+    // Step 2: local normalisation (sliding max window over lowPeak).
     const int localWin = std::max(30, wInt / 12);
     std::vector<float> localMax(wInt, 0.001f);
     for (int x = 0; x < wInt; ++x) {
         float lm = 0.001f;
         for (int j = std::max(0, x - localWin); j <= std::min(wInt-1, x + localWin); ++j)
-            if (pixels[j].fullPeak > lm) lm = pixels[j].fullPeak;
+            if (pixels[j].lowPeak > lm) lm = pixels[j].lowPeak;
         localMax[x] = lm;
     }
 
@@ -217,29 +217,25 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     // Step 3: draw 4 strips per pixel.
     for (int x = 0; x < wInt; ++x) {
         // Mixed global (25%) + local (75%) reference for beat contrast while scrolling.
-        // All bands are normalised against the same reference to preserve natural balance.
         float normRef = globalMax * 0.25f + localMax[x] * 0.75f;
         if (normRef < 0.001f) normRef = 0.001f;
 
-        // Normalisieren + Sqrt-Kompression gegen dieselbe Referenz (globales Max)
+        // Normalise + sqrt compression
         auto norm = [&](float v) {
             return std::sqrt(std::min(1.0f, v / normRef));
         };
 
         float lowPeakN = norm(pixels[x].lowPeak);
         float lowRmsN  = norm(pixels[x].lowRms);
-        float midN     = norm(pixels[x].midRms);
-        float highN    = norm(pixels[x].highRms);
+        float midN     = norm(pixels[x].midPeak);
+        float highN    = norm(pixels[x].highPeak);
 
-        // Visual attenuation factors prevent bright colours (white/orange) from
-        // visually dominating the darker bass layer:
-        //   LOW:  0.95 -> full headroom, bass dominates the area
-        //   MID:  0.62 -> orange reaches at most 62% of a bass peak
-        //   HIGH: 0.38 -> white strip is a thin needle in the waveform centre
-        float lowPeakY = lowPeakN * midY * 0.95f;
-        float lowRmsY  = lowRmsN  * midY * 0.88f;  // core slightly smaller than halo
-        float midY_    = midN     * midY * 0.62f;
-        float highY_   = highN    * midY * 0.38f;
+        // The gain weighting is already baked in by the analyzer (LOW×1.5, MID×0.7, HIGH×0.3).
+        // Just map normalised values to pixel heights.
+        float lowPeakY = lowPeakN * midY;
+        float lowRmsY  = lowRmsN  * midY;
+        float midY_    = midN     * midY;
+        float highY_   = highN    * midY;
 
         int vIdx = x * 2;
         const float fx = static_cast<float>(x);

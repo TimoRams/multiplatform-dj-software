@@ -235,22 +235,108 @@ Item {
                 }
             }
 
-            // Overview waveform + Tempo Fader
+            // Overview waveform + Buttons (left) | Tempo Fader (right)
             RowLayout {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 80
-                spacing: 10
+                spacing: 6
 
-                // Waveform (left side)
-                OverallWaveform {
-                    engine: deck.engine
+                // LEFT: Overview on top, buttons below
+                ColumnLayout {
                     Layout.fillWidth: true
-                    Layout.fillHeight: true
+                    spacing: 4
+
+                    // Slim rectified overview waveform
+                    OverallWaveform {
+                        engine: deck.engine
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 44
+                    }
+
+                    // Controls (Play/Pause, Cue, Sync + Quantize, Keylock, Slip)
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 6
+
+                        Button {
+                            text: "PLAY"
+                            Layout.preferredWidth: 70
+                            Layout.preferredHeight: 34
+                            palette.buttonText: "white"
+                            background: Rectangle {
+                                color: deck.engine && deck.engine.isPlaying ? "lightgreen" : "#444"
+                                radius: 4
+                            }
+                            onClicked: { if(deck.engine) deck.engine.togglePlay() }
+                        }
+
+                        Button {
+                            text: "CUE"
+                            Layout.preferredWidth: 50
+                            Layout.preferredHeight: 34
+                            palette.buttonText: "white"
+                            background: Rectangle { color: "#444"; radius: 4 }
+                        }
+
+                        Button {
+                            text: "SYNC"
+                            checkable: true
+                            Layout.preferredWidth: 50
+                            Layout.preferredHeight: 34
+                            palette.buttonText: checked ? "white" : "#aaa"
+                            background: Rectangle {
+                                color: parent.checked ? "#3a8a3a" : "#444"
+                                border.color: parent.checked ? "#5cfa5c" : "transparent"
+                                border.width: parent.checked ? 1 : 0
+                                radius: 4
+                            }
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        Button {
+                            text: "QUANTIZE"
+                            checkable: true
+                            Layout.preferredWidth: 72
+                            Layout.preferredHeight: 34
+                            palette.buttonText: checked ? "white" : "#aaa"
+                            background: Rectangle {
+                                color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
+                                border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
+                                border.width: 1; radius: 4
+                            }
+                        }
+
+                        Button {
+                            text: "KEYLOCK"
+                            checkable: true
+                            Layout.preferredWidth: 72
+                            Layout.preferredHeight: 34
+                            palette.buttonText: checked ? "white" : "#aaa"
+                            background: Rectangle {
+                                color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
+                                border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
+                                border.width: 1; radius: 4
+                            }
+                        }
+
+                        Button {
+                            text: "SLIP"
+                            checkable: true
+                            Layout.preferredWidth: 50
+                            Layout.preferredHeight: 34
+                            palette.buttonText: checked ? "white" : "#aaa"
+                            background: Rectangle {
+                                color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
+                                border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
+                                border.width: 1; radius: 4
+                            }
+                        }
+                    }
                 }
 
-                // Tempo Fader (right side, vertical)
+                // RIGHT: Tempo Fader spanning full height of this row
                 Rectangle {
-                    Layout.preferredWidth: 50
+                    Layout.preferredWidth: 46
                     Layout.fillHeight: true
                     color: "#1a1a1a"
                     border.color: "#333"
@@ -259,10 +345,9 @@ Item {
 
                     ColumnLayout {
                         anchors.fill: parent
-                        anchors.margins: 5
+                        anchors.margins: 4
                         spacing: 2
 
-                        // Tempo label
                         Text {
                             Layout.alignment: Qt.AlignHCenter
                             text: "TEMPO"
@@ -271,16 +356,12 @@ Item {
                             font.bold: true
                         }
 
-                        // Vertical slider for tempo (±8%)
                         Slider {
                             id: tempoSlider
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             orientation: Qt.Vertical
-                            from: -8
-                            to: 8
-                            value: 0
-                            stepSize: 0.5
+                            from: -8; to: 8; value: 0; stepSize: 0.5
                             TapHandler {
                                 onDoubleTapped: {
                                     tempoSlider.enabled = false
@@ -288,109 +369,17 @@ Item {
                                     tempoSlider.enabled = true
                                 }
                             }
-                            onValueChanged: {
-                                if (deck.engine) {
-                                    deck.engine.setTempoPercent(value)
-                                }
-                            }
+                            onValueChanged: { if (deck.engine) deck.engine.setTempoPercent(value) }
                         }
 
-                        // Percentage display
                         Text {
                             Layout.alignment: Qt.AlignHCenter
                             text: (tempoSlider.value >= 0 ? "+" : "") + tempoSlider.value.toFixed(1) + "%"
                             color: "#aaaaaa"
-                            font.pixelSize: window.sp(10)
+                            font.pixelSize: window.sp(9)
                             font.bold: true
                             font.family: "monospace"
                         }
-                    }
-                }
-            }
-
-            // Controls (Play/Pause, Cue, Sync + Quantize, Keylock, Slip)
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 10
-                
-                Button {
-                    text: "PLAY"
-                    Layout.preferredWidth: 80
-                    Layout.preferredHeight: 40
-                    palette.buttonText: "white"
-                    background: Rectangle {
-                        color: deck.engine && deck.engine.isPlaying ? "lightgreen" : "#444"
-                        radius: 4
-                    }
-                    onClicked: {
-                        if(deck.engine) deck.engine.togglePlay()
-                    }
-                }
-                
-                Button {
-                    text: "CUE"
-                    Layout.preferredWidth: 60
-                    Layout.preferredHeight: 40
-                    palette.buttonText: "white"
-                    background: Rectangle { color: "#444"; radius: 4 }
-                }
-                
-                Button {
-                    text: "SYNC"
-                    checkable: true
-                    Layout.preferredWidth: 60
-                    Layout.preferredHeight: 40
-                    palette.buttonText: checked ? "white" : "#aaa"
-                    background: Rectangle { 
-                        color: parent.checked ? "#3a8a3a" : "#444"
-                        border.color: parent.checked ? "#5cfa5c" : "transparent"
-                        border.width: parent.checked ? 1 : 0
-                        radius: 4 
-                    }
-                }
-
-                // Spacer to push the other buttons to the right (if space allows), or just visually separate
-                Item { Layout.fillWidth: true }
-
-                Button {
-                    text: "QUANTIZE"
-                    checkable: true
-                    Layout.preferredWidth: 80
-                    Layout.preferredHeight: 40
-                    palette.buttonText: checked ? "white" : "#aaa"
-                    background: Rectangle { 
-                        color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
-                        border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
-                        border.width: 1
-                        radius: 4 
-                    }
-                }
-
-                Button {
-                    text: "KEYLOCK"
-                    checkable: true
-                    Layout.preferredWidth: 80
-                    Layout.preferredHeight: 40
-                    palette.buttonText: checked ? "white" : "#aaa"
-                    background: Rectangle { 
-                        color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
-                        border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
-                        border.width: 1
-                        radius: 4 
-                    }
-                }
-
-                Button {
-                    text: "SLIP"
-                    checkable: true
-                    Layout.preferredWidth: 60
-                    Layout.preferredHeight: 40
-                    palette.buttonText: checked ? "white" : "#aaa"
-                    background: Rectangle { 
-                        color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
-                        border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
-                        border.width: 1
-                        radius: 4 
                     }
                 }
             }

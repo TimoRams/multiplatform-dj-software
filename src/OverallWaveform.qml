@@ -9,7 +9,7 @@ Item {
     property color stripeColor: "#2a2a2a"
 
     Layout.fillWidth: true
-    Layout.preferredHeight: 60 
+    Layout.preferredHeight: 44
 
     Rectangle {
         anchors.fill: parent
@@ -17,14 +17,13 @@ Item {
         border.color: "#333"
         border.width: 1
 
-        // Hardwarebeschleunigte Waveform View
-        // Zeichnet den gesamten Track in die Breite (Fit to Width)
-        // Zeichnet auch den Playhead als vertikale Linie innerhalb des Renderings
+        // Rectified (half-wave) overview — baseline at bottom, draws upward only
         WaveformItem {
             id: overview
             anchors.fill: parent
             anchors.margins: 2
             engine: root.engine
+            rectified: true
         }
 
         // Scrubbing / seeking
