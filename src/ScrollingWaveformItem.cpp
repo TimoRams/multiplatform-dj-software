@@ -177,9 +177,10 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
 
     // Step 1: Catmull-Rom interpolation per output pixel.
     struct ScrollPixel {
-        float lowPeak = 0.0f, lowRms  = 0.0f;
-        float midPeak = 0.0f, midRms  = 0.0f;
-        float highPeak = 0.0f, highRms = 0.0f;
+        float lowPeak  = 0.0f, lowRms   = 0.0f;
+        float midPeak  = 0.0f, midRms   = 0.0f;
+        float highPeak = 0.0f, highRms  = 0.0f;
+        float transientDelta = 0.0f;
     };
     std::vector<ScrollPixel> pixels(wInt);
 
@@ -199,6 +200,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         pixels[x].midRms   = catmull(d0.midRms,   d1.midRms,   d2.midRms,   d3.midRms,   t);
         pixels[x].highPeak = catmull(d0.highPeak, d1.highPeak, d2.highPeak, d3.highPeak, t);
         pixels[x].highRms  = catmull(d0.highRms,  d1.highRms,  d2.highRms,  d3.highRms,  t);
+        pixels[x].transientDelta = catmull(d0.transientDelta, d1.transientDelta,
+                                           d2.transientDelta, d3.transientDelta, t);
     }
 
     // Step 2: local normalisation (sliding max window over lowPeak).
@@ -214,7 +217,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     float globalMax = m_engine->getTrackData()->getGlobalMaxPeak();
     if (globalMax < 0.001f) globalMax = 0.001f;
 
-    // Step 3: draw 4 strips per pixel.
+    // Step 3: draw 4 strips per pixel with transient-based width boost + dynamic RGB.
     for (int x = 0; x < wInt; ++x) {
         // Mixed global (25%) + local (75%) reference for beat contrast while scrolling.
         float normRef = globalMax * 0.25f + localMax[x] * 0.75f;
@@ -225,28 +228,38 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             return std::sqrt(std::min(1.0f, v / normRef));
         };
 
-        float lowPeakN = norm(pixels[x].lowPeak);
-        float lowRmsN  = norm(pixels[x].lowRms);
-        float midN     = norm(pixels[x].midPeak);
-        float highN    = norm(pixels[x].highPeak);
+        float lowPeakN  = norm(pixels[x].lowPeak);
+        float lowRmsN   = norm(pixels[x].lowRms);
+        float midPeakN  = norm(pixels[x].midPeak);
+        float highPeakN = norm(pixels[x].highPeak);
+
+        // --- Transient width boost ---
+        // transientDelta drives geometric widening of bass-heavy bins.
+        float td = pixels[x].transientDelta / normRef;
+        float widthMult = 1.0f + td * 3.0f;
+        widthMult = std::min(widthMult, 1.8f);
 
         // The gain weighting is already baked in by the analyzer (LOW×1.5, MID×0.7, HIGH×0.3).
-        // Just map normalised values to pixel heights.
-        float lowPeakY = lowPeakN * midY;
-        float lowRmsY  = lowRmsN  * midY;
-        float midY_    = midN     * midY;
-        float highY_   = highN    * midY;
+        // Transient boost widens bass, mids/highs stay unaffected.
+        float lowPeakY = std::min(lowPeakN * midY * widthMult, midY);
+        float lowRmsY  = std::min(lowRmsN  * midY * widthMult, midY);
+        float midY_    = midPeakN * midY;
+        float highY_   = highPeakN * midY;
+
+        // Transient-driven alpha boost for bass layers
+        uchar bassHaloAlpha = static_cast<uchar>(std::min(255.0f, 120.0f + td * 400.0f));
+        uchar bassCoreAlpha = static_cast<uchar>(std::min(255.0f, 220.0f + td * 100.0f));
 
         int vIdx = x * 2;
         const float fx = static_cast<float>(x);
 
-        // Layer 0: LOW PEAK - dark blue halo (alpha 120, semi-transparent)
-        lowPeakV[vIdx  ].set(fx, midY - lowPeakY, 30,  80, 220, 120);
-        lowPeakV[vIdx+1].set(fx, midY + lowPeakY, 30,  80, 220, 120);
+        // Layer 0: LOW PEAK - dark blue halo (alpha boosted on transients)
+        lowPeakV[vIdx  ].set(fx, midY - lowPeakY, 30,  80, 220, bassHaloAlpha);
+        lowPeakV[vIdx+1].set(fx, midY + lowPeakY, 30,  80, 220, bassHaloAlpha);
 
-        // Layer 1: LOW RMS - bright blue core (alpha 220, near-opaque)
-        lowRmsV[vIdx  ].set(fx, midY - lowRmsY, 60, 150, 255, 220);
-        lowRmsV[vIdx+1].set(fx, midY + lowRmsY, 60, 150, 255, 220);
+        // Layer 1: LOW RMS - bright blue core (alpha boosted on transients)
+        lowRmsV[vIdx  ].set(fx, midY - lowRmsY, 60, 150, 255, bassCoreAlpha);
+        lowRmsV[vIdx+1].set(fx, midY + lowRmsY, 60, 150, 255, bassCoreAlpha);
 
         // Layer 2: MID - amber/orange (alpha 200)
         midV[vIdx  ].set(fx, midY - midY_, 255, 140, 0, 200);

@@ -15,22 +15,30 @@ class TrackData : public QObject
     Q_PROPERTY(bool   isKeyAnalyzed READ isKeyAnalyzed    NOTIFY keyAnalyzed)
 
 public:
-    // Per-block bin (≈256 samples): Peak + RMS per frequency band.
+    // Per-block bin (≈ samplesPerBin samples): Peak + RMS per frequency band.
+    //
     //   Peak = absolute maximum of the rectified signal in the block (transients)
     //   RMS  = root mean square over the block (sustained energy / body)
-    // Three bands from a juce::dsp::LinkwitzRileyFilter crossover:
-    //   low  (<150 Hz)       kick / subbass
+    //
+    // Three bands from a phase-compensated LR4 crossover:
+    //   low  (<150 Hz)       kick / subbass   — allpass-compensated at 2500 Hz
     //   mid  (150–2500 Hz)   snare, vocals, chords
     //   high (>2500 Hz)      hi-hats, cymbals, air
+    //
     // All values are pre-weighted with asymmetric gain factors:
     //   LOW × 1.5  |  MID × 0.7  |  HIGH × 0.3
+    //
+    // transientDelta = fast_peak_envelope − slow_rms_envelope  (on LOW band).
+    // Positive spikes indicate sharp drum hits; used by the renderer to
+    // visually widen and brighten bass transients (Rekordbox-style punch).
     struct WaveformBin {
-        float lowPeak  = 0.0f;
-        float lowRms   = 0.0f;
-        float midPeak  = 0.0f;
-        float midRms   = 0.0f;
-        float highPeak = 0.0f;
-        float highRms  = 0.0f;
+        float lowPeak       = 0.0f;
+        float lowRms        = 0.0f;
+        float midPeak       = 0.0f;
+        float midRms        = 0.0f;
+        float highPeak      = 0.0f;
+        float highRms       = 0.0f;
+        float transientDelta = 0.0f;  // crest-factor spike for bass transients
     };
 
     // Alias kept for renderer compatibility; will be removed in a future refactor.

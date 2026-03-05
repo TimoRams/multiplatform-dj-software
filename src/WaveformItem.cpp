@@ -147,12 +147,13 @@ QSGNode* WaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
 
         // Pixel binning: aggregate data points to pixel width.
         struct PixelBin {
-            float lowPeak  = 0.0f;
-            float lowRms   = 0.0f;
-            float midPeak  = 0.0f;
-            float midRms   = 0.0f;
-            float highPeak = 0.0f;
-            float highRms  = 0.0f;
+            float lowPeak       = 0.0f;
+            float lowRms        = 0.0f;
+            float midPeak       = 0.0f;
+            float midRms        = 0.0f;
+            float highPeak      = 0.0f;
+            float highRms       = 0.0f;
+            float transientDelta = 0.0f;
         };
         std::vector<PixelBin> bins(maxPixels);
 
@@ -171,6 +172,8 @@ QSGNode* WaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
                 if (data[d].lowPeak  > bins[x].lowPeak)  bins[x].lowPeak  = data[d].lowPeak;
                 if (data[d].midPeak  > bins[x].midPeak)  bins[x].midPeak  = data[d].midPeak;
                 if (data[d].highPeak > bins[x].highPeak) bins[x].highPeak = data[d].highPeak;
+                if (data[d].transientDelta > bins[x].transientDelta)
+                    bins[x].transientDelta = data[d].transientDelta;
                 sumLowRms  += data[d].lowRms;
                 sumMidRms  += data[d].midRms;
                 sumHighRms += data[d].highRms;
@@ -197,22 +200,52 @@ QSGNode* WaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
                 return std::sqrt(std::min(1.0f, v / globalMax));
             };
 
-            float lowPeakN = norm(bins[x].lowPeak);
-            float lowRmsN  = norm(bins[x].lowRms);
-            float midPeakN = norm(bins[x].midPeak);
-            float midRmsN  = norm(bins[x].midRms);
+            float lowPeakN  = norm(bins[x].lowPeak);
+            float lowRmsN   = norm(bins[x].lowRms);
+            float midPeakN  = norm(bins[x].midPeak);
             float highPeakN = norm(bins[x].highPeak);
-            float highRmsN  = norm(bins[x].highRms);
 
-            // Height mapping:
-            //   LOW peak halo  -> full height (bass dominates visually)
-            //   LOW RMS body   -> slightly smaller solid core
-            //   MID peak       -> orange reaches ~65% of bass
-            //   HIGH peak      -> white thin needle
-            float lowPeakY = lowPeakN * maxBarH;
-            float lowRmsY  = lowRmsN  * maxBarH;
+            // --- Dynamic RGB Normalization ---
+            // Divide all bands by max(low, mid, high) so at least one colour
+            // channel is always at full saturation (pure red / green / blue).
+            // This prevents bright, fully-mastered passages from washing out
+            // to grey/white.  The geometry height carries the overall amplitude.
+            float maxBand = std::max({lowPeakN, midPeakN, highPeakN});
+            float colorLow = 1.0f, colorMid = 0.0f, colorHigh = 0.0f;
+            if (maxBand > 0.001f) {
+                colorLow  = lowPeakN  / maxBand;
+                colorMid  = midPeakN  / maxBand;
+                colorHigh = highPeakN / maxBand;
+            }
+
+            // --- Transient width boost ---
+            // transientDelta drives geometric widening of bass-heavy bins.
+            // On a sharp kick hit, the bar becomes ~1.6× wider, making bass
+            // transients visually "punch out" of the waveform (Rekordbox-style).
+            float td = bins[x].transientDelta / globalMax;
+            float widthMult = 1.0f + td * 3.0f;
+            widthMult = std::min(widthMult, 1.8f);  // cap at 1.8×
+
+            // Height mapping: geometry scales with overall amplitude.
+            // Transient width boost scales height on bass transients.
+            float lowPeakY = lowPeakN * maxBarH * widthMult;
+            float lowRmsY  = lowRmsN  * maxBarH * widthMult;
             float midY_    = midPeakN * maxBarH;
             float highY_   = highPeakN * maxBarH;
+
+            // Clamp after widthMult to prevent overflow
+            lowPeakY = std::min(lowPeakY, maxBarH);
+            lowRmsY  = std::min(lowRmsY,  maxBarH);
+
+            // Dynamic RGB colours: map normalised band energies to colour channels.
+            // Bass → Blue (30-60, 80-150, 220-255), Mid → Amber (255, 140, 0), High → White (240, 240, 255)
+            // When a band dominates, its colour saturates to pure.
+            auto toU8 = [](float v) -> uchar { return static_cast<uchar>(v * 255.0f); };
+
+            // Bass halo colour: darker blue, alpha boosted by transient
+            uchar bassHaloAlpha = static_cast<uchar>(std::min(255.0f, 120.0f + td * 400.0f));
+            // Bass core colour: brighter blue
+            uchar bassCoreAlpha = static_cast<uchar>(std::min(255.0f, 220.0f + td * 100.0f));
 
             const int vIdx = x * 2;
 
@@ -222,13 +255,13 @@ QSGNode* WaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
             const float mdBot = m_rectified ? baseline : baseline + midY_;
             const float hiBot = m_rectified ? baseline : baseline + highY_;
 
-            // Layer 0: LOW PEAK - dark blue halo (alpha 120)
-            lowPeakV[vIdx  ].set(fx, baseline - lowPeakY,  30,  80, 220, 120);
-            lowPeakV[vIdx+1].set(fx, lpBot,                30,  80, 220, 120);
+            // Layer 0: LOW PEAK - dark blue halo (alpha boosted on transients)
+            lowPeakV[vIdx  ].set(fx, baseline - lowPeakY,  30,  80, 220, bassHaloAlpha);
+            lowPeakV[vIdx+1].set(fx, lpBot,                30,  80, 220, bassHaloAlpha);
 
-            // Layer 1: LOW RMS - bright blue core (alpha 220)
-            lowRmsV[vIdx  ].set(fx, baseline - lowRmsY,  60, 150, 255, 220);
-            lowRmsV[vIdx+1].set(fx, lrBot,               60, 150, 255, 220);
+            // Layer 1: LOW RMS - bright blue core (alpha boosted on transients)
+            lowRmsV[vIdx  ].set(fx, baseline - lowRmsY,  60, 150, 255, bassCoreAlpha);
+            lowRmsV[vIdx+1].set(fx, lrBot,               60, 150, 255, bassCoreAlpha);
 
             // Layer 2: MID - amber/orange (alpha 200)
             midV[vIdx  ].set(fx, baseline - midY_, 255, 140, 0, 200);

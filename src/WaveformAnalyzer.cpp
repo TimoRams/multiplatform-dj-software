@@ -37,12 +37,41 @@ void WaveformAnalyzer::stopAnalysis()
     stopThread(2000);
 }
 
+// Envelope follower with separate attack and release time constants.
+// Used for transient detection: a fast follower tracks peaks while a slow
+// follower tracks the sustained RMS body.  Their difference isolates
+// sharp drum hits (positive crest-factor spikes).
+struct EnvelopeFollower {
+    float state = 0.0f;
+    float attackCoef  = 0.0f;
+    float releaseCoef = 0.0f;
+
+    void prepare(double sampleRate, float attackMs, float releaseMs) {
+        attackCoef  = std::exp(-1.0f / (static_cast<float>(sampleRate) * attackMs  * 0.001f));
+        releaseCoef = std::exp(-1.0f / (static_cast<float>(sampleRate) * releaseMs * 0.001f));
+    }
+
+    float process(float rectified) {
+        float coef = rectified > state ? attackCoef : releaseCoef;
+        state = rectified + coef * (state - rectified);
+        return state;
+    }
+
+    void reset() { state = 0.0f; }
+};
+
 // Linkwitz-Riley 4th-order crossover (LR4, -24 dB/oct).
 // Uses juce::dsp::LinkwitzRileyFilter with the two-output processSample()
 // overload that returns phase-aligned LP and HP in one call.
-// Two filters are cascaded:
-//   xoverLow  (150 Hz):  splits mono → LOW + (MID+HIGH)
-//   xoverHigh (2500 Hz): splits (MID+HIGH) → MID + HIGH
+//
+// Phase-compensated 3-band architecture (perfect reconstruction):
+//   xoverLow  (150 Hz):   mono → rawLow + midHigh
+//   xoverHigh (2500 Hz):  midHigh → mid + high
+//   allpassComp (2500 Hz): rawLow → low  (phase-aligned with mid/high)
+//
+// Without the allpass on the LOW band, bass transients arrive earlier
+// than the mid/high components of the same drum hit, causing temporal
+// smearing in the visual display.
 
 void WaveformAnalyzer::run()
 {
@@ -69,17 +98,28 @@ void WaveformAnalyzer::run()
     if (samplesPerBin < 1) return;
 
     // -------------------------------------------------------------------------
-    // DSP-Kette: juce::dsp::LinkwitzRileyFilter 3-Band Crossover
+    // DSP-Kette: Phase-Compensated LR4 3-Band Crossover + Transient Detection
     //
-    //  1. CROSSOVER (LR4, -24 dB/oct)
-    //     xoverLow  @ 150 Hz:  mono → LOW  +  (MID+HIGH)
-    //     xoverHigh @ 2500 Hz: (MID+HIGH) → MID  +  HIGH
+    //  1. CROSSOVER (LR4, -24 dB/oct) with allpass phase compensation
+    //     xoverLow  @ 150 Hz:   mono → rawLow + midHigh
+    //     xoverHigh @ 2500 Hz:  midHigh → mid + high
+    //     allpassComp @ 2500 Hz: rawLow → low  (phase-aligned)
+    //
+    //     The allpass filter on the LOW band compensates the phase shift
+    //     introduced by xoverHigh on the MID+HIGH path.  Without it,
+    //     bass transients would arrive earlier than mid/high transients
+    //     of the same drum hit → temporal smearing in the visual display.
     //
     //  2. PEAK & RMS per band per block
     //     Peak = max |sample| in the block  (transients, drum hits)
     //     RMS  = sqrt(mean(sample²))        (sustained energy, body)
     //
-    //  3. ASYMMETRIC GAIN WEIGHTING
+    //  3. TRANSIENT DETECTION (dual envelope followers on LOW band)
+    //     Fast peak envelope (attack 0.5 ms, release 5 ms) tracks transients
+    //     Slow RMS envelope  (attack 5 ms,   release 80 ms) tracks body
+    //     Δ_transient = fast − slow  → positive spike on drum hits
+    //
+    //  4. ASYMMETRIC GAIN WEIGHTING
     //     LOW  × 1.5  →  bass visually dominates
     //     MID  × 0.7  →  mids sit behind
     //     HIGH × 0.3  →  highs are tiny spikes / nebel
@@ -87,12 +127,18 @@ void WaveformAnalyzer::run()
 
     // Crossover filters (mono, 1 channel)
     juce::dsp::LinkwitzRileyFilter<float> xoverLow;
-    xoverLow.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
+    xoverLow.setType(juce::dsp::LinkwitzRileyFilterType::allpass);  // type doesn't matter for 2-output overload
     xoverLow.setCutoffFrequency(150.0f);
 
     juce::dsp::LinkwitzRileyFilter<float> xoverHigh;
     xoverHigh.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
     xoverHigh.setCutoffFrequency(2500.0f);
+
+    // Allpass phase compensator for the LOW band.
+    // Matches the phase delay that xoverHigh introduces on the MID+HIGH path.
+    juce::dsp::LinkwitzRileyFilter<float> allpassComp;
+    allpassComp.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
+    allpassComp.setCutoffFrequency(2500.0f);
 
     {
         juce::dsp::ProcessSpec spec;
@@ -101,7 +147,15 @@ void WaveformAnalyzer::run()
         spec.numChannels      = 1;
         xoverLow.prepare(spec);
         xoverHigh.prepare(spec);
+        allpassComp.prepare(spec);
     }
+
+    // Dual envelope followers for bass transient detection.
+    // The difference (fast − slow) isolates sharp drum hits.
+    EnvelopeFollower envFastPeak;  // tracks transients (short ballistics)
+    EnvelopeFollower envSlowRms;   // tracks sustained body (long ballistics)
+    envFastPeak.prepare(sampleRate, 0.5f, 5.0f);    // attack 0.5 ms, release 5 ms
+    envSlowRms.prepare (sampleRate, 5.0f, 80.0f);   // attack 5 ms,   release 80 ms
 
     // Gain factors per band
     constexpr float gainLow  = 1.5f;
@@ -128,6 +182,9 @@ void WaveformAnalyzer::run()
         float peakLow = 0.0f, peakMid = 0.0f, peakHigh = 0.0f;
         double sqSumLow = 0.0, sqSumMid = 0.0, sqSumHigh = 0.0;
 
+        // Transient tracking: max crest-factor delta in this bin
+        float maxTransientDelta = 0.0f;
+
         for (int s = 0; s < samplesPerBin; ++s)
         {
             // Mono-mix: average all channels
@@ -136,14 +193,18 @@ void WaveformAnalyzer::run()
                 mono += readBuf.getReadPointer(ch)[s];
             mono /= static_cast<float>(numCh);
 
-            // Stage 1: LR4 crossover
-            //   xoverLow splits mono → sigLow + sigMidHigh
-            //   xoverHigh splits sigMidHigh → sigMid + sigHigh
-            float sigLow, sigMidHigh;
-            xoverLow.processSample(0, mono, sigLow, sigMidHigh);
+            // Stage 1: LR4 crossover with allpass phase compensation
+            //   xoverLow splits mono → rawLow + midHigh
+            //   xoverHigh splits midHigh → mid + high
+            //   allpassComp delays rawLow to match the phase of mid/high
+            float rawLow, midHigh;
+            xoverLow.processSample(0, mono, rawLow, midHigh);
 
             float sigMid, sigHigh;
-            xoverHigh.processSample(0, sigMidHigh, sigMid, sigHigh);
+            xoverHigh.processSample(0, midHigh, sigMid, sigHigh);
+
+            // Phase-compensate the LOW band
+            float sigLow = allpassComp.processSample(0, rawLow);
 
             // Stage 2: rectify
             float absLow  = std::abs(sigLow);
@@ -159,6 +220,15 @@ void WaveformAnalyzer::run()
             sqSumLow  += static_cast<double>(absLow  * absLow);
             sqSumMid  += static_cast<double>(absMid  * absMid);
             sqSumHigh += static_cast<double>(absHigh * absHigh);
+
+            // Stage 3: transient detection on LOW band
+            //   fast envelope tracks the peak (short attack/release)
+            //   slow envelope tracks the RMS body (long attack/release)
+            //   Δ = fast − slow → positive spike on drum hits
+            float envFast = envFastPeak.process(absLow);
+            float envSlow = envSlowRms.process(absLow);
+            float delta   = envFast - envSlow;
+            if (delta > maxTransientDelta) maxTransientDelta = delta;
         }
 
         // RMS
@@ -167,7 +237,7 @@ void WaveformAnalyzer::run()
         float rmsMid  = std::sqrt(static_cast<float>(sqSumMid)  * inv);
         float rmsHigh = std::sqrt(static_cast<float>(sqSumHigh) * inv);
 
-        // Stage 3: asymmetric gain weighting
+        // Stage 4: asymmetric gain weighting
         TrackData::WaveformBin wbin;
         wbin.lowPeak  = juce::jlimit(0.0f, 1.0f, peakLow  * gainLow);
         wbin.lowRms   = juce::jlimit(0.0f, 1.0f, rmsLow   * gainLow);
@@ -175,6 +245,7 @@ void WaveformAnalyzer::run()
         wbin.midRms   = juce::jlimit(0.0f, 1.0f, rmsMid   * gainMid);
         wbin.highPeak = juce::jlimit(0.0f, 1.0f, peakHigh * gainHigh);
         wbin.highRms  = juce::jlimit(0.0f, 1.0f, rmsHigh  * gainHigh);
+        wbin.transientDelta = juce::jlimit(0.0f, 1.0f, maxTransientDelta * gainLow);
 
         // Track global max for renderer normalisation
         float binMax = std::max({wbin.lowPeak, wbin.midPeak, wbin.highPeak});
