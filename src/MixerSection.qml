@@ -24,7 +24,7 @@ Rectangle {
         }
     }
 
-    component MixerKnob: ColumnLayout {
+    component MixerKnob: RowLayout {
         id: knobRoot
         property alias text: label.text
         property alias from: dial.from
@@ -32,23 +32,28 @@ Rectangle {
         property alias knobValue: dial.value
         property real knobSize: 26
         property real defaultValue: (dial.from + dial.to) / 2
+        // "left" = label on left (Deck A), "right" = label on right (Deck B)
+        property string labelSide: "left"
 
-        spacing: 2
+        spacing: 4
         Layout.alignment: Qt.AlignHCenter
 
-        Text { 
+        // Left label slot
+        Text {
             id: label
-            color: "#aaa"
+            visible: knobRoot.labelSide === "left"
+            color: "#666"
             font.pixelSize: window.sp(9)
             font.bold: true
-            Layout.alignment: Qt.AlignHCenter 
+            font.family: "monospace"
+            Layout.alignment: Qt.AlignVCenter
         }
 
-        Dial { 
+        Dial {
             id: dial
-            Layout.alignment: Qt.AlignHCenter
-            width: knobSize
-            height: knobSize
+            Layout.alignment: Qt.AlignVCenter
+            width: knobRoot.knobSize
+            height: knobRoot.knobSize
 
             background: Rectangle {
                 x: dial.width / 2 - width / 2
@@ -105,6 +110,17 @@ Rectangle {
                 }
             }
         }
+
+        // Right label slot
+        Text {
+            visible: knobRoot.labelSide === "right"
+            text: label.text
+            color: "#666"
+            font.pixelSize: window.sp(9)
+            font.bold: true
+            font.family: "monospace"
+            Layout.alignment: Qt.AlignVCenter
+        }
     }
 
     ColumnLayout {
@@ -126,30 +142,26 @@ Rectangle {
                 Layout.alignment: Qt.AlignHCenter
                 spacing: 8
 
-                MixerKnob { 
-                    text: "TRIM"; from: 0; to: 2; knobValue: 1.0; 
+                MixerKnob {
+                    text: "T"; labelSide: "left"; from: 0; to: 2; knobValue: 1.0
                     knobSize: 16
-                    onKnobValueChanged: { if(engineA) engineA.trim = knobValue; }
+                    onKnobValueChanged: { if(engineA) engineA.trim = knobValue }
                 }
-
-                MixerKnob { 
-                    text: "HIGH"; from: -1; to: 1; knobValue: 0; 
-                    onKnobValueChanged: { if(engineA) engineA.eqHigh = knobValue; }
+                MixerKnob {
+                    text: "H"; labelSide: "left"; from: -1; to: 1; knobValue: 0
+                    onKnobValueChanged: { if(engineA) engineA.eqHigh = knobValue }
                 }
-
-                MixerKnob { 
-                    text: "MID"; from: -1; to: 1; knobValue: 0; 
-                    onKnobValueChanged: { if(engineA) engineA.eqMid = knobValue; }
+                MixerKnob {
+                    text: "M"; labelSide: "left"; from: -1; to: 1; knobValue: 0
+                    onKnobValueChanged: { if(engineA) engineA.eqMid = knobValue }
                 }
-
-                MixerKnob { 
-                    text: "LOW"; from: -1; to: 1; knobValue: 0; 
-                    onKnobValueChanged: { if(engineA) engineA.eqLow = knobValue; }
+                MixerKnob {
+                    text: "L"; labelSide: "left"; from: -1; to: 1; knobValue: 0
+                    onKnobValueChanged: { if(engineA) engineA.eqLow = knobValue }
                 }
-
-                MixerKnob { 
-                    text: "FILTER"; from: -1; to: 1; knobValue: 0; 
-                    onKnobValueChanged: { if(engineA) engineA.filter = knobValue; }
+                MixerKnob {
+                    text: "F"; labelSide: "left"; from: -1; to: 1; knobValue: 0
+                    onKnobValueChanged: { if(engineA) engineA.filter = knobValue }
                 }
 
                 Button {
@@ -190,30 +202,27 @@ Rectangle {
                 Layout.alignment: Qt.AlignHCenter
                 spacing: 8
 
-                MixerKnob { 
-                    text: "TRIM"; from: 0; to: 2; knobValue: 1.0; 
+                MixerKnob {
+                    text: "T"; labelSide: "right"; from: 0; to: 2; knobValue: 1.0
                     knobSize: 16
-                    onKnobValueChanged: { if(engineB) engineB.trim = knobValue; }
+                    onKnobValueChanged: { if(engineB) engineB.trim = knobValue }
                 }
 
-                MixerKnob { 
-                    text: "HIGH"; from: -1; to: 1; knobValue: 0; 
-                    onKnobValueChanged: { if(engineB) engineB.eqHigh = knobValue; }
+                MixerKnob {
+                    text: "H"; labelSide: "right"; from: -1; to: 1; knobValue: 0
+                    onKnobValueChanged: { if(engineB) engineB.eqHigh = knobValue }
                 }
-
-                MixerKnob { 
-                    text: "MID"; from: -1; to: 1; knobValue: 0; 
-                    onKnobValueChanged: { if(engineB) engineB.eqMid = knobValue; }
+                MixerKnob {
+                    text: "M"; labelSide: "right"; from: -1; to: 1; knobValue: 0
+                    onKnobValueChanged: { if(engineB) engineB.eqMid = knobValue }
                 }
-
-                MixerKnob { 
-                    text: "LOW"; from: -1; to: 1; knobValue: 0; 
-                    onKnobValueChanged: { if(engineB) engineB.eqLow = knobValue; }
+                MixerKnob {
+                    text: "L"; labelSide: "right"; from: -1; to: 1; knobValue: 0
+                    onKnobValueChanged: { if(engineB) engineB.eqLow = knobValue }
                 }
-
-                MixerKnob { 
-                    text: "FILTER"; from: -1; to: 1; knobValue: 0; 
-                    onKnobValueChanged: { if(engineB) engineB.filter = knobValue; }
+                MixerKnob {
+                    text: "F"; labelSide: "right"; from: -1; to: 1; knobValue: 0
+                    onKnobValueChanged: { if(engineB) engineB.filter = knobValue }
                 }
 
                 Button {

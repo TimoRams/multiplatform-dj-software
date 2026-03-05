@@ -25,8 +25,10 @@ public:
     //   mid  (150–2500 Hz)   snare, vocals, chords
     //   high (>2500 Hz)      hi-hats, cymbals, air
     //
-    // All values are pre-weighted with asymmetric gain factors:
-    //   LOW × 1.5  |  MID × 0.7  |  HIGH × 0.3
+    // All values are pre-normalised per-band and shaped with pow() contrast.
+    // The analyzer operates in two passes:
+    //   Pass 1 (live preview): running-max normalisation, emits chunks progressively.
+    //   Pass 2 (final polish): true global-max normalisation, atomically replaces data.
     //
     // transientDelta = fast_peak_envelope − slow_rms_envelope  (on LOW band).
     // Positive spikes indicate sharp drum hits; used by the renderer to
@@ -39,6 +41,15 @@ public:
         float highPeak      = 0.0f;
         float highRms       = 0.0f;
         float transientDelta = 0.0f;  // crest-factor spike for bass transients
+        // Triangle envelope: instant-attack, asymmetric decay.
+        // The renderer draws these as the primary bar height — this gives the
+        // characteristic "right-falling triangle" shape on every transient.
+        //   lowEnv:  decay ~80 ms  → wide, fat bass blocks
+        //   midEnv:  decay ~25 ms  → sharp snare spikes
+        //   highEnv: decay ~25 ms  → tiny hihat needles
+        float lowEnv        = 0.0f;
+        float midEnv        = 0.0f;
+        float highEnv       = 0.0f;
     };
 
     // Alias kept for renderer compatibility; will be removed in a future refactor.
@@ -136,6 +147,16 @@ public:
     void appendData(const QVector<FrequencyData>& newData) {
         QMutexLocker locker(&m_mutex);
         m_data.append(newData);
+        emit dataUpdated();
+    }
+
+    // Atomically replace the entire waveform with the final-polish version.
+    // Called at the end of Pass 2; the renderer seamlessly switches to it
+    // on the next timer tick without any flicker.
+    void replaceAllData(QVector<FrequencyData>&& finalData, float finalGlobalMaxPeak) {
+        QMutexLocker locker(&m_mutex);
+        m_data = std::move(finalData);
+        m_globalMaxPeak = finalGlobalMaxPeak;
         emit dataUpdated();
     }
 

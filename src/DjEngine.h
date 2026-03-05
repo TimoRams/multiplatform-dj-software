@@ -20,6 +20,8 @@ class DjEngine : public QObject
     Q_PROPERTY(float progress READ getProgress NOTIFY progressChanged)
     Q_PROPERTY(bool isPlaying READ isPlaying NOTIFY playingChanged)
     Q_PROPERTY(double tempoPercent READ getTempoPercent WRITE setTempoPercent NOTIFY tempoChanged)
+    Q_PROPERTY(double currentBpm READ getCurrentBpm NOTIFY tempoChanged)
+    Q_PROPERTY(double tempoRatio READ getTempoRatio NOTIFY tempoChanged)
     Q_PROPERTY(TrackData* trackData READ getTrackData CONSTANT)
 
     Q_PROPERTY(QString trackTitle   READ trackTitle   NOTIFY trackMetadataChanged)
@@ -61,6 +63,14 @@ public:
     QString coverArtUrl()   const { return m_coverArtUrl; }
     bool    hasCoverArt()   const { return m_hasCoverArt; }
     double  getTempoPercent() const { return m_tempoPercent; }
+    // Returns the analysed BPM multiplied by the current tempo ratio.
+    // Shows 0.0 until BPM analysis is complete.
+    double  getCurrentBpm()   const {
+        double base = m_trackData ? m_trackData->getBpm() : 0.0;
+        return base > 0.0 ? base * (1.0 + m_tempoPercent / 100.0) : 0.0;
+    }
+    // Speed multiplier for the waveform renderer (e.g. 1.08 at +8%).
+    double  getTempoRatio()   const { return 1.0 + m_tempoPercent / 100.0; }
 
     // Mixer Getters
     double volume() const { return m_volume; }
@@ -135,7 +145,7 @@ private:
     QString m_coverArtUrl;
     bool    m_hasCoverArt = false;
 
-    // Tempo control: ±8% range
+    // Tempo control: ±6/8/16/32/100% (WIDE) selectable range
     double m_tempoPercent = 0.0;
 
     // Mixer state

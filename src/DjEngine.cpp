@@ -240,6 +240,12 @@ DjEngine::DjEngine(QObject* parent) : QObject(parent)
         }
     });
 
+    // When BPM analysis finishes, re-emit tempoChanged so that currentBpm
+    // and tempoRatio Q_PROPERTYs update in QML.
+    connect(m_trackData, &TrackData::bpmAnalyzed, this, [this]() {
+        emit tempoChanged();
+    });
+
     juce::MessageManager::getInstance();
     formatManager.registerBasicFormats();
 
@@ -474,8 +480,8 @@ void DjEngine::onTimer()
 
 void DjEngine::setTempoPercent(double percent)
 {
-    // Clamp to ±8% range
-    percent = std::clamp(percent, -8.0, 8.0);
+    // Clamp to ±100% range (WIDE mode)
+    percent = std::clamp(percent, -100.0, 100.0);
     
     if (m_tempoPercent == percent) return;
     

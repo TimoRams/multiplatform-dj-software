@@ -47,8 +47,13 @@ struct EnvelopeFollower {
     float releaseCoef = 0.0f;
 
     void prepare(double sampleRate, float attackMs, float releaseMs) {
-        attackCoef  = std::exp(-1.0f / (static_cast<float>(sampleRate) * attackMs  * 0.001f));
-        releaseCoef = std::exp(-1.0f / (static_cast<float>(sampleRate) * releaseMs * 0.001f));
+        // attackMs == 0 → instant attack (coefficient = 0 → state = input immediately)
+        attackCoef  = (attackMs  > 0.0f)
+            ? std::exp(-1.0f / (static_cast<float>(sampleRate) * attackMs  * 0.001f))
+            : 0.0f;
+        releaseCoef = (releaseMs > 0.0f)
+            ? std::exp(-1.0f / (static_cast<float>(sampleRate) * releaseMs * 0.001f))
+            : 0.0f;
     }
 
     float process(float rectified) {
@@ -101,14 +106,19 @@ void WaveformAnalyzer::run()
     // DSP-Kette: Phase-Compensated LR4 3-Band Crossover + Transient Detection
     //
     //  1. CROSSOVER (LR4, -24 dB/oct) with allpass phase compensation
-    //     xoverLow  @ 150 Hz:   mono → rawLow + midHigh
-    //     xoverHigh @ 2500 Hz:  midHigh → mid + high
-    //     allpassComp @ 2500 Hz: rawLow → low  (phase-aligned)
-    //
-    //     The allpass filter on the LOW band compensates the phase shift
-    //     introduced by xoverHigh on the MID+HIGH path.  Without it,
-    //     bass transients would arrive earlier than mid/high transients
-    //     of the same drum hit → temporal smearing in the visual display.
+     //     xoverLow  @ 150 Hz:   stereo → rawLow + midHigh
+     //     xoverHigh @ 2500 Hz:  midHigh → mid + high
+     //     allpassComp @ 2500 Hz: rawLow → low  (phase-aligned)
+     //
+     //     Rekordbox / Serato convention:
+     //       LOW  = Kick + Sub-Bass (0–150 Hz)   → fat blue blocks
+     //       MID  = Bass + Vocals + Snare (150–2500 Hz) → amber spikes
+     //       HIGH = HiHat + Percussion (2500 Hz+) → white needles
+     //
+     //     The allpass filter on the LOW band compensates the phase shift
+     //     introduced by xoverHigh on the MID+HIGH path.  Without it,
+     //     bass transients would arrive earlier than mid/high transients
+     //     of the same drum hit → temporal smearing in the visual display.
     //
     //  2. PEAK & RMS per band per block
     //     Peak = max |sample| in the block  (transients, drum hits)
@@ -128,11 +138,11 @@ void WaveformAnalyzer::run()
     // Crossover filters (mono, 1 channel)
     juce::dsp::LinkwitzRileyFilter<float> xoverLow;
     xoverLow.setType(juce::dsp::LinkwitzRileyFilterType::allpass);  // type doesn't matter for 2-output overload
-    xoverLow.setCutoffFrequency(150.0f);
+    xoverLow.setCutoffFrequency(150.0f);   // LOW/MID split: Kick+Sub vs everything else
 
     juce::dsp::LinkwitzRileyFilter<float> xoverHigh;
     xoverHigh.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
-    xoverHigh.setCutoffFrequency(2500.0f);
+    xoverHigh.setCutoffFrequency(2500.0f); // MID/HIGH split: Snare+Vocals vs HiHat+Perc
 
     // Allpass phase compensator for the LOW band.
     // Matches the phase delay that xoverHigh introduces on the MID+HIGH path.
@@ -141,10 +151,13 @@ void WaveformAnalyzer::run()
     allpassComp.setCutoffFrequency(2500.0f);
 
     {
+        // Prepare filters with the actual number of channels so the stereo-max
+        // path can call processSample(ch, ...) for ch = 0 and ch = 1.
         juce::dsp::ProcessSpec spec;
         spec.sampleRate       = sampleRate;
         spec.maximumBlockSize = static_cast<juce::uint32>(samplesPerBin);
-        spec.numChannels      = 1;
+        spec.numChannels      = static_cast<juce::uint32>(
+            std::max(1, static_cast<int>(reader->numChannels)));
         xoverLow.prepare(spec);
         xoverHigh.prepare(spec);
         allpassComp.prepare(spec);
@@ -157,16 +170,62 @@ void WaveformAnalyzer::run()
     envFastPeak.prepare(sampleRate, 0.5f, 5.0f);    // attack 0.5 ms, release 5 ms
     envSlowRms.prepare (sampleRate, 5.0f, 80.0f);   // attack 5 ms,   release 80 ms
 
-    // Gain factors per band
-    constexpr float gainLow  = 1.5f;
-    constexpr float gainMid  = 0.7f;
-    constexpr float gainHigh = 0.3f;
+    // Rekordbox-style triangle envelope followers.
+    // Instant attack (0 ms): every sample peak is tracked immediately.
+    // Asymmetric decay: LOW decays slowly (fat blocks), MID/HIGH quickly (sharp spikes).
+    // The renderer uses these as the primary bar height — their exponential decay
+    // directly produces the characteristic "right-falling triangle" on each transient.
+    EnvelopeFollower envLow;   // 0 ms attack, 40 ms release → fat bass blocks, snappy at 130+ BPM
+    EnvelopeFollower envMid;   // 0 ms attack, 15 ms release → razor-sharp snare spikes
+    EnvelopeFollower envHigh;  // 0 ms attack, 15 ms release → bright hihat needles
+    envLow .prepare(sampleRate, 0.0f, 40.0f);
+    envMid .prepare(sampleRate, 0.0f, 15.0f);
+    envHigh.prepare(sampleRate, 0.0f, 15.0f);
 
-    float globalMaxPeak = 0.001f;
+    // =========================================================================
+    // PASS 1 — Live Preview  (progressive rendering while audio is read)
+    //
+    //   Running maxima (floored at 0.2) normalise each chunk on-the-fly so the
+    //   waveform builds up live on screen.  Starting at 0.2 prevents the very
+    //   first quiet sample from exploding to 1.0 before the running max settles.
+    //
+    //   All raw envelope states are also stored in rawBins[] for Pass 2.
+    // =========================================================================
 
-    const int batchSize = 100;
-    QVector<TrackData::WaveformBin> batch;
-    batch.reserve(batchSize);
+    struct RawBin {
+        float peakLow  = 0.0f, peakMid  = 0.0f, peakHigh  = 0.0f;
+        float rmsLow   = 0.0f, rmsMid   = 0.0f, rmsHigh   = 0.0f;
+        float envLowRaw  = 0.0f, envMidRaw  = 0.0f, envHighRaw = 0.0f;
+        float transientDelta = 0.0f;
+    };
+    std::vector<RawBin> rawBins;
+    rawBins.reserve(static_cast<size_t>(numPoints));
+
+    // Running maxima for live preview — start at 0.2 to avoid initial explosion.
+    float runMaxEnvLow  = 0.2f;
+    float runMaxEnvMid  = 0.2f;
+    float runMaxEnvHigh = 0.2f;
+    float runMaxPeak    = 0.2f;
+
+    // True global maxima, updated in Pass 1, used for the final-polish in Pass 2.
+    float globalMaxEnvLow  = 0.001f;
+    float globalMaxEnvMid  = 0.001f;
+    float globalMaxEnvHigh = 0.001f;
+    float globalMaxPeak    = 0.001f;
+
+    // Helper: shape one raw envelope value → final visual value.
+    // Called identically in both passes so they produce the same result given
+    // the same normalised input.
+    auto shapeEnv = [](float normLow, float normMid, float normHigh,
+                       float& outLow,  float& outMid,  float& outHigh) {
+        outLow  = std::pow(juce::jlimit(0.0f, 1.0f, normLow),  1.5f);
+        outMid  = std::pow(juce::jlimit(0.0f, 1.0f, normMid),  1.2f) * 0.75f;
+        outHigh = std::pow(juce::jlimit(0.0f, 1.0f, normHigh), 1.8f) * 0.90f;
+    };
+
+    constexpr int previewChunk = 50;   // emit to UI every N bins
+    QVector<TrackData::WaveformBin> previewBatch;
+    previewBatch.reserve(previewChunk);
 
     juce::AudioBuffer<float> readBuf(static_cast<int>(reader->numChannels), samplesPerBin);
 
@@ -181,89 +240,137 @@ void WaveformAnalyzer::run()
 
         float peakLow = 0.0f, peakMid = 0.0f, peakHigh = 0.0f;
         double sqSumLow = 0.0, sqSumMid = 0.0, sqSumHigh = 0.0;
-
-        // Transient tracking: max crest-factor delta in this bin
         float maxTransientDelta = 0.0f;
 
         for (int s = 0; s < samplesPerBin; ++s)
         {
-            // Mono-mix: average all channels
-            float mono = 0.0f;
+            float bestLow = 0.0f, bestMid = 0.0f, bestHigh = 0.0f;
             for (int ch = 0; ch < numCh; ++ch)
-                mono += readBuf.getReadPointer(ch)[s];
-            mono /= static_cast<float>(numCh);
+            {
+                float in = readBuf.getReadPointer(ch)[s];
 
-            // Stage 1: LR4 crossover with allpass phase compensation
-            //   xoverLow splits mono → rawLow + midHigh
-            //   xoverHigh splits midHigh → mid + high
-            //   allpassComp delays rawLow to match the phase of mid/high
-            float rawLow, midHigh;
-            xoverLow.processSample(0, mono, rawLow, midHigh);
+                float rawLow, midHigh;
+                xoverLow.processSample(ch, in, rawLow, midHigh);
 
-            float sigMid, sigHigh;
-            xoverHigh.processSample(0, midHigh, sigMid, sigHigh);
+                float sigMid, sigHigh;
+                xoverHigh.processSample(ch, midHigh, sigMid, sigHigh);
 
-            // Phase-compensate the LOW band
-            float sigLow = allpassComp.processSample(0, rawLow);
+                float sigLow = allpassComp.processSample(ch, rawLow);
 
-            // Stage 2: rectify
-            float absLow  = std::abs(sigLow);
-            float absMid  = std::abs(sigMid);
-            float absHigh = std::abs(sigHigh);
+                float aL = std::abs(sigLow);
+                float aM = std::abs(sigMid);
+                float aH = std::abs(sigHigh);
 
-            // Peak tracking
-            if (absLow  > peakLow)  peakLow  = absLow;
-            if (absMid  > peakMid)  peakMid  = absMid;
-            if (absHigh > peakHigh) peakHigh = absHigh;
+                if (aL > bestLow)  bestLow  = aL;
+                if (aM > bestMid)  bestMid  = aM;
+                if (aH > bestHigh) bestHigh = aH;
+            }
 
-            // RMS accumulation
-            sqSumLow  += static_cast<double>(absLow  * absLow);
-            sqSumMid  += static_cast<double>(absMid  * absMid);
-            sqSumHigh += static_cast<double>(absHigh * absHigh);
+            if (bestLow  > peakLow)  peakLow  = bestLow;
+            if (bestMid  > peakMid)  peakMid  = bestMid;
+            if (bestHigh > peakHigh) peakHigh = bestHigh;
 
-            // Stage 3: transient detection on LOW band
-            //   fast envelope tracks the peak (short attack/release)
-            //   slow envelope tracks the RMS body (long attack/release)
-            //   Δ = fast − slow → positive spike on drum hits
-            float envFast = envFastPeak.process(absLow);
-            float envSlow = envSlowRms.process(absLow);
-            float delta   = envFast - envSlow;
+            sqSumLow  += static_cast<double>(bestLow  * bestLow);
+            sqSumMid  += static_cast<double>(bestMid  * bestMid);
+            sqSumHigh += static_cast<double>(bestHigh * bestHigh);
+
+            float envFastVal = envFastPeak.process(bestLow);
+            float envSlowVal = envSlowRms .process(bestLow);
+            float delta      = envFastVal - envSlowVal;
             if (delta > maxTransientDelta) maxTransientDelta = delta;
+
+            envLow .process(bestLow);
+            envMid .process(bestMid);
+            envHigh.process(bestHigh);
         }
 
-        // RMS
         const float inv = 1.0f / static_cast<float>(samplesPerBin);
-        float rmsLow  = std::sqrt(static_cast<float>(sqSumLow)  * inv);
-        float rmsMid  = std::sqrt(static_cast<float>(sqSumMid)  * inv);
-        float rmsHigh = std::sqrt(static_cast<float>(sqSumHigh) * inv);
 
-        // Stage 4: asymmetric gain weighting
-        TrackData::WaveformBin wbin;
-        wbin.lowPeak  = juce::jlimit(0.0f, 1.0f, peakLow  * gainLow);
-        wbin.lowRms   = juce::jlimit(0.0f, 1.0f, rmsLow   * gainLow);
-        wbin.midPeak  = juce::jlimit(0.0f, 1.0f, peakMid  * gainMid);
-        wbin.midRms   = juce::jlimit(0.0f, 1.0f, rmsMid   * gainMid);
-        wbin.highPeak = juce::jlimit(0.0f, 1.0f, peakHigh * gainHigh);
-        wbin.highRms  = juce::jlimit(0.0f, 1.0f, rmsHigh  * gainHigh);
-        wbin.transientDelta = juce::jlimit(0.0f, 1.0f, maxTransientDelta * gainLow);
+        RawBin rb;
+        rb.peakLow  = peakLow;
+        rb.peakMid  = peakMid;
+        rb.peakHigh = peakHigh;
+        rb.rmsLow   = std::sqrt(static_cast<float>(sqSumLow)  * inv);
+        rb.rmsMid   = std::sqrt(static_cast<float>(sqSumMid)  * inv);
+        rb.rmsHigh  = std::sqrt(static_cast<float>(sqSumHigh) * inv);
+        rb.envLowRaw  = envLow .state;
+        rb.envMidRaw  = envMid .state;
+        rb.envHighRaw = envHigh.state;
+        rb.transientDelta = maxTransientDelta;
+        rawBins.push_back(rb);
 
-        // Track global max for renderer normalisation
-        float binMax = std::max({wbin.lowPeak, wbin.midPeak, wbin.highPeak});
-        if (binMax > globalMaxPeak) {
-            globalMaxPeak = binMax;
-            m_trackData->setGlobalMaxPeak(globalMaxPeak);
-        }
+        // Update true global maxima (used by Pass 2)
+        if (rb.envLowRaw  > globalMaxEnvLow)  globalMaxEnvLow  = rb.envLowRaw;
+        if (rb.envMidRaw  > globalMaxEnvMid)  globalMaxEnvMid  = rb.envMidRaw;
+        if (rb.envHighRaw > globalMaxEnvHigh) globalMaxEnvHigh = rb.envHighRaw;
+        float binPeakMax = std::max({peakLow, peakMid, peakHigh});
+        if (binPeakMax > globalMaxPeak) globalMaxPeak = binPeakMax;
 
-        batch.append(wbin);
-        if (batch.size() >= batchSize) {
-            m_trackData->appendData(batch);
-            batch.clear();
-            wait(1);
+        // Update running maxima for live preview (only grows, never shrinks)
+        if (rb.envLowRaw  > runMaxEnvLow)  runMaxEnvLow  = rb.envLowRaw;
+        if (rb.envMidRaw  > runMaxEnvMid)  runMaxEnvMid  = rb.envMidRaw;
+        if (rb.envHighRaw > runMaxEnvHigh) runMaxEnvHigh = rb.envHighRaw;
+        if (binPeakMax    > runMaxPeak)    runMaxPeak    = binPeakMax;
+
+        // Build preview WaveformBin with running-max normalisation
+        TrackData::WaveformBin pbin;
+        pbin.lowPeak  = juce::jlimit(0.0f, 1.0f, rb.peakLow  / runMaxPeak);
+        pbin.lowRms   = juce::jlimit(0.0f, 1.0f, rb.rmsLow   / runMaxPeak);
+        pbin.midPeak  = juce::jlimit(0.0f, 1.0f, rb.peakMid  / runMaxPeak);
+        pbin.midRms   = juce::jlimit(0.0f, 1.0f, rb.rmsMid   / runMaxPeak);
+        pbin.highPeak = juce::jlimit(0.0f, 1.0f, rb.peakHigh / runMaxPeak);
+        pbin.highRms  = juce::jlimit(0.0f, 1.0f, rb.rmsHigh  / runMaxPeak);
+        pbin.transientDelta = juce::jlimit(0.0f, 1.0f, rb.transientDelta / runMaxPeak);
+        shapeEnv(rb.envLowRaw  / runMaxEnvLow,
+                 rb.envMidRaw  / runMaxEnvMid,
+                 rb.envHighRaw / runMaxEnvHigh,
+                 pbin.lowEnv, pbin.midEnv, pbin.highEnv);
+
+        previewBatch.append(pbin);
+        if (previewBatch.size() >= previewChunk) {
+            m_trackData->appendData(previewBatch);
+            previewBatch.clear();
         }
     }
+    if (!previewBatch.isEmpty())
+        m_trackData->appendData(previewBatch);
 
-    if (!batch.isEmpty())
-        m_trackData->appendData(batch);
+    if (threadShouldExit()) return;
+
+    // =========================================================================
+    // PASS 2 — Final Polish  (runs immediately after Pass 1, ~few ms for a 5-min track)
+    //
+    //   Re-normalise every bin against the TRUE global per-band maxima and
+    //   atomically replace the preview data in one call.  The renderer picks
+    //   up the polished version on its next timer tick — no flicker.
+    // =========================================================================
+
+    m_trackData->setGlobalMaxPeak(globalMaxPeak);
+
+    QVector<TrackData::WaveformBin> finalData;
+    finalData.reserve(static_cast<int>(rawBins.size()));
+
+    for (const RawBin& rb : rawBins)
+    {
+        if (threadShouldExit()) break;
+
+        TrackData::WaveformBin wbin;
+        wbin.lowPeak  = juce::jlimit(0.0f, 1.0f, rb.peakLow  / globalMaxPeak);
+        wbin.lowRms   = juce::jlimit(0.0f, 1.0f, rb.rmsLow   / globalMaxPeak);
+        wbin.midPeak  = juce::jlimit(0.0f, 1.0f, rb.peakMid  / globalMaxPeak);
+        wbin.midRms   = juce::jlimit(0.0f, 1.0f, rb.rmsMid   / globalMaxPeak);
+        wbin.highPeak = juce::jlimit(0.0f, 1.0f, rb.peakHigh / globalMaxPeak);
+        wbin.highRms  = juce::jlimit(0.0f, 1.0f, rb.rmsHigh  / globalMaxPeak);
+        wbin.transientDelta = juce::jlimit(0.0f, 1.0f, rb.transientDelta / globalMaxPeak);
+        shapeEnv(rb.envLowRaw  / globalMaxEnvLow,
+                 rb.envMidRaw  / globalMaxEnvMid,
+                 rb.envHighRaw / globalMaxEnvHigh,
+                 wbin.lowEnv, wbin.midEnv, wbin.highEnv);
+        finalData.append(wbin);
+    }
+
+    if (!threadShouldExit())
+        m_trackData->replaceAllData(std::move(finalData), globalMaxPeak);
 
     if (threadShouldExit()) return;
 

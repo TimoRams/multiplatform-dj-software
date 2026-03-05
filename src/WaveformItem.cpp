@@ -154,6 +154,9 @@ QSGNode* WaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
             float highPeak      = 0.0f;
             float highRms       = 0.0f;
             float transientDelta = 0.0f;
+            float lowEnv        = 0.0f;  // Rekordbox-style triangle envelope values
+            float midEnv        = 0.0f;
+            float highEnv       = 0.0f;
         };
         std::vector<PixelBin> bins(maxPixels);
 
@@ -174,6 +177,10 @@ QSGNode* WaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
                 if (data[d].highPeak > bins[x].highPeak) bins[x].highPeak = data[d].highPeak;
                 if (data[d].transientDelta > bins[x].transientDelta)
                     bins[x].transientDelta = data[d].transientDelta;
+                // Envelope: take max within the pixel bin (preserves the triangle peak)
+                if (data[d].lowEnv  > bins[x].lowEnv)  bins[x].lowEnv  = data[d].lowEnv;
+                if (data[d].midEnv  > bins[x].midEnv)  bins[x].midEnv  = data[d].midEnv;
+                if (data[d].highEnv > bins[x].highEnv) bins[x].highEnv = data[d].highEnv;
                 sumLowRms  += data[d].lowRms;
                 sumMidRms  += data[d].midRms;
                 sumHighRms += data[d].highRms;
@@ -191,7 +198,9 @@ QSGNode* WaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         float globalMax = m_engine->getTrackData()->getGlobalMaxPeak();
         if (globalMax < 0.001f) globalMax = 0.001f;
 
-        // Draw: normalise values against globalMax, then multiply by bar height.
+        // Draw: Rekordbox-style rendering.
+        // Envelope = primary bar body (triangle shape from analyzer).
+        // Peak = transient spike tip (extends slightly above envelope on loud hits).
         for (int x = 0; x < maxPixels; ++x) {
             const float fx = static_cast<float>(x);
 
@@ -200,76 +209,52 @@ QSGNode* WaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
                 return std::sqrt(std::min(1.0f, v / globalMax));
             };
 
-            float lowPeakN  = norm(bins[x].lowPeak);
-            float lowRmsN   = norm(bins[x].lowRms);
-            float midPeakN  = norm(bins[x].midPeak);
-            float highPeakN = norm(bins[x].highPeak);
-
-            // --- Dynamic RGB Normalization ---
-            // Divide all bands by max(low, mid, high) so at least one colour
-            // channel is always at full saturation (pure red / green / blue).
-            // This prevents bright, fully-mastered passages from washing out
-            // to grey/white.  The geometry height carries the overall amplitude.
-            float maxBand = std::max({lowPeakN, midPeakN, highPeakN});
-            float colorLow = 1.0f, colorMid = 0.0f, colorHigh = 0.0f;
-            if (maxBand > 0.001f) {
-                colorLow  = lowPeakN  / maxBand;
-                colorMid  = midPeakN  / maxBand;
-                colorHigh = highPeakN / maxBand;
-            }
+            // Rekordbox look: envelope carries the shape, peak is the sharp tip
+            float lowEnvN   = norm(bins[x].lowEnv);
+            float midEnvN   = norm(bins[x].midEnv);
+            float highEnvN  = norm(bins[x].highEnv);
+            float lowPeakN  = norm(bins[x].lowPeak);  // spike above envelope
 
             // --- Transient width boost ---
-            // transientDelta drives geometric widening of bass-heavy bins.
-            // On a sharp kick hit, the bar becomes ~1.6× wider, making bass
-            // transients visually "punch out" of the waveform (Rekordbox-style).
             float td = bins[x].transientDelta / globalMax;
             float widthMult = 1.0f + td * 3.0f;
-            widthMult = std::min(widthMult, 1.8f);  // cap at 1.8×
+            widthMult = std::min(widthMult, 1.8f);
 
-            // Height mapping: geometry scales with overall amplitude.
-            // Transient width boost scales height on bass transients.
-            float lowPeakY = lowPeakN * maxBarH * widthMult;
-            float lowRmsY  = lowRmsN  * maxBarH * widthMult;
-            float midY_    = midPeakN * maxBarH;
-            float highY_   = highPeakN * maxBarH;
+            // Primary heights: envelope body + peak spike
+            float lowEnvY  = lowEnvN  * maxBarH * widthMult;
+            float lowPeakY = lowPeakN * maxBarH * widthMult;  // spike extends a bit further
+            float midY_    = midEnvN  * maxBarH;
+            float highY_   = highEnvN * maxBarH;
 
-            // Clamp after widthMult to prevent overflow
+            lowEnvY  = std::min(lowEnvY,  maxBarH);
             lowPeakY = std::min(lowPeakY, maxBarH);
-            lowRmsY  = std::min(lowRmsY,  maxBarH);
 
-            // Dynamic RGB colours: map normalised band energies to colour channels.
-            // Bass → Blue (30-60, 80-150, 220-255), Mid → Amber (255, 140, 0), High → White (240, 240, 255)
-            // When a band dominates, its colour saturates to pure.
-            auto toU8 = [](float v) -> uchar { return static_cast<uchar>(v * 255.0f); };
-
-            // Bass halo colour: darker blue, alpha boosted by transient
+            // Transient-driven alpha boost for bass layers
             uchar bassHaloAlpha = static_cast<uchar>(std::min(255.0f, 120.0f + td * 400.0f));
-            // Bass core colour: brighter blue
             uchar bassCoreAlpha = static_cast<uchar>(std::min(255.0f, 220.0f + td * 100.0f));
 
             const int vIdx = x * 2;
 
-            // bottom vertex: baseline for rectified, baseline+bar for symmetric
             const float lpBot = m_rectified ? baseline : baseline + lowPeakY;
-            const float lrBot = m_rectified ? baseline : baseline + lowRmsY;
+            const float leBot = m_rectified ? baseline : baseline + lowEnvY;
             const float mdBot = m_rectified ? baseline : baseline + midY_;
             const float hiBot = m_rectified ? baseline : baseline + highY_;
 
-            // Layer 0: LOW PEAK - dark blue halo (alpha boosted on transients)
-            lowPeakV[vIdx  ].set(fx, baseline - lowPeakY,  30,  80, 220, bassHaloAlpha);
-            lowPeakV[vIdx+1].set(fx, lpBot,                30,  80, 220, bassHaloAlpha);
+            // Layer 0: LOW PEAK spike - lighter blue, transient tip
+            lowPeakV[vIdx  ].set(fx, baseline - lowPeakY,  50, 100, 255, bassHaloAlpha);
+            lowPeakV[vIdx+1].set(fx, lpBot,                50, 100, 255, bassHaloAlpha);
 
-            // Layer 1: LOW RMS - bright blue core (alpha boosted on transients)
-            lowRmsV[vIdx  ].set(fx, baseline - lowRmsY,  60, 150, 255, bassCoreAlpha);
-            lowRmsV[vIdx+1].set(fx, lrBot,               60, 150, 255, bassCoreAlpha);
+            // Layer 1: LOW ENV body - bright solid blue (main fat bass block)
+            lowRmsV[vIdx  ].set(fx, baseline - lowEnvY, 60, 150, 255, bassCoreAlpha);
+            lowRmsV[vIdx+1].set(fx, leBot,              60, 150, 255, bassCoreAlpha);
 
-            // Layer 2: MID - amber/orange (alpha 200)
+            // Layer 2: MID ENV - amber/orange spikes (sharp 25 ms decay)
             midV[vIdx  ].set(fx, baseline - midY_, 255, 140, 0, 200);
             midV[vIdx+1].set(fx, mdBot,            255, 140, 0, 200);
 
-            // Layer 3: HIGH - white with slight blue tint (alpha 204)
-            highV[vIdx  ].set(fx, baseline - highY_, 240, 240, 255, 204);
-            highV[vIdx+1].set(fx, hiBot,             240, 240, 255, 204);
+            // Layer 3: HIGH ENV - pure white needles (sharp, always on top)
+            highV[vIdx  ].set(fx, baseline - highY_, 240, 240, 255, 220);
+            highV[vIdx+1].set(fx, hiBot,             240, 240, 255, 220);
         }
 
         // Cursor / playhead

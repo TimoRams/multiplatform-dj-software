@@ -77,14 +77,21 @@ Item {
             }
         }
 
-        // ── PAD GRID (4 × 2) ────────────────────────────────────────────
-        GridLayout {
+        // ── PAD GRID (4 × 2) — half width, half height, left-aligned ───
+        Item {
             Layout.fillWidth:  true
             Layout.fillHeight: true
-            columns: 4
-            rows:    2
-            columnSpacing: 4
-            rowSpacing:    4
+
+            GridLayout {
+                width:  parent.width  * 0.5
+                height: parent.height * 0.5
+                anchors.left:   parent.left
+                anchors.top:    parent.top
+
+                columns: 4
+                rows:    2
+                columnSpacing: 3
+                rowSpacing:    3
 
             Repeater {
                 model: 8
@@ -133,6 +140,7 @@ Item {
                     Behavior on color { ColorAnimation { duration: 80 } }
                 }
             }
-        }
+            }   // GridLayout
+        }       // Item wrapper
     }
 }
