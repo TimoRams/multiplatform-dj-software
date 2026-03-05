@@ -87,7 +87,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     PkgConfig::KEYFINDER
 )
 
-target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)
+target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"

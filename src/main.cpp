@@ -21,7 +21,8 @@ int main(int argc, char *argv[])
 {
     std::cout << "========================================" << std::endl;
     std::cout << "RAMSBROCK DJ ENGINE - INITIAL BUILD TEST" << std::endl;
-    std::cout << "JUCE Version: " << juce::SystemStats::getJUCEVersion() << std::endl;
+    std::cout << "JUCE Version:   " << juce::SystemStats::getJUCEVersion() << std::endl;
+    std::cout << "C++ Standard:   " << __cplusplus << std::endl;
     std::cout << "========================================" << std::endl;
 
     // ── Global text rendering quality ────────────────────────────────────────
