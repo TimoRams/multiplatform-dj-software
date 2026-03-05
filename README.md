@@ -57,11 +57,7 @@ These three threads communicate exclusively via Qt Queued Connections – zero d
 
 ## 🗺 Roadmap
 
-- [ ] Jogwheel / Scratch mechanics
-- [ ] Mixer Section (Crossfader, EQ, Gain)
-- [ ] Save & recall Hot Cues (Performance Pads)
-- [ ] MIDI Controller Mapping
-- [ ] Audio Streaming Integration
+- [ ] Create roadmap
 
 ---
 
