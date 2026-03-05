@@ -124,7 +124,7 @@ Item {
                         color: deck._hasTrack
                                ? (deck.deckName === "A" ? "#ff9900" : "#00ccff")
                                : "#333"
-                        font.pixelSize: deck._hasTrack ? 22 : 18
+                        font.pixelSize: deck._hasTrack ? window.sp(22) : window.sp(18)
                         opacity: deck._hasTrack ? 0.6 : 0.4
                         visible: coverImage.status !== Image.Ready
                     }
@@ -154,7 +154,7 @@ Item {
                         width: parent.width
                         text:  deck._hasTrack ? deck._trackTitle : "No Track Loaded"
                         color: deck._hasTrack ? "#f0f0f0" : "#555"
-                        font.pixelSize: 14
+                        font.pixelSize: window.sp(14)
                         font.bold: true
                         elide: Text.ElideRight
                     }
@@ -163,7 +163,7 @@ Item {
                         width: parent.width
                         text:  deck._hasTrack ? deck._trackArtist : ""
                         color: "#aaaaaa"
-                        font.pixelSize: 11
+                        font.pixelSize: window.sp(11)
                         elide: Text.ElideRight
                         visible: deck._hasTrack && deck._trackArtist !== ""
                     }
@@ -190,7 +190,7 @@ Item {
                             anchors.centerIn: parent
                             text:  deck._trackBpm !== "" ? deck._trackBpm + " BPM" : "BPM: \u2013"
                             color: deck._trackBpm !== "" ? "#80e080" : "#507050"
-                            font.pixelSize: 10
+                            font.pixelSize: window.sp(10)
                             font.family: "monospace"
                         }
                     }
@@ -209,7 +209,7 @@ Item {
                             anchors.centerIn: parent
                             text:  deck._trackKey !== "" ? deck._trackKey : "KEY: \u2013"
                             color: deck._trackKey !== "" ? "#8080e0" : "#505070"
-                            font.pixelSize: 10
+                            font.pixelSize: window.sp(10)
                             font.family: "monospace"
                         }
                     }
@@ -228,7 +228,7 @@ Item {
                             anchors.centerIn: parent
                             text:  deck._trackDuration
                             color: "#aaaaaa"
-                            font.pixelSize: 10
+                            font.pixelSize: window.sp(10)
                             font.family: "monospace"
                         }
                     }
@@ -267,7 +267,7 @@ Item {
                             Layout.alignment: Qt.AlignHCenter
                             text: "TEMPO"
                             color: "#aaaaaa"
-                            font.pixelSize: 9
+                            font.pixelSize: window.sp(9)
                             font.bold: true
                         }
 
@@ -300,7 +300,7 @@ Item {
                             Layout.alignment: Qt.AlignHCenter
                             text: (tempoSlider.value >= 0 ? "+" : "") + tempoSlider.value.toFixed(1) + "%"
                             color: "#aaaaaa"
-                            font.pixelSize: 10
+                            font.pixelSize: window.sp(10)
                             font.bold: true
                             font.family: "monospace"
                         }

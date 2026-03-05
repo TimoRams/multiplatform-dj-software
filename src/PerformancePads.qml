@@ -62,7 +62,7 @@ Item {
                         anchors.centerIn: parent
                         text:  modelData.label
                         color: root.activeMode === index ? "#e0e0e0" : "#606060"
-                        font.pixelSize: 9
+                        font.pixelSize: window.sp(9)
                         font.bold: root.activeMode === index
                         font.family: "sans-serif"
                         font.letterSpacing: 0.3
@@ -115,7 +115,7 @@ Item {
                         anchors.margins: 5
                         text:  (index + 1).toString()
                         color: Qt.lighter(parent.padBaseColor, 2.0)
-                        font.pixelSize: 10
+                        font.pixelSize: window.sp(10)
                         font.bold: true
                         font.family: "monospace"
                         opacity: 0.7

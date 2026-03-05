@@ -66,7 +66,7 @@ Rectangle {
                             anchors.centerIn: parent
                             text: "FX" + (index + 1)
                             color: "#999"
-                            font.pixelSize: 11
+                            font.pixelSize: window.sp(11)
                             font.bold: true
                         }
                     }
@@ -89,7 +89,7 @@ Rectangle {
                     Text { 
                         text: "REC"
                         color: "#999"
-                        font.pixelSize: 10
+                        font.pixelSize: window.sp(10)
                         font.bold: true
                         anchors.verticalCenter: parent.verticalCenter 
                     }
@@ -103,7 +103,7 @@ Rectangle {
                 Text { 
                     text: "MASTER"
                     color: "#999"
-                    font.pixelSize: 10
+                    font.pixelSize: window.sp(10)
                     font.bold: true
                     anchors.verticalCenter: parent.verticalCenter 
                 }
@@ -135,7 +135,7 @@ Rectangle {
                 Text {
                     text: "MASTER"
                     color: "#ff9900"
-                    font.pixelSize: 11
+                    font.pixelSize: window.sp(11)
                     font.bold: true
                     Layout.alignment: Qt.AlignVCenter
                 }
@@ -143,7 +143,7 @@ Rectangle {
                     Layout.fillWidth: true
                     text: "128.00"
                     color: "#00ccff"
-                    font.pixelSize: 16
+                    font.pixelSize: window.sp(16)
                     font.family: "monospace"
                     font.bold: true
                     horizontalAlignment: Text.AlignRight
@@ -152,7 +152,7 @@ Rectangle {
                 Text {
                     text: "BPM"
                     color: "#666"
-                    font.pixelSize: 9
+                    font.pixelSize: window.sp(9)
                     Layout.alignment: Qt.AlignVCenter
                 }
             }
@@ -172,7 +172,7 @@ Rectangle {
                 Text { 
                     text: "AUDIO"
                     color: "#999"
-                    font.pixelSize: 10
+                    font.pixelSize: window.sp(10)
                     font.bold: true
                     anchors.verticalCenter: parent.verticalCenter 
                 }
@@ -196,7 +196,7 @@ Rectangle {
             Text {
                 text: root.currentTime
                 color: "#ddd"
-                font.pixelSize: 13
+                font.pixelSize: window.sp(13)
                 font.family: "monospace"
                 font.bold: true
                 Layout.alignment: Qt.AlignVCenter
@@ -217,7 +217,7 @@ Rectangle {
                         radius: 3 
                     }
                     contentItem: Text { 
-                        text: parent.text; color: "#ccc"; font.pixelSize: 14; 
+                        text: parent.text; color: "#ccc"; font.pixelSize: window.sp(14); 
                         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter;
                         anchors.centerIn: parent
                     }
@@ -239,7 +239,7 @@ Rectangle {
                         radius: 3 
                     }
                     contentItem: Text { 
-                        text: parent.text; color: "#ccc"; font.pixelSize: 14; 
+                        text: parent.text; color: "#ccc"; font.pixelSize: window.sp(14); 
                         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter 
                         anchors.centerIn: parent
                     }

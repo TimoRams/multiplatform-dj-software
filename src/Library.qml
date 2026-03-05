@@ -57,7 +57,7 @@ Rectangle {
                             anchors.leftMargin:     14
                             text:  modelData.label
                             color: libraryRoot.activeTab === modelData.key ? "#ffffff" : "#999999"
-                            font.pixelSize: 12
+                            font.pixelSize: window.sp(12)
                             font.bold: libraryRoot.activeTab === modelData.key
                         }
 
@@ -116,7 +116,7 @@ Rectangle {
                             anchors.centerIn: parent
                             text: "↑"
                             color: "#aaaaaa"
-                            font.pixelSize: 12
+                            font.pixelSize: window.sp(12)
                         }
                         MouseArea {
                             id: upMouse
@@ -134,7 +134,7 @@ Rectangle {
                               ? libraryManager.currentFolder.split("/").pop() || "/"
                               : "Ordner"
                         color: "#888"
-                        font.pixelSize: 11
+                        font.pixelSize: window.sp(11)
                         elide: Text.ElideLeft
                         width: folderHeader.width - 36
                     }
@@ -167,13 +167,13 @@ Rectangle {
 
                         Text {
                             text: "📁"
-                            font.pixelSize: 11
+                            font.pixelSize: window.sp(11)
                             color: "#aaaaaa"
                         }
                         Text {
                             text: modelData
                             color: "#cccccc"
-                            font.pixelSize: 12
+                            font.pixelSize: window.sp(12)
                             elide: Text.ElideRight
                             width: folderList.width - 40
                         }
@@ -212,7 +212,7 @@ Rectangle {
                 anchors.centerIn: parent
                 text: libraryRoot.activeTab.charAt(0).toUpperCase() + libraryRoot.activeTab.slice(1)
                 color: "#555"
-                font.pixelSize: 13
+                font.pixelSize: window.sp(13)
             }
         }
 
@@ -242,7 +242,7 @@ Rectangle {
                     Text {
                         text: "Track"
                         color: "#666"
-                        font.pixelSize: 11
+                        font.pixelSize: window.sp(11)
                         font.bold: true
                     }
                 }
@@ -278,7 +278,7 @@ Rectangle {
                         anchors.rightMargin:    8
                         text:  trackDelegate.modelData
                         color: "#dddddd"
-                        font.pixelSize: 12
+                        font.pixelSize: window.sp(12)
                         elide: Text.ElideRight
                     }
 
@@ -326,7 +326,7 @@ Rectangle {
                           ? "Keine Audiodateien im gewählten Ordner"
                           : libraryRoot.activeTab.charAt(0).toUpperCase() + libraryRoot.activeTab.slice(1) + " – Platzhalter"
                     color: "#555"
-                    font.pixelSize: 13
+                    font.pixelSize: window.sp(13)
                 }
             }
         }

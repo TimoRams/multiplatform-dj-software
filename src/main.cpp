@@ -8,6 +8,7 @@
 #include <QQmlApplicationEngine>
 #include <QQuickWindow>
 #include <QQmlContext>
+#include <QFont>
 
 #include "DjEngine.h"
 #include "WaveformItem.h"
@@ -23,11 +24,23 @@ int main(int argc, char *argv[])
     std::cout << "JUCE Version: " << juce::SystemStats::getJUCEVersion() << std::endl;
     std::cout << "========================================" << std::endl;
 
+    // ── Global text rendering quality ────────────────────────────────────────
+    // Qt's built-in curve renderer (signed-distance-field) scales perfectly
+    // at any size and works well with Vulkan.  NativeTextRendering can look
+    // blurry on Linux + Vulkan, so we explicitly use CurveTextRendering.
+    QQuickWindow::setTextRenderType(QQuickWindow::CurveTextRendering);
+
     qputenv("QSG_INFO", "1");
 
     QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
 
     QGuiApplication app(argc, argv);
+
+    // Set a global default font with proper hinting strategy
+    QFont defaultFont = app.font();
+    defaultFont.setHintingPreference(QFont::PreferFullHinting);
+    defaultFont.setStyleStrategy(QFont::PreferAntialias);
+    app.setFont(defaultFont);
 
     juce::MessageManager::getInstance();
 

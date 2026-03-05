@@ -11,6 +11,20 @@ Window {
     title: "Multiplatform DJ Software (Qt 6 + JUCE)"
     color: "#1e1e19"
 
+    // ── Global font scaling ──────────────────────────────────────────────────
+    // Dampened scaling: fonts grow/shrink at ~half the rate of the window.
+    // At 800px (ref) → factor 1.0, at 400px → 0.85, at 1600px → 1.19.
+    // This keeps text readable and proportional to fixed-size buttons.
+    readonly property real _refHeight: 800
+    function sp(basePx) {
+        var ratio = window.height / _refHeight
+        // Square-root dampening: sqrt(ratio) changes much slower than ratio
+        var dampened = Math.sqrt(ratio)
+        var result = Math.round(basePx * dampened)
+        // Clamp: never smaller than 70% or larger than 140% of the design size
+        return Math.max(Math.round(basePx * 0.7), Math.min(result, Math.round(basePx * 1.4)))
+    }
+
     // Globaler Waveform-Zoom (beide Decks synchron, wie in Serato/Rekordbox)
     property real waveformZoom: 3.0
     readonly property real zoomMin: 0.8

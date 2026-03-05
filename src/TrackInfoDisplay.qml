@@ -42,7 +42,7 @@ Item {
                 Text {
                     anchors.centerIn: parent
                     text: "\u266a" // ♪
-                    font.pixelSize: 26
+                    font.pixelSize: window.sp(26)
                     color: "#444"
                     visible: coverImage.status !== Image.Ready
                 }
@@ -72,7 +72,7 @@ Item {
                     anchors.centerIn: parent
                     text: root.deckName
                     color: "#111"
-                    font.pixelSize: 11
+                    font.pixelSize: window.sp(11)
                     font.bold: true
                 }
             }
@@ -89,7 +89,7 @@ Item {
                 Layout.fillWidth: true
                 text: root.hasTrack ? root.trackTitle : "No Track Loaded"
                 color: root.hasTrack ? "#f0f0f0" : "#555"
-                font.pixelSize: 13
+                font.pixelSize: window.sp(13)
                 font.bold: true
                 elide: Text.ElideRight
                 maximumLineCount: 1
@@ -104,7 +104,7 @@ Item {
                     return root.trackArtist
                 }
                 color: "#999"
-                font.pixelSize: 11
+                font.pixelSize: window.sp(11)
                 elide: Text.ElideRight
                 maximumLineCount: 1
                 visible: root.hasTrack
@@ -130,7 +130,7 @@ Item {
                         anchors.centerIn: parent
                         text: root.trackBpm + " BPM"
                         color: root.hasTrack ? "#80e080" : "#555"
-                        font.pixelSize: 10
+                        font.pixelSize: window.sp(10)
                         font.family: "monospace"
                     }
                 }
@@ -150,7 +150,7 @@ Item {
                         anchors.centerIn: parent
                         text: root.trackKey
                         color: root.hasTrack ? "#8080e0" : "#555"
-                        font.pixelSize: 10
+                        font.pixelSize: window.sp(10)
                         font.family: "monospace"
                     }
                 }
@@ -170,7 +170,7 @@ Item {
                         anchors.centerIn: parent
                         text: root.trackDuration
                         color: "#aaa"
-                        font.pixelSize: 10
+                        font.pixelSize: window.sp(10)
                         font.family: "monospace"
                     }
                 }

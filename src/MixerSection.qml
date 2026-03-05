@@ -39,7 +39,7 @@ Rectangle {
         Text { 
             id: label
             color: "#aaa"
-            font.pixelSize: 9
+            font.pixelSize: window.sp(9)
             font.bold: true
             Layout.alignment: Qt.AlignHCenter 
         }
@@ -255,7 +255,7 @@ Rectangle {
         Text { 
             text: "A   CROSSFADER   B" 
             color: "#888"
-            font.pixelSize: 9
+            font.pixelSize: window.sp(9)
             font.bold: true
             Layout.alignment: Qt.AlignHCenter 
         }
