@@ -438,6 +438,9 @@ void WaveformAnalyzer::run()
 
         // ── Shared 0.5-BPM histogram ─────────────────────────────────────────
         std::map<double, int> bpmHistogram;
+        // Parallel map: raw (unrounded) instantBpm values that fell into each bin.
+        // Used after peak-finding to compute the exact weighted-average BPM.
+        std::map<double, std::vector<double>> bpmRawValues;
 
         // Beat sample positions from the full-track pass (used for grid alignment
         // and for 16-beat macro-distance BPM measurement).
@@ -562,6 +565,7 @@ void WaveformAnalyzer::run()
                 // Snap to nearest 0.5 BPM and vote.
                 double binnedBpm = std::round(instantBpm * 2.0) / 2.0;
                 bpmHistogram[binnedBpm]++;
+                bpmRawValues[binnedBpm].push_back(instantBpm);  // keep raw value for weighted avg;
             }
         }
 
@@ -601,7 +605,22 @@ void WaveformAnalyzer::run()
                 }
             }
 
-            estimatedBpm = peakBpm;
+            // ── Weighted-average BPM (Un-Quantized) ──────────────────────────
+            // Use the 0.5-BPM bin only as a cluster identifier. Compute the exact
+            // mean of all raw instantBpm values that landed within ±0.25 BPM of
+            // the winning bin.  This eliminates grid drift on Vinyl rips and live
+            // recordings where the true tempo sits between two 0.5-BPM grid lines.
+            {
+                double rawSum   = 0.0;
+                int    rawCount = 0;
+                const double clusterRadius = 0.25;  // collect ±0.25 BPM around winner
+                for (auto& [bin, vals] : bpmRawValues) {
+                    if (std::abs(bin - peakBpm) <= clusterRadius) {
+                        for (double v : vals) { rawSum += v; ++rawCount; }
+                    }
+                }
+                estimatedBpm = (rawCount > 0) ? (rawSum / rawCount) : peakBpm;
+            }
 
             // Debug: print top 5 histogram entries.
             std::vector<std::pair<double, int>> sorted(bpmHistogram.begin(),
@@ -713,38 +732,83 @@ void WaveformAnalyzer::run()
                      << "bestPhaseAnchor=" << bestPhaseAnchor << "seconds"
                      << "gridScore=" << bestPhaseScore << "/" << beatPositions.size();
 
-            // ── STEP 3: Walk back to the first beat in the track ────────────
-            // From the phase-aligned anchor, walk backwards in beat periods until:
-            //   (a) We'd go below sample 0, OR
-            //   (b) The region is near-silent (RMS < –60 dBFS), indicating pre-intro
+            // ── STEP 3: Energy-gated walk-back to first real beat ───────────
+            // Walk backwards in beat periods from the comb-filter anchor.
+            // Stop when the candidate position's peak energy drops below 15 % of
+            // globalMaxPeak — that is the boundary between real content and intro
+            // atmosphere/silence. This prevents the grid from landing on quiet
+            // Atmo noises before the first kick.
             const uint_t rmsHop = 512;
             juce::AudioBuffer<float> rmsBuf(static_cast<int>(reader->numChannels),
                                             static_cast<int>(rmsHop));
+            const float energyThreshold = globalMaxPeak * 0.15f;  // 15 % of track peak
 
             uint64_t gridAnchor = bestPhaseOffset;
             while (true) {
-                // Next step: go back one beat period.
                 int64_t prev = static_cast<int64_t>(gridAnchor) - static_cast<int64_t>(samplesPerBeat);
                 if (prev < 0) break;
 
-                // Measure RMS at prev.
+                // Measure peak amplitude at the candidate position.
                 juce::int64 prevSample = static_cast<juce::int64>(prev);
                 reader->read(&rmsBuf, 0, static_cast<int>(rmsHop), prevSample, true, false);
-                float rmsSum = 0.0f;
-                const int nc = static_cast<int>(reader->numChannels);
+                float peakAmp = 0.0f;
+                const int nc  = static_cast<int>(reader->numChannels);
                 for (int ch = 0; ch < nc; ++ch) {
                     const float* p = rmsBuf.getReadPointer(ch);
-                    for (uint_t s = 0; s < rmsHop; ++s) rmsSum += p[s] * p[s];
+                    for (uint_t s = 0; s < rmsHop; ++s) {
+                        float a = std::abs(p[s]);
+                        if (a > peakAmp) peakAmp = a;
+                    }
                 }
-                float rms = std::sqrt(rmsSum / static_cast<float>(rmsHop * nc));
 
-                // –60 dBFS ≈ 0.001 linear. If near-silent, we've hit the intro: stop.
-                if (rms < 0.001f) break;
+                // Below threshold = intro/silence — stop here.
+                if (peakAmp < energyThreshold) break;
 
                 gridAnchor = static_cast<uint64_t>(prev);
             }
 
             firstBeatSample = static_cast<qint64>(gridAnchor);
+
+            // ── STEP 4: Transient micro-snap (pixel-accurate grid) ───────────
+            // The walk-back lands on a beat-period boundary that may sit a few
+            // milliseconds before or after the actual kick-drum transient peak.
+            // We search rawBins (already computed in Pass 1) within a ±15 ms
+            // window and snap firstBeatSample to the bin with the highest peakLow.
+            // This guarantees the grid line cuts exactly through the top of the
+            // blue bass block in the waveform renderer.
+            {
+                const double snapWindowSec = 0.015;  // ±15 ms
+                const double secPerBin     = 1.0 / static_cast<double>(m_pointsPerSecond);
+                const double samplesPerBin = static_cast<double>(samplesPerBin);  // reuse local
+
+                // Convert firstBeatSample → bin index.
+                int centerBin = static_cast<int>(
+                    static_cast<double>(firstBeatSample) / sampleRate * m_pointsPerSecond);
+                int halfWin = static_cast<int>(std::ceil(
+                    snapWindowSec / secPerBin));  // number of bins in ±15 ms
+
+                int lo = std::max(0, centerBin - halfWin);
+                int hi = std::min(static_cast<int>(rawBins.size()) - 1, centerBin + halfWin);
+
+                float bestPeak = -1.0f;
+                int   bestBin  = centerBin;
+                for (int b = lo; b <= hi; ++b) {
+                    float score = rawBins[static_cast<size_t>(b)].peakLow
+                                + rawBins[static_cast<size_t>(b)].transientDelta * 0.5f;
+                    if (score > bestPeak) { bestPeak = score; bestBin = b; }
+                }
+
+                // Snap: convert bestBin back to a sample position (centre of that bin).
+                qint64 snappedSample = static_cast<qint64>(
+                    (static_cast<double>(bestBin) + 0.5) / m_pointsPerSecond * sampleRate);
+
+                qDebug() << "[WaveformAnalyzer] Transient micro-snap:"
+                         << "centerBin=" << centerBin << "bestBin=" << bestBin
+                         << "shift=" << (snappedSample - firstBeatSample) << "samples"
+                         << "(" << ((snappedSample - firstBeatSample) * 1000.0 / sampleRate) << "ms)";
+
+                firstBeatSample = snappedSample;
+            }
             qDebug() << "[WaveformAnalyzer] Beat-grid alignment complete:"
                      << "firstBeatSample=" << firstBeatSample
                      << "(" << (static_cast<double>(firstBeatSample) / sampleRate * 1000.0) << "ms)"
