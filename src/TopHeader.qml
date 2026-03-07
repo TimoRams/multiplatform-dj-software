@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
 import QtQuick.Window
+import DJSoftware
 
 Rectangle {
     id: root
@@ -36,6 +37,11 @@ Rectangle {
         var h = date.getHours().toString().padStart(2, '0');
         var m = date.getMinutes().toString().padStart(2, '0');
         root.currentTime = h + ":" + m;
+    }
+
+    // Settings window — created once, shown/hidden on demand
+    SettingsWindow {
+        id: settingsWin
     }
 
     RowLayout {
@@ -244,7 +250,9 @@ Rectangle {
                         anchors.centerIn: parent
                     }
                     onClicked: {
-                        console.log("Preferences Clicked")
+                        settingsWin.show()
+                        settingsWin.raise()
+                        settingsWin.requestActivate()
                     }
                 }
             }

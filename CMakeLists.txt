@@ -45,6 +45,7 @@ qt_add_qml_module(${PROJECT_NAME}
         src/Library.qml
         src/PerformancePads.qml
         src/MixerSection.qml
+        src/SettingsWindow.qml
 )
 
 target_sources(${PROJECT_NAME} PRIVATE
