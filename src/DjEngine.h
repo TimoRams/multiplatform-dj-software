@@ -106,6 +106,7 @@ public slots:
     // FX chain
     void setFxEffectType(EffectType type);
     void setFxWetDry(float amount);
+    void setFxSCKnob(float knob);   // bipolar -1..+1 for Sound Color
 
 signals:
     void progressChanged();

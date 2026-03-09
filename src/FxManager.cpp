@@ -1,5 +1,6 @@
 #include "FxManager.h"
 #include "DjEngine.h"
+#include <cmath>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FxManager implementation
@@ -39,6 +40,13 @@ EffectType FxManager::effectTypeFromString(const QString& name)
     if (name == "Roll")          return EffectType::Roll;
     if (name == "Nobius")        return EffectType::Nobius;
     if (name == "Mobius")        return EffectType::Mobius;
+    // ── SoundColor mode aliases ──────────────────────────────────────────────
+    if (name == "Space")         return EffectType::SoundColorSpace;
+    if (name == "D.Echo")        return EffectType::SoundColorDubEcho;
+    if (name == "Crush")         return EffectType::SoundColorCrush;
+    if (name == "Pitch")         return EffectType::SoundColorPitch;
+    if (name == "Noise")         return EffectType::SoundColorNoise;
+    if (name == "Filter")        return EffectType::SoundColorFilter;
     return EffectType::None;
 }
 
@@ -100,6 +108,98 @@ void FxManager::setDeckAssignment(int unitId, int deck, bool active)
             target->setFxWetDry(wd);
         }
     }
+}
+
+// ── SoundColor ────────────────────────────────────────────────────────────────
+
+void FxManager::setSoundColorMode(const QString& mode)
+{
+    if (m_soundColorMode == mode) return;
+
+    // When switching AWAY from Filter mode, reset engine filters to neutral
+    if (m_soundColorMode == "Filter" && mode != "Filter")
+    {
+        if (m_engineA) m_engineA->setFilter(0.0);
+        if (m_engineB) m_engineB->setFilter(0.0);
+    }
+
+    m_soundColorMode = mode;
+    emit soundColorModeChanged();
+    // Re-apply current values with the new mode
+    applySoundColorToEngine(m_engineA, mode, m_soundColorValueA);
+    applySoundColorToEngine(m_engineB, mode, m_soundColorValueB);
+
+    // When switching TO Filter mode, apply current knob values as filter
+    if (mode == "Filter")
+    {
+        if (m_engineA) m_engineA->setFilter(static_cast<double>(m_soundColorValueA));
+        if (m_engineB) m_engineB->setFilter(static_cast<double>(m_soundColorValueB));
+    }
+
+    qDebug() << "[FxManager] SoundColor mode ->" << mode;
+}
+
+void FxManager::setSoundColor(const QString& mode, float value)
+{
+    // Centre knob: left half → deck A gets wetter, right half → deck B gets wetter
+    // value 0.0 = full left (wet A, dry B)
+    // value 0.5 = centre   (both dry)
+    // value 1.0 = full right (dry A, wet B)
+    if (m_soundColorMode != mode)
+    {
+        m_soundColorMode = mode;
+        emit soundColorModeChanged();
+    }
+
+    const float wetA = (value < 0.5f) ? (0.5f - value) * 2.0f : 0.0f;
+    const float wetB = (value > 0.5f) ? (value - 0.5f) * 2.0f : 0.0f;
+
+    m_soundColorValueA = 0.5f + wetA * 0.5f;  // remap back to 0-1 for applySoundColor
+    m_soundColorValueB = 0.5f + wetB * 0.5f;
+
+    applySoundColorToEngine(m_engineA, mode, m_soundColorValueA);
+    applySoundColorToEngine(m_engineB, mode, m_soundColorValueB);
+}
+
+void FxManager::setSoundColorDeck(int deck, float value)
+{
+    // value is bipolar -1..+1
+    if (deck == 1)
+    {
+        m_soundColorValueA = value;
+        applySoundColorToEngine(m_engineA, m_soundColorMode, value);
+        // For Filter mode: also drive the engine's built-in filter
+        if (m_soundColorMode == "Filter" && m_engineA)
+            m_engineA->setFilter(static_cast<double>(value));
+    }
+    else
+    {
+        m_soundColorValueB = value;
+        applySoundColorToEngine(m_engineB, m_soundColorMode, value);
+        if (m_soundColorMode == "Filter" && m_engineB)
+            m_engineB->setFilter(static_cast<double>(value));
+    }
+}
+
+void FxManager::applySoundColorToEngine(DjEngine* engine, const QString& mode, float value)
+{
+    if (!engine) return;
+
+    // value is bipolar -1..+1.  At 0.0 (centre) = bypass.
+    if (std::abs(value) < 0.01f)
+    {
+        engine->setFxEffectType(EffectType::None);
+        engine->setFxWetDry(0.0f);
+        engine->setFxSCKnob(0.0f);
+        return;
+    }
+
+    EffectType type = effectTypeFromString(mode);
+    engine->setFxEffectType(type);
+    // SC FX handle their own wet/dry internally based on the knob.
+    // setFxWetDry(1.0) ensures the SmoothedValue wrapper doesn't attenuate us.
+    engine->setFxWetDry(1.0f);
+    engine->setFxSCKnob(value);
 }
 
 // ── Unit 1 setters ────────────────────────────────────────────────────────────

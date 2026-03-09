@@ -30,11 +30,28 @@ class FxManager : public QObject
     Q_PROPERTY(bool    deck2A      READ deck2A      WRITE setDeck2A      NOTIFY deck2AChanged)
     Q_PROPERTY(bool    deck2B      READ deck2B      WRITE setDeck2B      NOTIFY deck2BChanged)
 
+    // ── SoundColor (centre knob) ──────────────────────────────────────────────
+    Q_PROPERTY(QString soundColorMode READ soundColorMode WRITE setSoundColorMode NOTIFY soundColorModeChanged)
+
 public:
     explicit FxManager(QObject* parent = nullptr);
 
     /// Register both deck engines — must be called before the QML engine loads.
     void registerEngines(DjEngine* deckA, DjEngine* deckB);
+
+    // ── SoundColor ───────────────────────────────────────────────────────────
+    QString soundColorMode() const { return m_soundColorMode; }
+    Q_INVOKABLE void setSoundColorMode(const QString& mode);
+
+    /// Called from FxBar centre knob — applies SoundColor to BOTH decks.
+    /// @param mode   "Space"|"D.Echo"|"Crush"|"Pitch"|"Noise"|"Filter"
+    /// @param value  0.0 = full left (wet A), 0.5 = dry, 1.0 = full right (wet B)
+    Q_INVOKABLE void setSoundColor(const QString& mode, float value);
+
+    /// Called from per-deck SC knob in the Mixer strip.
+    /// @param deck   1 = Deck A, 2 = Deck B
+    /// @param value  -1.0 (max left) … 0.0 (centre/bypass) … +1.0 (max right)
+    Q_INVOKABLE void setSoundColorDeck(int deck, float value);
 
     // ── Accessors – unit 1 ───────────────────────────────────────────────────
     QString effectType1() const { return m_effectType1; }
@@ -86,9 +103,18 @@ signals:
     void deck2AChanged();
     void deck2BChanged();
 
+    void soundColorModeChanged();
+
 private:
     DjEngine* m_engineA = nullptr;
     DjEngine* m_engineB = nullptr;
+
+    // ── SoundColor state ─────────────────────────────────────────────────────
+    QString m_soundColorMode { "Filter" };
+    float   m_soundColorValueA { 0.0f };   // bipolar -1..+1 per deck
+    float   m_soundColorValueB { 0.0f };
+
+    void applySoundColorToEngine(DjEngine* engine, const QString& mode, float value);
 
     // ── Unit 1 state ─────────────────────────────────────────────────────────
     QString m_effectType1 { "---" };

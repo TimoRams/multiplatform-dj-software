@@ -39,7 +39,14 @@ enum class EffectType : int {
     SlipRoll    = 13,
     Roll        = 14,
     Nobius      = 15,
-    Mobius      = 16
+    Mobius      = 16,
+    // ── Sound Color FX (bipolar knob -1..+1) ─────────────────────────────────
+    SoundColorFilter = 17,   // dual LPF/HPF with resonance
+    SoundColorDubEcho= 18,   // echo + bipolar LPF/HPF on wet tail
+    SoundColorCrush  = 19,   // bitcrusher + bipolar filter
+    SoundColorSpace  = 20,   // reverb + bipolar filter on wet
+    SoundColorPitch  = 21,   // pure pitch shift ±12 semitones
+    SoundColorNoise  = 22    // white noise through bipolar filter
 };
 
 class FxProcessor
@@ -58,16 +65,20 @@ public:
 
     // ── Thread-safe parameter setters (main thread) ──────────────────────────
     void setEffectType(EffectType type);
-    /// amount: 0.0 = full dry, 1.0 = full wet
+    /// amount: 0.0 = full dry, 1.0 = full wet  (used by FX units 1/2)
     void setAmount(float amount);
+    /// knob: -1.0 = max left, 0.0 = bypass, +1.0 = max right  (Sound Color only)
+    void setSCKnobValue(float knob);
 
     EffectType getEffectType() const { return static_cast<EffectType>(m_typeAtomic.load()); }
     float      getAmount()     const { return m_amountAtomic.load(); }
+    float      getSCKnob()     const { return m_scKnobAtomic.load(); }
 
 private:
     // ── Shared state ─────────────────────────────────────────────────────────
     std::atomic<int>   m_typeAtomic   { static_cast<int>(EffectType::None) };
     std::atomic<float> m_amountAtomic { 0.0f };
+    std::atomic<float> m_scKnobAtomic { 0.0f };  // bipolar -1..+1 for Sound Color
 
     double m_sampleRate    = 44100.0;
     int    m_maxBlockSize  = 512;
@@ -148,8 +159,10 @@ private:
 
     // ── Phaser (4-stage all-pass) ─────────────────────────────────────────────
     struct PhaserState {
-        // 4 all-pass stages per channel
-        float ap[2][4] = {};   // [ch][stage]
+        // 1st-order all-pass per stage: y[n] = coeff*(x[n] - y[n-1]) + x[n-1]
+        // We store x[n-1] and y[n-1] per channel per stage
+        float xPrev[2][4] = {};  // [ch][stage] previous input
+        float yPrev[2][4] = {};  // [ch][stage] previous output
         float lfoPhase = 0.f;
     };
     PhaserState m_phaserState;
@@ -162,7 +175,8 @@ private:
 
     // ── Enigma Jet (Phaser + Pitch-detune) ────────────────────────────────────
     struct EnigmaState {
-        float ap[2][8] = {};   // 8 all-pass stages per channel
+        float xPrev[2][8] = {};  // [ch][stage] previous input for all-pass
+        float yPrev[2][8] = {};  // [ch][stage] previous output for all-pass
         float lfoPhase = 0.f;
         // small detune delay
         std::vector<float> detBufL, detBufR;
@@ -210,6 +224,50 @@ private:
     MobiusState m_mobiusState;
     void processMobius(juce::AudioBuffer<float>& wet, int start, int n,
                        float amount, bool nobius);
+
+    // ── Sound Color: shared bipolar biquad filter helper ─────────────────────
+    // A 2-pole State-Variable Filter (SVF) that morphs LPF↔HPF based on sign.
+    // knob < 0 → LPF (cutoff 20kHz→20Hz), knob > 0 → HPF (cutoff 20Hz→20kHz)
+    struct SVFState {
+        float s1[2] = {};  // integrator 1, per channel
+        float s2[2] = {};  // integrator 2, per channel
+    };
+
+    // Apply the bipolar SVF in-place to the wet buffer.
+    // knob: -1..+1  (0 = transparent/bypass)
+    // Returns the amount of wet signal to mix (0 at center, 1 at extremes).
+    float applySCFilter(juce::AudioBuffer<float>& buf, int start, int n,
+                        float knob, SVFState& state);
+
+    // ── Sound Color: per-effect state ─────────────────────────────────────────
+    struct SCFilterState  { SVFState svf; };
+    struct SCDubEchoState {
+        DelayLine lineL, lineR;
+        SVFState  svf;
+        float     hpL = 0.f, hpR = 0.f;  // HP filter state for echo tail
+    };
+    struct SCCrushState   { SVFState svf; std::vector<BitcrusherState> bc; };
+    struct SCSpaceState   { SVFState svf; };
+    struct SCNoiseState   {
+        uint32_t seed = 12345u;
+        SVFState svf;
+    };
+
+    SCFilterState  m_scFilterState;
+    SCDubEchoState m_scDubEchoState;
+    SCCrushState   m_scCrushState;
+    SCSpaceState   m_scSpaceState;
+    SCNoiseState   m_scNoiseState;
+
+    void prepareSCDelays();
+
+    // SC process functions — all take raw bipolar knob value (-1..+1)
+    void processSC_Filter  (juce::AudioBuffer<float>& buf, int start, int n, float knob);
+    void processSC_DubEcho (juce::AudioBuffer<float>& buf, int start, int n, float knob);
+    void processSC_Crush   (juce::AudioBuffer<float>& buf, int start, int n, float knob);
+    void processSC_Space   (juce::AudioBuffer<float>& buf, int start, int n, float knob);
+    void processSC_Pitch   (juce::AudioBuffer<float>& buf, int start, int n, float knob);
+    void processSC_Noise   (juce::AudioBuffer<float>& buf, int start, int n, float knob);
 
     // ── Helpers ───────────────────────────────────────────────────────────────
     // Copies [start, start+n) from src into a temporary buffer starting at 0,

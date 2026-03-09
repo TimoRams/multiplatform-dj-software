@@ -118,6 +118,7 @@ public:
     // ── FxProcessor slot (called from Qt main thread) ────────────────────────
     void setFxEffectType(EffectType type) { m_fx.setEffectType(type); }
     void setFxAmount(float amount)        { m_fx.setAmount(amount); }
+    void setFxSCKnob(float knob)          { m_fx.setSCKnobValue(knob); }
 
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override {
         if (source) source->prepareToPlay(samplesPerBlockExpected, sampleRate);
@@ -607,4 +608,9 @@ void DjEngine::setFxEffectType(EffectType type)
 void DjEngine::setFxWetDry(float amount)
 {
     if (mixerSource) mixerSource->setFxAmount(amount);
+}
+
+void DjEngine::setFxSCKnob(float knob)
+{
+    if (mixerSource) mixerSource->setFxSCKnob(knob);
 }

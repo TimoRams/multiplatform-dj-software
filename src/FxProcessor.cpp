@@ -139,6 +139,10 @@ void FxProcessor::prepare(double sampleRate, int maxBlockSize, int numChannels)
     prepareSpiral();
     prepareFlanger();
     prepareEnigma();
+    prepareSCDelays();
+
+    // SC crush per-channel state
+    m_scCrushState.bc.assign(static_cast<size_t>(numChannels), BitcrusherState{});
 
     // Roll/Slip/Mobius/Nobius buffers are stack-allocated (fixed size), just reset positions
     m_rollState   = RollState{};
@@ -233,6 +237,45 @@ void FxProcessor::process(juce::AudioBuffer<float>& buffer, int startSample, int
     {
         processMobius(wetBuf, 0, numSamples, amount, false);
     }
+    // ── Sound Color FX: use bipolar SC knob, NOT amount/SmoothedValue ─────────
+    // These functions handle their own wet/dry internally and write directly
+    // into `buffer` (not wetBuf), then return so the smoothed mix is skipped.
+    else if (type == EffectType::SoundColorFilter)
+    {
+        const float knob = m_scKnobAtomic.load(std::memory_order_relaxed);
+        processSC_Filter(buffer, startSample, numSamples, knob);
+        return;
+    }
+    else if (type == EffectType::SoundColorDubEcho)
+    {
+        const float knob = m_scKnobAtomic.load(std::memory_order_relaxed);
+        processSC_DubEcho(buffer, startSample, numSamples, knob);
+        return;
+    }
+    else if (type == EffectType::SoundColorCrush)
+    {
+        const float knob = m_scKnobAtomic.load(std::memory_order_relaxed);
+        processSC_Crush(buffer, startSample, numSamples, knob);
+        return;
+    }
+    else if (type == EffectType::SoundColorSpace)
+    {
+        const float knob = m_scKnobAtomic.load(std::memory_order_relaxed);
+        processSC_Space(buffer, startSample, numSamples, knob);
+        return;
+    }
+    else if (type == EffectType::SoundColorPitch)
+    {
+        const float knob = m_scKnobAtomic.load(std::memory_order_relaxed);
+        processSC_Pitch(buffer, startSample, numSamples, knob);
+        return;
+    }
+    else if (type == EffectType::SoundColorNoise)
+    {
+        const float knob = m_scKnobAtomic.load(std::memory_order_relaxed);
+        processSC_Noise(buffer, startSample, numSamples, knob);
+        return;
+    }
     // EffectType::None → wet buffer stays as dry copy, mixed at `amount` weight
 
     // ── Per-sample smoothed wet/dry mix back into the main buffer ─────────────
@@ -264,6 +307,11 @@ void FxProcessor::setEffectType(EffectType type)
 void FxProcessor::setAmount(float amount)
 {
     m_amountAtomic.store(std::clamp(amount, 0.0f, 1.0f), std::memory_order_relaxed);
+}
+
+void FxProcessor::setSCKnobValue(float knob)
+{
+    m_scKnobAtomic.store(std::clamp(knob, -1.0f, 1.0f), std::memory_order_relaxed);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -433,36 +481,48 @@ void FxProcessor::prepareDelay()
 void FxProcessor::processEcho(juce::AudioBuffer<float>& wet,
                               int start, int n, float amount, bool lowCut)
 {
-    // Delay time: amount 0→0 = ~100ms, amount 1 = ~600ms
-    const int delaySamples = static_cast<int>(m_sampleRate * (0.1 + amount * 0.5));
-    // Feedback: amount 0 = 0.2, amount 1 = 0.75
-    const float feedback  = 0.2f + amount * 0.55f;
-    // High-pass cutoff for Low-Cut Echo (1-pole IIR): ~200 Hz
-    const float hpCoeff   = lowCut ? std::exp(-2.0f * juce::MathConstants<float>::pi
-                                               * 200.f / static_cast<float>(m_sampleRate))
-                                   : 0.f;
+    // Delay time: 100ms (amount 0) to 500ms (amount 1)
+    const int delaySamples = std::clamp(
+        static_cast<int>(m_sampleRate * (0.1 + amount * 0.4)),
+        1, kMaxDelaySamples - 1);
+    // Feedback: 0.25 to 0.65 — never unstable
+    const float feedback = 0.25f + amount * 0.40f;
+    // HP coefficient for low-cut variant
+    const float hpAlpha = lowCut
+        ? 1.f / (1.f + 2.f * juce::MathConstants<float>::pi * 200.f
+                       / static_cast<float>(m_sampleRate))
+        : 0.f;
 
-    auto process1ch = [&](float* data, DelayLine& line, float& hpState)
+    for (int ch = 0; ch < wet.getNumChannels() && ch < 2; ++ch)
     {
+        float* data = wet.getWritePointer(ch) + start;
+        DelayLine& line = (ch == 0) ? m_delayState.lineL : m_delayState.lineR;
+        float& hpPrev = (ch == 0) ? m_delayState.hpStateL : m_delayState.hpStateR;
+
         for (int i = 0; i < n; ++i)
         {
             float delayed = line.read(delaySamples);
+
             if (lowCut)
             {
-                // 1-pole high-pass: y[n] = x[n] - x[n-1] + coeff*y[n-1]
-                float hp = delayed - hpState + hpCoeff * hpState;
-                hpState  = delayed;
+                // Simple 1-pole high-pass (removes bass from feedback loop)
+                float filtered = hpAlpha * (hpPrev + delayed - hpPrev);
+                // Actually: 1-pole HP: y[n] = alpha * (y[n-1] + x[n] - x[n-1])
+                // We need to store x[n-1] too. Simplified approach:
+                float hp = delayed - hpPrev;
+                hpPrev   = delayed;
                 delayed  = hp;
             }
-            float out = data[i] + delayed * feedback;
+
+            // Soft-clip the feedback to prevent blowup
+            float fb = delayed * feedback;
+            fb = std::tanh(fb);
+
+            float out = data[i] + fb;
             line.write(out);
             data[i] = out;
         }
-    };
-
-    process1ch(wet.getWritePointer(0) + start, m_delayState.lineL, m_delayState.hpStateL);
-    if (wet.getNumChannels() > 1)
-        process1ch(wet.getWritePointer(1) + start, m_delayState.lineR, m_delayState.hpStateR);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -472,31 +532,32 @@ void FxProcessor::processEcho(juce::AudioBuffer<float>& wet,
 void FxProcessor::processMtDelay(juce::AudioBuffer<float>& wet,
                                   int start, int n, float amount)
 {
-    const int maxDelay    = static_cast<int>(m_sampleRate * (0.1 + amount * 0.5));
-    const float feedback  = 0.15f + amount * 0.35f;
+    const int maxDelay = std::clamp(
+        static_cast<int>(m_sampleRate * (0.1 + amount * 0.4)),
+        4, kMaxDelaySamples - 1);
+    const float feedback = 0.15f + amount * 0.30f;
 
-    // 3 taps at 25%, 50%, 75% of max delay time
-    const int tap1 = maxDelay / 4;
-    const int tap2 = maxDelay / 2;
-    const int tap3 = (maxDelay * 3) / 4;
+    const int tap1 = std::max(1, maxDelay / 4);
+    const int tap2 = std::max(2, maxDelay / 2);
+    const int tap3 = std::max(3, (maxDelay * 3) / 4);
 
-    auto process1ch = [&](float* data, DelayLine& line)
+    for (int ch = 0; ch < wet.getNumChannels() && ch < 2; ++ch)
     {
+        float* data = wet.getWritePointer(ch) + start;
+        DelayLine& line = (ch == 0) ? m_delayState.lineL : m_delayState.lineR;
+
         for (int i = 0; i < n; ++i)
         {
             const float t1 = line.read(tap1);
             const float t2 = line.read(tap2);
             const float t3 = line.read(tap3);
-            const float tapMix = (t1 * 0.5f + t2 * 0.35f + t3 * 0.25f);
-            const float out = data[i] + tapMix * feedback;
+            const float tapMix = t1 * 0.45f + t2 * 0.35f + t3 * 0.25f;
+            const float fb = std::tanh(tapMix * feedback);
+            const float out = data[i] + fb;
             line.write(out);
             data[i] = out;
         }
-    };
-
-    process1ch(wet.getWritePointer(0) + start, m_delayState.lineL);
-    if (wet.getNumChannels() > 1)
-        process1ch(wet.getWritePointer(1) + start, m_delayState.lineR);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -523,35 +584,47 @@ void FxProcessor::processSpiral(juce::AudioBuffer<float>& wet,
     // Base delay: ~15ms
     const float baseDelay = static_cast<float>(m_sampleRate) * 0.015f;
     const int   bufSize   = static_cast<int>(m_spiralState.bufL.size());
+    if (bufSize == 0) return;
 
-    auto process1ch = [&](float* data, std::vector<float>& buf, float lfoOffset)
-    {
-        float phase = m_spiralState.lfoPhase + lfoOffset;
-        for (int i = 0; i < n; ++i)
-        {
-            buf[static_cast<size_t>(m_spiralState.writePos) % static_cast<size_t>(bufSize)] = data[i];
+    const int numCh = std::min(wet.getNumChannels(), 2);
+    float* data[2] = { wet.getWritePointer(0) + start,
+                       numCh > 1 ? wet.getWritePointer(1) + start : nullptr };
+    std::vector<float>* bufs[2] = { &m_spiralState.bufL, &m_spiralState.bufR };
+    // Per-channel LFO offset for stereo width
+    const float lfoOff[2] = { 0.f, 0.25f };
 
-            float lfo = std::sin(2.f * juce::MathConstants<float>::pi * phase);
-            int   delSamples = static_cast<int>(baseDelay + lfo * modDepth);
-            delSamples = std::clamp(delSamples, 0, bufSize - 1);
-
-            int readPos = m_spiralState.writePos - delSamples;
-            if (readPos < 0) readPos += bufSize;
-
-            data[i] = data[i] * 0.7f + buf[static_cast<size_t>(readPos)] * 0.5f;
-            phase += lfoInc;
-            if (phase >= 1.f) phase -= 1.f;
-        }
-    };
-
-    process1ch(wet.getWritePointer(0) + start, m_spiralState.bufL, 0.f);
-    if (wet.getNumChannels() > 1)
-        process1ch(wet.getWritePointer(1) + start, m_spiralState.bufR, 0.25f);
-
-    // Advance write position and LFO phase together
     for (int i = 0; i < n; ++i)
     {
-        m_spiralState.writePos = (m_spiralState.writePos + 1) % bufSize;
+        const int wp = m_spiralState.writePos;
+
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            auto& buf = *bufs[ch];
+            buf[static_cast<size_t>(wp)] = data[ch][i];
+
+            float phase = m_spiralState.lfoPhase + lfoOff[ch];
+            if (phase >= 1.f) phase -= 1.f;
+            float lfo = std::sin(2.f * juce::MathConstants<float>::pi * phase);
+
+            // Fractional delay for smooth modulation
+            float delF = baseDelay + lfo * modDepth;
+            delF = std::clamp(delF, 0.f, static_cast<float>(bufSize - 1));
+            int   delI = static_cast<int>(delF);
+            float frac = delF - static_cast<float>(delI);
+
+            int rp0 = wp - delI;
+            if (rp0 < 0) rp0 += bufSize;
+            int rp1 = rp0 - 1;
+            if (rp1 < 0) rp1 += bufSize;
+
+            float delayed = buf[static_cast<size_t>(rp0)] * (1.f - frac)
+                          + buf[static_cast<size_t>(rp1)] * frac;
+
+            data[ch][i] = data[ch][i] * 0.7f + delayed * 0.5f;
+        }
+
+        // Advance writePos and LFO ONCE per sample
+        m_spiralState.writePos = (wp + 1) % bufSize;
         m_spiralState.lfoPhase += lfoInc;
         if (m_spiralState.lfoPhase >= 1.f) m_spiralState.lfoPhase -= 1.f;
     }
@@ -581,35 +654,48 @@ void FxProcessor::processFlanger(juce::AudioBuffer<float>& wet,
     const float baseDelay = static_cast<float>(m_sampleRate) * 0.003f; // 3ms base
     const float feedback  = 0.4f + amount * 0.3f;
     const int   bufSize   = static_cast<int>(m_flangerState.bufL.size());
+    if (bufSize == 0) return;
 
-    auto process1ch = [&](float* data, std::vector<float>& buf, float lfoOff)
-    {
-        float phase = m_flangerState.lfoPhase + lfoOff;
-        for (int i = 0; i < n; ++i)
-        {
-            const int wp = m_flangerState.writePos % bufSize;
-            float lfo     = std::sin(2.f * juce::MathConstants<float>::pi * phase);
-            int   del     = static_cast<int>(baseDelay + lfo * modDepth);
-            del = std::clamp(del, 0, bufSize - 1);
-            int   rp      = wp - del;
-            if (rp < 0) rp += bufSize;
-
-            const float delayed = buf[static_cast<size_t>(rp)];
-            buf[static_cast<size_t>(wp)] = data[i] + delayed * feedback;
-            data[i] = data[i] + delayed;
-
-            phase += lfoInc;
-            if (phase >= 1.f) phase -= 1.f;
-        }
-    };
-
-    process1ch(wet.getWritePointer(0) + start, m_flangerState.bufL, 0.f);
-    if (wet.getNumChannels() > 1)
-        process1ch(wet.getWritePointer(1) + start, m_flangerState.bufR, 0.5f);
+    const int numCh = std::min(wet.getNumChannels(), 2);
+    float* data[2] = { wet.getWritePointer(0) + start,
+                       numCh > 1 ? wet.getWritePointer(1) + start : nullptr };
+    std::vector<float>* bufs[2] = { &m_flangerState.bufL, &m_flangerState.bufR };
+    const float lfoOff[2] = { 0.f, 0.5f };
 
     for (int i = 0; i < n; ++i)
     {
-        m_flangerState.writePos = (m_flangerState.writePos + 1) % bufSize;
+        const int wp = m_flangerState.writePos;
+
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            auto& buf = *bufs[ch];
+
+            float phase = m_flangerState.lfoPhase + lfoOff[ch];
+            if (phase >= 1.f) phase -= 1.f;
+            float lfo = std::sin(2.f * juce::MathConstants<float>::pi * phase);
+
+            // Fractional delay with linear interpolation
+            float delF = baseDelay + lfo * modDepth;
+            delF = std::clamp(delF, 0.f, static_cast<float>(bufSize - 1));
+            int   delI = static_cast<int>(delF);
+            float frac = delF - static_cast<float>(delI);
+
+            int rp0 = wp - delI;
+            if (rp0 < 0) rp0 += bufSize;
+            int rp1 = rp0 - 1;
+            if (rp1 < 0) rp1 += bufSize;
+
+            float delayed = buf[static_cast<size_t>(rp0)] * (1.f - frac)
+                          + buf[static_cast<size_t>(rp1)] * frac;
+
+            // Write input + soft-clipped feedback into delay buffer
+            buf[static_cast<size_t>(wp)] = data[ch][i] + std::tanh(delayed * feedback);
+            // Output = input + delayed
+            data[ch][i] = data[ch][i] + delayed;
+        }
+
+        // Advance writePos and LFO ONCE per sample
+        m_flangerState.writePos = (wp + 1) % bufSize;
         m_flangerState.lfoPhase += lfoInc;
         if (m_flangerState.lfoPhase >= 1.f) m_flangerState.lfoPhase -= 1.f;
     }
@@ -632,38 +718,38 @@ void FxProcessor::processPhaser(juce::AudioBuffer<float>& wet,
     const float twoPiOverSr = 2.f * juce::MathConstants<float>::pi
                               / static_cast<float>(m_sampleRate);
 
-    for (int ch = 0; ch < wet.getNumChannels() && ch < 2; ++ch)
-    {
-        float* data  = wet.getWritePointer(ch) + start;
-        float  phase = m_phaserState.lfoPhase;
-
-        for (int i = 0; i < n; ++i)
-        {
-            float lfo = 0.5f * (1.f + std::sin(2.f * juce::MathConstants<float>::pi * phase));
-            float freq = fMin + lfo * (fMax - fMin);
-            float coeff = (std::tan(twoPiOverSr * freq * 0.5f) - 1.f)
-                        / (std::tan(twoPiOverSr * freq * 0.5f) + 1.f);
-
-            float x = data[i];
-            for (int s = 0; s < 4; ++s)
-            {
-                float y = coeff * x + m_phaserState.ap[ch][s]
-                        - coeff * m_phaserState.ap[ch][s];
-                // 1st order all-pass: y[n] = coeff*(x[n] - y[n-1]) + x[n-1]
-                float yn = coeff * (x - m_phaserState.ap[ch][s]) + m_phaserState.ap[ch][s];
-                (void)y;
-                m_phaserState.ap[ch][s] = yn;
-                x = yn;
-            }
-            data[i] = data[i] + x * feedback;
-
-            phase += lfoInc;
-            if (phase >= 1.f) phase -= 1.f;
-        }
-    }
+    const int numCh = std::min(wet.getNumChannels(), 2);
 
     for (int i = 0; i < n; ++i)
     {
+        // Compute LFO and all-pass coefficient once per sample
+        float lfo = 0.5f * (1.f + std::sin(2.f * juce::MathConstants<float>::pi
+                                           * m_phaserState.lfoPhase));
+        float freq = fMin + lfo * (fMax - fMin);
+        float tanHalf = std::tan(twoPiOverSr * freq * 0.5f);
+        float coeff = (tanHalf - 1.f) / (tanHalf + 1.f);
+
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            float x = wet.getWritePointer(ch)[start + i];
+
+            // 4-stage all-pass cascade
+            // Correct 1st-order all-pass: y[n] = coeff * (x[n] - y[n-1]) + x[n-1]
+            for (int s = 0; s < 4; ++s)
+            {
+                float xn = x;
+                float yn = coeff * (xn - m_phaserState.yPrev[ch][s])
+                         + m_phaserState.xPrev[ch][s];
+                m_phaserState.xPrev[ch][s] = xn;
+                m_phaserState.yPrev[ch][s] = yn;
+                x = yn;
+            }
+
+            // Mix dry + phased with feedback depth
+            wet.getWritePointer(ch)[start + i] += x * feedback;
+        }
+
+        // Advance LFO ONCE per sample
         m_phaserState.lfoPhase += lfoInc;
         if (m_phaserState.lfoPhase >= 1.f) m_phaserState.lfoPhase -= 1.f;
     }
@@ -727,52 +813,65 @@ void FxProcessor::processEnigmaJet(juce::AudioBuffer<float>& wet,
     const float detLfoInc  = detLfoRate / static_cast<float>(m_sampleRate);
     const float detDepth   = static_cast<float>(m_sampleRate) * 0.005f; // 5ms
     const int   detBufSize = static_cast<int>(m_enigmaState.detBufL.size());
+    if (detBufSize == 0) return;
 
-    for (int ch = 0; ch < wet.getNumChannels() && ch < 2; ++ch)
-    {
-        float* data  = wet.getWritePointer(ch) + start;
-        std::vector<float>& detBuf = (ch == 0) ? m_enigmaState.detBufL : m_enigmaState.detBufR;
-        float phase = m_enigmaState.lfoPhase;
-        float detPhase = m_enigmaState.detLfo;
-
-        for (int i = 0; i < n; ++i)
-        {
-            // 8-stage all-pass phaser
-            float lfo   = 0.5f * (1.f + std::sin(2.f * juce::MathConstants<float>::pi * phase));
-            float freq  = fMin + lfo * (fMax - fMin);
-            float coeff = (std::tan(twoPiOverSr * freq * 0.5f) - 1.f)
-                        / (std::tan(twoPiOverSr * freq * 0.5f) + 1.f);
-
-            float x = data[i];
-            for (int s = 0; s < 8; ++s)
-            {
-                float yn = coeff * (x - m_enigmaState.ap[ch][s]) + m_enigmaState.ap[ch][s];
-                m_enigmaState.ap[ch][s] = yn;
-                x = yn;
-            }
-            float phased = data[i] + x * feedback;
-
-            // Detune via chorus delay
-            detBuf[static_cast<size_t>(m_enigmaState.detWritePos) % static_cast<size_t>(detBufSize)] = phased;
-            float detLfo = std::sin(2.f * juce::MathConstants<float>::pi * detPhase);
-            int   del    = static_cast<int>(detDepth * 0.5f * (1.f + detLfo));
-            del = std::clamp(del, 0, detBufSize - 1);
-            int   rp     = m_enigmaState.detWritePos - del;
-            if (rp < 0) rp += detBufSize;
-
-            data[i] = phased * 0.6f + detBuf[static_cast<size_t>(rp)] * 0.4f;
-
-            phase    += phaseLfoInc;
-            if (phase    >= 1.f) phase    -= 1.f;
-            detPhase += detLfoInc;
-            if (detPhase >= 1.f) detPhase -= 1.f;
-
-            m_enigmaState.detWritePos = (m_enigmaState.detWritePos + 1) % detBufSize;
-        }
-    }
+    const int numCh = std::min(wet.getNumChannels(), 2);
+    float* data[2] = { wet.getWritePointer(0) + start,
+                       numCh > 1 ? wet.getWritePointer(1) + start : nullptr };
+    std::vector<float>* detBufs[2] = { &m_enigmaState.detBufL, &m_enigmaState.detBufR };
 
     for (int i = 0; i < n; ++i)
     {
+        // Compute phaser LFO + coefficient once per sample
+        float lfo   = 0.5f * (1.f + std::sin(2.f * juce::MathConstants<float>::pi
+                                              * m_enigmaState.lfoPhase));
+        float freq  = fMin + lfo * (fMax - fMin);
+        float tanHalf = std::tan(twoPiOverSr * freq * 0.5f);
+        float coeff = (tanHalf - 1.f) / (tanHalf + 1.f);
+
+        // Detune LFO
+        float detLfoVal = std::sin(2.f * juce::MathConstants<float>::pi
+                                   * m_enigmaState.detLfo);
+
+        const int wp = m_enigmaState.detWritePos;
+
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            auto& detBuf = *detBufs[ch];
+
+            // 8-stage all-pass cascade (correct formula)
+            float x = data[ch][i];
+            for (int s = 0; s < 8; ++s)
+            {
+                float xn = x;
+                float yn = coeff * (xn - m_enigmaState.yPrev[ch][s])
+                         + m_enigmaState.xPrev[ch][s];
+                m_enigmaState.xPrev[ch][s] = xn;
+                m_enigmaState.yPrev[ch][s] = yn;
+                x = yn;
+            }
+            float phased = data[ch][i] + x * feedback;
+
+            // Detune via chorus delay with linear interpolation
+            detBuf[static_cast<size_t>(wp)] = phased;
+            float delF = detDepth * 0.5f * (1.f + detLfoVal);
+            delF = std::clamp(delF, 0.f, static_cast<float>(detBufSize - 1));
+            int   delI = static_cast<int>(delF);
+            float frac = delF - static_cast<float>(delI);
+
+            int rp0 = wp - delI;
+            if (rp0 < 0) rp0 += detBufSize;
+            int rp1 = rp0 - 1;
+            if (rp1 < 0) rp1 += detBufSize;
+
+            float delayed = detBuf[static_cast<size_t>(rp0)] * (1.f - frac)
+                          + detBuf[static_cast<size_t>(rp1)] * frac;
+
+            data[ch][i] = phased * 0.6f + delayed * 0.4f;
+        }
+
+        // Advance all state ONCE per sample
+        m_enigmaState.detWritePos = (wp + 1) % detBufSize;
         m_enigmaState.lfoPhase += phaseLfoInc;
         if (m_enigmaState.lfoPhase >= 1.f) m_enigmaState.lfoPhase -= 1.f;
         m_enigmaState.detLfo += detLfoInc;
@@ -948,6 +1047,352 @@ void FxProcessor::processMobius(juce::AudioBuffer<float>& wet,
                 st.readPos = 0.0;
                 st.forward = true;
             }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sound Color FX — Pioneer DDJ-FLX10 style
+//
+// All SC effects receive a bipolar knob value: -1.0 (max left) … 0.0 (centre/
+// bypass) … +1.0 (max right).  At 0.0 the signal passes through 100% dry.
+//
+// Architecture: [Effect core] → [Bipolar SVF LPF/HPF] → mix back into buffer.
+//
+// The SVF (State Variable Filter) is used for smooth morphing because it:
+//  • Has no instability risk across the full frequency range
+//  • Naturally separates LP and HP outputs in one pass
+//  • Allows Q to be modulated without artefacts
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Prepare SC delay lines ────────────────────────────────────────────────────
+void FxProcessor::prepareSCDelays()
+{
+    m_scDubEchoState.lineL.prepare(kMaxDelaySamples);
+    m_scDubEchoState.lineR.prepare(kMaxDelaySamples);
+    m_scDubEchoState.hpL = 0.f;
+    m_scDubEchoState.hpR = 0.f;
+    m_scDubEchoState.svf = SVFState{};
+    m_scFilterState.svf  = SVFState{};
+    m_scSpaceState.svf   = SVFState{};
+    m_scNoiseState.svf   = SVFState{};
+    m_scNoiseState.seed  = 12345u;
+    m_scCrushState.svf   = SVFState{};
+}
+
+// ── Bipolar SVF helper ────────────────────────────────────────────────────────
+//
+// Processes buf in-place with a 2-pole SVF.
+// knob < 0 → LPF:  cutoff from 20 kHz (|knob|=0) down to 20 Hz (|knob|=1)
+// knob > 0 → HPF:  cutoff from 20 Hz  (knob=0)   up   to 20 kHz (knob=1)
+// knob = 0 → transparent (no filtering)
+// Q rises from 0.7 (open) to 1.8 (full) for a slight resonance sweep.
+//
+// Returns wet gain (0 at centre, 1 at extremes) so callers know mix amount.
+float FxProcessor::applySCFilter(juce::AudioBuffer<float>& buf, int start, int n,
+                                  float knob, SVFState& state)
+{
+    const float absK = std::abs(knob);
+    if (absK < 0.005f) return 0.f;   // fully transparent at centre
+
+    const float sr  = static_cast<float>(m_sampleRate);
+    const float pi  = juce::MathConstants<float>::pi;
+
+    // Cutoff frequency: exponential mapping 20 Hz ↔ 20 kHz
+    // At absK=0 → 20kHz (LPF fully open / HPF fully closed), |knob|=1 → 20Hz / 20kHz
+    float fc;
+    if (knob < 0.f)
+        // LPF: 20 kHz → 20 Hz as knob goes -1
+        fc = 20000.f * std::pow(20.f / 20000.f, absK);
+    else
+        // HPF: 20 Hz → 20 kHz as knob goes +1
+        fc = 20.f * std::pow(20000.f / 20.f, absK);
+
+    fc = std::clamp(fc, 20.f, 20000.f);
+
+    const float q   = 0.7f + absK * 1.1f;  // 0.7 → 1.8
+    const float w   = 2.f * std::tan(pi * fc / sr); // SVF g coefficient
+    const float k   = 1.f / q;
+    const float a1  = 1.f / (1.f + k * w + w * w);
+    const float a2  = w * a1;
+    const float a3  = w * a2;
+
+    const int numCh = std::min(buf.getNumChannels(), 2);
+    for (int i = 0; i < n; ++i)
+    {
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            float x = buf.getWritePointer(ch)[start + i];
+
+            float v3 = x - state.s2[ch];
+            float v1 = a1 * state.s1[ch] + a2 * v3;
+            float v2 = state.s2[ch]       + a2 * state.s1[ch] + a3 * v3;
+
+            state.s1[ch] = 2.f * v1 - state.s1[ch];
+            state.s2[ch] = 2.f * v2 - state.s2[ch];
+
+            // Choose LP or HP output based on sign of knob
+            float out = (knob < 0.f) ? v2 : (x - k * v1 - v2);
+            buf.getWritePointer(ch)[start + i] = out;
+        }
+    }
+    return absK; // wet gain = |knob|
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. SC FILTER — pure dual resonant LPF/HPF
+// ─────────────────────────────────────────────────────────────────────────────
+void FxProcessor::processSC_Filter(juce::AudioBuffer<float>& buffer,
+                                    int start, int n, float knob)
+{
+    const float absK = std::abs(knob);
+    if (absK < 0.005f) return; // centre = bypass
+
+    // Copy to wet buffer
+    juce::AudioBuffer<float> wetBuf(m_numChannels, n);
+    copyToWet(buffer, wetBuf, start, n);
+
+    // Apply the bipolar SVF in-place — this IS the effect, no pre-processing
+    applySCFilter(wetBuf, 0, n, knob, m_scFilterState.svf);
+
+    // Wet amount: quick fade-in from centre so there's no sudden cut at 0
+    const float wet = absK;
+    const float dry = 1.f - wet;
+    const int   numCh = std::min(buffer.getNumChannels(), m_numChannels);
+    for (int ch = 0; ch < numCh; ++ch)
+    {
+        float*       dst = buffer.getWritePointer(ch) + start;
+        const float* src = wetBuf.getReadPointer(ch);
+        for (int i = 0; i < n; ++i)
+            dst[i] = dst[i] * dry + src[i] * wet;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2. SC DUB ECHO — delay + bipolar LPF/HPF on the wet tail
+//    knob < 0 → dark dub echo (delay + LPF in feedback)
+//    knob > 0 → bright sibilant echo (delay + HPF in feedback)
+// ─────────────────────────────────────────────────────────────────────────────
+void FxProcessor::processSC_DubEcho(juce::AudioBuffer<float>& buffer,
+                                     int start, int n, float knob)
+{
+    const float absK = std::abs(knob);
+    if (absK < 0.005f) return;
+
+    // Delay time: fixed at approx 3/4 beat — 375ms at 120BPM.
+    // In absence of BPM sync, use a musical constant ~0.375s.
+    const int delaySamples = std::clamp(
+        static_cast<int>(m_sampleRate * 0.375),
+        1, kMaxDelaySamples - 1);
+    const float feedback = 0.45f + absK * 0.25f;  // 0.45 – 0.7
+
+    // Build wet (echo) buffer
+    juce::AudioBuffer<float> wetBuf(m_numChannels, n);
+    copyToWet(buffer, wetBuf, start, n);
+
+    // Process delay per channel
+    const int numCh = std::min(wetBuf.getNumChannels(), 2);
+    for (int ch = 0; ch < numCh; ++ch)
+    {
+        float* data = wetBuf.getWritePointer(ch);
+        DelayLine& line = (ch == 0) ? m_scDubEchoState.lineL : m_scDubEchoState.lineR;
+
+        for (int i = 0; i < n; ++i)
+        {
+            float delayed = line.read(delaySamples);
+            float fb = std::tanh(delayed * feedback);
+            float out = data[i] + fb;
+            line.write(out);
+            data[i] = out;
+        }
+    }
+
+    // Apply bipolar filter on wet tail
+    applySCFilter(wetBuf, 0, n, knob, m_scDubEchoState.svf);
+
+    // Mix: wet grows with |knob|
+    const float wet = absK;
+    const float dry = 1.f - wet;
+    for (int ch = 0; ch < numCh; ++ch)
+    {
+        float*       dst = buffer.getWritePointer(ch) + start;
+        const float* src = wetBuf.getReadPointer(ch);
+        for (int i = 0; i < n; ++i)
+            dst[i] = dst[i] * dry + src[i] * wet;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. SC CRUSH — bitcrusher + bipolar LPF/HPF
+//    knob < 0 → crunchy + dark (LPF closes as crushing increases)
+//    knob > 0 → crunchy + bright/thin (HPF opens as crushing increases)
+// ─────────────────────────────────────────────────────────────────────────────
+void FxProcessor::processSC_Crush(juce::AudioBuffer<float>& buffer,
+                                   int start, int n, float knob)
+{
+    const float absK = std::abs(knob);
+    if (absK < 0.005f) return;
+
+    // Build wet buffer
+    juce::AudioBuffer<float> wetBuf(m_numChannels, n);
+    copyToWet(buffer, wetBuf, start, n);
+
+    // Bit depth: 16 bit (absK=0) → 3 bit (absK=1)
+    const float bitDepth = 16.f * std::pow(3.f / 16.f, absK);
+    const float steps    = std::pow(2.f, bitDepth);
+    const float invSteps = 1.f / steps;
+    // Hold length: 1 (no SRC) → 8 samples
+    const int holdLen = 1 + static_cast<int>(absK * 7.f);
+
+    // Ensure per-channel state
+    if (m_scCrushState.bc.size() < static_cast<size_t>(m_numChannels))
+        m_scCrushState.bc.assign(static_cast<size_t>(m_numChannels), BitcrusherState{});
+
+    const int numCh = std::min(wetBuf.getNumChannels(), m_numChannels);
+    for (int ch = 0; ch < numCh; ++ch)
+    {
+        float* data = wetBuf.getWritePointer(ch);
+        auto&  st   = m_scCrushState.bc[static_cast<size_t>(ch)];
+
+        for (int i = 0; i < n; ++i)
+        {
+            if (st.holdCounter <= 0)
+            {
+                float q = std::floor(data[i] * steps * 0.5f + 0.5f) * invSteps * 2.f;
+                st.holdSample  = std::clamp(q, -1.f, 1.f);
+                st.holdCounter = holdLen;
+            }
+            data[i] = st.holdSample;
+            --st.holdCounter;
+        }
+    }
+
+    // Bipolar filter pass
+    applySCFilter(wetBuf, 0, n, knob, m_scCrushState.svf);
+
+    const float wet = absK;
+    const float dry = 1.f - wet;
+    for (int ch = 0; ch < numCh; ++ch)
+    {
+        float*       dst = buffer.getWritePointer(ch) + start;
+        const float* src = wetBuf.getReadPointer(ch);
+        for (int i = 0; i < n; ++i)
+            dst[i] = dst[i] * dry + src[i] * wet;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. SC SPACE — reverb + bipolar LPF/HPF on wet
+//    knob < 0 → dark hall (LPF on reverb tail)
+//    knob > 0 → bright icy hall (HPF on reverb tail, only sibilants echo)
+// ─────────────────────────────────────────────────────────────────────────────
+void FxProcessor::processSC_Space(juce::AudioBuffer<float>& buffer,
+                                   int start, int n, float knob)
+{
+    const float absK = std::abs(knob);
+    if (absK < 0.005f) return;
+
+    juce::AudioBuffer<float> wetBuf(m_numChannels, n);
+    copyToWet(buffer, wetBuf, start, n);
+
+    // Update reverb params: roomSize and wetLevel scale with absK
+    juce::dsp::Reverb::Parameters p;
+    p.roomSize   = 0.5f + absK * 0.5f;   // 0.5 → 1.0
+    p.damping    = (knob < 0.f) ? (0.2f + absK * 0.6f) : 0.1f;  // dark = more damping
+    p.wetLevel   = 1.f;   // wet/dry handled externally
+    p.dryLevel   = 0.f;
+    p.width      = 0.6f + absK * 0.4f;
+    p.freezeMode = 0.f;
+    m_reverb.setParameters(p);
+
+    processReverb(wetBuf, 0, n);
+
+    // Apply bipolar filter on reverb output
+    applySCFilter(wetBuf, 0, n, knob, m_scSpaceState.svf);
+
+    const float wet = absK;
+    const float dry = 1.f - wet;
+    const int numCh = std::min(buffer.getNumChannels(), m_numChannels);
+    for (int ch = 0; ch < numCh; ++ch)
+    {
+        float*       dst = buffer.getWritePointer(ch) + start;
+        const float* src = wetBuf.getReadPointer(ch);
+        for (int i = 0; i < n; ++i)
+            dst[i] = dst[i] * dry + src[i] * wet;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. SC PITCH — ±12 semitones, no filter, wet fades in quickly from centre
+// ─────────────────────────────────────────────────────────────────────────────
+void FxProcessor::processSC_Pitch(juce::AudioBuffer<float>& buffer,
+                                   int start, int n, float knob)
+{
+    const float absK = std::abs(knob);
+    if (absK < 0.005f) return;
+
+    juce::AudioBuffer<float> wetBuf(m_numChannels, n);
+    copyToWet(buffer, wetBuf, start, n);
+
+    // knob -1 = -12 semitones, knob +1 = +12 semitones
+    const double semitones  = static_cast<double>(knob) * 12.0;
+    const double pitchRatio = std::pow(2.0, semitones / 12.0);
+    m_pitchShifter->setPitchRatio(pitchRatio);
+    m_pitchShifter->process(wetBuf, 0, n);
+
+    // Wet ramps quickly to 100% — at |knob| > 0.15 it's already full wet
+    const float wet = std::min(1.f, absK * 6.f);
+    const float dry = 1.f - wet;
+    const int numCh = std::min(buffer.getNumChannels(), m_numChannels);
+    for (int ch = 0; ch < numCh; ++ch)
+    {
+        float*       dst = buffer.getWritePointer(ch) + start;
+        const float* src = wetBuf.getReadPointer(ch);
+        for (int i = 0; i < n; ++i)
+            dst[i] = dst[i] * dry + src[i] * wet;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. SC NOISE — additive white noise through bipolar LPF/HPF
+//    knob < 0 → low-pass filtered noise (wind/rumble sweep)
+//    knob > 0 → high-pass filtered noise (sibilant hiss sweep)
+//    Track audio runs 100% dry underneath — noise is purely additive.
+// ─────────────────────────────────────────────────────────────────────────────
+void FxProcessor::processSC_Noise(juce::AudioBuffer<float>& buffer,
+                                   int start, int n, float knob)
+{
+    const float absK = std::abs(knob);
+    if (absK < 0.005f) return;
+
+    // Generate white noise into a temporary buffer
+    juce::AudioBuffer<float> noiseBuf(m_numChannels, n);
+    noiseBuf.clear();
+
+    const int numCh = std::min(buffer.getNumChannels(), m_numChannels);
+    for (int i = 0; i < n; ++i)
+    {
+        m_scNoiseState.seed = m_scNoiseState.seed * 1664525u + 1013904223u;
+        const float white = static_cast<float>(static_cast<int32_t>(m_scNoiseState.seed))
+                            / static_cast<float>(0x7fffffff);
+        for (int ch = 0; ch < numCh; ++ch)
+            noiseBuf.getWritePointer(ch)[i] = white;
+    }
+
+    // Apply bipolar filter to the noise
+    applySCFilter(noiseBuf, 0, n, knob, m_scNoiseState.svf);
+
+    // Add filtered noise on top of dry signal
+    // Noise gain scales with |knob| — at full knob noise is quite audible
+    const float noiseGain = absK * 0.6f;
+    for (int ch = 0; ch < numCh; ++ch)
+    {
+        float*       dst   = buffer.getWritePointer(ch) + start;
+        const float* noise = noiseBuf.getReadPointer(ch);
+        for (int i = 0; i < n; ++i)
+        {
+            dst[i] += noise[i] * noiseGain;
+            dst[i]  = std::clamp(dst[i], -1.f, 1.f);
         }
     }
 }

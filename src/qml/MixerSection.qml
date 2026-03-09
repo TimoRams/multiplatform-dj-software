@@ -160,8 +160,22 @@ Rectangle {
                     onKnobValueChanged: { if(engineA) engineA.eqLow = knobValue }
                 }
                 MixerKnob {
-                    text: "F"; labelSide: "left"; from: -1; to: 1; knobValue: 0
-                    onKnobValueChanged: { if(engineA) engineA.filter = knobValue }
+                    id: scKnobA
+                    text: "SC"; labelSide: "left"; from: -1; to: 1; knobValue: 0.0
+                    defaultValue: 0.0
+                    onKnobValueChanged: {
+                        if(typeof fxManager !== "undefined") {
+                            fxManager.setSoundColorDeck(1, knobValue)
+                            // Filter mode drives the built-in engine filter directly
+                            if(fxManager.soundColorMode === "Filter") {
+                                if(engineA) engineA.filter = knobValue
+                            } else {
+                                if(engineA) engineA.filter = 0.0
+                            }
+                        } else {
+                            if(engineA) engineA.filter = knobValue
+                        }
+                    }
                 }
 
                 Button {
@@ -221,8 +235,21 @@ Rectangle {
                     onKnobValueChanged: { if(engineB) engineB.eqLow = knobValue }
                 }
                 MixerKnob {
-                    text: "F"; labelSide: "right"; from: -1; to: 1; knobValue: 0
-                    onKnobValueChanged: { if(engineB) engineB.filter = knobValue }
+                    id: scKnobB
+                    text: "SC"; labelSide: "right"; from: -1; to: 1; knobValue: 0.0
+                    defaultValue: 0.0
+                    onKnobValueChanged: {
+                        if(typeof fxManager !== "undefined") {
+                            fxManager.setSoundColorDeck(2, knobValue)
+                            if(fxManager.soundColorMode === "Filter") {
+                                if(engineB) engineB.filter = knobValue
+                            } else {
+                                if(engineB) engineB.filter = 0.0
+                            }
+                        } else {
+                            if(engineB) engineB.filter = knobValue
+                        }
+                    }
                 }
 
                 Button {
