@@ -49,204 +49,214 @@ Rectangle {
         anchors.margins: 5
         anchors.leftMargin: 10
         anchors.rightMargin: 10
-        spacing: 15
+        spacing: 0
 
-        // ----------------------------------------------------
-        // LEFT SECTION (FX Routing, Master Vol, Recording)
-        // ----------------------------------------------------
-        RowLayout {
-            Layout.alignment: Qt.AlignLeft
-            spacing: 15
+        // ── LEFT: Software name ───────────────────────────────────────────────
+        Row {
+            spacing: 6
+            Layout.alignment: Qt.AlignVCenter
 
-            // FX Units indicators
-            Row {
-                spacing: 4
-                Repeater {
-                    model: 2
-                    Rectangle {
-                        width: 32; height: 24
-                        color: "#2a2a2a"
-                        border.color: "#444"
-                        radius: 3
-                        Text {
-                            anchors.centerIn: parent
-                            text: "FX" + (index + 1)
-                            color: "#999"
-                            font.pixelSize: window.sp(11)
-                            font.bold: true
-                        }
-                    }
-                }
-            }
-
-            // Recorder
+            // Small coloured accent bar (Traktor-style)
             Rectangle {
-                width: 50; height: 24
-                color: "#2a2a2a"
-                border.color: "#444"
-                radius: 3
-                Row {
-                    anchors.centerIn: parent
-                    spacing: 5
+                width: 3; height: 22; radius: 1
+                anchors.verticalCenter: parent.verticalCenter
+                gradient: Gradient {
+                    orientation: Gradient.Vertical
+                    GradientStop { position: 0.0; color: "#1e90ff" }
+                    GradientStop { position: 1.0; color: "#0050cc" }
+                }
+            }
+
+            Column {
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 0
+
+                Text {
+                    text: "DJ-Software"
+                    color: "#ffffff"
+                    font.pixelSize: window.sp(14)
+                    font.bold: true
+                    font.letterSpacing: 1.5
+                }
+                Text {
+                    text: "by Ramsbrock.net"
+                    color: "#555"
+                    font.pixelSize: window.sp(8)
+                    font.letterSpacing: 0.5
+                }
+            }
+        }
+
+        // ── SPACER fills between left and right groups ────────────────────────
+        Item { Layout.fillWidth: true }
+
+        // ── CENTER: Master Volume (compact, Serato-style) ─────────────────────
+        Row {
+            spacing: 8
+            Layout.alignment: Qt.AlignVCenter
+
+            Text {
+                text: "MASTER"
+                color: "#666"
+                font.pixelSize: window.sp(9)
+                font.bold: true
+                font.letterSpacing: 1
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            Slider {
+                id: masterSlider
+                width: 100; height: 18
+                anchors.verticalCenter: parent.verticalCenter
+                from: 0.0; to: 1.0; value: 0.8
+
+                background: Rectangle {
+                    x: masterSlider.leftPadding
+                    y: masterSlider.topPadding + masterSlider.availableHeight / 2 - height / 2
+                    width: masterSlider.availableWidth
+                    height: 4; radius: 2
+                    color: "#1a1a1a"
+                    border.color: "#333"
+
                     Rectangle {
-                        width: 8; height: 8; radius: 4; color: "#aa3333"
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                    Text { 
-                        text: "REC"
-                        color: "#999"
-                        font.pixelSize: window.sp(10)
-                        font.bold: true
-                        anchors.verticalCenter: parent.verticalCenter 
+                        width: masterSlider.visualPosition * parent.width
+                        height: parent.height; radius: 2
+                        color: "#1e90ff"
                     }
                 }
-            }
-            
-            // Master Volume
-            Row {
-                spacing: 8
-                Layout.alignment: Qt.AlignVCenter
-                Text { 
-                    text: "MASTER"
-                    color: "#999"
-                    font.pixelSize: window.sp(10)
-                    font.bold: true
-                    anchors.verticalCenter: parent.verticalCenter 
+
+                handle: Rectangle {
+                    x: masterSlider.leftPadding + masterSlider.visualPosition
+                       * (masterSlider.availableWidth - width)
+                    y: masterSlider.topPadding + masterSlider.availableHeight / 2 - height / 2
+                    width: 10; height: 10; radius: 5
+                    color: "#ddd"
+                    border.color: "#888"
+                    border.width: 1
                 }
-                Slider {
-                    width: 120; height: 20
-                    anchors.verticalCenter: parent.verticalCenter
-                    value: 0.8
+
+                TapHandler {
+                    onDoubleTapped: {
+                        masterSlider.enabled = false
+                        masterSlider.value = 0.8
+                        masterSlider.enabled = true
+                    }
                 }
             }
         }
 
-        // ----------------------------------------------------
-        // CENTER SECTION (Global Master Clock / BPM)
-        // ----------------------------------------------------
-        Rectangle {
-            Layout.alignment: Qt.AlignHCenter
-            width: 200
-            height: 30
-            color: "#0a0a0a"
-            border.color: "#333"
-            radius: 4
+        // ── SPACER ────────────────────────────────────────────────────────────
+        Item { Layout.fillWidth: true }
 
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 12
-                anchors.rightMargin: 12
-                spacing: 10
+        // ── RIGHT: Audio load + REC + Clock + Actions ─────────────────────────
+        Row {
+            spacing: 14
+            Layout.alignment: Qt.AlignVCenter
 
-                Text {
-                    text: "MASTER"
-                    color: "#ff9900"
-                    font.pixelSize: window.sp(11)
-                    font.bold: true
-                    Layout.alignment: Qt.AlignVCenter
-                }
-                Text {
-                    Layout.fillWidth: true
-                    text: "128.00"
-                    color: "#00ccff"
-                    font.pixelSize: window.sp(16)
-                    font.family: "monospace"
-                    font.bold: true
-                    horizontalAlignment: Text.AlignRight
-                    verticalAlignment: Text.AlignVCenter
-                }
-                Text {
-                    text: "BPM"
-                    color: "#666"
-                    font.pixelSize: window.sp(9)
-                    Layout.alignment: Qt.AlignVCenter
-                }
-            }
-        }
-
-        // ----------------------------------------------------
-        // RIGHT SECTION (Status & Preferences)
-        // ----------------------------------------------------
-        RowLayout {
-            Layout.alignment: Qt.AlignRight
-            spacing: 15
-
-            // CPU / Audio Drop load meter
+            // Audio load bar
             Row {
-                spacing: 6
-                Layout.alignment: Qt.AlignVCenter
-                Text { 
+                spacing: 5
+                anchors.verticalCenter: parent.verticalCenter
+
+                Text {
                     text: "AUDIO"
-                    color: "#999"
-                    font.pixelSize: window.sp(10)
+                    color: "#555"
+                    font.pixelSize: window.sp(9)
                     font.bold: true
-                    anchors.verticalCenter: parent.verticalCenter 
+                    anchors.verticalCenter: parent.verticalCenter
                 }
                 Rectangle {
-                    width: 70; height: 8
-                    color: "#0a0a0a"
-                    border.color: "#333"
-                    radius: 4
+                    width: 60; height: 6
+                    color: "#0d0d0d"
+                    border.color: "#2a2a2a"
+                    radius: 3
                     anchors.verticalCenter: parent.verticalCenter
-                    
-                    Rectangle { 
-                        width: 15; height: 6; radius: 3; color: "#4a9a4a" 
+
+                    Rectangle {
+                        width: 12; height: 4; radius: 2
                         anchors.verticalCenter: parent.verticalCenter
-                        anchors.left: parent.left
-                        anchors.leftMargin: 1
+                        anchors.left: parent.left; anchors.leftMargin: 1
+                        color: "#2e7d32"
                     }
                 }
             }
 
-            // Current Time (Clock)
+            // REC button
+            Rectangle {
+                width: 42; height: 22
+                color: "#1a1a1a"
+                border.color: "#333"
+                radius: 3
+                anchors.verticalCenter: parent.verticalCenter
+
+                Row {
+                    anchors.centerIn: parent
+                    spacing: 4
+
+                    Rectangle {
+                        width: 7; height: 7; radius: 3.5
+                        color: "#aa3333"
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                    Text {
+                        text: "REC"
+                        color: "#777"
+                        font.pixelSize: window.sp(9)
+                        font.bold: true
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                }
+            }
+
+            // Clock
             Text {
                 text: root.currentTime
-                color: "#ddd"
-                font.pixelSize: window.sp(13)
+                color: "#bbb"
+                font.pixelSize: window.sp(12)
                 font.family: "monospace"
                 font.bold: true
                 Layout.alignment: Qt.AlignVCenter
-                Layout.leftMargin: 10
+                anchors.verticalCenter: parent.verticalCenter
             }
 
-            // UI Actions
+            // UI action buttons
             Row {
-                spacing: 4
-                Layout.alignment: Qt.AlignVCenter
-                
+                spacing: 3
+                anchors.verticalCenter: parent.verticalCenter
+
                 Button {
-                    width: 32; height: 26
+                    width: 28; height: 24
                     text: "⛶"
-                    background: Rectangle { 
-                        color: parent.pressed ? "#444" : "#2a2a2a"
-                        border.color: "#444"
-                        radius: 3 
+                    background: Rectangle {
+                        color: parent.pressed ? "#333" : "#1e1e1e"
+                        border.color: "#333"
+                        radius: 3
                     }
-                    contentItem: Text { 
-                        text: parent.text; color: "#ccc"; font.pixelSize: window.sp(14); 
-                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter;
+                    contentItem: Text {
+                        text: parent.text; color: "#aaa"; font.pixelSize: window.sp(13)
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment:   Text.AlignVCenter
                         anchors.centerIn: parent
                     }
                     onClicked: {
-                        if (root.Window.window.visibility === Window.FullScreen) {
+                        if (root.Window.window.visibility === Window.FullScreen)
                             root.Window.window.showNormal()
-                        } else {
+                        else
                             root.Window.window.showFullScreen()
-                        }
                     }
                 }
 
                 Button {
-                    width: 32; height: 26
+                    width: 28; height: 24
                     text: "⚙"
-                    background: Rectangle { 
-                        color: parent.pressed ? "#444" : "#2a2a2a"
-                        border.color: "#444"
-                        radius: 3 
+                    background: Rectangle {
+                        color: parent.pressed ? "#333" : "#1e1e1e"
+                        border.color: "#333"
+                        radius: 3
                     }
-                    contentItem: Text { 
-                        text: parent.text; color: "#ccc"; font.pixelSize: window.sp(14); 
-                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter 
+                    contentItem: Text {
+                        text: parent.text; color: "#aaa"; font.pixelSize: window.sp(13)
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment:   Text.AlignVCenter
                         anchors.centerIn: parent
                     }
                     onClicked: {
