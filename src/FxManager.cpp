@@ -22,10 +22,23 @@ void FxManager::registerEngines(DjEngine* deckA, DjEngine* deckB)
 
 EffectType FxManager::effectTypeFromString(const QString& name)
 {
-    if (name == "Reverb")     return EffectType::Reverb;
-    if (name == "Bitcrusher") return EffectType::Bitcrusher;
+    if (name == "Reverb")        return EffectType::Reverb;
+    if (name == "Bitcrusher")    return EffectType::Bitcrusher;
     if (name == "Pitch Shifter" || name == "PitchShifter")
-                              return EffectType::PitchShifter;
+                                 return EffectType::PitchShifter;
+    if (name == "Echo")          return EffectType::Echo;
+    if (name == "Low Cut Echo")  return EffectType::LowCutEcho;
+    if (name == "MT Delay")      return EffectType::MtDelay;
+    if (name == "Spiral")        return EffectType::Spiral;
+    if (name == "Flanger")       return EffectType::Flanger;
+    if (name == "Phaser")        return EffectType::Phaser;
+    if (name == "Trans")         return EffectType::Trans;
+    if (name == "Enigma Jet")    return EffectType::EnigmaJet;
+    if (name == "Stretch")       return EffectType::Stretch;
+    if (name == "Slip Roll")     return EffectType::SlipRoll;
+    if (name == "Roll")          return EffectType::Roll;
+    if (name == "Nobius")        return EffectType::Nobius;
+    if (name == "Mobius")        return EffectType::Mobius;
     return EffectType::None;
 }
 

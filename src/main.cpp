@@ -69,7 +69,7 @@ int main(int argc, char *argv[])
     fxManager.registerEngines(deckA.get(), deckB.get());
     engine.rootContext()->setContextProperty("fxManager", &fxManager);
 
-    const QUrl url(u"qrc:/DJSoftware/src/main.qml"_s);
+    const QUrl url(u"qrc:/DJSoftware/src/qml/main.qml"_s);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
                      &app, [url](QObject *obj, const QUrl &objUrl) {
         if (!obj && url == objUrl)
