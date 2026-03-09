@@ -325,6 +325,31 @@ Item {
                         }
 
                         Button {
+                            text: "REV"
+                            checkable: true
+                            checked: deck.engine ? deck.engine.isReverse : false
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 18
+                            background: Rectangle {
+                                color: parent.checked ? "#883300" : "#444"
+                                border.color: parent.checked ? "#ff6600" : "transparent"
+                                border.width: 1
+                                radius: 3
+                            }
+                            contentItem: Text {
+                                text: parent.text
+                                color: parent.checked ? "#ff6600" : "#aaa"
+                                font.pixelSize: window.sp(8)
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: {
+                                if (deck.engine) deck.engine.setReverse(checked)
+                            }
+                        }
+
+                        Button {
                             text: "SYNC"
                             checkable: true
                             Layout.fillWidth: true

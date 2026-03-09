@@ -113,12 +113,15 @@ double parseBpmString(const QString& raw) {
 
 class DjEngine::MixerDspSource : public juce::AudioSource {
 public:
-    MixerDspSource(juce::AudioSource* inSource) : source(inSource) {}
+    MixerDspSource(juce::AudioSource* inSource, juce::AudioTransportSource* transport)
+        : source(inSource), m_transport(transport) {}
 
-    // ── FxProcessor slot (called from Qt main thread) ────────────────────────
+    // ── FxProcessor slot (called from Qt main thread) ──────────────────────
     void setFxEffectType(EffectType type) { m_fx.setEffectType(type); }
     void setFxAmount(float amount)        { m_fx.setAmount(amount); }
     void setFxSCKnob(float knob)          { m_fx.setSCKnobValue(knob); }
+
+    void setReverse(bool rev) { m_reverse.store(rev, std::memory_order_relaxed); }
 
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override {
         if (source) source->prepareToPlay(samplesPerBlockExpected, sampleRate);
@@ -166,6 +169,29 @@ public:
         m_fx.process(*bufferToFill.buffer,
                      bufferToFill.startSample,
                      bufferToFill.numSamples);
+
+        // ── Reverse: flip samples in block + scrub transport backwards ─────────
+        if (m_reverse.load(std::memory_order_relaxed) && m_transport && m_sampleRate > 0)
+        {
+            const int s = bufferToFill.startSample;
+            const int numSamp = bufferToFill.numSamples;
+
+            // 1. Reverse the samples in the block so audio plays backwards
+            for (int ch = 0; ch < bufferToFill.buffer->getNumChannels(); ++ch)
+            {
+                float* ptr = bufferToFill.buffer->getWritePointer(ch) + s;
+                std::reverse(ptr, ptr + numSamp);
+            }
+
+            // 2. Seek transport backwards by 2× block length:
+            //    - 1× to undo the forward read that just happened
+            //    - 1× to actually move backwards
+            double currentPos = m_transport->getCurrentPosition();
+            double blockDur   = static_cast<double>(numSamp) / m_sampleRate;
+            double newPos     = currentPos - 2.0 * blockDur;
+            if (newPos < 0.0) newPos = 0.0;
+            m_transport->setPosition(newPos);
+        }
     }
 
     void setTrim(float val) { trimVal = val; }
@@ -221,6 +247,7 @@ private:
     }
 
     juce::AudioSource* source = nullptr;
+    juce::AudioTransportSource* m_transport = nullptr;
     double m_sampleRate = 0;
 
     std::atomic<float> trimVal{1.0f};
@@ -239,6 +266,7 @@ private:
     FilterType colorFilter;
 
     FxProcessor m_fx;
+    std::atomic<bool> m_reverse { false };
 };
 
 DjEngine::DjEngine(QObject* parent) : QObject(parent)
@@ -280,7 +308,7 @@ DjEngine::DjEngine(QObject* parent) : QObject(parent)
     );
     
     // Create the mixer DSP source to apply EQ, Filter, and Gain based on Pioneer DJM A9.
-    mixerSource = std::make_unique<MixerDspSource>(resamplingSource.get());
+    mixerSource = std::make_unique<MixerDspSource>(resamplingSource.get(), &transportSource);
     mixerSource->setTrim(static_cast<float>(m_trim));
     mixerSource->setFader(static_cast<float>(m_volume));
 
@@ -345,16 +373,20 @@ float DjEngine::getVisualPosition() const
     // Forward-interpolate from the last snapshot using elapsed wall-clock time.
     // This keeps the waveform smooth between onTimer() ticks (every 16 ms).
     double elapsed = static_cast<double>(m_snapClock.nsecsElapsed()) * 1e-9;
-    double interpolated = m_snapPosition + elapsed;
+
+    // When reverse is on, interpolate backwards instead of forwards
+    double interpolated = m_isReverse
+        ? m_snapPosition - elapsed
+        : m_snapPosition + elapsed;
 
     // Subtract hardware latency so the display shows what is currently audible,
     // not the audio-thread read pointer which is latencySeconds ahead.
-    double compensated = interpolated - static_cast<double>(m_latencySeconds);
-    compensated = std::max(0.0, compensated);
+    double compensated = m_isReverse
+        ? interpolated + static_cast<double>(m_latencySeconds)   // reverse: add latency
+        : interpolated - static_cast<double>(m_latencySeconds);  // forward: subtract latency
 
     double len = transportSource.getLengthInSeconds();
-    if (len > 0.0)
-        compensated = std::min(compensated, len);
+    compensated = std::clamp(compensated, 0.0, len > 0.0 ? len : compensated);
 
     return static_cast<float>(compensated);
 }
@@ -613,4 +645,12 @@ void DjEngine::setFxWetDry(float amount)
 void DjEngine::setFxSCKnob(float knob)
 {
     if (mixerSource) mixerSource->setFxSCKnob(knob);
+}
+
+void DjEngine::setReverse(bool on)
+{
+    if (m_isReverse == on) return;
+    m_isReverse = on;
+    if (mixerSource) mixerSource->setReverse(on);
+    emit reverseChanged();
 }

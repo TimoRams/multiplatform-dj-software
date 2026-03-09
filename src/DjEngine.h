@@ -21,6 +21,7 @@ class DjEngine : public QObject
     Q_OBJECT
     Q_PROPERTY(float progress READ getProgress NOTIFY progressChanged)
     Q_PROPERTY(bool isPlaying READ isPlaying NOTIFY playingChanged)
+    Q_PROPERTY(bool isReverse READ isReverse NOTIFY reverseChanged)
     Q_PROPERTY(double tempoPercent READ getTempoPercent WRITE setTempoPercent NOTIFY tempoChanged)
     Q_PROPERTY(double currentBpm READ getCurrentBpm NOTIFY tempoChanged)
     Q_PROPERTY(double tempoRatio READ getTempoRatio NOTIFY tempoChanged)
@@ -108,9 +109,13 @@ public slots:
     void setFxWetDry(float amount);
     void setFxSCKnob(float knob);   // bipolar -1..+1 for Sound Color
 
+    bool isReverse() const { return m_isReverse; }
+    Q_INVOKABLE void setReverse(bool on);
+
 signals:
     void progressChanged();
     void playingChanged();
+    void reverseChanged();
     void tempoChanged();
     void trackLoaded();
     void trackMetadataChanged();
@@ -165,6 +170,7 @@ private:
     double m_eqMid = 0.0;
     double m_eqLow = 0.0;
     double m_filter = 0.0;
+    bool   m_isReverse = false;
     bool m_cueEnabled = false;
 
     // Updates the JUCE transport source gain based on volume and trim
