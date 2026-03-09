@@ -3,18 +3,16 @@
 #include <QObject>
 #include <QString>
 #include <QDebug>
+#include "FxProcessor.h"
+
+class DjEngine;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FxManager  –  C++ stub that bridges the QML FX-UI to the JUCE audio engine.
+// FxManager  –  bridges the QML FX-UI to the JUCE audio engines.
 //
-// Currently implemented as a thin stub that:
-//   • Logs all UI changes to qDebug() so you can confirm signal flow.
-//   • Stores the current state (effect type, wet/dry, deck assignment) for both
-//     FX units so the QML can always read back the current state.
-//   • Exposes Q_INVOKABLE methods that QML calls directly.
-//
-// To wire this up to JUCE later, replace the qDebug() bodies with calls to
-// your DSP graph / AudioProcessorGraph nodes.
+// Call registerEngines(deckA, deckB) from main() after both DjEngines are
+// constructed.  All QML invokable methods forward directly to the matching
+// DjEngine::setFxEffectType() / setFxWetDry().
 // ─────────────────────────────────────────────────────────────────────────────
 class FxManager : public QObject
 {
@@ -34,6 +32,9 @@ class FxManager : public QObject
 
 public:
     explicit FxManager(QObject* parent = nullptr);
+
+    /// Register both deck engines — must be called before the QML engine loads.
+    void registerEngines(DjEngine* deckA, DjEngine* deckB);
 
     // ── Accessors – unit 1 ───────────────────────────────────────────────────
     QString effectType1() const { return m_effectType1; }
@@ -86,6 +87,9 @@ signals:
     void deck2BChanged();
 
 private:
+    DjEngine* m_engineA = nullptr;
+    DjEngine* m_engineB = nullptr;
+
     // ── Unit 1 state ─────────────────────────────────────────────────────────
     QString m_effectType1 { "---" };
     float   m_wetDry1     { 0.0f  };
@@ -98,7 +102,8 @@ private:
     bool    m_deck2A      { false };
     bool    m_deck2B      { false };
 
-    // ── Internal helper ──────────────────────────────────────────────────────
-    // Forwards a parameter change to the JUCE DSP graph (stub: just logs).
-    void applyToEngine(int unitId, const QString& param, float value);
+    // Convert QML string name → EffectType enum
+    static EffectType effectTypeFromString(const QString& name);
+    // Forward effect type + wetDry to all assigned engines for a unit
+    void routeToEngines(int unitId, EffectType type, float wetDry);
 };

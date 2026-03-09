@@ -12,6 +12,7 @@
 
 #include "TrackData.h"
 #include "WaveformAnalyzer.h"
+#include "FxProcessor.h"
 
 class CoverArtProvider;
 
@@ -101,6 +102,10 @@ public slots:
     void setEqLow(double value);
     void setFilter(double value);
     void setCueEnabled(bool value);
+
+    // FX chain
+    void setFxEffectType(EffectType type);
+    void setFxWetDry(float amount);
 
 signals:
     void progressChanged();

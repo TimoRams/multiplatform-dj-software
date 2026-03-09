@@ -3,7 +3,7 @@ import QtQuick.Layouts
 import QtQuick.Controls
 import DJSoftware
 
-Window {
+ApplicationWindow {
     id: window
     width: 1280
     height: 800

@@ -147,42 +147,29 @@ Rectangle {
             }
 
             background: Rectangle {
-                color: "#252525"
+                color: effectCombo.pressed ? "#333" : "#252525"
                 radius: 3
-                border.color: "#444"
+                border.color: effectCombo.pressed ? root.accentColor : "#444"
                 border.width: 1
             }
 
+            // Use default delegate — custom ones broke mouse input
             delegate: ItemDelegate {
                 width: effectCombo.width
+                height: 24
+                highlighted: effectCombo.highlightedIndex === index
+
                 contentItem: Text {
                     text: modelData
-                    color: effectCombo.currentIndex === index ? root.accentColor : "#ccc"
+                    color: highlighted ? root.accentColor : "#ccc"
                     font.pixelSize: 10
                     font.family: "monospace"
+                    leftPadding: 8
                     verticalAlignment: Text.AlignVCenter
                 }
-                background: Rectangle {
-                    color: highlighted ? "#2e2e2e" : "#1a1a1a"
-                }
-                highlighted: effectCombo.highlightedIndex === index
-            }
-
-            popup: Popup {
-                y: effectCombo.height
-                width: effectCombo.width
-                padding: 1
-
-                contentItem: ListView {
-                    clip: true
-                    implicitHeight: contentHeight
-                    model: effectCombo.delegateModel
-                }
 
                 background: Rectangle {
-                    color: "#1a1a1a"
-                    border.color: "#444"
-                    border.width: 1
+                    color: highlighted ? "#2a2a2a" : "#1a1a1a"
                 }
             }
 

@@ -1,6 +1,7 @@
 #include "DjEngine.h"
 #include "CoverArtExtractor.h"
 #include "CoverArtProvider.h"
+#include "FxProcessor.h"
 #include <QUrl>
 #include <QDebug>
 #include <QFile>
@@ -114,8 +115,14 @@ class DjEngine::MixerDspSource : public juce::AudioSource {
 public:
     MixerDspSource(juce::AudioSource* inSource) : source(inSource) {}
 
+    // ── FxProcessor slot (called from Qt main thread) ────────────────────────
+    void setFxEffectType(EffectType type) { m_fx.setEffectType(type); }
+    void setFxAmount(float amount)        { m_fx.setAmount(amount); }
+
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override {
         if (source) source->prepareToPlay(samplesPerBlockExpected, sampleRate);
+
+        m_fx.prepare(sampleRate, samplesPerBlockExpected, 2);
         
         juce::dsp::ProcessSpec spec { sampleRate, static_cast<juce::uint32>(samplesPerBlockExpected), 2 };
         lowEq.prepare(spec);
@@ -153,6 +160,11 @@ public:
         midEq.process(context);
         highEq.process(context);
         colorFilter.process(context);
+
+        // ── FX slot (Reverb / Bitcrusher / PitchShifter) ──────────────────────
+        m_fx.process(*bufferToFill.buffer,
+                     bufferToFill.startSample,
+                     bufferToFill.numSamples);
     }
 
     void setTrim(float val) { trimVal = val; }
@@ -224,6 +236,8 @@ private:
     FilterType midEq;
     FilterType highEq;
     FilterType colorFilter;
+
+    FxProcessor m_fx;
 };
 
 DjEngine::DjEngine(QObject* parent) : QObject(parent)
@@ -585,3 +599,12 @@ void DjEngine::setCueEnabled(bool value)
     }
 }
 
+void DjEngine::setFxEffectType(EffectType type)
+{
+    if (mixerSource) mixerSource->setFxEffectType(type);
+}
+
+void DjEngine::setFxWetDry(float amount)
+{
+    if (mixerSource) mixerSource->setFxAmount(amount);
+}

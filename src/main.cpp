@@ -66,6 +66,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("libraryManager", &libraryManager);
 
     FxManager fxManager;
+    fxManager.registerEngines(deckA.get(), deckB.get());
     engine.rootContext()->setContextProperty("fxManager", &fxManager);
 
     const QUrl url(u"qrc:/DJSoftware/src/main.qml"_s);
