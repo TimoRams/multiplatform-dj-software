@@ -14,6 +14,7 @@
 #include "WaveformItem.h"
 #include "LibraryManager.h"
 #include "CoverArtProvider.h"
+#include "FxManager.h"
 
 using namespace Qt::StringLiterals;
 
@@ -63,6 +64,9 @@ int main(int argc, char *argv[])
 
     LibraryManager libraryManager;
     engine.rootContext()->setContextProperty("libraryManager", &libraryManager);
+
+    FxManager fxManager;
+    engine.rootContext()->setContextProperty("fxManager", &fxManager);
 
     const QUrl url(u"qrc:/DJSoftware/src/main.qml"_s);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,

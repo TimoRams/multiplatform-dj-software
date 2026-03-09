@@ -159,6 +159,16 @@ Window {
         }
 
         // --------------------------------------------------------------------
+        // FX RACK  –  horizontale Effekt-Leiste in der Mitte des Bildschirms
+        // (zwischen Decks/Mixer-Sektion und Library)
+        // --------------------------------------------------------------------
+        FxBar {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 40
+            Layout.maximumHeight:   40
+        }
+
+        // --------------------------------------------------------------------
         // UNTERER BEREICH: TRACK LIBRARY
         // fillHeight: true → schluckt jeden vertikalen Restplatz.
         // --------------------------------------------------------------------

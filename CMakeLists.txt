@@ -46,6 +46,8 @@ qt_add_qml_module(${PROJECT_NAME}
         src/PerformancePads.qml
         src/MixerSection.qml
         src/SettingsWindow.qml
+        src/FxUnit.qml
+        src/FxBar.qml
 )
 
 target_sources(${PROJECT_NAME} PRIVATE
@@ -60,6 +62,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/CoverArtExtractor.h
     src/CoverArtExtractor.cpp
     src/CoverArtProvider.h
+    src/FxManager.h
+    src/FxManager.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE src)
