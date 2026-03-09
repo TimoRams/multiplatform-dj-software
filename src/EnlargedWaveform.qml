@@ -48,9 +48,37 @@ Item {
         
         // --- SCROLLING WAVEFORM (Echtes C++ Rendering) ---
         ScrollingWaveformItem {
+            id: waveItem
             anchors.fill: parent
             engine: root.engine
             pixelsPerPoint: root.waveformZoom
+        }
+
+        // VSync-synchrone Pull-Architektur:
+        // FrameAnimation läuft nur wenn isPlaying == true (gebunden).
+        // Jeder Frame: C++ atomic-Position lesen → requestUpdate() → updatePaintNode()
+        // Bei Pause stoppt FrameAnimation sofort → kein Drift, kein Nachrutschen.
+        // Kein Behavior / SmoothedAnimation / SpringAnimation hier oder in ScrollingWaveformItem.
+        FrameAnimation {
+            id: waveFrameAnim
+            // Strict binding to play state — stops immediately on pause.
+            running: root.engine !== null && root.engine.isPlaying
+            onTriggered: {
+                // Poll atomic C++ position each VSync frame.
+                // ScrollingWaveformItem.updatePaintNode() reads engine.getVisualPosition()
+                // directly, so just requesting a repaint is enough.
+                waveItem.requestUpdate()
+            }
+        }
+
+        // Also repaint once when pausing so the waveform freezes at the exact
+        // stopped position (FrameAnimation has already stopped at this point).
+        Connections {
+            target: root.engine
+            function onPlayingChanged() {
+                if (!root.engine.isPlaying)
+                    waveItem.requestUpdate()
+            }
         }
 
         // --- FIXED PLAYHEAD (STATISCHER ABSPIELKOPF) ---
@@ -61,6 +89,7 @@ Item {
             color: "red"
             anchors.centerIn: parent
             z: 10
+            // NO Behavior, NO SmoothedAnimation, NO SpringAnimation on this element.
         }
     }
 }

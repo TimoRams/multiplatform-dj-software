@@ -344,6 +344,13 @@ float DjEngine::getVisualPosition() const
     return static_cast<float>(compensated);
 }
 
+double DjEngine::getPlayheadPositionAtomic() const
+{
+    // Lock-free load — always returns the last value written by onTimer().
+    // QML FrameAnimation calls this every VSync frame; must never block.
+    return m_atomicPlayheadPos.load(std::memory_order_relaxed);
+}
+
 void DjEngine::setCoverArtProvider(CoverArtProvider* provider, const QString& deckId)
 {
     m_coverProvider = provider;
@@ -472,9 +479,14 @@ void DjEngine::onTimer()
         m_snapPosition = transportSource.getCurrentPosition();
         m_snapClock.restart();
         m_snapValid = true;
+        // Also update the atomic so QML FrameAnimation can poll it lock-free.
+        m_atomicPlayheadPos.store(m_snapPosition, std::memory_order_relaxed);
         emit progressChanged();
     } else {
         m_snapValid = false;
+        // Keep atomic in sync with the stopped position.
+        m_atomicPlayheadPos.store(transportSource.getCurrentPosition(),
+                                   std::memory_order_relaxed);
     }
 }
 

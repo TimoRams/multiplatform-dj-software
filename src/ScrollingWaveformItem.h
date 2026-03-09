@@ -3,7 +3,6 @@
 #include <QQuickItem>
 #include <QSGGeometryNode>
 #include <QSGVertexColorMaterial>
-#include <QTimer>
 #include "DjEngine.h"
 #include "TrackData.h"
 
@@ -25,6 +24,10 @@ public:
 
     Q_INVOKABLE void zoomIn();
     Q_INVOKABLE void zoomOut();
+    // Called by the QML FrameAnimation every VSync frame to request a repaint.
+    // When isPlaying == false the FrameAnimation stops, so this is never called
+    // unnecessarily — exactly what we want for instant-freeze on pause.
+    Q_INVOKABLE void requestUpdate() { update(); }
 
 signals:
     void engineChanged();
@@ -36,18 +39,12 @@ protected:
 private slots:
     void onTrackLoaded();
     void onDataUpdated();
-    void onProgressChanged();
 
 private:
     DjEngine* m_engine = nullptr;
     bool m_forceUpdate = false;
 
-    // Continuous render timer: fires regardless of playback state.
-    // 8 ms interval (~120 FPS cap); getVisualPosition() interpolates sub-frame.
-    QTimer* m_renderTimer = nullptr;
-
     // Zoom level in pixels per data point.
-    // Higher = zoomed in (fewer seconds visible, more detail).
     float m_pixelsPerPoint = 3.0f;
 
     static constexpr float ZOOM_MIN    = 0.8f;

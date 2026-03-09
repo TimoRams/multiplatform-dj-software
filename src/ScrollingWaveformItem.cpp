@@ -7,13 +7,6 @@
 ScrollingWaveformItem::ScrollingWaveformItem(QQuickItem* parent) : QQuickItem(parent)
 {
     setFlag(ItemHasContents, true);
-
-    // The render timer fires continuously once a track is loaded,
-    // independent of playback state. update() is cheap when nothing changed.
-    m_renderTimer = new QTimer(this);
-    m_renderTimer->setInterval(8);
-    connect(m_renderTimer, &QTimer::timeout, this, [this]() { update(); });
-    // Timer starts in onTrackLoaded()
 }
 
 DjEngine* ScrollingWaveformItem::engine() const
@@ -31,9 +24,8 @@ void ScrollingWaveformItem::setEngine(DjEngine* engine)
     m_engine = engine;
     if (m_engine) {
         connect(m_engine, &DjEngine::trackLoaded, this, &ScrollingWaveformItem::onTrackLoaded);
-        connect(m_engine, &DjEngine::progressChanged, this, &ScrollingWaveformItem::onProgressChanged);
     } else {
-        m_renderTimer->stop();
+        // nothing to stop — FrameAnimation in QML will have stopped already
     }
     emit engineChanged();
     m_forceUpdate = true;
@@ -67,7 +59,6 @@ void ScrollingWaveformItem::onTrackLoaded()
         connect(m_engine->getTrackData(), &TrackData::dataCleared, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
         connect(m_engine->getTrackData(), &TrackData::bpmAnalyzed, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
     }
-    m_renderTimer->start();
     m_forceUpdate = true;
     update();
 }
@@ -76,11 +67,6 @@ void ScrollingWaveformItem::onDataUpdated()
 {
     m_forceUpdate = true;
     update();
-}
-
-void ScrollingWaveformItem::onProgressChanged()
-{
-    // The render timer calls update() on its own; nothing needed here.
 }
 
 QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
@@ -98,11 +84,11 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     }
 
     // Scene graph node order (back to front):
-    //   0: lowPeakNode - blue halo    (bass, base layer)
-    //   1: lowRmsNode  - bright blue body (bass)
-    //   2: midNode     - orange strip (mids)
-    //   3: highNode    - white strip  (highs)
-    //   4: beatNode    - beat grid lines (on top)
+    //   0: lowNode    - dark blue     (sub-bass / kick,    LP @ 110 Hz)
+    //   1: lowMidNode - gold/ocker    (bass body / warmth, BP 150–160 Hz)
+    //   2: midNode    - orange/red    (snare / vocals,     BP 180–800 Hz)
+    //   3: highNode   - pure white    (hi-hat / perc,      BP@2750 + HP@19k)
+    //   4: beatNode   - beat grid lines (on top)
     QSGNode* rootNode = oldNode;
     if (!rootNode) {
         rootNode = new QSGNode();
@@ -119,8 +105,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             return node;
         };
 
-        makeStrip(rootNode); // 0: lowPeak
-        makeStrip(rootNode); // 1: lowRms
+        makeStrip(rootNode); // 0: low
+        makeStrip(rootNode); // 1: lowMid
         makeStrip(rootNode); // 2: mid
         makeStrip(rootNode); // 3: high
 
@@ -136,31 +122,28 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         rootNode->appendChildNode(beatNode);
     }
 
-    auto* lowPeakNode = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(0));
-    auto* lowRmsNode  = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(1));
-    auto* midNode     = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(2));
-    auto* highNode    = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(3));
-    auto* beatNode    = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(4));
+    auto* lowNode    = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(0));
+    auto* lowMidNode = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(1));
+    auto* midNode    = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(2));
+    auto* highNode   = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(3));
+    auto* beatNode   = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(4));
 
     int wInt = static_cast<int>(width());
     if (wInt <= 0) return rootNode;
 
-    lowPeakNode->geometry()->allocate(wInt * 2);
-    lowRmsNode ->geometry()->allocate(wInt * 2);
-    midNode    ->geometry()->allocate(wInt * 2);
-    highNode   ->geometry()->allocate(wInt * 2);
+    lowNode   ->geometry()->allocate(wInt * 2);
+    lowMidNode->geometry()->allocate(wInt * 2);
+    midNode   ->geometry()->allocate(wInt * 2);
+    highNode  ->geometry()->allocate(wInt * 2);
 
-    auto* lowPeakV = lowPeakNode->geometry()->vertexDataAsColoredPoint2D();
-    auto* lowRmsV  = lowRmsNode ->geometry()->vertexDataAsColoredPoint2D();
-    auto* midV     = midNode    ->geometry()->vertexDataAsColoredPoint2D();
-    auto* highV    = highNode   ->geometry()->vertexDataAsColoredPoint2D();
+    auto* lowV    = lowNode   ->geometry()->vertexDataAsColoredPoint2D();
+    auto* lowMidV = lowMidNode->geometry()->vertexDataAsColoredPoint2D();
+    auto* midV    = midNode   ->geometry()->vertexDataAsColoredPoint2D();
+    auto* highV   = highNode  ->geometry()->vertexDataAsColoredPoint2D();
 
     const float w             = static_cast<float>(wInt);
     const float midY          = static_cast<float>(height()) / 2.0f;
     const float pointsPerSec  = 150.0f;
-    // Tempo-compensated zoom: when playing faster (+tempo), the waveform is
-    // compressed so beats stay the same visual distance apart (beat-matching).
-    // When slowing down (-tempo), it stretches.  Formula: ppp / tempoRatio.
     const double tempoRatio   = m_engine->getTempoRatio();
     const float pixelsPerPoint = static_cast<float>(m_pixelsPerPoint / tempoRatio);
     const float centerIndexReal = m_engine->getVisualPosition() * pointsPerSec;
@@ -179,13 +162,9 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         return allData[idx];
     };
 
-    // Step 1: Catmull-Rom interpolation per output pixel.
+    // Catmull-Rom interpolation per output pixel (4 bands).
     struct ScrollPixel {
-        float lowPeak  = 0.0f, lowRms   = 0.0f;
-        float midPeak  = 0.0f, midRms   = 0.0f;
-        float highPeak = 0.0f, highRms  = 0.0f;
-        float transientDelta = 0.0f;
-        float lowEnv   = 0.0f, midEnv   = 0.0f, highEnv = 0.0f;
+        float low = 0.0f, lowMid = 0.0f, mid = 0.0f, high = 0.0f;
     };
     std::vector<ScrollPixel> pixels(wInt);
 
@@ -199,89 +178,69 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         const auto& d2 = getD(i0+2);
         const auto& d3 = getD(i0+3);
 
-        pixels[x].lowPeak  = catmull(d0.lowPeak,  d1.lowPeak,  d2.lowPeak,  d3.lowPeak,  t);
-        pixels[x].lowRms   = catmull(d0.lowRms,   d1.lowRms,   d2.lowRms,   d3.lowRms,   t);
-        pixels[x].midPeak  = catmull(d0.midPeak,  d1.midPeak,  d2.midPeak,  d3.midPeak,  t);
-        pixels[x].midRms   = catmull(d0.midRms,   d1.midRms,   d2.midRms,   d3.midRms,   t);
-        pixels[x].highPeak = catmull(d0.highPeak, d1.highPeak, d2.highPeak, d3.highPeak, t);
-        pixels[x].highRms  = catmull(d0.highRms,  d1.highRms,  d2.highRms,  d3.highRms,  t);
-        pixels[x].transientDelta = catmull(d0.transientDelta, d1.transientDelta,
-                                           d2.transientDelta, d3.transientDelta, t);
-        pixels[x].lowEnv   = catmull(d0.lowEnv,   d1.lowEnv,   d2.lowEnv,   d3.lowEnv,   t);
-        pixels[x].midEnv   = catmull(d0.midEnv,   d1.midEnv,   d2.midEnv,   d3.midEnv,   t);
-        pixels[x].highEnv  = catmull(d0.highEnv,  d1.highEnv,  d2.highEnv,  d3.highEnv,  t);
+        pixels[x].low    = catmull(d0.low,    d1.low,    d2.low,    d3.low,    t);
+        pixels[x].lowMid = catmull(d0.lowMid, d1.lowMid, d2.lowMid, d3.lowMid, t);
+        pixels[x].mid    = catmull(d0.mid,    d1.mid,    d2.mid,    d3.mid,    t);
+        pixels[x].high   = catmull(d0.high,   d1.high,   d2.high,   d3.high,   t);
     }
 
-    // Step 2: local normalisation (sliding max window over lowPeak).
-    const int localWin = std::max(30, wInt / 12);
-    std::vector<float> localMax(wInt, 0.001f);
+    // Draw 4 STACKED layers (back to front).
+    // Each band adds its height ON TOP of the previous one, so all 4 colors
+    // are visible as distinct stripes (like Rekordbox), not hidden behind
+    // the largest layer.
+    //
+    //   totalH = low + lowMid + mid + high   (clamped to midY)
+    //
+    //   Layer 0 (outermost): LOW  — dark blue — from midY±totalH to midY±(totalH-low)
+    //   Layer 1:             LOWMID — gold     — from midY±(lm+mid+high) to midY±(mid+high)
+    //   Layer 2:             MID  — orange     — from midY±(mid+high) to midY±high
+    //   Layer 3 (innermost): HIGH — white      — from midY±high to midY
     for (int x = 0; x < wInt; ++x) {
-        float lm = 0.001f;
-        for (int j = std::max(0, x - localWin); j <= std::min(wInt-1, x + localWin); ++j)
-            if (pixels[j].lowPeak > lm) lm = pixels[j].lowPeak;
-        localMax[x] = lm;
-    }
-
-    float globalMax = m_engine->getTrackData()->getGlobalMaxPeak();
-    if (globalMax < 0.001f) globalMax = 0.001f;
-
-    // Step 3: draw 4 strips per pixel with Rekordbox-style envelope heights.
-    for (int x = 0; x < wInt; ++x) {
-        // Mixed global (25%) + local (75%) reference for beat contrast while scrolling.
-        float normRef = globalMax * 0.25f + localMax[x] * 0.75f;
-        if (normRef < 0.001f) normRef = 0.001f;
-
-        // Normalise + sqrt compression
-        auto norm = [&](float v) {
-            return std::sqrt(std::min(1.0f, v / normRef));
-        };
-
-        // Rekordbox-style: envelope = primary bar body, peak = transient spike tip.
-        // The envelope already has right-falling triangle shape from the analyzer.
-        float lowEnvN   = norm(pixels[x].lowEnv);
-        float midEnvN   = norm(pixels[x].midEnv);
-        float highEnvN  = norm(pixels[x].highEnv);
-        float lowPeakN  = norm(pixels[x].lowPeak);   // spike tip above the envelope
-
-        // --- Transient width boost ---
-        float td = pixels[x].transientDelta / normRef;
-        float widthMult = 1.0f + td * 3.0f;
-        widthMult = std::min(widthMult, 1.8f);
-
-        // Primary heights from envelope, not raw peak (gives the triangle look).
-        float lowEnvY  = std::min(lowEnvN  * midY * widthMult, midY);
-        float lowPeakY = std::min(lowPeakN * midY * widthMult, midY); // spike extends further
-        float midY_    = midEnvN  * midY;
-        float highY_   = highEnvN * midY;
-
-        // Transient-driven alpha boost for bass layers
-        uchar bassHaloAlpha = static_cast<uchar>(std::min(255.0f, 120.0f + td * 400.0f));
-        uchar bassCoreAlpha = static_cast<uchar>(std::min(255.0f, 220.0f + td * 100.0f));
-
-        int vIdx = x * 2;
         const float fx = static_cast<float>(x);
+        const int vIdx = x * 2;
 
-        // Layer 0: LOW PEAK spike - slightly lighter blue, extends above envelope
-        lowPeakV[vIdx  ].set(fx, midY - lowPeakY, 50, 100, 255, bassHaloAlpha);
-        lowPeakV[vIdx+1].set(fx, midY + lowPeakY, 50, 100, 255, bassHaloAlpha);
+        // Raw band heights (each 0..1 * midY)
+        float hLow    = pixels[x].low    * midY;
+        float hLowMid = pixels[x].lowMid * midY;
+        float hMid    = pixels[x].mid    * midY;
+        float hHigh   = pixels[x].high   * midY;
 
-        // Layer 1: LOW ENV body - solid bright blue, the main fat bass block
-        lowRmsV[vIdx  ].set(fx, midY - lowEnvY, 60, 150, 255, bassCoreAlpha);
-        lowRmsV[vIdx+1].set(fx, midY + lowEnvY, 60, 150, 255, bassCoreAlpha);
+        // Stack from inside out: high is innermost, low is outermost
+        float stackHigh   = hHigh;
+        float stackMid    = hHigh + hMid;
+        float stackLowMid = hHigh + hMid + hLowMid;
+        float stackLow    = hHigh + hMid + hLowMid + hLow;
 
-        // Layer 2: MID ENV - amber/orange spikes (sharp, 25 ms decay)
-        midV[vIdx  ].set(fx, midY - midY_, 255, 140, 0, 200);
-        midV[vIdx+1].set(fx, midY + midY_, 255, 140, 0, 200);
+        // Clamp total to available half-height
+        if (stackLow > midY) {
+            float scale = midY / stackLow;
+            stackHigh   *= scale;
+            stackMid    *= scale;
+            stackLowMid *= scale;
+            stackLow     = midY;
+        }
 
-        // Layer 3: HIGH ENV - white needles on top (25 ms decay, always on top)
-        highV[vIdx  ].set(fx, midY - highY_, 240, 240, 255, 220);
-        highV[vIdx+1].set(fx, midY + highY_, 240, 240, 255, 220);
+        // Layer 0 (background): LOW — dark blue — outermost band
+        lowV[vIdx  ].set(fx, midY - stackLow,  0, 0, 255, 220);
+        lowV[vIdx+1].set(fx, midY + stackLow,  0, 0, 255, 220);
+
+        // Layer 1: LOWMID — gold/ocker — second band from outside
+        lowMidV[vIdx  ].set(fx, midY - stackLowMid, 255, 170, 0, 200);
+        lowMidV[vIdx+1].set(fx, midY + stackLowMid, 255, 170, 0, 200);
+
+        // Layer 2: MID — orange/red — second band from inside
+        midV[vIdx  ].set(fx, midY - stackMid, 255, 68, 0, 200);
+        midV[vIdx+1].set(fx, midY + stackMid, 255, 68, 0, 200);
+
+        // Layer 3 (foreground): HIGH — pure white — innermost band
+        highV[vIdx  ].set(fx, midY - stackHigh, 255, 255, 255, 220);
+        highV[vIdx+1].set(fx, midY + stackHigh, 255, 255, 255, 220);
     }
 
-    lowPeakNode->markDirty(QSGNode::DirtyGeometry);
-    lowRmsNode ->markDirty(QSGNode::DirtyGeometry);
-    midNode    ->markDirty(QSGNode::DirtyGeometry);
-    highNode   ->markDirty(QSGNode::DirtyGeometry);
+    lowNode   ->markDirty(QSGNode::DirtyGeometry);
+    lowMidNode->markDirty(QSGNode::DirtyGeometry);
+    midNode   ->markDirty(QSGNode::DirtyGeometry);
+    highNode  ->markDirty(QSGNode::DirtyGeometry);
 
     // Beatgrid rendering.
     QSGGeometry* beatGeo = beatNode->geometry();

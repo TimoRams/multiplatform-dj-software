@@ -6,6 +6,7 @@
 #include <QVector>
 #include <QElapsedTimer>
 #include <atomic>
+#include <cstdint>
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 
@@ -51,6 +52,9 @@ public:
     float getPosition() const;
     // Latency-compensated position in seconds, used by the waveform renderer.
     float getVisualPosition() const;
+    // Lock-free atomic read of the playhead position (seconds).
+    // Called from QML FrameAnimation every VSync frame — must be wait-free.
+    Q_INVOKABLE double getPlayheadPositionAtomic() const;
     bool isPlaying() const;
     TrackData* getTrackData() const;
 
@@ -166,4 +170,8 @@ private:
     double         m_snapPosition    = 0.0;
     QElapsedTimer  m_snapClock;
     bool           m_snapValid       = false;
+
+    // Atomic playhead position (seconds). Written on every onTimer() tick,
+    // read lock-free by getPlayheadPositionAtomic() from the QML FrameAnimation.
+    std::atomic<double> m_atomicPlayheadPos{0.0};
 };

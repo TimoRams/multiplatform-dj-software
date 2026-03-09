@@ -15,38 +15,34 @@ class TrackData : public QObject
     Q_PROPERTY(bool   isKeyAnalyzed READ isKeyAnalyzed    NOTIFY keyAnalyzed)
 
 public:
-    // Per-block bin (≈ samplesPerBin samples): Peak + RMS per frequency band.
+    // Per-block bin (≈ samplesPerBin samples): envelope per frequency band.
     //
-    //   Peak = absolute maximum of the rectified signal in the block (transients)
-    //   RMS  = root mean square over the block (sustained energy / body)
+    // Four bands from a parallel filterbank (Rekordbox-style, overlapping slopes):
+    //   low     (LP @ 110 Hz, 6 dB/oct)         kick / subbass      → dark blue
+    //   lowMid  (BP 150–160 Hz, 12+6 dB/oct)    bass body / warmth  → gold
+    //   mid     (BP 180–800 Hz, 12+6 dB/oct)    snare, vocals       → orange
+    //   high    (BP@2750 + HP@19kHz)             hi-hat, percussion  → white
     //
-    // Three bands from a phase-compensated LR4 crossover:
-    //   low  (<150 Hz)       kick / subbass   — allpass-compensated at 2500 Hz
-    //   mid  (150–2500 Hz)   snare, vocals, chords
-    //   high (>2500 Hz)      hi-hats, cymbals, air
-    //
-    // All values are pre-normalised per-band and shaped with pow() contrast.
+    // All values are globally normalised per-band and shaped with pow() contrast.
     // The analyzer operates in two passes:
-    //   Pass 1 (live preview): running-max normalisation, emits chunks progressively.
-    //   Pass 2 (final polish): true global-max normalisation, atomically replaces data.
-    //
-    // transientDelta = fast_peak_envelope − slow_rms_envelope  (on LOW band).
-    // Positive spikes indicate sharp drum hits; used by the renderer to
-    // visually widen and brighten bass transients (Rekordbox-style punch).
+    //   Pass 1 (raw analysis):  collects raw envelope values, tracks global maxima.
+    //   Pass 2 (final output):  normalises against true global max, applies pow()
+    //                           contrast + UI gain, atomically replaces data.
     struct WaveformBin {
+        float low     = 0.0f;   // sub-bass / kick
+        float lowMid  = 0.0f;   // bass body / warmth
+        float mid     = 0.0f;   // snare / vocals
+        float high    = 0.0f;   // hi-hat / percussion
+
+        // Legacy aliases so existing code compiles during transition.
+        // TODO: remove once all renderers are fully migrated to 4-band.
         float lowPeak       = 0.0f;
         float lowRms        = 0.0f;
         float midPeak       = 0.0f;
         float midRms        = 0.0f;
         float highPeak      = 0.0f;
         float highRms       = 0.0f;
-        float transientDelta = 0.0f;  // crest-factor spike for bass transients
-        // Triangle envelope: instant-attack, asymmetric decay.
-        // The renderer draws these as the primary bar height — this gives the
-        // characteristic "right-falling triangle" shape on every transient.
-        //   lowEnv:  decay ~80 ms  → wide, fat bass blocks
-        //   midEnv:  decay ~25 ms  → sharp snare spikes
-        //   highEnv: decay ~25 ms  → tiny hihat needles
+        float transientDelta = 0.0f;
         float lowEnv        = 0.0f;
         float midEnv        = 0.0f;
         float highEnv       = 0.0f;
