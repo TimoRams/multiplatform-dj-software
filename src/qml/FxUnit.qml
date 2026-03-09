@@ -131,7 +131,25 @@ Rectangle {
         // ── Effect selector ──────────────────────────────────────────────────
         ComboBox {
             id: effectCombo
-            model: ["---", "Echo", "Reverb", "Flanger", "Filter", "Phaser", "Bitcrusher", "Delay"]
+            model: [
+                "---",
+                "Echo",
+                "Low Cut Echo",
+                "MT Delay",
+                "Reverb",
+                "Spiral",
+                "Flanger",
+                "Phaser",
+                "Trans",
+                "Enigma Jet",
+                "Bitcrusher",
+                "Pitch Shifter",
+                "Stretch",
+                "Slip Roll",
+                "Roll",
+                "Nobius",
+                "Mobius"
+            ]
             Layout.fillWidth: true
             Layout.preferredHeight: 24
             Layout.alignment: Qt.AlignVCenter

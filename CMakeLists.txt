@@ -36,18 +36,18 @@ qt_add_qml_module(${PROJECT_NAME}
     URI DJSoftware
     VERSION 1.0
     QML_FILES
-        src/main.qml
-        src/TopHeader.qml
-        src/EnlargedWaveform.qml
-        src/OverallWaveform.qml
-        src/DeckControl.qml
-        src/TrackInfoDisplay.qml
-        src/Library.qml
-        src/PerformancePads.qml
-        src/MixerSection.qml
-        src/SettingsWindow.qml
-        src/FxUnit.qml
-        src/FxBar.qml
+        src/qml/main.qml
+        src/qml/TopHeader.qml
+        src/qml/EnlargedWaveform.qml
+        src/qml/OverallWaveform.qml
+        src/qml/DeckControl.qml
+        src/qml/TrackInfoDisplay.qml
+        src/qml/Library.qml
+        src/qml/PerformancePads.qml
+        src/qml/MixerSection.qml
+        src/qml/SettingsWindow.qml
+        src/qml/FxUnit.qml
+        src/qml/FxBar.qml
 )
 
 target_sources(${PROJECT_NAME} PRIVATE
