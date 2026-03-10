@@ -45,9 +45,9 @@ private:
     bool m_forceUpdate = false;
 
     // Zoom level in pixels per data point.
-    float m_pixelsPerPoint = 3.0f;
+    float m_pixelsPerPoint = 1.5f;
 
-    static constexpr float ZOOM_MIN    = 0.8f;
-    static constexpr float ZOOM_MAX    = 12.0f;
+    static constexpr float ZOOM_MIN    = 0.35f;  // matches zoomBase * 1.3^-5
+    static constexpr float ZOOM_MAX    = 11.0f;  // matches zoomBase * 1.3^7
     static constexpr float ZOOM_FACTOR = 1.3f;
 };

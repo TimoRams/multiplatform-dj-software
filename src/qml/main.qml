@@ -26,29 +26,33 @@ ApplicationWindow {
     }
 
     // Globaler Waveform-Zoom (beide Decks synchron, wie in Serato/Rekordbox)
-    property real waveformZoom: 3.0
-    readonly property real zoomMin: 0.8
-    readonly property real zoomMax: 12.0
+    // Zoom wird als diskreter Schrittzähler gespeichert, damit Reinzoomen und
+    // Rauszoomen sich exakt aufheben (kein Float-Rundungsfehler beim Klemmen).
+    readonly property real zoomBase:   1.5    // pixelsPerPoint bei step=0 (~8.5s @ 1920px)
     readonly property real zoomFactor: 1.3
+    readonly property int  zoomStepMin: -5    // max. rauszoomen  → 1.5/1.3^5 ≈ 0.38 ppp
+    readonly property int  zoomStepMax:  7    // max. reinzoomen  → 1.5*1.3^7 ≈ 10.1 ppp
+    property int  waveformZoomStep: 0
+    readonly property real waveformZoom: zoomBase * Math.pow(zoomFactor, waveformZoomStep)
 
     // Ctrl+ = Reinzoomen (mehr Detail, weniger Sekunden sichtbar)
     Shortcut {
         sequence: "Ctrl+="
         onActivated: {
-            window.waveformZoom = Math.min(window.zoomMax, window.waveformZoom * window.zoomFactor)
+            window.waveformZoomStep = Math.min(window.zoomStepMax, window.waveformZoomStep + 1)
         }
     }
     Shortcut {
         sequence: "Ctrl++"
         onActivated: {
-            window.waveformZoom = Math.min(window.zoomMax, window.waveformZoom * window.zoomFactor)
+            window.waveformZoomStep = Math.min(window.zoomStepMax, window.waveformZoomStep + 1)
         }
     }
     // Ctrl- = Rauszoomen (weniger Detail, mehr Sekunden sichtbar)
     Shortcut {
         sequence: "Ctrl+-"
         onActivated: {
-            window.waveformZoom = Math.max(window.zoomMin, window.waveformZoom / window.zoomFactor)
+            window.waveformZoomStep = Math.max(window.zoomStepMin, window.waveformZoomStep - 1)
         }
     }
 

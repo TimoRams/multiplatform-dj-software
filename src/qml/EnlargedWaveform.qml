@@ -9,7 +9,7 @@ Item {
     property color backgroundColor: "#1e1e1e"
     
     // Zoom controlled externally (main.qml) so both decks zoom in sync.
-    property real waveformZoom: 3.0
+    property real waveformZoom: 1.5
 
     Layout.fillWidth: true
     Layout.fillHeight: true
