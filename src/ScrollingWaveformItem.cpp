@@ -2,7 +2,9 @@
 #include <QDebug>
 #include <QSGGeometry>
 #include <QSGVertexColorMaterial>
+#include <algorithm>
 #include <cmath>
+#include <vector>
 
 ScrollingWaveformItem::ScrollingWaveformItem(QQuickItem* parent) : QQuickItem(parent)
 {
@@ -85,10 +87,11 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
 
     // Scene graph node order (back to front):
     //   0: lowNode    - dark blue     (sub-bass / kick,    LP @ 110 Hz)
-    //   1: lowMidNode - gold/ocker    (bass body / warmth, BP 150–160 Hz)
-    //   2: midNode    - orange/red    (snare / vocals,     BP 180–800 Hz)
-    //   3: highNode   - pure white    (hi-hat / perc,      BP@2750 + HP@19k)
-    //   4: beatNode   - beat grid lines (on top)
+    //   1: lowMidNode  - gold/ocker    (bass body / warmth, BP 150–160 Hz)
+    //   2: midNode     - orange/red    (snare / vocals,     BP 180–800 Hz)
+    //   3: highNode    - pure white    (hi-hat / perc,      BP@2750 + HP@19k)
+    //   4: beatNode    - regular beat lines (white, thin)
+    //   5: downbeatNode- downbeat lines (red) + triangle markers
     QSGNode* rootNode = oldNode;
     if (!rootNode) {
         rootNode = new QSGNode();
@@ -105,28 +108,48 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             return node;
         };
 
-        makeStrip(rootNode); // 0: low
-        makeStrip(rootNode); // 1: lowMid
-        makeStrip(rootNode); // 2: mid
-        makeStrip(rootNode); // 3: high
+        auto makeLinesNode = [](QSGNode* parent) -> QSGGeometryNode* {
+            auto* node = new QSGGeometryNode();
+            auto* geo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
+            geo->setDrawingMode(QSGGeometry::DrawLines);
+            geo->setLineWidth(1.0f);
+            node->setGeometry(geo);
+            node->setFlag(QSGNode::OwnsGeometry);
+            node->setMaterial(new QSGVertexColorMaterial());
+            node->setFlag(QSGNode::OwnsMaterial);
+            parent->appendChildNode(node);
+            return node;
+        };
 
-        // 4: beatNode (DrawLines)
-        auto* beatNode = new QSGGeometryNode();
-        auto* beatGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
-        beatGeo->setDrawingMode(QSGGeometry::DrawLines);
-        beatGeo->setLineWidth(1.0f);
-        beatNode->setGeometry(beatGeo);
-        beatNode->setFlag(QSGNode::OwnsGeometry);
-        beatNode->setMaterial(new QSGVertexColorMaterial());
-        beatNode->setFlag(QSGNode::OwnsMaterial);
-        rootNode->appendChildNode(beatNode);
+        makeStrip(rootNode);     // 0: low
+        makeStrip(rootNode);     // 1: lowMid
+        makeStrip(rootNode);     // 2: mid
+        makeStrip(rootNode);     // 3: high
+        makeLinesNode(rootNode); // 4: regular beat lines (DrawLines, white)
+        makeLinesNode(rootNode); // 5: downbeat lines + triangle markers (DrawLines red + DrawTriangles)
+        // Note: node 5 is reused for BOTH the red vertical line AND the triangle.
+        // We allocate two separate geometry nodes inside it: the child QSGNode
+        // approach would require more nodes, so instead we use a shared Lines node
+        // for the line and a sibling TrianglesNode appended directly to rootNode.
+
+        // 6: downbeat triangle markers (DrawTriangles, red filled)
+        auto* triNode = new QSGGeometryNode();
+        auto* triGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
+        triGeo->setDrawingMode(QSGGeometry::DrawTriangles);
+        triNode->setGeometry(triGeo);
+        triNode->setFlag(QSGNode::OwnsGeometry);
+        triNode->setMaterial(new QSGVertexColorMaterial());
+        triNode->setFlag(QSGNode::OwnsMaterial);
+        rootNode->appendChildNode(triNode);
     }
 
-    auto* lowNode    = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(0));
-    auto* lowMidNode = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(1));
-    auto* midNode    = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(2));
-    auto* highNode   = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(3));
-    auto* beatNode   = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(4));
+    auto* lowNode      = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(0));
+    auto* lowMidNode   = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(1));
+    auto* midNode      = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(2));
+    auto* highNode     = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(3));
+    auto* beatNode     = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(4));
+    auto* downbeatNode = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(5));
+    auto* triNode      = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(6));
 
     int wInt = static_cast<int>(width());
     if (wInt <= 0) return rootNode;
@@ -242,63 +265,128 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     midNode   ->markDirty(QSGNode::DirtyGeometry);
     highNode  ->markDirty(QSGNode::DirtyGeometry);
 
-    // Beatgrid rendering.
-    QSGGeometry* beatGeo = beatNode->geometry();
+    // ── Beat-grid rendering (Rekordbox style) ────────────────────────────────
+    // Node 4: regular beat lines     — white, 1px, alpha 110
+    // Node 5: downbeat lines         — red (#e6, 0, 0), 1px, alpha 220
+    // Node 6: downbeat triangles     — red filled, pointing down from top edge
+    QSGGeometry* beatGeo     = beatNode    ->geometry();
+    QSGGeometry* downGeo     = downbeatNode->geometry();
+    QSGGeometry* triGeo2     = triNode     ->geometry();
     TrackData* td = m_engine->getTrackData();
     if (td->isBpmAnalyzed()) {
-        double bpm            = td->getBpm();
-        qint64 firstBeatSamp  = td->getFirstBeatSample();
-        double sr             = td->getSampleRate();
-        const float pps       = 150.0f; // must match the analyzer's pointsPerSecond
+        const double sr  = td->getSampleRate();
+        const float  pps = 150.0f;
 
-        double samplesPerBeat = sr * (60.0 / bpm);
-        double pointsPerBeat  = samplesPerBeat / (sr / pps);
+        // Prefer elastic BeatMarker grid; fall back to rigid grid.
+        std::vector<TrackData::BeatMarker> beatGrid = td->getBeatGrid();
+        const bool hasElasticGrid = !beatGrid.empty();
 
-        double firstBeatPoint = static_cast<double>(firstBeatSamp) / (sr / pps);
+        const double ppp          = static_cast<double>(pixelsPerPoint);
+        const double visiblePoints = w / ppp;
+        const double leftSec       = (centerIndexReal - visiblePoints / 2.0) / pps;
+        const double rightSec      = (centerIndexReal + visiblePoints / 2.0) / pps;
 
-        double visiblePoints  = w / pixelsPerPoint;
-        double leftPoint      = centerIndexReal - visiblePoints / 2.0;
-        double rightPoint     = centerIndexReal + visiblePoints / 2.0;
+        // Collect visible markers, separated into regular and downbeat lists.
+        struct VisibleBeat { float x; bool isDownbeat; int barNumber; };
+        std::vector<VisibleBeat> visible;
+        visible.reserve(256);
 
-        // First and last visible beat index.
-        int beatStart = static_cast<int>(std::floor((leftPoint - firstBeatPoint) / pointsPerBeat));
-        int beatEnd   = static_cast<int>(std::ceil((rightPoint - firstBeatPoint) / pointsPerBeat));
-        int visibleBeats = beatEnd - beatStart + 1;
-        if (visibleBeats < 0) visibleBeats = 0;
-        if (visibleBeats > 2000) visibleBeats = 2000; // Sicherheit
-
-        // 2 Vertices pro Beat-Linie (oben + unten)
-        beatGeo->allocate(visibleBeats * 2);
-        QSGGeometry::ColoredPoint2D* bVerts = beatGeo->vertexDataAsColoredPoint2D();
-        int bIdx = 0;
-
-        for (int b = beatStart; b <= beatEnd; ++b) {
-            double beatPoint = firstBeatPoint + b * pointsPerBeat;
-            // Pixel-X dieser Beat-Linie
-            float beatX = static_cast<float>(
-                w / 2.0 + (beatPoint - centerIndexReal) * pixelsPerPoint
-            );
-            if (beatX < 0.0f || beatX > w) continue;
-
-            // Downbeats (every 4th beat) are rendered brighter.
-            bool isDownbeat = ((b % 4) == 0);
-            uchar alpha = isDownbeat ? 180 : 100;
-            uchar brightness = isDownbeat ? 255 : 200;
-
-            bVerts[bIdx].set(beatX, 0.0f, brightness, brightness, brightness, alpha);
-            bVerts[bIdx+1].set(beatX, height(), brightness, brightness, brightness, alpha);
-            bIdx += 2;
+        if (hasElasticGrid) {
+            // Binary-search: find first marker that could be visible.
+            auto cmp = [](const TrackData::BeatMarker& m, double t){
+                return m.positionSec < t; };
+            auto it = std::lower_bound(beatGrid.begin(), beatGrid.end(),
+                                       leftSec - 0.5, cmp);
+            for (; it != beatGrid.end() && it->positionSec <= rightSec + 0.5; ++it) {
+                double beatPoint = it->positionSec * pps;
+                float  bx = static_cast<float>(w / 2.0 + (beatPoint - centerIndexReal) * ppp);
+                if (bx >= 0.0f && bx <= w)
+                    visible.push_back({bx, it->isDownbeat, it->barNumber});
+            }
+        } else {
+            // Legacy rigid-grid fallback.
+            double bpm          = td->getBpm();
+            qint64 firstBeatSamp = td->getFirstBeatSample();
+            double firstBeatSec  = static_cast<double>(firstBeatSamp) / sr;
+            double beatPeriod    = 60.0 / bpm;
+            int beatStart = static_cast<int>(std::floor((leftSec  - firstBeatSec) / beatPeriod));
+            int beatEnd   = static_cast<int>(std::ceil ((rightSec - firstBeatSec) / beatPeriod));
+            beatStart = std::max(beatStart, -1);
+            beatEnd   = std::min(beatEnd,   100000);
+            for (int b = beatStart; b <= beatEnd; ++b) {
+                double beatSec  = firstBeatSec + b * beatPeriod;
+                double beatPoint = beatSec * pps;
+                float  bx = static_cast<float>(w / 2.0 + (beatPoint - centerIndexReal) * ppp);
+                if (bx >= 0.0f && bx <= w)
+                    visible.push_back({bx, (b % 4 == 0), b / 4 + 1});
+            }
         }
 
-        // Zero out unused vertex slots.
-        for (int i = bIdx; i < visibleBeats * 2; ++i)
-            bVerts[i].set(0, 0, 0, 0, 0, 0);
+        // Count regular vs downbeat lines for allocation.
+        int numRegular  = 0;
+        int numDownbeat = 0;
+        for (auto& v : visible) {
+            if (v.isDownbeat) ++numDownbeat; else ++numRegular;
+        }
+
+        // ── Node 4: regular beat lines (white, thin) ─────────────────────────
+        beatGeo->allocate(numRegular * 2);
+        {
+            auto* v = beatGeo->vertexDataAsColoredPoint2D();
+            int idx = 0;
+            for (auto& vb : visible) {
+                if (vb.isDownbeat) continue;
+                v[idx  ].set(vb.x, 0.0f,    200, 200, 200, 110);
+                v[idx+1].set(vb.x, height(), 200, 200, 200, 110);
+                idx += 2;
+            }
+        }
+
+        // ── Node 5: downbeat lines (red, full height) ─────────────────────────
+        downGeo->allocate(numDownbeat * 2);
+        {
+            auto* v = downGeo->vertexDataAsColoredPoint2D();
+            int idx = 0;
+            for (auto& vb : visible) {
+                if (!vb.isDownbeat) continue;
+                v[idx  ].set(vb.x, 0.0f,    230, 0, 0, 220);
+                v[idx+1].set(vb.x, height(), 230, 0, 0, 180);
+                idx += 2;
+            }
+        }
+
+        // ── Node 6: downbeat triangle markers (red filled, top of waveform) ──
+        // Each triangle: tip points down at y=10, base at y=0,
+        // centred on the downbeat x position, width=8px.
+        //
+        //    x-4      x      x+4
+        //     *-------*-------*   y = 0   (base)
+        //              *           y = 10  (tip)
+        //
+        const float triH = 10.0f;  // height of triangle in pixels
+        const float triW =  4.0f;  // half-width of triangle base
+        triGeo2->allocate(numDownbeat * 3);
+        {
+            auto* v = triGeo2->vertexDataAsColoredPoint2D();
+            int idx = 0;
+            for (auto& vb : visible) {
+                if (!vb.isDownbeat) continue;
+                v[idx  ].set(vb.x - triW, 0.0f, 230, 0, 0, 230); // top-left
+                v[idx+1].set(vb.x + triW, 0.0f, 230, 0, 0, 230); // top-right
+                v[idx+2].set(vb.x,        triH, 230, 0, 0, 200); // tip
+                idx += 3;
+            }
+        }
 
     } else {
-        beatGeo->allocate(0);
+        beatGeo ->allocate(0);
+        downGeo ->allocate(0);
+        triGeo2 ->allocate(0);
     }
 
-    beatNode->markDirty(QSGNode::DirtyGeometry);
+    beatNode    ->markDirty(QSGNode::DirtyGeometry);
+    downbeatNode->markDirty(QSGNode::DirtyGeometry);
+    triNode     ->markDirty(QSGNode::DirtyGeometry);
     
     return rootNode;
 }

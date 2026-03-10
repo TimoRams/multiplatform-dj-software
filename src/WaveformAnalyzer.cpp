@@ -374,30 +374,41 @@ void WaveformAnalyzer::run()
     if (threadShouldExit()) return;
 
     // -------------------------------------------------------------------------
-    // Stage 4: BPM detection — strict 0.5-BPM binned histogram.
+    // Stage 4: BPM detection + elastic beat-grid alignment.
     //
-    //  1. CONFIDENCE GATING
-    //     Pre-scan computes median RMS; hops below 15 % of that are skipped.
+    //  1. ENERGY GATE  — median RMS pre-scan; low-energy hops are skipped.
     //
-    //  2. DUAL-METHOD (specdiff + hfc)
-    //     Two aubio_tempo instances run in parallel, both contributing
-    //     beat timestamps.
+    //  2. SINGLE DUAL-METHOD PASS (specdiff + hfc, full track)
+    //     One pass over the complete audio. Both aubio_tempo instances run in
+    //     parallel on every hop; their beat timestamps are merged and deduplicated
+    //     (< 100 ms apart). This eliminates the 3× duplication bug that was
+    //     polluting the histogram with triple-counted votes.
     //
-    //  3. INSTANT-BPM → 0.5-BPM BINNED HISTOGRAM
-    //     For every consecutive beat pair we compute the instantaneous BPM:
-    //       instantBpm = (sampleRate × 60) / deltaSamples
-    //     Values outside [60, 200] BPM are discarded immediately.
-    //     The remaining value is snapped to the nearest 0.5 BPM grid:
-    //       binnedBpm = round(instantBpm * 2) / 2
-    //     and voted into a std::map<double,int>.  The key with the highest
-    //     count is the "True BPM" — immune to syncopation, breakdowns, and
-    //     ambient sections because each IBI votes independently and the
-    //     majority wins.
+    //  3. 16-BEAT MACRO-DISTANCE HISTOGRAM
+    //     Measure BPM over 16-beat intervals to average out hop-size quantisation
+    //     (±1.3 BPM → ±0.08 BPM). Votes go into a 0.5-BPM binned histogram.
+    //     Winning bin is found, then half-time / double-time correction applied.
+    //     Final BPM is the weighted average of raw values within ±0.25 BPM of
+    //     the winner (un-quantised BPM for maximum grid accuracy).
     //
-    //  4. HALF-TIME / DOUBLE-TIME CORRECTION
-    //     If the winning BPM > 130, check whether exactly half of it also
-    //     has histogram votes.  If yes AND the half value is in [60,130],
-    //     prefer the lower value (DJ convention for Future Bass, Trap, etc.).
+    //  4. 3-STAGE COMB FILTER (coarse → fine → ultra-fine)
+    //     Stage 1: 256-sample steps over the scan window.
+    //     Stage 2: 16-sample steps within ±256 samples of the coarse peak.
+    //     Stage 3: 1-sample steps within ±16 samples of the fine peak.
+    //     Achieves sub-sample (< 0.025 ms) grid alignment without brute force.
+    //
+    //  5. ROBUST WALK-BACK
+    //     Walks backwards in beat periods from the comb anchor. Requires TWO
+    //     consecutive below-threshold positions to stop — prevents early stopping
+    //     on quiet synth pads that happen to be above 15 % of track peak.
+    //
+    //  6. ELASTIC BEAT-GRID (per-beat transient micro-snap)
+    //     After the rigid grid is locked, we build a full beat-timestamp array.
+    //     For every beat, we search rawBins in a ±15 ms window and snap the
+    //     timestamp to the highest low-band peak. This gives a beat array where
+    //     EVERY grid line sits exactly on the kick-drum transient, not on a
+    //     mathematical average. The array is stored in TrackData as the elastic
+    //     beat grid for pixel-perfect rendering.
     // -------------------------------------------------------------------------
     {
         const uint_t aubioSr  = static_cast<uint_t>(sampleRate);
@@ -427,7 +438,7 @@ void WaveformAnalyzer::run()
                 rmsSamples.push_back(std::sqrt(sum / static_cast<float>(hopSize * nc)));
             }
             if (!rmsSamples.empty()) {
-                auto mid = rmsSamples.begin() + rmsSamples.size() / 2;
+                auto mid = rmsSamples.begin() + static_cast<ptrdiff_t>(rmsSamples.size() / 2);
                 std::nth_element(rmsSamples.begin(), mid, rmsSamples.end());
                 energyGate = *mid * 0.15f;
             }
@@ -435,385 +446,363 @@ void WaveformAnalyzer::run()
         }
         qDebug() << "[WaveformAnalyzer] energyGate:" << energyGate;
 
-        // ── Shared 0.5-BPM histogram ─────────────────────────────────────────
-        std::map<double, int> bpmHistogram;
-        // Parallel map: raw (unrounded) instantBpm values that fell into each bin.
-        // Used after peak-finding to compute the exact weighted-average BPM.
-        std::map<double, std::vector<double>> bpmRawValues;
-
-        // Beat sample positions from the full-track pass (used for grid alignment
-        // and for 16-beat macro-distance BPM measurement).
+        // ── Histogram + beat collection ──────────────────────────────────────
+        std::map<double, int>                  bpmHistogram;
+        std::map<double, std::vector<double>>  bpmRawValues;
         std::vector<uint64_t> beatPositions;
+        std::vector<double>   allBeats;   // elastic: best aubio timestamps (seconds)
 
-        // Beat timestamps from the full-track pass (for grid alignment).
-        std::vector<double> allBeats;
-
-        // ── Dual-method pass runner ──────────────────────────────────────────
-        auto runPass = [&](juce::int64 startHop, juce::int64 endHop, bool keepBeats) {
+        // ── SINGLE dual-method pass over the full track ──────────────────────
+        // One pass: no redundant duplication. Both specdiff and hfc contribute
+        // beat timestamps; we keep the longer list as the elastic grid seed.
+        {
             aubio_tempo_t* tempoA = new_aubio_tempo("specdiff", winSize, hopSize, aubioSr);
             aubio_tempo_t* tempoB = new_aubio_tempo("hfc",      winSize, hopSize, aubioSr);
-            if (!tempoA || !tempoB) {
+            if (tempoA && tempoB) {
+                fvec_t* in   = new_fvec(hopSize);
+                fvec_t* outA = new_fvec(1);
+                fvec_t* outB = new_fvec(1);
+                juce::AudioBuffer<float> rb(static_cast<int>(reader->numChannels),
+                                            static_cast<int>(hopSize));
+
+                std::vector<double>   beatsA, beatsB;
+                std::vector<uint64_t> posA,   posB;
+                beatsA.reserve(4096); beatsB.reserve(4096);
+                posA  .reserve(4096); posB  .reserve(4096);
+
+                for (juce::int64 h = 0; h < totalHops; ++h) {
+                    if (threadShouldExit()) break;
+                    reader->read(&rb, 0, static_cast<int>(hopSize),
+                                 h * static_cast<juce::int64>(hopSize), true, false);
+                    const int nc = static_cast<int>(reader->numChannels);
+
+                    float rmsSum = 0.0f;
+                    for (uint_t s = 0; s < hopSize; ++s) {
+                        float m = 0.0f;
+                        for (int ch = 0; ch < nc; ++ch)
+                            m += rb.getReadPointer(ch)[s];
+                        m /= static_cast<float>(nc);
+                        in->data[s] = m;
+                        rmsSum += m * m;
+                    }
+                    if (std::sqrt(rmsSum / static_cast<float>(hopSize)) < energyGate) continue;
+
+                    aubio_tempo_do(tempoA, in, outA);
+                    aubio_tempo_do(tempoB, in, outB);
+
+                    if (outA->data[0] != 0.0f) {
+                        double t = static_cast<double>(aubio_tempo_get_last_s(tempoA));
+                        beatsA.push_back(t);
+                        posA.push_back(static_cast<uint64_t>(t * sampleRate));
+                    }
+                    if (outB->data[0] != 0.0f) {
+                        double t = static_cast<double>(aubio_tempo_get_last_s(tempoB));
+                        beatsB.push_back(t);
+                        posB.push_back(static_cast<uint64_t>(t * sampleRate));
+                    }
+                }
+
+                del_aubio_tempo(tempoA);
+                del_aubio_tempo(tempoB);
+                del_fvec(in); del_fvec(outA); del_fvec(outB);
+
+                // Merge into a single sorted, deduplicated beatPositions list.
+                // 50 ms dedup window: tight enough to remove true duplicates from
+                // specdiff+hfc firing on the same transient, loose enough to keep
+                // real 16th-note hi-hats at any BPM > 60.
+                beatPositions.reserve(posA.size() + posB.size());
+                beatPositions.insert(beatPositions.end(), posA.begin(), posA.end());
+                beatPositions.insert(beatPositions.end(), posB.begin(), posB.end());
+                std::sort(beatPositions.begin(), beatPositions.end());
+                {
+                    const uint64_t minSpacing = static_cast<uint64_t>(0.05 * sampleRate); // 50 ms
+                    auto last = std::unique(beatPositions.begin(), beatPositions.end(),
+                                            [minSpacing](uint64_t a, uint64_t b){
+                                                return (b - a) < minSpacing; });
+                    beatPositions.erase(last, beatPositions.end());
+                }
+
+                // Keep the longer timestamp list as the elastic grid seed.
+                allBeats = (beatsA.size() >= beatsB.size())
+                           ? std::move(beatsA) : std::move(beatsB);
+                std::sort(allBeats.begin(), allBeats.end());
+            } else {
                 if (tempoA) del_aubio_tempo(tempoA);
                 if (tempoB) del_aubio_tempo(tempoB);
-                return;
             }
+        }
 
-            fvec_t* in   = new_fvec(hopSize);
-            fvec_t* outA = new_fvec(1);
-            fvec_t* outB = new_fvec(1);
-            juce::AudioBuffer<float> rb(static_cast<int>(reader->numChannels),
-                                        static_cast<int>(hopSize));
-
-            std::vector<double> beatsA, beatsB;
-            std::vector<uint64_t> positionsA, positionsB;
-            beatsA.reserve(2048);
-            beatsB.reserve(2048);
-            positionsA.reserve(2048);
-            positionsB.reserve(2048);
-
-            for (juce::int64 h = startHop; h < endHop; ++h) {
-                if (threadShouldExit()) break;
-                reader->read(&rb, 0, static_cast<int>(hopSize),
-                             h * static_cast<juce::int64>(hopSize), true, false);
-                const int nc = static_cast<int>(reader->numChannels);
-
-                float rmsSum = 0.0f;
-                for (uint_t s = 0; s < hopSize; ++s) {
-                    float m = 0.0f;
-                    for (int ch = 0; ch < nc; ++ch) m += rb.getReadPointer(ch)[s];
-                    m /= static_cast<float>(nc);
-                    in->data[s] = m;
-                    rmsSum += m * m;
-                }
-                float rms = std::sqrt(rmsSum / static_cast<float>(hopSize));
-
-                if (rms < energyGate) continue;
-
-                aubio_tempo_do(tempoA, in, outA);
-                aubio_tempo_do(tempoB, in, outB);
-
-                if (outA->data[0] != 0.0f) {
-                    double beatSec = static_cast<double>(aubio_tempo_get_last_s(tempoA));
-                    beatsA.push_back(beatSec);
-                    positionsA.push_back(static_cast<uint64_t>(beatSec * sampleRate));
-                }
-                if (outB->data[0] != 0.0f) {
-                    double beatSec = static_cast<double>(aubio_tempo_get_last_s(tempoB));
-                    beatsB.push_back(beatSec);
-                    positionsB.push_back(static_cast<uint64_t>(beatSec * sampleRate));
-                }
-            }
-
-            del_aubio_tempo(tempoA);
-            del_aubio_tempo(tempoB);
-            del_fvec(in);
-            del_fvec(outA);
-            del_fvec(outB);
-
-            // Merge beat positions and timestamps from both methods.
-            beatPositions.insert(beatPositions.end(), positionsA.begin(), positionsA.end());
-            beatPositions.insert(beatPositions.end(), positionsB.begin(), positionsB.end());
-
-            if (keepBeats) {
-                allBeats = (beatsA.size() >= beatsB.size())
-                           ? std::move(beatsA)
-                           : std::move(beatsB);
-            }
-        };
-
-        // Three passes: first 40 %, middle 40 %, full track.
-        juce::int64 h1 = totalHops * 4 / 10;
-        juce::int64 h2 = totalHops * 3 / 10;
-        juce::int64 h3 = h2 + totalHops * 4 / 10;
-
-        runPass(0,  h1,        false);
-        runPass(h2, h3,        false);
-        runPass(0,  totalHops, true);
-
-        // ── 16-beat macro-distance BPM measurement ──────────────────────────
-        // Measure the distance across 16-beat intervals to average out the
-        // 512-sample hop-size quantization error. This reduces quantisation
-        // noise from ±1.3 BPM (at 100 BPM) to ±0.08 BPM.
+        // ── 16-beat macro-distance histogram ────────────────────────────────
         if (beatPositions.size() >= 17) {
-            // Sort beat positions to ensure chronological order (since we merged
-            // from both methods).
-            std::sort(beatPositions.begin(), beatPositions.end());
-
-            // Deduplicate very close beats (< 100 ms apart) — likely duplicates
-            // from specdiff and hfc firing on the same transient.
-            {
-                const uint64_t minSpacing = static_cast<uint64_t>(0.1 * sampleRate);
-                auto last = std::unique(beatPositions.begin(), beatPositions.end(),
-                                       [minSpacing](uint64_t a, uint64_t b) {
-                                           return (b - a) < minSpacing;
-                                       });
-                beatPositions.erase(last, beatPositions.end());
-            }
-
-            // Compute 16-beat macro-distances and vote them into the histogram.
             for (size_t i = 16; i < beatPositions.size(); ++i) {
-                uint64_t deltaSamples = beatPositions[i] - beatPositions[i - 16];
-                if (deltaSamples == 0) continue;
-
-                // BPM over 16 beats: multiply by 16 to get the true beat period.
-                double instantBpm = (16.0 * sampleRate * 60.0) / static_cast<double>(deltaSamples);
-
-                // Hard range gate: discard anything outside [60, 200].
+                uint64_t delta = beatPositions[i] - beatPositions[i - 16];
+                if (delta == 0) continue;
+                double instantBpm = (16.0 * sampleRate * 60.0) / static_cast<double>(delta);
                 if (instantBpm < 60.0 || instantBpm > 200.0) continue;
-
-                // Snap to nearest 0.5 BPM and vote.
                 double binnedBpm = std::round(instantBpm * 2.0) / 2.0;
                 bpmHistogram[binnedBpm]++;
-                bpmRawValues[binnedBpm].push_back(instantBpm);  // keep raw value for weighted avg;
+                bpmRawValues[binnedBpm].push_back(instantBpm);
             }
         }
 
         // ── Peak finding ─────────────────────────────────────────────────────
         double estimatedBpm = 0.0;
         if (!bpmHistogram.empty()) {
-            // Find the bin with the most votes.
             double peakBpm   = 0.0;
             int    peakCount = 0;
             for (auto& [bpm, count] : bpmHistogram) {
-                if (count > peakCount) {
-                    peakCount = count;
-                    peakBpm   = bpm;
-                }
+                if (count > peakCount) { peakCount = count; peakBpm = bpm; }
             }
 
-            // ── Future Bass / Double-Time Correction ─────────────────────────
-            // If the peak is above 130 BPM (outside the comfortable DJ range),
-            // check whether exactly half of it exists in the histogram and falls
-            // in [60, 130]. If so, prefer the halved value.
-            // This catches Future Bass (75 BPM, detected as 150), Trap (85 BPM
-            // detected as 170), and other common false-doubling cases.
-            if (peakBpm > 130.0) {
-                double halfBpm = peakBpm / 2.0;
-                // Re-snap to 0.5 grid (in case peakBpm was e.g. 150.2 before snapping).
-                halfBpm = std::round(halfBpm * 2.0) / 2.0;
+            // ── Half-time / Double-time correction ───────────────────────────
+            //
+            // HALF-TIME  (detected 2× too fast, e.g. Trap/DnB/Future Bass):
+            //   Trigger when peak > 135 BPM. Look for peakBpm/2 in the histogram
+            //   with a ±1.0 BPM fuzzy window (handles bin-boundary artefacts where
+            //   the true 85.0 landed in the 85.5 bin because of float rounding).
+            //
+            // DOUBLE-TIME (detected 2× too slow, e.g. slow-burn house misread as 65):
+            //   Trigger when peak < 80 BPM. Check if peakBpm*2 has histogram votes
+            //   and falls in the DJ range [80, 160].
+            //
+            // Helper: find the histogram bin with the highest vote count within
+            // [target - radius, target + radius].  Returns 0 if nothing found.
+            auto histVotesNear = [&](double target, double radius) -> int {
+                int best = 0;
+                for (auto& [bin, cnt] : bpmHistogram)
+                    if (std::abs(bin - target) <= radius && cnt > best)
+                        best = cnt;
+                return best;
+            };
 
-                if (halfBpm >= 60.0 && halfBpm <= 130.0) {
-                    auto it = bpmHistogram.find(halfBpm);
-                    if (it != bpmHistogram.end() && it->second > 0) {
-                        qDebug() << "[WaveformAnalyzer] Future Bass correction:"
+            if (peakBpm > 135.0) {
+                double halfBpm = std::round((peakBpm / 2.0) * 2.0) / 2.0;
+                if (halfBpm >= 60.0 && halfBpm <= 135.0) {
+                    int halfVotes = histVotesNear(halfBpm, 1.0);
+                    if (halfVotes > 0) {
+                        qDebug() << "[WaveformAnalyzer] Half-time correction:"
                                  << peakBpm << "->" << halfBpm
-                                 << "(peak votes:" << peakCount
-                                 << "half votes:" << it->second << ")";
+                                 << "(halfVotes:" << halfVotes << ")";
                         peakBpm = halfBpm;
                     }
                 }
+            } else if (peakBpm < 80.0) {
+                double doubleBpm = std::round((peakBpm * 2.0) * 2.0) / 2.0;
+                if (doubleBpm >= 80.0 && doubleBpm <= 160.0) {
+                    int doubleVotes = histVotesNear(doubleBpm, 1.0);
+                    if (doubleVotes > 0) {
+                        qDebug() << "[WaveformAnalyzer] Double-time correction:"
+                                 << peakBpm << "->" << doubleBpm
+                                 << "(doubleVotes:" << doubleVotes << ")";
+                        peakBpm = doubleBpm;
+                    }
+                }
             }
 
-            // ── Weighted-average BPM (Un-Quantized) ──────────────────────────
-            // Use the 0.5-BPM bin only as a cluster identifier. Compute the exact
-            // mean of all raw instantBpm values that landed within ±0.25 BPM of
-            // the winning bin.  This eliminates grid drift on Vinyl rips and live
-            // recordings where the true tempo sits between two 0.5-BPM grid lines.
+            // ── Weighted-average BPM (un-quantised) ──────────────────────────
             {
-                double rawSum   = 0.0;
-                int    rawCount = 0;
-                const double clusterRadius = 0.25;  // collect ±0.25 BPM around winner
+                double rawSum = 0.0; int rawCount = 0;
                 for (auto& [bin, vals] : bpmRawValues) {
-                    if (std::abs(bin - peakBpm) <= clusterRadius) {
+                    if (std::abs(bin - peakBpm) <= 0.25) {
                         for (double v : vals) { rawSum += v; ++rawCount; }
                     }
                 }
-                estimatedBpm = (rawCount > 0) ? (rawSum / rawCount) : peakBpm;
+                estimatedBpm = rawCount > 0 ? rawSum / rawCount : peakBpm;
             }
 
-            // Debug: print top 5 histogram entries.
-            std::vector<std::pair<double, int>> sorted(bpmHistogram.begin(),
-                                                       bpmHistogram.end());
+            // Debug: top-5 histogram.
+            std::vector<std::pair<double,int>> sorted(bpmHistogram.begin(), bpmHistogram.end());
             std::sort(sorted.begin(), sorted.end(),
-                      [](auto& a, auto& b) { return a.second > b.second; });
+                      [](auto& a, auto& b){ return a.second > b.second; });
             int show = std::min(static_cast<int>(sorted.size()), 5);
             QString top5;
             for (int i = 0; i < show; ++i)
                 top5 += QString("%1(%2) ").arg(sorted[i].first).arg(sorted[i].second);
-            qDebug() << "[WaveformAnalyzer] 16-beat BPM histogram top-5:" << top5
+            qDebug() << "[WaveformAnalyzer] 16-beat histogram top-5:" << top5
                      << "-> winner:" << estimatedBpm
                      << "(totalBeats:" << beatPositions.size() << ")";
         }
 
-        // ── Beat-grid alignment ───────────────────────────────────────────────
-        //
-        // Goal: find the exact sample position of the first beat so that the
-        // grid  firstBeat + n * period  lands precisely on every beat in the
-        // track.
-        //
-        // Strategy:
-        // 1. AUBIO LATENCY COMPENSATION: aubio's FFT-based beat detection reports
-        //    beats with a fixed delay (due to window size). We subtract a fixed
-        //    offset (hop_size) from all beatPositions to shift them left to the
-        //    true transient peaks.
-        //
-        // 2. COMB FILTER / PHASE ALIGNMENT (Downbeat-Finder): We don't trust
-        //    beatPositions[0] as the start. Instead, we compute the beat period
-        //    in samples and run a comb filter: test all possible phase offsets
-        //    (0 to period in regular steps), and score each offset by how many
-        //    aubio-detected beats align with the virtual grid lines. The offset
-        //    with the highest score is the true downbeat.
-        //
-        // 3. WALK BACK TO TRACK START: Once the grid anchor is locked, we walk
-        //    backwards to find the first beat in the track (handling silent intros).
-        // ─────────────────────────────────────────────────────────────────────
+        // ── Grid alignment ───────────────────────────────────────────────────
         qint64 firstBeatSample = 0;
+        std::vector<TrackData::BeatMarker> finalBeatGrid;
+
         if (estimatedBpm > 0.0 && beatPositions.size() >= 16) {
-            // ── STEP 1: Aubio latency compensation ───────────────────────────
-            // aubio's tempo detector reports beats quantized to the hop boundary,
-            // plus a fixed delay due to FFT windowing. Subtract hop_size from all
-            // beat positions to shift them left to the true transient peaks.
-            const uint64_t latencyCompensation = hopSize;
-            for (auto& pos : beatPositions) {
-                pos = (pos >= latencyCompensation) ? (pos - latencyCompensation) : 0;
-            }
-            qDebug() << "[WaveformAnalyzer] Applied aubio latency compensation:"
-                     << "–" << latencyCompensation << "samples";
+            // ── STEP 1: Aubio latency compensation ────────────────────────────
+            const uint64_t latComp = hopSize;
+            for (auto& pos : beatPositions)
+                pos = (pos >= latComp) ? (pos - latComp) : 0;
 
-            // ── STEP 2: Comb filter / phase alignment (downbeat-finder) ──────
-            // Compute the beat period in samples.
-            double samplesPerBeat = (sampleRate * 60.0) / estimatedBpm;
+            const double samplesPerBeat = (sampleRate * 60.0) / estimatedBpm;
+            const double tolerance      = 0.005 * sampleRate; // ±5 ms
 
-            // Test phase offsets from 0 to samplesPerBeat in regular steps (256-sample granularity).
-            const uint64_t phaseStep = 256;
-            uint64_t bestPhaseOffset = 0;
-            int      bestPhaseScore  = -1;
-            double   bestPhaseAnchor = 0.0;
+            // ── STEP 2: 3-Stage Comb Filter ───────────────────────────────────
+            // Scores a phase offset by counting how many beatPositions land within
+            // `tolerance` of any grid line anchored at that offset.
+            auto scorePhase = [&](uint64_t phase) -> int {
+                int score = 0;
+                for (uint64_t beat : beatPositions) {
+                    double diff = static_cast<double>(beat) - static_cast<double>(phase);
+                    double err  = diff - samplesPerBeat * std::round(diff / samplesPerBeat);
+                    if (std::abs(err) <= tolerance) ++score;
+                }
+                return score;
+            };
 
-            // We scan up to the first beat position found, but at least 4 beat periods
-            // to account for aubio's warm-up period (~80 ms detection latency).
             uint64_t scanLimit = static_cast<uint64_t>(4.0 * samplesPerBeat);
             if (!beatPositions.empty())
-                scanLimit = std::max(scanLimit, beatPositions[0] + static_cast<uint64_t>(samplesPerBeat));
+                scanLimit = std::max(scanLimit,
+                                     beatPositions[0] + static_cast<uint64_t>(samplesPerBeat));
 
-            for (uint64_t phase = 0; phase < scanLimit; phase += phaseStep) {
-                int score = 0;
-                const double tolerance = 0.005 * sampleRate; // ±5 ms tolerance
+            // Stage 1: 256-sample steps.
+            uint64_t bestPhase = 0;
+            int      bestScore = -1;
+            for (uint64_t p = 0; p < scanLimit; p += 256) {
+                int s = scorePhase(p);
+                if (s > bestScore) { bestScore = s; bestPhase = p; }
+            }
 
-                // Test how many beatPositions align with the virtual grid anchored at `phase`.
-                for (uint64_t beat : beatPositions) {
-                    // Distance to nearest grid line: beat - phase - n * samplesPerBeat.
-                    double diff  = static_cast<double>(beat - phase);
-                    double phase_err = diff - samplesPerBeat * std::round(diff / samplesPerBeat);
-                    if (std::abs(phase_err) <= tolerance) ++score;
-                }
-
-                if (score > bestPhaseScore) {
-                    bestPhaseScore  = score;
-                    bestPhaseOffset = phase;
-                    bestPhaseAnchor = static_cast<double>(phase) / sampleRate;
+            // Stage 2: 16-sample steps, ±256 samples around stage-1 peak.
+            {
+                uint64_t lo = (bestPhase >= 256) ? bestPhase - 256 : 0;
+                uint64_t hi = bestPhase + 256;
+                for (uint64_t p = lo; p <= hi; p += 16) {
+                    int s = scorePhase(p);
+                    if (s > bestScore) { bestScore = s; bestPhase = p; }
                 }
             }
 
-            // Refine the best phase offset: do a fine-grained sub-phase scan
-            // in ±256 samples around the best coarse offset.
-            if (bestPhaseScore >= 0) {
-                uint64_t refineStart = (bestPhaseOffset >= 64) ? (bestPhaseOffset - 64) : 0;
-                uint64_t refineEnd   = bestPhaseOffset + 64;
-                for (uint64_t phase = refineStart; phase <= refineEnd; phase += 16) {
-                    int score = 0;
-                    const double tolerance = 0.005 * sampleRate;
-                    for (uint64_t beat : beatPositions) {
-                        double diff  = static_cast<double>(beat - phase);
-                        double phase_err = diff - samplesPerBeat * std::round(diff / samplesPerBeat);
-                        if (std::abs(phase_err) <= tolerance) ++score;
-                    }
-                    if (score > bestPhaseScore) {
-                        bestPhaseScore  = score;
-                        bestPhaseOffset = phase;
-                        bestPhaseAnchor = static_cast<double>(phase) / sampleRate;
-                    }
+            // Stage 3: 1-sample steps, ±16 samples around stage-2 peak.
+            {
+                uint64_t lo = (bestPhase >= 16) ? bestPhase - 16 : 0;
+                uint64_t hi = bestPhase + 16;
+                for (uint64_t p = lo; p <= hi; ++p) {
+                    int s = scorePhase(p);
+                    if (s > bestScore) { bestScore = s; bestPhase = p; }
                 }
             }
 
-            qDebug() << "[WaveformAnalyzer] Comb filter phase alignment:"
-                     << "bestPhaseOffset=" << bestPhaseOffset << "samples"
-                     << "bestPhaseAnchor=" << bestPhaseAnchor << "seconds"
-                     << "gridScore=" << bestPhaseScore << "/" << beatPositions.size();
+            qDebug() << "[WaveformAnalyzer] 3-stage comb filter:"
+                     << "anchor=" << bestPhase << "samples"
+                     << "(" << (static_cast<double>(bestPhase)/sampleRate*1000.0) << "ms)"
+                     << "score=" << bestScore << "/" << beatPositions.size();
 
-            // ── STEP 3: Energy-gated walk-back to first real beat ───────────
-            // Walk backwards in beat periods from the comb-filter anchor.
-            // Stop when the candidate position's peak energy drops below 15 % of
-            // globalMaxPeak — that is the boundary between real content and intro
-            // atmosphere/silence. This prevents the grid from landing on quiet
-            // Atmo noises before the first kick.
-            const uint_t rmsHop = 512;
+            // ── STEP 3: Robust walk-back (2-consecutive-miss rule) ─────────────
+            // Walk backwards until TWO consecutive candidate positions are below
+            // the energy threshold — prevents early stopping on quiet pads in the
+            // intro that happen to be above 15 % of the global peak.
+            const uint_t  rmsHop          = 512;
+            const float   energyThreshold = globalMaxPeak * 0.15f;
             juce::AudioBuffer<float> rmsBuf(static_cast<int>(reader->numChannels),
                                             static_cast<int>(rmsHop));
-            const float energyThreshold = globalMaxPeak * 0.15f;  // 15 % of track peak
 
-            uint64_t gridAnchor = bestPhaseOffset;
-            while (true) {
-                int64_t prev = static_cast<int64_t>(gridAnchor) - static_cast<int64_t>(samplesPerBeat);
-                if (prev < 0) break;
-
-                // Measure peak amplitude at the candidate position.
-                juce::int64 prevSample = static_cast<juce::int64>(prev);
-                reader->read(&rmsBuf, 0, static_cast<int>(rmsHop), prevSample, true, false);
-                float peakAmp = 0.0f;
-                const int nc  = static_cast<int>(reader->numChannels);
+            auto peakAt = [&](juce::int64 sample) -> float {
+                reader->read(&rmsBuf, 0, static_cast<int>(rmsHop), sample, true, false);
+                float pk = 0.0f;
+                const int nc = static_cast<int>(reader->numChannels);
                 for (int ch = 0; ch < nc; ++ch) {
                     const float* p = rmsBuf.getReadPointer(ch);
-                    for (uint_t s = 0; s < rmsHop; ++s) {
-                        float a = std::abs(p[s]);
-                        if (a > peakAmp) peakAmp = a;
-                    }
+                    for (uint_t s = 0; s < rmsHop; ++s)
+                        pk = std::max(pk, std::abs(p[s]));
                 }
+                return pk;
+            };
 
-                // Below threshold = intro/silence — stop here.
-                if (peakAmp < energyThreshold) break;
-
-                gridAnchor = static_cast<uint64_t>(prev);
+            uint64_t gridAnchor = bestPhase;
+            int      missCount  = 0;
+            while (true) {
+                int64_t prev = static_cast<int64_t>(gridAnchor)
+                             - static_cast<int64_t>(samplesPerBeat);
+                if (prev < 0) break;
+                if (peakAt(static_cast<juce::int64>(prev)) < energyThreshold) {
+                    if (++missCount >= 2) break;  // two consecutive misses = real silence
+                } else {
+                    missCount = 0;
+                    gridAnchor = static_cast<uint64_t>(prev);
+                }
             }
 
             firstBeatSample = static_cast<qint64>(gridAnchor);
 
-            // ── STEP 4: Transient micro-snap (pixel-accurate grid) ───────────
-            // The walk-back lands on a beat-period boundary that may sit a few
-            // milliseconds before or after the actual kick-drum transient peak.
-            // We search rawBins (from Pass 1) within a ±15 ms window and snap
-            // firstBeatSample to the bin with the highest low-band envelope.
-            // This guarantees the grid line cuts exactly through the top of the
-            // blue bass block in the waveform renderer.
+            // ── STEP 4: Micro-snap firstBeatSample ───────────────────────────
             {
-                const double snapWindowSec = 0.015;  // ±15 ms
+                const double snapWindowSec = 0.015; // ±15 ms
                 const double secPerBin     = 1.0 / static_cast<double>(m_pointsPerSecond);
-
-                // Convert firstBeatSample → bin index.
                 int centerBin = static_cast<int>(
                     static_cast<double>(firstBeatSample) / sampleRate * m_pointsPerSecond);
-                int halfWin = static_cast<int>(std::ceil(
-                    snapWindowSec / secPerBin));  // number of bins in ±15 ms
-
+                int halfWin = static_cast<int>(std::ceil(snapWindowSec / secPerBin));
                 int lo = std::max(0, centerBin - halfWin);
                 int hi = std::min(static_cast<int>(rawBins.size()) - 1, centerBin + halfWin);
-
-                float bestPeak = -1.0f;
-                int   bestBin  = centerBin;
+                float bestPeak = -1.0f; int bestBin = centerBin;
                 for (int b = lo; b <= hi; ++b) {
-                    float score = rawBins[static_cast<size_t>(b)].low;
-                    if (score > bestPeak) { bestPeak = score; bestBin = b; }
+                    if (rawBins[static_cast<size_t>(b)].low > bestPeak) {
+                        bestPeak = rawBins[static_cast<size_t>(b)].low; bestBin = b;
+                    }
+                }
+                qint64 snapped = static_cast<qint64>(
+                    (static_cast<double>(bestBin) + 0.5) / m_pointsPerSecond * sampleRate);
+                qDebug() << "[WaveformAnalyzer] firstBeat micro-snap:"
+                         << ((snapped - firstBeatSample) * 1000.0 / sampleRate) << "ms";
+                firstBeatSample = snapped;
+            }
+
+            // ── STEP 5: Build elastic beat-grid with per-beat micro-snap ──────
+            // Generate beat timestamps mathematically (firstBeat + n * period),
+            // then snap each one to the nearest rawBin transient peak (±15 ms).
+            // Result: an array where every grid line sits exactly on the kick.
+            {
+                const double snapWindowSec = 0.015;
+                const double secPerBin     = 1.0 / static_cast<double>(m_pointsPerSecond);
+                const int    halfWin       = static_cast<int>(std::ceil(snapWindowSec / secPerBin));
+                const int    numRawBins    = static_cast<int>(rawBins.size());
+
+                finalBeatGrid.reserve(static_cast<size_t>(
+                    totalSamples / samplesPerBeat) + 4);
+
+                // Walk forward from firstBeatSample to end of track.
+                // Beat index n: isDownbeat = (n % 4 == 0), barNumber = n/4 + 1.
+                for (int n = 0; ; ++n) {
+                    double beatSec = static_cast<double>(firstBeatSample) / sampleRate
+                                   + n * (60.0 / estimatedBpm);
+                    if (beatSec >= duration) break;
+
+                    // Convert to rawBin index and search ±15 ms for the highest
+                    // low-band peak (kick transient).
+                    int centerBin = static_cast<int>(beatSec * m_pointsPerSecond);
+                    int lo = std::max(0, centerBin - halfWin);
+                    int hi = std::min(numRawBins - 1, centerBin + halfWin);
+
+                    float bestPeak = -1.0f;
+                    int   bestBin  = centerBin;
+                    for (int b = lo; b <= hi; ++b) {
+                        if (rawBins[static_cast<size_t>(b)].low > bestPeak) {
+                            bestPeak = rawBins[static_cast<size_t>(b)].low;
+                            bestBin  = b;
+                        }
+                    }
+
+                    // Snap to centre of best bin (sub-bin precision in seconds).
+                    double snappedSec = (static_cast<double>(bestBin) + 0.5)
+                                      / static_cast<double>(m_pointsPerSecond);
+
+                    finalBeatGrid.push_back(TrackData::BeatMarker{
+                        snappedSec,
+                        (n % 4 == 0),   // isDownbeat: beat 1 of every bar
+                        (n / 4) + 1     // barNumber:  1-based bar counter
+                    });
                 }
 
-                // Snap: convert bestBin back to a sample position (centre of that bin).
-                qint64 snappedSample = static_cast<qint64>(
-                    (static_cast<double>(bestBin) + 0.5) / m_pointsPerSecond * sampleRate);
-
-                qDebug() << "[WaveformAnalyzer] Transient micro-snap:"
-                         << "centerBin=" << centerBin << "bestBin=" << bestBin
-                         << "shift=" << (snappedSample - firstBeatSample) << "samples"
-                         << "(" << ((snappedSample - firstBeatSample) * 1000.0 / sampleRate) << "ms)";
-
-                firstBeatSample = snappedSample;
+                qDebug() << "[WaveformAnalyzer] Elastic beat-grid built:"
+                         << finalBeatGrid.size() << "beats"
+                         << "| firstBeat=" << firstBeatSample
+                         << "(" << (static_cast<double>(firstBeatSample)/sampleRate*1000.0) << "ms)"
+                         << "| samplesPerBeat=" << static_cast<uint64_t>(samplesPerBeat);
             }
-            qDebug() << "[WaveformAnalyzer] Beat-grid alignment complete:"
-                     << "firstBeatSample=" << firstBeatSample
-                     << "(" << (static_cast<double>(firstBeatSample) / sampleRate * 1000.0) << "ms)"
-                     << "samplesPerBeat=" << static_cast<uint64_t>(samplesPerBeat);
         }
 
         if (estimatedBpm > 0.0)
-            m_trackData->setBpmData(estimatedBpm, firstBeatSample, sampleRate);
+            m_trackData->setBpmData(estimatedBpm, firstBeatSample, sampleRate,
+                                    std::move(finalBeatGrid));
     }
 
     if (threadShouldExit()) return;

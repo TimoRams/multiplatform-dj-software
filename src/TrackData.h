@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QVector>
 #include <QMutex>
+#include <vector>
 
 class TrackData : public QObject
 {
@@ -15,6 +16,15 @@ class TrackData : public QObject
     Q_PROPERTY(bool   isKeyAnalyzed READ isKeyAnalyzed    NOTIFY keyAnalyzed)
 
 public:
+    // Beat marker: one entry per beat in the track.
+    // isDownbeat = true for beat 1 of each bar (every 4th beat, 4/4 time).
+    // barNumber  = 1-based bar counter (bar 1 = first detected downbeat).
+    struct BeatMarker {
+        double positionSec = 0.0;  // exact, micro-snapped timestamp (seconds)
+        bool   isDownbeat  = false;
+        int    barNumber   = 0;
+    };
+
     // Per-block bin (≈ samplesPerBin samples): envelope per frequency band.
     //
     // Four bands from a parallel filterbank (Rekordbox-style, overlapping slopes):
@@ -76,13 +86,24 @@ public:
         return m_globalMaxPeak;
     }
 
-    void setBpmData(double bpm, qint64 firstBeatSample, double sampleRate) {
+    // Store BPM + first-beat anchor (rigid grid, backwards compat) AND the full
+    // elastic beat-marker array (one BeatMarker per beat, with downbeat flags).
+    void setBpmData(double bpm, qint64 firstBeatSample, double sampleRate,
+                    std::vector<BeatMarker> beatGrid = {}) {
         QMutexLocker locker(&m_mutex);
-        m_bpm = bpm;
+        m_bpm             = bpm;
         m_firstBeatSample = firstBeatSample;
-        m_sampleRate = sampleRate;
-        m_isBpmAnalyzed = (bpm > 0.0);
+        m_sampleRate      = sampleRate;
+        m_isBpmAnalyzed   = (bpm > 0.0);
+        m_beatGrid        = std::move(beatGrid);
         emit bpmAnalyzed();
+    }
+
+    // Returns the elastic beat-marker array.
+    // Empty if the analyzer ran before this feature was added.
+    std::vector<BeatMarker> getBeatGrid() const {
+        QMutexLocker locker(&m_mutex);
+        return m_beatGrid;
     }
 
     double getBpm() const {
@@ -137,6 +158,7 @@ public:
         m_isBpmAnalyzed = false;
         m_detectedKey.clear();
         m_isKeyAnalyzed = false;
+        m_beatGrid.clear();
         emit dataCleared();
     }
 
@@ -181,6 +203,7 @@ private:
     qint64  m_firstBeatSample;
     double  m_sampleRate;
     bool    m_isBpmAnalyzed;
+    std::vector<BeatMarker> m_beatGrid;  // elastic beat markers (positionSec + downbeat flag)
 
     QString m_detectedKey;
     bool    m_isKeyAnalyzed;
