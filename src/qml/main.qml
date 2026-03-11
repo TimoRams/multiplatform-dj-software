@@ -9,7 +9,7 @@ ApplicationWindow {
     height: 800
     visible: true
     title: "Multiplatform DJ Software (Qt 6 + JUCE)"
-    color: "#1e1e19"
+    color: "#0a0a0a"
 
     // Timer to hide the loading indicator and show the main content
     Timer {
@@ -91,7 +91,7 @@ ApplicationWindow {
     ColumnLayout {
         id: mainLayout
         anchors.fill: parent
-        spacing: 0
+        spacing: 2
         visible: false
 
         // --------------------------------------------------------------------
@@ -109,7 +109,6 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.preferredHeight: window.baseUiHeight * window.uiScale
             Layout.maximumHeight: window.baseUiHeight * window.uiScale
-            Layout.topMargin: 2
 
             // Fixed-size design canvas; scaled down/up to match the window width.
             Item {
@@ -128,7 +127,7 @@ ApplicationWindow {
                     anchors.left:  parent.left
                     anchors.right: parent.right
                     height: 150
-                    spacing: 1
+                    spacing: 0
 
                     EnlargedWaveform {
                         Layout.fillWidth: true

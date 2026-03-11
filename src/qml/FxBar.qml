@@ -13,22 +13,6 @@ Rectangle {
     color: "#141414"
     height: 40
 
-    // Thin border lines to visually separate from the rows above and below
-    Rectangle {
-        anchors.top:   parent.top
-        anchors.left:  parent.left
-        anchors.right: parent.right
-        height: 1
-        color: "#2a2a2a"
-    }
-    Rectangle {
-        anchors.bottom: parent.bottom
-        anchors.left:   parent.left
-        anchors.right:  parent.right
-        height: 1
-        color: "#2a2a2a"
-    }
-
     RowLayout {
         anchors.fill: parent
         spacing: 0

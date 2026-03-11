@@ -8,17 +8,6 @@ Rectangle {
     id: root
     color: "#121212"
     height: 40
-    border.color: "#333"
-    border.width: 1
-    
-    // Bottom border only
-    Rectangle {
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        height: 1
-        color: "#000"
-    }
 
     property string currentTime: "00:00"
     
