@@ -87,6 +87,91 @@ Rectangle {
             }
         }
 
+        // ── ABLETON LINK section (always visible, fixed width) ─────────────────
+        Row {
+            spacing: 6
+            Layout.alignment: Qt.AlignVCenter
+            Layout.leftMargin: 12
+
+            // LINK toggle button
+            Rectangle {
+                width: 44; height: 22
+                radius: 3
+                color: linkManager.enabled ? "#1a3322" : "#1a1a1a"
+                border.color: linkManager.enabled ? "#44cc66" : "#333"
+                border.width: 1
+                anchors.verticalCenter: parent.verticalCenter
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "LINK"
+                    color: linkManager.enabled ? "#44cc66" : "#777"
+                    font.pixelSize: window.sp(9)
+                    font.bold: true
+                    font.letterSpacing: 0.5
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: linkManager.enabled = !linkManager.enabled
+                }
+            }
+
+            // Peer count — always visible (shows "0" when none connected)
+            Text {
+                width: 16
+                text: linkManager.numPeers.toString()
+                color: linkManager.numPeers > 0 ? "#44cc66" : "#555"
+                font.pixelSize: window.sp(9)
+                font.family: "monospace"
+                font.bold: true
+                horizontalAlignment: Text.AlignHCenter
+                anchors.verticalCenter: parent.verticalCenter
+            }
+
+            // Link BPM display — fixed width, opacity-controlled to avoid layout shift
+            Text {
+                width: 48
+                opacity: linkManager.enabled ? 1.0 : 0.3
+                text: linkManager.bpm.toFixed(1)
+                color: "#ccc"
+                font.pixelSize: window.sp(11)
+                font.family: "monospace"
+                font.bold: true
+                horizontalAlignment: Text.AlignRight
+                anchors.verticalCenter: parent.verticalCenter
+            }
+
+            // 4-beat phase indicator (running light) — fixed width, opacity-controlled
+            Row {
+                spacing: 3
+                opacity: linkManager.enabled ? 1.0 : 0.2
+                anchors.verticalCenter: parent.verticalCenter
+
+                Repeater {
+                    model: 4
+                    Rectangle {
+                        required property int index
+                        width: 7; height: 7; radius: 3.5
+                        color: {
+                            if (!linkManager.enabled) return "#222"
+                            var beatIndex = Math.floor(linkManager.phase)
+                            if (beatIndex < 0) beatIndex = 0
+                            if (beatIndex > 3) beatIndex = 3
+                            return index === beatIndex ? "#44cc66" : "#222"
+                        }
+                        border.color: {
+                            if (!linkManager.enabled) return "#333"
+                            var bi = Math.floor(Math.max(0, Math.min(3, linkManager.phase)))
+                            return index === bi ? "#66ee88" : "#333"
+                        }
+                        border.width: 1
+                    }
+                }
+            }
+        }
+
         // ── SPACER fills between left and right groups ────────────────────────
         Item { Layout.fillWidth: true }
 
@@ -139,87 +224,6 @@ Rectangle {
                         masterSlider.enabled = false
                         masterSlider.value = 0.8
                         masterSlider.enabled = true
-                    }
-                }
-            }
-        }
-
-        // ── SPACER ────────────────────────────────────────────────────────────
-        Item { Layout.fillWidth: true }
-
-        // ── ABLETON LINK section ──────────────────────────────────────────────
-        Row {
-            spacing: 8
-            Layout.alignment: Qt.AlignVCenter
-
-            // LINK toggle button
-            Rectangle {
-                width: 44; height: 22
-                radius: 3
-                color: linkManager.enabled ? "#1a3322" : "#1a1a1a"
-                border.color: linkManager.enabled ? "#44cc66" : "#333"
-                border.width: 1
-                anchors.verticalCenter: parent.verticalCenter
-
-                Text {
-                    anchors.centerIn: parent
-                    text: "LINK"
-                    color: linkManager.enabled ? "#44cc66" : "#777"
-                    font.pixelSize: window.sp(9)
-                    font.bold: true
-                    font.letterSpacing: 0.5
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: linkManager.enabled = !linkManager.enabled
-                }
-            }
-
-            // Peer count (only when enabled and peers > 0)
-            Text {
-                visible: linkManager.enabled && linkManager.numPeers > 0
-                text: linkManager.numPeers + "P"
-                color: "#44cc66"
-                font.pixelSize: window.sp(9)
-                font.family: "monospace"
-                font.bold: true
-                anchors.verticalCenter: parent.verticalCenter
-            }
-
-            // Link BPM display
-            Text {
-                visible: linkManager.enabled
-                text: linkManager.bpm.toFixed(1)
-                color: "#ccc"
-                font.pixelSize: window.sp(12)
-                font.family: "monospace"
-                font.bold: true
-                anchors.verticalCenter: parent.verticalCenter
-            }
-
-            // 4-beat phase indicator (running light)
-            Row {
-                spacing: 4
-                visible: linkManager.enabled
-                anchors.verticalCenter: parent.verticalCenter
-
-                Repeater {
-                    model: 4
-                    Rectangle {
-                        required property int index
-                        width: 8; height: 8; radius: 4
-                        // Light up the dot whose index matches the current beat phase
-                        color: {
-                            var beatIndex = Math.floor(linkManager.phase)
-                            if (beatIndex < 0) beatIndex = 0
-                            if (beatIndex > 3) beatIndex = 3
-                            return index === beatIndex ? "#44cc66" : "#333"
-                        }
-                        border.color: index === Math.floor(Math.max(0, Math.min(3, linkManager.phase)))
-                                      ? "#66ee88" : "#444"
-                        border.width: 1
                     }
                 }
             }
