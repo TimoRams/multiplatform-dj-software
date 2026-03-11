@@ -248,6 +248,14 @@ public:
         }
     }
 
+    // Return total latency introduced by this component in samples
+    int getLatencySamples() const {
+        int delay = 0;
+        if (stretcher) delay += stretcher->getStartDelay();
+        if (fifo) delay += fifo->getNumReady();
+        return delay;
+    }
+
 private:
     juce::AudioSource* source = nullptr;
     std::unique_ptr<RubberBand::RubberBandStretcher> stretcher;
@@ -519,28 +527,30 @@ float DjEngine::getPosition() const
 
 float DjEngine::getVisualPosition() const
 {
+    // When stopped/paused: return the frozen position (set by togglePlay).
     if (!m_snapValid || !transportSource.isPlaying())
         return getPosition();
 
     // Forward-interpolate from the last snapshot using elapsed wall-clock time.
     // This keeps the waveform smooth between onTimer() ticks (every 16 ms).
-    double elapsed = static_cast<double>(m_snapClock.nsecsElapsed()) * 1e-9;
+    // Multiply by tempo ratio because the audio playhead moves faster/slower
+    // than wall clock (transport reads at tempoRatio × realtime).
+    double currentTempoRatio = getTempoRatio();
+    double elapsed = (static_cast<double>(m_snapClock.nsecsElapsed()) * 1e-9) * currentTempoRatio;
 
     // When reverse is on, interpolate backwards instead of forwards
     double interpolated = m_isReverse
         ? m_snapPosition - elapsed
         : m_snapPosition + elapsed;
 
-    // Subtract hardware latency so the display shows what is currently audible,
-    // not the audio-thread read pointer which is latencySeconds ahead.
-    double compensated = m_isReverse
-        ? interpolated + static_cast<double>(m_latencySeconds)   // reverse: add latency
-        : interpolated - static_cast<double>(m_latencySeconds);  // forward: subtract latency
+    // No latency compensation: the 46ms hardware buffer latency is imperceptible
+    // visually, and subtracting it caused a visible jump on play/pause transitions
+    // (playing = compensated, paused = uncompensated → discontinuity).
 
     double len = transportSource.getLengthInSeconds();
-    compensated = std::clamp(compensated, 0.0, len > 0.0 ? len : compensated);
+    interpolated = std::clamp(interpolated, 0.0, len > 0.0 ? len : interpolated);
 
-    return static_cast<float>(compensated);
+    return static_cast<float>(interpolated);
 }
 
 double DjEngine::getPlayheadPositionAtomic() const
@@ -654,10 +664,37 @@ void DjEngine::loadTrack(const QString& rawPath)
 
 void DjEngine::togglePlay()
 {
-    if (transportSource.isPlaying())
+    if (transportSource.isPlaying()) {
+        // Compute the interpolated visual position BEFORE stopping so we can
+        // freeze the transport at exactly the position the waveform was showing.
+        // This eliminates the visible jump when pressing pause.
+        double frozenPos;
+        if (m_snapValid) {
+            double tempoR = getTempoRatio();
+            double elapsed = (static_cast<double>(m_snapClock.nsecsElapsed()) * 1e-9) * tempoR;
+            frozenPos = m_isReverse
+                ? m_snapPosition - elapsed
+                : m_snapPosition + elapsed;
+            double len = transportSource.getLengthInSeconds();
+            frozenPos = std::clamp(frozenPos, 0.0, len > 0.0 ? len : frozenPos);
+        } else {
+            frozenPos = transportSource.getCurrentPosition();
+        }
+
         transportSource.stop();
-    else
+        transportSource.setPosition(frozenPos);
+        m_snapValid = false;
+        m_atomicPlayheadPos.store(frozenPos, std::memory_order_relaxed);
+    } else {
+        // Snapshot current position immediately so the interpolation starts
+        // from exactly where the waveform is showing (no 16ms wait for onTimer).
+        m_snapPosition = transportSource.getCurrentPosition();
+        m_snapClock.restart();
+        m_snapValid = true;
+        m_atomicPlayheadPos.store(m_snapPosition, std::memory_order_relaxed);
+
         transportSource.start();
+    }
         
     emit playingChanged();
 }

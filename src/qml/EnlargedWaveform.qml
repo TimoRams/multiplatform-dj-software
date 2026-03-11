@@ -154,33 +154,33 @@ Item {
             id: gridToolbar
             anchors.left:           parent.left
             anchors.verticalCenter: parent.verticalCenter
-            anchors.leftMargin:     4
-            width:  36
-            height: 114
+            anchors.leftMargin:     3
+            width:  26
+            height: 72
             color:  "#aa000000"
-            radius: 6
+            radius: 4
             z: 20
 
             visible: root.engine !== null && root.engine.trackData !== undefined
 
             Column {
                 anchors.centerIn: parent
-                spacing: 4
+                spacing: 2
 
                 // ── Set-Downbeat button ──────────────────────────────────────
                 // Icon: red vertical bar + downward triangle (Rekordbox style).
                 Rectangle {
                     id: setDownbeatBtn
-                    width: 28; height: 28
+                    width: 20; height: 20
                     color:  setDownbeatHover.containsMouse ? "#55ffffff" : "transparent"
-                    radius: 4
+                    radius: 3
 
                     // Red downbeat bar
                     Rectangle {
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.bottom:           parent.bottom
                         anchors.bottomMargin:     2
-                        width: 2; height: 16
+                        width: 1.5; height: 10
                         color: "#e60000"; radius: 1
                     }
                     // Downward-pointing triangle (Canvas)
@@ -188,7 +188,7 @@ Item {
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.top:              parent.top
                         anchors.topMargin:        2
-                        width: 10; height: 8
+                        width: 7; height: 5
                         onPaint: {
                             var ctx = getContext("2d")
                             ctx.clearRect(0, 0, width, height)
@@ -217,15 +217,15 @@ Item {
                 // Doubles BPM and rebuilds the grid (half-time correction).
                 Rectangle {
                     id: doubleBpmBtn
-                    width: 28; height: 28
+                    width: 20; height: 20
                     color:  doubleBpmHover.containsMouse ? "#55ffffff" : "transparent"
-                    radius: 4
+                    radius: 3
 
                     Text {
                         anchors.centerIn: parent
                         text:  "×2"
                         color: "#e6e600"   // yellow — visually distinct
-                        font.pixelSize: 11
+                        font.pixelSize: 9
                         font.bold: true
                     }
                     MouseArea {
@@ -244,15 +244,15 @@ Item {
                 // Halves BPM and rebuilds the grid (double-time correction).
                 Rectangle {
                     id: halveBpmBtn
-                    width: 28; height: 28
+                    width: 20; height: 20
                     color:  halveBpmHover.containsMouse ? "#55ffffff" : "transparent"
-                    radius: 4
+                    radius: 3
 
                     Text {
                         anchors.centerIn: parent
                         text:  "/2"
                         color: "#00aaff"   // blue — visually distinct
-                        font.pixelSize: 11
+                        font.pixelSize: 9
                         font.bold: true
                     }
                     MouseArea {
