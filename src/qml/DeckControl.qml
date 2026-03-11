@@ -55,6 +55,7 @@ Item {
     Connections {
         target: deck.engine ? deck.engine.trackData : null
         function onBpmAnalyzed() { deck._syncBpm(); deck._syncTempo() }
+        function onBeatgridChanged() { deck._syncBpm(); deck._syncTempo() }
     }
 
     DropArea {

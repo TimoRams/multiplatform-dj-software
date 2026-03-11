@@ -122,13 +122,25 @@ Item {
 
         // Also repaint once when pausing so the waveform freezes at the exact
         // stopped position (FrameAnimation has already stopped at this point).
+        // Also repaint when position changes while paused (e.g. seeking via overview).
         Connections {
             target: root.engine
             function onPlayingChanged() {
                 if (!root.engine.isPlaying)
                     waveItem.requestUpdate()
             }
-            // Repaint immediately whenever the beat-grid is manually shifted.
+            function onProgressChanged() {
+                // Repaint scrolling waveform when paused and position is changed
+                // (e.g. clicking on the overview waveform to seek).
+                if (root.engine && !root.engine.isPlaying)
+                    waveItem.requestUpdate()
+            }
+        }
+
+        // beatgridChanged is emitted by TrackData, not DjEngine.
+        // Connect to it separately so grid edits while paused refresh the display.
+        Connections {
+            target: root.engine ? root.engine.trackData : null
             function onBeatgridChanged() {
                 waveItem.requestUpdate()
             }
