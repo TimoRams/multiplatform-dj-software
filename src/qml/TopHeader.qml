@@ -172,141 +172,10 @@ Rectangle {
             }
         }
 
-        // ── SPACER ────────────────────────────────────────────────────────────
+        // ── SPACER (left half) ─────────────────────────────────────────────────
         Item { Layout.fillWidth: true }
 
-        // ── CENTER GROUP: VU Meter + MASTER Volume ───────────────────────────
-        Row {
-            spacing: 10
-            Layout.alignment: Qt.AlignVCenter
-
-            // ── VU Meter (L + R, dot-based) ──────────────────────────────────
-            Row {
-                spacing: 2
-                anchors.verticalCenter: parent.verticalCenter
-
-                Text {
-                    text: "L"
-                    color: "#555"
-                    font.pixelSize: window.sp(8)
-                    font.bold: true
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-
-                // VU meter dots (L and R stacked, 48 dots each)
-                Column {
-                    id: vuColumn
-                    spacing: 2
-                    anchors.verticalCenter: parent.verticalCenter
-
-                    // Shared level properties
-                    property real levelL: {
-                        var a = deckA ? deckA.vuLevelL : 0
-                        var b = deckB ? deckB.vuLevelL : 0
-                        return Math.max(a, b)
-                    }
-                    property real levelR: {
-                        var a = deckA ? deckA.vuLevelR : 0
-                        var b = deckB ? deckB.vuLevelR : 0
-                        return Math.max(a, b)
-                    }
-
-                    // Channel L dots
-                    Row {
-                        spacing: 1
-                        Repeater {
-                            model: 48
-                            Rectangle {
-                                required property int index
-                                width: 2; height: 4; radius: 0.5
-                                property real threshold: (index + 1) / 48.0
-                                property bool lit: vuColumn.levelL >= threshold
-                                color: lit ? (index >= 38 ? "#ff8c00" : "#44cc66") : "#1a1a1a"
-                            }
-                        }
-                    }
-
-                    // Channel R dots
-                    Row {
-                        spacing: 1
-                        Repeater {
-                            model: 48
-                            Rectangle {
-                                required property int index
-                                width: 2; height: 4; radius: 0.5
-                                property real threshold: (index + 1) / 48.0
-                                property bool lit: vuColumn.levelR >= threshold
-                                color: lit ? (index >= 38 ? "#ff8c00" : "#44cc66") : "#1a1a1a"
-                            }
-                        }
-                    }
-                }
-
-                Text {
-                    text: "R"
-                    color: "#555"
-                    font.pixelSize: window.sp(8)
-                    font.bold: true
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-            }
-
-            // ── MASTER Volume (right of VU) ──────────────────────────────────
-            Row {
-                spacing: 6
-                anchors.verticalCenter: parent.verticalCenter
-
-                Text {
-                    text: "MASTER"
-                    color: "#666"
-                    font.pixelSize: window.sp(9)
-                    font.bold: true
-                    font.letterSpacing: 1
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-                Slider {
-                    id: masterSlider
-                    width: 90; height: 18
-                    anchors.verticalCenter: parent.verticalCenter
-                    from: 0.0; to: 1.0; value: 0.8
-
-                    background: Rectangle {
-                        x: masterSlider.leftPadding
-                        y: masterSlider.topPadding + masterSlider.availableHeight / 2 - height / 2
-                        width: masterSlider.availableWidth
-                        height: 4; radius: 2
-                        color: "#1a1a1a"
-                        border.color: "#333"
-
-                        Rectangle {
-                            width: masterSlider.visualPosition * parent.width
-                            height: parent.height; radius: 2
-                            color: "#1e90ff"
-                        }
-                    }
-
-                    handle: Rectangle {
-                        x: masterSlider.leftPadding + masterSlider.visualPosition
-                           * (masterSlider.availableWidth - width)
-                        y: masterSlider.topPadding + masterSlider.availableHeight / 2 - height / 2
-                        width: 10; height: 10; radius: 5
-                        color: "#ddd"
-                        border.color: "#888"
-                        border.width: 1
-                    }
-
-                    TapHandler {
-                        onDoubleTapped: {
-                            masterSlider.enabled = false
-                            masterSlider.value = 0.8
-                            masterSlider.enabled = true
-                        }
-                    }
-                }
-            }
-        }
-
-        // ── SPACER ────────────────────────────────────────────────────────────
+        // ── SPACER (right half) ───────────────────────────────────────────────
         Item { Layout.fillWidth: true }
 
         // ── RIGHT: CPU/RAM + REC + Clock + Actions ────────────────────────────
@@ -462,6 +331,57 @@ Rectangle {
                         settingsWin.show()
                         settingsWin.raise()
                         settingsWin.requestActivate()
+                    }
+                }
+            }
+        }
+    }
+
+    // ── VU METER OVERLAY (absolutely centered) ────────────────────────────
+    Row {
+        anchors.centerIn: parent
+        spacing: 1
+
+        Column {
+            id: vuColumn
+            spacing: 2
+            anchors.verticalCenter: parent.verticalCenter
+
+            property real levelL: {
+                var a = deckA ? deckA.vuLevelL : 0
+                var b = deckB ? deckB.vuLevelL : 0
+                return Math.max(a, b)
+            }
+            property real levelR: {
+                var a = deckA ? deckA.vuLevelR : 0
+                var b = deckB ? deckB.vuLevelR : 0
+                return Math.max(a, b)
+            }
+
+            Row {
+                spacing: 1
+                Repeater {
+                    model: 48
+                    Rectangle {
+                        required property int index
+                        width: 2; height: 4; radius: 0.5
+                        property real threshold: (index + 1) / 48.0
+                        property bool lit: vuColumn.levelL >= threshold
+                        color: lit ? (index >= 38 ? "#ff8c00" : "#44cc66") : "#1a1a1a"
+                    }
+                }
+            }
+
+            Row {
+                spacing: 1
+                Repeater {
+                    model: 48
+                    Rectangle {
+                        required property int index
+                        width: 2; height: 4; radius: 0.5
+                        property real threshold: (index + 1) / 48.0
+                        property bool lit: vuColumn.levelR >= threshold
+                        color: lit ? (index >= 38 ? "#ff8c00" : "#44cc66") : "#1a1a1a"
                     }
                 }
             }
