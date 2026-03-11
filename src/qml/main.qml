@@ -11,6 +11,26 @@ ApplicationWindow {
     title: "Multiplatform DJ Software (Qt 6 + JUCE)"
     color: "#1e1e19"
 
+    // Timer to hide the loading indicator and show the main content
+    Timer {
+        id: loadingTimer
+        interval: 2000 // 2 seconds
+        running: true
+        repeat: false
+        onTriggered: {
+            loadingIndicator.running = false
+            loadingIndicator.visible = false
+            mainLayout.visible = true
+        }
+    }
+
+    BusyIndicator {
+        id: loadingIndicator
+        anchors.centerIn: parent
+        running: true
+        visible: true
+    }
+
     // ── Global font scaling ──────────────────────────────────────────────────
     // Dampened scaling: fonts grow/shrink at ~half the rate of the window.
     // At 800px (ref) → factor 1.0, at 400px → 0.85, at 1600px → 1.19.
@@ -69,8 +89,10 @@ ApplicationWindow {
     readonly property real baseUiHeight: 150 + (baseUiWidth / 3.8) + 4
 
     ColumnLayout {
+        id: mainLayout
         anchors.fill: parent
         spacing: 0
+        visible: false
 
         // --------------------------------------------------------------------
         // GLOBAL HEADER (Traktor-Style)

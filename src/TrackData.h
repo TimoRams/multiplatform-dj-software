@@ -4,6 +4,9 @@
 #include <QVector>
 #include <QMutex>
 #include <vector>
+#include <algorithm>
+#include <cmath>
+#include <limits>
 
 class TrackData : public QObject
 {
@@ -106,9 +109,90 @@ public:
         return m_beatGrid;
     }
 
+    // ── Manual beat-grid correction ──────────────────────────────────────────
+    // Rebuilds the entire BeatMarker array so that newAnchorSec is beat 1 / bar 1
+    // (i = 0, isDownbeat = true).  The grid is extended both backward (i < 0) and
+    // forward (i ≥ 0) to cover [0, trackLengthSec], then sorted by positionSec.
+    // Emits beatgridChanged() when done.
+    void shiftBeatgridToDownbeat(double newAnchorSec, double trackLengthSec) {
+        double bpm;
+        {
+            QMutexLocker locker(&m_mutex);
+            bpm = m_bpm;
+        }
+        if (bpm <= 0.0 || trackLengthSec <= 0.0) return;
+
+        const double beatDur = 60.0 / bpm;
+        std::vector<BeatMarker> grid;
+        grid.reserve(static_cast<size_t>(trackLengthSec / beatDur) + 4);
+
+        // ── Backward pass (i = -1, -2, …) until we go past the track start ──
+        for (int i = -1; ; --i) {
+            double pos = newAnchorSec + i * beatDur;
+            if (pos < -beatDur * 0.5) break;   // a little past 0 is fine; clamp below
+            if (pos < 0.0) pos = 0.0;
+            // Rebase: how many beats before the anchor?  Use (-i) as the offset.
+            // "beat index" from anchor perspective is i (negative).
+            // To assign barNumber we normalise to a non-negative beat counter:
+            // beatIdx = i  (negative), barNumber = floor(beatIdx/4).  We correct
+            // this after the sort when we renumber from the first marker.
+            grid.push_back(BeatMarker{ pos, false, i });
+            if (pos <= 0.0) break;
+        }
+
+        // ── Forward pass (i = 0, 1, 2, …) ──────────────────────────────────
+        for (int i = 0; ; ++i) {
+            double pos = newAnchorSec + i * beatDur;
+            if (pos > trackLengthSec + beatDur * 0.5) break;
+            if (pos > trackLengthSec) pos = trackLengthSec;
+            grid.push_back(BeatMarker{ pos, false, i });
+            if (pos >= trackLengthSec) break;
+        }
+
+        // ── Sort by time, remove duplicates at the boundary ─────────────────
+        std::sort(grid.begin(), grid.end(),
+            [](const BeatMarker& a, const BeatMarker& b){
+                return a.positionSec < b.positionSec;
+            });
+        grid.erase(std::unique(grid.begin(), grid.end(),
+            [](const BeatMarker& a, const BeatMarker& b){
+                return std::abs(a.positionSec - b.positionSec) < 0.001;
+            }), grid.end());
+
+        // ── Renumber: find the anchor beat (closest to newAnchorSec), assign
+        //    sequential beat index from there, set isDownbeat every 4 beats ──
+        // First, find the index of the anchor entry.
+        int anchorIdx = 0;
+        double minDist = std::numeric_limits<double>::max();
+        for (int k = 0; k < static_cast<int>(grid.size()); ++k) {
+            double d = std::abs(grid[k].positionSec - newAnchorSec);
+            if (d < minDist) { minDist = d; anchorIdx = k; }
+        }
+        for (int k = 0; k < static_cast<int>(grid.size()); ++k) {
+            int beatIdx  = k - anchorIdx;          // 0 at anchor, negative before it
+            // Modulo that always returns 0..3 even for negative beatIdx:
+            int mod4 = ((beatIdx % 4) + 4) % 4;
+            grid[k].isDownbeat = (mod4 == 0);
+            grid[k].barNumber  = beatIdx / 4 + 1;  // 1-based, may be ≤ 0 before anchor
+        }
+
+        {
+            QMutexLocker locker(&m_mutex);
+            m_beatGrid = std::move(grid);
+        }
+        emit beatgridChanged();
+    }
+
     double getBpm() const {
         QMutexLocker locker(&m_mutex);
         return m_bpm;
+    }
+
+    // Update only the BPM value (used by manual x2 / ÷2 correction).
+    // Does NOT rebuild the beat grid — the caller is responsible for that.
+    void setBpm(double bpm) {
+        QMutexLocker locker(&m_mutex);
+        m_bpm = bpm;
     }
 
     qint64 getFirstBeatSample() const {
@@ -193,6 +277,7 @@ signals:
     void dataCleared();
     void bpmAnalyzed();
     void keyAnalyzed();
+    void beatgridChanged();  // emitted after a manual grid shift
 
 private:
     QVector<FrequencyData> m_data;

@@ -37,6 +37,10 @@ class DjEngine : public QObject
     Q_PROPERTY(bool    hasCoverArt  READ hasCoverArt  NOTIFY trackMetadataChanged)
 
     // Mixer Properties
+    // Pixels per second at current zoom — needed by the scrub math in QML.
+    // 150 waveform-points/sec × pixelsPerPoint (written from QML via setPixelsPerPoint).
+    Q_PROPERTY(double pixelsPerSecond READ pixelsPerSecond WRITE setPixelsPerSecond NOTIFY pixelsPerSecondChanged)
+
     Q_PROPERTY(double volume READ volume WRITE setVolume NOTIFY volumeChanged)
     Q_PROPERTY(double trim READ trim WRITE setTrim NOTIFY trimChanged)
     Q_PROPERTY(double eqHigh READ eqHigh WRITE setEqHigh NOTIFY eqHighChanged)
@@ -58,6 +62,30 @@ public:
     // Called from QML FrameAnimation every VSync frame — must be wait-free.
     Q_INVOKABLE double getPlayheadPositionAtomic() const;
     bool isPlaying() const;
+
+    // Pixels-per-second scale mirrored from the waveform renderer so scrubBy()
+    // can convert mouse pixels → audio seconds without needing QML math.
+    double pixelsPerSecond() const { return m_pixelsPerSecond; }
+
+    // Scrubbing API called from QML MouseArea.
+    // pauseForScrub()  – silently stops transport without emitting playingChanged
+    //                    so the FrameAnimation stays alive for live preview.
+    // scrubBy()        – moves playhead by pixelDelta pixels (signed), thread-safe.
+    // resumeAfterScrub()– restarts transport and re-emits playingChanged.
+    Q_INVOKABLE void pauseForScrub();
+    Q_INVOKABLE void scrubBy(double pixelDelta);
+    Q_INVOKABLE void resumeAfterScrub();
+
+    // Manual beat-grid correction: rebuilds the BeatMarker array so that the
+    // current playhead position becomes beat 1 / bar 1.  Emits beatgridChanged
+    // via TrackData, which the waveform renderer picks up automatically.
+    Q_INVOKABLE void setDownbeatAtCurrentPosition();
+
+    // Half-time / double-time correction.
+    // Finds the nearest existing downbeat to the current playhead as a stable
+    // anchor, doubles/halves the stored BPM, then rebuilds the grid from there.
+    Q_INVOKABLE void doubleBpm();
+    Q_INVOKABLE void halveBpm();
     TrackData* getTrackData() const;
 
     QString trackTitle()    const { return m_trackTitle; }
@@ -112,6 +140,13 @@ public slots:
     bool isReverse() const { return m_isReverse; }
     Q_INVOKABLE void setReverse(bool on);
 
+    // Keep the engine's pixel-scale in sync with the waveform renderer.
+    void setPixelsPerSecond(double pps) {
+        if (m_pixelsPerSecond == pps) return;
+        m_pixelsPerSecond = pps;
+        emit pixelsPerSecondChanged();
+    }
+
 signals:
     void progressChanged();
     void playingChanged();
@@ -119,6 +154,7 @@ signals:
     void tempoChanged();
     void trackLoaded();
     void trackMetadataChanged();
+    void pixelsPerSecondChanged();
     
     // Mixer Signals
     void volumeChanged();
@@ -186,4 +222,9 @@ private:
     // Atomic playhead position (seconds). Written on every onTimer() tick,
     // read lock-free by getPlayheadPositionAtomic() from the QML FrameAnimation.
     std::atomic<double> m_atomicPlayheadPos{0.0};
+
+    // Scrub state.
+    // m_pixelsPerSecond is mirrored from the waveform renderer (150 pts/s × ppp).
+    double m_pixelsPerSecond = 225.0;  // default: 150 pts/s × 1.5 ppp
+    bool   m_isScrubbing     = false;
 };

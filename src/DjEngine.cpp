@@ -537,6 +537,110 @@ void DjEngine::onTimer()
     }
 }
 
+// ─── Scrub API ────────────────────────────────────────────────────────────────
+
+void DjEngine::pauseForScrub()
+{
+    // Stop audio output immediately.  We deliberately do NOT emit playingChanged()
+    // so the QML FrameAnimation keeps ticking and the waveform stays live.
+    transportSource.stop();
+    m_snapValid    = false;
+    m_isScrubbing  = true;
+}
+
+void DjEngine::scrubBy(double pixelDelta)
+{
+    // Convert pixel delta → time delta.
+    // The waveform maps (pixelsPerPoint × 150 pts/s) pixels to 1 second.
+    // Dragging right  → positive pixelDelta → waveform moves right
+    //                 → playhead moves BACKWARD (we "pull" the record left).
+    // Dragging left   → negative pixelDelta → playhead moves FORWARD.
+    // ∴ timeDelta = −pixelDelta / pixelsPerSecond
+    if (m_pixelsPerSecond <= 0.0) return;
+
+    double timeDelta = -pixelDelta / m_pixelsPerSecond;
+
+    double len     = transportSource.getLengthInSeconds();
+    double current = transportSource.getCurrentPosition();
+    double newPos  = std::clamp(current + timeDelta, 0.0, len > 0.0 ? len : 0.0);
+
+    transportSource.setPosition(newPos);
+
+    // Keep the atomic + snap in sync so getVisualPosition() stays correct
+    // while transport is stopped during scrub.
+    m_atomicPlayheadPos.store(newPos, std::memory_order_relaxed);
+    m_snapPosition = newPos;
+}
+
+void DjEngine::resumeAfterScrub()
+{
+    m_isScrubbing = false;
+    transportSource.start();
+    m_snapClock.restart();
+    m_snapValid = true;
+    emit playingChanged();
+}
+
+void DjEngine::setDownbeatAtCurrentPosition()
+{
+    if (!m_trackData || !m_trackData->isBpmAnalyzed()) return;
+
+    double anchorSec     = static_cast<double>(getVisualPosition());
+    double trackLengthSec = static_cast<double>(transportSource.getLengthInSeconds());
+    if (trackLengthSec <= 0.0) return;
+
+    // Delegate rebuild + emit beatgridChanged() to TrackData.
+    m_trackData->shiftBeatgridToDownbeat(anchorSec, trackLengthSec);
+}
+
+// Helper: find the positionSec of the downbeat (isDownbeat == true) nearest
+// to currentSec in the existing beat grid.  Falls back to currentSec itself
+// if the grid is empty or has no downbeats.
+static double nearestDownbeatAnchor(const std::vector<TrackData::BeatMarker>& grid,
+                                    double currentSec)
+{
+    double best     = currentSec;
+    double bestDist = std::numeric_limits<double>::max();
+    for (const auto& m : grid) {
+        if (!m.isDownbeat) continue;
+        double d = std::abs(m.positionSec - currentSec);
+        if (d < bestDist) { bestDist = d; best = m.positionSec; }
+    }
+    return best;
+}
+
+void DjEngine::doubleBpm()
+{
+    if (!m_trackData || !m_trackData->isBpmAnalyzed()) return;
+    double trackLen = static_cast<double>(transportSource.getLengthInSeconds());
+    if (trackLen <= 0.0) return;
+
+    double currentSec = static_cast<double>(getVisualPosition());
+    double anchor = nearestDownbeatAnchor(m_trackData->getBeatGrid(), currentSec);
+
+    double newBpm = m_trackData->getBpm() * 2.0;
+    m_trackData->setBpm(newBpm);
+    m_trackData->shiftBeatgridToDownbeat(anchor, trackLen);
+    emit tempoChanged();   // update BPM display in UI
+}
+
+void DjEngine::halveBpm()
+{
+    if (!m_trackData || !m_trackData->isBpmAnalyzed()) return;
+    double trackLen = static_cast<double>(transportSource.getLengthInSeconds());
+    if (trackLen <= 0.0) return;
+
+    double currentSec = static_cast<double>(getVisualPosition());
+    double anchor = nearestDownbeatAnchor(m_trackData->getBeatGrid(), currentSec);
+
+    double newBpm = m_trackData->getBpm() / 2.0;
+    m_trackData->setBpm(newBpm);
+    m_trackData->shiftBeatgridToDownbeat(anchor, trackLen);
+    emit tempoChanged();   // update BPM display in UI
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+
 void DjEngine::setTempoPercent(double percent)
 {
     // Clamp to ±100% range (WIDE mode)
