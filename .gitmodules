@@ -1,3 +1,6 @@
 [submodule "libs/JUCE"]
 	path = libs/JUCE
 	url = https://github.com/juce-framework/JUCE.git
+[submodule "libs/link"]
+	path = libs/link
+	url = https://github.com/Ableton/link.git
