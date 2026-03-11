@@ -136,6 +136,7 @@ public:
         outputBuffer.setSize(2, 65536);
         fifo = std::make_unique<juce::AbstractFifo>(65536);
         wasBypassed = true;
+        justUnbypassed = false;
     }
 
     void releaseResources() override {
@@ -144,13 +145,23 @@ public:
         fifo.reset();
     }
 
+    void setKeylock(bool enabled) {
+        keylockEnabled = enabled;
+    }
+
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override {
-        bool bypass = (std::abs(tempoRatio - 1.0) < 0.001);
+        bool bypass = !keylockEnabled && (std::abs(tempoRatio - 1.0) < 0.001);
         
         if (bypass) {
             if (source) source->getNextAudioBlock(info);
             else info.clearActiveBufferRegion();
+            
+            if (!wasBypassed && info.numSamples > 0) {
+                info.buffer->applyGainRamp(info.startSample, std::min(info.numSamples, 512), 0.0f, 1.0f);
+            }
+            
             wasBypassed = true;
+            justUnbypassed = false;
             return;
         }
 
@@ -158,6 +169,9 @@ public:
             if (stretcher) stretcher->reset();
             if (fifo) fifo->reset();
             wasBypassed = false;
+            justUnbypassed = true;
+        } else {
+            justUnbypassed = false;
         }
 
         if (!source || !stretcher || !fifo) {
@@ -225,6 +239,10 @@ public:
                 info.buffer->copyFrom(1, destStart + size1, outputBuffer, 1, start2, size2);
             }
             fifo->finishedRead(size1 + size2);
+            
+            if (justUnbypassed && framesNeeded > 0) {
+                info.buffer->applyGainRamp(info.startSample, std::min(framesNeeded, 512), 0.0f, 1.0f);
+            }
         } else {
             info.clearActiveBufferRegion();
         }
@@ -239,6 +257,8 @@ private:
     double sampleRate = 44100.0;
     double tempoRatio = 1.0;
     bool wasBypassed = true;
+    bool keylockEnabled = false;
+    bool justUnbypassed = false;
 };
 
 class DjEngine::MixerDspSource : public juce::AudioSource {
@@ -779,10 +799,16 @@ void DjEngine::updateSpeedAndPitch()
     
     if (m_keylock) {
         if (resamplingSource) resamplingSource->setResamplingRatio(1.0);
-        if (timeStretchSource) timeStretchSource->setTempoRatio(speedMultiplier);
+        if (timeStretchSource) {
+            timeStretchSource->setTempoRatio(speedMultiplier);
+            timeStretchSource->setKeylock(true);
+        }
     } else {
         if (resamplingSource) resamplingSource->setResamplingRatio(speedMultiplier);
-        if (timeStretchSource) timeStretchSource->setTempoRatio(1.0); // bypass
+        if (timeStretchSource) {
+            timeStretchSource->setTempoRatio(1.0); // bypass
+            timeStretchSource->setKeylock(false);
+        }
     }
 }
 
