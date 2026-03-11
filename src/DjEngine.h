@@ -22,6 +22,7 @@ class DjEngine : public QObject
     Q_PROPERTY(float progress READ getProgress NOTIFY progressChanged)
     Q_PROPERTY(bool isPlaying READ isPlaying NOTIFY playingChanged)
     Q_PROPERTY(bool isReverse READ isReverse NOTIFY reverseChanged)
+    Q_PROPERTY(bool keylock READ keylock WRITE setKeylock NOTIFY keylockChanged)
     Q_PROPERTY(double tempoPercent READ getTempoPercent WRITE setTempoPercent NOTIFY tempoChanged)
     Q_PROPERTY(double currentBpm READ getCurrentBpm NOTIFY tempoChanged)
     Q_PROPERTY(double tempoRatio READ getTempoRatio NOTIFY tempoChanged)
@@ -106,6 +107,8 @@ public:
     // Speed multiplier for the waveform renderer (e.g. 1.08 at +8%).
     double  getTempoRatio()   const { return 1.0 + m_tempoPercent / 100.0; }
 
+    bool keylock() const { return m_keylock; }
+
     // Mixer Getters
     double volume() const { return m_volume; }
     double trim() const { return m_trim; }
@@ -131,6 +134,7 @@ public slots:
     void setEqLow(double value);
     void setFilter(double value);
     void setCueEnabled(bool value);
+    void setKeylock(bool value);
 
     // FX chain
     void setFxEffectType(EffectType type);
@@ -164,18 +168,21 @@ signals:
     void eqLowChanged();
     void filterChanged();
     void cueEnabledChanged();
+    void keylockChanged();
 
 private slots:
     void onTimer();
 
 private:
     class MixerDspSource;
+    class TimeStretchAudioSource;
 
     juce::AudioDeviceManager deviceManager;
     juce::AudioFormatManager formatManager;
     std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
     juce::AudioTransportSource transportSource;
     std::unique_ptr<juce::ResamplingAudioSource> resamplingSource;
+    std::unique_ptr<TimeStretchAudioSource> timeStretchSource;
     std::unique_ptr<MixerDspSource> mixerSource;
     juce::AudioSourcePlayer sourcePlayer;
 
@@ -208,6 +215,9 @@ private:
     double m_filter = 0.0;
     bool   m_isReverse = false;
     bool m_cueEnabled = false;
+    bool m_keylock = false;
+
+    void updateSpeedAndPitch();
 
     // Updates the JUCE transport source gain based on volume and trim
     void updateGain();

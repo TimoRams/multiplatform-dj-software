@@ -392,6 +392,7 @@ Item {
                         Button {
                             text: "KEYLOCK"
                             checkable: true
+                            checked: deck.engine ? deck.engine.keylock : false
                             Layout.fillWidth: true
                             Layout.preferredHeight: 18
                             background: Rectangle {
@@ -406,6 +407,9 @@ Item {
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: {
+                                if (deck.engine) deck.engine.keylock = checked
                             }
                         }
 

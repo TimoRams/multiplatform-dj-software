@@ -23,6 +23,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(TAGLIB    REQUIRED IMPORTED_TARGET taglib)
 pkg_check_modules(AUBIO     REQUIRED IMPORTED_TARGET aubio)
 pkg_check_modules(KEYFINDER REQUIRED IMPORTED_TARGET libkeyfinder)
+pkg_check_modules(RUBBERBAND REQUIRED IMPORTED_TARGET rubberband)
 
 add_subdirectory(libs/JUCE)
 
@@ -92,6 +93,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     PkgConfig::TAGLIB
     PkgConfig::AUBIO
     PkgConfig::KEYFINDER
+    PkgConfig::RUBBERBAND
 )
 
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)

@@ -11,6 +11,7 @@
 #include <QRegularExpression>
 #include <juce_core/juce_core.h>
 #include <juce_dsp/juce_dsp.h>
+#include <rubberband/RubberBandStretcher.h>
 #include <cstring>
 #include <algorithm>
 #include <cmath>
@@ -109,7 +110,136 @@ double parseBpmString(const QString& raw) {
     return 0.0;
 }
 
-} // anon namespace
+}
+
+class DjEngine::TimeStretchAudioSource : public juce::AudioSource {
+public:
+    TimeStretchAudioSource(juce::AudioSource* inSource) : source(inSource) {}
+
+    void setTempoRatio(double ratio) {
+        if (std::abs(tempoRatio - ratio) < 0.001) return;
+        tempoRatio = ratio;
+        if (stretcher) {
+            stretcher->setTimeRatio(1.0 / tempoRatio);
+        }
+    }
+
+    void prepareToPlay(int samplesPerBlockExpected, double sr) override {
+        sampleRate = sr;
+        if (source) source->prepareToPlay(samplesPerBlockExpected, sr);
+        stretcher = std::make_unique<RubberBand::RubberBandStretcher>(
+            sr, 2, 
+            RubberBand::RubberBandStretcher::OptionProcessRealTime |
+            RubberBand::RubberBandStretcher::OptionPitchHighQuality);
+        
+        scratchBuffer.setSize(2, 8192);
+        outputBuffer.setSize(2, 65536);
+        fifo = std::make_unique<juce::AbstractFifo>(65536);
+        wasBypassed = true;
+    }
+
+    void releaseResources() override {
+        if (source) source->releaseResources();
+        stretcher.reset();
+        fifo.reset();
+    }
+
+    void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override {
+        bool bypass = (std::abs(tempoRatio - 1.0) < 0.001);
+        
+        if (bypass) {
+            if (source) source->getNextAudioBlock(info);
+            else info.clearActiveBufferRegion();
+            wasBypassed = true;
+            return;
+        }
+
+        if (wasBypassed) {
+            if (stretcher) stretcher->reset();
+            if (fifo) fifo->reset();
+            wasBypassed = false;
+        }
+
+        if (!source || !stretcher || !fifo) {
+            info.clearActiveBufferRegion();
+            return;
+        }
+
+        int framesNeeded = info.numSamples;
+        int destStart = info.startSample;
+        int maxPullLoops = 20;
+
+        while (fifo->getNumReady() < framesNeeded && maxPullLoops > 0) {
+            int pullSize = stretcher->getSamplesRequired();
+            if (pullSize == 0) pullSize = 1024;
+            
+            if (scratchBuffer.getNumSamples() < pullSize) {
+                scratchBuffer.setSize(2, pullSize, true);
+            }
+            
+            juce::AudioSourceChannelInfo pullInfo;
+            pullInfo.buffer = &scratchBuffer;
+            pullInfo.startSample = 0;
+            pullInfo.numSamples = pullSize;
+            scratchBuffer.clear(0, pullSize);
+            
+            source->getNextAudioBlock(pullInfo);
+            
+            const float* inputs[2] = { scratchBuffer.getReadPointer(0), scratchBuffer.getReadPointer(1) };
+            if (scratchBuffer.getNumChannels() == 1) inputs[1] = inputs[0];
+
+            stretcher->process(inputs, pullSize, false);
+            
+            int avail = stretcher->available();
+            if (avail > 0) {
+                if (outputBuffer.getNumSamples() < avail) {
+                    outputBuffer.setSize(2, std::max((int)outputBuffer.getNumSamples(), avail * 2), true);
+                }
+                
+                int start1, size1, start2, size2;
+                fifo->prepareToWrite(avail, start1, size1, start2, size2);
+                
+                if (size1 > 0) {
+                    float* outputs1[2] = { outputBuffer.getWritePointer(0, start1), outputBuffer.getWritePointer(1, start1) };
+                    stretcher->retrieve(outputs1, size1);
+                }
+                if (size2 > 0) {
+                    float* outputs2[2] = { outputBuffer.getWritePointer(0, start2), outputBuffer.getWritePointer(1, start2) };
+                    stretcher->retrieve(outputs2, size2);
+                }
+                fifo->finishedWrite(size1 + size2);
+            }
+            maxPullLoops--;
+        }
+
+        int ready = fifo->getNumReady();
+        if (ready >= framesNeeded) {
+            int start1, size1, start2, size2;
+            fifo->prepareToRead(framesNeeded, start1, size1, start2, size2);
+            if (size1 > 0) {
+                info.buffer->copyFrom(0, destStart, outputBuffer, 0, start1, size1);
+                info.buffer->copyFrom(1, destStart, outputBuffer, 1, start1, size1);
+            }
+            if (size2 > 0) {
+                info.buffer->copyFrom(0, destStart + size1, outputBuffer, 0, start2, size2);
+                info.buffer->copyFrom(1, destStart + size1, outputBuffer, 1, start2, size2);
+            }
+            fifo->finishedRead(size1 + size2);
+        } else {
+            info.clearActiveBufferRegion();
+        }
+    }
+
+private:
+    juce::AudioSource* source = nullptr;
+    std::unique_ptr<RubberBand::RubberBandStretcher> stretcher;
+    juce::AudioBuffer<float> scratchBuffer;
+    juce::AudioBuffer<float> outputBuffer;
+    std::unique_ptr<juce::AbstractFifo> fifo;
+    double sampleRate = 44100.0;
+    double tempoRatio = 1.0;
+    bool wasBypassed = true;
+};
 
 class DjEngine::MixerDspSource : public juce::AudioSource {
 public:
@@ -307,8 +437,10 @@ DjEngine::DjEngine(QObject* parent) : QObject(parent)
         2       // channels = 2 (stereo)
     );
     
+    timeStretchSource = std::make_unique<TimeStretchAudioSource>(resamplingSource.get());
+    
     // Create the mixer DSP source to apply EQ, Filter, and Gain based on Pioneer DJM A9.
-    mixerSource = std::make_unique<MixerDspSource>(resamplingSource.get(), &transportSource);
+    mixerSource = std::make_unique<MixerDspSource>(timeStretchSource.get(), &transportSource);
     mixerSource->setTrim(static_cast<float>(m_trim));
     mixerSource->setFader(static_cast<float>(m_volume));
 
@@ -641,6 +773,27 @@ void DjEngine::halveBpm()
 
 // ──────────────────────────────────────────────────────────────────────────────
 
+void DjEngine::updateSpeedAndPitch()
+{
+    double speedMultiplier = 1.0 + (m_tempoPercent / 100.0);
+    
+    if (m_keylock) {
+        if (resamplingSource) resamplingSource->setResamplingRatio(1.0);
+        if (timeStretchSource) timeStretchSource->setTempoRatio(speedMultiplier);
+    } else {
+        if (resamplingSource) resamplingSource->setResamplingRatio(speedMultiplier);
+        if (timeStretchSource) timeStretchSource->setTempoRatio(1.0); // bypass
+    }
+}
+
+void DjEngine::setKeylock(bool on)
+{
+    if (m_keylock == on) return;
+    m_keylock = on;
+    updateSpeedAndPitch();
+    emit keylockChanged();
+}
+
 void DjEngine::setTempoPercent(double percent)
 {
     // Clamp to ±100% range (WIDE mode)
@@ -649,18 +802,9 @@ void DjEngine::setTempoPercent(double percent)
     if (m_tempoPercent == percent) return;
     
     m_tempoPercent = percent;
+    updateSpeedAndPitch();
     
-    // Calculate speed multiplier: 1.0 = 100% = normal speed
-    // +8% = 1.08, -8% = 0.92
-    double speedMultiplier = 1.0 + (percent / 100.0);
-    
-    // Apply to the resampling source for pitch-preserving tempo change
-    if (resamplingSource) {
-        resamplingSource->setResamplingRatio(speedMultiplier);
-    }
-    
-    qDebug() << "[DjEngine] Tempo set to" << percent << "%" 
-             << "(speed:" << speedMultiplier << "x)";
+    qDebug() << "[DjEngine] Tempo set to" << percent << "%" << "(keylock:" << m_keylock << ")";
     
     emit tempoChanged();
 }
