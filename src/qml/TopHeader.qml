@@ -147,6 +147,87 @@ Rectangle {
         // ── SPACER ────────────────────────────────────────────────────────────
         Item { Layout.fillWidth: true }
 
+        // ── ABLETON LINK section ──────────────────────────────────────────────
+        Row {
+            spacing: 8
+            Layout.alignment: Qt.AlignVCenter
+
+            // LINK toggle button
+            Rectangle {
+                width: 44; height: 22
+                radius: 3
+                color: linkManager.enabled ? "#1a3322" : "#1a1a1a"
+                border.color: linkManager.enabled ? "#44cc66" : "#333"
+                border.width: 1
+                anchors.verticalCenter: parent.verticalCenter
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "LINK"
+                    color: linkManager.enabled ? "#44cc66" : "#777"
+                    font.pixelSize: window.sp(9)
+                    font.bold: true
+                    font.letterSpacing: 0.5
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: linkManager.enabled = !linkManager.enabled
+                }
+            }
+
+            // Peer count (only when enabled and peers > 0)
+            Text {
+                visible: linkManager.enabled && linkManager.numPeers > 0
+                text: linkManager.numPeers + "P"
+                color: "#44cc66"
+                font.pixelSize: window.sp(9)
+                font.family: "monospace"
+                font.bold: true
+                anchors.verticalCenter: parent.verticalCenter
+            }
+
+            // Link BPM display
+            Text {
+                visible: linkManager.enabled
+                text: linkManager.bpm.toFixed(1)
+                color: "#ccc"
+                font.pixelSize: window.sp(12)
+                font.family: "monospace"
+                font.bold: true
+                anchors.verticalCenter: parent.verticalCenter
+            }
+
+            // 4-beat phase indicator (running light)
+            Row {
+                spacing: 4
+                visible: linkManager.enabled
+                anchors.verticalCenter: parent.verticalCenter
+
+                Repeater {
+                    model: 4
+                    Rectangle {
+                        required property int index
+                        width: 8; height: 8; radius: 4
+                        // Light up the dot whose index matches the current beat phase
+                        color: {
+                            var beatIndex = Math.floor(linkManager.phase)
+                            if (beatIndex < 0) beatIndex = 0
+                            if (beatIndex > 3) beatIndex = 3
+                            return index === beatIndex ? "#44cc66" : "#333"
+                        }
+                        border.color: index === Math.floor(Math.max(0, Math.min(3, linkManager.phase)))
+                                      ? "#66ee88" : "#444"
+                        border.width: 1
+                    }
+                }
+            }
+        }
+
+        // ── SPACER ────────────────────────────────────────────────────────────
+        Item { Layout.fillWidth: true }
+
         // ── RIGHT: Audio load + REC + Clock + Actions ─────────────────────────
         Row {
             spacing: 14

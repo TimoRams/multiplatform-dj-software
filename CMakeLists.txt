@@ -27,6 +27,11 @@ pkg_check_modules(RUBBERBAND REQUIRED IMPORTED_TARGET rubberband)
 
 add_subdirectory(libs/JUCE)
 
+# Ableton Link — header-only library for tempo/beat sync
+# Disable tests and examples; we only need the Ableton::Link imported target.
+set(LINK_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+include(libs/link/AbletonLinkConfig.cmake)
+
 juce_add_console_app(${PROJECT_NAME}
     PRODUCT_NAME "Multiplatform DJ Software"
     COMPANY_NAME "Ramsbrock.net"
@@ -67,6 +72,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/FxManager.cpp
     src/FxProcessor.h
     src/FxProcessor.cpp
+    src/LinkManager.h
+    src/LinkManager.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE src)
@@ -94,6 +101,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     PkgConfig::AUBIO
     PkgConfig::KEYFINDER
     PkgConfig::RUBBERBAND
+    Ableton::Link
 )
 
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)

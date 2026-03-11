@@ -15,6 +15,7 @@
 #include "LibraryManager.h"
 #include "CoverArtProvider.h"
 #include "FxManager.h"
+#include "LinkManager.h"
 
 using namespace Qt::StringLiterals;
 
@@ -68,6 +69,9 @@ int main(int argc, char *argv[])
     FxManager fxManager;
     fxManager.registerEngines(deckA.get(), deckB.get());
     engine.rootContext()->setContextProperty("fxManager", &fxManager);
+
+    LinkManager linkManager;
+    engine.rootContext()->setContextProperty("linkManager", &linkManager);
 
     const QUrl url(u"qrc:/DJSoftware/src/qml/main.qml"_s);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
