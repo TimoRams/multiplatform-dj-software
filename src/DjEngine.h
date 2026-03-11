@@ -50,6 +50,10 @@ class DjEngine : public QObject
     Q_PROPERTY(double filter READ filter WRITE setFilter NOTIFY filterChanged)
     Q_PROPERTY(bool cueEnabled READ cueEnabled WRITE setCueEnabled NOTIFY cueEnabledChanged)
 
+    // VU meter peak levels (0.0-1.0+), read from the audio thread
+    Q_PROPERTY(float vuLevelL READ vuLevelL NOTIFY vuLevelChanged)
+    Q_PROPERTY(float vuLevelR READ vuLevelR NOTIFY vuLevelChanged)
+
 public:
     explicit DjEngine(QObject* parent = nullptr);
     ~DjEngine() override;
@@ -118,6 +122,10 @@ public:
     double filter() const { return m_filter; }
     bool cueEnabled() const { return m_cueEnabled; }
 
+    // VU meter getters — read atomic peaks from the audio thread
+    float vuLevelL() const;
+    float vuLevelR() const;
+
     void setCoverArtProvider(CoverArtProvider* provider, const QString& deckId);
 
 public slots:
@@ -169,6 +177,7 @@ signals:
     void filterChanged();
     void cueEnabledChanged();
     void keylockChanged();
+    void vuLevelChanged();
 
 private slots:
     void onTimer();

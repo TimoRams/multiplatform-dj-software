@@ -74,6 +74,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/FxProcessor.cpp
     src/LinkManager.h
     src/LinkManager.cpp
+    src/SystemMonitor.h
+    src/SystemMonitor.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE src)

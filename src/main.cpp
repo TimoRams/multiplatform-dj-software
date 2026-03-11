@@ -16,6 +16,7 @@
 #include "CoverArtProvider.h"
 #include "FxManager.h"
 #include "LinkManager.h"
+#include "SystemMonitor.h"
 
 using namespace Qt::StringLiterals;
 
@@ -72,6 +73,9 @@ int main(int argc, char *argv[])
 
     LinkManager linkManager;
     engine.rootContext()->setContextProperty("linkManager", &linkManager);
+
+    SystemMonitor sysMonitor;
+    engine.rootContext()->setContextProperty("sysMonitor", &sysMonitor);
 
     const QUrl url(u"qrc:/DJSoftware/src/qml/main.qml"_s);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,

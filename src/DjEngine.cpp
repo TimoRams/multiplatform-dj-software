@@ -350,6 +350,20 @@ public:
             if (newPos < 0.0) newPos = 0.0;
             m_transport->setPosition(newPos);
         }
+
+        // ── VU peak level measurement (post-processing) ───────────────────
+        {
+            auto* buf = bufferToFill.buffer;
+            const int s = bufferToFill.startSample;
+            const int n = bufferToFill.numSamples;
+            float peakL = 0.0f, peakR = 0.0f;
+            if (buf->getNumChannels() > 0)
+                peakL = buf->getMagnitude(0, s, n);
+            if (buf->getNumChannels() > 1)
+                peakR = buf->getMagnitude(1, s, n);
+            m_peakL.store(peakL, std::memory_order_relaxed);
+            m_peakR.store(peakR, std::memory_order_relaxed);
+        }
     }
 
     void setTrim(float val) { trimVal = val; }
@@ -425,6 +439,11 @@ private:
 
     FxProcessor m_fx;
     std::atomic<bool> m_reverse { false };
+
+public:
+    // VU meter peak levels — written on audio thread, read from UI thread
+    std::atomic<float> m_peakL { 0.0f };
+    std::atomic<float> m_peakR { 0.0f };
 };
 
 DjEngine::DjEngine(QObject* parent) : QObject(parent)
@@ -724,6 +743,18 @@ void DjEngine::onTimer()
         m_atomicPlayheadPos.store(transportSource.getCurrentPosition(),
                                    std::memory_order_relaxed);
     }
+    // Always emit VU level updates (30 Hz timer = nice for meters)
+    emit vuLevelChanged();
+}
+
+float DjEngine::vuLevelL() const
+{
+    return mixerSource ? mixerSource->m_peakL.load(std::memory_order_relaxed) : 0.0f;
+}
+
+float DjEngine::vuLevelR() const
+{
+    return mixerSource ? mixerSource->m_peakR.load(std::memory_order_relaxed) : 0.0f;
 }
 
 // ─── Scrub API ────────────────────────────────────────────────────────────────
