@@ -53,6 +53,9 @@ class DjEngine : public QObject
     // VU meter peak levels (0.0-1.0+), read from the audio thread
     Q_PROPERTY(float vuLevelL READ vuLevelL NOTIFY vuLevelChanged)
     Q_PROPERTY(float vuLevelR READ vuLevelR NOTIFY vuLevelChanged)
+    
+    // Global anti-clip gain reduction (0.0-1.0), 1.0 = no reduction
+    Q_PROPERTY(float gainReduction READ gainReduction NOTIFY gainReductionChanged)
 
 public:
     explicit DjEngine(QObject* parent = nullptr);
@@ -91,6 +94,10 @@ public:
     // anchor, doubles/halves the stored BPM, then rebuilds the grid from there.
     Q_INVOKABLE void doubleBpm();
     Q_INVOKABLE void halveBpm();
+
+    // Master volume + anti-clip (global, shared across all decks)
+    Q_INVOKABLE void setMasterVolume(float v);
+    Q_INVOKABLE void setAntiClip(bool enabled);
     TrackData* getTrackData() const;
 
     QString trackTitle()    const { return m_trackTitle; }
@@ -125,6 +132,7 @@ public:
     // VU meter getters — read atomic peaks from the audio thread
     float vuLevelL() const;
     float vuLevelR() const;
+    float gainReduction() const;
 
     void setCoverArtProvider(CoverArtProvider* provider, const QString& deckId);
 
@@ -178,6 +186,7 @@ signals:
     void cueEnabledChanged();
     void keylockChanged();
     void vuLevelChanged();
+    void gainReductionChanged();
 
 private slots:
     void onTimer();

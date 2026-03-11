@@ -172,6 +172,120 @@ Rectangle {
             spacing: 14
             Layout.alignment: Qt.AlignVCenter
 
+            // Anti-Clip button
+            Rectangle {
+                width: 52; height: 22
+                radius: 3
+                anchors.verticalCenter: parent.verticalCenter
+                property bool antiClipActive: false
+                property real gr: deckA ? deckA.gainReduction : 1.0
+
+                // gr < 0.5 (extreme clipping) -> Dark Red
+                // gr < 0.7 (strong clipping) -> Red
+                // gr < 0.99 (light clipping) -> Yellow
+                // otherwise (no clipping) -> Green
+                color: !antiClipActive ? "#1a1a1a" : (gr < 0.5 ? "#5c0000" : (gr < 0.7 ? "#b71c1c" : (gr < 0.99 ? "#f57f17" : "#1b5e20")))
+                border.color: !antiClipActive ? "#333" : (gr < 0.5 ? "#8e0000" : (gr < 0.7 ? "#f44336" : (gr < 0.99 ? "#fbc02d" : "#4caf50")))
+                border.width: 1
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "A-CLIP"
+                    color: !parent.antiClipActive ? "#666" : (parent.gr < 0.99 ? "#fff" : "#c8e6c9")
+                    font.pixelSize: window.sp(8)
+                    font.bold: true
+                    font.family: "monospace"
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        parent.antiClipActive = !parent.antiClipActive
+                        if (deckA) deckA.setAntiClip(parent.antiClipActive)
+                    }
+                }
+            }
+
+            // Master Volume knob
+            Row {
+                spacing: 3
+                anchors.verticalCenter: parent.verticalCenter
+
+                Text {
+                    text: "MST"
+                    color: "#555"
+                    font.pixelSize: window.sp(8)
+                    font.bold: true
+                    font.family: "monospace"
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+
+                Dial {
+                    id: masterVolDial
+                    width: 26; height: 26
+                    from: 0.0; to: 1.0; value: 0.8
+
+                    background: Rectangle {
+                        x: masterVolDial.width / 2 - width / 2
+                        y: masterVolDial.height / 2 - height / 2
+                        width: masterVolDial.width
+                        height: masterVolDial.height
+                        radius: width / 2
+                        color: "transparent"
+
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: parent.width * 0.85
+                            height: parent.height * 0.85
+                            radius: width / 2
+                            color: "#222"
+                            border.color: "#444"
+                            border.width: 1
+                        }
+                    }
+
+                    handle: Rectangle {
+                        id: mstHandle
+                        x: masterVolDial.background.x + masterVolDial.background.width / 2 - width / 2
+                        y: masterVolDial.background.y + masterVolDial.background.height / 2 - height / 2
+                        width: masterVolDial.width * 0.85
+                        height: masterVolDial.height * 0.85
+                        color: "transparent"
+
+                        Rectangle {
+                            color: "#aaa"
+                            width: 2
+                            height: parent.height * 0.35
+                            radius: 1
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.top: parent.top
+                            anchors.topMargin: 1
+                        }
+
+                        transform: [
+                            Rotation {
+                                angle: masterVolDial.angle
+                                origin.x: mstHandle.width / 2
+                                origin.y: mstHandle.height / 2
+                            }
+                        ]
+                    }
+
+                    onValueChanged: {
+                        if (deckA) deckA.setMasterVolume(value)
+                    }
+
+                    TapHandler {
+                        onDoubleTapped: {
+                            masterVolDial.enabled = false
+                            masterVolDial.value = 0.8
+                            masterVolDial.enabled = true
+                        }
+                    }
+                }
+            }
+
             // CPU / RAM bars (stacked thin bars)
             Row {
                 spacing: 5

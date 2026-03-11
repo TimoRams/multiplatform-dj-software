@@ -351,6 +351,71 @@ public:
             m_transport->setPosition(newPos);
         }
 
+        // ── Master Volume + Anti-Clip Limiter ───────────────────────────
+        {
+            auto* buf = bufferToFill.buffer;
+            const int s = bufferToFill.startSample;
+            const int n = bufferToFill.numSamples;
+
+            // Apply master volume
+            float masterGain = s_masterVolume.load(std::memory_order_relaxed);
+            if (std::abs(masterGain - 1.0f) > 0.001f) {
+                for (int ch = 0; ch < buf->getNumChannels(); ++ch)
+                    buf->applyGain(ch, s, n, masterGain);
+            }
+
+            // Anti-clip: strict zero-latency hard peak limiter
+            if (s_antiClipEnabled.load(std::memory_order_relaxed)) {
+                const float limitThreshold = 0.99f; // -0.08 dB
+                const float attackCoeff  = 0.2f;    // Very fast attack to catch transients
+                const float releaseCoeff = 0.0005f; // Smooth slow release (~50-100ms)
+
+                float minGainThisBlock = 1.0f;
+
+                for (int i = 0; i < n; ++i) {
+                    float peak = 0.0f;
+                    for (int ch = 0; ch < buf->getNumChannels(); ++ch) {
+                        float absSample = std::abs(buf->getSample(ch, s + i));
+                        if (absSample > peak) peak = absSample;
+                    }
+
+                    // Target gain is 1.0 unless peak exceeds threshold
+                    float targetGain = 1.0f;
+                    if (peak > limitThreshold) {
+                        targetGain = limitThreshold / peak;
+                    }
+
+                    // Envelope follower
+                    if (targetGain < m_limiterEnvelope) {
+                        // Attack: apply reduction quickly
+                        m_limiterEnvelope += attackCoeff * (targetGain - m_limiterEnvelope);
+                    } else {
+                        // Release: return to 1.0 slowly
+                        m_limiterEnvelope += releaseCoeff * (targetGain - m_limiterEnvelope);
+                    }
+
+                    if (m_limiterEnvelope > 1.0f) m_limiterEnvelope = 1.0f;
+
+                    if (m_limiterEnvelope < minGainThisBlock) {
+                        minGainThisBlock = m_limiterEnvelope;
+                    }
+
+                    // Apply gain reduction only if actually active
+                    if (m_limiterEnvelope < 0.999f) {
+                        for (int ch = 0; ch < buf->getNumChannels(); ++ch) {
+                            buf->setSample(ch, s + i, buf->getSample(ch, s + i) * m_limiterEnvelope);
+                        }
+                    }
+                }
+                
+                // Track max gain reduction for UI
+                s_gainReduction.store(minGainThisBlock, std::memory_order_relaxed);
+            } else {
+                m_limiterEnvelope = 1.0f;
+                s_gainReduction.store(1.0f, std::memory_order_relaxed);
+            }
+        }
+
         // ── VU peak level measurement (post-processing) ───────────────────
         {
             auto* buf = bufferToFill.buffer;
@@ -439,12 +504,23 @@ private:
 
     FxProcessor m_fx;
     std::atomic<bool> m_reverse { false };
+    float m_limiterEnvelope = 1.0f;  // anti-clip envelope state
 
 public:
     // VU meter peak levels — written on audio thread, read from UI thread
     std::atomic<float> m_peakL { 0.0f };
     std::atomic<float> m_peakR { 0.0f };
+
+    // Global shared state: master volume + anti-clip (shared across all decks)
+    static std::atomic<float> s_masterVolume;
+    static std::atomic<bool>  s_antiClipEnabled;
+    static std::atomic<float> s_gainReduction;
 };
+
+// Static shared state: master volume + anti-clip
+std::atomic<float> DjEngine::MixerDspSource::s_masterVolume{1.0f};
+std::atomic<bool>  DjEngine::MixerDspSource::s_antiClipEnabled{false};
+std::atomic<float> DjEngine::MixerDspSource::s_gainReduction{1.0f};
 
 DjEngine::DjEngine(QObject* parent) : QObject(parent)
 {
@@ -745,6 +821,7 @@ void DjEngine::onTimer()
     }
     // Always emit VU level updates (30 Hz timer = nice for meters)
     emit vuLevelChanged();
+    emit gainReductionChanged();
 }
 
 float DjEngine::vuLevelL() const
@@ -755,6 +832,12 @@ float DjEngine::vuLevelL() const
 float DjEngine::vuLevelR() const
 {
     return mixerSource ? mixerSource->m_peakR.load(std::memory_order_relaxed) : 0.0f;
+}
+
+float DjEngine::gainReduction() const
+{
+    // s_gainReduction is a static atomic shared across all instances
+    return MixerDspSource::s_gainReduction.load(std::memory_order_relaxed);
 }
 
 // ─── Scrub API ────────────────────────────────────────────────────────────────
@@ -857,6 +940,17 @@ void DjEngine::halveBpm()
     m_trackData->setBpm(newBpm);
     m_trackData->shiftBeatgridToDownbeat(anchor, trackLen);
     emit tempoChanged();   // update BPM display in UI
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+void DjEngine::setMasterVolume(float v) {
+    MixerDspSource::s_masterVolume.store(std::clamp(v, 0.0f, 1.5f),
+                                         std::memory_order_relaxed);
+}
+
+void DjEngine::setAntiClip(bool enabled) {
+    MixerDspSource::s_antiClipEnabled.store(enabled, std::memory_order_relaxed);
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
