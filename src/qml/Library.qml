@@ -8,6 +8,8 @@ Rectangle {
 
     // Aktiver Sidebar-Tab: "library" | "streaming" | "usb" | "files"
     property string activeTab: "library"
+    // Aktiver Library-Unterpunkt
+    property string librarySubTab: "allSongs"
 
     RowLayout {
         anchors.fill: parent
@@ -192,13 +194,108 @@ Rectangle {
         }
 
         // ----------------------------------------------------------------
-        // SPALTE 2 PLACEHOLDER: sichtbar wenn Tab NICHT "files" ist
+        // SPALTE 2 LIBRARY: Unterpunkte (nur sichtbar wenn Tab "library")
         // ----------------------------------------------------------------
         Rectangle {
             Layout.preferredWidth: 220
             Layout.fillHeight: true
             color: "#222222"
-            visible: libraryRoot.activeTab !== "files"
+            visible: libraryRoot.activeTab === "library"
+
+            Rectangle {
+                anchors.right:  parent.right
+                anchors.top:    parent.top
+                anchors.bottom: parent.bottom
+                width: 1
+                color: "#333"
+            }
+
+            // Header
+            Rectangle {
+                id: libSubHeader
+                anchors.top:   parent.top
+                anchors.left:  parent.left
+                anchors.right: parent.right
+                height: 24
+                color: "#1a1a1a"
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left
+                    anchors.leftMargin: 10
+                    text: "Sammlung"
+                    color: "#888"
+                    font.pixelSize: window.sp(11)
+                    font.bold: true
+                }
+            }
+
+            Column {
+                anchors.top: libSubHeader.bottom
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.topMargin: 4
+                spacing: 1
+
+                Rectangle {
+                    width: parent.width
+                    height: 30
+                    color: libraryRoot.librarySubTab === "allSongs" ? "#2a5298" : "transparent"
+
+                    Row {
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.left: parent.left
+                        anchors.leftMargin: 12
+                        spacing: 8
+
+                        Text {
+                            text: "♫"
+                            color: libraryRoot.librarySubTab === "allSongs" ? "#ffffff" : "#888"
+                            font.pixelSize: window.sp(13)
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        Text {
+                            text: "Alle Songs"
+                            color: libraryRoot.librarySubTab === "allSongs" ? "#ffffff" : "#cccccc"
+                            font.pixelSize: window.sp(12)
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        // Track count badge
+                        Rectangle {
+                            visible: libraryModel ? libraryModel.count > 0 : false
+                            width: countText.width + 10
+                            height: 16
+                            radius: 8
+                            color: "#3a3a3a"
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Text {
+                                id: countText
+                                anchors.centerIn: parent
+                                text: libraryModel ? libraryModel.count : "0"
+                                color: "#aaa"
+                                font.pixelSize: window.sp(10)
+                            }
+                        }
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: libraryRoot.librarySubTab = "allSongs"
+                    }
+                }
+            }
+        }
+
+        // ----------------------------------------------------------------
+        // SPALTE 2 PLACEHOLDER: sichtbar für streaming/usb Tabs
+        // ----------------------------------------------------------------
+        Rectangle {
+            Layout.preferredWidth: 220
+            Layout.fillHeight: true
+            color: "#222222"
+            visible: libraryRoot.activeTab !== "files" && libraryRoot.activeTab !== "library"
 
             Rectangle {
                 anchors.right:  parent.right
@@ -210,9 +307,7 @@ Rectangle {
 
             Text {
                 anchors.centerIn: parent
-                text: libraryRoot.activeTab === "library"
-                      ? "Sammlung"
-                      : libraryRoot.activeTab.charAt(0).toUpperCase() + libraryRoot.activeTab.slice(1)
+                text: libraryRoot.activeTab.charAt(0).toUpperCase() + libraryRoot.activeTab.slice(1)
                 color: "#555"
                 font.pixelSize: window.sp(13)
             }
