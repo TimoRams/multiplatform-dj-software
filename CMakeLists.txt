@@ -88,6 +88,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/LibraryDatabase.cpp
     src/LibraryTableModel.h
     src/LibraryTableModel.cpp
+    src/BrickwallLimiter.h
+    src/BrickwallLimiter.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE src)

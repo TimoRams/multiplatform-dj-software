@@ -1,4 +1,5 @@
 #include "DjEngine.h"
+#include "BrickwallLimiter.h"
 #include "CoverArtExtractor.h"
 #include "CoverArtProvider.h"
 #include "FxProcessor.h"
@@ -287,6 +288,7 @@ public:
         if (source) source->prepareToPlay(samplesPerBlockExpected, sampleRate);
 
         m_fx.prepare(sampleRate, samplesPerBlockExpected, 2);
+        m_limiter.prepare(sampleRate, samplesPerBlockExpected, 2);
         
         juce::dsp::ProcessSpec spec { sampleRate, static_cast<juce::uint32>(samplesPerBlockExpected), 2 };
         lowEq.prepare(spec);
@@ -366,55 +368,19 @@ public:
                     buf->applyGain(ch, s, n, masterGain);
             }
 
-            // Anti-clip: strict zero-latency hard peak limiter
-            if (s_antiClipEnabled.load(std::memory_order_relaxed)) {
-                const float limitThreshold = 0.99f; // -0.08 dB
-                const float attackCoeff  = 0.2f;    // Very fast attack to catch transients
-                const float releaseCoeff = 0.0005f; // Smooth slow release (~50-100ms)
+            // Brickwall Limiter: always processes (consistent latency),
+            // seamless crossfade handled internally via setEnabled()
+            {
+                m_limiter.setEnabled(s_antiClipEnabled.load(std::memory_order_relaxed));
 
-                float minGainThisBlock = 1.0f;
+                float* channelPtrs[16];
+                const int numCh = std::min(buf->getNumChannels(), 16);
+                for (int ch = 0; ch < numCh; ++ch)
+                    channelPtrs[ch] = buf->getWritePointer(ch);
 
-                for (int i = 0; i < n; ++i) {
-                    float peak = 0.0f;
-                    for (int ch = 0; ch < buf->getNumChannels(); ++ch) {
-                        float absSample = std::abs(buf->getSample(ch, s + i));
-                        if (absSample > peak) peak = absSample;
-                    }
-
-                    // Target gain is 1.0 unless peak exceeds threshold
-                    float targetGain = 1.0f;
-                    if (peak > limitThreshold) {
-                        targetGain = limitThreshold / peak;
-                    }
-
-                    // Envelope follower
-                    if (targetGain < m_limiterEnvelope) {
-                        // Attack: apply reduction quickly
-                        m_limiterEnvelope += attackCoeff * (targetGain - m_limiterEnvelope);
-                    } else {
-                        // Release: return to 1.0 slowly
-                        m_limiterEnvelope += releaseCoeff * (targetGain - m_limiterEnvelope);
-                    }
-
-                    if (m_limiterEnvelope > 1.0f) m_limiterEnvelope = 1.0f;
-
-                    if (m_limiterEnvelope < minGainThisBlock) {
-                        minGainThisBlock = m_limiterEnvelope;
-                    }
-
-                    // Apply gain reduction only if actually active
-                    if (m_limiterEnvelope < 0.999f) {
-                        for (int ch = 0; ch < buf->getNumChannels(); ++ch) {
-                            buf->setSample(ch, s + i, buf->getSample(ch, s + i) * m_limiterEnvelope);
-                        }
-                    }
-                }
-                
-                // Track max gain reduction for UI
-                s_gainReduction.store(minGainThisBlock, std::memory_order_relaxed);
-            } else {
-                m_limiterEnvelope = 1.0f;
-                s_gainReduction.store(1.0f, std::memory_order_relaxed);
+                float gr = m_limiter.processBlock(channelPtrs, numCh, s, n);
+                s_gainReduction.store(m_limiter.isEnabled() ? gr : 1.0f,
+                                      std::memory_order_relaxed);
             }
         }
 
@@ -506,7 +472,7 @@ private:
 
     FxProcessor m_fx;
     std::atomic<bool> m_reverse { false };
-    float m_limiterEnvelope = 1.0f;  // anti-clip envelope state
+    BrickwallLimiter m_limiter;
 
 public:
     // VU meter peak levels — written on audio thread, read from UI thread
