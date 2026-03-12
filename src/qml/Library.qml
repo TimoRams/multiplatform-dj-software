@@ -7,7 +7,7 @@ Rectangle {
     color: "#1e1e1e"
 
     // Aktiver Sidebar-Tab: "library" | "streaming" | "usb" | "files"
-    property string activeTab: "files"
+    property string activeTab: "library"
 
     RowLayout {
         anchors.fill: parent
@@ -210,121 +210,332 @@ Rectangle {
 
             Text {
                 anchors.centerIn: parent
-                text: libraryRoot.activeTab.charAt(0).toUpperCase() + libraryRoot.activeTab.slice(1)
+                text: libraryRoot.activeTab === "library"
+                      ? "Sammlung"
+                      : libraryRoot.activeTab.charAt(0).toUpperCase() + libraryRoot.activeTab.slice(1)
                 color: "#555"
                 font.pixelSize: window.sp(13)
             }
         }
 
         // ----------------------------------------------------------------
-        // SPALTE 3: TRACKLISTE
+        // SPALTE 3: CONTENT AREA
+        // Switches between DB library view and file-browser track list.
         // ----------------------------------------------------------------
-        Rectangle {
+        Item {
             Layout.fillWidth:  true
             Layout.fillHeight: true
-            color: "#1e1e1e"
 
-            // Spaltenheader
+            // ============================================================
+            // A) DATABASE LIBRARY VIEW (Tab "library")
+            // ============================================================
             Rectangle {
-                id: trackHeader
-                anchors.top:   parent.top
-                anchors.left:  parent.left
-                anchors.right: parent.right
-                height: 24
-                color: "#1a1a1a"
+                anchors.fill: parent
+                color: "#1e1e1e"
+                visible: libraryRoot.activeTab === "library"
 
-                Row {
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.left: parent.left
-                    anchors.leftMargin: 10
-                    spacing: 0
+                // Column headers
+                Rectangle {
+                    id: libHeader
+                    anchors.top:   parent.top
+                    anchors.left:  parent.left
+                    anchors.right: parent.right
+                    height: 24
+                    color: "#1a1a1a"
 
-                    Text {
-                        text: "Track"
-                        color: "#666"
-                        font.pixelSize: window.sp(11)
-                        font.bold: true
-                    }
-                }
-            }
-
-            ListView {
-                id: trackList
-                anchors.top:    trackHeader.bottom
-                anchors.left:   parent.left
-                anchors.right:  parent.right
-                anchors.bottom: parent.bottom
-                clip: true
-
-                model: libraryManager ? libraryManager.tracks : []
-
-                delegate: Rectangle {
-                    id: trackDelegate
-                    required property string modelData
-                    required property int    index
-
-                    width:  ListView.view.width
-                    height: 28
-                    // Visuelles Feedback: Delegate wird beim Drag leicht abgedunkelt,
-                    // bewegt sich aber NICHT – es bleibt starr an seinem Platz.
-                    opacity: dragArea.drag.active ? 0.45 : 1.0
-                    color:   trackDelegate.index % 2 === 0 ? "transparent" : "#232323"
-
-                    Text {
+                    Row {
                         anchors.verticalCenter: parent.verticalCenter
-                        anchors.left:           parent.left
-                        anchors.leftMargin:     12
-                        anchors.right:          parent.right
-                        anchors.rightMargin:    8
-                        text:  trackDelegate.modelData
-                        color: "#dddddd"
-                        font.pixelSize: window.sp(12)
-                        elide: Text.ElideRight
-                    }
+                        anchors.left:  parent.left
+                        anchors.right: parent.right
+                        anchors.leftMargin: 10
+                        spacing: 0
 
-                    // Invisible drag proxy: only this item moves with the cursor.
-                    // Drag.Automatic hands off the drag to the OS -> no delegate clipping.
-                    Item {
-                        id: dragPayload
-                        anchors.fill: parent   // Startposition = Delegate-Position
-
-                        Drag.active:           dragArea.drag.active
-                        Drag.dragType:         Drag.Automatic
-                        Drag.supportedActions: Qt.CopyAction
-                        Drag.hotSpot.x:        trackDelegate.width  / 2
-                        Drag.hotSpot.y:        trackDelegate.height / 2
-                        Drag.mimeData: ({
-                            "text/uri-list": "file://" + (libraryManager ? libraryManager.currentFolder : "") + "/" + trackDelegate.modelData,
-                            "text/plain":    (libraryManager ? libraryManager.currentFolder : "") + "/" + trackDelegate.modelData
-                        })
-                    }
-
-                    MouseArea {
-                        id: dragArea
-                        anchors.fill: parent
-                        cursorShape:  drag.active ? Qt.DragMoveCursor : Qt.PointingHandCursor
-
-                        // Ziel ist der unsichtbare Proxy, NICHT das sichtbare Delegate
-                        drag.target:    dragPayload
-                        drag.axis:      Drag.XAndYAxis
-                        drag.threshold: 6
-
-                        onReleased: {
-                            dragPayload.Drag.drop()
-                            // Reset proxy to origin position
-                            dragPayload.x = 0
-                            dragPayload.y = 0
+                        // Status column
+                        Text {
+                            width: 36
+                            text: "✓"
+                            color: "#666"
+                            font.pixelSize: window.sp(11)
+                            font.bold: true
+                            horizontalAlignment: Text.AlignHCenter
+                        }
+                        // Title
+                        Text {
+                            width: (libHeader.width - 36 - 140 - 70 - 60 - 10) * 0.55
+                            text: "Titel"
+                            color: "#666"
+                            font.pixelSize: window.sp(11)
+                            font.bold: true
+                        }
+                        // Artist
+                        Text {
+                            width: (libHeader.width - 36 - 140 - 70 - 60 - 10) * 0.45
+                            text: "Künstler"
+                            color: "#666"
+                            font.pixelSize: window.sp(11)
+                            font.bold: true
+                        }
+                        // BPM
+                        Text {
+                            width: 70
+                            text: "BPM"
+                            color: "#666"
+                            font.pixelSize: window.sp(11)
+                            font.bold: true
+                            horizontalAlignment: Text.AlignRight
+                        }
+                        // Key
+                        Text {
+                            width: 60
+                            text: "Key"
+                            color: "#666"
+                            font.pixelSize: window.sp(11)
+                            font.bold: true
+                            horizontalAlignment: Text.AlignHCenter
+                            leftPadding: 10
                         }
                     }
                 }
 
-                // Leer-Zustand
+                ListView {
+                    id: libTrackList
+                    anchors.top:    libHeader.bottom
+                    anchors.left:   parent.left
+                    anchors.right:  parent.right
+                    anchors.bottom: parent.bottom
+                    clip: true
+
+                    model: libraryModel ? libraryModel : null
+
+                    delegate: Rectangle {
+                        id: libDelegate
+                        required property int    index
+                        required property string trackId
+                        required property string title
+                        required property string artist
+                        required property real   bpm
+                        required property string key
+                        required property bool   isAnalyzed
+                        required property string filePath
+
+                        width:  ListView.view.width
+                        height: 28
+                        opacity: libDragArea.drag.active ? 0.45 : 1.0
+                        color:   index % 2 === 0 ? "transparent" : "#232323"
+
+                        Row {
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.left:  parent.left
+                            anchors.right: parent.right
+                            anchors.leftMargin: 10
+                            spacing: 0
+
+                            // Status indicator
+                            Text {
+                                width: 36
+                                text: libDelegate.isAnalyzed ? "●" : "○"
+                                color: libDelegate.isAnalyzed ? "#4caf50" : "#555"
+                                font.pixelSize: window.sp(11)
+                                horizontalAlignment: Text.AlignHCenter
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            // Title
+                            Text {
+                                width: (libHeader.width - 36 - 140 - 70 - 60 - 10) * 0.55
+                                text: libDelegate.title || "—"
+                                color: "#dddddd"
+                                font.pixelSize: window.sp(12)
+                                elide: Text.ElideRight
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            // Artist
+                            Text {
+                                width: (libHeader.width - 36 - 140 - 70 - 60 - 10) * 0.45
+                                text: libDelegate.artist || "—"
+                                color: "#aaaaaa"
+                                font.pixelSize: window.sp(12)
+                                elide: Text.ElideRight
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            // BPM
+                            Text {
+                                width: 70
+                                text: libDelegate.bpm > 0 ? libDelegate.bpm.toFixed(1) : "—"
+                                color: libDelegate.bpm > 0 ? "#4caf50" : "#555"
+                                font.pixelSize: window.sp(12)
+                                horizontalAlignment: Text.AlignRight
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            // Key
+                            Text {
+                                width: 60
+                                text: libDelegate.key || "—"
+                                color: libDelegate.key ? "#42a5f5" : "#555"
+                                font.pixelSize: window.sp(12)
+                                horizontalAlignment: Text.AlignHCenter
+                                leftPadding: 10
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+
+                        // Drag proxy for loading into decks
+                        Item {
+                            id: libDragPayload
+                            anchors.fill: parent
+                            Drag.active:           libDragArea.drag.active
+                            Drag.dragType:         Drag.Automatic
+                            Drag.supportedActions: Qt.CopyAction
+                            Drag.hotSpot.x:        libDelegate.width  / 2
+                            Drag.hotSpot.y:        libDelegate.height / 2
+                            Drag.mimeData: ({
+                                "text/uri-list": "file://" + libDelegate.filePath,
+                                "text/plain":    libDelegate.filePath
+                            })
+                        }
+
+                        MouseArea {
+                            id: libDragArea
+                            anchors.fill: parent
+                            cursorShape:  drag.active ? Qt.DragMoveCursor : Qt.PointingHandCursor
+                            drag.target:    libDragPayload
+                            drag.axis:      Drag.XAndYAxis
+                            drag.threshold: 6
+                            onReleased: {
+                                libDragPayload.Drag.drop()
+                                libDragPayload.x = 0
+                                libDragPayload.y = 0
+                            }
+                        }
+                    }
+
+                    // Empty state
+                    Text {
+                        anchors.centerIn: parent
+                        visible: libTrackList.count === 0
+                        text: "Keine Tracks in der Bibliothek.\nLade einen Track auf ein Deck, um ihn hinzuzufügen."
+                        color: "#555"
+                        font.pixelSize: window.sp(13)
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+                }
+            }
+
+            // ============================================================
+            // B) FILE-BROWSER TRACK LIST (Tab "files")
+            // ============================================================
+            Rectangle {
+                anchors.fill: parent
+                color: "#1e1e1e"
+                visible: libraryRoot.activeTab === "files"
+
+                // Spaltenheader
+                Rectangle {
+                    id: trackHeader
+                    anchors.top:   parent.top
+                    anchors.left:  parent.left
+                    anchors.right: parent.right
+                    height: 24
+                    color: "#1a1a1a"
+
+                    Row {
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.left: parent.left
+                        anchors.leftMargin: 10
+                        spacing: 0
+
+                        Text {
+                            text: "Track"
+                            color: "#666"
+                            font.pixelSize: window.sp(11)
+                            font.bold: true
+                        }
+                    }
+                }
+
+                ListView {
+                    id: trackList
+                    anchors.top:    trackHeader.bottom
+                    anchors.left:   parent.left
+                    anchors.right:  parent.right
+                    anchors.bottom: parent.bottom
+                    clip: true
+
+                    model: libraryManager ? libraryManager.tracks : []
+
+                    delegate: Rectangle {
+                        id: trackDelegate
+                        required property string modelData
+                        required property int    index
+
+                        width:  ListView.view.width
+                        height: 28
+                        opacity: dragArea.drag.active ? 0.45 : 1.0
+                        color:   trackDelegate.index % 2 === 0 ? "transparent" : "#232323"
+
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.left:           parent.left
+                            anchors.leftMargin:     12
+                            anchors.right:          parent.right
+                            anchors.rightMargin:    8
+                            text:  trackDelegate.modelData
+                            color: "#dddddd"
+                            font.pixelSize: window.sp(12)
+                            elide: Text.ElideRight
+                        }
+
+                        Item {
+                            id: dragPayload
+                            anchors.fill: parent
+
+                            Drag.active:           dragArea.drag.active
+                            Drag.dragType:         Drag.Automatic
+                            Drag.supportedActions: Qt.CopyAction
+                            Drag.hotSpot.x:        trackDelegate.width  / 2
+                            Drag.hotSpot.y:        trackDelegate.height / 2
+                            Drag.mimeData: ({
+                                "text/uri-list": "file://" + (libraryManager ? libraryManager.currentFolder : "") + "/" + trackDelegate.modelData,
+                                "text/plain":    (libraryManager ? libraryManager.currentFolder : "") + "/" + trackDelegate.modelData
+                            })
+                        }
+
+                        MouseArea {
+                            id: dragArea
+                            anchors.fill: parent
+                            cursorShape:  drag.active ? Qt.DragMoveCursor : Qt.PointingHandCursor
+                            drag.target:    dragPayload
+                            drag.axis:      Drag.XAndYAxis
+                            drag.threshold: 6
+                            onReleased: {
+                                dragPayload.Drag.drop()
+                                dragPayload.x = 0
+                                dragPayload.y = 0
+                            }
+                        }
+                    }
+
+                    // Leer-Zustand
+                    Text {
+                        anchors.centerIn: parent
+                        visible: trackList.count === 0
+                        text: "Keine Audiodateien im gewählten Ordner"
+                        color: "#555"
+                        font.pixelSize: window.sp(13)
+                    }
+                }
+            }
+
+            // ============================================================
+            // C) PLACEHOLDER for other tabs
+            // ============================================================
+            Rectangle {
+                anchors.fill: parent
+                color: "#1e1e1e"
+                visible: libraryRoot.activeTab !== "files" && libraryRoot.activeTab !== "library"
+
                 Text {
                     anchors.centerIn: parent
-                    visible: trackList.count === 0
-                    text: libraryRoot.activeTab === "files"
-                          ? "Keine Audiodateien im gewählten Ordner"
-                          : libraryRoot.activeTab.charAt(0).toUpperCase() + libraryRoot.activeTab.slice(1) + " – Platzhalter"
+                    text: libraryRoot.activeTab.charAt(0).toUpperCase() + libraryRoot.activeTab.slice(1) + " – Platzhalter"
                     color: "#555"
                     font.pixelSize: window.sp(13)
                 }

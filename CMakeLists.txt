@@ -13,7 +13,7 @@ if(CCACHE_PROGRAM)
 endif()
 
 # Qt setup
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Quick3D)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Quick3D Sql)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
@@ -83,6 +83,11 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/MidiControllerManager.cpp
     src/SettingsManager.h
     src/SettingsManager.cpp
+    src/TrackIdGenerator.h
+    src/LibraryDatabase.h
+    src/LibraryDatabase.cpp
+    src/LibraryTableModel.h
+    src/LibraryTableModel.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE src)
@@ -108,6 +113,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Qml
     Qt6::Quick
     Qt6::Quick3D
+    Qt6::Sql
     PkgConfig::TAGLIB
     PkgConfig::AUBIO
     PkgConfig::KEYFINDER

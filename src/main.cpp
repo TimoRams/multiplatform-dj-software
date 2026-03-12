@@ -20,6 +20,8 @@
 #include "ParameterStore.h"
 #include "MidiControllerManager.h"
 #include "SettingsManager.h"
+#include "LibraryDatabase.h"
+#include "LibraryTableModel.h"
 
 using namespace Qt::StringLiterals;
 
@@ -77,6 +79,22 @@ int main(int argc, char *argv[])
 
     LibraryManager libraryManager;
     engine.rootContext()->setContextProperty("libraryManager", &libraryManager);
+
+    // ── Database-backed library ──────────────────────────────────────────
+    LibraryDatabase libraryDb;
+    if (!libraryDb.open())
+        qWarning() << "[main] LibraryDatabase failed to open – library features disabled.";
+
+    LibraryTableModel libraryTableModel("library_conn");
+    libraryDb.setTableModel(&libraryTableModel);
+    libraryTableModel.refresh();
+
+    engine.rootContext()->setContextProperty("libraryDb",    &libraryDb);
+    engine.rootContext()->setContextProperty("libraryModel", &libraryTableModel);
+
+    // Wire decks to the database so loaded tracks are persisted automatically.
+    deckA->setLibraryDatabase(&libraryDb);
+    deckB->setLibraryDatabase(&libraryDb);
 
     FxManager fxManager;
     fxManager.registerEngines(deckA.get(), deckB.get());

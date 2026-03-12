@@ -2,6 +2,8 @@
 #include "CoverArtExtractor.h"
 #include "CoverArtProvider.h"
 #include "FxProcessor.h"
+#include "LibraryDatabase.h"
+#include "TrackIdGenerator.h"
 #include <QUrl>
 #include <QDebug>
 #include <QFile>
@@ -661,6 +663,11 @@ void DjEngine::setCoverArtProvider(CoverArtProvider* provider, const QString& de
     m_deckId = deckId;
 }
 
+void DjEngine::setLibraryDatabase(LibraryDatabase* db)
+{
+    m_libraryDb = db;
+}
+
 bool DjEngine::isPlaying() const
 {
     return transportSource.isPlaying();
@@ -737,6 +744,15 @@ void DjEngine::loadTrack(const QString& rawPath)
 
         m_hasTrack = true;
 
+        // ── Add track to library database ────────────────────────────────
+        if (m_libraryDb) {
+            int durSec = static_cast<int>(durationSec);
+            m_currentTrackId = TrackIdGenerator::generate(
+                m_trackArtist, m_trackTitle, durSec, rawPath);
+            m_libraryDb->addTrack(m_currentTrackId,
+                                 m_trackTitle, m_trackArtist, durSec, rawPath);
+        }
+
         qDebug() << "[DjEngine] title=" << m_trackTitle
                  << " artist=" << m_trackArtist
                  << " key=" << m_trackKey;
@@ -751,6 +767,29 @@ void DjEngine::loadTrack(const QString& rawPath)
         transportSource.setPosition(0.0);
 
         m_analyzer->startAnalysis(rawPath);
+
+        // ── Connect analysis results to library DB ───────────────────────
+        if (m_libraryDb && !m_currentTrackId.isEmpty()) {
+            auto trackId = m_currentTrackId;
+            auto* db = m_libraryDb;
+
+            // Disconnect any previous connections (from a prior loadTrack call).
+            disconnect(m_trackData, &TrackData::bpmAnalyzed, this, nullptr);
+            disconnect(m_trackData, &TrackData::keyAnalyzed, this, nullptr);
+
+            connect(m_trackData, &TrackData::bpmAnalyzed, this, [db, trackId, this]() {
+                double bpm = m_trackData->getBpm();
+                QString key = m_trackData->getDetectedKey();
+                if (bpm > 0.0)
+                    db->updateAnalysisData(trackId, static_cast<float>(bpm), key);
+            });
+            connect(m_trackData, &TrackData::keyAnalyzed, this, [db, trackId, this]() {
+                double bpm = m_trackData->getBpm();
+                QString key = m_trackData->getDetectedKey();
+                if (!key.isEmpty())
+                    db->updateAnalysisData(trackId, static_cast<float>(bpm), key);
+            });
+        }
 
         emit trackLoaded();
         emit progressChanged();

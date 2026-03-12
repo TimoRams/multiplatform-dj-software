@@ -15,6 +15,7 @@
 #include "FxProcessor.h"
 
 class CoverArtProvider;
+class LibraryDatabase;
 
 class DjEngine : public QObject
 {
@@ -135,6 +136,7 @@ public:
     float gainReduction() const;
 
     void setCoverArtProvider(CoverArtProvider* provider, const QString& deckId);
+    void setLibraryDatabase(LibraryDatabase* db);
 
 public slots:
     void loadTrack(const QString& rawPath);
@@ -217,7 +219,9 @@ private:
     bool    m_hasTrack = false;
 
     CoverArtProvider* m_coverProvider = nullptr;
+    LibraryDatabase*   m_libraryDb     = nullptr;
     QString m_deckId;
+    QString m_currentTrackId;
     QString m_coverArtUrl;
     bool    m_hasCoverArt = false;
 
