@@ -138,6 +138,11 @@ public:
         scratchBuffer.setSize(2, 8192);
         outputBuffer.setSize(2, 65536);
         fifo = std::make_unique<juce::AbstractFifo>(65536);
+        tailBuffer.setSize(2, samplesPerBlockExpected + kCrossfadeLen);
+        tailSamples = 0;
+        crossfadeRemaining = 0;
+        crossfadeTailPos = 0;
+        prevBypass = true;
         wasBypassed = true;
         justUnbypassed = false;
     }
@@ -154,101 +159,139 @@ public:
 
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override {
         bool bypass = !keylockEnabled && (std::abs(tempoRatio - 1.0) < 0.001);
-        
+        const int numCh = std::min(info.buffer->getNumChannels(), 2);
+
+        // ── Detect state transition ───────────────────────────────────────
+        bool transitioned = (bypass != prevBypass);
+        prevBypass = bypass;
+
+        if (transitioned && tailSamples > 0) {
+            // Start crossfade from saved tail into new signal
+            crossfadeRemaining = std::min(tailSamples, kCrossfadeLen);
+            crossfadeTailPos = 0;
+        }
+
+        // ── Produce output via current path ───────────────────────────────
         if (bypass) {
             if (source) source->getNextAudioBlock(info);
             else info.clearActiveBufferRegion();
-            
-            if (!wasBypassed && info.numSamples > 0) {
-                info.buffer->applyGainRamp(info.startSample, std::min(info.numSamples, 512), 0.0f, 1.0f);
-            }
-            
-            wasBypassed = true;
-            justUnbypassed = false;
-            return;
-        }
 
-        if (wasBypassed) {
-            if (stretcher) stretcher->reset();
-            if (fifo) fifo->reset();
-            wasBypassed = false;
-            justUnbypassed = true;
+            if (transitioned) {
+                // Just switched to bypass — stretcher was active until now
+                wasBypassed = true;
+                justUnbypassed = false;
+            }
+
         } else {
-            justUnbypassed = false;
-        }
-
-        if (!source || !stretcher || !fifo) {
-            info.clearActiveBufferRegion();
-            return;
-        }
-
-        int framesNeeded = info.numSamples;
-        int destStart = info.startSample;
-        int maxPullLoops = 20;
-
-        while (fifo->getNumReady() < framesNeeded && maxPullLoops > 0) {
-            int pullSize = stretcher->getSamplesRequired();
-            if (pullSize == 0) pullSize = 1024;
-            
-            if (scratchBuffer.getNumSamples() < pullSize) {
-                scratchBuffer.setSize(2, pullSize, true);
+            if (wasBypassed) {
+                if (stretcher) stretcher->reset();
+                if (fifo) fifo->reset();
+                wasBypassed = false;
+                justUnbypassed = true;
+            } else {
+                justUnbypassed = false;
             }
-            
-            juce::AudioSourceChannelInfo pullInfo;
-            pullInfo.buffer = &scratchBuffer;
-            pullInfo.startSample = 0;
-            pullInfo.numSamples = pullSize;
-            scratchBuffer.clear(0, pullSize);
-            
-            source->getNextAudioBlock(pullInfo);
-            
-            const float* inputs[2] = { scratchBuffer.getReadPointer(0), scratchBuffer.getReadPointer(1) };
-            if (scratchBuffer.getNumChannels() == 1) inputs[1] = inputs[0];
 
-            stretcher->process(inputs, pullSize, false);
-            
-            int avail = stretcher->available();
-            if (avail > 0) {
-                if (outputBuffer.getNumSamples() < avail) {
-                    outputBuffer.setSize(2, std::max((int)outputBuffer.getNumSamples(), avail * 2), true);
+            if (!source || !stretcher || !fifo) {
+                info.clearActiveBufferRegion();
+            } else {
+                int framesNeeded = info.numSamples;
+                int destStart = info.startSample;
+                int maxPullLoops = 20;
+
+                while (fifo->getNumReady() < framesNeeded && maxPullLoops > 0) {
+                    int pullSize = stretcher->getSamplesRequired();
+                    if (pullSize == 0) pullSize = 1024;
+
+                    if (scratchBuffer.getNumSamples() < pullSize) {
+                        scratchBuffer.setSize(2, pullSize, true);
+                    }
+
+                    juce::AudioSourceChannelInfo pullInfo;
+                    pullInfo.buffer = &scratchBuffer;
+                    pullInfo.startSample = 0;
+                    pullInfo.numSamples = pullSize;
+                    scratchBuffer.clear(0, pullSize);
+
+                    source->getNextAudioBlock(pullInfo);
+
+                    const float* inputs[2] = { scratchBuffer.getReadPointer(0), scratchBuffer.getReadPointer(1) };
+                    if (scratchBuffer.getNumChannels() == 1) inputs[1] = inputs[0];
+
+                    stretcher->process(inputs, pullSize, false);
+
+                    int avail = stretcher->available();
+                    if (avail > 0) {
+                        if (outputBuffer.getNumSamples() < avail) {
+                            outputBuffer.setSize(2, std::max((int)outputBuffer.getNumSamples(), avail * 2), true);
+                        }
+
+                        int start1, size1, start2, size2;
+                        fifo->prepareToWrite(avail, start1, size1, start2, size2);
+
+                        if (size1 > 0) {
+                            float* outputs1[2] = { outputBuffer.getWritePointer(0, start1), outputBuffer.getWritePointer(1, start1) };
+                            stretcher->retrieve(outputs1, size1);
+                        }
+                        if (size2 > 0) {
+                            float* outputs2[2] = { outputBuffer.getWritePointer(0, start2), outputBuffer.getWritePointer(1, start2) };
+                            stretcher->retrieve(outputs2, size2);
+                        }
+                        fifo->finishedWrite(size1 + size2);
+                    }
+                    maxPullLoops--;
                 }
-                
-                int start1, size1, start2, size2;
-                fifo->prepareToWrite(avail, start1, size1, start2, size2);
-                
-                if (size1 > 0) {
-                    float* outputs1[2] = { outputBuffer.getWritePointer(0, start1), outputBuffer.getWritePointer(1, start1) };
-                    stretcher->retrieve(outputs1, size1);
+
+                int ready = fifo->getNumReady();
+                if (ready >= framesNeeded) {
+                    int start1, size1, start2, size2;
+                    fifo->prepareToRead(framesNeeded, start1, size1, start2, size2);
+                    if (size1 > 0) {
+                        info.buffer->copyFrom(0, destStart, outputBuffer, 0, start1, size1);
+                        info.buffer->copyFrom(1, destStart, outputBuffer, 1, start1, size1);
+                    }
+                    if (size2 > 0) {
+                        info.buffer->copyFrom(0, destStart + size1, outputBuffer, 0, start2, size2);
+                        info.buffer->copyFrom(1, destStart + size1, outputBuffer, 1, start2, size2);
+                    }
+                    fifo->finishedRead(size1 + size2);
+                } else {
+                    // FIFO underrun (stretcher warming up) — silence is ok,
+                    // the crossfade from the tail buffer masks it.
+                    info.clearActiveBufferRegion();
                 }
-                if (size2 > 0) {
-                    float* outputs2[2] = { outputBuffer.getWritePointer(0, start2), outputBuffer.getWritePointer(1, start2) };
-                    stretcher->retrieve(outputs2, size2);
-                }
-                fifo->finishedWrite(size1 + size2);
             }
-            maxPullLoops--;
         }
 
-        int ready = fifo->getNumReady();
-        if (ready >= framesNeeded) {
-            int start1, size1, start2, size2;
-            fifo->prepareToRead(framesNeeded, start1, size1, start2, size2);
-            if (size1 > 0) {
-                info.buffer->copyFrom(0, destStart, outputBuffer, 0, start1, size1);
-                info.buffer->copyFrom(1, destStart, outputBuffer, 1, start1, size1);
+        // ── Apply crossfade from saved tail into new output ───────────────
+        if (crossfadeRemaining > 0) {
+            int fadeLen = std::min(crossfadeRemaining, info.numSamples);
+            int fadeTotal = std::min(tailSamples, kCrossfadeLen);
+
+            for (int i = 0; i < fadeLen; ++i) {
+                float t = static_cast<float>(crossfadeTailPos + i + 1) / static_cast<float>(fadeTotal);
+                t = std::clamp(t, 0.0f, 1.0f);
+
+                for (int ch = 0; ch < numCh; ++ch) {
+                    float newSamp = info.buffer->getSample(ch, info.startSample + i);
+                    float oldSamp = (crossfadeTailPos + i < tailSamples)
+                        ? tailBuffer.getSample(ch, crossfadeTailPos + i)
+                        : 0.0f;
+                    // Equal-power-ish crossfade: old fades out, new fades in
+                    info.buffer->setSample(ch, info.startSample + i,
+                        oldSamp * (1.0f - t) + newSamp * t);
+                }
             }
-            if (size2 > 0) {
-                info.buffer->copyFrom(0, destStart + size1, outputBuffer, 0, start2, size2);
-                info.buffer->copyFrom(1, destStart + size1, outputBuffer, 1, start2, size2);
-            }
-            fifo->finishedRead(size1 + size2);
-            
-            if (justUnbypassed && framesNeeded > 0) {
-                info.buffer->applyGainRamp(info.startSample, std::min(framesNeeded, 512), 0.0f, 1.0f);
-            }
-        } else {
-            info.clearActiveBufferRegion();
+            crossfadeTailPos += fadeLen;
+            crossfadeRemaining -= fadeLen;
         }
+
+        // ── Save current output as tail for potential next transition ─────
+        int samplesToSave = std::min(info.numSamples, tailBuffer.getNumSamples());
+        for (int ch = 0; ch < numCh; ++ch) {
+            tailBuffer.copyFrom(ch, 0, *info.buffer, ch, info.startSample, samplesToSave);
+        }
+        tailSamples = samplesToSave;
     }
 
     // Return total latency introduced by this component in samples
@@ -270,6 +313,14 @@ private:
     bool wasBypassed = true;
     bool keylockEnabled = false;
     bool justUnbypassed = false;
+
+    // Seamless crossfade state
+    juce::AudioBuffer<float> tailBuffer;       // last block's output
+    int tailSamples = 0;                       // valid samples in tailBuffer
+    int crossfadeRemaining = 0;                // samples left in crossfade
+    int crossfadeTailPos = 0;                  // read position in tail
+    bool prevBypass = true;                    // previous bypass state
+    static constexpr int kCrossfadeLen = 1024; // ~23 ms @ 44.1 kHz
 };
 
 class DjEngine::MixerDspSource : public juce::AudioSource {
