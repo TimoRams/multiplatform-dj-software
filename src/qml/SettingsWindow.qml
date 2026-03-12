@@ -282,6 +282,18 @@ Window {
                     anchors.margins: 30
                     spacing: 20
 
+                    property var midiDeviceList: []
+
+                    function refreshMidiDevices() {
+                        if (midiManager) {
+                            midiDeviceList = midiManager.getAvailableMidiDevices()
+                        }
+                    }
+
+                    Component.onCompleted: {
+                        refreshMidiDevices()
+                    }
+
                     Text {
                         text: "MIDI Controller"
                         color: "#f0f0f0"
@@ -295,27 +307,144 @@ Window {
                         color: "#2a2a2a"
                     }
 
-                    // Placeholder device list
-                    Repeater {
-                        model: ["No MIDI devices detected"]
-                        delegate: Rectangle {
-                            required property string modelData
+                    // Device Selection
+                    RowLayout {
+                        spacing: 16
+                        Text {
+                            text: "MIDI Input"
+                            color: "#aaa"
+                            font.pixelSize: 12
+                            Layout.preferredWidth: 130
+                        }
+                        
+                        ComboBox {
+                            id: midiDeviceCombo
                             Layout.fillWidth: true
-                            height: 36
-                            color: "#252525"
-                            border.color: "#333"
-                            radius: 4
-
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                anchors.left: parent.left
-                                anchors.leftMargin: 14
-                                text: modelData
-                                color: "#555"
+                            height: 32
+                            model: parent.midiDeviceList
+                            
+                            contentItem: Text {
+                                text: parent.displayText
+                                color: "#ccc"
                                 font.pixelSize: 12
-                                font.family: "monospace"
+                                verticalAlignment: Text.AlignVCenter
+                                leftPadding: 12
+                            }
+                            
+                            background: Rectangle {
+                                color: "#252525"
+                                border.color: "#3a3a3a"
+                                radius: 4
+                            }
+                            
+                            onActivated: {
+                                if (midiManager) {
+                                    midiManager.selectMidiDevice(currentIndex)
+                                }
                             }
                         }
+
+                        Button {
+                            text: "↻"
+                            Layout.preferredWidth: 32
+                            Layout.preferredHeight: 32
+                            background: Rectangle {
+                                color: parent.down ? "#444" : "#333"
+                                border.color: parent.hovered ? "#555" : "transparent"
+                                radius: 4
+                            }
+                            contentItem: Text {
+                                text: parent.text
+                                color: "#fff"
+                                font.pixelSize: 16
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: {
+                                parent.parent.refreshMidiDevices()
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 1
+                        color: "#2a2a2a"
+                    }
+
+                    Text {
+                        text: "Mappings"
+                        color: "#eee"
+                        font.pixelSize: 14
+                        font.bold: true
+                    }
+
+                    // Mappings List
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+
+                        // Helper component for mapping rows
+                        Component {
+                            id: mappingRowComponent
+                            RowLayout {
+                                required property string labelStr
+                                required property string paramId
+                                
+                                Layout.fillWidth: true
+                                spacing: 16
+
+                                Text {
+                                    text: labelStr
+                                    color: "#aaa"
+                                    font.pixelSize: 12
+                                    Layout.preferredWidth: 130
+                                }
+
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    height: 32
+                                    color: isLearning ? "#ff9900" : "#252525"
+                                    border.color: isLearning ? "#ffb732" : "#3a3a3a"
+                                    radius: 4
+
+                                    property bool isLearning: false
+
+                                    // Listen for C++ signal to reset learn state
+                                    Connections {
+                                        target: midiManager
+                                        function onMappingUpdated() {
+                                            isLearning = false
+                                        }
+                                    }
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: parent.isLearning ? "Waiting for MIDI..." : "Learn"
+                                        color: parent.isLearning ? "#1a1a1a" : "#ccc"
+                                        font.pixelSize: 12
+                                        font.bold: parent.isLearning
+                                    }
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            if (midiManager && !parent.isLearning) {
+                                                parent.isLearning = true
+                                                midiManager.startMidiLearn(paramId)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Loader { sourceComponent: mappingRowComponent; property string labelStr: "Deck A Play"; property string paramId: "deckA_play" }
+                        Loader { sourceComponent: mappingRowComponent; property string labelStr: "Deck B Play"; property string paramId: "deckB_play" }
+                        Loader { sourceComponent: mappingRowComponent; property string labelStr: "Deck A Volume"; property string paramId: "deckA_vol" }
+                        Loader { sourceComponent: mappingRowComponent; property string labelStr: "Deck B Volume"; property string paramId: "deckB_vol" }
+                        Loader { sourceComponent: mappingRowComponent; property string labelStr: "Crossfader"; property string paramId: "crossfader" }
                     }
                 }
             }

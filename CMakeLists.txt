@@ -24,6 +24,7 @@ pkg_check_modules(TAGLIB    REQUIRED IMPORTED_TARGET taglib)
 pkg_check_modules(AUBIO     REQUIRED IMPORTED_TARGET aubio)
 pkg_check_modules(KEYFINDER REQUIRED IMPORTED_TARGET libkeyfinder)
 pkg_check_modules(RUBBERBAND REQUIRED IMPORTED_TARGET rubberband)
+pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa)
 
 add_subdirectory(libs/JUCE)
 
@@ -76,6 +77,10 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/LinkManager.cpp
     src/SystemMonitor.h
     src/SystemMonitor.cpp
+    src/ParameterStore.h
+    src/ParameterStore.cpp
+    src/MidiControllerManager.h
+    src/MidiControllerManager.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE src)
@@ -84,6 +89,8 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     JUCE_USE_CURL=0
     JUCE_WEB_BROWSER=0
     JUCE_USE_MP3AUDIOFORMAT=1
+    JUCE_ALSA=1
+    JUCE_ALSA_SEQ=1
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -103,6 +110,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     PkgConfig::AUBIO
     PkgConfig::KEYFINDER
     PkgConfig::RUBBERBAND
+    PkgConfig::ALSA
     Ableton::Link
 )
 

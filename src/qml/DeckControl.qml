@@ -58,6 +58,22 @@ Item {
         function onBeatgridChanged() { deck._syncBpm(); deck._syncTempo() }
     }
 
+    // Connect to ParameterStore for MIDI mapping
+    Connections {
+        target: parameterStore
+        function onParameterChanged(id, value) {
+            if (!deck.engine) return
+            var expectedId = "deck" + deck.deckName + "_play"
+            if (id === expectedId) {
+                if (value > 0.5 && !deck.engine.isPlaying) {
+                    deck.engine.play()
+                } else if (value <= 0.5 && deck.engine.isPlaying) {
+                    deck.engine.pause()
+                }
+            }
+        }
+    }
+
     DropArea {
         anchors.fill: parent
         keys: ["text/uri-list", "text/plain"]

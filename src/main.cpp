@@ -17,6 +17,8 @@
 #include "FxManager.h"
 #include "LinkManager.h"
 #include "SystemMonitor.h"
+#include "ParameterStore.h"
+#include "MidiControllerManager.h"
 
 using namespace Qt::StringLiterals;
 
@@ -46,7 +48,8 @@ int main(int argc, char *argv[])
     defaultFont.setStyleStrategy(QFont::PreferAntialias);
     app.setFont(defaultFont);
 
-    juce::MessageManager::getInstance();
+    // Properly initialize JUCE GUI subsystems (needed for ALSA MIDI detection on Linux)
+    juce::ScopedJuceInitialiser_GUI juceInit;
 
     // DjEngines on the heap so we control their destruction order explicitly.
     auto deckA = std::make_unique<DjEngine>();
@@ -58,6 +61,10 @@ int main(int argc, char *argv[])
     deckB->setCoverArtProvider(coverProvider, "deckB");
 
     QQmlApplicationEngine engine;
+    
+    // Core Managers
+    ParameterStore parameterStore;
+    MidiControllerManager midiManager(&parameterStore);
 
     engine.addImageProvider("coverart", coverProvider);
 
@@ -76,6 +83,10 @@ int main(int argc, char *argv[])
 
     SystemMonitor sysMonitor;
     engine.rootContext()->setContextProperty("sysMonitor", &sysMonitor);
+
+    // Provide single source of truth and MIDI manager
+    engine.rootContext()->setContextProperty("parameterStore", &parameterStore);
+    engine.rootContext()->setContextProperty("midiManager", &midiManager);
 
     const QUrl url(u"qrc:/DJSoftware/src/qml/main.qml"_s);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,

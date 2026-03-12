@@ -24,6 +24,21 @@ Rectangle {
         }
     }
 
+    Connections {
+        target: parameterStore
+        function onParameterChanged(id, value) {
+            if (id === "deckA_vol") {
+                volFaderA.value = value
+            } else if (id === "deckB_vol") {
+                volFaderB.value = value
+            } else if (id === "crossfader") {
+                // crossfader from parameter store is 0.0 to 1.0, 
+                // internally in UI we use -1.0 to 1.0
+                crossfader.value = (value * 2.0) - 1.0
+            }
+        }
+    }
+
     component MixerKnob: RowLayout {
         id: knobRoot
         property alias text: label.text
@@ -199,7 +214,13 @@ Rectangle {
                     Layout.alignment: Qt.AlignHCenter
                     orientation: Qt.Vertical
                     from: 0; to: 1.0; value: 0.8
-                    onValueChanged: { mixer.volA = value; mixer.updateVolumes(); }
+                    onValueChanged: { 
+                        mixer.volA = value; 
+                        mixer.updateVolumes(); 
+                        if (parameterStore && parameterStore.getParameter("deckA_vol") !== value) {
+                            parameterStore.setParameter("deckA_vol", value);
+                        }
+                    }
                     TapHandler {
                         onDoubleTapped: {
                             volFaderA.enabled = false
@@ -273,7 +294,13 @@ Rectangle {
                     Layout.alignment: Qt.AlignHCenter
                     orientation: Qt.Vertical
                     from: 0; to: 1.0; value: 0.8
-                    onValueChanged: { mixer.volB = value; mixer.updateVolumes(); }
+                    onValueChanged: { 
+                        mixer.volB = value; 
+                        mixer.updateVolumes();
+                        if (parameterStore && parameterStore.getParameter("deckB_vol") !== value) {
+                            parameterStore.setParameter("deckB_vol", value);
+                        }
+                    }
                     TapHandler {
                         onDoubleTapped: {
                             volFaderB.enabled = false
@@ -301,7 +328,16 @@ Rectangle {
             Layout.preferredHeight: 30
             from: -1.0; to: 1.0; value: 0.0
             stepSize: 0.01
-            onValueChanged: mixer.updateVolumes()
+            onValueChanged: {
+                mixer.updateVolumes()
+                if (parameterStore) {
+                    // convert -1.0 .. 1.0 to 0.0 .. 1.0 for the standard midi range store
+                    var normValue = (value + 1.0) / 2.0;
+                    if (Math.abs(parameterStore.getParameter("crossfader") - normValue) > 0.01) {
+                        parameterStore.setParameter("crossfader", normValue);
+                    }
+                }
+            }
             TapHandler {
                 onDoubleTapped: {
                     crossfader.enabled = false
