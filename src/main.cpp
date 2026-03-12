@@ -19,6 +19,7 @@
 #include "SystemMonitor.h"
 #include "ParameterStore.h"
 #include "MidiControllerManager.h"
+#include "SettingsManager.h"
 
 using namespace Qt::StringLiterals;
 
@@ -50,6 +51,9 @@ int main(int argc, char *argv[])
 
     // Properly initialize JUCE GUI subsystems (needed for ALSA MIDI detection on Linux)
     juce::ScopedJuceInitialiser_GUI juceInit;
+
+    // Initialize settings — creates the platform-specific AppData file on first run
+    SettingsManager::getInstance().init();
 
     // DjEngines on the heap so we control their destruction order explicitly.
     auto deckA = std::make_unique<DjEngine>();

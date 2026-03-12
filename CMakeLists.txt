@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
-set(PROJECT_NAME "MultiPlatformDJ")
-project(${PROJECT_NAME} VERSION 0.1.0 LANGUAGES C CXX)
+set(PROJECT_NAME "RamsbrockDJ")
+project(${PROJECT_NAME} VERSION 0.0.1 LANGUAGES C CXX)
 
 # Ensure Qt can be found when installed via pacman
 list(APPEND CMAKE_PREFIX_PATH "/usr/lib/cmake" "/usr/local/lib/cmake")
@@ -34,7 +34,7 @@ set(LINK_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 include(libs/link/AbletonLinkConfig.cmake)
 
 juce_add_console_app(${PROJECT_NAME}
-    PRODUCT_NAME "Multiplatform DJ Software"
+    PRODUCT_NAME "RamsbrockDJ"
     COMPANY_NAME "Ramsbrock.net"
 )
 
@@ -81,6 +81,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/ParameterStore.cpp
     src/MidiControllerManager.h
     src/MidiControllerManager.cpp
+    src/SettingsManager.h
+    src/SettingsManager.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE src)

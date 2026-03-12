@@ -8,7 +8,7 @@ ApplicationWindow {
     width: 1280
     height: 800
     visible: true
-    title: "Multiplatform DJ Software (Qt 6 + JUCE)"
+    title: "RamsbrockDJ"
     color: "#0a0a0a"
 
     // Timer to hide the loading indicator and show the main content
