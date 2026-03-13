@@ -60,13 +60,37 @@ Item {
     function _syncTempo() {
         if (!deck.engine) return
         var cb = deck.engine.currentBpm
+        // For sub-beat loops (e.g. 3/4), show the perceived rhythmic BPM.
+        if (cb > 0 && deck.engine.loopActive) {
+            var beats = deck.engine.loopLengthBeats
+            if (beats > 0.001 && beats < 1.0)
+                cb = cb / beats
+        }
         _currentBpm = cb > 0 ? cb.toFixed(2) : ""
+    }
+
+    function _showLiveBpmIndicator() {
+        if (!deck.engine || deck._currentBpm === "")
+            return false
+
+        // Always show when tempo fader is moved.
+        if (Math.abs(deck.engine.tempoPercent) > 0.01)
+            return true
+
+        // Also show when loop math changes perceived BPM without tempo fader move.
+        var base = Number(deck._trackBpm)
+        var live = Number(deck._currentBpm)
+        if (!isNaN(base) && !isNaN(live))
+            return Math.abs(live - base) > 0.01
+
+        return false
     }
 
     Connections {
         target: deck.engine
         function onTrackMetadataChanged() { deck._syncMetadata() }
         function onTempoChanged() { deck._syncTempo() }
+        function onLoopChanged() { deck._syncTempo() }
     }
 
     Connections {
@@ -242,9 +266,9 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                             }
 
-                            // Live BPM — shown only when tempo is shifted away from 0
+                            // Live BPM — shown on tempo shift OR loop-based perceived BPM shift
                             Text {
-                                visible: deck._currentBpm !== "" && deck._currentBpm !== deck._trackBpm
+                                visible: deck._showLiveBpmIndicator()
                                 text:  "→ " + deck._currentBpm
                                 // Orange when sped up, light blue when slowed down
                                 color: {
