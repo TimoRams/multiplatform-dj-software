@@ -86,7 +86,7 @@ void WaveformAnalyzer::run()
     std::unique_ptr<juce::AudioFormatReader> reader(m_formatManager->createReaderFor(file));
     if (!reader) return;
 
-    m_trackData->clear();
+    m_trackData->clearWaveformData();
 
     const juce::int64 totalSamples = reader->lengthInSamples;
     const double      sampleRate   = reader->sampleRate;

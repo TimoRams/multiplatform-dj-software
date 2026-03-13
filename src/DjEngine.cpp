@@ -553,12 +553,19 @@ DjEngine::DjEngine(QObject* parent) : QObject(parent)
             m_trackKey = analysedKey;
             emit trackMetadataChanged();
         }
+
+        persistCurrentAnalysisToLibrary();
     });
 
     // When BPM analysis finishes, re-emit tempoChanged so that currentBpm
     // and tempoRatio Q_PROPERTYs update in QML.
     connect(m_trackData, &TrackData::bpmAnalyzed, this, [this]() {
         emit tempoChanged();
+        persistCurrentAnalysisToLibrary();
+    });
+
+    connect(m_trackData, &TrackData::beatgridChanged, this, [this]() {
+        persistCurrentAnalysisToLibrary();
     });
 
     juce::MessageManager::getInstance();
@@ -685,6 +692,27 @@ void DjEngine::setLibraryDatabase(LibraryDatabase* db)
     m_libraryDb = db;
 }
 
+void DjEngine::persistCurrentAnalysisToLibrary()
+{
+    if (!m_libraryDb || m_currentTrackId.isEmpty() || !m_trackData)
+        return;
+
+    const double bpm = m_trackData->getBpm();
+    const QString key = m_trackData->getDetectedKey().trimmed();
+    const auto beatGrid = m_trackData->getBeatGrid();
+
+    if (bpm <= 0.0 && key.isEmpty() && beatGrid.empty())
+        return;
+
+    m_libraryDb->updateAnalysisData(
+        m_currentTrackId,
+        static_cast<float>(bpm),
+        key,
+        m_trackData->getFirstBeatSample(),
+        m_trackData->getSampleRate(),
+        beatGrid);
+}
+
 bool DjEngine::isPlaying() const
 {
     return transportSource.isPlaying();
@@ -707,6 +735,8 @@ void DjEngine::loadTrack(const QString& rawPath)
     auto* reader = formatManager.createReaderFor(file);
     if (reader != nullptr)
     {
+        m_trackData->clear();
+
         const auto metaMap = buildMetadataLookup(reader->metadataValues);
 
         qDebug() << "=== METADATA for" << rawPath << "(" << metaMap.size() << "keys) ===";
@@ -768,6 +798,23 @@ void DjEngine::loadTrack(const QString& rawPath)
                 m_trackArtist, m_trackTitle, durSec, rawPath);
             m_libraryDb->addTrack(m_currentTrackId,
                                  m_trackTitle, m_trackArtist, durSec, rawPath);
+
+            LibraryDatabase::AnalysisSnapshot cachedAnalysis;
+            if (m_libraryDb->tryGetAnalysisData(m_currentTrackId, &cachedAnalysis)
+                && cachedAnalysis.isAnalyzed) {
+                if (cachedAnalysis.bpm > 0.0) {
+                    m_trackData->setBpmData(cachedAnalysis.bpm,
+                                            cachedAnalysis.firstBeatSample,
+                                            cachedAnalysis.sampleRate,
+                                            cachedAnalysis.beatGrid);
+                }
+
+                const QString cachedKey = cachedAnalysis.key.trimmed();
+                if (!cachedKey.isEmpty()) {
+                    m_trackKey = cachedKey;
+                    m_trackData->setKeyData(cachedKey);
+                }
+            }
         }
 
         qDebug() << "[DjEngine] title=" << m_trackTitle
@@ -784,29 +831,6 @@ void DjEngine::loadTrack(const QString& rawPath)
         transportSource.setPosition(0.0);
 
         m_analyzer->startAnalysis(rawPath);
-
-        // ── Connect analysis results to library DB ───────────────────────
-        if (m_libraryDb && !m_currentTrackId.isEmpty()) {
-            auto trackId = m_currentTrackId;
-            auto* db = m_libraryDb;
-
-            // Disconnect any previous connections (from a prior loadTrack call).
-            disconnect(m_trackData, &TrackData::bpmAnalyzed, this, nullptr);
-            disconnect(m_trackData, &TrackData::keyAnalyzed, this, nullptr);
-
-            connect(m_trackData, &TrackData::bpmAnalyzed, this, [db, trackId, this]() {
-                double bpm = m_trackData->getBpm();
-                QString key = m_trackData->getDetectedKey();
-                if (bpm > 0.0)
-                    db->updateAnalysisData(trackId, static_cast<float>(bpm), key);
-            });
-            connect(m_trackData, &TrackData::keyAnalyzed, this, [db, trackId, this]() {
-                double bpm = m_trackData->getBpm();
-                QString key = m_trackData->getDetectedKey();
-                if (!key.isEmpty())
-                    db->updateAnalysisData(trackId, static_cast<float>(bpm), key);
-            });
-        }
 
         emit trackLoaded();
         emit progressChanged();
@@ -950,6 +974,9 @@ void DjEngine::setDownbeatAtCurrentPosition()
 
     // Delegate rebuild + emit beatgridChanged() to TrackData.
     m_trackData->shiftBeatgridToDownbeat(anchorSec, trackLengthSec);
+
+    // Persist immediately so manual beatgrid edits survive app restarts.
+    persistCurrentAnalysisToLibrary();
 }
 
 // Helper: find the positionSec of the downbeat (isDownbeat == true) nearest
@@ -980,6 +1007,7 @@ void DjEngine::doubleBpm()
     double newBpm = m_trackData->getBpm() * 2.0;
     m_trackData->setBpm(newBpm);
     m_trackData->shiftBeatgridToDownbeat(anchor, trackLen);
+    persistCurrentAnalysisToLibrary();
     emit tempoChanged();   // update BPM display in UI
 }
 
@@ -995,6 +1023,7 @@ void DjEngine::halveBpm()
     double newBpm = m_trackData->getBpm() / 2.0;
     m_trackData->setBpm(newBpm);
     m_trackData->shiftBeatgridToDownbeat(anchor, trackLen);
+    persistCurrentAnalysisToLibrary();
     emit tempoChanged();   // update BPM display in UI
 }
 

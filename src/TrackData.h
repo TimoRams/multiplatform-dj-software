@@ -93,12 +93,14 @@ public:
     // elastic beat-marker array (one BeatMarker per beat, with downbeat flags).
     void setBpmData(double bpm, qint64 firstBeatSample, double sampleRate,
                     std::vector<BeatMarker> beatGrid = {}) {
-        QMutexLocker locker(&m_mutex);
-        m_bpm             = bpm;
-        m_firstBeatSample = firstBeatSample;
-        m_sampleRate      = sampleRate;
-        m_isBpmAnalyzed   = (bpm > 0.0);
-        m_beatGrid        = std::move(beatGrid);
+        {
+            QMutexLocker locker(&m_mutex);
+            m_bpm             = bpm;
+            m_firstBeatSample = firstBeatSample;
+            m_sampleRate      = sampleRate;
+            m_isBpmAnalyzed   = (bpm > 0.0);
+            m_beatGrid        = std::move(beatGrid);
+        }
         emit bpmAnalyzed();
     }
 
@@ -178,6 +180,7 @@ public:
 
         {
             QMutexLocker locker(&m_mutex);
+            m_firstBeatSample = static_cast<qint64>(std::llround(newAnchorSec * m_sampleRate));
             m_beatGrid = std::move(grid);
         }
         emit beatgridChanged();
@@ -211,9 +214,11 @@ public:
     }
 
     void setKeyData(const QString& camelotKey) {
-        QMutexLocker locker(&m_mutex);
-        m_detectedKey  = camelotKey;
-        m_isKeyAnalyzed = !camelotKey.isEmpty();
+        {
+            QMutexLocker locker(&m_mutex);
+            m_detectedKey  = camelotKey;
+            m_isKeyAnalyzed = !camelotKey.isEmpty();
+        }
         emit keyAnalyzed();
     }
 
@@ -232,23 +237,37 @@ public:
         return m_data;
     }
 
+    void clearWaveformData() {
+        {
+            QMutexLocker locker(&m_mutex);
+            m_data.clear();
+            m_totalExpected = 0;
+            m_globalMaxPeak = 0.001f;
+        }
+        emit dataCleared();
+    }
+
     void clear() {
-        QMutexLocker locker(&m_mutex);
-        m_data.clear();
-        m_totalExpected = 0;
-        m_globalMaxPeak = 0.001f;
-        m_bpm = 0.0;
-        m_firstBeatSample = 0;
-        m_isBpmAnalyzed = false;
-        m_detectedKey.clear();
-        m_isKeyAnalyzed = false;
-        m_beatGrid.clear();
+        {
+            QMutexLocker locker(&m_mutex);
+            m_data.clear();
+            m_totalExpected = 0;
+            m_globalMaxPeak = 0.001f;
+            m_bpm = 0.0;
+            m_firstBeatSample = 0;
+            m_isBpmAnalyzed = false;
+            m_detectedKey.clear();
+            m_isKeyAnalyzed = false;
+            m_beatGrid.clear();
+        }
         emit dataCleared();
     }
 
     void appendData(const QVector<FrequencyData>& newData) {
-        QMutexLocker locker(&m_mutex);
-        m_data.append(newData);
+        {
+            QMutexLocker locker(&m_mutex);
+            m_data.append(newData);
+        }
         emit dataUpdated();
     }
 
@@ -256,9 +275,11 @@ public:
     // Called at the end of Pass 2; the renderer seamlessly switches to it
     // on the next timer tick without any flicker.
     void replaceAllData(QVector<FrequencyData>&& finalData, float finalGlobalMaxPeak) {
-        QMutexLocker locker(&m_mutex);
-        m_data = std::move(finalData);
-        m_globalMaxPeak = finalGlobalMaxPeak;
+        {
+            QMutexLocker locker(&m_mutex);
+            m_data = std::move(finalData);
+            m_globalMaxPeak = finalGlobalMaxPeak;
+        }
         emit dataUpdated();
     }
 

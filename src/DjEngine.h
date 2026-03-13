@@ -194,6 +194,8 @@ private slots:
     void onTimer();
 
 private:
+    void persistCurrentAnalysisToLibrary();
+
     class MixerDspSource;
     class TimeStretchAudioSource;
 

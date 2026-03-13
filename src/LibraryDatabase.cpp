@@ -7,6 +7,24 @@
 #include <QStandardPaths>
 #include <QDebug>
 
+namespace {
+
+bool tableHasColumn(QSqlDatabase& db, const QString& tableName, const QString& columnName)
+{
+    QSqlQuery q(db);
+    if (!q.exec(QString("PRAGMA table_info(%1)").arg(tableName)))
+        return false;
+
+    while (q.next()) {
+        if (q.value(1).toString().compare(columnName, Qt::CaseInsensitive) == 0)
+            return true;
+    }
+
+    return false;
+}
+
+}
+
 LibraryDatabase::LibraryDatabase(QObject* parent)
     : QObject(parent)
 {
@@ -115,6 +133,34 @@ bool LibraryDatabase::createSchema()
         if (!ok) return false;
     }
 
+    if (currentVersion < 2) {
+        bool ok = true;
+
+        if (!tableHasColumn(m_db, "Tracks", "first_beat_sample")) {
+            ok &= q.exec("ALTER TABLE Tracks ADD COLUMN first_beat_sample INTEGER DEFAULT 0");
+            if (!ok) qWarning() << "[LibraryDatabase] Tracks first_beat_sample:" << q.lastError().text();
+        }
+
+        if (!tableHasColumn(m_db, "Tracks", "analysis_sample_rate")) {
+            ok &= q.exec("ALTER TABLE Tracks ADD COLUMN analysis_sample_rate REAL DEFAULT 44100.0");
+            if (!ok) qWarning() << "[LibraryDatabase] Tracks analysis_sample_rate:" << q.lastError().text();
+        }
+
+        ok &= q.exec(
+            "CREATE TABLE IF NOT EXISTS BeatGridMarkers ("
+            "  track_id     TEXT NOT NULL,"
+            "  beat_index   INTEGER NOT NULL,"
+            "  position_sec REAL NOT NULL,"
+            "  is_downbeat  INTEGER NOT NULL DEFAULT 0,"
+            "  bar_number   INTEGER NOT NULL DEFAULT 0,"
+            "  PRIMARY KEY(track_id, beat_index),"
+            "  FOREIGN KEY(track_id) REFERENCES Tracks(id) ON DELETE CASCADE"
+            ")");
+        if (!ok) qWarning() << "[LibraryDatabase] BeatGridMarkers:" << q.lastError().text();
+
+        if (!ok) return false;
+    }
+
     // ── Stamp current version ────────────────────────────────────────────
     q.prepare("INSERT OR REPLACE INTO Meta (key, value) VALUES ('schema_version', :v)");
     q.bindValue(":v", kSchemaVersion);
@@ -166,18 +212,76 @@ bool LibraryDatabase::addTrack(const QString& trackId,
 
 void LibraryDatabase::updateAnalysisData(const QString& trackId,
                                          float newBpm,
-                                         const QString& newKey)
+                                         const QString& newKey,
+                                         qint64 firstBeatSample,
+                                         double sampleRate,
+                                         const std::vector<TrackData::BeatMarker>& beatGrid)
 {
+    if (trackId.isEmpty())
+        return;
+
     qDebug() << "[LibraryDatabase] updateAnalysisData:" << trackId.left(12)
-             << "bpm=" << newBpm << "key=" << newKey;
+             << "bpm=" << newBpm << "key=" << newKey
+             << "firstBeat=" << firstBeatSample
+             << "gridBeats=" << beatGrid.size();
+
+    if (!m_db.transaction()) {
+        qWarning() << "[LibraryDatabase] updateAnalysisData begin transaction:" << m_db.lastError().text();
+    }
+
     QSqlQuery q(m_db);
-    q.prepare("UPDATE Tracks SET bpm = :bpm, key = :key, is_analyzed = 1 WHERE id = :id");
+    q.prepare(
+        "UPDATE Tracks SET "
+        "  bpm = CASE WHEN :bpm > 0 THEN :bpm ELSE bpm END,"
+        "  key = CASE WHEN length(trim(:key)) > 0 THEN :key ELSE key END,"
+        "  is_analyzed = CASE WHEN (:bpm > 0 OR length(trim(:key)) > 0) THEN 1 ELSE is_analyzed END,"
+        "  first_beat_sample = CASE WHEN :firstBeatSample >= 0 THEN :firstBeatSample ELSE first_beat_sample END,"
+        "  analysis_sample_rate = CASE WHEN :sampleRate > 0 THEN :sampleRate ELSE analysis_sample_rate END"
+        " WHERE id = :id");
     q.bindValue(":bpm", static_cast<double>(newBpm));
     q.bindValue(":key", newKey);
+    q.bindValue(":firstBeatSample", firstBeatSample);
+    q.bindValue(":sampleRate", sampleRate);
     q.bindValue(":id",  trackId);
 
     if (!q.exec()) {
         qWarning() << "[LibraryDatabase] updateAnalysisData:" << q.lastError().text();
+        m_db.rollback();
+        return;
+    }
+
+    if (!beatGrid.empty()) {
+        q.prepare("DELETE FROM BeatGridMarkers WHERE track_id = :id");
+        q.bindValue(":id", trackId);
+        if (!q.exec()) {
+            qWarning() << "[LibraryDatabase] clear BeatGridMarkers:" << q.lastError().text();
+            m_db.rollback();
+            return;
+        }
+
+        q.prepare(
+            "INSERT INTO BeatGridMarkers (track_id, beat_index, position_sec, is_downbeat, bar_number) "
+            "VALUES (:trackId, :beatIndex, :positionSec, :isDownbeat, :barNumber)");
+
+        for (int beatIndex = 0; beatIndex < static_cast<int>(beatGrid.size()); ++beatIndex) {
+            const auto& marker = beatGrid[static_cast<size_t>(beatIndex)];
+            q.bindValue(":trackId", trackId);
+            q.bindValue(":beatIndex", beatIndex);
+            q.bindValue(":positionSec", marker.positionSec);
+            q.bindValue(":isDownbeat", marker.isDownbeat ? 1 : 0);
+            q.bindValue(":barNumber", marker.barNumber);
+
+            if (!q.exec()) {
+                qWarning() << "[LibraryDatabase] insert BeatGridMarkers:" << q.lastError().text();
+                m_db.rollback();
+                return;
+            }
+        }
+    }
+
+    if (!m_db.commit()) {
+        qWarning() << "[LibraryDatabase] updateAnalysisData commit:" << m_db.lastError().text();
+        m_db.rollback();
         return;
     }
 
@@ -185,6 +289,57 @@ void LibraryDatabase::updateAnalysisData(const QString& trackId,
         m_tableModel->refresh();
 
     emit analysisUpdated(trackId);
+}
+
+bool LibraryDatabase::tryGetAnalysisData(const QString& trackId, AnalysisSnapshot* out) const
+{
+    if (!out || trackId.isEmpty())
+        return false;
+
+    QSqlQuery q(m_db);
+    q.prepare(
+        "SELECT bpm, key, is_analyzed, "
+        "       COALESCE(first_beat_sample, 0), "
+        "       COALESCE(analysis_sample_rate, 44100.0) "
+        "FROM Tracks WHERE id = :id LIMIT 1");
+    q.bindValue(":id", trackId);
+
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] tryGetAnalysisData:" << q.lastError().text();
+        return false;
+    }
+
+    if (!q.next())
+        return false;
+
+    AnalysisSnapshot snapshot;
+    snapshot.bpm = q.value(0).toDouble();
+    snapshot.key = q.value(1).toString();
+    snapshot.isAnalyzed = q.value(2).toBool();
+    snapshot.firstBeatSample = q.value(3).toLongLong();
+    snapshot.sampleRate = q.value(4).toDouble();
+
+    QSqlQuery beatsQuery(m_db);
+    beatsQuery.prepare(
+        "SELECT position_sec, is_downbeat, bar_number "
+        "FROM BeatGridMarkers WHERE track_id = :id ORDER BY beat_index ASC");
+    beatsQuery.bindValue(":id", trackId);
+
+    if (!beatsQuery.exec()) {
+        qWarning() << "[LibraryDatabase] tryGetAnalysisData beatgrid:" << beatsQuery.lastError().text();
+        return false;
+    }
+
+    while (beatsQuery.next()) {
+        TrackData::BeatMarker marker;
+        marker.positionSec = beatsQuery.value(0).toDouble();
+        marker.isDownbeat = beatsQuery.value(1).toInt() != 0;
+        marker.barNumber = beatsQuery.value(2).toInt();
+        snapshot.beatGrid.push_back(marker);
+    }
+
+    *out = std::move(snapshot);
+    return true;
 }
 
 bool LibraryDatabase::trackExists(const QString& trackId) const
