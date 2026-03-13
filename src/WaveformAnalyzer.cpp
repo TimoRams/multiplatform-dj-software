@@ -1,4 +1,5 @@
 #include "WaveformAnalyzer.h"
+#include "PhraseAnalyzer.h"
 #include <QDebug>
 #include <juce_dsp/juce_dsp.h>
 #include <algorithm>
@@ -876,11 +877,9 @@ void WaveformAnalyzer::run()
         }
 
         // -----------------------------------------------------------------
-        // Stage 4.5: Beat-quantized segment detection + DJ-style labeling.
+        // Stage 4.5: Phrase-based segment detection via 16-beat block analysis.
         // -----------------------------------------------------------------
         {
-            std::vector<TrackSegment> segments;
-
             std::vector<double> beatTimes;
             beatTimes.reserve(finalBeatGrid.size() + allBeats.size());
             if (!finalBeatGrid.empty()) {
@@ -890,185 +889,10 @@ void WaveformAnalyzer::run()
                 beatTimes = allBeats;
             }
 
-            if (beatTimes.size() >= 48 && !rawBins.empty() && duration > 12.0) {
-                // Build a weighted energy profile from the analyzer bins.
-                const int n = static_cast<int>(rawBins.size());
-                const double secPerBin = duration / static_cast<double>(n);
-                std::vector<double> energy(static_cast<size_t>(n), 0.0);
-                for (int i = 0; i < n; ++i) {
-                    const auto& rb = rawBins[static_cast<size_t>(i)];
-                    energy[static_cast<size_t>(i)] =
-                        1.25 * static_cast<double>(rb.low) +
-                        0.95 * static_cast<double>(rb.lowMid) +
-                        0.60 * static_cast<double>(rb.mid) +
-                        0.30 * static_cast<double>(rb.high);
-                }
-
-                // Smooth energy over ~2s to avoid microstructure noise.
-                const int smoothWin = std::max(2, static_cast<int>(std::round(2.0 / secPerBin)));
-                std::vector<double> smooth(static_cast<size_t>(n), 0.0);
-                double acc = 0.0;
-                for (int i = 0; i < n; ++i) {
-                    acc += energy[static_cast<size_t>(i)];
-                    if (i >= smoothWin)
-                        acc -= energy[static_cast<size_t>(i - smoothWin)];
-                    smooth[static_cast<size_t>(i)] = acc / static_cast<double>(std::min(i + 1, smoothWin));
-                }
-
-                // Novelty = positive energy rise over ~2s horizon.
-                std::vector<double> novelty(static_cast<size_t>(n), 0.0);
-                for (int i = smoothWin; i < n; ++i) {
-                    const double d = smooth[static_cast<size_t>(i)] - smooth[static_cast<size_t>(i - smoothWin)];
-                    novelty[static_cast<size_t>(i)] = std::max(0.0, d);
-                }
-
-                // Candidate boundaries from novelty peaks with min spacing.
-                std::vector<std::pair<double, double>> markers; // (timeSec, score)
-                const int minGapBins = std::max(2, static_cast<int>(std::round(8.0 / secPerBin)));
-                for (int i = smoothWin + 1; i + 1 < n; ++i) {
-                    const double v = novelty[static_cast<size_t>(i)];
-                    if (v <= 0.0)
-                        continue;
-                    if (v >= novelty[static_cast<size_t>(i - 1)] && v >= novelty[static_cast<size_t>(i + 1)]) {
-                        const double t = static_cast<double>(i) * secPerBin;
-                        if (!markers.empty()) {
-                            const double lastT = markers.back().first;
-                            if ((t - lastT) < (minGapBins * secPerBin)) {
-                                if (v > markers.back().second)
-                                    markers.back() = {t, v};
-                                continue;
-                            }
-                        }
-                        markers.push_back({t, v});
-                    }
-                }
-
-                auto nearestBeatIndex = [&](double t) {
-                    auto it = std::lower_bound(beatTimes.begin(), beatTimes.end(), t);
-                    if (it == beatTimes.begin())
-                        return 0;
-                    if (it == beatTimes.end())
-                        return static_cast<int>(beatTimes.size()) - 1;
-                    const int idxHi = static_cast<int>(it - beatTimes.begin());
-                    const int idxLo = idxHi - 1;
-                    return (std::abs(beatTimes[static_cast<size_t>(idxHi)] - t)
-                          < std::abs(beatTimes[static_cast<size_t>(idxLo)] - t)) ? idxHi : idxLo;
-                };
-
-                const int quantBeats = (beatTimes.size() > 320) ? 32 : 16;
-                const int minBeatsPerSegment = 16;
-
-                std::vector<int> boundaryBeatIdx;
-                boundaryBeatIdx.push_back(0);
-                for (const auto& m : markers) {
-                    int b = nearestBeatIndex(m.first);
-                    b = static_cast<int>(std::llround(static_cast<double>(b) / quantBeats)) * quantBeats;
-                    b = std::clamp(b, quantBeats, static_cast<int>(beatTimes.size()) - quantBeats);
-                    boundaryBeatIdx.push_back(b);
-                }
-                boundaryBeatIdx.push_back(static_cast<int>(beatTimes.size()) - 1);
-
-                std::sort(boundaryBeatIdx.begin(), boundaryBeatIdx.end());
-                boundaryBeatIdx.erase(std::unique(boundaryBeatIdx.begin(), boundaryBeatIdx.end()),
-                                      boundaryBeatIdx.end());
-
-                // Merge tiny segments (<16 beats) with previous segment.
-                for (size_t i = 1; i + 1 < boundaryBeatIdx.size();) {
-                    const int beatsLen = boundaryBeatIdx[i] - boundaryBeatIdx[i - 1];
-                    if (beatsLen < minBeatsPerSegment) {
-                        boundaryBeatIdx.erase(boundaryBeatIdx.begin() + static_cast<ptrdiff_t>(i));
-                    } else {
-                        ++i;
-                    }
-                }
-
-                if (boundaryBeatIdx.size() >= 3) {
-                    const int segCount = static_cast<int>(boundaryBeatIdx.size()) - 1;
-                    std::vector<double> segRms(static_cast<size_t>(segCount), 0.0);
-                    std::vector<double> segTrend(static_cast<size_t>(segCount), 0.0);
-
-                    auto secToBin = [&](double t) {
-                        return std::clamp(static_cast<int>(std::floor(t / secPerBin)), 0, n - 1);
-                    };
-
-                    // Measure average RMS/energy for each segment.
-                    for (int sidx = 0; sidx < segCount; ++sidx) {
-                        const double tA = beatTimes[static_cast<size_t>(boundaryBeatIdx[sidx])];
-                        const double tB = beatTimes[static_cast<size_t>(boundaryBeatIdx[sidx + 1])];
-                        const int bA = secToBin(tA);
-                        const int bB = std::max(bA + 1, secToBin(tB));
-
-                        double sum = 0.0;
-                        double sumA = 0.0;
-                        double sumB = 0.0;
-                        int count = 0;
-                        int countA = 0;
-                        int countB = 0;
-                        const int mid = bA + (bB - bA) / 2;
-
-                        for (int b = bA; b <= bB && b < n; ++b) {
-                            const double v = energy[static_cast<size_t>(b)];
-                            sum += v;
-                            ++count;
-                            if (b < mid) { sumA += v; ++countA; }
-                            else { sumB += v; ++countB; }
-                        }
-
-                        segRms[static_cast<size_t>(sidx)] = (count > 0) ? (sum / count) : 0.0;
-                        const double a = (countA > 0) ? (sumA / countA) : 0.0;
-                        const double b = (countB > 0) ? (sumB / countB) : 0.0;
-                        segTrend[static_cast<size_t>(sidx)] = b - a;
-                    }
-
-                    struct LabelColor { const char* label; const char* color; };
-                    std::vector<LabelColor> labels(static_cast<size_t>(segCount), {"Verse", "#32CD32"});
-
-                    // Rules: first = Intro, last = Outro.
-                    labels.front() = {"Intro", "#1E90FF"};
-                    labels.back() = {"Outro", "#808080"};
-
-                    // Pick top 1-2 RMS segments (middle only) as Drop/Chorus.
-                    std::vector<int> middleIdx;
-                    for (int i = 1; i < segCount - 1; ++i)
-                        middleIdx.push_back(i);
-                    std::sort(middleIdx.begin(), middleIdx.end(), [&](int a, int b) {
-                        return segRms[static_cast<size_t>(a)] > segRms[static_cast<size_t>(b)];
-                    });
-
-                    const int dropCount = std::min(2, static_cast<int>(middleIdx.size()));
-                    std::vector<int> drops;
-                    for (int k = 0; k < dropCount; ++k) {
-                        const int di = middleIdx[static_cast<size_t>(k)];
-                        labels[static_cast<size_t>(di)] = {"Drop", "#FF4500"};
-                        drops.push_back(di);
-                    }
-
-                    // Segment right before a drop with rising energy => Build-up.
-                    for (int di : drops) {
-                        const int bi = di - 1;
-                        if (bi > 0) {
-                            const bool likelyBuild =
-                                segRms[static_cast<size_t>(bi)] < segRms[static_cast<size_t>(di)]
-                                || segTrend[static_cast<size_t>(bi)] > 0.0;
-                            if (likelyBuild && std::string(labels[static_cast<size_t>(bi)].label) != "Drop")
-                                labels[static_cast<size_t>(bi)] = {"Build-up", "#FFD700"};
-                        }
-                    }
-
-                    // Emit final segments.
-                    for (int i = 0; i < segCount; ++i) {
-                        const float tA = static_cast<float>(beatTimes[static_cast<size_t>(boundaryBeatIdx[i])]);
-                        const float tB = static_cast<float>(beatTimes[static_cast<size_t>(boundaryBeatIdx[i + 1])]);
-                        if (tB <= tA + 0.01f)
-                            continue;
-                        segments.push_back({
-                            QString::fromLatin1(labels[static_cast<size_t>(i)].label),
-                            tA,
-                            std::min(tB, static_cast<float>(duration)),
-                            QString::fromLatin1(labels[static_cast<size_t>(i)].color)
-                        });
-                    }
-                }
+            std::vector<TrackSegment> segments;
+            if (beatTimes.size() >= 17 && duration > 12.0) {
+                PhraseAnalyzer phraseAnalyzer;
+                segments = phraseAnalyzer.analyze(*reader, beatTimes, duration);
             }
 
             m_trackData->setSegmentsData(std::move(segments));

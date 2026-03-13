@@ -2,6 +2,7 @@
 #include <QDebug>
 #include <QSGGeometry>
 #include <QSGVertexColorMaterial>
+#include <QColor>
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -27,6 +28,7 @@ void ScrollingWaveformItem::setEngine(DjEngine* engine)
     if (m_engine) {
         connect(m_engine, &DjEngine::trackLoaded, this, &ScrollingWaveformItem::onTrackLoaded);
         connect(m_engine, &DjEngine::loopChanged, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
+        connect(m_engine, &DjEngine::segmentsChanged, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
     } else {
         // nothing to stop — FrameAnimation in QML will have stopped already
     }
@@ -163,6 +165,16 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         loopLineNode->setMaterial(new QSGVertexColorMaterial());
         loopLineNode->setFlag(QSGNode::OwnsMaterial);
         rootNode->appendChildNode(loopLineNode);
+
+        // 9: segment strip at the bottom (DrawTriangles)
+        auto* segmentNode = new QSGGeometryNode();
+        auto* segmentGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
+        segmentGeo->setDrawingMode(QSGGeometry::DrawTriangles);
+        segmentNode->setGeometry(segmentGeo);
+        segmentNode->setFlag(QSGNode::OwnsGeometry);
+        segmentNode->setMaterial(new QSGVertexColorMaterial());
+        segmentNode->setFlag(QSGNode::OwnsMaterial);
+        rootNode->appendChildNode(segmentNode);
     }
 
     auto* lowNode      = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(0));
@@ -174,6 +186,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     auto* triNode      = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(6));
     auto* loopFillNode = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(7));
     auto* loopLineNode = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(8));
+    auto* segmentNode  = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(9));
 
     int wInt = static_cast<int>(width());
     if (wInt <= 0) return rootNode;
@@ -466,6 +479,78 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
 
     loopFillNode->markDirty(QSGNode::DirtyGeometry);
     loopLineNode->markDirty(QSGNode::DirtyGeometry);
+
+    // ── Segment strip rendering (tiny colored bar at bottom) ───────────────
+    // Draw each segment as a 4px-high rectangle aligned to the waveform timeline.
+    QSGGeometry* segGeo = segmentNode->geometry();
+    const QVariantList segments = m_engine->currentSegments();
+    if (!segments.isEmpty()) {
+        struct SegRect {
+            float x1;
+            float x2;
+            QColor color;
+        };
+        std::vector<SegRect> segRects;
+        segRects.reserve(static_cast<size_t>(segments.size()));
+
+        for (const QVariant& v : segments) {
+            const QVariantMap m = v.toMap();
+            const double startSec = m.value("startTime").toDouble();
+            const double endSec = m.value("endTime").toDouble();
+            if (endSec <= startSec)
+                continue;
+
+            const double startPoint = startSec * pointsPerSec;
+            const double endPoint = endSec * pointsPerSec;
+
+            float x1 = static_cast<float>(w / 2.0 + (startPoint - centerIndexReal) * pixelsPerPoint);
+            float x2 = static_cast<float>(w / 2.0 + (endPoint - centerIndexReal) * pixelsPerPoint);
+
+            if (x2 < x1)
+                std::swap(x1, x2);
+
+            x1 = std::clamp(x1, 0.0f, w);
+            x2 = std::clamp(x2, 0.0f, w);
+            if (x2 <= x1 + 0.5f)
+                continue;
+
+            QColor c(m.value("colorHex").toString());
+            if (!c.isValid())
+                c = QColor("#666666");
+
+            segRects.push_back({x1, x2, c});
+        }
+
+        if (!segRects.empty()) {
+            const float yBottom = static_cast<float>(height());
+            const float yTop = std::max(0.0f, yBottom - 4.0f);
+
+            segGeo->allocate(static_cast<int>(segRects.size()) * 6);
+            auto* vtx = segGeo->vertexDataAsColoredPoint2D();
+            int idx = 0;
+            for (const auto& s : segRects) {
+                const auto r = static_cast<uchar>(s.color.red());
+                const auto g = static_cast<uchar>(s.color.green());
+                const auto b = static_cast<uchar>(s.color.blue());
+                constexpr uchar a = 220;
+
+                // Triangle 1
+                vtx[idx++].set(s.x1, yTop,    r, g, b, a);
+                vtx[idx++].set(s.x1, yBottom, r, g, b, a);
+                vtx[idx++].set(s.x2, yBottom, r, g, b, a);
+                // Triangle 2
+                vtx[idx++].set(s.x1, yTop,    r, g, b, a);
+                vtx[idx++].set(s.x2, yBottom, r, g, b, a);
+                vtx[idx++].set(s.x2, yTop,    r, g, b, a);
+            }
+        } else {
+            segGeo->allocate(0);
+        }
+    } else {
+        segGeo->allocate(0);
+    }
+
+    segmentNode->markDirty(QSGNode::DirtyGeometry);
     
     return rootNode;
 }

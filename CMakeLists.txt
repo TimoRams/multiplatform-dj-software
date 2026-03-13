@@ -61,6 +61,8 @@ qt_add_qml_module(${PROJECT_NAME}
 target_sources(${PROJECT_NAME} PRIVATE
     src/main.cpp
     src/DjEngine.cpp
+    src/PhraseAnalyzer.h
+    src/PhraseAnalyzer.cpp
     src/WaveformItem.cpp
     src/ScrollingWaveformItem.cpp
     src/WaveformAnalyzer.cpp
