@@ -340,6 +340,13 @@ Item {
                         Layout.preferredHeight: 44
                     }
 
+                    SegmentBar {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 10
+                        segments: deck.engine ? deck.engine.currentSegments : []
+                        totalTrackDuration: deck.engine ? deck.engine.trackDurationSec : 0
+                    }
+
                     // Controls (Play/Pause, Cue, Sync + Quantize, Keylock, Slip)
                     RowLayout {
                         Layout.fillWidth: true

@@ -6,6 +6,9 @@
 #include <QDir>
 #include <QStandardPaths>
 #include <QDebug>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 namespace {
 
@@ -23,6 +26,51 @@ bool tableHasColumn(QSqlDatabase& db, const QString& tableName, const QString& c
     return false;
 }
 
+}
+
+QString LibraryDatabase::trackSegmentsToJson(const std::vector<TrackSegment>& segments)
+{
+    QJsonArray arr;
+
+    for (const auto& s : segments) {
+        QJsonObject obj;
+        obj.insert("label", s.label);
+        obj.insert("startTime", s.startTime);
+        obj.insert("endTime", s.endTime);
+        obj.insert("colorHex", s.colorHex);
+        arr.append(obj);
+    }
+
+    return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+}
+
+QVariantList LibraryDatabase::trackSegmentsJsonToVariantList(const QString& json)
+{
+    QVariantList result;
+    if (json.trimmed().isEmpty())
+        return result;
+
+    QJsonParseError err;
+    const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8(), &err);
+    if (err.error != QJsonParseError::NoError || !doc.isArray())
+        return result;
+
+    const QJsonArray arr = doc.array();
+    result.reserve(arr.size());
+
+    for (const auto v : arr) {
+        if (!v.isObject())
+            continue;
+        const QJsonObject o = v.toObject();
+        QVariantMap m;
+        m.insert("label", o.value("label").toString());
+        m.insert("startTime", o.value("startTime").toDouble());
+        m.insert("endTime", o.value("endTime").toDouble());
+        m.insert("colorHex", o.value("colorHex").toString());
+        result.push_back(m);
+    }
+
+    return result;
 }
 
 LibraryDatabase::LibraryDatabase(QObject* parent)
@@ -106,6 +154,7 @@ bool LibraryDatabase::createSchema()
             "  bitrate_kbps INTEGER DEFAULT 0,"
             "  bpm          REAL    DEFAULT 0.0,"
             "  key          TEXT    DEFAULT '',"
+            "  track_segments TEXT DEFAULT '',"
             "  is_analyzed  BOOLEAN DEFAULT 0"
             ")");
         if (!ok) qWarning() << "[LibraryDatabase] Tracks:" << q.lastError().text();
@@ -168,6 +217,17 @@ bool LibraryDatabase::createSchema()
         if (!tableHasColumn(m_db, "Tracks", "bitrate_kbps")) {
             ok &= q.exec("ALTER TABLE Tracks ADD COLUMN bitrate_kbps INTEGER DEFAULT 0");
             if (!ok) qWarning() << "[LibraryDatabase] Tracks bitrate_kbps:" << q.lastError().text();
+        }
+
+        if (!ok) return false;
+    }
+
+    if (currentVersion < 4) {
+        bool ok = true;
+
+        if (!tableHasColumn(m_db, "Tracks", "track_segments")) {
+            ok &= q.exec("ALTER TABLE Tracks ADD COLUMN track_segments TEXT DEFAULT ''");
+            if (!ok) qWarning() << "[LibraryDatabase] Tracks track_segments:" << q.lastError().text();
         }
 
         if (!ok) return false;
@@ -372,6 +432,48 @@ bool LibraryDatabase::trackExists(const QString& trackId) const
     q.bindValue(":id", trackId);
     q.exec();
     return q.next();
+}
+
+bool LibraryDatabase::updateTrackSegments(const QString& trackId,
+                                          const std::vector<TrackSegment>& segments)
+{
+    if (trackId.isEmpty())
+        return false;
+
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE Tracks SET track_segments = :segments WHERE id = :id");
+    q.bindValue(":segments", trackSegmentsToJson(segments));
+    q.bindValue(":id", trackId);
+
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] updateTrackSegments:" << q.lastError().text();
+        return false;
+    }
+
+    if (m_tableModel)
+        m_tableModel->refresh();
+
+    return true;
+}
+
+QVariantList LibraryDatabase::trackSegmentsForTrack(const QString& trackId) const
+{
+    if (trackId.isEmpty())
+        return {};
+
+    QSqlQuery q(m_db);
+    q.prepare("SELECT COALESCE(track_segments, '') FROM Tracks WHERE id = :id LIMIT 1");
+    q.bindValue(":id", trackId);
+
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] trackSegmentsForTrack:" << q.lastError().text();
+        return {};
+    }
+
+    if (!q.next())
+        return {};
+
+    return trackSegmentsJsonToVariantList(q.value(0).toString());
 }
 
 QString LibraryDatabase::filePath(const QString& trackId) const

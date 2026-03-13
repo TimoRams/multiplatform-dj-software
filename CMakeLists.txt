@@ -47,6 +47,7 @@ qt_add_qml_module(${PROJECT_NAME}
         src/qml/TopHeader.qml
         src/qml/EnlargedWaveform.qml
         src/qml/OverallWaveform.qml
+        src/qml/SegmentBar.qml
         src/qml/DeckControl.qml
         src/qml/TrackInfoDisplay.qml
         src/qml/Library.qml

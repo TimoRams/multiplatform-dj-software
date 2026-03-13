@@ -4,6 +4,7 @@
 #include <QString>
 #include <QTimer>
 #include <QVector>
+#include <QVariantList>
 #include <QElapsedTimer>
 #include <atomic>
 #include <cstdint>
@@ -40,9 +41,11 @@ class DjEngine : public QObject
     Q_PROPERTY(QString trackAlbum   READ trackAlbum   NOTIFY trackMetadataChanged)
     Q_PROPERTY(QString trackKey     READ trackKey     NOTIFY trackMetadataChanged)
     Q_PROPERTY(QString trackDuration READ trackDuration NOTIFY trackMetadataChanged)
+    Q_PROPERTY(double trackDurationSec READ trackDurationSec NOTIFY trackMetadataChanged)
     Q_PROPERTY(bool    hasTrack     READ hasTrack     NOTIFY trackMetadataChanged)
     Q_PROPERTY(QString coverArtUrl  READ coverArtUrl  NOTIFY trackMetadataChanged)
     Q_PROPERTY(bool    hasCoverArt  READ hasCoverArt  NOTIFY trackMetadataChanged)
+    Q_PROPERTY(QVariantList currentSegments READ currentSegments NOTIFY segmentsChanged)
 
     // Mixer Properties
     // Pixels per second at current zoom — needed by the scrub math in QML.
@@ -70,7 +73,7 @@ public:
     ~DjEngine() override;
 
     float getProgress() const;
-    float getDuration() const;
+    Q_INVOKABLE float getDuration() const;
     float getPosition() const;
     // Latency-compensated position in seconds, used by the waveform renderer.
     float getVisualPosition() const;
@@ -122,9 +125,11 @@ public:
     QString trackAlbum()    const { return m_trackAlbum; }
     QString trackKey()      const { return m_trackKey; }
     QString trackDuration() const { return m_trackDuration; }
+    double  trackDurationSec() const { return m_trackDurationSec; }
     bool    hasTrack()      const { return m_hasTrack; }
     QString coverArtUrl()   const { return m_coverArtUrl; }
     bool    hasCoverArt()   const { return m_hasCoverArt; }
+    QVariantList currentSegments() const { return m_currentSegments; }
     double  getTempoPercent() const { return m_tempoPercent; }
     // Returns the analysed BPM multiplied by the current tempo ratio.
     // Shows 0.0 until BPM analysis is complete.
@@ -215,6 +220,7 @@ signals:
     void keylockChanged();
     void vuLevelChanged();
     void gainReductionChanged();
+    void segmentsChanged();
 
 private slots:
     void onTimer();
@@ -244,6 +250,7 @@ private:
     QString m_trackAlbum;
     QString m_trackKey;
     QString m_trackDuration;
+    double  m_trackDurationSec = 0.0;
     bool    m_hasTrack = false;
 
     CoverArtProvider* m_coverProvider = nullptr;
@@ -252,6 +259,7 @@ private:
     QString m_currentTrackId;
     QString m_coverArtUrl;
     bool    m_hasCoverArt = false;
+    QVariantList m_currentSegments;
 
     // Tempo control: ±6/8/16/32/100% (WIDE) selectable range
     double m_tempoPercent = 0.0;

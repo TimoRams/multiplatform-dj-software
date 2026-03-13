@@ -574,6 +574,27 @@ DjEngine::DjEngine(QObject* parent) : QObject(parent)
         persistCurrentAnalysisToLibrary();
     });
 
+    connect(m_trackData, &TrackData::segmentsAnalyzed, this, [this]() {
+        const auto segments = m_trackData->getSegments();
+
+        QVariantList asVariant;
+        asVariant.reserve(static_cast<int>(segments.size()));
+        for (const auto& s : segments) {
+            QVariantMap m;
+            m.insert("label", s.label);
+            m.insert("startTime", s.startTime);
+            m.insert("endTime", s.endTime);
+            m.insert("colorHex", s.colorHex);
+            asVariant.push_back(m);
+        }
+
+        m_currentSegments = asVariant;
+        emit segmentsChanged();
+
+        if (m_libraryDb && !m_currentTrackId.isEmpty() && !segments.empty())
+            m_libraryDb->updateTrackSegments(m_currentTrackId, segments);
+    });
+
     juce::MessageManager::getInstance();
     formatManager.registerBasicFormats();
 
@@ -742,6 +763,8 @@ void DjEngine::loadTrack(const QString& rawPath)
     if (reader != nullptr)
     {
         m_trackData->clear();
+        m_currentSegments.clear();
+        emit segmentsChanged();
 
         const auto metaMap = buildMetadataLookup(reader->metadataValues);
 
@@ -772,6 +795,7 @@ void DjEngine::loadTrack(const QString& rawPath)
         filenameHeuristic(baseName, m_trackTitle, m_trackArtist);
 
         double durationSec = static_cast<double>(reader->lengthInSamples) / reader->sampleRate;
+        m_trackDurationSec = durationSec;
         int mins = static_cast<int>(durationSec) / 60;
         int secs = static_cast<int>(durationSec) % 60;
         m_trackDuration = QString("%1:%2").arg(mins).arg(secs, 2, 10, QChar('0'));
@@ -814,6 +838,9 @@ void DjEngine::loadTrack(const QString& rawPath)
             LibraryDatabase::AnalysisSnapshot cachedAnalysis;
             if (m_libraryDb->tryGetAnalysisData(m_currentTrackId, &cachedAnalysis)
                 && cachedAnalysis.isAnalyzed) {
+                m_currentSegments = m_libraryDb->trackSegmentsForTrack(m_currentTrackId);
+                emit segmentsChanged();
+
                 if (cachedAnalysis.bpm > 0.0) {
                     m_trackData->setBpmData(cachedAnalysis.bpm,
                                             cachedAnalysis.firstBeatSample,
@@ -826,6 +853,10 @@ void DjEngine::loadTrack(const QString& rawPath)
                     m_trackKey = cachedKey;
                     m_trackData->setKeyData(cachedKey);
                 }
+            } else {
+                // Strictly hide segment UI state until fresh analysis writes data.
+                m_currentSegments = QVariantList();
+                emit segmentsChanged();
             }
         }
 

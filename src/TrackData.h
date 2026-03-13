@@ -8,6 +8,8 @@
 #include <cmath>
 #include <limits>
 
+#include "TrackSegment.h"
+
 class TrackData : public QObject
 {
     Q_OBJECT
@@ -232,6 +234,19 @@ public:
         return m_isKeyAnalyzed;
     }
 
+    void setSegmentsData(std::vector<TrackSegment> segments) {
+        {
+            QMutexLocker locker(&m_mutex);
+            m_segments = std::move(segments);
+        }
+        emit segmentsAnalyzed();
+    }
+
+    std::vector<TrackSegment> getSegments() const {
+        QMutexLocker locker(&m_mutex);
+        return m_segments;
+    }
+
     QVector<FrequencyData> getWaveformData() const {
         QMutexLocker locker(&m_mutex);
         return m_data;
@@ -259,6 +274,7 @@ public:
             m_detectedKey.clear();
             m_isKeyAnalyzed = false;
             m_beatGrid.clear();
+            m_segments.clear();
         }
         emit dataCleared();
     }
@@ -299,6 +315,7 @@ signals:
     void bpmAnalyzed();
     void keyAnalyzed();
     void beatgridChanged();  // emitted after a manual grid shift
+    void segmentsAnalyzed();
 
 private:
     QVector<FrequencyData> m_data;
@@ -310,6 +327,7 @@ private:
     double  m_sampleRate;
     bool    m_isBpmAnalyzed;
     std::vector<BeatMarker> m_beatGrid;  // elastic beat markers (positionSec + downbeat flag)
+    std::vector<TrackSegment> m_segments;
 
     QString m_detectedKey;
     bool    m_isKeyAnalyzed;
