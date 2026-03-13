@@ -2,90 +2,61 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
 
-// ─────────────────────────────────────────────────────────────────────────────
 // FxUnit – a single effects unit (deck assignment + effect type + wet/dry knob)
-// ─────────────────────────────────────────────────────────────────────────────
 Rectangle {
     id: root
 
-    // ── Public API ────────────────────────────────────────────────────────────
-    // Which FX slot this unit represents (1 = left, 2 = right)
     property int unitId: 1
-
-    // Deck-assignment state (readable from outside)
     property alias deck1Active: btnDeck1.checked
     property alias deck2Active: btnDeck2.checked
-
-    // Currently selected effect name
     property alias effectType: effectCombo.currentText
-
-    // Wet/Dry amount  0.0 … 1.0
     property alias wetDry: wetDryDial.value
-
-    // Accent colour that identifies this unit visually (overridable)
     property color accentColor: unitId === 1 ? "#1e90ff" : "#ff6a00"
 
-    // ── Signals ───────────────────────────────────────────────────────────────
-    // NOTE: aliases already auto-generate effectTypeChanged, wetDryChanged,
-    // deck1ActiveChanged, deck2ActiveChanged — do NOT redeclare them.
     signal deck1Toggled(bool active)
     signal deck2Toggled(bool active)
 
-    // ── Geometry ──────────────────────────────────────────────────────────────
     height: 40
-    color: "#1a1a1a"
+    color: "#161616"
 
-    // Thin accent stripe at the top
-    Rectangle {
-        anchors.top:  parent.top
-        anchors.left: parent.left
-        anchors.right: parent.right
-        height: 2
-        color: root.accentColor
-        opacity: 0.7
-    }
-
-    // ── Layout ────────────────────────────────────────────────────────────────
     RowLayout {
         anchors.fill: parent
-        anchors.leftMargin:  8
+        anchors.leftMargin: 8
         anchors.rightMargin: 8
         spacing: 6
 
-        // ── FX label ─────────────────────────────────────────────────────────
         Text {
             text: "FX" + root.unitId
-            color: root.accentColor
-            font.pixelSize: 10
+            color: "#8d8d8d"
+            font.pixelSize: 9
             font.bold: true
             font.family: "monospace"
             Layout.alignment: Qt.AlignVCenter
-            Layout.preferredWidth: 22
+            Layout.preferredWidth: 24
         }
 
-        // ── Deck-assignment buttons ───────────────────────────────────────────
         Button {
             id: btnDeck1
             text: "1"
             checkable: true
             checked: false
-            Layout.preferredWidth:  26
+            Layout.preferredWidth: 26
             Layout.preferredHeight: 22
             Layout.alignment: Qt.AlignVCenter
 
             contentItem: Text {
                 text: parent.text
-                color: parent.checked ? "#000" : "#aaa"
+                color: parent.checked ? root.accentColor : "#8f8f8f"
                 font.pixelSize: 10
                 font.bold: true
                 horizontalAlignment: Text.AlignHCenter
-                verticalAlignment:   Text.AlignVCenter
+                verticalAlignment: Text.AlignVCenter
             }
 
             background: Rectangle {
-                color: parent.checked ? root.accentColor : "#2e2e2e"
+                color: parent.checked ? "#222222" : "#1f1f1f"
                 radius: 3
-                border.color: parent.checked ? root.accentColor : "#444"
+                border.color: parent.checked ? root.accentColor : "#353535"
                 border.width: 1
             }
 
@@ -101,23 +72,23 @@ Rectangle {
             text: "2"
             checkable: true
             checked: false
-            Layout.preferredWidth:  26
+            Layout.preferredWidth: 26
             Layout.preferredHeight: 22
             Layout.alignment: Qt.AlignVCenter
 
             contentItem: Text {
                 text: parent.text
-                color: parent.checked ? "#000" : "#aaa"
+                color: parent.checked ? root.accentColor : "#8f8f8f"
                 font.pixelSize: 10
                 font.bold: true
                 horizontalAlignment: Text.AlignHCenter
-                verticalAlignment:   Text.AlignVCenter
+                verticalAlignment: Text.AlignVCenter
             }
 
             background: Rectangle {
-                color: parent.checked ? root.accentColor : "#2e2e2e"
+                color: parent.checked ? "#222222" : "#1f1f1f"
                 radius: 3
-                border.color: parent.checked ? root.accentColor : "#444"
+                border.color: parent.checked ? root.accentColor : "#353535"
                 border.width: 1
             }
 
@@ -128,7 +99,6 @@ Rectangle {
             }
         }
 
-        // ── Effect selector ──────────────────────────────────────────────────
         ComboBox {
             id: effectCombo
             model: [
@@ -156,22 +126,40 @@ Rectangle {
 
             contentItem: Text {
                 leftPadding: 6
+                rightPadding: 18
                 text: effectCombo.displayText
-                color: "#ddd"
+                color: "#d5d5d5"
                 font.pixelSize: 10
                 font.family: "monospace"
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
             }
 
+            indicator: Canvas {
+                x: effectCombo.width - width - 7
+                y: effectCombo.topPadding + (effectCombo.availableHeight - height) / 2
+                width: 8
+                height: 6
+                contextType: "2d"
+
+                onPaint: {
+                    context.reset()
+                    context.moveTo(0, 0)
+                    context.lineTo(width, 0)
+                    context.lineTo(width / 2, height)
+                    context.closePath()
+                    context.fillStyle = "#777"
+                    context.fill()
+                }
+            }
+
             background: Rectangle {
-                color: effectCombo.pressed ? "#333" : "#252525"
+                color: effectCombo.pressed ? "#242424" : "#1f1f1f"
                 radius: 3
-                border.color: effectCombo.pressed ? root.accentColor : "#444"
+                border.color: effectCombo.visualFocus ? root.accentColor : "#353535"
                 border.width: 1
             }
 
-            // Use default delegate — custom ones broke mouse input
             delegate: ItemDelegate {
                 width: effectCombo.width
                 height: 24
@@ -179,7 +167,7 @@ Rectangle {
 
                 contentItem: Text {
                     text: modelData
-                    color: highlighted ? root.accentColor : "#ccc"
+                    color: highlighted ? "#f1f1f1" : "#bcbcbc"
                     font.pixelSize: 10
                     font.family: "monospace"
                     leftPadding: 8
@@ -187,8 +175,16 @@ Rectangle {
                 }
 
                 background: Rectangle {
-                    color: highlighted ? "#2a2a2a" : "#1a1a1a"
+                    color: highlighted ? "#262626" : "#171717"
+                    border.color: highlighted ? root.accentColor : "transparent"
+                    border.width: highlighted ? 1 : 0
                 }
+            }
+
+            popup.background: Rectangle {
+                color: "#171717"
+                border.color: "#303030"
+                border.width: 1
             }
 
             onCurrentTextChanged: {
@@ -197,17 +193,15 @@ Rectangle {
             }
         }
 
-        // ── Wet/Dry knob ─────────────────────────────────────────────────────
         Item {
-            Layout.preferredWidth:  36
+            Layout.preferredWidth: 36
             Layout.preferredHeight: 32
             Layout.alignment: Qt.AlignVCenter
 
-            // Label above the knob
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.top: parent.top
-                text: "W/D"
+                text: "MIX"
                 color: "#666"
                 font.pixelSize: 8
                 font.family: "monospace"
@@ -217,11 +211,11 @@ Rectangle {
                 id: wetDryDial
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom
-                width:  26
+                width: 26
                 height: 26
-                from:   0.0
-                to:     1.0
-                value:  0.0
+                from: 0.0
+                to: 1.0
+                value: 0.0
                 stepSize: 0.01
 
                 background: Rectangle {
@@ -238,7 +232,7 @@ Rectangle {
                         width: parent.width * 0.85
                         height: parent.height * 0.85
                         radius: width / 2
-                        color: "#222"
+                        color: "#1f1f1f"
                         border.color: wetDryDial.value > 0 ? root.accentColor : "#444"
                         border.width: 1
                     }
@@ -246,9 +240,9 @@ Rectangle {
 
                 handle: Rectangle {
                     id: dialHandle
-                    x: wetDryDial.background.x + wetDryDial.background.width  / 2 - width  / 2
+                    x: wetDryDial.background.x + wetDryDial.background.width / 2 - width / 2
                     y: wetDryDial.background.y + wetDryDial.background.height / 2 - height / 2
-                    width:  wetDryDial.width  * 0.85
+                    width: wetDryDial.width * 0.85
                     height: wetDryDial.height * 0.85
                     color: "transparent"
 
@@ -264,16 +258,15 @@ Rectangle {
 
                     transform: Rotation {
                         angle: wetDryDial.angle
-                        origin.x: dialHandle.width  / 2
+                        origin.x: dialHandle.width / 2
                         origin.y: dialHandle.height / 2
                     }
                 }
 
-                // Double-click resets to 0
                 TapHandler {
                     onDoubleTapped: {
                         wetDryDial.enabled = false
-                        wetDryDial.value   = 0.0
+                        wetDryDial.value = 0.0
                         wetDryDial.enabled = true
                     }
                 }
