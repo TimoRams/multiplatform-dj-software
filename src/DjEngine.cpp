@@ -447,6 +447,11 @@ public:
                 peakR = buf->getMagnitude(1, s, n);
             m_peakL.store(peakL, std::memory_order_relaxed);
             m_peakR.store(peakR, std::memory_order_relaxed);
+            // Strict digital clip indicator: only flag when we overshoot full scale
+            // with a small margin to avoid false positives from limiter ceiling.
+            constexpr float kClipThreshold = 1.001f;
+            m_clipDetected.store((peakL > kClipThreshold) || (peakR > kClipThreshold),
+                                std::memory_order_relaxed);
         }
     }
 
@@ -529,6 +534,7 @@ public:
     // VU meter peak levels — written on audio thread, read from UI thread
     std::atomic<float> m_peakL { 0.0f };
     std::atomic<float> m_peakR { 0.0f };
+    std::atomic<bool>  m_clipDetected { false };
 
     // Global shared state: master volume + anti-clip (shared across all decks)
     static std::atomic<float> s_masterVolume;
@@ -912,6 +918,11 @@ float DjEngine::vuLevelL() const
 float DjEngine::vuLevelR() const
 {
     return mixerSource ? mixerSource->m_peakR.load(std::memory_order_relaxed) : 0.0f;
+}
+
+bool DjEngine::clipDetected() const
+{
+    return mixerSource ? mixerSource->m_clipDetected.load(std::memory_order_relaxed) : false;
 }
 
 float DjEngine::gainReduction() const

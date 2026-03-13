@@ -460,6 +460,17 @@ Rectangle {
                 var b = deckB ? deckB.vuLevelR : 0
                 return Math.max(a, b)
             }
+            property real gainReduction: {
+                var a = deckA ? deckA.gainReduction : 1.0
+                var b = deckB ? deckB.gainReduction : 1.0
+                return Math.min(a, b)
+            }
+            // True clip only when the engine reports digital overs.
+            property bool clipNow: {
+                var a = deckA ? deckA.clipDetected : false
+                var b = deckB ? deckB.clipDetected : false
+                return a || b
+            }
 
             Row {
                 spacing: 1
@@ -469,8 +480,13 @@ Rectangle {
                         required property int index
                         width: 2; height: 4; radius: 0.5
                         property real threshold: (index + 1) / 48.0
-                        property bool lit: vuColumn.levelL >= threshold
-                        color: lit ? (index >= 38 ? "#ff8c00" : "#44cc66") : "#1a1a1a"
+                        property bool clipSegment: index >= 45
+                        property bool lit: clipSegment ? vuColumn.clipNow : (vuColumn.levelL >= threshold)
+                        color: {
+                            if (!lit) return "#1a1a1a"
+                            if (clipSegment && vuColumn.clipNow) return "#ff2b2b"
+                            return index >= 38 ? "#ffb347" : "#44cc66"
+                        }
                     }
                 }
             }
@@ -483,8 +499,13 @@ Rectangle {
                         required property int index
                         width: 2; height: 4; radius: 0.5
                         property real threshold: (index + 1) / 48.0
-                        property bool lit: vuColumn.levelR >= threshold
-                        color: lit ? (index >= 38 ? "#ff8c00" : "#44cc66") : "#1a1a1a"
+                        property bool clipSegment: index >= 45
+                        property bool lit: clipSegment ? vuColumn.clipNow : (vuColumn.levelR >= threshold)
+                        color: {
+                            if (!lit) return "#1a1a1a"
+                            if (clipSegment && vuColumn.clipNow) return "#ff2b2b"
+                            return index >= 38 ? "#ffb347" : "#44cc66"
+                        }
                     }
                 }
             }
