@@ -26,6 +26,7 @@ void ScrollingWaveformItem::setEngine(DjEngine* engine)
     m_engine = engine;
     if (m_engine) {
         connect(m_engine, &DjEngine::trackLoaded, this, &ScrollingWaveformItem::onTrackLoaded);
+        connect(m_engine, &DjEngine::loopChanged, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
     } else {
         // nothing to stop — FrameAnimation in QML will have stopped already
     }
@@ -141,6 +142,27 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         triNode->setMaterial(new QSGVertexColorMaterial());
         triNode->setFlag(QSGNode::OwnsMaterial);
         rootNode->appendChildNode(triNode);
+
+        // 7: loop overlay rectangle (DrawTriangleStrip)
+        auto* loopFillNode = new QSGGeometryNode();
+        auto* loopFillGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
+        loopFillGeo->setDrawingMode(QSGGeometry::DrawTriangleStrip);
+        loopFillNode->setGeometry(loopFillGeo);
+        loopFillNode->setFlag(QSGNode::OwnsGeometry);
+        loopFillNode->setMaterial(new QSGVertexColorMaterial());
+        loopFillNode->setFlag(QSGNode::OwnsMaterial);
+        rootNode->appendChildNode(loopFillNode);
+
+        // 8: loop in/out markers (DrawLines)
+        auto* loopLineNode = new QSGGeometryNode();
+        auto* loopLineGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
+        loopLineGeo->setDrawingMode(QSGGeometry::DrawLines);
+        loopLineGeo->setLineWidth(1.0f);
+        loopLineNode->setGeometry(loopLineGeo);
+        loopLineNode->setFlag(QSGNode::OwnsGeometry);
+        loopLineNode->setMaterial(new QSGVertexColorMaterial());
+        loopLineNode->setFlag(QSGNode::OwnsMaterial);
+        rootNode->appendChildNode(loopLineNode);
     }
 
     auto* lowNode      = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(0));
@@ -150,6 +172,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     auto* beatNode     = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(4));
     auto* downbeatNode = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(5));
     auto* triNode      = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(6));
+    auto* loopFillNode = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(7));
+    auto* loopLineNode = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(8));
 
     int wInt = static_cast<int>(width());
     if (wInt <= 0) return rootNode;
@@ -387,6 +411,61 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     beatNode    ->markDirty(QSGNode::DirtyGeometry);
     downbeatNode->markDirty(QSGNode::DirtyGeometry);
     triNode     ->markDirty(QSGNode::DirtyGeometry);
+
+    // ── Loop overlay rendering ───────────────────────────────────────────────
+    // Draws a translucent block for active loop range and two vertical markers.
+    QSGGeometry* loopFillGeo = loopFillNode->geometry();
+    QSGGeometry* loopLineGeo = loopLineNode->geometry();
+
+    const bool showLoopPreview = m_engine->loopActive() || m_engine->loopInSet();
+    if (showLoopPreview) {
+        const double loopInSec = m_engine->loopInPosition();
+        const double loopOutSec = m_engine->loopActive()
+            ? m_engine->loopOutPosition()
+            : static_cast<double>(m_engine->getVisualPosition());
+
+        const double loopInPoint = loopInSec * pointsPerSec;
+        const double loopOutPoint = loopOutSec * pointsPerSec;
+
+        float xIn = static_cast<float>(w / 2.0 + (loopInPoint - centerIndexReal) * pixelsPerPoint);
+        float xOut = static_cast<float>(w / 2.0 + (loopOutPoint - centerIndexReal) * pixelsPerPoint);
+
+        if (xOut < xIn)
+            std::swap(xIn, xOut);
+
+        const float drawLeft = std::max(0.0f, xIn);
+        const float drawRight = std::min(w, xOut);
+
+        if (drawRight > drawLeft + 0.5f) {
+            loopFillGeo->allocate(4);
+            auto* fv = loopFillGeo->vertexDataAsColoredPoint2D();
+            fv[0].set(drawLeft,  0.0f,            90, 180, 255, 36);
+            fv[1].set(drawLeft,  static_cast<float>(height()), 90, 180, 255, 36);
+            fv[2].set(drawRight, 0.0f,            90, 180, 255, 36);
+            fv[3].set(drawRight, static_cast<float>(height()), 90, 180, 255, 36);
+
+            loopLineGeo->allocate(4);
+            auto* lv = loopLineGeo->vertexDataAsColoredPoint2D();
+            lv[0].set(drawLeft,  0.0f,            120, 210, 255, 210);
+            lv[1].set(drawLeft,  static_cast<float>(height()), 120, 210, 255, 210);
+            lv[2].set(drawRight, 0.0f,            120, 210, 255, 210);
+            lv[3].set(drawRight, static_cast<float>(height()), 120, 210, 255, 210);
+        } else {
+            loopFillGeo->allocate(0);
+            // Even with tiny width, show the loop-in marker so user gets instant feedback.
+            const float markerX = std::clamp(xIn, 0.0f, w);
+            loopLineGeo->allocate(2);
+            auto* lv = loopLineGeo->vertexDataAsColoredPoint2D();
+            lv[0].set(markerX, 0.0f, 120, 210, 255, 220);
+            lv[1].set(markerX, static_cast<float>(height()), 120, 210, 255, 220);
+        }
+    } else {
+        loopFillGeo->allocate(0);
+        loopLineGeo->allocate(0);
+    }
+
+    loopFillNode->markDirty(QSGNode::DirtyGeometry);
+    loopLineNode->markDirty(QSGNode::DirtyGeometry);
     
     return rootNode;
 }

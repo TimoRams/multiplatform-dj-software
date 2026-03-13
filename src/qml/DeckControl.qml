@@ -23,6 +23,23 @@ Item {
     property string _trackBpm:      ""
     property string _currentBpm:    ""   // live tempo-adjusted BPM
 
+    function loopLabel() {
+        if (!deck.engine || !deck.engine.loopActive)
+            return "4 BEAT"
+        var beats = deck.engine.loopLengthBeats
+        if (Math.abs(beats - 1.5) < 0.08)
+            return "1.5"
+        if (Math.abs(beats - 0.75) < 0.05)
+            return "3/4"
+        if (Math.abs(beats - 0.5) < 0.04)
+            return "1/2"
+        if (Math.abs(beats - 0.25) < 0.03)
+            return "1/4"
+        if (beats >= 1.0)
+            return Math.round(beats) + " BEAT"
+        return beats.toFixed(2) + " BEAT"
+    }
+
     function _syncMetadata() {
         if (!deck.engine) return
         _hasTrack      = deck.engine.hasTrack
@@ -389,6 +406,7 @@ Item {
                         Button {
                             text: "QUANTIZE"
                             checkable: true
+                            checked: deck.engine ? deck.engine.quantizeEnabled : false
                             Layout.fillWidth: true
                             Layout.preferredHeight: 18
                             background: Rectangle {
@@ -403,6 +421,9 @@ Item {
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: {
+                                if (deck.engine) deck.engine.quantizeEnabled = checked
                             }
                         }
 
@@ -448,6 +469,143 @@ Item {
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
                             }
+                        }
+                    }
+
+                    // Loop controls
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 3
+
+                        Button {
+                            text: "LOOP IN"
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 18
+                            background: Rectangle {
+                                color: "#333"
+                                radius: 3
+                                border.color: "#555"
+                                border.width: 1
+                            }
+                            contentItem: Text {
+                                text: parent.text
+                                color: "#bbb"
+                                font.pixelSize: window.sp(8)
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: if (deck.engine) deck.engine.setLoopIn()
+                        }
+
+                        Button {
+                            text: "LOOP OUT"
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 18
+                            background: Rectangle {
+                                color: "#333"
+                                radius: 3
+                                border.color: "#555"
+                                border.width: 1
+                            }
+                            contentItem: Text {
+                                text: parent.text
+                                color: "#bbb"
+                                font.pixelSize: window.sp(8)
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: if (deck.engine) deck.engine.setLoopOut()
+                        }
+
+                        Button {
+                            text: "<"
+                            Layout.preferredWidth: 24
+                            Layout.preferredHeight: 18
+                            background: Rectangle {
+                                color: "#333"
+                                radius: 3
+                                border.color: "#555"
+                                border.width: 1
+                            }
+                            contentItem: Text {
+                                text: parent.text
+                                color: "#bbb"
+                                font.pixelSize: window.sp(9)
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: if (deck.engine) deck.engine.halveLoopLength()
+                        }
+
+                        Button {
+                            text: deck.loopLabel()
+                            checkable: true
+                            checked: deck.engine ? (deck.engine.loopActive && Math.abs(deck.engine.loopLengthBeats - 0.75) < 0.06) : false
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 18
+                            background: Rectangle {
+                                color: parent.checked ? "#335533" : "#333"
+                                radius: 3
+                                border.color: parent.checked ? "#66dd66" : "#555"
+                                border.width: 1
+                            }
+                            contentItem: Text {
+                                text: parent.text
+                                color: parent.checked ? "#d8ffd8" : "#bbb"
+                                font.pixelSize: window.sp(8)
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                                elide: Text.ElideRight
+                            }
+                            onClicked: if (deck.engine) deck.engine.toggleLoop4Beats()
+                        }
+
+                        Button {
+                            text: ">"
+                            Layout.preferredWidth: 24
+                            Layout.preferredHeight: 18
+                            background: Rectangle {
+                                color: "#333"
+                                radius: 3
+                                border.color: "#555"
+                                border.width: 1
+                            }
+                            contentItem: Text {
+                                text: parent.text
+                                color: "#bbb"
+                                font.pixelSize: window.sp(9)
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: if (deck.engine) deck.engine.doubleLoopLength()
+                        }
+
+                        Button {
+                            text: "3/4"
+                            checkable: true
+                            checked: deck.engine ? (deck.engine.loopActive && Math.abs(deck.engine.loopLengthBeats - 0.75) < 0.06) : false
+                            Layout.preferredWidth: 42
+                            Layout.preferredHeight: 18
+                            background: Rectangle {
+                                color: parent.checked ? "#334455" : "#333"
+                                radius: 3
+                                border.color: parent.checked ? "#66bbff" : "#555"
+                                border.width: 1
+                            }
+                            contentItem: Text {
+                                text: parent.text
+                                color: parent.checked ? "#d8ecff" : "#bbb"
+                                font.pixelSize: window.sp(8)
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: if (deck.engine) deck.engine.toggleLoopThreeQuarter()
                         }
                     }
                 }

@@ -796,6 +796,7 @@ void DjEngine::loadTrack(const QString& rawPath)
         }
 
         m_hasTrack = true;
+        clearLoop();
 
         // ── Add track to library database ────────────────────────────────
         if (m_libraryDb) {
@@ -899,6 +900,17 @@ void DjEngine::onTimer()
         // Store a position snapshot with a matching wall-clock timestamp.
         // getVisualPosition() forward-interpolates from here for each render frame.
         m_snapPosition = transportSource.getCurrentPosition();
+
+        if (m_loopActive && m_loopOutSec > m_loopInSec) {
+            if (!m_isReverse && m_snapPosition >= m_loopOutSec) {
+                transportSource.setPosition(m_loopInSec);
+                m_snapPosition = m_loopInSec;
+            } else if (m_isReverse && m_snapPosition <= m_loopInSec) {
+                transportSource.setPosition(m_loopOutSec);
+                m_snapPosition = m_loopOutSec;
+            }
+        }
+
         m_snapClock.restart();
         m_snapValid = true;
         // Also update the atomic so QML FrameAnimation can poll it lock-free.
@@ -1167,6 +1179,204 @@ void DjEngine::setCueEnabled(bool value)
         // In a real app, route this to a separate headphone/monitor audio output
         emit cueEnabledChanged();
     }
+}
+
+void DjEngine::setQuantizeEnabled(bool enabled)
+{
+    if (m_quantizeEnabled == enabled)
+        return;
+    m_quantizeEnabled = enabled;
+    emit quantizeEnabledChanged();
+}
+
+double DjEngine::quantizedBeatAt(double sec) const
+{
+    if (!m_trackData)
+        return sec;
+
+    const auto grid = m_trackData->getBeatGrid();
+    if (!grid.empty()) {
+        double best = grid.front().positionSec;
+        double bestDist = std::abs(best - sec);
+        for (const auto& m : grid) {
+            const double d = std::abs(m.positionSec - sec);
+            if (d < bestDist) {
+                best = m.positionSec;
+                bestDist = d;
+            }
+        }
+        return best;
+    }
+
+    const double bpm = m_trackData->getBpm();
+    const double sr = m_trackData->getSampleRate();
+    if (bpm <= 0.0 || sr <= 0.0)
+        return sec;
+
+    const double beatDur = 60.0 / bpm;
+    const double firstBeat = static_cast<double>(m_trackData->getFirstBeatSample()) / sr;
+    const double beatIndex = std::round((sec - firstBeat) / beatDur);
+    return firstBeat + beatIndex * beatDur;
+}
+
+double DjEngine::beatDurationAround(double sec) const
+{
+    if (!m_trackData)
+        return 0.5;
+
+    const auto grid = m_trackData->getBeatGrid();
+    if (grid.size() >= 2) {
+        int nearest = 0;
+        double bestDist = std::abs(grid[0].positionSec - sec);
+        for (int i = 1; i < static_cast<int>(grid.size()); ++i) {
+            const double d = std::abs(grid[static_cast<size_t>(i)].positionSec - sec);
+            if (d < bestDist) {
+                bestDist = d;
+                nearest = i;
+            }
+        }
+
+        if (nearest + 1 < static_cast<int>(grid.size())) {
+            const double d = grid[static_cast<size_t>(nearest + 1)].positionSec
+                           - grid[static_cast<size_t>(nearest)].positionSec;
+            if (d > 1e-3)
+                return d;
+        }
+        if (nearest > 0) {
+            const double d = grid[static_cast<size_t>(nearest)].positionSec
+                           - grid[static_cast<size_t>(nearest - 1)].positionSec;
+            if (d > 1e-3)
+                return d;
+        }
+    }
+
+    const double bpm = m_trackData->getBpm();
+    return bpm > 0.0 ? (60.0 / bpm) : 0.5;
+}
+
+void DjEngine::startLoopAt(double startSec, double lengthBeats)
+{
+    const double trackLen = transportSource.getLengthInSeconds();
+    if (trackLen <= 0.0)
+        return;
+
+    double start = std::clamp(startSec, 0.0, trackLen);
+    if (m_quantizeEnabled)
+        start = quantizedBeatAt(start);
+
+    const double beatDur = beatDurationAround(start);
+    if (beatDur <= 1e-4)
+        return;
+
+    constexpr double kMinLoopBeats = 0.125; // 1/8 beat
+    constexpr double kMaxLoopBeats = 4096.0;
+    double beats = std::clamp(lengthBeats, kMinLoopBeats, kMaxLoopBeats);
+    double end = start + beats * beatDur;
+    if (end > trackLen)
+        end = trackLen;
+    if (end <= start + 0.001)
+        return;
+
+    m_loopInSec = start;
+    m_loopOutSec = end;
+    m_loopLengthBeats = (end - start) / beatDur;
+    m_loopActive = true;
+    m_loopInSet = true;
+    emit loopChanged();
+}
+
+void DjEngine::setLoopIn()
+{
+    double pos = static_cast<double>(getVisualPosition());
+    if (m_quantizeEnabled)
+        pos = quantizedBeatAt(pos);
+
+    const double trackLen = transportSource.getLengthInSeconds();
+    if (trackLen <= 0.0)
+        return;
+
+    m_loopInSec = std::clamp(pos, 0.0, trackLen);
+    m_loopInSet = true;
+
+    if (m_loopActive && m_loopOutSec <= m_loopInSec) {
+        m_loopOutSec = std::min(trackLen, m_loopInSec + beatDurationAround(m_loopInSec));
+    }
+    emit loopChanged();
+}
+
+void DjEngine::setLoopOut()
+{
+    const double trackLen = transportSource.getLengthInSeconds();
+    if (trackLen <= 0.0)
+        return;
+
+    if (!m_loopInSet)
+        setLoopIn();
+
+    double pos = static_cast<double>(getVisualPosition());
+    if (m_quantizeEnabled)
+        pos = quantizedBeatAt(pos);
+
+    double out = std::clamp(pos, 0.0, trackLen);
+    const double beatDur = beatDurationAround(m_loopInSec);
+    if (out <= m_loopInSec + 0.001)
+        out = std::min(trackLen, m_loopInSec + beatDur);
+    if (out <= m_loopInSec + 0.001)
+        return;
+
+    m_loopOutSec = out;
+    m_loopLengthBeats = (m_loopOutSec - m_loopInSec) / std::max(beatDur, 1e-4);
+    m_loopActive = true;
+    emit loopChanged();
+}
+
+void DjEngine::toggleLoop4Beats()
+{
+    if (m_loopActive && std::abs(m_loopLengthBeats - 4.0) < 0.1) {
+        clearLoop();
+        return;
+    }
+    startLoopAt(static_cast<double>(getVisualPosition()), 4.0);
+}
+
+void DjEngine::toggleLoopThreeQuarter()
+{
+    // 3/4 loop = three quarters of ONE beat.
+    if (m_loopActive && std::abs(m_loopLengthBeats - 0.75) < 0.06) {
+        clearLoop();
+        return;
+    }
+    startLoopAt(static_cast<double>(getVisualPosition()), 0.75);
+}
+
+void DjEngine::halveLoopLength()
+{
+    if (!m_loopActive) {
+        startLoopAt(static_cast<double>(getVisualPosition()), 2.0);
+        return;
+    }
+    startLoopAt(m_loopInSec, m_loopLengthBeats / 2.0);
+}
+
+void DjEngine::doubleLoopLength()
+{
+    if (!m_loopActive) {
+        startLoopAt(static_cast<double>(getVisualPosition()), 8.0);
+        return;
+    }
+    startLoopAt(m_loopInSec, m_loopLengthBeats * 2.0);
+}
+
+void DjEngine::clearLoop()
+{
+    if (!m_loopActive && !m_loopInSet && m_loopLengthBeats == 0.0)
+        return;
+    m_loopActive = false;
+    m_loopInSet = false;
+    m_loopLengthBeats = 0.0;
+    m_loopInSec = 0.0;
+    m_loopOutSec = 0.0;
+    emit loopChanged();
 }
 
 void DjEngine::setFxEffectType(EffectType type)

@@ -135,6 +135,9 @@ Item {
                 if (root.engine && !root.engine.isPlaying)
                     waveItem.requestUpdate()
             }
+            function onLoopChanged() {
+                waveItem.requestUpdate()
+            }
         }
 
         // beatgridChanged is emitted by TrackData, not DjEngine.

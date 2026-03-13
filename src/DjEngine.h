@@ -28,6 +28,12 @@ class DjEngine : public QObject
     Q_PROPERTY(double currentBpm READ getCurrentBpm NOTIFY tempoChanged)
     Q_PROPERTY(double tempoRatio READ getTempoRatio NOTIFY tempoChanged)
     Q_PROPERTY(TrackData* trackData READ getTrackData CONSTANT)
+    Q_PROPERTY(bool quantizeEnabled READ quantizeEnabled WRITE setQuantizeEnabled NOTIFY quantizeEnabledChanged)
+    Q_PROPERTY(bool loopActive READ loopActive NOTIFY loopChanged)
+    Q_PROPERTY(bool loopInSet READ loopInSet NOTIFY loopChanged)
+    Q_PROPERTY(double loopLengthBeats READ loopLengthBeats NOTIFY loopChanged)
+    Q_PROPERTY(double loopInPosition READ loopInPosition NOTIFY loopChanged)
+    Q_PROPERTY(double loopOutPosition READ loopOutPosition NOTIFY loopChanged)
 
     Q_PROPERTY(QString trackTitle   READ trackTitle   NOTIFY trackMetadataChanged)
     Q_PROPERTY(QString trackArtist  READ trackArtist  NOTIFY trackMetadataChanged)
@@ -97,6 +103,15 @@ public:
     Q_INVOKABLE void doubleBpm();
     Q_INVOKABLE void halveBpm();
 
+    // Beatgrid-aligned loop controls
+    Q_INVOKABLE void setLoopIn();
+    Q_INVOKABLE void setLoopOut();
+    Q_INVOKABLE void toggleLoop4Beats();
+    Q_INVOKABLE void toggleLoopThreeQuarter();
+    Q_INVOKABLE void halveLoopLength();
+    Q_INVOKABLE void doubleLoopLength();
+    Q_INVOKABLE void clearLoop();
+
     // Master volume + anti-clip (global, shared across all decks)
     Q_INVOKABLE void setMasterVolume(float v);
     Q_INVOKABLE void setAntiClip(bool enabled);
@@ -130,6 +145,12 @@ public:
     double eqLow() const { return m_eqLow; }
     double filter() const { return m_filter; }
     bool cueEnabled() const { return m_cueEnabled; }
+    bool quantizeEnabled() const { return m_quantizeEnabled; }
+    bool loopActive() const { return m_loopActive; }
+    bool loopInSet() const { return m_loopInSet; }
+    double loopLengthBeats() const { return m_loopLengthBeats; }
+    double loopInPosition() const { return m_loopInSec; }
+    double loopOutPosition() const { return m_loopOutSec; }
 
     // VU meter getters — read atomic peaks from the audio thread
     float vuLevelL() const;
@@ -154,6 +175,7 @@ public slots:
     void setEqLow(double value);
     void setFilter(double value);
     void setCueEnabled(bool value);
+    void setQuantizeEnabled(bool enabled);
     void setKeylock(bool value);
 
     // FX chain
@@ -188,6 +210,8 @@ signals:
     void eqLowChanged();
     void filterChanged();
     void cueEnabledChanged();
+    void quantizeEnabledChanged();
+    void loopChanged();
     void keylockChanged();
     void vuLevelChanged();
     void gainReductionChanged();
@@ -242,6 +266,17 @@ private:
     bool   m_isReverse = false;
     bool m_cueEnabled = false;
     bool m_keylock = false;
+    bool m_quantizeEnabled = false;
+
+    bool m_loopActive = false;
+    double m_loopInSec = 0.0;
+    double m_loopOutSec = 0.0;
+    double m_loopLengthBeats = 0.0;
+    bool m_loopInSet = false;
+
+    double quantizedBeatAt(double sec) const;
+    double beatDurationAround(double sec) const;
+    void startLoopAt(double startSec, double lengthBeats);
 
     void updateSpeedAndPitch();
 
