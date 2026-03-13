@@ -325,9 +325,20 @@ Rectangle {
             // A) DATABASE LIBRARY VIEW (Tab "library")
             // ============================================================
             Rectangle {
+                id: libraryDbView
                 anchors.fill: parent
                 color: "#1e1e1e"
                 visible: libraryRoot.activeTab === "library"
+
+                readonly property int statusColWidth: 36
+                readonly property int bpmColWidth: 64
+                readonly property int keyColWidth: 56
+                readonly property int timeColWidth: 64
+                readonly property int kbpsColWidth: 64
+                readonly property int textAreaWidth: Math.max(140,
+                    width - statusColWidth - bpmColWidth - keyColWidth - timeColWidth - kbpsColWidth - 20)
+                readonly property int titleColWidth: Math.floor(textAreaWidth * 0.52)
+                readonly property int artistColWidth: textAreaWidth - titleColWidth
 
                 // Column headers
                 Rectangle {
@@ -347,47 +358,176 @@ Rectangle {
 
                         // Status column
                         Text {
-                            width: 36
+                            width: libraryDbView.statusColWidth
                             text: "✓"
                             color: "#666"
                             font.pixelSize: window.sp(11)
                             font.bold: true
                             horizontalAlignment: Text.AlignHCenter
                         }
-                        // Title
-                        Text {
-                            width: (libHeader.width - 36 - 140 - 70 - 60 - 10) * 0.55
-                            text: "Titel"
-                            color: "#666"
-                            font.pixelSize: window.sp(11)
-                            font.bold: true
+
+                        Rectangle {
+                            width: libraryDbView.titleColWidth
+                            height: parent.height
+                            color: "transparent"
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.left: parent.left
+                                text: "Titel"
+                                color: "#666"
+                                font.pixelSize: window.sp(11)
+                                font.bold: true
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.right: parent.right
+                                text: libraryModel && libraryModel.sortField === "title"
+                                      ? (libraryModel.sortAscending ? "▲" : "▼") : ""
+                                color: "#666"
+                                font.pixelSize: window.sp(9)
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: if (libraryModel) libraryModel.toggleSort("title")
+                            }
                         }
-                        // Artist
-                        Text {
-                            width: (libHeader.width - 36 - 140 - 70 - 60 - 10) * 0.45
-                            text: "Künstler"
-                            color: "#666"
-                            font.pixelSize: window.sp(11)
-                            font.bold: true
+
+                        Rectangle {
+                            width: libraryDbView.artistColWidth
+                            height: parent.height
+                            color: "transparent"
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.left: parent.left
+                                text: "Kuenstler"
+                                color: "#666"
+                                font.pixelSize: window.sp(11)
+                                font.bold: true
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.right: parent.right
+                                text: libraryModel && libraryModel.sortField === "artist"
+                                      ? (libraryModel.sortAscending ? "▲" : "▼") : ""
+                                color: "#666"
+                                font.pixelSize: window.sp(9)
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: if (libraryModel) libraryModel.toggleSort("artist")
+                            }
                         }
-                        // BPM
-                        Text {
-                            width: 70
-                            text: "BPM"
-                            color: "#666"
-                            font.pixelSize: window.sp(11)
-                            font.bold: true
-                            horizontalAlignment: Text.AlignRight
+
+                        Rectangle {
+                            width: libraryDbView.timeColWidth
+                            height: parent.height
+                            color: "transparent"
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: "Time"
+                                color: "#666"
+                                font.pixelSize: window.sp(11)
+                                font.bold: true
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.right: parent.right
+                                text: libraryModel && (libraryModel.sortField === "time" || libraryModel.sortField === "duration")
+                                      ? (libraryModel.sortAscending ? "▲" : "▼") : ""
+                                color: "#666"
+                                font.pixelSize: window.sp(9)
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: if (libraryModel) libraryModel.toggleSort("time")
+                            }
                         }
-                        // Key
-                        Text {
-                            width: 60
-                            text: "Key"
-                            color: "#666"
-                            font.pixelSize: window.sp(11)
-                            font.bold: true
-                            horizontalAlignment: Text.AlignHCenter
-                            leftPadding: 10
+
+                        Rectangle {
+                            width: libraryDbView.bpmColWidth
+                            height: parent.height
+                            color: "transparent"
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: "BPM"
+                                color: "#666"
+                                font.pixelSize: window.sp(11)
+                                font.bold: true
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.right: parent.right
+                                text: libraryModel && libraryModel.sortField === "bpm"
+                                      ? (libraryModel.sortAscending ? "▲" : "▼") : ""
+                                color: "#666"
+                                font.pixelSize: window.sp(9)
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: if (libraryModel) libraryModel.toggleSort("bpm")
+                            }
+                        }
+
+                        Rectangle {
+                            width: libraryDbView.keyColWidth
+                            height: parent.height
+                            color: "transparent"
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: "Key"
+                                color: "#666"
+                                font.pixelSize: window.sp(11)
+                                font.bold: true
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.right: parent.right
+                                text: libraryModel && libraryModel.sortField === "key"
+                                      ? (libraryModel.sortAscending ? "▲" : "▼") : ""
+                                color: "#666"
+                                font.pixelSize: window.sp(9)
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: if (libraryModel) libraryModel.toggleSort("key")
+                            }
+                        }
+
+                        Rectangle {
+                            width: libraryDbView.kbpsColWidth
+                            height: parent.height
+                            color: "transparent"
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: "kbps"
+                                color: "#666"
+                                font.pixelSize: window.sp(11)
+                                font.bold: true
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.right: parent.right
+                                text: libraryModel && (libraryModel.sortField === "kbps" || libraryModel.sortField === "bitrate")
+                                      ? (libraryModel.sortAscending ? "▲" : "▼") : ""
+                                color: "#666"
+                                font.pixelSize: window.sp(9)
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: if (libraryModel) libraryModel.toggleSort("kbps")
+                            }
                         }
                     }
                 }
@@ -408,8 +548,10 @@ Rectangle {
                         required property string trackId
                         required property string title
                         required property string artist
+                        required property int    durationSec
                         required property real   bpm
                         required property string key
+                        required property int    bitrateKbps
                         required property bool   isAnalyzed
                         required property string filePath
 
@@ -427,7 +569,7 @@ Rectangle {
 
                             // Status indicator
                             Text {
-                                width: 36
+                                width: libraryDbView.statusColWidth
                                 text: libDelegate.isAnalyzed ? "●" : "○"
                                 color: libDelegate.isAnalyzed ? "#4caf50" : "#555"
                                 font.pixelSize: window.sp(11)
@@ -436,7 +578,7 @@ Rectangle {
                             }
                             // Title
                             Text {
-                                width: (libHeader.width - 36 - 140 - 70 - 60 - 10) * 0.55
+                                width: libraryDbView.titleColWidth
                                 text: libDelegate.title || "—"
                                 color: "#dddddd"
                                 font.pixelSize: window.sp(12)
@@ -445,30 +587,49 @@ Rectangle {
                             }
                             // Artist
                             Text {
-                                width: (libHeader.width - 36 - 140 - 70 - 60 - 10) * 0.45
+                                width: libraryDbView.artistColWidth
                                 text: libDelegate.artist || "—"
                                 color: "#aaaaaa"
                                 font.pixelSize: window.sp(12)
                                 elide: Text.ElideRight
                                 anchors.verticalCenter: parent.verticalCenter
                             }
+                            // Time
+                            Text {
+                                width: libraryDbView.timeColWidth
+                                text: libDelegate.durationSec > 0
+                                      ? (Math.floor(libDelegate.durationSec / 60) + ":" + ("0" + (libDelegate.durationSec % 60)).slice(-2))
+                                      : "—"
+                                color: libDelegate.durationSec > 0 ? "#bbbbbb" : "#555"
+                                font.pixelSize: window.sp(12)
+                                horizontalAlignment: Text.AlignHCenter
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
                             // BPM
                             Text {
-                                width: 70
+                                width: libraryDbView.bpmColWidth
                                 text: libDelegate.bpm > 0 ? libDelegate.bpm.toFixed(1) : "—"
                                 color: libDelegate.bpm > 0 ? "#4caf50" : "#555"
                                 font.pixelSize: window.sp(12)
-                                horizontalAlignment: Text.AlignRight
+                                horizontalAlignment: Text.AlignHCenter
                                 anchors.verticalCenter: parent.verticalCenter
                             }
                             // Key
                             Text {
-                                width: 60
+                                width: libraryDbView.keyColWidth
                                 text: libDelegate.key || "—"
                                 color: libDelegate.key ? "#42a5f5" : "#555"
                                 font.pixelSize: window.sp(12)
                                 horizontalAlignment: Text.AlignHCenter
-                                leftPadding: 10
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            // kbps
+                            Text {
+                                width: libraryDbView.kbpsColWidth
+                                text: libDelegate.bitrateKbps > 0 ? libDelegate.bitrateKbps.toString() : "—"
+                                color: libDelegate.bitrateKbps > 0 ? "#cfcfcf" : "#555"
+                                font.pixelSize: window.sp(12)
+                                horizontalAlignment: Text.AlignHCenter
                                 anchors.verticalCenter: parent.verticalCenter
                             }
                         }

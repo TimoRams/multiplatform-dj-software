@@ -33,7 +33,8 @@ public:
                               const QString& title,
                               const QString& artist,
                               int durationSec,
-                              const QString& filePath);
+                              const QString& filePath,
+                              int bitrateKbps = 0);
 
     // Called by the analyzer when BPM / key detection finishes.
     Q_INVOKABLE void updateAnalysisData(const QString& trackId,
@@ -65,5 +66,5 @@ private:
     LibraryTableModel* m_tableModel = nullptr;
     QString m_dbPath;
 
-    static constexpr int kSchemaVersion = 2;
+    static constexpr int kSchemaVersion = 3;
 };

@@ -800,10 +800,15 @@ void DjEngine::loadTrack(const QString& rawPath)
         // ── Add track to library database ────────────────────────────────
         if (m_libraryDb) {
             int durSec = static_cast<int>(durationSec);
+            int bitrateKbps = 0;
+            if (durationSec > 0.0) {
+                const auto bytes = static_cast<double>(file.getSize());
+                bitrateKbps = static_cast<int>(std::lround((bytes * 8.0) / durationSec / 1000.0));
+            }
             m_currentTrackId = TrackIdGenerator::generate(
                 m_trackArtist, m_trackTitle, durSec, rawPath);
             m_libraryDb->addTrack(m_currentTrackId,
-                                 m_trackTitle, m_trackArtist, durSec, rawPath);
+                                 m_trackTitle, m_trackArtist, durSec, rawPath, bitrateKbps);
 
             LibraryDatabase::AnalysisSnapshot cachedAnalysis;
             if (m_libraryDb->tryGetAnalysisData(m_currentTrackId, &cachedAnalysis)

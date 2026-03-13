@@ -20,7 +20,7 @@ int LibraryTableModel::rowCount(const QModelIndex& parent) const
 int LibraryTableModel::columnCount(const QModelIndex& parent) const
 {
     if (parent.isValid()) return 0;
-    return 7; // id, title, artist, bpm, key, isAnalyzed, filePath
+    return 9; // id, title, artist, duration, bpm, key, kbps, isAnalyzed, filePath
 }
 
 QVariant LibraryTableModel::data(const QModelIndex& index, int role) const
@@ -34,8 +34,10 @@ QVariant LibraryTableModel::data(const QModelIndex& index, int role) const
     case IdRole:        return row.id;
     case TitleRole:     return row.title;
     case ArtistRole:    return row.artist;
+    case DurationRole:  return row.durationSec;
     case BpmRole:       return row.bpm;
     case KeyRole:       return row.key;
+    case BitrateRole:   return row.bitrateKbps;
     case AnalyzedRole:  return row.isAnalyzed;
     case FilePathRole:  return row.filePath;
 
@@ -45,10 +47,12 @@ QVariant LibraryTableModel::data(const QModelIndex& index, int role) const
         case 0: return row.id;
         case 1: return row.title;
         case 2: return row.artist;
-        case 3: return row.bpm;
-        case 4: return row.key;
-        case 5: return row.isAnalyzed;
-        case 6: return row.filePath;
+        case 3: return row.durationSec;
+        case 4: return row.bpm;
+        case 5: return row.key;
+        case 6: return row.bitrateKbps;
+        case 7: return row.isAnalyzed;
+        case 8: return row.filePath;
         }
         break;
     }
@@ -62,11 +66,52 @@ QHash<int, QByteArray> LibraryTableModel::roleNames() const
         { IdRole,       "trackId"    },
         { TitleRole,    "title"      },
         { ArtistRole,   "artist"     },
+        { DurationRole, "durationSec" },
         { BpmRole,      "bpm"        },
         { KeyRole,      "key"        },
+        { BitrateRole,  "bitrateKbps" },
         { AnalyzedRole, "isAnalyzed" },
         { FilePathRole, "filePath"   }
     };
+}
+
+QString LibraryTableModel::sortColumnSql() const
+{
+    if (m_sortField == "title")
+        return "LOWER(title)";
+    if (m_sortField == "artist")
+        return "LOWER(artist)";
+    if (m_sortField == "time" || m_sortField == "duration")
+        return "duration_sec";
+    if (m_sortField == "bpm")
+        return "bpm";
+    if (m_sortField == "key")
+        return "LOWER(key)";
+    if (m_sortField == "kbps" || m_sortField == "bitrate")
+        return "bitrate_kbps";
+    return "LOWER(artist)";
+}
+
+void LibraryTableModel::toggleSort(const QString& field)
+{
+    if (m_sortField == field) {
+        m_sortAscending = !m_sortAscending;
+    } else {
+        m_sortField = field;
+        m_sortAscending = true;
+    }
+    emit sortChanged();
+    refresh();
+}
+
+void LibraryTableModel::setSort(const QString& field, bool ascending)
+{
+    if (m_sortField == field && m_sortAscending == ascending)
+        return;
+    m_sortField = field;
+    m_sortAscending = ascending;
+    emit sortChanged();
+    refresh();
 }
 
 void LibraryTableModel::refresh()
@@ -78,11 +123,15 @@ void LibraryTableModel::refresh()
     }
 
     QSqlQuery q(db);
-    q.prepare(
-        "SELECT Tracks.id, title, artist, bpm, key, is_analyzed, Locations.file_path "
+    const QString sortDir = m_sortAscending ? "ASC" : "DESC";
+    const QString query = QString(
+        "SELECT Tracks.id, title, artist, duration_sec, bpm, key, bitrate_kbps, is_analyzed, Locations.file_path "
         "FROM Tracks "
         "JOIN Locations ON Tracks.id = Locations.track_id "
-        "ORDER BY artist, title");
+        "ORDER BY %1 %2, LOWER(title) ASC")
+        .arg(sortColumnSql(), sortDir);
+
+    q.prepare(query);
 
     if (!q.exec()) {
         qWarning() << "[LibraryTableModel] refresh query failed:" << q.lastError().text();
@@ -96,10 +145,12 @@ void LibraryTableModel::refresh()
         row.id         = q.value(0).toString();
         row.title      = q.value(1).toString();
         row.artist     = q.value(2).toString();
-        row.bpm        = q.value(3).toDouble();
-        row.key        = q.value(4).toString();
-        row.isAnalyzed = q.value(5).toBool();
-        row.filePath   = q.value(6).toString();
+        row.durationSec = q.value(3).toInt();
+        row.bpm        = q.value(4).toDouble();
+        row.key        = q.value(5).toString();
+        row.bitrateKbps = q.value(6).toInt();
+        row.isAnalyzed = q.value(7).toBool();
+        row.filePath   = q.value(8).toString();
         m_rows.append(std::move(row));
     }
     endResetModel();

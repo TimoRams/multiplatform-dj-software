@@ -103,6 +103,7 @@ bool LibraryDatabase::createSchema()
             "  title        TEXT,"
             "  artist       TEXT,"
             "  duration_sec INTEGER,"
+            "  bitrate_kbps INTEGER DEFAULT 0,"
             "  bpm          REAL    DEFAULT 0.0,"
             "  key          TEXT    DEFAULT '',"
             "  is_analyzed  BOOLEAN DEFAULT 0"
@@ -161,6 +162,17 @@ bool LibraryDatabase::createSchema()
         if (!ok) return false;
     }
 
+    if (currentVersion < 3) {
+        bool ok = true;
+
+        if (!tableHasColumn(m_db, "Tracks", "bitrate_kbps")) {
+            ok &= q.exec("ALTER TABLE Tracks ADD COLUMN bitrate_kbps INTEGER DEFAULT 0");
+            if (!ok) qWarning() << "[LibraryDatabase] Tracks bitrate_kbps:" << q.lastError().text();
+        }
+
+        if (!ok) return false;
+    }
+
     // ── Stamp current version ────────────────────────────────────────────
     q.prepare("INSERT OR REPLACE INTO Meta (key, value) VALUES ('schema_version', :v)");
     q.bindValue(":v", kSchemaVersion);
@@ -174,22 +186,33 @@ bool LibraryDatabase::addTrack(const QString& trackId,
                                const QString& title,
                                const QString& artist,
                                int durationSec,
-                               const QString& filePath)
+                               const QString& filePath,
+                               int bitrateKbps)
 {
     qDebug() << "[LibraryDatabase] addTrack:" << trackId.left(12) << title << artist;
     QSqlQuery q(m_db);
 
     // INSERT OR IGNORE: don't overwrite existing metadata if re-added.
-    q.prepare("INSERT OR IGNORE INTO Tracks (id, title, artist, duration_sec)"
-              " VALUES (:id, :title, :artist, :dur)");
+    q.prepare("INSERT OR IGNORE INTO Tracks (id, title, artist, duration_sec, bitrate_kbps)"
+              " VALUES (:id, :title, :artist, :dur, :kbps)");
     q.bindValue(":id",     trackId);
     q.bindValue(":title",  title);
     q.bindValue(":artist", artist);
     q.bindValue(":dur",    durationSec);
+    q.bindValue(":kbps",   bitrateKbps);
 
     if (!q.exec()) {
         qWarning() << "[LibraryDatabase] addTrack Tracks:" << q.lastError().text();
         return false;
+    }
+
+    // Keep bitrate up to date if a previously known track is reloaded with new metadata.
+    q.prepare("UPDATE Tracks SET bitrate_kbps = CASE WHEN :kbps > 0 THEN :kbps ELSE bitrate_kbps END "
+              "WHERE id = :id");
+    q.bindValue(":kbps", bitrateKbps);
+    q.bindValue(":id", trackId);
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] addTrack bitrate update:" << q.lastError().text();
     }
 
     // Insert location (UNIQUE on file_path prevents duplicates).

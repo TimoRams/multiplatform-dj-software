@@ -800,9 +800,16 @@ void WaveformAnalyzer::run()
             }
         }
 
-        if (estimatedBpm > 0.0)
-            m_trackData->setBpmData(estimatedBpm, firstBeatSample, sampleRate,
-                                    std::move(finalBeatGrid));
+        if (estimatedBpm > 0.0) {
+            // Do not overwrite a beatgrid that was already restored from DB
+            // (e.g. manually shifted downbeat). Keep cached grid stable on reload.
+            const bool hasExistingGrid = m_trackData->isBpmAnalyzed()
+                && !m_trackData->getBeatGrid().empty();
+            if (!hasExistingGrid) {
+                m_trackData->setBpmData(estimatedBpm, firstBeatSample, sampleRate,
+                                        std::move(finalBeatGrid));
+            }
+        }
     }
 
     if (threadShouldExit()) return;
