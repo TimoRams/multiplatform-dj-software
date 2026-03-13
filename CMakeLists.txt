@@ -21,7 +21,7 @@ set(CMAKE_AUTOUIC ON)
 # TagLib für Cover-Art-Extraction
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(TAGLIB    REQUIRED IMPORTED_TARGET taglib)
-pkg_check_modules(AUBIO     REQUIRED IMPORTED_TARGET aubio)
+pkg_check_modules(ESSENTIA REQUIRED essentia)
 pkg_check_modules(KEYFINDER REQUIRED IMPORTED_TARGET libkeyfinder)
 pkg_check_modules(RUBBERBAND REQUIRED IMPORTED_TARGET rubberband)
 pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa)
@@ -94,6 +94,14 @@ target_sources(${PROJECT_NAME} PRIVATE
 
 target_include_directories(${PROJECT_NAME} PRIVATE src)
 
+if(ESSENTIA_FOUND)
+    message(STATUS "Essentia found: High-level audio analysis enabled")
+    target_include_directories(RamsbrockDJ PRIVATE ${ESSENTIA_INCLUDE_DIRS})
+    target_link_libraries(RamsbrockDJ PRIVATE ${ESSENTIA_LIBRARIES})
+    target_compile_options(RamsbrockDJ PRIVATE ${ESSENTIA_CFLAGS_OTHER})
+    target_compile_definitions(RamsbrockDJ PRIVATE ESSENTIA_FOUND=1)
+endif()
+
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     JUCE_USE_CURL=0
     JUCE_WEB_BROWSER=0
@@ -117,7 +125,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Quick3D
     Qt6::Sql
     PkgConfig::TAGLIB
-    PkgConfig::AUBIO
     PkgConfig::KEYFINDER
     PkgConfig::RUBBERBAND
     PkgConfig::ALSA

@@ -385,66 +385,63 @@ Window {
                         spacing: 10
 
                         // Helper component for mapping rows
-                        Component {
-                            id: mappingRowComponent
-                            RowLayout {
-                                required property string labelStr
-                                required property string paramId
-                                
-                                Layout.fillWidth: true
-                                spacing: 16
+                        component MappingRow: RowLayout {
+                            required property string labelStr
+                            required property string paramId
 
-                                Text {
-                                    text: labelStr
-                                    color: "#aaa"
-                                    font.pixelSize: 12
-                                    Layout.preferredWidth: 130
+                            Layout.fillWidth: true
+                            spacing: 16
+
+                            Text {
+                                text: labelStr
+                                color: "#aaa"
+                                font.pixelSize: 12
+                                Layout.preferredWidth: 130
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                height: 32
+                                color: isLearning ? "#ff9900" : "#252525"
+                                border.color: isLearning ? "#ffb732" : "#3a3a3a"
+                                radius: 4
+
+                                property bool isLearning: false
+
+                                // Listen for C++ signal to reset learn state
+                                Connections {
+                                    target: midiManager
+                                    function onMappingUpdated() {
+                                        isLearning = false
+                                    }
                                 }
 
-                                Rectangle {
-                                    Layout.fillWidth: true
-                                    height: 32
-                                    color: isLearning ? "#ff9900" : "#252525"
-                                    border.color: isLearning ? "#ffb732" : "#3a3a3a"
-                                    radius: 4
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: parent.isLearning ? "Waiting for MIDI..." : "Learn"
+                                    color: parent.isLearning ? "#1a1a1a" : "#ccc"
+                                    font.pixelSize: 12
+                                    font.bold: parent.isLearning
+                                }
 
-                                    property bool isLearning: false
-
-                                    // Listen for C++ signal to reset learn state
-                                    Connections {
-                                        target: midiManager
-                                        function onMappingUpdated() {
-                                            isLearning = false
-                                        }
-                                    }
-
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: parent.isLearning ? "Waiting for MIDI..." : "Learn"
-                                        color: parent.isLearning ? "#1a1a1a" : "#ccc"
-                                        font.pixelSize: 12
-                                        font.bold: parent.isLearning
-                                    }
-
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: {
-                                            if (midiManager && !parent.isLearning) {
-                                                parent.isLearning = true
-                                                midiManager.startMidiLearn(paramId)
-                                            }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        if (midiManager && !parent.isLearning) {
+                                            parent.isLearning = true
+                                            midiManager.startMidiLearn(paramId)
                                         }
                                     }
                                 }
                             }
                         }
 
-                        Loader { sourceComponent: mappingRowComponent; property string labelStr: "Deck A Play"; property string paramId: "deckA_play" }
-                        Loader { sourceComponent: mappingRowComponent; property string labelStr: "Deck B Play"; property string paramId: "deckB_play" }
-                        Loader { sourceComponent: mappingRowComponent; property string labelStr: "Deck A Volume"; property string paramId: "deckA_vol" }
-                        Loader { sourceComponent: mappingRowComponent; property string labelStr: "Deck B Volume"; property string paramId: "deckB_vol" }
-                        Loader { sourceComponent: mappingRowComponent; property string labelStr: "Crossfader"; property string paramId: "crossfader" }
+                        MappingRow { labelStr: "Deck A Play";   paramId: "deckA_play" }
+                        MappingRow { labelStr: "Deck B Play";   paramId: "deckB_play" }
+                        MappingRow { labelStr: "Deck A Volume"; paramId: "deckA_vol" }
+                        MappingRow { labelStr: "Deck B Volume"; paramId: "deckB_vol" }
+                        MappingRow { labelStr: "Crossfader";    paramId: "crossfader" }
                     }
                 }
             }

@@ -10,6 +10,10 @@
 #include <QQmlContext>
 #include <QFont>
 
+#ifdef ESSENTIA_FOUND
+    #include <essentia/version.h>
+#endif
+
 #include "DjEngine.h"
 #include "WaveformItem.h"
 #include "LibraryManager.h"
@@ -32,6 +36,12 @@ int main(int argc, char *argv[])
     std::cout << "JUCE Version:   " << juce::SystemStats::getJUCEVersion() << std::endl;
     std::cout << "C++ Standard:   " << __cplusplus << std::endl;
     std::cout << "========================================" << std::endl;
+
+#ifdef ESSENTIA_FOUND
+    qDebug() << "Essentia Version:" << QString::fromLatin1(ESSENTIA_VERSION);
+#else
+    qDebug() << "Essentia nicht gefunden!";
+#endif
 
     // ── Global text rendering quality ────────────────────────────────────────
     // Qt's built-in curve renderer (signed-distance-field) scales perfectly

@@ -6,9 +6,12 @@
 #include <numeric>
 #include <complex>
 #include <map>
+#include <mutex>
 
-// aubio: BPM / beat tracking
-#include <aubio/aubio.h>
+#ifdef ESSENTIA_FOUND
+    #include <essentia/essentia.h>
+    #include <essentia/algorithmfactory.h>
+#endif
 
 // libKeyFinder: key detection
 #include <keyfinder/keyfinder.h>
@@ -411,125 +414,136 @@ void WaveformAnalyzer::run()
     //     beat grid for pixel-perfect rendering.
     // -------------------------------------------------------------------------
     {
-        const uint_t aubioSr  = static_cast<uint_t>(sampleRate);
-        const uint_t hopSize  = 512;
-        const uint_t winSize  = 1024;
-        const juce::int64 totalHops = totalSamples / static_cast<juce::int64>(hopSize);
-
-        // ── Pre-scan: energy gate ────────────────────────────────────────────
-        float energyGate = 0.0f;
-        {
-            juce::AudioBuffer<float> scanBuf(static_cast<int>(reader->numChannels),
-                                             static_cast<int>(hopSize));
-            const juce::int64 step = 16;
-            std::vector<float> rmsSamples;
-            rmsSamples.reserve(static_cast<size_t>(totalHops / step + 1));
-
-            for (juce::int64 h = 0; h < totalHops; h += step) {
-                if (threadShouldExit()) break;
-                reader->read(&scanBuf, 0, static_cast<int>(hopSize),
-                             h * static_cast<juce::int64>(hopSize), true, false);
-                float sum = 0.0f;
-                const int nc = static_cast<int>(reader->numChannels);
-                for (int ch = 0; ch < nc; ++ch) {
-                    const float* p = scanBuf.getReadPointer(ch);
-                    for (uint_t s = 0; s < hopSize; ++s) sum += p[s] * p[s];
-                }
-                rmsSamples.push_back(std::sqrt(sum / static_cast<float>(hopSize * nc)));
-            }
-            if (!rmsSamples.empty()) {
-                auto mid = rmsSamples.begin() + static_cast<ptrdiff_t>(rmsSamples.size() / 2);
-                std::nth_element(rmsSamples.begin(), mid, rmsSamples.end());
-                energyGate = *mid * 0.15f;
-            }
-            energyGate = std::max(energyGate, 0.003f);
-        }
-        qDebug() << "[WaveformAnalyzer] energyGate:" << energyGate;
-
-        // ── Histogram + beat collection ──────────────────────────────────────
         std::map<double, int>                  bpmHistogram;
         std::map<double, std::vector<double>>  bpmRawValues;
         std::vector<uint64_t> beatPositions;
-        std::vector<double>   allBeats;   // elastic: best aubio timestamps (seconds)
+        std::vector<double>   allBeats;
+        double essentiaBpmHint = 0.0;
 
-        // ── SINGLE dual-method pass over the full track ──────────────────────
-        // One pass: no redundant duplication. Both specdiff and hfc contribute
-        // beat timestamps; we keep the longer list as the elastic grid seed.
+        // ── Essentia beat + BPM extraction ───────────────────────────────────
         {
-            aubio_tempo_t* tempoA = new_aubio_tempo("specdiff", winSize, hopSize, aubioSr);
-            aubio_tempo_t* tempoB = new_aubio_tempo("hfc",      winSize, hopSize, aubioSr);
-            if (tempoA && tempoB) {
-                fvec_t* in   = new_fvec(hopSize);
-                fvec_t* outA = new_fvec(1);
-                fvec_t* outB = new_fvec(1);
-                juce::AudioBuffer<float> rb(static_cast<int>(reader->numChannels),
-                                            static_cast<int>(hopSize));
+#ifdef ESSENTIA_FOUND
+            static std::once_flag essentiaInitOnce;
+            std::call_once(essentiaInitOnce, []() {
+                essentia::init();
+            });
 
-                std::vector<double>   beatsA, beatsB;
-                std::vector<uint64_t> posA,   posB;
-                beatsA.reserve(4096); beatsB.reserve(4096);
-                posA  .reserve(4096); posB  .reserve(4096);
+            try {
+                std::vector<essentia::Real> monoSignal;
+                monoSignal.reserve(static_cast<size_t>(totalSamples));
 
-                for (juce::int64 h = 0; h < totalHops; ++h) {
+                const int blockSize = 8192;
+                juce::AudioBuffer<float> readBufMono(static_cast<int>(reader->numChannels), blockSize);
+
+                for (juce::int64 offset = 0; offset < totalSamples; offset += blockSize) {
                     if (threadShouldExit()) break;
-                    reader->read(&rb, 0, static_cast<int>(hopSize),
-                                 h * static_cast<juce::int64>(hopSize), true, false);
+                    const int toRead = static_cast<int>(
+                        std::min(static_cast<juce::int64>(blockSize), totalSamples - offset));
+                    reader->read(&readBufMono, 0, toRead, offset, true, false);
+
                     const int nc = static_cast<int>(reader->numChannels);
-
-                    float rmsSum = 0.0f;
-                    for (uint_t s = 0; s < hopSize; ++s) {
-                        float m = 0.0f;
+                    for (int s = 0; s < toRead; ++s) {
+                        float mono = 0.0f;
                         for (int ch = 0; ch < nc; ++ch)
-                            m += rb.getReadPointer(ch)[s];
-                        m /= static_cast<float>(nc);
-                        in->data[s] = m;
-                        rmsSum += m * m;
-                    }
-                    if (std::sqrt(rmsSum / static_cast<float>(hopSize)) < energyGate) continue;
-
-                    aubio_tempo_do(tempoA, in, outA);
-                    aubio_tempo_do(tempoB, in, outB);
-
-                    if (outA->data[0] != 0.0f) {
-                        double t = static_cast<double>(aubio_tempo_get_last_s(tempoA));
-                        beatsA.push_back(t);
-                        posA.push_back(static_cast<uint64_t>(t * sampleRate));
-                    }
-                    if (outB->data[0] != 0.0f) {
-                        double t = static_cast<double>(aubio_tempo_get_last_s(tempoB));
-                        beatsB.push_back(t);
-                        posB.push_back(static_cast<uint64_t>(t * sampleRate));
+                            mono += readBufMono.getReadPointer(ch)[s];
+                        monoSignal.push_back(static_cast<essentia::Real>(mono / static_cast<float>(nc)));
                     }
                 }
 
-                del_aubio_tempo(tempoA);
-                del_aubio_tempo(tempoB);
-                del_fvec(in); del_fvec(outA); del_fvec(outB);
+                if (!threadShouldExit() && !monoSignal.empty()) {
+                    using essentia::standard::Algorithm;
+                    using essentia::standard::AlgorithmFactory;
 
-                // Merge into a single sorted, deduplicated beatPositions list.
-                // 50 ms dedup window: tight enough to remove true duplicates from
-                // specdiff+hfc firing on the same transient, loose enough to keep
-                // real 16th-note hi-hats at any BPM > 60.
-                beatPositions.reserve(posA.size() + posB.size());
-                beatPositions.insert(beatPositions.end(), posA.begin(), posA.end());
-                beatPositions.insert(beatPositions.end(), posB.begin(), posB.end());
-                std::sort(beatPositions.begin(), beatPositions.end());
-                {
-                    const uint64_t minSpacing = static_cast<uint64_t>(0.05 * sampleRate); // 50 ms
-                    auto last = std::unique(beatPositions.begin(), beatPositions.end(),
-                                            [minSpacing](uint64_t a, uint64_t b){
-                                                return (b - a) < minSpacing; });
-                    beatPositions.erase(last, beatPositions.end());
+                    essentia::Real bpm = 0.0f;
+                    essentia::Real confidence = 0.0f;
+                    std::vector<essentia::Real> ticks;
+                    std::vector<essentia::Real> estimates;
+                    std::vector<essentia::Real> bpmIntervals;
+
+                    std::unique_ptr<Algorithm> rhythm(
+                        AlgorithmFactory::create("RhythmExtractor2013",
+                                                 "method", std::string("multifeature")));
+
+                    rhythm->input("signal").set(monoSignal);
+                    rhythm->output("bpm").set(bpm);
+                    rhythm->output("ticks").set(ticks);
+                    rhythm->output("confidence").set(confidence);
+                    rhythm->output("estimates").set(estimates);
+                    rhythm->output("bpmIntervals").set(bpmIntervals);
+                    rhythm->compute();
+
+                    essentiaBpmHint = static_cast<double>(bpm);
+
+                    beatPositions.reserve(ticks.size());
+                    allBeats.reserve(ticks.size());
+                    for (essentia::Real t : ticks) {
+                        const double sec = static_cast<double>(t);
+                        if (sec < 0.0 || sec >= duration)
+                            continue;
+                        allBeats.push_back(sec);
+                        beatPositions.push_back(static_cast<uint64_t>(sec * sampleRate));
+                    }
+
+                    std::sort(allBeats.begin(), allBeats.end());
+                    std::sort(beatPositions.begin(), beatPositions.end());
+                    {
+                        const uint64_t minSpacing = static_cast<uint64_t>(0.05 * sampleRate);
+                        auto last = std::unique(beatPositions.begin(), beatPositions.end(),
+                                                [minSpacing](uint64_t a, uint64_t b) {
+                                                    return (b - a) < minSpacing;
+                                                });
+                        beatPositions.erase(last, beatPositions.end());
+                    }
+
+                    qDebug() << "[WaveformAnalyzer] Essentia BPM:" << essentiaBpmHint
+                             << "confidence:" << static_cast<double>(confidence)
+                             << "ticks:" << beatPositions.size();
                 }
-
-                // Keep the longer timestamp list as the elastic grid seed.
-                allBeats = (beatsA.size() >= beatsB.size())
-                           ? std::move(beatsA) : std::move(beatsB);
-                std::sort(allBeats.begin(), allBeats.end());
-            } else {
-                if (tempoA) del_aubio_tempo(tempoA);
-                if (tempoB) del_aubio_tempo(tempoB);
+            } catch (const std::exception& e) {
+                qWarning() << "[WaveformAnalyzer] Essentia BPM extraction failed:" << e.what();
+            } catch (...) {
+                qWarning() << "[WaveformAnalyzer] Essentia BPM extraction failed with unknown error.";
             }
+#else
+            qWarning() << "[WaveformAnalyzer] ESSENTIA_FOUND not set, BPM analysis disabled.";
+#endif
+        }
+
+        // Fallback: if Essentia did not yield a BPM, estimate tempo from the
+        // already computed low-band waveform envelope via lag autocorrelation.
+        if (essentiaBpmHint <= 0.0 && !rawBins.empty()) {
+            const int fps = std::max(1, m_pointsPerSecond);
+            const int minLag = std::max(1, static_cast<int>(std::floor((fps * 60.0) / 200.0)));
+            const int maxLag = std::max(minLag + 1, static_cast<int>(std::ceil((fps * 60.0) / 60.0)));
+
+            std::vector<double> env;
+            env.reserve(rawBins.size());
+            for (const auto& b : rawBins)
+                env.push_back(static_cast<double>(b.low + 0.35f * b.lowMid));
+
+            if (static_cast<int>(env.size()) > maxLag + 8) {
+                const double mean = std::accumulate(env.begin(), env.end(), 0.0) / static_cast<double>(env.size());
+                for (double& v : env)
+                    v -= mean;
+
+                int bestLag = minLag;
+                double bestScore = -1.0;
+                for (int lag = minLag; lag <= maxLag; ++lag) {
+                    double s = 0.0;
+                    for (size_t i = static_cast<size_t>(lag); i < env.size(); ++i)
+                        s += env[i] * env[i - static_cast<size_t>(lag)];
+                    if (s > bestScore) {
+                        bestScore = s;
+                        bestLag = lag;
+                    }
+                }
+
+                if (bestScore > 0.0)
+                    essentiaBpmHint = (fps * 60.0) / static_cast<double>(bestLag);
+            }
+
+            if (essentiaBpmHint > 0.0)
+                qDebug() << "[WaveformAnalyzer] BPM fallback estimate:" << essentiaBpmHint;
         }
 
         // ── 16-beat macro-distance histogram ────────────────────────────────
@@ -623,13 +637,18 @@ void WaveformAnalyzer::run()
                      << "(totalBeats:" << beatPositions.size() << ")";
         }
 
+        // If the histogram cannot lock a stable tempo, fall back to Essentia's
+        // direct BPM estimate so the deck still gets a usable BPM value.
+        if (estimatedBpm <= 0.0 && essentiaBpmHint > 0.0)
+            estimatedBpm = essentiaBpmHint;
+
         // ── Grid alignment ───────────────────────────────────────────────────
         qint64 firstBeatSample = 0;
         std::vector<TrackData::BeatMarker> finalBeatGrid;
 
         if (estimatedBpm > 0.0 && beatPositions.size() >= 16) {
             // ── STEP 1: Aubio latency compensation ────────────────────────────
-            const uint64_t latComp = hopSize;
+            const uint64_t latComp = 512; // Keep previous tempo-detector latency compensation.
             for (auto& pos : beatPositions)
                 pos = (pos >= latComp) ? (pos - latComp) : 0;
 
@@ -691,7 +710,7 @@ void WaveformAnalyzer::run()
             // Walk backwards until TWO consecutive candidate positions are below
             // the energy threshold — prevents early stopping on quiet pads in the
             // intro that happen to be above 15 % of the global peak.
-            const uint_t  rmsHop          = 512;
+            const unsigned int rmsHop          = 512;
             const float   energyThreshold = globalMaxPeak * 0.15f;
             juce::AudioBuffer<float> rmsBuf(static_cast<int>(reader->numChannels),
                                             static_cast<int>(rmsHop));
@@ -702,7 +721,7 @@ void WaveformAnalyzer::run()
                 const int nc = static_cast<int>(reader->numChannels);
                 for (int ch = 0; ch < nc; ++ch) {
                     const float* p = rmsBuf.getReadPointer(ch);
-                    for (uint_t s = 0; s < rmsHop; ++s)
+                    for (unsigned int s = 0; s < rmsHop; ++s)
                         pk = std::max(pk, std::abs(p[s]));
                 }
                 return pk;
@@ -790,6 +809,51 @@ void WaveformAnalyzer::run()
                         (n % 4 == 0),   // isDownbeat: beat 1 of every bar
                         (n / 4) + 1     // barNumber:  1-based bar counter
                     });
+                }
+
+                // ── STEP 6: Downbeat phase correction (bar-aware) ─────────────
+                // Select the strongest bar phase (mod 4) from low/low-mid energy,
+                // then re-anchor downbeat flags so beat-1 markers are more stable.
+                if (finalBeatGrid.size() >= 16 && numRawBins > 0) {
+                    double phaseScore[4] = {0.0, 0.0, 0.0, 0.0};
+
+                    for (size_t i = 0; i < finalBeatGrid.size(); ++i) {
+                        const int bin = static_cast<int>(
+                            std::lround(finalBeatGrid[i].positionSec * m_pointsPerSecond));
+                        if (bin < 0 || bin >= numRawBins)
+                            continue;
+
+                        const auto& rb = rawBins[static_cast<size_t>(bin)];
+                        const double w = static_cast<double>(rb.low)
+                                       + 0.60 * static_cast<double>(rb.lowMid)
+                                       + 0.20 * static_cast<double>(rb.mid);
+                        phaseScore[i % 4] += w;
+                    }
+
+                    int bestPhase = 0;
+                    for (int p = 1; p < 4; ++p) {
+                        if (phaseScore[p] > phaseScore[bestPhase])
+                            bestPhase = p;
+                    }
+
+                    // Apply only when the alternative phase is clearly stronger
+                    // than the current assumption (phase 0).
+                    if (bestPhase != 0 && phaseScore[bestPhase] > phaseScore[0] * 1.08) {
+                        firstBeatSample = static_cast<qint64>(
+                            std::llround(finalBeatGrid[static_cast<size_t>(bestPhase)].positionSec * sampleRate));
+
+                        for (size_t i = 0; i < finalBeatGrid.size(); ++i) {
+                            const int rel = static_cast<int>(i) - bestPhase;
+                            const bool isDb = (rel >= 0) && (rel % 4 == 0);
+                            finalBeatGrid[i].isDownbeat = isDb;
+                            finalBeatGrid[i].barNumber = (rel >= 0) ? (rel / 4) + 1 : 0;
+                        }
+
+                        qDebug() << "[WaveformAnalyzer] Downbeat phase corrected:"
+                                 << "phase0=" << phaseScore[0]
+                                 << "phaseBest=" << bestPhase
+                                 << "score=" << phaseScore[bestPhase];
+                    }
                 }
 
                 qDebug() << "[WaveformAnalyzer] Elastic beat-grid built:"
