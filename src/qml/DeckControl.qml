@@ -417,20 +417,36 @@ Item {
                         Button {
                             text: "SYNC"
                             checkable: true
+                            checked: deck.engine ? deck.engine.syncEnabled : false
                             Layout.fillWidth: true
                             Layout.preferredHeight: 18
                             background: Rectangle {
-                                color: parent.checked ? "#3a8a3a" : "#444"
-                                border.color: parent.checked ? "#5cfa5c" : "transparent"
-                                border.width: 1; radius: 3
+                                color: {
+                                    if (!deck.engine || !parent.checked) return "#444"
+                                    return deck.engine.syncMaster ? "#7a5a10" : "#3a8a3a"
+                                }
+                                border.color: {
+                                    if (!deck.engine || !parent.checked) return "transparent"
+                                    return deck.engine.syncMaster ? "#ffd24d" : "#5cfa5c"
+                                }
+                                border.width: (deck.engine && deck.engine.syncMaster) ? 2 : 1
+                                radius: 3
                             }
                             contentItem: Text {
                                 text: parent.text
-                                color: parent.checked ? "white" : "#aaa"
+                                color: {
+                                    if (!parent.checked) return "#aaa"
+                                    if (deck.engine && deck.engine.syncMaster) return "#ffe18a"
+                                    return "white"
+                                }
                                 font.pixelSize: window.sp(8)
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: {
+                                if (deck.engine)
+                                    deck.engine.setSyncEnabled(checked)
                             }
                         }
 

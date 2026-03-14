@@ -547,8 +547,69 @@ std::atomic<float> DjEngine::MixerDspSource::s_masterVolume{1.0f};
 std::atomic<bool>  DjEngine::MixerDspSource::s_antiClipEnabled{false};
 std::atomic<float> DjEngine::MixerDspSource::s_gainReduction{1.0f};
 
+std::mutex DjEngine::s_syncMutex;
+std::vector<DjEngine*> DjEngine::s_syncDecks;
+DjEngine* DjEngine::s_syncMasterDeck = nullptr;
+
+void DjEngine::updateSyncMasterLocked()
+{
+    DjEngine* newMaster = nullptr;
+    for (auto* d : s_syncDecks) {
+        if (d && d->m_syncEnabled) {
+            newMaster = d;
+            break;
+        }
+    }
+
+    s_syncMasterDeck = newMaster;
+    for (auto* d : s_syncDecks) {
+        if (!d)
+            continue;
+        const bool wasMaster = d->m_isSyncMaster;
+        d->m_isSyncMaster = (d == s_syncMasterDeck) && d->m_syncEnabled;
+        if (wasMaster != d->m_isSyncMaster)
+            emit d->syncMasterChanged();
+    }
+}
+
+void DjEngine::propagateMasterTempoLocked(DjEngine* master)
+{
+    if (!master || !master->m_trackData)
+        return;
+
+    double masterBpm = 0.0;
+    std::vector<DjEngine*> followers;
+    {
+        std::lock_guard<std::mutex> g(s_syncMutex);
+        masterBpm = master->getCurrentBpm();
+        if (masterBpm <= 0.0)
+            return;
+        followers.reserve(s_syncDecks.size());
+        for (auto* d : s_syncDecks) {
+            if (!d || d == master || !d->m_syncEnabled || d->m_isSyncMaster)
+                continue;
+            followers.push_back(d);
+        }
+    }
+
+    for (auto* d : followers) {
+        if (!d->m_trackData)
+            continue;
+        const double baseBpm = d->m_trackData->getBpm();
+        if (baseBpm <= 0.0)
+            continue;
+        const double pct = ((masterBpm / baseBpm) - 1.0) * 100.0;
+        d->setTempoPercent(pct);
+    }
+}
+
 DjEngine::DjEngine(QObject* parent) : QObject(parent)
 {
+    {
+        std::lock_guard<std::mutex> g(s_syncMutex);
+        s_syncDecks.push_back(this);
+    }
+
     m_trackData = new TrackData(this);
     m_analyzer  = new WaveformAnalyzer(m_trackData, &formatManager, 150);
 
@@ -568,6 +629,20 @@ DjEngine::DjEngine(QObject* parent) : QObject(parent)
     connect(m_trackData, &TrackData::bpmAnalyzed, this, [this]() {
         emit tempoChanged();
         persistCurrentAnalysisToLibrary();
+        bool propagateFromSelf = false;
+        DjEngine* masterToFollow = nullptr;
+        if (m_syncEnabled) {
+            {
+                std::lock_guard<std::mutex> g(s_syncMutex);
+                updateSyncMasterLocked();
+                propagateFromSelf = m_isSyncMaster;
+                masterToFollow = s_syncMasterDeck;
+            }
+            if (propagateFromSelf)
+                propagateMasterTempoLocked(this);
+            else if (masterToFollow)
+                propagateMasterTempoLocked(masterToFollow);
+        }
     });
 
     connect(m_trackData, &TrackData::beatgridChanged, this, [this]() {
@@ -647,6 +722,14 @@ DjEngine::DjEngine(QObject* parent) : QObject(parent)
 
 DjEngine::~DjEngine()
 {
+    {
+        std::lock_guard<std::mutex> g(s_syncMutex);
+        s_syncDecks.erase(std::remove(s_syncDecks.begin(), s_syncDecks.end(), this), s_syncDecks.end());
+        if (s_syncMasterDeck == this)
+            s_syncMasterDeck = nullptr;
+        updateSyncMasterLocked();
+    }
+
     if (m_analyzer) {
         m_analyzer->stopAnalysis();
         delete m_analyzer;
@@ -1139,6 +1222,51 @@ void DjEngine::setTempoPercent(double percent)
     qDebug() << "[DjEngine] Tempo set to" << percent << "%" << "(keylock:" << m_keylock << ")";
     
     emit tempoChanged();
+
+    if (m_syncEnabled) {
+        bool amMaster = false;
+        {
+            std::lock_guard<std::mutex> g(s_syncMutex);
+            updateSyncMasterLocked();
+            amMaster = m_isSyncMaster;
+        }
+        if (amMaster)
+            propagateMasterTempoLocked(this);
+    }
+}
+
+void DjEngine::setSyncEnabled(bool enabled)
+{
+    if (m_syncEnabled == enabled)
+        return;
+
+    m_syncEnabled = enabled;
+    emit syncChanged();
+
+    bool amMaster = false;
+    DjEngine* masterDeck = nullptr;
+    {
+        std::lock_guard<std::mutex> g(s_syncMutex);
+        updateSyncMasterLocked();
+        amMaster = m_isSyncMaster;
+        masterDeck = s_syncMasterDeck;
+    }
+
+    if (m_syncEnabled) {
+        if (amMaster) {
+            propagateMasterTempoLocked(this);
+        } else if (masterDeck) {
+            const double masterBpm = masterDeck->getCurrentBpm();
+            if (m_trackData) {
+                const double baseBpm = m_trackData->getBpm();
+                if (masterBpm > 0.0 && baseBpm > 0.0) {
+                    const double pct = ((masterBpm / baseBpm) - 1.0) * 100.0;
+                    setTempoPercent(pct);
+                }
+            }
+            return;
+        }
+    }
 }
 
 void DjEngine::updateGain()

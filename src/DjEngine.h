@@ -8,6 +8,7 @@
 #include <QElapsedTimer>
 #include <atomic>
 #include <cstdint>
+#include <mutex>
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 
@@ -30,6 +31,8 @@ class DjEngine : public QObject
     Q_PROPERTY(double tempoRatio READ getTempoRatio NOTIFY tempoChanged)
     Q_PROPERTY(TrackData* trackData READ getTrackData CONSTANT)
     Q_PROPERTY(bool quantizeEnabled READ quantizeEnabled WRITE setQuantizeEnabled NOTIFY quantizeEnabledChanged)
+    Q_PROPERTY(bool syncEnabled READ syncEnabled WRITE setSyncEnabled NOTIFY syncChanged)
+    Q_PROPERTY(bool syncMaster READ isSyncMaster NOTIFY syncMasterChanged)
     Q_PROPERTY(bool loopActive READ loopActive NOTIFY loopChanged)
     Q_PROPERTY(bool loopInSet READ loopInSet NOTIFY loopChanged)
     Q_PROPERTY(double loopLengthBeats READ loopLengthBeats NOTIFY loopChanged)
@@ -151,6 +154,8 @@ public:
     double filter() const { return m_filter; }
     bool cueEnabled() const { return m_cueEnabled; }
     bool quantizeEnabled() const { return m_quantizeEnabled; }
+    bool syncEnabled() const { return m_syncEnabled; }
+    bool isSyncMaster() const { return m_isSyncMaster; }
     bool loopActive() const { return m_loopActive; }
     bool loopInSet() const { return m_loopInSet; }
     double loopLengthBeats() const { return m_loopLengthBeats; }
@@ -181,6 +186,7 @@ public slots:
     void setFilter(double value);
     void setCueEnabled(bool value);
     void setQuantizeEnabled(bool enabled);
+    void setSyncEnabled(bool enabled);
     void setKeylock(bool value);
 
     // FX chain
@@ -216,6 +222,8 @@ signals:
     void filterChanged();
     void cueEnabledChanged();
     void quantizeEnabledChanged();
+    void syncChanged();
+    void syncMasterChanged();
     void loopChanged();
     void keylockChanged();
     void vuLevelChanged();
@@ -275,6 +283,8 @@ private:
     bool m_cueEnabled = false;
     bool m_keylock = false;
     bool m_quantizeEnabled = false;
+    bool m_syncEnabled = false;
+    bool m_isSyncMaster = false;
 
     bool m_loopActive = false;
     double m_loopInSec = 0.0;
@@ -306,4 +316,10 @@ private:
     // m_pixelsPerSecond is mirrored from the waveform renderer (150 pts/s × ppp).
     double m_pixelsPerSecond = 225.0;  // default: 150 pts/s × 1.5 ppp
     bool   m_isScrubbing     = false;
+
+    static std::mutex s_syncMutex;
+    static std::vector<DjEngine*> s_syncDecks;
+    static DjEngine* s_syncMasterDeck;
+    static void updateSyncMasterLocked();
+    static void propagateMasterTempoLocked(DjEngine* master);
 };
