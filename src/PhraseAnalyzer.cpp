@@ -47,7 +47,7 @@ std::vector<TrackSegment> PhraseAnalyzer::analyze(juce::AudioFormatReader& reade
 
     extractFeatures(reader, blocks);
     normalizeAndLabel(blocks);
-    return mergeToSegments(blocks, durationSec);
+    return smoothAndMergeSegments(blocks, durationSec);
 }
 
 std::vector<PhraseBlock> PhraseAnalyzer::buildBlocks(const std::vector<double>& beatTimestamps,
@@ -213,34 +213,168 @@ void PhraseAnalyzer::normalizeAndLabel(std::vector<PhraseBlock>& blocks) const
     }
 }
 
-std::vector<TrackSegment> PhraseAnalyzer::mergeToSegments(const std::vector<PhraseBlock>& blocks,
-                                                          double durationSec) const
+std::vector<TrackSegment> PhraseAnalyzer::smoothAndMergeSegments(std::vector<PhraseBlock>& blocks,
+                                                                 double durationSec) const
 {
-    std::vector<TrackSegment> segments;
-    if (blocks.empty())
-        return segments;
+    // Rule 1: dynamic thresholds from track-wide average RMS values.
+    double sumOverall = 0.0;
+    double sumLow = 0.0;
+    int signalCount = 0;
+    for (const auto& block : blocks) {
+        if (!block.hasSignal)
+            continue;
+        sumOverall += block.overallRms;
+        sumLow += block.lowBandRms;
+        ++signalCount;
+    }
 
-    PhraseBlock run = blocks.front();
+    const float avgOverall = (signalCount > 0) ? static_cast<float>(sumOverall / signalCount) : 0.0f;
+    const float avgLow = (signalCount > 0) ? static_cast<float>(sumLow / signalCount) : 0.0f;
+    const float dropLowThreshold = avgLow * 1.20f;
+    const float dropOverallThreshold = avgOverall * 1.10f;
 
-    for (size_t i = 1; i < blocks.size(); ++i) {
-        const auto& cur = blocks[i];
-        if (cur.label == run.label) {
-            run.endTime = cur.endTime;
+    for (auto& block : blocks) {
+        if (!block.hasSignal)
+            continue;
+
+        const bool isDynamicDrop =
+            (block.lowBandRms > dropLowThreshold) &&
+            (block.overallRms > dropOverallThreshold);
+
+        if (isDynamicDrop) {
+            block.label = QStringLiteral("Drop");
+            block.colorHex = colorForLabel(block.label);
             continue;
         }
 
-        if (run.endTime > run.startTime + 0.01f) {
-            segments.push_back({
-                run.label,
-                run.startTime,
-                std::min(run.endTime, static_cast<float>(durationSec)),
-                run.colorHex
-            });
+        if (block.label == QStringLiteral("Drop")) {
+            block.label = QStringLiteral("Phrase");
+            block.colorHex = colorForLabel(block.label);
         }
-        run = cur;
     }
 
-    if (run.endTime > run.startTime + 0.01f) {
+    // Rule 2: context-aware outlier filter.
+    if (blocks.size() >= 3) {
+        std::vector<QString> smoothedLabels;
+        smoothedLabels.reserve(blocks.size());
+        for (const auto& b : blocks)
+            smoothedLabels.push_back(b.label);
+
+        for (size_t i = 1; i + 1 < blocks.size(); ++i) {
+            if (blocks[i - 1].label == blocks[i + 1].label && blocks[i].label != blocks[i - 1].label)
+                smoothedLabels[i] = blocks[i - 1].label;
+        }
+
+        for (size_t i = 0; i < blocks.size(); ++i) {
+            blocks[i].label = smoothedLabels[i];
+            blocks[i].colorHex = colorForLabel(blocks[i].label);
+        }
+    }
+
+    struct MergedSeg {
+        QString label;
+        QString colorHex;
+        float startTime = 0.0f;
+        float endTime = 0.0f;
+        int blockCount = 0;
+        float avgOverallRms = 0.0f;
+    };
+
+    std::vector<MergedSeg> merged;
+    if (!blocks.empty()) {
+        MergedSeg cur;
+        cur.label = blocks.front().label;
+        cur.colorHex = blocks.front().colorHex;
+        cur.startTime = blocks.front().startTime;
+        cur.endTime = blocks.front().endTime;
+        cur.blockCount = 1;
+        cur.avgOverallRms = blocks.front().overallRms;
+
+        for (size_t i = 1; i < blocks.size(); ++i) {
+            const auto& b = blocks[i];
+            if (b.label == cur.label) {
+                cur.endTime = b.endTime;
+                cur.avgOverallRms =
+                    (cur.avgOverallRms * static_cast<float>(cur.blockCount) + b.overallRms)
+                    / static_cast<float>(cur.blockCount + 1);
+                ++cur.blockCount;
+            } else {
+                merged.push_back(cur);
+                cur.label = b.label;
+                cur.colorHex = b.colorHex;
+                cur.startTime = b.startTime;
+                cur.endTime = b.endTime;
+                cur.blockCount = 1;
+                cur.avgOverallRms = b.overallRms;
+            }
+        }
+        merged.push_back(cur);
+    }
+
+    // Rule 3: enforce minimum segment length of 32 beats (2 blocks), except Outro.
+    constexpr int minBlocks = 2;
+    for (size_t i = 0; i < merged.size();) {
+        if (merged[i].label == QStringLiteral("Outro") || merged[i].blockCount >= minBlocks) {
+            ++i;
+            continue;
+        }
+
+        const bool hasPrev = (i > 0);
+        const bool hasNext = (i + 1 < merged.size());
+        if (!hasPrev && !hasNext) {
+            ++i;
+            continue;
+        }
+
+        size_t target = i;
+        if (hasPrev && hasNext) {
+            const float dPrev = std::abs(merged[i].avgOverallRms - merged[i - 1].avgOverallRms);
+            const float dNext = std::abs(merged[i].avgOverallRms - merged[i + 1].avgOverallRms);
+            target = (dPrev <= dNext) ? (i - 1) : (i + 1);
+        } else if (hasPrev) {
+            target = i - 1;
+        } else {
+            target = i + 1;
+        }
+
+        if (target < i) {
+            auto& dst = merged[target];
+            const auto src = merged[i];
+            const int totalBlocks = dst.blockCount + src.blockCount;
+            dst.startTime = std::min(dst.startTime, src.startTime);
+            dst.endTime = std::max(dst.endTime, src.endTime);
+            dst.avgOverallRms =
+                (dst.avgOverallRms * static_cast<float>(dst.blockCount)
+                 + src.avgOverallRms * static_cast<float>(src.blockCount))
+                / static_cast<float>(totalBlocks);
+            dst.blockCount = totalBlocks;
+            merged.erase(merged.begin() + static_cast<ptrdiff_t>(i));
+            if (i > 0)
+                --i;
+            continue;
+        }
+
+        auto& dst = merged[target];
+        const auto src = merged[i];
+        const int totalBlocks = dst.blockCount + src.blockCount;
+        dst.startTime = std::min(dst.startTime, src.startTime);
+        dst.endTime = std::max(dst.endTime, src.endTime);
+        dst.avgOverallRms =
+            (dst.avgOverallRms * static_cast<float>(dst.blockCount)
+             + src.avgOverallRms * static_cast<float>(src.blockCount))
+            / static_cast<float>(totalBlocks);
+        dst.blockCount = totalBlocks;
+        merged.erase(merged.begin() + static_cast<ptrdiff_t>(i));
+    }
+
+    std::vector<TrackSegment> segments;
+    if (merged.empty())
+        return segments;
+
+    segments.reserve(merged.size());
+    for (const auto& run : merged) {
+        if (run.endTime <= run.startTime + 0.01f)
+            continue;
         segments.push_back({
             run.label,
             run.startTime,

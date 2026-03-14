@@ -30,6 +30,6 @@ private:
     void extractFeatures(juce::AudioFormatReader& reader,
                          std::vector<PhraseBlock>& blocks) const;
     void normalizeAndLabel(std::vector<PhraseBlock>& blocks) const;
-    std::vector<TrackSegment> mergeToSegments(const std::vector<PhraseBlock>& blocks,
-                                              double durationSec) const;
+    std::vector<TrackSegment> smoothAndMergeSegments(std::vector<PhraseBlock>& blocks,
+                                                     double durationSec) const;
 };
