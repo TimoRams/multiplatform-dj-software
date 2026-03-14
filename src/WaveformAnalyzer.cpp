@@ -12,6 +12,233 @@
 #ifdef ESSENTIA_FOUND
     #include <essentia/essentia.h>
     #include <essentia/algorithmfactory.h>
+
+namespace {
+
+QVector<TrackData::RgbWaveformFrame> blendRgbPreferDynamics(
+    const QVector<TrackData::RgbWaveformFrame>& current,
+    const QVector<TrackData::RgbWaveformFrame>& candidate)
+{
+    if (candidate.isEmpty())
+        return current;
+    if (current.isEmpty())
+        return candidate;
+
+    const int n = std::min(current.size(), candidate.size());
+    QVector<TrackData::RgbWaveformFrame> out;
+    out.reserve(candidate.size());
+
+    for (int i = 0; i < n; ++i) {
+        TrackData::RgbWaveformFrame f = candidate[i];
+        const auto& c = current[i];
+
+        // Keep dynamic punch from the progressive pass.
+        f.rms = std::max(c.rms, f.rms);
+        f.low = std::max(c.low, f.low);
+        f.mid = std::max(c.mid, f.mid);
+        f.high = std::max(c.high, f.high);
+
+        // Never darken strongly: candidate can refine hue, but not kill brightness.
+        const int r = std::max(static_cast<int>(c.color.red() * 0.90f), f.color.red());
+        const int g = std::max(static_cast<int>(c.color.green() * 0.90f), f.color.green());
+        const int b = std::max(static_cast<int>(c.color.blue() * 0.90f), f.color.blue());
+        f.color = QColor(std::clamp(r, 0, 255), std::clamp(g, 0, 255), std::clamp(b, 0, 255), 230);
+
+        out.push_back(f);
+    }
+
+    for (int i = n; i < candidate.size(); ++i)
+        out.push_back(candidate[i]);
+
+    return out;
+}
+
+QVector<TrackData::RgbWaveformFrame> analyzeRgbFramesWithEssentia(
+    const std::vector<essentia::Real>& monoSignal,
+    double sampleRate,
+    int targetFrames,
+    int frameSize = 2048,
+    int hopSize = 1024)
+{
+    QVector<TrackData::RgbWaveformFrame> result;
+    if (monoSignal.empty() || sampleRate <= 0.0 || frameSize < 128 || hopSize < 64)
+        return result;
+
+    using essentia::Real;
+    using essentia::standard::Algorithm;
+    using essentia::standard::AlgorithmFactory;
+
+    std::vector<Real> frame;
+    std::vector<Real> windowedFrame;
+    std::vector<Real> spectrum;
+    Real low = 0.0f;
+    Real mid = 0.0f;
+    Real high = 0.0f;
+
+    std::unique_ptr<Algorithm> frameCutter(
+        AlgorithmFactory::create("FrameCutter",
+                                 "frameSize", frameSize,
+                                 "hopSize", hopSize,
+                                 "startFromZero", true,
+                                 "lastFrameToEndOfFile", false));
+    std::unique_ptr<Algorithm> windowing(
+        AlgorithmFactory::create("Windowing",
+                                 "type", std::string("hann"),
+                                 "size", frameSize,
+                                 "zeroPadding", 0));
+    std::unique_ptr<Algorithm> spectrumAlg(
+        AlgorithmFactory::create("Spectrum",
+                                 "size", frameSize));
+
+    // DJ RGB bands: low 20-250 Hz, mid 250-4000 Hz, high 4000-20000 Hz.
+    std::unique_ptr<Algorithm> bandLow(
+        AlgorithmFactory::create("EnergyBand",
+                                 "sampleRate", static_cast<Real>(sampleRate),
+                                 "startCutoffFrequency", 20.0,
+                                 "stopCutoffFrequency", 250.0));
+    std::unique_ptr<Algorithm> bandMid(
+        AlgorithmFactory::create("EnergyBand",
+                                 "sampleRate", static_cast<Real>(sampleRate),
+                                 "startCutoffFrequency", 250.0,
+                                 "stopCutoffFrequency", 4000.0));
+    std::unique_ptr<Algorithm> bandHigh(
+        AlgorithmFactory::create("EnergyBand",
+                                 "sampleRate", static_cast<Real>(sampleRate),
+                                 "startCutoffFrequency", 4000.0,
+                                 "stopCutoffFrequency", 20000.0));
+
+    frameCutter->input("signal").set(monoSignal);
+    frameCutter->output("frame").set(frame);
+
+    windowing->input("frame").set(frame);
+    windowing->output("frame").set(windowedFrame);
+
+    spectrumAlg->input("frame").set(windowedFrame);
+    spectrumAlg->output("spectrum").set(spectrum);
+
+    bandLow->input("spectrum").set(spectrum);
+    bandLow->output("energyBand").set(low);
+    bandMid->input("spectrum").set(spectrum);
+    bandMid->output("energyBand").set(mid);
+    bandHigh->input("spectrum").set(spectrum);
+    bandHigh->output("energyBand").set(high);
+
+    std::vector<float> lows;
+    std::vector<float> mids;
+    std::vector<float> highs;
+    std::vector<float> rmsVals;
+    lows.reserve(monoSignal.size() / static_cast<size_t>(hopSize));
+    mids.reserve(lows.capacity());
+    highs.reserve(lows.capacity());
+    rmsVals.reserve(lows.capacity());
+
+    while (true) {
+        frameCutter->compute();
+        if (frame.empty())
+            break;
+
+        windowing->compute();
+        spectrumAlg->compute();
+        bandLow->compute();
+        bandMid->compute();
+        bandHigh->compute();
+
+        double sumSq = 0.0;
+        for (Real s : frame)
+            sumSq += static_cast<double>(s) * static_cast<double>(s);
+        const float rms = static_cast<float>(std::sqrt(sumSq / std::max<size_t>(1, frame.size())));
+
+        lows.push_back(std::max(0.0f, static_cast<float>(low)));
+        mids.push_back(std::max(0.0f, static_cast<float>(mid)));
+        highs.push_back(std::max(0.0f, static_cast<float>(high)));
+        rmsVals.push_back(rms);
+    }
+
+    if (lows.empty())
+        return result;
+
+    const float maxLow = std::max(1e-9f, *std::max_element(lows.begin(), lows.end()));
+    const float maxMid = std::max(1e-9f, *std::max_element(mids.begin(), mids.end()));
+    const float maxHigh = std::max(1e-9f, *std::max_element(highs.begin(), highs.end()));
+    const float maxRms = std::max(1e-9f, *std::max_element(rmsVals.begin(), rmsVals.end()));
+
+    result.reserve(static_cast<int>(lows.size()));
+    for (size_t i = 0; i < lows.size(); ++i) {
+        const float ln = std::clamp(lows[i] / maxLow, 0.0f, 1.0f);
+        const float mn = std::clamp(mids[i] / maxMid, 0.0f, 1.0f);
+        const float hn = std::clamp(highs[i] / maxHigh, 0.0f, 1.0f);
+        const float rmsN = std::clamp(rmsVals[i] / maxRms, 0.0f, 1.0f);
+
+        // DJ color mixing: R=low, G=mid, B=high with stronger lift for readability.
+        int r = std::clamp(static_cast<int>(std::pow(ln, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
+        int g = std::clamp(static_cast<int>(std::pow(mn, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
+        int b = std::clamp(static_cast<int>(std::pow(hn, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
+        if (ln + mn + hn > 0.06f) {
+            r = std::max(r, 18);
+            g = std::max(g, 18);
+            b = std::max(b, 18);
+        }
+
+        const float amp = std::clamp(0.55f * std::max({ln, mn, hn}) + 0.45f * rmsN, 0.0f, 1.0f);
+
+        TrackData::RgbWaveformFrame f;
+        f.color = QColor(r, g, b, 230);
+        f.rms = amp;
+        f.low = ln;
+        f.mid = mn;
+        f.high = hn;
+        result.push_back(f);
+    }
+
+    // Keep RGB frame count aligned with waveform timeline resolution so
+    // scrolling waveform length stays correct.
+    if (targetFrames > 0 && result.size() != targetFrames) {
+        QVector<TrackData::RgbWaveformFrame> resampled;
+        resampled.reserve(targetFrames);
+        const int srcN = result.size();
+        for (int i = 0; i < targetFrames; ++i) {
+            const int s0 = static_cast<int>((static_cast<int64_t>(i) * srcN) / targetFrames);
+            int s1 = static_cast<int>((static_cast<int64_t>(i + 1) * srcN) / targetFrames);
+            s1 = std::max(s0 + 1, std::min(s1, srcN));
+
+            float maxRms = 0.0f;
+            float low = 0.0f;
+            float midV = 0.0f;
+            float highV = 0.0f;
+            float wr = 0.0f;
+            float wg = 0.0f;
+            float wb = 0.0f;
+            float wsum = 0.0f;
+
+            for (int j = s0; j < s1; ++j) {
+                const auto& f = result[j];
+                maxRms = std::max(maxRms, f.rms);
+                low = std::max(low, f.low);
+                midV = std::max(midV, f.mid);
+                highV = std::max(highV, f.high);
+                const float w = std::max(0.08f, f.rms);
+                wr += static_cast<float>(f.color.red()) * w;
+                wg += static_cast<float>(f.color.green()) * w;
+                wb += static_cast<float>(f.color.blue()) * w;
+                wsum += w;
+            }
+
+            TrackData::RgbWaveformFrame out;
+            out.rms = maxRms;
+            out.low = low;
+            out.mid = midV;
+            out.high = highV;
+            if (wsum > 0.0f)
+                out.color = QColor(static_cast<int>(wr / wsum), static_cast<int>(wg / wsum), static_cast<int>(wb / wsum), 230);
+            resampled.push_back(out);
+        }
+        return resampled;
+    }
+
+    return result;
+}
+
+} // namespace
 #endif
 
 // libKeyFinder: key detection
@@ -222,6 +449,8 @@ void WaveformAnalyzer::run()
     constexpr int previewChunk = 50;
     QVector<TrackData::WaveformBin> previewBatch;
     previewBatch.reserve(previewChunk);
+    QVector<TrackData::RgbWaveformFrame> previewRgbBatch;
+    previewRgbBatch.reserve(previewChunk);
 
     // Shared shaping helper — used identically in preview AND final pass.
     auto shapeBin = [](float norm, float expo, float gain) -> float {
@@ -325,13 +554,40 @@ void WaveformAnalyzer::run()
         pbin.transientDelta = 0.0f;
 
         previewBatch.append(pbin);
+        {
+            TrackData::RgbWaveformFrame rgb;
+            // Progressive preview: same RGB heuristic as final mapping.
+            const float lowN = std::clamp(pbin.low, 0.0f, 1.0f);
+            const float midN = std::clamp(pbin.mid, 0.0f, 1.0f);
+            const float highN = std::clamp(pbin.high, 0.0f, 1.0f);
+            const float rmsN = std::clamp(0.55f * std::max({lowN, midN, highN}) + 0.45f * ((lowN + midN + highN) / 3.0f), 0.0f, 1.0f);
+            int r = std::clamp(static_cast<int>(std::pow(lowN, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
+            int g = std::clamp(static_cast<int>(std::pow(midN, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
+            int b = std::clamp(static_cast<int>(std::pow(highN, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
+            if (lowN + midN + highN > 0.06f) {
+                r = std::max(r, 18);
+                g = std::max(g, 18);
+                b = std::max(b, 18);
+            }
+            rgb.color = QColor(r, g, b, 230);
+            rgb.rms = rmsN;
+            rgb.low = lowN;
+            rgb.mid = midN;
+            rgb.high = highN;
+            previewRgbBatch.append(rgb);
+        }
+
         if (previewBatch.size() >= previewChunk) {
             m_trackData->appendData(previewBatch);
+            m_trackData->appendRgbWaveformData(previewRgbBatch);
             previewBatch.clear();
+            previewRgbBatch.clear();
         }
     }
-    if (!previewBatch.isEmpty())
+    if (!previewBatch.isEmpty()) {
         m_trackData->appendData(previewBatch);
+        m_trackData->appendRgbWaveformData(previewRgbBatch);
+    }
 
     if (threadShouldExit()) return;
 
@@ -351,6 +607,8 @@ void WaveformAnalyzer::run()
 
     QVector<TrackData::WaveformBin> finalData;
     finalData.reserve(static_cast<int>(rawBins.size()));
+    QVector<TrackData::RgbWaveformFrame> polishedRgbData;
+    polishedRgbData.reserve(static_cast<int>(rawBins.size()));
 
     for (const RawBin& rb : rawBins)
     {
@@ -370,10 +628,35 @@ void WaveformAnalyzer::run()
         wbin.transientDelta = 0.0f;
 
         finalData.append(wbin);
+
+        TrackData::RgbWaveformFrame rgb;
+        const float lowN = std::clamp(wbin.low, 0.0f, 1.0f);
+        const float midN = std::clamp(wbin.mid, 0.0f, 1.0f);
+        const float highN = std::clamp(wbin.high, 0.0f, 1.0f);
+        const float rmsN = std::clamp(0.55f * std::max({lowN, midN, highN}) + 0.45f * ((lowN + midN + highN) / 3.0f), 0.0f, 1.0f);
+        int r = std::clamp(static_cast<int>(std::pow(lowN, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
+        int g = std::clamp(static_cast<int>(std::pow(midN, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
+        int b = std::clamp(static_cast<int>(std::pow(highN, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
+        if (lowN + midN + highN > 0.06f) {
+            r = std::max(r, 18);
+            g = std::max(g, 18);
+            b = std::max(b, 18);
+        }
+        rgb.color = QColor(r, g, b, 230);
+        rgb.rms = rmsN;
+        rgb.low = lowN;
+        rgb.mid = midN;
+        rgb.high = highN;
+        polishedRgbData.append(rgb);
     }
 
-    if (!threadShouldExit())
+    if (!threadShouldExit()) {
         m_trackData->replaceAllData(std::move(finalData), globalMaxPeak);
+        // Light post-processing pass before full Essentia spectral polish.
+        const auto currentRgb = m_trackData->getRgbWaveformData();
+        auto blended = blendRgbPreferDynamics(currentRgb, polishedRgbData);
+        m_trackData->setRgbWaveformData(std::move(blended));
+    }
 
     if (threadShouldExit()) return;
 
@@ -452,6 +735,16 @@ void WaveformAnalyzer::run()
                 }
 
                 if (!threadShouldExit() && !monoSignal.empty()) {
+                    // RGB waveform feature extraction (FrameCutter -> Windowing -> Spectrum -> EnergyBand).
+                    // This provides one color+RMS sample per analysis frame for QML painting.
+                    QVector<TrackData::RgbWaveformFrame> rgbFrames =
+                        analyzeRgbFramesWithEssentia(monoSignal, sampleRate, numPoints, 2048, 1024);
+                    if (!rgbFrames.isEmpty()) {
+                        const auto currentRgb = m_trackData->getRgbWaveformData();
+                        auto blended = blendRgbPreferDynamics(currentRgb, rgbFrames);
+                        m_trackData->setRgbWaveformData(std::move(blended));
+                    }
+
                     using essentia::standard::Algorithm;
                     using essentia::standard::AlgorithmFactory;
 

@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QVector>
 #include <QMutex>
+#include <QColor>
 #include <vector>
 #include <algorithm>
 #include <cmath>
@@ -65,6 +66,16 @@ public:
 
     // Alias kept for renderer compatibility; will be removed in a future refactor.
     using FrequencyData = WaveformBin;
+
+    // Per-frame RGB waveform data for modern DJ-style rendering.
+    // rms controls bar height, color encodes frequency balance (low/mid/high).
+    struct RgbWaveformFrame {
+        QColor color = QColor(255, 255, 255);
+        float rms = 0.0f;
+        float low = 0.0f;
+        float mid = 0.0f;
+        float high = 0.0f;
+    };
 
     explicit TrackData(QObject* parent = nullptr)
         : QObject(parent), m_totalExpected(0), m_globalMaxPeak(0.001f),
@@ -256,6 +267,7 @@ public:
         {
             QMutexLocker locker(&m_mutex);
             m_data.clear();
+            m_rgbData.clear();
             m_totalExpected = 0;
             m_globalMaxPeak = 0.001f;
         }
@@ -266,6 +278,7 @@ public:
         {
             QMutexLocker locker(&m_mutex);
             m_data.clear();
+            m_rgbData.clear();
             m_totalExpected = 0;
             m_globalMaxPeak = 0.001f;
             m_bpm = 0.0;
@@ -277,6 +290,29 @@ public:
             m_segments.clear();
         }
         emit dataCleared();
+    }
+
+    void setRgbWaveformData(QVector<RgbWaveformFrame>&& frames) {
+        {
+            QMutexLocker locker(&m_mutex);
+            m_rgbData = std::move(frames);
+        }
+        emit rgbWaveformUpdated();
+    }
+
+    void appendRgbWaveformData(const QVector<RgbWaveformFrame>& frames) {
+        if (frames.isEmpty())
+            return;
+        {
+            QMutexLocker locker(&m_mutex);
+            m_rgbData.append(frames);
+        }
+        emit rgbWaveformUpdated();
+    }
+
+    QVector<RgbWaveformFrame> getRgbWaveformData() const {
+        QMutexLocker locker(&m_mutex);
+        return m_rgbData;
     }
 
     void appendData(const QVector<FrequencyData>& newData) {
@@ -312,6 +348,7 @@ public:
 signals:
     void dataUpdated();
     void dataCleared();
+    void rgbWaveformUpdated();
     void bpmAnalyzed();
     void keyAnalyzed();
     void beatgridChanged();  // emitted after a manual grid shift
@@ -319,6 +356,7 @@ signals:
 
 private:
     QVector<FrequencyData> m_data;
+    QVector<RgbWaveformFrame> m_rgbData;
     int m_totalExpected;
     float m_globalMaxPeak;
 

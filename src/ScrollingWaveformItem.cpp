@@ -61,6 +61,7 @@ void ScrollingWaveformItem::onTrackLoaded()
 {
     if (m_engine && m_engine->getTrackData()) {
         connect(m_engine->getTrackData(), &TrackData::dataUpdated, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
+        connect(m_engine->getTrackData(), &TrackData::rgbWaveformUpdated, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
         connect(m_engine->getTrackData(), &TrackData::dataCleared, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
         connect(m_engine->getTrackData(), &TrackData::bpmAnalyzed, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
     }
@@ -81,9 +82,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         return nullptr;
     }
 
-    QVector<TrackData::FrequencyData> allData = m_engine->getTrackData()->getWaveformData();
-
-    if (allData.isEmpty()) {
+    QVector<TrackData::RgbWaveformFrame> rgbData = m_engine->getTrackData()->getRgbWaveformData();
+    if (rgbData.isEmpty()) {
         if (oldNode) delete oldNode;
         return nullptr;
     }
@@ -216,15 +216,18 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         return std::max(0.0f, v);
     };
 
-    const TrackData::FrequencyData zeroFD{};
-    auto getD = [&](int idx) -> const TrackData::FrequencyData& {
-        if (idx < 0 || idx >= allData.size()) return zeroFD;
-        return allData[idx];
+    const TrackData::RgbWaveformFrame zeroFD{};
+    auto getD = [&](int idx) -> const TrackData::RgbWaveformFrame& {
+        if (idx < 0 || idx >= rgbData.size()) return zeroFD;
+        return rgbData[idx];
     };
 
-    // Catmull-Rom interpolation per output pixel (4 bands).
+    // Catmull-Rom interpolation per output pixel (RGB + amplitude).
     struct ScrollPixel {
-        float low = 0.0f, lowMid = 0.0f, mid = 0.0f, high = 0.0f;
+        float rms = 0.0f;
+        float r = 0.0f;
+        float g = 0.0f;
+        float b = 0.0f;
     };
     std::vector<ScrollPixel> pixels(wInt);
 
@@ -238,64 +241,39 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         const auto& d2 = getD(i0+2);
         const auto& d3 = getD(i0+3);
 
-        pixels[x].low    = catmull(d0.low,    d1.low,    d2.low,    d3.low,    t);
-        pixels[x].lowMid = catmull(d0.lowMid, d1.lowMid, d2.lowMid, d3.lowMid, t);
-        pixels[x].mid    = catmull(d0.mid,    d1.mid,    d2.mid,    d3.mid,    t);
-        pixels[x].high   = catmull(d0.high,   d1.high,   d2.high,   d3.high,   t);
+        pixels[x].rms = catmull(d0.rms, d1.rms, d2.rms, d3.rms, t);
+        pixels[x].r = catmull(static_cast<float>(d0.color.red()) / 255.0f,
+                              static_cast<float>(d1.color.red()) / 255.0f,
+                              static_cast<float>(d2.color.red()) / 255.0f,
+                              static_cast<float>(d3.color.red()) / 255.0f, t);
+        pixels[x].g = catmull(static_cast<float>(d0.color.green()) / 255.0f,
+                              static_cast<float>(d1.color.green()) / 255.0f,
+                              static_cast<float>(d2.color.green()) / 255.0f,
+                              static_cast<float>(d3.color.green()) / 255.0f, t);
+        pixels[x].b = catmull(static_cast<float>(d0.color.blue()) / 255.0f,
+                              static_cast<float>(d1.color.blue()) / 255.0f,
+                              static_cast<float>(d2.color.blue()) / 255.0f,
+                              static_cast<float>(d3.color.blue()) / 255.0f, t);
     }
 
-    // Draw 4 STACKED layers (back to front).
-    // Each band adds its height ON TOP of the previous one, so all 4 colors
-    // are visible as distinct stripes (like Rekordbox), not hidden behind
-    // the largest layer.
-    //
-    //   totalH = low + lowMid + mid + high   (clamped to midY)
-    //
-    //   Layer 0 (outermost): LOW  — dark blue — from midY±totalH to midY±(totalH-low)
-    //   Layer 1:             LOWMID — gold     — from midY±(lm+mid+high) to midY±(mid+high)
-    //   Layer 2:             MID  — orange     — from midY±(mid+high) to midY±high
-    //   Layer 3 (innermost): HIGH — white      — from midY±high to midY
+    // Draw a single RGB waveform body (same color system as overview renderer).
     for (int x = 0; x < wInt; ++x) {
         const float fx = static_cast<float>(x);
         const int vIdx = x * 2;
 
-        // Raw band heights (each 0..1 * midY)
-        float hLow    = pixels[x].low    * midY;
-        float hLowMid = pixels[x].lowMid * midY;
-        float hMid    = pixels[x].mid    * midY;
-        float hHigh   = pixels[x].high   * midY;
+        const float amp = std::clamp(pixels[x].rms, 0.0f, 1.0f) * midY;
+        const int r = std::clamp(static_cast<int>(pixels[x].r * 255.0f * 1.10f + 8.0f), 0, 255);
+        const int g = std::clamp(static_cast<int>(pixels[x].g * 255.0f * 1.10f + 8.0f), 0, 255);
+        const int b = std::clamp(static_cast<int>(pixels[x].b * 255.0f * 1.10f + 8.0f), 0, 255);
 
-        // Stack from inside out: high is innermost, low is outermost
-        float stackHigh   = hHigh;
-        float stackMid    = hHigh + hMid;
-        float stackLowMid = hHigh + hMid + hLowMid;
-        float stackLow    = hHigh + hMid + hLowMid + hLow;
-
-        // Clamp total to available half-height
-        if (stackLow > midY) {
-            float scale = midY / stackLow;
-            stackHigh   *= scale;
-            stackMid    *= scale;
-            stackLowMid *= scale;
-            stackLow     = midY;
-        }
-
-        // Layer 0 (background): LOW — dark blue — outermost band
-        lowV[vIdx  ].set(fx, midY - stackLow,  0, 0, 255, 220);
-        lowV[vIdx+1].set(fx, midY + stackLow,  0, 0, 255, 220);
-
-        // Layer 1: LOWMID — gold/ocker — second band from outside
-        lowMidV[vIdx  ].set(fx, midY - stackLowMid, 255, 170, 0, 200);
-        lowMidV[vIdx+1].set(fx, midY + stackLowMid, 255, 170, 0, 200);
-
-        // Layer 2: MID — orange/red — second band from inside
-        midV[vIdx  ].set(fx, midY - stackMid, 255, 68, 0, 200);
-        midV[vIdx+1].set(fx, midY + stackMid, 255, 68, 0, 200);
-
-        // Layer 3 (foreground): HIGH — pure white — innermost band
-        highV[vIdx  ].set(fx, midY - stackHigh, 255, 255, 255, 220);
-        highV[vIdx+1].set(fx, midY + stackHigh, 255, 255, 255, 220);
+        lowV[vIdx  ].set(fx, midY - amp, r, g, b, 235);
+        lowV[vIdx+1].set(fx, midY + amp, r, g, b, 235);
     }
+
+    // Hide legacy stacked layers when RGB mode is active.
+    lowMidNode->geometry()->allocate(0);
+    midNode->geometry()->allocate(0);
+    highNode->geometry()->allocate(0);
 
     lowNode   ->markDirty(QSGNode::DirtyGeometry);
     lowMidNode->markDirty(QSGNode::DirtyGeometry);

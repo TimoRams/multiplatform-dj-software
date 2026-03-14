@@ -18,7 +18,7 @@ Item {
         border.width: 1
 
         // Rectified (half-wave) overview — baseline at bottom, draws upward only
-        WaveformItem {
+        RgbWaveformItem {
             id: overview
             anchors.fill: parent
             anchors.margins: 2

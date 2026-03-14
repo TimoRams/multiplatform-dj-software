@@ -63,6 +63,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/DjEngine.cpp
     src/PhraseAnalyzer.h
     src/PhraseAnalyzer.cpp
+    src/RgbWaveformItem.h
+    src/RgbWaveformItem.cpp
     src/WaveformItem.cpp
     src/ScrollingWaveformItem.cpp
     src/WaveformAnalyzer.cpp
