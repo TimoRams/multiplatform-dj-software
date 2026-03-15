@@ -104,6 +104,11 @@ if(ESSENTIA_FOUND)
     target_include_directories(RamsbrockDJ PRIVATE ${ESSENTIA_INCLUDE_DIRS})
     target_link_libraries(RamsbrockDJ PRIVATE ${ESSENTIA_LIBRARIES})
     target_compile_options(RamsbrockDJ PRIVATE ${ESSENTIA_CFLAGS_OTHER})
+    # Ensure non-standard library locations (e.g. /usr/local/lib) are visible at runtime.
+    if(ESSENTIA_LIBRARY_DIRS)
+        set_property(TARGET RamsbrockDJ APPEND PROPERTY BUILD_RPATH "${ESSENTIA_LIBRARY_DIRS}")
+        set_property(TARGET RamsbrockDJ APPEND PROPERTY INSTALL_RPATH "${ESSENTIA_LIBRARY_DIRS}")
+    endif()
     target_compile_definitions(RamsbrockDJ PRIVATE ESSENTIA_FOUND=1)
 endif()
 
