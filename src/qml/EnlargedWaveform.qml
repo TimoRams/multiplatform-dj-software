@@ -80,8 +80,7 @@ Item {
             onPressed: (mouse) => {
                 if (root.engine === null) return
                 wasPlayingBeforeScrub = root.engine.isPlaying
-                if (wasPlayingBeforeScrub)
-                    root.engine.pauseForScrub()
+                root.engine.pauseForScrub()
                 lastMouseX = mouse.x
             }
 
@@ -96,8 +95,7 @@ Item {
 
             onReleased: {
                 if (root.engine === null) return
-                if (wasPlayingBeforeScrub)
-                    root.engine.resumeAfterScrub()
+                root.engine.resumeAfterScrub()
                 wasPlayingBeforeScrub = false
             }
         }

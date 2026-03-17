@@ -334,6 +334,9 @@ public:
     void setFxSCKnob(float knob)          { m_fx.setSCKnobValue(knob); }
 
     void setReverse(bool rev) { m_reverse.store(rev, std::memory_order_relaxed); }
+    void setReverseCompensationSpeed(double speed) {
+        m_reverseCompensationSpeed.store(std::clamp(speed, 0.05, 4.0), std::memory_order_relaxed);
+    }
 
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override {
         if (source) source->prepareToPlay(samplesPerBlockExpected, sampleRate);
@@ -399,8 +402,9 @@ public:
             // 2. Seek transport backwards by 2× block length:
             //    - 1× to undo the forward read that just happened
             //    - 1× to actually move backwards
+            const double compSpeed = m_reverseCompensationSpeed.load(std::memory_order_relaxed);
             double currentPos = m_transport->getCurrentPosition();
-            double blockDur   = static_cast<double>(numSamp) / m_sampleRate;
+            double blockDur   = (static_cast<double>(numSamp) / m_sampleRate) * compSpeed;
             double newPos     = currentPos - 2.0 * blockDur;
             if (newPos < 0.0) newPos = 0.0;
             m_transport->setPosition(newPos);
@@ -528,6 +532,7 @@ private:
 
     FxProcessor m_fx;
     std::atomic<bool> m_reverse { false };
+    std::atomic<double> m_reverseCompensationSpeed { 1.0 };
     BrickwallLimiter m_limiter;
 
 public:
@@ -1010,6 +1015,19 @@ void DjEngine::setPosition(float progress)
 
 void DjEngine::onTimer()
 {
+    if (m_isScrubbing) {
+        // Hold the transport near the last user-scrubbed position so playback
+        // does not drift when the user pauses mouse movement mid-scratch.
+        transportSource.setPosition(m_scrubHoldPosition);
+
+        m_atomicPlayheadPos.store(transportSource.getCurrentPosition(),
+                                  std::memory_order_relaxed);
+        emit progressChanged();
+        emit vuLevelChanged();
+        emit gainReductionChanged();
+        return;
+    }
+
     if (transportSource.isPlaying()) {
         // Store a position snapshot with a matching wall-clock timestamp.
         // getVisualPosition() forward-interpolates from here for each render frame.
@@ -1066,11 +1084,20 @@ float DjEngine::gainReduction() const
 
 void DjEngine::pauseForScrub()
 {
-    // Stop audio output immediately.  We deliberately do NOT emit playingChanged()
-    // so the QML FrameAnimation keeps ticking and the waveform stays live.
-    transportSource.stop();
-    m_snapValid    = false;
-    m_isScrubbing  = true;
+    if (m_isScrubbing)
+        return;
+
+    m_scrubWasPlaying = transportSource.isPlaying();
+    m_isScrubbing = true;
+    m_snapValid = false;
+
+    // Ensure audio path is running so scratch movement is audible even when
+    // the deck was paused before the gesture.
+    if (!transportSource.isPlaying())
+        transportSource.start();
+
+    m_scrubHoldPosition = transportSource.getCurrentPosition();
+    m_lastScrubInputClock.restart();
 }
 
 void DjEngine::scrubBy(double pixelDelta)
@@ -1084,23 +1111,47 @@ void DjEngine::scrubBy(double pixelDelta)
     if (m_pixelsPerSecond <= 0.0) return;
 
     double timeDelta = -pixelDelta / m_pixelsPerSecond;
+    scratchBySeconds(timeDelta);
+}
 
-    double len     = transportSource.getLengthInSeconds();
+void DjEngine::scratchBySeconds(double deltaSeconds)
+{
+    if (deltaSeconds == 0.0)
+        return;
+
+    // Increase response so jog/waveform drags feel closer to vinyl movement.
+    deltaSeconds *= 1.85;
+    deltaSeconds = std::clamp(deltaSeconds, -0.12, 0.12);
+
+    double len = transportSource.getLengthInSeconds();
+    if (len <= 0.0)
+        return;
+
     double current = transportSource.getCurrentPosition();
-    double newPos  = std::clamp(current + timeDelta, 0.0, len > 0.0 ? len : 0.0);
+    double newPos = std::clamp(current + deltaSeconds, 0.0, len);
 
     transportSource.setPosition(newPos);
+    m_scrubHoldPosition = newPos;
+    m_lastScrubInputClock.restart();
 
-    // Keep the atomic + snap in sync so getVisualPosition() stays correct
-    // while transport is stopped during scrub.
+    // Keep the atomic + snap in sync for all synced UIs.
     m_atomicPlayheadPos.store(newPos, std::memory_order_relaxed);
     m_snapPosition = newPos;
+    emit progressChanged();
 }
 
 void DjEngine::resumeAfterScrub()
 {
+    if (!m_isScrubbing)
+        return;
+
     m_isScrubbing = false;
-    transportSource.start();
+    if (m_scrubWasPlaying)
+        transportSource.start();
+    else
+        transportSource.stop();
+
+    m_scrubWasPlaying = false;
     m_snapClock.restart();
     m_snapValid = true;
     emit playingChanged();
@@ -1192,12 +1243,14 @@ void DjEngine::updateSpeedAndPitch()
             timeStretchSource->setTempoRatio(speedMultiplier);
             timeStretchSource->setKeylock(true);
         }
+        if (mixerSource) mixerSource->setReverseCompensationSpeed(1.0);
     } else {
         if (resamplingSource) resamplingSource->setResamplingRatio(speedMultiplier);
         if (timeStretchSource) {
             timeStretchSource->setTempoRatio(1.0); // bypass
             timeStretchSource->setKeylock(false);
         }
+        if (mixerSource) mixerSource->setReverseCompensationSpeed(speedMultiplier);
     }
 }
 

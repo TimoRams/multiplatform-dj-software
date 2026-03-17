@@ -89,13 +89,13 @@ public:
     // can convert mouse pixels → audio seconds without needing QML math.
     double pixelsPerSecond() const { return m_pixelsPerSecond; }
 
-    // Scrubbing API called from QML MouseArea.
-    // pauseForScrub()  – silently stops transport without emitting playingChanged
-    //                    so the FrameAnimation stays alive for live preview.
-    // scrubBy()        – moves playhead by pixelDelta pixels (signed), thread-safe.
-    // resumeAfterScrub()– restarts transport and re-emits playingChanged.
+    // Universal scratch API used by jogwheel and scrolling waveform.
+    // pauseForScrub() captures current play state and enters scratch mode.
+    // scrubBy() and scratchBySeconds() move the playhead with audible output.
+    // resumeAfterScrub() restores pre-scratch transport state.
     Q_INVOKABLE void pauseForScrub();
     Q_INVOKABLE void scrubBy(double pixelDelta);
+    Q_INVOKABLE void scratchBySeconds(double deltaSeconds);
     Q_INVOKABLE void resumeAfterScrub();
 
     // Manual beat-grid correction: rebuilds the BeatMarker array so that the
@@ -316,6 +316,9 @@ private:
     // m_pixelsPerSecond is mirrored from the waveform renderer (150 pts/s × ppp).
     double m_pixelsPerSecond = 225.0;  // default: 150 pts/s × 1.5 ppp
     bool   m_isScrubbing     = false;
+    bool   m_scrubWasPlaying = false;
+    double m_scrubHoldPosition = 0.0;
+    QElapsedTimer m_lastScrubInputClock;
 
     static std::mutex s_syncMutex;
     static std::vector<DjEngine*> s_syncDecks;
