@@ -96,6 +96,10 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/LibraryTableModel.cpp
     src/BrickwallLimiter.h
     src/BrickwallLimiter.cpp
+    src/ScratchEngine.h
+    src/ScratchEngine.cpp
+    src/TurntableSimulation.h
+    src/TurntableSimulation.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE src)
