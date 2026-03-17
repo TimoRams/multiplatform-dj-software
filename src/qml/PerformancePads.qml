@@ -5,7 +5,9 @@ Item {
     id: root
 
     property int activeMode: 0
+    property var engine: null
     property string accentColor: "#ff9900"
+    readonly property real padAreaWidth: Math.max(260, root.width * 0.5)
 
     readonly property var modes: [
         { label: "HOT CUE",   color: "#e04040" },
@@ -30,9 +32,11 @@ Item {
         anchors.fill: parent
         spacing: 4
 
-        // ── MODE TABS ────────────────────────────────────────────────────
+        // Mode tabs are intentionally only as wide as the pad grid.
         RowLayout {
-            Layout.fillWidth:   true
+            Layout.preferredWidth: padAreaWidth
+            Layout.maximumWidth: padAreaWidth
+            Layout.alignment: Qt.AlignLeft
             Layout.preferredHeight: 32
             Layout.maximumHeight:   32
             spacing: 2
@@ -78,69 +82,88 @@ Item {
         }
 
         // ── PAD GRID (4 × 2) — half width, half height, left-aligned ───
-        Item {
+        RowLayout {
+            id: contentRow
             Layout.fillWidth:  true
             Layout.fillHeight: true
+            Layout.minimumHeight: 88
+            spacing: 12
 
-            GridLayout {
-                width:  parent.width  * 0.5
-                height: parent.height * 0.5
-                anchors.left:   parent.left
-                anchors.top:    parent.top
+            Item {
+                Layout.preferredWidth: padAreaWidth
+                Layout.maximumWidth: padAreaWidth
+                Layout.fillHeight: true
 
-                columns: 4
-                rows:    2
-                columnSpacing: 3
-                rowSpacing:    3
+                GridLayout {
+                    anchors.fill: parent
 
-            Repeater {
-                model: 8
+                    columns: 4
+                    rows:    2
+                    columnSpacing: 3
+                    rowSpacing:    3
 
-                Rectangle {
-                    Layout.fillWidth:  true
-                    Layout.fillHeight: true
-                    Layout.row:    Math.floor(index / 4)
-                    Layout.column: index % 4
+                    Repeater {
+                        model: 8
 
-                    radius: 5
-                    color:  padMouse.pressed
-                            ? Qt.lighter(padBaseColor, 1.6)
-                            : padMouse.containsMouse
-                              ? Qt.lighter(padBaseColor, 1.2)
-                              : padBaseColor
+                        Rectangle {
+                            Layout.fillWidth:  true
+                            Layout.fillHeight: true
+                            Layout.row:    Math.floor(index / 4)
+                            Layout.column: index % 4
 
-                    border.color: Qt.lighter(padBaseColor, 1.4)
-                    border.width: 1
+                            radius: 5
+                            color:  padMouse.pressed
+                                    ? Qt.lighter(padBaseColor, 1.6)
+                                    : padMouse.containsMouse
+                                      ? Qt.lighter(padBaseColor, 1.2)
+                                      : padBaseColor
 
-                    readonly property color padBaseColor:
-                        Qt.darker(root.padColors[root.activeMode][index], 2.8)
+                            border.color: Qt.lighter(padBaseColor, 1.4)
+                            border.width: 1
 
-                    // Pad number (top-left corner)
-                    Text {
-                        anchors.top:  parent.top
-                        anchors.left: parent.left
-                        anchors.margins: 5
-                        text:  (index + 1).toString()
-                        color: Qt.lighter(parent.padBaseColor, 2.0)
-                        font.pixelSize: window.sp(10)
-                        font.bold: true
-                        font.family: "monospace"
-                        opacity: 0.7
+                            readonly property color padBaseColor:
+                                Qt.darker(root.padColors[root.activeMode][index], 2.8)
+
+                            // Pad number (top-left corner)
+                            Text {
+                                anchors.top:  parent.top
+                                anchors.left: parent.left
+                                anchors.margins: 5
+                                text:  (index + 1).toString()
+                                color: Qt.lighter(parent.padBaseColor, 2.0)
+                                font.pixelSize: window.sp(10)
+                                font.bold: true
+                                font.family: "monospace"
+                                opacity: 0.7
+                            }
+
+                            MouseArea {
+                                id: padMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onPressed:  console.log("[Pad] Mode=" + root.modes[root.activeMode].label
+                                                        + " Pad=" + (index + 1))
+                            }
+
+                            Behavior on color { ColorAnimation { duration: 80 } }
+                        }
                     }
-
-                    MouseArea {
-                        id: padMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onPressed:  console.log("[Pad] Mode=" + root.modes[root.activeMode].label
-                                                + " Pad=" + (index + 1))
-                    }
-
-                    Behavior on color { ColorAnimation { duration: 80 } }
                 }
             }
-            }   // GridLayout
-        }       // Item wrapper
+
+            TurntableIndicator {
+                engine: root.engine
+                Layout.alignment: Qt.AlignVCenter
+                Layout.preferredWidth: Math.min(contentRow.height, Math.max(100, root.width * 0.16))
+                Layout.preferredHeight: Layout.preferredWidth
+                Layout.maximumWidth: Layout.preferredWidth
+                Layout.maximumHeight: Layout.preferredHeight
+            }
+
+            Item {
+                Layout.fillWidth: true
+            }
+        }
     }
 }

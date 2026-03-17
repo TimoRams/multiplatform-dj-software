@@ -26,6 +26,25 @@ Item {
             rectified: true
         }
 
+        Rectangle {
+            id: overviewPlayhead
+            width: 3
+            anchors.top: overview.top
+            anchors.bottom: overview.bottom
+            x: {
+                if (!root.engine) return overview.x
+                var p = root.engine.progress
+                if (p < 0.0) p = 0.0
+                if (p > 1.0) p = 1.0
+                return overview.x + p * overview.width - width / 2
+            }
+            color: "#ff2b2b"
+            border.color: "#ffd0d0"
+            border.width: 1
+            radius: 1
+            z: 5
+        }
+
         // Scrubbing / seeking
         MouseArea {
             anchors.fill: parent

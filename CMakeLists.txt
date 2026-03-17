@@ -52,6 +52,7 @@ qt_add_qml_module(${PROJECT_NAME}
         src/qml/TrackInfoDisplay.qml
         src/qml/Library.qml
         src/qml/PerformancePads.qml
+        src/qml/TurntableIndicator.qml
         src/qml/MixerSection.qml
         src/qml/SettingsWindow.qml
         src/qml/FxUnit.qml

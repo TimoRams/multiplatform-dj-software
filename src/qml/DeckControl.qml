@@ -749,6 +749,7 @@ Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.minimumHeight: 100
+                engine: deck.engine
                 accentColor: deck.deckName === "A" ? "#ff9900" : "#00ccff"
             }
         }
