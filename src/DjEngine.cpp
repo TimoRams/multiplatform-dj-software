@@ -349,6 +349,10 @@ public:
         midEq.prepare(spec);
         highEq.prepare(spec);
         colorFilter.prepare(spec);
+
+        reverseTailBuffer.setSize(2, kReverseCrossfadeSamples);
+        reverseTailBuffer.clear();
+        reverseTailValid = false;
         
         m_sampleRate = sampleRate;
         updateFilters();
@@ -362,6 +366,50 @@ public:
         if (source) source->getNextAudioBlock(bufferToFill);
 
         if (m_sampleRate <= 0.0 || bufferToFill.buffer->getNumChannels() == 0 || bufferToFill.numSamples == 0) return;
+
+        // Reverse has to happen BEFORE downstream DSP (EQ/FX/limiter), otherwise
+        // stateful processors run on forward-time blocks and produce rough artifacts
+        // once the block gets flipped afterwards.
+        const bool reverseOn = m_reverse.load(std::memory_order_relaxed);
+        if (reverseOn && m_transport && m_sampleRate > 0) {
+            const int s = bufferToFill.startSample;
+            const int numSamp = bufferToFill.numSamples;
+
+            for (int ch = 0; ch < bufferToFill.buffer->getNumChannels(); ++ch) {
+                float* ptr = bufferToFill.buffer->getWritePointer(ch) + s;
+                std::reverse(ptr, ptr + numSamp);
+            }
+
+            const double compSpeed = m_reverseCompensationSpeed.load(std::memory_order_relaxed);
+            const double currentPos = m_transport->getCurrentPosition();
+            const double blockDur = (static_cast<double>(numSamp) / m_sampleRate) * compSpeed;
+            double newPos = currentPos - 2.0 * blockDur;
+            if (newPos < 0.0) newPos = 0.0;
+            m_transport->setPosition(newPos);
+
+            // Smooth reverse block boundaries to reduce zipper/click artifacts.
+            const int fadeLen = std::min(numSamp, kReverseCrossfadeSamples);
+            if (reverseTailValid && fadeLen > 0) {
+                for (int i = 0; i < fadeLen; ++i) {
+                    const float t = static_cast<float>(i + 1) / static_cast<float>(fadeLen);
+                    const float a = 1.0f - t;
+                    for (int ch = 0; ch < std::min(bufferToFill.buffer->getNumChannels(), 2); ++ch) {
+                        const float oldS = reverseTailBuffer.getSample(ch, i);
+                        const float newS = bufferToFill.buffer->getSample(ch, s + i);
+                        bufferToFill.buffer->setSample(ch, s + i, oldS * a + newS * t);
+                    }
+                }
+            }
+
+            if (fadeLen > 0) {
+                const int tailStart = s + numSamp - fadeLen;
+                for (int ch = 0; ch < std::min(bufferToFill.buffer->getNumChannels(), 2); ++ch)
+                    reverseTailBuffer.copyFrom(ch, 0, *bufferToFill.buffer, ch, tailStart, fadeLen);
+                reverseTailValid = true;
+            }
+        } else {
+            reverseTailValid = false;
+        }
 
         juce::dsp::AudioBlock<float> block(*bufferToFill.buffer);
         auto slicedBlock = block.getSubBlock(bufferToFill.startSample, bufferToFill.numSamples);
@@ -385,30 +433,6 @@ public:
         m_fx.process(*bufferToFill.buffer,
                      bufferToFill.startSample,
                      bufferToFill.numSamples);
-
-        // ── Reverse: flip samples in block + scrub transport backwards ─────────
-        if (m_reverse.load(std::memory_order_relaxed) && m_transport && m_sampleRate > 0)
-        {
-            const int s = bufferToFill.startSample;
-            const int numSamp = bufferToFill.numSamples;
-
-            // 1. Reverse the samples in the block so audio plays backwards
-            for (int ch = 0; ch < bufferToFill.buffer->getNumChannels(); ++ch)
-            {
-                float* ptr = bufferToFill.buffer->getWritePointer(ch) + s;
-                std::reverse(ptr, ptr + numSamp);
-            }
-
-            // 2. Seek transport backwards by 2× block length:
-            //    - 1× to undo the forward read that just happened
-            //    - 1× to actually move backwards
-            const double compSpeed = m_reverseCompensationSpeed.load(std::memory_order_relaxed);
-            double currentPos = m_transport->getCurrentPosition();
-            double blockDur   = (static_cast<double>(numSamp) / m_sampleRate) * compSpeed;
-            double newPos     = currentPos - 2.0 * blockDur;
-            if (newPos < 0.0) newPos = 0.0;
-            m_transport->setPosition(newPos);
-        }
 
         // ── Master Volume + Anti-Clip Limiter ───────────────────────────
         {
@@ -534,6 +558,10 @@ private:
     std::atomic<bool> m_reverse { false };
     std::atomic<double> m_reverseCompensationSpeed { 1.0 };
     BrickwallLimiter m_limiter;
+
+    juce::AudioBuffer<float> reverseTailBuffer;
+    bool reverseTailValid = false;
+    static constexpr int kReverseCrossfadeSamples = 96;
 
 public:
     // VU meter peak levels — written on audio thread, read from UI thread
@@ -1250,8 +1278,9 @@ void DjEngine::setAntiClip(bool enabled) {
 void DjEngine::updateSpeedAndPitch()
 {
     double speedMultiplier = 1.0 + (m_tempoPercent / 100.0);
+    bool useKeylockPath = m_keylock && !m_isReverse;
     
-    if (m_keylock) {
+    if (useKeylockPath) {
         if (resamplingSource) resamplingSource->setResamplingRatio(1.0);
         if (timeStretchSource) {
             timeStretchSource->setTempoRatio(speedMultiplier);
@@ -1624,6 +1653,8 @@ void DjEngine::setReverse(bool on)
 {
     if (m_isReverse == on) return;
     m_isReverse = on;
+    // Keep resampling/time-stretch path consistent with reverse mode.
+    updateSpeedAndPitch();
     if (mixerSource) mixerSource->setReverse(on);
     emit reverseChanged();
 }

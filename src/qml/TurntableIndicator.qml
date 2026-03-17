@@ -29,9 +29,10 @@ Item {
         var playheadSec = root.engine.getPlayheadPositionAtomic()
         var bpm = root.engine.currentBpm > 0 ? root.engine.currentBpm : 120.0
         var degreesPerSecond = (bpm * 360.0) / (60.0 * root.beatsPerRevolution)
-        var signedDegreesPerSecond = root.engine.isReverse ? -degreesPerSecond : degreesPerSecond
 
-        var angle = (playheadSec * signedDegreesPerSecond) % 360.0
+        // Rotation follows actual playhead direction. In reverse, playheadSec
+        // moves backwards, so the wheel naturally rotates backwards as well.
+        var angle = (playheadSec * degreesPerSecond) % 360.0
         if (angle < 0)
             angle += 360.0
         markerRotator.rotation = angle
