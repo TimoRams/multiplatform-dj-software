@@ -1016,12 +1016,25 @@ void DjEngine::setPosition(float progress)
 void DjEngine::onTimer()
 {
     if (m_isScrubbing) {
-        // Hold the transport near the last user-scrubbed position so playback
-        // does not drift when the user pauses mouse movement mid-scratch.
-        transportSource.setPosition(m_scrubHoldPosition);
+        // Click-and-hold should brake quietly; audible scratch is only while
+        // there is active motion input.
+        const qint64 idleMs = m_lastScrubInputClock.isValid()
+            ? m_lastScrubInputClock.elapsed()
+            : 1000;
 
-        m_atomicPlayheadPos.store(transportSource.getCurrentPosition(),
-                                  std::memory_order_relaxed);
+        if (idleMs > 25) {
+            if (transportSource.isPlaying())
+                transportSource.stop();
+            transportSource.setPosition(m_scrubHoldPosition);
+            m_atomicPlayheadPos.store(m_scrubHoldPosition,
+                                      std::memory_order_relaxed);
+        } else {
+            if (!transportSource.isPlaying())
+                transportSource.start();
+            m_atomicPlayheadPos.store(transportSource.getCurrentPosition(),
+                                      std::memory_order_relaxed);
+        }
+
         emit progressChanged();
         emit vuLevelChanged();
         emit gainReductionChanged();
@@ -1091,13 +1104,11 @@ void DjEngine::pauseForScrub()
     m_isScrubbing = true;
     m_snapValid = false;
 
-    // Ensure audio path is running so scratch movement is audible even when
-    // the deck was paused before the gesture.
-    if (!transportSource.isPlaying())
-        transportSource.start();
-
     m_scrubHoldPosition = transportSource.getCurrentPosition();
     m_lastScrubInputClock.restart();
+
+    // Immediate touch brake: no scratch noise on plain click/hold.
+    transportSource.stop();
 }
 
 void DjEngine::scrubBy(double pixelDelta)
@@ -1129,6 +1140,9 @@ void DjEngine::scratchBySeconds(double deltaSeconds)
 
     double current = transportSource.getCurrentPosition();
     double newPos = std::clamp(current + deltaSeconds, 0.0, len);
+
+    if (m_isScrubbing && !transportSource.isPlaying())
+        transportSource.start();
 
     transportSource.setPosition(newPos);
     m_scrubHoldPosition = newPos;

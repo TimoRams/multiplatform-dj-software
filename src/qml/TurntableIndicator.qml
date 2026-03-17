@@ -10,8 +10,10 @@ Item {
     // 2 beats per full turn feels closer to a DJ platter indicator speed.
     property real beatsPerRevolution: 2.0
     property bool dragActive: false
+    property bool _scratchEngaged: false
+    property real _accumDragAngle: 0.0
+    property real scratchDeadzoneDeg: 1.4
 
-    property bool _wasPlayingBeforeDrag: false
     property real _lastDragAngle: 0.0
     property real _grabOffsetAngle: 0.0
 
@@ -139,10 +141,11 @@ Item {
                 }
 
                 root.dragActive = true
+                root._scratchEngaged = false
+                root._accumDragAngle = 0.0
                 var cursorAngle = root.angleForPoint(mouse.x, mouse.y)
                 root._grabOffsetAngle = root.shortestAngleDelta(cursorAngle, markerRotator.rotation)
                 root._lastDragAngle = markerRotator.rotation
-                root._wasPlayingBeforeDrag = root.engine.isPlaying
                 root.engine.pauseForScrub()
             }
 
@@ -153,6 +156,16 @@ Item {
                 var cursorAngle = root.angleForPoint(mouse.x, mouse.y)
                 var nextVisualAngle = root.normalizeAngle(cursorAngle + root._grabOffsetAngle)
                 var delta = root.shortestAngleDelta(root._lastDragAngle, nextVisualAngle)
+
+                if (!root._scratchEngaged) {
+                    root._accumDragAngle += Math.abs(delta)
+                    root._lastDragAngle = nextVisualAngle
+
+                    if (root._accumDragAngle < root.scratchDeadzoneDeg)
+                        return
+
+                    root._scratchEngaged = true
+                }
 
                 markerRotator.rotation = nextVisualAngle
                 root._lastDragAngle = nextVisualAngle
@@ -165,7 +178,8 @@ Item {
 
                 root.dragActive = false
                 root.engine.resumeAfterScrub()
-                root._wasPlayingBeforeDrag = false
+                root._scratchEngaged = false
+                root._accumDragAngle = 0.0
                 root.updateRotation()
             }
 
@@ -173,7 +187,8 @@ Item {
                 root.dragActive = false
                 if (root.engine)
                     root.engine.resumeAfterScrub()
-                root._wasPlayingBeforeDrag = false
+                root._scratchEngaged = false
+                root._accumDragAngle = 0.0
                 root.updateRotation()
             }
         }

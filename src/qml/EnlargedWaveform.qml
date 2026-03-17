@@ -76,17 +76,33 @@ Item {
 
             property real lastMouseX: 0
             property bool wasPlayingBeforeScrub: false
+            property bool scrubEngaged: false
+            property real accumulatedDragPx: 0
+            property real scrubDeadzonePx: 2.0
 
             onPressed: (mouse) => {
                 if (root.engine === null) return
                 wasPlayingBeforeScrub = root.engine.isPlaying
-                root.engine.pauseForScrub()
+                scrubEngaged = false
+                accumulatedDragPx = 0
                 lastMouseX = mouse.x
+                root.engine.pauseForScrub()
             }
 
             onPositionChanged: (mouse) => {
                 if (root.engine === null) return
                 let deltaX = mouse.x - lastMouseX
+
+                if (!scrubEngaged) {
+                    accumulatedDragPx += Math.abs(deltaX)
+                    lastMouseX = mouse.x
+
+                    if (accumulatedDragPx < scrubDeadzonePx)
+                        return
+
+                    scrubEngaged = true
+                }
+
                 root.engine.scrubBy(deltaX)
                 // Keep waveform repainting during scrub (transport is stopped).
                 waveItem.requestUpdate()
@@ -96,6 +112,16 @@ Item {
             onReleased: {
                 if (root.engine === null) return
                 root.engine.resumeAfterScrub()
+                scrubEngaged = false
+                accumulatedDragPx = 0
+                wasPlayingBeforeScrub = false
+            }
+
+            onCanceled: {
+                if (root.engine)
+                    root.engine.resumeAfterScrub()
+                scrubEngaged = false
+                accumulatedDragPx = 0
                 wasPlayingBeforeScrub = false
             }
         }
