@@ -82,6 +82,8 @@ public:
     float getPosition() const;
     // Latency-compensated position in seconds, used by the waveform renderer.
     float getVisualPosition() const;
+    // QML-safe access to the interpolated visual playhead.
+    Q_INVOKABLE double getVisualPositionQml() const;
     // Lock-free atomic read of the playhead position (seconds).
     // Called from QML FrameAnimation every VSync frame — must be wait-free.
     Q_INVOKABLE double getPlayheadPositionAtomic() const;

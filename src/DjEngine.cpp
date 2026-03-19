@@ -862,6 +862,11 @@ float DjEngine::getVisualPosition() const
     return static_cast<float>(interpolated);
 }
 
+double DjEngine::getVisualPositionQml() const
+{
+    return static_cast<double>(getVisualPosition());
+}
+
 double DjEngine::getPlayheadPositionAtomic() const
 {
     // Lock-free load — always returns the last value written by onTimer().

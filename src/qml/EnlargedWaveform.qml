@@ -17,9 +17,8 @@ Item {
         if (!root.engine)
             return -1000
 
-        // Use an invokable engine API for QML-safe playhead reads.
-        // getVisualPosition() is C++-internal and not exposed to QML.
-        var pos = root.engine.getPlayheadPositionAtomic()
+        // Use interpolated visual position, matching the C++ waveform renderer.
+        var pos = root.engine.getVisualPositionQml()
         if (pos === undefined || isNaN(pos))
             pos = root.engine.progress * root.engine.getDuration()
 
