@@ -136,6 +136,7 @@ void RgbWaveformItem::paint(QPainter* painter)
         if (!m.value("set").toBool())
             continue;
 
+        const int cueIndex = m.value("index").toInt();
         const double cueSec = m.value("positionSec").toDouble();
         const float progress = std::clamp(static_cast<float>(cueSec / durationSec), 0.0f, 1.0f);
         const float x = progress * static_cast<float>(w);
@@ -147,5 +148,27 @@ void RgbWaveformItem::paint(QPainter* painter)
 
         painter->setPen(QPen(c, 1.0));
         painter->drawLine(QPointF(x, 0.0), QPointF(x, static_cast<float>(h)));
+
+        // Top cue badge: same cue color + readable number inside.
+        const float badgeW = 16.0f;
+        const float badgeH = 11.0f;
+        const float badgeX = std::clamp(x - badgeW * 0.5f, 0.0f, static_cast<float>(w) - badgeW);
+        const QRectF badgeRect(badgeX, 0.0, badgeW, badgeH);
+
+        QColor fill = c;
+        fill.setAlpha(245);
+        painter->setBrush(fill);
+        painter->setPen(QPen(fill.darker(130), 1.0));
+        painter->drawRoundedRect(badgeRect, 2.0, 2.0);
+
+        const int brightness = (fill.red() * 299 + fill.green() * 587 + fill.blue() * 114) / 1000;
+        const QColor textColor = (brightness < 145) ? QColor("#f8f8f8") : QColor("#111111");
+        painter->setPen(textColor);
+
+        QFont f = painter->font();
+        f.setBold(true);
+        f.setPixelSize(8);
+        painter->setFont(f);
+        painter->drawText(badgeRect, Qt::AlignCenter, QString::number(cueIndex + 1));
     }
 }
