@@ -29,6 +29,7 @@ void ScrollingWaveformItem::setEngine(DjEngine* engine)
         connect(m_engine, &DjEngine::trackLoaded, this, &ScrollingWaveformItem::onTrackLoaded);
         connect(m_engine, &DjEngine::loopChanged, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
         connect(m_engine, &DjEngine::segmentsChanged, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
+        connect(m_engine, &DjEngine::hotCuesChanged, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
     } else {
         // nothing to stop — FrameAnimation in QML will have stopped already
     }
@@ -175,6 +176,17 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         segmentNode->setMaterial(new QSGVertexColorMaterial());
         segmentNode->setFlag(QSGNode::OwnsMaterial);
         rootNode->appendChildNode(segmentNode);
+
+        // 10: hotcue markers (DrawLines)
+        auto* hotCueNode = new QSGGeometryNode();
+        auto* hotCueGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
+        hotCueGeo->setDrawingMode(QSGGeometry::DrawLines);
+        hotCueGeo->setLineWidth(1.5f);
+        hotCueNode->setGeometry(hotCueGeo);
+        hotCueNode->setFlag(QSGNode::OwnsGeometry);
+        hotCueNode->setMaterial(new QSGVertexColorMaterial());
+        hotCueNode->setFlag(QSGNode::OwnsMaterial);
+        rootNode->appendChildNode(hotCueNode);
     }
 
     auto* lowNode      = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(0));
@@ -187,6 +199,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     auto* loopFillNode = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(7));
     auto* loopLineNode = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(8));
     auto* segmentNode  = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(9));
+    auto* hotCueNode   = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(10));
 
     int wInt = static_cast<int>(width());
     if (wInt <= 0) return rootNode;
@@ -457,6 +470,50 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
 
     loopFillNode->markDirty(QSGNode::DirtyGeometry);
     loopLineNode->markDirty(QSGNode::DirtyGeometry);
+
+    // ── Hotcue markers ─────────────────────────────────────────────────────
+    QSGGeometry* hotCueGeo = hotCueNode->geometry();
+    const QVariantList cues = m_engine->hotCues();
+    if (!cues.isEmpty()) {
+        struct CueLine {
+            float x;
+            QColor color;
+        };
+        std::vector<CueLine> visibleCues;
+        visibleCues.reserve(static_cast<size_t>(cues.size()));
+
+        for (const QVariant& v : cues) {
+            const QVariantMap m = v.toMap();
+            if (!m.value("set").toBool())
+                continue;
+
+            const double cueSec = m.value("positionSec").toDouble();
+            const double cuePoint = cueSec * pointsPerSec;
+            const float x = static_cast<float>(w / 2.0 + (cuePoint - centerIndexReal) * pixelsPerPoint);
+            if (x < 0.0f || x > w)
+                continue;
+
+            QColor c(m.value("color").toString());
+            if (!c.isValid())
+                c = QColor("#e04040");
+            visibleCues.push_back({x, c});
+        }
+
+        hotCueGeo->allocate(static_cast<int>(visibleCues.size()) * 2);
+        auto* vtx = hotCueGeo->vertexDataAsColoredPoint2D();
+        int idx = 0;
+        for (const auto& cue : visibleCues) {
+            const auto r = static_cast<uchar>(cue.color.red());
+            const auto g = static_cast<uchar>(cue.color.green());
+            const auto b = static_cast<uchar>(cue.color.blue());
+            vtx[idx++].set(cue.x, 0.0f,                        r, g, b, 230);
+            vtx[idx++].set(cue.x, static_cast<float>(height()), r, g, b, 190);
+        }
+    } else {
+        hotCueGeo->allocate(0);
+    }
+
+    hotCueNode->markDirty(QSGNode::DirtyGeometry);
 
     // ── Segment strip rendering (tiny colored bar at bottom) ───────────────
     // Draw each segment as a 4px-high rectangle aligned to the waveform timeline.

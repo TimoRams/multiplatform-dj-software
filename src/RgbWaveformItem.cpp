@@ -23,6 +23,7 @@ void RgbWaveformItem::setEngine(DjEngine* engine)
     if (m_engine) {
         connect(m_engine, &DjEngine::trackLoaded, this, &RgbWaveformItem::onTrackLoaded, Qt::UniqueConnection);
         connect(m_engine, &DjEngine::progressChanged, this, &RgbWaveformItem::onRgbDataChanged, Qt::UniqueConnection);
+        connect(m_engine, &DjEngine::hotCuesChanged, this, &RgbWaveformItem::onRgbDataChanged, Qt::UniqueConnection);
     }
 
     emit engineChanged();
@@ -126,5 +127,25 @@ void RgbWaveformItem::paint(QPainter* painter)
                                      1.0,
                                      static_cast<qreal>(2.0f * barH + 1.0f)));
         }
+    }
+
+    const float durationSec = std::max(0.001f, m_engine->getDuration());
+    const QVariantList cues = m_engine->hotCues();
+    for (const QVariant& v : cues) {
+        const QVariantMap m = v.toMap();
+        if (!m.value("set").toBool())
+            continue;
+
+        const double cueSec = m.value("positionSec").toDouble();
+        const float progress = std::clamp(static_cast<float>(cueSec / durationSec), 0.0f, 1.0f);
+        const float x = progress * static_cast<float>(w);
+
+        QColor c(m.value("color").toString());
+        if (!c.isValid())
+            c = QColor("#e04040");
+        c.setAlpha(230);
+
+        painter->setPen(QPen(c, 1.0));
+        painter->drawLine(QPointF(x, 0.0), QPointF(x, static_cast<float>(h)));
     }
 }

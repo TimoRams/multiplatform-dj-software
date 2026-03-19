@@ -233,6 +233,27 @@ bool LibraryDatabase::createSchema()
         if (!ok) return false;
     }
 
+    if (currentVersion < 5) {
+        bool ok = true;
+
+        ok &= q.exec(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_cuepoints_track_slot "
+            "ON CuePoints(track_id, cue_index)");
+        if (!ok) qWarning() << "[LibraryDatabase] CuePoints index:" << q.lastError().text();
+
+        if (!tableHasColumn(m_db, "CuePoints", "label")) {
+            ok &= q.exec("ALTER TABLE CuePoints ADD COLUMN label TEXT DEFAULT ''");
+            if (!ok) qWarning() << "[LibraryDatabase] CuePoints label:" << q.lastError().text();
+        }
+
+        if (!tableHasColumn(m_db, "CuePoints", "color")) {
+            ok &= q.exec("ALTER TABLE CuePoints ADD COLUMN color TEXT DEFAULT '#FF0000'");
+            if (!ok) qWarning() << "[LibraryDatabase] CuePoints color:" << q.lastError().text();
+        }
+
+        if (!ok) return false;
+    }
+
     // ── Stamp current version ────────────────────────────────────────────
     q.prepare("INSERT OR REPLACE INTO Meta (key, value) VALUES ('schema_version', :v)");
     q.bindValue(":v", kSchemaVersion);
@@ -474,6 +495,80 @@ QVariantList LibraryDatabase::trackSegmentsForTrack(const QString& trackId) cons
         return {};
 
     return trackSegmentsJsonToVariantList(q.value(0).toString());
+}
+
+bool LibraryDatabase::upsertCuePoint(const QString& trackId,
+                                     int cueIndex,
+                                     double positionSec,
+                                     const QString& label,
+                                     const QString& colorHex)
+{
+    if (trackId.isEmpty() || cueIndex < 0 || cueIndex >= 8 || positionSec < 0.0)
+        return false;
+
+    QSqlQuery q(m_db);
+    q.prepare(
+        "INSERT OR REPLACE INTO CuePoints (track_id, cue_index, position_sec, label, color) "
+        "VALUES (:trackId, :cueIndex, :positionSec, :label, :color)");
+    q.bindValue(":trackId", trackId);
+    q.bindValue(":cueIndex", cueIndex);
+    q.bindValue(":positionSec", positionSec);
+    q.bindValue(":label", label);
+    q.bindValue(":color", colorHex);
+
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] upsertCuePoint:" << q.lastError().text();
+        return false;
+    }
+
+    return true;
+}
+
+bool LibraryDatabase::deleteCuePoint(const QString& trackId, int cueIndex)
+{
+    if (trackId.isEmpty() || cueIndex < 0 || cueIndex >= 8)
+        return false;
+
+    QSqlQuery q(m_db);
+    q.prepare("DELETE FROM CuePoints WHERE track_id = :trackId AND cue_index = :cueIndex");
+    q.bindValue(":trackId", trackId);
+    q.bindValue(":cueIndex", cueIndex);
+
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] deleteCuePoint:" << q.lastError().text();
+        return false;
+    }
+
+    return true;
+}
+
+QVariantList LibraryDatabase::cuePointsForTrack(const QString& trackId) const
+{
+    if (trackId.isEmpty())
+        return {};
+
+    QSqlQuery q(m_db);
+    q.prepare(
+        "SELECT cue_index, position_sec, COALESCE(label, ''), COALESCE(color, '#FF0000') "
+        "FROM CuePoints WHERE track_id = :trackId ORDER BY cue_index ASC");
+    q.bindValue(":trackId", trackId);
+
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] cuePointsForTrack:" << q.lastError().text();
+        return {};
+    }
+
+    QVariantList cues;
+    while (q.next()) {
+        QVariantMap c;
+        c.insert("index", q.value(0).toInt());
+        c.insert("positionSec", q.value(1).toDouble());
+        c.insert("label", q.value(2).toString());
+        c.insert("color", q.value(3).toString());
+        cues.push_back(c);
+    }
+
+    return cues;
 }
 
 QString LibraryDatabase::filePath(const QString& trackId) const

@@ -113,6 +113,19 @@ double parseBpmString(const QString& raw) {
     return 0.0;
 }
 
+QString defaultHotCueColor(int index)
+{
+    static const std::array<const char*, 16> colors = {
+        "#e04040", "#e08030", "#e0d030", "#30b050",
+        "#30a0d0", "#6060e0", "#c040c0", "#e06080",
+        "#ff4d4d", "#ff9f43", "#f6e05e", "#48bb78",
+        "#38b2ac", "#4299e1", "#9f7aea", "#ed64a6"
+    };
+    if (index < 0 || index >= static_cast<int>(colors.size()))
+        return QStringLiteral("#e04040");
+    return QString::fromLatin1(colors[static_cast<size_t>(index)]);
+}
+
 }
 
 class ReverseStreamAudioSource : public juce::PositionableAudioSource {
@@ -674,6 +687,7 @@ DjEngine::DjEngine(QObject* parent) : QObject(parent)
 
     m_trackData = new TrackData(this);
     m_analyzer  = new WaveformAnalyzer(m_trackData, &formatManager, 150);
+    clearHotCueState();
 
     // When the analyzer detects a key, override the (often absent) ID3 key field.
     connect(m_trackData, &TrackData::keyAnalyzed, this, [this]() {
@@ -862,6 +876,7 @@ void DjEngine::setCoverArtProvider(CoverArtProvider* provider, const QString& de
 void DjEngine::setLibraryDatabase(LibraryDatabase* db)
 {
     m_libraryDb = db;
+    loadHotCuesForCurrentTrack();
 }
 
 void DjEngine::persistCurrentAnalysisToLibrary()
@@ -909,7 +924,9 @@ void DjEngine::loadTrack(const QString& rawPath)
     {
         m_trackData->clear();
         m_currentSegments.clear();
+        clearHotCueState();
         emit segmentsChanged();
+        emit hotCuesChanged();
 
         const auto metaMap = buildMetadataLookup(reader->metadataValues);
 
@@ -1003,6 +1020,8 @@ void DjEngine::loadTrack(const QString& rawPath)
                 m_currentSegments = QVariantList();
                 emit segmentsChanged();
             }
+
+            loadHotCuesForCurrentTrack();
         }
 
         qDebug() << "[DjEngine] title=" << m_trackTitle
@@ -1150,6 +1169,163 @@ float DjEngine::gainReduction() const
 {
     // s_gainReduction is a static atomic shared across all instances
     return MixerDspSource::s_gainReduction.load(std::memory_order_relaxed);
+}
+
+QVariantList DjEngine::hotCues() const
+{
+    QVariantList out;
+    out.reserve(static_cast<int>(m_hotCueSlots.size()));
+
+    for (int i = 0; i < static_cast<int>(m_hotCueSlots.size()); ++i) {
+        const auto& slot = m_hotCueSlots[static_cast<size_t>(i)];
+        QVariantMap m;
+        m.insert("index", i);
+        m.insert("set", slot.set);
+        m.insert("positionSec", slot.positionSec);
+        m.insert("label", slot.label);
+        m.insert("color", slot.color);
+        out.push_back(m);
+    }
+
+    return out;
+}
+
+bool DjEngine::isValidHotCueIndex(int index) const
+{
+    return index >= 0 && index < static_cast<int>(m_hotCueSlots.size());
+}
+
+void DjEngine::clearHotCueState()
+{
+    for (int i = 0; i < static_cast<int>(m_hotCueSlots.size()); ++i) {
+        auto& slot = m_hotCueSlots[static_cast<size_t>(i)];
+        slot.set = false;
+        slot.positionSec = 0.0;
+        slot.label.clear();
+        slot.color = defaultHotCueColor(i);
+    }
+}
+
+void DjEngine::loadHotCuesForCurrentTrack()
+{
+    clearHotCueState();
+
+    if (!m_libraryDb || m_currentTrackId.isEmpty()) {
+        emit hotCuesChanged();
+        return;
+    }
+
+    const QVariantList stored = m_libraryDb->cuePointsForTrack(m_currentTrackId);
+    for (const QVariant& v : stored) {
+        const QVariantMap m = v.toMap();
+        const int index = m.value("index").toInt();
+        if (!isValidHotCueIndex(index))
+            continue;
+
+        auto& slot = m_hotCueSlots[static_cast<size_t>(index)];
+        slot.set = true;
+        slot.positionSec = std::max(0.0, m.value("positionSec").toDouble());
+        slot.label = m.value("label").toString();
+        const QString color = m.value("color").toString().trimmed();
+        slot.color = color.isEmpty() ? defaultHotCueColor(index) : color;
+    }
+
+    emit hotCuesChanged();
+}
+
+void DjEngine::persistHotCueSlot(int index)
+{
+    if (!isValidHotCueIndex(index) || !m_libraryDb || m_currentTrackId.isEmpty())
+        return;
+
+    const auto& slot = m_hotCueSlots[static_cast<size_t>(index)];
+    if (slot.set) {
+        const QString label = slot.label.isEmpty()
+            ? QStringLiteral("HOT CUE %1").arg(index + 1)
+            : slot.label;
+        m_libraryDb->upsertCuePoint(m_currentTrackId, index, slot.positionSec, label, slot.color);
+    } else {
+        m_libraryDb->deleteCuePoint(m_currentTrackId, index);
+    }
+}
+
+void DjEngine::storeHotCue(int index)
+{
+    if (!isValidHotCueIndex(index) || !m_hasTrack)
+        return;
+
+    const double trackLen = transportSource.getLengthInSeconds();
+    if (trackLen <= 0.0)
+        return;
+
+    auto& slot = m_hotCueSlots[static_cast<size_t>(index)];
+    slot.set = true;
+    slot.positionSec = std::clamp(static_cast<double>(getVisualPosition()), 0.0, trackLen);
+    if (slot.color.isEmpty())
+        slot.color = defaultHotCueColor(index);
+    if (slot.label.isEmpty())
+        slot.label = QStringLiteral("HOT CUE %1").arg(index + 1);
+
+    persistHotCueSlot(index);
+    emit hotCuesChanged();
+}
+
+void DjEngine::triggerHotCue(int index)
+{
+    if (!isValidHotCueIndex(index) || !m_hasTrack)
+        return;
+
+    const auto& slot = m_hotCueSlots[static_cast<size_t>(index)];
+    if (!slot.set) {
+        storeHotCue(index);
+        return;
+    }
+
+    const double trackLen = transportSource.getLengthInSeconds();
+    if (trackLen <= 0.0)
+        return;
+
+    const double pos = std::clamp(slot.positionSec, 0.0, trackLen);
+    transportSource.setPosition(pos);
+    m_snapPosition = pos;
+    m_snapClock.restart();
+    m_snapValid = true;
+    m_atomicPlayheadPos.store(pos, std::memory_order_relaxed);
+    emit progressChanged();
+}
+
+void DjEngine::clearHotCue(int index)
+{
+    if (!isValidHotCueIndex(index))
+        return;
+
+    auto& slot = m_hotCueSlots[static_cast<size_t>(index)];
+    slot.set = false;
+    slot.positionSec = 0.0;
+    slot.label.clear();
+    if (slot.color.isEmpty())
+        slot.color = defaultHotCueColor(index);
+
+    persistHotCueSlot(index);
+    emit hotCuesChanged();
+}
+
+void DjEngine::setHotCueColor(int index, const QString& colorHex)
+{
+    if (!isValidHotCueIndex(index))
+        return;
+
+    QString color = colorHex.trimmed();
+    if (color.isEmpty())
+        color = defaultHotCueColor(index);
+
+    auto& slot = m_hotCueSlots[static_cast<size_t>(index)];
+    slot.color = color;
+
+    if (slot.set)
+        persistHotCueSlot(index);
+
+    emit hotCuesChanged();
 }
 
 // ─── Scrub API ────────────────────────────────────────────────────────────────

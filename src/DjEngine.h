@@ -7,6 +7,7 @@
 #include <QVariantList>
 #include <QElapsedTimer>
 #include <atomic>
+#include <array>
 #include <cstdint>
 #include <mutex>
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -70,6 +71,7 @@ class DjEngine : public QObject
     
     // Global anti-clip gain reduction (0.0-1.0), 1.0 = no reduction
     Q_PROPERTY(float gainReduction READ gainReduction NOTIFY gainReductionChanged)
+    Q_PROPERTY(QVariantList hotCues READ hotCues NOTIFY hotCuesChanged)
 
 public:
     explicit DjEngine(QObject* parent = nullptr);
@@ -121,6 +123,10 @@ public:
     // Master volume + anti-clip (global, shared across all decks)
     Q_INVOKABLE void setMasterVolume(float v);
     Q_INVOKABLE void setAntiClip(bool enabled);
+    Q_INVOKABLE void triggerHotCue(int index);
+    Q_INVOKABLE void storeHotCue(int index);
+    Q_INVOKABLE void clearHotCue(int index);
+    Q_INVOKABLE void setHotCueColor(int index, const QString& colorHex);
     TrackData* getTrackData() const;
 
     QString trackTitle()    const { return m_trackTitle; }
@@ -167,6 +173,7 @@ public:
     float vuLevelR() const;
     bool clipDetected() const;
     float gainReduction() const;
+    QVariantList hotCues() const;
 
     void setCoverArtProvider(CoverArtProvider* provider, const QString& deckId);
     void setLibraryDatabase(LibraryDatabase* db);
@@ -229,12 +236,24 @@ signals:
     void vuLevelChanged();
     void gainReductionChanged();
     void segmentsChanged();
+    void hotCuesChanged();
 
 private slots:
     void onTimer();
 
 private:
     void persistCurrentAnalysisToLibrary();
+    void clearHotCueState();
+    void loadHotCuesForCurrentTrack();
+    void persistHotCueSlot(int index);
+    bool isValidHotCueIndex(int index) const;
+
+    struct HotCueSlot {
+        bool set = false;
+        double positionSec = 0.0;
+        QString label;
+        QString color = "#e04040";
+    };
 
     class MixerDspSource;
     class TimeStretchAudioSource;
@@ -269,6 +288,7 @@ private:
     QString m_coverArtUrl;
     bool    m_hasCoverArt = false;
     QVariantList m_currentSegments;
+    std::array<HotCueSlot, 8> m_hotCueSlots;
 
     // Tempo control: ±6/8/16/32/100% (WIDE) selectable range
     double m_tempoPercent = 0.0;
