@@ -115,6 +115,94 @@ double parseBpmString(const QString& raw) {
 
 }
 
+class ReverseStreamAudioSource : public juce::PositionableAudioSource {
+public:
+    ReverseStreamAudioSource(juce::PositionableAudioSource* source) : m_source(source) {}
+
+    void setNextReadPosition(juce::int64 newPosition) override {
+        m_source->setNextReadPosition(newPosition);
+        m_logicalPos = newPosition;
+    }
+
+    juce::int64 getNextReadPosition() const override {
+        return m_logicalPos;
+    }
+
+    juce::int64 getTotalLength() const override {
+        return m_source->getTotalLength();
+    }
+
+    bool isLooping() const override { return m_source->isLooping(); }
+    void setLooping(bool shouldLoop) override { m_source->setLooping(shouldLoop); }
+
+    void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override {
+        m_source->prepareToPlay(samplesPerBlockExpected, sampleRate);
+    }
+
+    void releaseResources() override {
+        m_source->releaseResources();
+    }
+
+    void getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill) override {
+        if (!m_reverse.load(std::memory_order_relaxed)) {
+            // Forward playback
+            m_source->setNextReadPosition(m_logicalPos);
+            m_source->getNextAudioBlock(bufferToFill);
+            m_logicalPos = m_source->getNextReadPosition();
+            return;
+        }
+
+        // Reverse playback
+        const int numSamples = bufferToFill.numSamples;
+        juce::int64 currentPos = m_logicalPos;
+
+        // Start reading from currentPos - numSamples, because reading goes forwards
+        juce::int64 readStart = currentPos - numSamples;
+        int samplesToRead = numSamples;
+        int zerosToPad = 0;
+
+        if (readStart < 0) {
+            samplesToRead = static_cast<int>(currentPos);
+            zerosToPad = numSamples - samplesToRead;
+            readStart = 0;
+        }
+
+        if (samplesToRead > 0) {
+            m_source->setNextReadPosition(readStart);
+            
+            juce::AudioSourceChannelInfo readInfo(bufferToFill);
+            readInfo.startSample = bufferToFill.startSample;
+            readInfo.numSamples = samplesToRead;
+            m_source->getNextAudioBlock(readInfo);
+
+            for (int ch = 0; ch < bufferToFill.buffer->getNumChannels(); ++ch) {
+                float* ptr = bufferToFill.buffer->getWritePointer(ch, bufferToFill.startSample);
+                std::reverse(ptr, ptr + samplesToRead);
+            }
+        }
+
+        if (zerosToPad > 0) {
+            for (int ch = 0; ch < bufferToFill.buffer->getNumChannels(); ++ch) {
+                juce::FloatVectorOperations::clear(
+                    bufferToFill.buffer->getWritePointer(ch, bufferToFill.startSample + samplesToRead),
+                    zerosToPad);
+            }
+        }
+
+        m_logicalPos = currentPos - samplesToRead;
+        if (m_logicalPos < 0) m_logicalPos = 0;
+    }
+
+    void setReverse(bool rev) {
+        m_reverse.store(rev, std::memory_order_relaxed);
+    }
+
+private:
+    juce::PositionableAudioSource* m_source;
+    std::atomic<bool> m_reverse{false};
+    juce::int64 m_logicalPos{0};
+};
+
 class DjEngine::TimeStretchAudioSource : public juce::AudioSource {
 public:
     TimeStretchAudioSource(juce::AudioSource* inSource) : source(inSource) {}
@@ -333,11 +421,6 @@ public:
     void setFxAmount(float amount)        { m_fx.setAmount(amount); }
     void setFxSCKnob(float knob)          { m_fx.setSCKnobValue(knob); }
 
-    void setReverse(bool rev) { m_reverse.store(rev, std::memory_order_relaxed); }
-    void setReverseCompensationSpeed(double speed) {
-        m_reverseCompensationSpeed.store(std::clamp(speed, 0.05, 4.0), std::memory_order_relaxed);
-    }
-
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override {
         if (source) source->prepareToPlay(samplesPerBlockExpected, sampleRate);
 
@@ -350,10 +433,6 @@ public:
         highEq.prepare(spec);
         colorFilter.prepare(spec);
 
-        reverseTailBuffer.setSize(2, kReverseCrossfadeSamples);
-        reverseTailBuffer.clear();
-        reverseTailValid = false;
-        
         m_sampleRate = sampleRate;
         updateFilters();
     }
@@ -366,50 +445,6 @@ public:
         if (source) source->getNextAudioBlock(bufferToFill);
 
         if (m_sampleRate <= 0.0 || bufferToFill.buffer->getNumChannels() == 0 || bufferToFill.numSamples == 0) return;
-
-        // Reverse has to happen BEFORE downstream DSP (EQ/FX/limiter), otherwise
-        // stateful processors run on forward-time blocks and produce rough artifacts
-        // once the block gets flipped afterwards.
-        const bool reverseOn = m_reverse.load(std::memory_order_relaxed);
-        if (reverseOn && m_transport && m_sampleRate > 0) {
-            const int s = bufferToFill.startSample;
-            const int numSamp = bufferToFill.numSamples;
-
-            for (int ch = 0; ch < bufferToFill.buffer->getNumChannels(); ++ch) {
-                float* ptr = bufferToFill.buffer->getWritePointer(ch) + s;
-                std::reverse(ptr, ptr + numSamp);
-            }
-
-            const double compSpeed = m_reverseCompensationSpeed.load(std::memory_order_relaxed);
-            const double currentPos = m_transport->getCurrentPosition();
-            const double blockDur = (static_cast<double>(numSamp) / m_sampleRate) * compSpeed;
-            double newPos = currentPos - 2.0 * blockDur;
-            if (newPos < 0.0) newPos = 0.0;
-            m_transport->setPosition(newPos);
-
-            // Smooth reverse block boundaries to reduce zipper/click artifacts.
-            const int fadeLen = std::min(numSamp, kReverseCrossfadeSamples);
-            if (reverseTailValid && fadeLen > 0) {
-                for (int i = 0; i < fadeLen; ++i) {
-                    const float t = static_cast<float>(i + 1) / static_cast<float>(fadeLen);
-                    const float a = 1.0f - t;
-                    for (int ch = 0; ch < std::min(bufferToFill.buffer->getNumChannels(), 2); ++ch) {
-                        const float oldS = reverseTailBuffer.getSample(ch, i);
-                        const float newS = bufferToFill.buffer->getSample(ch, s + i);
-                        bufferToFill.buffer->setSample(ch, s + i, oldS * a + newS * t);
-                    }
-                }
-            }
-
-            if (fadeLen > 0) {
-                const int tailStart = s + numSamp - fadeLen;
-                for (int ch = 0; ch < std::min(bufferToFill.buffer->getNumChannels(), 2); ++ch)
-                    reverseTailBuffer.copyFrom(ch, 0, *bufferToFill.buffer, ch, tailStart, fadeLen);
-                reverseTailValid = true;
-            }
-        } else {
-            reverseTailValid = false;
-        }
 
         juce::dsp::AudioBlock<float> block(*bufferToFill.buffer);
         auto slicedBlock = block.getSubBlock(bufferToFill.startSample, bufferToFill.numSamples);
@@ -555,13 +590,7 @@ private:
     FilterType colorFilter;
 
     FxProcessor m_fx;
-    std::atomic<bool> m_reverse { false };
-    std::atomic<double> m_reverseCompensationSpeed { 1.0 };
     BrickwallLimiter m_limiter;
-
-    juce::AudioBuffer<float> reverseTailBuffer;
-    bool reverseTailValid = false;
-    static constexpr int kReverseCrossfadeSamples = 96;
 
 public:
     // VU meter peak levels — written on audio thread, read from UI thread
@@ -986,7 +1015,9 @@ void DjEngine::loadTrack(const QString& rawPath)
         transportSource.setSource(nullptr);
 
         readerSource = std::make_unique<juce::AudioFormatReaderSource>(reader, true);
-        transportSource.setSource(readerSource.get(), 0, nullptr, reader->sampleRate);
+        reverseWrapSource = std::make_unique<ReverseStreamAudioSource>(readerSource.get());
+        reverseWrapSource->setReverse(m_isReverse);
+        transportSource.setSource(reverseWrapSource.get(), 0, nullptr, reader->sampleRate);
         transportSource.setPosition(0.0);
 
         m_analyzer->startAnalysis(rawPath);
@@ -1278,7 +1309,7 @@ void DjEngine::setAntiClip(bool enabled) {
 void DjEngine::updateSpeedAndPitch()
 {
     double speedMultiplier = 1.0 + (m_tempoPercent / 100.0);
-    bool useKeylockPath = m_keylock && !m_isReverse;
+    bool useKeylockPath = m_keylock; // Reverse is now continuous, Keylock works with it!
     
     if (useKeylockPath) {
         if (resamplingSource) resamplingSource->setResamplingRatio(1.0);
@@ -1286,14 +1317,12 @@ void DjEngine::updateSpeedAndPitch()
             timeStretchSource->setTempoRatio(speedMultiplier);
             timeStretchSource->setKeylock(true);
         }
-        if (mixerSource) mixerSource->setReverseCompensationSpeed(1.0);
     } else {
         if (resamplingSource) resamplingSource->setResamplingRatio(speedMultiplier);
         if (timeStretchSource) {
             timeStretchSource->setTempoRatio(1.0); // bypass
             timeStretchSource->setKeylock(false);
         }
-        if (mixerSource) mixerSource->setReverseCompensationSpeed(speedMultiplier);
     }
 }
 
@@ -1653,8 +1682,9 @@ void DjEngine::setReverse(bool on)
 {
     if (m_isReverse == on) return;
     m_isReverse = on;
-    // Keep resampling/time-stretch path consistent with reverse mode.
+    if (reverseWrapSource) {
+        static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get())->setReverse(on);
+    }
     updateSpeedAndPitch();
-    if (mixerSource) mixerSource->setReverse(on);
     emit reverseChanged();
 }

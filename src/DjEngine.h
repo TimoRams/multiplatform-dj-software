@@ -242,6 +242,7 @@ private:
     juce::AudioDeviceManager deviceManager;
     juce::AudioFormatManager formatManager;
     std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
+    std::unique_ptr<class ReverseStreamAudioSource> reverseWrapSource;
     juce::AudioTransportSource transportSource;
     std::unique_ptr<juce::ResamplingAudioSource> resamplingSource;
     std::unique_ptr<TimeStretchAudioSource> timeStretchSource;
