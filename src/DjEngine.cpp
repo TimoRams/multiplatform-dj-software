@@ -1547,6 +1547,38 @@ void DjEngine::setTempoPercent(double percent)
     }
 }
 
+void DjEngine::setManualBpm(double bpm)
+{
+    if (!m_trackData)
+        return;
+
+    const double clamped = std::clamp(bpm, 20.0, 300.0);
+    if (clamped <= 0.0)
+        return;
+
+    const double trackLen = static_cast<double>(transportSource.getLengthInSeconds());
+    const double currentSec = static_cast<double>(getVisualPosition());
+    const double anchor = nearestDownbeatAnchor(m_trackData->getBeatGrid(), currentSec);
+
+    m_trackData->setBpm(clamped);
+    if (trackLen > 0.0)
+        m_trackData->shiftBeatgridToDownbeat(anchor, trackLen);
+
+    persistCurrentAnalysisToLibrary();
+    emit tempoChanged();
+
+    if (m_syncEnabled) {
+        bool amMaster = false;
+        {
+            std::lock_guard<std::mutex> g(s_syncMutex);
+            updateSyncMasterLocked();
+            amMaster = m_isSyncMaster;
+        }
+        if (amMaster)
+            propagateMasterTempoLocked(this);
+    }
+}
+
 void DjEngine::setSyncEnabled(bool enabled)
 {
     if (m_syncEnabled == enabled)

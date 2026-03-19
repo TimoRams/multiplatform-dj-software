@@ -6,6 +6,7 @@ Item {
     id: deck
     property string deckName: "A"
     property var engine: null
+    property string _manualBpmInput: ""
 
     Layout.fillWidth: true
     Layout.fillHeight: true
@@ -244,6 +245,7 @@ Item {
 
                     // BPM badge (analyzed + live current)
                     Rectangle {
+                        id: bpmBadge
                         visible: deck._hasTrack
                         width:   bpmBadgeRow.implicitWidth + 10
                         height:  20
@@ -279,6 +281,23 @@ Item {
                                 font.family: "monospace"
                                 font.bold: true
                                 anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.RightButton
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: (mouse) => {
+                                if (mouse.button !== Qt.RightButton || !deck.engine)
+                                    return
+                                deck._manualBpmInput = deck._trackBpm !== ""
+                                    ? deck._trackBpm
+                                    : (deck._currentBpm !== "" ? deck._currentBpm : "120.00")
+                                manualBpmField.text = deck._manualBpmInput
+                                manualBpmPopup.visible = true
+                                manualBpmField.forceActiveFocus()
+                                manualBpmField.selectAll()
                             }
                         }
                     }
@@ -832,12 +851,90 @@ Item {
             }
         }
 
+        // ── Manual BPM popup (right-click BPM badge) ────────────────────────
+        Rectangle {
+            id: manualBpmPopup
+            visible: false
+            z: 1000
+
+            x: Math.max(6, Math.min(parent.width - width - 6,
+                                    metaBadges.x + bpmBadge.x + bpmBadge.width - width))
+            y: metaBadges.y + bpmBadge.height + 6
+
+            width: 160
+            height: 92
+            radius: 4
+            color: "#1e1e1e"
+            border.color: deck.deckName === "A" ? "#4a8a4a" : "#4a8a4a"
+            border.width: 1
+
+            MouseArea {
+                anchors.fill: parent
+                onClicked: mouse => mouse.accepted = true
+            }
+
+            Column {
+                anchors.fill: parent
+                anchors.margins: 6
+                spacing: 6
+
+                Text {
+                    text: "MANUAL BPM"
+                    color: "#a5d6a7"
+                    font.pixelSize: window.sp(9)
+                    font.bold: true
+                    font.family: "monospace"
+                }
+
+                TextField {
+                    id: manualBpmField
+                    width: parent.width
+                    height: 30
+                    placeholderText: "z.B. 124.50"
+                    color: "#111"
+                    placeholderTextColor: "#666"
+                    selectionColor: "#4caf50"
+                    selectedTextColor: "#fff"
+                    font.pixelSize: window.sp(11)
+                    font.bold: true
+                    font.family: "monospace"
+                    background: Rectangle {
+                        color: "#f5f5f5"
+                        border.color: "#8bc34a"
+                        border.width: 2
+                        radius: 3
+                    }
+                    onAccepted: applyManualBpm()
+
+                    function applyManualBpm() {
+                        var value = Number(text.replace(",", "."))
+                        if (!deck.engine || isNaN(value) || value <= 0)
+                            return
+                        deck.engine.setManualBpm(value)
+                        deck._syncBpm()
+                        deck._syncTempo()
+                        manualBpmPopup.visible = false
+                    }
+                }
+
+                Text {
+                    text: "Enter = Anwenden"
+                    color: "#8e8e8e"
+                    font.pixelSize: window.sp(8)
+                    font.family: "monospace"
+                }
+            }
+        }
+
         // Transparent full-deck overlay: dismiss popup when clicking outside it
         MouseArea {
             anchors.fill: parent
             z: 998
-            visible: tempoRangePopup.visible
-            onClicked: tempoRangePopup.visible = false
+            visible: tempoRangePopup.visible || manualBpmPopup.visible
+            onClicked: {
+                tempoRangePopup.visible = false
+                manualBpmPopup.visible = false
+            }
         }
     }
 }

@@ -185,6 +185,7 @@ public slots:
     void togglePlay();
     void setPosition(float progress);
     void setTempoPercent(double percent);
+    Q_INVOKABLE void setManualBpm(double bpm);
     
     // Mixer Setters
     void setVolume(double value);
