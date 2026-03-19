@@ -11,6 +11,24 @@ Item {
     
     // Zoom controlled externally (main.qml) so both decks zoom in sync.
     property real waveformZoom: 1.5
+    property int cueOverlayTick: 0
+
+    function cueX(cueSec) {
+        if (!root.engine)
+            return -1000
+
+        // Use an invokable engine API for QML-safe playhead reads.
+        // getVisualPosition() is C++-internal and not exposed to QML.
+        var pos = root.engine.getPlayheadPositionAtomic()
+        if (pos === undefined || isNaN(pos))
+            pos = root.engine.progress * root.engine.getDuration()
+
+        var ratio = root.engine.tempoRatio
+        if (ratio <= 0.0001)
+            ratio = 1.0
+        var effectivePpp = root.waveformZoom / ratio
+        return width * 0.5 + (cueSec - pos) * 150.0 * effectivePpp
+    }
 
     Layout.fillWidth: true
     Layout.fillHeight: true
@@ -152,15 +170,24 @@ Item {
             function onPlayingChanged() {
                 if (!root.engine.isPlaying)
                     waveItem.requestUpdate()
+                root.cueOverlayTick++
             }
             function onProgressChanged() {
                 // Repaint scrolling waveform when paused and position is changed
                 // (e.g. clicking on the overview waveform to seek).
                 if (root.engine && !root.engine.isPlaying)
                     waveItem.requestUpdate()
+                root.cueOverlayTick++
             }
             function onLoopChanged() {
                 waveItem.requestUpdate()
+                root.cueOverlayTick++
+            }
+            function onHotCuesChanged() {
+                root.cueOverlayTick++
+            }
+            function onTempoChanged() {
+                root.cueOverlayTick++
             }
         }
 
@@ -182,6 +209,43 @@ Item {
             anchors.centerIn: parent
             z: 10
             // NO Behavior, NO SmoothedAnimation, NO SpringAnimation on this element.
+        }
+
+        // Top hotcue labels in cue color with visible slot number.
+        Item {
+            anchors.fill: parent
+            z: 12
+
+            Repeater {
+                model: root.engine ? root.engine.hotCues : []
+
+                Rectangle {
+                    required property var modelData
+                    visible: modelData && modelData["set"]
+                    width: 18
+                    height: 12
+                    radius: 2
+                    y: 1
+                    x: {
+                        root.cueOverlayTick
+                        var cx = root.cueX(modelData["positionSec"])
+                        // Attach label to the top-right side of the cue bar.
+                        return Math.max(0, Math.min(parent.width - width, cx + 4))
+                    }
+                    color: modelData["color"]
+                    border.color: "#111"
+                    border.width: 1
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: (modelData["index"] + 1).toString()
+                        color: "#ffffff"
+                        font.pixelSize: window.sp(8)
+                        font.bold: true
+                        font.family: "monospace"
+                    }
+                }
+            }
         }
 
         // ─── Beat-grid toolbar (left edge overlay) ───────────────────────────

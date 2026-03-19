@@ -177,11 +177,22 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         segmentNode->setFlag(QSGNode::OwnsMaterial);
         rootNode->appendChildNode(segmentNode);
 
-        // 10: hotcue markers (DrawLines)
+        // 10: hotcue marker shadow (DrawLines)
+        auto* hotCueShadowNode = new QSGGeometryNode();
+        auto* hotCueShadowGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
+        hotCueShadowGeo->setDrawingMode(QSGGeometry::DrawLines);
+        hotCueShadowGeo->setLineWidth(4.2f);
+        hotCueShadowNode->setGeometry(hotCueShadowGeo);
+        hotCueShadowNode->setFlag(QSGNode::OwnsGeometry);
+        hotCueShadowNode->setMaterial(new QSGVertexColorMaterial());
+        hotCueShadowNode->setFlag(QSGNode::OwnsMaterial);
+        rootNode->appendChildNode(hotCueShadowNode);
+
+        // 11: hotcue markers (DrawLines)
         auto* hotCueNode = new QSGGeometryNode();
         auto* hotCueGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
         hotCueGeo->setDrawingMode(QSGGeometry::DrawLines);
-        hotCueGeo->setLineWidth(1.5f);
+        hotCueGeo->setLineWidth(2.6f);
         hotCueNode->setGeometry(hotCueGeo);
         hotCueNode->setFlag(QSGNode::OwnsGeometry);
         hotCueNode->setMaterial(new QSGVertexColorMaterial());
@@ -199,7 +210,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     auto* loopFillNode = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(7));
     auto* loopLineNode = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(8));
     auto* segmentNode  = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(9));
-    auto* hotCueNode   = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(10));
+    auto* hotCueShadowNode = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(10));
+    auto* hotCueNode       = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(11));
 
     int wInt = static_cast<int>(width());
     if (wInt <= 0) return rootNode;
@@ -472,6 +484,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     loopLineNode->markDirty(QSGNode::DirtyGeometry);
 
     // ── Hotcue markers ─────────────────────────────────────────────────────
+    QSGGeometry* hotCueShadowGeo = hotCueShadowNode->geometry();
     QSGGeometry* hotCueGeo = hotCueNode->geometry();
     const QVariantList cues = m_engine->hotCues();
     if (!cues.isEmpty()) {
@@ -499,20 +512,30 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             visibleCues.push_back({x, c});
         }
 
+        hotCueShadowGeo->allocate(static_cast<int>(visibleCues.size()) * 2);
         hotCueGeo->allocate(static_cast<int>(visibleCues.size()) * 2);
+        auto* shadowVtx = hotCueShadowGeo->vertexDataAsColoredPoint2D();
         auto* vtx = hotCueGeo->vertexDataAsColoredPoint2D();
         int idx = 0;
         for (const auto& cue : visibleCues) {
             const auto r = static_cast<uchar>(cue.color.red());
             const auto g = static_cast<uchar>(cue.color.green());
             const auto b = static_cast<uchar>(cue.color.blue());
-            vtx[idx++].set(cue.x, 0.0f,                        r, g, b, 230);
-            vtx[idx++].set(cue.x, static_cast<float>(height()), r, g, b, 190);
+
+            const int base = idx;
+            shadowVtx[base].set(cue.x, 0.0f,                         0, 0, 0, 170);
+            shadowVtx[base + 1].set(cue.x, static_cast<float>(height()), 0, 0, 0, 140);
+
+            vtx[base].set(cue.x, 0.0f,                         r, g, b, 255);
+            vtx[base + 1].set(cue.x, static_cast<float>(height()), r, g, b, 220);
+            idx += 2;
         }
     } else {
+        hotCueShadowGeo->allocate(0);
         hotCueGeo->allocate(0);
     }
 
+    hotCueShadowNode->markDirty(QSGNode::DirtyGeometry);
     hotCueNode->markDirty(QSGNode::DirtyGeometry);
 
     // ── Segment strip rendering (tiny colored bar at bottom) ───────────────
