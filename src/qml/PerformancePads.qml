@@ -7,6 +7,10 @@ Item {
 
     property var engine: null
     property string accentColor: "#ff9900"
+    property int activeTab: 0
+
+    readonly property var tabs: ["HOT CUE", "PAD FX", "BEATJUMP", "STEMS"]
+    readonly property var beatJumpPads: [-16, -8, -4, -2, 2, 4, 8, 16]
 
     readonly property real padAreaWidth: Math.max(290, root.width * 0.58)
     readonly property var palette16: [
@@ -31,9 +35,80 @@ Item {
         return mins.toString().padStart(2, "0") + ":" + s.toString().padStart(2, "0")
     }
 
+    function beatJumpLabel(index) {
+        var b = root.beatJumpPads[index]
+        return (b > 0 ? "+" : "") + b + "B"
+    }
+
+    function beatDurationSeconds() {
+        if (!root.engine)
+            return 0.5
+        var bpm = root.engine.currentBpm
+        if (!bpm || bpm <= 0.0)
+            return 0.5
+        return 60.0 / bpm
+    }
+
+    function doBeatJump(beats) {
+        if (!root.engine)
+            return
+        var duration = root.engine.getDuration()
+        if (!duration || duration <= 0.0)
+            return
+
+        var current = root.engine.getPlayheadPositionAtomic()
+        if (current === undefined || isNaN(current))
+            current = root.engine.progress * duration
+
+        var nextPos = current + beats * root.beatDurationSeconds()
+        nextPos = Math.max(0.0, Math.min(duration, nextPos))
+        root.engine.setPosition(nextPos / duration)
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 6
+
+        // Mode tabs above pads.
+        RowLayout {
+            Layout.preferredWidth: padAreaWidth
+            Layout.maximumWidth: padAreaWidth
+            Layout.alignment: Qt.AlignLeft
+            Layout.preferredHeight: 26
+            Layout.maximumHeight: 26
+            spacing: 2
+            z: 30
+
+            Repeater {
+                model: root.tabs
+
+                Rectangle {
+                    required property int index
+                    required property var modelData
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    radius: 3
+                    color: root.activeTab === index ? "#2a2a2a" : "#181818"
+                    border.color: root.activeTab === index ? root.accentColor : "#2a2a2a"
+                    border.width: 1
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: modelData
+                        color: root.activeTab === index ? "#f0f0f0" : "#888"
+                        font.pixelSize: window.sp(8)
+                        font.bold: root.activeTab === index
+                        font.letterSpacing: 0.3
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.activeTab = index
+                    }
+                }
+            }
+        }
 
         RowLayout {
             id: contentRow
@@ -41,6 +116,7 @@ Item {
             Layout.fillHeight: true
             Layout.minimumHeight: 120
             spacing: 12
+            z: 10
 
             Item {
                 Layout.preferredWidth: padAreaWidth
@@ -58,7 +134,7 @@ Item {
                         anchors.top: parent.top
                         anchors.left: parent.left
                         anchors.margins: 6
-                        text: "HOT CUE"
+                        text: root.tabs[root.activeTab]
                         color: root.accentColor
                         font.pixelSize: window.sp(9)
                         font.bold: true
@@ -85,10 +161,13 @@ Item {
                             Layout.column: index % 4
 
                             readonly property var cue: root.hotCueAt(index)
-                            readonly property bool cueSet: cue && cue.set
+                            readonly property bool isHotCueTab: root.activeTab === 0
+                            readonly property bool isBeatJumpTab: root.activeTab === 2
+                            readonly property bool isPlaceholderTab: root.activeTab === 1 || root.activeTab === 3
+                            readonly property bool cueSet: isHotCueTab && cue && cue.set
                             readonly property color activeColor: cueSet
                                 ? cue.color
-                                : "#3a3a3a"
+                                : (isBeatJumpTab ? "#4a3c22" : (isPlaceholderTab ? "#2f2f2f" : "#3a3a3a"))
 
                             radius: 5
                             color:  padMouse.pressed
@@ -115,10 +194,22 @@ Item {
 
                             Text {
                                 anchors.centerIn: parent
-                                text: cueSet ? root.formatCueTime(cue.positionSec) : "SET"
-                                color: cueSet ? "#ffffff" : "#808080"
+                                text: {
+                                    if (isHotCueTab)
+                                        return cueSet ? root.formatCueTime(cue.positionSec) : "SET"
+                                    if (isBeatJumpTab)
+                                        return root.beatJumpLabel(index)
+                                    return "-"
+                                }
+                                color: {
+                                    if (isHotCueTab)
+                                        return cueSet ? "#ffffff" : "#808080"
+                                    if (isBeatJumpTab)
+                                        return "#ffd38a"
+                                    return "#777"
+                                }
                                 font.pixelSize: window.sp(8)
-                                font.bold: cueSet
+                                font.bold: isHotCueTab ? cueSet : true
                                 font.family: "monospace"
                             }
 
@@ -131,6 +222,15 @@ Item {
 
                                 onClicked: (mouse) => {
                                     if (!root.engine)
+                                        return
+
+                                    if (isBeatJumpTab) {
+                                        if (mouse.button === Qt.LeftButton)
+                                            root.doBeatJump(root.beatJumpPads[index])
+                                        return
+                                    }
+
+                                    if (isPlaceholderTab)
                                         return
 
                                     if (mouse.button === Qt.LeftButton) {
@@ -176,7 +276,13 @@ Item {
         Text {
             Layout.preferredWidth: padAreaWidth
             Layout.maximumWidth: padAreaWidth
-            text: "8 HOT CUES  •  L-Klick: Jump/Set  •  M-Klick: Clear  •  R-Klick: Farbe"
+            text: {
+                if (root.activeTab === 0)
+                    return "8 HOT CUES  •  L-Klick: Jump/Set  •  M-Klick: Clear  •  R-Klick: Farbe"
+                if (root.activeTab === 2)
+                    return "BEATJUMP  •  L-Klick: ± Beats"
+                return "Tab ist vorbereitet (Funktion folgt)"
+            }
             color: "#666"
             font.pixelSize: window.sp(8)
             font.family: "monospace"
