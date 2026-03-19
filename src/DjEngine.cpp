@@ -829,6 +829,8 @@ float DjEngine::getDuration() const
 
 float DjEngine::getPosition() const
 {
+    if (m_isScrubbing)
+        return static_cast<float>(m_scrubHoldPosition);
     return static_cast<float>(transportSource.getCurrentPosition());
 }
 
@@ -1109,7 +1111,11 @@ void DjEngine::onTimer()
         } else {
             if (!transportSource.isPlaying())
                 transportSource.start();
-            m_atomicPlayheadPos.store(transportSource.getCurrentPosition(),
+            // Keep UI perfectly pinned to the commanded scrub position.
+            // The transport may move slightly between callbacks when running,
+            // which caused visible back/forth jitter in the scrolling waveform.
+            transportSource.setPosition(m_scrubHoldPosition);
+            m_atomicPlayheadPos.store(m_scrubHoldPosition,
                                       std::memory_order_relaxed);
         }
 
@@ -1365,16 +1371,16 @@ void DjEngine::scratchBySeconds(double deltaSeconds)
     if (deltaSeconds == 0.0)
         return;
 
-    // Increase response so jog/waveform drags feel closer to vinyl movement.
-    deltaSeconds *= 1.85;
-    deltaSeconds = std::clamp(deltaSeconds, -0.12, 0.12);
+    // Precision-first response for mouse waveform scrubbing.
+    // A tiny clamp guards against accidental event spikes without causing jumps.
+    deltaSeconds = std::clamp(deltaSeconds, -0.05, 0.05);
 
     double len = transportSource.getLengthInSeconds();
     if (len <= 0.0)
         return;
 
-    double current = transportSource.getCurrentPosition();
-    double newPos = std::clamp(current + deltaSeconds, 0.0, len);
+    const double basePos = m_scrubHoldPosition;
+    double newPos = std::clamp(basePos + deltaSeconds, 0.0, len);
 
     if (m_isScrubbing && !transportSource.isPlaying())
         transportSource.start();
