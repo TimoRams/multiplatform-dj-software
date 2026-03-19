@@ -146,20 +146,23 @@ void RgbWaveformItem::paint(QPainter* painter)
             c = QColor("#e04040");
         c.setAlpha(230);
 
-        painter->setPen(QPen(c, 1.0));
+        // Draw a high-contrast cue bar: subtle dark underlay + bright main line.
+        painter->setPen(QPen(QColor(0, 0, 0, 170), 4.0));
+        painter->drawLine(QPointF(x, 0.0), QPointF(x, static_cast<float>(h)));
+        painter->setPen(QPen(c, 2.4));
         painter->drawLine(QPointF(x, 0.0), QPointF(x, static_cast<float>(h)));
 
         // Top cue badge: same cue color + readable number inside.
-        const float badgeW = 16.0f;
-        const float badgeH = 11.0f;
+        const float badgeW = 20.0f;
+        const float badgeH = 14.0f;
         const float badgeX = std::clamp(x - badgeW * 0.5f, 0.0f, static_cast<float>(w) - badgeW);
         const QRectF badgeRect(badgeX, 0.0, badgeW, badgeH);
 
         QColor fill = c;
         fill.setAlpha(245);
         painter->setBrush(fill);
-        painter->setPen(QPen(fill.darker(130), 1.0));
-        painter->drawRoundedRect(badgeRect, 2.0, 2.0);
+        painter->setPen(QPen(QColor(0, 0, 0, 185), 1.0));
+        painter->drawRoundedRect(badgeRect, 2.5, 2.5);
 
         const int brightness = (fill.red() * 299 + fill.green() * 587 + fill.blue() * 114) / 1000;
         const QColor textColor = (brightness < 145) ? QColor("#f8f8f8") : QColor("#111111");
@@ -167,7 +170,7 @@ void RgbWaveformItem::paint(QPainter* painter)
 
         QFont f = painter->font();
         f.setBold(true);
-        f.setPixelSize(8);
+        f.setPixelSize(9);
         painter->setFont(f);
         painter->drawText(badgeRect, Qt::AlignCenter, QString::number(cueIndex + 1));
     }
