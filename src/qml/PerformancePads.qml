@@ -96,7 +96,7 @@ Item {
                         anchors.centerIn: parent
                         text: modelData
                         color: root.activeTab === index ? "#f0f0f0" : "#888"
-                        font.pixelSize: window.sp(8)
+                        font.pixelSize: window.spViewport(8)
                         font.bold: root.activeTab === index
                         font.letterSpacing: 0.3
                     }
@@ -136,7 +136,7 @@ Item {
                         anchors.margins: 6
                         text: root.tabs[root.activeTab]
                         color: root.accentColor
-                        font.pixelSize: window.sp(9)
+                        font.pixelSize: window.spViewport(9)
                         font.bold: true
                         font.letterSpacing: 0.7
                     }
@@ -186,7 +186,7 @@ Item {
                                 anchors.margins: 5
                                 text:  (index + 1).toString()
                                 color: cueSet ? "#ffffff" : "#999"
-                                font.pixelSize: window.sp(9)
+                                font.pixelSize: window.spViewport(9)
                                 font.bold: true
                                 font.family: "monospace"
                                 opacity: 0.7
@@ -208,7 +208,7 @@ Item {
                                         return "#ffd38a"
                                     return "#777"
                                 }
-                                font.pixelSize: window.sp(8)
+                                font.pixelSize: window.spViewport(8)
                                 font.bold: isHotCueTab ? cueSet : true
                                 font.family: "monospace"
                             }
@@ -284,7 +284,7 @@ Item {
                 return "Tab ist vorbereitet (Funktion folgt)"
             }
             color: "#666"
-            font.pixelSize: window.sp(8)
+            font.pixelSize: window.spViewport(8)
             font.family: "monospace"
         }
     }

@@ -239,7 +239,7 @@ Item {
                         anchors.centerIn: parent
                         text: (modelData["index"] + 1).toString()
                         color: "#ffffff"
-                        font.pixelSize: window.sp(8)
+                        font.pixelSize: window.spViewport(8)
                         font.bold: true
                         font.family: "monospace"
                     }

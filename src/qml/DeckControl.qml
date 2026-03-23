@@ -166,17 +166,17 @@ Item {
             // Deck header: unified metadata fields (always visible)
             Rectangle {
                 Layout.fillWidth: true
-                height: 62
+                height: 52
                 color: "transparent"
 
                 RowLayout {
                     anchors.fill: parent
-                    spacing: 6
+                    spacing: 4
 
                     // Cover art square (left-aligned)
                     Rectangle {
                         id: coverArt
-                        Layout.preferredWidth: 62
+                        Layout.preferredWidth: 52
                         Layout.fillHeight: true
                         radius: 4
                         color: "#1a1a1a"
@@ -193,7 +193,7 @@ Item {
                             color: deck._hasTrack
                                    ? (deck.deckName === "A" ? "#ff9900" : "#00ccff")
                                    : "#333"
-                            font.pixelSize: deck._hasTrack ? window.sp(22) : window.sp(18)
+                            font.pixelSize: deck._hasTrack ? window.spViewport(22) : window.spViewport(18)
                             opacity: deck._hasTrack ? 0.6 : 0.4
                             visible: coverImage.status !== Image.Ready
                         }
@@ -213,37 +213,38 @@ Item {
                     ColumnLayout {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        spacing: 3
+                        spacing: 2
 
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 29
+                            Layout.preferredHeight: 25
                             radius: 4
                             color: "#1b1b1b"
                             border.color: "#3a3a3a"
                             border.width: 1
 
-                            Column {
+                            Row {
                                 anchors.fill: parent
-                                anchors.leftMargin: 8
-                                anchors.rightMargin: 8
-                                anchors.topMargin: 3
-                                anchors.bottomMargin: 3
-                                spacing: 1
+                                anchors.leftMargin: 6
+                                anchors.rightMargin: 6
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 4
 
                                 Text {
+                                    anchors.verticalCenter: parent.verticalCenter
                                     text: "TITLE"
                                     color: "#6f6f6f"
-                                    font.pixelSize: window.sp(7)
+                                    font.pixelSize: window.spViewport(6)
                                     font.bold: true
                                     font.family: "monospace"
                                 }
 
                                 Text {
-                                    width: parent.width
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: parent.width - 42
                                     text: deck._hasTrack ? deck._trackTitle : "No Track Loaded"
                                     color: deck._hasTrack ? "#f0f0f0" : "#777"
-                                    font.pixelSize: window.sp(10)
+                                    font.pixelSize: window.spViewport(8)
                                     font.bold: true
                                     elide: Text.ElideRight
                                 }
@@ -252,35 +253,36 @@ Item {
 
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 29
+                            Layout.preferredHeight: 25
                             radius: 4
                             color: "#1b1b1b"
                             border.color: "#3a3a3a"
                             border.width: 1
 
-                            Column {
+                            Row {
                                 anchors.fill: parent
-                                anchors.leftMargin: 8
-                                anchors.rightMargin: 8
-                                anchors.topMargin: 3
-                                anchors.bottomMargin: 3
-                                spacing: 1
+                                anchors.leftMargin: 6
+                                anchors.rightMargin: 6
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 4
 
                                 Text {
+                                    anchors.verticalCenter: parent.verticalCenter
                                     text: "ARTIST"
                                     color: "#6f6f6f"
-                                    font.pixelSize: window.sp(7)
+                                    font.pixelSize: window.spViewport(6)
                                     font.bold: true
                                     font.family: "monospace"
                                 }
 
                                 Text {
-                                    width: parent.width
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: parent.width - 46
                                     text: deck._hasTrack
                                           ? (deck._trackArtist !== "" ? deck._trackArtist : "Unknown Artist")
                                           : "-"
                                     color: deck._hasTrack ? "#b8b8b8" : "#666"
-                                    font.pixelSize: window.sp(9)
+                                    font.pixelSize: window.spViewport(8)
                                     elide: Text.ElideRight
                                 }
                             }
@@ -290,41 +292,42 @@ Item {
                     GridLayout {
                         id: metaBadges
                         columns: 2
-                        rowSpacing: 3
-                        columnSpacing: 3
-                        Layout.preferredWidth: 188
+                        rowSpacing: 2
+                        columnSpacing: 2
+                        Layout.preferredWidth: 164
                         Layout.alignment: Qt.AlignVCenter
 
                         // BASE BPM (analyzed/manual value)
                         Rectangle {
                             id: bpmBadge
-                            Layout.preferredWidth: 92
-                            Layout.preferredHeight: 29
+                            Layout.preferredWidth: 81
+                            Layout.preferredHeight: 25
                             radius: 4
                             color: "#1a2e1a"
                             border.color: "#4a8a4a"
                             border.width: 1
 
-                            Column {
+                            Row {
                                 anchors.fill: parent
-                                anchors.leftMargin: 5
-                                anchors.rightMargin: 5
-                                anchors.topMargin: 3
-                                anchors.bottomMargin: 3
-                                spacing: 1
+                                anchors.leftMargin: 4
+                                anchors.rightMargin: 4
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 3
 
                                 Text {
-                                    text: "BASE BPM"
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: "BPM"
                                     color: "#5f8f5f"
-                                    font.pixelSize: window.sp(7)
+                                    font.pixelSize: window.spViewport(6)
                                     font.bold: true
                                     font.family: "monospace"
                                 }
 
                                 Text {
+                                    anchors.verticalCenter: parent.verticalCenter
                                     text: deck._trackBpm !== "" ? deck._trackBpm : "--"
                                     color: deck._trackBpm !== "" ? "#80e080" : "#5a705a"
-                                    font.pixelSize: window.sp(10)
+                                    font.pixelSize: window.spViewport(8)
                                     font.bold: true
                                     font.family: "monospace"
                                 }
@@ -350,37 +353,38 @@ Item {
 
                         // LIVE BPM (tempo/loop adjusted value)
                         Rectangle {
-                            Layout.preferredWidth: 92
-                            Layout.preferredHeight: 29
+                            Layout.preferredWidth: 81
+                            Layout.preferredHeight: 25
                             radius: 4
                             color: "#20242f"
                             border.color: deck._showLiveBpmIndicator() ? "#4f7fcf" : "#3f475a"
                             border.width: 1
 
-                            Column {
+                            Row {
                                 anchors.fill: parent
-                                anchors.leftMargin: 5
-                                anchors.rightMargin: 5
-                                anchors.topMargin: 3
-                                anchors.bottomMargin: 3
-                                spacing: 1
+                                anchors.leftMargin: 4
+                                anchors.rightMargin: 4
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 3
 
                                 Text {
-                                    text: "LIVE BPM"
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: "LIVE"
                                     color: "#6b82a5"
-                                    font.pixelSize: window.sp(7)
+                                    font.pixelSize: window.spViewport(6)
                                     font.bold: true
                                     font.family: "monospace"
                                 }
 
                                 Text {
+                                    anchors.verticalCenter: parent.verticalCenter
                                     text: deck._currentBpm !== "" ? deck._currentBpm : "--"
                                     color: {
                                         if (!deck._showLiveBpmIndicator()) return "#6c7484"
                                         if (!deck.engine) return "#aab6cc"
                                         return deck.engine.tempoPercent > 0 ? "#ffaa00" : "#55ccff"
                                     }
-                                    font.pixelSize: window.sp(10)
+                                    font.pixelSize: window.spViewport(8)
                                     font.bold: true
                                     font.family: "monospace"
                                 }
@@ -388,33 +392,34 @@ Item {
                         }
 
                         Rectangle {
-                            Layout.preferredWidth: 92
-                            Layout.preferredHeight: 29
+                            Layout.preferredWidth: 81
+                            Layout.preferredHeight: 25
                             radius: 4
                             color: "#1a1a2e"
                             border.color: "#4a4aaa"
                             border.width: 1
 
-                            Column {
+                            Row {
                                 anchors.fill: parent
-                                anchors.leftMargin: 5
-                                anchors.rightMargin: 5
-                                anchors.topMargin: 3
-                                anchors.bottomMargin: 3
-                                spacing: 1
+                                anchors.leftMargin: 4
+                                anchors.rightMargin: 4
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 3
 
                                 Text {
+                                    anchors.verticalCenter: parent.verticalCenter
                                     text: "KEY"
                                     color: "#5d6bad"
-                                    font.pixelSize: window.sp(7)
+                                    font.pixelSize: window.spViewport(6)
                                     font.bold: true
                                     font.family: "monospace"
                                 }
 
                                 Text {
+                                    anchors.verticalCenter: parent.verticalCenter
                                     text: deck._trackKey !== "" ? deck._trackKey : "--"
                                     color: deck._trackKey !== "" ? "#8080e0" : "#59608a"
-                                    font.pixelSize: window.sp(10)
+                                    font.pixelSize: window.spViewport(8)
                                     font.bold: true
                                     font.family: "monospace"
                                 }
@@ -422,33 +427,34 @@ Item {
                         }
 
                         Rectangle {
-                            Layout.preferredWidth: 92
-                            Layout.preferredHeight: 29
+                            Layout.preferredWidth: 81
+                            Layout.preferredHeight: 25
                             radius: 4
                             color: "#202020"
                             border.color: "#4a4a4a"
                             border.width: 1
 
-                            Column {
+                            Row {
                                 anchors.fill: parent
-                                anchors.leftMargin: 5
-                                anchors.rightMargin: 5
-                                anchors.topMargin: 3
-                                anchors.bottomMargin: 3
-                                spacing: 1
+                                anchors.leftMargin: 4
+                                anchors.rightMargin: 4
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 3
 
                                 Text {
-                                    text: "LENGTH"
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: "LEN"
                                     color: "#7f7f7f"
-                                    font.pixelSize: window.sp(7)
+                                    font.pixelSize: window.spViewport(6)
                                     font.bold: true
                                     font.family: "monospace"
                                 }
 
                                 Text {
+                                    anchors.verticalCenter: parent.verticalCenter
                                     text: deck._trackDuration !== "" ? deck._trackDuration : "--:--"
                                     color: deck._trackDuration !== "" ? "#b0b0b0" : "#6f6f6f"
-                                    font.pixelSize: window.sp(10)
+                                    font.pixelSize: window.spViewport(8)
                                     font.bold: true
                                     font.family: "monospace"
                                 }
@@ -492,7 +498,7 @@ Item {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 18
                             palette.buttonText: "white"
-                            font.pixelSize: window.sp(8)
+                            font.pixelSize: window.spViewport(8)
                             background: Rectangle {
                                 color: deck.engine && deck.engine.isPlaying ? "#44aa44" : "#444"
                                 radius: 3
@@ -500,7 +506,7 @@ Item {
                             contentItem: Text {
                                 text: parent.text
                                 color: "white"
-                                font.pixelSize: window.sp(8)
+                                font.pixelSize: window.spViewport(8)
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -517,7 +523,7 @@ Item {
                             contentItem: Text {
                                 text: parent.text
                                 color: "white"
-                                font.pixelSize: window.sp(8)
+                                font.pixelSize: window.spViewport(8)
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -539,7 +545,7 @@ Item {
                             contentItem: Text {
                                 text: parent.text
                                 color: parent.checked ? "#ff6600" : "#aaa"
-                                font.pixelSize: window.sp(8)
+                                font.pixelSize: window.spViewport(8)
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -574,7 +580,7 @@ Item {
                                     if (deck.engine && deck.engine.syncMaster) return "#ffe18a"
                                     return "white"
                                 }
-                                font.pixelSize: window.sp(8)
+                                font.pixelSize: window.spViewport(8)
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -599,7 +605,7 @@ Item {
                             contentItem: Text {
                                 text: parent.text
                                 color: parent.checked ? "white" : "#aaa"
-                                font.pixelSize: window.sp(8)
+                                font.pixelSize: window.spViewport(8)
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -623,7 +629,7 @@ Item {
                             contentItem: Text {
                                 text: parent.text
                                 color: parent.checked ? "white" : "#aaa"
-                                font.pixelSize: window.sp(8)
+                                font.pixelSize: window.spViewport(8)
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -646,7 +652,7 @@ Item {
                             contentItem: Text {
                                 text: parent.text
                                 color: parent.checked ? "white" : "#aaa"
-                                font.pixelSize: window.sp(8)
+                                font.pixelSize: window.spViewport(8)
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -672,7 +678,7 @@ Item {
                             contentItem: Text {
                                 text: parent.text
                                 color: "#bbb"
-                                font.pixelSize: window.sp(8)
+                                font.pixelSize: window.spViewport(8)
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -693,7 +699,7 @@ Item {
                             contentItem: Text {
                                 text: parent.text
                                 color: "#bbb"
-                                font.pixelSize: window.sp(8)
+                                font.pixelSize: window.spViewport(8)
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -714,7 +720,7 @@ Item {
                             contentItem: Text {
                                 text: parent.text
                                 color: "#bbb"
-                                font.pixelSize: window.sp(9)
+                                font.pixelSize: window.spViewport(9)
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -737,7 +743,7 @@ Item {
                             contentItem: Text {
                                 text: parent.text
                                 color: parent.checked ? "#d8ffd8" : "#bbb"
-                                font.pixelSize: window.sp(8)
+                                font.pixelSize: window.spViewport(8)
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -759,7 +765,7 @@ Item {
                             contentItem: Text {
                                 text: parent.text
                                 color: "#bbb"
-                                font.pixelSize: window.sp(9)
+                                font.pixelSize: window.spViewport(9)
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -782,7 +788,7 @@ Item {
                             contentItem: Text {
                                 text: parent.text
                                 color: parent.checked ? "#d8ecff" : "#bbb"
-                                font.pixelSize: window.sp(8)
+                                font.pixelSize: window.spViewport(8)
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -823,14 +829,14 @@ Item {
                                 Text {
                                     text: "TEMPO"
                                     color: "#cccccc"
-                                    font.pixelSize: window.sp(8)
+                                    font.pixelSize: window.spViewport(8)
                                     font.bold: true
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
                                 Text {
                                     text: "▾"
                                     color: deck.deckName === "A" ? "#ff9900" : "#00ccff"
-                                    font.pixelSize: window.sp(9)
+                                    font.pixelSize: window.spViewport(9)
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
                             }
@@ -871,7 +877,7 @@ Item {
                             color: tempoSlider.value > 0 ? "#ffaa00"
                                  : tempoSlider.value < 0 ? "#55ccff"
                                  : "#666666"
-                            font.pixelSize: window.sp(9)
+                            font.pixelSize: window.spViewport(9)
                             font.bold: true
                             font.family: "monospace"
                         }
@@ -943,7 +949,7 @@ Item {
                             color: tempoPanel.tempoRange === modelData.value
                                    ? (deck.deckName === "A" ? "#ff9900" : "#00ccff")
                                    : "#aaaaaa"
-                            font.pixelSize: window.sp(9)
+                            font.pixelSize: window.spViewport(9)
                             font.bold: tempoPanel.tempoRange === modelData.value
                             font.family: "monospace"
                         }
@@ -997,7 +1003,7 @@ Item {
                 Text {
                     text: "MANUAL BPM"
                     color: "#a5d6a7"
-                    font.pixelSize: window.sp(9)
+                    font.pixelSize: window.spViewport(9)
                     font.bold: true
                     font.family: "monospace"
                 }
@@ -1011,7 +1017,7 @@ Item {
                     placeholderTextColor: "#666"
                     selectionColor: "#4caf50"
                     selectedTextColor: "#fff"
-                    font.pixelSize: window.sp(11)
+                    font.pixelSize: window.spViewport(11)
                     font.bold: true
                     font.family: "monospace"
                     background: Rectangle {
@@ -1036,7 +1042,7 @@ Item {
                 Text {
                     text: "Enter = Anwenden"
                     color: "#8e8e8e"
-                    font.pixelSize: window.sp(8)
+                    font.pixelSize: window.spViewport(8)
                     font.family: "monospace"
                 }
             }

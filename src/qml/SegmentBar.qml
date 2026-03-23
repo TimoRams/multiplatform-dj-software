@@ -41,7 +41,7 @@ Item {
                 text: modelData.label || ""
                 visible: parent.width >= 52
                 color: "#111"
-                font.pixelSize: 9
+                font.pixelSize: window.spViewport(9)
                 font.bold: true
                 elide: Text.ElideRight
             }

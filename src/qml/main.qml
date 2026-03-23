@@ -35,8 +35,9 @@ ApplicationWindow {
     // Small font sizes get an additional readability boost because many labels
     // in the UI use 7-10px design sizes.
     readonly property real _refHeight: 800
-    property real fontScaleBoost: 1.18
-    function sp(basePx) {
+    property real fontScaleBoost: 1.12
+
+    function _scaledFontSize(basePx) {
         var ratio = window.height / _refHeight
         var dampened = Math.sqrt(ratio)
 
@@ -49,7 +50,7 @@ ApplicationWindow {
         else if (basePx <= 12)
             smallTextBoost = 1.08
 
-        var result = Math.round(basePx * dampened * fontScaleBoost * smallTextBoost)
+        var result = basePx * dampened * fontScaleBoost * smallTextBoost
 
         var minReadable = basePx <= 8 ? 10
                         : basePx <= 10 ? 11
@@ -58,6 +59,27 @@ ApplicationWindow {
         var maxScaleClamp = Math.round(basePx * 1.9)
 
         return Math.max(Math.max(minReadable, minScaleClamp), Math.min(result, maxScaleClamp))
+    }
+
+    // Standard scaling for non-transformed areas (header, FX bar, library).
+    function sp(basePx) {
+        return Math.round(_scaledFontSize(basePx))
+    }
+
+    // Viewport-aware sizing for the transformed top deck area.
+    // Intentionally independent from uiScale/height to prevent text layout
+    // jumps while resizing or scaling the viewport.
+    function spViewport(basePx) {
+        var logicalPx = basePx
+
+        // Keep tiny labels readable without dynamic relayout.
+        if (basePx <= 8)
+            logicalPx = basePx + 2
+        else if (basePx <= 10)
+            logicalPx = basePx + 1
+
+        var dpr = Math.max(1.0, window.devicePixelRatio)
+        return Math.round(logicalPx * dpr) / dpr
     }
 
     // Globaler Waveform-Zoom (beide Decks synchron, wie in Serato/Rekordbox)

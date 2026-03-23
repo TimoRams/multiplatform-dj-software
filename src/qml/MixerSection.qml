@@ -58,7 +58,7 @@ Rectangle {
             id: label
             visible: knobRoot.labelSide === "left"
             color: "#666"
-            font.pixelSize: window.sp(9)
+            font.pixelSize: window.spViewport(9)
             font.bold: true
             font.family: "monospace"
             Layout.alignment: Qt.AlignVCenter
@@ -131,7 +131,7 @@ Rectangle {
             visible: knobRoot.labelSide === "right"
             text: label.text
             color: "#666"
-            font.pixelSize: window.sp(9)
+            font.pixelSize: window.spViewport(9)
             font.bold: true
             font.family: "monospace"
             Layout.alignment: Qt.AlignVCenter
@@ -318,7 +318,7 @@ Rectangle {
         Text { 
             text: "A   CROSSFADER   B" 
             color: "#888"
-            font.pixelSize: window.sp(9)
+            font.pixelSize: window.spViewport(9)
             font.bold: true
             Layout.alignment: Qt.AlignHCenter 
         }
