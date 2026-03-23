@@ -32,17 +32,32 @@ ApplicationWindow {
     }
 
     // ── Global font scaling ──────────────────────────────────────────────────
-    // Dampened scaling: fonts grow/shrink at ~half the rate of the window.
-    // At 800px (ref) → factor 1.0, at 400px → 0.85, at 1600px → 1.19.
-    // This keeps text readable and proportional to fixed-size buttons.
+    // Small font sizes get an additional readability boost because many labels
+    // in the UI use 7-10px design sizes.
     readonly property real _refHeight: 800
+    property real fontScaleBoost: 1.18
     function sp(basePx) {
         var ratio = window.height / _refHeight
-        // Square-root dampening: sqrt(ratio) changes much slower than ratio
         var dampened = Math.sqrt(ratio)
-        var result = Math.round(basePx * dampened)
-        // Clamp: never smaller than 70% or larger than 140% of the design size
-        return Math.max(Math.round(basePx * 0.7), Math.min(result, Math.round(basePx * 1.4)))
+
+        // Keep micro-labels readable on high-res displays.
+        var smallTextBoost = 1.0
+        if (basePx <= 8)
+            smallTextBoost = 1.30
+        else if (basePx <= 10)
+            smallTextBoost = 1.16
+        else if (basePx <= 12)
+            smallTextBoost = 1.08
+
+        var result = Math.round(basePx * dampened * fontScaleBoost * smallTextBoost)
+
+        var minReadable = basePx <= 8 ? 10
+                        : basePx <= 10 ? 11
+                        : Math.round(basePx * 0.9)
+        var minScaleClamp = Math.round(basePx * 0.9)
+        var maxScaleClamp = Math.round(basePx * 1.9)
+
+        return Math.max(Math.max(minReadable, minScaleClamp), Math.min(result, maxScaleClamp))
     }
 
     // Globaler Waveform-Zoom (beide Decks synchron, wie in Serato/Rekordbox)

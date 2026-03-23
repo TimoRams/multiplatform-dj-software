@@ -163,180 +163,296 @@ Item {
             anchors.margins: 10
             spacing: 12
 
-            // Deck header: cover art, title, artist, BPM, key
+            // Deck header: unified metadata fields (always visible)
             Rectangle {
                 Layout.fillWidth: true
-                height: 56
+                height: 62
                 color: "transparent"
 
-                // Cover art square (left-aligned)
-                Rectangle {
-                    id: coverArt
-                    anchors.left:   parent.left
-                    anchors.top:    parent.top
-                    anchors.bottom: parent.bottom
-                    width:  height   // quadratisch
-                    radius: 4
-                    color:  "#1a1a1a"
-                    border.color: deck._hasTrack
-                                  ? (deck.deckName === "A" ? "#ff9900" : "#00ccff")
-                                  : "#333"
-                    border.width: 1
+                RowLayout {
+                    anchors.fill: parent
+                    spacing: 6
 
-                    // Placeholder icon when no cover art is present
-                    Text {
-                        id: coverPlaceholder
-                        anchors.centerIn: parent
-                        text: deck._hasTrack ? "♪" : "♫"
-                        color: deck._hasTrack
-                               ? (deck.deckName === "A" ? "#ff9900" : "#00ccff")
-                               : "#333"
-                        font.pixelSize: deck._hasTrack ? window.sp(22) : window.sp(18)
-                        opacity: deck._hasTrack ? 0.6 : 0.4
-                        visible: coverImage.status !== Image.Ready
-                    }
-
-                    // Cover art via CoverArtProvider (image://coverart/)
-                    Image {
-                        id: coverImage
-                        anchors.fill: parent
-                        anchors.margins: 1
-                        source: deck.engine && deck.engine.hasCoverArt
-                                ? deck.engine.coverArtUrl : ""
-                        fillMode: Image.PreserveAspectCrop
-                        visible: status === Image.Ready
-                    }
-                }
-
-                // Titelzeile + Artist
-                Column {
-                    anchors.left:   coverArt.right
-                    anchors.leftMargin: 8
-                    anchors.right:  metaBadges.left
-                    anchors.rightMargin: 8
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: 3
-
-                    Text {
-                        width: parent.width
-                        text:  deck._hasTrack ? deck._trackTitle : "No Track Loaded"
-                        color: deck._hasTrack ? "#f0f0f0" : "#555"
-                        font.pixelSize: window.sp(14)
-                        font.bold: true
-                        elide: Text.ElideRight
-                    }
-
-                    Text {
-                        width: parent.width
-                        text:  deck._hasTrack ? deck._trackArtist : ""
-                        color: "#aaaaaa"
-                        font.pixelSize: window.sp(11)
-                        elide: Text.ElideRight
-                        visible: deck._hasTrack && deck._trackArtist !== ""
-                    }
-                }
-
-                // BPM + KEY badges (right-aligned)
-                Row {
-                    id: metaBadges
-                    anchors.right:          parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: 5
-
-                    // BPM badge (analyzed + live current)
+                    // Cover art square (left-aligned)
                     Rectangle {
-                        id: bpmBadge
-                        visible: deck._hasTrack
-                        width:   bpmBadgeRow.implicitWidth + 10
-                        height:  20
-                        radius:  3
-                        color:   "#1a2e1a"
-                        border.color: "#4a8a4a"
+                        id: coverArt
+                        Layout.preferredWidth: 62
+                        Layout.fillHeight: true
+                        radius: 4
+                        color: "#1a1a1a"
+                        border.color: deck._hasTrack
+                                      ? (deck.deckName === "A" ? "#ff9900" : "#00ccff")
+                                      : "#333"
                         border.width: 1
 
-                        Row {
-                            id: bpmBadgeRow
+                        // Placeholder icon when no cover art is present
+                        Text {
+                            id: coverPlaceholder
                             anchors.centerIn: parent
-                            spacing: 4
-
-                            Text {
-                                id: bpmLabel
-                                text:  deck._trackBpm !== "" ? deck._trackBpm : "BPM: \u2013"
-                                color: deck._trackBpm !== "" ? "#80e080" : "#507050"
-                                font.pixelSize: window.sp(10)
-                                font.family: "monospace"
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-
-                            // Live BPM — shown on tempo shift OR loop-based perceived BPM shift
-                            Text {
-                                visible: deck._showLiveBpmIndicator()
-                                text:  "→ " + deck._currentBpm
-                                // Orange when sped up, light blue when slowed down
-                                color: {
-                                    if (!deck.engine) return "#aaaaaa"
-                                    return deck.engine.tempoPercent > 0 ? "#ffaa00" : "#55ccff"
-                                }
-                                font.pixelSize: window.sp(10)
-                                font.family: "monospace"
-                                font.bold: true
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
+                            text: deck._hasTrack ? "♪" : "♫"
+                            color: deck._hasTrack
+                                   ? (deck.deckName === "A" ? "#ff9900" : "#00ccff")
+                                   : "#333"
+                            font.pixelSize: deck._hasTrack ? window.sp(22) : window.sp(18)
+                            opacity: deck._hasTrack ? 0.6 : 0.4
+                            visible: coverImage.status !== Image.Ready
                         }
 
-                        MouseArea {
+                        // Cover art via CoverArtProvider (image://coverart/)
+                        Image {
+                            id: coverImage
                             anchors.fill: parent
-                            acceptedButtons: Qt.RightButton
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: (mouse) => {
-                                if (mouse.button !== Qt.RightButton || !deck.engine)
-                                    return
-                                deck._manualBpmInput = deck._trackBpm !== ""
-                                    ? deck._trackBpm
-                                    : (deck._currentBpm !== "" ? deck._currentBpm : "120.00")
-                                manualBpmField.text = deck._manualBpmInput
-                                manualBpmPopup.visible = true
-                                manualBpmField.forceActiveFocus()
-                                manualBpmField.selectAll()
+                            anchors.margins: 1
+                            source: deck.engine && deck.engine.hasCoverArt
+                                    ? deck.engine.coverArtUrl : ""
+                            fillMode: Image.PreserveAspectCrop
+                            visible: status === Image.Ready
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        spacing: 3
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 29
+                            radius: 4
+                            color: "#1b1b1b"
+                            border.color: "#3a3a3a"
+                            border.width: 1
+
+                            Column {
+                                anchors.fill: parent
+                                anchors.leftMargin: 8
+                                anchors.rightMargin: 8
+                                anchors.topMargin: 3
+                                anchors.bottomMargin: 3
+                                spacing: 1
+
+                                Text {
+                                    text: "TITLE"
+                                    color: "#6f6f6f"
+                                    font.pixelSize: window.sp(7)
+                                    font.bold: true
+                                    font.family: "monospace"
+                                }
+
+                                Text {
+                                    width: parent.width
+                                    text: deck._hasTrack ? deck._trackTitle : "No Track Loaded"
+                                    color: deck._hasTrack ? "#f0f0f0" : "#777"
+                                    font.pixelSize: window.sp(10)
+                                    font.bold: true
+                                    elide: Text.ElideRight
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 29
+                            radius: 4
+                            color: "#1b1b1b"
+                            border.color: "#3a3a3a"
+                            border.width: 1
+
+                            Column {
+                                anchors.fill: parent
+                                anchors.leftMargin: 8
+                                anchors.rightMargin: 8
+                                anchors.topMargin: 3
+                                anchors.bottomMargin: 3
+                                spacing: 1
+
+                                Text {
+                                    text: "ARTIST"
+                                    color: "#6f6f6f"
+                                    font.pixelSize: window.sp(7)
+                                    font.bold: true
+                                    font.family: "monospace"
+                                }
+
+                                Text {
+                                    width: parent.width
+                                    text: deck._hasTrack
+                                          ? (deck._trackArtist !== "" ? deck._trackArtist : "Unknown Artist")
+                                          : "-"
+                                    color: deck._hasTrack ? "#b8b8b8" : "#666"
+                                    font.pixelSize: window.sp(9)
+                                    elide: Text.ElideRight
+                                }
                             }
                         }
                     }
 
-                    // KEY badge
-                    Rectangle {
-                        visible: deck._hasTrack
-                        width:   keyLabel.implicitWidth + 10
-                        height:  20
-                        radius:  3
-                        color:   "#1a1a2e"
-                        border.color: "#4a4aaa"
-                        border.width: 1
-                        Text {
-                            id: keyLabel
-                            anchors.centerIn: parent
-                            text:  deck._trackKey !== "" ? deck._trackKey : "KEY: \u2013"
-                            color: deck._trackKey !== "" ? "#8080e0" : "#505070"
-                            font.pixelSize: window.sp(10)
-                            font.family: "monospace"
-                        }
-                    }
+                    GridLayout {
+                        id: metaBadges
+                        columns: 2
+                        rowSpacing: 3
+                        columnSpacing: 3
+                        Layout.preferredWidth: 188
+                        Layout.alignment: Qt.AlignVCenter
 
-                    // Duration badge
-                    Rectangle {
-                        visible: deck._hasTrack
-                        width:   durLabel.implicitWidth + 10
-                        height:  20
-                        radius:  3
-                        color:   "#202020"
-                        border.color: "#444"
-                        border.width: 1
-                        Text {
-                            id: durLabel
-                            anchors.centerIn: parent
-                            text:  deck._trackDuration
-                            color: "#aaaaaa"
-                            font.pixelSize: window.sp(10)
-                            font.family: "monospace"
+                        // BASE BPM (analyzed/manual value)
+                        Rectangle {
+                            id: bpmBadge
+                            Layout.preferredWidth: 92
+                            Layout.preferredHeight: 29
+                            radius: 4
+                            color: "#1a2e1a"
+                            border.color: "#4a8a4a"
+                            border.width: 1
+
+                            Column {
+                                anchors.fill: parent
+                                anchors.leftMargin: 5
+                                anchors.rightMargin: 5
+                                anchors.topMargin: 3
+                                anchors.bottomMargin: 3
+                                spacing: 1
+
+                                Text {
+                                    text: "BASE BPM"
+                                    color: "#5f8f5f"
+                                    font.pixelSize: window.sp(7)
+                                    font.bold: true
+                                    font.family: "monospace"
+                                }
+
+                                Text {
+                                    text: deck._trackBpm !== "" ? deck._trackBpm : "--"
+                                    color: deck._trackBpm !== "" ? "#80e080" : "#5a705a"
+                                    font.pixelSize: window.sp(10)
+                                    font.bold: true
+                                    font.family: "monospace"
+                                }
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                acceptedButtons: Qt.RightButton
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: (mouse) => {
+                                    if (mouse.button !== Qt.RightButton || !deck.engine)
+                                        return
+                                    deck._manualBpmInput = deck._trackBpm !== ""
+                                        ? deck._trackBpm
+                                        : (deck._currentBpm !== "" ? deck._currentBpm : "120.00")
+                                    manualBpmField.text = deck._manualBpmInput
+                                    manualBpmPopup.visible = true
+                                    manualBpmField.forceActiveFocus()
+                                    manualBpmField.selectAll()
+                                }
+                            }
+                        }
+
+                        // LIVE BPM (tempo/loop adjusted value)
+                        Rectangle {
+                            Layout.preferredWidth: 92
+                            Layout.preferredHeight: 29
+                            radius: 4
+                            color: "#20242f"
+                            border.color: deck._showLiveBpmIndicator() ? "#4f7fcf" : "#3f475a"
+                            border.width: 1
+
+                            Column {
+                                anchors.fill: parent
+                                anchors.leftMargin: 5
+                                anchors.rightMargin: 5
+                                anchors.topMargin: 3
+                                anchors.bottomMargin: 3
+                                spacing: 1
+
+                                Text {
+                                    text: "LIVE BPM"
+                                    color: "#6b82a5"
+                                    font.pixelSize: window.sp(7)
+                                    font.bold: true
+                                    font.family: "monospace"
+                                }
+
+                                Text {
+                                    text: deck._currentBpm !== "" ? deck._currentBpm : "--"
+                                    color: {
+                                        if (!deck._showLiveBpmIndicator()) return "#6c7484"
+                                        if (!deck.engine) return "#aab6cc"
+                                        return deck.engine.tempoPercent > 0 ? "#ffaa00" : "#55ccff"
+                                    }
+                                    font.pixelSize: window.sp(10)
+                                    font.bold: true
+                                    font.family: "monospace"
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.preferredWidth: 92
+                            Layout.preferredHeight: 29
+                            radius: 4
+                            color: "#1a1a2e"
+                            border.color: "#4a4aaa"
+                            border.width: 1
+
+                            Column {
+                                anchors.fill: parent
+                                anchors.leftMargin: 5
+                                anchors.rightMargin: 5
+                                anchors.topMargin: 3
+                                anchors.bottomMargin: 3
+                                spacing: 1
+
+                                Text {
+                                    text: "KEY"
+                                    color: "#5d6bad"
+                                    font.pixelSize: window.sp(7)
+                                    font.bold: true
+                                    font.family: "monospace"
+                                }
+
+                                Text {
+                                    text: deck._trackKey !== "" ? deck._trackKey : "--"
+                                    color: deck._trackKey !== "" ? "#8080e0" : "#59608a"
+                                    font.pixelSize: window.sp(10)
+                                    font.bold: true
+                                    font.family: "monospace"
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.preferredWidth: 92
+                            Layout.preferredHeight: 29
+                            radius: 4
+                            color: "#202020"
+                            border.color: "#4a4a4a"
+                            border.width: 1
+
+                            Column {
+                                anchors.fill: parent
+                                anchors.leftMargin: 5
+                                anchors.rightMargin: 5
+                                anchors.topMargin: 3
+                                anchors.bottomMargin: 3
+                                spacing: 1
+
+                                Text {
+                                    text: "LENGTH"
+                                    color: "#7f7f7f"
+                                    font.pixelSize: window.sp(7)
+                                    font.bold: true
+                                    font.family: "monospace"
+                                }
+
+                                Text {
+                                    text: deck._trackDuration !== "" ? deck._trackDuration : "--:--"
+                                    color: deck._trackDuration !== "" ? "#b0b0b0" : "#6f6f6f"
+                                    font.pixelSize: window.sp(10)
+                                    font.bold: true
+                                    font.family: "monospace"
+                                }
+                            }
                         }
                     }
                 }
