@@ -46,7 +46,8 @@ enum class EffectType : int {
     SoundColorCrush  = 19,   // bitcrusher + bipolar filter
     SoundColorSpace  = 20,   // reverb + bipolar filter on wet
     SoundColorPitch  = 21,   // pure pitch shift ±12 semitones
-    SoundColorNoise  = 22    // white noise through bipolar filter
+    SoundColorNoise  = 22,   // white noise through bipolar filter
+    SoundColorSweep  = 23    // animated bipolar filter sweep (rate/depth via SC param)
 };
 
 class FxProcessor
@@ -69,16 +70,20 @@ public:
     void setAmount(float amount);
     /// knob: -1.0 = max left, 0.0 = bypass, +1.0 = max right  (Sound Color only)
     void setSCKnobValue(float knob);
+    /// param: 0.0..1.0 generic Sound Color parameter (mode-specific behavior).
+    void setSCParamValue(float param);
 
     EffectType getEffectType() const { return static_cast<EffectType>(m_typeAtomic.load()); }
     float      getAmount()     const { return m_amountAtomic.load(); }
     float      getSCKnob()     const { return m_scKnobAtomic.load(); }
+    float      getSCParam()    const { return m_scParamAtomic.load(); }
 
 private:
     // ── Shared state ─────────────────────────────────────────────────────────
     std::atomic<int>   m_typeAtomic   { static_cast<int>(EffectType::None) };
     std::atomic<float> m_amountAtomic { 0.0f };
     std::atomic<float> m_scKnobAtomic { 0.0f };  // bipolar -1..+1 for Sound Color
+    std::atomic<float> m_scParamAtomic{ 0.5f };  // generic 0..1 parameter for SC modes
 
     double m_sampleRate    = 44100.0;
     int    m_maxBlockSize  = 512;
@@ -240,11 +245,11 @@ private:
                         float knob, SVFState& state);
 
     // ── Sound Color: per-effect state ─────────────────────────────────────────
-    struct SCFilterState  { SVFState svf; };
+    struct SCFilterState  { SVFState svfA; SVFState svfB; };
     struct SCDubEchoState {
         DelayLine lineL, lineR;
         SVFState  svf;
-        float     hpL = 0.f, hpR = 0.f;  // HP filter state for echo tail
+        float     lpL = 0.f, lpR = 0.f;  // tape-style low-pass in feedback
     };
     struct SCCrushState   { SVFState svf; std::vector<BitcrusherState> bc; };
     struct SCSpaceState   { SVFState svf; };
@@ -252,12 +257,19 @@ private:
         uint32_t seed = 12345u;
         SVFState svf;
     };
+    struct SCSweepState {
+        float lp1[2] = {};
+        float bp1[2] = {};
+        float lp2[2] = {};
+        float bp2[2] = {};
+    };
 
     SCFilterState  m_scFilterState;
     SCDubEchoState m_scDubEchoState;
     SCCrushState   m_scCrushState;
     SCSpaceState   m_scSpaceState;
     SCNoiseState   m_scNoiseState;
+    SCSweepState   m_scSweepState;
 
     void prepareSCDelays();
 
@@ -268,6 +280,7 @@ private:
     void processSC_Space   (juce::AudioBuffer<float>& buf, int start, int n, float knob);
     void processSC_Pitch   (juce::AudioBuffer<float>& buf, int start, int n, float knob);
     void processSC_Noise   (juce::AudioBuffer<float>& buf, int start, int n, float knob);
+    void processSC_Sweep   (juce::AudioBuffer<float>& buf, int start, int n, float knob, float param);
 
     // ── Helpers ───────────────────────────────────────────────────────────────
     // Copies [start, start+n) from src into a temporary buffer starting at 0,

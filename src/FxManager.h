@@ -32,6 +32,7 @@ class FxManager : public QObject
 
     // ── SoundColor (centre knob) ──────────────────────────────────────────────
     Q_PROPERTY(QString soundColorMode READ soundColorMode WRITE setSoundColorMode NOTIFY soundColorModeChanged)
+    Q_PROPERTY(float soundColorParam READ soundColorParam WRITE setSoundColorParam NOTIFY soundColorParamChanged)
 
 public:
     explicit FxManager(QObject* parent = nullptr);
@@ -41,7 +42,9 @@ public:
 
     // ── SoundColor ───────────────────────────────────────────────────────────
     QString soundColorMode() const { return m_soundColorMode; }
+    float soundColorParam() const { return m_soundColorParam; }
     Q_INVOKABLE void setSoundColorMode(const QString& mode);
+    Q_INVOKABLE void setSoundColorParam(float param);
 
     /// Called from FxBar centre knob — applies SoundColor to BOTH decks.
     /// @param mode   "Space"|"D.Echo"|"Crush"|"Pitch"|"Noise"|"Filter"
@@ -104,6 +107,7 @@ signals:
     void deck2BChanged();
 
     void soundColorModeChanged();
+    void soundColorParamChanged();
 
 private:
     DjEngine* m_engineA = nullptr;
@@ -111,6 +115,7 @@ private:
 
     // ── SoundColor state ─────────────────────────────────────────────────────
     QString m_soundColorMode { "Filter" };
+    float   m_soundColorParam { 0.5f };
     float   m_soundColorValueA { 0.0f };   // bipolar -1..+1 per deck
     float   m_soundColorValueB { 0.0f };
 

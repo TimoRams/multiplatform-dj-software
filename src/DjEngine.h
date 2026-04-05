@@ -212,6 +212,7 @@ public slots:
     void setFxEffectType(EffectType type);
     void setFxWetDry(float amount);
     void setFxSCKnob(float knob);   // bipolar -1..+1 for Sound Color
+    void setFxSCParam(float param); // 0..1 mode parameter for Sound Color
 
     bool isReverse() const { return m_isReverse; }
     Q_INVOKABLE void setReverse(bool on);

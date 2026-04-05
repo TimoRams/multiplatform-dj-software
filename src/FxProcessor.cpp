@@ -276,6 +276,13 @@ void FxProcessor::process(juce::AudioBuffer<float>& buffer, int startSample, int
         processSC_Noise(buffer, startSample, numSamples, knob);
         return;
     }
+    else if (type == EffectType::SoundColorSweep)
+    {
+        const float knob = m_scKnobAtomic.load(std::memory_order_relaxed);
+        const float param = m_scParamAtomic.load(std::memory_order_relaxed);
+        processSC_Sweep(buffer, startSample, numSamples, knob, param);
+        return;
+    }
     // EffectType::None → wet buffer stays as dry copy, mixed at `amount` weight
 
     // ── Per-sample smoothed wet/dry mix back into the main buffer ─────────────
@@ -312,6 +319,11 @@ void FxProcessor::setAmount(float amount)
 void FxProcessor::setSCKnobValue(float knob)
 {
     m_scKnobAtomic.store(std::clamp(knob, -1.0f, 1.0f), std::memory_order_relaxed);
+}
+
+void FxProcessor::setSCParamValue(float param)
+{
+    m_scParamAtomic.store(std::clamp(param, 0.0f, 1.0f), std::memory_order_relaxed);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1070,14 +1082,16 @@ void FxProcessor::prepareSCDelays()
 {
     m_scDubEchoState.lineL.prepare(kMaxDelaySamples);
     m_scDubEchoState.lineR.prepare(kMaxDelaySamples);
-    m_scDubEchoState.hpL = 0.f;
-    m_scDubEchoState.hpR = 0.f;
+    m_scDubEchoState.lpL = 0.f;
+    m_scDubEchoState.lpR = 0.f;
     m_scDubEchoState.svf = SVFState{};
-    m_scFilterState.svf  = SVFState{};
+    m_scFilterState.svfA = SVFState{};
+    m_scFilterState.svfB = SVFState{};
     m_scSpaceState.svf   = SVFState{};
     m_scNoiseState.svf   = SVFState{};
     m_scNoiseState.seed  = 12345u;
     m_scCrushState.svf   = SVFState{};
+    m_scSweepState = SCSweepState{};
 }
 
 // ── Bipolar SVF helper ────────────────────────────────────────────────────────
@@ -1148,12 +1162,60 @@ void FxProcessor::processSC_Filter(juce::AudioBuffer<float>& buffer,
     const float absK = std::abs(knob);
     if (absK < 0.005f) return; // centre = bypass
 
+    const float param = m_scParamAtomic.load(std::memory_order_relaxed);
+    const float q = 0.70f + param * 15.30f;
+    const float sr = static_cast<float>(m_sampleRate);
+    const float pi = juce::MathConstants<float>::pi;
+
+    float fc;
+    if (knob < 0.f)
+        fc = 20000.f * std::pow(20.f / 20000.f, absK);
+    else
+        fc = 20.f * std::pow(20000.f / 20.f, absK);
+    fc = std::clamp(fc, 20.f, 20000.f);
+
+    const float w = 2.f * std::tan(pi * fc / sr);
+    const float k = 1.f / std::max(0.2f, q);
+    const float a1 = 1.f / (1.f + k * w + w * w);
+    const float a2 = w * a1;
+    const float a3 = w * a2;
+
     // Copy to wet buffer
     juce::AudioBuffer<float> wetBuf(m_numChannels, n);
     copyToWet(buffer, wetBuf, start, n);
 
-    // Apply the bipolar SVF in-place — this IS the effect, no pre-processing
-    applySCFilter(wetBuf, 0, n, knob, m_scFilterState.svf);
+    // 24 dB/oct slope: cascade two 2-pole SVF stages with shared cutoff/Q.
+    const int numChProc = std::min(wetBuf.getNumChannels(), 2);
+    for (int i = 0; i < n; ++i) {
+        for (int ch = 0; ch < numChProc; ++ch) {
+            float* d = wetBuf.getWritePointer(ch);
+            const float x = d[i];
+
+            float v3a = x - m_scFilterState.svfA.s2[ch];
+            float v1a = a1 * m_scFilterState.svfA.s1[ch] + a2 * v3a;
+            float v2a = m_scFilterState.svfA.s2[ch] + a2 * m_scFilterState.svfA.s1[ch] + a3 * v3a;
+            m_scFilterState.svfA.s1[ch] = 2.f * v1a - m_scFilterState.svfA.s1[ch];
+            m_scFilterState.svfA.s2[ch] = 2.f * v2a - m_scFilterState.svfA.s2[ch];
+            const float stageA = (knob < 0.f) ? v2a : (x - k * v1a - v2a);
+
+            float v3b = stageA - m_scFilterState.svfB.s2[ch];
+            float v1b = a1 * m_scFilterState.svfB.s1[ch] + a2 * v3b;
+            float v2b = m_scFilterState.svfB.s2[ch] + a2 * m_scFilterState.svfB.s1[ch] + a3 * v3b;
+            m_scFilterState.svfB.s1[ch] = 2.f * v1b - m_scFilterState.svfB.s1[ch];
+            m_scFilterState.svfB.s2[ch] = 2.f * v2b - m_scFilterState.svfB.s2[ch];
+            d[i] = (knob < 0.f) ? v2b : (stageA - k * v1b - v2b);
+        }
+    }
+
+    // Resonance-driven edge emphasis (musical "squelch") controlled by PARAM.
+    // PARAM=0 is near isolator behavior (minimal bump), PARAM=1 is aggressive.
+    const float edgeGain = 1.0f + param * 0.9f;
+    const int numChEdge = std::min(wetBuf.getNumChannels(), m_numChannels);
+    for (int ch = 0; ch < numChEdge; ++ch) {
+        float* d = wetBuf.getWritePointer(ch);
+        for (int i = 0; i < n; ++i)
+            d[i] = std::tanh(d[i] * edgeGain);
+    }
 
     // Wet amount: quick fade-in from centre so there's no sudden cut at 0
     const float wet = absK;
@@ -1179,12 +1241,19 @@ void FxProcessor::processSC_DubEcho(juce::AudioBuffer<float>& buffer,
     const float absK = std::abs(knob);
     if (absK < 0.005f) return;
 
-    // Delay time: fixed at approx 3/4 beat — 375ms at 120BPM.
-    // In absence of BPM sync, use a musical constant ~0.375s.
+    const float param = m_scParamAtomic.load(std::memory_order_relaxed);
+
+    // PARAM controls delay time from musical short to long range.
+    // 120 BPM reference: 1/16 = 125 ms, 3/4 = 1500 ms.
+    const double delaySec = 0.125 + static_cast<double>(param) * (1.50 - 0.125);
     const int delaySamples = std::clamp(
-        static_cast<int>(m_sampleRate * 0.375),
+        static_cast<int>(m_sampleRate * delaySec),
         1, kMaxDelaySamples - 1);
-    const float feedback = 0.45f + absK * 0.25f;  // 0.45 – 0.7
+    const float feedback = std::clamp(0.30f + 0.45f * param + 0.15f * absK, 0.2f, 0.92f);
+    const float tapeLpHz = 12000.0f - param * 11000.0f; // darker at high PARAM
+    const float tapeAlpha = std::clamp(2.0f * juce::MathConstants<float>::pi
+                                       * (tapeLpHz / static_cast<float>(m_sampleRate)),
+                                       0.001f, 0.99f);
 
     // Build wet (echo) buffer
     juce::AudioBuffer<float> wetBuf(m_numChannels, n);
@@ -1200,10 +1269,15 @@ void FxProcessor::processSC_DubEcho(juce::AudioBuffer<float>& buffer,
         for (int i = 0; i < n; ++i)
         {
             float delayed = line.read(delaySamples);
-            float fb = std::tanh(delayed * feedback);
+
+            float& lpState = (ch == 0) ? m_scDubEchoState.lpL : m_scDubEchoState.lpR;
+            lpState += tapeAlpha * (delayed - lpState);
+            float tapeDelayed = lpState;
+
+            float fb = std::tanh(tapeDelayed * feedback);
             float out = data[i] + fb;
             line.write(out);
-            data[i] = out;
+            data[i] = tapeDelayed;
         }
     }
 
@@ -1233,16 +1307,19 @@ void FxProcessor::processSC_Crush(juce::AudioBuffer<float>& buffer,
     const float absK = std::abs(knob);
     if (absK < 0.005f) return;
 
+    const float param = m_scParamAtomic.load(std::memory_order_relaxed);
+    const float intensity = std::clamp(absK * (0.15f + 0.85f * param), 0.0f, 1.0f);
+
     // Build wet buffer
     juce::AudioBuffer<float> wetBuf(m_numChannels, n);
     copyToWet(buffer, wetBuf, start, n);
 
-    // Bit depth: 16 bit (absK=0) → 3 bit (absK=1)
-    const float bitDepth = 16.f * std::pow(3.f / 16.f, absK);
+    // Bit depth: 16 bit -> 2 bit with intensity
+    const float bitDepth = 16.f * std::pow(2.f / 16.f, intensity);
     const float steps    = std::pow(2.f, bitDepth);
     const float invSteps = 1.f / steps;
-    // Hold length: 1 (no SRC) → 8 samples
-    const int holdLen = 1 + static_cast<int>(absK * 7.f);
+    // Decimation: 1 -> 96 samples with intensity
+    const int holdLen = 1 + static_cast<int>(intensity * 95.f);
 
     // Ensure per-channel state
     if (m_scCrushState.bc.size() < static_cast<size_t>(m_numChannels))
@@ -1270,7 +1347,7 @@ void FxProcessor::processSC_Crush(juce::AudioBuffer<float>& buffer,
     // Bipolar filter pass
     applySCFilter(wetBuf, 0, n, knob, m_scCrushState.svf);
 
-    const float wet = absK;
+    const float wet = intensity;
     const float dry = 1.f - wet;
     for (int ch = 0; ch < numCh; ++ch)
     {
@@ -1292,17 +1369,20 @@ void FxProcessor::processSC_Space(juce::AudioBuffer<float>& buffer,
     const float absK = std::abs(knob);
     if (absK < 0.005f) return;
 
+    const float param = m_scParamAtomic.load(std::memory_order_relaxed);
+
     juce::AudioBuffer<float> wetBuf(m_numChannels, n);
     copyToWet(buffer, wetBuf, start, n);
 
-    // Update reverb params: roomSize and wetLevel scale with absK
+    // PARAM controls room size + decay length.
+    // left (0): short room/chamber, right (1): huge long hall.
     juce::dsp::Reverb::Parameters p;
-    p.roomSize   = 0.5f + absK * 0.5f;   // 0.5 → 1.0
-    p.damping    = (knob < 0.f) ? (0.2f + absK * 0.6f) : 0.1f;  // dark = more damping
+    p.roomSize   = 0.18f + param * 0.82f;
+    p.damping    = 0.85f - param * 0.70f;
     p.wetLevel   = 1.f;   // wet/dry handled externally
     p.dryLevel   = 0.f;
-    p.width      = 0.6f + absK * 0.4f;
-    p.freezeMode = 0.f;
+    p.width      = 0.55f + param * 0.45f;
+    p.freezeMode = std::clamp((param - 0.90f) * 2.0f, 0.0f, 1.0f);
     m_reverb.setParameters(p);
 
     processReverb(wetBuf, 0, n);
@@ -1331,11 +1411,15 @@ void FxProcessor::processSC_Pitch(juce::AudioBuffer<float>& buffer,
     const float absK = std::abs(knob);
     if (absK < 0.005f) return;
 
+    const float param = m_scParamAtomic.load(std::memory_order_relaxed);
+
     juce::AudioBuffer<float> wetBuf(m_numChannels, n);
     copyToWet(buffer, wetBuf, start, n);
 
-    // knob -1 = -12 semitones, knob +1 = +12 semitones
-    const double semitones  = static_cast<double>(knob) * 12.0;
+    // PARAM controls max pitch range:
+    // 0.0 => +/-1 semitone, 1.0 => +/-36 semitones (3 octaves).
+    const double maxRangeSemitones = 1.0 + static_cast<double>(param) * 35.0;
+    const double semitones  = static_cast<double>(knob) * maxRangeSemitones;
     const double pitchRatio = std::pow(2.0, semitones / 12.0);
     m_pitchShifter->setPitchRatio(pitchRatio);
     m_pitchShifter->process(wetBuf, 0, n);
@@ -1365,6 +1449,8 @@ void FxProcessor::processSC_Noise(juce::AudioBuffer<float>& buffer,
     const float absK = std::abs(knob);
     if (absK < 0.005f) return;
 
+    const float param = m_scParamAtomic.load(std::memory_order_relaxed);
+
     // Generate white noise into a temporary buffer
     juce::AudioBuffer<float> noiseBuf(m_numChannels, n);
     noiseBuf.clear();
@@ -1384,7 +1470,7 @@ void FxProcessor::processSC_Noise(juce::AudioBuffer<float>& buffer,
 
     // Add filtered noise on top of dry signal
     // Noise gain scales with |knob| — at full knob noise is quite audible
-    const float noiseGain = absK * 0.6f;
+    const float noiseGain = absK * (0.08f + param * 1.20f);
     for (int ch = 0; ch < numCh; ++ch)
     {
         float*       dst   = buffer.getWritePointer(ch) + start;
@@ -1394,5 +1480,71 @@ void FxProcessor::processSC_Noise(juce::AudioBuffer<float>& buffer,
             dst[i] += noise[i] * noiseGain;
             dst[i]  = std::clamp(dst[i], -1.f, 1.f);
         }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7. SC SWEEP — animated LP/HP sweep with user parameter for rate/depth
+//    knob sign selects LP (left) vs HP (right) flavor.
+//    param controls sweep motion: 0 = subtle/slow, 1 = fast/deep.
+// ─────────────────────────────────────────────────────────────────────────────
+void FxProcessor::processSC_Sweep(juce::AudioBuffer<float>& buffer,
+                                   int start, int n, float knob, float param)
+{
+    const float absK = std::abs(knob);
+    if (absK < 0.005f) return;
+
+    juce::AudioBuffer<float> wetBuf(m_numChannels, n);
+    copyToWet(buffer, wetBuf, start, n);
+
+    // PARAM controls resonance (Q): low -> subtle, high -> aggressive/whistling.
+    const float sr = static_cast<float>(m_sampleRate);
+    const float pi = juce::MathConstants<float>::pi;
+    const float q = 0.7f + param * 19.3f;
+
+    // Color controls cutoff trajectory.
+    float fc;
+    if (knob < 0.f)
+        fc = 18000.f * std::pow(80.f / 18000.f, absK);   // downward sweep for notch side
+    else
+        fc = 80.f * std::pow(18000.f / 80.f, absK);      // upward sweep for HP side
+    fc = std::clamp(fc, 20.f, 20000.f);
+
+    const float w = 2.f * std::tan(pi * fc / sr);
+    const float r = 1.f / std::max(0.2f, q);
+    const float hpScale = std::clamp(1.0f + param * 0.35f, 1.0f, 1.35f);
+
+    const int numCh = std::min(wetBuf.getNumChannels(), 2);
+    for (int i = 0; i < n; ++i) {
+        for (int ch = 0; ch < numCh; ++ch) {
+            float* data = wetBuf.getWritePointer(ch);
+            const float x = data[i];
+
+            // Stage 1 SVF
+            float hp1 = x - m_scSweepState.lp1[ch] - r * m_scSweepState.bp1[ch];
+            m_scSweepState.bp1[ch] += w * hp1;
+            m_scSweepState.lp1[ch] += w * m_scSweepState.bp1[ch];
+
+            // Stage 2 SVF for steeper contour
+            float hp2 = x - m_scSweepState.lp2[ch] - r * m_scSweepState.bp2[ch];
+            m_scSweepState.bp2[ch] += w * hp2;
+            m_scSweepState.lp2[ch] += w * m_scSweepState.bp2[ch];
+
+            const float notch = 0.5f * ((m_scSweepState.lp1[ch] + hp1) + (m_scSweepState.lp2[ch] + hp2));
+            const float hpOut = 0.5f * (hp1 + hp2) * hpScale;
+
+            data[i] = (knob < 0.f) ? notch : hpOut;
+        }
+    }
+
+    const float wet = std::clamp(absK, 0.0f, 1.0f);
+    const float dry = 1.f - wet;
+    const int outCh = std::min(buffer.getNumChannels(), m_numChannels);
+    for (int ch = 0; ch < outCh; ++ch)
+    {
+        float* dst = buffer.getWritePointer(ch) + start;
+        const float* src = wetBuf.getReadPointer(ch);
+        for (int i = 0; i < n; ++i)
+            dst[i] = dst[i] * dry + src[i] * wet;
     }
 }

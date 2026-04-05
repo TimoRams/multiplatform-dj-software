@@ -46,6 +46,7 @@ EffectType FxManager::effectTypeFromString(const QString& name)
     if (name == "Crush")         return EffectType::SoundColorCrush;
     if (name == "Pitch")         return EffectType::SoundColorPitch;
     if (name == "Noise")         return EffectType::SoundColorNoise;
+    if (name == "Sweep")         return EffectType::SoundColorSweep;
     if (name == "Filter")        return EffectType::SoundColorFilter;
     return EffectType::None;
 }
@@ -139,6 +140,19 @@ void FxManager::setSoundColorMode(const QString& mode)
     qDebug() << "[FxManager] SoundColor mode ->" << mode;
 }
 
+void FxManager::setSoundColorParam(float param)
+{
+    const float clamped = std::clamp(param, 0.0f, 1.0f);
+    if (qFuzzyCompare(m_soundColorParam, clamped))
+        return;
+
+    m_soundColorParam = clamped;
+    emit soundColorParamChanged();
+
+    if (m_engineA) m_engineA->setFxSCParam(m_soundColorParam);
+    if (m_engineB) m_engineB->setFxSCParam(m_soundColorParam);
+}
+
 void FxManager::setSoundColor(const QString& mode, float value)
 {
     // Centre knob: left half → deck A gets wetter, right half → deck B gets wetter
@@ -184,6 +198,19 @@ void FxManager::setSoundColorDeck(int deck, float value)
 void FxManager::applySoundColorToEngine(DjEngine* engine, const QString& mode, float value)
 {
     if (!engine) return;
+
+    engine->setFxSCParam(m_soundColorParam);
+
+    // "Filter" mode should use the deck's native DJ filter path only.
+    // Running SC filter DSP on top of the mixer filter causes double-filtering
+    // and unstable/unnatural behavior.
+    if (mode == "Filter") {
+        engine->setFxEffectType(EffectType::None);
+        engine->setFxWetDry(0.0f);
+        engine->setFxSCKnob(0.0f);
+        engine->setFilter(static_cast<double>(value));
+        return;
+    }
 
     // value is bipolar -1..+1.  At 0.0 (centre) = bypass.
     if (std::abs(value) < 0.01f)

@@ -660,6 +660,7 @@ public:
     void setFxEffectType(EffectType type) { m_fx.setEffectType(type); }
     void setFxAmount(float amount)        { m_fx.setAmount(amount); }
     void setFxSCKnob(float knob)          { m_fx.setSCKnobValue(knob); }
+    void setFxSCParam(float param)        { m_fx.setSCParamValue(param); }
 
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override {
         if (source) source->prepareToPlay(samplesPerBlockExpected, sampleRate);
@@ -2274,6 +2275,11 @@ void DjEngine::setFxWetDry(float amount)
 void DjEngine::setFxSCKnob(float knob)
 {
     if (mixerSource) mixerSource->setFxSCKnob(knob);
+}
+
+void DjEngine::setFxSCParam(float param)
+{
+    if (mixerSource) mixerSource->setFxSCParam(param);
 }
 
 void DjEngine::setReverse(bool on)
