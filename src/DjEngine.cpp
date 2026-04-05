@@ -495,6 +495,23 @@ public:
                     buf->applyGain(ch, s, n, masterGain);
             }
 
+            // ── VU peak level measurement (BEFORE limiter, real incoming signal) ───
+            // Measure true peaks before anti-clip processing so VU shows real levels.
+            {
+                float peakL = 0.0f, peakR = 0.0f;
+                if (buf->getNumChannels() > 0)
+                    peakL = buf->getMagnitude(0, s, n);
+                if (buf->getNumChannels() > 1)
+                    peakR = buf->getMagnitude(1, s, n);
+                m_peakL.store(peakL, std::memory_order_relaxed);
+                m_peakR.store(peakR, std::memory_order_relaxed);
+                // Strict digital clip indicator: only flag when real incoming signal
+                // overshoots full scale with a small margin.
+                constexpr float kClipThreshold = 1.001f;
+                m_clipDetected.store((peakL > kClipThreshold) || (peakR > kClipThreshold),
+                                     std::memory_order_relaxed);
+            }
+
             // Brickwall Limiter: always processes (consistent latency),
             // seamless crossfade handled internally via setEnabled()
             {
@@ -509,25 +526,6 @@ public:
                 s_gainReduction.store(m_limiter.isEnabled() ? gr : 1.0f,
                                       std::memory_order_relaxed);
             }
-        }
-
-        // ── VU peak level measurement (post-processing) ───────────────────
-        {
-            auto* buf = bufferToFill.buffer;
-            const int s = bufferToFill.startSample;
-            const int n = bufferToFill.numSamples;
-            float peakL = 0.0f, peakR = 0.0f;
-            if (buf->getNumChannels() > 0)
-                peakL = buf->getMagnitude(0, s, n);
-            if (buf->getNumChannels() > 1)
-                peakR = buf->getMagnitude(1, s, n);
-            m_peakL.store(peakL, std::memory_order_relaxed);
-            m_peakR.store(peakR, std::memory_order_relaxed);
-            // Strict digital clip indicator: only flag when we overshoot full scale
-            // with a small margin to avoid false positives from limiter ceiling.
-            constexpr float kClipThreshold = 1.001f;
-            m_clipDetected.store((peakL > kClipThreshold) || (peakR > kClipThreshold),
-                                std::memory_order_relaxed);
         }
     }
 

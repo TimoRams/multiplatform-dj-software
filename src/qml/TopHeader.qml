@@ -454,14 +454,14 @@ Rectangle {
         }
     }
 
-    // ── VU METER OVERLAY (absolutely centered) ────────────────────────────
+    // ── VU METER OVERLAY (centered, horizontal bars with Peak Hold + Decay) ──
     Row {
         anchors.centerIn: parent
-        spacing: 1
+        spacing: 8
 
         Column {
             id: vuColumn
-            spacing: 2
+            spacing: 4
             anchors.verticalCenter: parent.verticalCenter
 
             property real levelL: {
@@ -474,54 +474,204 @@ Rectangle {
                 var b = deckB ? deckB.vuLevelR : 0
                 return Math.max(a, b)
             }
-            property real gainReduction: {
-                var a = deckA ? deckA.gainReduction : 1.0
-                var b = deckB ? deckB.gainReduction : 1.0
-                return Math.min(a, b)
-            }
-            // True clip only when the engine reports digital overs.
             property bool clipNow: {
                 var a = deckA ? deckA.clipDetected : false
                 var b = deckB ? deckB.clipDetected : false
                 return a || b
             }
 
-            Row {
-                spacing: 1
-                Repeater {
-                    model: 48
-                    Rectangle {
-                        required property int index
-                        width: 2; height: 4; radius: 0.5
-                        property real threshold: (index + 1) / 48.0
-                        property bool clipSegment: index >= 45
-                        property bool lit: clipSegment ? vuColumn.clipNow : (vuColumn.levelL >= threshold)
-                        color: {
-                            if (!lit) return "#1a1a1a"
-                            if (clipSegment && vuColumn.clipNow) return "#ff2b2b"
-                            return index >= 38 ? "#ffb347" : "#44cc66"
+            // dB range: -33 to +9 = 42 segments
+            readonly property int totalSegments: 42
+
+            // Convert linear peak to dB
+            function peakToDb(peak) {
+                if (peak <= 0.0001) return -33.0
+                var db = 20.0 * Math.log10(peak)
+                return Math.max(-33.0, Math.min(15.0, db))
+            }
+
+            // Normalize dB to segment index (0-41)
+            function dbToSegmentIndex(db) {
+                return Math.floor((db + 33.0) * (totalSegments / 42.0))
+            }
+
+            // Color scheme: green → orange → red
+            function getBarColor(segmentIndex) {
+                if (segmentIndex >= 39) return "#ff2b2b"      // Red
+                if (segmentIndex >= 36) return "#ff6b3d"      // Orange-red
+                if (segmentIndex >= 24) return "#ffb347"      // Orange
+                return "#44cc66"                               // Green
+            }
+
+            // Peak Hold + Decay
+            property real peakHoldDbL: -33.0
+            property real peakHoldDbR: -33.0
+
+            onLevelLChanged: {
+                var db = peakToDb(levelL)
+                if (db > peakHoldDbL) {
+                    peakHoldDbL = db
+                    decayTimerL.restart()
+                }
+            }
+            onLevelRChanged: {
+                var db = peakToDb(levelR)
+                if (db > peakHoldDbR) {
+                    peakHoldDbR = db
+                    decayTimerR.restart()
+                }
+            }
+
+            Timer {
+                id: decayTimerL
+                interval: 300
+                onTriggered: decayAnimL.start()
+            }
+            Timer {
+                id: decayTimerR
+                interval: 300
+                onTriggered: decayAnimR.start()
+            }
+
+            NumberAnimation {
+                id: decayAnimL
+                target: vuColumn
+                property: "peakHoldDbL"
+                from: vuColumn.peakHoldDbL
+                to: -33.0
+                duration: 800
+                easing.type: Easing.InQuad
+            }
+            NumberAnimation {
+                id: decayAnimR
+                target: vuColumn
+                property: "peakHoldDbR"
+                from: vuColumn.peakHoldDbR
+                to: -33.0
+                duration: 800
+                easing.type: Easing.InQuad
+            }
+
+            // LEFT CHANNEL: Horizontal Bar
+            Rectangle {
+                width: 120
+                height: 6
+                radius: 2
+                color: "#1a1a1a"
+                border.color: "#333"
+                border.width: 1
+
+                Row {
+                    anchors.fill: parent
+                    anchors.margins: 1
+                    spacing: 0
+
+                    Repeater {
+                        model: vuColumn.totalSegments
+                        Rectangle {
+                            required property int index
+                            width: (parent.width - (vuColumn.totalSegments - 1) * 0) / vuColumn.totalSegments
+                            height: parent.height
+                            radius: 1
+                            property real currentDb: vuColumn.peakToDb(vuColumn.levelL)
+                            property real peakDb: vuColumn.peakHoldDbL
+                            property int litSegments: vuColumn.dbToSegmentIndex(currentDb)
+                            property int peakSegmentIndex: vuColumn.dbToSegmentIndex(peakDb)
+                            property bool isLit: index <= litSegments
+                            property bool isPeakBar: index === peakSegmentIndex
+                            color: {
+                                if (isPeakBar) return "#ffffff"
+                                if (!isLit) return "#1a1a1a"
+                                return vuColumn.getBarColor(index)
+                            }
                         }
                     }
                 }
             }
 
-            Row {
-                spacing: 1
-                Repeater {
-                    model: 48
-                    Rectangle {
-                        required property int index
-                        width: 2; height: 4; radius: 0.5
-                        property real threshold: (index + 1) / 48.0
-                        property bool clipSegment: index >= 45
-                        property bool lit: clipSegment ? vuColumn.clipNow : (vuColumn.levelR >= threshold)
-                        color: {
-                            if (!lit) return "#1a1a1a"
-                            if (clipSegment && vuColumn.clipNow) return "#ff2b2b"
-                            return index >= 38 ? "#ffb347" : "#44cc66"
+            // RIGHT CHANNEL: Horizontal Bar
+            Rectangle {
+                width: 120
+                height: 6
+                radius: 2
+                color: "#1a1a1a"
+                border.color: "#333"
+                border.width: 1
+
+                Row {
+                    anchors.fill: parent
+                    anchors.margins: 1
+                    spacing: 0
+
+                    Repeater {
+                        model: vuColumn.totalSegments
+                        Rectangle {
+                            required property int index
+                            width: (parent.width - (vuColumn.totalSegments - 1) * 0) / vuColumn.totalSegments
+                            height: parent.height
+                            radius: 1
+                            property real currentDb: vuColumn.peakToDb(vuColumn.levelR)
+                            property real peakDb: vuColumn.peakHoldDbR
+                            property int litSegments: vuColumn.dbToSegmentIndex(currentDb)
+                            property int peakSegmentIndex: vuColumn.dbToSegmentIndex(peakDb)
+                            property bool isLit: index <= litSegments
+                            property bool isPeakBar: index === peakSegmentIndex
+                            color: {
+                                if (isPeakBar) return "#ffffff"
+                                if (!isLit) return "#1a1a1a"
+                                return vuColumn.getBarColor(index)
+                            }
                         }
                     }
                 }
+            }
+        }
+
+        // CLIP Indicator
+        Column {
+            spacing: 2
+            anchors.verticalCenter: parent.verticalCenter
+
+            property real peakMaxDb: {
+                var dbL = vuColumn.peakToDb(vuColumn.levelL)
+                var dbR = vuColumn.peakToDb(vuColumn.levelR)
+                return Math.max(dbL, dbR)
+            }
+
+            property bool lightClip: vuColumn.clipNow && peakMaxDb < 3.0
+            property bool hardClip: vuColumn.clipNow && peakMaxDb >= 3.0
+
+            Timer {
+                id: clipBlinkTimer
+                interval: 150
+                repeat: true
+                running: parent.lightClip
+            }
+
+            // CLIP text
+            Text {
+                text: "CLIP"
+                color: {
+                    if (parent.hardClip) return "#ffffff"
+                    if (parent.lightClip) return clipBlinkTimer.running && Math.floor((Date.now() / 150) % 2) ? "#ff4444" : "#444444"
+                    return "#333333"
+                }
+                font.pixelSize: window.sp(10)
+                font.bold: true
+                font.family: "monospace"
+                width: 40
+                horizontalAlignment: Text.AlignHCenter
+            }
+
+            // Peak dB display
+            Text {
+                text: parent.peakMaxDb.toFixed(1) + "dB"
+                color: parent.hardClip ? "#ffffff" : (parent.lightClip ? "#ff6b6b" : "#888888")
+                font.pixelSize: window.sp(8)
+                font.bold: true
+                font.family: "monospace"
+                width: 40
+                horizontalAlignment: Text.AlignRight
             }
         }
     }
