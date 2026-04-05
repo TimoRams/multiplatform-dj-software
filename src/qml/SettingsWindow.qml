@@ -275,7 +275,15 @@ Window {
 
             // ── Page 1: MIDI Controller ────────────────────────────────────
             Item {
+                id: midiSettingsPage
+
+                onVisibleChanged: {
+                    if (visible)
+                        midiSettingsColumn.refreshAll()
+                }
+
                 ColumnLayout {
+                    id: midiSettingsColumn
                     anchors.top: parent.top
                     anchors.left: parent.left
                     anchors.right: parent.right
@@ -283,15 +291,89 @@ Window {
                     spacing: 20
 
                     property var midiDeviceList: []
+                    property var mappingList: []
+                    property bool hasMidiDevices: false
+                    property bool hasMappings: false
+                    property int availableMappingCount: 0
+                    readonly property string noMappingLabel: "Kein Mapping (manuell)"
 
-                    function refreshMidiDevices() {
-                        if (midiManager) {
-                            midiDeviceList = midiManager.getAvailableMidiDevices()
+                    ListModel { id: midiDeviceModel }
+                    ListModel { id: mappingModel }
+
+                    function updateComboSelection(comboBox, indexValue) {
+                        if (!comboBox)
+                            return
+                        if (indexValue >= 0 && indexValue < comboBox.count)
+                            comboBox.currentIndex = indexValue
+                        else
+                            comboBox.currentIndex = -1
+                    }
+
+                    function fillModel(listModel, values) {
+                        listModel.clear()
+                        for (var i = 0; i < values.length; ++i) {
+                            listModel.append({ text: String(values[i]) })
                         }
                     }
 
+                    function indexOfModelText(listModel, value) {
+                        for (var i = 0; i < listModel.count; ++i) {
+                            if (listModel.get(i).text === value)
+                                return i
+                        }
+                        return -1
+                    }
+
+                    function syncFromBackend() {
+                        if (midiManager) {
+                            midiDeviceList = midiManager.getAvailableMidiDevices()
+                            mappingList = midiManager.getAvailableMappingFiles()
+
+                            hasMidiDevices = midiDeviceList.length > 0
+                            hasMappings = mappingList.length > 0
+                            availableMappingCount = mappingList.length
+
+                            if (!hasMidiDevices)
+                                midiDeviceList = ["Kein MIDI-Gerät gefunden"]
+
+                            // Always allow manual mapping without a Mixxx XML file.
+                            mappingList = [noMappingLabel].concat(mappingList)
+
+                            fillModel(midiDeviceModel, midiDeviceList)
+                            fillModel(mappingModel, mappingList)
+
+                            updateComboSelection(midiDeviceCombo, midiManager.getSelectedMidiDeviceIndex())
+                            const selectedMapping = midiManager.getSelectedMapping()
+                            mappingCombo.currentIndex = selectedMapping === ""
+                                ? 0
+                                : Math.max(0, indexOfModelText(mappingModel, selectedMapping))
+                        }
+                    }
+
+                    function refreshAll() {
+                        if (midiManager)
+                            midiManager.refreshMidiAndMappings()
+                        syncFromBackend()
+                    }
+
                     Component.onCompleted: {
-                        refreshMidiDevices()
+                        Qt.callLater(refreshAll)
+                    }
+
+                    Connections {
+                        target: midiManager
+
+                        function onMidiDevicesUpdated() {
+                            midiSettingsColumn.syncFromBackend()
+                        }
+
+                        function onControllerListUpdated() {
+                            midiSettingsColumn.syncFromBackend()
+                        }
+
+                        function onMappingListUpdated() {
+                            midiSettingsColumn.syncFromBackend()
+                        }
                     }
 
                     Text {
@@ -311,7 +393,7 @@ Window {
                     RowLayout {
                         spacing: 16
                         Text {
-                            text: "MIDI Input"
+                            text: "MIDI Device"
                             color: "#aaa"
                             font.pixelSize: 12
                             Layout.preferredWidth: 130
@@ -321,14 +403,30 @@ Window {
                             id: midiDeviceCombo
                             Layout.fillWidth: true
                             height: 32
-                            model: parent.midiDeviceList
-                            
+                            model: midiDeviceModel
+                            textRole: "text"
+
                             contentItem: Text {
-                                text: parent.displayText
+                                text: midiDeviceCombo.currentIndex >= 0 ? midiDeviceCombo.displayText : "Kein MIDI-Gerät"
                                 color: "#ccc"
                                 font.pixelSize: 12
                                 verticalAlignment: Text.AlignVCenter
                                 leftPadding: 12
+                                elide: Text.ElideRight
+                            }
+
+                            delegate: ItemDelegate {
+                                width: midiDeviceCombo.width
+                                contentItem: Text {
+                                    text: model.text
+                                    color: "#ddd"
+                                    font.pixelSize: 12
+                                    elide: Text.ElideRight
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                                background: Rectangle {
+                                    color: highlighted ? "#3a3a3a" : "#252525"
+                                }
                             }
                             
                             background: Rectangle {
@@ -338,7 +436,7 @@ Window {
                             }
                             
                             onActivated: {
-                                if (midiManager) {
+                                if (midiManager && midiSettingsColumn.hasMidiDevices) {
                                     midiManager.selectMidiDevice(currentIndex)
                                 }
                             }
@@ -361,7 +459,159 @@ Window {
                                 verticalAlignment: Text.AlignVCenter
                             }
                             onClicked: {
-                                parent.parent.refreshMidiDevices()
+                                midiSettingsColumn.refreshAll()
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 1
+                        color: "#2a2a2a"
+                    }
+
+                    RowLayout {
+                        spacing: 16
+                        Text {
+                            text: "Mixxx Mapping"
+                            color: "#aaa"
+                            font.pixelSize: 12
+                            Layout.preferredWidth: 130
+                        }
+
+                        ComboBox {
+                            id: mappingCombo
+                            Layout.fillWidth: true
+                            height: 32
+                            model: mappingModel
+                            textRole: "text"
+
+                            contentItem: Text {
+                                text: mappingCombo.currentIndex >= 0 ? mappingCombo.displayText : "Kein Mapping"
+                                color: "#ccc"
+                                font.pixelSize: 12
+                                verticalAlignment: Text.AlignVCenter
+                                leftPadding: 12
+                                elide: Text.ElideRight
+                            }
+
+                            delegate: ItemDelegate {
+                                width: mappingCombo.width
+                                contentItem: Text {
+                                    text: model.text
+                                    color: "#ddd"
+                                    font.pixelSize: 12
+                                    elide: Text.ElideRight
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                                background: Rectangle {
+                                    color: highlighted ? "#3a3a3a" : "#252525"
+                                }
+                            }
+
+                            background: Rectangle {
+                                color: "#252525"
+                                border.color: "#3a3a3a"
+                                radius: 4
+                            }
+
+                            onActivated: {
+                                if (midiManager) {
+                                    if (mappingCombo.currentText === midiSettingsColumn.noMappingLabel)
+                                        midiManager.selectMapping("")
+                                    else
+                                        midiManager.selectMapping(mappingCombo.currentText)
+                                }
+                            }
+                        }
+
+                        Button {
+                            text: "↻"
+                            Layout.preferredWidth: 32
+                            Layout.preferredHeight: 32
+                            background: Rectangle {
+                                color: parent.down ? "#444" : "#333"
+                                border.color: parent.hovered ? "#555" : "transparent"
+                                radius: 4
+                            }
+                            contentItem: Text {
+                                text: parent.text
+                                color: "#fff"
+                                font.pixelSize: 16
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: {
+                                midiSettingsColumn.refreshAll()
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: midiManager ? "Mappings Ordner: " + midiManager.getMappingsDirectoryPath() : ""
+                        color: "#777"
+                        font.pixelSize: 11
+                        elide: Text.ElideMiddle
+                        Layout.fillWidth: true
+                    }
+
+                    Text {
+                        text: "MIDI Devices: " + (hasMidiDevices ? midiDeviceList.length : 0)
+                              + " | Mappings: " + availableMappingCount
+                        color: "#666"
+                        font.pixelSize: 10
+                        Layout.fillWidth: true
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+
+                        Button {
+                            text: "Settings-Ordner öffnen"
+                            Layout.preferredHeight: 32
+
+                            background: Rectangle {
+                                color: parent.down ? "#444" : "#333"
+                                border.color: parent.hovered ? "#555" : "transparent"
+                                radius: 4
+                            }
+
+                            contentItem: Text {
+                                text: parent.text
+                                color: "#fff"
+                                font.pixelSize: 12
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+
+                            onClicked: {
+                                if (midiManager)
+                                    midiManager.openSettingsDirectory()
+                            }
+                        }
+
+                        Button {
+                            text: "Mappings-Ordner öffnen"
+                            Layout.preferredHeight: 32
+
+                            background: Rectangle {
+                                color: parent.down ? "#444" : "#333"
+                                border.color: parent.hovered ? "#555" : "transparent"
+                                radius: 4
+                            }
+
+                            contentItem: Text {
+                                text: parent.text
+                                color: "#fff"
+                                font.pixelSize: 12
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+
+                            onClicked: {
+                                if (midiManager)
+                                    midiManager.openMappingsDirectory()
                             }
                         }
                     }
@@ -400,6 +650,7 @@ Window {
                             }
 
                             Rectangle {
+                                id: learnButton
                                 Layout.fillWidth: true
                                 height: 32
                                 color: isLearning ? "#ff9900" : "#252525"
@@ -412,7 +663,7 @@ Window {
                                 Connections {
                                     target: midiManager
                                     function onMappingUpdated() {
-                                        isLearning = false
+                                        learnButton.isLearning = false
                                     }
                                 }
 
@@ -428,8 +679,8 @@ Window {
                                     anchors.fill: parent
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
-                                        if (midiManager && !parent.isLearning) {
-                                            parent.isLearning = true
+                                        if (midiManager && !learnButton.isLearning) {
+                                            learnButton.isLearning = true
                                             midiManager.startMidiLearn(paramId)
                                         }
                                     }

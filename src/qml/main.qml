@@ -79,7 +79,8 @@ ApplicationWindow {
             logicalPx = basePx + 1
 
         var dpr = Math.max(1.0, window.devicePixelRatio)
-        return Math.round(logicalPx * dpr) / dpr
+        var snapped = Math.round(logicalPx * dpr) / dpr
+        return Math.max(1, Math.round(snapped))
     }
 
     // Globaler Waveform-Zoom (beide Decks synchron, wie in Serato/Rekordbox)
@@ -136,8 +137,8 @@ ApplicationWindow {
         // --------------------------------------------------------------------
         TopHeader {
             Layout.fillWidth: true
-            Layout.preferredHeight: 40
-            Layout.maximumHeight: 40
+            Layout.preferredHeight: Math.max(36, Math.round(40 * (window.height / 800)))
+            Layout.maximumHeight: Math.max(36, Math.round(40 * (window.height / 800)))
             z: 10
         }
 
@@ -226,8 +227,8 @@ ApplicationWindow {
         // --------------------------------------------------------------------
         FxBar {
             Layout.fillWidth: true
-            Layout.preferredHeight: 40
-            Layout.maximumHeight:   40
+            Layout.preferredHeight: Math.max(36, Math.round(40 * (window.height / 800)))
+            Layout.maximumHeight: Math.max(36, Math.round(40 * (window.height / 800)))
         }
 
         // --------------------------------------------------------------------

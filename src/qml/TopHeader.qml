@@ -7,7 +7,13 @@ import DJSoftware
 Rectangle {
     id: root
     color: "#121212"
-    height: 40
+    
+    // Dynamic header height scaling based on window height
+    // At reference height (800px), height is 40px
+    // Scales proportionally with window height
+    readonly property real _refHeaderHeight: 40
+    readonly property real _refWindowHeight: 800
+    height: Math.max(36, Math.round(_refHeaderHeight * (window.height / _refWindowHeight)))
 
     property string currentTime: "00:00"
     
@@ -35,9 +41,9 @@ Rectangle {
 
     RowLayout {
         anchors.fill: parent
-        anchors.margins: 5
-        anchors.leftMargin: 10
-        anchors.rightMargin: 10
+        anchors.margins: Math.max(3, Math.round(root.height * 0.12))
+        anchors.leftMargin: Math.max(8, Math.round(root.height * 0.25))
+        anchors.rightMargin: Math.max(8, Math.round(root.height * 0.25))
         spacing: 0
 
         // ── LEFT: Software name ───────────────────────────────────────────────
@@ -47,7 +53,9 @@ Rectangle {
 
             // Small coloured accent bar (Traktor-style)
             Rectangle {
-                width: 3; height: 22; radius: 1
+                width: Math.max(2, Math.round(root.height * 0.075)); 
+                height: Math.max(16, Math.round(root.height * 0.55)); 
+                radius: 1
                 anchors.verticalCenter: parent.verticalCenter
                 gradient: Gradient {
                     orientation: Gradient.Vertical
@@ -84,7 +92,8 @@ Rectangle {
 
             // LINK toggle button
             Rectangle {
-                width: 44; height: 22
+                width: Math.max(35, Math.round(root.height * 1.1)); 
+                height: Math.max(18, Math.round(root.height * 0.55))
                 radius: 3
                 color: (linkManager && linkManager.enabled) ? "#1a3322" : "#1a1a1a"
                 border.color: (linkManager && linkManager.enabled) ? "#44cc66" : "#333"
@@ -174,7 +183,8 @@ Rectangle {
 
             // Anti-Clip button
             Rectangle {
-                width: 52; height: 22
+                width: Math.max(44, Math.round(root.height * 1.3)); 
+                height: Math.max(18, Math.round(root.height * 0.55))
                 radius: 3
                 anchors.verticalCenter: parent.verticalCenter
                 property bool antiClipActive: false
@@ -223,7 +233,8 @@ Rectangle {
 
                 Dial {
                     id: masterVolDial
-                    width: 26; height: 26
+                    width: Math.max(20, Math.round(root.height * 0.65)); 
+                    height: Math.max(20, Math.round(root.height * 0.65))
                     from: 0.0; to: 1.0; value: 0.8
 
                     background: Rectangle {
@@ -353,7 +364,8 @@ Rectangle {
 
             // REC button
             Rectangle {
-                width: 42; height: 22
+                width: Math.max(35, Math.round(root.height * 1.05)); 
+                height: Math.max(18, Math.round(root.height * 0.55))
                 color: "#1a1a1a"
                 border.color: "#333"
                 radius: 3
@@ -395,7 +407,8 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
 
                 Button {
-                    width: 28; height: 24
+                    width: Math.max(24, Math.round(root.height * 0.7)); 
+                    height: Math.max(20, Math.round(root.height * 0.6))
                     text: "⛶"
                     background: Rectangle {
                         color: parent.pressed ? "#333" : "#1e1e1e"
@@ -417,7 +430,8 @@ Rectangle {
                 }
 
                 Button {
-                    width: 28; height: 24
+                    width: Math.max(24, Math.round(root.height * 0.7)); 
+                    height: Math.max(20, Math.round(root.height * 0.6))
                     text: "⚙"
                     background: Rectangle {
                         color: parent.pressed ? "#333" : "#1e1e1e"

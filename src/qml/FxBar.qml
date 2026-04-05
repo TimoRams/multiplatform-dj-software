@@ -8,7 +8,13 @@ Rectangle {
     id: root
 
     color: "#121212"
-    height: 40
+    
+    // Dynamic FxBar height scaling based on window height
+    // At reference height (800px), height is 40px
+    // Scales proportionally with window height
+    readonly property real _refHeight: 40
+    readonly property real _refWindowHeight: 800
+    height: Math.max(36, Math.round(_refHeight * (window.height / _refWindowHeight)))
 
     Rectangle {
         anchors.top: parent.top
@@ -46,13 +52,13 @@ Rectangle {
             readonly property var modes: ["Space", "D.Echo", "Crush", "Pitch", "Noise", "Filter"]
 
             function isActiveMode(modeName) {
-                if (typeof fxManager !== "undefined")
+                if (typeof fxManager !== "undefined" && fxManager !== null)
                     return fxManager.soundColorMode === modeName
                 return fallbackMode === modeName
             }
 
             Connections {
-                target: typeof fxManager !== "undefined" ? fxManager : null
+                target: (typeof fxManager !== "undefined" && fxManager !== null) ? fxManager : null
 
                 function onSoundColorModeChanged() {
                     soundColorPanel.fallbackMode = fxManager.soundColorMode
@@ -60,7 +66,7 @@ Rectangle {
             }
 
             Component.onCompleted: {
-                if (typeof fxManager !== "undefined")
+                if (typeof fxManager !== "undefined" && fxManager !== null)
                     fallbackMode = fxManager.soundColorMode
             }
 

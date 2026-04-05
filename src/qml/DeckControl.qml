@@ -108,9 +108,9 @@ Item {
             var expectedId = "deck" + deck.deckName + "_play"
             if (id === expectedId) {
                 if (value > 0.5 && !deck.engine.isPlaying) {
-                    deck.engine.play()
+                    deck.engine.togglePlay()
                 } else if (value <= 0.5 && deck.engine.isPlaying) {
-                    deck.engine.pause()
+                    deck.engine.togglePlay()
                 }
             }
         }
