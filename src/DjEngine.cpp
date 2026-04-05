@@ -132,7 +132,61 @@ class ReverseStreamAudioSource : public juce::PositionableAudioSource {
 public:
     ReverseStreamAudioSource(juce::PositionableAudioSource* source) : m_source(source) {}
 
+    void setLoopRangeSamples(juce::int64 loopInSample, juce::int64 loopOutSample, double sampleRate) {
+        const juce::SpinLock::ScopedLockType lock(m_stateLock);
+        if (!m_source)
+            return;
+
+        m_sampleRate = sampleRate > 1.0 ? sampleRate : 44100.0;
+        m_windowSamples = std::clamp(static_cast<int>(std::lround(m_sampleRate * 0.002)), 16, 256);
+
+        const juce::int64 total = std::max<juce::int64>(0, m_source->getTotalLength());
+        if (total <= 2) {
+            m_loopEnabled = false;
+            return;
+        }
+
+        juce::int64 in = std::clamp(loopInSample, static_cast<juce::int64>(0), total - 2);
+        juce::int64 out = std::clamp(loopOutSample, static_cast<juce::int64>(1), total - 1);
+
+        const juce::int64 minLen = std::max<juce::int64>(8, m_windowSamples * 2);
+        if (out <= in + minLen)
+            out = std::min(total - 1, in + minLen);
+        if (out <= in + 2) {
+            m_loopEnabled = false;
+            return;
+        }
+
+        const int searchRadius = std::clamp(static_cast<int>(std::lround(m_sampleRate * 0.0015)), 8, 512);
+        const juce::int64 snappedIn = findNearestZeroCrossingUnsafe(in, searchRadius, total);
+        const juce::int64 snappedOut = findNearestZeroCrossingUnsafe(out, searchRadius, total);
+
+        in = std::clamp(snappedIn, static_cast<juce::int64>(0), total - 2);
+        out = std::clamp(snappedOut, in + 1, total - 1);
+        if (out <= in + minLen)
+            out = std::min(total - 1, in + minLen);
+        if (out <= in + 2) {
+            m_loopEnabled = false;
+            return;
+        }
+
+        m_loopInSample = in;
+        m_loopOutSample = out;
+        m_loopEnabled = true;
+        m_pendingFadeInSamples = 0;
+
+        if (m_logicalPos < m_loopInSample || m_logicalPos >= m_loopOutSample)
+            m_logicalPos = m_loopInSample;
+    }
+
+    void clearLoopRangeSamples() {
+        const juce::SpinLock::ScopedLockType lock(m_stateLock);
+        m_loopEnabled = false;
+        m_pendingFadeInSamples = 0;
+    }
+
     void setNextReadPosition(juce::int64 newPosition) override {
+        const juce::SpinLock::ScopedLockType lock(m_stateLock);
         m_source->setNextReadPosition(newPosition);
         m_logicalPos = newPosition;
     }
@@ -149,14 +203,26 @@ public:
     void setLooping(bool shouldLoop) override { m_source->setLooping(shouldLoop); }
 
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override {
+        const juce::SpinLock::ScopedLockType lock(m_stateLock);
         m_source->prepareToPlay(samplesPerBlockExpected, sampleRate);
+        m_sampleRate = sampleRate > 1.0 ? sampleRate : 44100.0;
+        m_windowSamples = std::clamp(static_cast<int>(std::lround(m_sampleRate * 0.002)), 16, 256);
+        m_pendingFadeInSamples = 0;
     }
 
     void releaseResources() override {
+        const juce::SpinLock::ScopedLockType lock(m_stateLock);
         m_source->releaseResources();
     }
 
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill) override {
+        const juce::SpinLock::ScopedLockType lock(m_stateLock);
+
+        if (m_loopEnabled && !m_reverse.load(std::memory_order_relaxed)) {
+            getLoopedForwardAudioBlock(bufferToFill);
+            return;
+        }
+
         if (!m_reverse.load(std::memory_order_relaxed)) {
             // Forward playback
             m_source->setNextReadPosition(m_logicalPos);
@@ -211,9 +277,170 @@ public:
     }
 
 private:
+    void applyFadeInToRange(juce::AudioBuffer<float>* buffer,
+                            int startSample,
+                            int count,
+                            int numChannels) {
+        if (!buffer || count <= 0 || m_windowSamples <= 0 || m_pendingFadeInSamples <= 0)
+            return;
+
+        const int applyCount = std::min(count, m_pendingFadeInSamples);
+        const int startPhase = m_windowSamples - m_pendingFadeInSamples;
+        for (int i = 0; i < applyCount; ++i) {
+            const float g = std::clamp(static_cast<float>(startPhase + i + 1)
+                                     / static_cast<float>(m_windowSamples),
+                                       0.0f, 1.0f);
+            for (int ch = 0; ch < numChannels; ++ch) {
+                float* w = buffer->getWritePointer(ch, startSample + i);
+                *w *= g;
+            }
+        }
+        m_pendingFadeInSamples -= applyCount;
+    }
+
+    void applyFadeOutToTail(juce::AudioBuffer<float>* buffer,
+                            int chunkStart,
+                            int chunkLen,
+                            int numChannels) {
+        if (!buffer || chunkLen <= 0 || m_windowSamples <= 0)
+            return;
+
+        const int fadeLen = std::min(m_windowSamples, chunkLen);
+        const int fadeStart = chunkStart + chunkLen - fadeLen;
+        for (int i = 0; i < fadeLen; ++i) {
+            const float g = static_cast<float>(fadeLen - i)
+                          / static_cast<float>(fadeLen + 1);
+            for (int ch = 0; ch < numChannels; ++ch) {
+                float* w = buffer->getWritePointer(ch, fadeStart + i);
+                *w *= g;
+            }
+        }
+    }
+
+    void getLoopedForwardAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill) {
+        auto* out = bufferToFill.buffer;
+        if (!out || bufferToFill.numSamples <= 0 || !m_source) {
+            bufferToFill.clearActiveBufferRegion();
+            return;
+        }
+
+        const int numChannels = out->getNumChannels();
+        int remaining = bufferToFill.numSamples;
+        int destOffset = 0;
+
+        while (remaining > 0) {
+            if (m_logicalPos < m_loopInSample || m_logicalPos >= m_loopOutSample)
+                m_logicalPos = m_loopInSample;
+
+            const juce::int64 samplesToBoundary = m_loopOutSample - m_logicalPos;
+            if (samplesToBoundary <= 0) {
+                m_logicalPos = m_loopInSample;
+                continue;
+            }
+
+            const int chunk = std::min<int>(remaining, static_cast<int>(samplesToBoundary));
+
+            juce::AudioSourceChannelInfo readInfo(bufferToFill);
+            readInfo.startSample = bufferToFill.startSample + destOffset;
+            readInfo.numSamples = chunk;
+
+            m_source->setNextReadPosition(m_logicalPos);
+            m_source->getNextAudioBlock(readInfo);
+
+            applyFadeInToRange(out, readInfo.startSample, chunk, numChannels);
+
+            const bool hitsBoundary = (chunk == samplesToBoundary);
+            if (hitsBoundary) {
+                applyFadeOutToTail(out, readInfo.startSample, chunk, numChannels);
+                m_logicalPos = m_loopInSample;
+                m_pendingFadeInSamples = m_windowSamples;
+            } else {
+                m_logicalPos += chunk;
+            }
+
+            destOffset += chunk;
+            remaining -= chunk;
+        }
+    }
+
+    juce::int64 findNearestZeroCrossingUnsafe(juce::int64 approx,
+                                              int radius,
+                                              juce::int64 totalLength) {
+        if (!m_source || totalLength <= 2)
+            return approx;
+
+        const juce::int64 start = std::clamp(approx - static_cast<juce::int64>(radius),
+                                             static_cast<juce::int64>(0),
+                                             totalLength - 2);
+        const juce::int64 end = std::clamp(approx + static_cast<juce::int64>(radius),
+                                           static_cast<juce::int64>(1),
+                                           totalLength - 1);
+        const int count = static_cast<int>(std::max<juce::int64>(0, end - start + 1));
+        if (count < 2)
+            return std::clamp(approx, static_cast<juce::int64>(0), totalLength - 1);
+
+        juce::AudioBuffer<float> probe(2, count);
+        juce::AudioSourceChannelInfo info;
+        info.buffer = &probe;
+        info.startSample = 0;
+        info.numSamples = count;
+        probe.clear();
+
+        const juce::int64 oldPos = m_source->getNextReadPosition();
+        m_source->setNextReadPosition(start);
+        m_source->getNextAudioBlock(info);
+        m_source->setNextReadPosition(oldPos);
+
+        const int ch1 = probe.getNumChannels() > 1 ? 1 : 0;
+        const float* p0 = probe.getReadPointer(0);
+        const float* p1 = probe.getReadPointer(ch1);
+
+        juce::int64 bestSample = std::clamp(approx, start, end);
+        juce::int64 bestDist = std::numeric_limits<juce::int64>::max();
+
+        for (int i = 1; i < count; ++i) {
+            const float prev = 0.5f * (p0[i - 1] + p1[i - 1]);
+            const float curr = 0.5f * (p0[i] + p1[i]);
+            const bool crosses = (prev <= 0.0f && curr >= 0.0f)
+                              || (prev >= 0.0f && curr <= 0.0f);
+            if (!crosses)
+                continue;
+
+            const juce::int64 sampleIdx = start + i;
+            const juce::int64 dist = std::llabs(sampleIdx - approx);
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestSample = sampleIdx;
+                if (dist == 0)
+                    break;
+            }
+        }
+
+        if (bestDist == std::numeric_limits<juce::int64>::max()) {
+            float bestAbs = std::numeric_limits<float>::max();
+            for (int i = 0; i < count; ++i) {
+                const float s = 0.5f * (p0[i] + p1[i]);
+                const float a = std::abs(s);
+                if (a < bestAbs) {
+                    bestAbs = a;
+                    bestSample = start + i;
+                }
+            }
+        }
+
+        return std::clamp(bestSample, static_cast<juce::int64>(0), totalLength - 1);
+    }
+
     juce::PositionableAudioSource* m_source;
     std::atomic<bool> m_reverse{false};
     juce::int64 m_logicalPos{0};
+    juce::SpinLock m_stateLock;
+    bool m_loopEnabled{false};
+    juce::int64 m_loopInSample{0};
+    juce::int64 m_loopOutSample{0};
+    double m_sampleRate{44100.0};
+    int m_windowSamples{64};
+    int m_pendingFadeInSamples{0};
 };
 
 class DjEngine::TimeStretchAudioSource : public juce::AudioSource {
@@ -1042,6 +1269,7 @@ void DjEngine::loadTrack(const QString& rawPath)
         reverseWrapSource = std::make_unique<ReverseStreamAudioSource>(readerSource.get());
         reverseWrapSource->setReverse(m_isReverse);
         transportSource.setSource(reverseWrapSource.get(), 0, nullptr, reader->sampleRate);
+        m_loadedTrackSampleRate = reader->sampleRate;
         transportSource.setPosition(0.0);
 
         m_analyzer->startAnalysis(rawPath);
@@ -1177,10 +1405,7 @@ void DjEngine::onTimer()
         m_snapPosition = transportSource.getCurrentPosition();
 
         if (m_loopActive && m_loopOutSec > m_loopInSec) {
-            if (!m_isReverse && m_snapPosition >= m_loopOutSec) {
-                transportSource.setPosition(m_loopInSec);
-                m_snapPosition = m_loopInSec;
-            } else if (m_isReverse && m_snapPosition <= m_loopInSec) {
+            if (m_isReverse && m_snapPosition <= m_loopInSec) {
                 transportSource.setPosition(m_loopOutSec);
                 m_snapPosition = m_loopOutSec;
             }
@@ -1814,7 +2039,7 @@ void DjEngine::startLoopAt(double startSec, double lengthBeats)
     if (beatDur <= 1e-4)
         return;
 
-    constexpr double kMinLoopBeats = 0.125; // 1/8 beat
+    constexpr double kMinLoopBeats = 1.0 / 64.0;
     constexpr double kMaxLoopBeats = 4096.0;
     double beats = std::clamp(lengthBeats, kMinLoopBeats, kMaxLoopBeats);
     double end = start + beats * beatDur;
@@ -1828,6 +2053,7 @@ void DjEngine::startLoopAt(double startSec, double lengthBeats)
     m_loopLengthBeats = (end - start) / beatDur;
     m_loopActive = true;
     m_loopInSet = true;
+    applyLoopRangeToAudioSource();
     emit loopChanged();
 }
 
@@ -1847,6 +2073,8 @@ void DjEngine::setLoopIn()
     if (m_loopActive && m_loopOutSec <= m_loopInSec) {
         m_loopOutSec = std::min(trackLen, m_loopInSec + beatDurationAround(m_loopInSec));
     }
+    if (m_loopActive)
+        applyLoopRangeToAudioSource();
     emit loopChanged();
 }
 
@@ -1873,6 +2101,7 @@ void DjEngine::setLoopOut()
     m_loopOutSec = out;
     m_loopLengthBeats = (m_loopOutSec - m_loopInSec) / std::max(beatDur, 1e-4);
     m_loopActive = true;
+    applyLoopRangeToAudioSource();
     emit loopChanged();
 }
 
@@ -1922,7 +2151,41 @@ void DjEngine::clearLoop()
     m_loopLengthBeats = 0.0;
     m_loopInSec = 0.0;
     m_loopOutSec = 0.0;
+    clearLoopRangeOnAudioSource();
     emit loopChanged();
+}
+
+void DjEngine::applyLoopRangeToAudioSource()
+{
+    if (!reverseWrapSource || !m_loopActive || m_loopOutSec <= m_loopInSec)
+        return;
+
+    if (m_isReverse) {
+        clearLoopRangeOnAudioSource();
+        return;
+    }
+
+    auto* reverseSource = static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get());
+    if (!reverseSource)
+        return;
+
+    const double sr = (m_loadedTrackSampleRate > 1.0)
+        ? m_loadedTrackSampleRate
+        : (m_trackData ? m_trackData->getSampleRate() : 44100.0);
+
+    const juce::int64 loopInSample = static_cast<juce::int64>(std::llround(m_loopInSec * sr));
+    const juce::int64 loopOutSample = static_cast<juce::int64>(std::llround(m_loopOutSec * sr));
+
+    reverseSource->setLoopRangeSamples(loopInSample, loopOutSample, sr);
+}
+
+void DjEngine::clearLoopRangeOnAudioSource()
+{
+    if (!reverseWrapSource)
+        return;
+    auto* reverseSource = static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get());
+    if (reverseSource)
+        reverseSource->clearLoopRangeSamples();
 }
 
 void DjEngine::setFxEffectType(EffectType type)
@@ -1946,6 +2209,8 @@ void DjEngine::setReverse(bool on)
     m_isReverse = on;
     if (reverseWrapSource) {
         static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get())->setReverse(on);
+        if (m_loopActive)
+            applyLoopRangeToAudioSource();
     }
     updateSpeedAndPitch();
     emit reverseChanged();

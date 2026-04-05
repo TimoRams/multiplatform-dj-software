@@ -61,11 +61,22 @@ Item {
     function _syncTempo() {
         if (!deck.engine) return
         var cb = deck.engine.currentBpm
-        // For sub-beat loops (e.g. 3/4), show the perceived rhythmic BPM.
+        // For loops, show perceived rhythmic BPM and wrap to a realistic range.
         if (cb > 0 && deck.engine.loopActive) {
             var beats = deck.engine.loopLengthBeats
+            // Only sub-beat loops (<1 beat) alter perceived BPM.
+            // Loops >= 1 beat (e.g. 2 beats) should keep normal track BPM display.
             if (beats > 0.001 && beats < 1.0)
                 cb = cb / beats
+
+            if (beats > 0.001 && beats < 1.0) {
+                var minBpm = 70.0
+                var maxBpm = 150.0
+                while (cb > maxBpm)
+                    cb = cb / 2.0
+                while (cb < minBpm)
+                    cb = cb * 2.0
+            }
         }
         _currentBpm = cb > 0 ? cb.toFixed(2) : ""
     }

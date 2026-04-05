@@ -326,6 +326,8 @@ private:
     double quantizedBeatAt(double sec) const;
     double beatDurationAround(double sec) const;
     void startLoopAt(double startSec, double lengthBeats);
+    void applyLoopRangeToAudioSource();
+    void clearLoopRangeOnAudioSource();
 
     void updateSpeedAndPitch();
 
@@ -350,6 +352,7 @@ private:
     bool   m_scrubWasPlaying = false;
     double m_scrubHoldPosition = 0.0;
     QElapsedTimer m_lastScrubInputClock;
+    double m_loadedTrackSampleRate = 44100.0;
 
     static std::mutex s_syncMutex;
     static std::vector<DjEngine*> s_syncDecks;
