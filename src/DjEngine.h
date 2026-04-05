@@ -102,6 +102,9 @@ public:
     Q_INVOKABLE void pauseForScrub();
     Q_INVOKABLE void scrubBy(double pixelDelta);
     Q_INVOKABLE void scratchBySeconds(double deltaSeconds);
+    // Generic scratch input: signed playback-rate target where 1.0 = normal forward speed.
+    // This decouples UI deltas from the audio scratch model (usable for MIDI/HID jog ticks).
+    Q_INVOKABLE void pushScratchVelocityTick(double velocityRate);
     Q_INVOKABLE void resumeAfterScrub();
 
     // Manual beat-grid correction: rebuilds the BeatMarker array so that the
@@ -352,6 +355,15 @@ private:
     bool   m_scrubWasPlaying = false;
     double m_scrubHoldPosition = 0.0;
     QElapsedTimer m_lastScrubInputClock;
+    QElapsedTimer m_scrubPhysicsClock;
+    double m_scratchTargetRate = 0.0;
+    double m_scratchSmoothedRate = 0.0;
+    double m_scratchRateAttackTauSec = 0.015;
+    double m_scratchRateReleaseTauSec = 0.040;
+    double m_scratchIdleTimeoutSec = 0.030;
+    double m_scratchMaxRate = 12.0;
+    bool   m_scrubSavedKeylock = false;
+    bool   m_scrubSavedReverseState = false;
     double m_loadedTrackSampleRate = 44100.0;
 
     static std::mutex s_syncMutex;

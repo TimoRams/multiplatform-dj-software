@@ -1370,28 +1370,48 @@ void DjEngine::setPosition(float progress)
 void DjEngine::onTimer()
 {
     if (m_isScrubbing) {
-        // Click-and-hold should brake quietly; audible scratch is only while
-        // there is active motion input.
-        const qint64 idleMs = m_lastScrubInputClock.isValid()
-            ? m_lastScrubInputClock.elapsed()
-            : 1000;
+        const double dtSec = m_scrubPhysicsClock.isValid()
+            ? std::clamp(static_cast<double>(m_scrubPhysicsClock.nsecsElapsed()) * 1e-9,
+                         0.001, 0.050)
+            : 0.016;
+        m_scrubPhysicsClock.restart();
 
-        if (idleMs > 25) {
+        const double idleSec = m_lastScrubInputClock.isValid()
+            ? static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9
+            : 1.0;
+
+        const double targetRate = (idleSec > m_scratchIdleTimeoutSec)
+            ? 0.0
+            : m_scratchTargetRate;
+
+        const double tau = (std::abs(targetRate) > std::abs(m_scratchSmoothedRate))
+            ? m_scratchRateAttackTauSec
+            : m_scratchRateReleaseTauSec;
+        const double alpha = 1.0 - std::exp(-dtSec / std::max(0.001, tau));
+        m_scratchSmoothedRate += (targetRate - m_scratchSmoothedRate) * alpha;
+
+        const double absRate = std::abs(m_scratchSmoothedRate);
+        if (reverseWrapSource) {
+            auto* reverseSource = static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get());
+            reverseSource->setReverse(m_scratchSmoothedRate < 0.0);
+        }
+
+        if (resamplingSource) {
+            const double ratio = std::clamp(absRate, 0.05, m_scratchMaxRate);
+            resamplingSource->setResamplingRatio(ratio);
+        }
+
+        if (absRate < 0.01) {
             if (transportSource.isPlaying())
                 transportSource.stop();
-            transportSource.setPosition(m_scrubHoldPosition);
-            m_atomicPlayheadPos.store(m_scrubHoldPosition,
-                                      std::memory_order_relaxed);
-        } else {
-            if (!transportSource.isPlaying())
-                transportSource.start();
-            // Keep UI perfectly pinned to the commanded scrub position.
-            // The transport may move slightly between callbacks when running,
-            // which caused visible back/forth jitter in the scrolling waveform.
-            transportSource.setPosition(m_scrubHoldPosition);
-            m_atomicPlayheadPos.store(m_scrubHoldPosition,
-                                      std::memory_order_relaxed);
+        } else if (!transportSource.isPlaying()) {
+            transportSource.start();
         }
+
+        m_scrubHoldPosition = transportSource.getCurrentPosition();
+        m_atomicPlayheadPos.store(m_scrubHoldPosition,
+                                  std::memory_order_relaxed);
+        m_snapPosition = m_scrubHoldPosition;
 
         emit progressChanged();
         emit vuLevelChanged();
@@ -1617,8 +1637,22 @@ void DjEngine::pauseForScrub()
     m_snapValid = false;
 
     m_scrubHoldPosition = transportSource.getCurrentPosition();
+    m_scratchTargetRate = 0.0;
+    m_scratchSmoothedRate = 0.0;
+    m_scrubPhysicsClock.restart();
     m_lastScrubInputClock.restart();
     emit scrubbingChanged();
+
+    // Scratch should run as pure speed=pitch behavior.
+    // Temporarily bypass keylock/time-stretch while the platter is grabbed.
+    m_scrubSavedKeylock = m_keylock;
+    m_scrubSavedReverseState = m_isReverse;
+    if (timeStretchSource)
+        timeStretchSource->setKeylock(false);
+    if (resamplingSource)
+        resamplingSource->setResamplingRatio(1.0);
+    if (reverseWrapSource)
+        static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get())->setReverse(false);
 
     // Immediate touch brake: no scratch noise on plain click/hold.
     transportSource.stop();
@@ -1651,20 +1685,31 @@ void DjEngine::scratchBySeconds(double deltaSeconds)
     if (len <= 0.0)
         return;
 
-    const double basePos = m_scrubHoldPosition;
-    double newPos = std::clamp(basePos + deltaSeconds, 0.0, len);
+    const double dtSecRaw = m_lastScrubInputClock.isValid()
+        ? std::max(0.001, static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9)
+        : 0.008;
+    const double instantaneousRate = std::clamp(deltaSeconds / dtSecRaw,
+                                                 -m_scratchMaxRate,
+                                                 m_scratchMaxRate);
+    pushScratchVelocityTick(instantaneousRate);
 
     if (m_isScrubbing && !transportSource.isPlaying())
         transportSource.start();
 
-    transportSource.setPosition(newPos);
-    m_scrubHoldPosition = newPos;
+    m_scrubHoldPosition = transportSource.getCurrentPosition();
     m_lastScrubInputClock.restart();
 
     // Keep the atomic + snap in sync for all synced UIs.
-    m_atomicPlayheadPos.store(newPos, std::memory_order_relaxed);
-    m_snapPosition = newPos;
+    m_atomicPlayheadPos.store(m_scrubHoldPosition, std::memory_order_relaxed);
+    m_snapPosition = m_scrubHoldPosition;
+    m_scrubPhysicsClock.restart();
     emit progressChanged();
+}
+
+void DjEngine::pushScratchVelocityTick(double velocityRate)
+{
+    m_scratchTargetRate = std::clamp(velocityRate, -m_scratchMaxRate, m_scratchMaxRate);
+    m_lastScrubInputClock.restart();
 }
 
 void DjEngine::resumeAfterScrub()
@@ -1673,6 +1718,20 @@ void DjEngine::resumeAfterScrub()
         return;
 
     m_isScrubbing = false;
+    m_scratchTargetRate = 0.0;
+    m_scratchSmoothedRate = 0.0;
+
+    if (reverseWrapSource)
+        static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get())->setReverse(m_scrubSavedReverseState);
+    if (resamplingSource)
+        resamplingSource->setResamplingRatio(1.0);
+
+    if (timeStretchSource)
+        timeStretchSource->setKeylock(m_scrubSavedKeylock && m_keylock);
+
+    // Restore regular playback behavior (tempo/keylock/reverse chain state).
+    updateSpeedAndPitch();
+
     if (m_scrubWasPlaying)
         transportSource.start();
     else
@@ -2081,28 +2140,42 @@ void DjEngine::setLoopIn()
 void DjEngine::setLoopOut()
 {
     const double trackLen = transportSource.getLengthInSeconds();
-    if (trackLen <= 0.0)
-        return;
+        const double dtSec = m_scrubPhysicsClock.isValid()
+            ? std::clamp(static_cast<double>(m_scrubPhysicsClock.nsecsElapsed()) * 1e-9,
+                         0.001, 0.050)
+            : 0.016;
+        m_scrubPhysicsClock.restart();
 
-    if (!m_loopInSet)
-        setLoopIn();
+        const double idleSec = m_lastScrubInputClock.isValid()
+            ? static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9
+            : 1.0;
 
-    double pos = static_cast<double>(getVisualPosition());
-    if (m_quantizeEnabled)
-        pos = quantizedBeatAt(pos);
+        const double targetRate = (idleSec > m_scratchIdleTimeoutSec)
+            ? 0.0
+            : m_scratchTargetRate;
 
-    double out = std::clamp(pos, 0.0, trackLen);
-    const double beatDur = beatDurationAround(m_loopInSec);
-    if (out <= m_loopInSec + 0.001)
-        out = std::min(trackLen, m_loopInSec + beatDur);
-    if (out <= m_loopInSec + 0.001)
-        return;
+        const double tau = (std::abs(targetRate) > std::abs(m_scratchSmoothedRate))
+            ? m_scratchRateAttackTauSec
+            : m_scratchRateReleaseTauSec;
+        const double alpha = 1.0 - std::exp(-dtSec / std::max(0.001, tau));
+        m_scratchSmoothedRate += (targetRate - m_scratchSmoothedRate) * alpha;
 
-    m_loopOutSec = out;
-    m_loopLengthBeats = (m_loopOutSec - m_loopInSec) / std::max(beatDur, 1e-4);
-    m_loopActive = true;
-    applyLoopRangeToAudioSource();
-    emit loopChanged();
+        const double len = transportSource.getLengthInSeconds();
+        if (len > 0.0) {
+            m_scrubHoldPosition = std::clamp(m_scrubHoldPosition + (m_scratchSmoothedRate * dtSec),
+                                             0.0, len);
+        }
+
+        if (std::abs(m_scratchSmoothedRate) < 0.01) {
+            if (transportSource.isPlaying())
+                transportSource.stop();
+        } else if (!transportSource.isPlaying()) {
+            transportSource.start();
+        }
+
+        transportSource.setPosition(m_scrubHoldPosition);
+        m_atomicPlayheadPos.store(m_scrubHoldPosition,
+                                  std::memory_order_relaxed);
 }
 
 void DjEngine::toggleLoop4Beats()
