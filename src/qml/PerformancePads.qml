@@ -11,7 +11,7 @@ Item {
 
     // Hold-and-Play hotcue state tracking
     property double hotCueHoldPressedIndex: -1
-    property double hotCueHoldStartPosition: 0.0
+    property double hotCueHoldCuePosition: 0.0
     property bool hotCueHoldWasPlaying: false
 
     readonly property var tabs: ["HOT CUE", "PAD FX", "BEATJUMP", "STEMS"]
@@ -235,7 +235,7 @@ Item {
 
                                     // Save current playback state before triggering hotcue
                                     root.hotCueHoldPressedIndex = index
-                                    root.hotCueHoldStartPosition = root.engine.getPlayheadPositionAtomic()
+                                    root.hotCueHoldCuePosition = cueSet ? cue.positionSec : 0.0
                                     root.hotCueHoldWasPlaying = root.engine.isPlaying
 
                                     // Trigger the hotcue (jumps to position)
@@ -259,21 +259,21 @@ Item {
                                     if (root.hotCueHoldPressedIndex !== index)
                                         return
 
-                                    // Jump back to the original position
-                                    var trackLen = root.engine.getDuration()
-                                    if (trackLen && trackLen > 0) {
-                                        var normalizedPos = root.hotCueHoldStartPosition / trackLen
-                                        root.engine.setPosition(Math.max(0, Math.min(1.0, normalizedPos)))
-                                    }
-
-                                    // Restore the original playback state
-                                    if (root.hotCueHoldWasPlaying) {
-                                        root.engine.play()
-                                    } else {
+                                    // If the deck was paused before pressing the pad,
+                                    // release returns directly to that hotcue start.
+                                    if (!root.hotCueHoldWasPlaying) {
+                                        // Pause first, then seek. This avoids the pause-path
+                                        // freezing at the transient playhead position.
                                         root.engine.pause()
+                                        var trackLen = root.engine.getDuration()
+                                        if (trackLen && trackLen > 0) {
+                                            var normalizedPos = root.hotCueHoldCuePosition / trackLen
+                                            root.engine.setPosition(Math.max(0, Math.min(1.0, normalizedPos)))
+                                        }
                                     }
 
                                     root.hotCueHoldPressedIndex = -1
+                                    root.hotCueHoldCuePosition = 0.0
                                 }
 
                                 onClicked: (mouse) => {
