@@ -1395,6 +1395,7 @@ void DjEngine::pauseForScrub()
 
     m_scrubHoldPosition = transportSource.getCurrentPosition();
     m_lastScrubInputClock.restart();
+    emit scrubbingChanged();
 
     // Immediate touch brake: no scratch noise on plain click/hold.
     transportSource.stop();
@@ -1457,6 +1458,7 @@ void DjEngine::resumeAfterScrub()
     m_scrubWasPlaying = false;
     m_snapClock.restart();
     m_snapValid = true;
+    emit scrubbingChanged();
     emit playingChanged();
 }
 

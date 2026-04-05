@@ -25,6 +25,7 @@ class DjEngine : public QObject
     Q_OBJECT
     Q_PROPERTY(float progress READ getProgress NOTIFY progressChanged)
     Q_PROPERTY(bool isPlaying READ isPlaying NOTIFY playingChanged)
+    Q_PROPERTY(bool scrubbing READ isScrubbing NOTIFY scrubbingChanged)
     Q_PROPERTY(bool isReverse READ isReverse NOTIFY reverseChanged)
     Q_PROPERTY(bool keylock READ keylock WRITE setKeylock NOTIFY keylockChanged)
     Q_PROPERTY(double tempoPercent READ getTempoPercent WRITE setTempoPercent NOTIFY tempoChanged)
@@ -88,6 +89,7 @@ public:
     // Called from QML FrameAnimation every VSync frame — must be wait-free.
     Q_INVOKABLE double getPlayheadPositionAtomic() const;
     bool isPlaying() const;
+    bool isScrubbing() const { return m_isScrubbing; }
 
     // Pixels-per-second scale mirrored from the waveform renderer so scrubBy()
     // can convert mouse pixels → audio seconds without needing QML math.
@@ -221,6 +223,7 @@ public slots:
 signals:
     void progressChanged();
     void playingChanged();
+    void scrubbingChanged();
     void reverseChanged();
     void tempoChanged();
     void trackLoaded();

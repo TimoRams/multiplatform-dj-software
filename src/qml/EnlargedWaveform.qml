@@ -161,6 +161,16 @@ Item {
             }
         }
 
+        // While paused, keep a lightweight repaint heartbeat so manual turntable
+        // movement and non-frame-driven position changes stay visually in sync.
+        Timer {
+            id: pausedWaveRefresh
+            interval: 33
+            repeat: true
+            running: root.engine !== null && (!root.engine.isPlaying || root.engine.scrubbing)
+            onTriggered: waveItem.requestUpdate()
+        }
+
         // Also repaint once when pausing so the waveform freezes at the exact
         // stopped position (FrameAnimation has already stopped at this point).
         // Also repaint when position changes while paused (e.g. seeking via overview).
@@ -172,15 +182,17 @@ Item {
                 root.cueOverlayTick++
             }
             function onProgressChanged() {
-                // Repaint scrolling waveform when paused and position is changed
-                // (e.g. clicking on the overview waveform to seek).
-                if (root.engine && !root.engine.isPlaying)
+                // Repaint scrolling waveform on paused seek and during scratch.
+                if (root.engine && (!root.engine.isPlaying || root.engine.scrubbing))
                     waveItem.requestUpdate()
                 root.cueOverlayTick++
             }
             function onLoopChanged() {
                 waveItem.requestUpdate()
                 root.cueOverlayTick++
+            }
+            function onScrubbingChanged() {
+                waveItem.requestUpdate()
             }
             function onHotCuesChanged() {
                 root.cueOverlayTick++
