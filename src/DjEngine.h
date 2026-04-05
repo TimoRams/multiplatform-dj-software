@@ -187,6 +187,10 @@ public slots:
     void setTempoPercent(double percent);
     Q_INVOKABLE void setManualBpm(double bpm);
     
+    // Playback control
+    Q_INVOKABLE void play();
+    Q_INVOKABLE void pause();
+    
     // Mixer Setters
     void setVolume(double value);
     void setTrim(double value);

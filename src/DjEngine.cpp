@@ -1090,6 +1090,49 @@ void DjEngine::togglePlay()
     emit playingChanged();
 }
 
+void DjEngine::play()
+{
+    if (transportSource.isPlaying())
+        return; // Already playing
+
+    // Snapshot current position immediately so the interpolation starts
+    // from exactly where the waveform is showing (no 16ms wait for onTimer).
+    m_snapPosition = transportSource.getCurrentPosition();
+    m_snapClock.restart();
+    m_snapValid = true;
+    m_atomicPlayheadPos.store(m_snapPosition, std::memory_order_relaxed);
+
+    transportSource.start();
+    emit playingChanged();
+}
+
+void DjEngine::pause()
+{
+    if (!transportSource.isPlaying())
+        return; // Already paused
+
+    // Compute the interpolated visual position BEFORE stopping so we can
+    // freeze the transport at exactly the position the waveform was showing.
+    double frozenPos;
+    if (m_snapValid) {
+        double tempoR = getTempoRatio();
+        double elapsed = (static_cast<double>(m_snapClock.nsecsElapsed()) * 1e-9) * tempoR;
+        frozenPos = m_isReverse
+            ? m_snapPosition - elapsed
+            : m_snapPosition + elapsed;
+        double len = transportSource.getLengthInSeconds();
+        frozenPos = std::clamp(frozenPos, 0.0, len > 0.0 ? len : frozenPos);
+    } else {
+        frozenPos = transportSource.getCurrentPosition();
+    }
+
+    transportSource.stop();
+    transportSource.setPosition(frozenPos);
+    m_snapValid = false;
+    m_atomicPlayheadPos.store(frozenPos, std::memory_order_relaxed);
+    emit playingChanged();
+}
+
 void DjEngine::setPosition(float progress)
 {
     double len = transportSource.getLengthInSeconds();

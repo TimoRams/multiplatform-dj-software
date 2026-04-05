@@ -9,6 +9,11 @@ Item {
     property string accentColor: "#ff9900"
     property int activeTab: 0
 
+    // Hold-and-Play hotcue state tracking
+    property double hotCueHoldPressedIndex: -1
+    property double hotCueHoldStartPosition: 0.0
+    property bool hotCueHoldWasPlaying: false
+
     readonly property var tabs: ["HOT CUE", "PAD FX", "BEATJUMP", "STEMS"]
     readonly property var beatJumpPads: [-16, -8, -4, -2, 2, 4, 8, 16]
 
@@ -220,6 +225,57 @@ Item {
                                 cursorShape: Qt.PointingHandCursor
                                 acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
 
+                                onPressed: (mouse) => {
+                                    if (!root.engine)
+                                        return
+
+                                    // Only handle left button for hotcues
+                                    if (mouse.button !== Qt.LeftButton || !isHotCueTab)
+                                        return
+
+                                    // Save current playback state before triggering hotcue
+                                    root.hotCueHoldPressedIndex = index
+                                    root.hotCueHoldStartPosition = root.engine.getPlayheadPositionAtomic()
+                                    root.hotCueHoldWasPlaying = root.engine.isPlaying
+
+                                    // Trigger the hotcue (jumps to position)
+                                    if (cueSet) {
+                                        root.engine.triggerHotCue(index)
+                                        // Start playback if not already playing
+                                        if (!root.hotCueHoldWasPlaying) {
+                                            root.engine.play()
+                                        }
+                                    } else {
+                                        // If hotcue not set, set it instead
+                                        root.engine.storeHotCue(index)
+                                    }
+                                }
+
+                                onReleased: (mouse) => {
+                                    if (!root.engine || !isHotCueTab)
+                                        return
+
+                                    // Only handle if this was the pad that was pressed
+                                    if (root.hotCueHoldPressedIndex !== index)
+                                        return
+
+                                    // Jump back to the original position
+                                    var trackLen = root.engine.getDuration()
+                                    if (trackLen && trackLen > 0) {
+                                        var normalizedPos = root.hotCueHoldStartPosition / trackLen
+                                        root.engine.setPosition(Math.max(0, Math.min(1.0, normalizedPos)))
+                                    }
+
+                                    // Restore the original playback state
+                                    if (root.hotCueHoldWasPlaying) {
+                                        root.engine.play()
+                                    } else {
+                                        root.engine.pause()
+                                    }
+
+                                    root.hotCueHoldPressedIndex = -1
+                                }
+
                                 onClicked: (mouse) => {
                                     if (!root.engine)
                                         return
@@ -233,11 +289,7 @@ Item {
                                     if (isPlaceholderTab)
                                         return
 
-                                    if (mouse.button === Qt.LeftButton) {
-                                        root.engine.triggerHotCue(index)
-                                        return
-                                    }
-
+                                    // Handle middle and right button clicks (left button is handled by press/release)
                                     if (mouse.button === Qt.MiddleButton) {
                                         root.engine.clearHotCue(index)
                                         return
