@@ -95,16 +95,18 @@ Item {
             preventStealing: true
 
             property real lastMouseX: 0
+            property real pressMouseX: 0
             property bool wasPlayingBeforeScrub: false
             property bool scrubEngaged: false
             property real accumulatedDragPx: 0
-            property real scrubDeadzonePx: 2.0
+            property real scrubDeadzonePx: 0.45
 
             onPressed: (mouse) => {
                 if (root.engine === null) return
                 wasPlayingBeforeScrub = root.engine.isPlaying
                 scrubEngaged = false
                 accumulatedDragPx = 0
+                pressMouseX = mouse.x
                 lastMouseX = mouse.x
                 root.engine.pauseForScrub()
             }
@@ -115,12 +117,12 @@ Item {
 
                 if (!scrubEngaged) {
                     accumulatedDragPx += Math.abs(deltaX)
-                    lastMouseX = mouse.x
 
                     if (accumulatedDragPx < scrubDeadzonePx)
                         return
 
                     scrubEngaged = true
+                    deltaX = mouse.x - pressMouseX
                 }
 
                 root.engine.scrubBy(deltaX)

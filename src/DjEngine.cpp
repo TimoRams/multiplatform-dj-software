@@ -1453,24 +1453,34 @@ void DjEngine::setPosition(float progress)
 
 void DjEngine::onTimer()
 {
-    if (m_isScrubbing) {
+    if (m_isScrubbing || m_scratchReleaseActive) {
         const double dtSec = m_scrubPhysicsClock.isValid()
             ? std::clamp(static_cast<double>(m_scrubPhysicsClock.nsecsElapsed()) * 1e-9,
                          0.001, 0.050)
             : 0.016;
         m_scrubPhysicsClock.restart();
 
-        const double idleSec = m_lastScrubInputClock.isValid()
-            ? static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9
-            : 1.0;
+        double targetRate = 0.0;
+        double tau = m_scratchRateReleaseTauSec;
+        if (m_isScrubbing) {
+            const double idleSec = m_lastScrubInputClock.isValid()
+                ? static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9
+                : 1.0;
 
-        const double targetRate = (idleSec > m_scratchIdleTimeoutSec)
-            ? 0.0
-            : m_scratchTargetRate;
+            targetRate = (idleSec > m_scratchIdleTimeoutSec)
+                ? 0.0
+                : m_scratchTargetRate;
 
-        const double tau = (std::abs(targetRate) > std::abs(m_scratchSmoothedRate))
-            ? m_scratchRateAttackTauSec
-            : m_scratchRateReleaseTauSec;
+            tau = (std::abs(targetRate) > std::abs(m_scratchSmoothedRate))
+                ? m_scratchRateAttackTauSec
+                : m_scratchRateReleaseTauSec;
+        } else {
+            targetRate = m_scratchReleaseTargetRate;
+            tau = (std::abs(targetRate) < 0.001)
+                ? m_scratchReleaseToStopTauSec
+                : m_scratchReleaseToPlayTauSec;
+        }
+
         const double alpha = 1.0 - std::exp(-dtSec / std::max(0.001, tau));
         m_scratchSmoothedRate += (targetRate - m_scratchSmoothedRate) * alpha;
 
@@ -1496,6 +1506,32 @@ void DjEngine::onTimer()
         m_atomicPlayheadPos.store(m_scrubHoldPosition,
                                   std::memory_order_relaxed);
         m_snapPosition = m_scrubHoldPosition;
+
+        if (!m_isScrubbing && m_scratchReleaseActive
+            && std::abs(m_scratchSmoothedRate - m_scratchReleaseTargetRate) <= m_scratchReleaseSettleThreshold) {
+            m_scratchReleaseActive = false;
+            m_scratchTargetRate = 0.0;
+            m_scratchSmoothedRate = 0.0;
+
+            if (reverseWrapSource)
+                static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get())->setReverse(m_scrubSavedReverseState);
+            if (resamplingSource)
+                resamplingSource->setResamplingRatio(1.0);
+            if (timeStretchSource)
+                timeStretchSource->setKeylock(m_scrubSavedKeylock && m_keylock);
+
+            updateSpeedAndPitch();
+
+            if (m_scrubWasPlaying)
+                transportSource.start();
+            else
+                transportSource.stop();
+
+            m_scrubWasPlaying = false;
+            m_snapClock.restart();
+            m_snapValid = true;
+            emit playingChanged();
+        }
 
         emit progressChanged();
         emit vuLevelChanged();
@@ -1835,11 +1871,14 @@ void DjEngine::pauseForScrub()
     if (m_isScrubbing)
         return;
 
+    m_scratchReleaseActive = false;
+    m_scratchReleaseTargetRate = 0.0;
     m_scrubWasPlaying = transportSource.isPlaying();
     m_isScrubbing = true;
     m_snapValid = false;
 
     m_scrubHoldPosition = transportSource.getCurrentPosition();
+    m_scratchAccumulatedMoveSec = 0.0;
     m_scratchTargetRate = 0.0;
     m_scratchSmoothedRate = 0.0;
     m_scrubPhysicsClock.restart();
@@ -1880,26 +1919,42 @@ void DjEngine::scratchBySeconds(double deltaSeconds)
     if (deltaSeconds == 0.0)
         return;
 
-    // Precision-first response for mouse waveform scrubbing.
-    // A tiny clamp guards against accidental event spikes without causing jumps.
-    deltaSeconds = std::clamp(deltaSeconds, -0.05, 0.05);
+    const double requestedDelta = std::clamp(deltaSeconds,
+                                             -m_scratchEventSpikeClampSec,
+                                             m_scratchEventSpikeClampSec);
+    const bool fineMove = std::abs(requestedDelta) <= m_scratchFineMoveThresholdSec;
+    const double directStep = fineMove
+        ? requestedDelta
+        : std::clamp(requestedDelta,
+                     -m_scratchDirectStepLimitSec,
+                     m_scratchDirectStepLimitSec);
 
-    double len = transportSource.getLengthInSeconds();
+    const double len = transportSource.getLengthInSeconds();
     if (len <= 0.0)
         return;
+
+    if (m_scratchReleaseActive)
+        m_scratchReleaseActive = false;
 
     const double dtSecRaw = m_lastScrubInputClock.isValid()
         ? std::max(0.001, static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9)
         : 0.008;
-    const double instantaneousRate = std::clamp(deltaSeconds / dtSecRaw,
+    double instantaneousRate = std::clamp(requestedDelta / dtSecRaw,
                                                  -m_scratchMaxRate,
                                                  m_scratchMaxRate);
+    if (fineMove)
+        instantaneousRate *= 0.35;
     pushScratchVelocityTick(instantaneousRate);
 
     if (m_isScrubbing && !transportSource.isPlaying())
         transportSource.start();
 
-    m_scrubHoldPosition = transportSource.getCurrentPosition();
+    const double currentPos = m_scrubHoldPosition;
+    const double nextPos = std::clamp(currentPos + directStep, 0.0, len);
+    transportSource.setPosition(nextPos);
+
+    m_scratchAccumulatedMoveSec += std::abs(directStep);
+    m_scrubHoldPosition = nextPos;
     m_lastScrubInputClock.restart();
 
     // Keep the atomic + snap in sync for all synced UIs.
@@ -1921,30 +1976,47 @@ void DjEngine::resumeAfterScrub()
         return;
 
     m_isScrubbing = false;
-    m_scratchTargetRate = 0.0;
-    m_scratchSmoothedRate = 0.0;
 
-    if (reverseWrapSource)
-        static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get())->setReverse(m_scrubSavedReverseState);
-    if (resamplingSource)
-        resamplingSource->setResamplingRatio(1.0);
+    // Touch/hold without meaningful movement: resume immediately with no glide.
+    if (m_scratchAccumulatedMoveSec < m_scratchInertiaMoveThresholdSec) {
+        m_scratchReleaseActive = false;
+        m_scratchReleaseTargetRate = 0.0;
+        m_scratchTargetRate = 0.0;
+        m_scratchSmoothedRate = 0.0;
 
-    if (timeStretchSource)
-        timeStretchSource->setKeylock(m_scrubSavedKeylock && m_keylock);
+        if (reverseWrapSource)
+            static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get())->setReverse(m_scrubSavedReverseState);
+        if (resamplingSource)
+            resamplingSource->setResamplingRatio(1.0);
+        if (timeStretchSource)
+            timeStretchSource->setKeylock(m_scrubSavedKeylock && m_keylock);
 
-    // Restore regular playback behavior (tempo/keylock/reverse chain state).
-    updateSpeedAndPitch();
+        updateSpeedAndPitch();
 
-    if (m_scrubWasPlaying)
-        transportSource.start();
-    else
-        transportSource.stop();
+        if (m_scrubWasPlaying)
+            transportSource.start();
+        else
+            transportSource.stop();
 
-    m_scrubWasPlaying = false;
-    m_snapClock.restart();
-    m_snapValid = true;
+        m_scrubWasPlaying = false;
+        m_snapClock.restart();
+        m_snapValid = true;
+        emit scrubbingChanged();
+        emit playingChanged();
+        return;
+    }
+
+    // Keep current fling velocity and glide back to normal transport speed.
+    // If the deck was paused before scratch, glide to a full stop instead.
+    if (std::abs(m_scratchSmoothedRate) < 0.02)
+        m_scratchSmoothedRate = m_scratchTargetRate;
+    m_scratchSmoothedRate = std::clamp(m_scratchSmoothedRate, -m_scratchMaxRate, m_scratchMaxRate);
+    m_scratchReleaseTargetRate = m_scrubWasPlaying ? 1.0 : 0.0;
+    m_scratchReleaseActive = true;
+    m_lastScrubInputClock.restart();
+    m_scrubPhysicsClock.restart();
+
     emit scrubbingChanged();
-    emit playingChanged();
 }
 
 void DjEngine::setDownbeatAtCurrentPosition()

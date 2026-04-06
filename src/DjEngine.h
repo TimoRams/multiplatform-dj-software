@@ -375,6 +375,16 @@ private:
     double m_scratchRateReleaseTauSec = 0.040;
     double m_scratchIdleTimeoutSec = 0.030;
     double m_scratchMaxRate = 12.0;
+    bool   m_scratchReleaseActive = false;
+    double m_scratchReleaseTargetRate = 0.0;
+    double m_scratchReleaseToPlayTauSec = 0.22;
+    double m_scratchReleaseToStopTauSec = 0.12;
+    double m_scratchReleaseSettleThreshold = 0.03;
+    double m_scratchDirectStepLimitSec = 0.02;
+    double m_scratchFineMoveThresholdSec = 0.006;
+    double m_scratchEventSpikeClampSec = 0.08;
+    double m_scratchAccumulatedMoveSec = 0.0;
+    double m_scratchInertiaMoveThresholdSec = 0.004;
     bool   m_scrubSavedKeylock = false;
     bool   m_scrubSavedReverseState = false;
     double m_loadedTrackSampleRate = 44100.0;
