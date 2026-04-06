@@ -84,12 +84,12 @@ ApplicationWindow {
     }
 
     // Globaler Waveform-Zoom (beide Decks synchron, wie in professioneller DJ-Software)
-    // Exakt 10 diskrete Zoomstufen für reproduzierbares, stabiles Rendering.
-    readonly property var waveformZoomLevels: [0.22, 0.29, 0.38, 0.52, 0.70, 0.95, 1.30, 1.80, 2.50, 3.50, 5.00, 7.20]
+    // Zusätzliche Rauszoom-Stufen am Anfang; 0.22 (vorher weitester Rauszoom) bleibt als neuer Default.
+    readonly property var waveformZoomLevels: [0.10, 0.14, 0.18, 0.22, 0.29, 0.38, 0.52, 0.70, 0.95, 1.30, 1.80, 2.50, 3.50, 5.00, 7.20]
     readonly property int  zoomStepMin: 0
     readonly property int  zoomStepMax: waveformZoomLevels.length - 1
-    // Default bleibt bei 1.80 ppp.
-    property int  waveformZoomStep: waveformZoomLevels.indexOf(1.80)
+    // Default ist jetzt der bisher weiteste Rauszoom.
+    property int  waveformZoomStep: waveformZoomLevels.indexOf(0.22)
     readonly property real waveformZoom: waveformZoomLevels[waveformZoomStep]
 
     // Ctrl+ = Reinzoomen (mehr Detail, weniger Sekunden sichtbar)
