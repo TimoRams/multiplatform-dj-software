@@ -72,15 +72,15 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
-        spacing: 6
+        spacing: 4
 
         // Mode tabs above pads.
         RowLayout {
             Layout.preferredWidth: padAreaWidth
             Layout.maximumWidth: padAreaWidth
             Layout.alignment: Qt.AlignLeft
-            Layout.preferredHeight: 26
-            Layout.maximumHeight: 26
+            Layout.preferredHeight: 22
+            Layout.maximumHeight: 22
             spacing: 2
             z: 30
 
@@ -119,8 +119,8 @@ Item {
             id: contentRow
             Layout.fillWidth:  true
             Layout.fillHeight: true
-            Layout.minimumHeight: 120
-            spacing: 12
+            Layout.minimumHeight: 52
+            spacing: 8
             z: 10
 
             Item {
@@ -149,12 +149,12 @@ Item {
 
                 GridLayout {
                     anchors.fill: parent
-                    anchors.margins: 6
+                    anchors.margins: 4
 
                     columns: 4
                     rows: 2
-                    columnSpacing: 3
-                    rowSpacing: 3
+                    columnSpacing: 2
+                    rowSpacing: 2
 
                     Repeater {
                         model: 8

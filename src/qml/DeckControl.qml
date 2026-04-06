@@ -603,7 +603,7 @@ Item {
                         }
 
                         Button {
-                            text: "QUANTIZE"
+                            text: "Q"
                             checkable: true
                             checked: deck.engine ? deck.engine.quantizeEnabled : false
                             Layout.fillWidth: true
@@ -627,7 +627,7 @@ Item {
                         }
 
                         Button {
-                            text: "KEYLOCK"
+                            text: "KL"
                             checkable: true
                             checked: deck.engine ? deck.engine.keylock : false
                             Layout.fillWidth: true
@@ -809,11 +809,29 @@ Item {
                     }
                 }
 
-                // RIGHT: Tempo Fader spanning full height of this row
+            }
+            
+            // Performance pads + tempo fader on the right
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.max(52, parent.height * 0.38)
+                Layout.maximumHeight: Math.max(52, parent.height * 0.38)
+                Layout.alignment: Qt.AlignVCenter
+                spacing: 4
+
+                PerformancePads {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumHeight: 52
+                    engine: deck.engine
+                    accentColor: deck.deckName === "A" ? "#ff9900" : "#00ccff"
+                }
+
                 Rectangle {
                     id: tempoPanel
-                    Layout.preferredWidth: 50
-                    Layout.fillHeight: true
+                    Layout.preferredWidth: 52
+                    Layout.preferredHeight: Math.max(100, parent.height * 0.62)
+                    Layout.alignment: Qt.AlignVCenter
                     color: "#1a1a1a"
                     border.color: "#333"
                     border.width: 1
@@ -826,7 +844,6 @@ Item {
                         anchors.margins: 4
                         spacing: 2
 
-                        // ── Clickable TEMPO ▾ header ──
                         Rectangle {
                             id: tempoHeader
                             Layout.fillWidth: true
@@ -894,15 +911,6 @@ Item {
                         }
                     }
                 }
-            }
-            
-            // Performance pads (hot cue, pad FX, beatjump, stems)
-            PerformancePads {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                Layout.minimumHeight: 100
-                engine: deck.engine
-                accentColor: deck.deckName === "A" ? "#ff9900" : "#00ccff"
             }
         }
 
