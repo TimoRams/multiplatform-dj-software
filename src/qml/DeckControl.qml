@@ -499,14 +499,18 @@ Item {
                         totalTrackDuration: deck.engine ? deck.engine.trackDurationSec : 0
                     }
 
-                    // Controls (Play/Pause, Cue, Sync + Quantize, Keylock, Slip)
+                    // Single adaptive control row: more text gets more width.
                     RowLayout {
+                        id: deckControlsRow
                         Layout.fillWidth: true
                         spacing: 3
+
+                        property real unit: Math.max(18, (width - (spacing * 12)) / 14.0)
 
                         Button {
                             text: "PLAY"
                             Layout.fillWidth: true
+                            Layout.preferredWidth: deckControlsRow.unit * 1.1
                             Layout.preferredHeight: 18
                             palette.buttonText: "white"
                             font.pixelSize: window.spViewport(8)
@@ -529,6 +533,7 @@ Item {
                         Button {
                             text: "CUE"
                             Layout.fillWidth: true
+                            Layout.preferredWidth: deckControlsRow.unit * 1.0
                             Layout.preferredHeight: 18
                             background: Rectangle { color: "#444"; radius: 3 }
                             contentItem: Text {
@@ -546,6 +551,7 @@ Item {
                             checkable: true
                             checked: deck.engine ? deck.engine.isReverse : false
                             Layout.fillWidth: true
+                            Layout.preferredWidth: deckControlsRow.unit * 1.0
                             Layout.preferredHeight: 18
                             background: Rectangle {
                                 color: parent.checked ? "#883300" : "#444"
@@ -571,6 +577,7 @@ Item {
                             checkable: true
                             checked: deck.engine ? deck.engine.syncEnabled : false
                             Layout.fillWidth: true
+                            Layout.preferredWidth: deckControlsRow.unit * 1.2
                             Layout.preferredHeight: 18
                             background: Rectangle {
                                 color: {
@@ -607,6 +614,7 @@ Item {
                             checkable: true
                             checked: deck.engine ? deck.engine.quantizeEnabled : false
                             Layout.fillWidth: true
+                            Layout.preferredWidth: deckControlsRow.unit * 0.8
                             Layout.preferredHeight: 18
                             background: Rectangle {
                                 color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
@@ -631,6 +639,7 @@ Item {
                             checkable: true
                             checked: deck.engine ? deck.engine.keylock : false
                             Layout.fillWidth: true
+                            Layout.preferredWidth: deckControlsRow.unit * 0.9
                             Layout.preferredHeight: 18
                             background: Rectangle {
                                 color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
@@ -654,6 +663,7 @@ Item {
                             text: "SLIP"
                             checkable: true
                             Layout.fillWidth: true
+                            Layout.preferredWidth: deckControlsRow.unit * 1.1
                             Layout.preferredHeight: 18
                             background: Rectangle {
                                 color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
@@ -669,16 +679,11 @@ Item {
                                 verticalAlignment: Text.AlignVCenter
                             }
                         }
-                    }
-
-                    // Loop controls
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 3
 
                         Button {
-                            text: "LOOP IN"
+                            text: "L IN"
                             Layout.fillWidth: true
+                            Layout.preferredWidth: deckControlsRow.unit * 1.2
                             Layout.preferredHeight: 18
                             background: Rectangle {
                                 color: "#333"
@@ -698,8 +703,9 @@ Item {
                         }
 
                         Button {
-                            text: "LOOP OUT"
+                            text: "L OUT"
                             Layout.fillWidth: true
+                            Layout.preferredWidth: deckControlsRow.unit * 1.3
                             Layout.preferredHeight: 18
                             background: Rectangle {
                                 color: "#333"
@@ -720,7 +726,8 @@ Item {
 
                         Button {
                             text: "<"
-                            Layout.preferredWidth: 24
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: deckControlsRow.unit * 0.75
                             Layout.preferredHeight: 18
                             background: Rectangle {
                                 color: "#333"
@@ -744,6 +751,7 @@ Item {
                             checkable: true
                             checked: deck.engine ? (deck.engine.loopActive && Math.abs(deck.engine.loopLengthBeats - 0.75) < 0.06) : false
                             Layout.fillWidth: true
+                            Layout.preferredWidth: deckControlsRow.unit * 2.0
                             Layout.preferredHeight: 18
                             background: Rectangle {
                                 color: parent.checked ? "#335533" : "#333"
@@ -765,7 +773,8 @@ Item {
 
                         Button {
                             text: ">"
-                            Layout.preferredWidth: 24
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: deckControlsRow.unit * 0.75
                             Layout.preferredHeight: 18
                             background: Rectangle {
                                 color: "#333"
@@ -788,7 +797,8 @@ Item {
                             text: "3/4"
                             checkable: true
                             checked: deck.engine ? (deck.engine.loopActive && Math.abs(deck.engine.loopLengthBeats - 0.75) < 0.06) : false
-                            Layout.preferredWidth: 42
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: deckControlsRow.unit * 1.0
                             Layout.preferredHeight: 18
                             background: Rectangle {
                                 color: parent.checked ? "#334455" : "#333"
