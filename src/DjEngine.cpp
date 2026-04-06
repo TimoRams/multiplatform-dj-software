@@ -2141,42 +2141,43 @@ void DjEngine::setLoopIn()
 void DjEngine::setLoopOut()
 {
     const double trackLen = transportSource.getLengthInSeconds();
-        const double dtSec = m_scrubPhysicsClock.isValid()
-            ? std::clamp(static_cast<double>(m_scrubPhysicsClock.nsecsElapsed()) * 1e-9,
-                         0.001, 0.050)
-            : 0.016;
-        m_scrubPhysicsClock.restart();
+    if (trackLen <= 0.0)
+        return;
 
-        const double idleSec = m_lastScrubInputClock.isValid()
-            ? static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9
-            : 1.0;
+    double outPos = static_cast<double>(getVisualPosition());
+    if (m_quantizeEnabled)
+        outPos = quantizedBeatAt(outPos);
+    outPos = std::clamp(outPos, 0.0, trackLen);
 
-        const double targetRate = (idleSec > m_scratchIdleTimeoutSec)
-            ? 0.0
-            : m_scratchTargetRate;
+    // If no IN point is set yet, create a sensible default one-beat loop ending at OUT.
+    if (!m_loopInSet) {
+        const double beatDurAtOut = beatDurationAround(outPos);
+        if (beatDurAtOut <= 1e-4)
+            return;
+        m_loopInSec = std::clamp(outPos - beatDurAtOut, 0.0, outPos);
+        m_loopInSet = true;
+    }
 
-        const double tau = (std::abs(targetRate) > std::abs(m_scratchSmoothedRate))
-            ? m_scratchRateAttackTauSec
-            : m_scratchRateReleaseTauSec;
-        const double alpha = 1.0 - std::exp(-dtSec / std::max(0.001, tau));
-        m_scratchSmoothedRate += (targetRate - m_scratchSmoothedRate) * alpha;
+    const double minLenSec = 0.001;
+    if (outPos <= m_loopInSec + minLenSec) {
+        outPos = std::min(trackLen, m_loopInSec + beatDurationAround(m_loopInSec));
+    }
+    if (outPos <= m_loopInSec + minLenSec)
+        return;
 
-        const double len = transportSource.getLengthInSeconds();
-        if (len > 0.0) {
-            m_scrubHoldPosition = std::clamp(m_scrubHoldPosition + (m_scratchSmoothedRate * dtSec),
-                                             0.0, len);
-        }
+    m_loopOutSec = outPos;
+    m_loopActive = true;
 
-        if (std::abs(m_scratchSmoothedRate) < 0.01) {
-            if (transportSource.isPlaying())
-                transportSource.stop();
-        } else if (!transportSource.isPlaying()) {
-            transportSource.start();
-        }
+    const double beatDurAtIn = beatDurationAround(m_loopInSec);
+    if (beatDurAtIn > 1e-4) {
+        constexpr double kMinLoopBeats = 1.0 / 64.0;
+        constexpr double kMaxLoopBeats = 4096.0;
+        const double beats = (m_loopOutSec - m_loopInSec) / beatDurAtIn;
+        m_loopLengthBeats = std::clamp(beats, kMinLoopBeats, kMaxLoopBeats);
+    }
 
-        transportSource.setPosition(m_scrubHoldPosition);
-        m_atomicPlayheadPos.store(m_scrubHoldPosition,
-                                  std::memory_order_relaxed);
+    applyLoopRangeToAudioSource();
+    emit loopChanged();
 }
 
 void DjEngine::toggleLoop4Beats()

@@ -684,7 +684,8 @@ Item {
                             text: "L IN"
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 1.2
-                            Layout.preferredHeight: 15
+                            Layout.minimumWidth: 44
+                            Layout.preferredHeight: 18
                             background: Rectangle {
                                 color: "#333"
                                 radius: 3
@@ -706,7 +707,8 @@ Item {
                             text: "L OUT"
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 1.3
-                            Layout.preferredHeight: 15
+                            Layout.minimumWidth: 50
+                            Layout.preferredHeight: 18
                             background: Rectangle {
                                 color: "#333"
                                 radius: 3
@@ -728,7 +730,8 @@ Item {
                             text: "<"
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 0.75
-                            Layout.preferredHeight: 15
+                            Layout.minimumWidth: 28
+                            Layout.preferredHeight: 18
                             background: Rectangle {
                                 color: "#333"
                                 radius: 3
@@ -752,7 +755,8 @@ Item {
                             checked: deck.engine ? (deck.engine.loopActive && Math.abs(deck.engine.loopLengthBeats - 0.75) < 0.06) : false
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 2.0
-                            Layout.preferredHeight: 15
+                            Layout.minimumWidth: 58
+                            Layout.preferredHeight: 18
                             background: Rectangle {
                                 color: parent.checked ? "#335533" : "#333"
                                 radius: 3
@@ -775,7 +779,8 @@ Item {
                             text: ">"
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 0.75
-                            Layout.preferredHeight: 15
+                            Layout.minimumWidth: 28
+                            Layout.preferredHeight: 18
                             background: Rectangle {
                                 color: "#333"
                                 radius: 3
@@ -799,7 +804,8 @@ Item {
                             checked: deck.engine ? (deck.engine.loopActive && Math.abs(deck.engine.loopLengthBeats - 0.75) < 0.06) : false
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 1.0
-                            Layout.preferredHeight: 15
+                            Layout.minimumWidth: 36
+                            Layout.preferredHeight: 18
                             background: Rectangle {
                                 color: parent.checked ? "#334455" : "#333"
                                 radius: 3
