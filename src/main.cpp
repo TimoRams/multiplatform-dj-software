@@ -32,10 +32,11 @@ using namespace Qt::StringLiterals;
 
 namespace {
 QtMessageHandler g_previousMessageHandler = nullptr;
+const QString kBreezeDialOverrideWarning = QStringLiteral("Member fillColor of the object BreezeDial overrides a member of the base object");
 
 void filteredMessageHandler(QtMsgType type, const QMessageLogContext& context, const QString& message)
 {
-    if (message.contains("Member fillColor of the object BreezeDial overrides a member of the base object"))
+    if (message.contains(kBreezeDialOverrideWarning))
         return;
 
     if (g_previousMessageHandler)
@@ -58,15 +59,8 @@ int main(int argc, char *argv[])
 #endif
 
     g_previousMessageHandler = qInstallMessageHandler(filteredMessageHandler);
-
-    // ── Global text rendering quality ────────────────────────────────────────
-    // Qt's built-in curve renderer (signed-distance-field) scales perfectly
-    // at any size and works well with Vulkan.  NativeTextRendering can look
-    // blurry on Linux + Vulkan, so we explicitly use CurveTextRendering.
     QQuickWindow::setTextRenderType(QQuickWindow::CurveTextRendering);
 
-    // Breeze style can trigger noisy sampled-image warnings with some GPU/driver
-    // combinations. Use a deterministic built-in style unless the user set one.
     if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE"))
         qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
 
@@ -82,28 +76,23 @@ int main(int argc, char *argv[])
     defaultFont.setStyleStrategy(QFont::PreferAntialias);
     app.setFont(defaultFont);
 
-    // Properly initialize JUCE GUI subsystems (needed for ALSA MIDI detection on Linux)
     juce::ScopedJuceInitialiser_GUI juceInit;
 
-    // Initialize settings — creates the platform-specific AppData file on first run
     SettingsManager::getInstance().init();
 
-    // DjEngines on the heap so we control their destruction order explicitly.
     auto deckA = std::make_unique<DjEngine>();
     auto deckB = std::make_unique<DjEngine>();
 
-    // Cover art provider is owned by the QML engine after addImageProvider().
-    auto* coverProvider = new CoverArtProvider();
-    deckA->setCoverArtProvider(coverProvider, "deckA");
-    deckB->setCoverArtProvider(coverProvider, "deckB");
+    auto coverProvider = std::make_unique<CoverArtProvider>();
+    deckA->setCoverArtProvider(coverProvider.get(), "deckA");
+    deckB->setCoverArtProvider(coverProvider.get(), "deckB");
 
     QQmlApplicationEngine engine;
-    
-    // Core Managers
+
     ParameterStore parameterStore;
     MidiControllerManager midiManager(&parameterStore);
 
-    engine.addImageProvider("coverart", coverProvider);
+    engine.addImageProvider("coverart", coverProvider.release());
 
     engine.rootContext()->setContextProperty("deckA", deckA.get());
     engine.rootContext()->setContextProperty("deckB", deckB.get());
@@ -111,7 +100,6 @@ int main(int argc, char *argv[])
     LibraryManager libraryManager;
     engine.rootContext()->setContextProperty("libraryManager", &libraryManager);
 
-    // ── Database-backed library ──────────────────────────────────────────
     LibraryDatabase libraryDb;
     if (!libraryDb.open())
         qWarning() << "[main] LibraryDatabase failed to open – library features disabled.";
@@ -123,7 +111,6 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("libraryDb",    &libraryDb);
     engine.rootContext()->setContextProperty("libraryModel", &libraryTableModel);
 
-    // Wire decks to the database so loaded tracks are persisted automatically.
     deckA->setLibraryDatabase(&libraryDb);
     deckB->setLibraryDatabase(&libraryDb);
 
@@ -137,28 +124,20 @@ int main(int argc, char *argv[])
     SystemMonitor sysMonitor;
     engine.rootContext()->setContextProperty("sysMonitor", &sysMonitor);
 
-    // Provide single source of truth and MIDI manager
     engine.rootContext()->setContextProperty("parameterStore", &parameterStore);
     engine.rootContext()->setContextProperty("midiManager", &midiManager);
 
-    const QUrl url(u"qrc:/DJSoftware/src/qml/main.qml"_s);
+    const auto url = QUrl(u"qrc:/DJSoftware/src/qml/main.qml"_s);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
-                     &app, [url](QObject *obj, const QUrl &objUrl) {
+                     &app, [url](QObject* obj, const QUrl& objUrl) {
         if (!obj && url == objUrl)
             QCoreApplication::exit(-1);
     }, Qt::QueuedConnection);
 
     engine.load(url);
 
-    int ret = app.exec();
+    const int ret = app.exec();
 
-    // ── Shutdown order (critical for avoiding JUCE assertion failures) ────────
-    // 1. Tear down the QML scene first — it holds raw pointers to the DjEngines
-    //    via context properties.  After this, no QML binding can touch them.
-    // 2. Destroy the DjEngines — each one tears down its AudioDeviceManager,
-    //    AudioTransportSource, WaveformAnalyzer etc. while the JUCE
-    //    MessageManager is still alive (required for clean device shutdown).
-    // 3. Clean up JUCE singletons last.
     engine.rootContext()->setContextProperty("deckA", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("deckB", static_cast<QObject*>(nullptr));
 
