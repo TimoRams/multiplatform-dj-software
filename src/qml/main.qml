@@ -197,7 +197,7 @@ ApplicationWindow {
                     anchors.bottom: parent.bottom
                     anchors.left:   parent.left
                     anchors.right:  parent.right
-                    anchors.topMargin: 2
+                    anchors.topMargin: 0
                     spacing: 2
 
                     DeckControl {

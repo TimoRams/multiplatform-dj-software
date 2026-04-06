@@ -172,13 +172,18 @@ Item {
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.margins: 2
-            spacing: 1
+            anchors.leftMargin: 2
+            anchors.rightMargin: 2
+            anchors.bottomMargin: 2
+            anchors.topMargin: 0
+            spacing: 0
 
             // Deck header: unified metadata fields (always visible)
             Rectangle {
                 Layout.fillWidth: true
-                height: deck.headerCellHeight * 2
+                Layout.preferredHeight: deck.headerCellHeight * 2
+                Layout.minimumHeight: deck.headerCellHeight * 2
+                Layout.maximumHeight: deck.headerCellHeight * 2
                 color: "transparent"
 
                 RowLayout {
