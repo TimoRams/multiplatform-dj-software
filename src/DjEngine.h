@@ -134,6 +134,8 @@ public:
     Q_INVOKABLE void storeHotCue(int index);
     Q_INVOKABLE void clearHotCue(int index);
     Q_INVOKABLE void setHotCueColor(int index, const QString& colorHex);
+    Q_INVOKABLE void cueButtonPress();
+    Q_INVOKABLE void cueButtonRelease();
     TrackData* getTrackData() const;
 
     QString trackTitle()    const { return m_trackTitle; }
@@ -261,6 +263,8 @@ private:
     void loadHotCuesForCurrentTrack();
     void persistHotCueSlot(int index);
     bool isValidHotCueIndex(int index) const;
+    void loadMainCueForCurrentTrack();
+    void persistMainCuePoint();
 
     struct HotCueSlot {
         bool set = false;
@@ -303,6 +307,8 @@ private:
     bool    m_hasCoverArt = false;
     QVariantList m_currentSegments;
     std::array<HotCueSlot, 8> m_hotCueSlots;
+    double m_mainCueSec = -1.0;
+    bool m_mainCuePreviewActive = false;
 
     // Tempo control: ±6/8/16/32/100% (WIDE) selectable range
     double m_tempoPercent = 0.0;

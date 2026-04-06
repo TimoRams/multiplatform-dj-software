@@ -56,7 +56,7 @@ public:
                                          const std::vector<TrackSegment>& segments);
     Q_INVOKABLE QVariantList trackSegmentsForTrack(const QString& trackId) const;
 
-    // Hotcue persistence (16 slots per track, index 0..15).
+    // Hotcue persistence (8 slots per track, index 0..7).
     Q_INVOKABLE bool upsertCuePoint(const QString& trackId,
                                     int cueIndex,
                                     double positionSec,
@@ -64,6 +64,10 @@ public:
                                     const QString& colorHex);
     Q_INVOKABLE bool deleteCuePoint(const QString& trackId, int cueIndex);
     Q_INVOKABLE QVariantList cuePointsForTrack(const QString& trackId) const;
+
+    // Main CUE persistence (single point per track, seconds, <0 means unset).
+    Q_INVOKABLE bool upsertMainCuePoint(const QString& trackId, double positionSec);
+    Q_INVOKABLE double mainCuePointForTrack(const QString& trackId) const;
 
     // Check whether a track is already in the database.
     Q_INVOKABLE bool trackExists(const QString& trackId) const;
@@ -85,5 +89,5 @@ private:
     LibraryTableModel* m_tableModel = nullptr;
     QString m_dbPath;
 
-    static constexpr int kSchemaVersion = 5;
+    static constexpr int kSchemaVersion = 6;
 };

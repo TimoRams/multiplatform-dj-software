@@ -1110,6 +1110,7 @@ void DjEngine::setLibraryDatabase(LibraryDatabase* db)
 {
     m_libraryDb = db;
     loadHotCuesForCurrentTrack();
+    loadMainCueForCurrentTrack();
 }
 
 void DjEngine::persistCurrentAnalysisToLibrary()
@@ -1158,6 +1159,8 @@ void DjEngine::loadTrack(const QString& rawPath)
         m_trackData->clear();
         m_currentSegments.clear();
         clearHotCueState();
+        m_mainCueSec = -1.0;
+        m_mainCuePreviewActive = false;
         emit segmentsChanged();
         emit hotCuesChanged();
 
@@ -1255,6 +1258,7 @@ void DjEngine::loadTrack(const QString& rawPath)
             }
 
             loadHotCuesForCurrentTrack();
+            loadMainCueForCurrentTrack();
         }
 
         qDebug() << "[DjEngine] title=" << m_trackTitle
@@ -1624,6 +1628,94 @@ void DjEngine::setHotCueColor(int index, const QString& colorHex)
         persistHotCueSlot(index);
 
     emit hotCuesChanged();
+}
+
+void DjEngine::loadMainCueForCurrentTrack()
+{
+    m_mainCueSec = -1.0;
+
+    if (!m_libraryDb || m_currentTrackId.isEmpty())
+        return;
+
+    const double storedCue = m_libraryDb->mainCuePointForTrack(m_currentTrackId);
+    m_mainCueSec = storedCue >= 0.0 ? storedCue : -1.0;
+}
+
+void DjEngine::persistMainCuePoint()
+{
+    if (!m_libraryDb || m_currentTrackId.isEmpty())
+        return;
+    m_libraryDb->upsertMainCuePoint(m_currentTrackId, m_mainCueSec);
+}
+
+void DjEngine::cueButtonPress()
+{
+    if (!m_hasTrack)
+        return;
+
+    const double trackLen = transportSource.getLengthInSeconds();
+    if (trackLen <= 0.0)
+        return;
+
+    const bool wasPlaying = transportSource.isPlaying();
+
+    if (wasPlaying) {
+        // While playing, CUE should jump to the stored cue and continue playback.
+        if (m_mainCueSec < 0.0) {
+            m_mainCueSec = std::clamp(static_cast<double>(getVisualPosition()), 0.0, trackLen);
+            persistMainCuePoint();
+        }
+
+        const double cuePos = std::clamp(m_mainCueSec, 0.0, trackLen);
+        transportSource.setPosition(cuePos);
+        m_snapPosition = cuePos;
+        m_snapClock.restart();
+        m_snapValid = true;
+        m_atomicPlayheadPos.store(cuePos, std::memory_order_relaxed);
+        emit progressChanged();
+        return;
+    }
+
+    // While paused, pressing CUE sets the cue point at current position and previews while held.
+    const double cuePos = std::clamp(static_cast<double>(getVisualPosition()), 0.0, trackLen);
+    m_mainCueSec = cuePos;
+    persistMainCuePoint();
+
+    transportSource.setPosition(cuePos);
+    m_snapPosition = cuePos;
+    m_snapClock.restart();
+    m_snapValid = true;
+    m_atomicPlayheadPos.store(cuePos, std::memory_order_relaxed);
+
+    m_mainCuePreviewActive = true;
+    transportSource.start();
+    emit playingChanged();
+    emit progressChanged();
+}
+
+void DjEngine::cueButtonRelease()
+{
+    if (!m_mainCuePreviewActive)
+        return;
+
+    m_mainCuePreviewActive = false;
+
+    const double trackLen = transportSource.getLengthInSeconds();
+    if (trackLen <= 0.0)
+        return;
+
+    const double cuePos = std::clamp(m_mainCueSec >= 0.0 ? m_mainCueSec : 0.0, 0.0, trackLen);
+    if (transportSource.isPlaying())
+        transportSource.stop();
+    transportSource.setPosition(cuePos);
+
+    m_snapPosition = cuePos;
+    m_snapClock.restart();
+    m_snapValid = false;
+    m_atomicPlayheadPos.store(cuePos, std::memory_order_relaxed);
+
+    emit playingChanged();
+    emit progressChanged();
 }
 
 // ─── Scrub API ────────────────────────────────────────────────────────────────

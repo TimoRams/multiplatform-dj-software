@@ -154,6 +154,7 @@ bool LibraryDatabase::createSchema()
             "  bitrate_kbps INTEGER DEFAULT 0,"
             "  bpm          REAL    DEFAULT 0.0,"
             "  key          TEXT    DEFAULT '',"
+            "  main_cue_sec REAL    DEFAULT -1.0,"
             "  track_segments TEXT DEFAULT '',"
             "  is_analyzed  BOOLEAN DEFAULT 0"
             ")");
@@ -249,6 +250,17 @@ bool LibraryDatabase::createSchema()
         if (!tableHasColumn(m_db, "CuePoints", "color")) {
             ok &= q.exec("ALTER TABLE CuePoints ADD COLUMN color TEXT DEFAULT '#FF0000'");
             if (!ok) qWarning() << "[LibraryDatabase] CuePoints color:" << q.lastError().text();
+        }
+
+        if (!ok) return false;
+    }
+
+    if (currentVersion < 6) {
+        bool ok = true;
+
+        if (!tableHasColumn(m_db, "Tracks", "main_cue_sec")) {
+            ok &= q.exec("ALTER TABLE Tracks ADD COLUMN main_cue_sec REAL DEFAULT -1.0");
+            if (!ok) qWarning() << "[LibraryDatabase] Tracks main_cue_sec:" << q.lastError().text();
         }
 
         if (!ok) return false;
@@ -569,6 +581,41 @@ QVariantList LibraryDatabase::cuePointsForTrack(const QString& trackId) const
     }
 
     return cues;
+}
+
+bool LibraryDatabase::upsertMainCuePoint(const QString& trackId, double positionSec)
+{
+    if (trackId.isEmpty())
+        return false;
+
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE Tracks SET main_cue_sec = :cueSec WHERE id = :trackId");
+    q.bindValue(":cueSec", positionSec);
+    q.bindValue(":trackId", trackId);
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] upsertMainCuePoint:" << q.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+double LibraryDatabase::mainCuePointForTrack(const QString& trackId) const
+{
+    if (trackId.isEmpty())
+        return -1.0;
+
+    QSqlQuery q(m_db);
+    q.prepare("SELECT COALESCE(main_cue_sec, -1.0) FROM Tracks WHERE id = :trackId LIMIT 1");
+    q.bindValue(":trackId", trackId);
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] mainCuePointForTrack:" << q.lastError().text();
+        return -1.0;
+    }
+
+    if (!q.next())
+        return -1.0;
+
+    return q.value(0).toDouble();
 }
 
 QString LibraryDatabase::filePath(const QString& trackId) const

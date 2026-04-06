@@ -544,6 +544,8 @@ Item {
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
                             }
+                            onPressed: { if (deck.engine) deck.engine.cueButtonPress() }
+                            onReleased: { if (deck.engine) deck.engine.cueButtonRelease() }
                         }
 
                         Button {

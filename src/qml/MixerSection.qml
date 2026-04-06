@@ -194,16 +194,16 @@ Rectangle {
 
                 Button {
                     text: "CUE"
-                    checkable: true
                     Layout.alignment: Qt.AlignHCenter
                     Layout.preferredWidth: 40
                     Layout.preferredHeight: 24
-                    palette.buttonText: checked ? "#000" : "#fff"
+                    palette.buttonText: "#fff"
                     background: Rectangle { 
-                        color: parent.checked ? "#ff9900" : "#333"
+                        color: "#333"
                         radius: 4 
                     }
-                    onCheckedChanged: { if(engineA) engineA.cueEnabled = checked; }
+                    onPressed: { if(engineA) engineA.cueButtonPress(); }
+                    onReleased: { if(engineA) engineA.cueButtonRelease(); }
                 }
 
                 // Volume Fader A
@@ -275,16 +275,16 @@ Rectangle {
 
                 Button {
                     text: "CUE"
-                    checkable: true
                     Layout.alignment: Qt.AlignHCenter
                     Layout.preferredWidth: 40
                     Layout.preferredHeight: 24
-                    palette.buttonText: checked ? "#000" : "#fff"
+                    palette.buttonText: "#fff"
                     background: Rectangle { 
-                        color: parent.checked ? "#00ccff" : "#333"
+                        color: "#333"
                         radius: 4 
                     }
-                    onCheckedChanged: { if(engineB) engineB.cueEnabled = checked; }
+                    onPressed: { if(engineB) engineB.cueButtonPress(); }
+                    onReleased: { if(engineB) engineB.cueButtonRelease(); }
                 }
 
                 // Volume Fader B
