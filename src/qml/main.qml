@@ -120,6 +120,9 @@ ApplicationWindow {
     // -------------------------------------------------------------------------
     readonly property real baseUiWidth: 1600
     readonly property real uiScale: width / baseUiWidth
+    // Keep header height fixed to prevent resize jitter and control shifts.
+    readonly property int topBarHeight: 34
+    readonly property int fxBarHeight: Math.max(36, Math.round(40 * (window.height / 800)))
 
     // Referenz height of the top section at baseUiWidth (waveforms + decks + mixer).
     // The deck/mixer block is intentionally kept about 25% shorter so the library
@@ -137,8 +140,9 @@ ApplicationWindow {
         // --------------------------------------------------------------------
         TopHeader {
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.max(36, Math.round(40 * (window.height / 800)))
-            Layout.maximumHeight: Math.max(36, Math.round(40 * (window.height / 800)))
+            Layout.minimumHeight: window.topBarHeight
+            Layout.preferredHeight: window.topBarHeight
+            Layout.maximumHeight: window.topBarHeight
             z: 10
         }
 
@@ -227,8 +231,8 @@ ApplicationWindow {
         // --------------------------------------------------------------------
         FxBar {
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.max(36, Math.round(40 * (window.height / 800)))
-            Layout.maximumHeight: Math.max(36, Math.round(40 * (window.height / 800)))
+            Layout.preferredHeight: window.fxBarHeight
+            Layout.maximumHeight: window.fxBarHeight
         }
 
         // --------------------------------------------------------------------

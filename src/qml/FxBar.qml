@@ -9,12 +9,8 @@ Rectangle {
 
     color: "#121212"
     
-    // Dynamic FxBar height scaling based on window height
-    // At reference height (800px), height is 40px
-    // Scales proportionally with window height
-    readonly property real _refHeight: 40
-    readonly property real _refWindowHeight: 800
-    height: Math.max(36, Math.round(_refHeight * (window.height / _refWindowHeight)))
+    // Height controlled by parent layout (main.qml fxBarHeight) to avoid double scaling
+    height: window.fxBarHeight
 
     Rectangle {
         anchors.top: parent.top

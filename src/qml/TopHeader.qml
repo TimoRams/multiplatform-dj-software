@@ -8,12 +8,20 @@ Rectangle {
     id: root
     color: "#121212"
     
-    // Dynamic header height scaling based on window height
-    // At reference height (800px), height is 40px
-    // Scales proportionally with window height
-    readonly property real _refHeaderHeight: 40
-    readonly property real _refWindowHeight: 800
-    height: Math.max(36, Math.round(_refHeaderHeight * (window.height / _refWindowHeight)))
+    // Height is FULLY controlled by parent layout (main.qml Layout.minimumHeight/preferredHeight/maximumHeight)
+    // NO implicitHeight to avoid competing bindings!
+    
+    // ── FIXED CONSTANTS (no binding to root.height to avoid cascading jitter) ──
+    readonly property int verticalPad: 0
+    readonly property int horizontalPadding: 8
+    readonly property int accentBarWidth: 2
+    readonly property int accentBarHeight: 14
+    readonly property int masterDialSize: 22
+    readonly property int antiClipButtonWidth: 44
+    readonly property int buttonSpacing: 3
+    
+    // Buttons should match the bar height exactly.
+    readonly property int buttonHeight: root.height
 
     property string currentTime: "00:00"
     
@@ -41,9 +49,10 @@ Rectangle {
 
     RowLayout {
         anchors.fill: parent
-        anchors.margins: Math.max(3, Math.round(root.height * 0.12))
-        anchors.leftMargin: Math.max(8, Math.round(root.height * 0.25))
-        anchors.rightMargin: Math.max(8, Math.round(root.height * 0.25))
+        anchors.topMargin: root.verticalPad
+        anchors.bottomMargin: root.verticalPad
+        anchors.leftMargin: root.horizontalPadding
+        anchors.rightMargin: root.horizontalPadding
         spacing: 0
 
         // ── LEFT: Software name ───────────────────────────────────────────────
@@ -53,10 +62,10 @@ Rectangle {
 
             // Small coloured accent bar (Traktor-style)
             Rectangle {
-                width: Math.max(2, Math.round(root.height * 0.075)); 
-                height: Math.max(16, Math.round(root.height * 0.55)); 
+                width: root.accentBarWidth
+                height: root.accentBarHeight
                 radius: 1
-                anchors.verticalCenter: parent.verticalCenter
+                color: "#1e90ff"
                 gradient: Gradient {
                     orientation: Gradient.Vertical
                     GradientStop { position: 0.0; color: "#1e90ff" }
@@ -65,46 +74,45 @@ Rectangle {
             }
 
             Column {
-                anchors.verticalCenter: parent.verticalCenter
                 spacing: 0
 
                 Text {
                     text: "DJ-Software"
                     color: "#ffffff"
-                    font.pixelSize: window.sp(14)
+                    font.pixelSize: 14
                     font.bold: true
                     font.letterSpacing: 1.5
                 }
                 Text {
                     text: "by Ramsbrock.net"
                     color: "#555"
-                    font.pixelSize: window.sp(8)
+                    font.pixelSize: 8
                     font.letterSpacing: 0.5
                 }
             }
         }
 
-        // ── ABLETON LINK section (always visible, fixed width) ─────────────────
+        // ── ABLETON LINK section ──────────────────────────────────────────────
         Row {
             spacing: 6
-            Layout.alignment: Qt.AlignVCenter
+            Layout.fillHeight: true
             Layout.leftMargin: 12
 
             // LINK toggle button
             Rectangle {
-                width: Math.max(35, Math.round(root.height * 1.1)); 
-                height: Math.max(18, Math.round(root.height * 0.55))
+                width: 35
+                height: parent.height
+                anchors.verticalCenter: parent.verticalCenter
                 radius: 0
                 color: (linkManager && linkManager.enabled) ? "#1a3322" : "#1a1a1a"
                 border.color: (linkManager && linkManager.enabled) ? "#44cc66" : "#333"
                 border.width: 1
-                anchors.verticalCenter: parent.verticalCenter
 
                 Text {
                     anchors.centerIn: parent
                     text: "LINK"
                     color: (linkManager && linkManager.enabled) ? "#44cc66" : "#777"
-                    font.pixelSize: window.sp(9)
+                    font.pixelSize: 9
                     font.bold: true
                     font.letterSpacing: 0.5
                 }
@@ -116,36 +124,36 @@ Rectangle {
                 }
             }
 
-            // Peer count — always visible
+            // Peer count
             Text {
                 width: 16
+                anchors.verticalCenter: parent.verticalCenter
                 text: linkManager ? linkManager.numPeers.toString() : "0"
                 color: (linkManager && linkManager.numPeers > 0) ? "#44cc66" : "#555"
-                font.pixelSize: window.sp(9)
+                font.pixelSize: 9
                 font.family: "monospace"
                 font.bold: true
                 horizontalAlignment: Text.AlignHCenter
-                anchors.verticalCenter: parent.verticalCenter
             }
 
-            // Link BPM display — fixed width, opacity-controlled
+            // Link BPM display
             Text {
                 width: 48
+                anchors.verticalCenter: parent.verticalCenter
                 opacity: (linkManager && linkManager.enabled) ? 1.0 : 0.3
                 text: linkManager ? linkManager.bpm.toFixed(1) : "120.0"
                 color: "#ccc"
-                font.pixelSize: window.sp(11)
+                font.pixelSize: 11
                 font.family: "monospace"
                 font.bold: true
                 horizontalAlignment: Text.AlignRight
-                anchors.verticalCenter: parent.verticalCenter
             }
 
-            // 4-beat phase indicator (running light) — fixed width, opacity-controlled
+            // 4-beat phase indicator
             Row {
                 spacing: 3
-                opacity: (linkManager && linkManager.enabled) ? 1.0 : 0.2
                 anchors.verticalCenter: parent.verticalCenter
+                opacity: (linkManager && linkManager.enabled) ? 1.0 : 0.2
 
                 Repeater {
                     model: 4
@@ -170,30 +178,22 @@ Rectangle {
             }
         }
 
-        // ── SPACER (left half) ─────────────────────────────────────────────────
-        Item { Layout.fillWidth: true }
-
-        // ── SPACER (right half) ───────────────────────────────────────────────
+        // ── SPACER (split UI in half) ─────────────────────────────────────────
         Item { Layout.fillWidth: true }
 
         // ── RIGHT: CPU/RAM + REC + Clock + Actions ────────────────────────────
         Row {
             spacing: 14
-            Layout.alignment: Qt.AlignVCenter
+            Layout.fillHeight: true
 
             // Anti-Clip button
             Rectangle {
-                width: Math.max(44, Math.round(root.height * 1.3)); 
-                height: Math.max(18, Math.round(root.height * 0.55))
+                width: root.antiClipButtonWidth
+                height: parent.height
                 radius: 0
-                anchors.verticalCenter: parent.verticalCenter
                 property bool antiClipActive: false
                 property real gr: deckA ? deckA.gainReduction : 1.0
 
-                // gr < 0.5 (extreme clipping) -> Dark Red
-                // gr < 0.7 (strong clipping) -> Red
-                // gr < 0.99 (light clipping) -> Yellow
-                // otherwise (no clipping) -> Green
                 color: !antiClipActive ? "#1a1a1a" : (gr < 0.5 ? "#5c0000" : (gr < 0.7 ? "#b71c1c" : (gr < 0.99 ? "#f57f17" : "#1b5e20")))
                 border.color: !antiClipActive ? "#333" : (gr < 0.5 ? "#8e0000" : (gr < 0.7 ? "#f44336" : (gr < 0.99 ? "#fbc02d" : "#4caf50")))
                 border.width: 1
@@ -202,7 +202,7 @@ Rectangle {
                     anchors.centerIn: parent
                     text: "A-CLIP"
                     color: !parent.antiClipActive ? "#666" : (parent.gr < 0.99 ? "#fff" : "#c8e6c9")
-                    font.pixelSize: window.sp(8)
+                    font.pixelSize: 8
                     font.bold: true
                     font.family: "monospace"
                 }
@@ -220,12 +220,13 @@ Rectangle {
             // Master Volume knob
             Row {
                 spacing: 3
+                Layout.alignment: Qt.AlignVCenter
                 anchors.verticalCenter: parent.verticalCenter
 
                 Text {
                     text: "MST"
                     color: "#555"
-                    font.pixelSize: window.sp(8)
+                    font.pixelSize: 8
                     font.bold: true
                     font.family: "monospace"
                     anchors.verticalCenter: parent.verticalCenter
@@ -233,8 +234,9 @@ Rectangle {
 
                 Dial {
                     id: masterVolDial
-                    width: Math.max(20, Math.round(root.height * 0.65)); 
-                    height: Math.max(20, Math.round(root.height * 0.65))
+                    width: root.masterDialSize
+                    height: root.masterDialSize
+                    anchors.verticalCenter: parent.verticalCenter
                     from: 0.0; to: 1.0; value: 0.8
 
                     background: Rectangle {
@@ -297,14 +299,14 @@ Rectangle {
                 }
             }
 
-            // CPU / RAM bars (stacked thin bars)
+            // CPU / RAM bars
             Row {
                 spacing: 5
+                Layout.alignment: Qt.AlignVCenter
                 anchors.verticalCenter: parent.verticalCenter
 
                 Column {
                     spacing: 2
-                    anchors.verticalCenter: parent.verticalCenter
 
                     // CPU bar
                     Row {
@@ -312,17 +314,15 @@ Rectangle {
                         Text {
                             text: "CPU"
                             color: "#555"
-                            font.pixelSize: window.sp(7)
+                            font.pixelSize: 7
                             font.bold: true
                             width: 22
-                            anchors.verticalCenter: parent.verticalCenter
                         }
                         Rectangle {
                             width: 50; height: 4
                             color: "#0d0d0d"
                             border.color: "#2a2a2a"
                             radius: 2
-                            anchors.verticalCenter: parent.verticalCenter
 
                             Rectangle {
                                 width: (sysMonitor ? sysMonitor.cpuUsage : 0) * parent.width
@@ -339,17 +339,15 @@ Rectangle {
                         Text {
                             text: "RAM"
                             color: "#555"
-                            font.pixelSize: window.sp(7)
+                            font.pixelSize: 7
                             font.bold: true
                             width: 22
-                            anchors.verticalCenter: parent.verticalCenter
                         }
                         Rectangle {
                             width: 50; height: 4
                             color: "#0d0d0d"
                             border.color: "#2a2a2a"
                             radius: 2
-                            anchors.verticalCenter: parent.verticalCenter
 
                             Rectangle {
                                 width: (sysMonitor ? sysMonitor.ramUsage : 0) * parent.width
@@ -364,12 +362,11 @@ Rectangle {
 
             // REC button
             Rectangle {
-                width: Math.max(35, Math.round(root.height * 1.05)); 
-                height: Math.max(18, Math.round(root.height * 0.55))
+                width: 35
+                height: parent.height
                 color: "#1a1a1a"
                 border.color: "#333"
                 radius: 0
-                anchors.verticalCenter: parent.verticalCenter
 
                 Row {
                     anchors.centerIn: parent
@@ -378,14 +375,12 @@ Rectangle {
                     Rectangle {
                         width: 7; height: 7; radius: 3.5
                         color: "#aa3333"
-                        anchors.verticalCenter: parent.verticalCenter
                     }
                     Text {
                         text: "REC"
                         color: "#777"
-                        font.pixelSize: window.sp(9)
+                        font.pixelSize: 9
                         font.bold: true
-                        anchors.verticalCenter: parent.verticalCenter
                     }
                 }
             }
@@ -394,7 +389,7 @@ Rectangle {
             Text {
                 text: root.currentTime
                 color: "#bbb"
-                font.pixelSize: window.sp(12)
+                font.pixelSize: 12
                 font.family: "monospace"
                 font.bold: true
                 Layout.alignment: Qt.AlignVCenter
@@ -404,50 +399,61 @@ Rectangle {
             // UI action buttons
             Row {
                 spacing: 3
+                height: root.buttonHeight
                 anchors.verticalCenter: parent.verticalCenter
 
-                Button {
-                    width: Math.max(24, Math.round(root.height * 0.7)); 
-                    height: Math.max(20, Math.round(root.height * 0.6))
-                    text: "⛶"
-                    background: Rectangle {
-                        color: parent.pressed ? "#333" : "#1e1e1e"
-                        border.color: "#333"
-                        radius: 0
-                    }
-                    contentItem: Text {
-                        text: parent.text; color: "#aaa"; font.pixelSize: window.sp(13)
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment:   Text.AlignVCenter
+                Rectangle {
+                    width: root.buttonHeight
+                    height: root.buttonHeight
+                    color: fullScreenMouse.pressed ? "#333" : "#1e1e1e"
+                    border.color: "#333"
+                    border.width: 1
+                    radius: 0
+
+                    Text {
                         anchors.centerIn: parent
+                        text: "⛶"
+                        color: "#aaa"
+                        font.pixelSize: 13
                     }
-                    onClicked: {
-                        if (root.Window.window.visibility === Window.FullScreen)
-                            root.Window.window.showNormal()
-                        else
-                            root.Window.window.showFullScreen()
+
+                    MouseArea {
+                        id: fullScreenMouse
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (root.Window.window.visibility === Window.FullScreen)
+                                root.Window.window.showNormal()
+                            else
+                                root.Window.window.showFullScreen()
+                        }
                     }
                 }
 
-                Button {
-                    width: Math.max(24, Math.round(root.height * 0.7)); 
-                    height: Math.max(20, Math.round(root.height * 0.6))
-                    text: "⚙"
-                    background: Rectangle {
-                        color: parent.pressed ? "#333" : "#1e1e1e"
-                        border.color: "#333"
-                        radius: 0
-                    }
-                    contentItem: Text {
-                        text: parent.text; color: "#aaa"; font.pixelSize: window.sp(13)
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment:   Text.AlignVCenter
+                Rectangle {
+                    width: root.buttonHeight
+                    height: root.buttonHeight
+                    color: settingsMouse.pressed ? "#333" : "#1e1e1e"
+                    border.color: "#333"
+                    border.width: 1
+                    radius: 0
+
+                    Text {
                         anchors.centerIn: parent
+                        text: "⚙"
+                        color: "#aaa"
+                        font.pixelSize: 13
                     }
-                    onClicked: {
-                        settingsWin.show()
-                        settingsWin.raise()
-                        settingsWin.requestActivate()
+
+                    MouseArea {
+                        id: settingsMouse
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            settingsWin.show()
+                            settingsWin.raise()
+                            settingsWin.requestActivate()
+                        }
                     }
                 }
             }
