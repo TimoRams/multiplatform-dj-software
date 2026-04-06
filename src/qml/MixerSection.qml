@@ -50,6 +50,7 @@ Rectangle {
         property alias to: dial.to
         property alias knobValue: dial.value
         property real knobSize: 26
+        property real labelSpace: 6
         property real defaultValue: (dial.from + dial.to) / 2
         property real columnWidth: 40
         // Kept for compatibility with existing uses; no longer affects layout.
@@ -58,9 +59,9 @@ Rectangle {
         Layout.preferredWidth: columnWidth
         Layout.minimumWidth: columnWidth
         Layout.maximumWidth: columnWidth
-        Layout.preferredHeight: knobSize
-        Layout.minimumHeight: knobSize
-        Layout.maximumHeight: knobSize
+        Layout.preferredHeight: knobSize + labelSpace
+        Layout.minimumHeight: knobSize + labelSpace
+        Layout.maximumHeight: knobSize + labelSpace
         Layout.alignment: Qt.AlignHCenter
 
         Dial {
@@ -177,12 +178,12 @@ Rectangle {
             }
         }
 
-        // Tiny label below the knob, drawn without increasing layout height.
+        // Tiny label below the knob with minimal reserved space.
         Text {
             id: label
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.top: dial.bottom
-            anchors.topMargin: -1
+            anchors.topMargin: 1
             color: "#666"
             font.pixelSize: window.spViewport(6)
             font.bold: true
