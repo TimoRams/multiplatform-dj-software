@@ -215,7 +215,7 @@ Rectangle {
                     Layout.preferredHeight: 120
                     Layout.maximumHeight: 120
                     orientation: Qt.Vertical
-                    from: 0; to: 1.0; value: 0.8
+                    from: 0; to: 1.0; value: 1.0
                     onValueChanged: { 
                         mixer.volA = value; 
                         mixer.updateVolumes(); 
@@ -297,7 +297,7 @@ Rectangle {
                     Layout.preferredHeight: 120
                     Layout.maximumHeight: 120
                     orientation: Qt.Vertical
-                    from: 0; to: 1.0; value: 0.8
+                    from: 0; to: 1.0; value: 1.0
                     onValueChanged: { 
                         mixer.volB = value; 
                         mixer.updateVolumes();
