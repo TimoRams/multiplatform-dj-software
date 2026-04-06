@@ -114,6 +114,17 @@ void LibraryTableModel::setSort(const QString& field, bool ascending)
     refresh();
 }
 
+void LibraryTableModel::setFilterText(const QString& text)
+{
+    const QString normalized = text.trimmed();
+    if (m_filterText == normalized)
+        return;
+
+    m_filterText = normalized;
+    emit filterTextChanged();
+    refresh();
+}
+
 void LibraryTableModel::refresh()
 {
     auto db = QSqlDatabase::database(m_connectionName, false);
@@ -124,14 +135,27 @@ void LibraryTableModel::refresh()
 
     QSqlQuery q(db);
     const QString sortDir = m_sortAscending ? "ASC" : "DESC";
-    const QString query = QString(
+    QString query = QString(
         "SELECT Tracks.id, title, artist, duration_sec, bpm, key, bitrate_kbps, is_analyzed, Locations.file_path "
         "FROM Tracks "
-        "JOIN Locations ON Tracks.id = Locations.track_id "
-        "ORDER BY %1 %2, LOWER(title) ASC")
+        "JOIN Locations ON Tracks.id = Locations.track_id ");
+
+    if (!m_filterText.isEmpty()) {
+        query += QStringLiteral(
+            "WHERE LOWER(title) LIKE :filter "
+            "OR LOWER(artist) LIKE :filter "
+            "OR LOWER(Locations.file_path) LIKE :filter ");
+    }
+
+    query += QString("ORDER BY %1 %2, LOWER(title) ASC")
         .arg(sortColumnSql(), sortDir);
 
     q.prepare(query);
+
+    if (!m_filterText.isEmpty()) {
+        const QString filterValue = QStringLiteral("%%1%").arg(m_filterText.toLower());
+        q.bindValue(QStringLiteral(":filter"), filterValue);
+    }
 
     if (!q.exec()) {
         qWarning() << "[LibraryTableModel] refresh query failed:" << q.lastError().text();

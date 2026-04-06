@@ -10,6 +10,26 @@ Rectangle {
     property string activeTab: "library"
     // Aktiver Library-Unterpunkt
     property string librarySubTab: "allSongs"
+    property string searchText: ""
+
+    function _matchesSearch(value) {
+        if (!searchText || searchText.length === 0)
+            return true
+        if (value === undefined || value === null)
+            return false
+        return value.toString().toLowerCase().indexOf(searchText.toLowerCase()) !== -1
+    }
+
+    readonly property var filteredFileTracks: {
+        if (!libraryManager || !libraryManager.tracks)
+            return []
+        if (!searchText || searchText.length === 0)
+            return libraryManager.tracks
+        var q = searchText.toLowerCase()
+        return libraryManager.tracks.filter(function(trackName) {
+            return trackName.toLowerCase().indexOf(q) !== -1
+        })
+    }
 
     RowLayout {
         anchors.fill: parent
@@ -321,14 +341,74 @@ Rectangle {
             Layout.fillWidth:  true
             Layout.fillHeight: true
 
+            Rectangle {
+                id: contentToolbar
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.right: parent.right
+                height: 30
+                color: "#181818"
+
+                Rectangle {
+                    anchors.bottom: parent.bottom
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    height: 1
+                    color: "#333"
+                }
+
+                TextField {
+                    id: searchField
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.rightMargin: 8
+                    width: Math.min(300, Math.max(180, parent.width * 0.3))
+                    height: 24
+                    placeholderText: "Suche"
+                    selectByMouse: true
+                    color: "#dddddd"
+                    font.pixelSize: window.sp(11)
+                    leftPadding: 8
+                    rightPadding: 8
+                    topPadding: 1
+                    bottomPadding: 1
+                    onTextEdited: libraryRoot.searchText = text
+
+                    Component.onCompleted: text = libraryRoot.searchText
+
+                    background: Rectangle {
+                        radius: 0
+                        color: "#111"
+                        border.width: 1
+                        border.color: searchField.activeFocus ? "#4f79c4" : "#3a3a3a"
+                    }
+                }
+            }
+
             // ============================================================
             // A) DATABASE LIBRARY VIEW (Tab "library")
             // ============================================================
             Rectangle {
                 id: libraryDbView
-                anchors.fill: parent
+                anchors.top: contentToolbar.bottom
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
                 color: "#1e1e1e"
                 visible: libraryRoot.activeTab === "library"
+
+                onVisibleChanged: {
+                    if (libraryModel)
+                        libraryModel.setFilterText(visible ? libraryRoot.searchText : "")
+                }
+
+                Connections {
+                    target: libraryRoot
+                    function onSearchTextChanged() {
+                        if (libraryDbView.visible && libraryModel)
+                            libraryModel.setFilterText(libraryRoot.searchText)
+                    }
+                }
 
                 readonly property int statusColWidth: 36
                 readonly property int bpmColWidth: 64
@@ -343,7 +423,7 @@ Rectangle {
                 // Column headers
                 Rectangle {
                     id: libHeader
-                    anchors.top:   parent.top
+                    anchors.top:   contentToolbar.bottom
                     anchors.left:  parent.left
                     anchors.right: parent.right
                     height: 24
@@ -698,14 +778,17 @@ Rectangle {
             // B) FILE-BROWSER TRACK LIST (Tab "files")
             // ============================================================
             Rectangle {
-                anchors.fill: parent
+                anchors.top: contentToolbar.bottom
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
                 color: "#1e1e1e"
                 visible: libraryRoot.activeTab === "files"
 
                 // Spaltenheader
                 Rectangle {
                     id: trackHeader
-                    anchors.top:   parent.top
+                    anchors.top:   contentToolbar.bottom
                     anchors.left:  parent.left
                     anchors.right: parent.right
                     height: 24
@@ -734,7 +817,7 @@ Rectangle {
                     anchors.bottom: parent.bottom
                     clip: true
 
-                    model: libraryManager ? libraryManager.tracks : []
+                    model: libraryRoot.filteredFileTracks
 
                     delegate: Rectangle {
                         id: trackDelegate
@@ -803,7 +886,10 @@ Rectangle {
             // C) PLACEHOLDER for other tabs
             // ============================================================
             Rectangle {
-                anchors.fill: parent
+                anchors.top: contentToolbar.bottom
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
                 color: "#1e1e1e"
                 visible: libraryRoot.activeTab !== "files" && libraryRoot.activeTab !== "library"
 

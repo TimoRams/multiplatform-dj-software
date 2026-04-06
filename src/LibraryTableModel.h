@@ -23,6 +23,7 @@ class LibraryTableModel : public QAbstractTableModel
     Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
     Q_PROPERTY(QString sortField READ sortField NOTIFY sortChanged)
     Q_PROPERTY(bool sortAscending READ sortAscending NOTIFY sortChanged)
+    Q_PROPERTY(QString filterText READ filterText WRITE setFilterText NOTIFY filterTextChanged)
 
 public:
     enum Role {
@@ -50,13 +51,16 @@ public:
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void toggleSort(const QString& field);
     Q_INVOKABLE void setSort(const QString& field, bool ascending);
+    Q_INVOKABLE void setFilterText(const QString& text);
 
     QString sortField() const { return m_sortField; }
     bool sortAscending() const { return m_sortAscending; }
+    QString filterText() const { return m_filterText; }
 
 signals:
     void countChanged();
     void sortChanged();
+    void filterTextChanged();
 
 private:
     QString sortColumnSql() const;
@@ -65,4 +69,5 @@ private:
     QVector<LibraryRow> m_rows;
     QString m_sortField = "artist";
     bool m_sortAscending = true;
+    QString m_filterText;
 };
