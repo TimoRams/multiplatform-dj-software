@@ -171,18 +171,18 @@ Item {
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.margins: 4
-            spacing: 2
+            anchors.margins: 2
+            spacing: 1
 
             // Deck header: unified metadata fields (always visible)
             Rectangle {
                 Layout.fillWidth: true
-                height: 52
+                height: 46
                 color: "transparent"
 
                 RowLayout {
                     anchors.fill: parent
-                    spacing: 2
+                    spacing: 1
 
                     // Cover art square (left-aligned)
                     Rectangle {
@@ -224,11 +224,11 @@ Item {
                     ColumnLayout {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        spacing: 1
+                        spacing: 0
 
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 22
+                            Layout.preferredHeight: 20
                             radius: 4
                             color: "#1b1b1b"
                             border.color: "#3a3a3a"
@@ -236,8 +236,8 @@ Item {
 
                             Row {
                                 anchors.fill: parent
-                                anchors.leftMargin: 4
-                                anchors.rightMargin: 4
+                                anchors.leftMargin: 3
+                                anchors.rightMargin: 3
                                 anchors.verticalCenter: parent.verticalCenter
                                 spacing: 4
 
@@ -255,7 +255,7 @@ Item {
                                     width: parent.width - 42
                                     text: deck._hasTrack ? deck._trackTitle : "No Track Loaded"
                                     color: deck._hasTrack ? "#f0f0f0" : "#777"
-                                    font.pixelSize: window.spViewport(7)
+                                    font.pixelSize: window.spViewport(6)
                                     font.bold: true
                                     elide: Text.ElideRight
                                 }
@@ -264,7 +264,7 @@ Item {
 
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 22
+                            Layout.preferredHeight: 20
                             radius: 4
                             color: "#1b1b1b"
                             border.color: "#3a3a3a"
@@ -272,8 +272,8 @@ Item {
 
                             Row {
                                 anchors.fill: parent
-                                anchors.leftMargin: 4
-                                anchors.rightMargin: 4
+                                anchors.leftMargin: 3
+                                anchors.rightMargin: 3
                                 anchors.verticalCenter: parent.verticalCenter
                                 spacing: 4
 
@@ -293,7 +293,7 @@ Item {
                                           ? (deck._trackArtist !== "" ? deck._trackArtist : "Unknown Artist")
                                           : "-"
                                     color: deck._hasTrack ? "#b8b8b8" : "#666"
-                                    font.pixelSize: window.spViewport(7)
+                                    font.pixelSize: window.spViewport(6)
                                     elide: Text.ElideRight
                                 }
                             }
@@ -312,7 +312,7 @@ Item {
                         Rectangle {
                             id: bpmBadge
                             Layout.preferredWidth: 81
-                            Layout.preferredHeight: 25
+                            Layout.preferredHeight: 22
                             radius: 4
                             color: "#1a2e1a"
                             border.color: "#4a8a4a"
@@ -365,7 +365,7 @@ Item {
                         // LIVE BPM (tempo/loop adjusted value)
                         Rectangle {
                             Layout.preferredWidth: 81
-                            Layout.preferredHeight: 25
+                            Layout.preferredHeight: 22
                             radius: 4
                             color: "#20242f"
                             border.color: deck._showLiveBpmIndicator() ? "#4f7fcf" : "#3f475a"
@@ -404,7 +404,7 @@ Item {
 
                         Rectangle {
                             Layout.preferredWidth: 81
-                            Layout.preferredHeight: 25
+                            Layout.preferredHeight: 22
                             radius: 4
                             color: "#1a1a2e"
                             border.color: "#4a4aaa"
@@ -439,7 +439,7 @@ Item {
 
                         Rectangle {
                             Layout.preferredWidth: 81
-                            Layout.preferredHeight: 25
+                            Layout.preferredHeight: 22
                             radius: 4
                             color: "#202020"
                             border.color: "#4a4a4a"
@@ -478,23 +478,23 @@ Item {
             // Overview waveform + Buttons (left) | Tempo Fader (right)
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 4
+                spacing: 2
 
                 // LEFT: Overview on top, buttons below
                 ColumnLayout {
                     Layout.fillWidth: true
-                        spacing: 1
+                    spacing: 0
 
                     // Slim rectified overview waveform
                     OverallWaveform {
                         engine: deck.engine
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 38
+                        Layout.preferredHeight: 34
                     }
 
                     SegmentBar {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 8
+                        Layout.preferredHeight: 6
                         segments: deck.engine ? deck.engine.currentSegments : []
                         totalTrackDuration: deck.engine ? deck.engine.trackDurationSec : 0
                     }
@@ -503,7 +503,7 @@ Item {
                     RowLayout {
                         id: deckControlsRow
                         Layout.fillWidth: true
-                        spacing: 3
+                        spacing: 2
 
                         property real unit: Math.max(18, (width - (spacing * 12)) / 14.0)
 
@@ -511,7 +511,7 @@ Item {
                             text: "PLAY"
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 1.1
-                            Layout.preferredHeight: 16
+                            Layout.preferredHeight: 15
                             palette.buttonText: "white"
                             font.pixelSize: window.spViewport(8)
                             background: Rectangle {
@@ -534,7 +534,7 @@ Item {
                             text: "CUE"
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 1.0
-                            Layout.preferredHeight: 16
+                            Layout.preferredHeight: 15
                             background: Rectangle { color: "#444"; radius: 3 }
                             contentItem: Text {
                                 text: parent.text
@@ -552,7 +552,7 @@ Item {
                             checked: deck.engine ? deck.engine.isReverse : false
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 1.0
-                            Layout.preferredHeight: 16
+                            Layout.preferredHeight: 15
                             background: Rectangle {
                                 color: parent.checked ? "#883300" : "#444"
                                 border.color: parent.checked ? "#ff6600" : "transparent"
@@ -578,7 +578,7 @@ Item {
                             checked: deck.engine ? deck.engine.syncEnabled : false
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 1.2
-                            Layout.preferredHeight: 16
+                            Layout.preferredHeight: 15
                             background: Rectangle {
                                 color: {
                                     if (!deck.engine || !parent.checked) return "#444"
@@ -615,7 +615,7 @@ Item {
                             checked: deck.engine ? deck.engine.quantizeEnabled : false
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 0.8
-                            Layout.preferredHeight: 16
+                            Layout.preferredHeight: 15
                             background: Rectangle {
                                 color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
                                 border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
@@ -640,7 +640,7 @@ Item {
                             checked: deck.engine ? deck.engine.keylock : false
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 0.9
-                            Layout.preferredHeight: 16
+                            Layout.preferredHeight: 15
                             background: Rectangle {
                                 color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
                                 border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
@@ -664,7 +664,7 @@ Item {
                             checkable: true
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 1.1
-                            Layout.preferredHeight: 16
+                            Layout.preferredHeight: 15
                             background: Rectangle {
                                 color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
                                 border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
@@ -684,7 +684,7 @@ Item {
                             text: "L IN"
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 1.2
-                            Layout.preferredHeight: 16
+                            Layout.preferredHeight: 15
                             background: Rectangle {
                                 color: "#333"
                                 radius: 3
@@ -706,7 +706,7 @@ Item {
                             text: "L OUT"
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 1.3
-                            Layout.preferredHeight: 16
+                            Layout.preferredHeight: 15
                             background: Rectangle {
                                 color: "#333"
                                 radius: 3
@@ -728,7 +728,7 @@ Item {
                             text: "<"
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 0.75
-                            Layout.preferredHeight: 16
+                            Layout.preferredHeight: 15
                             background: Rectangle {
                                 color: "#333"
                                 radius: 3
@@ -752,7 +752,7 @@ Item {
                             checked: deck.engine ? (deck.engine.loopActive && Math.abs(deck.engine.loopLengthBeats - 0.75) < 0.06) : false
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 2.0
-                            Layout.preferredHeight: 16
+                            Layout.preferredHeight: 15
                             background: Rectangle {
                                 color: parent.checked ? "#335533" : "#333"
                                 radius: 3
@@ -775,7 +775,7 @@ Item {
                             text: ">"
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 0.75
-                            Layout.preferredHeight: 16
+                            Layout.preferredHeight: 15
                             background: Rectangle {
                                 color: "#333"
                                 radius: 3
@@ -799,7 +799,7 @@ Item {
                             checked: deck.engine ? (deck.engine.loopActive && Math.abs(deck.engine.loopLengthBeats - 0.75) < 0.06) : false
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 1.0
-                            Layout.preferredHeight: 16
+                            Layout.preferredHeight: 15
                             background: Rectangle {
                                 color: parent.checked ? "#334455" : "#333"
                                 radius: 3
@@ -824,15 +824,16 @@ Item {
             // Performance pads + tempo fader on the right
             RowLayout {
                 Layout.fillWidth: true
-                Layout.preferredHeight: Math.max(44, parent.height * 0.30)
-                Layout.maximumHeight: Math.max(44, parent.height * 0.30)
+                Layout.preferredHeight: Math.max(156, parent.height * 0.22)
+                Layout.maximumHeight: Math.max(156, parent.height * 0.22)
                 Layout.alignment: Qt.AlignVCenter
                 spacing: 2
 
                 PerformancePads {
                     Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    Layout.minimumHeight: 52
+                    Layout.fillHeight: false
+                    Layout.preferredHeight: 156
+                    Layout.maximumHeight: 156
                     engine: deck.engine
                     accentColor: deck.deckName === "A" ? "#ff9900" : "#00ccff"
                 }
@@ -840,7 +841,9 @@ Item {
                 Rectangle {
                     id: tempoPanel
                     Layout.preferredWidth: 48
-                    Layout.preferredHeight: Math.max(88, parent.height * 0.54)
+                    Layout.fillHeight: true
+                    Layout.minimumHeight: 88
+                    Layout.maximumHeight: 156
                     Layout.alignment: Qt.AlignVCenter
                     color: "#1a1a1a"
                     border.color: "#333"

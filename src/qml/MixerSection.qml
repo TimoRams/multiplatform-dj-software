@@ -140,22 +140,21 @@ Rectangle {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 10
-        spacing: 15
+        anchors.margins: 6
+        spacing: 8
 
         // Deck A & B Controls
         RowLayout {
             Layout.fillWidth: true
-            Layout.fillHeight: true
-            spacing: 30
+            Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
+            spacing: 14
 
             Item { Layout.fillWidth: true } // Left spacer
 
             // -------------------- DECK A --------------------
             ColumnLayout {
-                Layout.fillHeight: true
                 Layout.alignment: Qt.AlignHCenter
-                spacing: 8
+                spacing: 5
 
                 MixerKnob {
                     text: "T"; labelSide: "left"; from: 0; to: 2; knobValue: 1.0
@@ -198,7 +197,7 @@ Rectangle {
                     checkable: true
                     Layout.alignment: Qt.AlignHCenter
                     Layout.preferredWidth: 40
-                    Layout.preferredHeight: 30
+                    Layout.preferredHeight: 24
                     palette.buttonText: checked ? "#000" : "#fff"
                     background: Rectangle { 
                         color: parent.checked ? "#ff9900" : "#333"
@@ -212,8 +211,8 @@ Rectangle {
                     id: volFaderA
                     Layout.fillHeight: false
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredHeight: 120
-                    Layout.maximumHeight: 120
+                    Layout.preferredHeight: 96
+                    Layout.maximumHeight: 96
                     orientation: Qt.Vertical
                     from: 0; to: 1.0; value: 1.0
                     onValueChanged: { 
@@ -235,9 +234,8 @@ Rectangle {
 
             // -------------------- DECK B --------------------
             ColumnLayout {
-                Layout.fillHeight: true
                 Layout.alignment: Qt.AlignHCenter
-                spacing: 8
+                spacing: 5
 
                 MixerKnob {
                     text: "T"; labelSide: "right"; from: 0; to: 2; knobValue: 1.0
@@ -280,7 +278,7 @@ Rectangle {
                     checkable: true
                     Layout.alignment: Qt.AlignHCenter
                     Layout.preferredWidth: 40
-                    Layout.preferredHeight: 30
+                    Layout.preferredHeight: 24
                     palette.buttonText: checked ? "#000" : "#fff"
                     background: Rectangle { 
                         color: parent.checked ? "#00ccff" : "#333"
@@ -294,8 +292,8 @@ Rectangle {
                     id: volFaderB
                     Layout.fillHeight: false
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredHeight: 120
-                    Layout.maximumHeight: 120
+                    Layout.preferredHeight: 96
+                    Layout.maximumHeight: 96
                     orientation: Qt.Vertical
                     from: 0; to: 1.0; value: 1.0
                     onValueChanged: { 
@@ -329,7 +327,7 @@ Rectangle {
         Slider {
             id: crossfader
             Layout.fillWidth: true
-            Layout.preferredHeight: 30
+            Layout.preferredHeight: 24
             from: -1.0; to: 1.0; value: 0.0
             stepSize: 0.01
             onValueChanged: {
