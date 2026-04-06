@@ -508,17 +508,20 @@ Item {
                         // Keep control sizing independent from the parent RowLayout width
                         // to avoid recursive layout recalculations.
                         property real unit: Math.max(24, window.spViewport(28))
+                        property int buttonHeight: 18
 
                         Button {
                             text: "PLAY"
                             Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 1.1
-                            Layout.preferredHeight: 15
+                            Layout.preferredHeight: deckControlsRow.buttonHeight
+                            Layout.minimumHeight: deckControlsRow.buttonHeight
+                            Layout.maximumHeight: deckControlsRow.buttonHeight
                             palette.buttonText: "white"
                             font.pixelSize: window.spViewport(8)
                             background: Rectangle {
                                 color: deck.engine && deck.engine.isPlaying ? "#44aa44" : "#444"
-                                radius: 3
+                                radius: 0
                             }
                             contentItem: Text {
                                 text: parent.text
@@ -536,8 +539,10 @@ Item {
                             text: "CUE"
                             Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 1.0
-                            Layout.preferredHeight: 15
-                            background: Rectangle { color: "#444"; radius: 3 }
+                            Layout.preferredHeight: deckControlsRow.buttonHeight
+                            Layout.minimumHeight: deckControlsRow.buttonHeight
+                            Layout.maximumHeight: deckControlsRow.buttonHeight
+                            background: Rectangle { color: "#444"; radius: 0 }
                             contentItem: Text {
                                 text: parent.text
                                 color: "white"
@@ -556,12 +561,14 @@ Item {
                             checked: deck.engine ? deck.engine.isReverse : false
                             Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 1.0
-                            Layout.preferredHeight: 15
+                            Layout.preferredHeight: deckControlsRow.buttonHeight
+                            Layout.minimumHeight: deckControlsRow.buttonHeight
+                            Layout.maximumHeight: deckControlsRow.buttonHeight
                             background: Rectangle {
                                 color: parent.checked ? "#883300" : "#444"
                                 border.color: parent.checked ? "#ff6600" : "transparent"
                                 border.width: 1
-                                radius: 3
+                                radius: 0
                             }
                             contentItem: Text {
                                 text: parent.text
@@ -582,7 +589,9 @@ Item {
                             checked: deck.engine ? deck.engine.syncEnabled : false
                             Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 1.2
-                            Layout.preferredHeight: 15
+                            Layout.preferredHeight: deckControlsRow.buttonHeight
+                            Layout.minimumHeight: deckControlsRow.buttonHeight
+                            Layout.maximumHeight: deckControlsRow.buttonHeight
                             background: Rectangle {
                                 color: {
                                     if (!deck.engine || !parent.checked) return "#444"
@@ -593,7 +602,7 @@ Item {
                                     return deck.engine.syncMaster ? "#ffd24d" : "#5cfa5c"
                                 }
                                 border.width: (deck.engine && deck.engine.syncMaster) ? 2 : 1
-                                radius: 3
+                                radius: 0
                             }
                             contentItem: Text {
                                 text: parent.text
@@ -619,11 +628,13 @@ Item {
                             checked: deck.engine ? deck.engine.quantizeEnabled : false
                             Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 0.8
-                            Layout.preferredHeight: 15
+                            Layout.preferredHeight: deckControlsRow.buttonHeight
+                            Layout.minimumHeight: deckControlsRow.buttonHeight
+                            Layout.maximumHeight: deckControlsRow.buttonHeight
                             background: Rectangle {
                                 color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
                                 border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
-                                border.width: 1; radius: 3
+                                border.width: 1; radius: 0
                             }
                             contentItem: Text {
                                 text: parent.text
@@ -644,11 +655,13 @@ Item {
                             checked: deck.engine ? deck.engine.keylock : false
                             Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 0.9
-                            Layout.preferredHeight: 15
+                            Layout.preferredHeight: deckControlsRow.buttonHeight
+                            Layout.minimumHeight: deckControlsRow.buttonHeight
+                            Layout.maximumHeight: deckControlsRow.buttonHeight
                             background: Rectangle {
                                 color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
                                 border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
-                                border.width: 1; radius: 3
+                                border.width: 1; radius: 0
                             }
                             contentItem: Text {
                                 text: parent.text
@@ -668,11 +681,13 @@ Item {
                             checkable: true
                             Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 1.1
-                            Layout.preferredHeight: 15
+                            Layout.preferredHeight: deckControlsRow.buttonHeight
+                            Layout.minimumHeight: deckControlsRow.buttonHeight
+                            Layout.maximumHeight: deckControlsRow.buttonHeight
                             background: Rectangle {
                                 color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
                                 border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
-                                border.width: 1; radius: 3
+                                border.width: 1; radius: 0
                             }
                             contentItem: Text {
                                 text: parent.text
@@ -689,10 +704,12 @@ Item {
                             Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 1.2
                             Layout.minimumWidth: 44
-                            Layout.preferredHeight: 18
+                            Layout.preferredHeight: deckControlsRow.buttonHeight
+                            Layout.minimumHeight: deckControlsRow.buttonHeight
+                            Layout.maximumHeight: deckControlsRow.buttonHeight
                             background: Rectangle {
                                 color: "#333"
-                                radius: 3
+                                radius: 0
                                 border.color: "#555"
                                 border.width: 1
                             }
@@ -712,10 +729,12 @@ Item {
                             Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 1.3
                             Layout.minimumWidth: 50
-                            Layout.preferredHeight: 18
+                            Layout.preferredHeight: deckControlsRow.buttonHeight
+                            Layout.minimumHeight: deckControlsRow.buttonHeight
+                            Layout.maximumHeight: deckControlsRow.buttonHeight
                             background: Rectangle {
                                 color: "#333"
-                                radius: 3
+                                radius: 0
                                 border.color: "#555"
                                 border.width: 1
                             }
@@ -735,10 +754,12 @@ Item {
                             Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 0.75
                             Layout.minimumWidth: 28
-                            Layout.preferredHeight: 18
+                            Layout.preferredHeight: deckControlsRow.buttonHeight
+                            Layout.minimumHeight: deckControlsRow.buttonHeight
+                            Layout.maximumHeight: deckControlsRow.buttonHeight
                             background: Rectangle {
                                 color: "#333"
-                                radius: 3
+                                radius: 0
                                 border.color: "#555"
                                 border.width: 1
                             }
@@ -760,10 +781,12 @@ Item {
                             Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 2.0
                             Layout.minimumWidth: 58
-                            Layout.preferredHeight: 18
+                            Layout.preferredHeight: deckControlsRow.buttonHeight
+                            Layout.minimumHeight: deckControlsRow.buttonHeight
+                            Layout.maximumHeight: deckControlsRow.buttonHeight
                             background: Rectangle {
                                 color: parent.checked ? "#335533" : "#333"
-                                radius: 3
+                                radius: 0
                                 border.color: parent.checked ? "#66dd66" : "#555"
                                 border.width: 1
                             }
@@ -784,10 +807,12 @@ Item {
                             Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 0.75
                             Layout.minimumWidth: 28
-                            Layout.preferredHeight: 18
+                            Layout.preferredHeight: deckControlsRow.buttonHeight
+                            Layout.minimumHeight: deckControlsRow.buttonHeight
+                            Layout.maximumHeight: deckControlsRow.buttonHeight
                             background: Rectangle {
                                 color: "#333"
-                                radius: 3
+                                radius: 0
                                 border.color: "#555"
                                 border.width: 1
                             }
@@ -809,10 +834,12 @@ Item {
                             Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 1.0
                             Layout.minimumWidth: 36
-                            Layout.preferredHeight: 18
+                            Layout.preferredHeight: deckControlsRow.buttonHeight
+                            Layout.minimumHeight: deckControlsRow.buttonHeight
+                            Layout.maximumHeight: deckControlsRow.buttonHeight
                             background: Rectangle {
                                 color: parent.checked ? "#334455" : "#333"
-                                radius: 3
+                                radius: 0
                                 border.color: parent.checked ? "#66bbff" : "#555"
                                 border.width: 1
                             }
@@ -858,7 +885,7 @@ Item {
                     color: "#1a1a1a"
                     border.color: "#333"
                     border.width: 1
-                    radius: 4
+                    radius: 0
 
                     property real tempoRange: 8
 
@@ -871,7 +898,7 @@ Item {
                             id: tempoHeader
                             Layout.fillWidth: false
                             height: 16
-                            radius: 3
+                            radius: 0
                             color: tempoRangePopup.visible ? "#2a2a2a" : "transparent"
 
                             Row {

@@ -200,7 +200,7 @@ Rectangle {
                     palette.buttonText: "#fff"
                     background: Rectangle { 
                         color: "#333"
-                        radius: 4 
+                        radius: 0 
                     }
                     onPressed: { if(engineA) engineA.cueButtonPress(); }
                     onReleased: { if(engineA) engineA.cueButtonRelease(); }
@@ -281,7 +281,7 @@ Rectangle {
                     palette.buttonText: "#fff"
                     background: Rectangle { 
                         color: "#333"
-                        radius: 4 
+                        radius: 0 
                     }
                     onPressed: { if(engineB) engineB.cueButtonPress(); }
                     onReleased: { if(engineB) engineB.cueButtonRelease(); }

@@ -55,7 +55,7 @@ Rectangle {
 
             background: Rectangle {
                 color: parent.checked ? "#222222" : "#1f1f1f"
-                radius: 3
+                radius: 0
                 border.color: parent.checked ? root.accentColor : "#353535"
                 border.width: 1
             }
@@ -87,7 +87,7 @@ Rectangle {
 
             background: Rectangle {
                 color: parent.checked ? "#222222" : "#1f1f1f"
-                radius: 3
+                radius: 0
                 border.color: parent.checked ? root.accentColor : "#353535"
                 border.width: 1
             }
@@ -155,7 +155,7 @@ Rectangle {
 
             background: Rectangle {
                 color: effectCombo.pressed ? "#242424" : "#1f1f1f"
-                radius: 3
+                radius: 0
                 border.color: effectCombo.visualFocus ? root.accentColor : "#353535"
                 border.width: 1
             }
@@ -178,6 +178,7 @@ Rectangle {
                     color: highlighted ? "#262626" : "#171717"
                     border.color: highlighted ? root.accentColor : "transparent"
                     border.width: highlighted ? 1 : 0
+                    radius: 0
                 }
             }
 
@@ -185,6 +186,7 @@ Rectangle {
                 color: "#171717"
                 border.color: "#303030"
                 border.width: 1
+                radius: 0
             }
 
             onCurrentTextChanged: {
@@ -223,7 +225,7 @@ Rectangle {
                     y: wetDryDial.height / 2 - height / 2
                     width: wetDryDial.width
                     height: wetDryDial.height
-                    radius: width / 2
+                    radius: 0
                     color: "transparent"
                     border.color: "transparent"
 
@@ -231,7 +233,7 @@ Rectangle {
                         anchors.centerIn: parent
                         width: parent.width * 0.85
                         height: parent.height * 0.85
-                        radius: width / 2
+                        radius: 0
                         color: "#1f1f1f"
                         border.color: wetDryDial.value > 0 ? root.accentColor : "#444"
                         border.width: 1

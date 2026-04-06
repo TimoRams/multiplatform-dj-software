@@ -94,7 +94,7 @@ Rectangle {
             Rectangle {
                 width: Math.max(35, Math.round(root.height * 1.1)); 
                 height: Math.max(18, Math.round(root.height * 0.55))
-                radius: 3
+                radius: 0
                 color: (linkManager && linkManager.enabled) ? "#1a3322" : "#1a1a1a"
                 border.color: (linkManager && linkManager.enabled) ? "#44cc66" : "#333"
                 border.width: 1
@@ -185,7 +185,7 @@ Rectangle {
             Rectangle {
                 width: Math.max(44, Math.round(root.height * 1.3)); 
                 height: Math.max(18, Math.round(root.height * 0.55))
-                radius: 3
+                radius: 0
                 anchors.verticalCenter: parent.verticalCenter
                 property bool antiClipActive: false
                 property real gr: deckA ? deckA.gainReduction : 1.0
@@ -368,7 +368,7 @@ Rectangle {
                 height: Math.max(18, Math.round(root.height * 0.55))
                 color: "#1a1a1a"
                 border.color: "#333"
-                radius: 3
+                radius: 0
                 anchors.verticalCenter: parent.verticalCenter
 
                 Row {
@@ -413,7 +413,7 @@ Rectangle {
                     background: Rectangle {
                         color: parent.pressed ? "#333" : "#1e1e1e"
                         border.color: "#333"
-                        radius: 3
+                        radius: 0
                     }
                     contentItem: Text {
                         text: parent.text; color: "#aaa"; font.pixelSize: window.sp(13)
@@ -436,7 +436,7 @@ Rectangle {
                     background: Rectangle {
                         color: parent.pressed ? "#333" : "#1e1e1e"
                         border.color: "#333"
-                        radius: 3
+                        radius: 0
                     }
                     contentItem: Text {
                         text: parent.text; color: "#aaa"; font.pixelSize: window.sp(13)

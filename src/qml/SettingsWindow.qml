@@ -432,7 +432,7 @@ Window {
                             background: Rectangle {
                                 color: "#252525"
                                 border.color: "#3a3a3a"
-                                radius: 4
+                                radius: 0
                             }
                             
                             onActivated: {
@@ -449,7 +449,7 @@ Window {
                             background: Rectangle {
                                 color: parent.down ? "#444" : "#333"
                                 border.color: parent.hovered ? "#555" : "transparent"
-                                radius: 4
+                                radius: 0
                             }
                             contentItem: Text {
                                 text: parent.text
