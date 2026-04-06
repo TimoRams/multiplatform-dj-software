@@ -120,7 +120,7 @@ QSGNode* WaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         float durationSeconds = m_engine->getDuration();
         if (durationSeconds <= 0.0f) durationSeconds = 1.0f;
 
-        const float pointsPerSec    = 150.0f;
+        const float pointsPerSec    = static_cast<float>(m_engine->waveformPointsPerSecond());
         int totalExpectedPoints     = static_cast<int>(durationSeconds * pointsPerSec);
         if (totalExpectedPoints < currentDataPoints) totalExpectedPoints = currentDataPoints;
 
@@ -171,7 +171,7 @@ QSGNode* WaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
 
         // Draw 4 STACKED layers (back to front).
         // Each band adds its height ON TOP of the previous one so all 4 colors
-        // are visible as distinct stripes (Rekordbox-style).
+        // are visible as distinct stripes (DJ-style).
         //
         // Rectified mode: baseline at bottom, bars grow up.
         // Normal mode:    baseline at centre, bars grow symmetrically up+down.

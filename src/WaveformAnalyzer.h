@@ -9,7 +9,7 @@
 class WaveformAnalyzer : public juce::Thread
 {
 public:
-    WaveformAnalyzer(TrackData* trackData, juce::AudioFormatManager* formatManager, int pointsPerSecond = 150);
+    WaveformAnalyzer(TrackData* trackData, juce::AudioFormatManager* formatManager, int pointsPerSecond = 600);
     ~WaveformAnalyzer();
 
     void startAnalysis(const QString& filePath);

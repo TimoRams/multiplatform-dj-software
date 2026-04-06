@@ -83,15 +83,14 @@ ApplicationWindow {
         return Math.max(1, Math.round(snapped))
     }
 
-    // Globaler Waveform-Zoom (beide Decks synchron, wie in Serato/Rekordbox)
-    // Zoom wird als diskreter Schrittzähler gespeichert, damit Reinzoomen und
-    // Rauszoomen sich exakt aufheben (kein Float-Rundungsfehler beim Klemmen).
-    readonly property real zoomBase:   1.5    // pixelsPerPoint bei step=0 (~8.5s @ 1920px)
-    readonly property real zoomFactor: 1.3
-    readonly property int  zoomStepMin: -5    // max. rauszoomen  → 1.5/1.3^5 ≈ 0.38 ppp
-    readonly property int  zoomStepMax:  7    // max. reinzoomen  → 1.5*1.3^7 ≈ 10.1 ppp
-    property int  waveformZoomStep: 0
-    readonly property real waveformZoom: zoomBase * Math.pow(zoomFactor, waveformZoomStep)
+    // Globaler Waveform-Zoom (beide Decks synchron, wie in professioneller DJ-Software)
+    // Exakt 10 diskrete Zoomstufen für reproduzierbares, stabiles Rendering.
+    readonly property var waveformZoomLevels: [0.22, 0.29, 0.38, 0.52, 0.70, 0.95, 1.30, 1.80, 2.50, 3.50, 5.00, 7.20]
+    readonly property int  zoomStepMin: 0
+    readonly property int  zoomStepMax: waveformZoomLevels.length - 1
+    // Default bleibt bei 1.80 ppp.
+    property int  waveformZoomStep: waveformZoomLevels.indexOf(1.80)
+    readonly property real waveformZoom: waveformZoomLevels[waveformZoomStep]
 
     // Ctrl+ = Reinzoomen (mehr Detail, weniger Sekunden sichtbar)
     Shortcut {

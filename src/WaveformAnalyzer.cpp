@@ -1,4 +1,5 @@
 #include "WaveformAnalyzer.h"
+#include "WaveformCache.h"
 #include "PhraseAnalyzer.h"
 #include <QDebug>
 #include <juce_dsp/juce_dsp.h>
@@ -329,12 +330,15 @@ void WaveformAnalyzer::run()
     m_trackData->setTotalExpected(numPoints);
     m_trackData->reserve(numPoints);
 
-    // Samples per waveform bin (one x-pixel in the overview).
-    const int samplesPerBin = static_cast<int>(totalSamples / numPoints);
-    if (samplesPerBin < 1) return;
+    // Use exact integer-ratio partitioning per bin to avoid cumulative timeline
+    // drift on long tracks (which otherwise degrades quality toward the end).
+    const juce::int64 maxSamplesPerBin = std::max<juce::int64>(
+        1,
+        (totalSamples + static_cast<juce::int64>(numPoints) - 1)
+            / static_cast<juce::int64>(numPoints));
 
     // -------------------------------------------------------------------------
-    // DSP-Kette: Parallel 4-Band Filterbank (Rekordbox-style, overlapping)
+    // DSP-Kette: Parallel 4-Band Filterbank (DJ-style, overlapping)
     //
     //  Band 1 — LOW  (Dark Blue):  LP @ 110 Hz, 6 dB/oct (1st order)
     //     Sub-bass + Kick fundamental. Single 1-pole LP.
@@ -457,16 +461,23 @@ void WaveformAnalyzer::run()
         return std::min(1.0f, std::pow(std::clamp(norm, 0.0f, 1.0f), expo) * gain);
     };
 
-    juce::AudioBuffer<float> readBuf(static_cast<int>(reader->numChannels), samplesPerBin);
+    juce::AudioBuffer<float> readBuf(static_cast<int>(reader->numChannels), static_cast<int>(maxSamplesPerBin));
 
     for (int bin = 0; bin < numPoints; ++bin)
     {
         if (threadShouldExit()) break;
 
-        reader->read(&readBuf, 0, samplesPerBin,
-                     static_cast<juce::int64>(bin) * samplesPerBin, true, false);
+        const juce::int64 binStart = (static_cast<juce::int64>(bin) * totalSamples)
+                                   / static_cast<juce::int64>(numPoints);
+        juce::int64 binEnd = (static_cast<juce::int64>(bin + 1) * totalSamples)
+                           / static_cast<juce::int64>(numPoints);
+        if (binEnd <= binStart)
+            binEnd = std::min(totalSamples, binStart + 1);
 
-        for (int s = 0; s < samplesPerBin; ++s)
+        const int toRead = static_cast<int>(std::max<juce::int64>(1, binEnd - binStart));
+        reader->read(&readBuf, 0, toRead, binStart, true, false);
+
+        for (int s = 0; s < toRead; ++s)
         {
             float bestLow = 0.0f, bestLowMid = 0.0f, bestMid = 0.0f, bestHigh = 0.0f;
 
@@ -1274,6 +1285,27 @@ void WaveformAnalyzer::run()
                     m_trackData->setKeyData(camelot);
             } catch (const std::exception& e) {
                 qWarning() << "[WaveformAnalyzer] libKeyFinder error:" << e.what();
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Stage 6: Persist finished waveform vectors into file cache.
+    // -------------------------------------------------------------------------
+    if (!threadShouldExit()) {
+        WaveformCache::Payload payload;
+        payload.pointsPerSecond = m_pointsPerSecond;
+        payload.totalExpected = m_trackData->getTotalExpected();
+        payload.globalMaxPeak = m_trackData->getGlobalMaxPeak();
+        payload.waveform = m_trackData->getWaveformData();
+        payload.rgb = m_trackData->getRgbWaveformData();
+
+        if (!payload.waveform.isEmpty() && !payload.rgb.isEmpty()) {
+            if (!WaveformCache::saveForFile(m_filePath, payload)) {
+                qWarning() << "[WaveformAnalyzer] Failed to write waveform cache for" << m_filePath;
+            } else {
+                qDebug() << "[WaveformAnalyzer] Waveform cache written:" << payload.waveform.size()
+                         << "bins," << payload.rgb.size() << "rgb frames";
             }
         }
     }

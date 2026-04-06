@@ -25,8 +25,11 @@ Item {
         var ratio = root.engine.tempoRatio
         if (ratio <= 0.0001)
             ratio = 1.0
+        var pps = root.engine.waveformPointsPerSecond
+        if (pps <= 0.0)
+            pps = 300.0
         var effectivePpp = root.waveformZoom / ratio
-        return width * 0.5 + (cueSec - pos) * 150.0 * effectivePpp
+        return width * 0.5 + (cueSec - pos) * pps * effectivePpp
     }
 
     Layout.fillWidth: true
@@ -73,11 +76,11 @@ Item {
         }
 
         // Keep the engine's pixel-scale in sync so scrubBy() can do correct math.
-        // Formula mirrors ScrollingWaveformItem: 150 waveform-points/s × ppp.
+        // Formula mirrors ScrollingWaveformItem: waveformPointsPerSecond × ppp.
         Binding {
             target: root.engine
             property: "pixelsPerSecond"
-            value: root.waveformZoom * 150.0
+            value: root.waveformZoom * root.engine.waveformPointsPerSecond
             when: root.engine !== null
         }
 
@@ -282,7 +285,7 @@ Item {
                 spacing: 2
 
                 // ── Set-Downbeat button ──────────────────────────────────────
-                // Icon: red vertical bar + downward triangle (Rekordbox style).
+                // Icon: red vertical bar + downward triangle (DJ style).
                 Rectangle {
                     id: setDownbeatBtn
                     width: 20; height: 20

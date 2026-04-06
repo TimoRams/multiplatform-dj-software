@@ -5,6 +5,7 @@
 #include "FxProcessor.h"
 #include "LibraryDatabase.h"
 #include "TrackIdGenerator.h"
+#include "WaveformCache.h"
 #include <QUrl>
 #include <QDebug>
 #include <QFile>
@@ -912,7 +913,10 @@ DjEngine::DjEngine(QObject* parent) : QObject(parent)
     }
 
     m_trackData = new TrackData(this);
-    m_analyzer  = new WaveformAnalyzer(m_trackData, &formatManager, 150);
+    m_analyzer  = new WaveformAnalyzer(
+        m_trackData,
+        &formatManager,
+        static_cast<int>(WAVEFORM_POINTS_PER_SECOND));
     clearHotCueState();
 
     // When the analyzer detects a key, override the (often absent) ID3 key field.
@@ -1019,7 +1023,9 @@ DjEngine::DjEngine(QObject* parent) : QObject(parent)
     m_snapClock.start();
 
     connect(&timer, &QTimer::timeout, this, &DjEngine::onTimer);
-    timer.start(16);
+    timer.setTimerType(Qt::PreciseTimer);
+    // Higher-rate control snapshots reduce visible waveform micro-jitter.
+    timer.start(8);
 }
 
 DjEngine::~DjEngine()
@@ -1053,14 +1059,14 @@ float DjEngine::getDuration() const
     return static_cast<float>(transportSource.getLengthInSeconds());
 }
 
-float DjEngine::getPosition() const
+double DjEngine::getPosition() const
 {
     if (m_isScrubbing)
-        return static_cast<float>(m_scrubHoldPosition);
-    return static_cast<float>(transportSource.getCurrentPosition());
+        return m_scrubHoldPosition;
+    return transportSource.getCurrentPosition();
 }
 
-float DjEngine::getVisualPosition() const
+double DjEngine::getVisualPosition() const
 {
     // When stopped/paused: return the frozen position (set by togglePlay).
     if (!m_snapValid || !transportSource.isPlaying())
@@ -1085,12 +1091,12 @@ float DjEngine::getVisualPosition() const
     double len = transportSource.getLengthInSeconds();
     interpolated = std::clamp(interpolated, 0.0, len > 0.0 ? len : interpolated);
 
-    return static_cast<float>(interpolated);
+    return interpolated;
 }
 
 double DjEngine::getVisualPositionQml() const
 {
-    return static_cast<double>(getVisualPosition());
+    return getVisualPosition();
 }
 
 double DjEngine::getPlayheadPositionAtomic() const
@@ -1221,6 +1227,7 @@ void DjEngine::loadTrack(const QString& rawPath)
         clearLoop();
 
         // ── Add track to library database ────────────────────────────────
+        bool hasDbAnalysis = false;
         if (m_libraryDb) {
             int durSec = static_cast<int>(durationSec);
             int bitrateKbps = 0;
@@ -1236,6 +1243,7 @@ void DjEngine::loadTrack(const QString& rawPath)
             LibraryDatabase::AnalysisSnapshot cachedAnalysis;
             if (m_libraryDb->tryGetAnalysisData(m_currentTrackId, &cachedAnalysis)
                 && cachedAnalysis.isAnalyzed) {
+                hasDbAnalysis = true;
                 m_currentSegments = m_libraryDb->trackSegmentsForTrack(m_currentTrackId);
                 emit segmentsChanged();
 
@@ -1261,6 +1269,33 @@ void DjEngine::loadTrack(const QString& rawPath)
             loadMainCueForCurrentTrack();
         }
 
+        // Try to restore finished waveform render data from user cache.
+        // This avoids re-running full waveform analysis on every reload.
+        bool loadedWaveformCache = false;
+        {
+            WaveformCache::Payload cache;
+            const int pps = static_cast<int>(WAVEFORM_POINTS_PER_SECOND);
+            if (WaveformCache::loadForFile(rawPath, pps, &cache)
+                && !cache.waveform.isEmpty()
+                && !cache.rgb.isEmpty()) {
+                const int expected = cache.totalExpected > 0 ? cache.totalExpected : cache.waveform.size();
+                const bool wfComplete = cache.waveform.size() >= static_cast<int>(expected * 0.98);
+                const bool rgbComplete = cache.rgb.size() >= static_cast<int>(expected * 0.98);
+
+                if (expected > 0 && wfComplete && rgbComplete) {
+                    m_trackData->setTotalExpected(expected);
+                    m_trackData->replaceAllData(std::move(cache.waveform), std::max(0.001f, cache.globalMaxPeak));
+                    m_trackData->setRgbWaveformData(std::move(cache.rgb));
+                    loadedWaveformCache = true;
+                    qDebug() << "[DjEngine] Waveform cache hit:" << rawPath;
+                } else {
+                    qDebug() << "[DjEngine] Waveform cache rejected (incomplete):" << rawPath;
+                }
+            } else {
+                qDebug() << "[DjEngine] Waveform cache miss:" << rawPath;
+            }
+        }
+
         qDebug() << "[DjEngine] title=" << m_trackTitle
                  << " artist=" << m_trackArtist
                  << " key=" << m_trackKey;
@@ -1277,7 +1312,11 @@ void DjEngine::loadTrack(const QString& rawPath)
         m_loadedTrackSampleRate = reader->sampleRate;
         transportSource.setPosition(0.0);
 
-        m_analyzer->startAnalysis(rawPath);
+        // Skip heavy analysis only when BOTH waveform cache and analysis metadata
+        // (BPM/key/grid) are already available.
+        if (!(loadedWaveformCache && hasDbAnalysis)) {
+            m_analyzer->startAnalysis(rawPath);
+        }
 
         emit trackLoaded();
         emit progressChanged();
@@ -1426,8 +1465,29 @@ void DjEngine::onTimer()
 
     if (transportSource.isPlaying()) {
         // Store a position snapshot with a matching wall-clock timestamp.
-        // getVisualPosition() forward-interpolates from here for each render frame.
-        m_snapPosition = transportSource.getCurrentPosition();
+        // We correct small timing drift smoothly so the waveform does not jitter.
+        const double measuredPos = transportSource.getCurrentPosition();
+
+        if (m_snapValid) {
+            const double tempoR = getTempoRatio();
+            const double elapsed = (static_cast<double>(m_snapClock.nsecsElapsed()) * 1e-9) * tempoR;
+            const double predictedPos = m_isReverse
+                ? m_snapPosition - elapsed
+                : m_snapPosition + elapsed;
+
+            const double error = measuredPos - predictedPos;
+            const double absError = std::abs(error);
+
+            if (absError <= 0.025) {
+                // Blend away micro drift to keep phase continuity frame-to-frame.
+                m_snapPosition = predictedPos + error * 0.22;
+            } else {
+                // Large discontinuities (seek/loop jump) must snap immediately.
+                m_snapPosition = measuredPos;
+            }
+        } else {
+            m_snapPosition = measuredPos;
+        }
 
         if (m_loopActive && m_loopOutSec > m_loopInSec) {
             if (m_isReverse && m_snapPosition <= m_loopInSec) {
@@ -1754,7 +1814,7 @@ void DjEngine::pauseForScrub()
 void DjEngine::scrubBy(double pixelDelta)
 {
     // Convert pixel delta → time delta.
-    // The waveform maps (pixelsPerPoint × 150 pts/s) pixels to 1 second.
+    // The waveform maps (pixelsPerPoint × waveformPointsPerSecond) pixels to 1 second.
     // Dragging right  → positive pixelDelta → waveform moves right
     //                 → playhead moves BACKWARD (we "pull" the record left).
     // Dragging left   → negative pixelDelta → playhead moves FORWARD.

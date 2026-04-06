@@ -52,9 +52,12 @@ class DjEngine : public QObject
     Q_PROPERTY(bool    hasCoverArt  READ hasCoverArt  NOTIFY trackMetadataChanged)
     Q_PROPERTY(QVariantList currentSegments READ currentSegments NOTIFY segmentsChanged)
 
-    // Mixer Properties
+    // Waveform Properties
+    // Central timeline resolution used by analyzer and waveform renderers.
+    Q_PROPERTY(double waveformPointsPerSecond READ waveformPointsPerSecond CONSTANT)
+
     // Pixels per second at current zoom — needed by the scrub math in QML.
-    // 150 waveform-points/sec × pixelsPerPoint (written from QML via setPixelsPerPoint).
+    // waveformPointsPerSecond × pixelsPerPoint (written from QML via setPixelsPerPoint).
     Q_PROPERTY(double pixelsPerSecond READ pixelsPerSecond WRITE setPixelsPerSecond NOTIFY pixelsPerSecondChanged)
 
     Q_PROPERTY(double volume READ volume WRITE setVolume NOTIFY volumeChanged)
@@ -75,14 +78,16 @@ class DjEngine : public QObject
     Q_PROPERTY(QVariantList hotCues READ hotCues NOTIFY hotCuesChanged)
 
 public:
+    static constexpr double WAVEFORM_POINTS_PER_SECOND = 600.0;
+
     explicit DjEngine(QObject* parent = nullptr);
     ~DjEngine() override;
 
     float getProgress() const;
     Q_INVOKABLE float getDuration() const;
-    float getPosition() const;
+    double getPosition() const;
     // Latency-compensated position in seconds, used by the waveform renderer.
-    float getVisualPosition() const;
+    double getVisualPosition() const;
     // QML-safe access to the interpolated visual playhead.
     Q_INVOKABLE double getVisualPositionQml() const;
     // Lock-free atomic read of the playhead position (seconds).
@@ -94,6 +99,7 @@ public:
     // Pixels-per-second scale mirrored from the waveform renderer so scrubBy()
     // can convert mouse pixels → audio seconds without needing QML math.
     double pixelsPerSecond() const { return m_pixelsPerSecond; }
+    double waveformPointsPerSecond() const { return WAVEFORM_POINTS_PER_SECOND; }
 
     // Universal scratch API used by jogwheel and scrolling waveform.
     // pauseForScrub() captures current play state and enters scratch mode.
@@ -356,8 +362,8 @@ private:
     std::atomic<double> m_atomicPlayheadPos{0.0};
 
     // Scrub state.
-    // m_pixelsPerSecond is mirrored from the waveform renderer (150 pts/s × ppp).
-    double m_pixelsPerSecond = 225.0;  // default: 150 pts/s × 1.5 ppp
+    // m_pixelsPerSecond is mirrored from the waveform renderer (WAVEFORM_POINTS_PER_SECOND × ppp).
+    double m_pixelsPerSecond = WAVEFORM_POINTS_PER_SECOND * 1.5;  // default with 1.5 ppp
     bool   m_isScrubbing     = false;
     bool   m_scrubWasPlaying = false;
     double m_scrubHoldPosition = 0.0;

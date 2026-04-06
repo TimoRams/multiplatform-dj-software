@@ -3,6 +3,55 @@
 #include <QPainter>
 #include <algorithm>
 
+namespace {
+
+static inline QColor mixDjWaveColor(float low, float mid, float high, float rms)
+{
+    low = std::clamp(low, 0.0f, 1.0f);
+    mid = std::clamp(mid, 0.0f, 1.0f);
+    high = std::clamp(high, 0.0f, 1.0f);
+    rms = std::clamp(rms, 0.0f, 1.0f);
+
+    // Stronger DJ palette:
+    //   low  -> red
+    //   mid  -> yellow/green
+    //   high -> blue
+    float r = std::pow(low, 0.52f) * 1.18f + std::pow(mid, 0.85f) * 0.36f;
+    float g = std::pow(mid, 0.50f) * 1.20f + std::pow(high, 0.95f) * 0.10f + std::pow(low, 1.20f) * 0.06f;
+    float b = std::pow(high, 0.50f) * 1.22f + std::pow(mid, 1.00f) * 0.08f;
+
+    // Keep some transient whitening, but lower than before to avoid washed colors.
+    const float whiteLift = std::pow(std::max({low, mid, high}), 0.70f) * (0.06f + 0.16f * rms);
+    r += whiteLift;
+    g += whiteLift;
+    b += whiteLift;
+
+    QColor c = QColor::fromRgbF(
+        std::clamp(r, 0.0f, 1.0f),
+        std::clamp(g, 0.0f, 1.0f),
+        std::clamp(b, 0.0f, 1.0f),
+        1.0f);
+
+    // Extra vibrance pass: saturate and brighten without shifting hue semantics.
+    float h = 0.0f;
+    float s = 0.0f;
+    float v = 0.0f;
+    c.getHsvF(&h, &s, &v);
+    s = std::clamp(static_cast<float>(s * 1.30 + 0.08), 0.0f, 1.0f);
+    v = std::clamp(static_cast<float>(v * 1.12 + 0.03 + 0.07 * rms), 0.0f, 1.0f);
+    c.setHsvF(h, s, v, 1.0);
+    return c;
+}
+
+struct OverviewBin {
+    float rms = 0.0f;
+    float low = 0.0f;
+    float mid = 0.0f;
+    float high = 0.0f;
+};
+
+} // namespace
+
 RgbWaveformItem::RgbWaveformItem(QQuickItem* parent)
     : QQuickPaintedItem(parent)
 {
@@ -77,6 +126,8 @@ void RgbWaveformItem::paint(QPainter* painter)
     const float baseline = m_rectified ? static_cast<float>(h - 1) : static_cast<float>(h) * 0.5f;
     const float maxBarH = m_rectified ? static_cast<float>(h - 1) : static_cast<float>(h) * 0.5f;
 
+    painter->setRenderHint(QPainter::Antialiasing, false);
+    painter->setRenderHint(QPainter::TextAntialiasing, true);
     painter->setPen(Qt::NoPen);
 
     const int drawWidth = std::clamp(
@@ -84,48 +135,65 @@ void RgbWaveformItem::paint(QPainter* painter)
         0,
         w);
 
+    std::vector<OverviewBin> bins(static_cast<size_t>(drawWidth));
+
     for (int x = 0; x < drawWidth; ++x) {
         const int i0 = static_cast<int>((static_cast<int64_t>(x) * analyzedFrames) / std::max(1, drawWidth));
         int i1 = static_cast<int>((static_cast<int64_t>(x + 1) * analyzedFrames) / std::max(1, drawWidth));
         i1 = std::max(i0 + 1, std::min(i1, analyzedFrames));
 
-        float maxRms = 0.0f;
-        float wr = 0.0f;
-        float wg = 0.0f;
-        float wb = 0.0f;
-        float wsum = 0.0f;
+        OverviewBin bin;
 
         for (int i = i0; i < i1; ++i) {
             const auto& f = frames[i];
-            maxRms = std::max(maxRms, f.rms);
-            const float weight = std::max(0.05f, f.rms);
-            wr += static_cast<float>(f.color.red()) * weight;
-            wg += static_cast<float>(f.color.green()) * weight;
-            wb += static_cast<float>(f.color.blue()) * weight;
-            wsum += weight;
+            bin.rms = std::max(bin.rms, f.rms);
+            bin.low = std::max(bin.low, f.low);
+            bin.mid = std::max(bin.mid, f.mid);
+            bin.high = std::max(bin.high, f.high);
         }
 
-        if (wsum <= 0.0f)
+        bins[static_cast<size_t>(x)] = bin;
+    }
+
+    // Gentle horizontal smoothing: keeps detail but removes jagged pixel noise.
+    if (drawWidth >= 5) {
+        std::vector<OverviewBin> smoothed = bins;
+        for (int x = 2; x < drawWidth - 2; ++x) {
+            const auto b0 = bins[static_cast<size_t>(x - 2)];
+            const auto b1 = bins[static_cast<size_t>(x - 1)];
+            const auto b2 = bins[static_cast<size_t>(x)];
+            const auto b3 = bins[static_cast<size_t>(x + 1)];
+            const auto b4 = bins[static_cast<size_t>(x + 2)];
+
+            smoothed[static_cast<size_t>(x)].rms = b0.rms * 0.08f + b1.rms * 0.24f + b2.rms * 0.36f + b3.rms * 0.24f + b4.rms * 0.08f;
+            smoothed[static_cast<size_t>(x)].low = b0.low * 0.08f + b1.low * 0.24f + b2.low * 0.36f + b3.low * 0.24f + b4.low * 0.08f;
+            smoothed[static_cast<size_t>(x)].mid = b0.mid * 0.08f + b1.mid * 0.24f + b2.mid * 0.36f + b3.mid * 0.24f + b4.mid * 0.08f;
+            smoothed[static_cast<size_t>(x)].high = b0.high * 0.08f + b1.high * 0.24f + b2.high * 0.36f + b3.high * 0.24f + b4.high * 0.08f;
+        }
+        bins.swap(smoothed);
+    }
+
+    for (int x = 0; x < drawWidth; ++x) {
+        const auto& bin = bins[static_cast<size_t>(x)];
+        if (bin.rms <= 0.0001f)
             continue;
 
-        const int r = std::clamp(static_cast<int>((wr / wsum) * 1.10f + 8.0f), 0, 255);
-        const int g = std::clamp(static_cast<int>((wg / wsum) * 1.10f + 8.0f), 0, 255);
-        const int b = std::clamp(static_cast<int>((wb / wsum) * 1.10f + 8.0f), 0, 255);
-        const QColor c(r, g, b, 230);
-
-        const float barH = std::clamp(maxRms, 0.0f, 1.0f) * maxBarH;
-        painter->setBrush(c);
+        const QColor base = mixDjWaveColor(bin.low, bin.mid, bin.high, bin.rms);
+        const QColor body(base.red(), base.green(), base.blue(), 236);
+        const float bodyH = std::clamp(bin.rms, 0.0f, 1.0f) * maxBarH;
 
         if (m_rectified) {
+            painter->setBrush(body);
             painter->drawRect(QRectF(static_cast<qreal>(x),
-                                     static_cast<qreal>(baseline - barH),
+                                     static_cast<qreal>(baseline - bodyH),
                                      1.0,
-                                     static_cast<qreal>(barH + 1.0f)));
+                                     static_cast<qreal>(bodyH + 1.0f)));
         } else {
+            painter->setBrush(body);
             painter->drawRect(QRectF(static_cast<qreal>(x),
-                                     static_cast<qreal>(baseline - barH),
+                                     static_cast<qreal>(baseline - bodyH),
                                      1.0,
-                                     static_cast<qreal>(2.0f * barH + 1.0f)));
+                                     static_cast<qreal>(2.0f * bodyH + 1.0f)));
         }
     }
 
@@ -146,10 +214,8 @@ void RgbWaveformItem::paint(QPainter* painter)
             c = QColor("#e04040");
         c.setAlpha(230);
 
-        // Draw a high-contrast cue bar: subtle dark underlay + bright main line.
-        painter->setPen(QPen(QColor(0, 0, 0, 170), 4.0));
-        painter->drawLine(QPointF(x, 0.0), QPointF(x, static_cast<float>(h)));
-        painter->setPen(QPen(c, 2.4));
+        // Draw a clean cue bar without shadow layers.
+        painter->setPen(QPen(c, 2.2));
         painter->drawLine(QPointF(x, 0.0), QPointF(x, static_cast<float>(h)));
 
         // Top cue badge: same cue color + readable number inside.

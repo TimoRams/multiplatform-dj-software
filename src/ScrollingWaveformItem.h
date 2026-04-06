@@ -3,6 +3,7 @@
 #include <QQuickItem>
 #include <QSGGeometryNode>
 #include <QSGVertexColorMaterial>
+#include <array>
 #include "DjEngine.h"
 #include "TrackData.h"
 
@@ -41,13 +42,16 @@ private slots:
     void onDataUpdated();
 
 private:
+    static float clampToZoomLevel(float ppp);
+
     DjEngine* m_engine = nullptr;
     bool m_forceUpdate = false;
 
     // Zoom level in pixels per data point.
     float m_pixelsPerPoint = 1.5f;
 
-    static constexpr float ZOOM_MIN    = 0.35f;  // matches zoomBase * 1.3^-5
-    static constexpr float ZOOM_MAX    = 11.0f;  // matches zoomBase * 1.3^7
-    static constexpr float ZOOM_FACTOR = 1.3f;
+    static constexpr std::array<float, 12> ZOOM_LEVELS = {
+        0.22f, 0.29f, 0.38f, 0.52f, 0.70f, 0.95f,
+        1.30f, 1.80f, 2.50f, 3.50f, 5.00f, 7.20f
+    };
 };

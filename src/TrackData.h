@@ -33,7 +33,7 @@ public:
 
     // Per-block bin (≈ samplesPerBin samples): envelope per frequency band.
     //
-    // Four bands from a parallel filterbank (Rekordbox-style, overlapping slopes):
+    // Four bands from a parallel filterbank (DJ-style, overlapping slopes):
     //   low     (LP @ 110 Hz, 6 dB/oct)         kick / subbass      → dark blue
     //   lowMid  (BP 150–160 Hz, 12+6 dB/oct)    bass body / warmth  → gold
     //   mid     (BP 180–800 Hz, 12+6 dB/oct)    snare, vocals       → orange
@@ -313,6 +313,36 @@ public:
     QVector<RgbWaveformFrame> getRgbWaveformData() const {
         QMutexLocker locker(&m_mutex);
         return m_rgbData;
+    }
+
+    int getRgbWaveformSize() const {
+        QMutexLocker locker(&m_mutex);
+        return m_rgbData.size();
+    }
+
+    QVector<RgbWaveformFrame> getRgbWaveformSlice(int startIndex, int endIndex, int* outStartIndex = nullptr) const {
+        QMutexLocker locker(&m_mutex);
+
+        if (outStartIndex)
+            *outStartIndex = 0;
+
+        if (m_rgbData.isEmpty())
+            return {};
+
+        const int lo = std::max(0, startIndex);
+        const int hi = std::min(endIndex, static_cast<int>(m_rgbData.size()));
+        if (lo >= hi)
+            return {};
+
+        QVector<RgbWaveformFrame> slice;
+        slice.reserve(hi - lo);
+        for (int i = lo; i < hi; ++i)
+            slice.push_back(m_rgbData[i]);
+
+        if (outStartIndex)
+            *outStartIndex = lo;
+
+        return slice;
     }
 
     void appendData(const QVector<FrequencyData>& newData) {

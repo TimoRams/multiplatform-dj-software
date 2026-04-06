@@ -69,6 +69,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/WaveformItem.cpp
     src/ScrollingWaveformItem.cpp
     src/WaveformAnalyzer.cpp
+    src/WaveformCache.h
+    src/WaveformCache.cpp
     src/TrackData.h
     src/LibraryManager.h
     src/LibraryManager.cpp

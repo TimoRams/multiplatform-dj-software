@@ -7,6 +7,63 @@
 #include <cmath>
 #include <vector>
 
+namespace {
+
+// Multiband DJ color mapping from spectral band energies.
+static inline QColor mixDjWaveColor(float low, float mid, float high, float rms)
+{
+    low = std::clamp(low, 0.0f, 1.0f);
+    mid = std::clamp(mid, 0.0f, 1.0f);
+    high = std::clamp(high, 0.0f, 1.0f);
+    rms = std::clamp(rms, 0.0f, 1.0f);
+
+    // Stronger DJ palette:
+    //   low  -> red
+    //   mid  -> yellow/green
+    //   high -> blue
+    float r = std::pow(low, 0.52f) * 1.18f + std::pow(mid, 0.85f) * 0.36f;
+    float g = std::pow(mid, 0.50f) * 1.20f + std::pow(high, 0.95f) * 0.10f + std::pow(low, 1.20f) * 0.06f;
+    float b = std::pow(high, 0.50f) * 1.22f + std::pow(mid, 1.00f) * 0.08f;
+
+    // Keep some transient whitening, but lower than before to avoid washed colors.
+    const float whiteLift = std::pow(std::max({low, mid, high}), 0.70f) * (0.06f + 0.16f * rms);
+    r += whiteLift;
+    g += whiteLift;
+    b += whiteLift;
+
+    QColor c = QColor::fromRgbF(
+        std::clamp(r, 0.0f, 1.0f),
+        std::clamp(g, 0.0f, 1.0f),
+        std::clamp(b, 0.0f, 1.0f),
+        1.0f);
+
+    // Extra vibrance pass: saturate and brighten without shifting hue semantics.
+    float h = 0.0f;
+    float s = 0.0f;
+    float v = 0.0f;
+    c.getHsvF(&h, &s, &v);
+    s = std::clamp(static_cast<float>(s * 1.30 + 0.08), 0.0f, 1.0f);
+    v = std::clamp(static_cast<float>(v * 1.12 + 0.03 + 0.07 * rms), 0.0f, 1.0f);
+    c.setHsvF(h, s, v, 1.0);
+    return c;
+}
+
+} // namespace
+
+float ScrollingWaveformItem::clampToZoomLevel(float ppp)
+{
+    float best = ZOOM_LEVELS[0];
+    float bestDist = std::abs(ppp - best);
+    for (float lvl : ZOOM_LEVELS) {
+        const float d = std::abs(ppp - lvl);
+        if (d < bestDist) {
+            best = lvl;
+            bestDist = d;
+        }
+    }
+    return best;
+}
+
 ScrollingWaveformItem::ScrollingWaveformItem(QQuickItem* parent) : QQuickItem(parent)
 {
     setFlag(ItemHasContents, true);
@@ -40,7 +97,7 @@ void ScrollingWaveformItem::setEngine(DjEngine* engine)
 
 void ScrollingWaveformItem::setPixelsPerPoint(float ppp)
 {
-    ppp = std::max(ZOOM_MIN, std::min(ZOOM_MAX, ppp));
+    ppp = clampToZoomLevel(ppp);
     if (qFuzzyCompare(m_pixelsPerPoint, ppp)) return;
     m_pixelsPerPoint = ppp;
     emit pixelsPerPointChanged();
@@ -50,12 +107,24 @@ void ScrollingWaveformItem::setPixelsPerPoint(float ppp)
 
 void ScrollingWaveformItem::zoomIn()
 {
-    setPixelsPerPoint(m_pixelsPerPoint * ZOOM_FACTOR);
+    for (float lvl : ZOOM_LEVELS) {
+        if (lvl > m_pixelsPerPoint + 0.0001f) {
+            setPixelsPerPoint(lvl);
+            return;
+        }
+    }
+    setPixelsPerPoint(ZOOM_LEVELS.back());
 }
 
 void ScrollingWaveformItem::zoomOut()
 {
-    setPixelsPerPoint(m_pixelsPerPoint / ZOOM_FACTOR);
+    for (int i = static_cast<int>(ZOOM_LEVELS.size()) - 1; i >= 0; --i) {
+        if (ZOOM_LEVELS[static_cast<size_t>(i)] < m_pixelsPerPoint - 0.0001f) {
+            setPixelsPerPoint(ZOOM_LEVELS[static_cast<size_t>(i)]);
+            return;
+        }
+    }
+    setPixelsPerPoint(ZOOM_LEVELS.front());
 }
 
 void ScrollingWaveformItem::onTrackLoaded()
@@ -83,11 +152,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         return nullptr;
     }
 
-    QVector<TrackData::RgbWaveformFrame> rgbData = m_engine->getTrackData()->getRgbWaveformData();
-    if (rgbData.isEmpty()) {
-        if (oldNode) delete oldNode;
-        return nullptr;
-    }
+    TrackData* td = m_engine->getTrackData();
 
     // Scene graph node order (back to front):
     //   0: lowNode    - dark blue     (sub-bass / kick,    LP @ 110 Hz)
@@ -227,11 +292,24 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     auto* highV   = highNode  ->geometry()->vertexDataAsColoredPoint2D();
 
     const float w             = static_cast<float>(wInt);
+    const double wD           = static_cast<double>(wInt);
     const float midY          = static_cast<float>(height()) / 2.0f;
-    const float pointsPerSec  = 150.0f;
+    const double pointsPerSec = m_engine->waveformPointsPerSecond();
     const double tempoRatio   = m_engine->getTempoRatio();
-    const float pixelsPerPoint = static_cast<float>(m_pixelsPerPoint / tempoRatio);
-    const float centerIndexReal = m_engine->getVisualPosition() * pointsPerSec;
+    const double pixelsPerPoint = static_cast<double>(m_pixelsPerPoint) / std::max(0.0001, tempoRatio);
+    const double centerIndexReal = static_cast<double>(m_engine->getVisualPosition()) * pointsPerSec;
+
+    // Chunk-wise waveform data access: fetch only what is visible (+guard).
+    const double visiblePoints = wD / std::max(0.0001, pixelsPerPoint);
+    const int guardPoints = 96;
+    const int sliceStart = static_cast<int>(std::floor(centerIndexReal - visiblePoints * 0.5)) - guardPoints - 4;
+    const int sliceEnd = static_cast<int>(std::ceil(centerIndexReal + visiblePoints * 0.5)) + guardPoints + 4;
+    int sliceBaseIndex = 0;
+    QVector<TrackData::RgbWaveformFrame> rgbData = td->getRgbWaveformSlice(sliceStart, sliceEnd, &sliceBaseIndex);
+    if (rgbData.isEmpty()) {
+        if (oldNode) delete oldNode;
+        return nullptr;
+    }
 
     // Catmull-Rom Spline
     auto catmull = [](float p0, float p1, float p2, float p3, float t) {
@@ -243,79 +321,132 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
 
     const TrackData::RgbWaveformFrame zeroFD{};
     auto getD = [&](int idx) -> const TrackData::RgbWaveformFrame& {
-        if (idx < 0 || idx >= rgbData.size()) return zeroFD;
-        return rgbData[idx];
+        const int local = idx - sliceBaseIndex;
+        if (local < 0)
+            return zeroFD;
+        if (local >= rgbData.size())
+            return zeroFD;
+        return rgbData[local];
     };
 
-    // Catmull-Rom interpolation per output pixel (RGB + amplitude).
+    // Catmull-Rom interpolation per output pixel (bands + amplitude).
     struct ScrollPixel {
         float rms = 0.0f;
-        float r = 0.0f;
-        float g = 0.0f;
-        float b = 0.0f;
+        float low = 0.0f;
+        float mid = 0.0f;
+        float high = 0.0f;
+        QColor color;
     };
     std::vector<ScrollPixel> pixels(wInt);
 
+    const int subSamples = std::clamp(
+        static_cast<int>(std::ceil(2.2 / std::max(0.12, pixelsPerPoint))),
+        1,
+        8);
     for (int x = 0; x < wInt; ++x) {
-        float dataPos = centerIndexReal + (static_cast<float>(x) - w * 0.5f) / pixelsPerPoint;
-        int   i0      = static_cast<int>(std::floor(dataPos)) - 1;
-        float t       = dataPos - std::floor(dataPos);
+        const double dataPos = centerIndexReal + (static_cast<double>(x) - wD * 0.5) / pixelsPerPoint;
+        float maxRms = 0.0f;
+        float sumLow = 0.0f;
+        float sumMid = 0.0f;
+        float sumHigh = 0.0f;
 
-        const auto& d0 = getD(i0);
-        const auto& d1 = getD(i0+1);
-        const auto& d2 = getD(i0+2);
-        const auto& d3 = getD(i0+3);
+        for (int s = 0; s < subSamples; ++s) {
+            const double ofs = (subSamples == 1)
+                ? 0.0
+                : ((static_cast<double>(s) + 0.5) / static_cast<double>(subSamples) - 0.5) * 0.92;
+            const double samplePos = dataPos + ofs;
+            const int i0 = static_cast<int>(std::floor(samplePos)) - 1;
+            const float t = static_cast<float>(samplePos - std::floor(samplePos));
 
-        pixels[x].rms = catmull(d0.rms, d1.rms, d2.rms, d3.rms, t);
-        pixels[x].r = catmull(static_cast<float>(d0.color.red()) / 255.0f,
-                              static_cast<float>(d1.color.red()) / 255.0f,
-                              static_cast<float>(d2.color.red()) / 255.0f,
-                              static_cast<float>(d3.color.red()) / 255.0f, t);
-        pixels[x].g = catmull(static_cast<float>(d0.color.green()) / 255.0f,
-                              static_cast<float>(d1.color.green()) / 255.0f,
-                              static_cast<float>(d2.color.green()) / 255.0f,
-                              static_cast<float>(d3.color.green()) / 255.0f, t);
-        pixels[x].b = catmull(static_cast<float>(d0.color.blue()) / 255.0f,
-                              static_cast<float>(d1.color.blue()) / 255.0f,
-                              static_cast<float>(d2.color.blue()) / 255.0f,
-                              static_cast<float>(d3.color.blue()) / 255.0f, t);
+            const auto& d0 = getD(i0);
+            const auto& d1 = getD(i0+1);
+            const auto& d2 = getD(i0+2);
+            const auto& d3 = getD(i0+3);
+
+            const float rms = catmull(d0.rms, d1.rms, d2.rms, d3.rms, t);
+            const float low = catmull(d0.low, d1.low, d2.low, d3.low, t);
+            const float mid = catmull(d0.mid, d1.mid, d2.mid, d3.mid, t);
+            const float high = catmull(d0.high, d1.high, d2.high, d3.high, t);
+
+            maxRms = std::max(maxRms, rms);
+            sumLow += low;
+            sumMid += mid;
+            sumHigh += high;
+        }
+
+        const float invN = 1.0f / static_cast<float>(subSamples);
+        pixels[x].rms = maxRms;
+        pixels[x].low = sumLow * invN;
+        pixels[x].mid = sumMid * invN;
+        pixels[x].high = sumHigh * invN;
     }
 
-    // Draw a single RGB waveform body (same color system as overview renderer).
+    // Lightweight horizontal smoothing to avoid blocky edges at high zoom-out.
+    if (wInt >= 3 && pixelsPerPoint < 0.95) {
+        std::vector<ScrollPixel> smooth = pixels;
+        for (int x = 1; x < wInt - 1; ++x) {
+            smooth[x].rms  = pixels[x - 1].rms * 0.16f + pixels[x].rms * 0.68f + pixels[x + 1].rms * 0.16f;
+            smooth[x].low  = pixels[x - 1].low * 0.16f + pixels[x].low * 0.68f + pixels[x + 1].low * 0.16f;
+            smooth[x].mid  = pixels[x - 1].mid * 0.16f + pixels[x].mid * 0.68f + pixels[x + 1].mid * 0.16f;
+            smooth[x].high = pixels[x - 1].high * 0.16f + pixels[x].high * 0.68f + pixels[x + 1].high * 0.16f;
+        }
+        pixels.swap(smooth);
+    }
+
     for (int x = 0; x < wInt; ++x) {
-        const float fx = static_cast<float>(x);
+        pixels[x].color = mixDjWaveColor(pixels[x].low, pixels[x].mid, pixels[x].high, pixels[x].rms);
+    }
+
+    // Premium multi-layer body: soft glow + main body + bright core.
+    for (int x = 0; x < wInt; ++x) {
+        const float fx = static_cast<float>(x) + 0.5f;
         const int vIdx = x * 2;
 
-        const float amp = std::clamp(pixels[x].rms, 0.0f, 1.0f) * midY;
-        const int r = std::clamp(static_cast<int>(pixels[x].r * 255.0f * 1.10f + 8.0f), 0, 255);
-        const int g = std::clamp(static_cast<int>(pixels[x].g * 255.0f * 1.10f + 8.0f), 0, 255);
-        const int b = std::clamp(static_cast<int>(pixels[x].b * 255.0f * 1.10f + 8.0f), 0, 255);
+        const float rms = std::clamp(pixels[x].rms, 0.0f, 1.0f);
+        const float bodyAmp = rms * midY;
+        const float glowAmp = std::min(midY, bodyAmp * 1.34f + 0.7f);
+        const float coreAmp = bodyAmp * 0.56f;
 
-        lowV[vIdx  ].set(fx, midY - amp, r, g, b, 235);
-        lowV[vIdx+1].set(fx, midY + amp, r, g, b, 235);
+        const QColor c = pixels[x].color;
+        const int r = c.red();
+        const int g = c.green();
+        const int b = c.blue();
+        const int coreR = std::clamp(static_cast<int>(r * 1.10f + 10.0f), 0, 255);
+        const int coreG = std::clamp(static_cast<int>(g * 1.10f + 10.0f), 0, 255);
+        const int coreB = std::clamp(static_cast<int>(b * 1.10f + 10.0f), 0, 255);
+
+        // Node 0: outer glow.
+        lowV[vIdx  ].set(fx, midY - glowAmp, r, g, b, 84);
+        lowV[vIdx+1].set(fx, midY + glowAmp, r, g, b, 84);
+
+        // Node 1: main waveform body.
+        lowMidV[vIdx  ].set(fx, midY - bodyAmp, r, g, b, 232);
+        lowMidV[vIdx+1].set(fx, midY + bodyAmp, r, g, b, 232);
+
+        // Node 2: bright center core for depth/contrast.
+        midV[vIdx  ].set(fx, midY - coreAmp, coreR, coreG, coreB, 248);
+        midV[vIdx+1].set(fx, midY + coreAmp, coreR, coreG, coreB, 248);
+
+        // Node 3 unused in RGB mode.
+        highV[vIdx  ].set(fx, midY, 0, 0, 0, 0);
+        highV[vIdx+1].set(fx, midY, 0, 0, 0, 0);
     }
-
-    // Hide legacy stacked layers when RGB mode is active.
-    lowMidNode->geometry()->allocate(0);
-    midNode->geometry()->allocate(0);
-    highNode->geometry()->allocate(0);
 
     lowNode   ->markDirty(QSGNode::DirtyGeometry);
     lowMidNode->markDirty(QSGNode::DirtyGeometry);
     midNode   ->markDirty(QSGNode::DirtyGeometry);
     highNode  ->markDirty(QSGNode::DirtyGeometry);
 
-    // ── Beat-grid rendering (Rekordbox style) ────────────────────────────────
+    // ── Beat-grid rendering (DJ style) ───────────────────────────────────────
     // Node 4: regular beat lines     — white, 1px, alpha 110
     // Node 5: downbeat lines         — red (#e6, 0, 0), 1px, alpha 220
     // Node 6: downbeat triangles     — red filled, pointing down from top edge
     QSGGeometry* beatGeo     = beatNode    ->geometry();
     QSGGeometry* downGeo     = downbeatNode->geometry();
     QSGGeometry* triGeo2     = triNode     ->geometry();
-    TrackData* td = m_engine->getTrackData();
     if (td->isBpmAnalyzed()) {
         const double sr  = td->getSampleRate();
-        const float  pps = 150.0f;
+        const float  pps = pointsPerSec;
 
         // Prefer elastic BeatMarker grid; fall back to rigid grid.
         std::vector<TrackData::BeatMarker> beatGrid = td->getBeatGrid();
