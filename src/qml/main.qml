@@ -122,8 +122,9 @@ ApplicationWindow {
     readonly property real uiScale: width / baseUiWidth
 
     // Referenz height of the top section at baseUiWidth (waveforms + decks + mixer).
-    // Waveforms: 150 px  |  Decks: baseUiWidth / 3.8 ≈ 421 px  |  spacing: 4 px
-    readonly property real baseUiHeight: 150 + (baseUiWidth / 3.8) + 4
+    // The deck/mixer block is intentionally kept about 25% shorter so the library
+    // can use more vertical space.
+    readonly property real baseUiHeight: 150 + (baseUiWidth / 5.0) + 4
 
     ColumnLayout {
         id: mainLayout
