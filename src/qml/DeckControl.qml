@@ -23,6 +23,7 @@ Item {
     property string _trackKey:      ""
     property string _trackBpm:      ""
     property string _currentBpm:    ""   // live tempo-adjusted BPM
+    readonly property int headerCellHeight: 22
 
     function loopLabel() {
         if (!deck.engine || !deck.engine.loopActive)
@@ -177,7 +178,7 @@ Item {
             // Deck header: unified metadata fields (always visible)
             Rectangle {
                 Layout.fillWidth: true
-                height: 46
+                height: deck.headerCellHeight * 2
                 color: "transparent"
 
                 RowLayout {
@@ -187,9 +188,11 @@ Item {
                     // Cover art square (left-aligned)
                     Rectangle {
                         id: coverArt
-                        Layout.preferredWidth: 52
+                        Layout.preferredWidth: deck.headerCellHeight * 2
+                        Layout.minimumWidth: deck.headerCellHeight * 2
+                        Layout.maximumWidth: deck.headerCellHeight * 2
                         Layout.fillHeight: true
-                        radius: 4
+                        radius: 0
                         color: "#1a1a1a"
                         border.color: deck._hasTrack
                                       ? (deck.deckName === "A" ? "#ff9900" : "#00ccff")
@@ -228,8 +231,10 @@ Item {
 
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 20
-                            radius: 4
+                            Layout.preferredHeight: deck.headerCellHeight
+                            Layout.minimumHeight: deck.headerCellHeight
+                            Layout.maximumHeight: deck.headerCellHeight
+                            radius: 0
                             color: "#1b1b1b"
                             border.color: "#3a3a3a"
                             border.width: 1
@@ -264,8 +269,10 @@ Item {
 
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 20
-                            radius: 4
+                            Layout.preferredHeight: deck.headerCellHeight
+                            Layout.minimumHeight: deck.headerCellHeight
+                            Layout.maximumHeight: deck.headerCellHeight
+                            radius: 0
                             color: "#1b1b1b"
                             border.color: "#3a3a3a"
                             border.width: 1
@@ -303,7 +310,7 @@ Item {
                     GridLayout {
                         id: metaBadges
                         columns: 2
-                        rowSpacing: 2
+                        rowSpacing: 0
                         columnSpacing: 2
                         Layout.preferredWidth: 164
                         Layout.alignment: Qt.AlignVCenter
@@ -312,8 +319,10 @@ Item {
                         Rectangle {
                             id: bpmBadge
                             Layout.preferredWidth: 81
-                            Layout.preferredHeight: 22
-                            radius: 4
+                            Layout.preferredHeight: deck.headerCellHeight
+                            Layout.minimumHeight: deck.headerCellHeight
+                            Layout.maximumHeight: deck.headerCellHeight
+                            radius: 0
                             color: "#1a2e1a"
                             border.color: "#4a8a4a"
                             border.width: 1
@@ -365,8 +374,10 @@ Item {
                         // LIVE BPM (tempo/loop adjusted value)
                         Rectangle {
                             Layout.preferredWidth: 81
-                            Layout.preferredHeight: 22
-                            radius: 4
+                            Layout.preferredHeight: deck.headerCellHeight
+                            Layout.minimumHeight: deck.headerCellHeight
+                            Layout.maximumHeight: deck.headerCellHeight
+                            radius: 0
                             color: "#20242f"
                             border.color: deck._showLiveBpmIndicator() ? "#4f7fcf" : "#3f475a"
                             border.width: 1
@@ -404,8 +415,10 @@ Item {
 
                         Rectangle {
                             Layout.preferredWidth: 81
-                            Layout.preferredHeight: 22
-                            radius: 4
+                            Layout.preferredHeight: deck.headerCellHeight
+                            Layout.minimumHeight: deck.headerCellHeight
+                            Layout.maximumHeight: deck.headerCellHeight
+                            radius: 0
                             color: "#1a1a2e"
                             border.color: "#4a4aaa"
                             border.width: 1
@@ -439,8 +452,10 @@ Item {
 
                         Rectangle {
                             Layout.preferredWidth: 81
-                            Layout.preferredHeight: 22
-                            radius: 4
+                            Layout.preferredHeight: deck.headerCellHeight
+                            Layout.minimumHeight: deck.headerCellHeight
+                            Layout.maximumHeight: deck.headerCellHeight
+                            radius: 0
                             color: "#202020"
                             border.color: "#4a4a4a"
                             border.width: 1
