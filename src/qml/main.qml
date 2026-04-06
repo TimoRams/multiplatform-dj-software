@@ -198,7 +198,7 @@ ApplicationWindow {
                     anchors.left:   parent.left
                     anchors.right:  parent.right
                     anchors.topMargin: 0
-                    spacing: 2
+                    spacing: 0
 
                     DeckControl {
                         deckName: "A"
