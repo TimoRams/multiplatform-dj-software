@@ -71,6 +71,8 @@ class DjEngine : public QObject
     // VU meter peak levels (0.0-1.0+), read from the audio thread
     Q_PROPERTY(float vuLevelL READ vuLevelL NOTIFY vuLevelChanged)
     Q_PROPERTY(float vuLevelR READ vuLevelR NOTIFY vuLevelChanged)
+    Q_PROPERTY(float preFaderVuLevelL READ preFaderVuLevelL NOTIFY vuLevelChanged)
+    Q_PROPERTY(float preFaderVuLevelR READ preFaderVuLevelR NOTIFY vuLevelChanged)
     Q_PROPERTY(bool clipDetected READ clipDetected NOTIFY vuLevelChanged)
     
     // Global anti-clip gain reduction (0.0-1.0), 1.0 = no reduction
@@ -186,6 +188,8 @@ public:
     // VU meter getters — read atomic peaks from the audio thread
     float vuLevelL() const;
     float vuLevelR() const;
+    float preFaderVuLevelL() const;
+    float preFaderVuLevelR() const;
     bool clipDetected() const;
     float gainReduction() const;
     QVariantList hotCues() const;

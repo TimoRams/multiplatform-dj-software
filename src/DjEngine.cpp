@@ -692,9 +692,8 @@ public:
         auto slicedBlock = block.getSubBlock(bufferToFill.startSample, bufferToFill.numSamples);
         juce::dsp::ProcessContextReplacing<float> context(slicedBlock);
 
-        // Map inputs directly. Note: QML trim goes 0..2.
-        // QML volume goes 0..1. Multiply both.
-        float gain = static_cast<float>(trimVal * faderVal);
+        // Apply trim pre-EQ/pre-fader (QML trim range: 0..2).
+        float gain = trimVal.load(std::memory_order_relaxed);
         if (std::abs(gain - 1.0f) > 0.001f) {
             for (size_t ch = 0; ch < slicedBlock.getNumChannels(); ++ch) {
                 juce::FloatVectorOperations::multiply(slicedBlock.getChannelPointer(ch), gain, static_cast<int>(slicedBlock.getNumSamples()));
@@ -710,6 +709,31 @@ public:
         m_fx.process(*bufferToFill.buffer,
                      bufferToFill.startSample,
                      bufferToFill.numSamples);
+
+        // Channel pre-fader meter: post Trim/EQ/Filter/FX, pre channel fader/crossfader.
+        {
+            auto* buf = bufferToFill.buffer;
+            const int s = bufferToFill.startSample;
+            const int n = bufferToFill.numSamples;
+
+            float peakPreL = 0.0f;
+            float peakPreR = 0.0f;
+            if (buf->getNumChannels() > 0)
+                peakPreL = buf->getMagnitude(0, s, n);
+            if (buf->getNumChannels() > 1)
+                peakPreR = buf->getMagnitude(1, s, n);
+
+            m_preFaderPeakL.store(peakPreL, std::memory_order_relaxed);
+            m_preFaderPeakR.store(peakPreR, std::memory_order_relaxed);
+        }
+
+        // Apply channel volume (includes crossfader contribution from UI).
+        const float faderGain = faderVal.load(std::memory_order_relaxed);
+        if (std::abs(faderGain - 1.0f) > 0.001f) {
+            for (size_t ch = 0; ch < slicedBlock.getNumChannels(); ++ch) {
+                juce::FloatVectorOperations::multiply(slicedBlock.getChannelPointer(ch), faderGain, static_cast<int>(slicedBlock.getNumSamples()));
+            }
+        }
 
         // ── Master Volume + Anti-Clip Limiter ───────────────────────────
         {
@@ -836,6 +860,8 @@ public:
     // VU meter peak levels — written on audio thread, read from UI thread
     std::atomic<float> m_peakL { 0.0f };
     std::atomic<float> m_peakR { 0.0f };
+    std::atomic<float> m_preFaderPeakL { 0.0f };
+    std::atomic<float> m_preFaderPeakR { 0.0f };
     std::atomic<bool>  m_clipDetected { false };
 
     // Global shared state: master volume + anti-clip (shared across all decks)
@@ -1520,6 +1546,16 @@ float DjEngine::vuLevelL() const
 float DjEngine::vuLevelR() const
 {
     return mixerSource ? mixerSource->m_peakR.load(std::memory_order_relaxed) : 0.0f;
+}
+
+float DjEngine::preFaderVuLevelL() const
+{
+    return mixerSource ? mixerSource->m_preFaderPeakL.load(std::memory_order_relaxed) : 0.0f;
+}
+
+float DjEngine::preFaderVuLevelR() const
+{
+    return mixerSource ? mixerSource->m_preFaderPeakR.load(std::memory_order_relaxed) : 0.0f;
 }
 
 bool DjEngine::clipDetected() const
