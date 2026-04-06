@@ -80,7 +80,58 @@ Rectangle {
                 radius: width / 2
                 color: "transparent"
                 border.color: "transparent"
-                
+
+                // Position arc: center-based for bipolar knobs, min-based for unipolar knobs.
+                Canvas {
+                    id: knobArc
+                    anchors.fill: parent
+                    antialiasing: true
+                    onPaint: {
+                        var ctx = getContext("2d")
+                        ctx.reset()
+
+                        var cx = width / 2
+                        var cy = height / 2
+                        var radius = Math.min(width, height) * 0.44
+                        var startDeg = 120
+                        var spanDeg = 300
+
+                        function clamp01(v) {
+                            return Math.max(0, Math.min(1, v))
+                        }
+
+                        var from = dial.from
+                        var to = dial.to
+                        var norm = clamp01((dial.value - from) / (to - from))
+
+                        ctx.lineWidth = Math.max(1, Math.round(width * 0.06))
+                        ctx.lineCap = "round"
+                        ctx.strokeStyle = "#5f6368"
+
+                        if (from < 0 && to > 0) {
+                            var neutral = clamp01((0 - from) / (to - from))
+                            var a0 = (startDeg + neutral * spanDeg) * Math.PI / 180
+                            var a1 = (startDeg + norm * spanDeg) * Math.PI / 180
+                            ctx.beginPath()
+                            ctx.arc(cx, cy, radius, a0, a1, norm < neutral)
+                            ctx.stroke()
+                        } else {
+                            var start = startDeg * Math.PI / 180
+                            var end = (startDeg + norm * spanDeg) * Math.PI / 180
+                            ctx.beginPath()
+                            ctx.arc(cx, cy, radius, start, end, false)
+                            ctx.stroke()
+                        }
+                    }
+
+                    Connections {
+                        target: dial
+                        function onValueChanged() { knobArc.requestPaint() }
+                        function onFromChanged() { knobArc.requestPaint() }
+                        function onToChanged() { knobArc.requestPaint() }
+                    }
+                }
+
                 Rectangle {
                     anchors.centerIn: parent
                     width: parent.width * 0.85
@@ -103,11 +154,11 @@ Rectangle {
                 Rectangle {
                     color: "#aaa"
                     width: 2
-                    height: parent.height * 0.35
+                    height: parent.height * 0.48
                     radius: 1
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.top: parent.top
-                    anchors.topMargin: 1
+                    anchors.topMargin: -2
                 }
                 
                 transform: [

@@ -229,6 +229,35 @@ Rectangle {
                     color: "transparent"
                     border.color: "transparent"
 
+                    Canvas {
+                        id: wetDryArc
+                        anchors.fill: parent
+                        antialiasing: true
+                        onPaint: {
+                            var ctx = getContext("2d")
+                            ctx.reset()
+
+                            var cx = width / 2
+                            var cy = height / 2
+                            var radius = Math.min(width, height) * 0.44
+                            var startDeg = 120
+                            var spanDeg = 300
+                            var norm = Math.max(0, Math.min(1, (wetDryDial.value - wetDryDial.from) / (wetDryDial.to - wetDryDial.from)))
+
+                            ctx.lineWidth = Math.max(1, Math.round(width * 0.06))
+                            ctx.lineCap = "round"
+                            ctx.strokeStyle = root.accentColor
+                            ctx.beginPath()
+                            ctx.arc(cx, cy, radius, startDeg * Math.PI / 180, (startDeg + norm * spanDeg) * Math.PI / 180, false)
+                            ctx.stroke()
+                        }
+
+                        Connections {
+                            target: wetDryDial
+                            function onValueChanged() { wetDryArc.requestPaint() }
+                        }
+                    }
+
                     Rectangle {
                         anchors.centerIn: parent
                         width: parent.width * 0.85
@@ -251,11 +280,11 @@ Rectangle {
                     Rectangle {
                         color: "#aaa"
                         width: 2
-                        height: parent.height * 0.35
+                        height: parent.height * 0.48
                         radius: 1
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.top: parent.top
-                        anchors.topMargin: 1
+                        anchors.topMargin: -2
                     }
 
                     transform: Rotation {
