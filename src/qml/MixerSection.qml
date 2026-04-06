@@ -279,8 +279,8 @@ Rectangle {
                     id: volFaderA
                     Layout.fillHeight: false
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredHeight: 96
-                    Layout.maximumHeight: 96
+                    Layout.preferredHeight: 48
+                    Layout.maximumHeight: 48
                     orientation: Qt.Vertical
                     from: 0.0; to: 1.0; value: 1.0
                     onValueChanged: { 
@@ -360,8 +360,8 @@ Rectangle {
                     id: volFaderB
                     Layout.fillHeight: false
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredHeight: 96
-                    Layout.maximumHeight: 96
+                    Layout.preferredHeight: 48
+                    Layout.maximumHeight: 48
                     orientation: Qt.Vertical
                     from: 0.0; to: 1.0; value: 1.0
                     onValueChanged: { 
