@@ -10,6 +10,19 @@ ApplicationWindow {
     visible: true
     title: "RamsbrockDJ"
     color: "#0a0a0a"
+    property bool libraryExpanded: false
+    readonly property real baseWaveformHeight: 150
+    readonly property real baseDeckMixerHeight: baseUiHeight - baseWaveformHeight
+
+    function _isTextInputFocused() {
+        var focused = activeFocusItem
+        if (!focused)
+            return false
+        return (typeof focused.echoMode !== "undefined")
+            || (typeof focused.inputMask === "string")
+            || (typeof focused.cursorPosition === "number")
+            || (typeof focused.inputMethodComposing === "boolean")
+    }
 
     // Timer to hide the loading indicator and show the main content
     Timer {
@@ -113,6 +126,16 @@ ApplicationWindow {
         }
     }
 
+    Shortcut {
+        sequence: "Space"
+        context: Qt.ApplicationShortcut
+        onActivated: {
+            if (window._isTextInputFocused())
+                return
+            window.libraryExpanded = !window.libraryExpanded
+        }
+    }
+
     // -------------------------------------------------------------------------
     // VIEWPORT SCALING
     // Referenzbreite, auf die das gesamte obere UI-Design ausgelegt ist.
@@ -139,6 +162,7 @@ ApplicationWindow {
         // GLOBAL HEADER (Traktor-Style)
         // --------------------------------------------------------------------
         TopHeader {
+            id: topHeader
             Layout.fillWidth: true
             Layout.minimumHeight: window.topBarHeight
             Layout.preferredHeight: window.topBarHeight
@@ -148,27 +172,22 @@ ApplicationWindow {
 
         // Viewport wrapper: reserves the scaled height in the ColumnLayout.
         Item {
+            id: waveformViewport
             Layout.fillWidth: true
-            Layout.preferredHeight: window.baseUiHeight * window.uiScale
-            Layout.maximumHeight: window.baseUiHeight * window.uiScale
+            Layout.preferredHeight: window.baseWaveformHeight * window.uiScale
+            Layout.maximumHeight: window.baseWaveformHeight * window.uiScale
 
             // Fixed-size design canvas; scaled down/up to match the window width.
             Item {
-                id: uiViewport
+                id: waveformCanvas
                 width:  window.baseUiWidth
-                height: window.baseUiHeight
+                height: window.baseWaveformHeight
                 scale:  window.uiScale
                 transformOrigin: Item.TopLeft
 
-                // ----------------------------------------------------------------
-                // OBERER BEREICH: SCROLLING WAVEFORMS
-                // ----------------------------------------------------------------
                 ColumnLayout {
                     id: waveformSection
-                    anchors.top:   parent.top
-                    anchors.left:  parent.left
-                    anchors.right: parent.right
-                    height: 150
+                    anchors.fill: parent
                     spacing: 0
 
                     EnlargedWaveform {
@@ -187,17 +206,28 @@ ApplicationWindow {
                         waveformZoom: window.waveformZoom
                     }
                 }
+            }
+        }
 
-                // ----------------------------------------------------------------
-                // MITTLERER BEREICH: DECK A + MIXER + DECK B
-                // ----------------------------------------------------------------
+        Item {
+            id: deckMixerViewport
+            Layout.fillWidth: true
+            Layout.preferredHeight: window.libraryExpanded ? 0 : window.baseDeckMixerHeight * window.uiScale
+            Layout.maximumHeight: window.libraryExpanded ? 0 : window.baseDeckMixerHeight * window.uiScale
+            visible: !window.libraryExpanded
+
+            Item {
+                id: deckMixerCanvas
+                width:  window.baseUiWidth
+                height: window.baseDeckMixerHeight
+                scale:  window.uiScale
+                transformOrigin: Item.TopLeft
+
                 RowLayout {
                     id: deckRow
-                    anchors.top:    waveformSection.bottom
-                    anchors.bottom: parent.bottom
+                    anchors.fill: parent
                     anchors.left:   parent.left
                     anchors.right:  parent.right
-                    anchors.topMargin: 0
                     spacing: 0
 
                     DeckControl {
@@ -230,9 +260,11 @@ ApplicationWindow {
         // (zwischen Decks/Mixer-Sektion und Library)
         // --------------------------------------------------------------------
         FxBar {
+            id: fxBarSection
             Layout.fillWidth: true
-            Layout.preferredHeight: window.fxBarHeight
-            Layout.maximumHeight: window.fxBarHeight
+            Layout.preferredHeight: window.libraryExpanded ? 0 : window.fxBarHeight
+            Layout.maximumHeight: window.libraryExpanded ? 0 : window.fxBarHeight
+            visible: !window.libraryExpanded
         }
 
         // --------------------------------------------------------------------
@@ -240,6 +272,7 @@ ApplicationWindow {
         // fillHeight: true → schluckt jeden vertikalen Restplatz.
         // --------------------------------------------------------------------
         Library {
+            id: librarySection
             Layout.fillWidth: true
             Layout.fillHeight: true
         }
