@@ -7,8 +7,8 @@ Item {
     property color ringColor: "#3a3a3a"
     property real ringThickness: 7
     property real cutoutAngleDeg: 16
-    // 2 beats per full turn feels closer to a DJ platter indicator speed.
-    property real beatsPerRevolution: 2.0
+    // Real platter baseline: 33 1/3 RPM at normal playback speed.
+    property real baseRpm: 33.3333333333
     property bool dragActive: false
     property bool _scratchEngaged: false
     property real _accumDragAngle: 0.0
@@ -27,8 +27,7 @@ Item {
         }
 
         var playheadSec = root.engine.getPlayheadPositionAtomic()
-        var bpm = root.engine.currentBpm > 0 ? root.engine.currentBpm : 120.0
-        var degreesPerSecond = (bpm * 360.0) / (60.0 * root.beatsPerRevolution)
+        var degreesPerSecond = (root.baseRpm * 360.0) / 60.0
 
         // Rotation follows actual playhead direction. In reverse, playheadSec
         // moves backwards, so the wheel naturally rotates backwards as well.
@@ -51,8 +50,7 @@ Item {
         if (!root.engine)
             return
 
-        var bpm = root.engine.currentBpm > 0 ? root.engine.currentBpm : 120.0
-        var secondsPerRevolution = (root.beatsPerRevolution * 60.0) / bpm
+        var secondsPerRevolution = 60.0 / root.baseRpm
         var deltaSeconds = (deltaAngle / 360.0) * secondsPerRevolution
 
         root.engine.scratchBySeconds(deltaSeconds)
