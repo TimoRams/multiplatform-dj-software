@@ -9,6 +9,7 @@
 #include <QQuickWindow>
 #include <QQmlContext>
 #include <QFont>
+#include <QtGlobal>
 
 #ifdef ESSENTIA_FOUND
     #include <essentia/version.h>
@@ -29,6 +30,19 @@
 
 using namespace Qt::StringLiterals;
 
+namespace {
+QtMessageHandler g_previousMessageHandler = nullptr;
+
+void filteredMessageHandler(QtMsgType type, const QMessageLogContext& context, const QString& message)
+{
+    if (message.contains("Member fillColor of the object BreezeDial overrides a member of the base object"))
+        return;
+
+    if (g_previousMessageHandler)
+        g_previousMessageHandler(type, context, message);
+}
+}
+
 int main(int argc, char *argv[])
 {
     std::cout << "========================================" << std::endl;
@@ -43,11 +57,18 @@ int main(int argc, char *argv[])
     qDebug() << "Essentia nicht gefunden!";
 #endif
 
+    g_previousMessageHandler = qInstallMessageHandler(filteredMessageHandler);
+
     // ── Global text rendering quality ────────────────────────────────────────
     // Qt's built-in curve renderer (signed-distance-field) scales perfectly
     // at any size and works well with Vulkan.  NativeTextRendering can look
     // blurry on Linux + Vulkan, so we explicitly use CurveTextRendering.
     QQuickWindow::setTextRenderType(QQuickWindow::CurveTextRendering);
+
+    // Breeze style can trigger noisy sampled-image warnings with some GPU/driver
+    // combinations. Use a deterministic built-in style unless the user set one.
+    if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE"))
+        qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
 
     qputenv("QSG_INFO", "1");
 

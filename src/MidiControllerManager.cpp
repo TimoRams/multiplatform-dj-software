@@ -49,7 +49,8 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, QObject* par
     QTimer::singleShot(750, this, [this]()
     {
         refreshMidiAndMappings();
-        restoreSavedDeviceSelections();
+        // Avoid reopening stale saved identifiers repeatedly on startup.
+        // Users can still select a device explicitly in settings.
     });
 
     m_selectedController = SettingsManager::getInstance().getSelectedController();
@@ -148,7 +149,11 @@ void MidiControllerManager::populateFromAlsaFallback()
         const QString portName = p.captured(2).trimmed();
 
         const QString lowerClient = currentClientName.toLower();
-        if (lowerClient == "system" || lowerClient == "midi through" || lowerClient.startsWith("pipewire"))
+        if (lowerClient == "system"
+            || lowerClient == "midi through"
+            || lowerClient.startsWith("pipewire")
+            || lowerClient.contains("ramsbrock")
+            || lowerClient.contains("aseqdump"))
             continue;
 
         const juce::String identifier("alsa:" + juce::String(currentClient) + ":" + juce::String(port));
@@ -324,12 +329,34 @@ void MidiControllerManager::openMidiOutputByIdentifier(const juce::String& ident
 void MidiControllerManager::restoreSavedDeviceSelections()
 {
     const auto inputId = SettingsManager::getInstance().getMidiInputIdentifier();
-    if (!inputId.isEmpty())
-        openMidiInputByIdentifier(juce::String::fromUTF8(inputId.toUtf8().constData()));
+    if (!inputId.isEmpty()) {
+        const juce::String savedInput = juce::String::fromUTF8(inputId.toUtf8().constData());
+        const bool inputExists = std::any_of(m_availableInputDeviceIdentifiers.begin(),
+                                             m_availableInputDeviceIdentifiers.end(),
+                                             [&savedInput](const juce::String& id)
+        {
+            return id == savedInput;
+        });
+        if (inputExists)
+            openMidiInputByIdentifier(savedInput);
+        else
+            qDebug() << "[MIDI] Skipping unavailable saved input identifier:" << inputId;
+    }
 
     const auto outputId = SettingsManager::getInstance().getMidiOutputIdentifier();
-    if (!outputId.isEmpty())
-        openMidiOutputByIdentifier(juce::String::fromUTF8(outputId.toUtf8().constData()));
+    if (!outputId.isEmpty()) {
+        const juce::String savedOutput = juce::String::fromUTF8(outputId.toUtf8().constData());
+        const bool outputExists = std::any_of(m_availableOutputDeviceIdentifiers.begin(),
+                                              m_availableOutputDeviceIdentifiers.end(),
+                                              [&savedOutput](const juce::String& id)
+        {
+            return id == savedOutput;
+        });
+        if (outputExists)
+            openMidiOutputByIdentifier(savedOutput);
+        else
+            qDebug() << "[MIDI] Skipping unavailable saved output identifier:" << outputId;
+    }
 }
 
 void MidiControllerManager::selectMidiInputDevice(int index)

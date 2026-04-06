@@ -638,7 +638,8 @@ Rectangle {
                         Item {
                             id: libDragPayload
                             anchors.fill: parent
-                            Drag.active:           libDragArea.drag.active
+                            property bool dragging: false
+                            Drag.active:           false
                             Drag.dragType:         Drag.Automatic
                             Drag.supportedActions: Qt.CopyAction
                             Drag.hotSpot.x:        libDelegate.width  / 2
@@ -652,14 +653,31 @@ Rectangle {
                         MouseArea {
                             id: libDragArea
                             anchors.fill: parent
-                            cursorShape:  drag.active ? Qt.DragMoveCursor : Qt.PointingHandCursor
-                            drag.target:    libDragPayload
-                            drag.axis:      Drag.XAndYAxis
-                            drag.threshold: 6
+                            property real pressX: 0
+                            property real pressY: 0
+                            cursorShape:  libDragPayload.dragging ? Qt.DragMoveCursor : Qt.PointingHandCursor
+                            onPressed: (mouse) => {
+                                pressX = mouse.x
+                                pressY = mouse.y
+                                libDragPayload.dragging = false
+                            }
+                            onPositionChanged: (mouse) => {
+                                if (!pressed || libDragPayload.dragging)
+                                    return
+                                if (Math.abs(mouse.x - pressX) + Math.abs(mouse.y - pressY) >= 8) {
+                                    libDragPayload.dragging = true
+                                    libDragPayload.Drag.active = true
+                                }
+                            }
                             onReleased: {
-                                libDragPayload.Drag.drop()
-                                libDragPayload.x = 0
-                                libDragPayload.y = 0
+                                if (libDragPayload.dragging)
+                                    libDragPayload.Drag.drop()
+                                libDragPayload.Drag.active = false
+                                libDragPayload.dragging = false
+                            }
+                            onCanceled: {
+                                libDragPayload.Drag.active = false
+                                libDragPayload.dragging = false
                             }
                         }
                     }

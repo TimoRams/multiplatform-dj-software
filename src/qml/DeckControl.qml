@@ -505,11 +505,13 @@ Item {
                         Layout.fillWidth: true
                         spacing: 2
 
-                        property real unit: Math.max(18, (width - (spacing * 12)) / 14.0)
+                        // Keep control sizing independent from the parent RowLayout width
+                        // to avoid recursive layout recalculations.
+                        property real unit: Math.max(24, window.spViewport(28))
 
                         Button {
                             text: "PLAY"
-                            Layout.fillWidth: true
+                            Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 1.1
                             Layout.preferredHeight: 15
                             palette.buttonText: "white"
@@ -532,7 +534,7 @@ Item {
 
                         Button {
                             text: "CUE"
-                            Layout.fillWidth: true
+                            Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 1.0
                             Layout.preferredHeight: 15
                             background: Rectangle { color: "#444"; radius: 3 }
@@ -552,7 +554,7 @@ Item {
                             text: "REV"
                             checkable: true
                             checked: deck.engine ? deck.engine.isReverse : false
-                            Layout.fillWidth: true
+                            Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 1.0
                             Layout.preferredHeight: 15
                             background: Rectangle {
@@ -578,7 +580,7 @@ Item {
                             text: "SYNC"
                             checkable: true
                             checked: deck.engine ? deck.engine.syncEnabled : false
-                            Layout.fillWidth: true
+                            Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 1.2
                             Layout.preferredHeight: 15
                             background: Rectangle {
@@ -615,7 +617,7 @@ Item {
                             text: "Q"
                             checkable: true
                             checked: deck.engine ? deck.engine.quantizeEnabled : false
-                            Layout.fillWidth: true
+                            Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 0.8
                             Layout.preferredHeight: 15
                             background: Rectangle {
@@ -640,7 +642,7 @@ Item {
                             text: "KL"
                             checkable: true
                             checked: deck.engine ? deck.engine.keylock : false
-                            Layout.fillWidth: true
+                            Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 0.9
                             Layout.preferredHeight: 15
                             background: Rectangle {
@@ -664,7 +666,7 @@ Item {
                         Button {
                             text: "SLIP"
                             checkable: true
-                            Layout.fillWidth: true
+                            Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 1.1
                             Layout.preferredHeight: 15
                             background: Rectangle {
@@ -684,7 +686,7 @@ Item {
 
                         Button {
                             text: "L IN"
-                            Layout.fillWidth: true
+                            Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 1.2
                             Layout.minimumWidth: 44
                             Layout.preferredHeight: 18
@@ -707,7 +709,7 @@ Item {
 
                         Button {
                             text: "L OUT"
-                            Layout.fillWidth: true
+                            Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 1.3
                             Layout.minimumWidth: 50
                             Layout.preferredHeight: 18
@@ -730,7 +732,7 @@ Item {
 
                         Button {
                             text: "<"
-                            Layout.fillWidth: true
+                            Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 0.75
                             Layout.minimumWidth: 28
                             Layout.preferredHeight: 18
@@ -755,7 +757,7 @@ Item {
                             text: deck.loopLabel()
                             checkable: true
                             checked: deck.engine ? (deck.engine.loopActive && Math.abs(deck.engine.loopLengthBeats - 0.75) < 0.06) : false
-                            Layout.fillWidth: true
+                            Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 2.0
                             Layout.minimumWidth: 58
                             Layout.preferredHeight: 18
@@ -779,7 +781,7 @@ Item {
 
                         Button {
                             text: ">"
-                            Layout.fillWidth: true
+                            Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 0.75
                             Layout.minimumWidth: 28
                             Layout.preferredHeight: 18
@@ -804,7 +806,7 @@ Item {
                             text: "3/4"
                             checkable: true
                             checked: deck.engine ? (deck.engine.loopActive && Math.abs(deck.engine.loopLengthBeats - 0.75) < 0.06) : false
-                            Layout.fillWidth: true
+                            Layout.fillWidth: false
                             Layout.preferredWidth: deckControlsRow.unit * 1.0
                             Layout.minimumWidth: 36
                             Layout.preferredHeight: 18
@@ -832,8 +834,8 @@ Item {
             // Performance pads + tempo fader on the right
             RowLayout {
                 Layout.fillWidth: true
-                Layout.preferredHeight: Math.max(156, parent.height * 0.22)
-                Layout.maximumHeight: Math.max(156, parent.height * 0.22)
+                Layout.preferredHeight: 156
+                Layout.maximumHeight: 156
                 Layout.alignment: Qt.AlignVCenter
                 spacing: 2
 
@@ -867,7 +869,7 @@ Item {
 
                         Rectangle {
                             id: tempoHeader
-                            Layout.fillWidth: true
+                            Layout.fillWidth: false
                             height: 16
                             radius: 3
                             color: tempoRangePopup.visible ? "#2a2a2a" : "transparent"
@@ -899,7 +901,7 @@ Item {
 
                         Slider {
                             id: tempoSlider
-                            Layout.fillWidth: true
+                            Layout.fillWidth: false
                             Layout.fillHeight: true
                             orientation: Qt.Vertical
                             from: -tempoPanel.tempoRange

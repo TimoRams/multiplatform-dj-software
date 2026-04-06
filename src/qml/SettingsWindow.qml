@@ -556,8 +556,8 @@ Window {
                     }
 
                     Text {
-                        text: "MIDI Devices: " + (hasMidiDevices ? midiDeviceList.length : 0)
-                              + " | Mappings: " + availableMappingCount
+                        text: "MIDI Devices: " + (midiSettingsColumn.hasMidiDevices ? midiSettingsColumn.midiDeviceList.length : 0)
+                              + " | Mappings: " + midiSettingsColumn.availableMappingCount
                         color: "#666"
                         font.pixelSize: 10
                         Layout.fillWidth: true

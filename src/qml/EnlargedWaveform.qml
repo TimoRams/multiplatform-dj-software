@@ -80,7 +80,7 @@ Item {
         Binding {
             target: root.engine
             property: "pixelsPerSecond"
-            value: root.waveformZoom * root.engine.waveformPointsPerSecond
+            value: root.engine ? (root.waveformZoom * root.engine.waveformPointsPerSecond) : 0
             when: root.engine !== null
         }
 
