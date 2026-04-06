@@ -171,8 +171,8 @@ Item {
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.margins: 10
-            spacing: 12
+            anchors.margins: 4
+            spacing: 2
 
             // Deck header: unified metadata fields (always visible)
             Rectangle {
@@ -182,7 +182,7 @@ Item {
 
                 RowLayout {
                     anchors.fill: parent
-                    spacing: 4
+                    spacing: 2
 
                     // Cover art square (left-aligned)
                     Rectangle {
@@ -224,11 +224,11 @@ Item {
                     ColumnLayout {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        spacing: 2
+                        spacing: 1
 
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 25
+                            Layout.preferredHeight: 22
                             radius: 4
                             color: "#1b1b1b"
                             border.color: "#3a3a3a"
@@ -236,8 +236,8 @@ Item {
 
                             Row {
                                 anchors.fill: parent
-                                anchors.leftMargin: 6
-                                anchors.rightMargin: 6
+                                anchors.leftMargin: 4
+                                anchors.rightMargin: 4
                                 anchors.verticalCenter: parent.verticalCenter
                                 spacing: 4
 
@@ -245,7 +245,7 @@ Item {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: "TITLE"
                                     color: "#6f6f6f"
-                                    font.pixelSize: window.spViewport(6)
+                                    font.pixelSize: window.spViewport(5)
                                     font.bold: true
                                     font.family: "monospace"
                                 }
@@ -255,7 +255,7 @@ Item {
                                     width: parent.width - 42
                                     text: deck._hasTrack ? deck._trackTitle : "No Track Loaded"
                                     color: deck._hasTrack ? "#f0f0f0" : "#777"
-                                    font.pixelSize: window.spViewport(8)
+                                    font.pixelSize: window.spViewport(7)
                                     font.bold: true
                                     elide: Text.ElideRight
                                 }
@@ -264,7 +264,7 @@ Item {
 
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 25
+                            Layout.preferredHeight: 22
                             radius: 4
                             color: "#1b1b1b"
                             border.color: "#3a3a3a"
@@ -272,8 +272,8 @@ Item {
 
                             Row {
                                 anchors.fill: parent
-                                anchors.leftMargin: 6
-                                anchors.rightMargin: 6
+                                anchors.leftMargin: 4
+                                anchors.rightMargin: 4
                                 anchors.verticalCenter: parent.verticalCenter
                                 spacing: 4
 
@@ -281,7 +281,7 @@ Item {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: "ARTIST"
                                     color: "#6f6f6f"
-                                    font.pixelSize: window.spViewport(6)
+                                    font.pixelSize: window.spViewport(5)
                                     font.bold: true
                                     font.family: "monospace"
                                 }
@@ -293,7 +293,7 @@ Item {
                                           ? (deck._trackArtist !== "" ? deck._trackArtist : "Unknown Artist")
                                           : "-"
                                     color: deck._hasTrack ? "#b8b8b8" : "#666"
-                                    font.pixelSize: window.spViewport(8)
+                                    font.pixelSize: window.spViewport(7)
                                     elide: Text.ElideRight
                                 }
                             }
@@ -478,23 +478,23 @@ Item {
             // Overview waveform + Buttons (left) | Tempo Fader (right)
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: 4
 
                 // LEFT: Overview on top, buttons below
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 4
+                        spacing: 1
 
                     // Slim rectified overview waveform
                     OverallWaveform {
                         engine: deck.engine
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 44
+                        Layout.preferredHeight: 38
                     }
 
                     SegmentBar {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 10
+                        Layout.preferredHeight: 8
                         segments: deck.engine ? deck.engine.currentSegments : []
                         totalTrackDuration: deck.engine ? deck.engine.trackDurationSec : 0
                     }
@@ -511,7 +511,7 @@ Item {
                             text: "PLAY"
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 1.1
-                            Layout.preferredHeight: 18
+                            Layout.preferredHeight: 16
                             palette.buttonText: "white"
                             font.pixelSize: window.spViewport(8)
                             background: Rectangle {
@@ -534,7 +534,7 @@ Item {
                             text: "CUE"
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 1.0
-                            Layout.preferredHeight: 18
+                            Layout.preferredHeight: 16
                             background: Rectangle { color: "#444"; radius: 3 }
                             contentItem: Text {
                                 text: parent.text
@@ -552,7 +552,7 @@ Item {
                             checked: deck.engine ? deck.engine.isReverse : false
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 1.0
-                            Layout.preferredHeight: 18
+                            Layout.preferredHeight: 16
                             background: Rectangle {
                                 color: parent.checked ? "#883300" : "#444"
                                 border.color: parent.checked ? "#ff6600" : "transparent"
@@ -578,7 +578,7 @@ Item {
                             checked: deck.engine ? deck.engine.syncEnabled : false
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 1.2
-                            Layout.preferredHeight: 18
+                            Layout.preferredHeight: 16
                             background: Rectangle {
                                 color: {
                                     if (!deck.engine || !parent.checked) return "#444"
@@ -615,7 +615,7 @@ Item {
                             checked: deck.engine ? deck.engine.quantizeEnabled : false
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 0.8
-                            Layout.preferredHeight: 18
+                            Layout.preferredHeight: 16
                             background: Rectangle {
                                 color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
                                 border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
@@ -640,7 +640,7 @@ Item {
                             checked: deck.engine ? deck.engine.keylock : false
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 0.9
-                            Layout.preferredHeight: 18
+                            Layout.preferredHeight: 16
                             background: Rectangle {
                                 color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
                                 border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
@@ -664,7 +664,7 @@ Item {
                             checkable: true
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 1.1
-                            Layout.preferredHeight: 18
+                            Layout.preferredHeight: 16
                             background: Rectangle {
                                 color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
                                 border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
@@ -684,7 +684,7 @@ Item {
                             text: "L IN"
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 1.2
-                            Layout.preferredHeight: 18
+                            Layout.preferredHeight: 16
                             background: Rectangle {
                                 color: "#333"
                                 radius: 3
@@ -706,7 +706,7 @@ Item {
                             text: "L OUT"
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 1.3
-                            Layout.preferredHeight: 18
+                            Layout.preferredHeight: 16
                             background: Rectangle {
                                 color: "#333"
                                 radius: 3
@@ -728,7 +728,7 @@ Item {
                             text: "<"
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 0.75
-                            Layout.preferredHeight: 18
+                            Layout.preferredHeight: 16
                             background: Rectangle {
                                 color: "#333"
                                 radius: 3
@@ -752,7 +752,7 @@ Item {
                             checked: deck.engine ? (deck.engine.loopActive && Math.abs(deck.engine.loopLengthBeats - 0.75) < 0.06) : false
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 2.0
-                            Layout.preferredHeight: 18
+                            Layout.preferredHeight: 16
                             background: Rectangle {
                                 color: parent.checked ? "#335533" : "#333"
                                 radius: 3
@@ -775,7 +775,7 @@ Item {
                             text: ">"
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 0.75
-                            Layout.preferredHeight: 18
+                            Layout.preferredHeight: 16
                             background: Rectangle {
                                 color: "#333"
                                 radius: 3
@@ -799,7 +799,7 @@ Item {
                             checked: deck.engine ? (deck.engine.loopActive && Math.abs(deck.engine.loopLengthBeats - 0.75) < 0.06) : false
                             Layout.fillWidth: true
                             Layout.preferredWidth: deckControlsRow.unit * 1.0
-                            Layout.preferredHeight: 18
+                            Layout.preferredHeight: 16
                             background: Rectangle {
                                 color: parent.checked ? "#334455" : "#333"
                                 radius: 3
@@ -824,10 +824,10 @@ Item {
             // Performance pads + tempo fader on the right
             RowLayout {
                 Layout.fillWidth: true
-                Layout.preferredHeight: Math.max(52, parent.height * 0.38)
-                Layout.maximumHeight: Math.max(52, parent.height * 0.38)
+                Layout.preferredHeight: Math.max(44, parent.height * 0.30)
+                Layout.maximumHeight: Math.max(44, parent.height * 0.30)
                 Layout.alignment: Qt.AlignVCenter
-                spacing: 4
+                spacing: 2
 
                 PerformancePads {
                     Layout.fillWidth: true
@@ -839,8 +839,8 @@ Item {
 
                 Rectangle {
                     id: tempoPanel
-                    Layout.preferredWidth: 52
-                    Layout.preferredHeight: Math.max(100, parent.height * 0.62)
+                    Layout.preferredWidth: 48
+                    Layout.preferredHeight: Math.max(88, parent.height * 0.54)
                     Layout.alignment: Qt.AlignVCenter
                     color: "#1a1a1a"
                     border.color: "#333"
@@ -851,13 +851,13 @@ Item {
 
                     ColumnLayout {
                         anchors.fill: parent
-                        anchors.margins: 4
-                        spacing: 2
+                        anchors.margins: 2
+                        spacing: 1
 
                         Rectangle {
                             id: tempoHeader
                             Layout.fillWidth: true
-                            height: 18
+                            height: 16
                             radius: 3
                             color: tempoRangePopup.visible ? "#2a2a2a" : "transparent"
 
@@ -867,14 +867,14 @@ Item {
                                 Text {
                                     text: "TEMPO"
                                     color: "#cccccc"
-                                    font.pixelSize: window.spViewport(8)
+                                    font.pixelSize: window.spViewport(7)
                                     font.bold: true
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
                                 Text {
                                     text: "▾"
                                     color: deck.deckName === "A" ? "#ff9900" : "#00ccff"
-                                    font.pixelSize: window.spViewport(9)
+                                    font.pixelSize: window.spViewport(8)
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
                             }

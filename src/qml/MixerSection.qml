@@ -210,8 +210,10 @@ Rectangle {
                 // Volume Fader A
                 Slider {
                     id: volFaderA
-                    Layout.fillHeight: true
+                    Layout.fillHeight: false
                     Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredHeight: 120
+                    Layout.maximumHeight: 120
                     orientation: Qt.Vertical
                     from: 0; to: 1.0; value: 0.8
                     onValueChanged: { 
@@ -290,8 +292,10 @@ Rectangle {
                 // Volume Fader B
                 Slider {
                     id: volFaderB
-                    Layout.fillHeight: true
+                    Layout.fillHeight: false
                     Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredHeight: 120
+                    Layout.maximumHeight: 120
                     orientation: Qt.Vertical
                     from: 0; to: 1.0; value: 0.8
                     onValueChanged: { 
