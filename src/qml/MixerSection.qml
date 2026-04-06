@@ -41,7 +41,7 @@ Rectangle {
         }
     }
 
-    component MixerKnob: RowLayout {
+    component MixerKnob: Item {
         id: knobRoot
         property alias text: label.text
         property alias from: dial.from
@@ -49,26 +49,22 @@ Rectangle {
         property alias knobValue: dial.value
         property real knobSize: 26
         property real defaultValue: (dial.from + dial.to) / 2
-        // "left" = label on left (Deck A), "right" = label on right (Deck B)
+        property real columnWidth: 40
+        // Kept for compatibility with existing uses; no longer affects layout.
         property string labelSide: "left"
 
-        spacing: 4
+        Layout.preferredWidth: columnWidth
+        Layout.minimumWidth: columnWidth
+        Layout.maximumWidth: columnWidth
+        Layout.preferredHeight: knobSize
+        Layout.minimumHeight: knobSize
+        Layout.maximumHeight: knobSize
         Layout.alignment: Qt.AlignHCenter
-
-        // Left label slot
-        Text {
-            id: label
-            visible: knobRoot.labelSide === "left"
-            color: "#666"
-            font.pixelSize: window.spViewport(9)
-            font.bold: true
-            font.family: "monospace"
-            Layout.alignment: Qt.AlignVCenter
-        }
 
         Dial {
             id: dial
-            Layout.alignment: Qt.AlignVCenter
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.top: parent.top
             width: knobRoot.knobSize
             height: knobRoot.knobSize
 
@@ -179,15 +175,16 @@ Rectangle {
             }
         }
 
-        // Right label slot
+        // Tiny label below the knob, drawn without increasing layout height.
         Text {
-            visible: knobRoot.labelSide === "right"
-            text: label.text
+            id: label
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.top: dial.bottom
+            anchors.topMargin: -1
             color: "#666"
-            font.pixelSize: window.spViewport(9)
+            font.pixelSize: window.spViewport(6)
             font.bold: true
             font.family: "monospace"
-            Layout.alignment: Qt.AlignVCenter
         }
     }
 
@@ -319,6 +316,8 @@ Rectangle {
                     checked: mixer.cueAActive
                     Layout.alignment: Qt.AlignHCenter
                     Layout.preferredWidth: 40
+                    Layout.minimumWidth: 40
+                    Layout.maximumWidth: 40
                     Layout.preferredHeight: 24
                     palette.buttonText: "#fff"
                     background: Rectangle { 
@@ -335,6 +334,9 @@ Rectangle {
                     id: volFaderA
                     Layout.fillHeight: false
                     Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: 40
+                    Layout.minimumWidth: 40
+                    Layout.maximumWidth: 40
                     Layout.preferredHeight: 48
                     Layout.maximumHeight: 48
                     orientation: Qt.Vertical
@@ -403,6 +405,8 @@ Rectangle {
                     checked: mixer.cueBActive
                     Layout.alignment: Qt.AlignHCenter
                     Layout.preferredWidth: 40
+                    Layout.minimumWidth: 40
+                    Layout.maximumWidth: 40
                     Layout.preferredHeight: 24
                     palette.buttonText: "#fff"
                     background: Rectangle { 
@@ -419,6 +423,9 @@ Rectangle {
                     id: volFaderB
                     Layout.fillHeight: false
                     Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: 40
+                    Layout.minimumWidth: 40
+                    Layout.maximumWidth: 40
                     Layout.preferredHeight: 48
                     Layout.maximumHeight: 48
                     orientation: Qt.Vertical
