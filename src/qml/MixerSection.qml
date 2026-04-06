@@ -386,7 +386,7 @@ Rectangle {
                         width: 6
                         anchors.left: parent.left
                         anchors.leftMargin: 0
-                        anchors.top: eqStackA.top
+                        anchors.top: channelAControls.top
                         height: eqStackA.height
                         color: "#101010"
                         border.color: "#2f2f2f"
@@ -519,7 +519,7 @@ Rectangle {
                         width: 6
                         anchors.left: parent.left
                         anchors.leftMargin: 0
-                        anchors.top: eqStackB.top
+                        anchors.top: channelBControls.top
                         height: eqStackB.height
                         color: "#101010"
                         border.color: "#2f2f2f"
