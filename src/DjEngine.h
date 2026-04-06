@@ -10,6 +10,7 @@
 #include <array>
 #include <cstdint>
 #include <mutex>
+#include <vector>
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 
@@ -52,12 +53,8 @@ class DjEngine : public QObject
     Q_PROPERTY(bool    hasCoverArt  READ hasCoverArt  NOTIFY trackMetadataChanged)
     Q_PROPERTY(QVariantList currentSegments READ currentSegments NOTIFY segmentsChanged)
 
-    // Waveform Properties
-    // Central timeline resolution used by analyzer and waveform renderers.
     Q_PROPERTY(double waveformPointsPerSecond READ waveformPointsPerSecond CONSTANT)
 
-    // Pixels per second at current zoom — needed by the scrub math in QML.
-    // waveformPointsPerSecond × pixelsPerPoint (written from QML via setPixelsPerPoint).
     Q_PROPERTY(double pixelsPerSecond READ pixelsPerSecond WRITE setPixelsPerSecond NOTIFY pixelsPerSecondChanged)
 
     Q_PROPERTY(double volume READ volume WRITE setVolume NOTIFY volumeChanged)
@@ -68,14 +65,12 @@ class DjEngine : public QObject
     Q_PROPERTY(double filter READ filter WRITE setFilter NOTIFY filterChanged)
     Q_PROPERTY(bool cueEnabled READ cueEnabled WRITE setCueEnabled NOTIFY cueEnabledChanged)
 
-    // VU meter peak levels (0.0-1.0+), read from the audio thread
     Q_PROPERTY(float vuLevelL READ vuLevelL NOTIFY vuLevelChanged)
     Q_PROPERTY(float vuLevelR READ vuLevelR NOTIFY vuLevelChanged)
     Q_PROPERTY(float preFaderVuLevelL READ preFaderVuLevelL NOTIFY vuLevelChanged)
     Q_PROPERTY(float preFaderVuLevelR READ preFaderVuLevelR NOTIFY vuLevelChanged)
     Q_PROPERTY(bool clipDetected READ clipDetected NOTIFY vuLevelChanged)
     
-    // Global anti-clip gain reduction (0.0-1.0), 1.0 = no reduction
     Q_PROPERTY(float gainReduction READ gainReduction NOTIFY gainReductionChanged)
     Q_PROPERTY(QVariantList hotCues READ hotCues NOTIFY hotCuesChanged)
 
@@ -351,8 +346,9 @@ private:
 
     void updateSpeedAndPitch();
 
-    // Updates the JUCE transport source gain based on volume and trim
     void updateGain();
+    void applyMixerEq();
+    void applyMixerFilter();
 
     // m_latencySeconds is computed once after device init (output latency + buffer size).
     // m_snapPosition + m_snapClock enable sub-frame interpolation in getVisualPosition().

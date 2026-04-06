@@ -24,6 +24,20 @@
 // (ID3v2, Vorbis comments, MP4 atoms, etc.).
 namespace {
 
+constexpr double kVolumeMin = 0.0;
+constexpr double kVolumeMax = 1.0;
+constexpr double kTrimMin = 0.0;
+constexpr double kTrimMax = 2.0;
+constexpr double kEqMin = -1.0;
+constexpr double kEqMax = 1.0;
+constexpr double kFilterMin = -1.0;
+constexpr double kFilterMax = 1.0;
+constexpr double kParamEpsilon = 1e-6;
+
+bool nearlyEqual(double a, double b) {
+    return std::abs(a - b) <= kParamEpsilon;
+}
+
 QString fromJuce(const juce::String& s) {
     return QString::fromUtf8(s.toRawUTF8());
 }
@@ -2137,65 +2151,94 @@ void DjEngine::updateGain()
     }
 }
 
+void DjEngine::applyMixerEq()
+{
+    if (!mixerSource)
+        return;
+    mixerSource->setEq(static_cast<float>(m_eqLow),
+                       static_cast<float>(m_eqMid),
+                       static_cast<float>(m_eqHigh));
+}
+
+void DjEngine::applyMixerFilter()
+{
+    if (!mixerSource)
+        return;
+    mixerSource->setFilterVal(static_cast<float>(m_filter));
+}
+
 void DjEngine::setVolume(double value)
 {
-    if (m_volume != value) {
-        m_volume = value;
-        updateGain();
-        emit volumeChanged();
-    }
+    const double clamped = std::clamp(value, kVolumeMin, kVolumeMax);
+    if (nearlyEqual(m_volume, clamped))
+        return;
+
+    m_volume = clamped;
+    if (mixerSource)
+        mixerSource->setFader(static_cast<float>(m_volume));
+    emit volumeChanged();
 }
 
 void DjEngine::setTrim(double value)
 {
-    if (m_trim != value) {
-        m_trim = value;
-        updateGain();
-        emit trimChanged();
-    }
+    const double clamped = std::clamp(value, kTrimMin, kTrimMax);
+    if (nearlyEqual(m_trim, clamped))
+        return;
+
+    m_trim = clamped;
+    if (mixerSource)
+        mixerSource->setTrim(static_cast<float>(m_trim));
+    emit trimChanged();
 }
 
 void DjEngine::setEqHigh(double value)
 {
-    if (m_eqHigh != value) {
-        m_eqHigh = value;
-        if (mixerSource) mixerSource->setEq(static_cast<float>(m_eqLow), static_cast<float>(m_eqMid), static_cast<float>(m_eqHigh));
-        emit eqHighChanged();
-    }
+    const double clamped = std::clamp(value, kEqMin, kEqMax);
+    if (nearlyEqual(m_eqHigh, clamped))
+        return;
+
+    m_eqHigh = clamped;
+    applyMixerEq();
+    emit eqHighChanged();
 }
 
 void DjEngine::setEqMid(double value)
 {
-    if (m_eqMid != value) {
-        m_eqMid = value;
-        if (mixerSource) mixerSource->setEq(static_cast<float>(m_eqLow), static_cast<float>(m_eqMid), static_cast<float>(m_eqHigh));
-        emit eqMidChanged();
-    }
+    const double clamped = std::clamp(value, kEqMin, kEqMax);
+    if (nearlyEqual(m_eqMid, clamped))
+        return;
+
+    m_eqMid = clamped;
+    applyMixerEq();
+    emit eqMidChanged();
 }
 
 void DjEngine::setEqLow(double value)
 {
-    if (m_eqLow != value) {
-        m_eqLow = value;
-        if (mixerSource) mixerSource->setEq(static_cast<float>(m_eqLow), static_cast<float>(m_eqMid), static_cast<float>(m_eqHigh));
-        emit eqLowChanged();
-    }
+    const double clamped = std::clamp(value, kEqMin, kEqMax);
+    if (nearlyEqual(m_eqLow, clamped))
+        return;
+
+    m_eqLow = clamped;
+    applyMixerEq();
+    emit eqLowChanged();
 }
 
 void DjEngine::setFilter(double value)
 {
-    if (m_filter != value) {
-        m_filter = value;
-        if (mixerSource) mixerSource->setFilterVal(static_cast<float>(m_filter));
-        emit filterChanged();
-    }
+    const double clamped = std::clamp(value, kFilterMin, kFilterMax);
+    if (nearlyEqual(m_filter, clamped))
+        return;
+
+    m_filter = clamped;
+    applyMixerFilter();
+    emit filterChanged();
 }
 
 void DjEngine::setCueEnabled(bool value)
 {
     if (m_cueEnabled != value) {
         m_cueEnabled = value;
-        // In a real app, route this to a separate headphone/monitor audio output
         emit cueEnabledChanged();
     }
 }
