@@ -138,6 +138,74 @@ Rectangle {
         }
     }
 
+    component MixerSlider: Slider {
+        id: control
+
+        // For crossfader: draw from center line to handle.
+        // For volume faders: draw from bottom to handle.
+        property bool centerFill: false
+
+        background: Rectangle {
+            x: control.orientation === Qt.Horizontal ? control.leftPadding : control.width / 2 - 2
+            y: control.orientation === Qt.Horizontal ? control.height / 2 - 2 : control.topPadding
+            width: control.orientation === Qt.Horizontal ? control.availableWidth : 4
+            height: control.orientation === Qt.Horizontal ? 4 : control.availableHeight
+            radius: 0
+            color: "#202020"
+            border.color: "#3a3a3a"
+            border.width: 1
+
+            Rectangle {
+                visible: control.orientation === Qt.Horizontal && !control.centerFill
+                x: 1
+                y: 1
+                width: Math.max(0, control.visualPosition * (parent.width - 2))
+                height: parent.height - 2
+                radius: 0
+                color: control.pressed ? "#5a5a5a" : "#3e3e3e"
+            }
+
+            Rectangle {
+                visible: control.orientation === Qt.Horizontal && control.centerFill
+                y: 1
+                height: parent.height - 2
+                radius: 0
+                color: control.pressed ? "#5a5a5a" : "#3e3e3e"
+
+                readonly property real midPx: parent.width / 2
+                readonly property real posPx: 1 + control.visualPosition * (parent.width - 2)
+
+                x: Math.min(midPx, posPx)
+                width: Math.max(0, Math.abs(posPx - midPx))
+            }
+
+            Rectangle {
+                visible: control.orientation === Qt.Vertical
+                x: 1
+                y: parent.height - 1 - Math.max(0, (1.0 - control.visualPosition) * (parent.height - 2))
+                width: parent.width - 2
+                height: Math.max(0, (1.0 - control.visualPosition) * (parent.height - 2))
+                radius: 0
+                color: control.pressed ? "#5a5a5a" : "#3e3e3e"
+            }
+        }
+
+        handle: Rectangle {
+            implicitWidth: control.orientation === Qt.Vertical ? 24 : 18
+            implicitHeight: control.orientation === Qt.Vertical ? 12 : 22
+            x: control.orientation === Qt.Horizontal
+               ? control.leftPadding + control.visualPosition * (control.availableWidth - width)
+               : control.width / 2 - width / 2
+            y: control.orientation === Qt.Horizontal
+               ? control.height / 2 - height / 2
+               : control.topPadding + control.visualPosition * (control.availableHeight - height)
+            radius: 0
+            color: control.pressed ? "#e0e0e0" : "#c8c8c8"
+            border.color: control.pressed ? "#707070" : "#444444"
+            border.width: 1
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 6
@@ -207,14 +275,14 @@ Rectangle {
                 }
 
                 // Volume Fader A
-                Slider {
+                MixerSlider {
                     id: volFaderA
                     Layout.fillHeight: false
                     Layout.alignment: Qt.AlignHCenter
                     Layout.preferredHeight: 96
                     Layout.maximumHeight: 96
                     orientation: Qt.Vertical
-                    from: 0; to: 1.0; value: 1.0
+                    from: 0.0; to: 1.0; value: 1.0
                     onValueChanged: { 
                         mixer.volA = value; 
                         mixer.updateVolumes(); 
@@ -288,14 +356,14 @@ Rectangle {
                 }
 
                 // Volume Fader B
-                Slider {
+                MixerSlider {
                     id: volFaderB
                     Layout.fillHeight: false
                     Layout.alignment: Qt.AlignHCenter
                     Layout.preferredHeight: 96
                     Layout.maximumHeight: 96
                     orientation: Qt.Vertical
-                    from: 0; to: 1.0; value: 1.0
+                    from: 0.0; to: 1.0; value: 1.0
                     onValueChanged: { 
                         mixer.volB = value; 
                         mixer.updateVolumes();
@@ -324,10 +392,11 @@ Rectangle {
             font.bold: true
             Layout.alignment: Qt.AlignHCenter 
         }
-        Slider {
+        MixerSlider {
             id: crossfader
             Layout.fillWidth: true
             Layout.preferredHeight: 24
+            centerFill: true
             from: -1.0; to: 1.0; value: 0.0
             stepSize: 0.01
             onValueChanged: {
