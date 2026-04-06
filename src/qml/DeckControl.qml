@@ -916,8 +916,10 @@ Item {
 
                         Rectangle {
                             id: tempoHeader
-                            Layout.fillWidth: false
-                            height: 16
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 16
+                            Layout.minimumHeight: 16
+                            Layout.maximumHeight: 16
                             radius: 0
                             color: tempoRangePopup.visible ? "#2a2a2a" : "transparent"
 
@@ -948,8 +950,9 @@ Item {
 
                         Slider {
                             id: tempoSlider
-                            Layout.fillWidth: false
+                            Layout.fillWidth: true
                             Layout.fillHeight: true
+                            Layout.alignment: Qt.AlignHCenter
                             orientation: Qt.Vertical
                             from: -tempoPanel.tempoRange
                             to:    tempoPanel.tempoRange
@@ -992,11 +995,11 @@ Item {
             visible: false
             z: 999
 
-            // Position: align left edge with tempoPanel, just below the header
-            x: tempoPanel.x + (tempoPanel.width - width) / 2
-            y: tempoPanel.y + 26          // header height (18) + margin (4) + panel margin (4)
+            // Position: align exactly to tempo panel frame.
+            x: tempoPanel.x
+            y: tempoPanel.y + tempoHeader.height + 2
 
-            width: 58
+            width: tempoPanel.width
             height: rangeCol.implicitHeight + 10
             radius: 4
             color: "#1e1e1e"
