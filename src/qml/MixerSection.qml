@@ -8,6 +8,8 @@ Rectangle {
     
     property var engineA: null
     property var engineB: null
+    property bool cueAActive: false
+    property bool cueBActive: false
     
     // Internal volumes for the faders (so crossfader can modify the actual engine volume)
     property real volA: 0.8
@@ -262,16 +264,19 @@ Rectangle {
 
                 Button {
                     text: "CUE"
+                    checkable: true
+                    checked: mixer.cueAActive
                     Layout.alignment: Qt.AlignHCenter
                     Layout.preferredWidth: 40
                     Layout.preferredHeight: 24
                     palette.buttonText: "#fff"
                     background: Rectangle { 
-                        color: "#333"
+                        color: parent.checked ? "#1f3a26" : "#333"
+                        border.color: parent.checked ? "#66cc88" : "#555"
+                        border.width: 1
                         radius: 0 
                     }
-                    onPressed: { if(engineA) engineA.cueButtonPress(); }
-                    onReleased: { if(engineA) engineA.cueButtonRelease(); }
+                    onClicked: mixer.cueAActive = checked
                 }
 
                 // Volume Fader A
@@ -343,16 +348,19 @@ Rectangle {
 
                 Button {
                     text: "CUE"
+                    checkable: true
+                    checked: mixer.cueBActive
                     Layout.alignment: Qt.AlignHCenter
                     Layout.preferredWidth: 40
                     Layout.preferredHeight: 24
                     palette.buttonText: "#fff"
                     background: Rectangle { 
-                        color: "#333"
+                        color: parent.checked ? "#1f3a26" : "#333"
+                        border.color: parent.checked ? "#66cc88" : "#555"
+                        border.width: 1
                         radius: 0 
                     }
-                    onPressed: { if(engineB) engineB.cueButtonPress(); }
-                    onReleased: { if(engineB) engineB.cueButtonRelease(); }
+                    onClicked: mixer.cueBActive = checked
                 }
 
                 // Volume Fader B
