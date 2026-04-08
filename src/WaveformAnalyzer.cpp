@@ -9,11 +9,6 @@
 #include <complex>
 #include <map>
 #include <mutex>
-
-#ifdef ESSENTIA_FOUND
-    #include <essentia/essentia.h>
-    #include <essentia/algorithmfactory.h>
-
 namespace {
 
 QVector<TrackData::RgbWaveformFrame> blendRgbPreferDynamics(
@@ -53,6 +48,10 @@ QVector<TrackData::RgbWaveformFrame> blendRgbPreferDynamics(
 
     return out;
 }
+
+#ifdef ESSENTIA_FOUND
+    #include <essentia/essentia.h>
+    #include <essentia/algorithmfactory.h>
 
 QVector<TrackData::RgbWaveformFrame> analyzeRgbFramesWithEssentia(
     const std::vector<essentia::Real>& monoSignal,
@@ -239,8 +238,8 @@ QVector<TrackData::RgbWaveformFrame> analyzeRgbFramesWithEssentia(
     return result;
 }
 
-} // namespace
 #endif
+} // namespace
 
 // libKeyFinder: key detection
 #include <keyfinder/keyfinder.h>
@@ -810,7 +809,7 @@ void WaveformAnalyzer::run()
                 qWarning() << "[WaveformAnalyzer] Essentia BPM extraction failed with unknown error.";
             }
 #else
-            qWarning() << "[WaveformAnalyzer] ESSENTIA_FOUND not set, BPM analysis disabled.";
+        qWarning() << "[WaveformAnalyzer] ESSENTIA_FOUND not set, using internal BPM fallback analysis.";
 #endif
         }
 

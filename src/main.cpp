@@ -11,10 +11,6 @@
 #include <QFont>
 #include <QtGlobal>
 
-#ifdef ESSENTIA_FOUND
-    #include <essentia/version.h>
-#endif
-
 #include "DjEngine.h"
 #include "WaveformItem.h"
 #include "LibraryManager.h"
@@ -52,11 +48,7 @@ int main(int argc, char *argv[])
     std::cout << "C++ Standard:   " << __cplusplus << std::endl;
     std::cout << "========================================" << std::endl;
 
-#ifdef ESSENTIA_FOUND
-    qDebug() << "Essentia Version:" << QString::fromLatin1(ESSENTIA_VERSION);
-#else
-    qDebug() << "Essentia nicht gefunden!";
-#endif
+    qDebug() << "Essentia disabled by project policy; using internal analysis pipeline.";
 
     g_previousMessageHandler = qInstallMessageHandler(filteredMessageHandler);
     QQuickWindow::setTextRenderType(QQuickWindow::CurveTextRendering);
