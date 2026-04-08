@@ -5,6 +5,10 @@ import QtQuick.Controls
 Rectangle {
     id: libraryRoot
     color: "#1e1e1e"
+    readonly property int sidebarRowHeight: Math.max(30, window.sp(32))
+    readonly property int sectionHeaderHeight: Math.max(22, window.sp(22))
+    readonly property int compactButtonHeight: Math.max(16, window.sp(16))
+    readonly property int compactButtonWidth: Math.max(20, window.sp(20))
 
     // Aktiver Sidebar-Tab: "library" | "streaming" | "usb" | "files"
     property string activeTab: "library"
@@ -70,7 +74,7 @@ Rectangle {
                     delegate: Rectangle {
                         required property var modelData
                         width:  parent.width
-                        height: 36
+                        height: libraryRoot.sidebarRowHeight
                         color:  libraryRoot.activeTab === modelData.key ? "#2a5298" : "transparent"
 
                         Text {
@@ -117,7 +121,7 @@ Rectangle {
                 anchors.top:   parent.top
                 anchors.left:  parent.left
                 anchors.right: parent.right
-                height: 24
+                height: libraryRoot.sectionHeaderHeight
                 color: "#1a1a1a"
 
                 Row {
@@ -129,7 +133,8 @@ Rectangle {
 
                     // Navigate-up button
                     Rectangle {
-                        width: 20; height: 16
+                        width: libraryRoot.compactButtonWidth
+                        height: libraryRoot.compactButtonHeight
                         radius: 2
                         color: upMouse.containsMouse ? "#3a3a3a" : "transparent"
                         visible: libraryManager ? libraryManager.canNavigateUp : false
@@ -178,7 +183,7 @@ Rectangle {
                     required property int    index
 
                     width:  ListView.view.width
-                    height: 28
+                    height: Math.max(26, window.sp(26))
                     color:  index % 2 === 0 ? "transparent" : "#252525"
 
                     Row {
@@ -236,7 +241,7 @@ Rectangle {
                 anchors.top:   parent.top
                 anchors.left:  parent.left
                 anchors.right: parent.right
-                height: 24
+                height: libraryRoot.sectionHeaderHeight
                 color: "#1a1a1a"
 
                 Text {
@@ -259,7 +264,7 @@ Rectangle {
 
                 Rectangle {
                     width: parent.width
-                    height: 30
+                    height: Math.max(28, window.sp(28))
                     color: libraryRoot.librarySubTab === "allSongs" ? "#2a5298" : "transparent"
 
                     Row {
@@ -284,7 +289,7 @@ Rectangle {
                         Rectangle {
                             visible: libraryModel ? libraryModel.count > 0 : false
                             width: countText.width + 10
-                            height: 16
+                            height: Math.max(16, Math.round(parent.height * 0.54))
                             radius: 8
                             color: "#3a3a3a"
                             anchors.verticalCenter: parent.verticalCenter

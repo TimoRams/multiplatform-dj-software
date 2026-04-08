@@ -17,6 +17,9 @@ Item {
 
     implicitHeight: 80
     implicitWidth: 300
+    readonly property int coverSize: Math.max(48, Math.round(height * 0.8))
+    readonly property int badgeSize: Math.max(16, Math.round(coverSize * 0.32))
+    readonly property int infoBadgeHeight: Math.max(16, Math.round(height * 0.22))
 
     // Deck-Farben: A = Orange, B = Cyan
     readonly property color deckColor: deckName === "A" ? "#ff9900" : "#00ccff"
@@ -27,8 +30,12 @@ Item {
 
         // ── DECK BADGE + COVER ───────────────────────────────────────
         Item {
-            width: 64
-            height: 64
+            Layout.preferredWidth: root.coverSize
+            Layout.minimumWidth: root.coverSize
+            Layout.maximumWidth: root.coverSize
+            Layout.preferredHeight: root.coverSize
+            Layout.minimumHeight: root.coverSize
+            Layout.maximumHeight: root.coverSize
 
             // Cover-Art Hintergrund
             Rectangle {
@@ -62,9 +69,9 @@ Item {
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 anchors.margins: -2
-                width: 20
-                height: 20
-                radius: 10
+                width: root.badgeSize
+                height: root.badgeSize
+                radius: width / 2
                 color: root.deckColor
                 z: 10
 
@@ -123,7 +130,7 @@ Item {
                     border.color: root.hasTrack ? "#4a8a4a" : "#333"
                     border.width: 1
                     implicitWidth: bpmText.implicitWidth + 12
-                    height: 18
+                    height: root.infoBadgeHeight
 
                     Text {
                         id: bpmText
@@ -143,7 +150,7 @@ Item {
                     border.color: root.hasTrack ? "#4a4aaa" : "#333"
                     border.width: 1
                     implicitWidth: keyText.implicitWidth + 12
-                    height: 18
+                    height: root.infoBadgeHeight
 
                     Text {
                         id: keyText
@@ -163,7 +170,7 @@ Item {
                     border.color: "#444"
                     border.width: 1
                     implicitWidth: durText.implicitWidth + 12
-                    height: 18
+                    height: root.infoBadgeHeight
 
                     Text {
                         id: durText

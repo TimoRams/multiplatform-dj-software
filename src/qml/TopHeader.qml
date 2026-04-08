@@ -14,14 +14,34 @@ Rectangle {
     // ── FIXED CONSTANTS (no binding to root.height to avoid cascading jitter) ──
     readonly property int verticalPad: 0
     readonly property int horizontalPadding: 8
-    readonly property int accentBarWidth: 2
-    readonly property int accentBarHeight: 14
-    readonly property int masterDialSize: 22
-    readonly property int antiClipButtonWidth: 44
+    readonly property int accentBarWidth: Math.max(2, Math.round(buttonHeight * 0.06))
+    readonly property int accentBarHeight: Math.max(12, Math.round(buttonHeight * 0.42))
+    readonly property int masterDialSize: Math.max(20, Math.round(buttonHeight * 0.65))
+    readonly property int antiClipButtonWidth: Math.max(40, Math.round(buttonHeight * 1.28))
     readonly property int buttonSpacing: 3
+    readonly property int linkToggleWidth: Math.max(36, Math.round(buttonHeight * 1.1))
+    readonly property int linkPeerWidth: Math.max(16, Math.round(buttonHeight * 0.55))
+    readonly property int linkBpmWidth: Math.max(48, Math.round(buttonHeight * 1.5))
+    readonly property int meterLabelWidth: Math.max(22, Math.round(buttonHeight * 0.7))
+    readonly property int meterBarWidth: Math.max(52, Math.round(buttonHeight * 1.7))
+    readonly property int smallButtonWidth: Math.max(36, Math.round(buttonHeight * 1.1))
+    readonly property int meterDotSize: Math.max(6, Math.round(buttonHeight * 0.2))
+    readonly property int vuBarWidth: Math.max(100, Math.round(buttonHeight * 3.5))
+    readonly property int vuBarHeight: Math.max(5, Math.round(buttonHeight * 0.18))
+    readonly property int miniBarHeight: Math.max(4, Math.round(buttonHeight * 0.12))
+    readonly property int clipInfoWidth: Math.max(36, Math.round(buttonHeight * 1.15))
+    readonly property int logoTitlePx: Math.min(root.sp(14), Math.max(11, Math.round(buttonHeight * 0.42)))
+    readonly property int logoSubPx: Math.min(root.sp(8), Math.max(7, Math.round(buttonHeight * 0.23)))
+    readonly property int recTextPx: Math.min(root.sp(9), Math.max(8, Math.round(buttonHeight * 0.27)))
+    readonly property int iconButtonPx: Math.min(root.sp(13), Math.max(10, Math.round(buttonHeight * 0.4)))
     
     // Buttons should match the bar height exactly.
     readonly property int buttonHeight: root.height
+
+    function sp(px) {
+        var w = root.Window.window
+        return (w && typeof w.sp === "function") ? w.sp(px) : px
+    }
 
     property string currentTime: "00:00"
     
@@ -58,7 +78,9 @@ Rectangle {
         // ── LEFT: Software name ───────────────────────────────────────────────
         Row {
             spacing: 6
+            Layout.fillHeight: true
             Layout.alignment: Qt.AlignVCenter
+            height: root.buttonHeight
 
             // Small coloured accent bar (Traktor-style)
             Rectangle {
@@ -75,18 +97,19 @@ Rectangle {
 
             Column {
                 spacing: 0
+                anchors.verticalCenter: parent.verticalCenter
 
                 Text {
                     text: "DJ-Software"
                     color: "#ffffff"
-                    font.pixelSize: 14
+                    font.pixelSize: root.logoTitlePx
                     font.bold: true
                     font.letterSpacing: 1.5
                 }
                 Text {
                     text: "by Ramsbrock.net"
                     color: "#555"
-                    font.pixelSize: 8
+                    font.pixelSize: root.logoSubPx
                     font.letterSpacing: 0.5
                 }
             }
@@ -97,12 +120,12 @@ Rectangle {
             spacing: 6
             Layout.fillHeight: true
             Layout.leftMargin: 12
+            height: root.buttonHeight
 
             // LINK toggle button
             Rectangle {
-                width: 35
+                width: root.linkToggleWidth
                 height: parent.height
-                anchors.verticalCenter: parent.verticalCenter
                 radius: 0
                 color: (linkManager && linkManager.enabled) ? "#1a3322" : "#1a1a1a"
                 border.color: (linkManager && linkManager.enabled) ? "#44cc66" : "#333"
@@ -112,7 +135,7 @@ Rectangle {
                     anchors.centerIn: parent
                     text: "LINK"
                     color: (linkManager && linkManager.enabled) ? "#44cc66" : "#777"
-                    font.pixelSize: 9
+                    font.pixelSize: root.sp(9)
                     font.bold: true
                     font.letterSpacing: 0.5
                 }
@@ -126,40 +149,42 @@ Rectangle {
 
             // Peer count
             Text {
-                width: 16
-                anchors.verticalCenter: parent.verticalCenter
+                width: root.linkPeerWidth
                 text: linkManager ? linkManager.numPeers.toString() : "0"
                 color: (linkManager && linkManager.numPeers > 0) ? "#44cc66" : "#555"
-                font.pixelSize: 9
+                font.pixelSize: root.sp(9)
                 font.family: "monospace"
                 font.bold: true
                 horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
             }
 
             // Link BPM display
             Text {
-                width: 48
-                anchors.verticalCenter: parent.verticalCenter
+                width: root.linkBpmWidth
                 opacity: (linkManager && linkManager.enabled) ? 1.0 : 0.3
                 text: linkManager ? linkManager.bpm.toFixed(1) : "120.0"
                 color: "#ccc"
-                font.pixelSize: 11
+                font.pixelSize: root.sp(11)
                 font.family: "monospace"
                 font.bold: true
                 horizontalAlignment: Text.AlignRight
+                verticalAlignment: Text.AlignVCenter
             }
 
             // 4-beat phase indicator
             Row {
                 spacing: 3
-                anchors.verticalCenter: parent.verticalCenter
                 opacity: (linkManager && linkManager.enabled) ? 1.0 : 0.2
+                height: parent.height
 
                 Repeater {
                     model: 4
                     Rectangle {
                         required property int index
-                        width: 7; height: 7; radius: 3.5
+                        width: root.meterDotSize
+                        height: root.meterDotSize
+                        radius: width / 2
                         color: {
                             if (!linkManager || !linkManager.enabled) return "#222"
                             var beatIndex = Math.floor(linkManager.phase)
@@ -185,11 +210,12 @@ Rectangle {
         Row {
             spacing: 14
             Layout.fillHeight: true
+            height: root.buttonHeight
 
             // Anti-Clip button
             Rectangle {
                 width: root.antiClipButtonWidth
-                height: parent.height
+                height: root.buttonHeight
                 radius: 0
                 property bool antiClipActive: false
                 property real gr: deckA ? deckA.gainReduction : 1.0
@@ -202,7 +228,7 @@ Rectangle {
                     anchors.centerIn: parent
                     text: "A-CLIP"
                     color: !parent.antiClipActive ? "#666" : (parent.gr < 0.99 ? "#fff" : "#c8e6c9")
-                    font.pixelSize: 8
+                    font.pixelSize: root.sp(8)
                     font.bold: true
                     font.family: "monospace"
                 }
@@ -221,22 +247,19 @@ Rectangle {
             Row {
                 spacing: 3
                 Layout.alignment: Qt.AlignVCenter
-                anchors.verticalCenter: parent.verticalCenter
 
                 Text {
                     text: "MST"
                     color: "#555"
-                    font.pixelSize: 8
+                    font.pixelSize: root.sp(8)
                     font.bold: true
                     font.family: "monospace"
-                    anchors.verticalCenter: parent.verticalCenter
                 }
 
                 Dial {
                     id: masterVolDial
                     width: root.masterDialSize
                     height: root.masterDialSize
-                    anchors.verticalCenter: parent.verticalCenter
                     from: 0.0; to: 1.0; value: 0.8
 
                     background: Rectangle {
@@ -332,7 +355,6 @@ Rectangle {
             Row {
                 spacing: 5
                 Layout.alignment: Qt.AlignVCenter
-                anchors.verticalCenter: parent.verticalCenter
 
                 Column {
                     spacing: 2
@@ -343,12 +365,13 @@ Rectangle {
                         Text {
                             text: "CPU"
                             color: "#555"
-                            font.pixelSize: 7
+                            font.pixelSize: root.sp(7)
                             font.bold: true
-                            width: 22
+                            width: root.meterLabelWidth
                         }
                         Rectangle {
-                            width: 50; height: 4
+                            width: root.meterBarWidth
+                            height: root.miniBarHeight
                             color: "#0d0d0d"
                             border.color: "#2a2a2a"
                             radius: 2
@@ -368,12 +391,13 @@ Rectangle {
                         Text {
                             text: "RAM"
                             color: "#555"
-                            font.pixelSize: 7
+                            font.pixelSize: root.sp(7)
                             font.bold: true
-                            width: 22
+                            width: root.meterLabelWidth
                         }
                         Rectangle {
-                            width: 50; height: 4
+                            width: root.meterBarWidth
+                            height: root.miniBarHeight
                             color: "#0d0d0d"
                             border.color: "#2a2a2a"
                             radius: 2
@@ -391,8 +415,8 @@ Rectangle {
 
             // REC button
             Rectangle {
-                width: 35
-                height: parent.height
+                width: root.smallButtonWidth
+                height: root.buttonHeight
                 color: "#1a1a1a"
                 border.color: "#333"
                 radius: 0
@@ -402,13 +426,15 @@ Rectangle {
                     spacing: 4
 
                     Rectangle {
-                        width: 7; height: 7; radius: 3.5
+                        width: root.meterDotSize
+                        height: root.meterDotSize
+                        radius: width / 2
                         color: "#aa3333"
                     }
                     Text {
                         text: "REC"
                         color: "#777"
-                        font.pixelSize: 9
+                        font.pixelSize: root.recTextPx
                         font.bold: true
                     }
                 }
@@ -418,18 +444,16 @@ Rectangle {
             Text {
                 text: root.currentTime
                 color: "#bbb"
-                font.pixelSize: 12
+                font.pixelSize: root.sp(12)
                 font.family: "monospace"
                 font.bold: true
                 Layout.alignment: Qt.AlignVCenter
-                anchors.verticalCenter: parent.verticalCenter
             }
 
             // UI action buttons
             Row {
                 spacing: 3
                 height: root.buttonHeight
-                anchors.verticalCenter: parent.verticalCenter
 
                 Rectangle {
                     width: root.buttonHeight
@@ -443,7 +467,7 @@ Rectangle {
                         anchors.centerIn: parent
                         text: "⛶"
                         color: "#aaa"
-                        font.pixelSize: 13
+                        font.pixelSize: root.iconButtonPx
                     }
 
                     MouseArea {
@@ -471,7 +495,7 @@ Rectangle {
                         anchors.centerIn: parent
                         text: "⚙"
                         color: "#aaa"
-                        font.pixelSize: 13
+                        font.pixelSize: root.iconButtonPx
                     }
 
                     MouseArea {
@@ -589,8 +613,8 @@ Rectangle {
 
             // LEFT CHANNEL: Horizontal Bar
             Rectangle {
-                width: 120
-                height: 6
+                width: root.vuBarWidth
+                height: root.vuBarHeight
                 radius: 2
                 color: "#1a1a1a"
                 border.color: "#333"
@@ -626,8 +650,8 @@ Rectangle {
 
             // RIGHT CHANNEL: Horizontal Bar
             Rectangle {
-                width: 120
-                height: 6
+                width: root.vuBarWidth
+                height: root.vuBarHeight
                 radius: 2
                 color: "#1a1a1a"
                 border.color: "#333"
@@ -694,7 +718,7 @@ Rectangle {
                 font.pixelSize: window.sp(10)
                 font.bold: true
                 font.family: "monospace"
-                width: 40
+                width: root.clipInfoWidth
                 horizontalAlignment: Text.AlignHCenter
             }
 
@@ -705,7 +729,7 @@ Rectangle {
                 font.pixelSize: window.sp(8)
                 font.bold: true
                 font.family: "monospace"
-                width: 40
+                width: root.clipInfoWidth
                 horizontalAlignment: Text.AlignRight
             }
         }

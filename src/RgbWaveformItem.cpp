@@ -55,8 +55,9 @@ struct OverviewBin {
 RgbWaveformItem::RgbWaveformItem(QQuickItem* parent)
     : QQuickPaintedItem(parent)
 {
-    setAntialiasing(false);
+    setAntialiasing(true);
     setOpaquePainting(false);
+    setRenderTarget(QQuickPaintedItem::FramebufferObject);
 }
 
 void RgbWaveformItem::setEngine(DjEngine* engine)

@@ -1,14 +1,19 @@
 import QtQuick
 import QtQuick.Controls as Controls
+import QtQuick.Window
 
 Controls.Button {
     id: control
+    readonly property var hostWindow: control.Window.window
+    function sp(px) {
+        return (hostWindow && typeof hostWindow.sp === "function") ? hostWindow.sp(px) : px
+    }
 
     implicitWidth: Math.max(48, contentItem ? contentItem.implicitWidth + leftPadding + rightPadding : 72)
-    implicitHeight: 32
+    implicitHeight: Math.max(30, sp(28))
     padding: 0
-    leftPadding: 10
-    rightPadding: 10
+    leftPadding: Math.max(8, Math.round(implicitHeight * 0.28))
+    rightPadding: leftPadding
     topPadding: 0
     bottomPadding: 0
 
@@ -22,7 +27,7 @@ Controls.Button {
     contentItem: Text {
         text: control.text
         color: control.enabled ? "#f0f0f0" : "#777777"
-        font.pixelSize: 12
+        font.pixelSize: control.sp(12)
         font.bold: control.checked || control.down
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter

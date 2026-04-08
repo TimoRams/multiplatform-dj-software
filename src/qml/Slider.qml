@@ -4,8 +4,8 @@ import QtQuick.Controls as Controls
 Controls.Slider {
     id: control
 
-    implicitWidth: orientation === Qt.Vertical ? 20 : 140
-    implicitHeight: orientation === Qt.Vertical ? 140 : 20
+    implicitWidth: orientation === Qt.Vertical ? 22 : 150
+    implicitHeight: orientation === Qt.Vertical ? 150 : 22
 
     background: Rectangle {
         x: control.orientation === Qt.Horizontal ? control.leftPadding : control.width / 2 - 2
@@ -39,8 +39,8 @@ Controls.Slider {
     }
 
     handle: Rectangle {
-        implicitWidth: 16
-        implicitHeight: 16
+        implicitWidth: Math.max(14, Math.round((control.orientation === Qt.Horizontal ? control.height : control.width) * 0.72))
+        implicitHeight: implicitWidth
         x: control.leftPadding + control.visualPosition * (control.availableWidth - width)
         y: control.topPadding + control.visualPosition * (control.availableHeight - height)
         radius: 0
