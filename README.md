@@ -9,7 +9,7 @@ A modern DJ application built on **JUCE** (Audio/DSP) and **Qt 6 / QML** (UI). W
 ## ✅ Current Features
 
 | Feature | Details |
-|---|---|
+| --- | --- |
 | **Dual-Deck Playback** | Two independent decks supporting FLAC / WAV / OGG / MP3 |
 | **3-Band Waveforms** | GPU-rendered waveforms with beatgrid overlay |
 | **BPM & Key Detection** | Autocorrelation + Krumhansl-Schmuckler, Harmonic Mixing Format |
@@ -55,10 +55,21 @@ These three threads communicate exclusively via Qt Queued Connections – zero d
 
 ---
 
+## License
+
+This project is licensed under the GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later).
+
+- Full license text: LICENSE
+- Copyright and project notices: NOTICE
+
+License and third-party notice details are documented in NOTICE.
+
+---
+
 ## 🗺 Roadmap
 
 - [ ] Create roadmap
 
 ---
 
-*Built with ❤️ on Linux | JUCE + Qt 6 + Vulkan RHI*
+Built with love on Linux | JUCE + Qt 6 + Vulkan RHI

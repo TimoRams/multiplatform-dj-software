@@ -20,6 +20,7 @@ Window {
         { label: "Audio Setup",     icon: "♪" },
         { label: "MIDI Controller", icon: "⎘" },
         { label: "Library",         icon: "☰" },
+        { label: "Legal",           icon: "§" },
     ]
 
     RowLayout {
@@ -767,6 +768,109 @@ Window {
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: console.log("Browse library folder")
                             }
+                        }
+                    }
+                }
+            }
+
+            // ── Page 3: Legal ─────────────────────────────────────────────
+            Item {
+                ColumnLayout {
+                    anchors.top: parent.top
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.margins: 30
+                    spacing: 14
+
+                    Text {
+                        text: "Legal Notices"
+                        color: "#f0f0f0"
+                        font.pixelSize: 18
+                        font.bold: true
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 1
+                        color: "#2a2a2a"
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: "#cfcfcf"
+                        font.pixelSize: 12
+                        text: "This software is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-or-later)."
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: "#9f9f9f"
+                        font.pixelSize: 12
+                        text: "You are entitled to receive the corresponding source code under the terms of the AGPL."
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: "#9f9f9f"
+                        font.pixelSize: 12
+                        text: "Source repository: https://github.com/TimoRams/multiplatform-dj-software"
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: "#9f9f9f"
+                        font.pixelSize: 12
+                        text: "License and third-party notices are documented in the NOTICE file."
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+
+                        Button {
+                            text: "Open Project Source"
+                            Layout.preferredHeight: 32
+
+                            background: Rectangle {
+                                color: parent.down ? "#444" : "#333"
+                                border.color: parent.hovered ? "#555" : "transparent"
+                                radius: 4
+                            }
+
+                            contentItem: Text {
+                                text: parent.text
+                                color: "#fff"
+                                font.pixelSize: 12
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+
+                            onClicked: Qt.openUrlExternally("https://github.com/TimoRams/multiplatform-dj-software")
+                        }
+
+                        Button {
+                            text: "Open AGPL License"
+                            Layout.preferredHeight: 32
+
+                            background: Rectangle {
+                                color: parent.down ? "#444" : "#333"
+                                border.color: parent.hovered ? "#555" : "transparent"
+                                radius: 4
+                            }
+
+                            contentItem: Text {
+                                text: parent.text
+                                color: "#fff"
+                                font.pixelSize: 12
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+
+                            onClicked: Qt.openUrlExternally("https://www.gnu.org/licenses/agpl-3.0.html")
                         }
                     }
                 }
