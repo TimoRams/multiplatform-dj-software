@@ -29,7 +29,9 @@ Item {
         if (pps <= 0.0)
             pps = 300.0
         var effectivePpp = root.waveformZoom / ratio
-        return width * 0.5 + (cueSec - pos) * pps * effectivePpp
+        var rawX = width * 0.5 + (cueSec - pos) * pps * effectivePpp
+        var dpr = Math.max(1.0, Screen.devicePixelRatio)
+        return Math.round(rawX * dpr) / dpr
     }
 
     Layout.fillWidth: true

@@ -354,6 +354,7 @@ private:
     // m_snapPosition + m_snapClock enable sub-frame interpolation in getVisualPosition().
     float          m_latencySeconds  = 0.0f;
     double         m_snapPosition    = 0.0;
+    double         m_snapTempoRatio  = 1.0;
     QElapsedTimer  m_snapClock;
     bool           m_snapValid       = false;
 

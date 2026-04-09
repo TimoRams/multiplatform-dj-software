@@ -1113,11 +1113,11 @@ double DjEngine::getVisualPosition() const
         return getPosition();
 
     // Forward-interpolate from the last snapshot using elapsed wall-clock time.
-    // This keeps the waveform smooth between onTimer() ticks (every 16 ms).
-    // Multiply by tempo ratio because the audio playhead moves faster/slower
-    // than wall clock (transport reads at tempoRatio × realtime).
-    double currentTempoRatio = getTempoRatio();
-    double elapsed = (static_cast<double>(m_snapClock.nsecsElapsed()) * 1e-9) * currentTempoRatio;
+    // This keeps the waveform smooth between onTimer() ticks.
+    // Use the tempo ratio captured at snapshot time to avoid micro speed
+    // discontinuities within a timer interval.
+    const double elapsed = (static_cast<double>(m_snapClock.nsecsElapsed()) * 1e-9)
+        * std::max(0.0001, m_snapTempoRatio);
 
     // When reverse is on, interpolate backwards instead of forwards
     double interpolated = m_isReverse
@@ -1369,18 +1369,7 @@ void DjEngine::togglePlay()
         // Compute the interpolated visual position BEFORE stopping so we can
         // freeze the transport at exactly the position the waveform was showing.
         // This eliminates the visible jump when pressing pause.
-        double frozenPos;
-        if (m_snapValid) {
-            double tempoR = getTempoRatio();
-            double elapsed = (static_cast<double>(m_snapClock.nsecsElapsed()) * 1e-9) * tempoR;
-            frozenPos = m_isReverse
-                ? m_snapPosition - elapsed
-                : m_snapPosition + elapsed;
-            double len = transportSource.getLengthInSeconds();
-            frozenPos = std::clamp(frozenPos, 0.0, len > 0.0 ? len : frozenPos);
-        } else {
-            frozenPos = transportSource.getCurrentPosition();
-        }
+        const double frozenPos = getVisualPosition();
 
         transportSource.stop();
         transportSource.setPosition(frozenPos);
@@ -1390,6 +1379,7 @@ void DjEngine::togglePlay()
         // Snapshot current position immediately so the interpolation starts
         // from exactly where the waveform is showing (no 16ms wait for onTimer).
         m_snapPosition = transportSource.getCurrentPosition();
+        m_snapTempoRatio = getTempoRatio();
         m_snapClock.restart();
         m_snapValid = true;
         m_atomicPlayheadPos.store(m_snapPosition, std::memory_order_relaxed);
@@ -1408,6 +1398,7 @@ void DjEngine::play()
     // Snapshot current position immediately so the interpolation starts
     // from exactly where the waveform is showing (no 16ms wait for onTimer).
     m_snapPosition = transportSource.getCurrentPosition();
+    m_snapTempoRatio = getTempoRatio();
     m_snapClock.restart();
     m_snapValid = true;
     m_atomicPlayheadPos.store(m_snapPosition, std::memory_order_relaxed);
@@ -1423,18 +1414,7 @@ void DjEngine::pause()
 
     // Compute the interpolated visual position BEFORE stopping so we can
     // freeze the transport at exactly the position the waveform was showing.
-    double frozenPos;
-    if (m_snapValid) {
-        double tempoR = getTempoRatio();
-        double elapsed = (static_cast<double>(m_snapClock.nsecsElapsed()) * 1e-9) * tempoR;
-        frozenPos = m_isReverse
-            ? m_snapPosition - elapsed
-            : m_snapPosition + elapsed;
-        double len = transportSource.getLengthInSeconds();
-        frozenPos = std::clamp(frozenPos, 0.0, len > 0.0 ? len : frozenPos);
-    } else {
-        frozenPos = transportSource.getCurrentPosition();
-    }
+    const double frozenPos = getVisualPosition();
 
     transportSource.stop();
     transportSource.setPosition(frozenPos);
@@ -1506,6 +1486,7 @@ void DjEngine::onTimer()
         m_atomicPlayheadPos.store(m_scrubHoldPosition,
                                   std::memory_order_relaxed);
         m_snapPosition = m_scrubHoldPosition;
+        m_snapTempoRatio = getTempoRatio();
 
         if (!m_isScrubbing && m_scratchReleaseActive
             && std::abs(m_scratchSmoothedRate - m_scratchReleaseTargetRate) <= m_scratchReleaseSettleThreshold) {
@@ -1528,6 +1509,7 @@ void DjEngine::onTimer()
                 transportSource.stop();
 
             m_scrubWasPlaying = false;
+            m_snapTempoRatio = getTempoRatio();
             m_snapClock.restart();
             m_snapValid = true;
             emit playingChanged();
@@ -1540,30 +1522,11 @@ void DjEngine::onTimer()
     }
 
     if (transportSource.isPlaying()) {
-        // Store a position snapshot with a matching wall-clock timestamp.
-        // We correct small timing drift smoothly so the waveform does not jitter.
+        // Store a fresh snapshot from the transport each control tick.
+        // Interpolation happens only between these anchors.
         const double measuredPos = transportSource.getCurrentPosition();
-
-        if (m_snapValid) {
-            const double tempoR = getTempoRatio();
-            const double elapsed = (static_cast<double>(m_snapClock.nsecsElapsed()) * 1e-9) * tempoR;
-            const double predictedPos = m_isReverse
-                ? m_snapPosition - elapsed
-                : m_snapPosition + elapsed;
-
-            const double error = measuredPos - predictedPos;
-            const double absError = std::abs(error);
-
-            if (absError <= 0.025) {
-                // Blend away micro drift to keep phase continuity frame-to-frame.
-                m_snapPosition = predictedPos + error * 0.22;
-            } else {
-                // Large discontinuities (seek/loop jump) must snap immediately.
-                m_snapPosition = measuredPos;
-            }
-        } else {
-            m_snapPosition = measuredPos;
-        }
+        m_snapPosition = measuredPos;
+        m_snapTempoRatio = getTempoRatio();
 
         if (m_loopActive && m_loopOutSec > m_loopInSec) {
             if (m_isReverse && m_snapPosition <= m_loopInSec) {
@@ -1736,6 +1699,7 @@ void DjEngine::triggerHotCue(int index)
     const double pos = std::clamp(slot.positionSec, 0.0, trackLen);
     transportSource.setPosition(pos);
     m_snapPosition = pos;
+    m_snapTempoRatio = getTempoRatio();
     m_snapClock.restart();
     m_snapValid = true;
     m_atomicPlayheadPos.store(pos, std::memory_order_relaxed);
@@ -1815,6 +1779,7 @@ void DjEngine::cueButtonPress()
         const double cuePos = std::clamp(m_mainCueSec, 0.0, trackLen);
         transportSource.setPosition(cuePos);
         m_snapPosition = cuePos;
+        m_snapTempoRatio = getTempoRatio();
         m_snapClock.restart();
         m_snapValid = true;
         m_atomicPlayheadPos.store(cuePos, std::memory_order_relaxed);
@@ -1829,6 +1794,7 @@ void DjEngine::cueButtonPress()
 
     transportSource.setPosition(cuePos);
     m_snapPosition = cuePos;
+    m_snapTempoRatio = getTempoRatio();
     m_snapClock.restart();
     m_snapValid = true;
     m_atomicPlayheadPos.store(cuePos, std::memory_order_relaxed);
@@ -1999,6 +1965,7 @@ void DjEngine::resumeAfterScrub()
             transportSource.stop();
 
         m_scrubWasPlaying = false;
+        m_snapTempoRatio = getTempoRatio();
         m_snapClock.restart();
         m_snapValid = true;
         emit scrubbingChanged();
