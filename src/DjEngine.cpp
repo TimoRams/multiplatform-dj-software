@@ -1844,6 +1844,7 @@ void DjEngine::pauseForScrub()
     m_snapValid = false;
 
     m_scrubHoldPosition = transportSource.getCurrentPosition();
+    m_scratchBaseRate = std::max(0.05, std::abs(getTempoRatio()));
     m_scratchAccumulatedMoveSec = 0.0;
     m_scratchTargetRate = 0.0;
     m_scratchSmoothedRate = 0.0;
@@ -1905,11 +1906,26 @@ void DjEngine::scratchBySeconds(double deltaSeconds)
     const double dtSecRaw = m_lastScrubInputClock.isValid()
         ? std::max(0.001, static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9)
         : 0.008;
-    double instantaneousRate = std::clamp(requestedDelta / dtSecRaw,
-                                                 -m_scratchMaxRate,
-                                                 m_scratchMaxRate);
+    const double rawRate = requestedDelta / dtSecRaw;
+    const double baseRate = std::max(0.05, m_scratchBaseRate);
+    const double absRaw = std::abs(rawRate);
+    double shapedAbsRate = 0.0;
+
+    if (absRaw <= baseRate) {
+        // High precision near zero movement; cubic rise avoids twitching.
+        const double t = std::clamp(absRaw / baseRate, 0.0, 1.0);
+        shapedAbsRate = baseRate * (0.15 * t + 0.85 * t * t * t);
+    } else {
+        // Above base speed, accelerate more aggressively for fast swipes.
+        shapedAbsRate = baseRate + (absRaw - baseRate) * 1.35;
+    }
+
     if (fineMove)
-        instantaneousRate *= 0.35;
+        shapedAbsRate *= 0.72;
+
+    const double instantaneousRate = std::copysign(
+        std::clamp(shapedAbsRate, 0.0, m_scratchMaxRate),
+        rawRate);
     pushScratchVelocityTick(instantaneousRate);
 
     if (m_isScrubbing && !transportSource.isPlaying())
@@ -1978,7 +1994,9 @@ void DjEngine::resumeAfterScrub()
     if (std::abs(m_scratchSmoothedRate) < 0.02)
         m_scratchSmoothedRate = m_scratchTargetRate;
     m_scratchSmoothedRate = std::clamp(m_scratchSmoothedRate, -m_scratchMaxRate, m_scratchMaxRate);
-    m_scratchReleaseTargetRate = m_scrubWasPlaying ? 1.0 : 0.0;
+    const double releaseBaseRate = std::max(0.05, std::abs(getTempoRatio()));
+    const double releaseDirection = m_scrubSavedReverseState ? -1.0 : 1.0;
+    m_scratchReleaseTargetRate = m_scrubWasPlaying ? (releaseDirection * releaseBaseRate) : 0.0;
     m_scratchReleaseActive = true;
     m_lastScrubInputClock.restart();
     m_scrubPhysicsClock.restart();
@@ -2098,6 +2116,17 @@ void DjEngine::setTempoPercent(double percent)
     if (m_tempoPercent == percent) return;
     
     m_tempoPercent = percent;
+
+    // Keep scratch/release baseline speed aligned with the tempo fader so
+    // releasing the record never snaps toward a hardcoded 1.0 speed.
+    if (m_isScrubbing || m_scratchReleaseActive) {
+        m_scratchBaseRate = std::max(0.05, std::abs(getTempoRatio()));
+        if (m_scratchReleaseActive && m_scrubWasPlaying) {
+            const double releaseDirection = m_scrubSavedReverseState ? -1.0 : 1.0;
+            m_scratchReleaseTargetRate = releaseDirection * m_scratchBaseRate;
+        }
+    }
+
     updateSpeedAndPitch();
     
     qDebug() << "[DjEngine] Tempo set to" << percent << "%" << "(keylock:" << m_keylock << ")";

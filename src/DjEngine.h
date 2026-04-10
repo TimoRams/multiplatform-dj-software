@@ -386,6 +386,7 @@ private:
     double m_scratchEventSpikeClampSec = 0.08;
     double m_scratchAccumulatedMoveSec = 0.0;
     double m_scratchInertiaMoveThresholdSec = 0.004;
+    double m_scratchBaseRate = 1.0;
     bool   m_scrubSavedKeylock = false;
     bool   m_scrubSavedReverseState = false;
     double m_loadedTrackSampleRate = 44100.0;
