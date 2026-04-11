@@ -251,9 +251,8 @@ Rectangle {
                                 radius: width / 2
                                 color: {
                                     if (!linkManager || !linkManager.enabled) return "#222"
-                                    var beatIndex = Math.floor(linkManager.phase)
-                                    if (beatIndex < 0) beatIndex = 0
-                                    if (beatIndex > 3) beatIndex = 3
+                                    var beatFloor = Math.floor(linkManager.beat)
+                                    var beatIndex = ((beatFloor % 4) + 4) % 4
                                     return index === beatIndex ? "#44cc66" : "#222"
                                 }
                                 border.width: 0

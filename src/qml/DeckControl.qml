@@ -128,7 +128,13 @@ Item {
             sampleRate = 44100.0
         var firstBeatSec = Number(deck.engine.trackData.firstBeatSample) / sampleRate
 
-        var beatDur = 60.0 / liveBpm
+        // Keep Link beat position anchored to the analyzed beatgrid, same logic
+        // as the top-bar beat indicators. Tempo is still published as live BPM.
+        var analyzedBpm = Number(deck.engine.trackData.bpm)
+        if (isNaN(analyzedBpm) || analyzedBpm <= 0.0)
+            analyzedBpm = liveBpm
+
+        var beatDur = 60.0 / analyzedBpm
         var absoluteBeat = (playheadSec - firstBeatSec) / beatDur
         if (isNaN(absoluteBeat) || !isFinite(absoluteBeat))
             return

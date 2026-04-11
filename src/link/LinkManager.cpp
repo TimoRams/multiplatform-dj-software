@@ -52,6 +52,10 @@ void LinkManager::publishDeckState(double bpm, double absoluteBeat, double quant
     const double tempoStep = std::abs(bpm - m_lastPublishedTempo);
     const double beatStep = std::abs(absoluteBeat - m_lastPublishedBeat);
 
+    // While tempo is being adjusted (pitch fader/sync), force regular commits so
+    // the Link session follows immediately and the LINK panel stays in phase.
+    const bool tempoActivelyChanging = (tempoStep > 0.001);
+
     constexpr std::int64_t kMinCommitIntervalUs = 40'000;   // 25 Hz cap
     constexpr std::int64_t kHeartbeatIntervalUs = 220'000;  // keep-alive
     constexpr double kTempoDeadband = 0.02;                 // BPM
@@ -63,6 +67,7 @@ void LinkManager::publishDeckState(double bpm, double absoluteBeat, double quant
 
     // If Link is already aligned, skip frequent commits to avoid UI/control jitter.
     if (!heartbeatDue
+        && !tempoActivelyChanging
         && tempoErr < kTempoDeadband
         && beatErr < kBeatDeadband
         && tempoStep < kTempoDeadband
