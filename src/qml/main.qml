@@ -11,6 +11,7 @@ ApplicationWindow {
     title: "RamsbrockDJ"
     color: "#0a0a0a"
     property bool libraryExpanded: false
+    property string linkedDeckName: ""
     readonly property real baseWaveformHeight: 150
     readonly property real baseDeckMixerHeight: baseUiHeight - baseWaveformHeight
 
@@ -127,6 +128,14 @@ ApplicationWindow {
             if (window._isTextInputFocused())
                 return
             window.libraryExpanded = !window.libraryExpanded
+        }
+    }
+
+    Connections {
+        target: (typeof linkManager !== "undefined" && linkManager !== null) ? linkManager : null
+        function onEnabledChanged() {
+            if (!linkManager.enabled)
+                window.linkedDeckName = ""
         }
     }
 

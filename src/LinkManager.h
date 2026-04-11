@@ -26,6 +26,8 @@ public:
 
     void setEnabled(bool on);
 
+    Q_INVOKABLE void publishDeckState(double bpm, double absoluteBeat, double quantum = 4.0);
+
 signals:
     void enabledChanged();
     void bpmChanged();

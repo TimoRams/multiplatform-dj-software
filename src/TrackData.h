@@ -18,6 +18,7 @@ class TrackData : public QObject
     Q_PROPERTY(double bpm           READ getBpm           NOTIFY bpmAnalyzed)
     Q_PROPERTY(bool   isBpmAnalyzed READ isBpmAnalyzed    NOTIFY bpmAnalyzed)
     Q_PROPERTY(qint64 firstBeatSample READ getFirstBeatSample NOTIFY bpmAnalyzed)
+    Q_PROPERTY(double sampleRate READ getSampleRate NOTIFY bpmAnalyzed)
     Q_PROPERTY(QString detectedKey  READ getDetectedKey   NOTIFY keyAnalyzed)
     Q_PROPERTY(bool   isKeyAnalyzed READ isKeyAnalyzed    NOTIFY keyAnalyzed)
 

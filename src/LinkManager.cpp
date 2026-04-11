@@ -31,6 +31,36 @@ void LinkManager::setEnabled(bool on)
     emit enabledChanged();
 }
 
+void LinkManager::publishDeckState(double bpm, double absoluteBeat, double quantum)
+{
+    if (!m_link.isEnabled())
+        return;
+    if (!std::isfinite(bpm) || bpm <= 0.0)
+        return;
+    if (!std::isfinite(absoluteBeat))
+        return;
+    if (!std::isfinite(quantum) || quantum <= 0.0)
+        quantum = 4.0;
+
+    auto sessionState = m_link.captureAppSessionState();
+    const auto now = m_link.clock().micros();
+
+    sessionState.setTempo(bpm, now);
+    sessionState.requestBeatAtTime(absoluteBeat, now, quantum);
+    m_link.commitAppSessionState(sessionState);
+
+    // Keep exposed properties responsive between poll ticks.
+    m_bpm = bpm;
+    m_beat = absoluteBeat;
+    m_phase = std::fmod(absoluteBeat, quantum);
+    if (m_phase < 0.0)
+        m_phase += quantum;
+
+    emit bpmChanged();
+    emit beatChanged();
+    emit phaseChanged();
+}
+
 void LinkManager::pollLinkState()
 {
     if (!m_link.isEnabled()) return;

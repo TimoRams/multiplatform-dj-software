@@ -23,6 +23,8 @@ Item {
     property string _trackKey:      ""
     property string _trackBpm:      ""
     property string _currentBpm:    ""   // live tempo-adjusted BPM
+    readonly property bool linkAvailable: (typeof linkManager !== "undefined" && linkManager !== null && linkManager.enabled)
+    readonly property bool linkMode: (typeof window !== "undefined" && window !== null && window.linkedDeckName === deck.deckName)
     readonly property int headerCellHeight: 22
 
     function loopLabel() {
@@ -99,6 +101,46 @@ Item {
         return false
     }
 
+    function _setLinkMode(on) {
+        if (typeof window === "undefined" || window === null)
+            return
+        window.linkedDeckName = on ? deck.deckName : ""
+    }
+
+    function _publishDeckToAbletonLink() {
+        if (!deck.engine || !deck.linkMode || !deck.linkAvailable)
+            return
+        if (!deck.engine.isPlaying)
+            return
+        if (!deck.engine.trackData || !deck.engine.trackData.isBpmAnalyzed)
+            return
+
+        var liveBpm = Number(deck.engine.currentBpm)
+        if (isNaN(liveBpm) || liveBpm <= 0.0)
+            return
+
+        var playheadSec = deck.engine.getPlayheadPositionAtomic()
+        if (playheadSec === undefined || isNaN(playheadSec))
+            return
+
+        var sampleRate = Number(deck.engine.trackData.sampleRate)
+        if (isNaN(sampleRate) || sampleRate <= 0.0)
+            sampleRate = 44100.0
+        var firstBeatSec = Number(deck.engine.trackData.firstBeatSample) / sampleRate
+
+        var beatDur = 60.0 / liveBpm
+        var absoluteBeat = (playheadSec - firstBeatSec) / beatDur
+        if (isNaN(absoluteBeat) || !isFinite(absoluteBeat))
+            return
+
+        linkManager.publishDeckState(liveBpm, absoluteBeat, 4.0)
+    }
+
+    onLinkModeChanged: {
+        if (deck.linkMode)
+            deck._publishDeckToAbletonLink()
+    }
+
     Connections {
         target: deck.engine
         function onTrackMetadataChanged() { deck._syncMetadata() }
@@ -110,6 +152,26 @@ Item {
         target: deck.engine ? deck.engine.trackData : null
         function onBpmAnalyzed() { deck._syncBpm(); deck._syncTempo() }
         function onBeatgridChanged() { deck._syncBpm(); deck._syncTempo() }
+    }
+
+    Connections {
+        target: (typeof linkManager !== "undefined" && linkManager !== null) ? linkManager : null
+        function onEnabledChanged() {
+            if (!linkManager.enabled && deck.linkMode)
+                deck._setLinkMode(false)
+        }
+        function onBpmChanged() {
+            // Deck-Link is publisher mode (Deck -> Ableton Link), so no follower action.
+        }
+        function onPhaseChanged() {}
+    }
+
+    Timer {
+        id: linkDeckSyncTimer
+        interval: 33
+        repeat: true
+        running: deck.linkMode && deck.linkAvailable && deck.engine !== null && deck.engine.isPlaying
+        onTriggered: deck._publishDeckToAbletonLink()
     }
 
     // Connect to ParameterStore for MIDI mapping
@@ -672,6 +734,38 @@ Item {
                             onClicked: {
                                 if (deck.engine)
                                     deck.engine.setSyncEnabled(checked)
+                            }
+                        }
+
+                        Button {
+                            text: "LINK"
+                            Layout.fillWidth: false
+                            Layout.preferredWidth: deckControlsRow.unit * 1.2
+                            Layout.preferredHeight: deckControlsRow.buttonHeight
+                            Layout.minimumHeight: deckControlsRow.buttonHeight
+                            Layout.maximumHeight: deckControlsRow.buttonHeight
+                            enabled: deck.linkAvailable
+                            opacity: enabled ? 1.0 : 0.55
+                            background: Rectangle {
+                                color: !parent.enabled ? "#2f2f2f" : (deck.linkMode ? "#2f8f44" : "#444")
+                                radius: 0
+                            }
+                            contentItem: Text {
+                                text: parent.text
+                                color: !parent.enabled ? "#6f6f6f" : (deck.linkMode ? "#e7ffe7" : "#aaa")
+                                font.pixelSize: window.spViewport(8)
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: {
+                                if (!deck.linkAvailable) {
+                                    deck._setLinkMode(false)
+                                    return
+                                }
+                                deck._setLinkMode(!deck.linkMode)
+                                if (deck.linkMode)
+                                    deck._publishDeckToAbletonLink()
                             }
                         }
 

@@ -38,6 +38,10 @@ Rectangle {
     readonly property int sectionHeight: Math.max(22, buttonHeight - 4)
     readonly property int sectionRadius: 4
     readonly property int sectionPadding: 6
+    readonly property color deckAColor: "#ff9900"
+    readonly property color deckBColor: "#00bfff"
+    readonly property int beatDotSize: Math.max(6, Math.round(buttonHeight * 0.2))
+    property int beatUiTick: 0
     
     // Buttons should match the visible bar height exactly (pixel-snapped).
     readonly property int buttonHeight: Math.max(1, Math.round(root.height - (root.verticalPad * 2)))
@@ -65,6 +69,55 @@ Rectangle {
         var h = date.getHours().toString().padStart(2, '0');
         var m = date.getMinutes().toString().padStart(2, '0');
         root.currentTime = h + ":" + m;
+    }
+
+    function deckBeatInfo(engine) {
+        // Dependency so expressions update continuously while transport runs.
+        var _tick = root.beatUiTick
+        if (!engine || !engine.trackData || !engine.trackData.isBpmAnalyzed)
+            return { valid: false, beatInBar: 0, barNumber: 0, phase: 0.0 }
+
+        // Beat/bar position in the SONG must stay tied to the analyzed beatgrid,
+        // not to transport tempo changes (tempo fader, sync, link publishing).
+        var bpm = Number(engine.trackData.bpm)
+        if (!isFinite(bpm) || bpm <= 0)
+            return { valid: false, beatInBar: 0, barNumber: 0, phase: 0.0 }
+
+        var playheadSec = engine.getPlayheadPositionAtomic()
+        if (playheadSec === undefined || isNaN(playheadSec))
+            return { valid: false, beatInBar: 0, barNumber: 0, phase: 0.0 }
+
+        var sampleRate = Number(engine.trackData.sampleRate)
+        if (!isFinite(sampleRate) || sampleRate <= 0)
+            sampleRate = 44100.0
+        var firstBeatSec = Number(engine.trackData.firstBeatSample) / sampleRate
+
+        var beatDur = 60.0 / bpm
+        var beatsFromAnchor = (playheadSec - firstBeatSec) / beatDur
+        var beatFloor = Math.floor(beatsFromAnchor)
+        var beatInBar = ((beatFloor % 4) + 4) % 4
+        var barNumber = Math.floor(beatFloor / 4) + 1
+        if (barNumber < 1)
+            barNumber = 1
+
+        var phase = beatsFromAnchor - beatFloor
+        if (phase < 0)
+            phase += 1.0
+
+        return {
+            valid: true,
+            beatInBar: beatInBar,
+            barNumber: barNumber,
+            phase: phase
+        }
+    }
+
+    Timer {
+        id: beatCounterTimer
+        interval: 50
+        repeat: true
+        running: true
+        onTriggered: root.beatUiTick++
     }
 
     // Settings window — created once, shown/hidden on demand
@@ -551,6 +604,96 @@ Rectangle {
     Row {
         anchors.centerIn: parent
         spacing: 8
+
+        // CDJ-like beat/bar counters (A orange, B blue), left of VU meter.
+        Rectangle {
+            width: 96
+            height: root.buttonHeight
+            radius: 0
+            color: "#161616"
+            border.width: 0
+
+            Column {
+                anchors.centerIn: parent
+                spacing: 3
+
+                Row {
+                    spacing: 4
+                    Text {
+                        width: 10
+                        text: "A"
+                        color: root.deckAColor
+                        font.pixelSize: root.sp(8)
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+
+                    Repeater {
+                        model: 4
+                        Rectangle {
+                            required property int index
+                            readonly property var info: root.deckBeatInfo(deckA)
+                            width: root.beatDotSize
+                            height: root.beatDotSize
+                            radius: width / 2
+                            color: {
+                                if (!info.valid)
+                                    return index === 0 ? "#5a3a16" : "#292929"
+                                if (index === info.beatInBar)
+                                    return "#ffb84d"
+                                return index === 0 ? "#734819" : "#292929"
+                            }
+                        }
+                    }
+
+                    Text {
+                        readonly property var info: root.deckBeatInfo(deckA)
+                        text: info.valid ? ("B" + info.barNumber) : "B--"
+                        color: "#9d9d9d"
+                        font.pixelSize: root.sp(7)
+                        font.family: "monospace"
+                    }
+                }
+
+                Row {
+                    spacing: 4
+                    Text {
+                        width: 10
+                        text: "B"
+                        color: root.deckBColor
+                        font.pixelSize: root.sp(8)
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+
+                    Repeater {
+                        model: 4
+                        Rectangle {
+                            required property int index
+                            readonly property var info: root.deckBeatInfo(deckB)
+                            width: root.beatDotSize
+                            height: root.beatDotSize
+                            radius: width / 2
+                            color: {
+                                if (!info.valid)
+                                    return index === 0 ? "#18435b" : "#292929"
+                                if (index === info.beatInBar)
+                                    return "#55d2ff"
+                                return index === 0 ? "#1a5b79" : "#292929"
+                            }
+                        }
+                    }
+
+                    Text {
+                        readonly property var info: root.deckBeatInfo(deckB)
+                        text: info.valid ? ("B" + info.barNumber) : "B--"
+                        color: "#9d9d9d"
+                        font.pixelSize: root.sp(7)
+                        font.family: "monospace"
+                    }
+                }
+            }
+        }
 
         Column {
             id: vuColumn
