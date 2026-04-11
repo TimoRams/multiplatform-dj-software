@@ -151,7 +151,7 @@ ApplicationWindow {
     readonly property int scaledDeckMixerHeight: Math.round(window.baseDeckMixerHeight * window.uiScale)
     // Keep header height fixed to prevent resize jitter and control shifts.
     readonly property int topBarHeight: 34
-    readonly property int fxBarHeight: Math.max(36, Math.round(40 * (window.height / 800)))
+    readonly property int fxBarHeight: 40
 
     // Referenz height of the top section at baseUiWidth (waveforms + decks + mixer).
     // The deck/mixer block is intentionally kept about 25% shorter so the library
