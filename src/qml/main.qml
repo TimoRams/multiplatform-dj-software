@@ -152,7 +152,7 @@ ApplicationWindow {
     ColumnLayout {
         id: mainLayout
         anchors.fill: parent
-        spacing: 2
+        spacing: 0
         visible: false
 
         // --------------------------------------------------------------------
@@ -165,6 +165,14 @@ ApplicationWindow {
             Layout.preferredHeight: window.topBarHeight
             Layout.maximumHeight: window.topBarHeight
             z: 10
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.minimumHeight: 1
+            Layout.preferredHeight: 1
+            Layout.maximumHeight: 1
+            color: "#7a7a7a"
         }
 
         // Viewport wrapper: reserves the scaled height in the ColumnLayout.
@@ -208,6 +216,14 @@ ApplicationWindow {
                     }
                 }
             }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.minimumHeight: 1
+            Layout.preferredHeight: 1
+            Layout.maximumHeight: 1
+            color: "#7a7a7a"
         }
 
         Item {

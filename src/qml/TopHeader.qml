@@ -7,6 +7,7 @@ import DJSoftware
 Rectangle {
     id: root
     color: "#121212"
+    clip: true
     
     // Height is FULLY controlled by parent layout (main.qml Layout.minimumHeight/preferredHeight/maximumHeight)
     // NO implicitHeight to avoid competing bindings!
@@ -34,9 +35,12 @@ Rectangle {
     readonly property int logoSubPx: Math.min(root.sp(8), Math.max(7, Math.round(buttonHeight * 0.23)))
     readonly property int recTextPx: Math.min(root.sp(9), Math.max(8, Math.round(buttonHeight * 0.27)))
     readonly property int iconButtonPx: Math.min(root.sp(13), Math.max(10, Math.round(buttonHeight * 0.4)))
+    readonly property int sectionHeight: Math.max(22, buttonHeight - 4)
+    readonly property int sectionRadius: 4
+    readonly property int sectionPadding: 6
     
-    // Buttons should match the bar height exactly.
-    readonly property int buttonHeight: root.height
+    // Buttons should match the visible bar height exactly (pixel-snapped).
+    readonly property int buttonHeight: Math.max(1, Math.round(root.height - (root.verticalPad * 2)))
 
     function sp(px) {
         // TopHeader has a fixed bar height of 34px. Do not scale fonts based on window height,
@@ -118,87 +122,90 @@ Rectangle {
 
         // ── ABLETON LINK section ──────────────────────────────────────────────
         Row {
-            spacing: 6
+            spacing: 0
             Layout.fillHeight: true
+            Layout.alignment: Qt.AlignVCenter
             Layout.leftMargin: 12
             height: root.buttonHeight
 
-            // LINK toggle button
             Rectangle {
-                width: root.linkToggleWidth
-                height: parent.height
+                anchors.verticalCenter: parent.verticalCenter
+                height: root.sectionHeight
+                width: linkPanelRow.implicitWidth + root.sectionPadding * 2
                 radius: 0
-                color: (linkManager && linkManager.enabled) ? "#1a3322" : "#1a1a1a"
-                border.color: (linkManager && linkManager.enabled) ? "#44cc66" : "#333"
+                color: (linkManager && linkManager.enabled) ? "#182a20" : "#171717"
                 border.width: 0
-
-                Text {
-                    anchors.centerIn: parent
-                    text: "LINK"
-                    color: (linkManager && linkManager.enabled) ? "#44cc66" : "#777"
-                    font.pixelSize: root.sp(9)
-                    font.bold: true
-                    font.letterSpacing: 0.5
-                }
 
                 MouseArea {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
                     onClicked: if (linkManager) linkManager.enabled = !linkManager.enabled
                 }
-            }
 
-            // Peer count
-            Text {
-                width: root.linkPeerWidth
-                text: linkManager ? linkManager.numPeers.toString() : "0"
-                color: (linkManager && linkManager.numPeers > 0) ? "#44cc66" : "#555"
-                font.pixelSize: root.sp(9)
-                font.family: "monospace"
-                font.bold: true
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-            }
+                Row {
+                    id: linkPanelRow
+                    anchors.centerIn: parent
+                    spacing: 8
 
-            // Link BPM display
-            Text {
-                width: root.linkBpmWidth
-                opacity: (linkManager && linkManager.enabled) ? 1.0 : 0.3
-                text: linkManager ? linkManager.bpm.toFixed(1) : "120.0"
-                color: "#ccc"
-                font.pixelSize: root.sp(11)
-                font.family: "monospace"
-                font.bold: true
-                horizontalAlignment: Text.AlignRight
-                verticalAlignment: Text.AlignVCenter
-            }
+                    Text {
+                        width: root.linkToggleWidth
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "LINK"
+                        color: (linkManager && linkManager.enabled) ? "#7df5a4" : "#848484"
+                        font.pixelSize: root.sp(9)
+                        font.bold: true
+                        font.letterSpacing: 0.4
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
 
-            // 4-beat phase indicator
-            Row {
-                spacing: 3
-                opacity: (linkManager && linkManager.enabled) ? 1.0 : 0.2
-                height: parent.height
+                    Text {
+                        width: root.linkPeerWidth
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: linkManager ? linkManager.numPeers.toString() : "0"
+                        color: (linkManager && linkManager.numPeers > 0) ? "#52d77e" : "#6d6d6d"
+                        font.pixelSize: root.sp(9)
+                        font.family: "monospace"
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
 
-                Repeater {
-                    model: 4
-                    Rectangle {
-                        required property int index
-                        width: root.meterDotSize
-                        height: root.meterDotSize
-                        radius: width / 2
-                        color: {
-                            if (!linkManager || !linkManager.enabled) return "#222"
-                            var beatIndex = Math.floor(linkManager.phase)
-                            if (beatIndex < 0) beatIndex = 0
-                            if (beatIndex > 3) beatIndex = 3
-                            return index === beatIndex ? "#44cc66" : "#222"
+                    Text {
+                        width: root.linkBpmWidth
+                        anchors.verticalCenter: parent.verticalCenter
+                        opacity: (linkManager && linkManager.enabled) ? 1.0 : 0.45
+                        text: linkManager ? linkManager.bpm.toFixed(1) : "120.0"
+                        color: "#d2d2d2"
+                        font.pixelSize: root.sp(11)
+                        font.family: "monospace"
+                        font.bold: true
+                        horizontalAlignment: Text.AlignRight
+                        verticalAlignment: Text.AlignVCenter
+                    }
+
+                    Row {
+                        spacing: 3
+                        anchors.verticalCenter: parent.verticalCenter
+                        opacity: (linkManager && linkManager.enabled) ? 1.0 : 0.28
+
+                        Repeater {
+                            model: 4
+                            Rectangle {
+                                required property int index
+                                width: root.meterDotSize
+                                height: root.meterDotSize
+                                radius: width / 2
+                                color: {
+                                    if (!linkManager || !linkManager.enabled) return "#222"
+                                    var beatIndex = Math.floor(linkManager.phase)
+                                    if (beatIndex < 0) beatIndex = 0
+                                    if (beatIndex > 3) beatIndex = 3
+                                    return index === beatIndex ? "#44cc66" : "#222"
+                                }
+                                border.width: 0
+                            }
                         }
-                        border.color: {
-                            if (!linkManager || !linkManager.enabled) return "#333"
-                            var bi = Math.floor(Math.max(0, Math.min(3, linkManager.phase)))
-                            return index === bi ? "#66ee88" : "#333"
-                        }
-                        border.width: 0
                     }
                 }
             }
@@ -211,6 +218,7 @@ Rectangle {
         Row {
             spacing: 14
             Layout.fillHeight: true
+            Layout.alignment: Qt.AlignVCenter
             height: root.buttonHeight
 
             // Anti-Clip button
@@ -245,23 +253,32 @@ Rectangle {
             }
 
             // Master Volume knob
-            Row {
-                spacing: 3
-                Layout.alignment: Qt.AlignVCenter
+            Rectangle {
+                width: root.masterDialSize + 28
+                height: root.buttonHeight
+                anchors.verticalCenter: parent.verticalCenter
+                radius: 0
+                color: "#171717"
+                border.width: 0
 
-                Text {
-                    text: "MST"
-                    color: "#555"
-                    font.pixelSize: root.sp(8)
-                    font.bold: true
-                    font.family: "monospace"
-                }
+                Row {
+                    anchors.centerIn: parent
+                    spacing: 5
 
-                Dial {
-                    id: masterVolDial
-                    width: root.masterDialSize
-                    height: root.masterDialSize
-                    from: 0.0; to: 1.0; value: 0.8
+                    Text {
+                        text: "MST"
+                        color: "#767676"
+                        font.pixelSize: root.sp(8)
+                        font.bold: true
+                        font.family: "monospace"
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    Dial {
+                        id: masterVolDial
+                        width: root.masterDialSize
+                        height: root.masterDialSize
+                        from: 0.0; to: 1.0; value: 0.8
 
                     background: Rectangle {
                         x: masterVolDial.width / 2 - width / 2
@@ -338,26 +355,32 @@ Rectangle {
                         ]
                     }
 
-                    onValueChanged: {
-                        if (deckA) deckA.setMasterVolume(value)
-                    }
+                        onValueChanged: {
+                            if (deckA) deckA.setMasterVolume(value)
+                        }
 
-                    TapHandler {
-                        onDoubleTapped: {
-                            masterVolDial.enabled = false
-                            masterVolDial.value = 0.8
-                            masterVolDial.enabled = true
+                        TapHandler {
+                            onDoubleTapped: {
+                                masterVolDial.enabled = false
+                                masterVolDial.value = 0.8
+                                masterVolDial.enabled = true
+                            }
                         }
                     }
                 }
             }
 
             // CPU / RAM bars
-            Row {
-                spacing: 5
-                Layout.alignment: Qt.AlignVCenter
+            Rectangle {
+                width: root.meterLabelWidth + root.meterBarWidth + 16
+                height: root.buttonHeight
+                anchors.verticalCenter: parent.verticalCenter
+                radius: 0
+                color: "#171717"
+                border.width: 0
 
                 Column {
+                    anchors.centerIn: parent
                     spacing: 2
 
                     // CPU bar
@@ -374,7 +397,6 @@ Rectangle {
                             width: root.meterBarWidth
                             height: root.miniBarHeight
                             color: "#0d0d0d"
-                            border.color: "#2a2a2a"
                             border.width: 0
                             radius: 2
 
@@ -401,7 +423,6 @@ Rectangle {
                             width: root.meterBarWidth
                             height: root.miniBarHeight
                             color: "#0d0d0d"
-                            border.color: "#2a2a2a"
                             border.width: 0
                             radius: 2
 
@@ -445,13 +466,22 @@ Rectangle {
             }
 
             // Clock
-            Text {
-                text: root.currentTime
-                color: "#bbb"
-                font.pixelSize: root.sp(12)
-                font.family: "monospace"
-                font.bold: true
-                Layout.alignment: Qt.AlignVCenter
+            Rectangle {
+                width: root.linkBpmWidth + 10
+                height: root.buttonHeight
+                anchors.verticalCenter: parent.verticalCenter
+                radius: 0
+                color: "#171717"
+                border.width: 0
+
+                Text {
+                    anchors.centerIn: parent
+                    text: root.currentTime
+                    color: "#d0d0d0"
+                    font.pixelSize: root.sp(12)
+                    font.family: "monospace"
+                    font.bold: true
+                }
             }
 
             // UI action buttons
