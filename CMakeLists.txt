@@ -3,13 +3,18 @@ cmake_minimum_required(VERSION 3.22)
 set(PROJECT_NAME "RamsbrockDJ")
 project(${PROJECT_NAME} VERSION 0.0.1 LANGUAGES C CXX)
 
+# Speed up no-op and small rebuilds by skipping automatic CMake regeneration.
+# Re-run CMake manually after editing any CMake files.
+set(CMAKE_SUPPRESS_REGENERATION ON)
+
 # Ensure Qt can be found when installed via pacman
 list(APPEND CMAKE_PREFIX_PATH "/usr/lib/cmake" "/usr/local/lib/cmake")
 
 find_program(CCACHE_PROGRAM ccache)
 if(CCACHE_PROGRAM)
-    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CCACHE_PROGRAM}")
-    message(STATUS "Using ccache for faster compilation")
+    set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    message(STATUS "Using ccache compiler launcher for faster rebuilds")
 endif()
 
 # Qt setup
@@ -17,6 +22,12 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Quick3D Sql)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
+include(ProcessorCount)
+ProcessorCount(_cpu_count)
+if(_cpu_count GREATER 1)
+    # Let Qt's autogen (moc/uic/rcc) run in parallel on multicore systems.
+    set(CMAKE_AUTOGEN_PARALLEL ${_cpu_count})
+endif()
 
 # TagLib für Cover-Art-Extraction
 find_package(PkgConfig REQUIRED)
