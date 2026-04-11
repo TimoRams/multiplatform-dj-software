@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QTimer>
+#include <cstdint>
 #include <ableton/Link.hpp>
 
 class LinkManager : public QObject
@@ -46,4 +47,8 @@ private:
     double m_phase    = 0.0;
     double m_beat     = 0.0;
     int    m_numPeers = 0;
+
+    std::int64_t m_lastPublishMicros = 0;
+    double m_lastPublishedTempo = 120.0;
+    double m_lastPublishedBeat = 0.0;
 };

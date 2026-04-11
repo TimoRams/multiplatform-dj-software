@@ -45,20 +45,44 @@ void LinkManager::publishDeckState(double bpm, double absoluteBeat, double quant
     auto sessionState = m_link.captureAppSessionState();
     const auto now = m_link.clock().micros();
 
+    const double linkTempoNow = sessionState.tempo();
+    const double linkBeatNow = sessionState.beatAtTime(now, quantum);
+    const double tempoErr = std::abs(bpm - linkTempoNow);
+    const double beatErr = std::abs(absoluteBeat - linkBeatNow);
+    const double tempoStep = std::abs(bpm - m_lastPublishedTempo);
+    const double beatStep = std::abs(absoluteBeat - m_lastPublishedBeat);
+
+    constexpr std::int64_t kMinCommitIntervalUs = 40'000;   // 25 Hz cap
+    constexpr std::int64_t kHeartbeatIntervalUs = 220'000;  // keep-alive
+    constexpr double kTempoDeadband = 0.02;                 // BPM
+    constexpr double kBeatDeadband = 0.03;                  // beats
+
+    const std::int64_t nowUs = now.count();
+    const bool heartbeatDue = (m_lastPublishMicros == 0)
+                           || ((nowUs - m_lastPublishMicros) >= kHeartbeatIntervalUs);
+
+    // If Link is already aligned, skip frequent commits to avoid UI/control jitter.
+    if (!heartbeatDue
+        && tempoErr < kTempoDeadband
+        && beatErr < kBeatDeadband
+        && tempoStep < kTempoDeadband
+        && beatStep < kBeatDeadband)
+        return;
+
+    // Never commit faster than the throttle interval unless this is the first publish.
+    if (m_lastPublishMicros != 0 && (nowUs - m_lastPublishMicros) < kMinCommitIntervalUs)
+        return;
+
     sessionState.setTempo(bpm, now);
     sessionState.requestBeatAtTime(absoluteBeat, now, quantum);
     m_link.commitAppSessionState(sessionState);
 
-    // Keep exposed properties responsive between poll ticks.
-    m_bpm = bpm;
-    m_beat = absoluteBeat;
-    m_phase = std::fmod(absoluteBeat, quantum);
-    if (m_phase < 0.0)
-        m_phase += quantum;
+    m_lastPublishMicros = nowUs;
+    m_lastPublishedTempo = bpm;
+    m_lastPublishedBeat = absoluteBeat;
 
-    emit bpmChanged();
-    emit beatChanged();
-    emit phaseChanged();
+    // Keep exposed properties responsive between poll ticks.
+    // Detailed property updates are emitted by pollLinkState() at 60 Hz.
 }
 
 void LinkManager::pollLinkState()
