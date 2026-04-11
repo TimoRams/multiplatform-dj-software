@@ -96,57 +96,52 @@ Item {
             // Let vertical scrolling pass through to parent if needed.
             preventStealing: true
 
-            property real lastMouseX: 0
             property real pressMouseX: 0
-            property bool wasPlayingBeforeScrub: false
+            property real pressPlayheadSec: 0
             property bool scrubEngaged: false
-            property real accumulatedDragPx: 0
-            property real scrubDeadzonePx: 0.45
+            property real scrubDeadzonePx: 0.0
 
             onPressed: (mouse) => {
                 if (root.engine === null) return
-                wasPlayingBeforeScrub = root.engine.isPlaying
                 scrubEngaged = false
-                accumulatedDragPx = 0
                 pressMouseX = mouse.x
-                lastMouseX = mouse.x
                 root.engine.pauseForScrub()
+                // Anchor exact playhead at grab time for true 1:1 dragging.
+                pressPlayheadSec = root.engine.getVisualPositionQml()
             }
 
             onPositionChanged: (mouse) => {
                 if (root.engine === null) return
-                let deltaX = mouse.x - lastMouseX
+                const dragPx = mouse.x - pressMouseX
 
-                if (!scrubEngaged) {
-                    accumulatedDragPx += Math.abs(deltaX)
+                if (!scrubEngaged && Math.abs(dragPx) < scrubDeadzonePx)
+                    return
 
-                    if (accumulatedDragPx < scrubDeadzonePx)
-                        return
+                scrubEngaged = true
 
-                    scrubEngaged = true
-                    deltaX = mouse.x - pressMouseX
-                }
+                // Match renderer scale: effective pps = (waveformZoom * points/sec) / tempoRatio.
+                var tempoRatio = Math.max(0.05, Math.abs(root.engine.tempoRatio))
+                var effectivePixelsPerSecond = (root.waveformZoom * root.engine.waveformPointsPerSecond) / tempoRatio
+                if (effectivePixelsPerSecond <= 0.0)
+                    return
 
-                root.engine.scrubBy(deltaX)
+                const targetSec = pressPlayheadSec - (dragPx / effectivePixelsPerSecond)
+                root.engine.setScrubPosition(targetSec)
+
                 // Keep waveform repainting during scrub (transport is stopped).
                 waveItem.requestUpdate()
-                lastMouseX = mouse.x
             }
 
             onReleased: {
                 if (root.engine === null) return
                 root.engine.resumeAfterScrub()
                 scrubEngaged = false
-                accumulatedDragPx = 0
-                wasPlayingBeforeScrub = false
             }
 
             onCanceled: {
                 if (root.engine)
                     root.engine.resumeAfterScrub()
                 scrubEngaged = false
-                accumulatedDragPx = 0
-                wasPlayingBeforeScrub = false
             }
         }
         // ────────────────────────────────────────────────────────────────────

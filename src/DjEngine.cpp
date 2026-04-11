@@ -1877,7 +1877,14 @@ void DjEngine::scrubBy(double pixelDelta)
     // ∴ timeDelta = −pixelDelta / pixelsPerSecond
     if (m_pixelsPerSecond <= 0.0) return;
 
-    double timeDelta = -pixelDelta / m_pixelsPerSecond;
+    // Match the rendered waveform scale used by ScrollingWaveformItem:
+    // effectivePpp = waveformZoom / tempoRatio
+    // => effective pixels/sec = m_pixelsPerSecond / tempoRatio.
+    // This keeps scratch feel consistent when tempo fader changes.
+    const double tempoRatio = std::max(0.05, std::abs(getTempoRatio()));
+    const double effectivePixelsPerSecond = std::max(1.0, m_pixelsPerSecond / tempoRatio);
+
+    double timeDelta = -pixelDelta / effectivePixelsPerSecond;
     scratchBySeconds(timeDelta);
 }
 
@@ -1890,6 +1897,7 @@ void DjEngine::scratchBySeconds(double deltaSeconds)
                                              -m_scratchEventSpikeClampSec,
                                              m_scratchEventSpikeClampSec);
     const bool fineMove = std::abs(requestedDelta) <= m_scratchFineMoveThresholdSec;
+    const bool microMove = std::abs(requestedDelta) <= (m_scratchFineMoveThresholdSec * 0.35);
     const double directStep = fineMove
         ? requestedDelta
         : std::clamp(requestedDelta,
@@ -1926,9 +1934,11 @@ void DjEngine::scratchBySeconds(double deltaSeconds)
     const double instantaneousRate = std::copysign(
         std::clamp(shapedAbsRate, 0.0, m_scratchMaxRate),
         rawRate);
-    pushScratchVelocityTick(instantaneousRate);
+    // For tiny hand motions, prefer direct position stepping without extra
+    // velocity drive to avoid overshoot / "too fast" feel.
+    pushScratchVelocityTick(microMove ? 0.0 : instantaneousRate);
 
-    if (m_isScrubbing && !transportSource.isPlaying())
+    if (m_isScrubbing && !transportSource.isPlaying() && !microMove)
         transportSource.start();
 
     const double currentPos = m_scrubHoldPosition;
@@ -1943,6 +1953,39 @@ void DjEngine::scratchBySeconds(double deltaSeconds)
     m_atomicPlayheadPos.store(m_scrubHoldPosition, std::memory_order_relaxed);
     m_snapPosition = m_scrubHoldPosition;
     m_scrubPhysicsClock.restart();
+    emit progressChanged();
+}
+
+void DjEngine::setScrubPosition(double positionSeconds)
+{
+    if (!m_isScrubbing)
+        return;
+
+    const double len = transportSource.getLengthInSeconds();
+    if (len <= 0.0)
+        return;
+
+    const double nextPos = std::clamp(positionSeconds, 0.0, len);
+    if (std::abs(nextPos - m_scrubHoldPosition) <= 1e-7)
+        return;
+
+    // Absolute grab mode: keep direct manipulation stable, no inertia drive.
+    m_scratchReleaseActive = false;
+    m_scratchTargetRate = 0.0;
+    m_scratchSmoothedRate = 0.0;
+
+    if (transportSource.isPlaying())
+        transportSource.stop();
+
+    transportSource.setPosition(nextPos);
+    m_scrubHoldPosition = nextPos;
+    m_lastScrubInputClock.restart();
+
+    // Keep all UI readers in sync with the exact dragged position.
+    m_atomicPlayheadPos.store(m_scrubHoldPosition, std::memory_order_relaxed);
+    m_snapPosition = m_scrubHoldPosition;
+    m_snapValid = false;
+
     emit progressChanged();
 }
 

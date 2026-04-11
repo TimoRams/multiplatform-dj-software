@@ -105,6 +105,8 @@ public:
     Q_INVOKABLE void pauseForScrub();
     Q_INVOKABLE void scrubBy(double pixelDelta);
     Q_INVOKABLE void scratchBySeconds(double deltaSeconds);
+    // Absolute scrub positioning for 1:1 direct manipulation.
+    Q_INVOKABLE void setScrubPosition(double positionSeconds);
     // Generic scratch input: signed playback-rate target where 1.0 = normal forward speed.
     // This decouples UI deltas from the audio scratch model (usable for MIDI/HID jog ticks).
     Q_INVOKABLE void pushScratchVelocityTick(double velocityRate);

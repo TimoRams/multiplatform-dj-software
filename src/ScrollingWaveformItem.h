@@ -47,6 +47,10 @@ private:
     DjEngine* m_engine = nullptr;
     bool m_forceUpdate = false;
 
+    // Track recent center position to adapt snapping for slow movement.
+    double m_lastCenterIndexReal = 0.0;
+    bool m_centerHistoryValid = false;
+
     // Zoom level in pixels per data point.
     float m_pixelsPerPoint = 1.5f;
 

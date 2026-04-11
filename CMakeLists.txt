@@ -3,10 +3,6 @@ cmake_minimum_required(VERSION 3.22)
 set(PROJECT_NAME "RamsbrockDJ")
 project(${PROJECT_NAME} VERSION 0.0.1 LANGUAGES C CXX)
 
-# Speed up no-op and small rebuilds by skipping automatic CMake regeneration.
-# Re-run CMake manually after editing any CMake files.
-set(CMAKE_SUPPRESS_REGENERATION ON)
-
 # Ensure Qt can be found when installed via pacman
 list(APPEND CMAKE_PREFIX_PATH "/usr/lib/cmake" "/usr/local/lib/cmake")
 

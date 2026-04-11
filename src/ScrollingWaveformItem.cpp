@@ -93,6 +93,7 @@ void ScrollingWaveformItem::setEngine(DjEngine* engine)
     }
     emit engineChanged();
     m_forceUpdate = true;
+    m_centerHistoryValid = false;
     update();
 }
 
@@ -103,6 +104,7 @@ void ScrollingWaveformItem::setPixelsPerPoint(float ppp)
     m_pixelsPerPoint = ppp;
     emit pixelsPerPointChanged();
     m_forceUpdate = true;
+    m_centerHistoryValid = false;
     update();
 }
 
@@ -137,6 +139,7 @@ void ScrollingWaveformItem::onTrackLoaded()
         connect(m_engine->getTrackData(), &TrackData::bpmAnalyzed, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
     }
     m_forceUpdate = true;
+    m_centerHistoryValid = false;
     update();
 }
 
@@ -301,10 +304,24 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     const double tempoRatio   = m_engine->getTempoRatio();
     const double pixelsPerPoint = static_cast<double>(m_pixelsPerPoint) / std::max(0.0001, tempoRatio);
     const double centerIndexReal = static_cast<double>(m_engine->getVisualPosition()) * pointsPerSec;
-    // Quantize scrolling to device-pixel steps (not logical pixels) to keep
-    // motion stable under fractional window scaling and resize.
-    const double centerIndexPixelSnapped = std::round(centerIndexReal * pixelsPerPoint * snapScale)
-        / (pixelsPerPoint * snapScale);
+    // Adaptive quantization:
+    // - very slow movement: keep sub-pixel precision (no snapping)
+    // - slow movement: quarter-pixel snapping
+    // - faster movement: full device-pixel snapping for visual stability
+    double centerIndexRender = centerIndexReal;
+    if (m_centerHistoryValid) {
+        const double deltaPx = std::abs(centerIndexReal - m_lastCenterIndexReal) * pixelsPerPoint;
+        if (deltaPx >= 0.80) {
+            centerIndexRender = std::round(centerIndexReal * pixelsPerPoint * snapScale)
+                / (pixelsPerPoint * snapScale);
+        } else if (deltaPx >= 0.22) {
+            centerIndexRender = std::round(centerIndexReal * pixelsPerPoint * snapScale * 4.0)
+                / (pixelsPerPoint * snapScale * 4.0);
+        }
+    }
+    m_lastCenterIndexReal = centerIndexReal;
+    m_centerHistoryValid = true;
+
     const auto snapDevicePixelX = [snapScale](double x) -> float {
         return static_cast<float>(std::round(x * snapScale) / snapScale);
     };
@@ -312,8 +329,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     // Chunk-wise waveform data access: fetch only what is visible (+guard).
     const double visiblePoints = wD / std::max(0.0001, pixelsPerPoint);
     const int guardPoints = 96;
-    const int sliceStart = static_cast<int>(std::floor(centerIndexPixelSnapped - visiblePoints * 0.5)) - guardPoints - 4;
-    const int sliceEnd = static_cast<int>(std::ceil(centerIndexPixelSnapped + visiblePoints * 0.5)) + guardPoints + 4;
+    const int sliceStart = static_cast<int>(std::floor(centerIndexRender - visiblePoints * 0.5)) - guardPoints - 4;
+    const int sliceEnd = static_cast<int>(std::ceil(centerIndexRender + visiblePoints * 0.5)) + guardPoints + 4;
     int sliceBaseIndex = 0;
     QVector<TrackData::RgbWaveformFrame> rgbData = td->getRgbWaveformSlice(sliceStart, sliceEnd, &sliceBaseIndex);
     if (rgbData.isEmpty()) {
@@ -356,7 +373,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         std::max(1.0, 1.0 / std::max(0.0001, pixelsPerPoint));
     const int subSamples = lockVisualSampleGrid ? 1 : 2;
     for (int x = 0; x < wInt; ++x) {
-        const double dataPosRaw = centerIndexPixelSnapped
+        const double dataPosRaw = centerIndexRender
             + (static_cast<double>(x) - wD * 0.5) / pixelsPerPoint;
         const double dataPos = lockVisualSampleGrid
             ? std::round(dataPosRaw / visualSamplesPerPixel) * visualSamplesPerPixel
@@ -471,8 +488,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
 
         const double ppp          = static_cast<double>(pixelsPerPoint);
         const double visiblePoints = w / ppp;
-        const double leftSec       = (centerIndexPixelSnapped - visiblePoints / 2.0) / pps;
-        const double rightSec      = (centerIndexPixelSnapped + visiblePoints / 2.0) / pps;
+        const double leftSec       = (centerIndexRender - visiblePoints / 2.0) / pps;
+        const double rightSec      = (centerIndexRender + visiblePoints / 2.0) / pps;
 
         // Collect visible markers, separated into regular and downbeat lists.
         struct VisibleBeat { float x; bool isDownbeat; int barNumber; };
@@ -487,7 +504,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                                        leftSec - 0.5, cmp);
             for (; it != beatGrid.end() && it->positionSec <= rightSec + 0.5; ++it) {
                 double beatPoint = it->positionSec * pps;
-                const float bx = snapDevicePixelX(w / 2.0 + (beatPoint - centerIndexPixelSnapped) * ppp);
+                const float bx = snapDevicePixelX(w / 2.0 + (beatPoint - centerIndexRender) * ppp);
                 if (bx >= 0.0f && bx <= w)
                     visible.push_back({bx, it->isDownbeat, it->barNumber});
             }
@@ -504,7 +521,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             for (int b = beatStart; b <= beatEnd; ++b) {
                 double beatSec  = firstBeatSec + b * beatPeriod;
                 double beatPoint = beatSec * pps;
-                const float bx = snapDevicePixelX(w / 2.0 + (beatPoint - centerIndexPixelSnapped) * ppp);
+                const float bx = snapDevicePixelX(w / 2.0 + (beatPoint - centerIndexRender) * ppp);
                 if (bx >= 0.0f && bx <= w)
                     visible.push_back({bx, (b % 4 == 0), b / 4 + 1});
             }
@@ -591,8 +608,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         const double loopInPoint = loopInSec * pointsPerSec;
         const double loopOutPoint = loopOutSec * pointsPerSec;
 
-        float xIn = snapDevicePixelX(w / 2.0 + (loopInPoint - centerIndexPixelSnapped) * pixelsPerPoint);
-        float xOut = snapDevicePixelX(w / 2.0 + (loopOutPoint - centerIndexPixelSnapped) * pixelsPerPoint);
+        float xIn = snapDevicePixelX(w / 2.0 + (loopInPoint - centerIndexRender) * pixelsPerPoint);
+        float xOut = snapDevicePixelX(w / 2.0 + (loopOutPoint - centerIndexRender) * pixelsPerPoint);
 
         if (xOut < xIn)
             std::swap(xIn, xOut);
@@ -650,7 +667,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
 
             const double cueSec = m.value("positionSec").toDouble();
             const double cuePoint = cueSec * pointsPerSec;
-            const float x = snapDevicePixelX(w / 2.0 + (cuePoint - centerIndexPixelSnapped) * pixelsPerPoint);
+            const float x = snapDevicePixelX(w / 2.0 + (cuePoint - centerIndexRender) * pixelsPerPoint);
             if (x < 0.0f || x > w)
                 continue;
 
@@ -709,8 +726,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             const double startPoint = startSec * pointsPerSec;
             const double endPoint = endSec * pointsPerSec;
 
-            float x1 = snapDevicePixelX(w / 2.0 + (startPoint - centerIndexPixelSnapped) * pixelsPerPoint);
-            float x2 = snapDevicePixelX(w / 2.0 + (endPoint - centerIndexPixelSnapped) * pixelsPerPoint);
+            float x1 = snapDevicePixelX(w / 2.0 + (startPoint - centerIndexRender) * pixelsPerPoint);
+            float x2 = snapDevicePixelX(w / 2.0 + (endPoint - centerIndexRender) * pixelsPerPoint);
 
             if (x2 < x1)
                 std::swap(x1, x2);
