@@ -2179,8 +2179,13 @@ void DjEngine::resumeAfterScrub()
 
     // Keep current fling velocity and glide back to normal transport speed.
     // If the deck was paused before scratch, glide to a full stop instead.
-    if (std::abs(m_scratchSmoothedRate) < 0.02)
-        m_scratchSmoothedRate = m_scratchTargetRate;
+    constexpr double kMinReleaseKickRate = 0.06;
+    if (std::abs(m_scratchSmoothedRate) < kMinReleaseKickRate) {
+        const double seedDir = (std::abs(m_scratchTargetRate) > 0.001)
+            ? std::copysign(1.0, m_scratchTargetRate)
+            : m_scratchDirectionSign;
+        m_scratchSmoothedRate = seedDir * kMinReleaseKickRate;
+    }
     m_scratchSmoothedRate = std::clamp(m_scratchSmoothedRate, -m_scratchMaxRate, m_scratchMaxRate);
     const double releaseBaseRate = std::max(0.01, std::abs(getTempoRatio()));
     const double releaseDirection = m_scrubSavedReverseState ? -1.0 : 1.0;
