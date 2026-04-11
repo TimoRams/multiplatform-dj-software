@@ -91,8 +91,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/FxManager.cpp
     src/FxProcessor.h
     src/FxProcessor.cpp
-    src/LinkManager.h
-    src/LinkManager.cpp
+    src/link/LinkManager.h
+    src/link/LinkManager.cpp
     src/SystemMonitor.h
     src/SystemMonitor.cpp
     src/ParameterStore.h

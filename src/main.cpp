@@ -16,7 +16,7 @@
 #include "LibraryManager.h"
 #include "CoverArtProvider.h"
 #include "FxManager.h"
-#include "LinkManager.h"
+#include "link/LinkManager.h"
 #include "SystemMonitor.h"
 #include "ParameterStore.h"
 #include "MidiControllerManager.h"
