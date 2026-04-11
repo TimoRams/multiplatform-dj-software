@@ -389,6 +389,10 @@ private:
     double m_scratchAccumulatedMoveSec = 0.0;
     double m_scratchInertiaMoveThresholdSec = 0.004;
     double m_scratchBaseRate = 1.0;
+    double m_scratchInputFilteredRate = 0.0;
+    double m_scratchInputRateFilterAlpha = 0.34;
+    double m_scratchDirectionSign = 1.0;
+    double m_scratchDirectionFlipThresholdRate = 0.08;
     bool   m_scratchAbsolutePositionControl = false;
     bool   m_scrubSavedKeylock = false;
     bool   m_scrubSavedReverseState = false;

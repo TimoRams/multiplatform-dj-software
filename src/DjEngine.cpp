@@ -676,6 +676,7 @@ public:
     void setFxAmount(float amount)        { m_fx.setAmount(amount); }
     void setFxSCKnob(float knob)          { m_fx.setSCKnobValue(knob); }
     void setFxSCParam(float param)        { m_fx.setSCParamValue(param); }
+    void setScratchTimbre(float amount)   { scratchTimbre.store(std::clamp(amount, 0.0f, 1.0f), std::memory_order_relaxed); }
 
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override {
         if (source) source->prepareToPlay(samplesPerBlockExpected, sampleRate);
@@ -690,6 +691,8 @@ public:
         colorFilter.prepare(spec);
 
         m_sampleRate = sampleRate;
+        m_scratchWarmLpState[0] = 0.0f;
+        m_scratchWarmLpState[1] = 0.0f;
         updateFilters();
     }
 
@@ -701,6 +704,29 @@ public:
         if (source) source->getNextAudioBlock(bufferToFill);
 
         if (m_sampleRate <= 0.0 || bufferToFill.buffer->getNumChannels() == 0 || bufferToFill.numSamples == 0) return;
+
+        // Dynamic scratch timbre: at very slow platter speed, soften highs and
+        // add a tiny saturation curve so drags sound less metallic/robotic.
+        const float timbre = scratchTimbre.load(std::memory_order_relaxed);
+        if (timbre > 0.0001f) {
+            const int numChannels = std::min(bufferToFill.buffer->getNumChannels(), 2);
+            const float cutoffHz = 1400.0f + (1.0f - timbre) * 9000.0f;
+            const float pole = std::exp(-2.0f * juce::MathConstants<float>::pi * cutoffHz
+                                        / static_cast<float>(m_sampleRate));
+            const float alpha = 1.0f - std::clamp(pole, 0.0f, 0.9999f);
+            const float drive = 1.0f + timbre * 1.2f;
+            const float norm = std::max(0.001f, std::tanh(drive));
+
+            for (int ch = 0; ch < numChannels; ++ch) {
+                float state = m_scratchWarmLpState[ch];
+                float* w = bufferToFill.buffer->getWritePointer(ch, bufferToFill.startSample);
+                for (int i = 0; i < bufferToFill.numSamples; ++i) {
+                    state += alpha * (w[i] - state);
+                    w[i] = std::tanh(state * drive) / norm;
+                }
+                m_scratchWarmLpState[ch] = state;
+            }
+        }
 
         juce::dsp::AudioBlock<float> block(*bufferToFill.buffer);
         auto slicedBlock = block.getSubBlock(bufferToFill.startSample, bufferToFill.numSamples);
@@ -869,6 +895,8 @@ private:
 
     FxProcessor m_fx;
     BrickwallLimiter m_limiter;
+    std::atomic<float> scratchTimbre { 0.0f };
+    float m_scratchWarmLpState[2] { 0.0f, 0.0f };
 
 public:
     // VU meter peak levels — written on audio thread, read from UI thread
@@ -1464,10 +1492,21 @@ void DjEngine::onTimer()
         const double alpha = 1.0 - std::exp(-dtSec / std::max(0.001, tau));
         m_scratchSmoothedRate += (targetRate - m_scratchSmoothedRate) * alpha;
 
+        if (std::abs(m_scratchSmoothedRate) >= m_scratchDirectionFlipThresholdRate)
+            m_scratchDirectionSign = (m_scratchSmoothedRate < 0.0) ? -1.0 : 1.0;
+
         const double absRate = std::abs(m_scratchSmoothedRate);
         if (reverseWrapSource) {
             auto* reverseSource = static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get());
-            reverseSource->setReverse(m_scratchSmoothedRate < 0.0);
+            reverseSource->setReverse(m_scratchDirectionSign < 0.0);
+        }
+
+        if (mixerSource) {
+            // Stronger coloration at very low platter speeds, fading out naturally
+            // into clean playback at faster scratches.
+            const double slowZone = std::clamp(1.0 - (absRate / 1.4), 0.0, 1.0);
+            const float timbre = static_cast<float>(std::pow(slowZone, 1.25) * 0.85);
+            mixerSource->setScratchTimbre(timbre);
         }
 
         if (resamplingSource) {
@@ -1502,6 +1541,10 @@ void DjEngine::onTimer()
             m_scratchReleaseActive = false;
             m_scratchTargetRate = 0.0;
             m_scratchSmoothedRate = 0.0;
+            m_scratchInputFilteredRate = 0.0;
+
+            if (mixerSource)
+                mixerSource->setScratchTimbre(0.0f);
 
             if (reverseWrapSource)
                 static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get())->setReverse(m_scrubSavedReverseState);
@@ -1529,6 +1572,9 @@ void DjEngine::onTimer()
         emit gainReductionChanged();
         return;
     }
+
+    if (mixerSource)
+        mixerSource->setScratchTimbre(0.0f);
 
     if (transportSource.isPlaying()) {
         // Store a fresh snapshot from the transport each control tick.
@@ -1865,6 +1911,7 @@ void DjEngine::pauseForScrub()
     m_scratchAccumulatedMoveSec = 0.0;
     m_scratchTargetRate = 0.0;
     m_scratchSmoothedRate = 0.0;
+    m_scratchInputFilteredRate = 0.0;
     m_scrubPhysicsClock.restart();
     m_lastScrubInputClock.restart();
     emit scrubbingChanged();
@@ -1873,6 +1920,7 @@ void DjEngine::pauseForScrub()
     // Temporarily bypass keylock/time-stretch while the platter is grabbed.
     m_scrubSavedKeylock = m_keylock;
     m_scrubSavedReverseState = m_isReverse;
+    m_scratchDirectionSign = m_scrubSavedReverseState ? -1.0 : 1.0;
     if (timeStretchSource)
         timeStretchSource->setKeylock(false);
     if (resamplingSource)
@@ -2011,8 +2059,7 @@ void DjEngine::setScrubPosition(double positionSeconds)
     const double instantaneousRate = std::copysign(
         std::clamp(shapedAbsRate, 0.0, m_scratchMaxRate),
         rawRate);
-    m_scratchTargetRate = instantaneousRate;
-    m_lastScrubInputClock.restart();
+    pushScratchVelocityTick(instantaneousRate);
 
     if (m_isScrubbing && !transportSource.isPlaying() && std::abs(instantaneousRate) > 0.001)
         transportSource.start();
@@ -2033,7 +2080,12 @@ void DjEngine::setScrubPosition(double positionSeconds)
 
 void DjEngine::pushScratchVelocityTick(double velocityRate)
 {
-    m_scratchTargetRate = std::clamp(velocityRate, -m_scratchMaxRate, m_scratchMaxRate);
+    const double rawTarget = std::clamp(velocityRate, -m_scratchMaxRate, m_scratchMaxRate);
+    m_scratchInputFilteredRate += (rawTarget - m_scratchInputFilteredRate)
+        * std::clamp(m_scratchInputRateFilterAlpha, 0.0, 1.0);
+    m_scratchTargetRate = std::clamp(m_scratchInputFilteredRate,
+                                     -m_scratchMaxRate,
+                                     m_scratchMaxRate);
     m_lastScrubInputClock.restart();
 }
 
@@ -2044,6 +2096,7 @@ void DjEngine::resumeAfterScrub()
 
     m_isScrubbing = false;
     m_scratchAbsolutePositionControl = false;
+    m_scratchInputFilteredRate = m_scratchSmoothedRate;
 
     // Touch/hold without meaningful movement: resume immediately with no glide.
     if (m_scratchAccumulatedMoveSec < m_scratchInertiaMoveThresholdSec) {
