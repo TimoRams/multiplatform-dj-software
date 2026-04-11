@@ -44,34 +44,28 @@ ApplicationWindow {
         visible: true
     }
 
-    // ── Global font scaling ──────────────────────────────────────────────────
-    // Small font sizes get an additional readability boost because many labels
-    // in the UI use 7-10px design sizes.
+    // ── Global font scaling (responsive / non-transformed areas only) ───────
     readonly property real _refHeight: 800
-    property real fontScaleBoost: 1.12
+    readonly property real responsiveFontScale: Math.max(0.92, Math.min(1.30, window.height / _refHeight))
+
+    function _snapScaleToPhysicalPixels(rawScale) {
+        var dpr = Math.max(1.0, window.devicePixelRatio)
+        // Keep scaled design width aligned to whole physical pixels.
+        var scaledPhysicalWidth = Math.round(window.baseUiWidth * rawScale * dpr)
+        return scaledPhysicalWidth / (window.baseUiWidth * dpr)
+    }
 
     function _scaledFontSize(basePx) {
-        var ratio = window.height / _refHeight
-        var dampened = Math.sqrt(ratio)
+        var scale = responsiveFontScale
+        var scaled = basePx * scale
 
-        // Keep micro-labels readable on high-res displays.
-        var smallTextBoost = 1.0
-        if (basePx <= 8)
-            smallTextBoost = 1.30
-        else if (basePx <= 10)
-            smallTextBoost = 1.16
-        else if (basePx <= 12)
-            smallTextBoost = 1.08
+        // Keep tiny labels legible while avoiding aggressive jumps.
+        if (basePx <= 10)
+            scaled *= 1.08
 
-        var result = basePx * dampened * fontScaleBoost * smallTextBoost
-
-        var minReadable = basePx <= 8 ? 10
-                        : basePx <= 10 ? 11
-                        : Math.round(basePx * 0.9)
-        var minScaleClamp = Math.round(basePx * 0.9)
-        var maxScaleClamp = Math.round(basePx * 1.9)
-
-        return Math.max(Math.max(minReadable, minScaleClamp), Math.min(result, maxScaleClamp))
+        var dpr = Math.max(1.0, window.devicePixelRatio)
+        var snapped = Math.round(scaled * dpr) / dpr
+        return Math.max(1, snapped)
     }
 
     // Standard scaling for non-transformed areas (header, FX bar, library).
@@ -142,7 +136,8 @@ ApplicationWindow {
     // uiScale passt alles proportional an, wenn das Fenster schmaler/breiter wird.
     // -------------------------------------------------------------------------
     readonly property real baseUiWidth: 1600
-    readonly property real uiScale: width / baseUiWidth
+    readonly property real rawUiScale: width / baseUiWidth
+    readonly property real uiScale: _snapScaleToPhysicalPixels(rawUiScale)
     readonly property int scaledWaveformHeight: Math.round(window.baseWaveformHeight * window.uiScale)
     readonly property int scaledDeckMixerHeight: Math.round(window.baseDeckMixerHeight * window.uiScale)
     // Keep header height fixed to prevent resize jitter and control shifts.
@@ -188,6 +183,8 @@ ApplicationWindow {
                 height: window.baseWaveformHeight
                 scale:  window.uiScale
                 transformOrigin: Item.TopLeft
+                x: Math.round((waveformViewport.width - (width * scale)) * 0.5)
+                y: 0
 
                 ColumnLayout {
                     id: waveformSection
@@ -228,6 +225,8 @@ ApplicationWindow {
                 height: window.baseDeckMixerHeight
                 scale:  window.uiScale
                 transformOrigin: Item.TopLeft
+                x: Math.round((deckMixerViewport.width - (width * scale)) * 0.5)
+                y: 0
 
                 RowLayout {
                     id: deckRow
