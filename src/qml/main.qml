@@ -45,9 +45,9 @@ ApplicationWindow {
         visible: true
     }
 
-    // ── Global font scaling (responsive / non-transformed areas only) ───────
+    // ── Global font sizing (non-transformed areas stay stable on resize) ─────
     readonly property real _refHeight: 800
-    readonly property real responsiveFontScale: Math.max(0.92, Math.min(1.30, window.height / _refHeight))
+    readonly property real responsiveFontScale: 1.0
 
     function _snapScaleToPhysicalPixels(rawScale) {
         var dpr = Math.max(1.0, window.devicePixelRatio)
