@@ -374,8 +374,8 @@ private:
     QElapsedTimer m_scrubPhysicsClock;
     double m_scratchTargetRate = 0.0;
     double m_scratchSmoothedRate = 0.0;
-    double m_scratchRateAttackTauSec = 0.015;
-    double m_scratchRateReleaseTauSec = 0.040;
+    double m_scratchRateAttackTauSec = 0.014;
+    double m_scratchRateReleaseTauSec = 0.055;
     double m_scratchIdleTimeoutSec = 0.120;
     double m_scratchMaxRate = 12.0;
     bool   m_scratchReleaseActive = false;
@@ -383,6 +383,8 @@ private:
     double m_scratchReleaseToPlayTauSec = 0.22;
     double m_scratchReleaseToStopTauSec = 0.12;
     double m_scratchReleaseSettleThreshold = 0.03;
+    double m_scratchControlResumeThresholdRate = 0.0012;
+    double m_scratchControlStopThresholdRate = 0.0006;
     double m_scratchDirectStepLimitSec = 0.02;
     double m_scratchFineMoveThresholdSec = 0.003;
     double m_scratchEventSpikeClampSec = 0.08;
@@ -391,6 +393,7 @@ private:
     double m_scratchBaseRate = 1.0;
     double m_scratchInputFilteredRate = 0.0;
     double m_scratchInputRateFilterAlpha = 0.34;
+    double m_scratchInputRateSlewPerSec = 28.0;
     double m_scratchDirectionSign = 1.0;
     double m_scratchDirectionFlipThresholdRate = 0.08;
     bool   m_scratchAbsolutePositionControl = false;

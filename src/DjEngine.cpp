@@ -1052,6 +1052,41 @@ DjEngine::DjEngine(QObject* parent) : QObject(parent)
         qWarning() << "JUCE AudioDeviceManager err:" << QString::fromStdString(err.toStdString());
     }
 
+    // Prefer lower output buffer sizes for better scratch responsiveness.
+    // Keep this conservative and only apply when the driver explicitly supports it.
+    if (auto* device = deviceManager.getCurrentAudioDevice()) {
+        const auto availableSizes = device->getAvailableBufferSizes();
+        const int currentSize = device->getCurrentBufferSizeSamples();
+        int targetSize = currentSize;
+
+        for (int preferred : {128, 256, 384, 512}) {
+            if (availableSizes.contains(preferred)) {
+                targetSize = preferred;
+                break;
+            }
+        }
+
+        if (targetSize == currentSize) {
+            for (int i = 0; i < availableSizes.size(); ++i) {
+                const int candidate = availableSizes[i];
+                if (candidate >= 128 && candidate < targetSize)
+                    targetSize = candidate;
+            }
+        }
+
+        if (targetSize < currentSize) {
+            juce::AudioDeviceManager::AudioDeviceSetup setup;
+            deviceManager.getAudioDeviceSetup(setup);
+            setup.bufferSize = targetSize;
+            const juce::String setupErr = deviceManager.setAudioDeviceSetup(setup, true);
+            if (setupErr.isEmpty()) {
+                qDebug() << "[DjEngine] Reduced audio buffer size:" << currentSize << "->" << targetSize;
+            } else {
+                qWarning() << "[DjEngine] Could not reduce audio buffer size:" << QString::fromStdString(setupErr.toStdString());
+            }
+        }
+    }
+
     deviceManager.addAudioCallback(&sourcePlayer);
     
     // Create the resampling source that wraps the transport source.
@@ -1092,8 +1127,8 @@ DjEngine::DjEngine(QObject* parent) : QObject(parent)
 
     connect(&timer, &QTimer::timeout, this, &DjEngine::onTimer);
     timer.setTimerType(Qt::PreciseTimer);
-    // Higher-rate control snapshots reduce visible waveform micro-jitter.
-    timer.start(8);
+    // Faster control snapshots reduce audible speed stepping while scratching.
+    timer.start(4);
 }
 
 DjEngine::~DjEngine()
@@ -1462,6 +1497,8 @@ void DjEngine::setPosition(float progress)
 void DjEngine::onTimer()
 {
     if (m_isScrubbing || m_scratchReleaseActive) {
+        double idleSec = 0.0;
+        bool hasIdleSample = false;
         const double dtSec = m_scrubPhysicsClock.isValid()
             ? std::clamp(static_cast<double>(m_scrubPhysicsClock.nsecsElapsed()) * 1e-9,
                          0.001, 0.050)
@@ -1471,9 +1508,10 @@ void DjEngine::onTimer()
         double targetRate = 0.0;
         double tau = m_scratchRateReleaseTauSec;
         if (m_isScrubbing) {
-            const double idleSec = m_lastScrubInputClock.isValid()
+            idleSec = m_lastScrubInputClock.isValid()
                 ? static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9
                 : 1.0;
+            hasIdleSample = true;
 
             targetRate = (idleSec > m_scratchIdleTimeoutSec)
                 ? 0.0
@@ -1514,10 +1552,12 @@ void DjEngine::onTimer()
             resamplingSource->setResamplingRatio(ratio);
         }
 
-        if (absRate < 0.002) {
+        // Playback hysteresis: avoid rapid start/stop toggling around zero.
+        const bool allowStopForIdleGrab = !m_isScrubbing || (hasIdleSample && idleSec > 0.040);
+        if (absRate < m_scratchControlStopThresholdRate && allowStopForIdleGrab) {
             if (transportSource.isPlaying())
                 transportSource.stop();
-        } else if (!transportSource.isPlaying()) {
+        } else if (absRate > m_scratchControlResumeThresholdRate && !transportSource.isPlaying()) {
             transportSource.start();
         }
 
@@ -2081,9 +2121,18 @@ void DjEngine::setScrubPosition(double positionSeconds)
 void DjEngine::pushScratchVelocityTick(double velocityRate)
 {
     const double rawTarget = std::clamp(velocityRate, -m_scratchMaxRate, m_scratchMaxRate);
+    const double dtSec = m_lastScrubInputClock.isValid()
+        ? std::clamp(static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9,
+                     0.001, 0.050)
+        : 0.008;
+
     m_scratchInputFilteredRate += (rawTarget - m_scratchInputFilteredRate)
         * std::clamp(m_scratchInputRateFilterAlpha, 0.0, 1.0);
-    m_scratchTargetRate = std::clamp(m_scratchInputFilteredRate,
+
+    const double maxStep = std::max(0.001, m_scratchInputRateSlewPerSec) * dtSec;
+    const double desired = std::clamp(m_scratchInputFilteredRate, -m_scratchMaxRate, m_scratchMaxRate);
+    const double delta = std::clamp(desired - m_scratchTargetRate, -maxStep, maxStep);
+    m_scratchTargetRate = std::clamp(m_scratchTargetRate + delta,
                                      -m_scratchMaxRate,
                                      m_scratchMaxRate);
     m_lastScrubInputClock.restart();
