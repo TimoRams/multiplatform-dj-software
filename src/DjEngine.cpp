@@ -1966,24 +1966,50 @@ void DjEngine::setScrubPosition(double positionSeconds)
         return;
 
     const double nextPos = std::clamp(positionSeconds, 0.0, len);
-    if (std::abs(nextPos - m_scrubHoldPosition) <= 1e-7)
+    const double deltaSec = nextPos - m_scrubHoldPosition;
+    if (std::abs(deltaSec) <= 1e-7)
         return;
 
-    // Absolute grab mode: keep direct manipulation stable, no inertia drive.
+    // Absolute grab mode with preserved scratch feel:
+    // derive a velocity target from absolute pointer movement so scratching
+    // remains audible and release inertia still works.
     m_scratchReleaseActive = false;
-    m_scratchTargetRate = 0.0;
-    m_scratchSmoothedRate = 0.0;
 
-    if (transportSource.isPlaying())
-        transportSource.stop();
+    const double dtSecRaw = m_lastScrubInputClock.isValid()
+        ? std::max(0.001, static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9)
+        : 0.008;
+    const double rawRate = deltaSec / dtSecRaw;
+    const double baseRate = std::max(0.05, m_scratchBaseRate);
+    const double absRaw = std::abs(rawRate);
+
+    double shapedAbsRate = 0.0;
+    if (absRaw <= baseRate) {
+        // Preserve fine control near zero without killing tactile response.
+        const double t = std::clamp(absRaw / baseRate, 0.0, 1.0);
+        shapedAbsRate = baseRate * (0.10 * t + 0.90 * t * t * t);
+    } else {
+        shapedAbsRate = baseRate + (absRaw - baseRate) * 1.25;
+    }
+
+    const bool microMove = std::abs(deltaSec) <= (m_scratchFineMoveThresholdSec * 0.25);
+    const double instantaneousRate = microMove
+        ? 0.0
+        : std::copysign(std::clamp(shapedAbsRate, 0.0, m_scratchMaxRate), rawRate);
+    m_scratchTargetRate = instantaneousRate;
+    m_lastScrubInputClock.restart();
+
+    if (m_isScrubbing && !transportSource.isPlaying() && !microMove)
+        transportSource.start();
 
     transportSource.setPosition(nextPos);
+    m_scratchAccumulatedMoveSec += std::abs(deltaSec);
     m_scrubHoldPosition = nextPos;
-    m_lastScrubInputClock.restart();
+    m_scrubPhysicsClock.restart();
 
     // Keep all UI readers in sync with the exact dragged position.
     m_atomicPlayheadPos.store(m_scrubHoldPosition, std::memory_order_relaxed);
     m_snapPosition = m_scrubHoldPosition;
+    m_snapTempoRatio = getTempoRatio();
     m_snapValid = false;
 
     emit progressChanged();
