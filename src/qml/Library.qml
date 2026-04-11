@@ -384,7 +384,7 @@ Rectangle {
                     background: Rectangle {
                         radius: 0
                         color: "#111"
-                        border.width: 1
+                        border.width: 0
                         border.color: searchField.activeFocus ? "#4f79c4" : "#3a3a3a"
                     }
                 }

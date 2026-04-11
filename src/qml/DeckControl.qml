@@ -654,7 +654,7 @@ Item {
                                     if (!deck.engine || !parent.checked) return "transparent"
                                     return deck.engine.syncMaster ? "#ffd24d" : "#5cfa5c"
                                 }
-                                border.width: (deck.engine && deck.engine.syncMaster) ? 2 : 1
+                                border.width: 0
                                 radius: 0
                             }
                             contentItem: Text {
@@ -1148,7 +1148,7 @@ Item {
                     background: Rectangle {
                         color: "#f5f5f5"
                         border.color: "#8bc34a"
-                        border.width: 2
+                        border.width: 0
                         radius: 3
                     }
                     onAccepted: applyManualBpm()

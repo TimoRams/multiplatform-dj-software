@@ -177,7 +177,7 @@ Rectangle {
                 background: Rectangle {
                     color: highlighted ? "#262626" : "#171717"
                     border.color: highlighted ? root.accentColor : "transparent"
-                    border.width: highlighted ? 1 : 0
+                    border.width: 0
                     radius: 0
                 }
             }

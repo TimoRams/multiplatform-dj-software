@@ -44,7 +44,7 @@ Item {
                 radius: 5
                 color: "#222"
                 border.color: root.deckColor
-                border.width: 2
+                border.width: 0
 
                 Text {
                     anchors.centerIn: parent
@@ -128,7 +128,7 @@ Item {
                     radius: 3
                     color: "#1a2e1a"
                     border.color: root.hasTrack ? "#4a8a4a" : "#333"
-                    border.width: 1
+                    border.width: 0
                     implicitWidth: bpmText.implicitWidth + 12
                     height: root.infoBadgeHeight
 
@@ -148,7 +148,7 @@ Item {
                     radius: 3
                     color: "#1a1a2e"
                     border.color: root.hasTrack ? "#4a4aaa" : "#333"
-                    border.width: 1
+                    border.width: 0
                     implicitWidth: keyText.implicitWidth + 12
                     height: root.infoBadgeHeight
 
@@ -168,7 +168,7 @@ Item {
                     radius: 3
                     color: "#202020"
                     border.color: "#444"
-                    border.width: 1
+                    border.width: 0
                     implicitWidth: durText.implicitWidth + 12
                     height: root.infoBadgeHeight
 

@@ -13,7 +13,7 @@ Item {
         radius: 2
         color: "#171717"
         border.color: "#2a2a2a"
-        border.width: 1
+        border.width: 0
     }
 
     Repeater {

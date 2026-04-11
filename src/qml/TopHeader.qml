@@ -375,6 +375,7 @@ Rectangle {
                             height: root.miniBarHeight
                             color: "#0d0d0d"
                             border.color: "#2a2a2a"
+                            border.width: 0
                             radius: 2
 
                             Rectangle {
@@ -401,6 +402,7 @@ Rectangle {
                             height: root.miniBarHeight
                             color: "#0d0d0d"
                             border.color: "#2a2a2a"
+                            border.width: 0
                             radius: 2
 
                             Rectangle {
@@ -420,6 +422,7 @@ Rectangle {
                 height: root.buttonHeight
                 color: "#1a1a1a"
                 border.color: "#333"
+                border.width: 0
                 radius: 0
 
                 Row {
