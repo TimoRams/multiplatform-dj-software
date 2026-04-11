@@ -14,25 +14,42 @@ Controls.Slider {
         height: control.orientation === Qt.Horizontal ? 4 : control.availableHeight
         radius: 0
         color: "#202020"
-        border.color: "#3a3a3a"
-        border.width: 1
+        border.width: 0
 
         Rectangle {
             visible: control.orientation === Qt.Horizontal
-            x: 1
-            y: 1
-            width: Math.max(0, control.visualPosition * (parent.width - 2))
-            height: parent.height - 2
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            height: 1
+            color: "#3a3a3a"
+        }
+
+        Rectangle {
+            visible: control.orientation === Qt.Vertical
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: 1
+            color: "#3a3a3a"
+        }
+
+        Rectangle {
+            visible: control.orientation === Qt.Horizontal
+            x: 0
+            y: 0
+            width: Math.max(0, control.visualPosition * parent.width)
+            height: parent.height
             radius: 0
             color: control.pressed ? "#5a5a5a" : "#3e3e3e"
         }
 
         Rectangle {
             visible: control.orientation === Qt.Vertical
-            x: 1
-            y: parent.height - 1 - Math.max(0, control.visualPosition * (parent.height - 2))
-            width: parent.width - 2
-            height: Math.max(0, control.visualPosition * (parent.height - 2))
+            x: 0
+            y: parent.height - Math.max(0, control.visualPosition * parent.height)
+            width: parent.width
+            height: Math.max(0, control.visualPosition * parent.height)
             radius: 0
             color: control.pressed ? "#5a5a5a" : "#3e3e3e"
         }
@@ -45,7 +62,14 @@ Controls.Slider {
         y: control.topPadding + control.visualPosition * (control.availableHeight - height)
         radius: 0
         color: control.pressed ? "#e0e0e0" : "#c8c8c8"
-        border.color: control.pressed ? "#707070" : "#444444"
-        border.width: 1
+        border.width: 0
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: 1
+            color: control.pressed ? "#707070" : "#444444"
+        }
     }
 }

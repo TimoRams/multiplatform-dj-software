@@ -159,8 +159,41 @@ Item {
     Rectangle {
         anchors.fill: parent
         color: "#161616"
-        border.color: deck.dropHovered ? "#5599ff" : "#333"
-        border.width: deck.dropHovered ? 2 : 1
+        readonly property real frameThickness: (deck.dropHovered ? 2.0 : 1.0) / Math.max(0.001, window.uiScale)
+        readonly property color frameColor: deck.dropHovered ? "#5599ff" : "#333"
+
+        // Render frame as dedicated edge rectangles to avoid transformed border flicker.
+        Rectangle {
+            x: 0
+            y: 0
+            width: parent.width
+            height: parent.frameThickness
+            color: parent.frameColor
+        }
+
+        Rectangle {
+            x: 0
+            y: parent.height - parent.frameThickness
+            width: parent.width
+            height: parent.frameThickness
+            color: parent.frameColor
+        }
+
+        Rectangle {
+            x: 0
+            y: 0
+            width: parent.frameThickness
+            height: parent.height
+            color: parent.frameColor
+        }
+
+        Rectangle {
+            x: parent.width - parent.frameThickness
+            y: 0
+            width: parent.frameThickness
+            height: parent.height
+            color: parent.frameColor
+        }
 
         // Drag-hover overlay
         Rectangle {
@@ -202,7 +235,7 @@ Item {
                         border.color: deck._hasTrack
                                       ? (deck.deckName === "A" ? "#ff9900" : "#00ccff")
                                       : "#333"
-                        border.width: 1
+                        border.width: 0
 
                         // Placeholder icon when no cover art is present
                         Text {
@@ -242,7 +275,7 @@ Item {
                             radius: 0
                             color: "#1b1b1b"
                             border.color: "#3a3a3a"
-                            border.width: 1
+                            border.width: 0
 
                             Row {
                                 anchors.fill: parent
@@ -280,7 +313,7 @@ Item {
                             radius: 0
                             color: "#1b1b1b"
                             border.color: "#3a3a3a"
-                            border.width: 1
+                            border.width: 0
 
                             Row {
                                 anchors.fill: parent
@@ -330,7 +363,7 @@ Item {
                             radius: 0
                             color: "#1a2e1a"
                             border.color: "#4a8a4a"
-                            border.width: 1
+                            border.width: 0
 
                             Row {
                                 anchors.fill: parent
@@ -385,7 +418,7 @@ Item {
                             radius: 0
                             color: "#20242f"
                             border.color: deck._showLiveBpmIndicator() ? "#4f7fcf" : "#3f475a"
-                            border.width: 1
+                            border.width: 0
 
                             Row {
                                 anchors.fill: parent
@@ -426,7 +459,7 @@ Item {
                             radius: 0
                             color: "#1a1a2e"
                             border.color: "#4a4aaa"
-                            border.width: 1
+                            border.width: 0
 
                             Row {
                                 anchors.fill: parent
@@ -463,7 +496,7 @@ Item {
                             radius: 0
                             color: "#202020"
                             border.color: "#4a4a4a"
-                            border.width: 1
+                            border.width: 0
 
                             Row {
                                 anchors.fill: parent
@@ -587,7 +620,7 @@ Item {
                             background: Rectangle {
                                 color: parent.checked ? "#883300" : "#444"
                                 border.color: parent.checked ? "#ff6600" : "transparent"
-                                border.width: 1
+                                border.width: 0
                                 radius: 0
                             }
                             contentItem: Text {
@@ -654,7 +687,7 @@ Item {
                             background: Rectangle {
                                 color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
                                 border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
-                                border.width: 1; radius: 0
+                                border.width: 0; radius: 0
                             }
                             contentItem: Text {
                                 text: parent.text
@@ -681,7 +714,7 @@ Item {
                             background: Rectangle {
                                 color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
                                 border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
-                                border.width: 1; radius: 0
+                                border.width: 0; radius: 0
                             }
                             contentItem: Text {
                                 text: parent.text
@@ -707,7 +740,7 @@ Item {
                             background: Rectangle {
                                 color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
                                 border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
-                                border.width: 1; radius: 0
+                                border.width: 0; radius: 0
                             }
                             contentItem: Text {
                                 text: parent.text
@@ -731,7 +764,7 @@ Item {
                                 color: "#333"
                                 radius: 0
                                 border.color: "#555"
-                                border.width: 1
+                                border.width: 0
                             }
                             contentItem: Text {
                                 text: parent.text
@@ -756,7 +789,7 @@ Item {
                                 color: "#333"
                                 radius: 0
                                 border.color: "#555"
-                                border.width: 1
+                                border.width: 0
                             }
                             contentItem: Text {
                                 text: parent.text
@@ -781,7 +814,7 @@ Item {
                                 color: "#333"
                                 radius: 0
                                 border.color: "#555"
-                                border.width: 1
+                                border.width: 0
                             }
                             contentItem: Text {
                                 text: parent.text
@@ -808,7 +841,7 @@ Item {
                                 color: parent.checked ? "#335533" : "#333"
                                 radius: 0
                                 border.color: parent.checked ? "#66dd66" : "#555"
-                                border.width: 1
+                                border.width: 0
                             }
                             contentItem: Text {
                                 text: parent.text
@@ -834,7 +867,7 @@ Item {
                                 color: "#333"
                                 radius: 0
                                 border.color: "#555"
-                                border.width: 1
+                                border.width: 0
                             }
                             contentItem: Text {
                                 text: parent.text
@@ -861,7 +894,7 @@ Item {
                                 color: parent.checked ? "#334455" : "#333"
                                 radius: 0
                                 border.color: parent.checked ? "#66bbff" : "#555"
-                                border.width: 1
+                                border.width: 0
                             }
                             contentItem: Text {
                                 text: parent.text
@@ -904,7 +937,7 @@ Item {
                     Layout.alignment: Qt.AlignVCenter
                     color: "#1a1a1a"
                     border.color: "#333"
-                    border.width: 1
+                    border.width: 0
                     radius: 0
 
                     property real tempoRange: 8
@@ -1004,7 +1037,7 @@ Item {
             radius: 4
             color: "#1e1e1e"
             border.color: deck.deckName === "A" ? "#ff9900" : "#00ccff"
-            border.width: 1
+            border.width: 0
 
             // Close when clicking anywhere outside the popup
             MouseArea {
@@ -1080,7 +1113,7 @@ Item {
             radius: 4
             color: "#1e1e1e"
             border.color: deck.deckName === "A" ? "#4a8a4a" : "#4a8a4a"
-            border.width: 1
+            border.width: 0
 
             MouseArea {
                 anchors.fill: parent

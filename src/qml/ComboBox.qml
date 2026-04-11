@@ -5,8 +5,16 @@ import QtQuick.Window
 Controls.ComboBox {
     id: control
     readonly property var hostWindow: control.Window.window
+
+    // Set to true for instances inside a `scale: window.uiScale` context
+    property bool useViewportScaling: false
+
     function sp(px) {
-        return (hostWindow && typeof hostWindow.sp === "function") ? hostWindow.sp(px) : px
+        if (!hostWindow) return px;
+        if (useViewportScaling && typeof hostWindow.spViewport === "function") {
+            return hostWindow.spViewport(px);
+        }
+        return (typeof hostWindow.sp === "function") ? hostWindow.sp(px) : px;
     }
 
     implicitWidth: Math.max(120, sp(140))
@@ -16,8 +24,15 @@ Controls.ComboBox {
     background: Rectangle {
         radius: 0
         color: control.pressed ? "#2a2a2a" : "#1f1f1f"
-        border.color: control.visualFocus ? "#5a5a5a" : "#3a3a3a"
-        border.width: 1
+        border.width: 0
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: 1
+            color: control.visualFocus ? "#ff9900" : "#3a3a3a"
+        }
     }
 
     contentItem: Text {
@@ -43,7 +58,14 @@ Controls.ComboBox {
     popup.background: Rectangle {
         radius: 0
         color: "#171717"
-        border.color: "#3a3a3a"
-        border.width: 1
+        border.width: 0
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 1
+            color: "#3a3a3a"
+        }
     }
 }

@@ -95,7 +95,7 @@ Item {
                     radius: 3
                     color: root.activeTab === index ? "#2a2a2a" : "#181818"
                     border.color: root.activeTab === index ? root.accentColor : "#2a2a2a"
-                    border.width: 1
+                    border.width: 0
 
                     Text {
                         anchors.centerIn: parent
@@ -133,7 +133,7 @@ Item {
                     radius: 5
                     color: "#151515"
                     border.color: "#2a2a2a"
-                    border.width: 1
+                    border.width: 0
 
                     Text {
                         anchors.top: parent.top
@@ -182,7 +182,7 @@ Item {
                                       : activeColor
 
                             border.color: cueSet ? Qt.lighter(activeColor, 1.5) : "#303030"
-                            border.width: 1
+                            border.width: 0
 
                             // Pad number (top-left corner)
                             Text {
@@ -353,7 +353,7 @@ Item {
         background: Rectangle {
             color: "#101010"
             border.color: "#2f2f2f"
-            border.width: 1
+            border.width: 0
             radius: 5
         }
 
@@ -373,7 +373,7 @@ Item {
                     radius: 4
                     color: modelData
                     border.color: Qt.lighter(modelData, 1.45)
-                    border.width: 1
+                    border.width: 0
 
                     MouseArea {
                         anchors.fill: parent

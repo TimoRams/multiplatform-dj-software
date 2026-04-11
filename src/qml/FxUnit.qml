@@ -57,7 +57,7 @@ Rectangle {
                 color: parent.checked ? "#222222" : "#1f1f1f"
                 radius: 0
                 border.color: parent.checked ? root.accentColor : "#353535"
-                border.width: 1
+                border.width: 0
             }
 
             onCheckedChanged: {
@@ -89,7 +89,7 @@ Rectangle {
                 color: parent.checked ? "#222222" : "#1f1f1f"
                 radius: 0
                 border.color: parent.checked ? root.accentColor : "#353535"
-                border.width: 1
+                border.width: 0
             }
 
             onCheckedChanged: {
@@ -157,7 +157,7 @@ Rectangle {
                 color: effectCombo.pressed ? "#242424" : "#1f1f1f"
                 radius: 0
                 border.color: effectCombo.visualFocus ? root.accentColor : "#353535"
-                border.width: 1
+                border.width: 0
             }
 
             delegate: ItemDelegate {
@@ -185,7 +185,7 @@ Rectangle {
             popup.background: Rectangle {
                 color: "#171717"
                 border.color: "#303030"
-                border.width: 1
+                border.width: 0
                 radius: 0
             }
 
@@ -265,7 +265,7 @@ Rectangle {
                         radius: 0
                         color: "#1f1f1f"
                         border.color: wetDryDial.value > 0 ? root.accentColor : "#444"
-                        border.width: 1
+                        border.width: 0
                     }
                 }
 

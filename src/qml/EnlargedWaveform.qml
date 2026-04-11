@@ -252,7 +252,7 @@ Item {
                     }
                     color: modelData["color"]
                     border.color: "#111"
-                    border.width: 1
+                    border.width: 0
 
                     Text {
                         anchors.centerIn: parent

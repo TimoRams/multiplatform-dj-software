@@ -138,7 +138,7 @@ Rectangle {
                     radius: width / 2
                     color: "#222"
                     border.color: "#444"
-                    border.width: 1
+                    border.width: 0
                 }
             }
 
@@ -206,7 +206,7 @@ Rectangle {
             radius: 0
             color: "#202020"
             border.color: "#3a3a3a"
-            border.width: 1
+            border.width: 0
 
             Rectangle {
                 visible: control.orientation === Qt.Horizontal && !control.centerFill
@@ -255,7 +255,7 @@ Rectangle {
             radius: 0
             color: control.pressed ? "#e0e0e0" : "#c8c8c8"
             border.color: control.pressed ? "#707070" : "#444444"
-            border.width: 1
+            border.width: 0
         }
     }
 
@@ -279,7 +279,7 @@ Rectangle {
                 Layout.alignment: Qt.AlignTop
                 color: "#151515"
                 border.color: "#353535"
-                border.width: 1
+                border.width: 0
                 radius: 0
 
                 Item {
@@ -347,7 +347,7 @@ Rectangle {
                             background: Rectangle {
                                 color: parent.checked ? "#1f3a26" : "#333"
                                 border.color: parent.checked ? "#66cc88" : "#555"
-                                border.width: 1
+                                border.width: 0
                                 radius: 0
                             }
                             onClicked: mixer.cueAActive = checked
@@ -390,7 +390,7 @@ Rectangle {
                         height: eqStackA.height
                         color: "#101010"
                         border.color: "#2f2f2f"
-                        border.width: 1
+                        border.width: 0
                         radius: 0
 
                         Rectangle {
@@ -412,7 +412,7 @@ Rectangle {
                 Layout.alignment: Qt.AlignTop
                 color: "#151515"
                 border.color: "#353535"
-                border.width: 1
+                border.width: 0
                 radius: 0
 
                 Item {
@@ -480,7 +480,7 @@ Rectangle {
                             background: Rectangle {
                                 color: parent.checked ? "#1f3a26" : "#333"
                                 border.color: parent.checked ? "#66cc88" : "#555"
-                                border.width: 1
+                                border.width: 0
                                 radius: 0
                             }
                             onClicked: mixer.cueBActive = checked
@@ -523,7 +523,7 @@ Rectangle {
                         height: eqStackB.height
                         color: "#101010"
                         border.color: "#2f2f2f"
-                        border.width: 1
+                        border.width: 0
                         radius: 0
 
                         Rectangle {

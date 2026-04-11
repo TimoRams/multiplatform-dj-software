@@ -143,6 +143,8 @@ ApplicationWindow {
     // -------------------------------------------------------------------------
     readonly property real baseUiWidth: 1600
     readonly property real uiScale: width / baseUiWidth
+    readonly property int scaledWaveformHeight: Math.round(window.baseWaveformHeight * window.uiScale)
+    readonly property int scaledDeckMixerHeight: Math.round(window.baseDeckMixerHeight * window.uiScale)
     // Keep header height fixed to prevent resize jitter and control shifts.
     readonly property int topBarHeight: 34
     readonly property int fxBarHeight: Math.max(36, Math.round(40 * (window.height / 800)))
@@ -174,8 +176,10 @@ ApplicationWindow {
         Item {
             id: waveformViewport
             Layout.fillWidth: true
-            Layout.preferredHeight: window.baseWaveformHeight * window.uiScale
-            Layout.maximumHeight: window.baseWaveformHeight * window.uiScale
+            Layout.minimumHeight: window.scaledWaveformHeight
+            Layout.preferredHeight: window.scaledWaveformHeight
+            Layout.maximumHeight: window.scaledWaveformHeight
+            clip: true
 
             // Fixed-size design canvas; scaled down/up to match the window width.
             Item {
@@ -212,9 +216,11 @@ ApplicationWindow {
         Item {
             id: deckMixerViewport
             Layout.fillWidth: true
-            Layout.preferredHeight: window.libraryExpanded ? 0 : window.baseDeckMixerHeight * window.uiScale
-            Layout.maximumHeight: window.libraryExpanded ? 0 : window.baseDeckMixerHeight * window.uiScale
+            Layout.minimumHeight: window.libraryExpanded ? 0 : window.scaledDeckMixerHeight
+            Layout.preferredHeight: window.libraryExpanded ? 0 : window.scaledDeckMixerHeight
+            Layout.maximumHeight: window.libraryExpanded ? 0 : window.scaledDeckMixerHeight
             visible: !window.libraryExpanded
+            clip: true
 
             Item {
                 id: deckMixerCanvas
@@ -262,6 +268,7 @@ ApplicationWindow {
         FxBar {
             id: fxBarSection
             Layout.fillWidth: true
+            Layout.minimumHeight: window.libraryExpanded ? 0 : window.fxBarHeight
             Layout.preferredHeight: window.libraryExpanded ? 0 : window.fxBarHeight
             Layout.maximumHeight: window.libraryExpanded ? 0 : window.fxBarHeight
             visible: !window.libraryExpanded

@@ -39,8 +39,9 @@ Rectangle {
     readonly property int buttonHeight: root.height
 
     function sp(px) {
-        var w = root.Window.window
-        return (w && typeof w.sp === "function") ? w.sp(px) : px
+        // TopHeader has a fixed bar height of 34px. Do not scale fonts based on window height,
+        // otherwise they will blow up and clip. Return the exact pixel value.
+        return px;
     }
 
     property string currentTime: "00:00"
@@ -129,7 +130,7 @@ Rectangle {
                 radius: 0
                 color: (linkManager && linkManager.enabled) ? "#1a3322" : "#1a1a1a"
                 border.color: (linkManager && linkManager.enabled) ? "#44cc66" : "#333"
-                border.width: 1
+                border.width: 0
 
                 Text {
                     anchors.centerIn: parent
@@ -197,7 +198,7 @@ Rectangle {
                             var bi = Math.floor(Math.max(0, Math.min(3, linkManager.phase)))
                             return index === bi ? "#66ee88" : "#333"
                         }
-                        border.width: 1
+                        border.width: 0
                     }
                 }
             }
@@ -222,7 +223,7 @@ Rectangle {
 
                 color: !antiClipActive ? "#1a1a1a" : (gr < 0.5 ? "#5c0000" : (gr < 0.7 ? "#b71c1c" : (gr < 0.99 ? "#f57f17" : "#1b5e20")))
                 border.color: !antiClipActive ? "#333" : (gr < 0.5 ? "#8e0000" : (gr < 0.7 ? "#f44336" : (gr < 0.99 ? "#fbc02d" : "#4caf50")))
-                border.width: 1
+                border.width: 0
 
                 Text {
                     anchors.centerIn: parent
@@ -306,7 +307,7 @@ Rectangle {
                             radius: width / 2
                             color: "#222"
                             border.color: "#444"
-                            border.width: 1
+                            border.width: 0
                         }
                     }
 
@@ -460,7 +461,7 @@ Rectangle {
                     height: root.buttonHeight
                     color: fullScreenMouse.pressed ? "#333" : "#1e1e1e"
                     border.color: "#333"
-                    border.width: 1
+                    border.width: 0
                     radius: 0
 
                     Text {
@@ -488,7 +489,7 @@ Rectangle {
                     height: root.buttonHeight
                     color: settingsMouse.pressed ? "#333" : "#1e1e1e"
                     border.color: "#333"
-                    border.width: 1
+                    border.width: 0
                     radius: 0
 
                     Text {
@@ -618,7 +619,7 @@ Rectangle {
                 radius: 2
                 color: "#1a1a1a"
                 border.color: "#333"
-                border.width: 1
+                border.width: 0
 
                 Row {
                     anchors.fill: parent
@@ -655,7 +656,7 @@ Rectangle {
                 radius: 2
                 color: "#1a1a1a"
                 border.color: "#333"
-                border.width: 1
+                border.width: 0
 
                 Row {
                     anchors.fill: parent
@@ -715,7 +716,7 @@ Rectangle {
                     if (parent.lightClip) return clipBlinkTimer.running && Math.floor((Date.now() / 150) % 2) ? "#ff4444" : "#444444"
                     return "#333333"
                 }
-                font.pixelSize: window.sp(10)
+                font.pixelSize: root.sp(10)
                 font.bold: true
                 font.family: "monospace"
                 width: root.clipInfoWidth
@@ -726,7 +727,7 @@ Rectangle {
             Text {
                 text: parent.peakMaxDb.toFixed(1) + "dB"
                 color: parent.hardClip ? "#ffffff" : (parent.lightClip ? "#ff6b6b" : "#888888")
-                font.pixelSize: window.sp(8)
+                font.pixelSize: root.sp(8)
                 font.bold: true
                 font.family: "monospace"
                 width: root.clipInfoWidth

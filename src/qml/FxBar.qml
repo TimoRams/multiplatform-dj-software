@@ -145,7 +145,7 @@ Rectangle {
                                     radius: width / 2
                                     color: "#1f1f1f"
                                     border.color: "#5a5a5a"
-                                    border.width: 1
+                                    border.width: 0
                                 }
                             }
 
@@ -198,7 +198,7 @@ Rectangle {
                                 border.color: soundColorPanel.isActiveMode(modelData)
                                               ? "#666"
                                               : "#303030"
-                                border.width: 1
+                                border.width: 0
 
                                 Text {
                                     anchors.centerIn: parent
