@@ -1471,21 +1471,30 @@ void DjEngine::onTimer()
         }
 
         if (resamplingSource) {
-            const double ratio = std::clamp(absRate, 0.05, m_scratchMaxRate);
+            const double ratio = std::clamp(absRate, 0.01, m_scratchMaxRate);
             resamplingSource->setResamplingRatio(ratio);
         }
 
-        if (absRate < 0.01) {
+        if (absRate < 0.002) {
             if (transportSource.isPlaying())
                 transportSource.stop();
         } else if (!transportSource.isPlaying()) {
             transportSource.start();
         }
 
-        m_scrubHoldPosition = transportSource.getCurrentPosition();
-        m_atomicPlayheadPos.store(m_scrubHoldPosition,
-                                  std::memory_order_relaxed);
-        m_snapPosition = m_scrubHoldPosition;
+        if (m_isScrubbing && m_scratchAbsolutePositionControl) {
+            // Absolute drag mode: keep transport pinned to the grabbed target.
+            // This avoids tiny left/right visual wobble between sparse input events.
+            transportSource.setPosition(m_scrubHoldPosition);
+            m_atomicPlayheadPos.store(m_scrubHoldPosition,
+                                      std::memory_order_relaxed);
+            m_snapPosition = m_scrubHoldPosition;
+        } else {
+            m_scrubHoldPosition = transportSource.getCurrentPosition();
+            m_atomicPlayheadPos.store(m_scrubHoldPosition,
+                                      std::memory_order_relaxed);
+            m_snapPosition = m_scrubHoldPosition;
+        }
         m_snapTempoRatio = getTempoRatio();
 
         if (!m_isScrubbing && m_scratchReleaseActive
@@ -1837,14 +1846,22 @@ void DjEngine::pauseForScrub()
     if (m_isScrubbing)
         return;
 
+    bool wasPlayingBeforeGrab = transportSource.isPlaying();
+    if (m_scratchReleaseActive) {
+        // If we re-grab while release glide is still active, preserve the
+        // original pre-scratch intent instead of the temporary glide transport state.
+        wasPlayingBeforeGrab = m_scrubWasPlaying;
+    }
+
     m_scratchReleaseActive = false;
     m_scratchReleaseTargetRate = 0.0;
-    m_scrubWasPlaying = transportSource.isPlaying();
+    m_scrubWasPlaying = wasPlayingBeforeGrab;
     m_isScrubbing = true;
     m_snapValid = false;
+    m_scratchAbsolutePositionControl = false;
 
     m_scrubHoldPosition = transportSource.getCurrentPosition();
-    m_scratchBaseRate = std::max(0.05, std::abs(getTempoRatio()));
+    m_scratchBaseRate = std::max(0.01, std::abs(getTempoRatio()));
     m_scratchAccumulatedMoveSec = 0.0;
     m_scratchTargetRate = 0.0;
     m_scratchSmoothedRate = 0.0;
@@ -1881,7 +1898,7 @@ void DjEngine::scrubBy(double pixelDelta)
     // effectivePpp = waveformZoom / tempoRatio
     // => effective pixels/sec = m_pixelsPerSecond / tempoRatio.
     // This keeps scratch feel consistent when tempo fader changes.
-    const double tempoRatio = std::max(0.05, std::abs(getTempoRatio()));
+    const double tempoRatio = std::max(0.01, std::abs(getTempoRatio()));
     const double effectivePixelsPerSecond = std::max(1.0, m_pixelsPerSecond / tempoRatio);
 
     double timeDelta = -pixelDelta / effectivePixelsPerSecond;
@@ -1897,7 +1914,6 @@ void DjEngine::scratchBySeconds(double deltaSeconds)
                                              -m_scratchEventSpikeClampSec,
                                              m_scratchEventSpikeClampSec);
     const bool fineMove = std::abs(requestedDelta) <= m_scratchFineMoveThresholdSec;
-    const bool microMove = std::abs(requestedDelta) <= (m_scratchFineMoveThresholdSec * 0.35);
     const double directStep = fineMove
         ? requestedDelta
         : std::clamp(requestedDelta,
@@ -1911,11 +1927,13 @@ void DjEngine::scratchBySeconds(double deltaSeconds)
     if (m_scratchReleaseActive)
         m_scratchReleaseActive = false;
 
+    m_scratchAbsolutePositionControl = false;
+
     const double dtSecRaw = m_lastScrubInputClock.isValid()
         ? std::max(0.001, static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9)
         : 0.008;
     const double rawRate = requestedDelta / dtSecRaw;
-    const double baseRate = std::max(0.05, m_scratchBaseRate);
+    const double baseRate = std::max(0.01, m_scratchBaseRate);
     const double absRaw = std::abs(rawRate);
     double shapedAbsRate = 0.0;
 
@@ -1934,11 +1952,9 @@ void DjEngine::scratchBySeconds(double deltaSeconds)
     const double instantaneousRate = std::copysign(
         std::clamp(shapedAbsRate, 0.0, m_scratchMaxRate),
         rawRate);
-    // For tiny hand motions, prefer direct position stepping without extra
-    // velocity drive to avoid overshoot / "too fast" feel.
-    pushScratchVelocityTick(microMove ? 0.0 : instantaneousRate);
+    pushScratchVelocityTick(instantaneousRate);
 
-    if (m_isScrubbing && !transportSource.isPlaying() && !microMove)
+    if (m_isScrubbing && !transportSource.isPlaying() && std::abs(instantaneousRate) > 0.001)
         transportSource.start();
 
     const double currentPos = m_scrubHoldPosition;
@@ -1974,12 +1990,13 @@ void DjEngine::setScrubPosition(double positionSeconds)
     // derive a velocity target from absolute pointer movement so scratching
     // remains audible and release inertia still works.
     m_scratchReleaseActive = false;
+    m_scratchAbsolutePositionControl = true;
 
     const double dtSecRaw = m_lastScrubInputClock.isValid()
         ? std::max(0.001, static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9)
         : 0.008;
     const double rawRate = deltaSec / dtSecRaw;
-    const double baseRate = std::max(0.05, m_scratchBaseRate);
+    const double baseRate = std::max(0.01, m_scratchBaseRate);
     const double absRaw = std::abs(rawRate);
 
     double shapedAbsRate = 0.0;
@@ -1991,14 +2008,13 @@ void DjEngine::setScrubPosition(double positionSeconds)
         shapedAbsRate = baseRate + (absRaw - baseRate) * 1.25;
     }
 
-    const bool microMove = std::abs(deltaSec) <= (m_scratchFineMoveThresholdSec * 0.25);
-    const double instantaneousRate = microMove
-        ? 0.0
-        : std::copysign(std::clamp(shapedAbsRate, 0.0, m_scratchMaxRate), rawRate);
+    const double instantaneousRate = std::copysign(
+        std::clamp(shapedAbsRate, 0.0, m_scratchMaxRate),
+        rawRate);
     m_scratchTargetRate = instantaneousRate;
     m_lastScrubInputClock.restart();
 
-    if (m_isScrubbing && !transportSource.isPlaying() && !microMove)
+    if (m_isScrubbing && !transportSource.isPlaying() && std::abs(instantaneousRate) > 0.001)
         transportSource.start();
 
     transportSource.setPosition(nextPos);
@@ -2027,6 +2043,7 @@ void DjEngine::resumeAfterScrub()
         return;
 
     m_isScrubbing = false;
+    m_scratchAbsolutePositionControl = false;
 
     // Touch/hold without meaningful movement: resume immediately with no glide.
     if (m_scratchAccumulatedMoveSec < m_scratchInertiaMoveThresholdSec) {
@@ -2063,7 +2080,7 @@ void DjEngine::resumeAfterScrub()
     if (std::abs(m_scratchSmoothedRate) < 0.02)
         m_scratchSmoothedRate = m_scratchTargetRate;
     m_scratchSmoothedRate = std::clamp(m_scratchSmoothedRate, -m_scratchMaxRate, m_scratchMaxRate);
-    const double releaseBaseRate = std::max(0.05, std::abs(getTempoRatio()));
+    const double releaseBaseRate = std::max(0.01, std::abs(getTempoRatio()));
     const double releaseDirection = m_scrubSavedReverseState ? -1.0 : 1.0;
     m_scratchReleaseTargetRate = m_scrubWasPlaying ? (releaseDirection * releaseBaseRate) : 0.0;
     m_scratchReleaseActive = true;
@@ -2189,7 +2206,7 @@ void DjEngine::setTempoPercent(double percent)
     // Keep scratch/release baseline speed aligned with the tempo fader so
     // releasing the record never snaps toward a hardcoded 1.0 speed.
     if (m_isScrubbing || m_scratchReleaseActive) {
-        m_scratchBaseRate = std::max(0.05, std::abs(getTempoRatio()));
+        m_scratchBaseRate = std::max(0.01, std::abs(getTempoRatio()));
         if (m_scratchReleaseActive && m_scrubWasPlaying) {
             const double releaseDirection = m_scrubSavedReverseState ? -1.0 : 1.0;
             m_scratchReleaseTargetRate = releaseDirection * m_scratchBaseRate;
