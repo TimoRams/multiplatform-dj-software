@@ -51,7 +51,11 @@ int main(int argc, char *argv[])
     qDebug() << "Essentia disabled by project policy; using internal analysis pipeline.";
 
     g_previousMessageHandler = qInstallMessageHandler(filteredMessageHandler);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
     QQuickWindow::setTextRenderType(QQuickWindow::CurveTextRendering);
+#else
+    QQuickWindow::setTextRenderType(QQuickWindow::QtTextRendering);
+#endif
 
     if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE"))
         qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");

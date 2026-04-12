@@ -8,12 +8,21 @@
 #include <QFileInfo>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QtGlobal>
 
 namespace {
 
 constexpr quint32 kMagic = 0x52574631; // RWF1
 constexpr qint32 kVersion = 2;
 constexpr int kBlockSize = 4096;
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+constexpr auto kDataStreamVersion = QDataStream::Qt_6_5;
+#elif QT_VERSION >= QT_VERSION_CHECK(6, 4, 0)
+constexpr auto kDataStreamVersion = QDataStream::Qt_6_4;
+#else
+constexpr auto kDataStreamVersion = QDataStream::Qt_6_0;
+#endif
 
 QString cacheBaseDir()
 {
@@ -79,7 +88,7 @@ bool WaveformCache::loadForFile(const QString& filePath, int pointsPerSecond, Pa
         return false;
 
     QDataStream in(&f);
-    in.setVersion(QDataStream::Qt_6_5);
+    in.setVersion(kDataStreamVersion);
 
     quint32 magic = 0;
     qint32 version = 0;
@@ -166,7 +175,7 @@ bool WaveformCache::saveForFile(const QString& filePath, const Payload& payload)
         return false;
 
     QDataStream out(&f);
-    out.setVersion(QDataStream::Qt_6_5);
+    out.setVersion(kDataStreamVersion);
 
     out << static_cast<quint32>(kMagic)
         << static_cast<qint32>(kVersion)
