@@ -42,14 +42,62 @@ These three threads communicate exclusively via Qt Queued Connections – zero d
 
 ## 💻 Build Instructions
 
-**Dependencies:** Qt 6, Vulkan, TagLib, CMake ≥ 3.22, C++20 Compiler
+### Required dependencies (all platforms)
+
+- Qt 6 (Core, Gui, Qml, Quick, Quick3D, Sql)
+- TagLib
+- libkeyfinder
+- RubberBand
+- CMake >= 3.22
+- C++23 compiler
+
+### Linux (Vulkan + ALSA)
+
+Example dependency install (Debian/Ubuntu):
+
+    sudo apt update
+    sudo apt install -y \
+      build-essential cmake pkg-config \
+      qt6-base-dev qt6-declarative-dev qt6-quick3d-dev \
+      libtag1-dev libkeyfinder-dev librubberband-dev libasound2-dev
+
+Build:
 
     git clone --recurse-submodules https://github.com/TimoRams/multiplatform-dj-software.git
     cd multiplatform-dj-software
-    mkdir build && cd build
-    cmake ..
-    make -j$(nproc)
-    ./bin/MultiPlatformDJ
+    cmake -S . -B build
+    cmake --build build -j$(nproc)
+    ./build/bin/RamsbrockDJ
+
+### macOS (Metal backend)
+
+Example dependency install (Homebrew):
+
+    brew install cmake pkg-config qt@6 taglib rubberband keyfinder
+
+Build:
+
+    git clone --recurse-submodules https://github.com/TimoRams/multiplatform-dj-software.git
+    cd multiplatform-dj-software
+    cmake -S . -B build -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
+    cmake --build build -j
+    ./build/bin/RamsbrockDJ
+
+### Windows (Vulkan backend)
+
+Recommended: install Qt 6 (with Quick/QML/Quick3D) via Qt Online Installer and use vcpkg for C/C++ dependencies.
+
+Example vcpkg dependency set:
+
+    vcpkg install taglib rubberband libkeyfinder
+
+Then configure using the vcpkg toolchain and your Qt 6 path:
+
+    cmake -S . -B build ^
+      -DCMAKE_TOOLCHAIN_FILE=C:/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake ^
+      -DCMAKE_PREFIX_PATH=C:/Qt/6.x.x/msvcxxxx_64
+
+    cmake --build build --config Release
 
 > JUCE is included as a submodule under `libs/JUCE/` – no separate installation required.
 

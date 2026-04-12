@@ -1,0 +1,88 @@
+name: Cross-Platform Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.allow_failure }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            allow_failure: false
+          - runner: macos-latest
+            allow_failure: true
+          - runner: windows-latest
+            allow_failure: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Qt (Windows)
+        if: matrix.runner == 'windows-latest'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.7.2'
+          modules: 'qtquick3d'
+
+      - name: Install Dependencies (Linux)
+        if: matrix.runner == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake pkg-config ninja-build \
+            qt6-base-dev qt6-declarative-dev qt6-quick3d-dev \
+            libtag1-dev libkeyfinder-dev librubberband-dev libasound2-dev
+
+      - name: Install Dependencies (macOS)
+        if: matrix.runner == 'macos-latest'
+        run: |
+          brew update
+          brew install cmake pkg-config qt@6 taglib rubberband keyfinder
+
+      - name: Install Dependencies (Windows, vcpkg)
+        if: matrix.runner == 'windows-latest'
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg C:\vcpkg
+          C:\vcpkg\bootstrap-vcpkg.bat
+          C:\vcpkg\vcpkg.exe install taglib rubberband libkeyfinder --triplet x64-windows
+
+      - name: Configure (Linux)
+        if: matrix.runner == 'ubuntu-latest'
+        run: |
+          cmake -S . -B build -G Ninja
+
+      - name: Configure (macOS)
+        if: matrix.runner == 'macos-latest'
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
+
+      - name: Configure (Windows)
+        if: matrix.runner == 'windows-latest'
+        shell: pwsh
+        run: |
+          cmake -S . -B build `
+            -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake `
+            -DQt6_DIR="$env:Qt6_DIR"
+
+      - name: Build (Linux/macOS)
+        if: matrix.runner != 'windows-latest'
+        run: |
+          cmake --build build --parallel
+
+      - name: Build (Windows)
+        if: matrix.runner == 'windows-latest'
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --parallel

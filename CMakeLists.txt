@@ -27,13 +27,162 @@ if(_cpu_count GREATER 1)
     set(CMAKE_AUTOGEN_PARALLEL ${_cpu_count})
 endif()
 
-# TagLib für Cover-Art-Extraction
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(TAGLIB    REQUIRED IMPORTED_TARGET taglib)
-pkg_check_modules(KEYFINDER REQUIRED IMPORTED_TARGET libkeyfinder)
-pkg_check_modules(RUBBERBAND REQUIRED IMPORTED_TARGET rubberband)
+# Third-party dependencies (cross-platform)
+find_package(PkgConfig QUIET)
+
+# ---- TagLib ---------------------------------------------------------------
+if(NOT TARGET ThirdParty::TagLib)
+    add_library(ThirdParty::TagLib INTERFACE IMPORTED)
+endif()
+
+set(_taglib_found FALSE)
+find_package(TagLib QUIET CONFIG)
+if(TARGET TagLib::TagLib)
+    target_link_libraries(ThirdParty::TagLib INTERFACE TagLib::TagLib)
+    set(_taglib_found TRUE)
+elseif(TARGET TagLib::tag)
+    target_link_libraries(ThirdParty::TagLib INTERFACE TagLib::tag)
+    set(_taglib_found TRUE)
+endif()
+
+if(NOT _taglib_found AND PkgConfig_FOUND)
+    pkg_check_modules(TAGLIB QUIET IMPORTED_TARGET taglib)
+    if(TARGET PkgConfig::TAGLIB)
+        target_link_libraries(ThirdParty::TagLib INTERFACE PkgConfig::TAGLIB)
+        set(_taglib_found TRUE)
+    endif()
+endif()
+
+if(NOT _taglib_found)
+    find_path(TAGLIB_INCLUDE_DIR NAMES taglib/tag.h)
+    find_library(TAGLIB_LIBRARY NAMES taglib)
+    if(TAGLIB_INCLUDE_DIR AND TAGLIB_LIBRARY)
+        if(NOT TARGET ThirdPartyTagLibBinary)
+            add_library(ThirdPartyTagLibBinary UNKNOWN IMPORTED)
+            set_target_properties(ThirdPartyTagLibBinary PROPERTIES
+                IMPORTED_LOCATION "${TAGLIB_LIBRARY}"
+                INTERFACE_INCLUDE_DIRECTORIES "${TAGLIB_INCLUDE_DIR}")
+        endif()
+        target_link_libraries(ThirdParty::TagLib INTERFACE ThirdPartyTagLibBinary)
+        set(_taglib_found TRUE)
+    endif()
+endif()
+
+if(NOT _taglib_found)
+    message(FATAL_ERROR "TagLib not found. Install taglib development files for your platform.")
+endif()
+
+# ---- KeyFinder ------------------------------------------------------------
+if(NOT TARGET ThirdParty::KeyFinder)
+    add_library(ThirdParty::KeyFinder INTERFACE IMPORTED)
+endif()
+
+set(_keyfinder_found FALSE)
+find_package(KeyFinder QUIET CONFIG)
+if(TARGET KeyFinder::KeyFinder)
+    target_link_libraries(ThirdParty::KeyFinder INTERFACE KeyFinder::KeyFinder)
+    set(_keyfinder_found TRUE)
+endif()
+
+if(NOT _keyfinder_found AND PkgConfig_FOUND)
+    pkg_check_modules(KEYFINDER QUIET IMPORTED_TARGET libkeyfinder)
+    if(TARGET PkgConfig::KEYFINDER)
+        target_link_libraries(ThirdParty::KeyFinder INTERFACE PkgConfig::KEYFINDER)
+        set(_keyfinder_found TRUE)
+    endif()
+endif()
+
+if(NOT _keyfinder_found)
+    find_path(KEYFINDER_INCLUDE_DIR NAMES keyfinder/keyfinder.h)
+    find_library(KEYFINDER_LIBRARY NAMES keyfinder libkeyfinder)
+    if(KEYFINDER_INCLUDE_DIR AND KEYFINDER_LIBRARY)
+        if(NOT TARGET ThirdPartyKeyFinderBinary)
+            add_library(ThirdPartyKeyFinderBinary UNKNOWN IMPORTED)
+            set_target_properties(ThirdPartyKeyFinderBinary PROPERTIES
+                IMPORTED_LOCATION "${KEYFINDER_LIBRARY}"
+                INTERFACE_INCLUDE_DIRECTORIES "${KEYFINDER_INCLUDE_DIR}")
+        endif()
+        target_link_libraries(ThirdParty::KeyFinder INTERFACE ThirdPartyKeyFinderBinary)
+        set(_keyfinder_found TRUE)
+    endif()
+endif()
+
+if(NOT _keyfinder_found)
+    message(FATAL_ERROR "libkeyfinder not found. Install libkeyfinder development files for your platform.")
+endif()
+
+# ---- RubberBand -----------------------------------------------------------
+if(NOT TARGET ThirdParty::RubberBand)
+    add_library(ThirdParty::RubberBand INTERFACE IMPORTED)
+endif()
+
+set(_rubberband_found FALSE)
+find_package(RubberBand QUIET CONFIG)
+if(TARGET RubberBand::rubberband)
+    target_link_libraries(ThirdParty::RubberBand INTERFACE RubberBand::rubberband)
+    set(_rubberband_found TRUE)
+endif()
+
+if(NOT _rubberband_found AND PkgConfig_FOUND)
+    pkg_check_modules(RUBBERBAND QUIET IMPORTED_TARGET rubberband)
+    if(TARGET PkgConfig::RUBBERBAND)
+        target_link_libraries(ThirdParty::RubberBand INTERFACE PkgConfig::RUBBERBAND)
+        set(_rubberband_found TRUE)
+    endif()
+endif()
+
+if(NOT _rubberband_found)
+    find_path(RUBBERBAND_INCLUDE_DIR NAMES rubberband/RubberBandStretcher.h)
+    find_library(RUBBERBAND_LIBRARY NAMES rubberband)
+    if(RUBBERBAND_INCLUDE_DIR AND RUBBERBAND_LIBRARY)
+        if(NOT TARGET ThirdPartyRubberBandBinary)
+            add_library(ThirdPartyRubberBandBinary UNKNOWN IMPORTED)
+            set_target_properties(ThirdPartyRubberBandBinary PROPERTIES
+                IMPORTED_LOCATION "${RUBBERBAND_LIBRARY}"
+                INTERFACE_INCLUDE_DIRECTORIES "${RUBBERBAND_INCLUDE_DIR}")
+        endif()
+        target_link_libraries(ThirdParty::RubberBand INTERFACE ThirdPartyRubberBandBinary)
+        set(_rubberband_found TRUE)
+    endif()
+endif()
+
+if(NOT _rubberband_found)
+    message(FATAL_ERROR "RubberBand not found. Install rubberband development files for your platform.")
+endif()
+
+# ---- ALSA (Linux only) ----------------------------------------------------
 if(UNIX AND NOT APPLE)
-    pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa)
+    if(NOT TARGET ThirdParty::ALSA)
+        add_library(ThirdParty::ALSA INTERFACE IMPORTED)
+    endif()
+
+    set(_alsa_found FALSE)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(ALSA QUIET IMPORTED_TARGET alsa)
+        if(TARGET PkgConfig::ALSA)
+            target_link_libraries(ThirdParty::ALSA INTERFACE PkgConfig::ALSA)
+            set(_alsa_found TRUE)
+        endif()
+    endif()
+
+    if(NOT _alsa_found)
+        find_path(ALSA_INCLUDE_DIR NAMES alsa/asoundlib.h)
+        find_library(ALSA_LIBRARY NAMES asound)
+        if(ALSA_INCLUDE_DIR AND ALSA_LIBRARY)
+            if(NOT TARGET ThirdPartyALSABinary)
+                add_library(ThirdPartyALSABinary UNKNOWN IMPORTED)
+                set_target_properties(ThirdPartyALSABinary PROPERTIES
+                    IMPORTED_LOCATION "${ALSA_LIBRARY}"
+                    INTERFACE_INCLUDE_DIRECTORIES "${ALSA_INCLUDE_DIR}")
+            endif()
+            target_link_libraries(ThirdParty::ALSA INTERFACE ThirdPartyALSABinary)
+            set(_alsa_found TRUE)
+        endif()
+    endif()
+
+    if(NOT _alsa_found)
+        message(FATAL_ERROR "ALSA not found on Linux. Install alsa development files.")
+    endif()
 endif()
 
 add_subdirectory(libs/JUCE)
@@ -157,15 +306,15 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Quick
     Qt6::Quick3D
     Qt6::Sql
-    PkgConfig::TAGLIB
-    PkgConfig::KEYFINDER
-    PkgConfig::RUBBERBAND
+    ThirdParty::TagLib
+    ThirdParty::KeyFinder
+    ThirdParty::RubberBand
     Ableton::Link
 )
 
 if(UNIX AND NOT APPLE)
     target_link_libraries(${PROJECT_NAME} PRIVATE
-        PkgConfig::ALSA
+        ThirdParty::ALSA
     )
 endif()
 
