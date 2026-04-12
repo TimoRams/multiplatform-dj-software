@@ -680,7 +680,7 @@ bool MidiControllerManager::loadMixxxXmlMapping(const QString& mappingFileName)
                 if (name == "status") status = text;
                 if (name == "midino") midino = text;
             }
-        } else if (xml.isEndElement() && xml.name() == "control") {
+        } else if (xml.isEndElement() && xml.name().toString() == "control") {
             inControl = false;
 
             const QString param = mapMixxxControlToInternalParam(group, key);
