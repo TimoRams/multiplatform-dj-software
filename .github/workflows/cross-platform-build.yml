@@ -2,25 +2,62 @@ name: Cross-Platform Build
 
 on:
   push:
+    branches:
+      - main
+      - master
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: cross-platform-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build:
+  build-linux:
+    name: Build (ubuntu-latest)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Dependencies (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake pkg-config ninja-build \
+            qt6-base-dev qt6-declarative-dev qt6-quick3d-dev qt6-shadertools-dev \
+            libtag1-dev librubberband-dev libasound2-dev libfftw3-dev
+
+      - name: Install libkeyfinder (Linux)
+        run: |
+          git clone --depth 1 https://github.com/mixxxdj/libkeyfinder.git
+          cmake -S libkeyfinder -B libkeyfinder/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake --build libkeyfinder/build --parallel
+          sudo cmake --install libkeyfinder/build
+
+      - name: Configure (Linux)
+        run: |
+          cmake -S . -B build -G Ninja
+
+      - name: Build (Linux)
+        run: |
+          cmake --build build --parallel
+
+  build-extra-platforms:
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
     name: Build (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
-    continue-on-error: ${{ matrix.allow_failure }}
+    continue-on-error: true
 
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: ubuntu-latest
-            allow_failure: false
-          - runner: macos-latest
-            allow_failure: true
-          - runner: windows-latest
-            allow_failure: true
+        runner:
+          - macos-latest
+          - windows-latest
 
     steps:
       - name: Checkout
@@ -34,23 +71,6 @@ jobs:
         with:
           version: '6.7.2'
           modules: 'qtquick3d'
-
-      - name: Install Dependencies (Linux)
-        if: matrix.runner == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential cmake pkg-config ninja-build \
-            qt6-base-dev qt6-declarative-dev qt6-quick3d-dev \
-            libtag1-dev librubberband-dev libasound2-dev libfftw3-dev
-
-      - name: Install libkeyfinder (Linux)
-        if: matrix.runner == 'ubuntu-latest'
-        run: |
-          git clone --depth 1 https://github.com/mixxxdj/libkeyfinder.git
-          cmake -S libkeyfinder -B libkeyfinder/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
-          cmake --build libkeyfinder/build --parallel
-          sudo cmake --install libkeyfinder/build
 
       - name: Install Dependencies (macOS)
         if: matrix.runner == 'macos-latest'
@@ -70,11 +90,6 @@ jobs:
           C:\vcpkg\bootstrap-vcpkg.bat
           C:\vcpkg\vcpkg.exe install taglib rubberband libkeyfinder --triplet x64-windows
 
-      - name: Configure (Linux)
-        if: matrix.runner == 'ubuntu-latest'
-        run: |
-          cmake -S . -B build -G Ninja
-
       - name: Configure (macOS)
         if: matrix.runner == 'macos-latest'
         run: |
@@ -84,15 +99,29 @@ jobs:
         if: matrix.runner == 'windows-latest'
         shell: pwsh
         run: |
-          if (-not $env:Qt6_DIR) {
-            throw "Qt6_DIR is empty. install-qt-action did not provide Qt CMake path."
+          $qt6Dir = $env:Qt6_DIR
+          if (-not $qt6Dir -and $env:QT_ROOT_DIR) {
+            $candidate = Join-Path $env:QT_ROOT_DIR 'lib/cmake/Qt6'
+            if (Test-Path (Join-Path $candidate 'Qt6Config.cmake')) {
+              $qt6Dir = $candidate
+            }
           }
+          if (-not $qt6Dir) {
+            $qtConfig = Get-ChildItem -Path $env:RUNNER_WORKSPACE -Filter Qt6Config.cmake -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($qtConfig) {
+              $qt6Dir = Split-Path $qtConfig.FullName -Parent
+            }
+          }
+          if (-not $qt6Dir) {
+            throw "Could not locate Qt6_DIR from install-qt-action output."
+          }
+          Write-Host "Using Qt6_DIR=$qt6Dir"
           cmake -S . -B build `
             -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake `
-            -DQt6_DIR="$env:Qt6_DIR"
+            -DQt6_DIR="$qt6Dir"
 
-      - name: Build (Linux/macOS)
-        if: matrix.runner != 'windows-latest'
+      - name: Build (macOS)
+        if: matrix.runner == 'macos-latest'
         run: |
           cmake --build build --parallel
 
