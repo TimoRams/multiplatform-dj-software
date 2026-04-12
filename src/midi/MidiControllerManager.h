@@ -1,13 +1,16 @@
 #pragma once
 
 #include <QObject>
-#include <QProcess>
 #include <QStringList>
 #include <QTimer>
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <map>
 #include <memory>
 #include <vector>
+
+#if defined(Q_OS_LINUX)
+#include <QProcess>
+#endif
 
 class ParameterStore;
 
@@ -86,8 +89,11 @@ private:
     // Learn State
     bool m_isLearning = false;
     QString m_learnParameterId;
+
+#if defined(Q_OS_LINUX)
     std::unique_ptr<QProcess> m_alsaInputMonitor;
     QString m_alsaMonitorBuffer;
+#endif
 
     void refreshMidiDeviceCache();
     void populateFromAlsaFallback();

@@ -11,6 +11,7 @@
 #include <QMetaObject>
 #include <QRegularExpression>
 #include <QSet>
+#include <QtGlobal>
 #include <QUrl>
 #include <QXmlStreamReader>
 #include <algorithm>
@@ -107,12 +108,15 @@ void MidiControllerManager::refreshMidiDeviceCache()
         qDebug() << "[MIDI] Output:" << toQString(dev.name) << "id:" << toQString(dev.identifier);
     }
 
+#if defined(Q_OS_LINUX)
     if (m_availableInputDeviceNames.isEmpty())
         populateFromAlsaFallback();
+#endif
 }
 
 void MidiControllerManager::populateFromAlsaFallback()
 {
+#if defined(Q_OS_LINUX)
     QProcess process;
     process.start("aconnect", {"-l"});
     if (!process.waitForFinished(1500)) {
@@ -163,15 +167,22 @@ void MidiControllerManager::populateFromAlsaFallback()
         m_availableInputDeviceNames.push_back(label);
         qDebug() << "[MIDI] ALSA fallback input:" << label << "id:" << toQString(identifier);
     }
+#endif
 }
 
 bool MidiControllerManager::isPseudoAlsaIdentifier(const juce::String& identifier) const
 {
+#if defined(Q_OS_LINUX)
     return identifier.startsWith("alsa:");
+#else
+    Q_UNUSED(identifier);
+    return false;
+#endif
 }
 
 void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIdentifier)
 {
+#if defined(Q_OS_LINUX)
     stopAlsaInputMonitor();
 
     if (!isPseudoAlsaIdentifier(pseudoIdentifier))
@@ -263,10 +274,14 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
     }
 
     qDebug() << "[MIDI] ALSA monitor started on" << port;
+#else
+    Q_UNUSED(pseudoIdentifier);
+#endif
 }
 
 void MidiControllerManager::stopAlsaInputMonitor()
 {
+#if defined(Q_OS_LINUX)
     if (!m_alsaInputMonitor)
         return;
 
@@ -278,6 +293,7 @@ void MidiControllerManager::stopAlsaInputMonitor()
 
     m_alsaInputMonitor.reset();
     m_alsaMonitorBuffer.clear();
+#endif
 }
 
 void MidiControllerManager::openMidiInputByIdentifier(const juce::String& identifier)
@@ -700,7 +716,12 @@ bool MidiControllerManager::loadMixxxXmlMapping(const QString& mappingFileName)
 
 void MidiControllerManager::startMidiLearn(const QString& parameterId)
 {
-    if (!m_midiInput && !m_alsaInputMonitor) {
+    bool hasLinuxAlsaMonitor = false;
+#if defined(Q_OS_LINUX)
+    hasLinuxAlsaMonitor = (m_alsaInputMonitor != nullptr);
+#endif
+
+    if (!m_midiInput && !hasLinuxAlsaMonitor) {
         const auto savedInput = SettingsManager::getInstance().getMidiInputIdentifier();
         if (!savedInput.isEmpty()) {
             openMidiInputByIdentifier(juce::String::fromUTF8(savedInput.toUtf8().constData()));
