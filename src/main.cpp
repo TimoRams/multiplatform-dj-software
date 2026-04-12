@@ -61,7 +61,15 @@ int main(int argc, char *argv[])
 
     qputenv("QSG_INFO", "1");
 
+#if defined(Q_OS_MACOS)
+    // Use Metal on macOS (native RHI backend).
+    qputenv("QSG_RHI_BACKEND", "metal");
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::Metal);
+#else
+    // Force Vulkan on Linux/Windows to keep the optimized rendering path.
+    qputenv("QSG_RHI_BACKEND", "vulkan");
     QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
+#endif
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::RoundPreferFloor);
 
     QGuiApplication app(argc, argv);
