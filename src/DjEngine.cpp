@@ -1565,6 +1565,11 @@ void DjEngine::onTimer()
             tau = (std::abs(targetRate) > std::abs(m_scratchSmoothedRate))
                 ? m_scratchRateAttackTauSec
                 : m_scratchRateReleaseTauSec;
+
+            // Very slow hand motion needs stronger smoothing to avoid
+            // "steppy"/digital sounding micro modulation.
+            if (std::abs(targetRate) < 0.35)
+                tau = std::max(tau, 0.080);
         } else {
             targetRate = m_scratchReleaseTargetRate;
             tau = (std::abs(targetRate) < 0.001)
@@ -1593,16 +1598,28 @@ void DjEngine::onTimer()
         }
 
         if (resamplingSource) {
-            const double ratio = std::clamp(absRate, 0.01, m_scratchMaxRate);
+            // Lower floor while scrubbing preserves low-speed nuance and avoids
+            // hard quantization to a fixed tiny speed.
+            const double minRatio = m_isScrubbing ? 0.002 : 0.004;
+            const double ratio = std::clamp(absRate, minRatio, m_scratchMaxRate);
             resamplingSource->setResamplingRatio(ratio);
         }
 
         // Playback hysteresis: avoid rapid start/stop toggling around zero.
-        const bool allowStopForIdleGrab = !m_isScrubbing || (hasIdleSample && idleSec > 0.040);
+        const double targetDistance = m_scratchAbsolutePositionControl
+            ? std::abs(m_scratchAbsoluteTargetPosition - m_scrubHoldPosition)
+            : 0.0;
+        const bool absoluteMotionPending = m_isScrubbing
+            && m_scratchAbsolutePositionControl
+            && targetDistance > (m_scratchAbsoluteSnapDistanceSec * 1.5);
+        const bool allowStopForIdleGrab = !m_isScrubbing
+            || ((hasIdleSample && idleSec > 0.040) && !absoluteMotionPending);
+
         if (absRate < m_scratchControlStopThresholdRate && allowStopForIdleGrab) {
             if (transportSource.isPlaying())
                 transportSource.stop();
-        } else if (absRate > m_scratchControlResumeThresholdRate && !transportSource.isPlaying()) {
+        } else if ((absRate > m_scratchControlResumeThresholdRate || absoluteMotionPending)
+                   && !transportSource.isPlaying()) {
             transportSource.start();
         }
 
@@ -2123,7 +2140,7 @@ void DjEngine::setScrubPosition(double positionSeconds)
         ? m_scratchAbsoluteTargetPosition
         : m_scrubHoldPosition;
     const double deltaSec = nextPos - prevTargetPos;
-    if (std::abs(deltaSec) <= 1e-7)
+    if (std::abs(deltaSec) <= 2e-5)
         return;
 
     // Absolute grab mode with preserved scratch feel:
