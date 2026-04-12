@@ -5,7 +5,11 @@ import QtQuick.Controls
 Rectangle {
     id: libraryRoot
     color: "#1e1e1e"
+    readonly property int toolbarHeight: 30
+    readonly property int sidebarWidth: Math.max(30, window.sp(32))
+    readonly property int subPaneWidth: 220
     readonly property int sidebarRowHeight: Math.max(30, window.sp(32))
+    readonly property int subMenuRowHeight: Math.max(28, window.sp(28))
     readonly property int sectionHeaderHeight: Math.max(22, window.sp(22))
     readonly property int compactButtonHeight: Math.max(16, window.sp(16))
     readonly property int compactButtonWidth: Math.max(20, window.sp(20))
@@ -35,15 +39,78 @@ Rectangle {
         })
     }
 
-    RowLayout {
+    ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
-        // ----------------------------------------------------------------
-        // SPALTE 1: SIDEBAR
-        // ----------------------------------------------------------------
         Rectangle {
-            Layout.preferredWidth: 120
+            id: contentToolbar
+            Layout.fillWidth: true
+            Layout.minimumHeight: libraryRoot.toolbarHeight
+            Layout.preferredHeight: libraryRoot.toolbarHeight
+            Layout.maximumHeight: libraryRoot.toolbarHeight
+            color: "#181818"
+
+            Rectangle {
+                anchors.bottom: parent.bottom
+                anchors.left: parent.left
+                anchors.right: parent.right
+                height: 1
+                color: "#333"
+            }
+
+            Text {
+                anchors.left: parent.left
+                anchors.leftMargin: 10
+                anchors.verticalCenter: parent.verticalCenter
+                text: libraryRoot.activeTab === "library" ? "LIBRARY" :
+                      (libraryRoot.activeTab === "files" ? "DATEIEN" :
+                       libraryRoot.activeTab.toUpperCase())
+                color: "#8c8c8c"
+                font.pixelSize: window.sp(11)
+                font.bold: true
+            }
+
+            TextField {
+                id: searchField
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: 8
+                width: Math.min(300, Math.max(180, parent.width * 0.3))
+                height: 24
+                placeholderText: "Suche"
+                selectByMouse: true
+                color: "#dddddd"
+                font.pixelSize: window.sp(11)
+                leftPadding: 8
+                rightPadding: 8
+                topPadding: 1
+                bottomPadding: 1
+                onTextEdited: libraryRoot.searchText = text
+
+                Component.onCompleted: text = libraryRoot.searchText
+
+                background: Rectangle {
+                    radius: 0
+                    color: "#111"
+                    border.width: 0
+                    border.color: searchField.activeFocus ? "#4f79c4" : "#3a3a3a"
+                }
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: 0
+
+            // ----------------------------------------------------------------
+            // SPALTE 1: SIDEBAR
+            // ----------------------------------------------------------------
+            Rectangle {
+            Layout.preferredWidth: libraryRoot.sidebarWidth
+            Layout.minimumWidth: libraryRoot.sidebarWidth
+            Layout.maximumWidth: libraryRoot.sidebarWidth
             Layout.fillHeight: true
             color: "#161616"
 
@@ -65,10 +132,10 @@ Rectangle {
 
                 Repeater {
                     model: [
-                        { key: "library",   label: "Library"   },
-                        { key: "streaming", label: "Streaming" },
-                        { key: "usb",       label: "USB"        },
-                        { key: "files",     label: "Dateien"   }
+                        { key: "library",   icon: "♫", tip: "Library"   },
+                        { key: "streaming", icon: "◉", tip: "Streaming" },
+                        { key: "usb",       icon: "⎘", tip: "USB"       },
+                        { key: "files",     icon: "📁", tip: "Dateien"  }
                     ]
 
                     delegate: Rectangle {
@@ -78,20 +145,26 @@ Rectangle {
                         color:  libraryRoot.activeTab === modelData.key ? "#2a5298" : "transparent"
 
                         Text {
-                            anchors.verticalCenter: parent.verticalCenter
-                            anchors.left:           parent.left
-                            anchors.leftMargin:     14
-                            text:  modelData.label
+                            anchors.centerIn: parent
+                            text: modelData.icon
                             color: libraryRoot.activeTab === modelData.key ? "#ffffff" : "#999999"
-                            font.pixelSize: window.sp(12)
+                            font.pixelSize: window.sp(14)
                             font.bold: libraryRoot.activeTab === modelData.key
+                            verticalAlignment: Text.AlignVCenter
+                            horizontalAlignment: Text.AlignHCenter
                         }
 
                         MouseArea {
+                            id: sidebarTabMouse
                             anchors.fill: parent
                             onClicked: libraryRoot.activeTab = modelData.key
                             cursorShape: Qt.PointingHandCursor
+                            hoverEnabled: true
                         }
+
+                        ToolTip.visible: sidebarTabMouse.containsMouse
+                        ToolTip.delay: 350
+                        ToolTip.text: modelData.tip
                     }
                 }
             }
@@ -101,7 +174,9 @@ Rectangle {
         // SPALTE 2: ORDNERBAUM (nur sichtbar wenn Tab "files" aktiv)
         // ----------------------------------------------------------------
         Rectangle {
-            Layout.preferredWidth: 220
+            Layout.preferredWidth: libraryRoot.subPaneWidth
+            Layout.minimumWidth: libraryRoot.subPaneWidth
+            Layout.maximumWidth: libraryRoot.subPaneWidth
             Layout.fillHeight: true
             color: "#222222"
             visible: libraryRoot.activeTab === "files"
@@ -128,8 +203,17 @@ Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.left:  parent.left
                     anchors.right: parent.right
-                    anchors.leftMargin: 6
-                    spacing: 4
+                    anchors.leftMargin: 10
+                    anchors.rightMargin: 8
+                    spacing: 6
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "DATEIEN"
+                        color: "#888"
+                        font.pixelSize: window.sp(11)
+                        font.bold: true
+                    }
 
                     // Navigate-up button
                     Rectangle {
@@ -160,10 +244,10 @@ Rectangle {
                         text: libraryManager
                               ? libraryManager.currentFolder.split("/").pop() || "/"
                               : "Ordner"
-                        color: "#888"
-                        font.pixelSize: window.sp(11)
+                        color: "#666"
+                        font.pixelSize: window.sp(10)
                         elide: Text.ElideLeft
-                        width: folderHeader.width - 36
+                        width: folderHeader.width - 94
                     }
                 }
             }
@@ -183,7 +267,7 @@ Rectangle {
                     required property int    index
 
                     width:  ListView.view.width
-                    height: Math.max(26, window.sp(26))
+                    height: libraryRoot.subMenuRowHeight
                     color:  index % 2 === 0 ? "transparent" : "#252525"
 
                     Row {
@@ -222,7 +306,9 @@ Rectangle {
         // SPALTE 2 LIBRARY: Unterpunkte (nur sichtbar wenn Tab "library")
         // ----------------------------------------------------------------
         Rectangle {
-            Layout.preferredWidth: 220
+            Layout.preferredWidth: libraryRoot.subPaneWidth
+            Layout.minimumWidth: libraryRoot.subPaneWidth
+            Layout.maximumWidth: libraryRoot.subPaneWidth
             Layout.fillHeight: true
             color: "#222222"
             visible: libraryRoot.activeTab === "library"
@@ -248,7 +334,7 @@ Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.left: parent.left
                     anchors.leftMargin: 10
-                    text: "Sammlung"
+                    text: "SAMMLUNG"
                     color: "#888"
                     font.pixelSize: window.sp(11)
                     font.bold: true
@@ -264,7 +350,7 @@ Rectangle {
 
                 Rectangle {
                     width: parent.width
-                    height: Math.max(28, window.sp(28))
+                    height: libraryRoot.subMenuRowHeight
                     color: libraryRoot.librarySubTab === "allSongs" ? "#2a5298" : "transparent"
 
                     Row {
@@ -317,7 +403,9 @@ Rectangle {
         // SPALTE 2 PLACEHOLDER: sichtbar für streaming/usb Tabs
         // ----------------------------------------------------------------
         Rectangle {
-            Layout.preferredWidth: 220
+            Layout.preferredWidth: libraryRoot.subPaneWidth
+            Layout.minimumWidth: libraryRoot.subPaneWidth
+            Layout.maximumWidth: libraryRoot.subPaneWidth
             Layout.fillHeight: true
             color: "#222222"
             visible: libraryRoot.activeTab !== "files" && libraryRoot.activeTab !== "library"
@@ -346,56 +434,12 @@ Rectangle {
             Layout.fillWidth:  true
             Layout.fillHeight: true
 
-            Rectangle {
-                id: contentToolbar
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.right: parent.right
-                height: 30
-                color: "#181818"
-
-                Rectangle {
-                    anchors.bottom: parent.bottom
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    height: 1
-                    color: "#333"
-                }
-
-                TextField {
-                    id: searchField
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.rightMargin: 8
-                    width: Math.min(300, Math.max(180, parent.width * 0.3))
-                    height: 24
-                    placeholderText: "Suche"
-                    selectByMouse: true
-                    color: "#dddddd"
-                    font.pixelSize: window.sp(11)
-                    leftPadding: 8
-                    rightPadding: 8
-                    topPadding: 1
-                    bottomPadding: 1
-                    onTextEdited: libraryRoot.searchText = text
-
-                    Component.onCompleted: text = libraryRoot.searchText
-
-                    background: Rectangle {
-                        radius: 0
-                        color: "#111"
-                        border.width: 0
-                        border.color: searchField.activeFocus ? "#4f79c4" : "#3a3a3a"
-                    }
-                }
-            }
-
             // ============================================================
             // A) DATABASE LIBRARY VIEW (Tab "library")
             // ============================================================
             Rectangle {
                 id: libraryDbView
-                anchors.top: contentToolbar.bottom
+                anchors.top: parent.top
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
@@ -428,7 +472,7 @@ Rectangle {
                 // Column headers
                 Rectangle {
                     id: libHeader
-                    anchors.top:   contentToolbar.bottom
+                    anchors.top:   parent.top
                     anchors.left:  parent.left
                     anchors.right: parent.right
                     height: 24
@@ -783,7 +827,7 @@ Rectangle {
             // B) FILE-BROWSER TRACK LIST (Tab "files")
             // ============================================================
             Rectangle {
-                anchors.top: contentToolbar.bottom
+                anchors.top: parent.top
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
@@ -793,7 +837,7 @@ Rectangle {
                 // Spaltenheader
                 Rectangle {
                     id: trackHeader
-                    anchors.top:   contentToolbar.bottom
+                    anchors.top:   parent.top
                     anchors.left:  parent.left
                     anchors.right: parent.right
                     height: 24
@@ -891,7 +935,7 @@ Rectangle {
             // C) PLACEHOLDER for other tabs
             // ============================================================
             Rectangle {
-                anchors.top: contentToolbar.bottom
+                anchors.top: parent.top
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
@@ -905,6 +949,7 @@ Rectangle {
                     font.pixelSize: window.sp(13)
                 }
             }
+        }
         }
     }
 }
