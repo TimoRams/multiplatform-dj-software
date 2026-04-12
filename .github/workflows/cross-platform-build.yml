@@ -42,19 +42,31 @@ jobs:
           sudo apt-get install -y \
             build-essential cmake pkg-config ninja-build \
             qt6-base-dev qt6-declarative-dev qt6-quick3d-dev \
-            libtag1-dev libkeyfinder-dev librubberband-dev libasound2-dev
+            libtag1-dev librubberband-dev libasound2-dev libfftw3-dev
+
+      - name: Install libkeyfinder (Linux)
+        if: matrix.runner == 'ubuntu-latest'
+        run: |
+          git clone --depth 1 https://github.com/mixxxdj/libkeyfinder.git
+          cmake -S libkeyfinder -B libkeyfinder/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake --build libkeyfinder/build --parallel
+          sudo cmake --install libkeyfinder/build
 
       - name: Install Dependencies (macOS)
         if: matrix.runner == 'macos-latest'
         run: |
           brew update
-          brew install cmake pkg-config qt@6 taglib rubberband keyfinder
+          brew install cmake pkg-config qt@6 taglib rubberband libkeyfinder
 
       - name: Install Dependencies (Windows, vcpkg)
         if: matrix.runner == 'windows-latest'
         shell: pwsh
         run: |
-          git clone https://github.com/microsoft/vcpkg C:\vcpkg
+          if (-not (Test-Path 'C:\vcpkg\.git')) {
+            git clone https://github.com/microsoft/vcpkg C:\vcpkg
+          } else {
+            Write-Host "Using existing vcpkg checkout at C:\vcpkg"
+          }
           C:\vcpkg\bootstrap-vcpkg.bat
           C:\vcpkg\vcpkg.exe install taglib rubberband libkeyfinder --triplet x64-windows
 
@@ -72,6 +84,9 @@ jobs:
         if: matrix.runner == 'windows-latest'
         shell: pwsh
         run: |
+          if (-not $env:Qt6_DIR) {
+            throw "Qt6_DIR is empty. install-qt-action did not provide Qt CMake path."
+          }
           cmake -S . -B build `
             -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake `
             -DQt6_DIR="$env:Qt6_DIR"
