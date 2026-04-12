@@ -67,50 +67,59 @@ qt_add_qml_module(${PROJECT_NAME}
 
 target_sources(${PROJECT_NAME} PRIVATE
     src/main.cpp
-    src/DjEngine.cpp
-    src/PhraseAnalyzer.h
-    src/PhraseAnalyzer.cpp
-    src/RgbWaveformItem.h
-    src/RgbWaveformItem.cpp
-    src/WaveformItem.cpp
-    src/ScrollingWaveformItem.cpp
-    src/WaveformAnalyzer.cpp
-    src/WaveformCache.h
-    src/WaveformCache.cpp
-    src/TrackData.h
-    src/LibraryManager.h
-    src/LibraryManager.cpp
-    src/CoverArtExtractor.h
-    src/CoverArtExtractor.cpp
-    src/CoverArtProvider.h
-    src/FxManager.h
-    src/FxManager.cpp
-    src/FxProcessor.h
-    src/FxProcessor.cpp
+    src/audio/DjEngine.cpp
+    src/analysis/PhraseAnalyzer.h
+    src/analysis/PhraseAnalyzer.cpp
+    src/rendering/RgbWaveformItem.h
+    src/rendering/RgbWaveformItem.cpp
+    src/rendering/WaveformItem.cpp
+    src/rendering/ScrollingWaveformItem.cpp
+    src/rendering/WaveformAnalyzer.cpp
+    src/rendering/WaveformCache.h
+    src/rendering/WaveformCache.cpp
+    src/domain/TrackData.h
+    src/domain/TrackSegment.h
+    src/library/LibraryManager.h
+    src/library/LibraryManager.cpp
+    src/library/CoverArtExtractor.h
+    src/library/CoverArtExtractor.cpp
+    src/library/CoverArtProvider.h
+    src/fx/FxManager.h
+    src/fx/FxManager.cpp
+    src/fx/FxProcessor.h
+    src/fx/FxProcessor.cpp
     src/link/LinkManager.h
     src/link/LinkManager.cpp
-    src/SystemMonitor.h
-    src/SystemMonitor.cpp
-    src/ParameterStore.h
-    src/ParameterStore.cpp
-    src/MidiControllerManager.h
-    src/MidiControllerManager.cpp
-    src/SettingsManager.h
-    src/SettingsManager.cpp
-    src/TrackIdGenerator.h
-    src/LibraryDatabase.h
-    src/LibraryDatabase.cpp
-    src/LibraryTableModel.h
-    src/LibraryTableModel.cpp
-    src/BrickwallLimiter.h
-    src/BrickwallLimiter.cpp
-    src/ScratchEngine.h
-    src/ScratchEngine.cpp
-    src/TurntableSimulation.h
-    src/TurntableSimulation.cpp
+    src/app/SystemMonitor.h
+    src/app/SystemMonitor.cpp
+    src/midi/ParameterStore.h
+    src/midi/ParameterStore.cpp
+    src/midi/MidiControllerManager.h
+    src/midi/MidiControllerManager.cpp
+    src/app/SettingsManager.h
+    src/app/SettingsManager.cpp
+    src/library/TrackIdGenerator.h
+    src/library/LibraryDatabase.h
+    src/library/LibraryDatabase.cpp
+    src/library/LibraryTableModel.h
+    src/library/LibraryTableModel.cpp
+    src/fx/BrickwallLimiter.h
+    src/fx/BrickwallLimiter.cpp
+    src/audio/ScratchEngine.h
+    src/audio/ScratchEngine.cpp
+    src/audio/TurntableSimulation.h
+    src/audio/TurntableSimulation.cpp
 )
 
-target_include_directories(${PROJECT_NAME} PRIVATE src)
+target_include_directories(${PROJECT_NAME} PRIVATE
+    src
+    src/audio
+    src/rendering
+    src/midi
+    src/analysis
+    src/domain
+    src/app
+)
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     JUCE_USE_CURL=0

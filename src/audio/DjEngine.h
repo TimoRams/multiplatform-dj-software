@@ -16,7 +16,7 @@
 
 #include "TrackData.h"
 #include "WaveformAnalyzer.h"
-#include "FxProcessor.h"
+#include "fx/FxProcessor.h"
 
 class CoverArtProvider;
 class LibraryDatabase;

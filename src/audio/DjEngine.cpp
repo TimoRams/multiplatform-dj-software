@@ -1,10 +1,10 @@
 #include "DjEngine.h"
-#include "BrickwallLimiter.h"
-#include "CoverArtExtractor.h"
-#include "CoverArtProvider.h"
-#include "FxProcessor.h"
-#include "LibraryDatabase.h"
-#include "TrackIdGenerator.h"
+#include "fx/BrickwallLimiter.h"
+#include "library/CoverArtExtractor.h"
+#include "library/CoverArtProvider.h"
+#include "fx/FxProcessor.h"
+#include "library/LibraryDatabase.h"
+#include "library/TrackIdGenerator.h"
 #include "WaveformCache.h"
 #include <QUrl>
 #include <QDebug>

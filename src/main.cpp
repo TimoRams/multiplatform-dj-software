@@ -13,16 +13,16 @@
 
 #include "DjEngine.h"
 #include "WaveformItem.h"
-#include "LibraryManager.h"
-#include "CoverArtProvider.h"
-#include "FxManager.h"
+#include "library/LibraryManager.h"
+#include "library/CoverArtProvider.h"
+#include "fx/FxManager.h"
 #include "link/LinkManager.h"
 #include "SystemMonitor.h"
-#include "ParameterStore.h"
-#include "MidiControllerManager.h"
+#include "midi/ParameterStore.h"
+#include "midi/MidiControllerManager.h"
 #include "SettingsManager.h"
-#include "LibraryDatabase.h"
-#include "LibraryTableModel.h"
+#include "library/LibraryDatabase.h"
+#include "library/LibraryTableModel.h"
 
 using namespace Qt::StringLiterals;
 
