@@ -397,6 +397,13 @@ private:
     double m_scratchDirectionSign = 1.0;
     double m_scratchDirectionFlipThresholdRate = 0.08;
     bool   m_scratchAbsolutePositionControl = false;
+    double m_scratchAbsoluteTargetPosition = 0.0;
+    double m_scratchAbsoluteFollowVelocity = 0.0;
+    double m_scratchAbsoluteFollowStiffness = 150.0;
+    double m_scratchAbsoluteFollowDamping = 24.0;
+    double m_scratchAbsoluteMaxFollowRate = 16.0;
+    double m_scratchAbsoluteSnapDistanceSec = 0.00035;
+    double m_scratchAbsoluteSnapVelocitySecPerSec = 0.015;
     bool   m_scrubSavedKeylock = false;
     bool   m_scrubSavedReverseState = false;
     double m_loadedTrackSampleRate = 44100.0;

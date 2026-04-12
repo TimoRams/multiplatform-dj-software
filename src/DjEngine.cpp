@@ -1508,14 +1508,59 @@ void DjEngine::onTimer()
         double targetRate = 0.0;
         double tau = m_scratchRateReleaseTauSec;
         if (m_isScrubbing) {
+            if (m_scratchAbsolutePositionControl) {
+                const double len = transportSource.getLengthInSeconds();
+                if (len > 0.0) {
+                    const double targetPos = std::clamp(m_scratchAbsoluteTargetPosition, 0.0, len);
+                    const double prevPos = m_scrubHoldPosition;
+                    const double errorSec = targetPos - m_scrubHoldPosition;
+
+                    // Mass-spring-damper follower: slightly lagging, velocity-aware
+                    // and naturally braking before target to mimic platter inertia.
+                    const double accel = (errorSec * m_scratchAbsoluteFollowStiffness)
+                                       - (m_scratchAbsoluteFollowVelocity * m_scratchAbsoluteFollowDamping);
+                    m_scratchAbsoluteFollowVelocity += accel * dtSec;
+                    m_scratchAbsoluteFollowVelocity = std::clamp(
+                        m_scratchAbsoluteFollowVelocity,
+                        -m_scratchAbsoluteMaxFollowRate,
+                        m_scratchAbsoluteMaxFollowRate);
+
+                    double stepSec = m_scratchAbsoluteFollowVelocity * dtSec;
+                    if (std::abs(stepSec) > std::abs(errorSec))
+                        stepSec = errorSec;
+
+                    m_scrubHoldPosition = std::clamp(m_scrubHoldPosition + stepSec, 0.0, len);
+
+                    const double residualError = targetPos - m_scrubHoldPosition;
+                    if (std::abs(residualError) <= m_scratchAbsoluteSnapDistanceSec
+                        && std::abs(m_scratchAbsoluteFollowVelocity) <= m_scratchAbsoluteSnapVelocitySecPerSec) {
+                        m_scrubHoldPosition = targetPos;
+                        m_scratchAbsoluteFollowVelocity = 0.0;
+                    }
+
+                    const double movedSec = m_scrubHoldPosition - prevPos;
+                    m_scratchAccumulatedMoveSec += std::abs(movedSec);
+
+                    const double motionRate = (dtSec > 1e-6)
+                        ? std::clamp(movedSec / dtSec, -m_scratchMaxRate, m_scratchMaxRate)
+                        : 0.0;
+                    m_scratchTargetRate = motionRate;
+
+                    if (std::abs(targetPos - m_scrubHoldPosition) > m_scratchAbsoluteSnapDistanceSec
+                        || std::abs(motionRate) > 0.001) {
+                        m_lastScrubInputClock.restart();
+                    }
+                }
+            }
+
             idleSec = m_lastScrubInputClock.isValid()
                 ? static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9
                 : 1.0;
             hasIdleSample = true;
 
-            targetRate = (idleSec > m_scratchIdleTimeoutSec)
-                ? 0.0
-                : m_scratchTargetRate;
+            targetRate = m_scratchAbsolutePositionControl
+                ? m_scratchTargetRate
+                : ((idleSec > m_scratchIdleTimeoutSec) ? 0.0 : m_scratchTargetRate);
 
             tau = (std::abs(targetRate) > std::abs(m_scratchSmoothedRate))
                 ? m_scratchRateAttackTauSec
@@ -1947,6 +1992,8 @@ void DjEngine::pauseForScrub()
     m_scratchAbsolutePositionControl = false;
 
     m_scrubHoldPosition = transportSource.getCurrentPosition();
+    m_scratchAbsoluteTargetPosition = m_scrubHoldPosition;
+    m_scratchAbsoluteFollowVelocity = 0.0;
     m_scratchBaseRate = std::max(0.01, std::abs(getTempoRatio()));
     m_scratchAccumulatedMoveSec = 0.0;
     m_scratchTargetRate = 0.0;
@@ -2016,6 +2063,8 @@ void DjEngine::scratchBySeconds(double deltaSeconds)
         m_scratchReleaseActive = false;
 
     m_scratchAbsolutePositionControl = false;
+    m_scratchAbsoluteTargetPosition = m_scrubHoldPosition;
+    m_scratchAbsoluteFollowVelocity = 0.0;
 
     const double dtSecRaw = m_lastScrubInputClock.isValid()
         ? std::max(0.001, static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9)
@@ -2070,7 +2119,10 @@ void DjEngine::setScrubPosition(double positionSeconds)
         return;
 
     const double nextPos = std::clamp(positionSeconds, 0.0, len);
-    const double deltaSec = nextPos - m_scrubHoldPosition;
+    const double prevTargetPos = m_scratchAbsolutePositionControl
+        ? m_scratchAbsoluteTargetPosition
+        : m_scrubHoldPosition;
+    const double deltaSec = nextPos - prevTargetPos;
     if (std::abs(deltaSec) <= 1e-7)
         return;
 
@@ -2079,6 +2131,7 @@ void DjEngine::setScrubPosition(double positionSeconds)
     // remains audible and release inertia still works.
     m_scratchReleaseActive = false;
     m_scratchAbsolutePositionControl = true;
+    m_scratchAbsoluteTargetPosition = nextPos;
 
     const double dtSecRaw = m_lastScrubInputClock.isValid()
         ? std::max(0.001, static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9)
@@ -2104,18 +2157,9 @@ void DjEngine::setScrubPosition(double positionSeconds)
     if (m_isScrubbing && !transportSource.isPlaying() && std::abs(instantaneousRate) > 0.001)
         transportSource.start();
 
-    transportSource.setPosition(nextPos);
-    m_scratchAccumulatedMoveSec += std::abs(deltaSec);
-    m_scrubHoldPosition = nextPos;
-    m_scrubPhysicsClock.restart();
-
-    // Keep all UI readers in sync with the exact dragged position.
-    m_atomicPlayheadPos.store(m_scrubHoldPosition, std::memory_order_relaxed);
-    m_snapPosition = m_scrubHoldPosition;
-    m_snapTempoRatio = getTempoRatio();
-    m_snapValid = false;
-
-    emit progressChanged();
+    // Hand movement itself contributes to release intent, while actual travel
+    // is accumulated in onTimer() via the spring follower.
+    m_scratchAccumulatedMoveSec += std::abs(deltaSec) * 0.45;
 }
 
 void DjEngine::pushScratchVelocityTick(double velocityRate)
@@ -2145,6 +2189,7 @@ void DjEngine::resumeAfterScrub()
 
     m_isScrubbing = false;
     m_scratchAbsolutePositionControl = false;
+    m_scratchAbsoluteFollowVelocity = 0.0;
     m_scratchInputFilteredRate = m_scratchSmoothedRate;
 
     // Touch/hold without meaningful movement: resume immediately with no glide.
