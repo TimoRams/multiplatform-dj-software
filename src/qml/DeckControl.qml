@@ -356,7 +356,7 @@ Item {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: "TITLE"
                                     color: "#6f6f6f"
-                                    font.pixelSize: window.spViewport(5)
+                                    font.pixelSize: window.spViewport(6)
                                     font.bold: true
                                     font.family: "monospace"
                                 }
@@ -366,7 +366,7 @@ Item {
                                     width: parent.width - 42
                                     text: deck._hasTrack ? deck._trackTitle : "No Track Loaded"
                                     color: deck._hasTrack ? "#f0f0f0" : "#777"
-                                    font.pixelSize: window.spViewport(6)
+                                    font.pixelSize: window.spViewport(8)
                                     font.bold: true
                                     elide: Text.ElideRight
                                 }
@@ -394,7 +394,7 @@ Item {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: "ARTIST"
                                     color: "#6f6f6f"
-                                    font.pixelSize: window.spViewport(5)
+                                    font.pixelSize: window.spViewport(6)
                                     font.bold: true
                                     font.family: "monospace"
                                 }
@@ -406,7 +406,7 @@ Item {
                                           ? (deck._trackArtist !== "" ? deck._trackArtist : "Unknown Artist")
                                           : "-"
                                     color: deck._hasTrack ? "#b8b8b8" : "#666"
-                                    font.pixelSize: window.spViewport(6)
+                                    font.pixelSize: window.spViewport(8)
                                     elide: Text.ElideRight
                                 }
                             }
@@ -444,7 +444,7 @@ Item {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: "BPM"
                                     color: "#5f8f5f"
-                                    font.pixelSize: window.spViewport(6)
+                                    font.pixelSize: window.spViewport(7)
                                     font.bold: true
                                     font.family: "monospace"
                                 }
@@ -453,7 +453,7 @@ Item {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: deck._trackBpm !== "" ? deck._trackBpm : "--"
                                     color: deck._trackBpm !== "" ? "#80e080" : "#5a705a"
-                                    font.pixelSize: window.spViewport(8)
+                                    font.pixelSize: window.spViewport(10)
                                     font.bold: true
                                     font.family: "monospace"
                                 }
@@ -499,7 +499,7 @@ Item {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: "LIVE"
                                     color: "#6b82a5"
-                                    font.pixelSize: window.spViewport(6)
+                                    font.pixelSize: window.spViewport(7)
                                     font.bold: true
                                     font.family: "monospace"
                                 }
@@ -512,7 +512,7 @@ Item {
                                         if (!deck.engine) return "#aab6cc"
                                         return deck.engine.tempoPercent > 0 ? "#ffaa00" : "#55ccff"
                                     }
-                                    font.pixelSize: window.spViewport(8)
+                                    font.pixelSize: window.spViewport(10)
                                     font.bold: true
                                     font.family: "monospace"
                                 }
@@ -540,7 +540,7 @@ Item {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: "KEY"
                                     color: "#5d6bad"
-                                    font.pixelSize: window.spViewport(6)
+                                    font.pixelSize: window.spViewport(7)
                                     font.bold: true
                                     font.family: "monospace"
                                 }
@@ -549,7 +549,7 @@ Item {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: deck._trackKey !== "" ? deck._trackKey : "--"
                                     color: deck._trackKey !== "" ? "#8080e0" : "#59608a"
-                                    font.pixelSize: window.spViewport(8)
+                                    font.pixelSize: window.spViewport(10)
                                     font.bold: true
                                     font.family: "monospace"
                                 }
@@ -577,7 +577,7 @@ Item {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: "LEN"
                                     color: "#7f7f7f"
-                                    font.pixelSize: window.spViewport(6)
+                                    font.pixelSize: window.spViewport(7)
                                     font.bold: true
                                     font.family: "monospace"
                                 }
@@ -586,7 +586,7 @@ Item {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: deck._trackDuration !== "" ? deck._trackDuration : "--:--"
                                     color: deck._trackDuration !== "" ? "#b0b0b0" : "#6f6f6f"
-                                    font.pixelSize: window.spViewport(8)
+                                    font.pixelSize: window.spViewport(10)
                                     font.bold: true
                                     font.family: "monospace"
                                 }

@@ -10,6 +10,7 @@ ApplicationWindow {
     visible: true
     title: "RamsbrockDJ"
     color: "#0a0a0a"
+    font.hintingPreference: Font.PreferFullHinting
     property bool libraryExpanded: false
     property string linkedDeckName: ""
     readonly property real baseWaveformHeight: 150
@@ -60,9 +61,13 @@ ApplicationWindow {
         var scale = responsiveFontScale
         var scaled = basePx * scale
 
-        // Keep tiny labels legible while avoiding aggressive jumps.
-        if (basePx <= 10)
-            scaled *= 1.08
+        // Keep tiny labels readable in dense UI areas.
+        if (basePx <= 8)
+            scaled *= 1.24
+        else if (basePx <= 10)
+            scaled *= 1.18
+        else if (basePx <= 12)
+            scaled *= 1.10
 
         var dpr = Math.max(1.0, window.devicePixelRatio)
         var snapped = Math.round(scaled * dpr) / dpr
@@ -74,17 +79,18 @@ ApplicationWindow {
         return Math.round(_scaledFontSize(basePx))
     }
 
-    // Viewport-aware sizing for the transformed top deck area.
-    // Intentionally independent from uiScale/height to prevent text layout
-    // jumps while resizing or scaling the viewport.
+    // Viewport-aware sizing for the top deck area.
+    // Keep it independent from width scaling to avoid text distortion.
     function spViewport(basePx) {
-        var logicalPx = basePx
+        var logicalPx = _scaledFontSize(basePx)
 
-        // Keep tiny labels readable without dynamic relayout.
-        if (basePx <= 8)
-            logicalPx = basePx + 2
+        // Keep tiny labels readable without large layout jumps.
+        if (basePx <= 6)
+            logicalPx += 1.4
+        else if (basePx <= 8)
+            logicalPx += 1.0
         else if (basePx <= 10)
-            logicalPx = basePx + 1
+            logicalPx += 0.6
 
         var dpr = Math.max(1.0, window.devicePixelRatio)
         var snapped = Math.round(logicalPx * dpr) / dpr
@@ -193,15 +199,10 @@ ApplicationWindow {
             Layout.maximumHeight: window.scaledWaveformHeight
             clip: true
 
-            // Fixed-size design canvas; scaled down/up to match the window width.
+            // Use direct viewport sizing instead of transform-scaling to keep text crisp.
             Item {
                 id: waveformCanvas
-                width:  window.baseUiWidth
-                height: window.baseWaveformHeight
-                scale:  window.uiScale
-                transformOrigin: Item.TopLeft
-                x: Math.round((waveformViewport.width - (width * scale)) * 0.5)
-                y: 0
+                anchors.fill: parent
 
                 ColumnLayout {
                     id: waveformSection
@@ -246,12 +247,7 @@ ApplicationWindow {
 
             Item {
                 id: deckMixerCanvas
-                width:  window.baseUiWidth
-                height: window.baseDeckMixerHeight
-                scale:  window.uiScale
-                transformOrigin: Item.TopLeft
-                x: Math.round((deckMixerViewport.width - (width * scale)) * 0.5)
-                y: 0
+                anchors.fill: parent
 
                 RowLayout {
                     id: deckRow

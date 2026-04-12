@@ -57,12 +57,12 @@ int main(int argc, char *argv[])
         qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
 
     if (qEnvironmentVariableIsEmpty("QT_SCALE_FACTOR_ROUNDING_POLICY"))
-        qputenv("QT_SCALE_FACTOR_ROUNDING_POLICY", "PassThrough");
+        qputenv("QT_SCALE_FACTOR_ROUNDING_POLICY", "RoundPreferFloor");
 
     qputenv("QSG_INFO", "1");
 
     QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
-    QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
+    QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::RoundPreferFloor);
 
     QGuiApplication app(argc, argv);
 
