@@ -73,7 +73,7 @@ Build:
 
 Example dependency install (Homebrew):
 
-    brew install cmake pkg-config qt@6 taglib rubberband keyfinder
+    brew install cmake pkg-config qt@6 taglib rubberband libkeyfinder
 
 Build:
 
