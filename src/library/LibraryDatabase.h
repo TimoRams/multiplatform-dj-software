@@ -84,10 +84,12 @@ signals:
 
 private:
     bool createSchema();
+    void scheduleTableModelRefresh();
 
     QSqlDatabase m_db;
     LibraryTableModel* m_tableModel = nullptr;
     QString m_dbPath;
+    bool m_tableModelRefreshPending = false;
 
     static constexpr int kSchemaVersion = 6;
 };

@@ -49,6 +49,10 @@ public:
 
     // Re-run the SELECT and reset the model.
     Q_INVOKABLE void refresh();
+    void updateAnalysisForTrack(const QString& trackId,
+                                double bpm,
+                                const QString& key,
+                                bool isAnalyzed);
     Q_INVOKABLE void toggleSort(const QString& field);
     Q_INVOKABLE void setSort(const QString& field, bool ascending);
     Q_INVOKABLE void setFilterText(const QString& text);

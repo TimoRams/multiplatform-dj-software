@@ -1,11 +1,13 @@
 #include "LibraryDatabase.h"
 #include "LibraryTableModel.h"
+#include "app/SettingsManager.h"
 
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QDir>
 #include <QStandardPaths>
 #include <QDebug>
+#include <QTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -87,18 +89,21 @@ LibraryDatabase::~LibraryDatabase()
 bool LibraryDatabase::open()
 {
     // ── Determine the database directory ─────────────────────────────────
-    // Use QStandardPaths::AppConfigLocation which resolves to:
-    //   Linux:   ~/.config/<AppName>
-    //   macOS:   ~/Library/Preferences/<AppName>
-    //   Windows: C:/Users/<USER>/AppData/Local/<AppName>
-    // This matches the SettingsManager path (which also lands in ~/.config/RamsbrockDJ/).
-    QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    if (configDir.isEmpty())
-        configDir = QDir::homePath() + "/.config";
+    // Use the same config directory as SettingsManager for consistency.
+    // This ensures all config files, settings, and database live in the same place.
+    QString configDir = SettingsManager::getInstance().getConfigDirectoryPath();
+    if (configDir.isEmpty()) {
+        qWarning() << "[LibraryDatabase] SettingsManager config directory is empty";
+        return false;
+    }
 
     QDir dbDir(configDir + "/db");
-    if (!dbDir.exists())
-        dbDir.mkpath(".");
+    if (!dbDir.exists()) {
+        if (!dbDir.mkpath(".")) {
+            qWarning() << "[LibraryDatabase] Failed to create db directory:" << dbDir.absolutePath();
+            return false;
+        }
+    }
 
     m_dbPath = dbDir.filePath("RamsbrockDJ_Library.db");
 
@@ -284,6 +289,8 @@ bool LibraryDatabase::addTrack(const QString& trackId,
 {
     qDebug() << "[LibraryDatabase] addTrack:" << trackId.left(12) << title << artist;
     QSqlQuery q(m_db);
+    bool trackInserted = false;
+    bool locationInserted = false;
 
     // INSERT OR IGNORE: don't overwrite existing metadata if re-added.
     q.prepare("INSERT OR IGNORE INTO Tracks (id, title, artist, duration_sec, bitrate_kbps)"
@@ -298,6 +305,7 @@ bool LibraryDatabase::addTrack(const QString& trackId,
         qWarning() << "[LibraryDatabase] addTrack Tracks:" << q.lastError().text();
         return false;
     }
+    trackInserted = q.numRowsAffected() > 0;
 
     // Keep bitrate up to date if a previously known track is reloaded with new metadata.
     q.prepare("UPDATE Tracks SET bitrate_kbps = CASE WHEN :kbps > 0 THEN :kbps ELSE bitrate_kbps END "
@@ -318,9 +326,10 @@ bool LibraryDatabase::addTrack(const QString& trackId,
         qWarning() << "[LibraryDatabase] addTrack Locations:" << q.lastError().text();
         return false;
     }
+    locationInserted = q.numRowsAffected() > 0;
 
-    if (m_tableModel)
-        m_tableModel->refresh();
+    if (trackInserted || locationInserted)
+        scheduleTableModelRefresh();
 
     emit trackAdded(trackId);
     return true;
@@ -401,8 +410,11 @@ void LibraryDatabase::updateAnalysisData(const QString& trackId,
         return;
     }
 
-    if (m_tableModel)
-        m_tableModel->refresh();
+    if (m_tableModel != nullptr)
+        m_tableModel->updateAnalysisForTrack(trackId,
+                                             static_cast<double>(newBpm),
+                                             newKey,
+                                             newBpm > 0.0f || !newKey.trimmed().isEmpty());
 
     emit analysisUpdated(trackId);
 }
@@ -483,8 +495,7 @@ bool LibraryDatabase::updateTrackSegments(const QString& trackId,
         return false;
     }
 
-    if (m_tableModel)
-        m_tableModel->refresh();
+    scheduleTableModelRefresh();
 
     return true;
 }
@@ -630,4 +641,20 @@ QString LibraryDatabase::filePath(const QString& trackId) const
 void LibraryDatabase::setTableModel(LibraryTableModel* model)
 {
     m_tableModel = model;
+}
+
+void LibraryDatabase::scheduleTableModelRefresh()
+{
+    if (m_tableModel == nullptr || m_tableModelRefreshPending)
+        return;
+
+    m_tableModelRefreshPending = true;
+
+    // Defer reset-heavy model refreshes until after the current UI interaction.
+    QTimer::singleShot(120, this, [this]() {
+        m_tableModelRefreshPending = false;
+
+        if (m_tableModel != nullptr)
+            m_tableModel->refresh();
+    });
 }

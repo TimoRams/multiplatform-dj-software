@@ -181,3 +181,45 @@ void LibraryTableModel::refresh()
 
     emit countChanged();
 }
+
+void LibraryTableModel::updateAnalysisForTrack(const QString& trackId,
+                                               double bpm,
+                                               const QString& key,
+                                               bool isAnalyzed)
+{
+    if (trackId.isEmpty())
+        return;
+
+    for (int rowIndex = 0; rowIndex < m_rows.size(); ++rowIndex) {
+        auto& row = m_rows[rowIndex];
+        if (row.id != trackId)
+            continue;
+
+        bool changed = false;
+
+        if (bpm > 0.0 && !qFuzzyCompare(row.bpm + 1.0, bpm + 1.0)) {
+            row.bpm = bpm;
+            changed = true;
+        }
+
+        if (!key.trimmed().isEmpty() && row.key != key) {
+            row.key = key;
+            changed = true;
+        }
+
+        if (row.isAnalyzed != isAnalyzed) {
+            row.isAnalyzed = isAnalyzed;
+            changed = true;
+        }
+
+        if (!changed)
+            return;
+
+        const QModelIndex left = index(rowIndex, 4);
+        const QModelIndex right = index(rowIndex, 7);
+        emit dataChanged(left,
+                         right,
+                         { Qt::DisplayRole, BpmRole, KeyRole, AnalyzedRole });
+        return;
+    }
+}
