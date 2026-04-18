@@ -202,6 +202,7 @@ public slots:
     void setPosition(float progress);
     void setTempoPercent(double percent);
     Q_INVOKABLE void setManualBpm(double bpm);
+    Q_INVOKABLE bool applyAudioDeviceSettings(int sampleRate, int bufferSize);
     
     // Playback control
     Q_INVOKABLE void play();
@@ -359,6 +360,7 @@ private:
     void clearLoopRangeOnAudioSource();
 
     void updateSpeedAndPitch();
+    void refreshHardwareLatency();
 
     void updateGain();
     void applyMixerEq();

@@ -13,8 +13,15 @@ Window {
     color: "#1e1e19"
     flags: Qt.Dialog
 
+    onVisibleChanged: {
+        if (visible)
+            syncAudioSettings()
+    }
+
     // ── Navigation categories ────────────────────────────────────────────────
     property int selectedCategory: 0
+    property int pendingAudioSampleRate: 44100
+    property int pendingAudioBufferSize: 512
 
     readonly property var categories: [
         { label: "Audio Setup",     icon: "♪" },
@@ -22,6 +29,66 @@ Window {
         { label: "Library",         icon: "☰" },
         { label: "Legal",           icon: "§" },
     ]
+
+    readonly property var sampleRateOptions: [
+        { label: "44.1 kHz", value: 44100 },
+        { label: "48 kHz", value: 48000 },
+        { label: "88.2 kHz", value: 88200 },
+        { label: "96 kHz", value: 96000 }
+    ]
+
+    readonly property var bufferSizeOptions: [
+        { label: "64 samples", value: 64 },
+        { label: "128 samples", value: 128 },
+        { label: "256 samples", value: 256 },
+        { label: "512 samples", value: 512 },
+        { label: "1024 samples", value: 1024 }
+    ]
+
+    function indexForValue(options, value) {
+        for (var i = 0; i < options.length; ++i) {
+            if (options[i].value === value)
+                return i
+        }
+        return 0
+    }
+
+    function syncAudioSettings() {
+        if (!settingsManager)
+            return
+
+        pendingAudioSampleRate = settingsManager.audioSampleRate
+        pendingAudioBufferSize = settingsManager.audioBufferSize
+
+        sampleRateCombo.currentIndex = indexForValue(sampleRateOptions, pendingAudioSampleRate)
+        bufferSizeCombo.currentIndex = indexForValue(bufferSizeOptions, pendingAudioBufferSize)
+    }
+
+    function applyAudioSettings() {
+        if (!settingsManager)
+            return
+
+        var sampleRate = sampleRateOptions[sampleRateCombo.currentIndex].value
+        var bufferSize = bufferSizeOptions[bufferSizeCombo.currentIndex].value
+
+        pendingAudioSampleRate = sampleRate
+        pendingAudioBufferSize = bufferSize
+
+        settingsManager.audioSampleRate = sampleRate
+        settingsManager.audioBufferSize = bufferSize
+
+        var appliedA = deckA && deckA.applyAudioDeviceSettings
+            ? deckA.applyAudioDeviceSettings(sampleRate, bufferSize)
+            : false
+        var appliedB = deckB && deckB.applyAudioDeviceSettings
+            ? deckB.applyAudioDeviceSettings(sampleRate, bufferSize)
+            : false
+
+        audioApplyStatus.text = (appliedA && appliedB)
+            ? "Applied to the audio engine."
+            : "Saved, but the audio device could not apply the requested mode right now."
+        audioApplyStatus.color = (appliedA && appliedB) ? "#8fe388" : "#ffb86c"
+    }
 
     RowLayout {
         anchors.fill: parent
@@ -175,6 +242,10 @@ Window {
                             font.bold: true
                         }
 
+                        Item {
+                            Component.onCompleted: settingsWindow.syncAudioSettings()
+                        }
+
                         Rectangle {
                             Layout.fillWidth: true
                             height: 1
@@ -223,20 +294,40 @@ Window {
                                 Layout.preferredWidth: 130
                             }
 
-                            Rectangle {
+                            ComboBox {
+                                id: sampleRateCombo
                                 Layout.fillWidth: true
                                 height: 32
-                                color: "#252525"
-                                border.color: "#3a3a3a"
-                                radius: 4
+                                model: settingsWindow.sampleRateOptions
+                                textRole: "label"
 
-                                Text {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    anchors.left: parent.left
-                                    anchors.leftMargin: 12
-                                    text: "44100 Hz"
+                                contentItem: Text {
+                                    text: sampleRateCombo.currentIndex >= 0 ? sampleRateCombo.displayText : "44.1 kHz"
                                     color: "#ccc"
                                     font.pixelSize: 12
+                                    verticalAlignment: Text.AlignVCenter
+                                    leftPadding: 12
+                                    elide: Text.ElideRight
+                                }
+
+                                delegate: ItemDelegate {
+                                    width: sampleRateCombo.width
+                                    contentItem: Text {
+                                        text: modelData.label
+                                        color: "#ddd"
+                                        font.pixelSize: 12
+                                        elide: Text.ElideRight
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    background: Rectangle {
+                                        color: highlighted ? "#3a3a3a" : "#252525"
+                                    }
+                                }
+
+                                background: Rectangle {
+                                    color: "#252525"
+                                    border.color: "#3a3a3a"
+                                    radius: 4
                                 }
                             }
                         }
@@ -253,22 +344,89 @@ Window {
                                 Layout.preferredWidth: 130
                             }
 
-                            Rectangle {
+                            ComboBox {
+                                id: bufferSizeCombo
                                 Layout.fillWidth: true
                                 height: 32
-                                color: "#252525"
-                                border.color: "#3a3a3a"
-                                radius: 4
+                                model: settingsWindow.bufferSizeOptions
+                                textRole: "label"
 
-                                Text {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    anchors.left: parent.left
-                                    anchors.leftMargin: 12
-                                    text: "512 samples  (≈ 11.6 ms)"
+                                contentItem: Text {
+                                    text: bufferSizeCombo.currentIndex >= 0 ? bufferSizeCombo.displayText : "512 samples"
                                     color: "#ccc"
                                     font.pixelSize: 12
+                                    verticalAlignment: Text.AlignVCenter
+                                    leftPadding: 12
+                                    elide: Text.ElideRight
+                                }
+
+                                delegate: ItemDelegate {
+                                    width: bufferSizeCombo.width
+                                    contentItem: Text {
+                                        text: modelData.label
+                                        color: "#ddd"
+                                        font.pixelSize: 12
+                                        elide: Text.ElideRight
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    background: Rectangle {
+                                        color: highlighted ? "#3a3a3a" : "#252525"
+                                    }
+                                }
+
+                                background: Rectangle {
+                                    color: "#252525"
+                                    border.color: "#3a3a3a"
+                                    radius: 4
                                 }
                             }
+                        }
+
+                        Text {
+                            text: "Bit depth is controlled by the audio interface/driver. This app configures sample rate and buffer size."
+                            color: "#7b7b7b"
+                            font.pixelSize: 11
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            Item { Layout.fillWidth: true }
+
+                            Button {
+                                text: "Apply Audio"
+                                Layout.preferredWidth: 130
+                                Layout.preferredHeight: 32
+
+                                background: Rectangle {
+                                    color: parent.down ? "#444" : "#2a2a2a"
+                                    border.color: parent.hovered ? "#5a5a5a" : "#3a3a3a"
+                                    radius: 4
+                                }
+
+                                contentItem: Text {
+                                    text: parent.text
+                                    color: "#f0f0f0"
+                                    font.pixelSize: 12
+                                    font.bold: true
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+
+                                onClicked: settingsWindow.applyAudioSettings()
+                            }
+                        }
+
+                        Text {
+                            id: audioApplyStatus
+                            text: ""
+                            color: "#8fe388"
+                            font.pixelSize: 11
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
                         }
                     }
                 }

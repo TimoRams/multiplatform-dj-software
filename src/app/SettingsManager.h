@@ -1,13 +1,20 @@
 #pragma once
 
+#include <QObject>
 #include <juce_core/juce_core.h>
 #include <juce_data_structures/juce_data_structures.h>
 #include <QString>
 
-class SettingsManager
+class SettingsManager : public QObject
 {
+    Q_OBJECT
+    Q_PROPERTY(int audioSampleRate READ getAudioSampleRate WRITE setAudioSampleRate NOTIFY audioSettingsChanged)
+    Q_PROPERTY(int audioBufferSize READ getAudioBufferSize WRITE setAudioBufferSize NOTIFY audioSettingsChanged)
+
 public:
     static SettingsManager& getInstance();
+
+    explicit SettingsManager(QObject* parent = nullptr);
 
     void init();
 
@@ -28,8 +35,16 @@ public:
     QString getSelectedMappingFile() const;
     void setSelectedMappingFile(const QString& mappingFileName);
 
+    int getAudioSampleRate() const;
+    void setAudioSampleRate(int sampleRate);
+
+    int getAudioBufferSize() const;
+    void setAudioBufferSize(int bufferSize);
+
+signals:
+    void audioSettingsChanged();
+
 private:
-    SettingsManager() = default;
     ~SettingsManager() = default;
     SettingsManager(const SettingsManager&) = delete;
     SettingsManager& operator=(const SettingsManager&) = delete;

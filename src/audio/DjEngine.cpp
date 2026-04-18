@@ -1091,6 +1091,49 @@ float DjEngine::getDuration() const
     return static_cast<float>(transportSource.getLengthInSeconds());
 }
 
+void DjEngine::refreshHardwareLatency()
+{
+    if (auto* device = deviceManager.getCurrentAudioDevice()) {
+        const int latencySamples = device->getOutputLatencyInSamples()
+                                 + device->getCurrentBufferSizeSamples();
+        const double sampleRate = device->getCurrentSampleRate();
+        if (sampleRate > 0.0)
+            m_latencySeconds = static_cast<float>(static_cast<double>(latencySamples) / sampleRate);
+
+        qDebug() << "[DjEngine] Hardware latency:" << latencySamples
+                 << "samples =" << m_latencySeconds << "s"
+                 << "(out:" << device->getOutputLatencyInSamples()
+                 << "buf:" << device->getCurrentBufferSizeSamples()
+                 << "sr:" << sampleRate << ")";
+    } else {
+        m_latencySeconds = 0.011f;
+        qDebug() << "[DjEngine] No audio device yet, using fallback latency 11ms";
+    }
+}
+
+bool DjEngine::applyAudioDeviceSettings(int sampleRate, int bufferSize)
+{
+    sampleRate = std::clamp(sampleRate, 44100, 96000);
+    bufferSize = std::clamp(bufferSize, 64, 4096);
+
+    if (!deviceManager.getCurrentAudioDevice())
+        return false;
+
+    juce::AudioDeviceManager::AudioDeviceSetup setup;
+    deviceManager.getAudioDeviceSetup(setup);
+    setup.sampleRate = static_cast<double>(sampleRate);
+    setup.bufferSize = bufferSize;
+
+    const juce::String error = deviceManager.setAudioDeviceSetup(setup, true);
+    if (error.isNotEmpty()) {
+        qWarning() << "[DjEngine] Failed to apply audio device settings:" << QString::fromStdString(error.toStdString());
+        return false;
+    }
+
+    refreshHardwareLatency();
+    return true;
+}
+
 DjEngine::LatencySnapshot DjEngine::buildLatencySnapshot() const
 {
     LatencySnapshot snapshot;

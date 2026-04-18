@@ -1,4 +1,5 @@
 #include "SettingsManager.h"
+#include <algorithm>
 #include <QDebug>
 #include <QDir>
 #include <QString>
@@ -7,6 +8,11 @@ SettingsManager& SettingsManager::getInstance()
 {
     static SettingsManager instance;
     return instance;
+}
+
+SettingsManager::SettingsManager(QObject* parent)
+    : QObject(parent)
+{
 }
 
 void SettingsManager::init()
@@ -152,4 +158,50 @@ void SettingsManager::setSelectedMappingFile(const QString& mappingFileName)
         return;
     userSettings->setValue("Midi/SelectedMappingFile", juce::String::fromUTF8(mappingFileName.toUtf8().constData()));
     userSettings->saveIfNeeded();
+}
+
+int SettingsManager::getAudioSampleRate() const
+{
+    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return 44100;
+
+    const int value = userSettings->getValue("Audio/SampleRate", "44100").getIntValue();
+    return value > 0 ? value : 44100;
+}
+
+void SettingsManager::setAudioSampleRate(int sampleRate)
+{
+    sampleRate = std::clamp(sampleRate, 44100, 96000);
+
+    auto* userSettings = getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return;
+
+    userSettings->setValue("Audio/SampleRate", sampleRate);
+    userSettings->saveIfNeeded();
+    emit audioSettingsChanged();
+}
+
+int SettingsManager::getAudioBufferSize() const
+{
+    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return 512;
+
+    const int value = userSettings->getValue("Audio/BufferSize", "512").getIntValue();
+    return value > 0 ? value : 512;
+}
+
+void SettingsManager::setAudioBufferSize(int bufferSize)
+{
+    bufferSize = std::clamp(bufferSize, 64, 4096);
+
+    auto* userSettings = getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return;
+
+    userSettings->setValue("Audio/BufferSize", bufferSize);
+    userSettings->saveIfNeeded();
+    emit audioSettingsChanged();
 }

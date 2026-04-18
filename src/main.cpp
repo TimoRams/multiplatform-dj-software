@@ -88,8 +88,13 @@ int main(int argc, char *argv[])
 
     SettingsManager::getInstance().init();
 
+    auto& settingsManager = SettingsManager::getInstance();
+
     auto deckA = std::make_unique<DjEngine>();
     auto deckB = std::make_unique<DjEngine>();
+
+    deckA->applyAudioDeviceSettings(settingsManager.getAudioSampleRate(), settingsManager.getAudioBufferSize());
+    deckB->applyAudioDeviceSettings(settingsManager.getAudioSampleRate(), settingsManager.getAudioBufferSize());
 
     auto coverProvider = std::make_unique<CoverArtProvider>();
     deckA->setCoverArtProvider(coverProvider.get(), "deckA");
@@ -102,6 +107,7 @@ int main(int argc, char *argv[])
 
     engine.addImageProvider("coverart", coverProvider.release());
 
+    engine.rootContext()->setContextProperty("settingsManager", &settingsManager);
     engine.rootContext()->setContextProperty("deckA", deckA.get());
     engine.rootContext()->setContextProperty("deckB", deckB.get());
 
