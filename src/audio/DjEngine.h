@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
 #include <QVector>
 #include <QVariantList>
@@ -203,6 +204,14 @@ public slots:
     void setTempoPercent(double percent);
     Q_INVOKABLE void setManualBpm(double bpm);
     Q_INVOKABLE bool applyAudioDeviceSettings(int sampleRate, int bufferSize);
+    Q_INVOKABLE bool applyAudioDeviceSettings(const QString& deviceType,
+                                              const QString& outputDevice,
+                                              int sampleRate,
+                                              int bufferSize);
+    Q_INVOKABLE QStringList getAvailableAudioDeviceTypes() const;
+    Q_INVOKABLE QStringList getAvailableAudioOutputDevices(const QString& deviceType = QString()) const;
+    Q_INVOKABLE QString getCurrentAudioDeviceType() const;
+    Q_INVOKABLE QString getCurrentAudioOutputDevice() const;
     
     // Playback control
     Q_INVOKABLE void play();
@@ -296,7 +305,7 @@ private:
     class MixerDspSource;
     class TimeStretchAudioSource;
 
-    juce::AudioDeviceManager deviceManager;
+    juce::AudioDeviceManager& deviceManager;
     juce::AudioFormatManager formatManager;
     std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
     std::unique_ptr<class ReverseStreamAudioSource> reverseWrapSource;

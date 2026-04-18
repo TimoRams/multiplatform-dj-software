@@ -21,7 +21,11 @@ Window {
     // ── Navigation categories ────────────────────────────────────────────────
     property int selectedCategory: 0
     property int pendingAudioSampleRate: 44100
-    property int pendingAudioBufferSize: 512
+    property int pendingAudioBufferSize: 128
+    property string pendingAudioDeviceType: ""
+    property string pendingAudioOutputDevice: ""
+    property var audioDeviceTypeOptions: []
+    property var audioOutputDeviceOptions: []
 
     readonly property var categories: [
         { label: "Audio Setup",     icon: "♪" },
@@ -53,12 +57,63 @@ Window {
         return 0
     }
 
+    function indexForText(options, value) {
+        for (var i = 0; i < options.length; ++i) {
+            if (String(options[i]) === String(value))
+                return i
+        }
+        return -1
+    }
+
+    function refreshAudioOutputDevices(deviceType) {
+        if (!deckA || !deckA.getAvailableAudioOutputDevices)
+            return
+
+        audioOutputDeviceOptions = deckA.getAvailableAudioOutputDevices(deviceType)
+        if (!audioOutputDeviceOptions || audioOutputDeviceOptions.length === 0)
+            audioOutputDeviceOptions = [""]
+
+        var selectedOutput = pendingAudioOutputDevice
+        if (!selectedOutput || indexForText(audioOutputDeviceOptions, selectedOutput) < 0) {
+            selectedOutput = deckA.getCurrentAudioOutputDevice ? deckA.getCurrentAudioOutputDevice() : ""
+            if (!selectedOutput || indexForText(audioOutputDeviceOptions, selectedOutput) < 0)
+                selectedOutput = audioOutputDeviceOptions[0]
+        }
+
+        pendingAudioOutputDevice = selectedOutput
+        outputDeviceCombo.currentIndex = Math.max(0, indexForText(audioOutputDeviceOptions, selectedOutput))
+    }
+
+    function refreshAudioDeviceLists() {
+        if (!deckA || !deckA.getAvailableAudioDeviceTypes)
+            return
+
+        audioDeviceTypeOptions = deckA.getAvailableAudioDeviceTypes()
+        if (!audioDeviceTypeOptions || audioDeviceTypeOptions.length === 0)
+            audioDeviceTypeOptions = [""]
+
+        var selectedType = pendingAudioDeviceType
+        if (!selectedType || indexForText(audioDeviceTypeOptions, selectedType) < 0) {
+            selectedType = deckA.getCurrentAudioDeviceType ? deckA.getCurrentAudioDeviceType() : ""
+            if (!selectedType || indexForText(audioDeviceTypeOptions, selectedType) < 0)
+                selectedType = audioDeviceTypeOptions[0]
+        }
+
+        pendingAudioDeviceType = selectedType
+        deviceTypeCombo.currentIndex = Math.max(0, indexForText(audioDeviceTypeOptions, selectedType))
+        refreshAudioOutputDevices(selectedType)
+    }
+
     function syncAudioSettings() {
         if (!settingsManager)
             return
 
+        pendingAudioDeviceType = settingsManager.audioDeviceType
+        pendingAudioOutputDevice = settingsManager.audioOutputDevice
         pendingAudioSampleRate = settingsManager.audioSampleRate
         pendingAudioBufferSize = settingsManager.audioBufferSize
+
+        refreshAudioDeviceLists()
 
         sampleRateCombo.currentIndex = indexForValue(sampleRateOptions, pendingAudioSampleRate)
         bufferSizeCombo.currentIndex = indexForValue(bufferSizeOptions, pendingAudioBufferSize)
@@ -68,25 +123,35 @@ Window {
         if (!settingsManager)
             return
 
+        var deviceType = audioDeviceTypeOptions.length > 0 && deviceTypeCombo.currentIndex >= 0
+            ? audioDeviceTypeOptions[deviceTypeCombo.currentIndex]
+            : pendingAudioDeviceType
+        var outputDevice = audioOutputDeviceOptions.length > 0 && outputDeviceCombo.currentIndex >= 0
+            ? audioOutputDeviceOptions[outputDeviceCombo.currentIndex]
+            : pendingAudioOutputDevice
         var sampleRate = sampleRateOptions[sampleRateCombo.currentIndex].value
         var bufferSize = bufferSizeOptions[bufferSizeCombo.currentIndex].value
 
+        pendingAudioDeviceType = deviceType
+        pendingAudioOutputDevice = outputDevice
         pendingAudioSampleRate = sampleRate
         pendingAudioBufferSize = bufferSize
 
+        settingsManager.audioDeviceType = deviceType
+        settingsManager.audioOutputDevice = outputDevice
         settingsManager.audioSampleRate = sampleRate
         settingsManager.audioBufferSize = bufferSize
 
         var appliedA = deckA && deckA.applyAudioDeviceSettings
-            ? deckA.applyAudioDeviceSettings(sampleRate, bufferSize)
+            ? deckA.applyAudioDeviceSettings(deviceType, outputDevice, sampleRate, bufferSize)
             : false
         var appliedB = deckB && deckB.applyAudioDeviceSettings
-            ? deckB.applyAudioDeviceSettings(sampleRate, bufferSize)
+            ? deckB.applyAudioDeviceSettings(deviceType, outputDevice, sampleRate, bufferSize)
             : false
 
         audioApplyStatus.text = (appliedA && appliedB)
-            ? "Applied to the audio engine."
-            : "Saved, but the audio device could not apply the requested mode right now."
+            ? "Applied to the selected device with a low-latency buffer."
+            : "Saved, but the requested device or buffer could not be applied right now."
         audioApplyStatus.color = (appliedA && appliedB) ? "#8fe388" : "#ffb86c"
     }
 
@@ -282,6 +347,64 @@ Window {
                             color: "#2a2a2a"
                         }
 
+                        // Device Type row
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 16
+
+                            Text {
+                                text: "Device Type"
+                                color: "#aaa"
+                                font.pixelSize: 12
+                                Layout.preferredWidth: 130
+                            }
+
+                            ComboBox {
+                                id: deviceTypeCombo
+                                Layout.fillWidth: true
+                                height: 32
+                                model: settingsWindow.audioDeviceTypeOptions
+
+                                contentItem: Text {
+                                    text: deviceTypeCombo.currentIndex >= 0 && deviceTypeCombo.displayText.length > 0
+                                          ? deviceTypeCombo.displayText
+                                          : "Default"
+                                    color: "#ccc"
+                                    font.pixelSize: 12
+                                    verticalAlignment: Text.AlignVCenter
+                                    leftPadding: 12
+                                    elide: Text.ElideRight
+                                }
+
+                                delegate: ItemDelegate {
+                                    width: deviceTypeCombo.width
+                                    contentItem: Text {
+                                        text: modelData.length > 0 ? modelData : "Default"
+                                        color: "#ddd"
+                                        font.pixelSize: 12
+                                        elide: Text.ElideRight
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    background: Rectangle {
+                                        color: highlighted ? "#3a3a3a" : "#252525"
+                                    }
+                                }
+
+                                background: Rectangle {
+                                    color: "#252525"
+                                    border.color: "#3a3a3a"
+                                    radius: 4
+                                }
+
+                                onCurrentIndexChanged: {
+                                    if (currentIndex >= 0 && currentIndex < settingsWindow.audioDeviceTypeOptions.length) {
+                                        settingsWindow.pendingAudioDeviceType = settingsWindow.audioDeviceTypeOptions[currentIndex]
+                                        settingsWindow.refreshAudioOutputDevices(settingsWindow.pendingAudioDeviceType)
+                                    }
+                                }
+                            }
+                        }
+
                         // Output Device row
                         RowLayout {
                             Layout.fillWidth: true
@@ -294,20 +417,46 @@ Window {
                                 Layout.preferredWidth: 130
                             }
 
-                            Rectangle {
+                            ComboBox {
+                                id: outputDeviceCombo
                                 Layout.fillWidth: true
                                 height: 32
-                                color: "#252525"
-                                border.color: "#3a3a3a"
-                                radius: 4
+                                model: settingsWindow.audioOutputDeviceOptions
 
-                                Text {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    anchors.left: parent.left
-                                    anchors.leftMargin: 12
-                                    text: "System Default"
+                                contentItem: Text {
+                                    text: outputDeviceCombo.currentIndex >= 0 && outputDeviceCombo.displayText.length > 0
+                                          ? outputDeviceCombo.displayText
+                                          : "System Default"
                                     color: "#ccc"
                                     font.pixelSize: 12
+                                    verticalAlignment: Text.AlignVCenter
+                                    leftPadding: 12
+                                    elide: Text.ElideRight
+                                }
+
+                                delegate: ItemDelegate {
+                                    width: outputDeviceCombo.width
+                                    contentItem: Text {
+                                        text: modelData.length > 0 ? modelData : "System Default"
+                                        color: "#ddd"
+                                        font.pixelSize: 12
+                                        elide: Text.ElideRight
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    background: Rectangle {
+                                        color: highlighted ? "#3a3a3a" : "#252525"
+                                    }
+                                }
+
+                                background: Rectangle {
+                                    color: "#252525"
+                                    border.color: "#3a3a3a"
+                                    radius: 4
+                                }
+
+                                onCurrentIndexChanged: {
+                                    if (currentIndex >= 0 && currentIndex < settingsWindow.audioOutputDeviceOptions.length)
+                                        settingsWindow.pendingAudioOutputDevice = settingsWindow.audioOutputDeviceOptions[currentIndex]
                                 }
                             }
                         }
@@ -413,7 +562,7 @@ Window {
                         }
 
                         Text {
-                            text: "Bit depth is controlled by the audio interface/driver. This app configures sample rate and buffer size."
+                            text: "Use the lowest stable buffer your device supports. On Windows, ASIO will appear here when available; on macOS and Linux this lists the active system audio backends and outputs."
                             color: "#7b7b7b"
                             font.pixelSize: 11
                             wrapMode: Text.WordWrap

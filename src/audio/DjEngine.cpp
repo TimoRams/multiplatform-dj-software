@@ -142,6 +142,67 @@ QString defaultHotCueColor(int index)
     return QString::fromLatin1(colors[static_cast<size_t>(index)]);
 }
 
+juce::String toJuceString(const QString& text)
+{
+    return juce::String::fromUTF8(text.toUtf8().constData());
+}
+
+int choosePreferredBufferSize(juce::AudioIODevice* device, int requestedSize)
+{
+    if (device == nullptr)
+        return requestedSize;
+
+    const auto availableSizes = device->getAvailableBufferSizes();
+    if (availableSizes.isEmpty())
+        return requestedSize;
+
+    if (availableSizes.contains(requestedSize))
+        return requestedSize;
+
+    int bestSize = availableSizes[0];
+    int bestDistance = std::abs(bestSize - requestedSize);
+
+    for (int i = 1; i < availableSizes.size(); ++i) {
+        const int candidate = availableSizes[i];
+        const int distance = std::abs(candidate - requestedSize);
+        if (distance < bestDistance || (distance == bestDistance && candidate < bestSize)) {
+            bestSize = candidate;
+            bestDistance = distance;
+        }
+    }
+
+    return bestSize;
+}
+
+juce::AudioIODeviceType* findDeviceType(juce::AudioDeviceManager& deviceManager, const QString& typeName)
+{
+    if (typeName.isEmpty())
+        return deviceManager.getCurrentDeviceTypeObject();
+
+    for (auto* type : deviceManager.getAvailableDeviceTypes()) {
+        if (type != nullptr && QString::fromUtf8(type->getTypeName().toRawUTF8()) == typeName)
+            return type;
+    }
+
+    return nullptr;
+}
+
+juce::AudioDeviceManager& sharedAudioDeviceManager()
+{
+    static juce::AudioDeviceManager manager;
+    return manager;
+}
+
+void ensureSharedAudioDeviceManagerReady(juce::AudioDeviceManager& manager)
+{
+    if (manager.getCurrentAudioDevice() != nullptr)
+        return;
+
+    const juce::String err = manager.initialiseWithDefaultDevices(0, 2);
+    if (err.isNotEmpty())
+        qWarning() << "JUCE AudioDeviceManager err:" << QString::fromStdString(err.toStdString());
+}
+
 }
 
 class ReverseStreamAudioSource : public juce::PositionableAudioSource {
@@ -902,8 +963,12 @@ void DjEngine::propagateMasterTempoLocked(DjEngine* master)
     }
 }
 
-DjEngine::DjEngine(QObject* parent) : QObject(parent)
+DjEngine::DjEngine(QObject* parent)
+    : QObject(parent)
+    , deviceManager(sharedAudioDeviceManager())
 {
+    ensureSharedAudioDeviceManagerReady(deviceManager);
+
     {
         std::lock_guard<std::mutex> g(s_syncMutex);
         s_syncDecks.push_back(this);
@@ -976,32 +1041,11 @@ DjEngine::DjEngine(QObject* parent) : QObject(parent)
     juce::MessageManager::getInstance();
     formatManager.registerBasicFormats();
 
-    juce::String err = deviceManager.initialiseWithDefaultDevices(0, 2);
-    if (err.isNotEmpty()) {
-        qWarning() << "JUCE AudioDeviceManager err:" << QString::fromStdString(err.toStdString());
-    }
-
     // Prefer lower output buffer sizes for better scratch responsiveness.
     // Keep this conservative and only apply when the driver explicitly supports it.
     if (auto* device = deviceManager.getCurrentAudioDevice()) {
-        const auto availableSizes = device->getAvailableBufferSizes();
         const int currentSize = device->getCurrentBufferSizeSamples();
-        int targetSize = currentSize;
-
-        for (int preferred : {128, 256, 384, 512}) {
-            if (availableSizes.contains(preferred)) {
-                targetSize = preferred;
-                break;
-            }
-        }
-
-        if (targetSize == currentSize) {
-            for (int i = 0; i < availableSizes.size(); ++i) {
-                const int candidate = availableSizes[i];
-                if (candidate >= 128 && candidate < targetSize)
-                    targetSize = candidate;
-            }
-        }
+        const int targetSize = choosePreferredBufferSize(device, 128);
 
         if (targetSize < currentSize) {
             juce::AudioDeviceManager::AudioDeviceSetup setup;
@@ -1113,21 +1157,89 @@ void DjEngine::refreshHardwareLatency()
 
 bool DjEngine::applyAudioDeviceSettings(int sampleRate, int bufferSize)
 {
+    return applyAudioDeviceSettings(getCurrentAudioDeviceType(), getCurrentAudioOutputDevice(), sampleRate, bufferSize);
+}
+
+QStringList DjEngine::getAvailableAudioDeviceTypes() const
+{
+    QStringList types;
+
+    auto& manager = const_cast<juce::AudioDeviceManager&>(deviceManager);
+    for (auto* type : manager.getAvailableDeviceTypes()) {
+        if (type != nullptr && type->getTypeName().isNotEmpty())
+            types.push_back(QString::fromUtf8(type->getTypeName().toRawUTF8()));
+    }
+
+    return types;
+}
+
+QStringList DjEngine::getAvailableAudioOutputDevices(const QString& deviceType) const
+{
+    QStringList devices;
+
+    auto& manager = const_cast<juce::AudioDeviceManager&>(deviceManager);
+    auto* type = findDeviceType(manager, deviceType);
+    if (type == nullptr)
+        return devices;
+
+    type->scanForDevices();
+    const auto names = type->getDeviceNames(false);
+    for (const auto& name : names)
+        devices.push_back(QString::fromUtf8(name.toRawUTF8()));
+
+    return devices;
+}
+
+QString DjEngine::getCurrentAudioDeviceType() const
+{
+    return QString::fromUtf8(deviceManager.getCurrentAudioDeviceType().toRawUTF8());
+}
+
+QString DjEngine::getCurrentAudioOutputDevice() const
+{
+    if (auto* device = deviceManager.getCurrentAudioDevice())
+        return QString::fromUtf8(device->getName().toRawUTF8());
+    return QString();
+}
+
+bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
+                                        const QString& outputDevice,
+                                        int sampleRate,
+                                        int bufferSize)
+{
     sampleRate = std::clamp(sampleRate, 44100, 96000);
     bufferSize = std::clamp(bufferSize, 64, 4096);
 
-    if (!deviceManager.getCurrentAudioDevice())
-        return false;
+    auto& manager = deviceManager;
+    auto* type = findDeviceType(manager, deviceType);
+    if (!deviceType.isEmpty() && type != nullptr && QString::fromUtf8(manager.getCurrentAudioDeviceType().toRawUTF8()) != deviceType)
+        manager.setCurrentAudioDeviceType(toJuceString(deviceType), true);
 
     juce::AudioDeviceManager::AudioDeviceSetup setup;
-    deviceManager.getAudioDeviceSetup(setup);
+    manager.getAudioDeviceSetup(setup);
     setup.sampleRate = static_cast<double>(sampleRate);
     setup.bufferSize = bufferSize;
+    setup.useDefaultInputChannels = true;
+    setup.inputDeviceName.clear();
+    setup.useDefaultOutputChannels = true;
+    if (outputDevice.isEmpty())
+        setup.outputDeviceName = manager.getCurrentAudioDevice() != nullptr ? manager.getCurrentAudioDevice()->getName() : juce::String();
+    else
+        setup.outputDeviceName = toJuceString(outputDevice);
 
-    const juce::String error = deviceManager.setAudioDeviceSetup(setup, true);
+    if (auto* currentDevice = manager.getCurrentAudioDevice())
+        setup.bufferSize = choosePreferredBufferSize(currentDevice, setup.bufferSize);
+
+    juce::String error = manager.setAudioDeviceSetup(setup, true);
     if (error.isNotEmpty()) {
+        if (setup.outputDeviceName.isNotEmpty()) {
+            setup.outputDeviceName.clear();
+            error = manager.setAudioDeviceSetup(setup, true);
+        }
+
         qWarning() << "[DjEngine] Failed to apply audio device settings:" << QString::fromStdString(error.toStdString());
-        return false;
+        if (error.isNotEmpty())
+            return false;
     }
 
     refreshHardwareLatency();

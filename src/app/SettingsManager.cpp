@@ -3,6 +3,8 @@
 #include <QDebug>
 #include <QDir>
 #include <QString>
+#include <QStringList>
+#include <juce_audio_devices/juce_audio_devices.h>
 
 SettingsManager& SettingsManager::getInstance()
 {
@@ -160,6 +162,61 @@ void SettingsManager::setSelectedMappingFile(const QString& mappingFileName)
     userSettings->saveIfNeeded();
 }
 
+QString SettingsManager::getAudioDeviceType() const
+{
+    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return QString();
+    return QString::fromUtf8(userSettings->getValue("Audio/DeviceType", "").toRawUTF8());
+}
+
+void SettingsManager::setAudioDeviceType(const QString& deviceType)
+{
+    auto* userSettings = getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return;
+
+    userSettings->setValue("Audio/DeviceType", juce::String::fromUTF8(deviceType.toUtf8().constData()));
+    userSettings->saveIfNeeded();
+    emit audioSettingsChanged();
+}
+
+QString SettingsManager::getAudioOutputDevice() const
+{
+    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return QString();
+    return QString::fromUtf8(userSettings->getValue("Audio/OutputDevice", "").toRawUTF8());
+}
+
+void SettingsManager::setAudioOutputDevice(const QString& deviceName)
+{
+    auto* userSettings = getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return;
+
+    userSettings->setValue("Audio/OutputDevice", juce::String::fromUTF8(deviceName.toUtf8().constData()));
+    userSettings->saveIfNeeded();
+    emit audioSettingsChanged();
+}
+
+QStringList SettingsManager::getAvailableAudioDeviceTypes() const
+{
+    QStringList types;
+
+    juce::AudioDeviceManager deviceManager;
+    juce::String err = deviceManager.initialiseWithDefaultDevices(0, 2);
+    if (err.isNotEmpty())
+        return types;
+
+    for (auto* type : deviceManager.getAvailableDeviceTypes()) {
+        if (type != nullptr && type->getTypeName().isNotEmpty())
+            types.push_back(QString::fromUtf8(type->getTypeName().toRawUTF8()));
+    }
+
+    return types;
+}
+
 int SettingsManager::getAudioSampleRate() const
 {
     const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
@@ -187,10 +244,10 @@ int SettingsManager::getAudioBufferSize() const
 {
     const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
     if (userSettings == nullptr)
-        return 512;
+        return 128;
 
-    const int value = userSettings->getValue("Audio/BufferSize", "512").getIntValue();
-    return value > 0 ? value : 512;
+    const int value = userSettings->getValue("Audio/BufferSize", "128").getIntValue();
+    return value > 0 ? value : 128;
 }
 
 void SettingsManager::setAudioBufferSize(int bufferSize)
