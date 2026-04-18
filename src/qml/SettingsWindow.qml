@@ -198,6 +198,36 @@ Window {
             }
 
             // Bottom: version tag
+            Button {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 34
+                anchors.leftMargin: 14
+                anchors.rightMargin: 14
+                height: 32
+                text: "Settings-Ordner öffnen"
+
+                background: Rectangle {
+                    color: parent.down ? "#444" : "#333"
+                    border.color: parent.hovered ? "#555" : "#3a3a3a"
+                    radius: 4
+                }
+
+                contentItem: Text {
+                    text: parent.text
+                    color: "#fff"
+                    font.pixelSize: 12
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+
+                onClicked: {
+                    if (midiManager)
+                        midiManager.openSettingsDirectory()
+                }
+            }
+
             Text {
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: 12
@@ -725,30 +755,6 @@ Window {
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 10
-
-                        Button {
-                            text: "Settings-Ordner öffnen"
-                            Layout.preferredHeight: 32
-
-                            background: Rectangle {
-                                color: parent.down ? "#444" : "#333"
-                                border.color: parent.hovered ? "#555" : "transparent"
-                                radius: 4
-                            }
-
-                            contentItem: Text {
-                                text: parent.text
-                                color: "#fff"
-                                font.pixelSize: 12
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-
-                            onClicked: {
-                                if (midiManager)
-                                    midiManager.openSettingsDirectory()
-                            }
-                        }
 
                         Button {
                             text: "Mappings-Ordner öffnen"
