@@ -26,6 +26,7 @@ Rectangle {
     readonly property int meterLabelWidth: Math.max(22, Math.round(buttonHeight * 0.7))
     readonly property int meterBarWidth: Math.max(52, Math.round(buttonHeight * 1.7))
     readonly property int smallButtonWidth: Math.max(36, Math.round(buttonHeight * 1.1))
+    readonly property int latencyButtonWidth: Math.max(88, Math.round(buttonHeight * 2.7))
     readonly property int meterDotSize: Math.max(6, Math.round(buttonHeight * 0.2))
     readonly property int vuBarWidth: Math.max(100, Math.round(buttonHeight * 3.5))
     readonly property int vuBarHeight: Math.max(5, Math.round(buttonHeight * 0.18))
@@ -42,6 +43,8 @@ Rectangle {
     readonly property color deckBColor: "#00bfff"
     readonly property int beatDotSize: Math.max(6, Math.round(buttonHeight * 0.2))
     property int beatUiTick: 0
+    property real totalLatencyMs: 0.0
+    property var latencyRows: []
     
     // Buttons should match the visible bar height exactly (pixel-snapped).
     readonly property int buttonHeight: Math.max(1, Math.round(root.height - (root.verticalPad * 2)))
@@ -50,6 +53,25 @@ Rectangle {
         // TopHeader has a fixed bar height of 34px. Do not scale fonts based on window height,
         // otherwise they will blow up and clip. Return the exact pixel value.
         return px;
+    }
+
+    function refreshLatencyInfo() {
+        if (!deckA || !deckA.latencyBreakdown)
+            return
+
+        var rows = deckA.latencyBreakdown()
+        if (!rows || rows.length === 0)
+            return
+
+        latencyRows = rows
+
+        var sum = 0.0
+        for (var i = 0; i < rows.length; ++i) {
+            var ms = Number(rows[i].ms)
+            if (!isNaN(ms) && isFinite(ms))
+                sum += ms
+        }
+        totalLatencyMs = sum
     }
 
     property string currentTime: "00:00"
@@ -63,12 +85,21 @@ Rectangle {
             root.currentTime = h + ":" + m;
         }
     }
+
+    Timer {
+        id: latencyPollTimer
+        interval: 350
+        running: true
+        repeat: true
+        onTriggered: root.refreshLatencyInfo()
+    }
     
     Component.onCompleted: {
         var date = new Date();
         var h = date.getHours().toString().padStart(2, '0');
         var m = date.getMinutes().toString().padStart(2, '0');
         root.currentTime = h + ":" + m;
+        root.refreshLatencyInfo()
     }
 
     function deckBeatInfo(engine) {
@@ -123,6 +154,102 @@ Rectangle {
     // Settings window — created once, shown/hidden on demand
     SettingsWindow {
         id: settingsWin
+    }
+
+    Popup {
+        id: latencyPopup
+        parent: Overlay.overlay
+        modal: false
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        padding: 0
+
+        background: Rectangle {
+            color: "#121212"
+            border.color: "#2a2a2a"
+            border.width: 1
+            radius: 4
+        }
+
+        contentItem: Column {
+            spacing: 0
+
+            Rectangle {
+                width: latencyPopup.width
+                height: 26
+                color: "#1a1a1a"
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left
+                    anchors.leftMargin: 10
+                    text: "Latency Breakdown"
+                    color: "#d6d6d6"
+                    font.pixelSize: root.sp(9)
+                    font.bold: true
+                    font.letterSpacing: 0.4
+                }
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.right: parent.right
+                    anchors.rightMargin: 10
+                    text: root.totalLatencyMs.toFixed(1) + " ms"
+                    color: "#9ecbff"
+                    font.pixelSize: root.sp(9)
+                    font.family: "monospace"
+                    font.bold: true
+                }
+            }
+
+            Repeater {
+                model: root.latencyRows
+
+                Rectangle {
+                    required property var modelData
+                    required property int index
+                    width: latencyPopup.width
+                    height: 28
+                    color: index % 2 === 0 ? "#141414" : "#171717"
+
+                    Row {
+                        anchors.fill: parent
+                        anchors.leftMargin: 10
+                        anchors.rightMargin: 10
+                        spacing: 8
+
+                        Text {
+                            width: 170
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: modelData.name
+                            color: "#bbbbbb"
+                            font.pixelSize: root.sp(8)
+                            elide: Text.ElideRight
+                        }
+
+                        Text {
+                            width: 54
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: Number(modelData.ms).toFixed(1) + " ms"
+                            color: "#f2f2f2"
+                            font.pixelSize: root.sp(8)
+                            font.family: "monospace"
+                            horizontalAlignment: Text.AlignRight
+                        }
+
+                        Text {
+                            width: 66
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: Number(modelData.samples).toString() + " smp"
+                            color: "#888"
+                            font.pixelSize: root.sp(8)
+                            font.family: "monospace"
+                            horizontalAlignment: Text.AlignRight
+                        }
+                    }
+                }
+            }
+        }
     }
 
     RowLayout {
@@ -418,6 +545,69 @@ Rectangle {
                                 masterVolDial.enabled = true
                             }
                         }
+                    }
+                }
+            }
+
+            // CPU / RAM bars
+            Rectangle {
+                id: latencyButton
+                width: root.latencyButtonWidth
+                height: root.buttonHeight
+                anchors.verticalCenter: parent.verticalCenter
+                radius: 0
+                color: latencyMouse.pressed ? "#232323" : "#171717"
+                border.width: 0
+
+                readonly property color latencyColor: root.totalLatencyMs >= 35.0 ? "#ff6f61"
+                                                     : root.totalLatencyMs >= 20.0 ? "#ffd166"
+                                                     : "#9ecbff"
+
+                Row {
+                    anchors.centerIn: parent
+                    spacing: 5
+
+                    Text {
+                        text: "LAT"
+                        color: "#7a7a7a"
+                        font.pixelSize: root.sp(8)
+                        font.bold: true
+                        font.family: "monospace"
+                    }
+
+                    Text {
+                        text: root.totalLatencyMs > 0 ? root.totalLatencyMs.toFixed(1) + "ms" : "--"
+                        color: latencyButton.latencyColor
+                        font.pixelSize: root.sp(10)
+                        font.bold: true
+                        font.family: "monospace"
+                    }
+
+                    Text {
+                        text: latencyPopup.opened ? "▴" : "▾"
+                        color: "#777"
+                        font.pixelSize: root.sp(8)
+                        font.bold: true
+                    }
+                }
+
+                MouseArea {
+                    id: latencyMouse
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        root.refreshLatencyInfo()
+
+                        if (latencyPopup.opened) {
+                            latencyPopup.close()
+                            return
+                        }
+
+                        var p = latencyButton.mapToItem(latencyPopup.parent, 0, latencyButton.height + 4)
+                        latencyPopup.width = 320
+                        latencyPopup.x = p.x
+                        latencyPopup.y = p.y
+                        latencyPopup.open()
                     }
                 }
             }

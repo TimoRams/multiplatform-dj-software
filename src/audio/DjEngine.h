@@ -135,6 +135,8 @@ public:
     // Master volume + anti-clip (global, shared across all decks)
     Q_INVOKABLE void setMasterVolume(float v);
     Q_INVOKABLE void setAntiClip(bool enabled);
+    Q_INVOKABLE double totalLatencyMs() const;
+    Q_INVOKABLE QVariantList latencyBreakdown() const;
     Q_INVOKABLE void triggerHotCue(int index);
     Q_INVOKABLE void storeHotCue(int index);
     Q_INVOKABLE void clearHotCue(int index);
@@ -265,6 +267,16 @@ private slots:
     void onTimer();
 
 private:
+    struct LatencySnapshot {
+        int outputSamples = 0;
+        int bufferSamples = 0;
+        int rubberbandSamples = 0;
+        int limiterSamples = 0;
+        double sampleRate = 44100.0;
+    };
+
+    LatencySnapshot buildLatencySnapshot() const;
+
     void persistCurrentAnalysisToLibrary();
     void clearHotCueState();
     void loadHotCuesForCurrentTrack();

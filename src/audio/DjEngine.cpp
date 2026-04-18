@@ -13,6 +13,7 @@
 #include <QHash>
 #include <QDateTime>
 #include <QRegularExpression>
+#include <QVariantMap>
 #include <juce_core/juce_core.h>
 #include <juce_dsp/juce_dsp.h>
 #include <rubberband/RubberBandStretcher.h>
@@ -1160,6 +1161,78 @@ float DjEngine::getProgress() const
 float DjEngine::getDuration() const
 {
     return static_cast<float>(transportSource.getLengthInSeconds());
+}
+
+DjEngine::LatencySnapshot DjEngine::buildLatencySnapshot() const
+{
+    LatencySnapshot snapshot;
+
+    if (auto* device = deviceManager.getCurrentAudioDevice()) {
+        snapshot.outputSamples = std::max(0, device->getOutputLatencyInSamples());
+        snapshot.bufferSamples = std::max(0, device->getCurrentBufferSizeSamples());
+        const double deviceRate = device->getCurrentSampleRate();
+        if (deviceRate > 0.0)
+            snapshot.sampleRate = deviceRate;
+    }
+
+    if (timeStretchSource)
+        snapshot.rubberbandSamples = std::max(0, timeStretchSource->getLatencySamples());
+
+    // BrickwallLimiter default lookahead is 3 ms (set in BrickwallLimiter.h).
+    snapshot.limiterSamples = std::max(0, static_cast<int>(std::lround(snapshot.sampleRate * 0.003)));
+    return snapshot;
+}
+
+double DjEngine::totalLatencyMs() const
+{
+    const auto snapshot = buildLatencySnapshot();
+    if (snapshot.sampleRate <= 0.0)
+        return 0.0;
+
+    const int totalSamples = snapshot.outputSamples
+                           + snapshot.bufferSamples
+                           + snapshot.rubberbandSamples
+                           + snapshot.limiterSamples;
+    return (static_cast<double>(totalSamples) / snapshot.sampleRate) * 1000.0;
+}
+
+QVariantList DjEngine::latencyBreakdown() const
+{
+    const auto snapshot = buildLatencySnapshot();
+    if (snapshot.sampleRate <= 0.0)
+        return {};
+
+    const auto toMs = [sampleRate = snapshot.sampleRate](int samples) -> double {
+        return (static_cast<double>(samples) / sampleRate) * 1000.0;
+    };
+
+    QVariantList rows;
+
+    QVariantMap outputRow;
+    outputRow.insert("name", QStringLiteral("JUCE Output Device"));
+    outputRow.insert("samples", snapshot.outputSamples);
+    outputRow.insert("ms", toMs(snapshot.outputSamples));
+    rows.push_back(outputRow);
+
+    QVariantMap bufferRow;
+    bufferRow.insert("name", QStringLiteral("Audio Buffer"));
+    bufferRow.insert("samples", snapshot.bufferSamples);
+    bufferRow.insert("ms", toMs(snapshot.bufferSamples));
+    rows.push_back(bufferRow);
+
+    QVariantMap rubberbandRow;
+    rubberbandRow.insert("name", QStringLiteral("RubberBand / Keylock"));
+    rubberbandRow.insert("samples", snapshot.rubberbandSamples);
+    rubberbandRow.insert("ms", toMs(snapshot.rubberbandSamples));
+    rows.push_back(rubberbandRow);
+
+    QVariantMap limiterRow;
+    limiterRow.insert("name", QStringLiteral("DSP Limiter Lookahead"));
+    limiterRow.insert("samples", snapshot.limiterSamples);
+    limiterRow.insert("ms", toMs(snapshot.limiterSamples));
+    rows.push_back(limiterRow);
+
+    return rows;
 }
 
 double DjEngine::getPosition() const
