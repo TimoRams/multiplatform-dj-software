@@ -549,9 +549,14 @@ public:
         if (source) source->releaseResources();
         stretcher.reset();
         fifo.reset();
+        m_prefillTargetSamples = 0;
+        m_wasBypassing = true;
+        m_reportedLatencySamples.store(0, std::memory_order_relaxed);
     }
 
-    void setKeylock(bool) {}
+    void setKeylock(bool enabled) {
+        m_keylockEnabled.store(enabled, std::memory_order_relaxed);
+    }
 
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override {
         if (!source || !stretcher || !fifo) {
@@ -559,12 +564,37 @@ public:
             return;
         }
 
+        const bool keylockActive = isKeylockActive();
+        if (!keylockActive) {
+            updateReportedLatency(0);
+
+            if (!m_wasBypassing) {
+                clearFifo();
+                stretcher->reset();
+                m_prefillTargetSamples = 0;
+            }
+
+            m_wasBypassing = true;
+            source->getNextAudioBlock(info);
+            return;
+        }
+
+        if (m_wasBypassing) {
+            clearFifo();
+            stretcher->reset();
+            m_prefillTargetSamples = 0;
+        }
+        m_wasBypassing = false;
+
         const int numCh = std::min(info.buffer->getNumChannels(), 2);
         const int framesNeeded = info.numSamples;
         const int destStart = info.startSample;
         int maxPullLoops = 24;
 
-        while (fifo->getNumReady() < framesNeeded && maxPullLoops > 0) {
+        const int desiredPrefill = computeDesiredPrefillSamples();
+        updatePrefillTarget(desiredPrefill);
+
+        while (fifo->getNumReady() < framesNeeded + m_prefillTargetSamples && maxPullLoops > 0) {
             int pullSize = stretcher->getSamplesRequired();
             if (pullSize <= 0)
                 pullSize = 1024;
@@ -609,6 +639,8 @@ public:
             --maxPullLoops;
         }
 
+        updateReportedLatency(std::max(m_prefillTargetSamples, fifo->getNumReady()));
+
         const int ready = fifo->getNumReady();
         const int toRead = std::min(ready, framesNeeded);
         if (toRead <= 0) {
@@ -636,17 +668,78 @@ public:
             for (int ch = 0; ch < numCh; ++ch)
                 info.buffer->clear(ch, remainderStart, remainderLen);
         }
+
+        if (!keylockActive && fifo->getNumReady() <= 0 && m_prefillTargetSamples <= 64)
+            m_wasBypassing = true;
     }
 
     // Return total latency introduced by this component in samples
     int getLatencySamples() const {
         int delay = 0;
         if (stretcher) delay += stretcher->getStartDelay();
-        if (fifo) delay += fifo->getNumReady();
+        delay += m_reportedLatencySamples.load(std::memory_order_relaxed);
         return delay;
     }
 
 private:
+    void updateReportedLatency(int targetSamples) {
+        targetSamples = std::max(0, targetSamples);
+        const int current = m_reportedLatencySamples.load(std::memory_order_relaxed);
+        if (current == targetSamples)
+            return;
+
+        const int step = current < targetSamples
+            ? std::max(8, (targetSamples - current) / 4)
+            : std::max(16, (current - targetSamples) / 6);
+
+        const int next = current < targetSamples
+            ? std::min(targetSamples, current + step)
+            : std::max(targetSamples, current - step);
+
+        m_reportedLatencySamples.store(next, std::memory_order_relaxed);
+    }
+
+    bool isKeylockActive() const {
+        return m_keylockEnabled.load(std::memory_order_relaxed)
+            && std::abs(tempoRatio - 1.0) >= 0.001;
+    }
+
+    int computeDesiredPrefillSamples() const {
+        if (!isKeylockActive())
+            return 0;
+
+        const double tempoDelta = std::abs(tempoRatio - 1.0);
+        const int base = 96;
+        const int dynamic = static_cast<int>(std::lround(tempoDelta * sampleRate * 0.012));
+        return std::clamp(base + dynamic, 96, 2048);
+    }
+
+    void updatePrefillTarget(int desiredPrefill) {
+        if (m_prefillTargetSamples == desiredPrefill)
+            return;
+
+        if (desiredPrefill > m_prefillTargetSamples) {
+            const int step = std::max(16, (desiredPrefill - m_prefillTargetSamples) / 6);
+            m_prefillTargetSamples = std::min(desiredPrefill, m_prefillTargetSamples + step);
+        } else {
+            const int step = std::max(32, (m_prefillTargetSamples - desiredPrefill) / 3);
+            m_prefillTargetSamples = std::max(desiredPrefill, m_prefillTargetSamples - step);
+        }
+    }
+
+    void clearFifo() {
+        if (!fifo)
+            return;
+
+        const int ready = fifo->getNumReady();
+        if (ready <= 0)
+            return;
+
+        int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
+        fifo->prepareToRead(ready, start1, size1, start2, size2);
+        fifo->finishedRead(size1 + size2);
+    }
+
     juce::AudioSource* source = nullptr;
     std::unique_ptr<RubberBand::RubberBandStretcher> stretcher;
     juce::AudioBuffer<float> scratchBuffer;
@@ -654,6 +747,10 @@ private:
     std::unique_ptr<juce::AbstractFifo> fifo;
     double sampleRate = 44100.0;
     double tempoRatio = 1.0;
+    std::atomic<bool> m_keylockEnabled { false };
+    std::atomic<int> m_reportedLatencySamples { 0 };
+    int m_prefillTargetSamples = 0;
+    bool m_wasBypassing = true;
 };
 
 class DjEngine::MixerDspSource : public juce::AudioSource {
