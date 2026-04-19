@@ -237,7 +237,7 @@ Item {
                     visible: modelData && modelData["set"]
                     width: 18
                     height: 12
-                    radius: 2
+                    radius: 0
                     y: 1
                     x: {
                         root.cueOverlayTick
@@ -274,7 +274,7 @@ Item {
             width:  26
             height: 72
             color:  "#aa000000"
-            radius: 4
+            radius: 0
             z: 20
 
             visible: root.engine !== null && root.engine.trackData !== undefined
@@ -289,7 +289,7 @@ Item {
                     id: setDownbeatBtn
                     width: 20; height: 20
                     color:  setDownbeatHover.containsMouse ? "#55ffffff" : "transparent"
-                    radius: 3
+                    radius: 0
 
                     // Red downbeat bar
                     Rectangle {
@@ -297,7 +297,7 @@ Item {
                         anchors.bottom:           parent.bottom
                         anchors.bottomMargin:     2
                         width: 1.5; height: 10
-                        color: "#e60000"; radius: 1
+                        color: "#e60000"; radius: 0
                     }
                     // Downward-pointing triangle (Canvas)
                     Canvas {
@@ -335,7 +335,7 @@ Item {
                     id: doubleBpmBtn
                     width: 20; height: 20
                     color:  doubleBpmHover.containsMouse ? "#55ffffff" : "transparent"
-                    radius: 3
+                    radius: 0
 
                     Text {
                         anchors.centerIn: parent
@@ -362,7 +362,7 @@ Item {
                     id: halveBpmBtn
                     width: 20; height: 20
                     color:  halveBpmHover.containsMouse ? "#55ffffff" : "transparent"
-                    radius: 3
+                    radius: 0
 
                     Text {
                         anchors.centerIn: parent

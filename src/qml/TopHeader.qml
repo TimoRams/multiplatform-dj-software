@@ -37,7 +37,7 @@ Rectangle {
     readonly property int recTextPx: Math.min(root.sp(9), Math.max(8, Math.round(buttonHeight * 0.27)))
     readonly property int iconButtonPx: Math.min(root.sp(13), Math.max(10, Math.round(buttonHeight * 0.4)))
     readonly property int sectionHeight: Math.max(22, buttonHeight - 4)
-    readonly property int sectionRadius: 4
+    readonly property int sectionRadius: 0
     readonly property int sectionPadding: 6
     readonly property color deckAColor: "#ff9900"
     readonly property color deckBColor: "#00bfff"
@@ -168,7 +168,7 @@ Rectangle {
             color: "#121212"
             border.color: "#2a2a2a"
             border.width: 1
-            radius: 4
+            radius: 0
         }
 
         contentItem: Column {
@@ -271,7 +271,7 @@ Rectangle {
             Rectangle {
                 width: root.accentBarWidth
                 height: root.accentBarHeight
-                radius: 1
+                radius: 0
                 color: "#1e90ff"
                 gradient: Gradient {
                     orientation: Gradient.Vertical
@@ -519,7 +519,7 @@ Rectangle {
                             color: "#aaa"
                             width: 2
                             height: parent.height * 0.48
-                            radius: 1
+                            radius: 0
                             anchors.horizontalCenter: parent.horizontalCenter
                             anchors.top: parent.top
                             anchors.topMargin: -2
@@ -640,11 +640,11 @@ Rectangle {
                             height: root.miniBarHeight
                             color: "#0d0d0d"
                             border.width: 0
-                            radius: 2
+                            radius: 0
 
                             Rectangle {
                                 width: (sysMonitor ? sysMonitor.cpuUsage : 0) * parent.width
-                                height: parent.height; radius: 2
+                                height: parent.height; radius: 0
                                 color: (sysMonitor && sysMonitor.cpuUsage > 0.8) ? "#e53935"
                                      : (sysMonitor && sysMonitor.cpuUsage > 0.5) ? "#fdd835" : "#2e7d32"
                             }
@@ -666,11 +666,11 @@ Rectangle {
                             height: root.miniBarHeight
                             color: "#0d0d0d"
                             border.width: 0
-                            radius: 2
+                            radius: 0
 
                             Rectangle {
                                 width: (sysMonitor ? sysMonitor.ramUsage : 0) * parent.width
-                                height: parent.height; radius: 2
+                                height: parent.height; radius: 0
                                 color: (sysMonitor && sysMonitor.ramUsage > 0.8) ? "#e53935"
                                      : (sysMonitor && sysMonitor.ramUsage > 0.5) ? "#fdd835" : "#2e7d32"
                             }
@@ -981,7 +981,7 @@ Rectangle {
             Rectangle {
                 width: root.vuBarWidth
                 height: root.vuBarHeight
-                radius: 2
+                radius: 0
                 color: "#1a1a1a"
                 border.color: "#333"
                 border.width: 0
@@ -997,7 +997,7 @@ Rectangle {
                             required property int index
                             width: (parent.width - (vuColumn.totalSegments - 1) * 0) / vuColumn.totalSegments
                             height: parent.height
-                            radius: 1
+                            radius: 0
                             property real currentDb: vuColumn.peakToDb(vuColumn.levelL)
                             property real peakDb: vuColumn.peakHoldDbL
                             property int litSegments: vuColumn.dbToSegmentIndex(currentDb)
@@ -1018,7 +1018,7 @@ Rectangle {
             Rectangle {
                 width: root.vuBarWidth
                 height: root.vuBarHeight
-                radius: 2
+                radius: 0
                 color: "#1a1a1a"
                 border.color: "#333"
                 border.width: 0
@@ -1034,7 +1034,7 @@ Rectangle {
                             required property int index
                             width: (parent.width - (vuColumn.totalSegments - 1) * 0) / vuColumn.totalSegments
                             height: parent.height
-                            radius: 1
+                            radius: 0
                             property real currentDb: vuColumn.peakToDb(vuColumn.levelR)
                             property real peakDb: vuColumn.peakHoldDbR
                             property int litSegments: vuColumn.dbToSegmentIndex(currentDb)

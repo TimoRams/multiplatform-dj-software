@@ -142,10 +142,10 @@ Rectangle {
                                     anchors.centerIn: parent
                                     width: parent.width * 0.86
                                     height: parent.height * 0.86
-                                    radius: width / 2
+                                    radius: 0
                                     color: "#1f1f1f"
-                                    border.color: "#5a5a5a"
-                                    border.width: 0
+                                    border.color: "#000000"
+                                    border.width: 1
                                 }
                             }
 
@@ -161,7 +161,7 @@ Rectangle {
                                     color: "#d0d0d0"
                                     width: 2
                                     height: parent.height * 0.48
-                                    radius: 1
+                                    radius: 0
                                     anchors.horizontalCenter: parent.horizontalCenter
                                     anchors.top: parent.top
                                     anchors.topMargin: -2
@@ -191,14 +191,14 @@ Rectangle {
                             delegate: Rectangle {
                                 Layout.fillWidth: true
                                 height: 18
-                                radius: 3
+                                radius: 0
                                 color: soundColorPanel.isActiveMode(modelData)
-                                       ? "#242424"
-                                       : "#191919"
+                                       ? "#2a2a2a"
+                                       : "#1f1f1f"
                                 border.color: soundColorPanel.isActiveMode(modelData)
                                               ? "#666"
-                                              : "#303030"
-                                border.width: 0
+                                              : "#000000"
+                                border.width: 1
 
                                 Text {
                                     anchors.centerIn: parent
@@ -219,7 +219,7 @@ Rectangle {
                                     anchors.leftMargin: 4
                                     anchors.rightMargin: 4
                                     height: 2
-                                    radius: 1
+                                    radius: 0
                                     visible: soundColorPanel.isActiveMode(modelData)
                                     color: "#d6d6d6"
                                 }

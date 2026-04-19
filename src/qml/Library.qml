@@ -219,7 +219,7 @@ Rectangle {
                     Rectangle {
                         width: libraryRoot.compactButtonWidth
                         height: libraryRoot.compactButtonHeight
-                        radius: 2
+                        radius: 0
                         color: upMouse.containsMouse ? "#3a3a3a" : "transparent"
                         visible: libraryManager ? libraryManager.canNavigateUp : false
 
@@ -376,8 +376,10 @@ Rectangle {
                             visible: libraryModel ? libraryModel.count > 0 : false
                             width: countText.width + 10
                             height: Math.max(16, Math.round(parent.height * 0.54))
-                            radius: 8
+                            radius: 0
                             color: "#3a3a3a"
+                            border.color: "#1a1a1a"
+                            border.width: 1
                             anchors.verticalCenter: parent.verticalCenter
 
                             Text {

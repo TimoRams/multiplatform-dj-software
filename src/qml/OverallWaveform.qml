@@ -14,8 +14,8 @@ Item {
     Rectangle {
         anchors.fill: parent
         color: root.stripeColor
-        border.color: "#333"
-        border.width: 0
+        border.color: "#000000"
+        border.width: 1
 
         // Rectified (half-wave) overview — baseline at bottom, draws upward only
         RgbWaveformItem {
@@ -39,9 +39,9 @@ Item {
                 return overview.x + p * overview.width - width / 2
             }
             color: "#ff2b2b"
-            border.color: "#ffd0d0"
+            border.color: "#ff2b2b"
             border.width: 0
-            radius: 1
+            radius: 0
             z: 5
         }
 

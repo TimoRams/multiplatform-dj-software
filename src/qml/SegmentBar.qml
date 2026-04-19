@@ -10,7 +10,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        radius: 2
+        radius: 0
         color: "#171717"
         border.color: "#2a2a2a"
         border.width: 0
@@ -34,7 +34,7 @@ Item {
             height: root.height
             color: (modelData.colorHex && modelData.colorHex !== "") ? modelData.colorHex : "#555"
             opacity: 0.9
-            radius: 1
+            radius: 0
 
             Text {
                 anchors.centerIn: parent

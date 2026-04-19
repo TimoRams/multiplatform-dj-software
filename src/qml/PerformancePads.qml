@@ -92,9 +92,9 @@ Item {
                     required property var modelData
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    radius: 3
+                    radius: 0
                     color: root.activeTab === index ? "#2a2a2a" : "#181818"
-                    border.color: root.activeTab === index ? root.accentColor : "#2a2a2a"
+                    border.color: root.activeTab === index ? root.accentColor : "#000000"
                     border.width: 0
 
                     Text {
@@ -130,10 +130,10 @@ Item {
 
                 Rectangle {
                     anchors.fill: parent
-                    radius: 5
-                    color: "#151515"
-                    border.color: "#2a2a2a"
-                    border.width: 0
+                    radius: 0
+                    color: "#2a2a2a"
+                    border.color: "#000000"
+                    border.width: 1
 
                     Text {
                         anchors.top: parent.top
@@ -174,15 +174,15 @@ Item {
                                 ? cue.color
                                 : (isBeatJumpTab ? "#4a3c22" : (isPlaceholderTab ? "#2f2f2f" : "#3a3a3a"))
 
-                            radius: 5
+                            radius: 0
                             color:  padMouse.pressed
                                     ? Qt.lighter(activeColor, 1.4)
                                     : padMouse.containsMouse
                                       ? Qt.lighter(activeColor, 1.15)
                                       : activeColor
 
-                            border.color: cueSet ? Qt.lighter(activeColor, 1.5) : "#303030"
-                            border.width: 0
+                            border.color: cueSet ? Qt.lighter(activeColor, 1.5) : "#1a1a1a"
+                            border.width: 1
 
                             // Pad number (top-left corner)
                             Text {
@@ -351,10 +351,10 @@ Item {
         padding: 6
 
         background: Rectangle {
-            color: "#101010"
-            border.color: "#2f2f2f"
-            border.width: 0
-            radius: 5
+            color: "#2a2a2a"
+            border.color: "#000000"
+            border.width: 1
+            radius: 0
         }
 
         GridLayout {
@@ -370,10 +370,10 @@ Item {
                     required property var modelData
                     Layout.preferredWidth: 26
                     Layout.preferredHeight: 26
-                    radius: 4
+                    radius: 0
                     color: modelData
-                    border.color: Qt.lighter(modelData, 1.45)
-                    border.width: 0
+                    border.color: Qt.lighter(modelData, 1.3)
+                    border.width: 1
 
                     MouseArea {
                         anchors.fill: parent

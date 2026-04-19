@@ -281,7 +281,7 @@ Rectangle {
                         color: "#aaa"
                         width: 2
                         height: parent.height * 0.48
-                        radius: 1
+                        radius: 0
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.top: parent.top
                         anchors.topMargin: -2

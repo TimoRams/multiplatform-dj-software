@@ -71,7 +71,7 @@ Item {
                 anchors.margins: -2
                 width: root.badgeSize
                 height: root.badgeSize
-                radius: width / 2
+                radius: 0
                 color: root.deckColor
                 z: 10
 
@@ -125,7 +125,7 @@ Item {
                 // BPM
                 Rectangle {
                     visible: root.trackBpm !== ""
-                    radius: 3
+                    radius: 0
                     color: "#1a2e1a"
                     border.color: root.hasTrack ? "#4a8a4a" : "#333"
                     border.width: 0
@@ -145,7 +145,7 @@ Item {
                 // Key
                 Rectangle {
                     visible: root.trackKey !== ""
-                    radius: 3
+                    radius: 0
                     color: "#1a1a2e"
                     border.color: root.hasTrack ? "#4a4aaa" : "#333"
                     border.width: 0
@@ -165,7 +165,7 @@ Item {
                 // Duration
                 Rectangle {
                     visible: root.trackDuration !== ""
-                    radius: 3
+                    radius: 0
                     color: "#202020"
                     border.color: "#444"
                     border.width: 0
