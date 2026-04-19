@@ -347,6 +347,7 @@ ApplicationWindow {
     // Keep header height fixed to prevent resize jitter and control shifts.
     readonly property int topBarHeight: 34
     readonly property int fxBarHeight: 40
+    readonly property int mixerBaseWidth: 180
 
     // Referenz height of the top section at baseUiWidth (waveforms + decks + mixer).
     // The deck/mixer block is intentionally kept about 25% shorter so the library
@@ -434,9 +435,21 @@ ApplicationWindow {
             visible: !window.libraryExpanded
             clip: true
 
+            readonly property real designWidth: window.baseUiWidth
+            readonly property real designHeight: window.baseDeckMixerHeight
+            readonly property real uniformScaleRaw: Math.min(
+                width / Math.max(1, designWidth),
+                height / Math.max(1, designHeight)
+            )
+            readonly property real uniformScale: window._snapScaleToPhysicalPixels(Math.max(0.1, uniformScaleRaw))
+
             Item {
                 id: deckMixerCanvas
-                anchors.fill: parent
+                width: deckMixerViewport.designWidth
+                height: deckMixerViewport.designHeight
+                anchors.centerIn: parent
+                scale: deckMixerViewport.uniformScale
+                transformOrigin: Item.Center
 
                 RowLayout {
                     id: deckRow
@@ -452,9 +465,10 @@ ApplicationWindow {
                         engine: deckA
                     }
 
-                    // MIXER SECTION
+                    // MIXER SECTION - proportional zur Fenster-Breite
                     MixerSection {
-                        Layout.preferredWidth: 180
+                        Layout.preferredWidth: window.mixerBaseWidth
+                        Layout.minimumWidth: window.mixerBaseWidth
                         Layout.fillHeight: true
                         engineA: deckA
                         engineB: deckB
