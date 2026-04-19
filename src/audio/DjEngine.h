@@ -81,23 +81,23 @@ public:
     explicit DjEngine(QObject* parent = nullptr);
     ~DjEngine() override;
 
-    float getProgress() const;
-    Q_INVOKABLE float getDuration() const;
-    double getPosition() const;
+    [[nodiscard]] float getProgress() const;
+    [[nodiscard]] Q_INVOKABLE float getDuration() const;
+    [[nodiscard]] double getPosition() const;
     // Latency-compensated position in seconds, used by the waveform renderer.
-    double getVisualPosition() const;
+    [[nodiscard]] double getVisualPosition() const;
     // QML-safe access to the interpolated visual playhead.
-    Q_INVOKABLE double getVisualPositionQml() const;
+    [[nodiscard]] Q_INVOKABLE double getVisualPositionQml() const;
     // Lock-free atomic read of the playhead position (seconds).
     // Called from QML FrameAnimation every VSync frame — must be wait-free.
-    Q_INVOKABLE double getPlayheadPositionAtomic() const;
-    bool isPlaying() const;
-    bool isScrubbing() const { return m_isScrubbing; }
+    [[nodiscard]] Q_INVOKABLE double getPlayheadPositionAtomic() const;
+    [[nodiscard]] bool isPlaying() const;
+    [[nodiscard]] bool isScrubbing() const { return m_isScrubbing; }
 
     // Pixels-per-second scale mirrored from the waveform renderer so scrubBy()
     // can convert mouse pixels → audio seconds without needing QML math.
-    double pixelsPerSecond() const { return m_pixelsPerSecond; }
-    double waveformPointsPerSecond() const { return WAVEFORM_POINTS_PER_SECOND; }
+    [[nodiscard]] double pixelsPerSecond() const { return m_pixelsPerSecond; }
+    [[nodiscard]] double waveformPointsPerSecond() const { return WAVEFORM_POINTS_PER_SECOND; }
 
     // Universal scratch API used by jogwheel and scrolling waveform.
     // pauseForScrub() captures current play state and enters scratch mode.
@@ -136,63 +136,63 @@ public:
     // Master volume + anti-clip (global, shared across all decks)
     Q_INVOKABLE void setMasterVolume(float v);
     Q_INVOKABLE void setAntiClip(bool enabled);
-    Q_INVOKABLE double totalLatencyMs() const;
-    Q_INVOKABLE QVariantList latencyBreakdown() const;
+    [[nodiscard]] Q_INVOKABLE double totalLatencyMs() const;
+    [[nodiscard]] Q_INVOKABLE QVariantList latencyBreakdown() const;
     Q_INVOKABLE void triggerHotCue(int index);
     Q_INVOKABLE void storeHotCue(int index);
     Q_INVOKABLE void clearHotCue(int index);
     Q_INVOKABLE void setHotCueColor(int index, const QString& colorHex);
     Q_INVOKABLE void cueButtonPress();
     Q_INVOKABLE void cueButtonRelease();
-    TrackData* getTrackData() const;
+    [[nodiscard]] TrackData* getTrackData() const;
 
-    QString trackTitle()    const { return m_trackTitle; }
-    QString trackArtist()   const { return m_trackArtist; }
-    QString trackAlbum()    const { return m_trackAlbum; }
-    QString trackKey()      const { return m_trackKey; }
-    QString trackDuration() const { return m_trackDuration; }
-    double  trackDurationSec() const { return m_trackDurationSec; }
-    bool    hasTrack()      const { return m_hasTrack; }
-    QString coverArtUrl()   const { return m_coverArtUrl; }
-    bool    hasCoverArt()   const { return m_hasCoverArt; }
-    QVariantList currentSegments() const { return m_currentSegments; }
-    double  getTempoPercent() const { return m_tempoPercent; }
+    [[nodiscard]] QString trackTitle()    const { return m_trackTitle; }
+    [[nodiscard]] QString trackArtist()   const { return m_trackArtist; }
+    [[nodiscard]] QString trackAlbum()    const { return m_trackAlbum; }
+    [[nodiscard]] QString trackKey()      const { return m_trackKey; }
+    [[nodiscard]] QString trackDuration() const { return m_trackDuration; }
+    [[nodiscard]] double  trackDurationSec() const { return m_trackDurationSec; }
+    [[nodiscard]] bool    hasTrack()      const { return m_hasTrack; }
+    [[nodiscard]] QString coverArtUrl()   const { return m_coverArtUrl; }
+    [[nodiscard]] bool    hasCoverArt()   const { return m_hasCoverArt; }
+    [[nodiscard]] QVariantList currentSegments() const { return m_currentSegments; }
+    [[nodiscard]] double  getTempoPercent() const { return m_tempoPercent; }
     // Returns the analysed BPM multiplied by the current tempo ratio.
     // Shows 0.0 until BPM analysis is complete.
-    double  getCurrentBpm()   const {
+    [[nodiscard]] double  getCurrentBpm()   const {
         double base = m_trackData ? m_trackData->getBpm() : 0.0;
         return base > 0.0 ? base * (1.0 + m_tempoPercent / 100.0) : 0.0;
     }
     // Speed multiplier for the waveform renderer (e.g. 1.08 at +8%).
-    double  getTempoRatio()   const { return 1.0 + m_tempoPercent / 100.0; }
+    [[nodiscard]] double  getTempoRatio()   const { return 1.0 + m_tempoPercent / 100.0; }
 
-    bool keylock() const { return m_keylock; }
+    [[nodiscard]] bool keylock() const { return m_keylock; }
 
     // Mixer Getters
-    double volume() const { return m_volume; }
-    double trim() const { return m_trim; }
-    double eqHigh() const { return m_eqHigh; }
-    double eqMid() const { return m_eqMid; }
-    double eqLow() const { return m_eqLow; }
-    double filter() const { return m_filter; }
-    bool cueEnabled() const { return m_cueEnabled; }
-    bool quantizeEnabled() const { return m_quantizeEnabled; }
-    bool syncEnabled() const { return m_syncEnabled; }
-    bool isSyncMaster() const { return m_isSyncMaster; }
-    bool loopActive() const { return m_loopActive; }
-    bool loopInSet() const { return m_loopInSet; }
-    double loopLengthBeats() const { return m_loopLengthBeats; }
-    double loopInPosition() const { return m_loopInSec; }
-    double loopOutPosition() const { return m_loopOutSec; }
+    [[nodiscard]] double volume() const { return m_volume; }
+    [[nodiscard]] double trim() const { return m_trim; }
+    [[nodiscard]] double eqHigh() const { return m_eqHigh; }
+    [[nodiscard]] double eqMid() const { return m_eqMid; }
+    [[nodiscard]] double eqLow() const { return m_eqLow; }
+    [[nodiscard]] double filter() const { return m_filter; }
+    [[nodiscard]] bool cueEnabled() const { return m_cueEnabled; }
+    [[nodiscard]] bool quantizeEnabled() const { return m_quantizeEnabled; }
+    [[nodiscard]] bool syncEnabled() const { return m_syncEnabled; }
+    [[nodiscard]] bool isSyncMaster() const { return m_isSyncMaster; }
+    [[nodiscard]] bool loopActive() const { return m_loopActive; }
+    [[nodiscard]] bool loopInSet() const { return m_loopInSet; }
+    [[nodiscard]] double loopLengthBeats() const { return m_loopLengthBeats; }
+    [[nodiscard]] double loopInPosition() const { return m_loopInSec; }
+    [[nodiscard]] double loopOutPosition() const { return m_loopOutSec; }
 
     // VU meter getters — read atomic peaks from the audio thread
-    float vuLevelL() const;
-    float vuLevelR() const;
-    float preFaderVuLevelL() const;
-    float preFaderVuLevelR() const;
-    bool clipDetected() const;
-    float gainReduction() const;
-    QVariantList hotCues() const;
+    [[nodiscard]] float vuLevelL() const;
+    [[nodiscard]] float vuLevelR() const;
+    [[nodiscard]] float preFaderVuLevelL() const;
+    [[nodiscard]] float preFaderVuLevelR() const;
+    [[nodiscard]] bool clipDetected() const;
+    [[nodiscard]] float gainReduction() const;
+    [[nodiscard]] QVariantList hotCues() const;
 
     void setCoverArtProvider(CoverArtProvider* provider, const QString& deckId);
     void setLibraryDatabase(LibraryDatabase* db);
@@ -235,7 +235,7 @@ public slots:
     void setFxSCKnob(float knob);   // bipolar -1..+1 for Sound Color
     void setFxSCParam(float param); // 0..1 mode parameter for Sound Color
 
-    bool isReverse() const { return m_isReverse; }
+    [[nodiscard]] bool isReverse() const { return m_isReverse; }
     Q_INVOKABLE void setReverse(bool on);
 
     // Keep the engine's pixel-scale in sync with the waveform renderer.
@@ -370,6 +370,10 @@ private:
 
     void updateSpeedAndPitch();
     void refreshHardwareLatency();
+    void applyScratchNeutralRouting();
+    void restorePostScrubPlaybackState();
+    void advanceAbsoluteScrubFollower(double dtSec);
+    void updateScrubPlayheadAnchor();
 
     void updateGain();
     void applyMixerEq();
@@ -387,6 +391,30 @@ private:
     // read lock-free by getPlayheadPositionAtomic() from the QML FrameAnimation.
     std::atomic<double> m_atomicPlayheadPos{0.0};
 
+    struct ScratchConfig {
+        static constexpr double kRateAttackTauSec = 0.014;
+        static constexpr double kRateReleaseTauSec = 0.055;
+        static constexpr double kIdleTimeoutSec = 0.120;
+        static constexpr double kMaxRate = 12.0;
+        static constexpr double kReleaseToPlayTauSec = 0.36;
+        static constexpr double kReleaseToStopTauSec = 0.20;
+        static constexpr double kReleaseSettleThreshold = 0.015;
+        static constexpr double kControlResumeThresholdRate = 0.0012;
+        static constexpr double kControlStopThresholdRate = 0.0006;
+        static constexpr double kDirectStepLimitSec = 0.02;
+        static constexpr double kFineMoveThresholdSec = 0.003;
+        static constexpr double kEventSpikeClampSec = 0.08;
+        static constexpr double kInertiaMoveThresholdSec = 0.002;
+        static constexpr double kInputRateFilterAlpha = 0.34;
+        static constexpr double kInputRateSlewPerSec = 28.0;
+        static constexpr double kDirectionFlipThresholdRate = 0.08;
+        static constexpr double kAbsoluteFollowStiffness = 150.0;
+        static constexpr double kAbsoluteFollowDamping = 24.0;
+        static constexpr double kAbsoluteMaxFollowRate = 16.0;
+        static constexpr double kAbsoluteSnapDistanceSec = 0.00035;
+        static constexpr double kAbsoluteSnapVelocitySecPerSec = 0.015;
+    };
+
     // Scrub state.
     // m_pixelsPerSecond is mirrored from the waveform renderer (WAVEFORM_POINTS_PER_SECOND × ppp).
     double m_pixelsPerSecond = WAVEFORM_POINTS_PER_SECOND * 1.5;  // default with 1.5 ppp
@@ -397,36 +425,36 @@ private:
     QElapsedTimer m_scrubPhysicsClock;
     double m_scratchTargetRate = 0.0;
     double m_scratchSmoothedRate = 0.0;
-    double m_scratchRateAttackTauSec = 0.014;
-    double m_scratchRateReleaseTauSec = 0.055;
-    double m_scratchIdleTimeoutSec = 0.120;
-    double m_scratchMaxRate = 12.0;
+    double m_scratchRateAttackTauSec = ScratchConfig::kRateAttackTauSec;
+    double m_scratchRateReleaseTauSec = ScratchConfig::kRateReleaseTauSec;
+    double m_scratchIdleTimeoutSec = ScratchConfig::kIdleTimeoutSec;
+    double m_scratchMaxRate = ScratchConfig::kMaxRate;
     bool   m_scratchReleaseActive = false;
     double m_scratchReleaseTargetRate = 0.0;
-    double m_scratchReleaseToPlayTauSec = 0.36;
-    double m_scratchReleaseToStopTauSec = 0.20;
-    double m_scratchReleaseSettleThreshold = 0.015;
-    double m_scratchControlResumeThresholdRate = 0.0012;
-    double m_scratchControlStopThresholdRate = 0.0006;
-    double m_scratchDirectStepLimitSec = 0.02;
-    double m_scratchFineMoveThresholdSec = 0.003;
-    double m_scratchEventSpikeClampSec = 0.08;
+    double m_scratchReleaseToPlayTauSec = ScratchConfig::kReleaseToPlayTauSec;
+    double m_scratchReleaseToStopTauSec = ScratchConfig::kReleaseToStopTauSec;
+    double m_scratchReleaseSettleThreshold = ScratchConfig::kReleaseSettleThreshold;
+    double m_scratchControlResumeThresholdRate = ScratchConfig::kControlResumeThresholdRate;
+    double m_scratchControlStopThresholdRate = ScratchConfig::kControlStopThresholdRate;
+    double m_scratchDirectStepLimitSec = ScratchConfig::kDirectStepLimitSec;
+    double m_scratchFineMoveThresholdSec = ScratchConfig::kFineMoveThresholdSec;
+    double m_scratchEventSpikeClampSec = ScratchConfig::kEventSpikeClampSec;
     double m_scratchAccumulatedMoveSec = 0.0;
-    double m_scratchInertiaMoveThresholdSec = 0.002;
+    double m_scratchInertiaMoveThresholdSec = ScratchConfig::kInertiaMoveThresholdSec;
     double m_scratchBaseRate = 1.0;
     double m_scratchInputFilteredRate = 0.0;
-    double m_scratchInputRateFilterAlpha = 0.34;
-    double m_scratchInputRateSlewPerSec = 28.0;
+    double m_scratchInputRateFilterAlpha = ScratchConfig::kInputRateFilterAlpha;
+    double m_scratchInputRateSlewPerSec = ScratchConfig::kInputRateSlewPerSec;
     double m_scratchDirectionSign = 1.0;
-    double m_scratchDirectionFlipThresholdRate = 0.08;
+    double m_scratchDirectionFlipThresholdRate = ScratchConfig::kDirectionFlipThresholdRate;
     bool   m_scratchAbsolutePositionControl = false;
     double m_scratchAbsoluteTargetPosition = 0.0;
     double m_scratchAbsoluteFollowVelocity = 0.0;
-    double m_scratchAbsoluteFollowStiffness = 150.0;
-    double m_scratchAbsoluteFollowDamping = 24.0;
-    double m_scratchAbsoluteMaxFollowRate = 16.0;
-    double m_scratchAbsoluteSnapDistanceSec = 0.00035;
-    double m_scratchAbsoluteSnapVelocitySecPerSec = 0.015;
+    double m_scratchAbsoluteFollowStiffness = ScratchConfig::kAbsoluteFollowStiffness;
+    double m_scratchAbsoluteFollowDamping = ScratchConfig::kAbsoluteFollowDamping;
+    double m_scratchAbsoluteMaxFollowRate = ScratchConfig::kAbsoluteMaxFollowRate;
+    double m_scratchAbsoluteSnapDistanceSec = ScratchConfig::kAbsoluteSnapDistanceSec;
+    double m_scratchAbsoluteSnapVelocitySecPerSec = ScratchConfig::kAbsoluteSnapVelocitySecPerSec;
     bool   m_scrubSavedReverseState = false;
     double m_loadedTrackSampleRate = 44100.0;
 

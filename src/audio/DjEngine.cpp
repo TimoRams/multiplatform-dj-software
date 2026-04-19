@@ -522,14 +522,29 @@ private:
 
 class DjEngine::TimeStretchAudioSource : public juce::AudioSource {
 public:
+    static constexpr int kMinPullSize = 64;
+    static constexpr int kMaxPullSize = 512;
+    static constexpr int kMaxPrefillSamples = 2048;
+    static constexpr int kPullLoopLimit = 24;
+    static constexpr double kPrefillDeadbandTempoDelta = 0.01;
+    static constexpr double kPrefillDynamicFactor = 0.005;
+    static constexpr double kPrefillExtremeThreshold = 0.30;
+    static constexpr double kPrefillExtremeFactor = 0.010;
+
     TimeStretchAudioSource(juce::AudioSource* inSource) : source(inSource) {}
 
     void setTempoRatio(double ratio) {
         if (std::abs(tempoRatio - ratio) < 0.001) return;
-        tempoRatio = ratio;
-        if (stretcher) {
-            stretcher->setTimeRatio(1.0 / tempoRatio);
-        }
+        tempoRatio = std::clamp(ratio, 0.01, 8.0);
+        updateStretcherRatios();
+    }
+
+    void setPitchLockEnabled(bool enabled) {
+        if (m_pitchLockEnabled.load(std::memory_order_relaxed) == enabled)
+            return;
+
+        m_pitchLockEnabled.store(enabled, std::memory_order_relaxed);
+        updateStretcherRatios();
     }
 
     void prepareToPlay(int samplesPerBlockExpected, double sr) override {
@@ -543,6 +558,8 @@ public:
 
         if (samplesPerBlockExpected > 0)
             stretcher->setMaxProcessSize(static_cast<size_t>(std::clamp(samplesPerBlockExpected * 2, 64, 4096)));
+
+        updateStretcherRatios();
 
         m_startPadRemaining.store(static_cast<int>(stretcher->getPreferredStartPad()), std::memory_order_relaxed);
         m_startDelayTrimRemaining.store(static_cast<int>(stretcher->getStartDelay()), std::memory_order_relaxed);
@@ -572,7 +589,7 @@ public:
         const int numCh = std::min(info.buffer->getNumChannels(), 2);
         const int framesNeeded = info.numSamples;
         const int destStart = info.startSample;
-        int maxPullLoops = 24;
+        int maxPullLoops = kPullLoopLimit;
 
         const int desiredPrefill = computeDesiredPrefillSamples();
         updatePrefillTarget(desiredPrefill);
@@ -581,8 +598,8 @@ public:
             const int shortfall = std::max(0, (framesNeeded + m_prefillTargetSamples) - fifo->getNumReady());
             int pullSize = stretcher->getSamplesRequired();
             if (pullSize <= 0)
-                pullSize = std::max(64, shortfall);
-            pullSize = std::clamp(pullSize, 64, 512);
+                pullSize = std::max(kMinPullSize, shortfall);
+            pullSize = std::clamp(pullSize, kMinPullSize, kMaxPullSize);
 
             if (scratchBuffer.getNumSamples() < pullSize)
                 scratchBuffer.setSize(2, pullSize, true);
@@ -704,15 +721,18 @@ private:
     }
 
     int computeDesiredPrefillSamples() const {
-        const double tempoDelta = std::abs(tempoRatio - 1.0);
-        if (tempoDelta < 0.01)
+        if (!m_pitchLockEnabled.load(std::memory_order_relaxed))
             return 0;
 
-        const int dynamic = static_cast<int>(std::lround(tempoDelta * sampleRate * 0.005));
-        const int extremeBoost = tempoDelta > 0.30
-            ? static_cast<int>(std::lround((tempoDelta - 0.30) * sampleRate * 0.010))
+        const double tempoDelta = std::abs(tempoRatio - 1.0);
+        if (tempoDelta < kPrefillDeadbandTempoDelta)
+            return 0;
+
+        const int dynamic = static_cast<int>(std::lround(tempoDelta * sampleRate * kPrefillDynamicFactor));
+        const int extremeBoost = tempoDelta > kPrefillExtremeThreshold
+            ? static_cast<int>(std::lround((tempoDelta - kPrefillExtremeThreshold) * sampleRate * kPrefillExtremeFactor))
             : 0;
-        return std::clamp(dynamic + extremeBoost, 0, 2048);
+        return std::clamp(dynamic + extremeBoost, 0, kMaxPrefillSamples);
     }
 
     void updatePrefillTarget(int desiredPrefill) {
@@ -750,6 +770,19 @@ private:
         }
     }
 
+    void updateStretcherRatios() {
+        if (!stretcher)
+            return;
+
+        const double safeTempoRatio = std::clamp(std::abs(tempoRatio), 0.01, 8.0);
+        const bool pitchLock = m_pitchLockEnabled.load(std::memory_order_relaxed);
+
+        // Tempo is controlled by ResamplingAudioSource. Rubber Band stays at
+        // 1:1 time and optionally compensates pitch when keylock is enabled.
+        stretcher->setTimeRatio(1.0);
+        stretcher->setPitchScale(pitchLock ? (1.0 / safeTempoRatio) : 1.0);
+    }
+
     juce::AudioSource* source = nullptr;
     std::unique_ptr<RubberBand::RubberBandStretcher> stretcher;
     juce::AudioBuffer<float> scratchBuffer;
@@ -758,6 +791,7 @@ private:
     std::unique_ptr<juce::AbstractFifo> fifo;
     double sampleRate = 44100.0;
     double tempoRatio = 1.0;
+    std::atomic<bool> m_pitchLockEnabled { false };
     std::atomic<int> m_reportedLatencySamples { 0 };
     std::atomic<int> m_startPadRemaining { 0 };
     std::atomic<int> m_startDelayTrimRemaining { 0 };
@@ -1758,6 +1792,74 @@ void DjEngine::setPosition(float progress)
     emit progressChanged();
 }
 
+void DjEngine::advanceAbsoluteScrubFollower(double dtSec)
+{
+    if (!m_scratchAbsolutePositionControl)
+        return;
+
+    const double len = transportSource.getLengthInSeconds();
+    if (len <= 0.0)
+        return;
+
+    const double targetPos = std::clamp(m_scratchAbsoluteTargetPosition, 0.0, len);
+    const double prevPos = m_scrubHoldPosition;
+    const double errorSec = targetPos - m_scrubHoldPosition;
+
+    // Mass-spring-damper follower: slightly lagging, velocity-aware
+    // and naturally braking before target to mimic platter inertia.
+    const double accel = (errorSec * m_scratchAbsoluteFollowStiffness)
+                       - (m_scratchAbsoluteFollowVelocity * m_scratchAbsoluteFollowDamping);
+    m_scratchAbsoluteFollowVelocity += accel * dtSec;
+    m_scratchAbsoluteFollowVelocity = std::clamp(
+        m_scratchAbsoluteFollowVelocity,
+        -m_scratchAbsoluteMaxFollowRate,
+        m_scratchAbsoluteMaxFollowRate);
+
+    double stepSec = m_scratchAbsoluteFollowVelocity * dtSec;
+    if (std::abs(stepSec) > std::abs(errorSec))
+        stepSec = errorSec;
+
+    m_scrubHoldPosition = std::clamp(m_scrubHoldPosition + stepSec, 0.0, len);
+
+    const double residualError = targetPos - m_scrubHoldPosition;
+    if (std::abs(residualError) <= m_scratchAbsoluteSnapDistanceSec
+        && std::abs(m_scratchAbsoluteFollowVelocity) <= m_scratchAbsoluteSnapVelocitySecPerSec) {
+        m_scrubHoldPosition = targetPos;
+        m_scratchAbsoluteFollowVelocity = 0.0;
+    }
+
+    const double movedSec = m_scrubHoldPosition - prevPos;
+    m_scratchAccumulatedMoveSec += std::abs(movedSec);
+
+    const double motionRate = (dtSec > 1e-6)
+        ? std::clamp(movedSec / dtSec, -m_scratchMaxRate, m_scratchMaxRate)
+        : 0.0;
+    m_scratchTargetRate = motionRate;
+
+    if (std::abs(targetPos - m_scrubHoldPosition) > m_scratchAbsoluteSnapDistanceSec
+        || std::abs(motionRate) > 0.001) {
+        m_lastScrubInputClock.restart();
+    }
+}
+
+void DjEngine::updateScrubPlayheadAnchor()
+{
+    if (m_isScrubbing && m_scratchAbsolutePositionControl) {
+        // Absolute drag mode: keep transport pinned to the grabbed target.
+        // This avoids tiny left/right visual wobble between sparse input events.
+        transportSource.setPosition(m_scrubHoldPosition);
+        m_atomicPlayheadPos.store(m_scrubHoldPosition,
+                                  std::memory_order_relaxed);
+        m_snapPosition = m_scrubHoldPosition;
+        return;
+    }
+
+    m_scrubHoldPosition = transportSource.getCurrentPosition();
+    m_atomicPlayheadPos.store(m_scrubHoldPosition,
+                              std::memory_order_relaxed);
+    m_snapPosition = m_scrubHoldPosition;
+}
+
 void DjEngine::onTimer()
 {
     if (m_isScrubbing || m_scratchReleaseActive) {
@@ -1772,50 +1874,7 @@ void DjEngine::onTimer()
         double targetRate = 0.0;
         double tau = m_scratchRateReleaseTauSec;
         if (m_isScrubbing) {
-            if (m_scratchAbsolutePositionControl) {
-                const double len = transportSource.getLengthInSeconds();
-                if (len > 0.0) {
-                    const double targetPos = std::clamp(m_scratchAbsoluteTargetPosition, 0.0, len);
-                    const double prevPos = m_scrubHoldPosition;
-                    const double errorSec = targetPos - m_scrubHoldPosition;
-
-                    // Mass-spring-damper follower: slightly lagging, velocity-aware
-                    // and naturally braking before target to mimic platter inertia.
-                    const double accel = (errorSec * m_scratchAbsoluteFollowStiffness)
-                                       - (m_scratchAbsoluteFollowVelocity * m_scratchAbsoluteFollowDamping);
-                    m_scratchAbsoluteFollowVelocity += accel * dtSec;
-                    m_scratchAbsoluteFollowVelocity = std::clamp(
-                        m_scratchAbsoluteFollowVelocity,
-                        -m_scratchAbsoluteMaxFollowRate,
-                        m_scratchAbsoluteMaxFollowRate);
-
-                    double stepSec = m_scratchAbsoluteFollowVelocity * dtSec;
-                    if (std::abs(stepSec) > std::abs(errorSec))
-                        stepSec = errorSec;
-
-                    m_scrubHoldPosition = std::clamp(m_scrubHoldPosition + stepSec, 0.0, len);
-
-                    const double residualError = targetPos - m_scrubHoldPosition;
-                    if (std::abs(residualError) <= m_scratchAbsoluteSnapDistanceSec
-                        && std::abs(m_scratchAbsoluteFollowVelocity) <= m_scratchAbsoluteSnapVelocitySecPerSec) {
-                        m_scrubHoldPosition = targetPos;
-                        m_scratchAbsoluteFollowVelocity = 0.0;
-                    }
-
-                    const double movedSec = m_scrubHoldPosition - prevPos;
-                    m_scratchAccumulatedMoveSec += std::abs(movedSec);
-
-                    const double motionRate = (dtSec > 1e-6)
-                        ? std::clamp(movedSec / dtSec, -m_scratchMaxRate, m_scratchMaxRate)
-                        : 0.0;
-                    m_scratchTargetRate = motionRate;
-
-                    if (std::abs(targetPos - m_scrubHoldPosition) > m_scratchAbsoluteSnapDistanceSec
-                        || std::abs(motionRate) > 0.001) {
-                        m_lastScrubInputClock.restart();
-                    }
-                }
-            }
+            advanceAbsoluteScrubFollower(dtSec);
 
             idleSec = m_lastScrubInputClock.isValid()
                 ? static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9
@@ -1887,19 +1946,7 @@ void DjEngine::onTimer()
             transportSource.start();
         }
 
-        if (m_isScrubbing && m_scratchAbsolutePositionControl) {
-            // Absolute drag mode: keep transport pinned to the grabbed target.
-            // This avoids tiny left/right visual wobble between sparse input events.
-            transportSource.setPosition(m_scrubHoldPosition);
-            m_atomicPlayheadPos.store(m_scrubHoldPosition,
-                                      std::memory_order_relaxed);
-            m_snapPosition = m_scrubHoldPosition;
-        } else {
-            m_scrubHoldPosition = transportSource.getCurrentPosition();
-            m_atomicPlayheadPos.store(m_scrubHoldPosition,
-                                      std::memory_order_relaxed);
-            m_snapPosition = m_scrubHoldPosition;
-        }
+        updateScrubPlayheadAnchor();
         m_snapTempoRatio = getTempoRatio();
 
         if (!m_isScrubbing && m_scratchReleaseActive
@@ -1912,24 +1959,7 @@ void DjEngine::onTimer()
             if (mixerSource)
                 mixerSource->setScratchTimbre(0.0f);
 
-            if (reverseWrapSource)
-                static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get())->setReverse(m_scrubSavedReverseState);
-            if (resamplingSource)
-                resamplingSource->setResamplingRatio(1.0);
-            if (timeStretchSource)
-                timeStretchSource->setTempoRatio(1.0);
-
-            updateSpeedAndPitch();
-
-            if (m_scrubWasPlaying)
-                transportSource.start();
-            else
-                transportSource.stop();
-
-            m_scrubWasPlaying = false;
-            m_snapTempoRatio = getTempoRatio();
-            m_snapClock.restart();
-            m_snapValid = true;
+            restorePostScrubPlaybackState();
             emit playingChanged();
         }
 
@@ -2251,6 +2281,38 @@ void DjEngine::cueButtonRelease()
     emit progressChanged();
 }
 
+void DjEngine::applyScratchNeutralRouting()
+{
+    if (timeStretchSource)
+        timeStretchSource->setTempoRatio(1.0);
+    if (resamplingSource)
+        resamplingSource->setResamplingRatio(1.0);
+    if (reverseWrapSource)
+        static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get())->setReverse(false);
+}
+
+void DjEngine::restorePostScrubPlaybackState()
+{
+    if (reverseWrapSource)
+        static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get())->setReverse(m_scrubSavedReverseState);
+    if (resamplingSource)
+        resamplingSource->setResamplingRatio(1.0);
+    if (timeStretchSource)
+        timeStretchSource->setTempoRatio(1.0);
+
+    updateSpeedAndPitch();
+
+    if (m_scrubWasPlaying)
+        transportSource.start();
+    else
+        transportSource.stop();
+
+    m_scrubWasPlaying = false;
+    m_snapTempoRatio = getTempoRatio();
+    m_snapClock.restart();
+    m_snapValid = true;
+}
+
 // ─── Scrub API ────────────────────────────────────────────────────────────────
 
 void DjEngine::pauseForScrub()
@@ -2288,12 +2350,7 @@ void DjEngine::pauseForScrub()
     // Rubber Band stage so routing and latency stay continuous.
     m_scrubSavedReverseState = m_isReverse;
     m_scratchDirectionSign = m_scrubSavedReverseState ? -1.0 : 1.0;
-    if (timeStretchSource)
-        timeStretchSource->setTempoRatio(1.0);
-    if (resamplingSource)
-        resamplingSource->setResamplingRatio(1.0);
-    if (reverseWrapSource)
-        static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get())->setReverse(false);
+    applyScratchNeutralRouting();
 
     // Immediate touch brake: no scratch noise on plain click/hold.
     transportSource.stop();
@@ -2479,24 +2536,7 @@ void DjEngine::resumeAfterScrub()
         m_scratchTargetRate = 0.0;
         m_scratchSmoothedRate = 0.0;
 
-        if (reverseWrapSource)
-            static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get())->setReverse(m_scrubSavedReverseState);
-        if (resamplingSource)
-            resamplingSource->setResamplingRatio(1.0);
-        if (timeStretchSource)
-            timeStretchSource->setTempoRatio(1.0);
-
-        updateSpeedAndPitch();
-
-        if (m_scrubWasPlaying)
-            transportSource.start();
-        else
-            transportSource.stop();
-
-        m_scrubWasPlaying = false;
-        m_snapTempoRatio = getTempoRatio();
-        m_snapClock.restart();
-        m_snapValid = true;
+        restorePostScrubPlaybackState();
         emit scrubbingChanged();
         emit playingChanged();
         return;
@@ -2601,16 +2641,15 @@ void DjEngine::setAntiClip(bool enabled) {
 void DjEngine::updateSpeedAndPitch()
 {
     double speedMultiplier = 1.0 + (m_tempoPercent / 100.0);
-    const bool useKeylockPath = m_keylock; // Reverse is now continuous, Keylock works with it!
-    
-    if (useKeylockPath) {
-        if (resamplingSource) resamplingSource->setResamplingRatio(1.0);
-        if (timeStretchSource)
-            timeStretchSource->setTempoRatio(speedMultiplier);
-    } else {
-        if (resamplingSource) resamplingSource->setResamplingRatio(speedMultiplier);
-        if (timeStretchSource)
-            timeStretchSource->setTempoRatio(1.0); // neutral pass-through
+
+    // Keep one tempo authority (resampler) so fader response is identical
+    // with and without keylock.
+    if (resamplingSource)
+        resamplingSource->setResamplingRatio(speedMultiplier);
+
+    if (timeStretchSource) {
+        timeStretchSource->setTempoRatio(speedMultiplier);
+        timeStretchSource->setPitchLockEnabled(m_keylock);
     }
 }
 
