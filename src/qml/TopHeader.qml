@@ -48,6 +48,19 @@ Rectangle {
     
     // Buttons should match the visible bar height exactly (pixel-snapped).
     readonly property int buttonHeight: Math.max(1, Math.round(root.height - (root.verticalPad * 2)))
+    
+    // Throttle resizing to avoid feedback loops
+    property int lastReportedWidth: width
+    property int resizeThrottle: 0
+    
+    onWidthChanged: {
+        // Debounce width changes to avoid layout thrashing
+        resizeThrottle++
+        if (resizeThrottle > 3) {
+            lastReportedWidth = width
+            resizeThrottle = 0
+        }
+    }
 
     function sp(px) {
         // TopHeader has a fixed bar height of 34px. Do not scale fonts based on window height,

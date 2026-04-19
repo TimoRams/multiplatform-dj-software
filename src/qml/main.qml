@@ -7,6 +7,8 @@ ApplicationWindow {
     id: window
     width: 1280
     height: 800
+    minimumWidth: 800
+    minimumHeight: 600
     visible: true
     title: "RamsbrockDJ"
     color: "#2a2a2a"
@@ -19,11 +21,32 @@ ApplicationWindow {
     property bool exitCleanupTriggered: false
     property real exitProgress: 0.0
     readonly property color unifiedGray: "#2a2a2a"
-        function requestAppClose() {
-            if (exitShutdownInProgress)
-                return
-            exitPromptVisible = true
+    
+    property int resizeThrottleCounter: 0
+    property int lastProcessedWidth: width
+    property int lastProcessedHeight: height
+    
+    onWidthChanged: {
+        resizeThrottleCounter++
+        if (resizeThrottleCounter >= 5) {
+            lastProcessedWidth = width
+            resizeThrottleCounter = 0
         }
+    }
+    
+    onHeightChanged: {
+        resizeThrottleCounter++
+        if (resizeThrottleCounter >= 5) {
+            lastProcessedHeight = height
+            resizeThrottleCounter = 0
+        }
+    }
+    
+    function requestAppClose() {
+        if (exitShutdownInProgress)
+            return
+        exitPromptVisible = true
+    }
 
         function cancelAppClosePrompt() {
             if (exitShutdownInProgress)
