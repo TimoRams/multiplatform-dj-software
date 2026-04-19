@@ -285,6 +285,7 @@ public:
         m_sampleRate = sampleRate > 1.0 ? sampleRate : 44100.0;
         m_windowSamples = std::clamp(static_cast<int>(std::lround(m_sampleRate * 0.002)), 16, 256);
         m_pendingFadeInSamples = 0;
+        m_pendingDirectionFadeInSamples = 0;
     }
 
     void releaseResources() override {
@@ -297,6 +298,10 @@ public:
 
         if (m_loopEnabled && !m_reverse.load(std::memory_order_relaxed)) {
             getLoopedForwardAudioBlock(bufferToFill);
+            applyDirectionFadeInToRange(bufferToFill.buffer,
+                                        bufferToFill.startSample,
+                                        bufferToFill.numSamples,
+                                        bufferToFill.buffer ? bufferToFill.buffer->getNumChannels() : 0);
             return;
         }
 
@@ -305,6 +310,10 @@ public:
             m_source->setNextReadPosition(m_logicalPos);
             m_source->getNextAudioBlock(bufferToFill);
             m_logicalPos = m_source->getNextReadPosition();
+            applyDirectionFadeInToRange(bufferToFill.buffer,
+                                        bufferToFill.startSample,
+                                        bufferToFill.numSamples,
+                                        bufferToFill.buffer ? bufferToFill.buffer->getNumChannels() : 0);
             return;
         }
 
@@ -335,6 +344,15 @@ public:
                 float* ptr = bufferToFill.buffer->getWritePointer(ch, bufferToFill.startSample);
                 std::reverse(ptr, ptr + samplesToRead);
             }
+
+            // If we run into the start of the file, fade out smoothly before
+            // zero-padding the remainder to avoid clicks.
+            if (zerosToPad > 0) {
+                applyFadeOutToTail(bufferToFill.buffer,
+                                   bufferToFill.startSample,
+                                   samplesToRead,
+                                   bufferToFill.buffer->getNumChannels());
+            }
         }
 
         if (zerosToPad > 0) {
@@ -347,10 +365,21 @@ public:
 
         m_logicalPos = currentPos - samplesToRead;
         if (m_logicalPos < 0) m_logicalPos = 0;
+
+        applyDirectionFadeInToRange(bufferToFill.buffer,
+                                    bufferToFill.startSample,
+                                    bufferToFill.numSamples,
+                                    bufferToFill.buffer ? bufferToFill.buffer->getNumChannels() : 0);
     }
 
     void setReverse(bool rev) {
+        const juce::SpinLock::ScopedLockType lock(m_stateLock);
+        const bool prev = m_reverse.load(std::memory_order_relaxed);
+        if (prev == rev)
+            return;
+
         m_reverse.store(rev, std::memory_order_relaxed);
+        m_pendingDirectionFadeInSamples = std::max(16, m_windowSamples);
     }
 
 private:
@@ -392,6 +421,27 @@ private:
                 *w *= g;
             }
         }
+    }
+
+    void applyDirectionFadeInToRange(juce::AudioBuffer<float>* buffer,
+                                     int startSample,
+                                     int count,
+                                     int numChannels) {
+        if (!buffer || count <= 0 || m_windowSamples <= 0 || m_pendingDirectionFadeInSamples <= 0)
+            return;
+
+        const int applyCount = std::min(count, m_pendingDirectionFadeInSamples);
+        const int startPhase = m_windowSamples - m_pendingDirectionFadeInSamples;
+        for (int i = 0; i < applyCount; ++i) {
+            const float g = std::clamp(static_cast<float>(startPhase + i + 1)
+                                     / static_cast<float>(m_windowSamples),
+                                       0.0f, 1.0f);
+            for (int ch = 0; ch < numChannels; ++ch) {
+                float* w = buffer->getWritePointer(ch, startSample + i);
+                *w *= g;
+            }
+        }
+        m_pendingDirectionFadeInSamples -= applyCount;
     }
 
     void getLoopedForwardAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill) {
@@ -518,6 +568,7 @@ private:
     double m_sampleRate{44100.0};
     int m_windowSamples{64};
     int m_pendingFadeInSamples{0};
+    int m_pendingDirectionFadeInSamples{0};
 };
 
 class DjEngine::TimeStretchAudioSource : public juce::AudioSource {
@@ -556,8 +607,10 @@ public:
             RubberBand::RubberBandStretcher::OptionWindowShort |
             RubberBand::RubberBandStretcher::OptionPitchHighSpeed);
 
-        if (samplesPerBlockExpected > 0)
-            stretcher->setMaxProcessSize(static_cast<size_t>(std::clamp(samplesPerBlockExpected * 2, 64, 4096)));
+        m_maxProcessSize = std::clamp(samplesPerBlockExpected > 0 ? samplesPerBlockExpected * 2 : 512,
+                                      kMinPullSize,
+                                      4096);
+        stretcher->setMaxProcessSize(static_cast<size_t>(m_maxProcessSize));
 
         updateStretcherRatios();
 
@@ -599,7 +652,7 @@ public:
             int pullSize = stretcher->getSamplesRequired();
             if (pullSize <= 0)
                 pullSize = std::max(kMinPullSize, shortfall);
-            pullSize = std::clamp(pullSize, kMinPullSize, kMaxPullSize);
+            pullSize = std::clamp(pullSize, kMinPullSize, std::min(kMaxPullSize, m_maxProcessSize));
 
             if (scratchBuffer.getNumSamples() < pullSize)
                 scratchBuffer.setSize(2, pullSize, true);
@@ -795,6 +848,7 @@ private:
     std::atomic<int> m_reportedLatencySamples { 0 };
     std::atomic<int> m_startPadRemaining { 0 };
     std::atomic<int> m_startDelayTrimRemaining { 0 };
+    int m_maxProcessSize = 512;
     int m_prefillTargetSamples = 0;
 };
 
@@ -1730,20 +1784,11 @@ void DjEngine::togglePlay()
         // Compute the interpolated visual position BEFORE stopping so we can
         // freeze the transport at exactly the position the waveform was showing.
         // This eliminates the visible jump when pressing pause.
-        const double frozenPos = getVisualPosition();
-
-        transportSource.stop();
-        transportSource.setPosition(frozenPos);
-        m_snapValid = false;
-        m_atomicPlayheadPos.store(frozenPos, std::memory_order_relaxed);
+        freezeTransportAt(getVisualPosition());
     } else {
         // Snapshot current position immediately so the interpolation starts
         // from exactly where the waveform is showing (no 16ms wait for onTimer).
-        m_snapPosition = transportSource.getCurrentPosition();
-        m_snapTempoRatio = getTempoRatio();
-        m_snapClock.restart();
-        m_snapValid = true;
-        m_atomicPlayheadPos.store(m_snapPosition, std::memory_order_relaxed);
+        armSnapFromTransportPosition();
 
         transportSource.start();
     }
@@ -1758,11 +1803,7 @@ void DjEngine::play()
 
     // Snapshot current position immediately so the interpolation starts
     // from exactly where the waveform is showing (no 16ms wait for onTimer).
-    m_snapPosition = transportSource.getCurrentPosition();
-    m_snapTempoRatio = getTempoRatio();
-    m_snapClock.restart();
-    m_snapValid = true;
-    m_atomicPlayheadPos.store(m_snapPosition, std::memory_order_relaxed);
+    armSnapFromTransportPosition();
 
     transportSource.start();
     emit playingChanged();
@@ -1775,13 +1816,30 @@ void DjEngine::pause()
 
     // Compute the interpolated visual position BEFORE stopping so we can
     // freeze the transport at exactly the position the waveform was showing.
-    const double frozenPos = getVisualPosition();
-
-    transportSource.stop();
-    transportSource.setPosition(frozenPos);
-    m_snapValid = false;
-    m_atomicPlayheadPos.store(frozenPos, std::memory_order_relaxed);
+    freezeTransportAt(getVisualPosition());
     emit playingChanged();
+}
+
+void DjEngine::setSnapAnchor(double positionSec, bool valid)
+{
+    m_snapPosition = positionSec;
+    m_snapTempoRatio = getTempoRatio();
+    m_snapClock.restart();
+    m_snapValid = valid;
+    m_atomicPlayheadPos.store(positionSec, std::memory_order_relaxed);
+}
+
+void DjEngine::armSnapFromTransportPosition()
+{
+    setSnapAnchor(transportSource.getCurrentPosition(), true);
+}
+
+void DjEngine::freezeTransportAt(double positionSec)
+{
+    transportSource.stop();
+    transportSource.setPosition(positionSec);
+    m_snapValid = false;
+    m_atomicPlayheadPos.store(positionSec, std::memory_order_relaxed);
 }
 
 void DjEngine::setPosition(float progress)
@@ -2229,11 +2287,7 @@ void DjEngine::cueButtonPress()
 
         const double cuePos = std::clamp(m_mainCueSec, 0.0, trackLen);
         transportSource.setPosition(cuePos);
-        m_snapPosition = cuePos;
-        m_snapTempoRatio = getTempoRatio();
-        m_snapClock.restart();
-        m_snapValid = true;
-        m_atomicPlayheadPos.store(cuePos, std::memory_order_relaxed);
+        setSnapAnchor(cuePos, true);
         emit progressChanged();
         return;
     }
@@ -2244,11 +2298,7 @@ void DjEngine::cueButtonPress()
     persistMainCuePoint();
 
     transportSource.setPosition(cuePos);
-    m_snapPosition = cuePos;
-    m_snapTempoRatio = getTempoRatio();
-    m_snapClock.restart();
-    m_snapValid = true;
-    m_atomicPlayheadPos.store(cuePos, std::memory_order_relaxed);
+    setSnapAnchor(cuePos, true);
 
     m_mainCuePreviewActive = true;
     transportSource.start();

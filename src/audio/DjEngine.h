@@ -370,6 +370,9 @@ private:
 
     void updateSpeedAndPitch();
     void refreshHardwareLatency();
+    void setSnapAnchor(double positionSec, bool valid);
+    void armSnapFromTransportPosition();
+    void freezeTransportAt(double positionSec);
     void applyScratchNeutralRouting();
     void restorePostScrubPlaybackState();
     void advanceAbsoluteScrubFollower(double dtSec);
