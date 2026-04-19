@@ -262,3 +262,12 @@ void SettingsManager::setAudioBufferSize(int bufferSize)
     userSettings->saveIfNeeded();
     emit audioSettingsChanged();
 }
+
+void SettingsManager::flushToDisk()
+{
+    auto* userSettings = getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return;
+
+    userSettings->save();
+}

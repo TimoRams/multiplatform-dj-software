@@ -75,6 +75,9 @@ public:
     // Retrieve the file_path for a given trackId (first location).
     Q_INVOKABLE QString filePath(const QString& trackId) const;
 
+    // Flush pending DB work and close the connection for clean shutdown.
+    Q_INVOKABLE void shutdown();
+
     // Wire up the table model so it auto-refreshes after mutations.
     void setTableModel(LibraryTableModel* model);
 

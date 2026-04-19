@@ -638,6 +638,20 @@ QString LibraryDatabase::filePath(const QString& trackId) const
     return q.next() ? q.value(0).toString() : QString();
 }
 
+void LibraryDatabase::shutdown()
+{
+    if (!m_db.isValid() || !m_db.isOpen())
+        return;
+
+    QSqlQuery q(m_db);
+    q.exec("PRAGMA wal_checkpoint(FULL)");
+
+    const QString connectionName = m_db.connectionName();
+    m_db.close();
+    m_db = QSqlDatabase();
+    QSqlDatabase::removeDatabase(connectionName);
+}
+
 void LibraryDatabase::setTableModel(LibraryTableModel* model)
 {
     m_tableModel = model;

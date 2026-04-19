@@ -13,6 +13,77 @@ ApplicationWindow {
     font.hintingPreference: Font.PreferFullHinting
     property bool libraryExpanded: false
     property string linkedDeckName: ""
+    property bool exitPromptVisible: false
+    property bool exitShutdownInProgress: false
+    property bool allowDirectClose: false
+    property bool exitCleanupTriggered: false
+    property real exitProgress: 0.0
+    readonly property color unifiedGray: "#2a2a2a"
+        function requestAppClose() {
+            if (exitShutdownInProgress)
+                return
+            exitPromptVisible = true
+        }
+
+        function cancelAppClosePrompt() {
+            if (exitShutdownInProgress)
+                return
+            exitPromptVisible = false
+        }
+
+        function confirmAppClose() {
+            if (exitShutdownInProgress)
+                return
+
+            exitShutdownInProgress = true
+            exitCleanupTriggered = false
+            exitProgress = 0.0
+            exitShutdownTimer.restart()
+        }
+
+        function finalizeAppClose() {
+            allowDirectClose = true
+            Qt.quit()
+        }
+
+        onClosing: function(close) {
+            if (allowDirectClose) {
+                close.accepted = true
+                return
+            }
+
+            close.accepted = false
+            requestAppClose()
+        }
+
+        Timer {
+            id: exitShutdownTimer
+            interval: 70
+            repeat: true
+            running: false
+            onTriggered: {
+                if (!window.exitShutdownInProgress) {
+                    stop()
+                    return
+                }
+
+                window.exitProgress = Math.min(1.0, window.exitProgress + 0.09)
+
+                if (!window.exitCleanupTriggered && window.exitProgress >= 0.25) {
+                    window.exitCleanupTriggered = true
+                    if (typeof settingsManager !== "undefined" && settingsManager && settingsManager.flushToDisk)
+                        settingsManager.flushToDisk()
+                    if (typeof libraryDb !== "undefined" && libraryDb && libraryDb.shutdown)
+                        libraryDb.shutdown()
+                }
+
+                if (window.exitProgress >= 1.0) {
+                    stop()
+                    window.finalizeAppClose()
+                }
+            }
+        }
+
     readonly property real baseWaveformHeight: 150
     readonly property real baseDeckMixerHeight: baseUiHeight - baseWaveformHeight
 
@@ -133,7 +204,25 @@ ApplicationWindow {
         onActivated: {
             if (window._isTextInputFocused())
                 return
+            if (window.exitPromptVisible)
+                return
             window.libraryExpanded = !window.libraryExpanded
+        }
+    }
+
+    Shortcut {
+        sequence: "Escape"
+        context: Qt.ApplicationShortcut
+        onActivated: {
+            if (window._isTextInputFocused())
+                return
+
+            if (window.exitPromptVisible) {
+                window.cancelAppClosePrompt()
+                return
+            }
+
+            window.requestAppClose()
         }
     }
 
@@ -302,6 +391,115 @@ ApplicationWindow {
             id: librarySection
             Layout.fillWidth: true
             Layout.fillHeight: true
+        }
+    }
+
+    Rectangle {
+        id: exitOverlay
+        anchors.fill: parent
+        z: 1000
+        visible: window.exitPromptVisible
+        color: window.unifiedGray
+        focus: visible
+
+        MouseArea {
+            anchors.fill: parent
+        }
+
+        Column {
+            anchors.centerIn: parent
+            width: Math.min(parent.width * 0.82, 460)
+            spacing: 14
+
+            Text {
+                width: parent.width
+                text: window.exitShutdownInProgress
+                      ? "Programm wird beendet..."
+                      : "Moechtest du das Programm wirklich beenden?"
+                color: "#e5e5e5"
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                font.pixelSize: window.sp(20)
+                font.bold: true
+            }
+
+            Row {
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: 10
+                visible: !window.exitShutdownInProgress
+
+                Rectangle {
+                    width: 118
+                    height: 38
+                    radius: 0
+                    color: yesArea.pressed ? "#3b3b3b" : "#353535"
+                    border.width: 1
+                    border.color: "#000000"
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "Yes"
+                        color: "#f0f0f0"
+                        font.pixelSize: window.sp(13)
+                        font.bold: true
+                    }
+
+                    MouseArea {
+                        id: yesArea
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: window.confirmAppClose()
+                    }
+                }
+
+                Rectangle {
+                    width: 118
+                    height: 38
+                    radius: 0
+                    color: noArea.pressed ? "#3b3b3b" : "#353535"
+                    border.width: 1
+                    border.color: "#000000"
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "No"
+                        color: "#f0f0f0"
+                        font.pixelSize: window.sp(13)
+                        font.bold: true
+                    }
+
+                    MouseArea {
+                        id: noArea
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: window.cancelAppClosePrompt()
+                    }
+                }
+            }
+
+            Rectangle {
+                width: parent.width
+                height: 6
+                color: "#1f1f1f"
+                border.width: 1
+                border.color: "#000000"
+                visible: window.exitShutdownInProgress
+
+                Rectangle {
+                    width: parent.width * window.exitProgress
+                    height: parent.height
+                    color: "#6f6f6f"
+                }
+            }
+
+            Text {
+                width: parent.width
+                visible: window.exitShutdownInProgress
+                text: "Datenbank und Einstellungen werden gespeichert..."
+                color: "#cfcfcf"
+                horizontalAlignment: Text.AlignHCenter
+                font.pixelSize: window.sp(11)
+            }
         }
     }
 }

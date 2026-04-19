@@ -52,6 +52,8 @@ public:
     int getAudioBufferSize() const;
     void setAudioBufferSize(int bufferSize);
 
+    Q_INVOKABLE void flushToDisk();
+
 signals:
     void audioSettingsChanged();
 
