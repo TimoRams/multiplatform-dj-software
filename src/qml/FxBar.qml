@@ -7,7 +7,7 @@ import QtQuick.Controls
 Rectangle {
     id: root
 
-    color: "#121212"
+    color: "#2a2a2a"
     
     // Height controlled by parent layout (main.qml fxBarHeight) to avoid double scaling
     height: window.fxBarHeight
@@ -17,7 +17,7 @@ Rectangle {
         anchors.left: parent.left
         anchors.right: parent.right
         height: 1
-        color: "#222"
+        color: "#000000"
     }
 
     RowLayout {
@@ -35,12 +35,12 @@ Rectangle {
         Rectangle {
             width: 1
             Layout.fillHeight: true
-            color: "#2a2a2a"
+            color: "#000000"
         }
 
         Rectangle {
             id: soundColorPanel
-            color: "#151515"
+            color: "#2a2a2a"
             Layout.preferredWidth: 240
             Layout.fillHeight: true
 
@@ -244,7 +244,7 @@ Rectangle {
         Rectangle {
             width: 1
             Layout.fillHeight: true
-            color: "#2a2a2a"
+            color: "#000000"
         }
 
         FxUnit {

@@ -4,7 +4,7 @@ import QtQuick.Controls
 
 Rectangle {
     id: libraryRoot
-    color: "#1e1e1e"
+    color: "#2a2a2a"
     readonly property int toolbarHeight: 30
     readonly property int sidebarWidth: Math.max(30, window.sp(32))
     readonly property int subPaneWidth: 220
@@ -49,14 +49,14 @@ Rectangle {
             Layout.minimumHeight: libraryRoot.toolbarHeight
             Layout.preferredHeight: libraryRoot.toolbarHeight
             Layout.maximumHeight: libraryRoot.toolbarHeight
-            color: "#181818"
+            color: "#2a2a2a"
 
             Rectangle {
                 anchors.bottom: parent.bottom
                 anchors.left: parent.left
                 anchors.right: parent.right
                 height: 1
-                color: "#333"
+                color: "#000000"
             }
 
             Text {
@@ -112,7 +112,7 @@ Rectangle {
             Layout.minimumWidth: libraryRoot.sidebarWidth
             Layout.maximumWidth: libraryRoot.sidebarWidth
             Layout.fillHeight: true
-            color: "#161616"
+            color: "#2a2a2a"
 
             // Rechte Trennlinie
             Rectangle {
@@ -120,7 +120,7 @@ Rectangle {
                 anchors.top:    parent.top
                 anchors.bottom: parent.bottom
                 width: 1
-                color: "#333"
+                color: "#000000"
             }
 
             Column {
@@ -178,7 +178,7 @@ Rectangle {
             Layout.minimumWidth: libraryRoot.subPaneWidth
             Layout.maximumWidth: libraryRoot.subPaneWidth
             Layout.fillHeight: true
-            color: "#222222"
+            color: "#2a2a2a"
             visible: libraryRoot.activeTab === "files"
 
             // Rechte Trennlinie
@@ -187,7 +187,7 @@ Rectangle {
                 anchors.top:    parent.top
                 anchors.bottom: parent.bottom
                 width: 1
-                color: "#333"
+                color: "#000000"
             }
 
             // Spaltenheader
@@ -197,7 +197,7 @@ Rectangle {
                 anchors.left:  parent.left
                 anchors.right: parent.right
                 height: libraryRoot.sectionHeaderHeight
-                color: "#1a1a1a"
+                color: "#2a2a2a"
 
                 Row {
                     anchors.verticalCenter: parent.verticalCenter
@@ -310,7 +310,7 @@ Rectangle {
             Layout.minimumWidth: libraryRoot.subPaneWidth
             Layout.maximumWidth: libraryRoot.subPaneWidth
             Layout.fillHeight: true
-            color: "#222222"
+            color: "#2a2a2a"
             visible: libraryRoot.activeTab === "library"
 
             Rectangle {
@@ -318,7 +318,7 @@ Rectangle {
                 anchors.top:    parent.top
                 anchors.bottom: parent.bottom
                 width: 1
-                color: "#333"
+                color: "#000000"
             }
 
             // Header
@@ -328,7 +328,7 @@ Rectangle {
                 anchors.left:  parent.left
                 anchors.right: parent.right
                 height: libraryRoot.sectionHeaderHeight
-                color: "#1a1a1a"
+                color: "#2a2a2a"
 
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
@@ -407,7 +407,7 @@ Rectangle {
             Layout.minimumWidth: libraryRoot.subPaneWidth
             Layout.maximumWidth: libraryRoot.subPaneWidth
             Layout.fillHeight: true
-            color: "#222222"
+            color: "#2a2a2a"
             visible: libraryRoot.activeTab !== "files" && libraryRoot.activeTab !== "library"
 
             Rectangle {
@@ -415,7 +415,7 @@ Rectangle {
                 anchors.top:    parent.top
                 anchors.bottom: parent.bottom
                 width: 1
-                color: "#333"
+                color: "#000000"
             }
 
             Text {
@@ -443,7 +443,7 @@ Rectangle {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
-                color: "#1e1e1e"
+                color: "#2a2a2a"
                 visible: libraryRoot.activeTab === "library"
 
                 onVisibleChanged: {
@@ -476,7 +476,7 @@ Rectangle {
                     anchors.left:  parent.left
                     anchors.right: parent.right
                     height: 24
-                    color: "#1a1a1a"
+                    color: "#2a2a2a"
 
                     Row {
                         anchors.verticalCenter: parent.verticalCenter
@@ -687,7 +687,7 @@ Rectangle {
                         width:  ListView.view.width
                         height: 28
                         opacity: libDragArea.drag.active ? 0.45 : 1.0
-                        color:   index % 2 === 0 ? "transparent" : "#232323"
+                        color:   index % 2 === 0 ? "#2c2c2c" : "#323232"
 
                         Row {
                             anchors.verticalCenter: parent.verticalCenter
@@ -831,7 +831,7 @@ Rectangle {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
-                color: "#1e1e1e"
+                color: "#2a2a2a"
                 visible: libraryRoot.activeTab === "files"
 
                 // Spaltenheader
@@ -841,7 +841,7 @@ Rectangle {
                     anchors.left:  parent.left
                     anchors.right: parent.right
                     height: 24
-                    color: "#1a1a1a"
+                    color: "#2a2a2a"
 
                     Row {
                         anchors.verticalCenter: parent.verticalCenter
@@ -876,7 +876,7 @@ Rectangle {
                         width:  ListView.view.width
                         height: 28
                         opacity: dragArea.drag.active ? 0.45 : 1.0
-                        color:   trackDelegate.index % 2 === 0 ? "transparent" : "#232323"
+                        color:   trackDelegate.index % 2 === 0 ? "#2c2c2c" : "#323232"
 
                         Text {
                             anchors.verticalCenter: parent.verticalCenter
@@ -939,7 +939,7 @@ Rectangle {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
-                color: "#1e1e1e"
+                color: "#2a2a2a"
                 visible: libraryRoot.activeTab !== "files" && libraryRoot.activeTab !== "library"
 
                 Text {

@@ -226,9 +226,9 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: "#161616"
+        color: "#2a2a2a"
         readonly property real frameThickness: (deck.dropHovered ? 2.0 : 1.0) / Math.max(0.001, window.uiScale)
-        readonly property color frameColor: deck.dropHovered ? "#5599ff" : "#333"
+        readonly property color frameColor: deck.dropHovered ? "#5599ff" : "#000000"
 
         // Render frame as dedicated edge rectangles to avoid transformed border flicker.
         Rectangle {

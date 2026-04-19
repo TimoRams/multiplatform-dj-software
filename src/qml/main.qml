@@ -9,7 +9,7 @@ ApplicationWindow {
     height: 800
     visible: true
     title: "RamsbrockDJ"
-    color: "#0a0a0a"
+    color: "#2a2a2a"
     font.hintingPreference: Font.PreferFullHinting
     property bool libraryExpanded: false
     property string linkedDeckName: ""
@@ -187,7 +187,7 @@ ApplicationWindow {
             Layout.minimumHeight: 1
             Layout.preferredHeight: 1
             Layout.maximumHeight: 1
-            color: "#7a7a7a"
+            color: "#000000"
         }
 
         // Viewport wrapper: reserves the scaled height in the ColumnLayout.
@@ -213,7 +213,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         engine: deckA
-                        backgroundColor: "#222"
+                        backgroundColor: "#2a2a2a"
                         waveformZoom: window.waveformZoom
                     }
 
@@ -221,7 +221,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         engine: deckB
-                        backgroundColor: "#252525"
+                        backgroundColor: "#2a2a2a"
                         waveformZoom: window.waveformZoom
                     }
                 }
@@ -233,7 +233,7 @@ ApplicationWindow {
             Layout.minimumHeight: 1
             Layout.preferredHeight: 1
             Layout.maximumHeight: 1
-            color: "#7a7a7a"
+            color: "#000000"
         }
 
         Item {
