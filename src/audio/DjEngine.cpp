@@ -1597,7 +1597,7 @@ void DjEngine::persistCurrentAnalysisToLibrary()
 
 bool DjEngine::isPlaying() const
 {
-    return transportSource.isPlaying();
+    return m_playRequested;
 }
 
 TrackData* DjEngine::getTrackData() const
@@ -1766,6 +1766,7 @@ void DjEngine::loadTrack(const QString& rawPath)
         transportSource.setSource(reverseWrapSource.get(), 0, nullptr, reader->sampleRate);
         m_loadedTrackSampleRate = reader->sampleRate;
         transportSource.setPosition(0.0);
+        ensureTransportRunningForPlayIntent();
 
         // Skip heavy analysis only when BOTH waveform cache and analysis metadata
         // (BPM/key/grid) are already available.
@@ -1780,17 +1781,17 @@ void DjEngine::loadTrack(const QString& rawPath)
 
 void DjEngine::togglePlay()
 {
-    if (transportSource.isPlaying()) {
-        // Compute the interpolated visual position BEFORE stopping so we can
-        // freeze the transport at exactly the position the waveform was showing.
-        // This eliminates the visible jump when pressing pause.
-        freezeTransportAt(getVisualPosition());
+    if (m_playRequested) {
+        m_playRequested = false;
+        if (transportSource.isPlaying()) {
+            // Compute the interpolated visual position BEFORE stopping so we can
+            // freeze the transport at exactly the position the waveform was showing.
+            // This eliminates the visible jump when pressing pause.
+            freezeTransportAt(getVisualPosition());
+        }
     } else {
-        // Snapshot current position immediately so the interpolation starts
-        // from exactly where the waveform is showing (no 16ms wait for onTimer).
-        armSnapFromTransportPosition();
-
-        transportSource.start();
+        m_playRequested = true;
+        ensureTransportRunningForPlayIntent();
     }
         
     emit playingChanged();
@@ -1798,26 +1799,48 @@ void DjEngine::togglePlay()
 
 void DjEngine::play()
 {
-    if (transportSource.isPlaying())
-        return; // Already playing
+    if (!m_playRequested)
+        m_playRequested = true;
 
-    // Snapshot current position immediately so the interpolation starts
-    // from exactly where the waveform is showing (no 16ms wait for onTimer).
-    armSnapFromTransportPosition();
-
-    transportSource.start();
+    ensureTransportRunningForPlayIntent();
     emit playingChanged();
 }
 
 void DjEngine::pause()
 {
-    if (!transportSource.isPlaying())
+    if (!m_playRequested && !transportSource.isPlaying())
         return; // Already paused
 
-    // Compute the interpolated visual position BEFORE stopping so we can
-    // freeze the transport at exactly the position the waveform was showing.
-    freezeTransportAt(getVisualPosition());
+    m_playRequested = false;
+
+    if (transportSource.isPlaying()) {
+        // Compute the interpolated visual position BEFORE stopping so we can
+        // freeze the transport at exactly the position the waveform was showing.
+        freezeTransportAt(getVisualPosition());
+    }
     emit playingChanged();
+}
+
+void DjEngine::ensureTransportRunningForPlayIntent()
+{
+    if (!m_playRequested || m_isScrubbing || m_scratchReleaseActive || !m_hasTrack)
+        return;
+
+    if (transportSource.isPlaying())
+        return;
+
+    const double len = transportSource.getLengthInSeconds();
+    if (len <= 0.0)
+        return;
+
+    // Keep transport stopped at true EOF. As soon as the playhead is moved
+    // back from the end, this function resumes playback automatically.
+    const double pos = transportSource.getCurrentPosition();
+    if (pos >= len - 0.0001)
+        return;
+
+    armSnapFromTransportPosition();
+    transportSource.start();
 }
 
 void DjEngine::setSnapAnchor(double positionSec, bool valid)
@@ -1845,8 +1868,10 @@ void DjEngine::freezeTransportAt(double positionSec)
 void DjEngine::setPosition(float progress)
 {
     double len = transportSource.getLengthInSeconds();
-    if (len > 0.0)
+    if (len > 0.0) {
         transportSource.setPosition(progress * len);
+        ensureTransportRunningForPlayIntent();
+    }
     emit progressChanged();
 }
 
@@ -2051,6 +2076,7 @@ void DjEngine::onTimer()
         emit progressChanged();
     } else {
         m_snapValid = false;
+        ensureTransportRunningForPlayIntent();
         // Keep atomic in sync with the stopped position.
         m_atomicPlayheadPos.store(transportSource.getCurrentPosition(),
                                    std::memory_order_relaxed);
@@ -2207,6 +2233,7 @@ void DjEngine::triggerHotCue(int index)
 
     const double pos = std::clamp(slot.positionSec, 0.0, trackLen);
     transportSource.setPosition(pos);
+    ensureTransportRunningForPlayIntent();
     m_snapPosition = pos;
     m_snapTempoRatio = getTempoRatio();
     m_snapClock.restart();
@@ -2276,7 +2303,7 @@ void DjEngine::cueButtonPress()
     if (trackLen <= 0.0)
         return;
 
-    const bool wasPlaying = transportSource.isPlaying();
+    const bool wasPlaying = m_playRequested;
 
     if (wasPlaying) {
         // While playing, CUE should jump to the stored cue and continue playback.
@@ -2352,7 +2379,7 @@ void DjEngine::restorePostScrubPlaybackState()
 
     updateSpeedAndPitch();
 
-    if (m_scrubWasPlaying)
+    if (m_playRequested)
         transportSource.start();
     else
         transportSource.stop();
@@ -2370,7 +2397,7 @@ void DjEngine::pauseForScrub()
     if (m_isScrubbing)
         return;
 
-    bool wasPlayingBeforeGrab = transportSource.isPlaying();
+    bool wasPlayingBeforeGrab = m_playRequested || transportSource.isPlaying();
     if (m_scratchReleaseActive) {
         // If we re-grab while release glide is still active, preserve the
         // original pre-scratch intent instead of the temporary glide transport state.

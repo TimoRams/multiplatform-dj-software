@@ -351,6 +351,7 @@ private:
     double m_filter = 0.0;
     bool   m_isReverse = false;
     bool m_cueEnabled = false;
+    bool m_playRequested = false;
     bool m_keylock = false;
     bool m_quantizeEnabled = false;
     bool m_syncEnabled = false;
@@ -373,6 +374,7 @@ private:
     void setSnapAnchor(double positionSec, bool valid);
     void armSnapFromTransportPosition();
     void freezeTransportAt(double positionSec);
+    void ensureTransportRunningForPlayIntent();
     void applyScratchNeutralRouting();
     void restorePostScrubPlaybackState();
     void advanceAbsoluteScrubFollower(double dtSec);
