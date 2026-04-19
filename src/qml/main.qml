@@ -110,11 +110,88 @@ ApplicationWindow {
         }
     }
 
-    BusyIndicator {
+    Item {
         id: loadingIndicator
+        property bool running: true
         anchors.centerIn: parent
-        running: true
         visible: true
+
+        width: 260
+        height: 120
+
+        Rectangle {
+            anchors.fill: parent
+            color: window.unifiedGray
+        }
+
+        Column {
+            anchors.centerIn: parent
+            spacing: 12
+
+            Text {
+                text: "RAMSBROCK DJ"
+                color: "#e0e0e0"
+                font.pixelSize: window.sp(18)
+                font.bold: true
+                horizontalAlignment: Text.AlignHCenter
+                width: 220
+            }
+
+            Item {
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: 150
+                height: 44
+
+                Row {
+                    anchors.bottom: parent.bottom
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    spacing: 6
+                    height: 40
+
+                    Repeater {
+                        model: 5
+
+                        Rectangle {
+                            id: loadBar
+                            required property int index
+                            width: 16
+                            height: 18
+                            color: "#7a7a7a"
+                            border.width: 1
+                            border.color: "#000000"
+                            radius: 0
+                            anchors.bottom: parent.bottom
+
+                            SequentialAnimation on height {
+                                running: loadingIndicator.running
+                                loops: Animation.Infinite
+                                alwaysRunToEnd: true
+                                PauseAnimation { duration: loadBar.index * 80 }
+                                NumberAnimation { from: 18; to: 38; duration: 320; easing.type: Easing.InOutQuad }
+                                NumberAnimation { from: 38; to: 18; duration: 320; easing.type: Easing.InOutQuad }
+                                PauseAnimation { duration: Math.max(0, 240 - loadBar.index * 30) }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    anchors.bottom: parent.bottom
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    height: 2
+                    color: "#000000"
+                }
+            }
+
+            Text {
+                text: "Loading audio engine..."
+                color: "#bcbcbc"
+                font.pixelSize: window.sp(11)
+                horizontalAlignment: Text.AlignHCenter
+                width: 220
+            }
+        }
     }
 
     // ── Global font sizing (non-transformed areas stay stable on resize) ─────

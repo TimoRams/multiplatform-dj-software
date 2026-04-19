@@ -4,7 +4,7 @@ import QtQuick.Controls
 
 Rectangle {
     id: mixer
-    color: "#181818"
+    color: "#2a2a2a"
     
     property var engineA: null
     property var engineB: null
@@ -154,7 +154,7 @@ Rectangle {
                     color: "#aaa"
                     width: 2
                     height: parent.height * 0.48
-                    radius: 1
+                    radius: 0
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.top: parent.top
                     anchors.topMargin: -2
@@ -204,8 +204,8 @@ Rectangle {
             width: control.orientation === Qt.Horizontal ? control.availableWidth : 4
             height: control.orientation === Qt.Horizontal ? 4 : control.availableHeight
             radius: 0
-            color: "#202020"
-            border.color: "#3a3a3a"
+            color: "#1f1f1f"
+            border.color: "#000000"
             border.width: 0
 
             Rectangle {
@@ -277,8 +277,8 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.alignment: Qt.AlignTop
-                color: "#151515"
-                border.color: "#353535"
+                color: "#2a2a2a"
+                border.color: "#000000"
                 border.width: 0
                 radius: 0
 
@@ -389,7 +389,7 @@ Rectangle {
                         anchors.top: channelAControls.top
                         height: eqStackA.height
                         color: "#101010"
-                        border.color: "#2f2f2f"
+                        border.color: "#000000"
                         border.width: 0
                         radius: 0
 
@@ -410,8 +410,8 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.alignment: Qt.AlignTop
-                color: "#151515"
-                border.color: "#353535"
+                color: "#2a2a2a"
+                border.color: "#000000"
                 border.width: 0
                 radius: 0
 
@@ -522,7 +522,7 @@ Rectangle {
                         anchors.top: channelBControls.top
                         height: eqStackB.height
                         color: "#101010"
-                        border.color: "#2f2f2f"
+                        border.color: "#000000"
                         border.width: 0
                         radius: 0
 
