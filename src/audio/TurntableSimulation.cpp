@@ -106,7 +106,8 @@ void TurntableSimulation::prepareToPlay(int, double sampleRate)
         m_sampleRate,
         2,
         RubberBand::RubberBandStretcher::OptionProcessRealTime |
-        RubberBand::RubberBandStretcher::OptionPitchHighQuality);
+        RubberBand::RubberBandStretcher::OptionWindowShort |
+        RubberBand::RubberBandStretcher::OptionPitchHighSpeed);
     m_lastUsedBypass = true;
     m_crossfadeRemaining = 0;
 }

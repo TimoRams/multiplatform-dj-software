@@ -538,10 +538,18 @@ public:
         stretcher = std::make_unique<RubberBand::RubberBandStretcher>(
             sr, 2, 
             RubberBand::RubberBandStretcher::OptionProcessRealTime |
-            RubberBand::RubberBandStretcher::OptionPitchHighQuality);
+            RubberBand::RubberBandStretcher::OptionWindowShort |
+            RubberBand::RubberBandStretcher::OptionPitchHighSpeed);
+
+        if (samplesPerBlockExpected > 0)
+            stretcher->setMaxProcessSize(static_cast<size_t>(std::clamp(samplesPerBlockExpected * 2, 64, 4096)));
+
+        m_startPadRemaining.store(static_cast<int>(stretcher->getPreferredStartPad()), std::memory_order_relaxed);
+        m_startDelayTrimRemaining.store(static_cast<int>(stretcher->getStartDelay()), std::memory_order_relaxed);
         
         scratchBuffer.setSize(2, 8192);
         outputBuffer.setSize(2, 65536);
+        trimBuffer.setSize(2, 1024);
         fifo = std::make_unique<juce::AbstractFifo>(65536);
     }
 
@@ -550,12 +558,9 @@ public:
         stretcher.reset();
         fifo.reset();
         m_prefillTargetSamples = 0;
-        m_wasBypassing = true;
         m_reportedLatencySamples.store(0, std::memory_order_relaxed);
-    }
-
-    void setKeylock(bool enabled) {
-        m_keylockEnabled.store(enabled, std::memory_order_relaxed);
+        m_startPadRemaining.store(0, std::memory_order_relaxed);
+        m_startDelayTrimRemaining.store(0, std::memory_order_relaxed);
     }
 
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override {
@@ -563,28 +568,6 @@ public:
             info.clearActiveBufferRegion();
             return;
         }
-
-        const bool keylockActive = isKeylockActive();
-        if (!keylockActive) {
-            updateReportedLatency(0);
-
-            if (!m_wasBypassing) {
-                clearFifo();
-                stretcher->reset();
-                m_prefillTargetSamples = 0;
-            }
-
-            m_wasBypassing = true;
-            source->getNextAudioBlock(info);
-            return;
-        }
-
-        if (m_wasBypassing) {
-            clearFifo();
-            stretcher->reset();
-            m_prefillTargetSamples = 0;
-        }
-        m_wasBypassing = false;
 
         const int numCh = std::min(info.buffer->getNumChannels(), 2);
         const int framesNeeded = info.numSamples;
@@ -595,9 +578,11 @@ public:
         updatePrefillTarget(desiredPrefill);
 
         while (fifo->getNumReady() < framesNeeded + m_prefillTargetSamples && maxPullLoops > 0) {
+            const int shortfall = std::max(0, (framesNeeded + m_prefillTargetSamples) - fifo->getNumReady());
             int pullSize = stretcher->getSamplesRequired();
             if (pullSize <= 0)
-                pullSize = 1024;
+                pullSize = std::max(64, shortfall);
+            pullSize = std::clamp(pullSize, 64, 512);
 
             if (scratchBuffer.getNumSamples() < pullSize)
                 scratchBuffer.setSize(2, pullSize, true);
@@ -608,7 +593,21 @@ public:
             pullInfo.numSamples = pullSize;
             scratchBuffer.clear(0, pullSize);
 
-            source->getNextAudioBlock(pullInfo);
+            const int startPadRemaining = m_startPadRemaining.load(std::memory_order_relaxed);
+            if (startPadRemaining > 0) {
+                const int padNow = std::min(startPadRemaining, pullSize);
+                m_startPadRemaining.store(startPadRemaining - padNow, std::memory_order_relaxed);
+
+                if (padNow < pullSize) {
+                    juce::AudioSourceChannelInfo tailInfo;
+                    tailInfo.buffer = &scratchBuffer;
+                    tailInfo.startSample = padNow;
+                    tailInfo.numSamples = pullSize - padNow;
+                    source->getNextAudioBlock(tailInfo);
+                }
+            } else {
+                source->getNextAudioBlock(pullInfo);
+            }
 
             const float* inputs[2] = { scratchBuffer.getReadPointer(0), scratchBuffer.getReadPointer(1) };
             if (scratchBuffer.getNumChannels() == 1)
@@ -616,7 +615,15 @@ public:
 
             stretcher->process(inputs, pullSize, false);
 
-            const int avail = stretcher->available();
+            int avail = stretcher->available();
+            int toTrim = m_startDelayTrimRemaining.load(std::memory_order_relaxed);
+            if (avail > 0 && toTrim > 0) {
+                const int trimNow = std::min(avail, toTrim);
+                trimStretcherOutput(trimNow);
+                m_startDelayTrimRemaining.store(toTrim - trimNow, std::memory_order_relaxed);
+                avail = stretcher->available();
+            }
+
             if (avail > 0) {
                 if (outputBuffer.getNumSamples() < avail)
                     outputBuffer.setSize(2, std::max((int) outputBuffer.getNumSamples(), avail * 2), true);
@@ -669,15 +676,12 @@ public:
                 info.buffer->clear(ch, remainderStart, remainderLen);
         }
 
-        if (!keylockActive && fifo->getNumReady() <= 0 && m_prefillTargetSamples <= 64)
-            m_wasBypassing = true;
     }
 
     // Return total latency introduced by this component in samples
     int getLatencySamples() const {
-        int delay = 0;
-        if (stretcher) delay += stretcher->getStartDelay();
-        delay += m_reportedLatencySamples.load(std::memory_order_relaxed);
+        int delay = m_reportedLatencySamples.load(std::memory_order_relaxed);
+        delay += std::max(0, m_startDelayTrimRemaining.load(std::memory_order_relaxed));
         return delay;
     }
 
@@ -699,19 +703,16 @@ private:
         m_reportedLatencySamples.store(next, std::memory_order_relaxed);
     }
 
-    bool isKeylockActive() const {
-        return m_keylockEnabled.load(std::memory_order_relaxed)
-            && std::abs(tempoRatio - 1.0) >= 0.001;
-    }
-
     int computeDesiredPrefillSamples() const {
-        if (!isKeylockActive())
+        const double tempoDelta = std::abs(tempoRatio - 1.0);
+        if (tempoDelta < 0.01)
             return 0;
 
-        const double tempoDelta = std::abs(tempoRatio - 1.0);
-        const int base = 96;
-        const int dynamic = static_cast<int>(std::lround(tempoDelta * sampleRate * 0.012));
-        return std::clamp(base + dynamic, 96, 2048);
+        const int dynamic = static_cast<int>(std::lround(tempoDelta * sampleRate * 0.005));
+        const int extremeBoost = tempoDelta > 0.30
+            ? static_cast<int>(std::lround((tempoDelta - 0.30) * sampleRate * 0.010))
+            : 0;
+        return std::clamp(dynamic + extremeBoost, 0, 2048);
     }
 
     void updatePrefillTarget(int desiredPrefill) {
@@ -727,30 +728,40 @@ private:
         }
     }
 
-    void clearFifo() {
-        if (!fifo)
+    void trimStretcherOutput(int samplesToTrim) {
+        if (!stretcher || samplesToTrim <= 0)
             return;
 
-        const int ready = fifo->getNumReady();
-        if (ready <= 0)
-            return;
+        while (samplesToTrim > 0) {
+            const int avail = stretcher->available();
+            if (avail <= 0)
+                break;
 
-        int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
-        fifo->prepareToRead(ready, start1, size1, start2, size2);
-        fifo->finishedRead(size1 + size2);
+            const int chunk = std::min(samplesToTrim, avail);
+            if (trimBuffer.getNumSamples() < chunk)
+                trimBuffer.setSize(2, chunk, false, false, true);
+
+            float* trimOut[2] = {
+                trimBuffer.getWritePointer(0),
+                trimBuffer.getWritePointer(1)
+            };
+            stretcher->retrieve(trimOut, chunk);
+            samplesToTrim -= chunk;
+        }
     }
 
     juce::AudioSource* source = nullptr;
     std::unique_ptr<RubberBand::RubberBandStretcher> stretcher;
     juce::AudioBuffer<float> scratchBuffer;
     juce::AudioBuffer<float> outputBuffer;
+    juce::AudioBuffer<float> trimBuffer;
     std::unique_ptr<juce::AbstractFifo> fifo;
     double sampleRate = 44100.0;
     double tempoRatio = 1.0;
-    std::atomic<bool> m_keylockEnabled { false };
     std::atomic<int> m_reportedLatencySamples { 0 };
+    std::atomic<int> m_startPadRemaining { 0 };
+    std::atomic<int> m_startDelayTrimRemaining { 0 };
     int m_prefillTargetSamples = 0;
-    bool m_wasBypassing = true;
 };
 
 class DjEngine::MixerDspSource : public juce::AudioSource {
@@ -1906,7 +1917,7 @@ void DjEngine::onTimer()
             if (resamplingSource)
                 resamplingSource->setResamplingRatio(1.0);
             if (timeStretchSource)
-                timeStretchSource->setKeylock(m_scrubSavedKeylock && m_keylock);
+                timeStretchSource->setTempoRatio(1.0);
 
             updateSpeedAndPitch();
 
@@ -2273,13 +2284,12 @@ void DjEngine::pauseForScrub()
     m_lastScrubInputClock.restart();
     emit scrubbingChanged();
 
-    // Scratch should run as pure speed=pitch behavior.
-    // Temporarily bypass keylock/time-stretch while the platter is grabbed.
-    m_scrubSavedKeylock = m_keylock;
+    // Scratch should run as pure speed=pitch behavior through a neutral
+    // Rubber Band stage so routing and latency stay continuous.
     m_scrubSavedReverseState = m_isReverse;
     m_scratchDirectionSign = m_scrubSavedReverseState ? -1.0 : 1.0;
     if (timeStretchSource)
-        timeStretchSource->setKeylock(false);
+        timeStretchSource->setTempoRatio(1.0);
     if (resamplingSource)
         resamplingSource->setResamplingRatio(1.0);
     if (reverseWrapSource)
@@ -2474,7 +2484,7 @@ void DjEngine::resumeAfterScrub()
         if (resamplingSource)
             resamplingSource->setResamplingRatio(1.0);
         if (timeStretchSource)
-            timeStretchSource->setKeylock(m_scrubSavedKeylock && m_keylock);
+            timeStretchSource->setTempoRatio(1.0);
 
         updateSpeedAndPitch();
 
@@ -2591,20 +2601,16 @@ void DjEngine::setAntiClip(bool enabled) {
 void DjEngine::updateSpeedAndPitch()
 {
     double speedMultiplier = 1.0 + (m_tempoPercent / 100.0);
-    bool useKeylockPath = m_keylock; // Reverse is now continuous, Keylock works with it!
+    const bool useKeylockPath = m_keylock; // Reverse is now continuous, Keylock works with it!
     
     if (useKeylockPath) {
         if (resamplingSource) resamplingSource->setResamplingRatio(1.0);
-        if (timeStretchSource) {
+        if (timeStretchSource)
             timeStretchSource->setTempoRatio(speedMultiplier);
-            timeStretchSource->setKeylock(true);
-        }
     } else {
         if (resamplingSource) resamplingSource->setResamplingRatio(speedMultiplier);
-        if (timeStretchSource) {
-            timeStretchSource->setTempoRatio(1.0); // bypass
-            timeStretchSource->setKeylock(false);
-        }
+        if (timeStretchSource)
+            timeStretchSource->setTempoRatio(1.0); // neutral pass-through
     }
 }
 

@@ -427,7 +427,6 @@ private:
     double m_scratchAbsoluteMaxFollowRate = 16.0;
     double m_scratchAbsoluteSnapDistanceSec = 0.00035;
     double m_scratchAbsoluteSnapVelocitySecPerSec = 0.015;
-    bool   m_scrubSavedKeylock = false;
     bool   m_scrubSavedReverseState = false;
     double m_loadedTrackSampleRate = 44100.0;
 
