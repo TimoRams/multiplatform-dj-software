@@ -86,7 +86,7 @@ Item {
                 color: control.pressed ? "#5a5a5a" : "#3e3e3e"
 
                 readonly property real midPy: parent.height / 2
-                readonly property real posPy: 1 + (1.0 - control.visualPosition) * (parent.height - 2)
+                readonly property real posPy: 1 + control.visualPosition * (parent.height - 2)
 
                 y: Math.min(midPy, posPy)
                 height: Math.max(0, Math.abs(posPy - midPy))
@@ -1167,8 +1167,9 @@ Item {
                             Layout.fillHeight: true
                             Layout.alignment: Qt.AlignHCenter
                             orientation: Qt.Vertical
-                            from: -tempoPanel.tempoRange
-                            to:    tempoPanel.tempoRange
+                            // Vertical fader direction: down = faster, up = slower.
+                            from:  tempoPanel.tempoRange
+                            to:   -tempoPanel.tempoRange
                             value: 0
                             centerFill: true
                             stepSize: tempoPanel.tempoRange <= 8  ? 0.1

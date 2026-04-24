@@ -60,7 +60,7 @@ Controls.Slider {
             color: control.pressed ? "#5a5a5a" : "#3e3e3e"
 
             readonly property real midPy: parent.height / 2
-            readonly property real posPy: 1 + (1.0 - control.visualPosition) * (parent.height - 2)
+            readonly property real posPy: 1 + control.visualPosition * (parent.height - 2)
 
             y: Math.min(midPy, posPy)
             height: Math.max(0, Math.abs(posPy - midPy))
