@@ -1456,6 +1456,30 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     }
 
     refreshHardwareLatency();
+
+    // AudioDeviceManager is shared across all deck instances. Reconfiguring the
+    // device can cause internal sources to re-prepare and some playback ratios
+    // to fall back to defaults. Reapply tempo/keylock state for every deck so
+    // no deck is left at stale speed after another deck applies settings.
+    std::vector<DjEngine*> decks;
+    {
+        std::lock_guard<std::mutex> g(s_syncMutex);
+        decks = s_syncDecks;
+    }
+
+    for (auto* deck : decks) {
+        if (!deck)
+            continue;
+
+        deck->refreshHardwareLatency();
+
+        // During active scratch/release, onTimer() owns the resampling ratio.
+        if (deck->m_isScrubbing || deck->m_scratchReleaseActive)
+            continue;
+
+        deck->updateSpeedAndPitch();
+    }
+
     return true;
 }
 
