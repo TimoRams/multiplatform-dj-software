@@ -278,7 +278,8 @@ private slots:
 
 private:
     struct LatencySnapshot {
-        int outputSamples = 0;
+        int outputEffectiveSamples = 0;
+        int outputRawSamples = 0;
         int bufferSamples = 0;
         int rubberbandSamples = 0;
         int limiterSamples = 0;
@@ -384,7 +385,9 @@ private:
     void applyMixerEq();
     void applyMixerFilter();
 
-    // m_latencySeconds is computed once after device init (output latency + buffer size).
+    // m_latencySeconds tracks effective output latency reported by the audio device.
+    // getOutputLatencyInSamples() is JUCE's callback->speaker delay and already
+    // includes the callback buffer on compliant drivers.
     // m_snapPosition + m_snapClock enable sub-frame interpolation in getVisualPosition().
     float          m_latencySeconds  = 0.0f;
     double         m_snapPosition    = 0.0;

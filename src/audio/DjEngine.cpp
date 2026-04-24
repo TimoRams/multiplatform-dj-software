@@ -576,6 +576,8 @@ public:
     static constexpr int kMinPullSize = 64;
     static constexpr int kMaxPullSize = 512;
     static constexpr int kMaxPrefillSamples = 2048;
+    static constexpr int kDefaultPrefillCapSamples = 256;
+    static constexpr int kPrefillMaxBlocks = 2;
     static constexpr int kPullLoopLimit = 24;
     static constexpr double kPrefillDeadbandTempoDelta = 0.01;
     static constexpr double kPrefillDynamicFactor = 0.005;
@@ -611,6 +613,13 @@ public:
                                       kMinPullSize,
                                       4096);
         stretcher->setMaxProcessSize(static_cast<size_t>(m_maxProcessSize));
+
+        const int baseBlockSize = samplesPerBlockExpected > 0
+            ? samplesPerBlockExpected
+            : kDefaultPrefillCapSamples;
+        m_prefillHardCapSamples = std::clamp(baseBlockSize * kPrefillMaxBlocks,
+                                             kMinPullSize,
+                                             kMaxPrefillSamples);
 
         updateStretcherRatios();
 
@@ -785,7 +794,8 @@ private:
         const int extremeBoost = tempoDelta > kPrefillExtremeThreshold
             ? static_cast<int>(std::lround((tempoDelta - kPrefillExtremeThreshold) * sampleRate * kPrefillExtremeFactor))
             : 0;
-        return std::clamp(dynamic + extremeBoost, 0, kMaxPrefillSamples);
+        const int hardCap = std::max(kMinPullSize, m_prefillHardCapSamples);
+        return std::clamp(dynamic + extremeBoost, 0, hardCap);
     }
 
     void updatePrefillTarget(int desiredPrefill) {
@@ -850,6 +860,7 @@ private:
     std::atomic<int> m_startDelayTrimRemaining { 0 };
     int m_maxProcessSize = 512;
     int m_prefillTargetSamples = 0;
+    int m_prefillHardCapSamples = kMaxPrefillSamples;
 };
 
 class DjEngine::MixerDspSource : public juce::AudioSource {
@@ -1275,19 +1286,22 @@ DjEngine::DjEngine(QObject* parent)
 
     sourcePlayer.setSource(mixerSource.get());
 
-    // Compute total hardware latency (output latency + current buffer size).
-    // getVisualPosition() subtracts this from the transport read pointer so the
-    // waveform display tracks the audio that is actually reaching the speakers.
+    // Compute effective output latency from the active audio device.
+    // JUCE reports callback->speaker delay via getOutputLatencyInSamples().
+    // On compliant drivers this already includes callback buffering.
     if (auto* device = deviceManager.getCurrentAudioDevice()) {
-        int latencySamples = device->getOutputLatencyInSamples()
-                           + device->getCurrentBufferSizeSamples();
+        const int outputLatencySamples = std::max(0, device->getOutputLatencyInSamples());
+        const int callbackBufferSamples = std::max(0, device->getCurrentBufferSizeSamples());
+        const int effectiveOutputSamples = outputLatencySamples > 0
+            ? outputLatencySamples
+            : callbackBufferSamples;
         double sr = device->getCurrentSampleRate();
         if (sr > 0.0)
-            m_latencySeconds = static_cast<float>(latencySamples / sr);
-        qDebug() << "[DjEngine] Hardware latency:" << latencySamples
+            m_latencySeconds = static_cast<float>(static_cast<double>(effectiveOutputSamples) / sr);
+        qDebug() << "[DjEngine] Effective output latency:" << effectiveOutputSamples
                  << "samples =" << m_latencySeconds << "s"
-                 << "(out:" << device->getOutputLatencyInSamples()
-                 << "buf:" << device->getCurrentBufferSizeSamples() << ")";
+                 << "(outputRaw:" << outputLatencySamples
+                 << "buffer:" << callbackBufferSamples << ")";
     } else {
         m_latencySeconds = 0.011f;
         qDebug() << "[DjEngine] No audio device yet, using fallback latency 11ms";
@@ -1334,16 +1348,19 @@ float DjEngine::getDuration() const
 void DjEngine::refreshHardwareLatency()
 {
     if (auto* device = deviceManager.getCurrentAudioDevice()) {
-        const int latencySamples = device->getOutputLatencyInSamples()
-                                 + device->getCurrentBufferSizeSamples();
+        const int outputLatencySamples = std::max(0, device->getOutputLatencyInSamples());
+        const int callbackBufferSamples = std::max(0, device->getCurrentBufferSizeSamples());
+        const int effectiveOutputSamples = outputLatencySamples > 0
+            ? outputLatencySamples
+            : callbackBufferSamples;
         const double sampleRate = device->getCurrentSampleRate();
         if (sampleRate > 0.0)
-            m_latencySeconds = static_cast<float>(static_cast<double>(latencySamples) / sampleRate);
+            m_latencySeconds = static_cast<float>(static_cast<double>(effectiveOutputSamples) / sampleRate);
 
-        qDebug() << "[DjEngine] Hardware latency:" << latencySamples
+        qDebug() << "[DjEngine] Effective output latency:" << effectiveOutputSamples
                  << "samples =" << m_latencySeconds << "s"
-                 << "(out:" << device->getOutputLatencyInSamples()
-                 << "buf:" << device->getCurrentBufferSizeSamples()
+                 << "(outputRaw:" << outputLatencySamples
+                 << "buffer:" << callbackBufferSamples
                  << "sr:" << sampleRate << ")";
     } else {
         m_latencySeconds = 0.011f;
@@ -1447,8 +1464,11 @@ DjEngine::LatencySnapshot DjEngine::buildLatencySnapshot() const
     LatencySnapshot snapshot;
 
     if (auto* device = deviceManager.getCurrentAudioDevice()) {
-        snapshot.outputSamples = std::max(0, device->getOutputLatencyInSamples());
+        snapshot.outputRawSamples = std::max(0, device->getOutputLatencyInSamples());
         snapshot.bufferSamples = std::max(0, device->getCurrentBufferSizeSamples());
+        snapshot.outputEffectiveSamples = snapshot.outputRawSamples > 0
+            ? snapshot.outputRawSamples
+            : snapshot.bufferSamples;
         const double deviceRate = device->getCurrentSampleRate();
         if (deviceRate > 0.0)
             snapshot.sampleRate = deviceRate;
@@ -1457,8 +1477,8 @@ DjEngine::LatencySnapshot DjEngine::buildLatencySnapshot() const
     if (timeStretchSource)
         snapshot.rubberbandSamples = std::max(0, timeStretchSource->getLatencySamples());
 
-    // BrickwallLimiter default lookahead is 3 ms (set in BrickwallLimiter.h).
-    snapshot.limiterSamples = std::max(0, static_cast<int>(std::lround(snapshot.sampleRate * 0.003)));
+    // BrickwallLimiter default lookahead is 1.5 ms (set in BrickwallLimiter.h).
+    snapshot.limiterSamples = std::max(0, static_cast<int>(std::lround(snapshot.sampleRate * 0.0015)));
     return snapshot;
 }
 
@@ -1468,8 +1488,7 @@ double DjEngine::totalLatencyMs() const
     if (snapshot.sampleRate <= 0.0)
         return 0.0;
 
-    const int totalSamples = snapshot.outputSamples
-                           + snapshot.bufferSamples
+    const int totalSamples = snapshot.outputEffectiveSamples
                            + snapshot.rubberbandSamples
                            + snapshot.limiterSamples;
     return (static_cast<double>(totalSamples) / snapshot.sampleRate) * 1000.0;
@@ -1487,28 +1506,39 @@ QVariantList DjEngine::latencyBreakdown() const
 
     QVariantList rows;
 
-    QVariantMap outputRow;
-    outputRow.insert("name", QStringLiteral("JUCE Output Device"));
-    outputRow.insert("samples", snapshot.outputSamples);
-    outputRow.insert("ms", toMs(snapshot.outputSamples));
-    rows.push_back(outputRow);
+    QVariantMap effectiveOutputRow;
+    effectiveOutputRow.insert("name", QStringLiteral("Output to Speakers"));
+    effectiveOutputRow.insert("samples", snapshot.outputEffectiveSamples);
+    effectiveOutputRow.insert("ms", toMs(snapshot.outputEffectiveSamples));
+    effectiveOutputRow.insert("countInTotal", true);
+    rows.push_back(effectiveOutputRow);
+
+    QVariantMap rawOutputRow;
+    rawOutputRow.insert("name", QStringLiteral("JUCE Output (Raw)"));
+    rawOutputRow.insert("samples", snapshot.outputRawSamples);
+    rawOutputRow.insert("ms", toMs(snapshot.outputRawSamples));
+    rawOutputRow.insert("countInTotal", false);
+    rows.push_back(rawOutputRow);
 
     QVariantMap bufferRow;
-    bufferRow.insert("name", QStringLiteral("Audio Buffer"));
+    bufferRow.insert("name", QStringLiteral("Callback Buffer (Info)"));
     bufferRow.insert("samples", snapshot.bufferSamples);
     bufferRow.insert("ms", toMs(snapshot.bufferSamples));
+    bufferRow.insert("countInTotal", false);
     rows.push_back(bufferRow);
 
     QVariantMap rubberbandRow;
     rubberbandRow.insert("name", QStringLiteral("RubberBand / Keylock"));
     rubberbandRow.insert("samples", snapshot.rubberbandSamples);
     rubberbandRow.insert("ms", toMs(snapshot.rubberbandSamples));
+    rubberbandRow.insert("countInTotal", true);
     rows.push_back(rubberbandRow);
 
     QVariantMap limiterRow;
     limiterRow.insert("name", QStringLiteral("DSP Limiter Lookahead"));
     limiterRow.insert("samples", snapshot.limiterSamples);
     limiterRow.insert("ms", toMs(snapshot.limiterSamples));
+    limiterRow.insert("countInTotal", true);
     rows.push_back(limiterRow);
 
     return rows;

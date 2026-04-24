@@ -83,7 +83,7 @@ private:
     // Parameters (atomic for thread-safe UI access)
     std::atomic<float> m_threshold      { 0.99f };
     std::atomic<float> m_ceiling        { 1.0f };
-    std::atomic<float> m_lookaheadMs    { 3.0f };
+    std::atomic<float> m_lookaheadMs    { 1.5f };
     std::atomic<float> m_releaseMs      { 100.0f };
     std::atomic<float> m_saturationAmt  { 0.3f };
     std::atomic<bool>  m_truePeakOn     { true };

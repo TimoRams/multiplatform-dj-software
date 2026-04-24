@@ -78,8 +78,23 @@ Rectangle {
 
         latencyRows = rows
 
+        if (deckA.totalLatencyMs) {
+            var exactTotal = Number(deckA.totalLatencyMs())
+            if (isFinite(exactTotal) && exactTotal >= 0) {
+                totalLatencyMs = exactTotal
+                return
+            }
+        }
+
+        // Fallback for older engines: only sum rows marked as part of total.
         var sum = 0.0
         for (var i = 0; i < rows.length; ++i) {
+            var include = rows[i].countInTotal
+            if (include === undefined)
+                include = true
+            if (!include)
+                continue
+
             var ms = Number(rows[i].ms)
             if (!isNaN(ms) && isFinite(ms))
                 sum += ms
@@ -235,7 +250,7 @@ Rectangle {
                             width: 170
                             anchors.verticalCenter: parent.verticalCenter
                             text: modelData.name
-                            color: "#bbbbbb"
+                            color: modelData.countInTotal === false ? "#7b7b7b" : "#bbbbbb"
                             font.pixelSize: root.sp(8)
                             elide: Text.ElideRight
                         }
