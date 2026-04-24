@@ -90,22 +90,18 @@ void MidiControllerManager::refreshMidiDeviceCache()
     m_availableInputDeviceNames.clear();
 
     const auto inDevices = juce::MidiInput::getAvailableDevices();
-    qDebug() << "[MIDI] JUCE input devices:" << static_cast<int>(inDevices.size());
     for (const auto& dev : inDevices) {
         m_availableInputDeviceIdentifiers.push_back(dev.identifier);
         m_availableInputDeviceNames.push_back(toQString(dev.name));
-        qDebug() << "[MIDI] Input:" << toQString(dev.name) << "id:" << toQString(dev.identifier);
     }
 
     m_availableOutputDeviceIdentifiers.clear();
     m_availableOutputDeviceNames.clear();
 
     const auto outDevices = juce::MidiOutput::getAvailableDevices();
-    qDebug() << "[MIDI] JUCE output devices:" << static_cast<int>(outDevices.size());
     for (const auto& dev : outDevices) {
         m_availableOutputDeviceIdentifiers.push_back(dev.identifier);
         m_availableOutputDeviceNames.push_back(toQString(dev.name));
-        qDebug() << "[MIDI] Output:" << toQString(dev.name) << "id:" << toQString(dev.identifier);
     }
 
 #if defined(Q_OS_LINUX)
@@ -165,7 +161,6 @@ void MidiControllerManager::populateFromAlsaFallback()
 
         m_availableInputDeviceIdentifiers.push_back(identifier);
         m_availableInputDeviceNames.push_back(label);
-        qDebug() << "[MIDI] ALSA fallback input:" << label << "id:" << toQString(identifier);
     }
 #endif
 }
@@ -273,7 +268,6 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
         return;
     }
 
-    qDebug() << "[MIDI] ALSA monitor started on" << port;
 #else
     Q_UNUSED(pseudoIdentifier);
 #endif
@@ -321,7 +315,6 @@ void MidiControllerManager::openMidiInputByIdentifier(const juce::String& identi
 
     input->start();
     m_midiInput = std::move(input);
-    qDebug() << "[MIDI] Input opened:" << toQString(identifier);
 }
 
 void MidiControllerManager::openMidiOutputByIdentifier(const juce::String& identifier)
@@ -339,7 +332,6 @@ void MidiControllerManager::openMidiOutputByIdentifier(const juce::String& ident
     }
 
     m_midiOutput = std::move(output);
-    qDebug() << "[MIDI] Output opened:" << toQString(identifier);
 }
 
 void MidiControllerManager::restoreSavedDeviceSelections()
@@ -355,8 +347,6 @@ void MidiControllerManager::restoreSavedDeviceSelections()
         });
         if (inputExists)
             openMidiInputByIdentifier(savedInput);
-        else
-            qDebug() << "[MIDI] Skipping unavailable saved input identifier:" << inputId;
     }
 
     const auto outputId = SettingsManager::getInstance().getMidiOutputIdentifier();
@@ -370,8 +360,6 @@ void MidiControllerManager::restoreSavedDeviceSelections()
         });
         if (outputExists)
             openMidiOutputByIdentifier(savedOutput);
-        else
-            qDebug() << "[MIDI] Skipping unavailable saved output identifier:" << outputId;
     }
 }
 

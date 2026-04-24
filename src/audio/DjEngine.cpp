@@ -1286,26 +1286,7 @@ DjEngine::DjEngine(QObject* parent)
 
     sourcePlayer.setSource(mixerSource.get());
 
-    // Compute effective output latency from the active audio device.
-    // JUCE reports callback->speaker delay via getOutputLatencyInSamples().
-    // On compliant drivers this already includes callback buffering.
-    if (auto* device = deviceManager.getCurrentAudioDevice()) {
-        const int outputLatencySamples = std::max(0, device->getOutputLatencyInSamples());
-        const int callbackBufferSamples = std::max(0, device->getCurrentBufferSizeSamples());
-        const int effectiveOutputSamples = outputLatencySamples > 0
-            ? outputLatencySamples
-            : callbackBufferSamples;
-        double sr = device->getCurrentSampleRate();
-        if (sr > 0.0)
-            m_latencySeconds = static_cast<float>(static_cast<double>(effectiveOutputSamples) / sr);
-        qDebug() << "[DjEngine] Effective output latency:" << effectiveOutputSamples
-                 << "samples =" << m_latencySeconds << "s"
-                 << "(outputRaw:" << outputLatencySamples
-                 << "buffer:" << callbackBufferSamples << ")";
-    } else {
-        m_latencySeconds = 0.011f;
-        qDebug() << "[DjEngine] No audio device yet, using fallback latency 11ms";
-    }
+    refreshHardwareLatency();
     m_snapClock.start();
 
     connect(&timer, &QTimer::timeout, this, &DjEngine::onTimer);
@@ -1347,6 +1328,12 @@ float DjEngine::getDuration() const
 
 void DjEngine::refreshHardwareLatency()
 {
+    static int s_lastEffectiveSamples = -1;
+    static int s_lastOutputRawSamples = -1;
+    static int s_lastBufferSamples = -1;
+    static int s_lastSampleRateRounded = -1;
+    static bool s_loggedNoDevice = false;
+
     if (auto* device = deviceManager.getCurrentAudioDevice()) {
         const int outputLatencySamples = std::max(0, device->getOutputLatencyInSamples());
         const int callbackBufferSamples = std::max(0, device->getCurrentBufferSizeSamples());
@@ -1357,14 +1344,33 @@ void DjEngine::refreshHardwareLatency()
         if (sampleRate > 0.0)
             m_latencySeconds = static_cast<float>(static_cast<double>(effectiveOutputSamples) / sampleRate);
 
-        qDebug() << "[DjEngine] Effective output latency:" << effectiveOutputSamples
-                 << "samples =" << m_latencySeconds << "s"
-                 << "(outputRaw:" << outputLatencySamples
-                 << "buffer:" << callbackBufferSamples
-                 << "sr:" << sampleRate << ")";
+        const int sampleRateRounded = sampleRate > 0.0
+            ? static_cast<int>(std::lround(sampleRate))
+            : 0;
+        const bool changed = (effectiveOutputSamples != s_lastEffectiveSamples)
+                          || (outputLatencySamples != s_lastOutputRawSamples)
+                          || (callbackBufferSamples != s_lastBufferSamples)
+                          || (sampleRateRounded != s_lastSampleRateRounded)
+                          || s_loggedNoDevice;
+
+        if (changed) {
+            qInfo() << "[DjEngine] Output latency:" << effectiveOutputSamples
+                    << "smp" << "(" << m_latencySeconds << "s)"
+                    << "raw:" << outputLatencySamples
+                    << "buf:" << callbackBufferSamples
+                    << "sr:" << sampleRateRounded;
+            s_lastEffectiveSamples = effectiveOutputSamples;
+            s_lastOutputRawSamples = outputLatencySamples;
+            s_lastBufferSamples = callbackBufferSamples;
+            s_lastSampleRateRounded = sampleRateRounded;
+            s_loggedNoDevice = false;
+        }
     } else {
         m_latencySeconds = 0.011f;
-        qDebug() << "[DjEngine] No audio device yet, using fallback latency 11ms";
+        if (!s_loggedNoDevice) {
+            qInfo() << "[DjEngine] No audio device yet, using fallback latency 11ms";
+            s_loggedNoDevice = true;
+        }
     }
 }
 
@@ -1681,10 +1687,6 @@ void DjEngine::loadTrack(const QString& rawPath)
 
         const auto metaMap = buildMetadataLookup(reader->metadataValues);
 
-        qDebug() << "=== METADATA for" << rawPath << "(" << metaMap.size() << "keys) ===";
-        for (auto it = metaMap.cbegin(); it != metaMap.cend(); ++it)
-            qDebug() << "  " << it.key() << "=" << it.value();
-
         m_trackTitle  = metaValue(metaMap, {"title", "id3title", "tit2", "tt2", "name", "tracktitle", "song"});
         m_trackArtist = metaValue(metaMap, {"artist", "id3artist", "tpe1", "albumartist", "tpe2", "band", "performer", "leadartist"});
         m_trackAlbum  = metaValue(metaMap, {"album", "id3album", "talb", "record", "albumtitle"});
@@ -1724,11 +1726,8 @@ void DjEngine::loadTrack(const QString& rawPath)
                                     .arg(m_deckId)
                                     .arg(QDateTime::currentMSecsSinceEpoch());
                 m_hasCoverArt = true;
-                qDebug() << "[DjEngine] Cover art loaded:" << coverFmt
-                         << coverData.size() << "bytes";
             } else {
                 m_coverProvider->clearCover(m_deckId);
-                qDebug() << "[DjEngine] No cover art found";
             }
         }
 
@@ -1796,18 +1795,9 @@ void DjEngine::loadTrack(const QString& rawPath)
                     m_trackData->replaceAllData(std::move(cache.waveform), std::max(0.001f, cache.globalMaxPeak));
                     m_trackData->setRgbWaveformData(std::move(cache.rgb));
                     loadedWaveformCache = true;
-                    qDebug() << "[DjEngine] Waveform cache hit:" << rawPath;
-                } else {
-                    qDebug() << "[DjEngine] Waveform cache rejected (incomplete):" << rawPath;
                 }
-            } else {
-                qDebug() << "[DjEngine] Waveform cache miss:" << rawPath;
             }
         }
-
-        qDebug() << "[DjEngine] title=" << m_trackTitle
-                 << " artist=" << m_trackArtist
-                 << " key=" << m_trackKey;
 
         emit trackMetadataChanged();
 
@@ -2812,8 +2802,6 @@ void DjEngine::setTempoPercent(double percent)
     }
 
     updateSpeedAndPitch();
-    
-    qDebug() << "[DjEngine] Tempo set to" << percent << "%" << "(keylock:" << m_keylock << ")";
     
     emit tempoChanged();
 

@@ -1079,7 +1079,7 @@ Window {
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: console.log("Browse library folder")
+                                onClicked: {}
                             }
                         }
                     }

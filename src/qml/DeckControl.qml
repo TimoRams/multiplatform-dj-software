@@ -134,7 +134,6 @@ Item {
         _trackAlbum    = deck.engine.trackAlbum
         _trackDuration = deck.engine.trackDuration
         _trackKey      = deck.engine.trackKey
-        console.log("[Deck " + deck.deckName + "] title='" + _trackTitle + "' artist='" + _trackArtist + "' key='" + _trackKey + "' dur='" + _trackDuration + "'")
     }
 
     function _syncBpm() {
@@ -300,7 +299,6 @@ Item {
             if (path.startsWith("file://"))
                 path = path.substring(7)
             if (path !== "" && deck.engine) {
-                console.log("Deck " + deck.deckName + " ← " + path)
                 deck.engine.loadTrack(path)
             }
         }

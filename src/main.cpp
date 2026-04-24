@@ -63,7 +63,11 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIsEmpty("QT_SCALE_FACTOR_ROUNDING_POLICY"))
         qputenv("QT_SCALE_FACTOR_ROUNDING_POLICY", "RoundPreferFloor");
 
-    qputenv("QSG_INFO", "1");
+    if (qEnvironmentVariableIsEmpty("QT_LOGGING_RULES")) {
+        qputenv("QT_LOGGING_RULES",
+                "qt.scenegraph.general=false;"
+                "qt.rhi.general=false");
+    }
 
 #if defined(Q_OS_MACOS)
     // Use Metal on macOS (native RHI backend).

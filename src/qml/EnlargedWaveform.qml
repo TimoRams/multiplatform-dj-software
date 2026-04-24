@@ -57,7 +57,6 @@ Item {
                  if (path.startsWith("file://")) {
                       path = path.substring(7);
                  }
-                 console.log("Loading into Enlarged Waveform: " + path);
                  if (root.engine) {
                      root.engine.loadTrack(path);
                  }
