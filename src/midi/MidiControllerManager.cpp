@@ -26,6 +26,31 @@ int clampMidi7bit(int value)
 {
     return std::max(0, std::min(127, value));
 }
+
+bool containsIdentifier(const std::vector<juce::String>& ids, const juce::String& needle)
+{
+    return std::ranges::find(ids, needle) != ids.end();
+}
+
+int indexOfIdentifier(const std::vector<juce::String>& ids, const juce::String& needle)
+{
+    const auto it = std::ranges::find(ids, needle);
+    if (it == ids.end())
+        return -1;
+    return static_cast<int>(std::distance(ids.begin(), it));
+}
+
+template <typename DeviceList>
+void appendMidiDeviceNames(const DeviceList& devices,
+                           std::vector<juce::String>& outIdentifiers,
+                           QStringList& outNames)
+{
+    outIdentifiers.reserve(outIdentifiers.size() + devices.size());
+    for (const auto& dev : devices) {
+        outIdentifiers.push_back(dev.identifier);
+        outNames.push_back(toQString(dev.name));
+    }
+}
 }
 
 MidiControllerManager::MidiControllerManager(ParameterStore* store, QObject* parent)
@@ -89,20 +114,16 @@ void MidiControllerManager::refreshMidiDeviceCache()
     m_availableInputDeviceIdentifiers.clear();
     m_availableInputDeviceNames.clear();
 
-    const auto inDevices = juce::MidiInput::getAvailableDevices();
-    for (const auto& dev : inDevices) {
-        m_availableInputDeviceIdentifiers.push_back(dev.identifier);
-        m_availableInputDeviceNames.push_back(toQString(dev.name));
-    }
+    appendMidiDeviceNames(juce::MidiInput::getAvailableDevices(),
+                          m_availableInputDeviceIdentifiers,
+                          m_availableInputDeviceNames);
 
     m_availableOutputDeviceIdentifiers.clear();
     m_availableOutputDeviceNames.clear();
 
-    const auto outDevices = juce::MidiOutput::getAvailableDevices();
-    for (const auto& dev : outDevices) {
-        m_availableOutputDeviceIdentifiers.push_back(dev.identifier);
-        m_availableOutputDeviceNames.push_back(toQString(dev.name));
-    }
+    appendMidiDeviceNames(juce::MidiOutput::getAvailableDevices(),
+                          m_availableOutputDeviceIdentifiers,
+                          m_availableOutputDeviceNames);
 
 #if defined(Q_OS_LINUX)
     if (m_availableInputDeviceNames.isEmpty())
@@ -339,26 +360,14 @@ void MidiControllerManager::restoreSavedDeviceSelections()
     const auto inputId = SettingsManager::getInstance().getMidiInputIdentifier();
     if (!inputId.isEmpty()) {
         const juce::String savedInput = juce::String::fromUTF8(inputId.toUtf8().constData());
-        const bool inputExists = std::any_of(m_availableInputDeviceIdentifiers.begin(),
-                                             m_availableInputDeviceIdentifiers.end(),
-                                             [&savedInput](const juce::String& id)
-        {
-            return id == savedInput;
-        });
-        if (inputExists)
+        if (containsIdentifier(m_availableInputDeviceIdentifiers, savedInput))
             openMidiInputByIdentifier(savedInput);
     }
 
     const auto outputId = SettingsManager::getInstance().getMidiOutputIdentifier();
     if (!outputId.isEmpty()) {
         const juce::String savedOutput = juce::String::fromUTF8(outputId.toUtf8().constData());
-        const bool outputExists = std::any_of(m_availableOutputDeviceIdentifiers.begin(),
-                                              m_availableOutputDeviceIdentifiers.end(),
-                                              [&savedOutput](const juce::String& id)
-        {
-            return id == savedOutput;
-        });
-        if (outputExists)
+        if (containsIdentifier(m_availableOutputDeviceIdentifiers, savedOutput))
             openMidiOutputByIdentifier(savedOutput);
     }
 }
@@ -400,12 +409,7 @@ int MidiControllerManager::getSelectedMidiInputIndex() const
         return -1;
 
     const juce::String selectedId = juce::String::fromUTF8(selected.toUtf8().constData());
-    for (size_t i = 0; i < m_availableInputDeviceIdentifiers.size(); ++i) {
-        if (m_availableInputDeviceIdentifiers[i] == selectedId)
-            return static_cast<int>(i);
-    }
-
-    return -1;
+    return indexOfIdentifier(m_availableInputDeviceIdentifiers, selectedId);
 }
 
 int MidiControllerManager::getSelectedMidiOutputIndex() const
@@ -415,12 +419,7 @@ int MidiControllerManager::getSelectedMidiOutputIndex() const
         return -1;
 
     const juce::String selectedId = juce::String::fromUTF8(selected.toUtf8().constData());
-    for (size_t i = 0; i < m_availableOutputDeviceIdentifiers.size(); ++i) {
-        if (m_availableOutputDeviceIdentifiers[i] == selectedId)
-            return static_cast<int>(i);
-    }
-
-    return -1;
+    return indexOfIdentifier(m_availableOutputDeviceIdentifiers, selectedId);
 }
 
 int MidiControllerManager::getSelectedMidiDeviceIndex() const

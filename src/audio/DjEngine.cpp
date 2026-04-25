@@ -162,8 +162,7 @@ int choosePreferredBufferSize(juce::AudioIODevice* device, int requestedSize)
     int bestSize = availableSizes[0];
     int bestDistance = std::abs(bestSize - requestedSize);
 
-    for (int i = 1; i < availableSizes.size(); ++i) {
-        const int candidate = availableSizes[i];
+    for (const int candidate : availableSizes) {
         const int distance = std::abs(candidate - requestedSize);
         if (distance < bestDistance || (distance == bestDistance && candidate < bestSize)) {
             bestSize = candidate;
@@ -201,6 +200,33 @@ void ensureSharedAudioDeviceManagerReady(juce::AudioDeviceManager& manager)
     const juce::String err = manager.initialiseWithDefaultDevices(0, 2);
     if (err.isNotEmpty())
         qWarning() << "JUCE AudioDeviceManager err:" << QString::fromStdString(err.toStdString());
+}
+
+struct OutputLatencySnapshot {
+    int outputRawSamples = 0;
+    int callbackBufferSamples = 0;
+    int effectiveOutputSamples = 0;
+    double sampleRate = 0.0;
+
+    [[nodiscard]] int roundedSampleRate() const noexcept
+    {
+        return sampleRate > 0.0 ? static_cast<int>(std::lround(sampleRate)) : 0;
+    }
+};
+
+OutputLatencySnapshot readOutputLatencySnapshot(juce::AudioIODevice* device)
+{
+    if (!device)
+        return {};
+
+    const int outputRawSamples = std::max(0, device->getOutputLatencyInSamples());
+    const int callbackBufferSamples = std::max(0, device->getCurrentBufferSizeSamples());
+    return {
+        .outputRawSamples = outputRawSamples,
+        .callbackBufferSamples = callbackBufferSamples,
+        .effectiveOutputSamples = outputRawSamples > 0 ? outputRawSamples : callbackBufferSamples,
+        .sampleRate = device->getCurrentSampleRate()
+    };
 }
 
 }
@@ -1335,34 +1361,26 @@ void DjEngine::refreshHardwareLatency()
     static bool s_loggedNoDevice = false;
 
     if (auto* device = deviceManager.getCurrentAudioDevice()) {
-        const int outputLatencySamples = std::max(0, device->getOutputLatencyInSamples());
-        const int callbackBufferSamples = std::max(0, device->getCurrentBufferSizeSamples());
-        const int effectiveOutputSamples = outputLatencySamples > 0
-            ? outputLatencySamples
-            : callbackBufferSamples;
-        const double sampleRate = device->getCurrentSampleRate();
-        if (sampleRate > 0.0)
-            m_latencySeconds = static_cast<float>(static_cast<double>(effectiveOutputSamples) / sampleRate);
+        const auto latency = readOutputLatencySnapshot(device);
+        if (latency.sampleRate > 0.0)
+            m_latencySeconds = static_cast<float>(static_cast<double>(latency.effectiveOutputSamples) / latency.sampleRate);
 
-        const int sampleRateRounded = sampleRate > 0.0
-            ? static_cast<int>(std::lround(sampleRate))
-            : 0;
-        const bool changed = (effectiveOutputSamples != s_lastEffectiveSamples)
-                          || (outputLatencySamples != s_lastOutputRawSamples)
-                          || (callbackBufferSamples != s_lastBufferSamples)
-                          || (sampleRateRounded != s_lastSampleRateRounded)
+        const bool changed = (latency.effectiveOutputSamples != s_lastEffectiveSamples)
+                          || (latency.outputRawSamples != s_lastOutputRawSamples)
+                          || (latency.callbackBufferSamples != s_lastBufferSamples)
+                          || (latency.roundedSampleRate() != s_lastSampleRateRounded)
                           || s_loggedNoDevice;
 
         if (changed) {
-            qInfo() << "[DjEngine] Output latency:" << effectiveOutputSamples
+            qInfo() << "[DjEngine] Output latency:" << latency.effectiveOutputSamples
                     << "smp" << "(" << m_latencySeconds << "s)"
-                    << "raw:" << outputLatencySamples
-                    << "buf:" << callbackBufferSamples
-                    << "sr:" << sampleRateRounded;
-            s_lastEffectiveSamples = effectiveOutputSamples;
-            s_lastOutputRawSamples = outputLatencySamples;
-            s_lastBufferSamples = callbackBufferSamples;
-            s_lastSampleRateRounded = sampleRateRounded;
+                    << "raw:" << latency.outputRawSamples
+                    << "buf:" << latency.callbackBufferSamples
+                    << "sr:" << latency.roundedSampleRate();
+            s_lastEffectiveSamples = latency.effectiveOutputSamples;
+            s_lastOutputRawSamples = latency.outputRawSamples;
+            s_lastBufferSamples = latency.callbackBufferSamples;
+            s_lastSampleRateRounded = latency.roundedSampleRate();
             s_loggedNoDevice = false;
         }
     } else {
@@ -1494,14 +1512,12 @@ DjEngine::LatencySnapshot DjEngine::buildLatencySnapshot() const
     LatencySnapshot snapshot;
 
     if (auto* device = deviceManager.getCurrentAudioDevice()) {
-        snapshot.outputRawSamples = std::max(0, device->getOutputLatencyInSamples());
-        snapshot.bufferSamples = std::max(0, device->getCurrentBufferSizeSamples());
-        snapshot.outputEffectiveSamples = snapshot.outputRawSamples > 0
-            ? snapshot.outputRawSamples
-            : snapshot.bufferSamples;
-        const double deviceRate = device->getCurrentSampleRate();
-        if (deviceRate > 0.0)
-            snapshot.sampleRate = deviceRate;
+        const auto latency = readOutputLatencySnapshot(device);
+        snapshot.outputRawSamples = latency.outputRawSamples;
+        snapshot.bufferSamples = latency.callbackBufferSamples;
+        snapshot.outputEffectiveSamples = latency.effectiveOutputSamples;
+        if (latency.sampleRate > 0.0)
+            snapshot.sampleRate = latency.sampleRate;
     }
 
     if (timeStretchSource)
@@ -1665,6 +1681,163 @@ TrackData* DjEngine::getTrackData() const
     return m_trackData;
 }
 
+void DjEngine::resetTrackLoadState()
+{
+    m_trackData->clear();
+    m_currentSegments.clear();
+    clearHotCueState();
+    m_mainCueSec = -1.0;
+    m_mainCuePreviewActive = false;
+    emit segmentsChanged();
+    emit hotCuesChanged();
+}
+
+void DjEngine::populateMetadataFromReader(const juce::AudioFormatReader& reader,
+                                          const QString& rawPath,
+                                          const juce::File& file)
+{
+    const auto metaMap = buildMetadataLookup(reader.metadataValues);
+
+    m_trackTitle = metaValue(metaMap, {"title", "id3title", "tit2", "tt2", "name", "tracktitle", "song"});
+    m_trackArtist = metaValue(metaMap, {"artist", "id3artist", "tpe1", "albumartist", "tpe2", "band", "performer", "leadartist"});
+    m_trackAlbum = metaValue(metaMap, {"album", "id3album", "talb", "record", "albumtitle"});
+    m_trackKey = metaValue(metaMap, {"key", "tkey", "initialkey", "musickey", "keysig"});
+
+    // Tag BPM is used immediately; the background analyzer will overwrite it later.
+    const QString tagBpm = metaValue(metaMap, {"bpm", "tbpm", "tmpo", "tempo", "beatsperminute"});
+    const double bpmVal = parseBpmString(tagBpm);
+    if (bpmVal > 0.0)
+        m_trackData->setBpmData(bpmVal, 0, reader.sampleRate);
+
+    const auto v1 = readId3v1(rawPath);
+    if (v1) {
+        if (m_trackTitle.isEmpty() && !v1->title.isEmpty())
+            m_trackTitle = v1->title;
+        if (m_trackArtist.isEmpty() && !v1->artist.isEmpty())
+            m_trackArtist = v1->artist;
+        if (m_trackAlbum.isEmpty() && !v1->album.isEmpty())
+            m_trackAlbum = v1->album;
+    }
+
+    const QString baseName = cleanup(QString::fromStdString(file.getFileNameWithoutExtension().toStdString()));
+    filenameHeuristic(baseName, m_trackTitle, m_trackArtist);
+}
+
+void DjEngine::updateTrackDuration(double durationSec)
+{
+    m_trackDurationSec = durationSec;
+    const int mins = static_cast<int>(durationSec) / 60;
+    const int secs = static_cast<int>(durationSec) % 60;
+    m_trackDuration = QString("%1:%2").arg(mins).arg(secs, 2, 10, QChar('0'));
+}
+
+void DjEngine::refreshCoverArtForTrack(const QString& rawPath)
+{
+    m_hasCoverArt = false;
+    m_coverArtUrl.clear();
+
+    if (!m_coverProvider)
+        return;
+
+    auto [coverData, _coverFmt] = CoverArtExtractor::extractCoverArt(rawPath);
+    if (!coverData.isEmpty()) {
+        m_coverProvider->setCover(m_deckId, coverData);
+        // Append a timestamp query parameter to bust QML's image:// URL cache.
+        m_coverArtUrl = QString("image://coverart/%1?t=%2")
+                            .arg(m_deckId)
+                            .arg(QDateTime::currentMSecsSinceEpoch());
+        m_hasCoverArt = true;
+    } else {
+        m_coverProvider->clearCover(m_deckId);
+    }
+}
+
+bool DjEngine::hydrateLibraryStateForTrack(const QString& rawPath, double durationSec)
+{
+    if (!m_libraryDb)
+        return false;
+
+    const int durSec = static_cast<int>(durationSec);
+    int bitrateKbps = 0;
+    const juce::File file(rawPath.toStdString());
+    if (durationSec > 0.0) {
+        const auto bytes = static_cast<double>(file.getSize());
+        bitrateKbps = static_cast<int>(std::lround((bytes * 8.0) / durationSec / 1000.0));
+    }
+
+    m_currentTrackId = TrackIdGenerator::generate(
+        m_trackArtist, m_trackTitle, durSec, rawPath);
+    m_libraryDb->addTrack(m_currentTrackId,
+                          m_trackTitle, m_trackArtist, durSec, rawPath, bitrateKbps);
+
+    bool hasDbAnalysis = false;
+    LibraryDatabase::AnalysisSnapshot cachedAnalysis;
+    if (m_libraryDb->tryGetAnalysisData(m_currentTrackId, &cachedAnalysis)
+        && cachedAnalysis.isAnalyzed) {
+        hasDbAnalysis = true;
+        m_currentSegments = m_libraryDb->trackSegmentsForTrack(m_currentTrackId);
+        emit segmentsChanged();
+
+        if (cachedAnalysis.bpm > 0.0) {
+            m_trackData->setBpmData(cachedAnalysis.bpm,
+                                    cachedAnalysis.firstBeatSample,
+                                    cachedAnalysis.sampleRate,
+                                    cachedAnalysis.beatGrid);
+        }
+
+        const QString cachedKey = cachedAnalysis.key.trimmed();
+        if (!cachedKey.isEmpty()) {
+            m_trackKey = cachedKey;
+            m_trackData->setKeyData(cachedKey);
+        }
+    } else {
+        // Strictly hide segment UI state until fresh analysis writes data.
+        m_currentSegments = QVariantList();
+        emit segmentsChanged();
+    }
+
+    loadHotCuesForCurrentTrack();
+    loadMainCueForCurrentTrack();
+    return hasDbAnalysis;
+}
+
+bool DjEngine::tryRestoreWaveformCacheForTrack(const QString& rawPath)
+{
+    WaveformCache::Payload cache;
+    const int pps = static_cast<int>(WAVEFORM_POINTS_PER_SECOND);
+    if (!WaveformCache::loadForFile(rawPath, pps, &cache)
+        || cache.waveform.isEmpty()
+        || cache.rgb.isEmpty()) {
+        return false;
+    }
+
+    const int expected = cache.totalExpected > 0 ? cache.totalExpected : cache.waveform.size();
+    const bool wfComplete = cache.waveform.size() >= static_cast<int>(expected * 0.98);
+    const bool rgbComplete = cache.rgb.size() >= static_cast<int>(expected * 0.98);
+
+    if (expected <= 0 || !wfComplete || !rgbComplete)
+        return false;
+
+    m_trackData->setTotalExpected(expected);
+    m_trackData->replaceAllData(std::move(cache.waveform), std::max(0.001f, cache.globalMaxPeak));
+    m_trackData->setRgbWaveformData(std::move(cache.rgb));
+    return true;
+}
+
+void DjEngine::attachReaderToTransport(juce::AudioFormatReader* reader)
+{
+    transportSource.stop();
+    transportSource.setSource(nullptr);
+
+    readerSource = std::make_unique<juce::AudioFormatReaderSource>(reader, true);
+    reverseWrapSource = std::make_unique<ReverseStreamAudioSource>(readerSource.get());
+    reverseWrapSource->setReverse(m_isReverse);
+    transportSource.setSource(reverseWrapSource.get(), 0, nullptr, reader->sampleRate);
+    m_loadedTrackSampleRate = reader->sampleRate;
+    transportSource.setPosition(0.0);
+    ensureTransportRunningForPlayIntent();
+}
+
 void DjEngine::loadTrack(const QString& rawPath)
 {
     juce::File file(rawPath.toStdString());
@@ -1675,152 +1848,33 @@ void DjEngine::loadTrack(const QString& rawPath)
     }
 
     auto* reader = formatManager.createReaderFor(file);
-    if (reader != nullptr)
-    {
-        m_trackData->clear();
-        m_currentSegments.clear();
-        clearHotCueState();
-        m_mainCueSec = -1.0;
-        m_mainCuePreviewActive = false;
-        emit segmentsChanged();
-        emit hotCuesChanged();
+    if (reader == nullptr)
+        return;
 
-        const auto metaMap = buildMetadataLookup(reader->metadataValues);
+    resetTrackLoadState();
+    populateMetadataFromReader(*reader, rawPath, file);
 
-        m_trackTitle  = metaValue(metaMap, {"title", "id3title", "tit2", "tt2", "name", "tracktitle", "song"});
-        m_trackArtist = metaValue(metaMap, {"artist", "id3artist", "tpe1", "albumartist", "tpe2", "band", "performer", "leadartist"});
-        m_trackAlbum  = metaValue(metaMap, {"album", "id3album", "talb", "record", "albumtitle"});
-        m_trackKey    = metaValue(metaMap, {"key", "tkey", "initialkey", "musickey", "keysig"});
+    const double durationSec = static_cast<double>(reader->lengthInSamples) / reader->sampleRate;
+    updateTrackDuration(durationSec);
+    refreshCoverArtForTrack(rawPath);
 
-        // Tag BPM is used immediately; the background analyzer will overwrite it later.
-        QString tagBpm = metaValue(metaMap, {"bpm", "tbpm", "tmpo", "tempo", "beatsperminute"});
-        double bpmVal  = parseBpmString(tagBpm);
-        if (bpmVal > 0.0)
-            m_trackData->setBpmData(bpmVal, 0, reader->sampleRate);
+    m_hasTrack = true;
+    clearLoop();
 
-        auto v1 = readId3v1(rawPath);
-        if (v1) {
-            if (m_trackTitle.isEmpty()  && !v1->title.isEmpty())  m_trackTitle  = v1->title;
-            if (m_trackArtist.isEmpty() && !v1->artist.isEmpty()) m_trackArtist = v1->artist;
-            if (m_trackAlbum.isEmpty()  && !v1->album.isEmpty())  m_trackAlbum  = v1->album;
-        }
+    const bool hasDbAnalysis = hydrateLibraryStateForTrack(rawPath, durationSec);
+    const bool loadedWaveformCache = tryRestoreWaveformCacheForTrack(rawPath);
 
-        QString baseName = cleanup(QString::fromStdString(
-            file.getFileNameWithoutExtension().toStdString()));
-        filenameHeuristic(baseName, m_trackTitle, m_trackArtist);
+    emit trackMetadataChanged();
 
-        double durationSec = static_cast<double>(reader->lengthInSamples) / reader->sampleRate;
-        m_trackDurationSec = durationSec;
-        int mins = static_cast<int>(durationSec) / 60;
-        int secs = static_cast<int>(durationSec) % 60;
-        m_trackDuration = QString("%1:%2").arg(mins).arg(secs, 2, 10, QChar('0'));
+    attachReaderToTransport(reader);
 
-        m_hasCoverArt = false;
-        m_coverArtUrl.clear();
-        if (m_coverProvider) {
-            auto [coverData, coverFmt] = CoverArtExtractor::extractCoverArt(rawPath);
-            if (!coverData.isEmpty()) {
-                m_coverProvider->setCover(m_deckId, coverData);
-                // Append a timestamp query parameter to bust QML's image:// URL cache.
-                m_coverArtUrl = QString("image://coverart/%1?t=%2")
-                                    .arg(m_deckId)
-                                    .arg(QDateTime::currentMSecsSinceEpoch());
-                m_hasCoverArt = true;
-            } else {
-                m_coverProvider->clearCover(m_deckId);
-            }
-        }
+    // Skip heavy analysis only when BOTH waveform cache and analysis metadata
+    // (BPM/key/grid) are already available.
+    if (!(loadedWaveformCache && hasDbAnalysis))
+        m_analyzer->startAnalysis(rawPath);
 
-        m_hasTrack = true;
-        clearLoop();
-
-        // ── Add track to library database ────────────────────────────────
-        bool hasDbAnalysis = false;
-        if (m_libraryDb) {
-            int durSec = static_cast<int>(durationSec);
-            int bitrateKbps = 0;
-            if (durationSec > 0.0) {
-                const auto bytes = static_cast<double>(file.getSize());
-                bitrateKbps = static_cast<int>(std::lround((bytes * 8.0) / durationSec / 1000.0));
-            }
-            m_currentTrackId = TrackIdGenerator::generate(
-                m_trackArtist, m_trackTitle, durSec, rawPath);
-            m_libraryDb->addTrack(m_currentTrackId,
-                                 m_trackTitle, m_trackArtist, durSec, rawPath, bitrateKbps);
-
-            LibraryDatabase::AnalysisSnapshot cachedAnalysis;
-            if (m_libraryDb->tryGetAnalysisData(m_currentTrackId, &cachedAnalysis)
-                && cachedAnalysis.isAnalyzed) {
-                hasDbAnalysis = true;
-                m_currentSegments = m_libraryDb->trackSegmentsForTrack(m_currentTrackId);
-                emit segmentsChanged();
-
-                if (cachedAnalysis.bpm > 0.0) {
-                    m_trackData->setBpmData(cachedAnalysis.bpm,
-                                            cachedAnalysis.firstBeatSample,
-                                            cachedAnalysis.sampleRate,
-                                            cachedAnalysis.beatGrid);
-                }
-
-                const QString cachedKey = cachedAnalysis.key.trimmed();
-                if (!cachedKey.isEmpty()) {
-                    m_trackKey = cachedKey;
-                    m_trackData->setKeyData(cachedKey);
-                }
-            } else {
-                // Strictly hide segment UI state until fresh analysis writes data.
-                m_currentSegments = QVariantList();
-                emit segmentsChanged();
-            }
-
-            loadHotCuesForCurrentTrack();
-            loadMainCueForCurrentTrack();
-        }
-
-        // Try to restore finished waveform render data from user cache.
-        // This avoids re-running full waveform analysis on every reload.
-        bool loadedWaveformCache = false;
-        {
-            WaveformCache::Payload cache;
-            const int pps = static_cast<int>(WAVEFORM_POINTS_PER_SECOND);
-            if (WaveformCache::loadForFile(rawPath, pps, &cache)
-                && !cache.waveform.isEmpty()
-                && !cache.rgb.isEmpty()) {
-                const int expected = cache.totalExpected > 0 ? cache.totalExpected : cache.waveform.size();
-                const bool wfComplete = cache.waveform.size() >= static_cast<int>(expected * 0.98);
-                const bool rgbComplete = cache.rgb.size() >= static_cast<int>(expected * 0.98);
-
-                if (expected > 0 && wfComplete && rgbComplete) {
-                    m_trackData->setTotalExpected(expected);
-                    m_trackData->replaceAllData(std::move(cache.waveform), std::max(0.001f, cache.globalMaxPeak));
-                    m_trackData->setRgbWaveformData(std::move(cache.rgb));
-                    loadedWaveformCache = true;
-                }
-            }
-        }
-
-        emit trackMetadataChanged();
-
-        transportSource.stop();
-        transportSource.setSource(nullptr);
-
-        readerSource = std::make_unique<juce::AudioFormatReaderSource>(reader, true);
-        reverseWrapSource = std::make_unique<ReverseStreamAudioSource>(readerSource.get());
-        reverseWrapSource->setReverse(m_isReverse);
-        transportSource.setSource(reverseWrapSource.get(), 0, nullptr, reader->sampleRate);
-        m_loadedTrackSampleRate = reader->sampleRate;
-        transportSource.setPosition(0.0);
-        ensureTransportRunningForPlayIntent();
-
-        // Skip heavy analysis only when BOTH waveform cache and analysis metadata
-        // (BPM/key/grid) are already available.
-        if (!(loadedWaveformCache && hasDbAnalysis)) {
-            m_analyzer->startAnalysis(rawPath);
-        }
-
-        emit trackLoaded();
-        emit progressChanged();
-    }
+    emit trackLoaded();
+    emit progressChanged();
 }
 
 void DjEngine::togglePlay()

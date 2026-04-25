@@ -288,6 +288,16 @@ private:
 
     LatencySnapshot buildLatencySnapshot() const;
 
+    void resetTrackLoadState();
+    void populateMetadataFromReader(const juce::AudioFormatReader& reader,
+                                    const QString& rawPath,
+                                    const juce::File& file);
+    void updateTrackDuration(double durationSec);
+    void refreshCoverArtForTrack(const QString& rawPath);
+    bool hydrateLibraryStateForTrack(const QString& rawPath, double durationSec);
+    bool tryRestoreWaveformCacheForTrack(const QString& rawPath);
+    void attachReaderToTransport(juce::AudioFormatReader* reader);
+
     void persistCurrentAnalysisToLibrary();
     void clearHotCueState();
     void loadHotCuesForCurrentTrack();
