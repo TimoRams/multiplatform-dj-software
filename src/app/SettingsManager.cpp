@@ -200,6 +200,190 @@ void SettingsManager::setAudioOutputDevice(const QString& deviceName)
     emit audioSettingsChanged();
 }
 
+QString SettingsManager::getAudioMasterDeviceType() const
+{
+    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return QString();
+
+    const auto value = QString::fromUtf8(userSettings->getValue("Audio/Master/DeviceType", "").toRawUTF8());
+    return value.isEmpty() ? getAudioDeviceType() : value;
+}
+
+void SettingsManager::setAudioMasterDeviceType(const QString& deviceType)
+{
+    auto* userSettings = getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return;
+
+    userSettings->setValue("Audio/Master/DeviceType", juce::String::fromUTF8(deviceType.toUtf8().constData()));
+    userSettings->saveIfNeeded();
+    emit audioSettingsChanged();
+}
+
+QString SettingsManager::getAudioMasterOutputDevice() const
+{
+    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return QString();
+
+    const auto value = QString::fromUtf8(userSettings->getValue("Audio/Master/OutputDevice", "").toRawUTF8());
+    return value.isEmpty() ? getAudioOutputDevice() : value;
+}
+
+void SettingsManager::setAudioMasterOutputDevice(const QString& deviceName)
+{
+    auto* userSettings = getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return;
+
+    userSettings->setValue("Audio/Master/OutputDevice", juce::String::fromUTF8(deviceName.toUtf8().constData()));
+    userSettings->saveIfNeeded();
+    emit audioSettingsChanged();
+}
+
+int SettingsManager::getAudioMasterFirstChannel() const
+{
+    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return 1;
+
+    const int value = userSettings->getValue("Audio/Master/FirstChannel", "1").getIntValue();
+    return value == -1 ? -1 : std::clamp(value, 1, 127);
+}
+
+void SettingsManager::setAudioMasterFirstChannel(int firstChannel)
+{
+    const int clamped = firstChannel == -1 ? -1 : std::clamp(firstChannel, 1, 127);
+    auto* userSettings = getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return;
+
+    userSettings->setValue("Audio/Master/FirstChannel", clamped);
+    userSettings->saveIfNeeded();
+    emit audioSettingsChanged();
+}
+
+QString SettingsManager::getAudioHeadphonesDeviceType() const
+{
+    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return QString();
+    return QString::fromUtf8(userSettings->getValue("Audio/Headphones/DeviceType", "").toRawUTF8());
+}
+
+void SettingsManager::setAudioHeadphonesDeviceType(const QString& deviceType)
+{
+    auto* userSettings = getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return;
+
+    userSettings->setValue("Audio/Headphones/DeviceType", juce::String::fromUTF8(deviceType.toUtf8().constData()));
+    userSettings->saveIfNeeded();
+    emit audioSettingsChanged();
+}
+
+QString SettingsManager::getAudioHeadphonesOutputDevice() const
+{
+    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return QString();
+    return QString::fromUtf8(userSettings->getValue("Audio/Headphones/OutputDevice", "").toRawUTF8());
+}
+
+void SettingsManager::setAudioHeadphonesOutputDevice(const QString& deviceName)
+{
+    auto* userSettings = getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return;
+
+    userSettings->setValue("Audio/Headphones/OutputDevice", juce::String::fromUTF8(deviceName.toUtf8().constData()));
+    userSettings->saveIfNeeded();
+    emit audioSettingsChanged();
+}
+
+int SettingsManager::getAudioHeadphonesFirstChannel() const
+{
+    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return -1;
+
+    const int value = userSettings->getValue("Audio/Headphones/FirstChannel", "-1").getIntValue();
+    return value == -1 ? -1 : std::clamp(value, 1, 127);
+}
+
+void SettingsManager::setAudioHeadphonesFirstChannel(int firstChannel)
+{
+    const int clamped = firstChannel == -1 ? -1 : std::clamp(firstChannel, 1, 127);
+    auto* userSettings = getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return;
+
+    userSettings->setValue("Audio/Headphones/FirstChannel", clamped);
+    userSettings->saveIfNeeded();
+    emit audioSettingsChanged();
+}
+
+QString SettingsManager::getAudioBoothDeviceType() const
+{
+    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return QString();
+    return QString::fromUtf8(userSettings->getValue("Audio/Booth/DeviceType", "").toRawUTF8());
+}
+
+void SettingsManager::setAudioBoothDeviceType(const QString& deviceType)
+{
+    auto* userSettings = getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return;
+
+    userSettings->setValue("Audio/Booth/DeviceType", juce::String::fromUTF8(deviceType.toUtf8().constData()));
+    userSettings->saveIfNeeded();
+    emit audioSettingsChanged();
+}
+
+QString SettingsManager::getAudioBoothOutputDevice() const
+{
+    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return QString();
+    return QString::fromUtf8(userSettings->getValue("Audio/Booth/OutputDevice", "").toRawUTF8());
+}
+
+void SettingsManager::setAudioBoothOutputDevice(const QString& deviceName)
+{
+    auto* userSettings = getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return;
+
+    userSettings->setValue("Audio/Booth/OutputDevice", juce::String::fromUTF8(deviceName.toUtf8().constData()));
+    userSettings->saveIfNeeded();
+    emit audioSettingsChanged();
+}
+
+int SettingsManager::getAudioBoothFirstChannel() const
+{
+    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return -1;
+
+    const int value = userSettings->getValue("Audio/Booth/FirstChannel", "-1").getIntValue();
+    return value == -1 ? -1 : std::clamp(value, 1, 127);
+}
+
+void SettingsManager::setAudioBoothFirstChannel(int firstChannel)
+{
+    const int clamped = firstChannel == -1 ? -1 : std::clamp(firstChannel, 1, 127);
+    auto* userSettings = getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return;
+
+    userSettings->setValue("Audio/Booth/FirstChannel", clamped);
+    userSettings->saveIfNeeded();
+    emit audioSettingsChanged();
+}
+
 QStringList SettingsManager::getAvailableAudioDeviceTypes() const
 {
     QStringList types;

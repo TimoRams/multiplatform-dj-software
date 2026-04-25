@@ -23,9 +23,22 @@ Window {
     property int pendingAudioSampleRate: 44100
     property int pendingAudioBufferSize: 128
     property string pendingAudioDeviceType: ""
-    property string pendingAudioOutputDevice: ""
+    property bool audioUiSyncing: false
+
+    property string pendingMasterOutputDevice: ""
+    property int pendingMasterFirstChannel: 1
+
+    property string pendingHeadphonesOutputDevice: ""
+    property int pendingHeadphonesFirstChannel: -1
+
+    property string pendingBoothOutputDevice: ""
+    property int pendingBoothFirstChannel: -1
+
     property var audioDeviceTypeOptions: []
     property var audioOutputDeviceOptions: []
+    property var masterChannelPairOptions: ["None", "1-2"]
+    property var headphonesChannelPairOptions: ["None", "1-2"]
+    property var boothChannelPairOptions: ["None", "1-2"]
 
     readonly property var categories: [
         { label: "Audio Setup",     icon: "♪" },
@@ -65,23 +78,109 @@ Window {
         return -1
     }
 
-    function refreshAudioOutputDevices(deviceType) {
+    function parseFirstChannel(pairText) {
+        if (!pairText || String(pairText) === "None")
+            return -1
+        var parts = String(pairText).split("-")
+        var first = parseInt(parts[0])
+        return isNaN(first) ? -1 : first
+    }
+
+    function pairTextForFirstChannel(options, firstChannel) {
+        if (firstChannel < 1)
+            return "None"
+        var desired = String(firstChannel) + "-" + String(firstChannel + 1)
+        if (indexForText(options, desired) >= 0)
+            return desired
+        return options.length > 0 ? String(options[0]) : "None"
+    }
+
+    function getRoleSelections(role) {
+        if (role === "master")
+            return { outputDevice: pendingMasterOutputDevice, firstChannel: pendingMasterFirstChannel }
+        if (role === "headphones")
+            return { outputDevice: pendingHeadphonesOutputDevice, firstChannel: pendingHeadphonesFirstChannel }
+        return { outputDevice: pendingBoothOutputDevice, firstChannel: pendingBoothFirstChannel }
+    }
+
+    function setRoleSelections(role, outputDevice, firstChannel) {
+        if (role === "master") {
+            pendingMasterOutputDevice = outputDevice
+            pendingMasterFirstChannel = firstChannel
+            return
+        }
+        if (role === "headphones") {
+            pendingHeadphonesOutputDevice = outputDevice
+            pendingHeadphonesFirstChannel = firstChannel
+            return
+        }
+        pendingBoothOutputDevice = outputDevice
+        pendingBoothFirstChannel = firstChannel
+    }
+
+    function refreshRoleOutputAndPairs(role) {
         if (!deckA || !deckA.getAvailableAudioOutputDevices)
             return
 
-        audioOutputDeviceOptions = deckA.getAvailableAudioOutputDevices(deviceType)
-        if (!audioOutputDeviceOptions || audioOutputDeviceOptions.length === 0)
-            audioOutputDeviceOptions = [""]
+        var selections = getRoleSelections(role)
+        var outputOptions = audioOutputDeviceOptions
+        if (!outputOptions || outputOptions.length === 0)
+            outputOptions = ["None"]
 
-        var selectedOutput = pendingAudioOutputDevice
-        if (!selectedOutput || indexForText(audioOutputDeviceOptions, selectedOutput) < 0) {
-            selectedOutput = deckA.getCurrentAudioOutputDevice ? deckA.getCurrentAudioOutputDevice() : ""
-            if (!selectedOutput || indexForText(audioOutputDeviceOptions, selectedOutput) < 0)
-                selectedOutput = audioOutputDeviceOptions[0]
+        if (indexForText(outputOptions, selections.outputDevice) < 0)
+            selections.outputDevice = outputOptions[0]
+
+        setRoleSelections(role, selections.outputDevice, selections.firstChannel)
+
+        audioUiSyncing = true
+        if (role === "master") {
+            masterOutputCombo.currentIndex = Math.max(0, indexForText(outputOptions, pendingMasterOutputDevice))
+            refreshRoleChannelPairs("master")
+            audioUiSyncing = false
+            return
         }
 
-        pendingAudioOutputDevice = selectedOutput
-        outputDeviceCombo.currentIndex = Math.max(0, indexForText(audioOutputDeviceOptions, selectedOutput))
+        if (role === "headphones") {
+            headphonesOutputCombo.currentIndex = Math.max(0, indexForText(outputOptions, pendingHeadphonesOutputDevice))
+            refreshRoleChannelPairs("headphones")
+            audioUiSyncing = false
+            return
+        }
+
+        boothOutputCombo.currentIndex = Math.max(0, indexForText(outputOptions, pendingBoothOutputDevice))
+        refreshRoleChannelPairs("booth")
+        audioUiSyncing = false
+    }
+
+    function refreshRoleChannelPairs(role) {
+        if (!deckA || !deckA.getAvailableOutputChannelPairs)
+            return
+
+        var selections = getRoleSelections(role)
+        var pairOptions = deckA.getAvailableOutputChannelPairs(pendingAudioDeviceType, selections.outputDevice)
+        if (!pairOptions || pairOptions.length === 0)
+            pairOptions = ["None", "1-2"]
+
+        var pairText = pairTextForFirstChannel(pairOptions, selections.firstChannel)
+        var firstChannel = parseFirstChannel(pairText)
+        setRoleSelections(role, selections.deviceType, selections.outputDevice, firstChannel)
+
+        audioUiSyncing = true
+        if (role === "master") {
+            masterChannelPairOptions = pairOptions
+            masterChannelCombo.currentIndex = Math.max(0, indexForText(masterChannelPairOptions, pairText))
+            audioUiSyncing = false
+            return
+        }
+        if (role === "headphones") {
+            headphonesChannelPairOptions = pairOptions
+            headphonesChannelCombo.currentIndex = Math.max(0, indexForText(headphonesChannelPairOptions, pairText))
+            audioUiSyncing = false
+            return
+        }
+        boothChannelPairOptions = pairOptions
+        boothChannelCombo.currentIndex = Math.max(0, indexForText(boothChannelPairOptions, pairText))
+        audioUiSyncing = false
     }
 
     function refreshAudioDeviceLists() {
@@ -91,17 +190,23 @@ Window {
         audioDeviceTypeOptions = deckA.getAvailableAudioDeviceTypes()
         if (!audioDeviceTypeOptions || audioDeviceTypeOptions.length === 0)
             audioDeviceTypeOptions = [""]
+        if (indexForText(audioDeviceTypeOptions, "") < 0)
+            audioDeviceTypeOptions.unshift("")
 
-        var selectedType = pendingAudioDeviceType
-        if (!selectedType || indexForText(audioDeviceTypeOptions, selectedType) < 0) {
-            selectedType = deckA.getCurrentAudioDeviceType ? deckA.getCurrentAudioDeviceType() : ""
-            if (!selectedType || indexForText(audioDeviceTypeOptions, selectedType) < 0)
-                selectedType = audioDeviceTypeOptions[0]
-        }
+        pendingAudioDeviceType = settingsManager ? settingsManager.audioDeviceType : pendingAudioDeviceType
+        if (!pendingAudioDeviceType || indexForText(audioDeviceTypeOptions, pendingAudioDeviceType) < 0)
+            pendingAudioDeviceType = audioDeviceTypeOptions[0]
 
-        pendingAudioDeviceType = selectedType
-        deviceTypeCombo.currentIndex = Math.max(0, indexForText(audioDeviceTypeOptions, selectedType))
-        refreshAudioOutputDevices(selectedType)
+        audioOutputDeviceOptions = deckA.getAvailableAudioOutputDevices(pendingAudioDeviceType)
+        if (!audioOutputDeviceOptions || audioOutputDeviceOptions.length === 0)
+            audioOutputDeviceOptions = ["None"]
+
+        audioUiSyncing = true
+        audioDeviceTypeCombo.currentIndex = Math.max(0, indexForText(audioDeviceTypeOptions, pendingAudioDeviceType))
+        refreshRoleOutputAndPairs("master")
+        refreshRoleOutputAndPairs("headphones")
+        refreshRoleOutputAndPairs("booth")
+        audioUiSyncing = false
     }
 
     function syncAudioSettings() {
@@ -109,50 +214,99 @@ Window {
             return
 
         pendingAudioDeviceType = settingsManager.audioDeviceType
-        pendingAudioOutputDevice = settingsManager.audioOutputDevice
+
+        pendingMasterOutputDevice = settingsManager.audioMasterOutputDevice
+        pendingMasterFirstChannel = settingsManager.audioMasterFirstChannel
+
+        pendingHeadphonesOutputDevice = settingsManager.audioHeadphonesOutputDevice
+        pendingHeadphonesFirstChannel = settingsManager.audioHeadphonesFirstChannel
+
+        pendingBoothOutputDevice = settingsManager.audioBoothOutputDevice
+        pendingBoothFirstChannel = settingsManager.audioBoothFirstChannel
+
         pendingAudioSampleRate = settingsManager.audioSampleRate
         pendingAudioBufferSize = settingsManager.audioBufferSize
 
         refreshAudioDeviceLists()
 
+        audioUiSyncing = true
         sampleRateCombo.currentIndex = indexForValue(sampleRateOptions, pendingAudioSampleRate)
         bufferSizeCombo.currentIndex = indexForValue(bufferSizeOptions, pendingAudioBufferSize)
+        audioUiSyncing = false
     }
 
     function applyAudioSettings() {
         if (!settingsManager)
             return
 
-        var deviceType = audioDeviceTypeOptions.length > 0 && deviceTypeCombo.currentIndex >= 0
-            ? audioDeviceTypeOptions[deviceTypeCombo.currentIndex]
-            : pendingAudioDeviceType
-        var outputDevice = audioOutputDeviceOptions.length > 0 && outputDeviceCombo.currentIndex >= 0
-            ? audioOutputDeviceOptions[outputDeviceCombo.currentIndex]
-            : pendingAudioOutputDevice
+        var deviceType = audioDeviceTypeOptions.length > 0 && audioDeviceTypeCombo.currentIndex >= 0
+            ? audioDeviceTypeOptions[audioDeviceTypeCombo.currentIndex] : pendingAudioDeviceType
+
+        var masterOutputDevice = audioOutputDeviceOptions.length > 0 && masterOutputCombo.currentIndex >= 0
+            ? audioOutputDeviceOptions[masterOutputCombo.currentIndex] : pendingMasterOutputDevice
+        var masterFirstChannel = masterChannelPairOptions.length > 0 && masterChannelCombo.currentIndex >= 0
+            ? parseFirstChannel(masterChannelPairOptions[masterChannelCombo.currentIndex]) : pendingMasterFirstChannel
+
+        var headphonesOutputDevice = audioOutputDeviceOptions.length > 0 && headphonesOutputCombo.currentIndex >= 0
+            ? audioOutputDeviceOptions[headphonesOutputCombo.currentIndex] : pendingHeadphonesOutputDevice
+        var headphonesFirstChannel = headphonesChannelPairOptions.length > 0 && headphonesChannelCombo.currentIndex >= 0
+            ? parseFirstChannel(headphonesChannelPairOptions[headphonesChannelCombo.currentIndex]) : pendingHeadphonesFirstChannel
+
+        var boothOutputDevice = audioOutputDeviceOptions.length > 0 && boothOutputCombo.currentIndex >= 0
+            ? audioOutputDeviceOptions[boothOutputCombo.currentIndex] : pendingBoothOutputDevice
+        var boothFirstChannel = boothChannelPairOptions.length > 0 && boothChannelCombo.currentIndex >= 0
+            ? parseFirstChannel(boothChannelPairOptions[boothChannelCombo.currentIndex]) : pendingBoothFirstChannel
+
         var sampleRate = sampleRateOptions[sampleRateCombo.currentIndex].value
         var bufferSize = bufferSizeOptions[bufferSizeCombo.currentIndex].value
 
         pendingAudioDeviceType = deviceType
-        pendingAudioOutputDevice = outputDevice
+        pendingMasterOutputDevice = masterOutputDevice
+        pendingMasterFirstChannel = masterFirstChannel
+        pendingHeadphonesOutputDevice = headphonesOutputDevice
+        pendingHeadphonesFirstChannel = headphonesFirstChannel
+        pendingBoothOutputDevice = boothOutputDevice
+        pendingBoothFirstChannel = boothFirstChannel
+
         pendingAudioSampleRate = sampleRate
         pendingAudioBufferSize = bufferSize
 
         settingsManager.audioDeviceType = deviceType
-        settingsManager.audioOutputDevice = outputDevice
+        settingsManager.audioMasterOutputDevice = masterOutputDevice
+        settingsManager.audioMasterFirstChannel = masterFirstChannel
+        settingsManager.audioHeadphonesOutputDevice = headphonesOutputDevice
+        settingsManager.audioHeadphonesFirstChannel = headphonesFirstChannel
+        settingsManager.audioBoothOutputDevice = boothOutputDevice
+        settingsManager.audioBoothFirstChannel = boothFirstChannel
         settingsManager.audioSampleRate = sampleRate
         settingsManager.audioBufferSize = bufferSize
 
         var appliedA = deckA && deckA.applyAudioDeviceSettings
-            ? deckA.applyAudioDeviceSettings(deviceType, outputDevice, sampleRate, bufferSize)
+            ? deckA.applyAudioDeviceSettings(deviceType,
+                                             masterOutputDevice,
+                                             sampleRate,
+                                             bufferSize,
+                                             masterFirstChannel,
+                                             headphonesFirstChannel,
+                                             boothFirstChannel)
             : false
         var appliedB = deckB && deckB.applyAudioDeviceSettings
-            ? deckB.applyAudioDeviceSettings(deviceType, outputDevice, sampleRate, bufferSize)
+            ? deckB.applyAudioDeviceSettings(deviceType,
+                                             masterOutputDevice,
+                                             sampleRate,
+                                             bufferSize,
+                                             masterFirstChannel,
+                                             headphonesFirstChannel,
+                                             boothFirstChannel)
             : false
 
-        audioApplyStatus.text = (appliedA && appliedB)
-            ? "Applied to the selected device with a low-latency buffer."
-            : "Saved, but the requested device or buffer could not be applied right now."
-        audioApplyStatus.color = (appliedA && appliedB) ? "#8fe388" : "#ffb86c"
+        if (appliedA && appliedB) {
+            audioApplyStatus.text = "Applied: Sound API selected once, role devices and channels updated."
+            audioApplyStatus.color = "#8fe388"
+        } else {
+            audioApplyStatus.text = "Saved, but the requested device, channels, or buffer could not be applied right now."
+            audioApplyStatus.color = "#ffb86c"
+        }
     }
 
     RowLayout {
@@ -347,119 +501,121 @@ Window {
                             color: "#2a2a2a"
                         }
 
-                        // Device Type row
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 16
+                          // Global sound API
+                          RowLayout {
+                              Layout.fillWidth: true
+                              spacing: 16
 
-                            Text {
-                                text: "Device Type"
-                                color: "#aaa"
-                                font.pixelSize: 12
-                                Layout.preferredWidth: 130
-                            }
+                              Text {
+                                  text: "Sound API"
+                                  color: "#aaa"
+                                  font.pixelSize: 12
+                                  Layout.preferredWidth: 130
+                              }
 
-                            ComboBox {
-                                id: deviceTypeCombo
-                                Layout.fillWidth: true
-                                height: 32
-                                model: settingsWindow.audioDeviceTypeOptions
+                              ComboBox {
+                                  id: audioDeviceTypeCombo
+                                  Layout.fillWidth: true
+                                  model: settingsWindow.audioDeviceTypeOptions
+                                  onCurrentIndexChanged: {
+                                      if (settingsWindow.audioUiSyncing)
+                                          return
+                                      if (currentIndex >= 0 && currentIndex < settingsWindow.audioDeviceTypeOptions.length) {
+                                          settingsWindow.pendingAudioDeviceType = settingsWindow.audioDeviceTypeOptions[currentIndex]
+                                          settingsWindow.refreshAudioDeviceLists()
+                                      }
+                                  }
+                              }
+                          }
 
-                                contentItem: Text {
-                                    text: deviceTypeCombo.currentIndex >= 0 && deviceTypeCombo.displayText.length > 0
-                                          ? deviceTypeCombo.displayText
-                                          : "Default"
-                                    color: "#ccc"
-                                    font.pixelSize: 12
-                                    verticalAlignment: Text.AlignVCenter
-                                    leftPadding: 12
-                                    elide: Text.ElideRight
-                                }
+                          GridLayout {
+                              Layout.fillWidth: true
+                              columns: 3
+                              columnSpacing: 12
+                              rowSpacing: 10
 
-                                delegate: ItemDelegate {
-                                    width: deviceTypeCombo.width
-                                    contentItem: Text {
-                                        text: modelData.length > 0 ? modelData : "Default"
-                                        color: "#ddd"
-                                        font.pixelSize: 12
-                                        elide: Text.ElideRight
-                                        verticalAlignment: Text.AlignVCenter
-                                    }
-                                    background: Rectangle {
-                                        color: highlighted ? "#3a3a3a" : "#252525"
-                                    }
-                                }
+                              Text { text: "Role"; color: "#7b7b7b"; font.pixelSize: 11 }
+                              Text { text: "Device"; color: "#7b7b7b"; font.pixelSize: 11 }
+                              Text { text: "Channels"; color: "#7b7b7b"; font.pixelSize: 11 }
 
-                                background: Rectangle {
-                                    color: "#252525"
-                                    border.color: "#3a3a3a"
-                                    radius: 4
-                                }
+                              Text { text: "Master"; color: "#ddd"; font.pixelSize: 12 }
+                              ComboBox {
+                                  id: masterOutputCombo
+                                  Layout.fillWidth: true
+                                  model: settingsWindow.audioOutputDeviceOptions
+                                  onCurrentIndexChanged: {
+                                      if (settingsWindow.audioUiSyncing)
+                                          return
+                                      if (currentIndex >= 0 && currentIndex < settingsWindow.audioOutputDeviceOptions.length) {
+                                          settingsWindow.pendingMasterOutputDevice = settingsWindow.audioOutputDeviceOptions[currentIndex]
+                                          settingsWindow.refreshRoleChannelPairs("master")
+                                      }
+                                  }
+                              }
+                              ComboBox {
+                                  id: masterChannelCombo
+                                  Layout.fillWidth: true
+                                  model: settingsWindow.masterChannelPairOptions
+                                  onCurrentIndexChanged: {
+                                      if (settingsWindow.audioUiSyncing)
+                                          return
+                                      if (currentIndex >= 0 && currentIndex < settingsWindow.masterChannelPairOptions.length)
+                                          settingsWindow.pendingMasterFirstChannel = settingsWindow.parseFirstChannel(settingsWindow.masterChannelPairOptions[currentIndex])
+                                  }
+                              }
 
-                                onCurrentIndexChanged: {
-                                    if (currentIndex >= 0 && currentIndex < settingsWindow.audioDeviceTypeOptions.length) {
-                                        settingsWindow.pendingAudioDeviceType = settingsWindow.audioDeviceTypeOptions[currentIndex]
-                                        settingsWindow.refreshAudioOutputDevices(settingsWindow.pendingAudioDeviceType)
-                                    }
-                                }
-                            }
-                        }
+                              Text { text: "Headphones"; color: "#ddd"; font.pixelSize: 12 }
+                              ComboBox {
+                                  id: headphonesOutputCombo
+                                  Layout.fillWidth: true
+                                  model: settingsWindow.audioOutputDeviceOptions
+                                  onCurrentIndexChanged: {
+                                      if (settingsWindow.audioUiSyncing)
+                                          return
+                                      if (currentIndex >= 0 && currentIndex < settingsWindow.audioOutputDeviceOptions.length) {
+                                          settingsWindow.pendingHeadphonesOutputDevice = settingsWindow.audioOutputDeviceOptions[currentIndex]
+                                          settingsWindow.refreshRoleChannelPairs("headphones")
+                                      }
+                                  }
+                              }
+                              ComboBox {
+                                  id: headphonesChannelCombo
+                                  Layout.fillWidth: true
+                                  model: settingsWindow.headphonesChannelPairOptions
+                                  onCurrentIndexChanged: {
+                                      if (settingsWindow.audioUiSyncing)
+                                          return
+                                      if (currentIndex >= 0 && currentIndex < settingsWindow.headphonesChannelPairOptions.length)
+                                          settingsWindow.pendingHeadphonesFirstChannel = settingsWindow.parseFirstChannel(settingsWindow.headphonesChannelPairOptions[currentIndex])
+                                  }
+                              }
 
-                        // Output Device row
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 16
-
-                            Text {
-                                text: "Output Device"
-                                color: "#aaa"
-                                font.pixelSize: 12
-                                Layout.preferredWidth: 130
-                            }
-
-                            ComboBox {
-                                id: outputDeviceCombo
-                                Layout.fillWidth: true
-                                height: 32
-                                model: settingsWindow.audioOutputDeviceOptions
-
-                                contentItem: Text {
-                                    text: outputDeviceCombo.currentIndex >= 0 && outputDeviceCombo.displayText.length > 0
-                                          ? outputDeviceCombo.displayText
-                                          : "System Default"
-                                    color: "#ccc"
-                                    font.pixelSize: 12
-                                    verticalAlignment: Text.AlignVCenter
-                                    leftPadding: 12
-                                    elide: Text.ElideRight
-                                }
-
-                                delegate: ItemDelegate {
-                                    width: outputDeviceCombo.width
-                                    contentItem: Text {
-                                        text: modelData.length > 0 ? modelData : "System Default"
-                                        color: "#ddd"
-                                        font.pixelSize: 12
-                                        elide: Text.ElideRight
-                                        verticalAlignment: Text.AlignVCenter
-                                    }
-                                    background: Rectangle {
-                                        color: highlighted ? "#3a3a3a" : "#252525"
-                                    }
-                                }
-
-                                background: Rectangle {
-                                    color: "#252525"
-                                    border.color: "#3a3a3a"
-                                    radius: 4
-                                }
-
-                                onCurrentIndexChanged: {
-                                    if (currentIndex >= 0 && currentIndex < settingsWindow.audioOutputDeviceOptions.length)
-                                        settingsWindow.pendingAudioOutputDevice = settingsWindow.audioOutputDeviceOptions[currentIndex]
-                                }
-                            }
-                        }
+                              Text { text: "Booth"; color: "#ddd"; font.pixelSize: 12 }
+                              ComboBox {
+                                  id: boothOutputCombo
+                                  Layout.fillWidth: true
+                                  model: settingsWindow.audioOutputDeviceOptions
+                                  onCurrentIndexChanged: {
+                                      if (settingsWindow.audioUiSyncing)
+                                          return
+                                      if (currentIndex >= 0 && currentIndex < settingsWindow.audioOutputDeviceOptions.length) {
+                                          settingsWindow.pendingBoothOutputDevice = settingsWindow.audioOutputDeviceOptions[currentIndex]
+                                          settingsWindow.refreshRoleChannelPairs("booth")
+                                      }
+                                  }
+                              }
+                              ComboBox {
+                                  id: boothChannelCombo
+                                  Layout.fillWidth: true
+                                  model: settingsWindow.boothChannelPairOptions
+                                  onCurrentIndexChanged: {
+                                      if (settingsWindow.audioUiSyncing)
+                                          return
+                                      if (currentIndex >= 0 && currentIndex < settingsWindow.boothChannelPairOptions.length)
+                                          settingsWindow.pendingBoothFirstChannel = settingsWindow.parseFirstChannel(settingsWindow.boothChannelPairOptions[currentIndex])
+                                  }
+                              }
+                          }
 
                         // Sample Rate row
                         RowLayout {

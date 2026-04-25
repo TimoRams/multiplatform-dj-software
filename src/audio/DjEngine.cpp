@@ -214,6 +214,102 @@ struct OutputLatencySnapshot {
     }
 };
 
+struct OutputRoutingConfig {
+    int masterFirstChannel = 1;
+    int headphonesFirstChannel = -1;
+    int boothFirstChannel = -1;
+};
+
+constexpr uint64_t kRoutingFieldMask = 0x1fu;
+
+int clampFirstChannelForPack(int firstChannel)
+{
+    if (firstChannel < 1)
+        return -1;
+    return std::clamp(firstChannel, 1, 30);
+}
+
+uint64_t packRouting(const OutputRoutingConfig& cfg)
+{
+    const auto encode = [](int firstChannel) -> uint64_t {
+        const int clamped = clampFirstChannelForPack(firstChannel);
+        return static_cast<uint64_t>(clamped < 1 ? 0 : (clamped + 1));
+    };
+
+    uint64_t packed = 0;
+    packed |= encode(cfg.masterFirstChannel);
+    packed |= encode(cfg.headphonesFirstChannel) << 5;
+    packed |= encode(cfg.boothFirstChannel) << 10;
+    return packed;
+}
+
+OutputRoutingConfig unpackRouting(uint64_t packed)
+{
+    const auto decode = [](uint64_t value) -> int {
+        const int decoded = static_cast<int>(value & kRoutingFieldMask) - 1;
+        return decoded < 1 ? -1 : decoded;
+    };
+
+    return {
+        .masterFirstChannel = decode(packed),
+        .headphonesFirstChannel = decode(packed >> 5),
+        .boothFirstChannel = decode(packed >> 10)
+    };
+}
+
+std::atomic<uint64_t> s_outputRoutingPacked { packRouting(OutputRoutingConfig{}) };
+
+int readDeviceOutputChannelCount(const QString& deviceType, const QString& outputDevice)
+{
+    juce::AudioDeviceManager probe;
+    const juce::String initErr = probe.initialiseWithDefaultDevices(0, 2);
+    if (initErr.isNotEmpty())
+        return 2;
+
+    if (!deviceType.isEmpty()) {
+        if (auto* type = findDeviceType(probe, deviceType))
+            probe.setCurrentAudioDeviceType(type->getTypeName(), true);
+    }
+
+    juce::AudioDeviceManager::AudioDeviceSetup setup;
+    probe.getAudioDeviceSetup(setup);
+    setup.useDefaultInputChannels = true;
+    setup.inputDeviceName.clear();
+    setup.useDefaultOutputChannels = true;
+    if (!outputDevice.isEmpty())
+        setup.outputDeviceName = toJuceString(outputDevice);
+
+    juce::String error = probe.setAudioDeviceSetup(setup, true);
+    if (error.isNotEmpty() && setup.outputDeviceName.isNotEmpty()) {
+        setup.outputDeviceName.clear();
+        error = probe.setAudioDeviceSetup(setup, true);
+    }
+
+    if (auto* device = probe.getCurrentAudioDevice()) {
+        const int namesCount = device->getOutputChannelNames().size();
+        if (namesCount > 0)
+            return namesCount;
+
+        const int activeCount = device->getActiveOutputChannels().getHighestBit() + 1;
+        if (activeCount > 0)
+            return activeCount;
+    }
+
+    return 2;
+}
+
+QStringList buildChannelPairList(int channelCount)
+{
+    QStringList pairs;
+    pairs.push_back(QStringLiteral("None"));
+
+    channelCount = std::max(2, channelCount);
+    for (int first = 1; first + 1 <= channelCount; first += 2)
+        pairs.push_back(QStringLiteral("%1-%2").arg(first).arg(first + 1));
+
+    return pairs;
+}
+
 OutputLatencySnapshot readOutputLatencySnapshot(juce::AudioIODevice* device)
 {
     if (!device)
@@ -891,8 +987,8 @@ private:
 
 class DjEngine::MixerDspSource : public juce::AudioSource {
 public:
-    MixerDspSource(juce::AudioSource* inSource, juce::AudioTransportSource* transport)
-        : source(inSource), m_transport(transport) {}
+    MixerDspSource(juce::AudioSource* inSource, DjEngine* owner)
+        : source(inSource), m_owner(owner) {}
 
     // ── FxProcessor slot (called from Qt main thread) ──────────────────────
     void setFxEffectType(EffectType type) { m_fx.setEffectType(type); }
@@ -903,6 +999,8 @@ public:
 
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override {
         if (source) source->prepareToPlay(samplesPerBlockExpected, sampleRate);
+
+        m_routeScratch.setSize(2, std::max(64, samplesPerBlockExpected), false, true, true);
 
         m_fx.prepare(sampleRate, samplesPerBlockExpected, 2);
         m_limiter.prepare(sampleRate, samplesPerBlockExpected, 2);
@@ -1042,6 +1140,8 @@ public:
                 s_gainReduction.store(m_limiter.isEnabled() ? gr : 1.0f,
                                       std::memory_order_relaxed);
             }
+
+            applyOutputRouting(*buf, s, n);
         }
     }
 
@@ -1063,6 +1163,72 @@ public:
     }
 
 private:
+    void routeStereoToPair(juce::AudioBuffer<float>& buffer,
+                           const float* srcL,
+                           const float* srcR,
+                           int start,
+                           int n,
+                           int firstChannel,
+                           bool add)
+    {
+        if (firstChannel < 1)
+            return;
+
+        const int leftChannel = firstChannel - 1;
+        const int rightChannel = leftChannel + 1;
+        if (rightChannel >= buffer.getNumChannels())
+            return;
+
+        float* dstL = buffer.getWritePointer(leftChannel, start);
+        float* dstR = buffer.getWritePointer(rightChannel, start);
+
+        for (int i = 0; i < n; ++i) {
+            if (add) {
+                dstL[i] += srcL[i];
+                dstR[i] += srcR[i];
+            } else {
+                dstL[i] = srcL[i];
+                dstR[i] = srcR[i];
+            }
+        }
+    }
+
+    void applyOutputRouting(juce::AudioBuffer<float>& buffer, int start, int n)
+    {
+        if (buffer.getNumChannels() < 2)
+            return;
+        if (m_routeScratch.getNumSamples() < n)
+            return;
+
+        m_routeScratch.copyFrom(0, 0, buffer, 0, start, n);
+        m_routeScratch.copyFrom(1, 0, buffer, std::min(1, buffer.getNumChannels() - 1), start, n);
+        const float* srcL = m_routeScratch.getReadPointer(0);
+        const float* srcR = m_routeScratch.getReadPointer(1);
+
+        const auto routing = unpackRouting(s_outputRoutingPacked.load(std::memory_order_relaxed));
+        const bool cueActive = m_owner != nullptr && m_owner->cueEnabled();
+
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+            buffer.clear(ch, start, n);
+
+        bool hasOutput = false;
+        if (routing.masterFirstChannel >= 1) {
+            routeStereoToPair(buffer, srcL, srcR, start, n, routing.masterFirstChannel, false);
+            hasOutput = true;
+        }
+
+        if (routing.boothFirstChannel >= 1) {
+            const bool add = hasOutput;
+            routeStereoToPair(buffer, srcL, srcR, start, n, routing.boothFirstChannel, add);
+            hasOutput = true;
+        }
+
+        if (cueActive && routing.headphonesFirstChannel >= 1) {
+            const bool add = hasOutput;
+            routeStereoToPair(buffer, srcL, srcR, start, n, routing.headphonesFirstChannel, add);
+        }
+    }
+
     float getDecibelsFromKnob(float kb) const {
         if (kb < 0.0f) {
             return kb * 32.0f; // -1 -> -32 dB (approx -inf / kill)
@@ -1098,7 +1264,7 @@ private:
     }
 
     juce::AudioSource* source = nullptr;
-    juce::AudioTransportSource* m_transport = nullptr;
+    DjEngine* m_owner = nullptr;
     double m_sampleRate = 0;
 
     std::atomic<float> trimVal{1.0f};
@@ -1118,6 +1284,7 @@ private:
 
     FxProcessor m_fx;
     BrickwallLimiter m_limiter;
+    juce::AudioBuffer<float> m_routeScratch;
     std::atomic<float> scratchTimbre { 0.0f };
     float m_scratchWarmLpState[2] { 0.0f, 0.0f };
 
@@ -1306,7 +1473,7 @@ DjEngine::DjEngine(QObject* parent)
     timeStretchSource = std::make_unique<TimeStretchAudioSource>(resamplingSource.get());
     
     // Create the mixer DSP source to apply EQ, Filter, and Gain based on Pioneer DJM A9.
-    mixerSource = std::make_unique<MixerDspSource>(timeStretchSource.get(), &transportSource);
+    mixerSource = std::make_unique<MixerDspSource>(timeStretchSource.get(), this);
     mixerSource->setTrim(static_cast<float>(m_trim));
     mixerSource->setFader(static_cast<float>(m_volume));
 
@@ -1394,7 +1561,14 @@ void DjEngine::refreshHardwareLatency()
 
 bool DjEngine::applyAudioDeviceSettings(int sampleRate, int bufferSize)
 {
-    return applyAudioDeviceSettings(getCurrentAudioDeviceType(), getCurrentAudioOutputDevice(), sampleRate, bufferSize);
+    const auto routing = unpackRouting(s_outputRoutingPacked.load(std::memory_order_relaxed));
+    return applyAudioDeviceSettings(getCurrentAudioDeviceType(),
+                                    getCurrentAudioOutputDevice(),
+                                    sampleRate,
+                                    bufferSize,
+                                    routing.masterFirstChannel,
+                                    routing.headphonesFirstChannel,
+                                    routing.boothFirstChannel);
 }
 
 QStringList DjEngine::getAvailableAudioDeviceTypes() const
@@ -1427,6 +1601,21 @@ QStringList DjEngine::getAvailableAudioOutputDevices(const QString& deviceType) 
     return devices;
 }
 
+QStringList DjEngine::getAvailableOutputChannelPairs(const QString& deviceType,
+                                                     const QString& outputDevice) const
+{
+    QString selectedType = deviceType;
+    QString selectedOutput = outputDevice;
+
+    if (selectedType.isEmpty())
+        selectedType = getCurrentAudioDeviceType();
+    if (selectedOutput.isEmpty())
+        selectedOutput = getCurrentAudioOutputDevice();
+
+    const int channelCount = readDeviceOutputChannelCount(selectedType, selectedOutput);
+    return buildChannelPairList(channelCount);
+}
+
 QString DjEngine::getCurrentAudioDeviceType() const
 {
     return QString::fromUtf8(deviceManager.getCurrentAudioDeviceType().toRawUTF8());
@@ -1442,10 +1631,22 @@ QString DjEngine::getCurrentAudioOutputDevice() const
 bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
                                         const QString& outputDevice,
                                         int sampleRate,
-                                        int bufferSize)
+                                        int bufferSize,
+                                        int masterFirstChannel,
+                                        int headphonesFirstChannel,
+                                        int boothFirstChannel)
 {
     sampleRate = std::clamp(sampleRate, 44100, 96000);
     bufferSize = std::clamp(bufferSize, 64, 4096);
+
+    masterFirstChannel = clampFirstChannelForPack(masterFirstChannel);
+    headphonesFirstChannel = clampFirstChannelForPack(headphonesFirstChannel);
+    boothFirstChannel = clampFirstChannelForPack(boothFirstChannel);
+    s_outputRoutingPacked.store(packRouting({
+        .masterFirstChannel = masterFirstChannel,
+        .headphonesFirstChannel = headphonesFirstChannel,
+        .boothFirstChannel = boothFirstChannel
+    }), std::memory_order_relaxed);
 
     auto& manager = deviceManager;
     auto* type = findDeviceType(manager, deviceType);
@@ -1463,6 +1664,21 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
         setup.outputDeviceName = manager.getCurrentAudioDevice() != nullptr ? manager.getCurrentAudioDevice()->getName() : juce::String();
     else
         setup.outputDeviceName = toJuceString(outputDevice);
+
+    juce::BigInteger selectedOutputChannels;
+    const auto setPairBits = [&selectedOutputChannels](int firstChannel) {
+        if (firstChannel < 1)
+            return;
+        selectedOutputChannels.setBit(firstChannel - 1);
+        selectedOutputChannels.setBit(firstChannel);
+    };
+    setPairBits(masterFirstChannel);
+    setPairBits(headphonesFirstChannel);
+    setPairBits(boothFirstChannel);
+    if (selectedOutputChannels.countNumberOfSetBits() > 0) {
+        setup.useDefaultOutputChannels = false;
+        setup.outputChannels = selectedOutputChannels;
+    }
 
     if (auto* currentDevice = manager.getCurrentAudioDevice())
         setup.bufferSize = choosePreferredBufferSize(currentDevice, setup.bufferSize);
@@ -3031,10 +3247,9 @@ void DjEngine::setFilter(double value)
 
 void DjEngine::setCueEnabled(bool value)
 {
-    if (m_cueEnabled != value) {
-        m_cueEnabled = value;
+    const bool prev = m_cueEnabled.exchange(value, std::memory_order_relaxed);
+    if (prev != value)
         emit cueEnabledChanged();
-    }
 }
 
 void DjEngine::setQuantizeEnabled(bool enabled)

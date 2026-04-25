@@ -97,14 +97,20 @@ int main(int argc, char *argv[])
     auto deckA = std::make_unique<DjEngine>();
     auto deckB = std::make_unique<DjEngine>();
 
-    deckA->applyAudioDeviceSettings(settingsManager.getAudioDeviceType(),
-                                    settingsManager.getAudioOutputDevice(),
+    deckA->applyAudioDeviceSettings(settingsManager.getAudioMasterDeviceType(),
+                                    settingsManager.getAudioMasterOutputDevice(),
                                     settingsManager.getAudioSampleRate(),
-                                    settingsManager.getAudioBufferSize());
-    deckB->applyAudioDeviceSettings(settingsManager.getAudioDeviceType(),
-                                    settingsManager.getAudioOutputDevice(),
+                                    settingsManager.getAudioBufferSize(),
+                                    settingsManager.getAudioMasterFirstChannel(),
+                                    settingsManager.getAudioHeadphonesFirstChannel(),
+                                    settingsManager.getAudioBoothFirstChannel());
+    deckB->applyAudioDeviceSettings(settingsManager.getAudioMasterDeviceType(),
+                                    settingsManager.getAudioMasterOutputDevice(),
                                     settingsManager.getAudioSampleRate(),
-                                    settingsManager.getAudioBufferSize());
+                                    settingsManager.getAudioBufferSize(),
+                                    settingsManager.getAudioMasterFirstChannel(),
+                                    settingsManager.getAudioHeadphonesFirstChannel(),
+                                    settingsManager.getAudioBoothFirstChannel());
 
     auto coverProvider = std::make_unique<CoverArtProvider>();
     deckA->setCoverArtProvider(coverProvider.get(), "deckA");

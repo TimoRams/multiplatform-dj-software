@@ -175,7 +175,7 @@ public:
     [[nodiscard]] double eqMid() const { return m_eqMid; }
     [[nodiscard]] double eqLow() const { return m_eqLow; }
     [[nodiscard]] double filter() const { return m_filter; }
-    [[nodiscard]] bool cueEnabled() const { return m_cueEnabled; }
+    [[nodiscard]] bool cueEnabled() const { return m_cueEnabled.load(std::memory_order_relaxed); }
     [[nodiscard]] bool quantizeEnabled() const { return m_quantizeEnabled; }
     [[nodiscard]] bool syncEnabled() const { return m_syncEnabled; }
     [[nodiscard]] bool isSyncMaster() const { return m_isSyncMaster; }
@@ -207,9 +207,14 @@ public slots:
     Q_INVOKABLE bool applyAudioDeviceSettings(const QString& deviceType,
                                               const QString& outputDevice,
                                               int sampleRate,
-                                              int bufferSize);
+                                              int bufferSize,
+                                              int masterFirstChannel = 1,
+                                              int headphonesFirstChannel = -1,
+                                              int boothFirstChannel = -1);
     Q_INVOKABLE QStringList getAvailableAudioDeviceTypes() const;
     Q_INVOKABLE QStringList getAvailableAudioOutputDevices(const QString& deviceType = QString()) const;
+    Q_INVOKABLE QStringList getAvailableOutputChannelPairs(const QString& deviceType = QString(),
+                                                           const QString& outputDevice = QString()) const;
     Q_INVOKABLE QString getCurrentAudioDeviceType() const;
     Q_INVOKABLE QString getCurrentAudioOutputDevice() const;
     
@@ -361,7 +366,7 @@ private:
     double m_eqLow = 0.0;
     double m_filter = 0.0;
     bool   m_isReverse = false;
-    bool m_cueEnabled = false;
+    std::atomic<bool> m_cueEnabled { false };
     bool m_playRequested = false;
     bool m_keylock = false;
     bool m_quantizeEnabled = false;
