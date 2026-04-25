@@ -122,6 +122,7 @@ void FxProcessor::prepare(double sampleRate, int maxBlockSize, int numChannels)
     m_sampleRate   = sampleRate;
     m_maxBlockSize = maxBlockSize;
     m_numChannels  = numChannels;
+    m_wetScratch.setSize(m_numChannels, m_maxBlockSize, false, true, true);
 
     // Smoothed wet/dry: ~20 ms ramp time to eliminate clicks
     const float rampSamples = static_cast<float>(sampleRate * 0.020);
@@ -154,148 +155,170 @@ void FxProcessor::prepare(double sampleRate, int maxBlockSize, int numChannels)
 
 void FxProcessor::process(juce::AudioBuffer<float>& buffer, int startSample, int numSamples)
 {
-    // ── Snapshot current targets from atomics ─────────────────────────────────
-    const auto  type   = static_cast<EffectType>(m_typeAtomic.load(std::memory_order_relaxed));
+    const auto type = static_cast<EffectType>(m_typeAtomic.load(std::memory_order_relaxed));
     const float amount = m_amountAtomic.load(std::memory_order_relaxed);
 
-    // Update smoothed targets
-    const float targetWet = amount;
-    const float targetDry = 1.0f - amount;
-    m_wetSmooth.setTargetValue(targetWet);
-    m_drySmooth.setTargetValue(targetDry);
+    m_wetSmooth.setTargetValue(amount);
+    m_drySmooth.setTargetValue(1.0f - amount);
 
-    // If fully bypassed and smoother has settled → nothing to do
     if (type == EffectType::None && !m_wetSmooth.isSmoothing() && amount < 1e-4f)
         return;
 
-    // ── Build wet buffer (copy of dry, then process in-place) ─────────────────
-    juce::AudioBuffer<float> wetBuf(m_numChannels, numSamples);
-    copyToWet(buffer, wetBuf, startSample, numSamples);
+    if (processSoundColorEffect(type, buffer, startSample, numSamples))
+        return;
 
-    if (type == EffectType::Reverb)
+    if (!ensureScratchCapacity(numSamples))
     {
-        updateReverbParams(amount);
-        processReverb(wetBuf, 0, numSamples);
-    }
-    else if (type == EffectType::Bitcrusher)
-    {
-        processBitcrusher(wetBuf, 0, numSamples, amount);
-    }
-    else if (type == EffectType::PitchShifter)
-    {
-        processPitchShifter(wetBuf, 0, numSamples, amount);
-    }
-    else if (type == EffectType::Echo)
-    {
-        processEcho(wetBuf, 0, numSamples, amount, false);
-    }
-    else if (type == EffectType::LowCutEcho)
-    {
-        processEcho(wetBuf, 0, numSamples, amount, true);
-    }
-    else if (type == EffectType::MtDelay)
-    {
-        processMtDelay(wetBuf, 0, numSamples, amount);
-    }
-    else if (type == EffectType::Spiral)
-    {
-        processSpiral(wetBuf, 0, numSamples, amount);
-    }
-    else if (type == EffectType::Flanger)
-    {
-        processFlanger(wetBuf, 0, numSamples, amount);
-    }
-    else if (type == EffectType::Phaser)
-    {
-        processPhaser(wetBuf, 0, numSamples, amount);
-    }
-    else if (type == EffectType::Trans)
-    {
-        processTrans(wetBuf, 0, numSamples, amount);
-    }
-    else if (type == EffectType::EnigmaJet)
-    {
-        processEnigmaJet(wetBuf, 0, numSamples, amount);
-    }
-    else if (type == EffectType::Stretch)
-    {
-        processStretch(wetBuf, 0, numSamples, amount);
-    }
-    else if (type == EffectType::SlipRoll)
-    {
-        processRoll(wetBuf, 0, numSamples, amount, true);
-    }
-    else if (type == EffectType::Roll)
-    {
-        processRoll(wetBuf, 0, numSamples, amount, false);
-    }
-    else if (type == EffectType::Nobius)
-    {
-        processMobius(wetBuf, 0, numSamples, amount, true);
-    }
-    else if (type == EffectType::Mobius)
-    {
-        processMobius(wetBuf, 0, numSamples, amount, false);
-    }
-    // ── Sound Color FX: use bipolar SC knob, NOT amount/SmoothedValue ─────────
-    // These functions handle their own wet/dry internally and write directly
-    // into `buffer` (not wetBuf), then return so the smoothed mix is skipped.
-    else if (type == EffectType::SoundColorFilter)
-    {
-        const float knob = m_scKnobAtomic.load(std::memory_order_relaxed);
-        processSC_Filter(buffer, startSample, numSamples, knob);
+        jassertfalse;
         return;
     }
-    else if (type == EffectType::SoundColorDubEcho)
-    {
-        const float knob = m_scKnobAtomic.load(std::memory_order_relaxed);
-        processSC_DubEcho(buffer, startSample, numSamples, knob);
-        return;
-    }
-    else if (type == EffectType::SoundColorCrush)
-    {
-        const float knob = m_scKnobAtomic.load(std::memory_order_relaxed);
-        processSC_Crush(buffer, startSample, numSamples, knob);
-        return;
-    }
-    else if (type == EffectType::SoundColorSpace)
-    {
-        const float knob = m_scKnobAtomic.load(std::memory_order_relaxed);
-        processSC_Space(buffer, startSample, numSamples, knob);
-        return;
-    }
-    else if (type == EffectType::SoundColorPitch)
-    {
-        const float knob = m_scKnobAtomic.load(std::memory_order_relaxed);
-        processSC_Pitch(buffer, startSample, numSamples, knob);
-        return;
-    }
-    else if (type == EffectType::SoundColorNoise)
-    {
-        const float knob = m_scKnobAtomic.load(std::memory_order_relaxed);
-        processSC_Noise(buffer, startSample, numSamples, knob);
-        return;
-    }
-    else if (type == EffectType::SoundColorSweep)
-    {
-        const float knob = m_scKnobAtomic.load(std::memory_order_relaxed);
-        const float param = m_scParamAtomic.load(std::memory_order_relaxed);
-        processSC_Sweep(buffer, startSample, numSamples, knob, param);
-        return;
-    }
-    // EffectType::None → wet buffer stays as dry copy, mixed at `amount` weight
 
-    // ── Per-sample smoothed wet/dry mix back into the main buffer ─────────────
-    for (int s = 0; s < numSamples; ++s)
+    copyToWet(buffer, m_wetScratch, startSample, numSamples);
+    processWetEffect(type, m_wetScratch, numSamples, amount);
+    mixWetDrySmoothed(buffer, m_wetScratch, startSample, numSamples);
+}
+
+bool FxProcessor::ensureScratchCapacity(int numSamples)
+{
+    return m_wetScratch.getNumChannels() >= m_numChannels
+        && m_wetScratch.getNumSamples() >= numSamples;
+}
+
+void FxProcessor::processWetEffect(EffectType type,
+                                   juce::AudioBuffer<float>& wetBuf,
+                                   int n,
+                                   float amount)
+{
+    switch (type)
+    {
+        case EffectType::Reverb:
+            updateReverbParams(amount);
+            processReverb(wetBuf, 0, n);
+            break;
+        case EffectType::Bitcrusher:
+            processBitcrusher(wetBuf, 0, n, amount);
+            break;
+        case EffectType::PitchShifter:
+            processPitchShifter(wetBuf, 0, n, amount);
+            break;
+        case EffectType::Echo:
+            processEcho(wetBuf, 0, n, amount, false);
+            break;
+        case EffectType::LowCutEcho:
+            processEcho(wetBuf, 0, n, amount, true);
+            break;
+        case EffectType::MtDelay:
+            processMtDelay(wetBuf, 0, n, amount);
+            break;
+        case EffectType::Spiral:
+            processSpiral(wetBuf, 0, n, amount);
+            break;
+        case EffectType::Flanger:
+            processFlanger(wetBuf, 0, n, amount);
+            break;
+        case EffectType::Phaser:
+            processPhaser(wetBuf, 0, n, amount);
+            break;
+        case EffectType::Trans:
+            processTrans(wetBuf, 0, n, amount);
+            break;
+        case EffectType::EnigmaJet:
+            processEnigmaJet(wetBuf, 0, n, amount);
+            break;
+        case EffectType::Stretch:
+            processStretch(wetBuf, 0, n, amount);
+            break;
+        case EffectType::SlipRoll:
+            processRoll(wetBuf, 0, n, amount, true);
+            break;
+        case EffectType::Roll:
+            processRoll(wetBuf, 0, n, amount, false);
+            break;
+        case EffectType::Nobius:
+            processMobius(wetBuf, 0, n, amount, true);
+            break;
+        case EffectType::Mobius:
+            processMobius(wetBuf, 0, n, amount, false);
+            break;
+        case EffectType::None:
+        default:
+            break;
+    }
+}
+
+bool FxProcessor::processSoundColorEffect(EffectType type,
+                                          juce::AudioBuffer<float>& buffer,
+                                          int start,
+                                          int n)
+{
+    switch (type)
+    {
+        case EffectType::SoundColorFilter:
+        case EffectType::SoundColorDubEcho:
+        case EffectType::SoundColorCrush:
+        case EffectType::SoundColorSpace:
+        case EffectType::SoundColorPitch:
+        case EffectType::SoundColorNoise:
+        case EffectType::SoundColorSweep:
+            break;
+        default:
+            return false;
+    }
+
+    if (!ensureScratchCapacity(n))
+    {
+        jassertfalse;
+        return true;
+    }
+
+    const float knob = m_scKnobAtomic.load(std::memory_order_relaxed);
+    switch (type)
+    {
+        case EffectType::SoundColorFilter:
+            processSC_Filter(buffer, start, n, knob);
+            break;
+        case EffectType::SoundColorDubEcho:
+            processSC_DubEcho(buffer, start, n, knob);
+            break;
+        case EffectType::SoundColorCrush:
+            processSC_Crush(buffer, start, n, knob);
+            break;
+        case EffectType::SoundColorSpace:
+            processSC_Space(buffer, start, n, knob);
+            break;
+        case EffectType::SoundColorPitch:
+            processSC_Pitch(buffer, start, n, knob);
+            break;
+        case EffectType::SoundColorNoise:
+            processSC_Noise(buffer, start, n, knob);
+            break;
+        case EffectType::SoundColorSweep:
+        {
+            const float param = m_scParamAtomic.load(std::memory_order_relaxed);
+            processSC_Sweep(buffer, start, n, knob, param);
+            break;
+        }
+        default:
+            break;
+    }
+
+    return true;
+}
+
+void FxProcessor::mixWetDrySmoothed(juce::AudioBuffer<float>& buffer,
+                                    const juce::AudioBuffer<float>& wetBuf,
+                                    int start,
+                                    int n)
+{
+    const int numChannels = std::min(buffer.getNumChannels(), m_numChannels);
+    for (int i = 0; i < n; ++i)
     {
         const float wet = m_wetSmooth.getNextValue();
         const float dry = m_drySmooth.getNextValue();
-
-        for (int ch = 0; ch < std::min(buffer.getNumChannels(), m_numChannels); ++ch)
+        for (int ch = 0; ch < numChannels; ++ch)
         {
-            float* mainPtr = buffer.getWritePointer(ch) + startSample + s;
-            const float wetSample = wetBuf.getReadPointer(ch)[s];
-            *mainPtr = (*mainPtr) * dry + wetSample * wet;
+            float* mainPtr = buffer.getWritePointer(ch) + start + i;
+            *mainPtr = (*mainPtr) * dry + wetBuf.getReadPointer(ch)[i] * wet;
         }
     }
 }
@@ -1181,7 +1204,7 @@ void FxProcessor::processSC_Filter(juce::AudioBuffer<float>& buffer,
     const float a3 = w * a2;
 
     // Copy to wet buffer
-    juce::AudioBuffer<float> wetBuf(m_numChannels, n);
+    auto& wetBuf = m_wetScratch;
     copyToWet(buffer, wetBuf, start, n);
 
     // 24 dB/oct slope: cascade two 2-pole SVF stages with shared cutoff/Q.
@@ -1256,7 +1279,7 @@ void FxProcessor::processSC_DubEcho(juce::AudioBuffer<float>& buffer,
                                        0.001f, 0.99f);
 
     // Build wet (echo) buffer
-    juce::AudioBuffer<float> wetBuf(m_numChannels, n);
+    auto& wetBuf = m_wetScratch;
     copyToWet(buffer, wetBuf, start, n);
 
     // Process delay per channel
@@ -1311,7 +1334,7 @@ void FxProcessor::processSC_Crush(juce::AudioBuffer<float>& buffer,
     const float intensity = std::clamp(absK * (0.15f + 0.85f * param), 0.0f, 1.0f);
 
     // Build wet buffer
-    juce::AudioBuffer<float> wetBuf(m_numChannels, n);
+    auto& wetBuf = m_wetScratch;
     copyToWet(buffer, wetBuf, start, n);
 
     // Bit depth: 16 bit -> 2 bit with intensity
@@ -1371,7 +1394,7 @@ void FxProcessor::processSC_Space(juce::AudioBuffer<float>& buffer,
 
     const float param = m_scParamAtomic.load(std::memory_order_relaxed);
 
-    juce::AudioBuffer<float> wetBuf(m_numChannels, n);
+    auto& wetBuf = m_wetScratch;
     copyToWet(buffer, wetBuf, start, n);
 
     // PARAM controls room size + decay length.
@@ -1413,7 +1436,7 @@ void FxProcessor::processSC_Pitch(juce::AudioBuffer<float>& buffer,
 
     const float param = m_scParamAtomic.load(std::memory_order_relaxed);
 
-    juce::AudioBuffer<float> wetBuf(m_numChannels, n);
+    auto& wetBuf = m_wetScratch;
     copyToWet(buffer, wetBuf, start, n);
 
     // PARAM controls max pitch range:
@@ -1451,9 +1474,9 @@ void FxProcessor::processSC_Noise(juce::AudioBuffer<float>& buffer,
 
     const float param = m_scParamAtomic.load(std::memory_order_relaxed);
 
-    // Generate white noise into a temporary buffer
-    juce::AudioBuffer<float> noiseBuf(m_numChannels, n);
-    noiseBuf.clear();
+    auto& noiseBuf = m_wetScratch;
+    for (int ch = 0; ch < noiseBuf.getNumChannels(); ++ch)
+        noiseBuf.clear(ch, 0, n);
 
     const int numCh = std::min(buffer.getNumChannels(), m_numChannels);
     for (int i = 0; i < n; ++i)
@@ -1494,7 +1517,7 @@ void FxProcessor::processSC_Sweep(juce::AudioBuffer<float>& buffer,
     const float absK = std::abs(knob);
     if (absK < 0.005f) return;
 
-    juce::AudioBuffer<float> wetBuf(m_numChannels, n);
+    auto& wetBuf = m_wetScratch;
     copyToWet(buffer, wetBuf, start, n);
 
     // PARAM controls resonance (Q): low -> subtle, high -> aggressive/whistling.

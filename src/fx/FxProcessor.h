@@ -283,6 +283,14 @@ private:
     void processSC_Sweep   (juce::AudioBuffer<float>& buf, int start, int n, float knob, float param);
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+    bool ensureScratchCapacity(int numSamples);
+    void processWetEffect(EffectType type, juce::AudioBuffer<float>& wetBuf, int n, float amount);
+    bool processSoundColorEffect(EffectType type, juce::AudioBuffer<float>& buffer, int start, int n);
+    void mixWetDrySmoothed(juce::AudioBuffer<float>& buffer,
+                           const juce::AudioBuffer<float>& wetBuf,
+                           int start,
+                           int n);
+
     // Copies [start, start+n) from src into a temporary buffer starting at 0,
     // or fills wet buffer with silence for "no-op" bypass.
     void copyToWet(const juce::AudioBuffer<float>& src,
@@ -291,4 +299,6 @@ private:
                    const juce::AudioBuffer<float>& wetBuf,
                    int start, int n,
                    float wetGain, float dryGain);
+
+    juce::AudioBuffer<float> m_wetScratch;
 };
