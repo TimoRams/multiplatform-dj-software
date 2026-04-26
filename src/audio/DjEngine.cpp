@@ -260,13 +260,34 @@ OutputRoutingConfig unpackRouting(uint64_t packed)
 }
 
 std::atomic<uint64_t> s_outputRoutingPacked { packRouting(OutputRoutingConfig{}) };
+std::mutex s_outputChannelCountCacheMutex;
+QHash<QString, int> s_outputChannelCountCache;
+
+void clearOutputChannelCountCache()
+{
+    std::lock_guard<std::mutex> lock(s_outputChannelCountCacheMutex);
+    s_outputChannelCountCache.clear();
+}
 
 int readDeviceOutputChannelCount(const QString& deviceType, const QString& outputDevice)
 {
+    const QString key = deviceType.trimmed() + QStringLiteral("\n") + outputDevice.trimmed();
+    {
+        std::lock_guard<std::mutex> lock(s_outputChannelCountCacheMutex);
+        const auto it = s_outputChannelCountCache.constFind(key);
+        if (it != s_outputChannelCountCache.cend())
+            return it.value();
+    }
+
+    int channelCount = 2;
+
     juce::AudioDeviceManager probe;
     const juce::String initErr = probe.initialiseWithDefaultDevices(0, 2);
-    if (initErr.isNotEmpty())
-        return 2;
+    if (initErr.isNotEmpty()) {
+        std::lock_guard<std::mutex> lock(s_outputChannelCountCacheMutex);
+        s_outputChannelCountCache.insert(key, channelCount);
+        return channelCount;
+    }
 
     if (!deviceType.isEmpty()) {
         if (auto* type = findDeviceType(probe, deviceType))
@@ -293,14 +314,48 @@ int readDeviceOutputChannelCount(const QString& deviceType, const QString& outpu
         const int activeSetBits = activeChannels.countNumberOfSetBits();
 
         if (namesCount > 0 && activeSetBits > 0)
-            return std::max(namesCount, activeSetBits);
-        if (namesCount > 0)
-            return namesCount;
-        if (activeSetBits > 0)
-            return activeSetBits;
+            channelCount = std::max(namesCount, activeSetBits);
+        else if (namesCount > 0)
+            channelCount = namesCount;
+        else if (activeSetBits > 0)
+            channelCount = activeSetBits;
     }
 
-    return 2;
+    channelCount = std::clamp(channelCount, 2, kMaxSupportedOutputChannel);
+    {
+        std::lock_guard<std::mutex> lock(s_outputChannelCountCacheMutex);
+        s_outputChannelCountCache.insert(key, channelCount);
+    }
+    return channelCount;
+}
+
+int readCurrentDeviceOutputChannelCount(const juce::AudioDeviceManager& manager,
+                                        const QString& deviceType,
+                                        const QString& outputDevice)
+{
+    auto* device = manager.getCurrentAudioDevice();
+    if (device == nullptr)
+        return -1;
+
+    const QString currentType = QString::fromUtf8(manager.getCurrentAudioDeviceType().toRawUTF8());
+    if (!deviceType.isEmpty() && currentType != deviceType)
+        return -1;
+
+    const QString currentOutput = QString::fromUtf8(device->getName().toRawUTF8());
+    if (!outputDevice.isEmpty() && currentOutput != outputDevice)
+        return -1;
+
+    const int namesCount = device->getOutputChannelNames().size();
+    const int activeSetBits = device->getActiveOutputChannels().countNumberOfSetBits();
+    int channelCount = 2;
+    if (namesCount > 0 && activeSetBits > 0)
+        channelCount = std::max(namesCount, activeSetBits);
+    else if (namesCount > 0)
+        channelCount = namesCount;
+    else if (activeSetBits > 0)
+        channelCount = activeSetBits;
+
+    return std::clamp(channelCount, 2, kMaxSupportedOutputChannel);
 }
 
 QStringList buildChannelPairList(int channelCount)
@@ -1485,6 +1540,7 @@ DjEngine::DjEngine(QObject* parent)
     sourcePlayer.setSource(mixerSource.get());
 
     refreshHardwareLatency();
+    clearOutputChannelCountCache();
     m_snapClock.start();
 
     connect(&timer, &QTimer::timeout, this, &DjEngine::onTimer);
@@ -1597,7 +1653,7 @@ QStringList DjEngine::getAvailableAudioDeviceTypes() const
 QStringList DjEngine::getAvailableAudioOutputDevices(const QString& deviceType) const
 {
     QStringList devices;
-    QStringList fallbackDevices;
+    QStringList allDevices;
 
     auto& manager = const_cast<juce::AudioDeviceManager&>(deviceManager);
     auto* type = findDeviceType(manager, deviceType);
@@ -1609,6 +1665,7 @@ QStringList DjEngine::getAvailableAudioOutputDevices(const QString& deviceType) 
         ? deviceType
         : QString::fromUtf8(type->getTypeName().toRawUTF8());
     const QString currentOutput = getCurrentAudioOutputDevice();
+    const QString selectedTypeLower = selectedType.toLower();
     QSet<QString> seen;
 
     const auto names = type->getDeviceNames(false);
@@ -1618,15 +1675,36 @@ QStringList DjEngine::getAvailableAudioOutputDevices(const QString& deviceType) 
             continue;
 
         seen.insert(qName);
-        const int channelCount = readDeviceOutputChannelCount(selectedType, qName);
-        if (channelCount >= 2)
+        allDevices.push_back(qName);
+
+        bool keep = true;
+#if JUCE_LINUX || JUCE_BSD
+        // ALSA often reports many internal/alias endpoints that are not useful
+        // in a DJ output picker. Filter those cheaply by name.
+        if (selectedTypeLower.contains(QStringLiteral("alsa"))) {
+            const QString lowerName = qName.toLower();
+            keep = !(lowerName.startsWith(QStringLiteral("hw:"))
+                     || lowerName.startsWith(QStringLiteral("plughw:"))
+                     || lowerName.startsWith(QStringLiteral("sysdefault:"))
+                     || lowerName.startsWith(QStringLiteral("front:"))
+                     || lowerName.startsWith(QStringLiteral("surround"))
+                     || lowerName.startsWith(QStringLiteral("iec958:"))
+                     || lowerName.startsWith(QStringLiteral("dmix:"))
+                     || lowerName.startsWith(QStringLiteral("dsnoop:"))
+                     || lowerName.startsWith(QStringLiteral("usbstream:"))
+                     || lowerName == QStringLiteral("null"));
+        }
+#endif
+
+        if (keep)
             devices.push_back(qName);
-        else
-            fallbackDevices.push_back(qName);
     }
 
     if (devices.isEmpty())
-        devices = fallbackDevices;
+        devices = allDevices;
+
+    if (!currentOutput.isEmpty() && !devices.contains(currentOutput) && allDevices.contains(currentOutput))
+        devices.push_front(currentOutput);
 
     const int currentOutputIndex = devices.indexOf(currentOutput);
     if (currentOutputIndex > 0)
@@ -1646,7 +1724,10 @@ QStringList DjEngine::getAvailableOutputChannelPairs(const QString& deviceType,
     if (selectedOutput.isEmpty())
         selectedOutput = getCurrentAudioOutputDevice();
 
-    const int channelCount = readDeviceOutputChannelCount(selectedType, selectedOutput);
+    int channelCount = readCurrentDeviceOutputChannelCount(deviceManager, selectedType, selectedOutput);
+    if (channelCount < 2)
+        channelCount = readDeviceOutputChannelCount(selectedType, selectedOutput);
+
     return buildChannelPairList(channelCount);
 }
 
@@ -1672,6 +1753,15 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
 {
     sampleRate = std::clamp(sampleRate, 44100, 96000);
     bufferSize = std::clamp(bufferSize, 64, 4096);
+
+#if JUCE_LINUX || JUCE_BSD
+    const QString requestedType = !deviceType.isEmpty() ? deviceType : getCurrentAudioDeviceType();
+    if (requestedType.toLower().contains(QStringLiteral("alsa"))
+        && sampleRate >= 96000
+        && bufferSize < 128) {
+        bufferSize = 128;
+    }
+#endif
 
     masterFirstChannel = clampFirstChannelForPack(masterFirstChannel);
     headphonesFirstChannel = clampFirstChannelForPack(headphonesFirstChannel);

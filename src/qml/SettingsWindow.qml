@@ -14,8 +14,15 @@ Window {
     flags: Qt.Dialog
 
     onVisibleChanged: {
-        if (visible)
-            syncAudioSettings()
+        if (visible) {
+            if (!audioSyncPending) {
+                audioSyncPending = true
+                audioSyncTimer.start()
+            }
+        } else {
+            audioSyncTimer.stop()
+            audioSyncPending = false
+        }
     }
 
     // ── Navigation categories ────────────────────────────────────────────────
@@ -24,6 +31,8 @@ Window {
     property int pendingAudioBufferSize: 128
     property string pendingAudioDeviceType: ""
     property bool audioUiSyncing: false
+    property bool audioSyncPending: false
+    property var outputChannelPairsCache: ({})
 
     property string pendingMasterOutputDevice: ""
     property int pendingMasterFirstChannel: 1
@@ -39,6 +48,16 @@ Window {
     property var masterChannelPairOptions: ["None", "1-2"]
     property var headphonesChannelPairOptions: ["None", "1-2"]
     property var boothChannelPairOptions: ["None", "1-2"]
+
+    Timer {
+        id: audioSyncTimer
+        interval: 0
+        repeat: false
+        onTriggered: {
+            settingsWindow.audioSyncPending = false
+            settingsWindow.syncAudioSettings()
+        }
+    }
 
     readonly property var categories: [
         { label: "Audio Setup",     icon: "♪" },
@@ -93,6 +112,23 @@ Window {
         if (indexForText(options, desired) >= 0)
             return desired
         return options.length > 0 ? String(options[0]) : "None"
+    }
+
+    function outputPairCacheKey(outputDevice) {
+        return String(pendingAudioDeviceType) + "|" + String(outputDevice)
+    }
+
+    function getOutputPairOptions(outputDevice) {
+        var key = outputPairCacheKey(outputDevice)
+        if (outputChannelPairsCache[key] !== undefined)
+            return outputChannelPairsCache[key]
+
+        var options = deckA.getAvailableOutputChannelPairs(pendingAudioDeviceType, outputDevice)
+        if (!options || options.length === 0)
+            options = ["None", "1-2"]
+
+        outputChannelPairsCache[key] = options
+        return options
     }
 
     function getRoleSelections(role) {
@@ -157,9 +193,7 @@ Window {
             return
 
         var selections = getRoleSelections(role)
-        var pairOptions = deckA.getAvailableOutputChannelPairs(pendingAudioDeviceType, selections.outputDevice)
-        if (!pairOptions || pairOptions.length === 0)
-            pairOptions = ["None", "1-2"]
+        var pairOptions = getOutputPairOptions(selections.outputDevice)
 
         var pairText = pairTextForFirstChannel(pairOptions, selections.firstChannel)
         var firstChannel = parseFirstChannel(pairText)
@@ -186,6 +220,8 @@ Window {
     function refreshOutputsForPendingType() {
         if (!deckA || !deckA.getAvailableAudioOutputDevices)
             return
+
+        outputChannelPairsCache = ({})
 
         audioOutputDeviceOptions = deckA.getAvailableAudioOutputDevices(pendingAudioDeviceType)
         if (!audioOutputDeviceOptions || audioOutputDeviceOptions.length === 0)
@@ -294,26 +330,20 @@ Window {
         settingsManager.audioSampleRate = sampleRate
         settingsManager.audioBufferSize = bufferSize
 
-        var appliedA = deckA && deckA.applyAudioDeviceSettings
-            ? deckA.applyAudioDeviceSettings(deviceType,
-                                             masterOutputDevice,
-                                             sampleRate,
-                                             bufferSize,
-                                             masterFirstChannel,
-                                             headphonesFirstChannel,
-                                             boothFirstChannel)
-            : false
-        var appliedB = deckB && deckB.applyAudioDeviceSettings
-            ? deckB.applyAudioDeviceSettings(deviceType,
-                                             masterOutputDevice,
-                                             sampleRate,
-                                             bufferSize,
-                                             masterFirstChannel,
-                                             headphonesFirstChannel,
-                                             boothFirstChannel)
+        var deckToApply = deckA && deckA.applyAudioDeviceSettings ? deckA
+            : (deckB && deckB.applyAudioDeviceSettings ? deckB : null)
+
+        var applied = deckToApply
+            ? deckToApply.applyAudioDeviceSettings(deviceType,
+                                                   masterOutputDevice,
+                                                   sampleRate,
+                                                   bufferSize,
+                                                   masterFirstChannel,
+                                                   headphonesFirstChannel,
+                                                   boothFirstChannel)
             : false
 
-        if (appliedA && appliedB) {
+        if (applied) {
             audioApplyStatus.text = "Applied: Sound API selected once, role devices and channels updated."
             audioApplyStatus.color = "#8fe388"
         } else {
@@ -502,10 +532,6 @@ Window {
                             color: "#f0f0f0"
                             font.pixelSize: 18
                             font.bold: true
-                        }
-
-                        Item {
-                            Component.onCompleted: settingsWindow.syncAudioSettings()
                         }
 
                         Rectangle {

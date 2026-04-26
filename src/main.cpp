@@ -104,13 +104,6 @@ int main(int argc, char *argv[])
                                     settingsManager.getAudioMasterFirstChannel(),
                                     settingsManager.getAudioHeadphonesFirstChannel(),
                                     settingsManager.getAudioBoothFirstChannel());
-    deckB->applyAudioDeviceSettings(settingsManager.getAudioMasterDeviceType(),
-                                    settingsManager.getAudioMasterOutputDevice(),
-                                    settingsManager.getAudioSampleRate(),
-                                    settingsManager.getAudioBufferSize(),
-                                    settingsManager.getAudioMasterFirstChannel(),
-                                    settingsManager.getAudioHeadphonesFirstChannel(),
-                                    settingsManager.getAudioBoothFirstChannel());
 
     auto coverProvider = std::make_unique<CoverArtProvider>();
     deckA->setCoverArtProvider(coverProvider.get(), "deckA");
