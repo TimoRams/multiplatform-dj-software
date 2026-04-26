@@ -11,6 +11,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
+#include <QSet>
 #include <QDateTime>
 #include <QRegularExpression>
 #include <QVariantMap>
@@ -221,12 +222,13 @@ struct OutputRoutingConfig {
 };
 
 constexpr uint64_t kRoutingFieldMask = 0x1fu;
+constexpr int kMaxSupportedOutputChannel = 30;
 
 int clampFirstChannelForPack(int firstChannel)
 {
     if (firstChannel < 1)
         return -1;
-    return std::clamp(firstChannel, 1, 30);
+    return std::clamp(firstChannel, 1, kMaxSupportedOutputChannel);
 }
 
 uint64_t packRouting(const OutputRoutingConfig& cfg)
@@ -287,12 +289,15 @@ int readDeviceOutputChannelCount(const QString& deviceType, const QString& outpu
 
     if (auto* device = probe.getCurrentAudioDevice()) {
         const int namesCount = device->getOutputChannelNames().size();
+        const auto activeChannels = device->getActiveOutputChannels();
+        const int activeSetBits = activeChannels.countNumberOfSetBits();
+
+        if (namesCount > 0 && activeSetBits > 0)
+            return std::max(namesCount, activeSetBits);
         if (namesCount > 0)
             return namesCount;
-
-        const int activeCount = device->getActiveOutputChannels().getHighestBit() + 1;
-        if (activeCount > 0)
-            return activeCount;
+        if (activeSetBits > 0)
+            return activeSetBits;
     }
 
     return 2;
@@ -303,7 +308,7 @@ QStringList buildChannelPairList(int channelCount)
     QStringList pairs;
     pairs.push_back(QStringLiteral("None"));
 
-    channelCount = std::max(2, channelCount);
+    channelCount = std::clamp(channelCount, 2, kMaxSupportedOutputChannel);
     for (int first = 1; first + 1 <= channelCount; first += 2)
         pairs.push_back(QStringLiteral("%1-%2").arg(first).arg(first + 1));
 
@@ -1576,10 +1581,15 @@ QStringList DjEngine::getAvailableAudioDeviceTypes() const
     QStringList types;
 
     auto& manager = const_cast<juce::AudioDeviceManager&>(deviceManager);
+    const QString currentType = getCurrentAudioDeviceType();
     for (auto* type : manager.getAvailableDeviceTypes()) {
         if (type != nullptr && type->getTypeName().isNotEmpty())
             types.push_back(QString::fromUtf8(type->getTypeName().toRawUTF8()));
     }
+
+    const int currentIndex = types.indexOf(currentType);
+    if (currentIndex > 0)
+        types.move(currentIndex, 0);
 
     return types;
 }
@@ -1587,6 +1597,7 @@ QStringList DjEngine::getAvailableAudioDeviceTypes() const
 QStringList DjEngine::getAvailableAudioOutputDevices(const QString& deviceType) const
 {
     QStringList devices;
+    QStringList fallbackDevices;
 
     auto& manager = const_cast<juce::AudioDeviceManager&>(deviceManager);
     auto* type = findDeviceType(manager, deviceType);
@@ -1594,9 +1605,32 @@ QStringList DjEngine::getAvailableAudioOutputDevices(const QString& deviceType) 
         return devices;
 
     type->scanForDevices();
+    const QString selectedType = !deviceType.isEmpty()
+        ? deviceType
+        : QString::fromUtf8(type->getTypeName().toRawUTF8());
+    const QString currentOutput = getCurrentAudioOutputDevice();
+    QSet<QString> seen;
+
     const auto names = type->getDeviceNames(false);
-    for (const auto& name : names)
-        devices.push_back(QString::fromUtf8(name.toRawUTF8()));
+    for (const auto& name : names) {
+        const QString qName = QString::fromUtf8(name.toRawUTF8()).trimmed();
+        if (qName.isEmpty() || seen.contains(qName))
+            continue;
+
+        seen.insert(qName);
+        const int channelCount = readDeviceOutputChannelCount(selectedType, qName);
+        if (channelCount >= 2)
+            devices.push_back(qName);
+        else
+            fallbackDevices.push_back(qName);
+    }
+
+    if (devices.isEmpty())
+        devices = fallbackDevices;
+
+    const int currentOutputIndex = devices.indexOf(currentOutput);
+    if (currentOutputIndex > 0)
+        devices.move(currentOutputIndex, 0);
 
     return devices;
 }

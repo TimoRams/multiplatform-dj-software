@@ -163,7 +163,7 @@ Window {
 
         var pairText = pairTextForFirstChannel(pairOptions, selections.firstChannel)
         var firstChannel = parseFirstChannel(pairText)
-        setRoleSelections(role, selections.deviceType, selections.outputDevice, firstChannel)
+        setRoleSelections(role, selections.outputDevice, firstChannel)
 
         audioUiSyncing = true
         if (role === "master") {
@@ -183,6 +183,21 @@ Window {
         audioUiSyncing = false
     }
 
+    function refreshOutputsForPendingType() {
+        if (!deckA || !deckA.getAvailableAudioOutputDevices)
+            return
+
+        audioOutputDeviceOptions = deckA.getAvailableAudioOutputDevices(pendingAudioDeviceType)
+        if (!audioOutputDeviceOptions || audioOutputDeviceOptions.length === 0)
+            audioOutputDeviceOptions = ["None"]
+
+        audioUiSyncing = true
+        refreshRoleOutputAndPairs("master")
+        refreshRoleOutputAndPairs("headphones")
+        refreshRoleOutputAndPairs("booth")
+        audioUiSyncing = false
+    }
+
     function refreshAudioDeviceLists() {
         if (!deckA || !deckA.getAvailableAudioDeviceTypes)
             return
@@ -190,23 +205,19 @@ Window {
         audioDeviceTypeOptions = deckA.getAvailableAudioDeviceTypes()
         if (!audioDeviceTypeOptions || audioDeviceTypeOptions.length === 0)
             audioDeviceTypeOptions = [""]
-        if (indexForText(audioDeviceTypeOptions, "") < 0)
-            audioDeviceTypeOptions.unshift("")
-
-        pendingAudioDeviceType = settingsManager ? settingsManager.audioDeviceType : pendingAudioDeviceType
-        if (!pendingAudioDeviceType || indexForText(audioDeviceTypeOptions, pendingAudioDeviceType) < 0)
-            pendingAudioDeviceType = audioDeviceTypeOptions[0]
-
-        audioOutputDeviceOptions = deckA.getAvailableAudioOutputDevices(pendingAudioDeviceType)
-        if (!audioOutputDeviceOptions || audioOutputDeviceOptions.length === 0)
-            audioOutputDeviceOptions = ["None"]
+        if (!pendingAudioDeviceType || indexForText(audioDeviceTypeOptions, pendingAudioDeviceType) < 0) {
+            var currentType = deckA.getCurrentAudioDeviceType ? deckA.getCurrentAudioDeviceType() : ""
+            if (currentType && indexForText(audioDeviceTypeOptions, currentType) >= 0)
+                pendingAudioDeviceType = currentType
+            else
+                pendingAudioDeviceType = audioDeviceTypeOptions[0]
+        }
 
         audioUiSyncing = true
         audioDeviceTypeCombo.currentIndex = Math.max(0, indexForText(audioDeviceTypeOptions, pendingAudioDeviceType))
-        refreshRoleOutputAndPairs("master")
-        refreshRoleOutputAndPairs("headphones")
-        refreshRoleOutputAndPairs("booth")
         audioUiSyncing = false
+
+        refreshOutputsForPendingType()
     }
 
     function syncAudioSettings() {
@@ -214,6 +225,8 @@ Window {
             return
 
         pendingAudioDeviceType = settingsManager.audioDeviceType
+        if (!pendingAudioDeviceType && deckA && deckA.getCurrentAudioDeviceType)
+            pendingAudioDeviceType = deckA.getCurrentAudioDeviceType()
 
         pendingMasterOutputDevice = settingsManager.audioMasterOutputDevice
         pendingMasterFirstChannel = settingsManager.audioMasterFirstChannel
@@ -522,7 +535,7 @@ Window {
                                           return
                                       if (currentIndex >= 0 && currentIndex < settingsWindow.audioDeviceTypeOptions.length) {
                                           settingsWindow.pendingAudioDeviceType = settingsWindow.audioDeviceTypeOptions[currentIndex]
-                                          settingsWindow.refreshAudioDeviceLists()
+                                          settingsWindow.refreshOutputsForPendingType()
                                       }
                                   }
                               }
