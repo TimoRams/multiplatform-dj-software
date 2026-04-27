@@ -84,13 +84,12 @@ jobs:
           export QT_QML_DIR=$($QMAKE -query QT_INSTALL_QML)
           export QT_LIB_DIR=$($QMAKE -query QT_INSTALL_LIBS)
           
-          # Manually copy Wayland platform plugins and bundle all Qt libs/QML to avoid host dependency leaks
-          mkdir -p AppDir/usr/plugins/platforms AppDir/usr/plugins/wayland-graphics-integration-client AppDir/usr/qml AppDir/usr/lib
-          cp $QT_PLUGINS_DIR/platforms/libqwayland* AppDir/usr/plugins/platforms/ 2>/dev/null || true
-          cp -r $QT_PLUGINS_DIR/wayland* AppDir/usr/plugins/ 2>/dev/null || true
-          rsync -a $QT_QML_DIR/ AppDir/usr/qml/
-          cp -a $QT_LIB_DIR/libQt6*.so* AppDir/usr/lib/ 2> /dev/null || true
-          cp -a $QT_LIB_DIR/libicu*.so* AppDir/usr/lib/ 2> /dev/null || true
+          # Bundle full Qt plugins/QML/libs (follow symlinks) to avoid host dependency leaks
+          mkdir -p AppDir/usr/plugins AppDir/usr/qml AppDir/usr/lib
+          rsync -aL $QT_PLUGINS_DIR/ AppDir/usr/plugins/
+          rsync -aL $QT_QML_DIR/ AppDir/usr/qml/
+          cp -aL $QT_LIB_DIR/libQt6*.so* AppDir/usr/lib/ 2> /dev/null || true
+          cp -aL $QT_LIB_DIR/libicu*.so* AppDir/usr/lib/ 2> /dev/null || true
 
           # Force Qt to load everything from inside the AppImage at runtime
           cat <<EOF > AppDir/usr/bin/qt.conf
@@ -118,6 +117,20 @@ jobs:
           while IFS= read -r -d '' f; do
             if [ -f "$f" ]; then QML_PLUGIN_ARGS="$QML_PLUGIN_ARGS -e $f"; fi
           done < <(find AppDir/usr/qml -name "*.so" -print0)
+
+          copy_deps() {
+            ldd "$1" | awk '/=>/ {print $3}' | while read -r lib; do
+              if [ -z "$lib" ]; then continue; fi
+              case "$lib" in
+                /lib*/ld-linux*|/lib*/libc.so*|/lib*/libm.so*|/lib*/libpthread.so*|/lib*/librt.so*|/lib*/libdl.so*|/lib*/libutil.so*|/lib*/libresolv.so*) continue ;;
+              esac
+              cp -aL "$lib" AppDir/usr/lib/ 2>/dev/null || true
+            done
+          }
+          copy_deps AppDir/usr/bin/RamsbrockDJ
+          while IFS= read -r -d '' f; do
+            copy_deps "$f"
+          done < <(find AppDir/usr/plugins AppDir/usr/qml -name "*.so" -print0)
 
           # Ensure runtime uses AppImage-local Qt paths
           cat <<'EOF' > AppDir/AppRun
@@ -322,13 +335,12 @@ jobs:
           export QT_QML_DIR=$($QMAKE -query QT_INSTALL_QML)
           export QT_LIB_DIR=$($QMAKE -query QT_INSTALL_LIBS)
           
-          # Manually copy Wayland platform plugins and bundle all Qt libs/QML to avoid host dependency leaks
-          mkdir -p AppDir/usr/plugins/platforms AppDir/usr/plugins/wayland-graphics-integration-client AppDir/usr/qml AppDir/usr/lib
-          cp $QT_PLUGINS_DIR/platforms/libqwayland* AppDir/usr/plugins/platforms/ 2>/dev/null || true
-          cp -r $QT_PLUGINS_DIR/wayland* AppDir/usr/plugins/ 2>/dev/null || true
-          rsync -a $QT_QML_DIR/ AppDir/usr/qml/
-          cp -a $QT_LIB_DIR/libQt6*.so* AppDir/usr/lib/ 2> /dev/null || true
-          cp -a $QT_LIB_DIR/libicu*.so* AppDir/usr/lib/ 2> /dev/null || true
+          # Bundle full Qt plugins/QML/libs (follow symlinks) to avoid host dependency leaks
+          mkdir -p AppDir/usr/plugins AppDir/usr/qml AppDir/usr/lib
+          rsync -aL $QT_PLUGINS_DIR/ AppDir/usr/plugins/
+          rsync -aL $QT_QML_DIR/ AppDir/usr/qml/
+          cp -aL $QT_LIB_DIR/libQt6*.so* AppDir/usr/lib/ 2> /dev/null || true
+          cp -aL $QT_LIB_DIR/libicu*.so* AppDir/usr/lib/ 2> /dev/null || true
 
           # Force Qt to load everything from inside the AppImage at runtime
           cat <<EOF > AppDir/usr/bin/qt.conf
@@ -356,6 +368,20 @@ jobs:
           while IFS= read -r -d '' f; do
             if [ -f "$f" ]; then QML_PLUGIN_ARGS="$QML_PLUGIN_ARGS -e $f"; fi
           done < <(find AppDir/usr/qml -name "*.so" -print0)
+
+          copy_deps() {
+            ldd "$1" | awk '/=>/ {print $3}' | while read -r lib; do
+              if [ -z "$lib" ]; then continue; fi
+              case "$lib" in
+                /lib*/ld-linux*|/lib*/libc.so*|/lib*/libm.so*|/lib*/libpthread.so*|/lib*/librt.so*|/lib*/libdl.so*|/lib*/libutil.so*|/lib*/libresolv.so*) continue ;;
+              esac
+              cp -aL "$lib" AppDir/usr/lib/ 2>/dev/null || true
+            done
+          }
+          copy_deps AppDir/usr/bin/RamsbrockDJ
+          while IFS= read -r -d '' f; do
+            copy_deps "$f"
+          done < <(find AppDir/usr/plugins AppDir/usr/qml -name "*.so" -print0)
 
           # Ensure runtime uses AppImage-local Qt paths
           cat <<'EOF' > AppDir/AppRun
