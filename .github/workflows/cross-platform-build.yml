@@ -54,11 +54,34 @@ jobs:
         run: |
           cmake --build build --parallel
 
+      - name: Deploy Linux (AppImage)
+        run: |
+          mkdir -p deploy/AppDir/usr/bin deploy/AppDir/usr/share/applications deploy/AppDir/usr/share/icons/hicolor/256x256/apps
+          cp build/bin/RamsbrockDJ deploy/AppDir/usr/bin/
+          cat <<EOF > deploy/AppDir/usr/share/applications/RamsbrockDJ.desktop
+          [Desktop Entry]
+          Type=Application
+          Name=RamsbrockDJ
+          Exec=RamsbrockDJ
+          Icon=RamsbrockDJ
+          Categories=AudioVideo;
+          EOF
+          touch deploy/AppDir/usr/share/icons/hicolor/256x256/apps/RamsbrockDJ.png
+          cd deploy
+          ARCH=$(uname -m)
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-$ARCH.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-$ARCH.AppImage
+          chmod +x linuxdeploy*.AppImage
+          export QMAKE=$(which qmake6)
+          export QML_SOURCES_PATHS=../src/qml
+          export VERSION=1.0.0
+          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir -e AppDir/usr/bin/RamsbrockDJ --plugin qt --output appimage
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RamsbrockDJ-ubuntu-latest
-          path: build/bin/RamsbrockDJ*
+          name: RamsbrockDJ-ubuntu-latest-AppImage
+          path: deploy/RamsbrockDJ*.AppImage
 
   build-extra-platforms:
     if: ${{ github.event_name == 'workflow_dispatch' }}
@@ -195,8 +218,53 @@ jobs:
         run: |
           cmake --build build --config Release --parallel
 
+      - name: Deploy macOS
+        if: startsWith(matrix.runner, 'macos')
+        run: |
+          mkdir -p deploy/RamsbrockDJ.app/Contents/MacOS
+          cp build/bin/RamsbrockDJ deploy/RamsbrockDJ.app/Contents/MacOS/
+          $(brew --prefix qt@6)/bin/macdeployqt deploy/RamsbrockDJ.app -qmldir=src/qml
+
+      - name: Deploy Windows
+        if: matrix.runner == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path deploy\RamsbrockDJ
+          Copy-Item build\bin\RamsbrockDJ.exe deploy\RamsbrockDJ\
+          $qtBin = Join-Path $env:Qt6_DIR 'bin'
+          $windeployqt = Join-Path $qtBin 'windeployqt.exe'
+          & $windeployqt --qmldir src\qml deploy\RamsbrockDJ\RamsbrockDJ.exe
+          Copy-Item "C:\vcpkg\installed\x64-windows\bin\*.dll" -Destination deploy\RamsbrockDJ\
+
+      - name: Deploy Linux ARM
+        if: matrix.runner == 'ubuntu-24.04-arm'
+        run: |
+          mkdir -p deploy/AppDir/usr/bin deploy/AppDir/usr/share/applications deploy/AppDir/usr/share/icons/hicolor/256x256/apps
+          cp build/bin/RamsbrockDJ deploy/AppDir/usr/bin/
+          cat <<EOF > deploy/AppDir/usr/share/applications/RamsbrockDJ.desktop
+          [Desktop Entry]
+          Type=Application
+          Name=RamsbrockDJ
+          Exec=RamsbrockDJ
+          Icon=RamsbrockDJ
+          Categories=AudioVideo;
+          EOF
+          touch deploy/AppDir/usr/share/icons/hicolor/256x256/apps/RamsbrockDJ.png
+          cd deploy
+          ARCH=$(uname -m)
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-$ARCH.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-$ARCH.AppImage
+          chmod +x linuxdeploy*.AppImage
+          export QMAKE=$(which qmake6)
+          export QML_SOURCES_PATHS=../src/qml
+          export VERSION=1.0.0
+          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir -e AppDir/usr/bin/RamsbrockDJ --plugin qt --output appimage
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: RamsbrockDJ-${{ matrix.runner }}
-          path: build/bin/RamsbrockDJ*
+          path: |
+            deploy/RamsbrockDJ.app/
+            deploy/RamsbrockDJ/
+            deploy/RamsbrockDJ*.AppImage
