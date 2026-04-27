@@ -138,7 +138,7 @@ jobs:
           sudo apt-get install -y \
             build-essential cmake pkg-config ninja-build ccache \
             qt6-base-dev qt6-declarative-dev qt6-quick3d-dev qt6-shadertools-dev \
-            qt6-wayland qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qtqml-workerscript qml6-module-qtquick-templates2 \
+            qt6-wayland qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qtqml-workerscript \
             libtag1-dev librubberband-dev libasound2-dev libfftw3-dev \
             libfreetype-dev libfontconfig1-dev \
             libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxrender-dev \
