@@ -76,25 +76,45 @@ jobs:
           
           export QMAKE=$(which qmake6)
           export QML_SOURCES_PATHS=../src/qml
+          export QML_IMPORT_PATHS=$($QMAKE -query QT_INSTALL_QML)
           export EXTRA_QT_PLUGINS=wayland,xcb
           export VERSION=1.0.0
           
           export QT_PLUGINS_DIR=$($QMAKE -query QT_INSTALL_PLUGINS)
           export QT_QML_DIR=$($QMAKE -query QT_INSTALL_QML)
+          export QT_LIB_DIR=$($QMAKE -query QT_INSTALL_LIBS)
           
           # Manually copy Wayland platform plugins AND WorkerScript because the Qt plugin misses them sometimes
-          mkdir -p AppDir/usr/plugins/platforms AppDir/usr/plugins/wayland-graphics-integration-client AppDir/usr/qml/QtQml
+          mkdir -p AppDir/usr/plugins/platforms AppDir/usr/plugins/wayland-graphics-integration-client AppDir/usr/qml/QtQml AppDir/usr/lib
           cp $QT_PLUGINS_DIR/platforms/libqwayland* AppDir/usr/plugins/platforms/ 2>/dev/null || true
           cp -r $QT_PLUGINS_DIR/wayland* AppDir/usr/plugins/ 2>/dev/null || true
           cp -r $QT_QML_DIR/QtQml/WorkerScript AppDir/usr/qml/QtQml/ 2>/dev/null || true
+          cp $QT_LIB_DIR/libQt6QmlWorkerScript.so* AppDir/usr/lib/ 2> /dev/null || true
+
+          # Force Qt to load everything from inside the AppImage at runtime
+          cat <<EOF > AppDir/usr/bin/qt.conf
+          [Paths]
+          Prefix=..
+          Plugins=plugins
+          Libraries=lib
+          Qml2Imports=qml
+          EOF
           
           # Tell linuxdeploy to explicitly link and patch our manually copied Wayland libraries so their dependencies (like libQt6WaylandClient.so) are found!
           WAYLAND_ARGS=""
           for f in AppDir/usr/plugins/platforms/libqwayland*.so; do
             if [ -f "$f" ]; then WAYLAND_ARGS="$WAYLAND_ARGS -e $f"; fi
           done
+          WORKERSCRIPT_ARGS=""
+          for f in AppDir/usr/lib/libQt6QmlWorkerScript.so*; do
+            if [ -f "$f" ]; then WORKERSCRIPT_ARGS="$WORKERSCRIPT_ARGS -e $f"; fi
+          done
+          WORKERSCRIPT_PLUGIN_ARGS=""
+          for f in AppDir/usr/qml/QtQml/WorkerScript/*.so; do
+            if [ -f "$f" ]; then WORKERSCRIPT_PLUGIN_ARGS="$WORKERSCRIPT_PLUGIN_ARGS -e $f"; fi
+          done
           
-          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir -e AppDir/usr/bin/RamsbrockDJ $WAYLAND_ARGS --plugin qt --output appimage
+          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir -e AppDir/usr/bin/RamsbrockDJ $WAYLAND_ARGS $WORKERSCRIPT_ARGS $WORKERSCRIPT_PLUGIN_ARGS --plugin qt --output appimage
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -278,25 +298,45 @@ jobs:
           
           export QMAKE=$(which qmake6)
           export QML_SOURCES_PATHS=../src/qml
+          export QML_IMPORT_PATHS=$($QMAKE -query QT_INSTALL_QML)
           export EXTRA_QT_PLUGINS=wayland,xcb
           export VERSION=1.0.0
           
           export QT_PLUGINS_DIR=$($QMAKE -query QT_INSTALL_PLUGINS)
           export QT_QML_DIR=$($QMAKE -query QT_INSTALL_QML)
+          export QT_LIB_DIR=$($QMAKE -query QT_INSTALL_LIBS)
           
           # Manually copy Wayland platform plugins AND WorkerScript because the Qt plugin misses them sometimes
-          mkdir -p AppDir/usr/plugins/platforms AppDir/usr/plugins/wayland-graphics-integration-client AppDir/usr/qml/QtQml
+          mkdir -p AppDir/usr/plugins/platforms AppDir/usr/plugins/wayland-graphics-integration-client AppDir/usr/qml/QtQml AppDir/usr/lib
           cp $QT_PLUGINS_DIR/platforms/libqwayland* AppDir/usr/plugins/platforms/ 2>/dev/null || true
           cp -r $QT_PLUGINS_DIR/wayland* AppDir/usr/plugins/ 2>/dev/null || true
           cp -r $QT_QML_DIR/QtQml/WorkerScript AppDir/usr/qml/QtQml/ 2>/dev/null || true
+          cp $QT_LIB_DIR/libQt6QmlWorkerScript.so* AppDir/usr/lib/ 2> /dev/null || true
+
+          # Force Qt to load everything from inside the AppImage at runtime
+          cat <<EOF > AppDir/usr/bin/qt.conf
+          [Paths]
+          Prefix=..
+          Plugins=plugins
+          Libraries=lib
+          Qml2Imports=qml
+          EOF
           
           # Tell linuxdeploy to explicitly link and patch our manually copied Wayland libraries so their dependencies (like libQt6WaylandClient.so) are found!
           WAYLAND_ARGS=""
           for f in AppDir/usr/plugins/platforms/libqwayland*.so; do
             if [ -f "$f" ]; then WAYLAND_ARGS="$WAYLAND_ARGS -e $f"; fi
           done
+          WORKERSCRIPT_ARGS=""
+          for f in AppDir/usr/lib/libQt6QmlWorkerScript.so*; do
+            if [ -f "$f" ]; then WORKERSCRIPT_ARGS="$WORKERSCRIPT_ARGS -e $f"; fi
+          done
+          WORKERSCRIPT_PLUGIN_ARGS=""
+          for f in AppDir/usr/qml/QtQml/WorkerScript/*.so; do
+            if [ -f "$f" ]; then WORKERSCRIPT_PLUGIN_ARGS="$WORKERSCRIPT_PLUGIN_ARGS -e $f"; fi
+          done
           
-          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir -e AppDir/usr/bin/RamsbrockDJ $WAYLAND_ARGS --plugin qt --output appimage
+          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir -e AppDir/usr/bin/RamsbrockDJ $WAYLAND_ARGS $WORKERSCRIPT_ARGS $WORKERSCRIPT_PLUGIN_ARGS --plugin qt --output appimage
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
