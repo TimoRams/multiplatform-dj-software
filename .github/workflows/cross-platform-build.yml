@@ -50,7 +50,7 @@ jobs:
           cmake --build build --parallel
 
   build-extra-platforms:
-    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     name: Build (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
     continue-on-error: true
@@ -59,7 +59,9 @@ jobs:
       fail-fast: false
       matrix:
         runner:
-          - macos-latest
+          - ubuntu-24.04-arm
+          - macos-13
+          - macos-15
           - windows-latest
 
     steps:
@@ -75,8 +77,28 @@ jobs:
           version: '6.7.2'
           modules: 'qtquick3d'
 
+      - name: Install Dependencies (Linux ARM)
+        if: matrix.runner == 'ubuntu-24.04-arm'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake pkg-config ninja-build \
+            qt6-base-dev qt6-declarative-dev qt6-quick3d-dev qt6-shadertools-dev \
+            libtag1-dev librubberband-dev libasound2-dev libfftw3-dev \
+            libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxrender-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev
+
+      - name: Install libkeyfinder (Linux ARM)
+        if: matrix.runner == 'ubuntu-24.04-arm'
+        run: |
+          git clone --depth 1 https://github.com/mixxxdj/libkeyfinder.git
+          cmake -S libkeyfinder -B libkeyfinder/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake --build libkeyfinder/build --parallel
+          sudo cmake --install libkeyfinder/build
+
       - name: Install Dependencies (macOS)
-        if: matrix.runner == 'macos-latest'
+        if: startsWith(matrix.runner, 'macos')
         run: |
           brew update
           brew install cmake pkg-config qt@6 taglib rubberband libkeyfinder
@@ -94,9 +116,14 @@ jobs:
           C:\vcpkg\vcpkg.exe install taglib rubberband libkeyfinder --triplet x64-windows
 
       - name: Configure (macOS)
-        if: matrix.runner == 'macos-latest'
+        if: startsWith(matrix.runner, 'macos')
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
+
+      - name: Configure (Linux ARM)
+        if: matrix.runner == 'ubuntu-24.04-arm'
+        run: |
+          cmake -S . -B build -G Ninja
 
       - name: Configure (Windows)
         if: matrix.runner == 'windows-latest'
@@ -124,7 +151,12 @@ jobs:
             -DQt6_DIR="$qt6Dir"
 
       - name: Build (macOS)
-        if: matrix.runner == 'macos-latest'
+        if: startsWith(matrix.runner, 'macos')
+        run: |
+          cmake --build build --parallel
+
+      - name: Build (Linux ARM)
+        if: matrix.runner == 'ubuntu-24.04-arm'
         run: |
           cmake --build build --parallel
 
