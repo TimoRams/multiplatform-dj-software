@@ -120,6 +120,23 @@ ApplicationWindow {
             || (typeof focused.inputMethodComposing === "boolean")
     }
 
+    function _handleLinkEnabledChanged() {
+        if (typeof linkManager === "undefined" || linkManager === null)
+            return
+        if (!linkManager.enabled)
+            window.linkedDeckName = ""
+    }
+
+    Component.onCompleted: {
+        if (typeof linkManager !== "undefined" && linkManager !== null)
+            linkManager.enabledChanged.connect(window._handleLinkEnabledChanged)
+    }
+
+    Component.onDestruction: {
+        if (typeof linkManager !== "undefined" && linkManager !== null)
+            linkManager.enabledChanged.disconnect(window._handleLinkEnabledChanged)
+    }
+
     // Timer to hide the loading indicator and show the main content
     Timer {
         id: loadingTimer
@@ -328,10 +345,6 @@ ApplicationWindow {
 
     Connections {
         target: (typeof linkManager !== "undefined" && linkManager !== null) ? linkManager : null
-        function onEnabledChanged() {
-            if (!linkManager.enabled)
-                window.linkedDeckName = ""
-        }
     }
 
     // -------------------------------------------------------------------------
