@@ -84,12 +84,13 @@ jobs:
           export QT_QML_DIR=$($QMAKE -query QT_INSTALL_QML)
           export QT_LIB_DIR=$($QMAKE -query QT_INSTALL_LIBS)
           
-          # Manually copy Wayland platform plugins AND WorkerScript because the Qt plugin misses them sometimes
-          mkdir -p AppDir/usr/plugins/platforms AppDir/usr/plugins/wayland-graphics-integration-client AppDir/usr/qml/QtQml AppDir/usr/lib
+          # Manually copy Wayland platform plugins and bundle all Qt libs/QML to avoid host dependency leaks
+          mkdir -p AppDir/usr/plugins/platforms AppDir/usr/plugins/wayland-graphics-integration-client AppDir/usr/qml AppDir/usr/lib
           cp $QT_PLUGINS_DIR/platforms/libqwayland* AppDir/usr/plugins/platforms/ 2>/dev/null || true
           cp -r $QT_PLUGINS_DIR/wayland* AppDir/usr/plugins/ 2>/dev/null || true
-          cp -r $QT_QML_DIR/QtQml/WorkerScript AppDir/usr/qml/QtQml/ 2>/dev/null || true
-          cp $QT_LIB_DIR/libQt6QmlWorkerScript.so* AppDir/usr/lib/ 2> /dev/null || true
+          rsync -a $QT_QML_DIR/ AppDir/usr/qml/
+          cp -a $QT_LIB_DIR/libQt6*.so* AppDir/usr/lib/ 2> /dev/null || true
+          cp -a $QT_LIB_DIR/libicu*.so* AppDir/usr/lib/ 2> /dev/null || true
 
           # Force Qt to load everything from inside the AppImage at runtime
           cat <<EOF > AppDir/usr/bin/qt.conf
@@ -113,6 +114,17 @@ jobs:
           for f in AppDir/usr/qml/QtQml/WorkerScript/*.so; do
             if [ -f "$f" ]; then WORKERSCRIPT_PLUGIN_ARGS="$WORKERSCRIPT_PLUGIN_ARGS -e $f"; fi
           done
+
+          # Ensure runtime uses AppImage-local Qt paths
+          cat <<'EOF' > AppDir/AppRun
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "$0")")"
+          export LD_LIBRARY_PATH="$HERE/usr/lib:$HERE/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
+          export QT_PLUGIN_PATH="$HERE/usr/plugins"
+          export QML2_IMPORT_PATH="$HERE/usr/qml"
+          exec "$HERE/usr/bin/RamsbrockDJ" "$@"
+          EOF
+          chmod +x AppDir/AppRun
           
           ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir -e AppDir/usr/bin/RamsbrockDJ $WAYLAND_ARGS $WORKERSCRIPT_ARGS $WORKERSCRIPT_PLUGIN_ARGS --plugin qt --output appimage
 
@@ -306,12 +318,13 @@ jobs:
           export QT_QML_DIR=$($QMAKE -query QT_INSTALL_QML)
           export QT_LIB_DIR=$($QMAKE -query QT_INSTALL_LIBS)
           
-          # Manually copy Wayland platform plugins AND WorkerScript because the Qt plugin misses them sometimes
-          mkdir -p AppDir/usr/plugins/platforms AppDir/usr/plugins/wayland-graphics-integration-client AppDir/usr/qml/QtQml AppDir/usr/lib
+          # Manually copy Wayland platform plugins and bundle all Qt libs/QML to avoid host dependency leaks
+          mkdir -p AppDir/usr/plugins/platforms AppDir/usr/plugins/wayland-graphics-integration-client AppDir/usr/qml AppDir/usr/lib
           cp $QT_PLUGINS_DIR/platforms/libqwayland* AppDir/usr/plugins/platforms/ 2>/dev/null || true
           cp -r $QT_PLUGINS_DIR/wayland* AppDir/usr/plugins/ 2>/dev/null || true
-          cp -r $QT_QML_DIR/QtQml/WorkerScript AppDir/usr/qml/QtQml/ 2>/dev/null || true
-          cp $QT_LIB_DIR/libQt6QmlWorkerScript.so* AppDir/usr/lib/ 2> /dev/null || true
+          rsync -a $QT_QML_DIR/ AppDir/usr/qml/
+          cp -a $QT_LIB_DIR/libQt6*.so* AppDir/usr/lib/ 2> /dev/null || true
+          cp -a $QT_LIB_DIR/libicu*.so* AppDir/usr/lib/ 2> /dev/null || true
 
           # Force Qt to load everything from inside the AppImage at runtime
           cat <<EOF > AppDir/usr/bin/qt.conf
@@ -335,6 +348,17 @@ jobs:
           for f in AppDir/usr/qml/QtQml/WorkerScript/*.so; do
             if [ -f "$f" ]; then WORKERSCRIPT_PLUGIN_ARGS="$WORKERSCRIPT_PLUGIN_ARGS -e $f"; fi
           done
+
+          # Ensure runtime uses AppImage-local Qt paths
+          cat <<'EOF' > AppDir/AppRun
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "$0")")"
+          export LD_LIBRARY_PATH="$HERE/usr/lib:$HERE/usr/lib/aarch64-linux-gnu:$LD_LIBRARY_PATH"
+          export QT_PLUGIN_PATH="$HERE/usr/plugins"
+          export QML2_IMPORT_PATH="$HERE/usr/qml"
+          exec "$HERE/usr/bin/RamsbrockDJ" "$@"
+          EOF
+          chmod +x AppDir/AppRun
           
           ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir -e AppDir/usr/bin/RamsbrockDJ $WAYLAND_ARGS $WORKERSCRIPT_ARGS $WORKERSCRIPT_PLUGIN_ARGS --plugin qt --output appimage
 
