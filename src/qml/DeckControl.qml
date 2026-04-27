@@ -26,6 +26,10 @@ Item {
     readonly property bool linkAvailable: (typeof linkManager !== "undefined" && linkManager !== null && linkManager.enabled)
     readonly property bool linkMode: (typeof window !== "undefined" && window !== null && window.linkedDeckName === deck.deckName)
     readonly property int headerCellHeight: 22
+    property double _linkSuppressPublishUntilMs: 0
+    property double _linkFollowBlockedUntilMs: 0
+    property double _lastLinkPublishMs: 0
+    property double _lastLinkPublishBpm: 0
 
     component DeckSlider: Slider {
         id: control
@@ -188,10 +192,68 @@ Item {
         window.linkedDeckName = on ? deck.deckName : ""
     }
 
+    function _isLinkLeader() {
+        if (!deck.engine || !deck.linkAvailable)
+            return false
+        if (!linkManager)
+            return false
+
+        // With no peers we can seed Link; once peers exist, only sync master leads.
+        if (linkManager.numPeers <= 0)
+            return true
+        return deck.engine.syncMaster
+    }
+
+    function _shouldFollowLinkTempo() {
+        if (!deck.engine || !deck.linkMode || !deck.linkAvailable)
+            return false
+        if (!linkManager || linkManager.numPeers <= 0)
+            return false
+        if (deck._isLinkLeader())
+            return false
+        if (!deck.engine.isPlaying)
+            return false
+        if (deck.engine.scrubbing)
+            return false
+        if (Date.now() < deck._linkFollowBlockedUntilMs)
+            return false
+        if (!deck.engine.trackData || !deck.engine.trackData.isBpmAnalyzed)
+            return false
+        return true
+    }
+
+    function _followAbletonLinkTempo(forceNow) {
+        if (!deck._shouldFollowLinkTempo())
+            return
+
+        var linkBpm = Number(linkManager.bpm)
+        var baseBpm = Number(deck.engine.trackData.bpm)
+        if (isNaN(linkBpm) || !isFinite(linkBpm) || linkBpm <= 0.0)
+            return
+        if (isNaN(baseBpm) || !isFinite(baseBpm) || baseBpm <= 0.0)
+            return
+
+        var targetPct = ((linkBpm / baseBpm) - 1.0) * 100.0
+        targetPct = Math.max(-100.0, Math.min(100.0, targetPct))
+
+        var deltaPct = Math.abs(Number(deck.engine.tempoPercent) - targetPct)
+        if (!forceNow && deltaPct < 0.03)
+            return
+
+        deck.engine.setTempoPercent(targetPct)
+
+        // Prevent immediate writeback of old local beat/tempo into Link.
+        deck._linkSuppressPublishUntilMs = Date.now() + 420
+    }
+
     function _publishDeckToAbletonLink() {
         if (!deck.engine || !deck.linkMode || !deck.linkAvailable)
             return
         if (!deck.engine.isPlaying)
+            return
+        if (!deck._isLinkLeader())
+            return
+        if (Date.now() < deck._linkSuppressPublishUntilMs)
             return
         if (!deck.engine.trackData || !deck.engine.trackData.isBpmAnalyzed)
             return
@@ -220,12 +282,23 @@ Item {
         if (isNaN(absoluteBeat) || !isFinite(absoluteBeat))
             return
 
+        var nowMs = Date.now()
+        var minPublishIntervalMs = deck.engine.scrubbing ? 70 : 120
+        if ((nowMs - deck._lastLinkPublishMs) < minPublishIntervalMs
+            && Math.abs(liveBpm - deck._lastLinkPublishBpm) < 0.02)
+            return
+
         linkManager.publishDeckState(liveBpm, absoluteBeat, 4.0)
+        deck._lastLinkPublishMs = nowMs
+        deck._lastLinkPublishBpm = liveBpm
     }
 
     onLinkModeChanged: {
-        if (deck.linkMode)
+        if (deck.linkMode) {
+            deck._linkSuppressPublishUntilMs = Date.now() + 180
             deck._publishDeckToAbletonLink()
+            deck._followAbletonLinkTempo(true)
+        }
     }
 
     Connections {
@@ -233,6 +306,20 @@ Item {
         function onTrackMetadataChanged() { deck._syncMetadata() }
         function onTempoChanged() { deck._syncTempo() }
         function onLoopChanged() { deck._syncTempo() }
+        function onScrubbingChanged() {
+            if (!deck.engine)
+                return
+
+            if (deck.engine.scrubbing) {
+                // During scratch local manipulation takes over.
+                deck._linkFollowBlockedUntilMs = Date.now() + 120
+            } else {
+                // Allow release tail to settle before re-following external Link tempo.
+                deck._linkFollowBlockedUntilMs = Date.now() + 280
+                deck._linkSuppressPublishUntilMs = Date.now() + 320
+                deck._followAbletonLinkTempo(true)
+            }
+        }
     }
 
     Connections {
@@ -246,16 +333,18 @@ Item {
         function onEnabledChanged() {
             if (!linkManager.enabled && deck.linkMode)
                 deck._setLinkMode(false)
+            if (linkManager.enabled && deck.linkMode)
+                deck._followAbletonLinkTempo(true)
         }
         function onBpmChanged() {
-            // Deck-Link is publisher mode (Deck -> Ableton Link), so no follower action.
+            deck._followAbletonLinkTempo(false)
         }
         function onPhaseChanged() {}
     }
 
     Timer {
         id: linkDeckSyncTimer
-        interval: 33
+        interval: 50
         repeat: true
         running: deck.linkMode && deck.linkAvailable && deck.engine !== null && deck.engine.isPlaying
         onTriggered: deck._publishDeckToAbletonLink()
