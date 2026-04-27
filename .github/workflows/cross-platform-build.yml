@@ -73,10 +73,21 @@ jobs:
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-$ARCH.AppImage
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-$ARCH.AppImage
           chmod +x linuxdeploy*.AppImage
+          
+          # Force bundling of QtQml.WorkerScript
+          echo 'import QtQml.WorkerScript' > ../src/qml/_ImplicitDeps.qml
+          
           export QMAKE=$(which qmake6)
           export QML_SOURCES_PATHS=../src/qml
           export EXTRA_QT_PLUGINS=wayland,xcb
           export VERSION=1.0.0
+          
+          # Manually copy Wayland platform plugins
+          export QT_PLUGINS_DIR=$($QMAKE -query QT_INSTALL_PLUGINS)
+          mkdir -p AppDir/usr/plugins/platforms AppDir/usr/plugins/wayland-graphics-integration-client
+          cp $QT_PLUGINS_DIR/platforms/libqwayland* AppDir/usr/plugins/platforms/ 2>/dev/null || true
+          cp -r $QT_PLUGINS_DIR/wayland* AppDir/usr/plugins/ 2>/dev/null || true
+          
           ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir -e AppDir/usr/bin/RamsbrockDJ --plugin qt --output appimage
 
       - name: Upload Artifact
@@ -258,10 +269,21 @@ jobs:
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-$ARCH.AppImage
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-$ARCH.AppImage
           chmod +x linuxdeploy*.AppImage
+          
+          # Force bundling of QtQml.WorkerScript
+          echo 'import QtQml.WorkerScript' > ../src/qml/_ImplicitDeps.qml
+          
           export QMAKE=$(which qmake6)
           export QML_SOURCES_PATHS=../src/qml
           export EXTRA_QT_PLUGINS=wayland,xcb
           export VERSION=1.0.0
+          
+          # Manually copy Wayland platform plugins
+          export QT_PLUGINS_DIR=$($QMAKE -query QT_INSTALL_PLUGINS)
+          mkdir -p AppDir/usr/plugins/platforms AppDir/usr/plugins/wayland-graphics-integration-client
+          cp $QT_PLUGINS_DIR/platforms/libqwayland* AppDir/usr/plugins/platforms/ 2>/dev/null || true
+          cp -r $QT_PLUGINS_DIR/wayland* AppDir/usr/plugins/ 2>/dev/null || true
+          
           ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir -e AppDir/usr/bin/RamsbrockDJ --plugin qt --output appimage
 
       - name: Upload Artifact
