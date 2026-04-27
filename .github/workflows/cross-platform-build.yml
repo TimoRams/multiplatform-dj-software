@@ -23,11 +23,16 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Setup ccache (Linux)
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}
+
       - name: Install Dependencies (Linux)
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential cmake pkg-config ninja-build \
+            build-essential cmake pkg-config ninja-build ccache \
             qt6-base-dev qt6-declarative-dev qt6-quick3d-dev qt6-shadertools-dev \
             libtag1-dev librubberband-dev libasound2-dev libfftw3-dev \
             libfreetype-dev libfontconfig1-dev \
@@ -49,6 +54,12 @@ jobs:
         run: |
           cmake --build build --parallel
 
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RamsbrockDJ-ubuntu-latest
+          path: build/bin/RamsbrockDJ*
+
   build-extra-platforms:
     if: ${{ github.event_name == 'workflow_dispatch' }}
     name: Build (${{ matrix.runner }})
@@ -59,16 +70,34 @@ jobs:
       fail-fast: false
       matrix:
         runner:
-          - ubuntu-24.04-arm
-          - macos-13
-          - macos-15
-          - windows-latest
+          - ubuntu-24.04-arm  # Linux ARM
+          - macos-13          # Latest Intel macOS supported by GitHub
+          - macos-latest      # Latest Apple Silicon (ARM) macOS
+          - windows-latest    # Windows x64
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Setup ccache (macOS/Linux)
+        if: matrix.runner != 'windows-latest'
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ matrix.runner }}
+
+      - name: Cache vcpkg (Windows)
+        if: matrix.runner == 'windows-latest'
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\vcpkg\.git
+            C:\vcpkg\installed
+            C:\vcpkg\downloads
+            C:\vcpkg\packages
+            C:\vcpkg\buildtrees
+          key: vcpkg-${{ matrix.runner }}-${{ hashFiles('**/CMakeLists.txt') }}
 
       - name: Install Qt (Windows)
         if: matrix.runner == 'windows-latest'
@@ -82,7 +111,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential cmake pkg-config ninja-build \
+            build-essential cmake pkg-config ninja-build ccache \
             qt6-base-dev qt6-declarative-dev qt6-quick3d-dev qt6-shadertools-dev \
             libtag1-dev librubberband-dev libasound2-dev libfftw3-dev \
             libfreetype-dev libfontconfig1-dev \
@@ -101,7 +130,7 @@ jobs:
         if: startsWith(matrix.runner, 'macos')
         run: |
           brew update
-          brew install cmake pkg-config qt@6 taglib rubberband libkeyfinder
+          brew install cmake pkg-config qt@6 taglib rubberband libkeyfinder ccache
 
       - name: Install Dependencies (Windows, vcpkg)
         if: matrix.runner == 'windows-latest'
@@ -165,3 +194,9 @@ jobs:
         shell: pwsh
         run: |
           cmake --build build --config Release --parallel
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RamsbrockDJ-${{ matrix.runner }}
+          path: build/bin/RamsbrockDJ*
