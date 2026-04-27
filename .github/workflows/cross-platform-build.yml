@@ -114,6 +114,10 @@ jobs:
           for f in AppDir/usr/qml/QtQml/WorkerScript/*.so; do
             if [ -f "$f" ]; then WORKERSCRIPT_PLUGIN_ARGS="$WORKERSCRIPT_PLUGIN_ARGS -e $f"; fi
           done
+          QML_PLUGIN_ARGS=""
+          while IFS= read -r -d '' f; do
+            if [ -f "$f" ]; then QML_PLUGIN_ARGS="$QML_PLUGIN_ARGS -e $f"; fi
+          done < <(find AppDir/usr/qml -name "*.so" -print0)
 
           # Ensure runtime uses AppImage-local Qt paths
           cat <<'EOF' > AppDir/AppRun
@@ -126,7 +130,7 @@ jobs:
           EOF
           chmod +x AppDir/AppRun
           
-          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir -e AppDir/usr/bin/RamsbrockDJ $WAYLAND_ARGS $WORKERSCRIPT_ARGS $WORKERSCRIPT_PLUGIN_ARGS --plugin qt --output appimage
+          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir -e AppDir/usr/bin/RamsbrockDJ $WAYLAND_ARGS $WORKERSCRIPT_ARGS $WORKERSCRIPT_PLUGIN_ARGS $QML_PLUGIN_ARGS --plugin qt --output appimage
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -348,6 +352,10 @@ jobs:
           for f in AppDir/usr/qml/QtQml/WorkerScript/*.so; do
             if [ -f "$f" ]; then WORKERSCRIPT_PLUGIN_ARGS="$WORKERSCRIPT_PLUGIN_ARGS -e $f"; fi
           done
+          QML_PLUGIN_ARGS=""
+          while IFS= read -r -d '' f; do
+            if [ -f "$f" ]; then QML_PLUGIN_ARGS="$QML_PLUGIN_ARGS -e $f"; fi
+          done < <(find AppDir/usr/qml -name "*.so" -print0)
 
           # Ensure runtime uses AppImage-local Qt paths
           cat <<'EOF' > AppDir/AppRun
@@ -360,7 +368,7 @@ jobs:
           EOF
           chmod +x AppDir/AppRun
           
-          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir -e AppDir/usr/bin/RamsbrockDJ $WAYLAND_ARGS $WORKERSCRIPT_ARGS $WORKERSCRIPT_PLUGIN_ARGS --plugin qt --output appimage
+          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir -e AppDir/usr/bin/RamsbrockDJ $WAYLAND_ARGS $WORKERSCRIPT_ARGS $WORKERSCRIPT_PLUGIN_ARGS $QML_PLUGIN_ARGS --plugin qt --output appimage
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
