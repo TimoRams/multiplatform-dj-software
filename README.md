@@ -69,6 +69,13 @@ Build:
     cmake --build build -j$(nproc)
     ./build/bin/RamsbrockDJ
 
+Target-native SIMD code generation is enabled automatically on Linux, Windows x64, and Intel-based macOS builds. You can still force it on or off explicitly with:
+
+    cmake -S . -B build -DRDBJ_ENABLE_NATIVE_SIMD=ON
+    cmake -S . -B build -DRDBJ_ENABLE_NATIVE_SIMD=OFF
+
+That lets the compiler emit ISA-specific code such as AVX2 on capable x86_64 systems, while Apple Intel builds use the matching x86 SIMD path.
+
 ### macOS (Metal backend)
 
 Example dependency install (Homebrew):
@@ -82,6 +89,8 @@ Build:
     cmake -S . -B build -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
     cmake --build build -j
     ./build/bin/RamsbrockDJ
+
+On Apple Silicon, build the arm64 target natively to get the platform's SIMD path automatically; keep universal builds off if you want the compiler to specialise for one CPU family.
 
 ### Windows (Vulkan backend)
 

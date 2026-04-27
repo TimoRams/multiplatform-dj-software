@@ -3,6 +3,15 @@ cmake_minimum_required(VERSION 3.22)
 set(PROJECT_NAME "RamsbrockDJ")
 project(${PROJECT_NAME} VERSION 0.0.1 LANGUAGES C CXX)
 
+set(RDBJ_ENABLE_NATIVE_SIMD_DEFAULT OFF)
+if(WIN32 OR (UNIX AND NOT APPLE))
+    set(RDBJ_ENABLE_NATIVE_SIMD_DEFAULT ON)
+elseif(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|i[3-6]86)$")
+    set(RDBJ_ENABLE_NATIVE_SIMD_DEFAULT ON)
+endif()
+
+option(RDBJ_ENABLE_NATIVE_SIMD "Enable target-specific SIMD code generation for release builds" ${RDBJ_ENABLE_NATIVE_SIMD_DEFAULT})
+
 # Ensure Qt can be found when installed via pacman (Linux only)
 if(UNIX AND NOT APPLE)
     list(APPEND CMAKE_PREFIX_PATH "/usr/lib/cmake" "/usr/local/lib/cmake")
@@ -319,6 +328,18 @@ if(UNIX AND NOT APPLE)
 endif()
 
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)
+
+if(RDBJ_ENABLE_NATIVE_SIMD)
+    if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+        target_compile_options(${PROJECT_NAME} PRIVATE
+            $<$<CONFIG:Release>:/arch:AVX2>
+        )
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT APPLE)
+        target_compile_options(${PROJECT_NAME} PRIVATE
+            $<$<CONFIG:Release>:-march=native>
+        )
+    endif()
+endif()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
