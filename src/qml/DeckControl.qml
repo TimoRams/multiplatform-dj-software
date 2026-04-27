@@ -31,6 +31,26 @@ Item {
     property double _lastLinkPublishMs: 0
     property double _lastLinkPublishBpm: 0
 
+    function _handleLinkEnabledChanged() {
+        if (typeof linkManager === "undefined" || linkManager === null)
+            return
+
+        if (!linkManager.enabled && deck.linkMode)
+            deck._setLinkMode(false)
+        if (linkManager.enabled && deck.linkMode)
+            deck._followAbletonLinkTempo(true)
+    }
+
+    Component.onCompleted: {
+        if (typeof linkManager !== "undefined" && linkManager !== null)
+            linkManager.enabledChanged.connect(deck._handleLinkEnabledChanged)
+    }
+
+    Component.onDestruction: {
+        if (typeof linkManager !== "undefined" && linkManager !== null)
+            linkManager.enabledChanged.disconnect(deck._handleLinkEnabledChanged)
+    }
+
     component DeckSlider: Slider {
         id: control
         property bool centerFill: false
@@ -330,12 +350,6 @@ Item {
 
     Connections {
         target: (typeof linkManager !== "undefined" && linkManager !== null) ? linkManager : null
-        function onEnabledChanged() {
-            if (!linkManager.enabled && deck.linkMode)
-                deck._setLinkMode(false)
-            if (linkManager.enabled && deck.linkMode)
-                deck._followAbletonLinkTempo(true)
-        }
         function onBpmChanged() {
             deck._followAbletonLinkTempo(false)
         }
