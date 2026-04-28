@@ -89,10 +89,11 @@ jobs:
           # Restore the real binary in case the plugin replaced it with a wrapper script.
           cp -f ../build/bin/RamsbrockDJ AppDir/usr/bin/RamsbrockDJ
 
-          # Keep GPU/driver libraries dynamic (never bundle them into the AppImage)
+          # Keep Vulkan/GPU libraries dynamic so the AppImage always uses the host driver stack.
           find AppDir -type f \( \
             -name 'libEGL*.so*' -o -name 'libGL*.so*' -o -name 'libGLESv2*.so*' -o -name 'libglapi*.so*' \
             -o -name 'libvulkan*.so*' -o -name 'libdrm*.so*' -o -name 'libgbm*.so*' \
+            -o -name 'libVkLayer*.so*' -o -name 'VkLayer_*.json' \
             -o -name 'libva*.so*' -o -name 'libva-drm*.so*' -o -name 'libva-x11*.so*' \
           \) -print0 | xargs -0 -r rm -f
 
@@ -124,9 +125,7 @@ jobs:
               export QT_QPA_PLATFORM="xcb"
             fi
           fi
-          export QSG_RHI_BACKEND="${QSG_RHI_BACKEND:-vulkan}"
           export QSG_RHI_PREFER_SOFTWARE_RENDERER=0
-          export QT_QUICK_BACKEND="${QT_QUICK_BACKEND:-vulkan}"
           exec "$APPDIR/usr/bin/RamsbrockDJ" "$@"
           EOF
           chmod +x AppDir/AppRun
@@ -325,10 +324,11 @@ jobs:
           # Restore the real binary in case the plugin replaced it with a wrapper script.
           cp -f ../build/bin/RamsbrockDJ AppDir/usr/bin/RamsbrockDJ
 
-          # Keep GPU/driver libraries dynamic (never bundle them into the AppImage)
+          # Keep Vulkan/GPU libraries dynamic so the AppImage always uses the host driver stack.
           find AppDir -type f \( \
             -name 'libEGL*.so*' -o -name 'libGL*.so*' -o -name 'libGLESv2*.so*' -o -name 'libglapi*.so*' \
             -o -name 'libvulkan*.so*' -o -name 'libdrm*.so*' -o -name 'libgbm*.so*' \
+            -o -name 'libVkLayer*.so*' -o -name 'VkLayer_*.json' \
             -o -name 'libva*.so*' -o -name 'libva-drm*.so*' -o -name 'libva-x11*.so*' \
           \) -print0 | xargs -0 -r rm -f
 
@@ -360,9 +360,7 @@ jobs:
               export QT_QPA_PLATFORM="xcb"
             fi
           fi
-          export QSG_RHI_BACKEND="${QSG_RHI_BACKEND:-vulkan}"
           export QSG_RHI_PREFER_SOFTWARE_RENDERER=0
-          export QT_QUICK_BACKEND="${QT_QUICK_BACKEND:-vulkan}"
           exec "$APPDIR/usr/bin/RamsbrockDJ" "$@"
           EOF
           chmod +x AppDir/AppRun
