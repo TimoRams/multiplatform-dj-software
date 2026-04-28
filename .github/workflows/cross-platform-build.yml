@@ -14,8 +14,8 @@ concurrency:
 
 jobs:
   build-linux:
-    name: Build (ubuntu-24.04)
-    runs-on: ubuntu-24.04
+    name: Build (ubuntu-latest)
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -124,7 +124,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RamsbrockDJ-ubuntu-24.04-AppImage
+          name: RamsbrockDJ-ubuntu-latest-AppImage
           path: deploy/RamsbrockDJ*.AppImage
 
   build-extra-platforms:
