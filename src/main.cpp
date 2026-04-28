@@ -74,8 +74,10 @@ int main(int argc, char *argv[])
     qputenv("QSG_RHI_BACKEND", "metal");
     QQuickWindow::setGraphicsApi(QSGRendererInterface::Metal);
 #else
-    // Force Vulkan on Linux/Windows to keep the optimized rendering path.
-    qputenv("QSG_RHI_BACKEND", "vulkan");
+    // Enforce Vulkan on Linux/Windows.
+    const QString rhiBackend = qEnvironmentVariable("QSG_RHI_BACKEND");
+    if (rhiBackend.compare("vulkan", Qt::CaseInsensitive) != 0)
+        qputenv("QSG_RHI_BACKEND", "vulkan");
     QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
 #endif
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::RoundPreferFloor);

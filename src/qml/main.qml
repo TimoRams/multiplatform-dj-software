@@ -238,10 +238,21 @@ ApplicationWindow {
     readonly property real _refHeight: 800
     readonly property real responsiveFontScale: 1.0
 
+    function _dpr() {
+        var dpr = Screen.devicePixelRatio
+        if (!isFinite(dpr) || dpr <= 0)
+            dpr = 1.0
+        return dpr
+    }
+
     function _snapScaleToPhysicalPixels(rawScale) {
-        var dpr = Math.max(1.0, window.devicePixelRatio)
+        if (!isFinite(rawScale) || rawScale <= 0)
+            rawScale = 1.0
+        var dpr = _dpr()
         // Keep scaled design width aligned to whole physical pixels.
         var scaledPhysicalWidth = Math.round(window.baseUiWidth * rawScale * dpr)
+        if (!isFinite(scaledPhysicalWidth) || scaledPhysicalWidth <= 0)
+            return 1.0
         return scaledPhysicalWidth / (window.baseUiWidth * dpr)
     }
 
@@ -257,7 +268,7 @@ ApplicationWindow {
         else if (basePx <= 12)
             scaled *= 1.10
 
-        var dpr = Math.max(1.0, window.devicePixelRatio)
+        var dpr = _dpr()
         var snapped = Math.round(scaled * dpr) / dpr
         return Math.max(1, snapped)
     }
@@ -280,7 +291,7 @@ ApplicationWindow {
         else if (basePx <= 10)
             logicalPx += 0.6
 
-        var dpr = Math.max(1.0, window.devicePixelRatio)
+        var dpr = _dpr()
         var snapped = Math.round(logicalPx * dpr) / dpr
         return Math.max(1, Math.round(snapped))
     }

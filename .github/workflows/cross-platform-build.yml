@@ -124,7 +124,7 @@ jobs:
             ldd "$1" | awk '/=>/ {print $3}' | while read -r lib; do
               if [ -z "$lib" ]; then continue; fi
               case "$lib" in
-                /lib*/ld-linux*|/lib*/libc.so*|/lib*/libm.so*|/lib*/libpthread.so*|/lib*/librt.so*|/lib*/libdl.so*|/lib*/libutil.so*|/lib*/libresolv.so*) continue ;;
+                /lib*/ld-linux*|/lib*/libc.so*|/lib*/libm.so*|/lib*/libpthread.so*|/lib*/librt.so*|/lib*/libdl.so*|/lib*/libutil.so*|/lib*/libresolv.so*|*/libdrm.so*|*/libgbm.so*|*/libEGL.so*|*/libGL.so*|*/libGLESv2.so*|*/libglapi.so*|*/libvulkan.so*|*/libvulkan_*.so*|*/libva.so*|*/libva-drm.so*|*/libva-x11.so*) continue ;;
               esac
               cp -aL "$lib" AppDir/usr/lib/ 2>/dev/null || true
             done
@@ -141,6 +141,12 @@ jobs:
           export LD_LIBRARY_PATH="$HERE/usr/lib:$HERE/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
           export QT_PLUGIN_PATH="$HERE/usr/plugins"
           export QML2_IMPORT_PATH="$HERE/usr/qml"
+          if [ -z "$QT_QPA_PLATFORM" ] || [ "$QT_QPA_PLATFORM" = "wayland" ]; then
+            if [ -z "$RDBJ_ALLOW_WAYLAND" ]; then
+              export QT_QPA_PLATFORM="xcb"
+            fi
+          fi
+          export QSG_RHI_BACKEND="${QSG_RHI_BACKEND:-vulkan}"
           exec "$HERE/usr/bin/RamsbrockDJ" "$@"
           EOF
           chmod +x AppDir/AppRun
@@ -377,7 +383,7 @@ jobs:
             ldd "$1" | awk '/=>/ {print $3}' | while read -r lib; do
               if [ -z "$lib" ]; then continue; fi
               case "$lib" in
-                /lib*/ld-linux*|/lib*/libc.so*|/lib*/libm.so*|/lib*/libpthread.so*|/lib*/librt.so*|/lib*/libdl.so*|/lib*/libutil.so*|/lib*/libresolv.so*) continue ;;
+                /lib*/ld-linux*|/lib*/libc.so*|/lib*/libm.so*|/lib*/libpthread.so*|/lib*/librt.so*|/lib*/libdl.so*|/lib*/libutil.so*|/lib*/libresolv.so*|*/libdrm.so*|*/libgbm.so*|*/libEGL.so*|*/libGL.so*|*/libGLESv2.so*|*/libglapi.so*|*/libvulkan.so*|*/libvulkan_*.so*|*/libva.so*|*/libva-drm.so*|*/libva-x11.so*) continue ;;
               esac
               cp -aL "$lib" AppDir/usr/lib/ 2>/dev/null || true
             done
@@ -394,6 +400,12 @@ jobs:
           export LD_LIBRARY_PATH="$HERE/usr/lib:$HERE/usr/lib/aarch64-linux-gnu:$LD_LIBRARY_PATH"
           export QT_PLUGIN_PATH="$HERE/usr/plugins"
           export QML2_IMPORT_PATH="$HERE/usr/qml"
+          if [ -z "$QT_QPA_PLATFORM" ] || [ "$QT_QPA_PLATFORM" = "wayland" ]; then
+            if [ -z "$RDBJ_ALLOW_WAYLAND" ]; then
+              export QT_QPA_PLATFORM="xcb"
+            fi
+          fi
+          export QSG_RHI_BACKEND="${QSG_RHI_BACKEND:-vulkan}"
           exec "$HERE/usr/bin/RamsbrockDJ" "$@"
           EOF
           chmod +x AppDir/AppRun
