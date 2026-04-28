@@ -103,10 +103,17 @@ jobs:
           # Ensure runtime uses AppImage-local Qt paths
           cat <<'EOF' > AppDir/AppRun
           #!/bin/sh
-          HERE="$(dirname "$(readlink -f "$0")")"
-          export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-          export QT_PLUGIN_PATH="$HERE/usr/plugins"
-          export QML2_IMPORT_PATH="$HERE/usr/qml"
+          APPDIR="$(dirname "$(readlink -f "$0")")"
+          if [ ! -x "$APPDIR/usr/bin/RamsbrockDJ" ]; then
+            if [ -x "$APPDIR/../usr/bin/RamsbrockDJ" ]; then
+              APPDIR="$(readlink -f "$APPDIR/..")"
+            elif [ -x "$APPDIR/../../usr/bin/RamsbrockDJ" ]; then
+              APPDIR="$(readlink -f "$APPDIR/../..")"
+            fi
+          fi
+          export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          export QT_PLUGIN_PATH="$APPDIR/usr/plugins"
+          export QML2_IMPORT_PATH="$APPDIR/usr/qml"
           if [ -z "$QT_QPA_PLATFORM" ] || [ "$QT_QPA_PLATFORM" = "wayland" ]; then
             if [ -z "$RDBJ_ALLOW_WAYLAND" ]; then
               export QT_QPA_PLATFORM="xcb"
@@ -115,7 +122,7 @@ jobs:
           export QSG_RHI_BACKEND="${QSG_RHI_BACKEND:-vulkan}"
           export QSG_RHI_PREFER_SOFTWARE_RENDERER=0
           export QT_QUICK_BACKEND="${QT_QUICK_BACKEND:-vulkan}"
-          exec "$HERE/usr/bin/RamsbrockDJ" "$@"
+          exec "$APPDIR/usr/bin/RamsbrockDJ" "$@"
           EOF
           chmod +x AppDir/AppRun
           
@@ -330,10 +337,17 @@ jobs:
           # Ensure runtime uses AppImage-local Qt paths
           cat <<'EOF' > AppDir/AppRun
           #!/bin/sh
-          HERE="$(dirname "$(readlink -f "$0")")"
-          export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-          export QT_PLUGIN_PATH="$HERE/usr/plugins"
-          export QML2_IMPORT_PATH="$HERE/usr/qml"
+          APPDIR="$(dirname "$(readlink -f "$0")")"
+          if [ ! -x "$APPDIR/usr/bin/RamsbrockDJ" ]; then
+            if [ -x "$APPDIR/../usr/bin/RamsbrockDJ" ]; then
+              APPDIR="$(readlink -f "$APPDIR/..")"
+            elif [ -x "$APPDIR/../../usr/bin/RamsbrockDJ" ]; then
+              APPDIR="$(readlink -f "$APPDIR/../..")"
+            fi
+          fi
+          export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          export QT_PLUGIN_PATH="$APPDIR/usr/plugins"
+          export QML2_IMPORT_PATH="$APPDIR/usr/qml"
           if [ -z "$QT_QPA_PLATFORM" ] || [ "$QT_QPA_PLATFORM" = "wayland" ]; then
             if [ -z "$RDBJ_ALLOW_WAYLAND" ]; then
               export QT_QPA_PLATFORM="xcb"
@@ -342,7 +356,7 @@ jobs:
           export QSG_RHI_BACKEND="${QSG_RHI_BACKEND:-vulkan}"
           export QSG_RHI_PREFER_SOFTWARE_RENDERER=0
           export QT_QUICK_BACKEND="${QT_QUICK_BACKEND:-vulkan}"
-          exec "$HERE/usr/bin/RamsbrockDJ" "$@"
+          exec "$APPDIR/usr/bin/RamsbrockDJ" "$@"
           EOF
           chmod +x AppDir/AppRun
           
