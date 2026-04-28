@@ -1231,16 +1231,29 @@ private:
                            int firstChannel,
                            bool add)
     {
+        // Null pointer checks
+        if (!srcL || !srcR || n <= 0)
+            return;
+        
         if (firstChannel < 1)
             return;
 
         const int leftChannel = firstChannel - 1;
         const int rightChannel = leftChannel + 1;
-        if (rightChannel >= buffer.getNumChannels())
+        
+        // Bounds check: ensure both channels exist in buffer
+        if (leftChannel < 0 || rightChannel >= buffer.getNumChannels())
+            return;
+        
+        // Additional safety: verify buffer is valid and has enough samples
+        if (buffer.getNumSamples() < (start + n))
             return;
 
         float* dstL = buffer.getWritePointer(leftChannel, start);
         float* dstR = buffer.getWritePointer(rightChannel, start);
+        
+        if (!dstL || !dstR)
+            return;
 
         for (int i = 0; i < n; ++i) {
             if (add) {
@@ -1679,20 +1692,33 @@ QStringList DjEngine::getAvailableAudioOutputDevices(const QString& deviceType) 
 
         bool keep = true;
 #if JUCE_LINUX || JUCE_BSD
-        // ALSA often reports many internal/alias endpoints that are not useful
-        // in a DJ output picker. Filter those cheaply by name.
-        if (selectedTypeLower.contains(QStringLiteral("alsa"))) {
-            const QString lowerName = qName.toLower();
-            keep = !(lowerName.startsWith(QStringLiteral("hw:"))
-                     || lowerName.startsWith(QStringLiteral("plughw:"))
-                     || lowerName.startsWith(QStringLiteral("sysdefault:"))
-                     || lowerName.startsWith(QStringLiteral("front:"))
-                     || lowerName.startsWith(QStringLiteral("surround"))
-                     || lowerName.startsWith(QStringLiteral("iec958:"))
-                     || lowerName.startsWith(QStringLiteral("dmix:"))
-                     || lowerName.startsWith(QStringLiteral("dsnoop:"))
-                     || lowerName.startsWith(QStringLiteral("usbstream:"))
-                     || lowerName == QStringLiteral("null"));
+        const QString lowerName = qName.toLower();
+        
+        // Exclude virtual/internal/problematic devices on Linux
+        keep = !(lowerName.startsWith(QStringLiteral("hw:"))
+                 || lowerName.startsWith(QStringLiteral("plughw:"))
+                 || lowerName.startsWith(QStringLiteral("sysdefault:"))
+                 || lowerName.startsWith(QStringLiteral("front:"))
+                 || lowerName.startsWith(QStringLiteral("surround"))
+                 || lowerName.startsWith(QStringLiteral("iec958:"))
+                 || lowerName.startsWith(QStringLiteral("dmix:"))
+                 || lowerName.startsWith(QStringLiteral("dsnoop:"))
+                 || lowerName.startsWith(QStringLiteral("usbstream:"))
+                 || lowerName.startsWith(QStringLiteral("jackinput"))
+                 || lowerName.contains(QStringLiteral("internal"))
+                 || lowerName.contains(QStringLiteral("loopback"))
+                 || lowerName.startsWith(QStringLiteral("lavaplayer"))
+                 || lowerName.startsWith(QStringLiteral("Combined"))
+                 || lowerName == QStringLiteral("null")
+                 || lowerName == QStringLiteral("default"));
+        
+        // On PipeWire/ALSA, prefer human-readable names and exclude raw configs
+        if (keep && (selectedTypeLower.contains(QStringLiteral("alsa")) || selectedTypeLower.contains(QStringLiteral("pipewire")))) {
+            // Look for actual physical devices or named profiles
+            keep = !lowerName.contains(QStringLiteral("@"))
+                && !lowerName.startsWith(QStringLiteral("builtin_"))
+                && !lowerName.contains(QStringLiteral(":CARD="))
+                && !lowerName.contains(QStringLiteral(":DEV="));
         }
 #endif
 
@@ -1773,9 +1799,17 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     }), std::memory_order_relaxed);
 
     auto& manager = deviceManager;
+    
+    // Safety: ensure manager has a valid device before proceeding
+    if (manager.getCurrentAudioDevice() == nullptr) {
+        qWarning() << "[DjEngine] No audio device available for setup";
+        return false;
+    }
+    
     auto* type = findDeviceType(manager, deviceType);
-    if (!deviceType.isEmpty() && type != nullptr && QString::fromUtf8(manager.getCurrentAudioDeviceType().toRawUTF8()) != deviceType)
+    if (!deviceType.isEmpty() && type != nullptr && QString::fromUtf8(manager.getCurrentAudioDeviceType().toRawUTF8()) != deviceType) {
         manager.setCurrentAudioDeviceType(toJuceString(deviceType), true);
+    }
 
     juce::AudioDeviceManager::AudioDeviceSetup setup;
     manager.getAudioDeviceSetup(setup);
@@ -1784,11 +1818,63 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     setup.useDefaultInputChannels = true;
     setup.inputDeviceName.clear();
     setup.useDefaultOutputChannels = true;
-    if (outputDevice.isEmpty())
-        setup.outputDeviceName = manager.getCurrentAudioDevice() != nullptr ? manager.getCurrentAudioDevice()->getName() : juce::String();
-    else
+    
+    // Validate output device name
+    if (outputDevice.isEmpty()) {
+        if (auto* device = manager.getCurrentAudioDevice()) {
+            setup.outputDeviceName = device->getName();
+        } else {
+            qWarning() << "[DjEngine] No current audio device to get name from";
+            return false;
+        }
+    } else {
         setup.outputDeviceName = toJuceString(outputDevice);
+    }
 
+    // Validate channel configuration against device capabilities
+    // First, get the device to check actual channel count
+    int maxOutputChannels = 2;  // Safe default
+    
+    // Try to determine channel count from the requested device
+    if (auto* device = manager.getCurrentAudioDevice()) {
+        const int namesCount = device->getOutputChannelNames().size();
+        const int activeSetBits = device->getActiveOutputChannels().countNumberOfSetBits();
+        if (namesCount > 0)
+            maxOutputChannels = namesCount;
+        else if (activeSetBits > 0)
+            maxOutputChannels = activeSetBits;
+        else
+            maxOutputChannels = 2;
+        
+        // Clamp to reasonable max
+        maxOutputChannels = std::clamp(maxOutputChannels, 2, kMaxSupportedOutputChannel);
+        
+        setup.bufferSize = choosePreferredBufferSize(device, setup.bufferSize);
+    }
+    
+    // Validate and clamp requested channels to actual device channels
+    auto validateChannelForDevice = [maxOutputChannels](int& firstChannel) {
+        if (firstChannel < 1)
+            return;
+        // Ensure both left and right channels fit within device
+        // firstChannel is 1-based, so rightChannel = firstChannel + 1
+        if (firstChannel < 1 || (firstChannel + 1) > maxOutputChannels) {
+            qWarning() << "[DjEngine] Channel" << firstChannel << "out of range [1-" 
+                       << maxOutputChannels - 1 << "], disabling this route";
+            firstChannel = -1;  // Mark as disabled
+        }
+    };
+    validateChannelForDevice(masterFirstChannel);
+    validateChannelForDevice(headphonesFirstChannel);
+    validateChannelForDevice(boothFirstChannel);
+    
+    // Update routing after validation
+    s_outputRoutingPacked.store(packRouting({
+        .masterFirstChannel = masterFirstChannel,
+        .headphonesFirstChannel = headphonesFirstChannel,
+        .boothFirstChannel = boothFirstChannel
+    }), std::memory_order_relaxed);
+    
     juce::BigInteger selectedOutputChannels;
     const auto setPairBits = [&selectedOutputChannels](int firstChannel) {
         if (firstChannel < 1)
@@ -1804,19 +1890,41 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
         setup.outputChannels = selectedOutputChannels;
     }
 
-    if (auto* currentDevice = manager.getCurrentAudioDevice())
-        setup.bufferSize = choosePreferredBufferSize(currentDevice, setup.bufferSize);
-
+    // Try to apply the audio device setup with fallback strategy
     juce::String error = manager.setAudioDeviceSetup(setup, true);
+    
     if (error.isNotEmpty()) {
-        if (setup.outputDeviceName.isNotEmpty()) {
+        qWarning() << "[DjEngine] Initial device setup failed:" << QString::fromStdString(error.toStdString());
+        
+        // Fallback 1: Try without custom channel routing
+        if (setup.useDefaultOutputChannels == false) {
+            qWarning() << "[DjEngine] Retrying without custom channel routing";
+            setup.useDefaultOutputChannels = true;
+            error = manager.setAudioDeviceSetup(setup, true);
+        }
+        
+        // Fallback 2: Try with default output device
+        if (error.isNotEmpty() && setup.outputDeviceName.isNotEmpty()) {
+            qWarning() << "[DjEngine] Retrying with default output device";
             setup.outputDeviceName.clear();
             error = manager.setAudioDeviceSetup(setup, true);
         }
-
-        qWarning() << "[DjEngine] Failed to apply audio device settings:" << QString::fromStdString(error.toStdString());
-        if (error.isNotEmpty())
+        
+        // Fallback 3: Try minimum viable setup
+        if (error.isNotEmpty()) {
+            qWarning() << "[DjEngine] Attempting minimum viable setup";
+            manager.getAudioDeviceSetup(setup);
+            setup.sampleRate = static_cast<double>(sampleRate);
+            setup.bufferSize = std::clamp(bufferSize, 128, 512);
+            setup.useDefaultOutputChannels = true;
+            setup.outputDeviceName.clear();
+            error = manager.setAudioDeviceSetup(setup, true);
+        }
+        
+        if (error.isNotEmpty()) {
+            qWarning() << "[DjEngine] Failed to apply audio device settings after all fallbacks:" << QString::fromStdString(error.toStdString());
             return false;
+        }
     }
 
     refreshHardwareLatency();
