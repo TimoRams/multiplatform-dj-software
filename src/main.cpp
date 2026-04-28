@@ -69,11 +69,7 @@ int main(int argc, char *argv[])
                 "qt.rhi.general=false");
     }
 
-#if defined(Q_OS_MACOS)
-    // Use Metal on macOS (native RHI backend).
-    qputenv("QSG_RHI_BACKEND", "metal");
-    QQuickWindow::setGraphicsApi(QSGRendererInterface::Metal);
-#else
+#if !defined(Q_OS_MACOS)
     // Enforce Vulkan on Linux/Windows.
     const QString rhiBackend = qEnvironmentVariable("QSG_RHI_BACKEND");
     if (rhiBackend.compare("vulkan", Qt::CaseInsensitive) != 0)
@@ -160,6 +156,11 @@ int main(int argc, char *argv[])
     }, Qt::QueuedConnection);
 
     engine.load(url);
+
+    if (!engine.rootObjects().isEmpty()) {
+        if (auto* rootWindow = qobject_cast<QWindow*>(engine.rootObjects().first()))
+            rootWindow->show();
+    }
 
     const int ret = app.exec();
 
