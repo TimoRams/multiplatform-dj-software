@@ -43,6 +43,20 @@ Rectangle {
         }
     }
 
+    Connections {
+        target: engineA
+        function onCueEnabledChanged() {
+            mixer.cueAActive = engineA ? engineA.cueEnabled : false
+        }
+    }
+
+    Connections {
+        target: engineB
+        function onCueEnabledChanged() {
+            mixer.cueBActive = engineB ? engineB.cueEnabled : false
+        }
+    }
+
     component MixerKnob: Item {
         id: knobRoot
         property alias text: label.text
@@ -350,7 +364,10 @@ Rectangle {
                                 border.width: 0
                                 radius: 0
                             }
-                            onClicked: mixer.cueAActive = checked
+                            onClicked: {
+                                mixer.cueAActive = checked
+                                if (engineA) engineA.cueEnabled = checked
+                            }
                         }
 
                         MixerSlider {
@@ -483,7 +500,10 @@ Rectangle {
                                 border.width: 0
                                 radius: 0
                             }
-                            onClicked: mixer.cueBActive = checked
+                            onClicked: {
+                                mixer.cueBActive = checked
+                                if (engineB) engineB.cueEnabled = checked
+                            }
                         }
 
                         MixerSlider {
