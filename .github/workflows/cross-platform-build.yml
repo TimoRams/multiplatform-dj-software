@@ -14,8 +14,8 @@ concurrency:
 
 jobs:
   build-linux:
-    name: Build (ubuntu-latest)
-    runs-on: ubuntu-latest
+    name: Build (ubuntu-20.04)
+    runs-on: ubuntu-20.04
 
     steps:
       - name: Checkout
@@ -82,16 +82,14 @@ jobs:
           export EXTRA_QT_PLUGINS=wayland,xcb
           export VERSION=1.0.0
           
-          export QT_PLUGINS_DIR=$($QMAKE -query QT_INSTALL_PLUGINS)
-          export QT_QML_DIR=$($QMAKE -query QT_INSTALL_QML)
-          export QT_LIB_DIR=$($QMAKE -query QT_INSTALL_LIBS)
-          
-          # Bundle full Qt plugins/QML/libs (follow symlinks) to avoid host dependency leaks
-          mkdir -p AppDir/usr/plugins AppDir/usr/qml AppDir/usr/lib
-          rsync -aL $QT_PLUGINS_DIR/ AppDir/usr/plugins/
-          rsync -aL $QT_QML_DIR/ AppDir/usr/qml/
-          cp -aL $QT_LIB_DIR/libQt6*.so* AppDir/usr/lib/ 2> /dev/null || true
-          cp -aL $QT_LIB_DIR/libicu*.so* AppDir/usr/lib/ 2> /dev/null || true
+          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir -e AppDir/usr/bin/RamsbrockDJ --plugin qt
+
+          # Keep GPU/driver libraries dynamic (never bundle them into the AppImage)
+          find AppDir -type f \( \
+            -name 'libEGL*.so*' -o -name 'libGL*.so*' -o -name 'libGLESv2*.so*' -o -name 'libglapi*.so*' \
+            -o -name 'libvulkan*.so*' -o -name 'libdrm*.so*' -o -name 'libgbm*.so*' \
+            -o -name 'libva*.so*' -o -name 'libva-drm*.so*' -o -name 'libva-x11*.so*' \
+          \) -print0 | xargs -0 -r rm -f
 
           # Force Qt to load everything from inside the AppImage at runtime
           cat <<EOF > AppDir/usr/bin/qt.conf
@@ -101,44 +99,12 @@ jobs:
           Libraries=lib
           Qml2Imports=qml
           EOF
-          
-          # Tell linuxdeploy to explicitly link and patch our manually copied Wayland libraries so their dependencies (like libQt6WaylandClient.so) are found!
-          WAYLAND_ARGS=""
-          for f in AppDir/usr/plugins/platforms/libqwayland*.so; do
-            if [ -f "$f" ]; then WAYLAND_ARGS="$WAYLAND_ARGS -e $f"; fi
-          done
-          WORKERSCRIPT_ARGS=""
-          for f in AppDir/usr/lib/libQt6QmlWorkerScript.so*; do
-            if [ -f "$f" ]; then WORKERSCRIPT_ARGS="$WORKERSCRIPT_ARGS -e $f"; fi
-          done
-          WORKERSCRIPT_PLUGIN_ARGS=""
-          for f in AppDir/usr/qml/QtQml/WorkerScript/*.so; do
-            if [ -f "$f" ]; then WORKERSCRIPT_PLUGIN_ARGS="$WORKERSCRIPT_PLUGIN_ARGS -e $f"; fi
-          done
-          QML_PLUGIN_ARGS=""
-          while IFS= read -r -d '' f; do
-            if [ -f "$f" ]; then QML_PLUGIN_ARGS="$QML_PLUGIN_ARGS -e $f"; fi
-          done < <(find AppDir/usr/qml -name "*.so" -print0)
-
-          copy_deps() {
-            ldd "$1" | awk '/=>/ {print $3}' | while read -r lib; do
-              if [ -z "$lib" ]; then continue; fi
-              case "$lib" in
-                /lib*/ld-linux*|/lib*/libc.so*|/lib*/libm.so*|/lib*/libpthread.so*|/lib*/librt.so*|/lib*/libdl.so*|/lib*/libutil.so*|/lib*/libresolv.so*|*/libdrm.so*|*/libgbm.so*|*/libEGL.so*|*/libGL.so*|*/libGLESv2.so*|*/libglapi.so*|*/libvulkan.so*|*/libvulkan_*.so*|*/libva.so*|*/libva-drm.so*|*/libva-x11.so*) continue ;;
-              esac
-              cp -aL "$lib" AppDir/usr/lib/ 2>/dev/null || true
-            done
-          }
-          copy_deps AppDir/usr/bin/RamsbrockDJ
-          while IFS= read -r -d '' f; do
-            copy_deps "$f"
-          done < <(find AppDir/usr/plugins AppDir/usr/qml -name "*.so" -print0)
 
           # Ensure runtime uses AppImage-local Qt paths
           cat <<'EOF' > AppDir/AppRun
           #!/bin/sh
           HERE="$(dirname "$(readlink -f "$0")")"
-          export LD_LIBRARY_PATH="$HERE/usr/lib:$HERE/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
+          export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           export QT_PLUGIN_PATH="$HERE/usr/plugins"
           export QML2_IMPORT_PATH="$HERE/usr/qml"
           if [ -z "$QT_QPA_PLATFORM" ] || [ "$QT_QPA_PLATFORM" = "wayland" ]; then
@@ -147,16 +113,18 @@ jobs:
             fi
           fi
           export QSG_RHI_BACKEND="${QSG_RHI_BACKEND:-vulkan}"
+          export QSG_RHI_PREFER_SOFTWARE_RENDERER=0
+          export QT_QUICK_BACKEND="${QT_QUICK_BACKEND:-vulkan}"
           exec "$HERE/usr/bin/RamsbrockDJ" "$@"
           EOF
           chmod +x AppDir/AppRun
           
-          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir -e AppDir/usr/bin/RamsbrockDJ $WAYLAND_ARGS $WORKERSCRIPT_ARGS $WORKERSCRIPT_PLUGIN_ARGS $QML_PLUGIN_ARGS --plugin qt --output appimage
+          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir --output appimage
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RamsbrockDJ-ubuntu-latest-AppImage
+          name: RamsbrockDJ-ubuntu-20.04-AppImage
           path: deploy/RamsbrockDJ*.AppImage
 
   build-extra-platforms:
@@ -341,16 +309,14 @@ jobs:
           export EXTRA_QT_PLUGINS=wayland,xcb
           export VERSION=1.0.0
           
-          export QT_PLUGINS_DIR=$($QMAKE -query QT_INSTALL_PLUGINS)
-          export QT_QML_DIR=$($QMAKE -query QT_INSTALL_QML)
-          export QT_LIB_DIR=$($QMAKE -query QT_INSTALL_LIBS)
-          
-          # Bundle full Qt plugins/QML/libs (follow symlinks) to avoid host dependency leaks
-          mkdir -p AppDir/usr/plugins AppDir/usr/qml AppDir/usr/lib
-          rsync -aL $QT_PLUGINS_DIR/ AppDir/usr/plugins/
-          rsync -aL $QT_QML_DIR/ AppDir/usr/qml/
-          cp -aL $QT_LIB_DIR/libQt6*.so* AppDir/usr/lib/ 2> /dev/null || true
-          cp -aL $QT_LIB_DIR/libicu*.so* AppDir/usr/lib/ 2> /dev/null || true
+          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir -e AppDir/usr/bin/RamsbrockDJ --plugin qt
+
+          # Keep GPU/driver libraries dynamic (never bundle them into the AppImage)
+          find AppDir -type f \( \
+            -name 'libEGL*.so*' -o -name 'libGL*.so*' -o -name 'libGLESv2*.so*' -o -name 'libglapi*.so*' \
+            -o -name 'libvulkan*.so*' -o -name 'libdrm*.so*' -o -name 'libgbm*.so*' \
+            -o -name 'libva*.so*' -o -name 'libva-drm*.so*' -o -name 'libva-x11*.so*' \
+          \) -print0 | xargs -0 -r rm -f
 
           # Force Qt to load everything from inside the AppImage at runtime
           cat <<EOF > AppDir/usr/bin/qt.conf
@@ -360,44 +326,12 @@ jobs:
           Libraries=lib
           Qml2Imports=qml
           EOF
-          
-          # Tell linuxdeploy to explicitly link and patch our manually copied Wayland libraries so their dependencies (like libQt6WaylandClient.so) are found!
-          WAYLAND_ARGS=""
-          for f in AppDir/usr/plugins/platforms/libqwayland*.so; do
-            if [ -f "$f" ]; then WAYLAND_ARGS="$WAYLAND_ARGS -e $f"; fi
-          done
-          WORKERSCRIPT_ARGS=""
-          for f in AppDir/usr/lib/libQt6QmlWorkerScript.so*; do
-            if [ -f "$f" ]; then WORKERSCRIPT_ARGS="$WORKERSCRIPT_ARGS -e $f"; fi
-          done
-          WORKERSCRIPT_PLUGIN_ARGS=""
-          for f in AppDir/usr/qml/QtQml/WorkerScript/*.so; do
-            if [ -f "$f" ]; then WORKERSCRIPT_PLUGIN_ARGS="$WORKERSCRIPT_PLUGIN_ARGS -e $f"; fi
-          done
-          QML_PLUGIN_ARGS=""
-          while IFS= read -r -d '' f; do
-            if [ -f "$f" ]; then QML_PLUGIN_ARGS="$QML_PLUGIN_ARGS -e $f"; fi
-          done < <(find AppDir/usr/qml -name "*.so" -print0)
-
-          copy_deps() {
-            ldd "$1" | awk '/=>/ {print $3}' | while read -r lib; do
-              if [ -z "$lib" ]; then continue; fi
-              case "$lib" in
-                /lib*/ld-linux*|/lib*/libc.so*|/lib*/libm.so*|/lib*/libpthread.so*|/lib*/librt.so*|/lib*/libdl.so*|/lib*/libutil.so*|/lib*/libresolv.so*|*/libdrm.so*|*/libgbm.so*|*/libEGL.so*|*/libGL.so*|*/libGLESv2.so*|*/libglapi.so*|*/libvulkan.so*|*/libvulkan_*.so*|*/libva.so*|*/libva-drm.so*|*/libva-x11.so*) continue ;;
-              esac
-              cp -aL "$lib" AppDir/usr/lib/ 2>/dev/null || true
-            done
-          }
-          copy_deps AppDir/usr/bin/RamsbrockDJ
-          while IFS= read -r -d '' f; do
-            copy_deps "$f"
-          done < <(find AppDir/usr/plugins AppDir/usr/qml -name "*.so" -print0)
 
           # Ensure runtime uses AppImage-local Qt paths
           cat <<'EOF' > AppDir/AppRun
           #!/bin/sh
           HERE="$(dirname "$(readlink -f "$0")")"
-          export LD_LIBRARY_PATH="$HERE/usr/lib:$HERE/usr/lib/aarch64-linux-gnu:$LD_LIBRARY_PATH"
+          export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           export QT_PLUGIN_PATH="$HERE/usr/plugins"
           export QML2_IMPORT_PATH="$HERE/usr/qml"
           if [ -z "$QT_QPA_PLATFORM" ] || [ "$QT_QPA_PLATFORM" = "wayland" ]; then
@@ -406,11 +340,13 @@ jobs:
             fi
           fi
           export QSG_RHI_BACKEND="${QSG_RHI_BACKEND:-vulkan}"
+          export QSG_RHI_PREFER_SOFTWARE_RENDERER=0
+          export QT_QUICK_BACKEND="${QT_QUICK_BACKEND:-vulkan}"
           exec "$HERE/usr/bin/RamsbrockDJ" "$@"
           EOF
           chmod +x AppDir/AppRun
           
-          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir -e AppDir/usr/bin/RamsbrockDJ $WAYLAND_ARGS $WORKERSCRIPT_ARGS $WORKERSCRIPT_PLUGIN_ARGS $QML_PLUGIN_ARGS --plugin qt --output appimage
+          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir --output appimage
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
