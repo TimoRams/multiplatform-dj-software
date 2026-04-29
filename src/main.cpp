@@ -158,8 +158,22 @@ int main(int argc, char *argv[])
     engine.load(url);
 
     if (!engine.rootObjects().isEmpty()) {
-        if (auto* rootWindow = qobject_cast<QWindow*>(engine.rootObjects().first()))
+        if (auto* rootWindow = qobject_cast<QWindow*>(engine.rootObjects().first())) {
+            qDebug() << "[main] Root window found, setting size and visibility";
             rootWindow->show();
+            
+#if defined(Q_OS_MACOS)
+            // macOS requires extra steps to properly show the window
+            rootWindow->raise();
+            rootWindow->requestActivate();
+            qDebug() << "[main] macOS: Window raised and activated";
+#endif
+        } else {
+            qWarning() << "[main] Root object is not a QWindow!";
+        }
+    } else {
+        qCritical() << "[main] No root objects found after loading QML!";
+        return -1;
     }
 
     const int ret = app.exec();
