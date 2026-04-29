@@ -205,6 +205,97 @@ Rectangle {
         }
     }
 
+    component VuMeterVertical: Rectangle {
+        id: vuMeter
+        required property real levelLinear  // 0.0 to 1.0
+        required property string deckName   // "A" or "B"
+        
+        width: 8
+        color: "#101010"
+        border.color: "#000000"
+        border.width: 0
+        radius: 0
+        
+        // Peak hold and decay
+        property real peakHoldLevel: 0.0
+        
+        readonly property real totalHeight: height
+        readonly property int totalSegments: 20
+        readonly property real segmentHeight: totalHeight / totalSegments
+        
+        function getLitSegments(level) {
+            return Math.floor(level * totalSegments)
+        }
+        
+        function getBarColor(segmentIndex, totalLit) {
+            const greenThresh = Math.floor(totalSegments * 0.6)
+            const orangeThresh = Math.floor(totalSegments * 0.85)
+            
+            if (segmentIndex >= orangeThresh) return "#ff5b4d"      // Red
+            if (segmentIndex >= greenThresh) return "#ffcc55"       // Orange
+            return "#66cc88"                                        // Green
+        }
+        
+        onLevelLinearChanged: {
+            if (levelLinear > peakHoldLevel) {
+                peakHoldLevel = levelLinear
+                decayTimer.restart()
+            }
+        }
+        
+        Timer {
+            id: decayTimer
+            interval: 300
+            onTriggered: decayAnim.start()
+        }
+        
+        NumberAnimation {
+            id: decayAnim
+            target: vuMeter
+            property: "peakHoldLevel"
+            from: vuMeter.peakHoldLevel
+            to: 0.0
+            duration: 800
+            easing.type: Easing.InQuad
+        }
+        
+        // Column of segments from bottom to top
+        Column {
+            anchors.fill: parent
+            anchors.margins: 0
+            spacing: 0
+            
+            Repeater {
+                model: vuMeter.totalSegments
+                delegate: Rectangle {
+                    required property int index
+                    width: vuMeter.width
+                    height: vuMeter.segmentHeight
+                    radius: 0
+                    color: {
+                        const reversedIndex = vuMeter.totalSegments - 1 - index
+                        const litSegments = vuMeter.getLitSegments(vuMeter.levelLinear)
+                        const peakSegments = vuMeter.getLitSegments(vuMeter.peakHoldLevel)
+                        const peakSegmentIndex = peakSegments - 1
+                        
+                        // White peak indicator
+                        if (reversedIndex === peakSegmentIndex && peakSegmentIndex >= 0) {
+                            return "#ffffff"
+                        }
+                        
+                        // Lit segment
+                        if (reversedIndex < litSegments) {
+                            return vuMeter.getBarColor(reversedIndex, litSegments)
+                        }
+                        
+                        // Dark segment
+                        return "#101010"
+                    }
+                }
+            }
+        }
+    }
+
     component MixerSlider: Slider {
         id: control
 
@@ -293,7 +384,7 @@ Rectangle {
                 Layout.alignment: Qt.AlignTop
                 color: "#2a2a2a"
                 border.color: "#000000"
-                border.width: 0
+                border.width: 2
                 radius: 0
 
                 Item {
@@ -398,26 +489,14 @@ Rectangle {
                         }
                     }
 
-                    Rectangle {
-                        id: vuABack
-                        width: 6
+                    VuMeterVertical {
+                        id: vuAMeter
                         anchors.left: parent.left
                         anchors.leftMargin: 0
-                        anchors.top: channelAControls.top
-                        height: eqStackA.height
-                        color: "#101010"
-                        border.color: "#000000"
-                        border.width: 0
-                        radius: 0
-
-                        Rectangle {
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.bottom: parent.bottom
-                            height: Math.max(0, Math.min(parent.height, parent.height * mixer.vuACombined))
-                            color: mixer.vuACombined > 0.85 ? "#ff5b4d" : (mixer.vuACombined > 0.6 ? "#ffcc55" : "#66cc88")
-                            radius: 0
-                        }
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        levelLinear: mixer.vuACombined
+                        deckName: "A"
                     }
                 }
             }
@@ -429,7 +508,7 @@ Rectangle {
                 Layout.alignment: Qt.AlignTop
                 color: "#2a2a2a"
                 border.color: "#000000"
-                border.width: 0
+                border.width: 2
                 radius: 0
 
                 Item {
@@ -534,26 +613,14 @@ Rectangle {
                         }
                     }
 
-                    Rectangle {
-                        id: vuBBack
-                        width: 6
+                    VuMeterVertical {
+                        id: vuBMeter
                         anchors.left: parent.left
                         anchors.leftMargin: 0
-                        anchors.top: channelBControls.top
-                        height: eqStackB.height
-                        color: "#101010"
-                        border.color: "#000000"
-                        border.width: 0
-                        radius: 0
-
-                        Rectangle {
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.bottom: parent.bottom
-                            height: Math.max(0, Math.min(parent.height, parent.height * mixer.vuBCombined))
-                            color: mixer.vuBCombined > 0.85 ? "#ff5b4d" : (mixer.vuBCombined > 0.6 ? "#ffcc55" : "#66cc88")
-                            radius: 0
-                        }
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        levelLinear: mixer.vuBCombined
+                        deckName: "B"
                     }
                 }
             }
