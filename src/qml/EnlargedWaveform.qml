@@ -124,7 +124,25 @@ Item {
                 if (effectivePixelsPerSecond <= 0.0)
                     return
 
-                const targetSec = pressPlayheadSec - (dragPx / effectivePixelsPerSecond)
+                var targetSec = pressPlayheadSec - (dragPx / effectivePixelsPerSecond)
+
+                // Wrap within loop boundaries (Serato/Rekordbox style): reaching one
+                // end jumps to the other side. Re-anchor so subsequent drag is smooth.
+                if (root.engine.loopActive && root.engine.loopOutPosition > root.engine.loopInPosition) {
+                    var loopIn  = root.engine.loopInPosition
+                    var loopOut = root.engine.loopOutPosition
+                    var loopLen = loopOut - loopIn
+                    if (targetSec < loopIn) {
+                        targetSec = loopOut - (loopIn - targetSec) % loopLen
+                        pressPlayheadSec = targetSec
+                        pressMouseX = mouse.x
+                    } else if (targetSec > loopOut) {
+                        targetSec = loopIn + (targetSec - loopOut) % loopLen
+                        pressPlayheadSec = targetSec
+                        pressMouseX = mouse.x
+                    }
+                }
+
                 root.engine.setScrubPosition(targetSec)
 
                 // Keep waveform repainting during scrub (transport is stopped).
@@ -260,62 +278,70 @@ Item {
             }
         }
 
-        // ─── Beat-grid toolbar (left edge overlay) ───────────────────────────
-        // Three buttons stacked vertically:
-        //   ▽  Set Downbeat  – make current playhead position beat-1 / bar-1
-        //   ×2              – double the BPM (half-time correction)
-        //   /2              – halve  the BPM (double-time correction)
+        // ─── Beat-grid toolbar (left edge, full deck height) ────────────────
         Rectangle {
             id: gridToolbar
-            anchors.left:           parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.leftMargin:     3
-            width:  26
-            height: 72
-            color:  "#aa000000"
-            radius: 0
+            anchors.left:   parent.left
+            anchors.top:    parent.top
+            anchors.bottom: parent.bottom
+            width: 30
+            color: "#cc0d0d0d"
             z: 20
-
             visible: root.engine !== null && root.engine.trackData !== undefined
 
-            Column {
-                anchors.centerIn: parent
-                spacing: 2
+            // Right border for visual separation from waveform
+            Rectangle {
+                anchors.right:  parent.right
+                anchors.top:    parent.top
+                anchors.bottom: parent.bottom
+                width: 1
+                color: "#28ffffff"
+            }
+
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 0
 
                 // ── Set-Downbeat button ──────────────────────────────────────
-                // Icon: red vertical bar + downward triangle (DJ style).
                 Rectangle {
-                    id: setDownbeatBtn
-                    width: 20; height: 20
-                    color:  setDownbeatHover.containsMouse ? "#55ffffff" : "transparent"
-                    radius: 0
+                    Layout.fillWidth:  true
+                    Layout.fillHeight: true
+                    color: setDownbeatHover.containsMouse ? "#22ffffff" : "transparent"
 
-                    // Red downbeat bar
                     Rectangle {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.bottom:           parent.bottom
-                        anchors.bottomMargin:     2
-                        width: 1.5; height: 10
-                        color: "#e60000"; radius: 0
+                        anchors.left: parent.left; anchors.right: parent.right
+                        anchors.bottom: parent.bottom; height: 1
+                        color: "#22ffffff"
                     }
-                    // Downward-pointing triangle (Canvas)
-                    Canvas {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.top:              parent.top
-                        anchors.topMargin:        2
-                        width: 7; height: 5
-                        onPaint: {
-                            var ctx = getContext("2d")
-                            ctx.clearRect(0, 0, width, height)
-                            ctx.beginPath()
-                            ctx.moveTo(0, 0)
-                            ctx.lineTo(width, 0)
-                            ctx.lineTo(width / 2, height)
-                            ctx.closePath()
-                            ctx.fillStyle = "#e60000"
-                            ctx.fill()
+
+                    Item {
+                        anchors.centerIn: parent
+                        width: 12; height: 14
+
+                        Canvas {
+                            anchors.top: parent.top
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            width: 8; height: 5
+                            onPaint: {
+                                var ctx = getContext("2d")
+                                ctx.clearRect(0, 0, width, height)
+                                ctx.beginPath()
+                                ctx.moveTo(0, 0)
+                                ctx.lineTo(width, 0)
+                                ctx.lineTo(width / 2, height)
+                                ctx.closePath()
+                                ctx.fillStyle = "#e60000"
+                                ctx.fill()
+                            }
+                        }
+                        Rectangle {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.bottom: parent.bottom
+                            width: 2; height: 7
+                            color: "#e60000"
                         }
                     }
+
                     MouseArea {
                         id: setDownbeatHover
                         anchors.fill: parent
@@ -329,18 +355,22 @@ Item {
                 }
 
                 // ── BPM ×2 button ────────────────────────────────────────────
-                // Doubles BPM and rebuilds the grid (half-time correction).
                 Rectangle {
-                    id: doubleBpmBtn
-                    width: 20; height: 20
-                    color:  doubleBpmHover.containsMouse ? "#55ffffff" : "transparent"
-                    radius: 0
+                    Layout.fillWidth:  true
+                    Layout.fillHeight: true
+                    color: doubleBpmHover.containsMouse ? "#22ffffff" : "transparent"
+
+                    Rectangle {
+                        anchors.left: parent.left; anchors.right: parent.right
+                        anchors.bottom: parent.bottom; height: 1
+                        color: "#22ffffff"
+                    }
 
                     Text {
                         anchors.centerIn: parent
                         text:  "×2"
-                        color: "#e6e600"   // yellow — visually distinct
-                        font.pixelSize: 9
+                        color: "#e6e600"
+                        font.pixelSize: 10
                         font.bold: true
                     }
                     MouseArea {
@@ -356,18 +386,16 @@ Item {
                 }
 
                 // ── BPM ÷2 button ────────────────────────────────────────────
-                // Halves BPM and rebuilds the grid (double-time correction).
                 Rectangle {
-                    id: halveBpmBtn
-                    width: 20; height: 20
-                    color:  halveBpmHover.containsMouse ? "#55ffffff" : "transparent"
-                    radius: 0
+                    Layout.fillWidth:  true
+                    Layout.fillHeight: true
+                    color: halveBpmHover.containsMouse ? "#22ffffff" : "transparent"
 
                     Text {
                         anchors.centerIn: parent
                         text:  "/2"
-                        color: "#00aaff"   // blue — visually distinct
-                        font.pixelSize: 9
+                        color: "#00aaff"
+                        font.pixelSize: 10
                         font.bold: true
                     }
                     MouseArea {
@@ -381,7 +409,7 @@ Item {
                     ToolTip.text:    "Halve BPM (/2) — double-time correction"
                     ToolTip.delay:   600
                 }
-            } // Column
+            }
         }
         // ─────────────────────────────────────────────────────────────────────
     }   // Rectangle (background + waveform stack)

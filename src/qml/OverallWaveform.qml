@@ -60,6 +60,19 @@ Item {
                     if (progress < 0.0) progress = 0.0;
                     if (progress > 1.0) progress = 1.0;
 
+                    if (root.engine.loopActive && root.engine.loopOutPosition > root.engine.loopInPosition) {
+                        var trackLength = root.engine.duration;
+                        if (trackLength > 0.0) {
+                            var loopInProgress = root.engine.loopInPosition / trackLength;
+                            var loopOutProgress = root.engine.loopOutPosition / trackLength;
+
+                            if (progress < loopInProgress)
+                                progress = loopInProgress;
+                            else if (progress > loopOutProgress)
+                                progress = loopOutProgress;
+                        }
+                    }
+
                     root.engine.setPosition(progress);
                 }
             }

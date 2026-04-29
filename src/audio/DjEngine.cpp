@@ -3247,13 +3247,53 @@ void DjEngine::setScrubPosition(double positionSeconds)
     if (len <= 0.0)
         return;
 
-    const double nextPos = std::clamp(positionSeconds, 0.0, len);
+    double nextPos = std::clamp(positionSeconds, 0.0, len);
+    if (m_loopActive && m_loopOutSec > m_loopInSec) {
+        const double loopStart = std::clamp(m_loopInSec, 0.0, len);
+        const double loopEnd = std::clamp(m_loopOutSec, loopStart, len);
+        const double loopLength = loopEnd - loopStart;
+
+        if (loopLength > 0.0) {
+            if (nextPos < loopStart) {
+                const double wraps = std::ceil((loopStart - nextPos) / loopLength);
+                nextPos += wraps * loopLength;
+            } else if (nextPos > loopEnd) {
+                const double wraps = std::ceil((nextPos - loopEnd) / loopLength);
+                nextPos -= wraps * loopLength;
+            }
+
+            while (nextPos < loopStart)
+                nextPos += loopLength;
+            while (nextPos > loopEnd)
+                nextPos -= loopLength;
+        }
+    }
+
     const double prevTargetPos = m_scratchAbsolutePositionControl
         ? m_scratchAbsoluteTargetPosition
         : m_scrubHoldPosition;
     const double deltaSec = nextPos - prevTargetPos;
     if (std::abs(deltaSec) <= 2e-5)
         return;
+
+    // A large position jump while a loop is active means the QML wrapped the
+    // scrub target across a loop boundary (Serato-style). Snap to the new
+    // position immediately instead of deriving a bogus reverse velocity from
+    // the jump delta — the next input event will supply the correct velocity.
+    if (m_loopActive && m_loopOutSec > m_loopInSec) {
+        const double halfLoop = (m_loopOutSec - m_loopInSec) * 0.5;
+        if (std::abs(deltaSec) > halfLoop) {
+            m_scratchReleaseActive = false;
+            m_scratchAbsolutePositionControl = true;
+            m_scratchAbsoluteTargetPosition = nextPos;
+            m_scrubHoldPosition = nextPos;
+            m_scratchAbsoluteFollowVelocity = 0.0;
+            transportSource.setPosition(nextPos);
+            m_atomicPlayheadPos.store(nextPos, std::memory_order_relaxed);
+            m_lastScrubInputClock.restart();
+            return;
+        }
+    }
 
     // Absolute grab mode with preserved scratch feel:
     // derive a velocity target from absolute pointer movement so scratching
