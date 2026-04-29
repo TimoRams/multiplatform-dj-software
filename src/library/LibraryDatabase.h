@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QString>
 #include <QSqlDatabase>
+#include <QTimer>
 #include <QVariantList>
 #include <vector>
 
@@ -75,8 +76,12 @@ public:
     // Retrieve the file_path for a given trackId (first location).
     Q_INVOKABLE QString filePath(const QString& trackId) const;
 
+    // Human-readable mirrored database status for the exit dialog.
+    Q_PROPERTY(QString mirroredDatabaseStatus READ mirroredDatabaseStatus NOTIFY mirroredDatabaseStatusChanged)
+    Q_INVOKABLE QString mirroredDatabaseStatus() const;
+
     // Flush pending DB work and close the connection for clean shutdown.
-    Q_INVOKABLE void shutdown();
+    Q_INVOKABLE void shutdown(bool syncBackup = false);
 
     // Wire up the table model so it auto-refreshes after mutations.
     void setTableModel(LibraryTableModel* model);
@@ -84,11 +89,15 @@ public:
 signals:
     void trackAdded(const QString& trackId);
     void analysisUpdated(const QString& trackId);
+    void mirroredDatabaseStatusChanged();
 
 private:
     bool createSchema();
     void scheduleTableModelRefresh();
     bool isHealthyDatabaseFile(const QString& path) const;
+    bool recreateDatabaseFileFromLiveConnection(const QString& targetPath);
+    bool reopenDatabaseConnection();
+    void performMirrorSelfCheck();
     bool restorePrimaryFromBackup();
     bool syncBackupFromPrimary();
     bool copyDatabaseFile(const QString& sourcePath, const QString& targetPath) const;
@@ -98,6 +107,13 @@ private:
     LibraryTableModel* m_tableModel = nullptr;
     QString m_dbPath;
     QString m_backupDbPath;
+    QString m_activeDbPath;
+    QString m_manualBackupDbPath;
+    QString m_lastRecoveryEvent;
+    QString m_cachedMirrorStatus;
+    QTimer m_mirrorSelfCheckTimer;
+    bool m_primaryMirrorDegraded = false;
+    bool m_backupMirrorDegraded = false;
     bool m_tableModelRefreshPending = false;
 
     static constexpr int kSchemaVersion = 6;

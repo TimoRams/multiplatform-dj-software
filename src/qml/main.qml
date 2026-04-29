@@ -17,6 +17,7 @@ ApplicationWindow {
     property string linkedDeckName: ""
     property bool exitPromptVisible: false
     property bool exitShutdownInProgress: false
+    property bool exitManualBackupRequested: false
     property bool allowDirectClose: false
     property bool exitCleanupTriggered: false
     property real exitProgress: 0.0
@@ -45,12 +46,14 @@ ApplicationWindow {
     function requestAppClose() {
         if (exitShutdownInProgress)
             return
+        exitManualBackupRequested = false
         exitPromptVisible = true
     }
 
         function cancelAppClosePrompt() {
             if (exitShutdownInProgress)
                 return
+            exitManualBackupRequested = false
             exitPromptVisible = false
         }
 
@@ -99,7 +102,7 @@ ApplicationWindow {
                     if (typeof settingsManager !== "undefined" && settingsManager && settingsManager.flushToDisk)
                         settingsManager.flushToDisk()
                     if (typeof libraryDb !== "undefined" && libraryDb && libraryDb.shutdown)
-                        libraryDb.shutdown()
+                        libraryDb.shutdown(window.exitManualBackupRequested)
                 }
 
                 if (window.exitProgress >= 1.0) {
@@ -578,7 +581,7 @@ ApplicationWindow {
 
                     Text {
                         anchors.centerIn: parent
-                        text: "Yes"
+                        text: "OK"
                         color: "#f0f0f0"
                         font.pixelSize: window.sp(13)
                         font.bold: true
@@ -602,7 +605,7 @@ ApplicationWindow {
 
                     Text {
                         anchors.centerIn: parent
-                        text: "No"
+                        text: "Abbrechen"
                         color: "#f0f0f0"
                         font.pixelSize: window.sp(13)
                         font.bold: true
@@ -639,6 +642,67 @@ ApplicationWindow {
                 color: "#cfcfcf"
                 horizontalAlignment: Text.AlignHCenter
                 font.pixelSize: window.sp(11)
+            }
+
+            Text {
+                width: parent.width
+                visible: !window.exitShutdownInProgress
+                text: (typeof libraryDb !== "undefined" && libraryDb !== null)
+                      ? (libraryDb.mirroredDatabaseStatus ? libraryDb.mirroredDatabaseStatus : "DB A: unbekannt | DB B: unbekannt")
+                      : "DB A: unbekannt | DB B: unbekannt"
+                color: "#b8b8b8"
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                font.pixelSize: window.sp(11)
+            }
+
+            CheckBox {
+                id: manualBackupCheck
+                visible: !window.exitShutdownInProgress
+                checked: false
+                padding: 0
+                spacing: 8
+                text: "Datenbank-Backup manuell speichern"
+                indicator: Rectangle {
+                    implicitWidth: 16
+                    implicitHeight: 16
+                    radius: 2
+                    border.width: 1
+                    border.color: parent.checked ? "#9a9a9a" : "#5a5a5a"
+                    color: parent.checked ? "#4c4c4c" : "#232323"
+
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: 8
+                        height: 8
+                        radius: 1
+                        color: parent.visible && parent.parent.checked ? "#e5e5e5" : "transparent"
+                        visible: parent.parent.checked
+                    }
+                }
+                contentItem: Text {
+                    text: manualBackupCheck.text
+                    color: "#f0f0f0"
+                    font.pixelSize: window.sp(12)
+                    font.bold: true
+                    verticalAlignment: Text.AlignVCenter
+                    leftPadding: 2
+                }
+                onCheckedChanged: {
+                    if (window.exitShutdownInProgress)
+                        return
+                    window.exitManualBackupRequested = checked
+                }
+            }
+
+            Text {
+                width: parent.width
+                visible: !window.exitShutdownInProgress
+                text: "Wenn aktiv, wird beim Beenden eine separate Datei gespeichert, die nur durch diese Option aktualisiert wird."
+                color: "#a8a8a8"
+                font.pixelSize: window.sp(10)
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
             }
         }
     }
