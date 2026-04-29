@@ -387,6 +387,9 @@ void SettingsManager::setAudioBoothFirstChannel(int firstChannel)
 QStringList SettingsManager::getAvailableAudioDeviceTypes() const
 {
     QStringList types;
+    QString jackType;
+    QString pipewireType;
+    QString pulseType;
 
     juce::AudioDeviceManager deviceManager;
     juce::String err = deviceManager.initialiseWithDefaultDevices(0, 2);
@@ -394,9 +397,29 @@ QStringList SettingsManager::getAvailableAudioDeviceTypes() const
         return types;
 
     for (auto* type : deviceManager.getAvailableDeviceTypes()) {
-        if (type != nullptr && type->getTypeName().isNotEmpty())
-            types.push_back(QString::fromUtf8(type->getTypeName().toRawUTF8()));
+        if (type == nullptr || type->getTypeName().isNotEmpty() == false)
+            continue;
+
+        const QString name = QString::fromUtf8(type->getTypeName().toRawUTF8());
+        types.push_back(name);
+
+        const QString lower = name.toLower();
+        if (jackType.isEmpty() && lower == QStringLiteral("jack"))
+            jackType = name;
+        if (pipewireType.isEmpty() && lower.contains(QStringLiteral("pipewire")))
+            pipewireType = name;
+        if (pulseType.isEmpty() && (lower.contains(QStringLiteral("pulse")) || lower.contains(QStringLiteral("pulseaudio"))))
+            pulseType = name;
     }
+
+    const QString preferredType = !jackType.isEmpty() ? jackType
+                                : !pipewireType.isEmpty() ? pipewireType
+                                : !pulseType.isEmpty() ? pulseType
+                                : QString();
+
+    const int preferredIndex = types.indexOf(preferredType);
+    if (preferredIndex > 0)
+        types.move(preferredIndex, 0);
 
     return types;
 }

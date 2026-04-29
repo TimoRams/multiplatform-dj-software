@@ -344,7 +344,12 @@ Window {
             : false
 
         if (applied) {
-            audioApplyStatus.text = "Applied: Sound API selected once, role devices and channels updated."
+            var note = "Applied: Sound API selected once, role devices and channels updated."
+            if ((headphonesOutputDevice && masterOutputDevice && headphonesOutputDevice !== masterOutputDevice)
+                || (boothOutputDevice && masterOutputDevice && boothOutputDevice !== masterOutputDevice)) {
+                note = "Applied: Pre-cue uses channel pairs on the master device. Separate devices are not yet supported."
+            }
+            audioApplyStatus.text = note
             audioApplyStatus.color = "#8fe388"
         } else {
             audioApplyStatus.text = "Saved, but the requested device, channels, or buffer could not be applied right now."

@@ -39,6 +39,14 @@ endif()
 # Third-party dependencies (cross-platform)
 find_package(PkgConfig QUIET)
 
+if(UNIX AND NOT APPLE)
+    pkg_check_modules(JACK QUIET IMPORTED_TARGET jack)
+    if(TARGET PkgConfig::JACK)
+        message(STATUS "Enabling JUCE JACK backend")
+        add_compile_definitions(JUCE_JACK=1)
+    endif()
+endif()
+
 # ---- TagLib ---------------------------------------------------------------
 if(NOT TARGET ThirdParty::TagLib)
     add_library(ThirdParty::TagLib INTERFACE IMPORTED)

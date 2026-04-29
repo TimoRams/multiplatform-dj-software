@@ -289,18 +289,42 @@ int readDeviceOutputChannelCount(const QString& deviceType, const QString& outpu
         return channelCount;
     }
 
+    juce::AudioIODeviceType* type = nullptr;
     if (!deviceType.isEmpty()) {
-        if (auto* type = findDeviceType(probe, deviceType))
+        type = findDeviceType(probe, deviceType);
+        if (type != nullptr)
             probe.setCurrentAudioDeviceType(type->getTypeName(), true);
+    } else {
+        type = probe.getCurrentDeviceTypeObject();
     }
+
+    if (type == nullptr)
+        type = probe.getCurrentDeviceTypeObject();
 
     juce::AudioDeviceManager::AudioDeviceSetup setup;
     probe.getAudioDeviceSetup(setup);
     setup.useDefaultInputChannels = true;
     setup.inputDeviceName.clear();
     setup.useDefaultOutputChannels = true;
-    if (!outputDevice.isEmpty())
-        setup.outputDeviceName = toJuceString(outputDevice);
+    QString sanitizedOutput = outputDevice.trimmed();
+    if (sanitizedOutput.compare(QStringLiteral("None"), Qt::CaseInsensitive) == 0)
+        sanitizedOutput.clear();
+    if (!sanitizedOutput.isEmpty() && type != nullptr) {
+        type->scanForDevices();
+        const auto names = type->getDeviceNames(false);
+        bool found = false;
+        for (const auto& name : names) {
+            if (QString::fromUtf8(name.toRawUTF8()).trimmed() == sanitizedOutput) {
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+            sanitizedOutput.clear();
+    }
+
+    if (!sanitizedOutput.isEmpty())
+        setup.outputDeviceName = toJuceString(sanitizedOutput);
 
     juce::String error = probe.setAudioDeviceSetup(setup, true);
     if (error.isNotEmpty() && setup.outputDeviceName.isNotEmpty()) {
@@ -1651,14 +1675,39 @@ QStringList DjEngine::getAvailableAudioDeviceTypes() const
 
     auto& manager = const_cast<juce::AudioDeviceManager&>(deviceManager);
     const QString currentType = getCurrentAudioDeviceType();
+    QString jackType;
+    QString pipewireType;
+    QString pulseType;
+
     for (auto* type : manager.getAvailableDeviceTypes()) {
-        if (type != nullptr && type->getTypeName().isNotEmpty())
-            types.push_back(QString::fromUtf8(type->getTypeName().toRawUTF8()));
+        if (type == nullptr || type->getTypeName().isEmpty())
+            continue;
+        const QString name = QString::fromUtf8(type->getTypeName().toRawUTF8());
+        types.push_back(name);
+#if JUCE_LINUX || JUCE_BSD
+        const QString lower = name.toLower();
+        if (jackType.isEmpty() && lower == QStringLiteral("jack"))
+            jackType = name;
+        if (pipewireType.isEmpty() && lower.contains(QStringLiteral("pipewire")))
+            pipewireType = name;
+        if (pulseType.isEmpty() && (lower.contains(QStringLiteral("pulse")) || lower.contains(QStringLiteral("pulseaudio"))))
+            pulseType = name;
+#endif
     }
 
-    const int currentIndex = types.indexOf(currentType);
-    if (currentIndex > 0)
-        types.move(currentIndex, 0);
+    const QString preferredType = !jackType.isEmpty() ? jackType
+                                : !pipewireType.isEmpty() ? pipewireType
+                                : !pulseType.isEmpty() ? pulseType
+                                : currentType;
+
+    const int preferredIndex = types.indexOf(preferredType);
+    if (preferredIndex > 0)
+        types.move(preferredIndex, 0);
+    else {
+        const int currentIndex = types.indexOf(currentType);
+        if (currentIndex > 0)
+            types.move(currentIndex, 0);
+    }
 
     return types;
 }
@@ -1709,11 +1758,18 @@ QStringList DjEngine::getAvailableAudioOutputDevices(const QString& deviceType) 
                  || lowerName.contains(QStringLiteral("loopback"))
                  || lowerName.startsWith(QStringLiteral("lavaplayer"))
                  || lowerName.startsWith(QStringLiteral("Combined"))
-                 || lowerName == QStringLiteral("null")
-                 || lowerName == QStringLiteral("default"));
+                 || lowerName == QStringLiteral("null"));
+
+        if (!keep) {
+            if (lowerName == QStringLiteral("default")
+                || lowerName.contains(QStringLiteral("pipewire"))
+                || lowerName.contains(QStringLiteral("pulse"))) {
+                keep = true;
+            }
+        }
         
         // On PipeWire/ALSA, prefer human-readable names and exclude raw configs
-        if (keep && (selectedTypeLower.contains(QStringLiteral("alsa")) || selectedTypeLower.contains(QStringLiteral("pipewire")))) {
+        if (keep && (selectedTypeLower.contains(QStringLiteral("alsa")) || selectedTypeLower.contains(QStringLiteral("pipewire")) || selectedTypeLower.contains(QStringLiteral("pulse")))) {
             // Look for actual physical devices or named profiles
             keep = !lowerName.contains(QStringLiteral("@"))
                 && !lowerName.startsWith(QStringLiteral("builtin_"))
@@ -1811,6 +1867,31 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
         manager.setCurrentAudioDeviceType(toJuceString(deviceType), true);
     }
 
+    QString sanitizedOutput = outputDevice.trimmed();
+    if (sanitizedOutput.compare(QStringLiteral("None"), Qt::CaseInsensitive) == 0)
+        sanitizedOutput.clear();
+
+    if (!sanitizedOutput.isEmpty() && type != nullptr) {
+        type->scanForDevices();
+        const auto names = type->getDeviceNames(false);
+        bool found = false;
+        for (const auto& name : names) {
+            if (QString::fromUtf8(name.toRawUTF8()).trimmed() == sanitizedOutput) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            qWarning() << "[DjEngine] Requested output device not found:" << sanitizedOutput
+                       << "- using default";
+            sanitizedOutput.clear();
+        }
+    }
+
+    if (!sanitizedOutput.isEmpty() && deviceType.toLower().contains(QStringLiteral("pipewire"))) {
+        qInfo() << "[DjEngine] PipeWire backend selected with output device:" << sanitizedOutput;
+    }
+
     juce::AudioDeviceManager::AudioDeviceSetup setup;
     manager.getAudioDeviceSetup(setup);
     setup.sampleRate = static_cast<double>(sampleRate);
@@ -1820,7 +1901,7 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     setup.useDefaultOutputChannels = true;
     
     // Validate output device name
-    if (outputDevice.isEmpty()) {
+    if (sanitizedOutput.isEmpty()) {
         if (auto* device = manager.getCurrentAudioDevice()) {
             setup.outputDeviceName = device->getName();
         } else {
@@ -1828,7 +1909,7 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
             return false;
         }
     } else {
-        setup.outputDeviceName = toJuceString(outputDevice);
+        setup.outputDeviceName = toJuceString(sanitizedOutput);
     }
 
     // Validate channel configuration against device capabilities
