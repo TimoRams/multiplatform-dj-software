@@ -13,8 +13,6 @@ Item {
 
     property bool dropHovered: false
 
-    // Local metadata properties: engine is a 'var', so QML cannot track its signals
-    // directly. Values are mirrored here and updated explicitly via Connections.
     property bool   _hasTrack:      false
     property string _trackTitle:    "No Track Loaded"
     property string _trackArtist:   ""
@@ -22,7 +20,7 @@ Item {
     property string _trackDuration: ""
     property string _trackKey:      ""
     property string _trackBpm:      ""
-    property string _currentBpm:    ""   // live tempo-adjusted BPM
+    property string _currentBpm:    ""
     readonly property bool linkAvailable: (typeof linkManager !== "undefined" && linkManager !== null && linkManager.enabled)
     readonly property bool linkMode: (typeof window !== "undefined" && window !== null && window.linkedDeckName === deck.deckName)
     readonly property int headerCellHeight: 22
@@ -31,66 +29,69 @@ Item {
     property double _lastLinkPublishMs: 0
     property double _lastLinkPublishBpm: 0
 
-    function _handleLinkEnabledChanged() {
-        if (typeof linkManager === "undefined" || linkManager === null)
-            return
+    // ── Theme ────────────────────────────────────────────────────────────
+    readonly property color accent:    deckName === "A" ? "#ff9900" : "#00ccff"
+    readonly property color accentGrn: "#4dd98a"
+    readonly property color accentBlu: "#5bb6ff"
+    readonly property int   btnH:      22
 
-        if (!linkManager.enabled && deck.linkMode)
-            deck._setLinkMode(false)
-        if (linkManager.enabled && deck.linkMode)
-            deck._followAbletonLinkTempo(true)
+    // ── Reusable flat button component ───────────────────────────────────
+    component FlatBtn: Rectangle {
+        id: fb
+        required property string btnText
+        property bool   fbActive:           false
+        property color  fbActiveColor:      "#1a2e1a"
+        property color  fbActiveTxtColor:   deck.accentGrn
+        property color  fbInactiveColor:    "#1c1c1c"
+        property color  fbInactiveTxtColor: "#888"
+
+        Layout.preferredHeight: deck.btnH
+        Layout.minimumHeight:   deck.btnH
+        Layout.maximumHeight:   deck.btnH
+
+        color: hovH.hovered ? "#282828" : (fbActive ? fbActiveColor : fbInactiveColor)
+
+        HoverHandler { id: hovH }
+
+        Text {
+            anchors.centerIn: parent
+            text: fb.btnText
+            color: fb.fbActive ? fb.fbActiveTxtColor : fb.fbInactiveTxtColor
+            font.pixelSize: window.spViewport(8)
+            font.bold: true
+            font.family: "monospace"
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideRight
+        }
+
+        signal clicked()
+        signal btnPressed()
+        signal btnReleased()
+
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: fb.clicked()
+            onPressed: fb.btnPressed()
+            onReleased: fb.btnReleased()
+        }
     }
 
-    Component.onCompleted: {
-        if (typeof linkManager !== "undefined" && linkManager !== null)
-            linkManager.enabledChanged.connect(deck._handleLinkEnabledChanged)
-    }
-
-    Component.onDestruction: {
-        if (typeof linkManager !== "undefined" && linkManager !== null)
-            linkManager.enabledChanged.disconnect(deck._handleLinkEnabledChanged)
-    }
-
+    // ── Tempo slider component ───────────────────────────────────────────
     component DeckSlider: Slider {
         id: control
         property bool centerFill: false
 
-        implicitWidth: orientation === Qt.Vertical ? 22 : 150
+        implicitWidth:  orientation === Qt.Vertical ? 22 : 150
         implicitHeight: orientation === Qt.Vertical ? 150 : 22
 
         background: Rectangle {
             x: control.orientation === Qt.Horizontal ? control.leftPadding : control.width / 2 - 2
             y: control.orientation === Qt.Horizontal ? control.height / 2 - 2 : control.topPadding
-            width: control.orientation === Qt.Horizontal ? control.availableWidth : 4
+            width:  control.orientation === Qt.Horizontal ? control.availableWidth  : 4
             height: control.orientation === Qt.Horizontal ? 4 : control.availableHeight
             radius: 0
-            color: "#1f1f1f"
-            border.color: "#000000"
-            border.width: 0
-
-            Rectangle {
-                visible: control.orientation === Qt.Horizontal && !control.centerFill
-                x: 1
-                y: 1
-                width: Math.max(0, control.visualPosition * (parent.width - 2))
-                height: parent.height - 2
-                radius: 0
-                color: control.pressed ? "#5a5a5a" : "#3e3e3e"
-            }
-
-            Rectangle {
-                visible: control.orientation === Qt.Horizontal && control.centerFill
-                y: 1
-                height: parent.height - 2
-                radius: 0
-                color: control.pressed ? "#5a5a5a" : "#3e3e3e"
-
-                readonly property real midPx: parent.width / 2
-                readonly property real posPx: 1 + control.visualPosition * (parent.width - 2)
-
-                x: Math.min(midPx, posPx)
-                width: Math.max(0, Math.abs(posPx - midPx))
-            }
+            color: "#1a1a1a"
 
             Rectangle {
                 visible: control.orientation === Qt.Vertical && !control.centerFill
@@ -118,8 +119,8 @@ Item {
         }
 
         handle: Rectangle {
-            implicitWidth: control.orientation === Qt.Vertical ? 24 : 18
-            implicitHeight: control.orientation === Qt.Vertical ? 12 : 22
+            implicitWidth:  control.orientation === Qt.Vertical ? 26 : 18
+            implicitHeight: control.orientation === Qt.Vertical ? 10 : 22
             x: control.orientation === Qt.Horizontal
                ? control.leftPadding + control.visualPosition * (control.availableWidth - width)
                : control.width / 2 - width / 2
@@ -127,24 +128,20 @@ Item {
                ? control.height / 2 - height / 2
                : control.topPadding + control.visualPosition * (control.availableHeight - height)
             radius: 0
-            color: control.pressed ? "#e0e0e0" : "#c8c8c8"
-            border.color: control.pressed ? "#707070" : "#444444"
-            border.width: 0
+            color: control.pressed ? "#e0e0e0" : "#c0c0c0"
         }
     }
+
+    // ── Logic ─────────────────────────────────────────────────────────────
 
     function loopLabel() {
         if (!deck.engine || !deck.engine.loopActive)
             return "4 BEAT"
         var beats = deck.engine.loopLengthBeats
-        if (Math.abs(beats - 1.5) < 0.08)
-            return "1.5"
-        if (Math.abs(beats - 0.75) < 0.05)
-            return "3/4"
-        if (Math.abs(beats - 0.5) < 0.04)
-            return "1/2"
-        if (Math.abs(beats - 0.25) < 0.03)
-            return "1/4"
+        if (Math.abs(beats - 1.5) < 0.08)  return "1.5"
+        if (Math.abs(beats - 0.75) < 0.05) return "3/4"
+        if (Math.abs(beats - 0.5)  < 0.04) return "1/2"
+        if (Math.abs(beats - 0.25) < 0.03) return "1/4"
         if (beats >= 1.0)
             return Math.round(beats) + " BEAT"
         return beats.toFixed(2) + " BEAT"
@@ -169,21 +166,15 @@ Item {
     function _syncTempo() {
         if (!deck.engine) return
         var cb = deck.engine.currentBpm
-        // For loops, show perceived rhythmic BPM and wrap to a realistic range.
         if (cb > 0 && deck.engine.loopActive) {
             var beats = deck.engine.loopLengthBeats
-            // Only sub-beat loops (<1 beat) alter perceived BPM.
-            // Loops >= 1 beat (e.g. 2 beats) should keep normal track BPM display.
             if (beats > 0.001 && beats < 1.0)
                 cb = cb / beats
-
             if (beats > 0.001 && beats < 1.0) {
                 var minBpm = 70.0
                 var maxBpm = 150.0
-                while (cb > maxBpm)
-                    cb = cb / 2.0
-                while (cb < minBpm)
-                    cb = cb * 2.0
+                while (cb > maxBpm) cb = cb / 2.0
+                while (cb < minBpm) cb = cb * 2.0
             }
         }
         _currentBpm = cb > 0 ? cb.toFixed(2) : ""
@@ -192,17 +183,12 @@ Item {
     function _showLiveBpmIndicator() {
         if (!deck.engine || deck._currentBpm === "")
             return false
-
-        // Always show when tempo fader is moved.
         if (Math.abs(deck.engine.tempoPercent) > 0.01)
             return true
-
-        // Also show when loop math changes perceived BPM without tempo fader move.
         var base = Number(deck._trackBpm)
         var live = Number(deck._currentBpm)
         if (!isNaN(base) && !isNaN(live))
             return Math.abs(live - base) > 0.01
-
         return false
     }
 
@@ -213,104 +199,79 @@ Item {
     }
 
     function _isLinkLeader() {
-        if (!deck.engine || !deck.linkAvailable)
-            return false
-        if (!linkManager)
-            return false
-
-        // With no peers we can seed Link; once peers exist, only sync master leads.
-        if (linkManager.numPeers <= 0)
-            return true
+        if (!deck.engine || !deck.linkAvailable) return false
+        if (!linkManager) return false
+        if (linkManager.numPeers <= 0) return true
         return deck.engine.syncMaster
     }
 
     function _shouldFollowLinkTempo() {
-        if (!deck.engine || !deck.linkMode || !deck.linkAvailable)
-            return false
-        if (!linkManager || linkManager.numPeers <= 0)
-            return false
-        if (deck._isLinkLeader())
-            return false
-        if (!deck.engine.isPlaying)
-            return false
-        if (deck.engine.scrubbing)
-            return false
-        if (Date.now() < deck._linkFollowBlockedUntilMs)
-            return false
-        if (!deck.engine.trackData || !deck.engine.trackData.isBpmAnalyzed)
-            return false
+        if (!deck.engine || !deck.linkMode || !deck.linkAvailable) return false
+        if (!linkManager || linkManager.numPeers <= 0) return false
+        if (deck._isLinkLeader()) return false
+        if (!deck.engine.isPlaying) return false
+        if (deck.engine.scrubbing) return false
+        if (Date.now() < deck._linkFollowBlockedUntilMs) return false
+        if (!deck.engine.trackData || !deck.engine.trackData.isBpmAnalyzed) return false
         return true
     }
 
     function _followAbletonLinkTempo(forceNow) {
-        if (!deck._shouldFollowLinkTempo())
-            return
-
+        if (!deck._shouldFollowLinkTempo()) return
         var linkBpm = Number(linkManager.bpm)
         var baseBpm = Number(deck.engine.trackData.bpm)
-        if (isNaN(linkBpm) || !isFinite(linkBpm) || linkBpm <= 0.0)
-            return
-        if (isNaN(baseBpm) || !isFinite(baseBpm) || baseBpm <= 0.0)
-            return
-
+        if (isNaN(linkBpm) || !isFinite(linkBpm) || linkBpm <= 0.0) return
+        if (isNaN(baseBpm) || !isFinite(baseBpm) || baseBpm <= 0.0) return
         var targetPct = ((linkBpm / baseBpm) - 1.0) * 100.0
         targetPct = Math.max(-100.0, Math.min(100.0, targetPct))
-
         var deltaPct = Math.abs(Number(deck.engine.tempoPercent) - targetPct)
-        if (!forceNow && deltaPct < 0.03)
-            return
-
+        if (!forceNow && deltaPct < 0.03) return
         deck.engine.setTempoPercent(targetPct)
-
-        // Prevent immediate writeback of old local beat/tempo into Link.
         deck._linkSuppressPublishUntilMs = Date.now() + 420
     }
 
     function _publishDeckToAbletonLink() {
-        if (!deck.engine || !deck.linkMode || !deck.linkAvailable)
-            return
-        if (!deck.engine.isPlaying)
-            return
-        if (!deck._isLinkLeader())
-            return
-        if (Date.now() < deck._linkSuppressPublishUntilMs)
-            return
-        if (!deck.engine.trackData || !deck.engine.trackData.isBpmAnalyzed)
-            return
-
+        if (!deck.engine || !deck.linkMode || !deck.linkAvailable) return
+        if (!deck.engine.isPlaying) return
+        if (!deck._isLinkLeader()) return
+        if (Date.now() < deck._linkSuppressPublishUntilMs) return
+        if (!deck.engine.trackData || !deck.engine.trackData.isBpmAnalyzed) return
         var liveBpm = Number(deck.engine.currentBpm)
-        if (isNaN(liveBpm) || liveBpm <= 0.0)
-            return
-
+        if (isNaN(liveBpm) || liveBpm <= 0.0) return
         var playheadSec = deck.engine.getPlayheadPositionAtomic()
-        if (playheadSec === undefined || isNaN(playheadSec))
-            return
-
+        if (playheadSec === undefined || isNaN(playheadSec)) return
         var sampleRate = Number(deck.engine.trackData.sampleRate)
-        if (isNaN(sampleRate) || sampleRate <= 0.0)
-            sampleRate = 44100.0
+        if (isNaN(sampleRate) || sampleRate <= 0.0) sampleRate = 44100.0
         var firstBeatSec = Number(deck.engine.trackData.firstBeatSample) / sampleRate
-
-        // Keep Link beat position anchored to the analyzed beatgrid, same logic
-        // as the top-bar beat indicators. Tempo is still published as live BPM.
         var analyzedBpm = Number(deck.engine.trackData.bpm)
-        if (isNaN(analyzedBpm) || analyzedBpm <= 0.0)
-            analyzedBpm = liveBpm
-
+        if (isNaN(analyzedBpm) || analyzedBpm <= 0.0) analyzedBpm = liveBpm
         var beatDur = 60.0 / analyzedBpm
         var absoluteBeat = (playheadSec - firstBeatSec) / beatDur
-        if (isNaN(absoluteBeat) || !isFinite(absoluteBeat))
-            return
-
+        if (isNaN(absoluteBeat) || !isFinite(absoluteBeat)) return
         var nowMs = Date.now()
         var minPublishIntervalMs = deck.engine.scrubbing ? 70 : 120
         if ((nowMs - deck._lastLinkPublishMs) < minPublishIntervalMs
             && Math.abs(liveBpm - deck._lastLinkPublishBpm) < 0.02)
             return
-
         linkManager.publishDeckState(liveBpm, absoluteBeat, 4.0)
         deck._lastLinkPublishMs = nowMs
         deck._lastLinkPublishBpm = liveBpm
+    }
+
+    function _handleLinkEnabledChanged() {
+        if (typeof linkManager === "undefined" || linkManager === null) return
+        if (!linkManager.enabled && deck.linkMode) deck._setLinkMode(false)
+        if (linkManager.enabled && deck.linkMode)  deck._followAbletonLinkTempo(true)
+    }
+
+    Component.onCompleted: {
+        if (typeof linkManager !== "undefined" && linkManager !== null)
+            linkManager.enabledChanged.connect(deck._handleLinkEnabledChanged)
+    }
+
+    Component.onDestruction: {
+        if (typeof linkManager !== "undefined" && linkManager !== null)
+            linkManager.enabledChanged.disconnect(deck._handleLinkEnabledChanged)
     }
 
     onLinkModeChanged: {
@@ -324,18 +285,14 @@ Item {
     Connections {
         target: deck.engine
         function onTrackMetadataChanged() { deck._syncMetadata() }
-        function onTempoChanged() { deck._syncTempo() }
-        function onLoopChanged() { deck._syncTempo() }
+        function onTempoChanged()         { deck._syncTempo() }
+        function onLoopChanged()          { deck._syncTempo() }
         function onScrubbingChanged() {
-            if (!deck.engine)
-                return
-
+            if (!deck.engine) return
             if (deck.engine.scrubbing) {
-                // During scratch local manipulation takes over.
-                deck._linkFollowBlockedUntilMs = Date.now() + 120
+                deck._linkFollowBlockedUntilMs   = Date.now() + 120
             } else {
-                // Allow release tail to settle before re-following external Link tempo.
-                deck._linkFollowBlockedUntilMs = Date.now() + 280
+                deck._linkFollowBlockedUntilMs   = Date.now() + 280
                 deck._linkSuppressPublishUntilMs = Date.now() + 320
                 deck._followAbletonLinkTempo(true)
             }
@@ -344,16 +301,14 @@ Item {
 
     Connections {
         target: deck.engine ? deck.engine.trackData : null
-        function onBpmAnalyzed() { deck._syncBpm(); deck._syncTempo() }
-        function onBeatgridChanged() { deck._syncBpm(); deck._syncTempo() }
+        function onBpmAnalyzed()    { deck._syncBpm(); deck._syncTempo() }
+        function onBeatgridChanged(){ deck._syncBpm(); deck._syncTempo() }
     }
 
     Connections {
         target: (typeof linkManager !== "undefined" && linkManager !== null) ? linkManager : null
-        function onBpmChanged() {
-            deck._followAbletonLinkTempo(false)
-        }
-        function onPhaseChanged() {}
+        function onBpmChanged()  { deck._followAbletonLinkTempo(false) }
+        function onPhaseChanged(){}
     }
 
     Timer {
@@ -364,18 +319,16 @@ Item {
         onTriggered: deck._publishDeckToAbletonLink()
     }
 
-    // Connect to ParameterStore for MIDI mapping
     Connections {
         target: parameterStore
         function onParameterChanged(id, value) {
             if (!deck.engine) return
             var expectedId = "deck" + deck.deckName + "_play"
             if (id === expectedId) {
-                if (value > 0.5 && !deck.engine.isPlaying) {
+                if (value > 0.5 && !deck.engine.isPlaying)
                     deck.engine.togglePlay()
-                } else if (value <= 0.5 && deck.engine.isPlaying) {
+                else if (value <= 0.5 && deck.engine.isPlaying)
                     deck.engine.togglePlay()
-                }
             }
         }
     }
@@ -383,212 +336,132 @@ Item {
     DropArea {
         anchors.fill: parent
         keys: ["text/uri-list", "text/plain"]
-
-        onEntered: (drag) => {
-            drag.accept(Qt.CopyAction)
-            deck.dropHovered = true
-        }
-        onExited:  () => { deck.dropHovered = false }
-
-        onDropped: (drop) => {
+        onEntered: (drag) => { drag.accept(Qt.CopyAction); deck.dropHovered = true }
+        onExited:  ()      => { deck.dropHovered = false }
+        onDropped: (drop)  => {
             deck.dropHovered = false
             var path = ""
-            if (drop.hasUrls && drop.urls.length > 0) {
-                path = drop.urls[0].toString()
-            } else if (drop.hasText) {
-                path = drop.text
-            }
-            // Strip file:// prefix (Linux/macOS)
-            if (path.startsWith("file://"))
-                path = path.substring(7)
-            if (path !== "" && deck.engine) {
-                deck.engine.loadTrack(path)
-            }
+            if (drop.hasUrls && drop.urls.length > 0) path = drop.urls[0].toString()
+            else if (drop.hasText)                    path = drop.text
+            if (path.startsWith("file://")) path = path.substring(7)
+            if (path !== "" && deck.engine)  deck.engine.loadTrack(path)
         }
     }
 
+    // ── Visual ────────────────────────────────────────────────────────────
     Rectangle {
         anchors.fill: parent
-        color: "#2a2a2a"
-        readonly property real frameThickness: (deck.dropHovered ? 2.0 : 1.0) / Math.max(0.001, window.uiScale)
-        readonly property color frameColor: deck.dropHovered ? "#5599ff" : "#000000"
+        color: "#131313"
 
-        // Render frame as dedicated edge rectangles to avoid transformed border flicker.
-        Rectangle {
-            x: 0
-            y: 0
-            width: parent.width
-            height: parent.frameThickness
-            color: parent.frameColor
-        }
-
-        Rectangle {
-            x: 0
-            y: parent.height - parent.frameThickness
-            width: parent.width
-            height: parent.frameThickness
-            color: parent.frameColor
-        }
-
-        Rectangle {
-            x: 0
-            y: 0
-            width: parent.frameThickness
-            height: parent.height
-            color: parent.frameColor
-        }
-
-        Rectangle {
-            x: parent.width - parent.frameThickness
-            y: 0
-            width: parent.frameThickness
-            height: parent.height
-            color: parent.frameColor
-        }
-
-        // Drag-hover overlay
+        // Drop-hover overlay
         Rectangle {
             anchors.fill: parent
             color: "#5599ff"
             opacity: deck.dropHovered ? 0.07 : 0.0
             Behavior on opacity { NumberAnimation { duration: 80 } }
         }
+        Rectangle {
+            anchors.fill: parent; color: "transparent"
+            border.color: deck.dropHovered ? "#5599ff" : "transparent"
+            border.width: 2; visible: deck.dropHovered
+        }
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.leftMargin: 2
-            anchors.rightMargin: 2
-            anchors.bottomMargin: 2
-            anchors.topMargin: 0
             spacing: 0
 
-            // Deck header: unified metadata fields (always visible)
+            // ── Track-info header ──────────────────────────────────────────
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: deck.headerCellHeight * 2
-                Layout.minimumHeight: deck.headerCellHeight * 2
-                Layout.maximumHeight: deck.headerCellHeight * 2
-                color: "transparent"
+                color: "#0f0f0f"
 
                 RowLayout {
                     anchors.fill: parent
-                    spacing: 1
+                    spacing: 0
 
-                    // Cover art square (left-aligned)
+                    // Deck accent strip
                     Rectangle {
-                        id: coverArt
-                        Layout.preferredWidth: deck.headerCellHeight * 2
-                        Layout.minimumWidth: deck.headerCellHeight * 2
-                        Layout.maximumWidth: deck.headerCellHeight * 2
-                        Layout.fillHeight: true
-                        radius: 0
-                        color: "#1a1a1a"
-                        border.color: deck._hasTrack
-                                      ? (deck.deckName === "A" ? "#ff9900" : "#00ccff")
-                                      : "#333"
-                        border.width: 0
+                        Layout.preferredWidth: 3; Layout.fillHeight: true
+                        color: deck.accent
+                        opacity: deck._hasTrack ? 1.0 : 0.25
+                    }
 
-                        // Placeholder icon when no cover art is present
+                    // Cover art
+                    Rectangle {
+                        Layout.preferredWidth: deck.headerCellHeight * 2
+                        Layout.minimumWidth:   deck.headerCellHeight * 2
+                        Layout.maximumWidth:   deck.headerCellHeight * 2
+                        Layout.fillHeight: true
+                        color: "#0d0d0d"
+
                         Text {
-                            id: coverPlaceholder
                             anchors.centerIn: parent
-                            text: deck._hasTrack ? "♪" : "♫"
-                            color: deck._hasTrack
-                                   ? (deck.deckName === "A" ? "#ff9900" : "#00ccff")
-                                   : "#333"
-                            font.pixelSize: deck._hasTrack ? window.spViewport(22) : window.spViewport(18)
-                            opacity: deck._hasTrack ? 0.6 : 0.4
+                            text: "♪"
+                            color: deck._hasTrack ? deck.accent : "#333"
+                            font.pixelSize: window.spViewport(18)
+                            opacity: deck._hasTrack ? 0.6 : 0.35
                             visible: coverImage.status !== Image.Ready
                         }
-
-                        // Cover art via CoverArtProvider (image://coverart/)
                         Image {
                             id: coverImage
                             anchors.fill: parent
-                            anchors.margins: 1
-                            source: deck.engine && deck.engine.hasCoverArt
-                                    ? deck.engine.coverArtUrl : ""
+                            source: deck.engine && deck.engine.hasCoverArt ? deck.engine.coverArtUrl : ""
                             fillMode: Image.PreserveAspectCrop
                             visible: status === Image.Ready
                         }
                     }
 
+                    Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: "#1c1c1c" }
+
+                    // Title + Artist
                     ColumnLayout {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
+                        Layout.fillWidth: true; Layout.fillHeight: true
                         spacing: 0
 
-                        Rectangle {
+                        Item {
                             Layout.fillWidth: true
                             Layout.preferredHeight: deck.headerCellHeight
-                            Layout.minimumHeight: deck.headerCellHeight
-                            Layout.maximumHeight: deck.headerCellHeight
-                            radius: 0
-                            color: "#1b1b1b"
-                            border.color: "#3a3a3a"
-                            border.width: 0
 
                             Row {
-                                anchors.fill: parent
-                                anchors.leftMargin: 3
-                                anchors.rightMargin: 3
-                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.fill: parent; anchors.leftMargin: 5; anchors.rightMargin: 4
                                 spacing: 4
-
                                 Text {
                                     anchors.verticalCenter: parent.verticalCenter
-                                    text: "TITLE"
-                                    color: "#6f6f6f"
-                                    font.pixelSize: window.spViewport(6)
-                                    font.bold: true
-                                    font.family: "monospace"
+                                    text: "TITLE"; color: "#444"
+                                    font.pixelSize: window.spViewport(6); font.bold: true; font.family: "monospace"
                                 }
-
                                 Text {
                                     anchors.verticalCenter: parent.verticalCenter
-                                    width: parent.width - 42
+                                    width: parent.width - 52
                                     text: deck._hasTrack ? deck._trackTitle : "No Track Loaded"
-                                    color: deck._hasTrack ? "#f0f0f0" : "#777"
-                                    font.pixelSize: window.spViewport(8)
-                                    font.bold: true
+                                    color: deck._hasTrack ? "#e8e8e8" : "#555"
+                                    font.pixelSize: window.spViewport(8); font.bold: true
                                     elide: Text.ElideRight
                                 }
                             }
+                            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#1c1c1c" }
                         }
 
-                        Rectangle {
+                        Item {
                             Layout.fillWidth: true
                             Layout.preferredHeight: deck.headerCellHeight
-                            Layout.minimumHeight: deck.headerCellHeight
-                            Layout.maximumHeight: deck.headerCellHeight
-                            radius: 0
-                            color: "#1b1b1b"
-                            border.color: "#3a3a3a"
-                            border.width: 0
 
                             Row {
-                                anchors.fill: parent
-                                anchors.leftMargin: 3
-                                anchors.rightMargin: 3
-                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.fill: parent; anchors.leftMargin: 5; anchors.rightMargin: 4
                                 spacing: 4
-
                                 Text {
                                     anchors.verticalCenter: parent.verticalCenter
-                                    text: "ARTIST"
-                                    color: "#6f6f6f"
-                                    font.pixelSize: window.spViewport(6)
-                                    font.bold: true
-                                    font.family: "monospace"
+                                    text: "ARTIST"; color: "#444"
+                                    font.pixelSize: window.spViewport(6); font.bold: true; font.family: "monospace"
                                 }
-
                                 Text {
                                     anchors.verticalCenter: parent.verticalCenter
-                                    width: parent.width - 46
+                                    width: parent.width - 58
                                     text: deck._hasTrack
                                           ? (deck._trackArtist !== "" ? deck._trackArtist : "Unknown Artist")
                                           : "-"
-                                    color: deck._hasTrack ? "#b8b8b8" : "#666"
+                                    color: deck._hasTrack ? "#a8a8a8" : "#555"
                                     font.pixelSize: window.spViewport(8)
                                     elide: Text.ElideRight
                                 }
@@ -596,632 +469,285 @@ Item {
                         }
                     }
 
+                    Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: "#1c1c1c" }
+
+                    // Meta badges 2×2
                     GridLayout {
                         id: metaBadges
-                        columns: 2
-                        rowSpacing: 0
-                        columnSpacing: 2
-                        Layout.preferredWidth: 164
-                        Layout.alignment: Qt.AlignVCenter
+                        columns: 2; rowSpacing: 0; columnSpacing: 0
+                        Layout.preferredWidth: 164; Layout.fillHeight: true
 
-                        // BASE BPM (analyzed/manual value)
                         Rectangle {
                             id: bpmBadge
-                            Layout.preferredWidth: 81
-                            Layout.preferredHeight: deck.headerCellHeight
-                            Layout.minimumHeight: deck.headerCellHeight
-                            Layout.maximumHeight: deck.headerCellHeight
-                            radius: 0
-                            color: "#1a2e1a"
-                            border.color: "#4a8a4a"
-                            border.width: 0
+                            Layout.preferredWidth: 82; Layout.preferredHeight: deck.headerCellHeight
+                            color: "#0d1a0d"
 
-                            Row {
-                                anchors.fill: parent
-                                anchors.leftMargin: 4
-                                anchors.rightMargin: 4
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: 3
-
-                                Text {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: "BPM"
-                                    color: "#5f8f5f"
-                                    font.pixelSize: window.spViewport(7)
-                                    font.bold: true
-                                    font.family: "monospace"
-                                }
-
-                                Text {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: deck._trackBpm !== "" ? deck._trackBpm : "--"
-                                    color: deck._trackBpm !== "" ? "#80e080" : "#5a705a"
-                                    font.pixelSize: window.spViewport(10)
-                                    font.bold: true
-                                    font.family: "monospace"
-                                }
+                            Row { anchors.fill: parent; anchors.leftMargin: 5; spacing: 3
+                                Text { anchors.verticalCenter: parent.verticalCenter; text: "BPM"; color: "#3a6a3a"; font.pixelSize: window.spViewport(6); font.bold: true; font.family: "monospace" }
+                                Text { anchors.verticalCenter: parent.verticalCenter; text: deck._trackBpm !== "" ? deck._trackBpm : "--"; color: deck._trackBpm !== "" ? deck.accentGrn : "#4a604a"; font.pixelSize: window.spViewport(10); font.bold: true; font.family: "monospace" }
                             }
-
                             MouseArea {
-                                anchors.fill: parent
-                                acceptedButtons: Qt.RightButton
-                                cursorShape: Qt.PointingHandCursor
+                                anchors.fill: parent; acceptedButtons: Qt.RightButton; cursorShape: Qt.PointingHandCursor
                                 onClicked: (mouse) => {
-                                    if (mouse.button !== Qt.RightButton || !deck.engine)
-                                        return
-                                    deck._manualBpmInput = deck._trackBpm !== ""
-                                        ? deck._trackBpm
-                                        : (deck._currentBpm !== "" ? deck._currentBpm : "120.00")
+                                    if (mouse.button !== Qt.RightButton || !deck.engine) return
+                                    deck._manualBpmInput = deck._trackBpm !== "" ? deck._trackBpm : (deck._currentBpm !== "" ? deck._currentBpm : "120.00")
                                     manualBpmField.text = deck._manualBpmInput
                                     manualBpmPopup.visible = true
                                     manualBpmField.forceActiveFocus()
                                     manualBpmField.selectAll()
                                 }
                             }
+                            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#1c1c1c" }
                         }
 
-                        // LIVE BPM (tempo/loop adjusted value)
                         Rectangle {
-                            Layout.preferredWidth: 81
-                            Layout.preferredHeight: deck.headerCellHeight
-                            Layout.minimumHeight: deck.headerCellHeight
-                            Layout.maximumHeight: deck.headerCellHeight
-                            radius: 0
-                            color: "#20242f"
-                            border.color: deck._showLiveBpmIndicator() ? "#4f7fcf" : "#3f475a"
-                            border.width: 0
+                            Layout.preferredWidth: 82; Layout.preferredHeight: deck.headerCellHeight
+                            color: "#0d0d1c"
 
-                            Row {
-                                anchors.fill: parent
-                                anchors.leftMargin: 4
-                                anchors.rightMargin: 4
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: 3
-
-                                Text {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: "LIVE"
-                                    color: "#6b82a5"
-                                    font.pixelSize: window.spViewport(7)
-                                    font.bold: true
-                                    font.family: "monospace"
-                                }
-
+                            Row { anchors.fill: parent; anchors.leftMargin: 5; spacing: 3
+                                Text { anchors.verticalCenter: parent.verticalCenter; text: "LIVE"; color: "#3a3a6a"; font.pixelSize: window.spViewport(6); font.bold: true; font.family: "monospace" }
                                 Text {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: deck._currentBpm !== "" ? deck._currentBpm : "--"
                                     color: {
-                                        if (!deck._showLiveBpmIndicator()) return "#6c7484"
-                                        if (!deck.engine) return "#aab6cc"
-                                        return deck.engine.tempoPercent > 0 ? "#ffaa00" : "#55ccff"
+                                        if (!deck._showLiveBpmIndicator()) return "#444464"
+                                        if (!deck.engine) return deck.accentBlu
+                                        return deck.engine.tempoPercent > 0 ? "#ffaa00" : deck.accentBlu
                                     }
-                                    font.pixelSize: window.spViewport(10)
-                                    font.bold: true
-                                    font.family: "monospace"
+                                    font.pixelSize: window.spViewport(10); font.bold: true; font.family: "monospace"
                                 }
+                            }
+                            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#1c1c1c" }
+                            Rectangle { anchors.left: parent.left; height: parent.height; width: 1; color: "#1c1c1c" }
+                        }
+
+                        Rectangle {
+                            Layout.preferredWidth: 82; Layout.preferredHeight: deck.headerCellHeight
+                            color: "#0d0d1c"
+
+                            Row { anchors.fill: parent; anchors.leftMargin: 5; spacing: 3
+                                Text { anchors.verticalCenter: parent.verticalCenter; text: "KEY"; color: "#3a3a6a"; font.pixelSize: window.spViewport(6); font.bold: true; font.family: "monospace" }
+                                Text { anchors.verticalCenter: parent.verticalCenter; text: deck._trackKey !== "" ? deck._trackKey : "--"; color: deck._trackKey !== "" ? deck.accentBlu : "#444464"; font.pixelSize: window.spViewport(10); font.bold: true; font.family: "monospace" }
                             }
                         }
 
                         Rectangle {
-                            Layout.preferredWidth: 81
-                            Layout.preferredHeight: deck.headerCellHeight
-                            Layout.minimumHeight: deck.headerCellHeight
-                            Layout.maximumHeight: deck.headerCellHeight
-                            radius: 0
-                            color: "#1a1a2e"
-                            border.color: "#4a4aaa"
-                            border.width: 0
+                            Layout.preferredWidth: 82; Layout.preferredHeight: deck.headerCellHeight
+                            color: "#151515"
 
-                            Row {
-                                anchors.fill: parent
-                                anchors.leftMargin: 4
-                                anchors.rightMargin: 4
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: 3
-
-                                Text {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: "KEY"
-                                    color: "#5d6bad"
-                                    font.pixelSize: window.spViewport(7)
-                                    font.bold: true
-                                    font.family: "monospace"
-                                }
-
-                                Text {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: deck._trackKey !== "" ? deck._trackKey : "--"
-                                    color: deck._trackKey !== "" ? "#8080e0" : "#59608a"
-                                    font.pixelSize: window.spViewport(10)
-                                    font.bold: true
-                                    font.family: "monospace"
-                                }
+                            Row { anchors.fill: parent; anchors.leftMargin: 5; spacing: 3
+                                Text { anchors.verticalCenter: parent.verticalCenter; text: "LEN"; color: "#444"; font.pixelSize: window.spViewport(6); font.bold: true; font.family: "monospace" }
+                                Text { anchors.verticalCenter: parent.verticalCenter; text: deck._trackDuration !== "" ? deck._trackDuration : "--:--"; color: deck._trackDuration !== "" ? "#b0b0b0" : "#555"; font.pixelSize: window.spViewport(10); font.bold: true; font.family: "monospace" }
                             }
-                        }
-
-                        Rectangle {
-                            Layout.preferredWidth: 81
-                            Layout.preferredHeight: deck.headerCellHeight
-                            Layout.minimumHeight: deck.headerCellHeight
-                            Layout.maximumHeight: deck.headerCellHeight
-                            radius: 0
-                            color: "#202020"
-                            border.color: "#4a4a4a"
-                            border.width: 0
-
-                            Row {
-                                anchors.fill: parent
-                                anchors.leftMargin: 4
-                                anchors.rightMargin: 4
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: 3
-
-                                Text {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: "LEN"
-                                    color: "#7f7f7f"
-                                    font.pixelSize: window.spViewport(7)
-                                    font.bold: true
-                                    font.family: "monospace"
-                                }
-
-                                Text {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: deck._trackDuration !== "" ? deck._trackDuration : "--:--"
-                                    color: deck._trackDuration !== "" ? "#b0b0b0" : "#6f6f6f"
-                                    font.pixelSize: window.spViewport(10)
-                                    font.bold: true
-                                    font.family: "monospace"
-                                }
-                            }
+                            Rectangle { anchors.left: parent.left; height: parent.height; width: 1; color: "#1c1c1c" }
                         }
                     }
                 }
             }
 
-            // Overview waveform + Buttons (left) | Tempo Fader (right)
-            RowLayout {
+            Rectangle { Layout.fillWidth: true; height: 1; color: "#1c1c1c" }
+
+            // ── Overview waveform ─────────────────────────────────────────
+            OverallWaveform {
+                engine: deck.engine
                 Layout.fillWidth: true
-                spacing: 2
+                Layout.preferredHeight: 34
+                stripeColor: "#0d0d0d"
+            }
 
-                // LEFT: Overview on top, buttons below
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 0
+            SegmentBar {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 6
+                segments: deck.engine ? deck.engine.currentSegments : []
+                totalTrackDuration: deck.engine ? deck.engine.trackDurationSec : 0
+            }
 
-                    // Slim rectified overview waveform
-                    OverallWaveform {
-                        engine: deck.engine
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 34
-                    }
+            Rectangle { Layout.fillWidth: true; height: 1; color: "#1c1c1c" }
 
-                    SegmentBar {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 6
-                        segments: deck.engine ? deck.engine.currentSegments : []
-                        totalTrackDuration: deck.engine ? deck.engine.trackDurationSec : 0
-                    }
+            // ── Transport / loop controls ─────────────────────────────────
+            RowLayout {
+                id: deckControlsRow
+                Layout.fillWidth: true
+                spacing: 0
 
-                    // Single adaptive control row: more text gets more width.
-                    RowLayout {
-                        id: deckControlsRow
-                        Layout.fillWidth: true
-                        spacing: 2
+                property real unit: Math.max(22, window.spViewport(26))
 
-                        // Keep control sizing independent from the parent RowLayout width
-                        // to avoid recursive layout recalculations.
-                        property real unit: Math.max(24, window.spViewport(28))
-                        property int buttonHeight: 18
+                // PLAY
+                FlatBtn {
+                    btnText: "PLAY"
+                    Layout.preferredWidth: deckControlsRow.unit * 1.3
+                    fbActive: deck.engine ? deck.engine.isPlaying : false
+                    fbActiveColor: "#0d280d"; fbActiveTxtColor: deck.accentGrn
+                    fbInactiveTxtColor: "#666"
+                    onClicked: { if (deck.engine) deck.engine.togglePlay() }
+                }
+                Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#1c1c1c" }
 
-                        Button {
-                            text: "PLAY"
-                            Layout.fillWidth: false
-                            Layout.preferredWidth: deckControlsRow.unit * 1.1
-                            Layout.preferredHeight: deckControlsRow.buttonHeight
-                            Layout.minimumHeight: deckControlsRow.buttonHeight
-                            Layout.maximumHeight: deckControlsRow.buttonHeight
-                            palette.buttonText: "white"
-                            font.pixelSize: window.spViewport(8)
-                            background: Rectangle {
-                                color: deck.engine && deck.engine.isPlaying ? "#44aa44" : "#444"
-                                radius: 0
-                            }
-                            contentItem: Text {
-                                text: parent.text
-                                color: "white"
-                                font.pixelSize: window.spViewport(8)
-                                font.bold: true
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                                elide: Text.ElideNone
-                            }
-                            onClicked: { if(deck.engine) deck.engine.togglePlay() }
-                        }
+                // CUE
+                FlatBtn {
+                    btnText: "CUE"
+                    Layout.preferredWidth: deckControlsRow.unit
+                    onBtnPressed:  { if (deck.engine) deck.engine.cueButtonPress() }
+                    onBtnReleased: { if (deck.engine) deck.engine.cueButtonRelease() }
+                }
+                Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#1c1c1c" }
 
-                        Button {
-                            text: "CUE"
-                            Layout.fillWidth: false
-                            Layout.preferredWidth: deckControlsRow.unit * 1.0
-                            Layout.preferredHeight: deckControlsRow.buttonHeight
-                            Layout.minimumHeight: deckControlsRow.buttonHeight
-                            Layout.maximumHeight: deckControlsRow.buttonHeight
-                            background: Rectangle { color: "#444"; radius: 0 }
-                            contentItem: Text {
-                                text: parent.text
-                                color: "white"
-                                font.pixelSize: window.spViewport(8)
-                                font.bold: true
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            onPressed: { if (deck.engine) deck.engine.cueButtonPress() }
-                            onReleased: { if (deck.engine) deck.engine.cueButtonRelease() }
-                        }
+                // REV
+                FlatBtn {
+                    btnText: "REV"
+                    Layout.preferredWidth: deckControlsRow.unit
+                    fbActive: deck.engine ? deck.engine.isReverse : false
+                    fbActiveColor: "#2a1200"; fbActiveTxtColor: "#ff6600"
+                    onClicked: { if (deck.engine) deck.engine.setReverse(!deck.engine.isReverse) }
+                }
+                Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#1c1c1c" }
 
-                        Button {
-                            text: "REV"
-                            checkable: true
-                            checked: deck.engine ? deck.engine.isReverse : false
-                            Layout.fillWidth: false
-                            Layout.preferredWidth: deckControlsRow.unit * 1.0
-                            Layout.preferredHeight: deckControlsRow.buttonHeight
-                            Layout.minimumHeight: deckControlsRow.buttonHeight
-                            Layout.maximumHeight: deckControlsRow.buttonHeight
-                            background: Rectangle {
-                                color: parent.checked ? "#883300" : "#444"
-                                border.color: parent.checked ? "#ff6600" : "transparent"
-                                border.width: 0
-                                radius: 0
-                            }
-                            contentItem: Text {
-                                text: parent.text
-                                color: parent.checked ? "#ff6600" : "#aaa"
-                                font.pixelSize: window.spViewport(8)
-                                font.bold: true
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            onClicked: {
-                                if (deck.engine) deck.engine.setReverse(checked)
-                            }
-                        }
+                // SYNC
+                FlatBtn {
+                    btnText: "SYNC"
+                    Layout.preferredWidth: deckControlsRow.unit * 1.2
+                    fbActive: deck.engine ? deck.engine.syncEnabled : false
+                    fbActiveColor: deck.engine && deck.engine.syncMaster ? "#2a2000" : "#0a2a0a"
+                    fbActiveTxtColor: deck.engine && deck.engine.syncMaster ? "#ffd24d" : deck.accentGrn
+                    onClicked: { if (deck.engine) deck.engine.setSyncEnabled(!deck.engine.syncEnabled) }
+                }
+                Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#1c1c1c" }
 
-                        Button {
-                            text: "SYNC"
-                            checkable: true
-                            checked: deck.engine ? deck.engine.syncEnabled : false
-                            Layout.fillWidth: false
-                            Layout.preferredWidth: deckControlsRow.unit * 1.2
-                            Layout.preferredHeight: deckControlsRow.buttonHeight
-                            Layout.minimumHeight: deckControlsRow.buttonHeight
-                            Layout.maximumHeight: deckControlsRow.buttonHeight
-                            background: Rectangle {
-                                color: {
-                                    if (!deck.engine || !parent.checked) return "#444"
-                                    return deck.engine.syncMaster ? "#7a5a10" : "#3a8a3a"
-                                }
-                                border.color: {
-                                    if (!deck.engine || !parent.checked) return "transparent"
-                                    return deck.engine.syncMaster ? "#ffd24d" : "#5cfa5c"
-                                }
-                                border.width: 0
-                                radius: 0
-                            }
-                            contentItem: Text {
-                                text: parent.text
-                                color: {
-                                    if (!parent.checked) return "#aaa"
-                                    if (deck.engine && deck.engine.syncMaster) return "#ffe18a"
-                                    return "white"
-                                }
-                                font.pixelSize: window.spViewport(8)
-                                font.bold: true
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            onClicked: {
-                                if (deck.engine)
-                                    deck.engine.setSyncEnabled(checked)
-                            }
-                        }
-
-                        Button {
-                            text: "LINK"
-                            Layout.fillWidth: false
-                            Layout.preferredWidth: deckControlsRow.unit * 1.2
-                            Layout.preferredHeight: deckControlsRow.buttonHeight
-                            Layout.minimumHeight: deckControlsRow.buttonHeight
-                            Layout.maximumHeight: deckControlsRow.buttonHeight
-                            enabled: deck.linkAvailable
-                            opacity: enabled ? 1.0 : 0.55
-                            background: Rectangle {
-                                color: !parent.enabled ? "#2f2f2f" : (deck.linkMode ? "#2f8f44" : "#444")
-                                radius: 0
-                            }
-                            contentItem: Text {
-                                text: parent.text
-                                color: !parent.enabled ? "#6f6f6f" : (deck.linkMode ? "#e7ffe7" : "#aaa")
-                                font.pixelSize: window.spViewport(8)
-                                font.bold: true
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            onClicked: {
-                                if (!deck.linkAvailable) {
-                                    deck._setLinkMode(false)
-                                    return
-                                }
-                                deck._setLinkMode(!deck.linkMode)
-                                if (deck.linkMode)
-                                    deck._publishDeckToAbletonLink()
-                            }
-                        }
-
-                        Button {
-                            text: "Q"
-                            checkable: true
-                            checked: deck.engine ? deck.engine.quantizeEnabled : false
-                            Layout.fillWidth: false
-                            Layout.preferredWidth: deckControlsRow.unit * 0.8
-                            Layout.preferredHeight: deckControlsRow.buttonHeight
-                            Layout.minimumHeight: deckControlsRow.buttonHeight
-                            Layout.maximumHeight: deckControlsRow.buttonHeight
-                            background: Rectangle {
-                                color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
-                                border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
-                                border.width: 0; radius: 0
-                            }
-                            contentItem: Text {
-                                text: parent.text
-                                color: parent.checked ? "white" : "#aaa"
-                                font.pixelSize: window.spViewport(8)
-                                font.bold: true
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            onClicked: {
-                                if (deck.engine) deck.engine.quantizeEnabled = checked
-                            }
-                        }
-
-                        Button {
-                            text: "KL"
-                            checkable: true
-                            checked: deck.engine ? deck.engine.keylock : false
-                            Layout.fillWidth: false
-                            Layout.preferredWidth: deckControlsRow.unit * 0.9
-                            Layout.preferredHeight: deckControlsRow.buttonHeight
-                            Layout.minimumHeight: deckControlsRow.buttonHeight
-                            Layout.maximumHeight: deckControlsRow.buttonHeight
-                            background: Rectangle {
-                                color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
-                                border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
-                                border.width: 0; radius: 0
-                            }
-                            contentItem: Text {
-                                text: parent.text
-                                color: parent.checked ? "white" : "#aaa"
-                                font.pixelSize: window.spViewport(8)
-                                font.bold: true
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            onClicked: {
-                                if (deck.engine) deck.engine.keylock = checked
-                            }
-                        }
-
-                        Button {
-                            text: "SLIP"
-                            checkable: true
-                            Layout.fillWidth: false
-                            Layout.preferredWidth: deckControlsRow.unit * 1.1
-                            Layout.preferredHeight: deckControlsRow.buttonHeight
-                            Layout.minimumHeight: deckControlsRow.buttonHeight
-                            Layout.maximumHeight: deckControlsRow.buttonHeight
-                            background: Rectangle {
-                                color: parent.checked ? (deck.deckName === "A" ? "#995c00" : "#007a99") : "#333"
-                                border.color: parent.checked ? (deck.deckName === "A" ? "#ff9900" : "#00ccff") : "#555"
-                                border.width: 0; radius: 0
-                            }
-                            contentItem: Text {
-                                text: parent.text
-                                color: parent.checked ? "white" : "#aaa"
-                                font.pixelSize: window.spViewport(8)
-                                font.bold: true
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                        }
-
-                        Button {
-                            text: "L IN"
-                            Layout.fillWidth: false
-                            Layout.preferredWidth: deckControlsRow.unit * 1.2
-                            Layout.minimumWidth: 44
-                            Layout.preferredHeight: deckControlsRow.buttonHeight
-                            Layout.minimumHeight: deckControlsRow.buttonHeight
-                            Layout.maximumHeight: deckControlsRow.buttonHeight
-                            background: Rectangle {
-                                color: "#333"
-                                radius: 0
-                                border.color: "#555"
-                                border.width: 0
-                            }
-                            contentItem: Text {
-                                text: parent.text
-                                color: "#bbb"
-                                font.pixelSize: window.spViewport(8)
-                                font.bold: true
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            onClicked: if (deck.engine) deck.engine.setLoopIn()
-                        }
-
-                        Button {
-                            text: "L OUT"
-                            Layout.fillWidth: false
-                            Layout.preferredWidth: deckControlsRow.unit * 1.3
-                            Layout.minimumWidth: 50
-                            Layout.preferredHeight: deckControlsRow.buttonHeight
-                            Layout.minimumHeight: deckControlsRow.buttonHeight
-                            Layout.maximumHeight: deckControlsRow.buttonHeight
-                            background: Rectangle {
-                                color: "#333"
-                                radius: 0
-                                border.color: "#555"
-                                border.width: 0
-                            }
-                            contentItem: Text {
-                                text: parent.text
-                                color: "#bbb"
-                                font.pixelSize: window.spViewport(8)
-                                font.bold: true
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            onClicked: if (deck.engine) deck.engine.setLoopOut()
-                        }
-
-                        Button {
-                            text: "<"
-                            Layout.fillWidth: false
-                            Layout.preferredWidth: deckControlsRow.unit * 0.75
-                            Layout.minimumWidth: 28
-                            Layout.preferredHeight: deckControlsRow.buttonHeight
-                            Layout.minimumHeight: deckControlsRow.buttonHeight
-                            Layout.maximumHeight: deckControlsRow.buttonHeight
-                            background: Rectangle {
-                                color: "#333"
-                                radius: 0
-                                border.color: "#555"
-                                border.width: 0
-                            }
-                            contentItem: Text {
-                                text: parent.text
-                                color: "#bbb"
-                                font.pixelSize: window.spViewport(9)
-                                font.bold: true
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            onClicked: if (deck.engine) deck.engine.halveLoopLength()
-                        }
-
-                        Button {
-                            text: deck.loopLabel()
-                            checkable: true
-                            checked: deck.engine ? (deck.engine.loopActive && Math.abs(deck.engine.loopLengthBeats - 0.75) < 0.06) : false
-                            Layout.fillWidth: false
-                            Layout.preferredWidth: deckControlsRow.unit * 2.0
-                            Layout.minimumWidth: 58
-                            Layout.preferredHeight: deckControlsRow.buttonHeight
-                            Layout.minimumHeight: deckControlsRow.buttonHeight
-                            Layout.maximumHeight: deckControlsRow.buttonHeight
-                            background: Rectangle {
-                                color: parent.checked ? "#335533" : "#333"
-                                radius: 0
-                                border.color: parent.checked ? "#66dd66" : "#555"
-                                border.width: 0
-                            }
-                            contentItem: Text {
-                                text: parent.text
-                                color: parent.checked ? "#d8ffd8" : "#bbb"
-                                font.pixelSize: window.spViewport(8)
-                                font.bold: true
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                                elide: Text.ElideRight
-                            }
-                            onClicked: if (deck.engine) deck.engine.toggleLoop4Beats()
-                        }
-
-                        Button {
-                            text: ">"
-                            Layout.fillWidth: false
-                            Layout.preferredWidth: deckControlsRow.unit * 0.75
-                            Layout.minimumWidth: 28
-                            Layout.preferredHeight: deckControlsRow.buttonHeight
-                            Layout.minimumHeight: deckControlsRow.buttonHeight
-                            Layout.maximumHeight: deckControlsRow.buttonHeight
-                            background: Rectangle {
-                                color: "#333"
-                                radius: 0
-                                border.color: "#555"
-                                border.width: 0
-                            }
-                            contentItem: Text {
-                                text: parent.text
-                                color: "#bbb"
-                                font.pixelSize: window.spViewport(9)
-                                font.bold: true
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            onClicked: if (deck.engine) deck.engine.doubleLoopLength()
-                        }
-
-                        Button {
-                            text: "3/4"
-                            checkable: true
-                            checked: deck.engine ? (deck.engine.loopActive && Math.abs(deck.engine.loopLengthBeats - 0.75) < 0.06) : false
-                            Layout.fillWidth: false
-                            Layout.preferredWidth: deckControlsRow.unit * 1.0
-                            Layout.minimumWidth: 36
-                            Layout.preferredHeight: deckControlsRow.buttonHeight
-                            Layout.minimumHeight: deckControlsRow.buttonHeight
-                            Layout.maximumHeight: deckControlsRow.buttonHeight
-                            background: Rectangle {
-                                color: parent.checked ? "#334455" : "#333"
-                                radius: 0
-                                border.color: parent.checked ? "#66bbff" : "#555"
-                                border.width: 0
-                            }
-                            contentItem: Text {
-                                text: parent.text
-                                color: parent.checked ? "#d8ecff" : "#bbb"
-                                font.pixelSize: window.spViewport(8)
-                                font.bold: true
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            onClicked: if (deck.engine) deck.engine.toggleLoopThreeQuarter()
-                        }
+                // LINK
+                FlatBtn {
+                    btnText: "LINK"
+                    Layout.preferredWidth: deckControlsRow.unit * 1.1
+                    fbActive: deck.linkMode
+                    fbActiveColor: "#0a2a14"; fbActiveTxtColor: "#3de87a"
+                    fbInactiveTxtColor: deck.linkAvailable ? "#777" : "#444"
+                    onClicked: {
+                        if (!deck.linkAvailable) { deck._setLinkMode(false); return }
+                        deck._setLinkMode(!deck.linkMode)
+                        if (deck.linkMode) deck._publishDeckToAbletonLink()
                     }
                 }
 
+                // Group separator
+                Rectangle { Layout.preferredWidth: 2; Layout.preferredHeight: deck.btnH; color: "#0a0a0a" }
+
+                // Q
+                FlatBtn {
+                    btnText: "Q"
+                    Layout.preferredWidth: deckControlsRow.unit * 0.8
+                    fbActive: deck.engine ? deck.engine.quantizeEnabled : false
+                    fbActiveColor: deck.deckName === "A" ? "#2a1e00" : "#002233"
+                    fbActiveTxtColor: deck.accent
+                    onClicked: { if (deck.engine) deck.engine.quantizeEnabled = !deck.engine.quantizeEnabled }
+                }
+                Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#1c1c1c" }
+
+                // KL
+                FlatBtn {
+                    btnText: "KL"
+                    Layout.preferredWidth: deckControlsRow.unit * 0.85
+                    fbActive: deck.engine ? deck.engine.keylock : false
+                    fbActiveColor: deck.deckName === "A" ? "#2a1e00" : "#002233"
+                    fbActiveTxtColor: deck.accent
+                    onClicked: { if (deck.engine) deck.engine.keylock = !deck.engine.keylock }
+                }
+                Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#1c1c1c" }
+
+                // SLIP
+                FlatBtn {
+                    btnText: "SLIP"
+                    Layout.preferredWidth: deckControlsRow.unit * 1.05
+                    fbActive: false
+                    fbActiveColor: deck.deckName === "A" ? "#2a1e00" : "#002233"
+                    fbActiveTxtColor: deck.accent
+                }
+
+                // Group separator
+                Rectangle { Layout.preferredWidth: 2; Layout.preferredHeight: deck.btnH; color: "#0a0a0a" }
+
+                // L IN
+                FlatBtn {
+                    btnText: "L IN"
+                    Layout.preferredWidth: deckControlsRow.unit * 1.1
+                    Layout.minimumWidth: 36
+                    onClicked: { if (deck.engine) deck.engine.setLoopIn() }
+                }
+                Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#1c1c1c" }
+
+                // L OUT
+                FlatBtn {
+                    btnText: "L OUT"
+                    Layout.preferredWidth: deckControlsRow.unit * 1.2
+                    Layout.minimumWidth: 40
+                    onClicked: { if (deck.engine) deck.engine.setLoopOut() }
+                }
+
+                // Group separator
+                Rectangle { Layout.preferredWidth: 2; Layout.preferredHeight: deck.btnH; color: "#0a0a0a" }
+
+                // <
+                FlatBtn {
+                    btnText: "<"
+                    Layout.preferredWidth: deckControlsRow.unit * 0.7
+                    Layout.minimumWidth: 22
+                    onClicked: { if (deck.engine) deck.engine.halveLoopLength() }
+                }
+                Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#1c1c1c" }
+
+                // Loop toggle
+                FlatBtn {
+                    btnText: deck.loopLabel()
+                    Layout.preferredWidth: deckControlsRow.unit * 2.0
+                    Layout.minimumWidth: 54
+                    fbActive: deck.engine ? deck.engine.loopActive : false
+                    fbActiveColor: "#0a2a0a"; fbActiveTxtColor: deck.accentGrn
+                    onClicked: { if (deck.engine) deck.engine.toggleLoop4Beats() }
+                }
+                Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#1c1c1c" }
+
+                // >
+                FlatBtn {
+                    btnText: ">"
+                    Layout.preferredWidth: deckControlsRow.unit * 0.7
+                    Layout.minimumWidth: 22
+                    onClicked: { if (deck.engine) deck.engine.doubleLoopLength() }
+                }
+                Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#1c1c1c" }
+
+                // 3/4
+                FlatBtn {
+                    btnText: "3/4"
+                    Layout.preferredWidth: deckControlsRow.unit * 0.95
+                    Layout.minimumWidth: 30
+                    fbActive: deck.engine ? (deck.engine.loopActive && Math.abs(deck.engine.loopLengthBeats - 0.75) < 0.06) : false
+                    fbActiveColor: "#001a2a"; fbActiveTxtColor: deck.accentBlu
+                    onClicked: { if (deck.engine) deck.engine.toggleLoopThreeQuarter() }
+                }
+
+                Item { Layout.fillWidth: true }
             }
-            
-            // Performance pads + tempo fader on the right
+
+            Rectangle { Layout.fillWidth: true; height: 1; color: "#1c1c1c" }
+
+            // ── Performance pads + tempo fader ────────────────────────────
             RowLayout {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 156
-                Layout.maximumHeight: 156
-                Layout.alignment: Qt.AlignVCenter
-                spacing: 2
+                Layout.fillHeight: true
+                spacing: 0
 
                 PerformancePads {
                     Layout.fillWidth: true
-                    Layout.fillHeight: false
-                    Layout.preferredHeight: 156
-                    Layout.maximumHeight: 156
+                    Layout.fillHeight: true
                     engine: deck.engine
-                    accentColor: deck.deckName === "A" ? "#ff9900" : "#00ccff"
+                    accentColor: deck.accent
                 }
+
+                Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: "#1c1c1c" }
 
                 Rectangle {
                     id: tempoPanel
-                    Layout.preferredWidth: 48
+                    Layout.preferredWidth: 50
                     Layout.fillHeight: true
-                    Layout.minimumHeight: 88
-                    Layout.maximumHeight: 156
-                    Layout.alignment: Qt.AlignVCenter
-                    color: "#2a2a2a"
-                    border.color: "#000000"
-                    border.width: 0
-                    radius: 0
+                    color: "#111111"
 
                     property real tempoRange: 8
 
@@ -1233,47 +759,26 @@ Item {
                         Rectangle {
                             id: tempoHeader
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 16
-                            Layout.minimumHeight: 16
-                            Layout.maximumHeight: 16
-                            radius: 0
-                            color: tempoRangePopup.visible ? "#2a2a2a" : "transparent"
+                            Layout.preferredHeight: 18
+                            color: "transparent"
 
                             Row {
-                                anchors.centerIn: parent
-                                spacing: 3
-                                Text {
-                                    text: "TEMPO"
-                                    color: "#cccccc"
-                                    font.pixelSize: window.spViewport(7)
-                                    font.bold: true
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                                Text {
-                                    text: "▾"
-                                    color: deck.deckName === "A" ? "#ff9900" : "#00ccff"
-                                    font.pixelSize: window.spViewport(8)
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
+                                anchors.centerIn: parent; spacing: 2
+                                Text { text: "TEMPO"; color: "#aaa"; font.pixelSize: window.spViewport(7); font.bold: true; font.letterSpacing: 0.5; anchors.verticalCenter: parent.verticalCenter }
+                                Text { text: "▾"; color: deck.accent; font.pixelSize: window.spViewport(8); anchors.verticalCenter: parent.verticalCenter }
                             }
-
                             MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
+                                anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                                 onClicked: tempoRangePopup.visible = !tempoRangePopup.visible
                             }
+                            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#1c1c1c" }
                         }
 
                         DeckSlider {
                             id: tempoSlider
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            Layout.alignment: Qt.AlignHCenter
+                            Layout.fillWidth: true; Layout.fillHeight: true; Layout.alignment: Qt.AlignHCenter
                             orientation: Qt.Vertical
-                            // Vertical fader direction: down = faster, up = slower.
-                            from:  tempoPanel.tempoRange
-                            to:   -tempoPanel.tempoRange
-                            value: 0
+                            from: tempoPanel.tempoRange; to: -tempoPanel.tempoRange; value: 0
                             centerFill: true
                             stepSize: tempoPanel.tempoRange <= 8  ? 0.1
                                     : tempoPanel.tempoRange <= 16 ? 0.25
@@ -1281,9 +786,7 @@ Item {
                                     : 1.0
                             TapHandler {
                                 onDoubleTapped: {
-                                    tempoSlider.enabled = false
-                                    tempoSlider.value = 0
-                                    tempoSlider.enabled = true
+                                    tempoSlider.enabled = false; tempoSlider.value = 0; tempoSlider.enabled = true
                                     if (deck.engine) deck.engine.setTempoPercent(0)
                                 }
                             }
@@ -1294,41 +797,24 @@ Item {
                             Layout.alignment: Qt.AlignHCenter
                             text: (tempoSlider.value >= 0 ? "+" : "") + tempoSlider.value.toFixed(1) + "%"
                             color: tempoSlider.value > 0 ? "#ffaa00"
-                                 : tempoSlider.value < 0 ? "#55ccff"
-                                 : "#666666"
-                            font.pixelSize: window.spViewport(9)
-                            font.bold: true
-                            font.family: "monospace"
+                                 : tempoSlider.value < 0 ? deck.accentBlu
+                                 : "#555"
+                            font.pixelSize: window.spViewport(9); font.bold: true; font.family: "monospace"
                         }
                     }
                 }
             }
         }
 
-        // ── Tempo range popup — floats above everything, z:999 ──────────────
-        // Lives directly inside the deck Rectangle (not in any layout) so it
-        // is never clipped by the ColumnLayout / RowLayout / Slider stacking.
+        // ── Tempo range popup ──────────────────────────────────────────────
         Rectangle {
             id: tempoRangePopup
-            visible: false
-            z: 999
+            visible: false; z: 999
+            x: tempoPanel.x; y: tempoPanel.y + tempoHeader.height + 2
+            width: tempoPanel.width; height: rangeCol.implicitHeight + 10
+            color: "#181818"; border.color: deck.accent; border.width: 1; radius: 0
 
-            // Position: align exactly to tempo panel frame.
-            x: tempoPanel.x
-            y: tempoPanel.y + tempoHeader.height + 2
-
-            width: tempoPanel.width
-            height: rangeCol.implicitHeight + 10
-            radius: 0
-            color: "#2a2a2a"
-            border.color: deck.deckName === "A" ? "#ff9900" : "#00ccff"
-            border.width: 0
-
-            // Close when clicking anywhere outside the popup
-            MouseArea {
-                anchors.fill: parent
-                onClicked: mouse => mouse.accepted = true   // eat click, don't close
-            }
+            MouseArea { anchors.fill: parent; onClicked: mouse => mouse.accepted = true }
 
             Column {
                 id: rangeCol
@@ -1343,37 +829,24 @@ Item {
                         { label: "32%",  value: 32  },
                         { label: "WIDE", value: 100 }
                     ]
-
                     delegate: Rectangle {
                         required property var modelData
-                        width: rangeCol.width
-                        height: 18
-                        radius: 0
+                        width: rangeCol.width; height: 18; radius: 0
                         color: tempoPanel.tempoRange === modelData.value
-                               ? (deck.deckName === "A" ? "#332200" : "#002233")
-                               : "transparent"
-
+                               ? (deck.deckName === "A" ? "#2a1800" : "#00182a") : "transparent"
                         Text {
-                            anchors.centerIn: parent
-                            text: modelData.label
-                            color: tempoPanel.tempoRange === modelData.value
-                                   ? (deck.deckName === "A" ? "#ff9900" : "#00ccff")
-                                   : "#aaaaaa"
+                            anchors.centerIn: parent; text: modelData.label
+                            color: tempoPanel.tempoRange === modelData.value ? deck.accent : "#888"
                             font.pixelSize: window.spViewport(9)
                             font.bold: tempoPanel.tempoRange === modelData.value
                             font.family: "monospace"
                         }
-
                         MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
+                            anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 tempoPanel.tempoRange = modelData.value
-                                var clamped = Math.max(-modelData.value,
-                                              Math.min( modelData.value, tempoSlider.value))
-                                tempoSlider.enabled = false
-                                tempoSlider.value   = clamped
-                                tempoSlider.enabled = true
+                                var clamped = Math.max(-modelData.value, Math.min(modelData.value, tempoSlider.value))
+                                tempoSlider.enabled = false; tempoSlider.value = clamped; tempoSlider.enabled = true
                                 if (deck.engine) deck.engine.setTempoPercent(clamped)
                                 tempoRangePopup.visible = false
                             }
@@ -1383,90 +856,45 @@ Item {
             }
         }
 
-        // ── Manual BPM popup (right-click BPM badge) ────────────────────────
+        // ── Manual BPM popup ──────────────────────────────────────────────
         Rectangle {
             id: manualBpmPopup
-            visible: false
-            z: 1000
-
+            visible: false; z: 1000
             x: Math.max(6, Math.min(parent.width - width - 6,
                                     metaBadges.x + bpmBadge.x + bpmBadge.width - width))
             y: metaBadges.y + bpmBadge.height + 6
+            width: 160; height: 92; radius: 0
+            color: "#181818"; border.color: "#3a6a3a"; border.width: 1
 
-            width: 160
-            height: 92
-            radius: 0
-            color: "#2a2a2a"
-            border.color: deck.deckName === "A" ? "#4a8a4a" : "#4a8a4a"
-            border.width: 0
-
-            MouseArea {
-                anchors.fill: parent
-                onClicked: mouse => mouse.accepted = true
-            }
+            MouseArea { anchors.fill: parent; onClicked: mouse => mouse.accepted = true }
 
             Column {
-                anchors.fill: parent
-                anchors.margins: 6
-                spacing: 6
-
-                Text {
-                    text: "MANUAL BPM"
-                    color: "#a5d6a7"
-                    font.pixelSize: window.spViewport(9)
-                    font.bold: true
-                    font.family: "monospace"
-                }
-
+                anchors.fill: parent; anchors.margins: 6; spacing: 6
+                Text { text: "MANUAL BPM"; color: deck.accentGrn; font.pixelSize: window.spViewport(9); font.bold: true; font.family: "monospace" }
                 TextField {
                     id: manualBpmField
-                    width: parent.width
-                    height: 30
-                    placeholderText: "z.B. 124.50"
-                    color: "#111"
-                    placeholderTextColor: "#666"
-                    selectionColor: "#4caf50"
-                    selectedTextColor: "#fff"
-                    font.pixelSize: window.spViewport(11)
-                    font.bold: true
-                    font.family: "monospace"
-                    background: Rectangle {
-                        color: "#f5f5f5"
-                        border.color: "#8bc34a"
-                        border.width: 0
-                        radius: 0
-                    }
+                    width: parent.width; height: 30
+                    placeholderText: "e.g. 124.50"; color: "#111"; placeholderTextColor: "#666"
+                    selectionColor: "#4caf50"; selectedTextColor: "#fff"
+                    font.pixelSize: window.spViewport(11); font.bold: true; font.family: "monospace"
+                    background: Rectangle { color: "#f5f5f5"; border.color: "#4dd98a"; border.width: 1; radius: 0 }
                     onAccepted: applyManualBpm()
-
                     function applyManualBpm() {
-                        var value = Number(text.replace(",", "."))
-                        if (!deck.engine || isNaN(value) || value <= 0)
-                            return
-                        deck.engine.setManualBpm(value)
-                        deck._syncBpm()
-                        deck._syncTempo()
+                        var v = Number(text.replace(",", "."))
+                        if (!deck.engine || isNaN(v) || v <= 0) return
+                        deck.engine.setManualBpm(v); deck._syncBpm(); deck._syncTempo()
                         manualBpmPopup.visible = false
                     }
                 }
-
-                Text {
-                    text: "Enter = Anwenden"
-                    color: "#8e8e8e"
-                    font.pixelSize: window.spViewport(8)
-                    font.family: "monospace"
-                }
+                Text { text: "Enter to apply"; color: "#666"; font.pixelSize: window.spViewport(8); font.family: "monospace" }
             }
         }
 
-        // Transparent full-deck overlay: dismiss popup when clicking outside it
+        // Dismiss overlay
         MouseArea {
-            anchors.fill: parent
-            z: 998
+            anchors.fill: parent; z: 998
             visible: tempoRangePopup.visible || manualBpmPopup.visible
-            onClicked: {
-                tempoRangePopup.visible = false
-                manualBpmPopup.visible = false
-            }
+            onClicked: { tempoRangePopup.visible = false; manualBpmPopup.visible = false }
         }
     }
 }
