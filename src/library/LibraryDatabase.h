@@ -88,10 +88,16 @@ signals:
 private:
     bool createSchema();
     void scheduleTableModelRefresh();
+    bool isHealthyDatabaseFile(const QString& path) const;
+    bool restorePrimaryFromBackup();
+    bool syncBackupFromPrimary();
+    bool copyDatabaseFile(const QString& sourcePath, const QString& targetPath) const;
+    void clearDatabaseConnection();
 
     QSqlDatabase m_db;
     LibraryTableModel* m_tableModel = nullptr;
     QString m_dbPath;
+    QString m_backupDbPath;
     bool m_tableModelRefreshPending = false;
 
     static constexpr int kSchemaVersion = 6;

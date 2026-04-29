@@ -66,7 +66,9 @@ ApplicationWindow {
 
         function finalizeAppClose() {
             allowDirectClose = true
-            Qt.quit()
+            exitPromptVisible = false
+            window.close()
+            Qt.callLater(Qt.quit)
         }
 
         onClosing: function(close) {

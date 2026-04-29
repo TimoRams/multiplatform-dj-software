@@ -23,6 +23,13 @@ LinkManager::LinkManager(QObject* parent)
     qDebug() << "[LinkManager] initialised (120 BPM, disabled)";
 }
 
+LinkManager::~LinkManager()
+{
+    m_pollTimer.stop();
+    m_link.setNumPeersCallback([](std::size_t) {});
+    m_link.enable(false);
+}
+
 void LinkManager::setEnabled(bool on)
 {
     if (m_link.isEnabled() == on) return;

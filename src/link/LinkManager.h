@@ -17,7 +17,7 @@ class LinkManager : public QObject
 
 public:
     explicit LinkManager(QObject* parent = nullptr);
-    ~LinkManager() override = default;
+    ~LinkManager() override;
 
     bool   enabled()  const { return m_link.isEnabled(); }
     double bpm()      const { return m_bpm; }

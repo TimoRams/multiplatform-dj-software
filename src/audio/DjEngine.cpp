@@ -279,6 +279,18 @@ int readDeviceOutputChannelCount(const QString& deviceType, const QString& outpu
             return it.value();
     }
 
+#if JUCE_LINUX || JUCE_BSD
+    const QString loweredType = deviceType.trimmed().toLower();
+    if (loweredType == QStringLiteral("jack") || loweredType.contains(QStringLiteral("jack"))) {
+        // Probing JACK from a temporary AudioDeviceManager can block while JACK
+        // negotiates graph state. For settings UI pair previews, return a safe
+        // stereo fallback and avoid opening a second backend instance.
+        std::lock_guard<std::mutex> lock(s_outputChannelCountCacheMutex);
+        s_outputChannelCountCache.insert(key, 2);
+        return 2;
+    }
+#endif
+
     int channelCount = 2;
 
     juce::AudioDeviceManager probe;
@@ -401,12 +413,34 @@ OutputLatencySnapshot readOutputLatencySnapshot(juce::AudioIODevice* device)
 
     const int outputRawSamples = std::max(0, device->getOutputLatencyInSamples());
     const int callbackBufferSamples = std::max(0, device->getCurrentBufferSizeSamples());
+    int effectiveSamples = outputRawSamples > 0 ? outputRawSamples : callbackBufferSamples;
+    if (effectiveSamples <= 0)
+        effectiveSamples = 512;
     return {
         .outputRawSamples = outputRawSamples,
         .callbackBufferSamples = callbackBufferSamples,
-        .effectiveOutputSamples = outputRawSamples > 0 ? outputRawSamples : callbackBufferSamples,
+        .effectiveOutputSamples = effectiveSamples,
         .sampleRate = device->getCurrentSampleRate()
     };
+}
+
+QString describeDeviceState(juce::AudioDeviceManager& manager)
+{
+    auto* device = manager.getCurrentAudioDevice();
+    const QString typeName = QString::fromUtf8(manager.getCurrentAudioDeviceType().toRawUTF8());
+    if (device == nullptr)
+        return QStringLiteral("type=%1, device=<none>").arg(typeName);
+
+    const QString deviceName = QString::fromUtf8(device->getName().toRawUTF8());
+    const int outLatency = std::max(0, device->getOutputLatencyInSamples());
+    const int buffer = std::max(0, device->getCurrentBufferSizeSamples());
+    const double sampleRate = device->getCurrentSampleRate();
+    return QStringLiteral("type=%1, device=%2, sr=%3, buf=%4, outLat=%5")
+        .arg(typeName,
+             deviceName,
+             QString::number(sampleRate, 'f', 1),
+             QString::number(buffer),
+             QString::number(outLatency));
 }
 
 }
@@ -1073,7 +1107,6 @@ class DjEngine::MixerDspSource : public juce::AudioSource {
 public:
     MixerDspSource(juce::AudioSource* inSource, DjEngine* owner)
         : source(inSource), m_owner(owner) {}
-
     // ── FxProcessor slot (called from Qt main thread) ──────────────────────
     void setFxEffectType(EffectType type) { m_fx.setEffectType(type); }
     void setFxAmount(float amount)        { m_fx.setAmount(amount); }
@@ -1106,7 +1139,14 @@ public:
     }
 
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill) override {
-        if (source) source->getNextAudioBlock(bufferToFill);
+        if (source) {
+            if (bufferToFill.numSamples > 0) {
+                source->getNextAudioBlock(bufferToFill);
+            } else {
+                // Keep this path side-effect free; some JACK states can report
+                // zero-sized callbacks transiently. We only log in that case.
+            }
+        }
 
         if (m_sampleRate <= 0.0 || bufferToFill.buffer->getNumChannels() == 0 || bufferToFill.numSamples == 0) return;
 
@@ -1605,6 +1645,12 @@ DjEngine::~DjEngine()
     transportSource.setSource(nullptr);
 }
 
+void DjEngine::shutdownSharedAudioDeviceManager()
+{
+    auto& manager = sharedAudioDeviceManager();
+    manager.closeAudioDevice();
+}
+
 float DjEngine::getProgress() const
 {
     if (transportSource.getTotalLength() > 0.0)
@@ -1649,9 +1695,8 @@ void DjEngine::refreshHardwareLatency()
             s_loggedNoDevice = false;
         }
     } else {
-        m_latencySeconds = 0.011f;
         if (!s_loggedNoDevice) {
-            qInfo() << "[DjEngine] No audio device yet, using fallback latency 11ms";
+            qInfo() << "[DjEngine] No audio device yet; keeping last known latency";
             s_loggedNoDevice = true;
         }
     }
@@ -1838,11 +1883,14 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
 
 #if JUCE_LINUX || JUCE_BSD
     const QString requestedType = !deviceType.isEmpty() ? deviceType : getCurrentAudioDeviceType();
+    const bool jackBackendRequested = requestedType.toLower().contains(QStringLiteral("jack"));
     if (requestedType.toLower().contains(QStringLiteral("alsa"))
         && sampleRate >= 96000
         && bufferSize < 128) {
         bufferSize = 128;
     }
+#else
+    const bool jackBackendRequested = deviceType.toLower().contains(QStringLiteral("jack"));
 #endif
 
     masterFirstChannel = clampFirstChannelForPack(masterFirstChannel);
@@ -1855,23 +1903,24 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     }), std::memory_order_relaxed);
 
     auto& manager = deviceManager;
-    
-    // Safety: ensure manager has a valid device before proceeding
     if (manager.getCurrentAudioDevice() == nullptr) {
-        qWarning() << "[DjEngine] No audio device available for setup";
-        return false;
+        qWarning() << "[DjEngine] No current audio device before setup; trying default initialisation";
+        const juce::String initErr = manager.initialiseWithDefaultDevices(0, 2);
+        if (initErr.isNotEmpty())
+            qWarning() << "[DjEngine] initialiseWithDefaultDevices failed:" << QString::fromStdString(initErr.toStdString());
     }
     
     auto* type = findDeviceType(manager, deviceType);
     if (!deviceType.isEmpty() && type != nullptr && QString::fromUtf8(manager.getCurrentAudioDeviceType().toRawUTF8()) != deviceType) {
         manager.setCurrentAudioDeviceType(toJuceString(deviceType), true);
+        type = findDeviceType(manager, deviceType);
     }
 
     QString sanitizedOutput = outputDevice.trimmed();
     if (sanitizedOutput.compare(QStringLiteral("None"), Qt::CaseInsensitive) == 0)
         sanitizedOutput.clear();
 
-    if (!sanitizedOutput.isEmpty() && type != nullptr) {
+    if (!jackBackendRequested && !sanitizedOutput.isEmpty() && type != nullptr) {
         type->scanForDevices();
         const auto names = type->getDeviceNames(false);
         bool found = false;
@@ -1888,10 +1937,6 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
         }
     }
 
-    if (!sanitizedOutput.isEmpty() && deviceType.toLower().contains(QStringLiteral("pipewire"))) {
-        qInfo() << "[DjEngine] PipeWire backend selected with output device:" << sanitizedOutput;
-    }
-
     juce::AudioDeviceManager::AudioDeviceSetup setup;
     manager.getAudioDeviceSetup(setup);
     setup.sampleRate = static_cast<double>(sampleRate);
@@ -1900,8 +1945,11 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     setup.inputDeviceName.clear();
     setup.useDefaultOutputChannels = true;
     
-    // Validate output device name
-    if (sanitizedOutput.isEmpty()) {
+    if (jackBackendRequested) {
+        // JACK exposes a single backend endpoint; forcing a specific output
+        // name can put JUCE into a zero-buffer callback state on some systems.
+        setup.outputDeviceName.clear();
+    } else if (sanitizedOutput.isEmpty()) {
         if (auto* device = manager.getCurrentAudioDevice()) {
             setup.outputDeviceName = device->getName();
         } else {
@@ -1912,12 +1960,12 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
         setup.outputDeviceName = toJuceString(sanitizedOutput);
     }
 
-    // Validate channel configuration against device capabilities
-    // First, get the device to check actual channel count
     int maxOutputChannels = 2;  // Safe default
     
-    // Try to determine channel count from the requested device
-    if (auto* device = manager.getCurrentAudioDevice()) {
+    // JACK setup should stay minimal: avoid extra device probing because it
+    // can block and the backend ignores per-output routing anyway.
+    if (!jackBackendRequested) {
+        if (auto* device = manager.getCurrentAudioDevice()) {
         const int namesCount = device->getOutputChannelNames().size();
         const int activeSetBits = device->getActiveOutputChannels().countNumberOfSetBits();
         if (namesCount > 0)
@@ -1926,11 +1974,12 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
             maxOutputChannels = activeSetBits;
         else
             maxOutputChannels = 2;
-        
-        // Clamp to reasonable max
-        maxOutputChannels = std::clamp(maxOutputChannels, 2, kMaxSupportedOutputChannel);
-        
-        setup.bufferSize = choosePreferredBufferSize(device, setup.bufferSize);
+            
+            // Clamp to reasonable max
+            maxOutputChannels = std::clamp(maxOutputChannels, 2, kMaxSupportedOutputChannel);
+            
+            setup.bufferSize = choosePreferredBufferSize(device, setup.bufferSize);
+        }
     }
     
     // Validate and clamp requested channels to actual device channels
@@ -1966,10 +2015,22 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     setPairBits(masterFirstChannel);
     setPairBits(headphonesFirstChannel);
     setPairBits(boothFirstChannel);
-    if (selectedOutputChannels.countNumberOfSetBits() > 0) {
+    if (!jackBackendRequested && selectedOutputChannels.countNumberOfSetBits() > 0) {
         setup.useDefaultOutputChannels = false;
         setup.outputChannels = selectedOutputChannels;
+    } else if (jackBackendRequested) {
+        setup.useDefaultOutputChannels = true;
+        setup.outputChannels.clear();
     }
+
+    auto* currentDevice = manager.getCurrentAudioDevice();
+    const bool needsReopen = currentDevice != nullptr
+        && ((std::abs(currentDevice->getCurrentSampleRate() - static_cast<double>(sampleRate)) > 0.5)
+            || (currentDevice->getCurrentBufferSizeSamples() != bufferSize)
+            || jackBackendRequested);
+
+    if (needsReopen)
+        manager.closeAudioDevice();
 
     // Try to apply the audio device setup with fallback strategy
     juce::String error = manager.setAudioDeviceSetup(setup, true);
@@ -2047,7 +2108,13 @@ DjEngine::LatencySnapshot DjEngine::buildLatencySnapshot() const
         snapshot.outputEffectiveSamples = latency.effectiveOutputSamples;
         if (latency.sampleRate > 0.0)
             snapshot.sampleRate = latency.sampleRate;
+
+        m_lastLatencySnapshot = snapshot;
+        return snapshot;
     }
+
+    if (m_lastLatencySnapshot.sampleRate > 0.0)
+        return m_lastLatencySnapshot;
 
     if (timeStretchSource)
         snapshot.rubberbandSamples = std::max(0, timeStretchSource->getLatencySamples());
@@ -2377,8 +2444,10 @@ void DjEngine::loadTrack(const QString& rawPath)
     }
 
     auto* reader = formatManager.createReaderFor(file);
-    if (reader == nullptr)
+    if (reader == nullptr) {
+        qWarning() << "[DjEngine] loadTrack failed: unsupported or unreadable format:" << rawPath;
         return;
+    }
 
     resetTrackLoadState();
     populateMetadataFromReader(*reader, rawPath, file);
@@ -2404,6 +2473,7 @@ void DjEngine::loadTrack(const QString& rawPath)
 
     emit trackLoaded();
     emit progressChanged();
+
 }
 
 void DjEngine::togglePlay()
@@ -2450,21 +2520,39 @@ void DjEngine::pause()
 
 void DjEngine::ensureTransportRunningForPlayIntent()
 {
-    if (!m_playRequested || m_isScrubbing || m_scratchReleaseActive || !m_hasTrack)
+    if (!m_playRequested)
         return;
 
-    if (transportSource.isPlaying())
+    if (m_isScrubbing || m_scratchReleaseActive || !m_hasTrack) {
         return;
+    }
+
+    if (deviceManager.getCurrentAudioDevice() == nullptr) {
+        qWarning() << "[DjEngine] Play requested without active audio device; trying to recover";
+        const juce::String initErr = deviceManager.initialiseWithDefaultDevices(0, 2);
+        if (initErr.isNotEmpty()) {
+            qWarning() << "[DjEngine] Could not recover audio device on play:" << QString::fromStdString(initErr.toStdString());
+            return;
+        }
+        refreshHardwareLatency();
+    }
+
+    if (transportSource.isPlaying()) {
+        return;
+    }
 
     const double len = transportSource.getLengthInSeconds();
-    if (len <= 0.0)
+    if (len <= 0.0) {
+        qWarning() << "[DjEngine] cannot start transport: invalid length" << len;
         return;
+    }
 
     // Keep transport stopped at true EOF. As soon as the playhead is moved
     // back from the end, this function resumes playback automatically.
     const double pos = transportSource.getCurrentPosition();
-    if (pos >= len - 0.0001)
+    if (pos >= len - 0.0001) {
         return;
+    }
 
     armSnapFromTransportPosition();
     transportSource.start();

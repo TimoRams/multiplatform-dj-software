@@ -170,6 +170,8 @@ int main(int argc, char *argv[])
     deckB.reset();
     deckA.reset();
 
+    DjEngine::shutdownSharedAudioDeviceManager();
+
     juce::MessageManager::deleteInstance();
     juce::DeletedAtShutdown::deleteAll();
 

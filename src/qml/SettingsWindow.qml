@@ -19,8 +19,10 @@ Window {
                 audioSyncPending = true
                 audioSyncTimer.start()
             }
+            audioDeviceListTimer.start()
         } else {
             audioSyncTimer.stop()
+            audioDeviceListTimer.stop()
             audioSyncPending = false
         }
     }
@@ -56,6 +58,15 @@ Window {
         onTriggered: {
             settingsWindow.audioSyncPending = false
             settingsWindow.syncAudioSettings()
+        }
+    }
+
+    Timer {
+        id: audioDeviceListTimer
+        interval: 16
+        repeat: false
+        onTriggered: {
+            settingsWindow.refreshAudioDeviceLists()
         }
     }
 
@@ -275,8 +286,6 @@ Window {
 
         pendingAudioSampleRate = settingsManager.audioSampleRate
         pendingAudioBufferSize = settingsManager.audioBufferSize
-
-        refreshAudioDeviceLists()
 
         audioUiSyncing = true
         sampleRateCombo.currentIndex = indexForValue(sampleRateOptions, pendingAudioSampleRate)

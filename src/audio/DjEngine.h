@@ -77,6 +77,7 @@ class DjEngine : public QObject
 
 public:
     static constexpr double WAVEFORM_POINTS_PER_SECOND = 600.0;
+    static void shutdownSharedAudioDeviceManager();
 
     explicit DjEngine(QObject* parent = nullptr);
     ~DjEngine() override;
@@ -405,6 +406,7 @@ private:
     // includes the callback buffer on compliant drivers.
     // m_snapPosition + m_snapClock enable sub-frame interpolation in getVisualPosition().
     float          m_latencySeconds  = 0.0f;
+    mutable LatencySnapshot m_lastLatencySnapshot;
     double         m_snapPosition    = 0.0;
     double         m_snapTempoRatio  = 1.0;
     QElapsedTimer  m_snapClock;

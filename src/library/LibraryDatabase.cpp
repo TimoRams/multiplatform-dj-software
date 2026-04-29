@@ -5,12 +5,15 @@
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QStandardPaths>
 #include <QDebug>
 #include <QTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QUuid>
 
 namespace {
 
@@ -105,11 +108,34 @@ bool LibraryDatabase::open()
         }
     }
 
-    m_dbPath = dbDir.filePath("RamsbrockDJ_Library.db");
+    const QString legacyDbPath = dbDir.filePath("RamsbrockDJ_Library.db");
+    m_dbPath = dbDir.filePath("RamsbrockDJ_Library_A.db");
+    m_backupDbPath = dbDir.filePath("RamsbrockDJ_Library_B.db");
 
-    qDebug() << "[LibraryDatabase] DB path:" << m_dbPath;
+    qDebug() << "[LibraryDatabase] DB primary path:" << m_dbPath;
+    qDebug() << "[LibraryDatabase] DB backup path:" << m_backupDbPath;
+
+    const bool primaryHealthy = isHealthyDatabaseFile(m_dbPath);
+    const bool backupHealthy = isHealthyDatabaseFile(m_backupDbPath);
+
+    if (!primaryHealthy && backupHealthy) {
+        qWarning() << "[LibraryDatabase] Primary DB is not healthy, restoring from backup";
+        if (!restorePrimaryFromBackup())
+            return false;
+    } else if (!primaryHealthy && !backupHealthy && isHealthyDatabaseFile(legacyDbPath)) {
+        qWarning() << "[LibraryDatabase] Migrating legacy DB into mirrored layout";
+        if (!copyDatabaseFile(legacyDbPath, m_dbPath))
+            return false;
+    } else if (primaryHealthy && !backupHealthy) {
+        qWarning() << "[LibraryDatabase] Backup DB is not healthy, refreshing from primary";
+        if (!copyDatabaseFile(m_dbPath, m_backupDbPath))
+            qWarning() << "[LibraryDatabase] Failed to refresh backup DB from primary";
+    } else if (!primaryHealthy && !backupHealthy) {
+        qWarning() << "[LibraryDatabase] Neither DB copy is healthy, creating a fresh database";
+    }
 
     // ── Open via QSqlDatabase ────────────────────────────────────────────
+    clearDatabaseConnection();
     m_db = QSqlDatabase::addDatabase("QSQLITE", "library_conn");
     m_db.setDatabaseName(m_dbPath);
 
@@ -123,7 +149,13 @@ bool LibraryDatabase::open()
     pragma.exec("PRAGMA journal_mode=WAL");
     pragma.exec("PRAGMA foreign_keys=ON");
 
-    return createSchema();
+    if (!createSchema())
+        return false;
+
+    if (!syncBackupFromPrimary())
+        qWarning() << "[LibraryDatabase] Failed to sync backup DB after open";
+
+    return true;
 }
 
 bool LibraryDatabase::createSchema()
@@ -274,7 +306,10 @@ bool LibraryDatabase::createSchema()
     // ── Stamp current version ────────────────────────────────────────────
     q.prepare("INSERT OR REPLACE INTO Meta (key, value) VALUES ('schema_version', :v)");
     q.bindValue(":v", kSchemaVersion);
-    q.exec();
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] Meta schema_version:" << q.lastError().text();
+        return false;
+    }
 
     qDebug() << "[LibraryDatabase] Schema created/updated to version" << kSchemaVersion;
     return true;
@@ -332,6 +367,8 @@ bool LibraryDatabase::addTrack(const QString& trackId,
         scheduleTableModelRefresh();
 
     emit trackAdded(trackId);
+    if (!syncBackupFromPrimary())
+        qWarning() << "[LibraryDatabase] Failed to sync backup DB after addTrack";
     return true;
 }
 
@@ -417,6 +454,8 @@ void LibraryDatabase::updateAnalysisData(const QString& trackId,
                                              newBpm > 0.0f || !newKey.trimmed().isEmpty());
 
     emit analysisUpdated(trackId);
+    if (!syncBackupFromPrimary())
+        qWarning() << "[LibraryDatabase] Failed to sync backup DB after updateAnalysisData";
 }
 
 bool LibraryDatabase::tryGetAnalysisData(const QString& trackId, AnalysisSnapshot* out) const
@@ -497,6 +536,9 @@ bool LibraryDatabase::updateTrackSegments(const QString& trackId,
 
     scheduleTableModelRefresh();
 
+    if (!syncBackupFromPrimary())
+        qWarning() << "[LibraryDatabase] Failed to sync backup DB after updateTrackSegments";
+
     return true;
 }
 
@@ -544,6 +586,9 @@ bool LibraryDatabase::upsertCuePoint(const QString& trackId,
         return false;
     }
 
+    if (!syncBackupFromPrimary())
+        qWarning() << "[LibraryDatabase] Failed to sync backup DB after upsertCuePoint";
+
     return true;
 }
 
@@ -561,6 +606,9 @@ bool LibraryDatabase::deleteCuePoint(const QString& trackId, int cueIndex)
         qWarning() << "[LibraryDatabase] deleteCuePoint:" << q.lastError().text();
         return false;
     }
+
+    if (!syncBackupFromPrimary())
+        qWarning() << "[LibraryDatabase] Failed to sync backup DB after deleteCuePoint";
 
     return true;
 }
@@ -607,6 +655,10 @@ bool LibraryDatabase::upsertMainCuePoint(const QString& trackId, double position
         qWarning() << "[LibraryDatabase] upsertMainCuePoint:" << q.lastError().text();
         return false;
     }
+
+    if (!syncBackupFromPrimary())
+        qWarning() << "[LibraryDatabase] Failed to sync backup DB after upsertMainCuePoint";
+
     return true;
 }
 
@@ -646,10 +698,10 @@ void LibraryDatabase::shutdown()
     QSqlQuery q(m_db);
     q.exec("PRAGMA wal_checkpoint(FULL)");
 
-    const QString connectionName = m_db.connectionName();
-    m_db.close();
-    m_db = QSqlDatabase();
-    QSqlDatabase::removeDatabase(connectionName);
+    if (!syncBackupFromPrimary())
+        qWarning() << "[LibraryDatabase] Failed to sync backup DB during shutdown";
+
+    clearDatabaseConnection();
 }
 
 void LibraryDatabase::setTableModel(LibraryTableModel* model)
@@ -671,4 +723,98 @@ void LibraryDatabase::scheduleTableModelRefresh()
         if (m_tableModel != nullptr)
             m_tableModel->refresh();
     });
+}
+
+bool LibraryDatabase::isHealthyDatabaseFile(const QString& path) const
+{
+    const QFileInfo fileInfo(path);
+    if (!fileInfo.exists() || fileInfo.size() <= 0)
+        return false;
+
+    const QString connectionName = QStringLiteral("library_health_%1")
+        .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+
+    {
+        QSqlDatabase healthDb = QSqlDatabase::addDatabase("QSQLITE", connectionName);
+        healthDb.setDatabaseName(path);
+
+        if (!healthDb.open()) {
+            qWarning() << "[LibraryDatabase] Health check open failed for" << path << ':' << healthDb.lastError().text();
+            QSqlDatabase::removeDatabase(connectionName);
+            return false;
+        }
+
+        QSqlQuery q(healthDb);
+        if (!q.exec("PRAGMA integrity_check")) {
+            qWarning() << "[LibraryDatabase] integrity_check failed to run for" << path << ':' << q.lastError().text();
+            healthDb.close();
+            QSqlDatabase::removeDatabase(connectionName);
+            return false;
+        }
+
+        const bool ok = q.next() && q.value(0).toString().compare(QStringLiteral("ok"), Qt::CaseInsensitive) == 0;
+        if (!ok)
+            qWarning() << "[LibraryDatabase] integrity_check reported corruption for" << path;
+
+        healthDb.close();
+        QSqlDatabase::removeDatabase(connectionName);
+        return ok;
+    }
+}
+
+bool LibraryDatabase::copyDatabaseFile(const QString& sourcePath, const QString& targetPath) const
+{
+    if (sourcePath.isEmpty() || targetPath.isEmpty() || sourcePath == targetPath)
+        return false;
+
+    QFileInfo sourceInfo(sourcePath);
+    if (!sourceInfo.exists() || sourceInfo.size() <= 0)
+        return false;
+
+    QFile::remove(targetPath);
+    QFile::remove(targetPath + QStringLiteral("-wal"));
+    QFile::remove(targetPath + QStringLiteral("-shm"));
+
+    if (!QFile::copy(sourcePath, targetPath)) {
+        qWarning() << "[LibraryDatabase] Failed to copy DB file from" << sourcePath << "to" << targetPath;
+        return false;
+    }
+
+    return true;
+}
+
+bool LibraryDatabase::restorePrimaryFromBackup()
+{
+    if (!isHealthyDatabaseFile(m_backupDbPath))
+        return false;
+
+    return copyDatabaseFile(m_backupDbPath, m_dbPath);
+}
+
+bool LibraryDatabase::syncBackupFromPrimary()
+{
+    if (!m_db.isOpen())
+        return false;
+
+    QSqlQuery q(m_db);
+    if (!q.exec("PRAGMA wal_checkpoint(TRUNCATE)")) {
+        qWarning() << "[LibraryDatabase] wal_checkpoint(TRUNCATE) failed:" << q.lastError().text();
+        return false;
+    }
+
+    return copyDatabaseFile(m_dbPath, m_backupDbPath);
+}
+
+void LibraryDatabase::clearDatabaseConnection()
+{
+    if (!m_db.isValid())
+        return;
+
+    const QString connectionName = m_db.connectionName();
+    if (m_db.isOpen())
+        m_db.close();
+    m_db = QSqlDatabase();
+
+    if (!connectionName.isEmpty())
+        QSqlDatabase::removeDatabase(connectionName);
 }
