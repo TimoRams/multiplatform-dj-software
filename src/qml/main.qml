@@ -686,7 +686,7 @@ ApplicationWindow {
                     font.pixelSize: window.sp(12)
                     font.bold: true
                     verticalAlignment: Text.AlignVCenter
-                    leftPadding: 2
+                    leftPadding: manualBackupCheck.indicator.width + manualBackupCheck.spacing
                 }
                 onCheckedChanged: {
                     if (window.exitShutdownInProgress)
