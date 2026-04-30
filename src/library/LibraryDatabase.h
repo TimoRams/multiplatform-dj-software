@@ -76,6 +76,36 @@ public:
     // Retrieve the file_path for a given trackId (first location).
     Q_INVOKABLE QString filePath(const QString& trackId) const;
 
+    // ── Playlist management ────────────────────────────────────────────────
+    // Returns new playlist id, or empty string on failure.
+    Q_INVOKABLE QString createPlaylist(const QString& name,
+                                       const QString& parentId = QString());
+    Q_INVOKABLE bool deletePlaylist(const QString& playlistId);
+    Q_INVOKABLE bool renamePlaylist(const QString& playlistId, const QString& newName);
+    // Update the drag-reorder sort position of a playlist.
+    Q_INVOKABLE bool setPlaylistSortOrder(const QString& playlistId, int sortOrder);
+
+    // Returns list of {id, name, parentId, sortOrder, trackCount} maps.
+    Q_INVOKABLE QVariantList getAllPlaylists() const;
+
+    Q_INVOKABLE bool addTrackToPlaylist(const QString& playlistId, const QString& trackId);
+    Q_INVOKABLE bool removeTrackFromPlaylist(const QString& playlistId, const QString& trackId);
+    Q_INVOKABLE bool setPlaylistTrackPosition(const QString& playlistId, const QString& trackId, int newPosition);
+    // Returns list of full track maps {trackId, title, artist, durationSec, bpm, key,
+    // bitrateKbps, isAnalyzed, filePath} ordered by position.
+    Q_INVOKABLE QVariantList getPlaylistTracks(const QString& playlistId) const;
+    Q_INVOKABLE bool isTrackInPlaylist(const QString& playlistId, const QString& trackId) const;
+    Q_INVOKABLE int getPlaylistTrackCount(const QString& playlistId) const;
+    // Move a playlist to a new parent (empty string = top level).
+    Q_INVOKABLE bool setPlaylistParent(const QString& playlistId, const QString& newParentId);
+
+    // ── Generic settings (stored in Meta table) ────────────────────────────
+    Q_INVOKABLE QString getSetting(const QString& key, const QString& defaultValue = {}) const;
+    Q_INVOKABLE bool    setSetting(const QString& key, const QString& value);
+
+    // ── Remove track from library (DB + waveform cache) ────────────────────
+    Q_INVOKABLE bool removeTrackFromLibrary(const QString& trackId);
+
     // Human-readable mirrored database status for the exit dialog.
     Q_PROPERTY(QString mirroredDatabaseStatus READ mirroredDatabaseStatus NOTIFY mirroredDatabaseStatusChanged)
     Q_INVOKABLE QString mirroredDatabaseStatus() const;
@@ -90,6 +120,8 @@ signals:
     void trackAdded(const QString& trackId);
     void analysisUpdated(const QString& trackId);
     void mirroredDatabaseStatusChanged();
+    void playlistsChanged();
+    void trackRemovedFromLibrary(const QString& trackId);
 
 private:
     bool createSchema();
@@ -116,5 +148,5 @@ private:
     bool m_backupMirrorDegraded = false;
     bool m_tableModelRefreshPending = false;
 
-    static constexpr int kSchemaVersion = 6;
+    static constexpr int kSchemaVersion = 7;
 };

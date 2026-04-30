@@ -1,6 +1,7 @@
 #include "LibraryDatabase.h"
 #include "LibraryTableModel.h"
 #include "app/SettingsManager.h"
+#include "rendering/WaveformCache.h"
 
 #include <QSqlQuery>
 #include <QSqlError>
@@ -317,6 +318,33 @@ bool LibraryDatabase::createSchema()
             ok &= q.exec("ALTER TABLE Tracks ADD COLUMN main_cue_sec REAL DEFAULT -1.0");
             if (!ok) qWarning() << "[LibraryDatabase] Tracks main_cue_sec:" << q.lastError().text();
         }
+
+        if (!ok) return false;
+    }
+
+    if (currentVersion < 7) {
+        bool ok = true;
+
+        ok &= q.exec(
+            "CREATE TABLE IF NOT EXISTS Playlists ("
+            "  id         TEXT PRIMARY KEY,"
+            "  name       TEXT NOT NULL,"
+            "  parent_id  TEXT DEFAULT NULL,"
+            "  sort_order INTEGER DEFAULT 0,"
+            "  FOREIGN KEY(parent_id) REFERENCES Playlists(id) ON DELETE CASCADE"
+            ")");
+        if (!ok) qWarning() << "[LibraryDatabase] Playlists:" << q.lastError().text();
+
+        ok &= q.exec(
+            "CREATE TABLE IF NOT EXISTS PlaylistItems ("
+            "  playlist_id TEXT NOT NULL,"
+            "  track_id    TEXT NOT NULL,"
+            "  position    INTEGER NOT NULL DEFAULT 0,"
+            "  PRIMARY KEY(playlist_id, track_id),"
+            "  FOREIGN KEY(playlist_id) REFERENCES Playlists(id) ON DELETE CASCADE,"
+            "  FOREIGN KEY(track_id)    REFERENCES Tracks(id)    ON DELETE CASCADE"
+            ")");
+        if (!ok) qWarning() << "[LibraryDatabase] PlaylistItems:" << q.lastError().text();
 
         if (!ok) return false;
     }
@@ -797,6 +825,425 @@ void LibraryDatabase::scheduleTableModelRefresh()
             m_tableModel->refresh();
     });
 }
+
+// ── Playlist management ────────────────────────────────────────────────────
+
+QString LibraryDatabase::createPlaylist(const QString& name, const QString& parentId)
+{
+    if (!m_db.isOpen() || name.trimmed().isEmpty())
+        return {};
+
+    const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+
+    QSqlQuery q(m_db);
+    // Get next sort_order among siblings.
+    if (parentId.isEmpty()) {
+        q.prepare("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM Playlists WHERE parent_id IS NULL");
+    } else {
+        q.prepare("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM Playlists WHERE parent_id = :pid");
+        q.bindValue(":pid", parentId);
+    }
+    q.exec();
+    const int sortOrder = q.next() ? q.value(0).toInt() : 0;
+
+    q.prepare("INSERT INTO Playlists (id, name, parent_id, sort_order) VALUES (:id, :name, :pid, :so)");
+    q.bindValue(":id",   id);
+    q.bindValue(":name", name.trimmed());
+    q.bindValue(":pid",  parentId.isEmpty() ? QVariant{} : QVariant{parentId});
+    q.bindValue(":so",   sortOrder);
+
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] createPlaylist:" << q.lastError().text();
+        return {};
+    }
+
+    emit playlistsChanged();
+    syncBackupFromPrimary();
+    return id;
+}
+
+bool LibraryDatabase::deletePlaylist(const QString& playlistId)
+{
+    if (!m_db.isOpen() || playlistId.isEmpty())
+        return false;
+
+    QSqlQuery q(m_db);
+    q.prepare("DELETE FROM Playlists WHERE id = :id");
+    q.bindValue(":id", playlistId);
+
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] deletePlaylist:" << q.lastError().text();
+        return false;
+    }
+
+    emit playlistsChanged();
+    syncBackupFromPrimary();
+    return true;
+}
+
+bool LibraryDatabase::renamePlaylist(const QString& playlistId, const QString& newName)
+{
+    if (!m_db.isOpen() || playlistId.isEmpty() || newName.trimmed().isEmpty())
+        return false;
+
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE Playlists SET name = :name WHERE id = :id");
+    q.bindValue(":name", newName.trimmed());
+    q.bindValue(":id",   playlistId);
+
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] renamePlaylist:" << q.lastError().text();
+        return false;
+    }
+
+    emit playlistsChanged();
+    syncBackupFromPrimary();
+    return true;
+}
+
+bool LibraryDatabase::setPlaylistSortOrder(const QString& playlistId, int sortOrder)
+{
+    if (!m_db.isOpen() || playlistId.isEmpty())
+        return false;
+
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE Playlists SET sort_order = :so WHERE id = :id");
+    q.bindValue(":so", sortOrder);
+    q.bindValue(":id", playlistId);
+
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] setPlaylistSortOrder:" << q.lastError().text();
+        return false;
+    }
+
+    emit playlistsChanged();
+    syncBackupFromPrimary();
+    return true;
+}
+
+bool LibraryDatabase::setPlaylistParent(const QString& playlistId, const QString& newParentId)
+{
+    if (!m_db.isOpen() || playlistId.isEmpty())
+        return false;
+
+    // Cycle guard: walk up from newParentId; reject if we reach playlistId.
+    if (!newParentId.isEmpty()) {
+        QSqlQuery check(m_db);
+        QString cursor = newParentId;
+        while (!cursor.isEmpty()) {
+            if (cursor == playlistId)
+                return false;
+            check.prepare("SELECT COALESCE(parent_id, '') FROM Playlists WHERE id = :id");
+            check.bindValue(":id", cursor);
+            if (!check.exec() || !check.next())
+                break;
+            cursor = check.value(0).toString();
+        }
+    }
+
+    QSqlQuery q(m_db);
+    if (newParentId.isEmpty()) {
+        q.prepare("UPDATE Playlists SET parent_id = NULL WHERE id = :id");
+    } else {
+        q.prepare("UPDATE Playlists SET parent_id = :parent WHERE id = :id");
+        q.bindValue(":parent", newParentId);
+    }
+    q.bindValue(":id", playlistId);
+
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] setPlaylistParent:" << q.lastError().text();
+        return false;
+    }
+
+    emit playlistsChanged();
+    syncBackupFromPrimary();
+    return true;
+}
+
+QVariantList LibraryDatabase::getAllPlaylists() const
+{
+    QVariantList result;
+    if (!m_db.isOpen())
+        return result;
+
+    QSqlQuery q(m_db);
+    const bool ok = q.exec(
+        "SELECT p.id, p.name, COALESCE(p.parent_id, '') AS parent_id, p.sort_order,"
+        "  (SELECT COUNT(*) FROM PlaylistItems pi WHERE pi.playlist_id = p.id) AS track_count"
+        " FROM Playlists p"
+        " ORDER BY p.sort_order ASC, p.name ASC");
+    if (!ok) {
+        qWarning() << "[LibraryDatabase] getAllPlaylists:" << q.lastError().text();
+        return result;
+    }
+
+    while (q.next()) {
+        QVariantMap m;
+        m["id"]         = q.value(0).toString();
+        m["name"]       = q.value(1).toString();
+        m["parentId"]   = q.value(2).toString();
+        m["sortOrder"]  = q.value(3).toInt();
+        m["trackCount"] = q.value(4).toInt();
+        result.push_back(m);
+    }
+    return result;
+}
+
+bool LibraryDatabase::addTrackToPlaylist(const QString& playlistId, const QString& trackId)
+{
+    if (!m_db.isOpen() || playlistId.isEmpty() || trackId.isEmpty())
+        return false;
+
+    QSqlQuery q(m_db);
+    q.prepare("SELECT COALESCE(MAX(position), -1) + 1 FROM PlaylistItems WHERE playlist_id = :pid");
+    q.bindValue(":pid", playlistId);
+    q.exec();
+    const int pos = q.next() ? q.value(0).toInt() : 0;
+
+    q.prepare(
+        "INSERT OR IGNORE INTO PlaylistItems (playlist_id, track_id, position)"
+        " VALUES (:pid, :tid, :pos)");
+    q.bindValue(":pid", playlistId);
+    q.bindValue(":tid", trackId);
+    q.bindValue(":pos", pos);
+
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] addTrackToPlaylist:" << q.lastError().text();
+        return false;
+    }
+
+    if (q.numRowsAffected() > 0) {
+        emit playlistsChanged();
+        syncBackupFromPrimary();
+    }
+    return true;
+}
+
+bool LibraryDatabase::removeTrackFromPlaylist(const QString& playlistId, const QString& trackId)
+{
+    if (!m_db.isOpen() || playlistId.isEmpty() || trackId.isEmpty())
+        return false;
+
+    QSqlQuery q(m_db);
+    q.prepare("DELETE FROM PlaylistItems WHERE playlist_id = :pid AND track_id = :tid");
+    q.bindValue(":pid", playlistId);
+    q.bindValue(":tid", trackId);
+
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] removeTrackFromPlaylist:" << q.lastError().text();
+        return false;
+    }
+
+    if (q.numRowsAffected() > 0) {
+        emit playlistsChanged();
+        syncBackupFromPrimary();
+    }
+    return true;
+}
+
+bool LibraryDatabase::setPlaylistTrackPosition(const QString& playlistId, const QString& trackId, int newPosition)
+{
+    if (!m_db.isOpen() || playlistId.isEmpty() || trackId.isEmpty() || newPosition < 0)
+        return false;
+
+    QSqlQuery q(m_db);
+    
+    // First, get the current position to adjust other tracks
+    q.prepare("SELECT position FROM PlaylistItems WHERE playlist_id = :pid AND track_id = :tid");
+    q.bindValue(":pid", playlistId);
+    q.bindValue(":tid", trackId);
+    
+    if (!q.exec() || !q.next()) {
+        qWarning() << "[LibraryDatabase] setPlaylistTrackPosition (select):" << q.lastError().text();
+        return false;
+    }
+    
+    int oldPosition = q.value(0).toInt();
+    if (oldPosition == newPosition)
+        return true;  // No change needed
+    
+    // If moving down, shift others up
+    if (newPosition > oldPosition) {
+        q.prepare("UPDATE PlaylistItems SET position = position - 1 "
+                  "WHERE playlist_id = :pid AND position > :old AND position <= :new");
+        q.bindValue(":pid", playlistId);
+        q.bindValue(":old", oldPosition);
+        q.bindValue(":new", newPosition);
+        if (!q.exec()) {
+            qWarning() << "[LibraryDatabase] setPlaylistTrackPosition (shift down):" << q.lastError().text();
+            return false;
+        }
+    }
+    // If moving up, shift others down
+    else {
+        q.prepare("UPDATE PlaylistItems SET position = position + 1 "
+                  "WHERE playlist_id = :pid AND position >= :new AND position < :old");
+        q.bindValue(":pid", playlistId);
+        q.bindValue(":new", newPosition);
+        q.bindValue(":old", oldPosition);
+        if (!q.exec()) {
+            qWarning() << "[LibraryDatabase] setPlaylistTrackPosition (shift up):" << q.lastError().text();
+            return false;
+        }
+    }
+    
+    // Update the track's position
+    q.prepare("UPDATE PlaylistItems SET position = :pos WHERE playlist_id = :pid AND track_id = :tid");
+    q.bindValue(":pos", newPosition);
+    q.bindValue(":pid", playlistId);
+    q.bindValue(":tid", trackId);
+    
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] setPlaylistTrackPosition (update):" << q.lastError().text();
+        return false;
+    }
+    
+    emit playlistsChanged();
+    syncBackupFromPrimary();
+    return true;
+}
+
+QVariantList LibraryDatabase::getPlaylistTracks(const QString& playlistId) const
+{
+    QVariantList result;
+    if (!m_db.isOpen() || playlistId.isEmpty())
+        return result;
+
+    QSqlQuery q(m_db);
+    q.prepare(
+        "SELECT t.id, t.title, t.artist, t.duration_sec, t.bpm, t.key,"
+        "       t.bitrate_kbps, t.is_analyzed, COALESCE(l.file_path, '')"
+        " FROM PlaylistItems pi"
+        " JOIN Tracks t ON pi.track_id = t.id"
+        " LEFT JOIN Locations l ON t.id = l.track_id"
+        " WHERE pi.playlist_id = :pid"
+        " ORDER BY pi.position ASC");
+    q.bindValue(":pid", playlistId);
+
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] getPlaylistTracks:" << q.lastError().text();
+        return result;
+    }
+
+    while (q.next()) {
+        QVariantMap m;
+        m["trackId"]     = q.value(0).toString();
+        m["title"]       = q.value(1).toString();
+        m["artist"]      = q.value(2).toString();
+        m["durationSec"] = q.value(3).toInt();
+        m["bpm"]         = q.value(4).toDouble();
+        m["key"]         = q.value(5).toString();
+        m["bitrateKbps"] = q.value(6).toInt();
+        m["isAnalyzed"]  = q.value(7).toBool();
+        m["filePath"]    = q.value(8).toString();
+        result.push_back(m);
+    }
+    return result;
+}
+
+bool LibraryDatabase::isTrackInPlaylist(const QString& playlistId, const QString& trackId) const
+{
+    if (!m_db.isOpen() || playlistId.isEmpty() || trackId.isEmpty())
+        return false;
+
+    QSqlQuery q(m_db);
+    q.prepare("SELECT 1 FROM PlaylistItems WHERE playlist_id = :pid AND track_id = :tid LIMIT 1");
+    q.bindValue(":pid", playlistId);
+    q.bindValue(":tid", trackId);
+    q.exec();
+    return q.next();
+}
+
+int LibraryDatabase::getPlaylistTrackCount(const QString& playlistId) const
+{
+    if (!m_db.isOpen() || playlistId.isEmpty())
+        return 0;
+
+    QSqlQuery q(m_db);
+    q.prepare("SELECT COUNT(*) FROM PlaylistItems WHERE playlist_id = :pid");
+    q.bindValue(":pid", playlistId);
+    q.exec();
+    return q.next() ? q.value(0).toInt() : 0;
+}
+
+// ── Generic settings ──────────────────────────────────────────────────────────
+
+QString LibraryDatabase::getSetting(const QString& key, const QString& defaultValue) const
+{
+    if (!m_db.isOpen() || key.isEmpty())
+        return defaultValue;
+
+    QSqlQuery q(m_db);
+    q.prepare("SELECT value FROM Meta WHERE key = :key LIMIT 1");
+    q.bindValue(":key", key);
+    if (!q.exec() || !q.next())
+        return defaultValue;
+    const QString v = q.value(0).toString();
+    return v.isNull() ? defaultValue : v;
+}
+
+bool LibraryDatabase::setSetting(const QString& key, const QString& value)
+{
+    if (!m_db.isOpen() || key.isEmpty())
+        return false;
+
+    QSqlQuery q(m_db);
+    q.prepare("INSERT OR REPLACE INTO Meta (key, value) VALUES (:key, :value)");
+    q.bindValue(":key",   key);
+    q.bindValue(":value", value);
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] setSetting:" << q.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+// ── Remove track from library ─────────────────────────────────────────────────
+
+bool LibraryDatabase::removeTrackFromLibrary(const QString& trackId)
+{
+    if (!m_db.isOpen() || trackId.isEmpty())
+        return false;
+
+    // Collect file paths before deletion so we can clean waveform cache.
+    QStringList filePaths;
+    {
+        QSqlQuery q(m_db);
+        q.prepare("SELECT file_path FROM Locations WHERE track_id = :id");
+        q.bindValue(":id", trackId);
+        if (q.exec()) {
+            while (q.next())
+                filePaths << q.value(0).toString();
+        }
+    }
+
+    // Delete track — cascades to Locations, CuePoints, BeatGridMarkers, PlaylistItems.
+    QSqlQuery q(m_db);
+    q.prepare("DELETE FROM Tracks WHERE id = :id");
+    q.bindValue(":id", trackId);
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] removeTrackFromLibrary:" << q.lastError().text();
+        return false;
+    }
+
+    // Delete waveform cache files for each known file path.
+    constexpr int kPps = 600;
+    for (const QString& fp : std::as_const(filePaths)) {
+        const QString cachePath = WaveformCache::cachePathFor(fp, kPps);
+        if (!cachePath.isEmpty() && QFile::exists(cachePath)) {
+            if (!QFile::remove(cachePath))
+                qWarning() << "[LibraryDatabase] Could not remove waveform cache:" << cachePath;
+        }
+    }
+
+    scheduleTableModelRefresh();
+    emit playlistsChanged();          // playlist track-counts may have changed
+    emit trackRemovedFromLibrary(trackId);
+    syncBackupFromPrimary();
+    return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 bool LibraryDatabase::isHealthyDatabaseFile(const QString& path) const
 {
