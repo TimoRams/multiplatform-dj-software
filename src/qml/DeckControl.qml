@@ -23,7 +23,7 @@ Item {
     property string _currentBpm:    ""
     readonly property bool linkAvailable: (typeof linkManager !== "undefined" && linkManager !== null && linkManager.enabled)
     readonly property bool linkMode: (typeof window !== "undefined" && window !== null && window.linkedDeckName === deck.deckName)
-    readonly property int headerCellHeight: 22
+    readonly property int headerCellHeight: 24
     property double _linkSuppressPublishUntilMs: 0
     property double _linkFollowBlockedUntilMs: 0
     property double _lastLinkPublishMs: 0
@@ -33,7 +33,7 @@ Item {
     readonly property color accent:    deckName === "A" ? "#ff9900" : "#00ccff"
     readonly property color accentGrn: "#4dd98a"
     readonly property color accentBlu: "#5bb6ff"
-    readonly property int   btnH:      22
+    readonly property int   btnH:      26
 
     // ── Reusable flat button component ───────────────────────────────────
     component FlatBtn: Rectangle {
@@ -42,14 +42,15 @@ Item {
         property bool   fbActive:           false
         property color  fbActiveColor:      "#1a2e1a"
         property color  fbActiveTxtColor:   deck.accentGrn
-        property color  fbInactiveColor:    "#1c1c1c"
+        property color  fbInactiveColor:    "#1e1e1e"
         property color  fbInactiveTxtColor: "#888"
 
         Layout.preferredHeight: deck.btnH
         Layout.minimumHeight:   deck.btnH
         Layout.maximumHeight:   deck.btnH
 
-        color: hovH.hovered ? "#282828" : (fbActive ? fbActiveColor : fbInactiveColor)
+        radius: 2
+        color: hovH.hovered ? "#2c2c2c" : (fbActive ? fbActiveColor : fbInactiveColor)
 
         HoverHandler { id: hovH }
 
@@ -57,8 +58,9 @@ Item {
             anchors.centerIn: parent
             text: fb.btnText
             color: fb.fbActive ? fb.fbActiveTxtColor : fb.fbInactiveTxtColor
-            font.pixelSize: window.spViewport(8)
-            font.bold: true
+            font.pixelSize: window.spViewport(9)
+            font.bold: fb.fbActive
+            font.letterSpacing: 0.4
             font.family: "monospace"
             horizontalAlignment: Text.AlignHCenter
             elide: Text.ElideRight
@@ -90,8 +92,8 @@ Item {
             y: control.orientation === Qt.Horizontal ? control.height / 2 - 2 : control.topPadding
             width:  control.orientation === Qt.Horizontal ? control.availableWidth  : 4
             height: control.orientation === Qt.Horizontal ? 4 : control.availableHeight
-            radius: 0
-            color: "#1a1a1a"
+            radius: 1
+            color: "#181818"
 
             Rectangle {
                 visible: control.orientation === Qt.Vertical && !control.centerFill
@@ -127,8 +129,8 @@ Item {
             y: control.orientation === Qt.Horizontal
                ? control.height / 2 - height / 2
                : control.topPadding + control.visualPosition * (control.availableHeight - height)
-            radius: 0
-            color: control.pressed ? "#e0e0e0" : "#c0c0c0"
+            radius: 2
+            color: control.pressed ? "#e8e8e8" : "#c8c8c8"
         }
     }
 
@@ -353,19 +355,6 @@ Item {
         anchors.fill: parent
         color: "#131313"
 
-        // Drop-hover overlay
-        Rectangle {
-            anchors.fill: parent
-            color: "#5599ff"
-            opacity: deck.dropHovered ? 0.07 : 0.0
-            Behavior on opacity { NumberAnimation { duration: 80 } }
-        }
-        Rectangle {
-            anchors.fill: parent; color: "transparent"
-            border.color: deck.dropHovered ? "#5599ff" : "transparent"
-            border.width: 2; visible: deck.dropHovered
-        }
-
         ColumnLayout {
             anchors.fill: parent
             spacing: 0
@@ -382,9 +371,9 @@ Item {
 
                     // Deck accent strip
                     Rectangle {
-                        Layout.preferredWidth: 3; Layout.fillHeight: true
+                        Layout.preferredWidth: 4; Layout.fillHeight: true
                         color: deck.accent
-                        opacity: deck._hasTrack ? 1.0 : 0.25
+                        opacity: deck._hasTrack ? 1.0 : 0.3
                     }
 
                     // Cover art
@@ -397,10 +386,11 @@ Item {
 
                         Text {
                             anchors.centerIn: parent
-                            text: "♪"
-                            color: deck._hasTrack ? deck.accent : "#333"
-                            font.pixelSize: window.spViewport(18)
-                            opacity: deck._hasTrack ? 0.6 : 0.35
+                            text: deck._hasTrack ? "♪" : deck.deckName
+                            color: deck.accent
+                            font.pixelSize: deck._hasTrack ? window.spViewport(16) : window.spViewport(24)
+                            font.bold: !deck._hasTrack
+                            opacity: deck._hasTrack ? 0.45 : 0.22
                             visible: coverImage.status !== Image.Ready
                         }
                         Image {
@@ -421,50 +411,38 @@ Item {
 
                         Item {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: deck.headerCellHeight
+                            Layout.fillHeight: true
 
-                            Row {
-                                anchors.fill: parent; anchors.leftMargin: 5; anchors.rightMargin: 4
-                                spacing: 4
-                                Text {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: "TITLE"; color: "#444"
-                                    font.pixelSize: window.spViewport(6); font.bold: true; font.family: "monospace"
-                                }
-                                Text {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    width: parent.width - 52
-                                    text: deck._hasTrack ? deck._trackTitle : "No Track Loaded"
-                                    color: deck._hasTrack ? "#e8e8e8" : "#555"
-                                    font.pixelSize: window.spViewport(8); font.bold: true
-                                    elide: Text.ElideRight
-                                }
+                            Text {
+                                anchors.left: parent.left; anchors.right: parent.right
+                                anchors.leftMargin: 7; anchors.rightMargin: 6
+                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.verticalCenterOffset: -1
+                                text: deck._hasTrack ? deck._trackTitle : "No Track Loaded"
+                                color: deck._hasTrack ? "#ebebeb" : "#555"
+                                font.pixelSize: window.spViewport(10)
+                                font.bold: true
+                                elide: Text.ElideRight
                             }
-                            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#1c1c1c" }
                         }
+
+                        Rectangle { Layout.fillWidth: true; height: 1; color: "#1e1e1e" }
 
                         Item {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: deck.headerCellHeight
+                            Layout.fillHeight: true
 
-                            Row {
-                                anchors.fill: parent; anchors.leftMargin: 5; anchors.rightMargin: 4
-                                spacing: 4
-                                Text {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: "ARTIST"; color: "#444"
-                                    font.pixelSize: window.spViewport(6); font.bold: true; font.family: "monospace"
-                                }
-                                Text {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    width: parent.width - 58
-                                    text: deck._hasTrack
-                                          ? (deck._trackArtist !== "" ? deck._trackArtist : "Unknown Artist")
-                                          : "-"
-                                    color: deck._hasTrack ? "#a8a8a8" : "#555"
-                                    font.pixelSize: window.spViewport(8)
-                                    elide: Text.ElideRight
-                                }
+                            Text {
+                                anchors.left: parent.left; anchors.right: parent.right
+                                anchors.leftMargin: 7; anchors.rightMargin: 6
+                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.verticalCenterOffset: 1
+                                text: deck._hasTrack
+                                      ? (deck._trackArtist !== "" ? deck._trackArtist : "Unknown Artist")
+                                      : ""
+                                color: deck._hasTrack ? "#9a9a9a" : "#555"
+                                font.pixelSize: window.spViewport(9)
+                                elide: Text.ElideRight
                             }
                         }
                     }
@@ -482,9 +460,9 @@ Item {
                             Layout.preferredWidth: 82; Layout.preferredHeight: deck.headerCellHeight
                             color: "#0d1a0d"
 
-                            Row { anchors.fill: parent; anchors.leftMargin: 5; spacing: 3
-                                Text { anchors.verticalCenter: parent.verticalCenter; text: "BPM"; color: "#3a6a3a"; font.pixelSize: window.spViewport(6); font.bold: true; font.family: "monospace" }
-                                Text { anchors.verticalCenter: parent.verticalCenter; text: deck._trackBpm !== "" ? deck._trackBpm : "--"; color: deck._trackBpm !== "" ? deck.accentGrn : "#4a604a"; font.pixelSize: window.spViewport(10); font.bold: true; font.family: "monospace" }
+                            Row { anchors.fill: parent; anchors.leftMargin: 5; spacing: 4
+                                Text { anchors.verticalCenter: parent.verticalCenter; text: "BPM"; color: "#3a6a3a"; font.pixelSize: window.spViewport(7); font.bold: true; font.family: "monospace" }
+                                Text { anchors.verticalCenter: parent.verticalCenter; text: deck._trackBpm !== "" ? deck._trackBpm : "--"; color: deck._trackBpm !== "" ? deck.accentGrn : "#4a604a"; font.pixelSize: window.spViewport(11); font.bold: true; font.family: "monospace" }
                             }
                             MouseArea {
                                 anchors.fill: parent; acceptedButtons: Qt.RightButton; cursorShape: Qt.PointingHandCursor
@@ -504,8 +482,8 @@ Item {
                             Layout.preferredWidth: 82; Layout.preferredHeight: deck.headerCellHeight
                             color: "#0d0d1c"
 
-                            Row { anchors.fill: parent; anchors.leftMargin: 5; spacing: 3
-                                Text { anchors.verticalCenter: parent.verticalCenter; text: "LIVE"; color: "#3a3a6a"; font.pixelSize: window.spViewport(6); font.bold: true; font.family: "monospace" }
+                            Row { anchors.fill: parent; anchors.leftMargin: 5; spacing: 4
+                                Text { anchors.verticalCenter: parent.verticalCenter; text: "LIVE"; color: "#3a3a6a"; font.pixelSize: window.spViewport(7); font.bold: true; font.family: "monospace" }
                                 Text {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: deck._currentBpm !== "" ? deck._currentBpm : "--"
@@ -514,7 +492,7 @@ Item {
                                         if (!deck.engine) return deck.accentBlu
                                         return deck.engine.tempoPercent > 0 ? "#ffaa00" : deck.accentBlu
                                     }
-                                    font.pixelSize: window.spViewport(10); font.bold: true; font.family: "monospace"
+                                    font.pixelSize: window.spViewport(11); font.bold: true; font.family: "monospace"
                                 }
                             }
                             Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#1c1c1c" }
@@ -525,9 +503,9 @@ Item {
                             Layout.preferredWidth: 82; Layout.preferredHeight: deck.headerCellHeight
                             color: "#0d0d1c"
 
-                            Row { anchors.fill: parent; anchors.leftMargin: 5; spacing: 3
-                                Text { anchors.verticalCenter: parent.verticalCenter; text: "KEY"; color: "#3a3a6a"; font.pixelSize: window.spViewport(6); font.bold: true; font.family: "monospace" }
-                                Text { anchors.verticalCenter: parent.verticalCenter; text: deck._trackKey !== "" ? deck._trackKey : "--"; color: deck._trackKey !== "" ? deck.accentBlu : "#444464"; font.pixelSize: window.spViewport(10); font.bold: true; font.family: "monospace" }
+                            Row { anchors.fill: parent; anchors.leftMargin: 5; spacing: 4
+                                Text { anchors.verticalCenter: parent.verticalCenter; text: "KEY"; color: "#3a3a6a"; font.pixelSize: window.spViewport(7); font.bold: true; font.family: "monospace" }
+                                Text { anchors.verticalCenter: parent.verticalCenter; text: deck._trackKey !== "" ? deck._trackKey : "--"; color: deck._trackKey !== "" ? deck.accentBlu : "#444464"; font.pixelSize: window.spViewport(11); font.bold: true; font.family: "monospace" }
                             }
                         }
 
@@ -535,9 +513,9 @@ Item {
                             Layout.preferredWidth: 82; Layout.preferredHeight: deck.headerCellHeight
                             color: "#151515"
 
-                            Row { anchors.fill: parent; anchors.leftMargin: 5; spacing: 3
-                                Text { anchors.verticalCenter: parent.verticalCenter; text: "LEN"; color: "#444"; font.pixelSize: window.spViewport(6); font.bold: true; font.family: "monospace" }
-                                Text { anchors.verticalCenter: parent.verticalCenter; text: deck._trackDuration !== "" ? deck._trackDuration : "--:--"; color: deck._trackDuration !== "" ? "#b0b0b0" : "#555"; font.pixelSize: window.spViewport(10); font.bold: true; font.family: "monospace" }
+                            Row { anchors.fill: parent; anchors.leftMargin: 5; spacing: 4
+                                Text { anchors.verticalCenter: parent.verticalCenter; text: "LEN"; color: "#444"; font.pixelSize: window.spViewport(7); font.bold: true; font.family: "monospace" }
+                                Text { anchors.verticalCenter: parent.verticalCenter; text: deck._trackDuration !== "" ? deck._trackDuration : "--:--"; color: deck._trackDuration !== "" ? "#b0b0b0" : "#555"; font.pixelSize: window.spViewport(11); font.bold: true; font.family: "monospace" }
                             }
                             Rectangle { anchors.left: parent.left; height: parent.height; width: 1; color: "#1c1c1c" }
                         }
@@ -565,165 +543,168 @@ Item {
             Rectangle { Layout.fillWidth: true; height: 1; color: "#1c1c1c" }
 
             // ── Transport / loop controls ─────────────────────────────────
-            RowLayout {
-                id: deckControlsRow
+            ColumnLayout {
+                id: deckControlsCol
                 Layout.fillWidth: true
                 spacing: 0
 
-                property real unit: Math.max(22, window.spViewport(26))
+                property real unit: Math.max(26, window.spViewport(28))
 
-                // PLAY
-                FlatBtn {
-                    btnText: "PLAY"
-                    Layout.preferredWidth: deckControlsRow.unit * 1.3
-                    fbActive: deck.engine ? deck.engine.isPlaying : false
-                    fbActiveColor: "#0d280d"; fbActiveTxtColor: deck.accentGrn
-                    fbInactiveTxtColor: "#666"
-                    onClicked: { if (deck.engine) deck.engine.togglePlay() }
-                }
-                Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#1c1c1c" }
+                // Row 1 — Transport
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 1
 
-                // CUE
-                FlatBtn {
-                    btnText: "CUE"
-                    Layout.preferredWidth: deckControlsRow.unit
-                    onBtnPressed:  { if (deck.engine) deck.engine.cueButtonPress() }
-                    onBtnReleased: { if (deck.engine) deck.engine.cueButtonRelease() }
-                }
-                Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#1c1c1c" }
-
-                // REV
-                FlatBtn {
-                    btnText: "REV"
-                    Layout.preferredWidth: deckControlsRow.unit
-                    fbActive: deck.engine ? deck.engine.isReverse : false
-                    fbActiveColor: "#2a1200"; fbActiveTxtColor: "#ff6600"
-                    onClicked: { if (deck.engine) deck.engine.setReverse(!deck.engine.isReverse) }
-                }
-                Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#1c1c1c" }
-
-                // SYNC
-                FlatBtn {
-                    btnText: "SYNC"
-                    Layout.preferredWidth: deckControlsRow.unit * 1.2
-                    fbActive: deck.engine ? deck.engine.syncEnabled : false
-                    fbActiveColor: deck.engine && deck.engine.syncMaster ? "#2a2000" : "#0a2a0a"
-                    fbActiveTxtColor: deck.engine && deck.engine.syncMaster ? "#ffd24d" : deck.accentGrn
-                    onClicked: { if (deck.engine) deck.engine.setSyncEnabled(!deck.engine.syncEnabled) }
-                }
-                Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#1c1c1c" }
-
-                // LINK
-                FlatBtn {
-                    btnText: "LINK"
-                    Layout.preferredWidth: deckControlsRow.unit * 1.1
-                    fbActive: deck.linkMode
-                    fbActiveColor: "#0a2a14"; fbActiveTxtColor: "#3de87a"
-                    fbInactiveTxtColor: deck.linkAvailable ? "#777" : "#444"
-                    onClicked: {
-                        if (!deck.linkAvailable) { deck._setLinkMode(false); return }
-                        deck._setLinkMode(!deck.linkMode)
-                        if (deck.linkMode) deck._publishDeckToAbletonLink()
+                    // PLAY
+                    FlatBtn {
+                        btnText: "PLAY"
+                        Layout.preferredWidth: deckControlsCol.unit * 1.5
+                        fbActive: deck.engine ? deck.engine.isPlaying : false
+                        fbActiveColor: "#0d280d"; fbActiveTxtColor: deck.accentGrn
+                        fbInactiveTxtColor: "#666"
+                        onClicked: { if (deck.engine) deck.engine.togglePlay() }
                     }
+
+                    // CUE
+                    FlatBtn {
+                        btnText: "CUE"
+                        Layout.preferredWidth: deckControlsCol.unit
+                        onBtnPressed:  { if (deck.engine) deck.engine.cueButtonPress() }
+                        onBtnReleased: { if (deck.engine) deck.engine.cueButtonRelease() }
+                    }
+
+                    // REV
+                    FlatBtn {
+                        btnText: "REV"
+                        Layout.preferredWidth: deckControlsCol.unit
+                        fbActive: deck.engine ? deck.engine.isReverse : false
+                        fbActiveColor: "#2a1200"; fbActiveTxtColor: "#ff6600"
+                        onClicked: { if (deck.engine) deck.engine.setReverse(!deck.engine.isReverse) }
+                    }
+
+                    // SYNC
+                    FlatBtn {
+                        btnText: "SYNC"
+                        Layout.preferredWidth: deckControlsCol.unit * 1.2
+                        fbActive: deck.engine ? deck.engine.syncEnabled : false
+                        fbActiveColor: deck.engine && deck.engine.syncMaster ? "#2a2000" : "#0a2a0a"
+                        fbActiveTxtColor: deck.engine && deck.engine.syncMaster ? "#ffd24d" : deck.accentGrn
+                        onClicked: { if (deck.engine) deck.engine.setSyncEnabled(!deck.engine.syncEnabled) }
+                    }
+
+                    // LINK
+                    FlatBtn {
+                        btnText: "LINK"
+                        Layout.preferredWidth: deckControlsCol.unit * 1.1
+                        fbActive: deck.linkMode
+                        fbActiveColor: "#0a2a14"; fbActiveTxtColor: "#3de87a"
+                        fbInactiveTxtColor: deck.linkAvailable ? "#777" : "#444"
+                        onClicked: {
+                            if (!deck.linkAvailable) { deck._setLinkMode(false); return }
+                            deck._setLinkMode(!deck.linkMode)
+                            if (deck.linkMode) deck._publishDeckToAbletonLink()
+                        }
+                    }
+
+                    // Group separator
+                    Rectangle { Layout.preferredWidth: 3; Layout.preferredHeight: deck.btnH; color: "#0a0a0a" }
+
+                    // Q
+                    FlatBtn {
+                        btnText: "Q"
+                        Layout.preferredWidth: deckControlsCol.unit * 0.85
+                        fbActive: deck.engine ? deck.engine.quantizeEnabled : false
+                        fbActiveColor: deck.deckName === "A" ? "#2a1e00" : "#002233"
+                        fbActiveTxtColor: deck.accent
+                        onClicked: { if (deck.engine) deck.engine.quantizeEnabled = !deck.engine.quantizeEnabled }
+                    }
+
+                    // KL
+                    FlatBtn {
+                        btnText: "KL"
+                        Layout.preferredWidth: deckControlsCol.unit * 0.85
+                        fbActive: deck.engine ? deck.engine.keylock : false
+                        fbActiveColor: deck.deckName === "A" ? "#2a1e00" : "#002233"
+                        fbActiveTxtColor: deck.accent
+                        onClicked: { if (deck.engine) deck.engine.keylock = !deck.engine.keylock }
+                    }
+
+                    // SLIP
+                    FlatBtn {
+                        btnText: "SLIP"
+                        Layout.preferredWidth: deckControlsCol.unit
+                        fbActive: false
+                        fbActiveColor: deck.deckName === "A" ? "#2a1e00" : "#002233"
+                        fbActiveTxtColor: deck.accent
+                    }
+
+                    Item { Layout.fillWidth: true }
                 }
 
-                // Group separator
-                Rectangle { Layout.preferredWidth: 2; Layout.preferredHeight: deck.btnH; color: "#0a0a0a" }
+                Rectangle { Layout.fillWidth: true; height: 1; color: "#161616" }
 
-                // Q
-                FlatBtn {
-                    btnText: "Q"
-                    Layout.preferredWidth: deckControlsRow.unit * 0.8
-                    fbActive: deck.engine ? deck.engine.quantizeEnabled : false
-                    fbActiveColor: deck.deckName === "A" ? "#2a1e00" : "#002233"
-                    fbActiveTxtColor: deck.accent
-                    onClicked: { if (deck.engine) deck.engine.quantizeEnabled = !deck.engine.quantizeEnabled }
+                // Row 2 — Loop
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 1
+
+                    // L IN
+                    FlatBtn {
+                        btnText: "L IN"
+                        Layout.preferredWidth: deckControlsCol.unit * 1.1
+                        Layout.minimumWidth: 36
+                        onClicked: { if (deck.engine) deck.engine.setLoopIn() }
+                    }
+
+                    // L OUT
+                    FlatBtn {
+                        btnText: "L OUT"
+                        Layout.preferredWidth: deckControlsCol.unit * 1.2
+                        Layout.minimumWidth: 40
+                        onClicked: { if (deck.engine) deck.engine.setLoopOut() }
+                    }
+
+                    // Group separator
+                    Rectangle { Layout.preferredWidth: 3; Layout.preferredHeight: deck.btnH; color: "#0a0a0a" }
+
+                    // <
+                    FlatBtn {
+                        btnText: "<"
+                        Layout.preferredWidth: deckControlsCol.unit * 0.75
+                        Layout.minimumWidth: 22
+                        onClicked: { if (deck.engine) deck.engine.halveLoopLength() }
+                    }
+
+                    // Loop toggle
+                    FlatBtn {
+                        btnText: deck.loopLabel()
+                        Layout.preferredWidth: deckControlsCol.unit * 2.0
+                        Layout.minimumWidth: 54
+                        fbActive: deck.engine ? deck.engine.loopActive : false
+                        fbActiveColor: "#0a2a0a"; fbActiveTxtColor: deck.accentGrn
+                        onClicked: { if (deck.engine) deck.engine.toggleLoop4Beats() }
+                    }
+
+                    // >
+                    FlatBtn {
+                        btnText: ">"
+                        Layout.preferredWidth: deckControlsCol.unit * 0.75
+                        Layout.minimumWidth: 22
+                        onClicked: { if (deck.engine) deck.engine.doubleLoopLength() }
+                    }
+
+                    // 3/4
+                    FlatBtn {
+                        btnText: "3/4"
+                        Layout.preferredWidth: deckControlsCol.unit * 0.95
+                        Layout.minimumWidth: 30
+                        fbActive: deck.engine ? (deck.engine.loopActive && Math.abs(deck.engine.loopLengthBeats - 0.75) < 0.06) : false
+                        fbActiveColor: "#001a2a"; fbActiveTxtColor: deck.accentBlu
+                        onClicked: { if (deck.engine) deck.engine.toggleLoopThreeQuarter() }
+                    }
+
+                    Item { Layout.fillWidth: true }
                 }
-                Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#1c1c1c" }
-
-                // KL
-                FlatBtn {
-                    btnText: "KL"
-                    Layout.preferredWidth: deckControlsRow.unit * 0.85
-                    fbActive: deck.engine ? deck.engine.keylock : false
-                    fbActiveColor: deck.deckName === "A" ? "#2a1e00" : "#002233"
-                    fbActiveTxtColor: deck.accent
-                    onClicked: { if (deck.engine) deck.engine.keylock = !deck.engine.keylock }
-                }
-                Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#1c1c1c" }
-
-                // SLIP
-                FlatBtn {
-                    btnText: "SLIP"
-                    Layout.preferredWidth: deckControlsRow.unit * 1.05
-                    fbActive: false
-                    fbActiveColor: deck.deckName === "A" ? "#2a1e00" : "#002233"
-                    fbActiveTxtColor: deck.accent
-                }
-
-                // Group separator
-                Rectangle { Layout.preferredWidth: 2; Layout.preferredHeight: deck.btnH; color: "#0a0a0a" }
-
-                // L IN
-                FlatBtn {
-                    btnText: "L IN"
-                    Layout.preferredWidth: deckControlsRow.unit * 1.1
-                    Layout.minimumWidth: 36
-                    onClicked: { if (deck.engine) deck.engine.setLoopIn() }
-                }
-                Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#1c1c1c" }
-
-                // L OUT
-                FlatBtn {
-                    btnText: "L OUT"
-                    Layout.preferredWidth: deckControlsRow.unit * 1.2
-                    Layout.minimumWidth: 40
-                    onClicked: { if (deck.engine) deck.engine.setLoopOut() }
-                }
-
-                // Group separator
-                Rectangle { Layout.preferredWidth: 2; Layout.preferredHeight: deck.btnH; color: "#0a0a0a" }
-
-                // <
-                FlatBtn {
-                    btnText: "<"
-                    Layout.preferredWidth: deckControlsRow.unit * 0.7
-                    Layout.minimumWidth: 22
-                    onClicked: { if (deck.engine) deck.engine.halveLoopLength() }
-                }
-                Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#1c1c1c" }
-
-                // Loop toggle
-                FlatBtn {
-                    btnText: deck.loopLabel()
-                    Layout.preferredWidth: deckControlsRow.unit * 2.0
-                    Layout.minimumWidth: 54
-                    fbActive: deck.engine ? deck.engine.loopActive : false
-                    fbActiveColor: "#0a2a0a"; fbActiveTxtColor: deck.accentGrn
-                    onClicked: { if (deck.engine) deck.engine.toggleLoop4Beats() }
-                }
-                Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#1c1c1c" }
-
-                // >
-                FlatBtn {
-                    btnText: ">"
-                    Layout.preferredWidth: deckControlsRow.unit * 0.7
-                    Layout.minimumWidth: 22
-                    onClicked: { if (deck.engine) deck.engine.doubleLoopLength() }
-                }
-                Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#1c1c1c" }
-
-                // 3/4
-                FlatBtn {
-                    btnText: "3/4"
-                    Layout.preferredWidth: deckControlsRow.unit * 0.95
-                    Layout.minimumWidth: 30
-                    fbActive: deck.engine ? (deck.engine.loopActive && Math.abs(deck.engine.loopLengthBeats - 0.75) < 0.06) : false
-                    fbActiveColor: "#001a2a"; fbActiveTxtColor: deck.accentBlu
-                    onClicked: { if (deck.engine) deck.engine.toggleLoopThreeQuarter() }
-                }
-
-                Item { Layout.fillWidth: true }
             }
 
             Rectangle { Layout.fillWidth: true; height: 1; color: "#1c1c1c" }
@@ -745,7 +726,7 @@ Item {
 
                 Rectangle {
                     id: tempoPanel
-                    Layout.preferredWidth: 50
+                    Layout.preferredWidth: 56
                     Layout.fillHeight: true
                     color: "#111111"
 
@@ -753,19 +734,19 @@ Item {
 
                     ColumnLayout {
                         anchors.fill: parent
-                        anchors.margins: 2
-                        spacing: 1
+                        anchors.margins: 3
+                        spacing: 2
 
                         Rectangle {
                             id: tempoHeader
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 18
+                            Layout.preferredHeight: 20
                             color: "transparent"
 
                             Row {
-                                anchors.centerIn: parent; spacing: 2
-                                Text { text: "TEMPO"; color: "#aaa"; font.pixelSize: window.spViewport(7); font.bold: true; font.letterSpacing: 0.5; anchors.verticalCenter: parent.verticalCenter }
-                                Text { text: "▾"; color: deck.accent; font.pixelSize: window.spViewport(8); anchors.verticalCenter: parent.verticalCenter }
+                                anchors.centerIn: parent; spacing: 3
+                                Text { text: "TEMPO"; color: "#bbb"; font.pixelSize: window.spViewport(7); font.bold: true; font.letterSpacing: 0.6; anchors.verticalCenter: parent.verticalCenter }
+                                Text { text: "▾"; color: deck.accent; font.pixelSize: window.spViewport(9); anchors.verticalCenter: parent.verticalCenter }
                             }
                             MouseArea {
                                 anchors.fill: parent; cursorShape: Qt.PointingHandCursor
@@ -799,11 +780,29 @@ Item {
                             color: tempoSlider.value > 0 ? "#ffaa00"
                                  : tempoSlider.value < 0 ? deck.accentBlu
                                  : "#555"
-                            font.pixelSize: window.spViewport(9); font.bold: true; font.family: "monospace"
+                            font.pixelSize: window.spViewport(10); font.bold: true; font.family: "monospace"
                         }
                     }
                 }
             }
+        }
+
+        // ── Drop-hover overlay (must be above all content) ────────────────
+        Rectangle {
+            anchors.fill: parent
+            z: 5
+            color: "#5599ff"
+            opacity: deck.dropHovered ? 0.08 : 0.0
+            Behavior on opacity { NumberAnimation { duration: 80 } }
+        }
+        Rectangle {
+            anchors.fill: parent
+            z: 5
+            color: "transparent"
+            border.color: "#5599ff"
+            border.width: 3
+            visible: deck.dropHovered
+            Behavior on opacity { NumberAnimation { duration: 80 } }
         }
 
         // ── Tempo range popup ──────────────────────────────────────────────

@@ -12,6 +12,7 @@ Item {
     // Zoom controlled externally (main.qml) so both decks zoom in sync.
     property real waveformZoom: 1.5
     property int cueOverlayTick: 0
+    property bool dropHovered: false
 
     function cueX(cueSec) {
         if (!root.engine)
@@ -39,28 +40,16 @@ Item {
 
     DropArea {
         anchors.fill: parent
-        // Visuelles Feedback
-        Rectangle {
-            anchors.fill: parent
-            color: root.backgroundColor == "#222" ? "cyan" : "magenta" // deck A = cyan, B = magenta
-            opacity: parent.containsDrag ? 0.2 : 0.0
-            visible: parent.containsDrag
-        }
-
-        onEntered: (drag) => {
-             drag.accept(Qt.LinkAction);
-        }
-
-         onDropped: (drop) => {
-            if (drop.hasUrls && drop.urls.length > 0) {
-                 var path = drop.urls[0].toString();
-                 if (path.startsWith("file://")) {
-                      path = path.substring(7);
-                 }
-                 if (root.engine) {
-                     root.engine.loadTrack(path);
-                 }
-            }
+        keys: ["text/uri-list", "text/plain"]
+        onEntered: (drag) => { drag.accept(Qt.CopyAction); root.dropHovered = true }
+        onExited:  ()      => { root.dropHovered = false }
+        onDropped: (drop)  => {
+            root.dropHovered = false
+            var path = ""
+            if (drop.hasUrls && drop.urls.length > 0) path = drop.urls[0].toString()
+            else if (drop.hasText)                    path = drop.text
+            if (path.startsWith("file://")) path = path.substring(7)
+            if (path !== "" && root.engine) root.engine.loadTrack(path)
         }
     }
 
@@ -413,5 +402,22 @@ Item {
         }
         // ─────────────────────────────────────────────────────────────────────
     }   // Rectangle (background + waveform stack)
+
+    // ── Drop-hover overlay (above all waveform content) ───────────────────
+    Rectangle {
+        anchors.fill: parent
+        z: 50
+        color: "#5599ff"
+        opacity: root.dropHovered ? 0.08 : 0.0
+        Behavior on opacity { NumberAnimation { duration: 80 } }
+    }
+    Rectangle {
+        anchors.fill: parent
+        z: 50
+        color: "transparent"
+        border.color: "#5599ff"
+        border.width: 3
+        visible: root.dropHovered
+    }
 }       // Item (root)
 
