@@ -75,6 +75,9 @@ class DjEngine : public QObject
     Q_PROPERTY(float gainReduction READ gainReduction NOTIFY gainReductionChanged)
     Q_PROPERTY(QVariantList hotCues READ hotCues NOTIFY hotCuesChanged)
     Q_PROPERTY(bool vinylBrakeActive READ isVinylBrakeActive NOTIFY vinylBrakeChanged)
+    Q_PROPERTY(bool echoOutActive    READ isEchoOutActive    NOTIFY echoOutChanged)
+    Q_PROPERTY(bool backspinActive   READ isBackspinActive   NOTIFY backspinChanged)
+    Q_PROPERTY(bool rollOutActive    READ isRollOutActive    NOTIFY rollOutChanged)
 
 public:
     static constexpr double WAVEFORM_POINTS_PER_SECOND = 600.0;
@@ -154,10 +157,24 @@ public:
     Q_INVOKABLE void clearPadFx();
 
     // ── Vinyl Brake ───────────────────────────────────────────────────────────
-    // Smoothly ramps playback speed to 0 (brake) or back to normal (release).
     Q_INVOKABLE void startVinylBrake();
     Q_INVOKABLE void stopVinylBrake();
     [[nodiscard]] bool isVinylBrakeActive() const { return m_vinylBrakeActive; }
+
+    // ── Echo Out ──────────────────────────────────────────────────────────────
+    Q_INVOKABLE void startEchoOut();
+    Q_INVOKABLE void stopEchoOut();
+    [[nodiscard]] bool isEchoOutActive() const { return m_echoOutActive; }
+
+    // ── Backspin ──────────────────────────────────────────────────────────────
+    Q_INVOKABLE void startBackspin();
+    Q_INVOKABLE void stopBackspin();
+    [[nodiscard]] bool isBackspinActive() const { return m_backspinActive; }
+
+    // ── Roll Out ──────────────────────────────────────────────────────────────
+    Q_INVOKABLE void startRollOut();
+    Q_INVOKABLE void stopRollOut();
+    [[nodiscard]] bool isRollOutActive() const { return m_rollOutActive; }
     [[nodiscard]] TrackData* getTrackData() const;
 
     [[nodiscard]] QString trackTitle()    const { return m_trackTitle; }
@@ -292,6 +309,9 @@ signals:
     void segmentsChanged();
     void hotCuesChanged();
     void vinylBrakeChanged();
+    void echoOutChanged();
+    void backspinChanged();
+    void rollOutChanged();
 
 private slots:
     void onTimer();
@@ -374,6 +394,9 @@ private:
     double m_tempoPercent = 0.0;
 
     bool m_vinylBrakeActive = false;
+    bool m_echoOutActive    = false;
+    bool m_backspinActive   = false;
+    bool m_rollOutActive    = false;
 
     // Mixer state
     double m_volume = 0.8;

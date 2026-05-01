@@ -234,6 +234,9 @@ void FxProcessor::processWetEffect(EffectType type,
         case EffectType::Roll:
             processRoll(wetBuf, 0, n, amount, false);
             break;
+        case EffectType::RollOut:
+            processRollOut(wetBuf, 0, n, amount);
+            break;
         case EffectType::Nobius:
             processMobius(wetBuf, 0, n, amount, true);
             break;
@@ -329,9 +332,12 @@ void FxProcessor::setEffectType(EffectType type)
     // instead we simply reset the smoother so the crossfade handles any transient.
     m_typeAtomic.store(static_cast<int>(type), std::memory_order_relaxed);
 
-    // Also reset pitch shifter read positions so we don't get a stale delayed burst
+    // Reset pitch shifter read positions to avoid stale delayed burst
     if (type == EffectType::PitchShifter && m_pitchShifter)
         m_pitchShifter->prepare(m_numChannels);
+    // Reset roll state on any roll type switch so the loop captures fresh audio
+    if (type == EffectType::Roll || type == EffectType::RollOut || type == EffectType::SlipRoll)
+        m_rollState = RollState{};
 }
 
 void FxProcessor::setAmount(float amount)
@@ -990,17 +996,22 @@ void FxProcessor::processRoll(juce::AudioBuffer<float>& wet,
 
     for (int i = 0; i < n; ++i)
     {
-        // Always record into rolling buffer
-        for (int ch = 0; ch < wet.getNumChannels() && ch < 2; ++ch)
-            st.buf[ch][st.writePos % kRollBuf] = wet.getReadPointer(ch)[start + i];
+        // For non-slip roll: only write during the initial fill phase (first loopLen samples).
+        // After that the buffer is frozen — writePos never advances again, so the captured
+        // loop region is never overwritten no matter how long the pad is held.
+        // For slip roll: always write so the advancing loopStart reads fresh audio.
+        const bool writing = slip || !st.loopActive || st.stepCounter < st.loopLen;
+
+        if (writing)
+            for (int ch = 0; ch < wet.getNumChannels() && ch < 2; ++ch)
+                st.buf[ch][st.writePos % kRollBuf] = wet.getReadPointer(ch)[start + i];
 
         if (!st.loopActive || st.loopLen != loopLen)
         {
-            // Capture a new loop start point
-            st.loopStart  = st.writePos;
-            st.loopLen    = loopLen;
-            st.readPos    = st.loopStart;
-            st.loopActive = true;
+            st.loopStart   = st.writePos;
+            st.loopLen     = loopLen;
+            st.readPos     = st.loopStart;
+            st.loopActive  = true;
             st.stepCounter = 0;
         }
 
@@ -1009,7 +1020,8 @@ void FxProcessor::processRoll(juce::AudioBuffer<float>& wet,
         for (int ch = 0; ch < wet.getNumChannels() && ch < 2; ++ch)
             wet.getWritePointer(ch)[start + i] = st.buf[ch][rp];
 
-        st.writePos = (st.writePos + 1) % kRollBuf;
+        if (writing)
+            st.writePos = (st.writePos + 1) % kRollBuf;
         ++st.stepCounter;
 
         if (slip)
@@ -1030,6 +1042,60 @@ void FxProcessor::processRoll(juce::AudioBuffer<float>& wet,
         else
         {
             // Regular roll: seamless loop repeat
+            st.readPos = (st.loopStart + (st.stepCounter % st.loopLen)) % kRollBuf;
+        }
+    }
+}
+
+void FxProcessor::processRollOut(juce::AudioBuffer<float>& wet,
+                                  int start, int n, float amount)
+{
+    // Start with the same loop length as Roll; each repetition doubles it (max 4×)
+    const int baseLen = std::max(64, static_cast<int>(m_sampleRate
+                        * std::pow(2.f, -amount * 2.5f) * 0.5f));
+
+    auto& st = m_rollState;
+
+    for (int i = 0; i < n; ++i)
+    {
+        for (int ch = 0; ch < wet.getNumChannels() && ch < 2; ++ch)
+            st.buf[ch][st.writePos % kRollBuf] = wet.getReadPointer(ch)[start + i];
+
+        if (!st.loopActive)
+        {
+            st.loopStart   = st.writePos;
+            st.loopLen     = baseLen;
+            st.readPos     = st.loopStart;
+            st.loopActive  = true;
+            st.stepCounter = 0;
+            st.doubleCount = 0;
+        }
+
+        const int rp = st.readPos % kRollBuf;
+        for (int ch = 0; ch < wet.getNumChannels() && ch < 2; ++ch)
+            wet.getWritePointer(ch)[start + i] = st.buf[ch][rp];
+
+        st.writePos = (st.writePos + 1) % kRollBuf;
+        ++st.stepCounter;
+
+        if (st.stepCounter >= st.loopLen)
+        {
+            st.stepCounter = 0;
+            if (st.doubleCount < 4)
+            {
+                ++st.doubleCount;
+                const int newLen = std::min(st.loopLen * 2, kRollBuf / 2);
+                st.loopStart = st.writePos;  // capture fresh audio for longer loop
+                st.loopLen   = newLen;
+                st.readPos   = st.loopStart;
+            }
+            else
+            {
+                st.readPos = st.loopStart;  // hold at max length
+            }
+        }
+        else
+        {
             st.readPos = (st.loopStart + (st.stepCounter % st.loopLen)) % kRollBuf;
         }
     }

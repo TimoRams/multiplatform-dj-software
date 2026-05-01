@@ -47,7 +47,8 @@ enum class EffectType : int {
     SoundColorSpace  = 20,   // reverb + bipolar filter on wet
     SoundColorPitch  = 21,   // pure pitch shift ±12 semitones
     SoundColorNoise  = 22,   // white noise through bipolar filter
-    SoundColorSweep  = 23    // animated bipolar filter sweep (rate/depth via SC param)
+    SoundColorSweep  = 23,   // animated bipolar filter sweep (rate/depth via SC param)
+    RollOut          = 24    // roll that doubles loop length every repetition
 };
 
 class FxProcessor
@@ -212,10 +213,12 @@ private:
         int    readPos     = 0;
         bool   loopActive  = false;
         int    stepCounter = 0;
+        int    doubleCount = 0;  // for RollOut: how many times loop has doubled
     };
     RollState m_rollState;
     void processRoll(juce::AudioBuffer<float>& wet, int start, int n,
                      float amount, bool slip);
+    void processRollOut(juce::AudioBuffer<float>& wet, int start, int n, float amount);
 
     // ── Nobius / Mobius (forward+reverse loop) ────────────────────────────────
     static constexpr int kMobiusBuf = 65536;

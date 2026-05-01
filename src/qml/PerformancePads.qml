@@ -26,53 +26,44 @@ Item {
     property int padFxMomentaryHeld: -1
 
     readonly property var padFxDefs: [
-        // Top row — momentary while held
-        { name: "ECHO",    effect: "Echo",       baseColor: "#0d2244", activeColor: "#1a4488" },
-        { name: "REVERB",  effect: "Reverb",     baseColor: "#0d3030", activeColor: "#1a6666" },
-        { name: "ROLL",    effect: "Roll",        baseColor: "#221440", activeColor: "#4428a0" },
-        { name: "CRUSH",   effect: "Bitcrusher", baseColor: "#381010", activeColor: "#882020" },
-        // Bottom row — toggle latch
-        { name: "FLANGE",  effect: "Flanger",    baseColor: "#0d2030", activeColor: "#1a5080" },
-        { name: "PHASER",  effect: "Phaser",      baseColor: "#0d2814", activeColor: "#1a5828" },
-        { name: "STRETCH", effect: "Stretch",    baseColor: "#1e1a10", activeColor: "#554a20" },
+        // Top row — momentary while held (0-3)
+        { name: "ECHO",    effect: "Echo",    amount: 1.0, baseColor: "#0d2244", activeColor: "#1a4488" },
+        { name: "FLANGE",  effect: "Flanger", amount: 1.0, baseColor: "#0d2030", activeColor: "#1a5080" },
+        { name: "REVERB",  effect: "Reverb",  amount: 0.6, baseColor: "#0d3030", activeColor: "#1a6666" },
+        { name: "REPEAT",  effect: "Roll",    amount: 1.0, baseColor: "#221440", activeColor: "#4428a0" },
+        // Bottom row — toggle latch (4-7)
+        { name: "ECHO OUT",effect: "EchoOut",    baseColor: "#1a2820", activeColor: "#2a6640" },
+        { name: "BACKSPIN",effect: "Backspin",   baseColor: "#2a1a30", activeColor: "#6a3080" },
         { name: "BRAKE",   effect: "VinylBrake", baseColor: "#2a1a08", activeColor: "#886020" },
+        { name: "ROLLOUT", effect: "RollOut",    baseColor: "#1e1440", activeColor: "#4428a0" },
     ]
 
     // ── PAD FX helpers ────────────────────────────────────────────────────────
     function padFxApply(defIndex) {
         if (!root.engine) return
         var def = root.padFxDefs[defIndex]
-        if (def.effect === "VinylBrake") {
-            root.engine.startVinylBrake()
-        } else {
-            root.engine.setPadFx(def.effect, 1.0)
-        }
+        if (def.effect === "VinylBrake")       root.engine.startVinylBrake()
+        else if (def.effect === "EchoOut")     root.engine.startEchoOut()
+        else if (def.effect === "Backspin")    root.engine.startBackspin()
+        else if (def.effect === "RollOut")     root.engine.startRollOut()
+        else                                   root.engine.setPadFx(def.effect, def.amount !== undefined ? def.amount : 1.0)
     }
 
     function padFxDeactivate(defIndex) {
         if (!root.engine) return
         var def = root.padFxDefs[defIndex]
-        if (def.effect === "VinylBrake")
-            root.engine.stopVinylBrake()
-        else
-            root.engine.clearPadFx()
+        if (def.effect === "VinylBrake")       root.engine.stopVinylBrake()
+        else if (def.effect === "EchoOut")     root.engine.stopEchoOut()
+        else if (def.effect === "Backspin")    root.engine.stopBackspin()
+        else if (def.effect === "RollOut")     root.engine.stopRollOut()
+        else                                   root.engine.clearPadFx()
     }
 
     function padFxRelease(defIndex) {
         if (!root.engine) return
-        var def = root.padFxDefs[defIndex]
-        if (def.effect === "VinylBrake") {
-            root.engine.stopVinylBrake()
-        } else {
-            // Restore active toggle if any, otherwise clear
-            if (root.padFxActiveToggle >= 0) {
-                var td = root.padFxDefs[root.padFxActiveToggle]
-                if (td.effect !== "VinylBrake")
-                    root.engine.setPadFx(td.effect, 1.0)
-            } else {
-                root.engine.clearPadFx()
-            }
-        }
+        // Momentary pad (0-3) released — all bottom-row toggles are MixerDspSource stop effects,
+        // none use FxProcessor, so just clear the pad FX slot
+        root.engine.clearPadFx()
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -232,10 +223,8 @@ Item {
                                  : activeColor
 
                         border.color: {
-                            if (cueSet)       return Qt.lighter(cue.color, 1.7)
-                            if (padFxLit)     return Qt.lighter(root.padFxDefs[index].activeColor, 1.8)
-                            if (padFxToggleOn && index === 7 && root.engine && root.engine.vinylBrakeActive)
-                                              return "#ffdd44"
+                            if (cueSet)   return Qt.lighter(cue.color, 1.7)
+                            if (padFxLit) return Qt.lighter(root.padFxDefs[index].activeColor, 1.8)
                             return "#282828"
                         }
                         border.width: 1

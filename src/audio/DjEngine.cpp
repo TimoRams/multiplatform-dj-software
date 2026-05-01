@@ -1120,7 +1120,10 @@ public:
         m_padFx.setEffectType(EffectType::None);
         m_padFx.setAmount(0.0f);
     }
-    void setVinylBrakeActive(bool active) { m_vinylBrakeWanted.store(active, std::memory_order_relaxed); }
+    void setVinylBrakeActive(bool active) { m_vinylBrakeWanted.store(active,  std::memory_order_relaxed); }
+    void setEchoOutActive   (bool active) { m_echoOutWanted.store(active,     std::memory_order_relaxed); }
+    void setBackspinActive  (bool active) { m_backspinWanted.store(active,    std::memory_order_relaxed); }
+    void setRollOutActive   (bool active) { m_rollOutWanted.store(active,     std::memory_order_relaxed); }
     void setScratchTimbre(float amount)   { scratchTimbre.store(std::clamp(amount, 0.0f, 1.0f), std::memory_order_relaxed); }
 
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override {
@@ -1143,12 +1146,35 @@ public:
         m_scratchWarmLpState[1] = 0.0f;
 
         // 1.15 s ramp from full speed to a complete stop
-        m_vinylBrakeRampDown = 1.0f / (1.15f * static_cast<float>(sampleRate));
-        m_vinylBrakeFactor   = 1.0f;
-        m_vinylBrakeWritePos = 0;
-        m_vinylBrakeReadPos  = 0.0f;
+        m_vinylBrakeRampDown  = 1.0f / (1.15f * static_cast<float>(sampleRate));
+        m_vinylBrakeFactor    = 1.0f;
+        m_vinylBrakeWritePos  = 0;
+        m_vinylBrakeReadPos   = 0.0f;
+        m_vinylBrakeNeedSync  = true;
+        m_backspinNeedSync    = true;
         m_vinylBrakeBufL.fill(0.0f);
         m_vinylBrakeBufR.fill(0.0f);
+
+        // Echo Out
+        m_echoOutDelaySamples = std::min(kEchoOutBuf - 1,
+                                         static_cast<int>(sampleRate * 0.375));
+        m_echoOutLpCoef = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi
+                                           * 4000.0f / static_cast<float>(sampleRate));
+        m_echoOutBufL.fill(0.0f);
+        m_echoOutBufR.fill(0.0f);
+        m_echoOutWritePos  = 0;
+        m_echoOutLpStateL  = 0.0f;
+        m_echoOutLpStateR  = 0.0f;
+        m_echoOutAudioActive = false;
+
+        // Backspin: 2.5× initial speed, decelerates to 0 in ~2.0 s
+        m_backspinSpeedRampDown = 2.5f / (2.0f * static_cast<float>(sampleRate));
+        m_backspinSpeed         = 0.0f;
+
+        // Roll Out
+        m_rollOutRampDown  = 1.0f / (1.5f * static_cast<float>(sampleRate));
+        m_rollOutNeedSync  = true;
+        m_rollOutGain      = 1.0f;
 
         updateFilters();
     }
@@ -1219,34 +1245,52 @@ public:
                         bufferToFill.startSample,
                         bufferToFill.numSamples);
 
-        // ── Vinyl brake: varispeed output effect (transport runs at normal speed) ──
+        // ── Circular buffer: always records; vinyl brake + backspin read from it ──
         {
-            const bool wantBrake = m_vinylBrakeWanted.load(std::memory_order_relaxed);
-            if (wantBrake || m_vinylBrakeFactor < 1.0f) {
-                const int numCh = std::min(bufferToFill.buffer->getNumChannels(), 2);
-                const int bStart = bufferToFill.startSample;
-                const int bN     = bufferToFill.numSamples;
-                float* dataL = numCh > 0 ? bufferToFill.buffer->getWritePointer(0, bStart) : nullptr;
-                float* dataR = numCh > 1 ? bufferToFill.buffer->getWritePointer(1, bStart) : nullptr;
+            const bool wantBrake    = m_vinylBrakeWanted.load(std::memory_order_relaxed);
+            const bool wantBackspin = m_backspinWanted.load(std::memory_order_relaxed);
 
-                for (int i = 0; i < bN; ++i) {
-                    // Record post-FX audio into circular buffer
-                    const int wp = m_vinylBrakeWritePos & kVinylBrakeMask;
-                    if (dataL) m_vinylBrakeBufL[wp] = dataL[i];
-                    if (dataR) m_vinylBrakeBufR[wp] = dataR[i];
-                    ++m_vinylBrakeWritePos;
+            const int numCh = std::min(bufferToFill.buffer->getNumChannels(), 2);
+            const int bStart = bufferToFill.startSample;
+            const int bN     = bufferToFill.numSamples;
+            float* dataL = numCh > 0 ? bufferToFill.buffer->getWritePointer(0, bStart) : nullptr;
+            float* dataR = numCh > 1 ? bufferToFill.buffer->getWritePointer(1, bStart) : nullptr;
 
+            // Sync read positions on first sample of activation
+            if (wantBrake && m_vinylBrakeNeedSync) {
+                m_vinylBrakeReadPos  = static_cast<float>((m_vinylBrakeWritePos - 1 + kVinylBrakeBuf) & kVinylBrakeMask);
+                m_vinylBrakeFactor   = 1.0f;
+                m_vinylBrakeNeedSync = false;
+            }
+            if (!wantBrake)
+                m_vinylBrakeNeedSync = true;
+
+            if (wantBackspin && m_backspinNeedSync) {
+                m_backspinReadPos  = static_cast<float>((m_vinylBrakeWritePos - 1 + kVinylBrakeBuf) & kVinylBrakeMask);
+                m_backspinSpeed    = 2.5f;  // start at 2.5× backward speed → decelerates to 0
+                m_backspinNeedSync = false;
+            }
+            if (!wantBackspin) {
+                m_backspinNeedSync = true;
+                m_backspinSpeed    = 0.0f;
+            }
+
+            for (int i = 0; i < bN; ++i) {
+                // Always record post-FX audio so backspin always has fresh material
+                const int wp = m_vinylBrakeWritePos & kVinylBrakeMask;
+                if (dataL) m_vinylBrakeBufL[wp] = dataL[i];
+                if (dataR) m_vinylBrakeBufR[wp] = dataR[i];
+                ++m_vinylBrakeWritePos;
+
+                if (wantBrake || m_vinylBrakeFactor < 1.0f) {
+                    // Ramp playback rate toward zero (pitch drops to silence)
                     if (wantBrake) {
-                        // Ramp the playback rate toward zero (pitch drops to silence)
                         m_vinylBrakeFactor = std::max(0.0f, m_vinylBrakeFactor - m_vinylBrakeRampDown);
                     } else {
-                        // Released: snap readPos to current write position so
-                        // the next active sample is the live audio again.
-                        m_vinylBrakeFactor = 1.0f;
+                        // Released: snap back to live audio immediately
+                        m_vinylBrakeFactor  = 1.0f;
                         m_vinylBrakeReadPos = static_cast<float>((m_vinylBrakeWritePos - 1) & kVinylBrakeMask);
                     }
-
-                    // Read from circular buffer at current (slowing) rate
                     const int rp = static_cast<int>(m_vinylBrakeReadPos) & kVinylBrakeMask;
                     if (m_vinylBrakeFactor > 0.0f) {
                         if (dataL) dataL[i] = m_vinylBrakeBufL[rp];
@@ -1256,9 +1300,114 @@ public:
                         if (dataR) dataR[i] = 0.0f;
                     }
                     m_vinylBrakeReadPos += m_vinylBrakeFactor;
-                    // Keep readPos within the buffer so float precision stays clean
                     if (m_vinylBrakeReadPos >= static_cast<float>(kVinylBrakeBuf))
                         m_vinylBrakeReadPos -= static_cast<float>(kVinylBrakeBuf);
+                }
+                else if (wantBackspin) {
+                    if (m_backspinSpeed > 0.0f) {
+                        // Linear-interpolated backward read: high pitch → low pitch → silence
+                        const int   rp0  = static_cast<int>(m_backspinReadPos) & kVinylBrakeMask;
+                        const int   rp1  = (rp0 + 1) & kVinylBrakeMask;
+                        const float frac = m_backspinReadPos - std::floor(m_backspinReadPos);
+                        if (dataL) dataL[i] = m_vinylBrakeBufL[rp0] + frac * (m_vinylBrakeBufL[rp1] - m_vinylBrakeBufL[rp0]);
+                        if (dataR) dataR[i] = m_vinylBrakeBufR[rp0] + frac * (m_vinylBrakeBufR[rp1] - m_vinylBrakeBufR[rp0]);
+                        m_backspinReadPos -= m_backspinSpeed;
+                        if (m_backspinReadPos < 0.0f)
+                            m_backspinReadPos += static_cast<float>(kVinylBrakeBuf);
+                        m_backspinSpeed = std::max(0.0f, m_backspinSpeed - m_backspinSpeedRampDown);
+                    } else {
+                        if (dataL) dataL[i] = 0.0f;
+                        if (dataR) dataR[i] = 0.0f;
+                    }
+                }
+            }
+        }
+
+        // ── Echo Out (stop effect): records live audio when idle; when active, cuts
+        //    live audio and plays the echo tail from the pre-recorded buffer → silence
+        {
+            const bool wantEchoOut = m_echoOutWanted.load(std::memory_order_relaxed);
+
+            if (!wantEchoOut && m_echoOutAudioActive) {
+                // Toggle turned off: reset for next use
+                m_echoOutAudioActive = false;
+                m_echoOutLpStateL    = 0.0f;
+                m_echoOutLpStateR    = 0.0f;
+            } else if (wantEchoOut && !m_echoOutAudioActive) {
+                m_echoOutAudioActive = true;
+            }
+
+            const int numCh = std::min(bufferToFill.buffer->getNumChannels(), 2);
+            const int bStart = bufferToFill.startSample;
+            const int bN     = bufferToFill.numSamples;
+
+            if (!m_echoOutAudioActive) {
+                // Idle: continuously record live audio into the delay buffer (no feedback)
+                const float* srcL = numCh > 0 ? bufferToFill.buffer->getReadPointer(0, bStart) : nullptr;
+                const float* srcR = numCh > 1 ? bufferToFill.buffer->getReadPointer(1, bStart) : nullptr;
+                for (int i = 0; i < bN; ++i) {
+                    m_echoOutBufL[m_echoOutWritePos & kEchoOutMask] = srcL ? srcL[i] : 0.f;
+                    m_echoOutBufR[m_echoOutWritePos & kEchoOutMask] = srcR ? srcR[i] : 0.f;
+                    ++m_echoOutWritePos;
+                }
+            } else {
+                // Active: cut live audio, play echo tail from pre-recorded buffer → silence
+                float* dataL = numCh > 0 ? bufferToFill.buffer->getWritePointer(0, bStart) : nullptr;
+                float* dataR = numCh > 1 ? bufferToFill.buffer->getWritePointer(1, bStart) : nullptr;
+                for (int i = 0; i < bN; ++i) {
+                    const int rp = (m_echoOutWritePos - m_echoOutDelaySamples + kEchoOutBuf) & kEchoOutMask;
+                    const float delL = m_echoOutBufL[rp];
+                    const float delR = m_echoOutBufR[rp];
+                    m_echoOutLpStateL += m_echoOutLpCoef * (delL - m_echoOutLpStateL);
+                    m_echoOutLpStateR += m_echoOutLpCoef * (delR - m_echoOutLpStateR);
+                    // Feed silence + feedback so the echo repeats and decays
+                    m_echoOutBufL[m_echoOutWritePos & kEchoOutMask] = m_echoOutLpStateL * kEchoOutFeedback;
+                    m_echoOutBufR[m_echoOutWritePos & kEchoOutMask] = m_echoOutLpStateR * kEchoOutFeedback;
+                    ++m_echoOutWritePos;
+                    // Output is ONLY the echo tail (live audio is cut → stop effect)
+                    if (dataL) dataL[i] = m_echoOutLpStateL;
+                    if (dataR) dataR[i] = m_echoOutLpStateR;
+                }
+            }
+        }
+
+        // ── Roll Out (stop effect): loops a captured 250 ms segment and fades to silence
+        {
+            const bool wantRollOut = m_rollOutWanted.load(std::memory_order_relaxed);
+
+            if (wantRollOut && m_rollOutNeedSync) {
+                m_rollOutLoopLen   = std::min(static_cast<int>(m_sampleRate * 0.25),
+                                              kVinylBrakeBuf / 4);
+                m_rollOutLoopStart = (m_vinylBrakeWritePos - m_rollOutLoopLen + kVinylBrakeBuf * 2)
+                                      & kVinylBrakeMask;
+                m_rollOutOffset    = 0.0f;
+                m_rollOutGain      = 1.0f;
+                m_rollOutNeedSync  = false;
+            }
+            if (!wantRollOut)
+                m_rollOutNeedSync = true;
+
+            if (wantRollOut && !m_rollOutNeedSync) {
+                const int numCh = std::min(bufferToFill.buffer->getNumChannels(), 2);
+                const int bStart = bufferToFill.startSample;
+                const int bN     = bufferToFill.numSamples;
+                float* dataL = numCh > 0 ? bufferToFill.buffer->getWritePointer(0, bStart) : nullptr;
+                float* dataR = numCh > 1 ? bufferToFill.buffer->getWritePointer(1, bStart) : nullptr;
+
+                for (int i = 0; i < bN; ++i) {
+                    const int rp = (m_rollOutLoopStart + static_cast<int>(m_rollOutOffset))
+                                    & kVinylBrakeMask;
+                    if (m_rollOutGain > 0.0f) {
+                        if (dataL) dataL[i] = m_vinylBrakeBufL[rp] * m_rollOutGain;
+                        if (dataR) dataR[i] = m_vinylBrakeBufR[rp] * m_rollOutGain;
+                        m_rollOutGain = std::max(0.0f, m_rollOutGain - m_rollOutRampDown);
+                    } else {
+                        if (dataL) dataL[i] = 0.0f;
+                        if (dataR) dataR[i] = 0.0f;
+                    }
+                    m_rollOutOffset += 1.0f;
+                    if (static_cast<int>(m_rollOutOffset) >= m_rollOutLoopLen)
+                        m_rollOutOffset -= static_cast<float>(m_rollOutLoopLen);
                 }
             }
         }
@@ -1491,17 +1640,47 @@ private:
     FxProcessor m_padFx;
     BrickwallLimiter m_limiter;
 
-    // Vinyl brake — varispeed output effect, transport is unaffected
-    // Buffer is power-of-2 so index wrapping uses a cheap bitmask.
-    static constexpr int kVinylBrakeBuf  = 1 << 18; // 262144 samples (~2.7 s @ 48 kHz, ~1.37 s @ 192 kHz)
+    // Vinyl brake + Backspin — shared circular buffer, transport is unaffected
+    static constexpr int kVinylBrakeBuf  = 1 << 18;
     static constexpr int kVinylBrakeMask = kVinylBrakeBuf - 1;
     std::atomic<bool> m_vinylBrakeWanted { false };
-    float m_vinylBrakeFactor   = 1.0f; // audio-thread only; 1=full speed, 0=stopped
-    float m_vinylBrakeRampDown = 0.0f; // per-sample decrement (computed in prepareToPlay)
-    int   m_vinylBrakeWritePos = 0;    // audio-thread only
-    float m_vinylBrakeReadPos  = 0.0f; // audio-thread only
+    std::atomic<bool> m_backspinWanted   { false };
+    float m_vinylBrakeFactor   = 1.0f;
+    float m_vinylBrakeRampDown = 0.0f;
+    int   m_vinylBrakeWritePos = 0;
+    float m_vinylBrakeReadPos  = 0.0f;
+    float m_backspinReadPos    = 0.0f;
+    bool  m_vinylBrakeNeedSync = true;  // audio-thread only
+    bool  m_backspinNeedSync   = true;  // audio-thread only
     std::array<float, kVinylBrakeBuf> m_vinylBrakeBufL {};
     std::array<float, kVinylBrakeBuf> m_vinylBrakeBufR {};
+
+    // Echo Out — records live audio when idle; when active cuts live and plays echo tail
+    static constexpr int   kEchoOutBuf      = 65536;
+    static constexpr int   kEchoOutMask     = kEchoOutBuf - 1;
+    static constexpr float kEchoOutFeedback = 0.68f;
+    std::atomic<bool>  m_echoOutWanted      { false };
+    bool           m_echoOutAudioActive     = false;  // audio thread only
+    int            m_echoOutWritePos        = 0;
+    int            m_echoOutDelaySamples    = 0;
+    float          m_echoOutLpCoef          = 0.0f;
+    float          m_echoOutLpStateL        = 0.0f;
+    float          m_echoOutLpStateR        = 0.0f;
+    std::array<float, kEchoOutBuf> m_echoOutBufL {};
+    std::array<float, kEchoOutBuf> m_echoOutBufR {};
+
+    // Backspin speed ramp (audio thread only): starts at 2.0× backward, decelerates to 0
+    float m_backspinSpeed        = 0.0f;
+    float m_backspinSpeedRampDown = 0.0f;  // computed in prepareToPlay
+
+    // Roll Out — loop + fade to silence in MixerDspSource (uses vinyl buffer for capture)
+    std::atomic<bool> m_rollOutWanted    { false };
+    bool  m_rollOutNeedSync  = true;
+    int   m_rollOutLoopStart = 0;
+    float m_rollOutOffset    = 0.0f;
+    float m_rollOutGain      = 1.0f;
+    float m_rollOutRampDown  = 0.0f;
+    int   m_rollOutLoopLen   = 0;
     juce::AudioBuffer<float> m_routeScratch;
     std::atomic<float> scratchTimbre { 0.0f };
     float m_scratchWarmLpState[2] { 0.0f, 0.0f };
@@ -4048,6 +4227,7 @@ void DjEngine::setPadFx(const QString& effectName, float wet)
         {"Trans",      EffectType::Trans},
         {"Stretch",    EffectType::Stretch},
         {"Filter",     EffectType::SoundColorFilter},
+        {"RollOut",    EffectType::RollOut},
     };
     const EffectType type = kMap.value(effectName, EffectType::None);
     if (mixerSource) {
@@ -4076,6 +4256,54 @@ void DjEngine::stopVinylBrake()
     m_vinylBrakeActive = false;
     if (mixerSource) mixerSource->setVinylBrakeActive(false);
     emit vinylBrakeChanged();
+}
+
+void DjEngine::startEchoOut()
+{
+    if (m_echoOutActive) return;
+    m_echoOutActive = true;
+    if (mixerSource) mixerSource->setEchoOutActive(true);
+    emit echoOutChanged();
+}
+
+void DjEngine::stopEchoOut()
+{
+    if (!m_echoOutActive) return;
+    m_echoOutActive = false;
+    if (mixerSource) mixerSource->setEchoOutActive(false);
+    emit echoOutChanged();
+}
+
+void DjEngine::startBackspin()
+{
+    if (m_backspinActive) return;
+    m_backspinActive = true;
+    if (mixerSource) mixerSource->setBackspinActive(true);
+    emit backspinChanged();
+}
+
+void DjEngine::stopBackspin()
+{
+    if (!m_backspinActive) return;
+    m_backspinActive = false;
+    if (mixerSource) mixerSource->setBackspinActive(false);
+    emit backspinChanged();
+}
+
+void DjEngine::startRollOut()
+{
+    if (m_rollOutActive) return;
+    m_rollOutActive = true;
+    if (mixerSource) mixerSource->setRollOutActive(true);
+    emit rollOutChanged();
+}
+
+void DjEngine::stopRollOut()
+{
+    if (!m_rollOutActive) return;
+    m_rollOutActive = false;
+    if (mixerSource) mixerSource->setRollOutActive(false);
+    emit rollOutChanged();
 }
 
 void DjEngine::setFxSCKnob(float knob)
