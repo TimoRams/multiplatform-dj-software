@@ -1,0 +1,12 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/icons">
+        <file alias="16.png">generated/16.png</file>
+        <file alias="32.png">generated/32.png</file>
+        <file alias="48.png">generated/48.png</file>
+        <file alias="64.png">generated/64.png</file>
+        <file alias="128.png">generated/128.png</file>
+        <file alias="256.png">generated/256.png</file>
+        <file alias="512.png">generated/512.png</file>
+    </qresource>
+</RCC>

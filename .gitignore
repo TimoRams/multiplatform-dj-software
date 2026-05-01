@@ -34,6 +34,9 @@ Thumbs.db
 desktop.ini
 
 # --- JUCE-spezifisch ---
-# Die meisten JUCE-Artefakte liegen im build-Ordner, 
+# Die meisten JUCE-Artefakte liegen im build-Ordner,
 # aber falls du den Projucer nutzt:
 JuceLibraryCode/
+
+# --- App Icons (generiert durch scripts/generate_icons.sh) ---
+resources/icons/generated/

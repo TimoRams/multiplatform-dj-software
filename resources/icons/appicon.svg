@@ -1,0 +1,18 @@
+<svg width="240" height="240" viewBox="0 0 240 240" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="black" stroke-width="2">
+
+  <!-- Outer ring -->
+  <circle cx="120" cy="120" r="100"></circle>
+
+  <!-- Grip ring -->
+  <circle cx="120" cy="120" r="85" stroke-dasharray="6 6"></circle>
+
+  <!-- Inner ring -->
+  <circle cx="120" cy="120" r="60"></circle>
+
+  <!-- Center disc -->
+  <circle cx="120" cy="120" r="18"></circle>
+
+  <!-- Center hole -->
+  <circle cx="120" cy="120" r="6"></circle>
+
+</svg>

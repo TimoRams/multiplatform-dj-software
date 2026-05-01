@@ -209,6 +209,13 @@ add_subdirectory(libs/JUCE)
 set(LINK_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 include(libs/link/AbletonLinkConfig.cmake)
 
+set(_icons_dir "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons")
+set(_icons_generated "${_icons_dir}/generated")
+set(_icons_ready FALSE)
+if(EXISTS "${_icons_generated}/256.png")
+    set(_icons_ready TRUE)
+endif()
+
 juce_add_console_app(${PROJECT_NAME}
     PRODUCT_NAME "RamsbrockDJ"
     COMPANY_NAME "Ramsbrock.net"
@@ -352,3 +359,31 @@ endif()
 set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# ── App Icons ─────────────────────────────────────────────────────────────────
+# Run scripts/generate_icons.sh first; then re-run CMake to pick up the icons.
+if(_icons_ready)
+    # All platforms: embed PNG sizes via QRC for QGuiApplication::setWindowIcon().
+    target_sources(${PROJECT_NAME} PRIVATE "${_icons_dir}/icons.qrc")
+
+    if(WIN32 AND EXISTS "${_icons_generated}/appicon.ico")
+        # Windows: also embed .ico directly in the executable for Explorer/taskbar.
+        target_sources(${PROJECT_NAME} PRIVATE "${_icons_dir}/windows/appicon.rc")
+    endif()
+
+    if(APPLE AND EXISTS "${_icons_generated}/AppIcon.icns")
+        # macOS: bundle the .icns so the Dock / Finder show the right icon.
+        target_sources(${PROJECT_NAME} PRIVATE "${_icons_generated}/AppIcon.icns")
+        set_source_files_properties("${_icons_generated}/AppIcon.icns"
+            PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+        set_target_properties(${PROJECT_NAME} PROPERTIES
+            MACOSX_BUNDLE TRUE
+            MACOSX_BUNDLE_ICON_FILE AppIcon.icns
+            MACOSX_BUNDLE_BUNDLE_NAME "RamsbrockDJ"
+            MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
+            MACOSX_BUNDLE_COPYRIGHT "© Ramsbrock.net"
+        )
+    endif()
+else()
+    message(STATUS "Icon resources not found — run scripts/generate_icons.sh then re-run CMake.")
+endif()
