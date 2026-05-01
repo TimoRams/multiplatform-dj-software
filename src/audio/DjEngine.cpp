@@ -1112,6 +1112,15 @@ public:
     void setFxAmount(float amount)        { m_fx.setAmount(amount); }
     void setFxSCKnob(float knob)          { m_fx.setSCKnobValue(knob); }
     void setFxSCParam(float param)        { m_fx.setSCParamValue(param); }
+
+    // ── PAD FX slot (independent of the FX bar chain) ──────────────────────
+    void setPadFxEffectType(EffectType type) { m_padFx.setEffectType(type); }
+    void setPadFxAmount(float amount)        { m_padFx.setAmount(amount); }
+    void clearPadFx() {
+        m_padFx.setEffectType(EffectType::None);
+        m_padFx.setAmount(0.0f);
+    }
+    void setVinylBrakeActive(bool active) { m_vinylBrakeWanted.store(active, std::memory_order_relaxed); }
     void setScratchTimbre(float amount)   { scratchTimbre.store(std::clamp(amount, 0.0f, 1.0f), std::memory_order_relaxed); }
 
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override {
@@ -1120,6 +1129,7 @@ public:
         m_routeScratch.setSize(2, std::max(64, samplesPerBlockExpected), false, true, true);
 
         m_fx.prepare(sampleRate, samplesPerBlockExpected, 2);
+        m_padFx.prepare(sampleRate, samplesPerBlockExpected, 2);
         m_limiter.prepare(sampleRate, samplesPerBlockExpected, 2);
         
         juce::dsp::ProcessSpec spec { sampleRate, static_cast<juce::uint32>(samplesPerBlockExpected), 2 };
@@ -1131,6 +1141,15 @@ public:
         m_sampleRate = sampleRate;
         m_scratchWarmLpState[0] = 0.0f;
         m_scratchWarmLpState[1] = 0.0f;
+
+        // 1.15 s ramp from full speed to a complete stop
+        m_vinylBrakeRampDown = 1.0f / (1.15f * static_cast<float>(sampleRate));
+        m_vinylBrakeFactor   = 1.0f;
+        m_vinylBrakeWritePos = 0;
+        m_vinylBrakeReadPos  = 0.0f;
+        m_vinylBrakeBufL.fill(0.0f);
+        m_vinylBrakeBufR.fill(0.0f);
+
         updateFilters();
     }
 
@@ -1194,6 +1213,55 @@ public:
         m_fx.process(*bufferToFill.buffer,
                      bufferToFill.startSample,
                      bufferToFill.numSamples);
+
+        // ── PAD FX slot (Performance Pads — independent of FX bar) ────────────
+        m_padFx.process(*bufferToFill.buffer,
+                        bufferToFill.startSample,
+                        bufferToFill.numSamples);
+
+        // ── Vinyl brake: varispeed output effect (transport runs at normal speed) ──
+        {
+            const bool wantBrake = m_vinylBrakeWanted.load(std::memory_order_relaxed);
+            if (wantBrake || m_vinylBrakeFactor < 1.0f) {
+                const int numCh = std::min(bufferToFill.buffer->getNumChannels(), 2);
+                const int bStart = bufferToFill.startSample;
+                const int bN     = bufferToFill.numSamples;
+                float* dataL = numCh > 0 ? bufferToFill.buffer->getWritePointer(0, bStart) : nullptr;
+                float* dataR = numCh > 1 ? bufferToFill.buffer->getWritePointer(1, bStart) : nullptr;
+
+                for (int i = 0; i < bN; ++i) {
+                    // Record post-FX audio into circular buffer
+                    const int wp = m_vinylBrakeWritePos & kVinylBrakeMask;
+                    if (dataL) m_vinylBrakeBufL[wp] = dataL[i];
+                    if (dataR) m_vinylBrakeBufR[wp] = dataR[i];
+                    ++m_vinylBrakeWritePos;
+
+                    if (wantBrake) {
+                        // Ramp the playback rate toward zero (pitch drops to silence)
+                        m_vinylBrakeFactor = std::max(0.0f, m_vinylBrakeFactor - m_vinylBrakeRampDown);
+                    } else {
+                        // Released: snap readPos to current write position so
+                        // the next active sample is the live audio again.
+                        m_vinylBrakeFactor = 1.0f;
+                        m_vinylBrakeReadPos = static_cast<float>((m_vinylBrakeWritePos - 1) & kVinylBrakeMask);
+                    }
+
+                    // Read from circular buffer at current (slowing) rate
+                    const int rp = static_cast<int>(m_vinylBrakeReadPos) & kVinylBrakeMask;
+                    if (m_vinylBrakeFactor > 0.0f) {
+                        if (dataL) dataL[i] = m_vinylBrakeBufL[rp];
+                        if (dataR) dataR[i] = m_vinylBrakeBufR[rp];
+                    } else {
+                        if (dataL) dataL[i] = 0.0f;
+                        if (dataR) dataR[i] = 0.0f;
+                    }
+                    m_vinylBrakeReadPos += m_vinylBrakeFactor;
+                    // Keep readPos within the buffer so float precision stays clean
+                    if (m_vinylBrakeReadPos >= static_cast<float>(kVinylBrakeBuf))
+                        m_vinylBrakeReadPos -= static_cast<float>(kVinylBrakeBuf);
+                }
+            }
+        }
 
         // Channel pre-fader meter: post Trim/EQ/Filter/FX, pre channel fader/crossfader.
         {
@@ -1420,7 +1488,20 @@ private:
     FilterType colorFilter;
 
     FxProcessor m_fx;
+    FxProcessor m_padFx;
     BrickwallLimiter m_limiter;
+
+    // Vinyl brake — varispeed output effect, transport is unaffected
+    // Buffer is power-of-2 so index wrapping uses a cheap bitmask.
+    static constexpr int kVinylBrakeBuf  = 1 << 18; // 262144 samples (~2.7 s @ 48 kHz, ~1.37 s @ 192 kHz)
+    static constexpr int kVinylBrakeMask = kVinylBrakeBuf - 1;
+    std::atomic<bool> m_vinylBrakeWanted { false };
+    float m_vinylBrakeFactor   = 1.0f; // audio-thread only; 1=full speed, 0=stopped
+    float m_vinylBrakeRampDown = 0.0f; // per-sample decrement (computed in prepareToPlay)
+    int   m_vinylBrakeWritePos = 0;    // audio-thread only
+    float m_vinylBrakeReadPos  = 0.0f; // audio-thread only
+    std::array<float, kVinylBrakeBuf> m_vinylBrakeBufL {};
+    std::array<float, kVinylBrakeBuf> m_vinylBrakeBufR {};
     juce::AudioBuffer<float> m_routeScratch;
     std::atomic<float> scratchTimbre { 0.0f };
     float m_scratchWarmLpState[2] { 0.0f, 0.0f };
@@ -3952,6 +4033,49 @@ void DjEngine::setFxEffectType(EffectType type)
 void DjEngine::setFxWetDry(float amount)
 {
     if (mixerSource) mixerSource->setFxAmount(amount);
+}
+
+void DjEngine::setPadFx(const QString& effectName, float wet)
+{
+    static const QHash<QString, EffectType> kMap = {
+        {"Echo",       EffectType::Echo},
+        {"Reverb",     EffectType::Reverb},
+        {"Roll",       EffectType::Roll},
+        {"SlipRoll",   EffectType::SlipRoll},
+        {"Flanger",    EffectType::Flanger},
+        {"Phaser",     EffectType::Phaser},
+        {"Bitcrusher", EffectType::Bitcrusher},
+        {"Trans",      EffectType::Trans},
+        {"Stretch",    EffectType::Stretch},
+        {"Filter",     EffectType::SoundColorFilter},
+    };
+    const EffectType type = kMap.value(effectName, EffectType::None);
+    if (mixerSource) {
+        mixerSource->setPadFxEffectType(type);
+        mixerSource->setPadFxAmount(wet);
+    }
+}
+
+void DjEngine::clearPadFx()
+{
+    if (mixerSource)
+        mixerSource->clearPadFx();
+}
+
+void DjEngine::startVinylBrake()
+{
+    if (m_vinylBrakeActive) return;
+    m_vinylBrakeActive = true;
+    if (mixerSource) mixerSource->setVinylBrakeActive(true);
+    emit vinylBrakeChanged();
+}
+
+void DjEngine::stopVinylBrake()
+{
+    if (!m_vinylBrakeActive) return;
+    m_vinylBrakeActive = false;
+    if (mixerSource) mixerSource->setVinylBrakeActive(false);
+    emit vinylBrakeChanged();
 }
 
 void DjEngine::setFxSCKnob(float knob)

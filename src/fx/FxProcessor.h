@@ -133,8 +133,8 @@ private:
     };
     struct DelayState {
         DelayLine lineL, lineR;
-        // Low-cut echo: simple 1-pole HP filter state
-        float hpStateL = 0.f, hpStateR = 0.f;
+        float hpStateL = 0.f, hpStateR = 0.f; // low-cut echo HP state
+        float lpFbL    = 0.f, lpFbR    = 0.f; // tape-warmth LP in echo feedback
     };
     DelayState m_delayState;
     void prepareDelay();
@@ -193,7 +193,7 @@ private:
     void processEnigmaJet(juce::AudioBuffer<float>& wet, int start, int n, float amount);
 
     // ── Stretch (granular freeze) ─────────────────────────────────────────────
-    static constexpr int kStretchBuf = 8192;
+    static constexpr int kStretchBuf = 65536; // ~1.37 s @ 48 kHz — avoids rapid wrap-click
     struct StretchState {
         float  buf[2][kStretchBuf] = {};
         int    writePos = 0;

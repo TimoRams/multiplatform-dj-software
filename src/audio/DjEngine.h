@@ -74,6 +74,7 @@ class DjEngine : public QObject
     
     Q_PROPERTY(float gainReduction READ gainReduction NOTIFY gainReductionChanged)
     Q_PROPERTY(QVariantList hotCues READ hotCues NOTIFY hotCuesChanged)
+    Q_PROPERTY(bool vinylBrakeActive READ isVinylBrakeActive NOTIFY vinylBrakeChanged)
 
 public:
     static constexpr double WAVEFORM_POINTS_PER_SECOND = 600.0;
@@ -145,6 +146,18 @@ public:
     Q_INVOKABLE void setHotCueColor(int index, const QString& colorHex);
     Q_INVOKABLE void cueButtonPress();
     Q_INVOKABLE void cueButtonRelease();
+
+    // ── PAD FX ────────────────────────────────────────────────────────────────
+    // Applies a named effect to the PAD FX slot (independent of the FX bar).
+    // effectName: "Echo"|"Reverb"|"Roll"|"Flanger"|"Filter"|"Phaser"|"Bitcrusher"|"SlipRoll"|"Trans"
+    Q_INVOKABLE void setPadFx(const QString& effectName, float wet = 1.0f);
+    Q_INVOKABLE void clearPadFx();
+
+    // ── Vinyl Brake ───────────────────────────────────────────────────────────
+    // Smoothly ramps playback speed to 0 (brake) or back to normal (release).
+    Q_INVOKABLE void startVinylBrake();
+    Q_INVOKABLE void stopVinylBrake();
+    [[nodiscard]] bool isVinylBrakeActive() const { return m_vinylBrakeActive; }
     [[nodiscard]] TrackData* getTrackData() const;
 
     [[nodiscard]] QString trackTitle()    const { return m_trackTitle; }
@@ -278,6 +291,7 @@ signals:
     void gainReductionChanged();
     void segmentsChanged();
     void hotCuesChanged();
+    void vinylBrakeChanged();
 
 private slots:
     void onTimer();
@@ -358,6 +372,8 @@ private:
 
     // Tempo control: ±6/8/16/32/100% (WIDE) selectable range
     double m_tempoPercent = 0.0;
+
+    bool m_vinylBrakeActive = false;
 
     // Mixer state
     double m_volume = 0.8;

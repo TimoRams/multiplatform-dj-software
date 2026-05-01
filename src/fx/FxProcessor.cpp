@@ -365,13 +365,12 @@ void FxProcessor::prepareReverb()
 
 void FxProcessor::updateReverbParams(float amount)
 {
-    // amount 0 → subtle room; amount 1 → huge wet hall
     juce::dsp::Reverb::Parameters p;
-    p.roomSize   = 0.2f + amount * 0.78f;   // 0.2 … 1.0
-    p.damping    = 0.3f + amount * 0.50f;   // 0.3 … 0.8
-    p.wetLevel   = amount;                   // 0 … 1  (wet/dry handled externally too)
-    p.dryLevel   = 0.0f;                     // dry mixed externally via SmoothedValue
-    p.width      = 0.5f + amount * 0.5f;    // 0.5 … 1.0 (stereo width)
+    p.roomSize   = 0.35f + amount * 0.45f;  // 0.35 … 0.80 — moderate room
+    p.damping    = 0.45f + amount * 0.40f;  // 0.45 … 0.85 — tames long tail
+    p.wetLevel   = 1.0f;                    // external mixer handles wet/dry balance
+    p.dryLevel   = 0.0f;                    // dry mixed externally via SmoothedValue
+    p.width      = 0.5f + amount * 0.5f;   // 0.5 … 1.0 (stereo width)
     p.freezeMode = 0.0f;
     m_reverb.setParameters(p);
 }
@@ -392,16 +391,17 @@ void FxProcessor::processBitcrusher(juce::AudioBuffer<float>& wet,
                                     int start, int n, float amount)
 {
     // ── Bit depth reduction ───────────────────────────────────────────────────
-    // amount 0.0 → 16 bit (65536 steps), amount 1.0 → 2 bit (4 steps)
-    // Exponential mapping so the middle of the knob (~8 bit) sounds interesting.
-    const float t         = amount;                          // 0 … 1
-    const float bitDepth  = 16.0f * std::pow(2.0f / 16.0f, t);  // 16 … 2 bits
-    const float steps     = std::pow(2.0f, bitDepth);       // 65536 … 4
+    // Steeper exponential so the effect becomes audible from early knob positions.
+    // amount 0.0 → 16 bit (clean), amount 0.4 → ~5 bit (gritty), amount 1.0 → 2 bit
+    const float bitDepth  = std::max(2.0f,
+        16.0f * std::pow(2.0f / 16.0f, amount * 1.6f));
+    const float steps     = std::pow(2.0f, bitDepth);
     const float invSteps  = 1.0f / steps;
 
     // ── Sample-rate reduction (Sample-and-Hold) ───────────────────────────────
-    // amount 0.0 → hold 1 sample (no reduction), amount 1.0 → hold 32 samples
-    const int holdLen = 1 + static_cast<int>(amount * 31.0f);
+    // Concave mapping: effect kicks in sooner than a linear ramp
+    // amount 0.0 → 1 sample, amount 0.3 → ~10 samples, amount 1.0 → 48 samples
+    const int holdLen = 1 + static_cast<int>(std::pow(amount, 0.65f) * 47.0f);
 
     for (int ch = 0; ch < wet.getNumChannels() && ch < (int)m_bcState.size(); ++ch)
     {
@@ -516,12 +516,17 @@ void FxProcessor::prepareDelay()
 void FxProcessor::processEcho(juce::AudioBuffer<float>& wet,
                               int start, int n, float amount, bool lowCut)
 {
-    // Delay time: 100ms (amount 0) to 500ms (amount 1)
+    // Delay time: 100 ms → 600 ms
     const int delaySamples = std::clamp(
-        static_cast<int>(m_sampleRate * (0.1 + amount * 0.4)),
+        static_cast<int>(m_sampleRate * (0.1 + amount * 0.5)),
         1, kMaxDelaySamples - 1);
-    // Feedback: 0.25 to 0.65 — never unstable
-    const float feedback = 0.25f + amount * 0.40f;
+    // Feedback: 0.28 → 0.60 — self-oscillation avoided
+    const float feedback = 0.28f + amount * 0.32f;
+    // Tape-warmth LP on the feedback path: bright (7 kHz) → warm (2.5 kHz) as amount rises
+    const float lpHz  = 7000.f - amount * 4500.f;
+    const float lpCoef = std::clamp(
+        2.f * juce::MathConstants<float>::pi * lpHz / static_cast<float>(m_sampleRate),
+        0.001f, 0.99f);
     // HP coefficient for low-cut variant
     const float hpAlpha = lowCut
         ? 1.f / (1.f + 2.f * juce::MathConstants<float>::pi * 200.f
@@ -530,9 +535,10 @@ void FxProcessor::processEcho(juce::AudioBuffer<float>& wet,
 
     for (int ch = 0; ch < wet.getNumChannels() && ch < 2; ++ch)
     {
-        float* data = wet.getWritePointer(ch) + start;
+        float* data    = wet.getWritePointer(ch) + start;
         DelayLine& line = (ch == 0) ? m_delayState.lineL : m_delayState.lineR;
-        float& hpPrev = (ch == 0) ? m_delayState.hpStateL : m_delayState.hpStateR;
+        float& hpPrev  = (ch == 0) ? m_delayState.hpStateL : m_delayState.hpStateR;
+        float& lpState = (ch == 0) ? m_delayState.lpFbL    : m_delayState.lpFbR;
 
         for (int i = 0; i < n; ++i)
         {
@@ -540,22 +546,22 @@ void FxProcessor::processEcho(juce::AudioBuffer<float>& wet,
 
             if (lowCut)
             {
-                // Simple 1-pole high-pass (removes bass from feedback loop)
-                float filtered = hpAlpha * (hpPrev + delayed - hpPrev);
-                // Actually: 1-pole HP: y[n] = alpha * (y[n-1] + x[n] - x[n-1])
-                // We need to store x[n-1] too. Simplified approach:
                 float hp = delayed - hpPrev;
                 hpPrev   = delayed;
                 delayed  = hp;
             }
 
-            // Soft-clip the feedback to prevent blowup
-            float fb = delayed * feedback;
-            fb = std::tanh(fb);
+            // Tape warmth: one-pole LP softens high frequencies in each repeat
+            lpState += lpCoef * (delayed - lpState);
+            float warm = lpState;
 
-            float out = data[i] + fb;
-            line.write(out);
-            data[i] = out;
+            // Soft-clip only at very high levels
+            float fb = std::tanh(warm * feedback * 1.3f) / 1.3f;
+
+            // Clean decay: write input + attenuated feedback (no direct signal buildup)
+            line.write(data[i] * 0.95f + fb);
+            // Output: add the warm echo on top of input
+            data[i] = data[i] + warm * 0.80f;
         }
     }
 }
@@ -568,9 +574,14 @@ void FxProcessor::processMtDelay(juce::AudioBuffer<float>& wet,
                                   int start, int n, float amount)
 {
     const int maxDelay = std::clamp(
-        static_cast<int>(m_sampleRate * (0.1 + amount * 0.4)),
+        static_cast<int>(m_sampleRate * (0.1 + amount * 0.5)),
         4, kMaxDelaySamples - 1);
-    const float feedback = 0.15f + amount * 0.30f;
+    const float feedback = 0.18f + amount * 0.30f;
+    // Tape LP for warmth in feedback: 8 kHz → 3 kHz as amount rises
+    const float lpHz  = 8000.f - amount * 5000.f;
+    const float lpCoef = std::clamp(
+        2.f * juce::MathConstants<float>::pi * lpHz / static_cast<float>(m_sampleRate),
+        0.001f, 0.99f);
 
     const int tap1 = std::max(1, maxDelay / 4);
     const int tap2 = std::max(2, maxDelay / 2);
@@ -580,16 +591,20 @@ void FxProcessor::processMtDelay(juce::AudioBuffer<float>& wet,
     {
         float* data = wet.getWritePointer(ch) + start;
         DelayLine& line = (ch == 0) ? m_delayState.lineL : m_delayState.lineR;
+        float& lpState  = (ch == 0) ? m_delayState.lpFbL : m_delayState.lpFbR;
 
         for (int i = 0; i < n; ++i)
         {
             const float t1 = line.read(tap1);
             const float t2 = line.read(tap2);
             const float t3 = line.read(tap3);
-            const float tapMix = t1 * 0.45f + t2 * 0.35f + t3 * 0.25f;
-            const float fb = std::tanh(tapMix * feedback);
-            const float out = data[i] + fb;
-            line.write(out);
+            // Normalized tap weights (sum = 1.0)
+            const float tapMix = t1 * 0.43f + t2 * 0.34f + t3 * 0.23f;
+            // Tape warmth LP on the tap mix
+            lpState += lpCoef * (tapMix - lpState);
+            const float fb  = std::tanh(lpState * feedback);
+            const float out = data[i] + fb * 0.90f;
+            line.write(data[i] * 0.95f + fb * 0.80f);
             data[i] = out;
         }
     }
@@ -611,13 +626,13 @@ void FxProcessor::prepareSpiral()
 void FxProcessor::processSpiral(juce::AudioBuffer<float>& wet,
                                  int start, int n, float amount)
 {
-    // LFO rate: 0.2 Hz to 3 Hz
-    const float lfoRate  = 0.2f + amount * 2.8f;
+    // LFO rate: 0.15 Hz to 2.5 Hz
+    const float lfoRate  = 0.15f + amount * 2.35f;
     const float lfoInc   = lfoRate / static_cast<float>(m_sampleRate);
-    // Modulation depth in samples: 5ms to 20ms
-    const float modDepth = static_cast<float>(m_sampleRate) * (0.005f + amount * 0.015f);
-    // Base delay: ~15ms
-    const float baseDelay = static_cast<float>(m_sampleRate) * 0.015f;
+    // Modulation depth: 4 ms to 18 ms — classic chorus range
+    const float modDepth = static_cast<float>(m_sampleRate) * (0.004f + amount * 0.014f);
+    // Base delay: 18 ms — centre of the classic chorus sweet-spot
+    const float baseDelay = static_cast<float>(m_sampleRate) * 0.018f;
     const int   bufSize   = static_cast<int>(m_spiralState.bufL.size());
     if (bufSize == 0) return;
 
@@ -655,7 +670,8 @@ void FxProcessor::processSpiral(juce::AudioBuffer<float>& wet,
             float delayed = buf[static_cast<size_t>(rp0)] * (1.f - frac)
                           + buf[static_cast<size_t>(rp1)] * frac;
 
-            data[ch][i] = data[ch][i] * 0.7f + delayed * 0.5f;
+            // Equal-power sum: keeps perceived loudness consistent as effect engages
+            data[ch][i] = data[ch][i] * 0.70f + delayed * 0.40f;
         }
 
         // Advance writePos and LFO ONCE per sample
@@ -681,13 +697,14 @@ void FxProcessor::prepareFlanger()
 void FxProcessor::processFlanger(juce::AudioBuffer<float>& wet,
                                   int start, int n, float amount)
 {
-    // LFO: 0.1 Hz to 2 Hz
-    const float lfoRate  = 0.1f + amount * 1.9f;
+    // LFO: 0.05 Hz (slow sweep) to 1.5 Hz (fast jet)
+    const float lfoRate  = 0.05f + amount * 1.45f;
     const float lfoInc   = lfoRate / static_cast<float>(m_sampleRate);
-    // Mod depth: 1ms to 7ms
-    const float modDepth = static_cast<float>(m_sampleRate) * (0.001f + amount * 0.006f);
-    const float baseDelay = static_cast<float>(m_sampleRate) * 0.003f; // 3ms base
-    const float feedback  = 0.4f + amount * 0.3f;
+    // Mod depth: 0.5 ms to 8 ms — full comb-filter sweep range
+    const float modDepth = static_cast<float>(m_sampleRate) * (0.0005f + amount * 0.0075f);
+    const float baseDelay = static_cast<float>(m_sampleRate) * 0.002f; // 2 ms base
+    // Feedback: 0.2 (subtle) → 0.82 (jet) — large range unlocks all flanger timbres
+    const float feedback  = 0.20f + amount * 0.62f;
     const int   bufSize   = static_cast<int>(m_flangerState.bufL.size());
     if (bufSize == 0) return;
 
@@ -723,10 +740,9 @@ void FxProcessor::processFlanger(juce::AudioBuffer<float>& wet,
             float delayed = buf[static_cast<size_t>(rp0)] * (1.f - frac)
                           + buf[static_cast<size_t>(rp1)] * frac;
 
-            // Write input + soft-clipped feedback into delay buffer
-            buf[static_cast<size_t>(wp)] = data[ch][i] + std::tanh(delayed * feedback);
-            // Output = input + delayed
-            data[ch][i] = data[ch][i] + delayed;
+            buf[static_cast<size_t>(wp)] = data[ch][i] + std::tanh(delayed * feedback) * 0.85f;
+            // Equal-power sum avoids the 6 dB level jump when flanger engages
+            data[ch][i] = (data[ch][i] + delayed) * 0.7071f;
         }
 
         // Advance writePos and LFO ONCE per sample
@@ -743,12 +759,13 @@ void FxProcessor::processFlanger(juce::AudioBuffer<float>& wet,
 void FxProcessor::processPhaser(juce::AudioBuffer<float>& wet,
                                  int start, int n, float amount)
 {
-    // LFO: 0.1 Hz to 4 Hz
-    const float lfoRate = 0.1f + amount * 3.9f;
+    // LFO: 0.1 Hz to 5 Hz
+    const float lfoRate = 0.1f + amount * 4.9f;
     const float lfoInc  = lfoRate / static_cast<float>(m_sampleRate);
-    // All-pass frequency sweep: 200 Hz to 4 kHz
-    const float fMin = 200.f, fMax = 4000.f;
-    const float feedback = 0.5f;
+    // All-pass frequency sweep: 100 Hz to 6 kHz — wider range than before
+    const float fMin = 100.f, fMax = 6000.f;
+    // Feedback grows with amount: more intensity at high settings
+    const float feedback = 0.30f + amount * 0.55f;
 
     const float twoPiOverSr = 2.f * juce::MathConstants<float>::pi
                               / static_cast<float>(m_sampleRate);
@@ -797,17 +814,22 @@ void FxProcessor::processPhaser(juce::AudioBuffer<float>& wet,
 void FxProcessor::processTrans(juce::AudioBuffer<float>& wet,
                                 int start, int n, float amount)
 {
-    // LFO rate: amount 0 = 2 Hz, amount 1 = 20 Hz (sync-able in future)
-    const float lfoRate = 2.f + amount * 18.f;
+    // Rate: 1 Hz (gentle) → 16 Hz (hard gate / ring-mod territory)
+    const float lfoRate = 1.f + amount * 15.f;
     const float lfoInc  = lfoRate / static_cast<float>(m_sampleRate);
-    // Depth: amount 0 = mild (0.3), amount 1 = hard chop (1.0)
-    const float depth   = 0.3f + amount * 0.7f;
+    // Depth: 0.25 (mild) → 1.0 (full silence in the dip)
+    const float depth   = 0.25f + amount * 0.75f;
+    // Hardness: low amount = soft sine tremolo, high amount = hard gate chop
+    // tanh scaling of the sine produces a shape between sine and square
+    const float hardness = 1.0f + amount * 10.0f;
 
     float phase = m_transState.lfoPhase;
     for (int i = 0; i < n; ++i)
     {
-        float lfo = 0.5f * (1.f + std::sin(2.f * juce::MathConstants<float>::pi * phase));
-        float gain = 1.f - depth + lfo * depth; // 0 to 1
+        float sineVal = std::sin(2.f * juce::MathConstants<float>::pi * phase);
+        float lfo     = std::tanh(sineVal * hardness); // -1..+1, progressively square
+        lfo = 0.5f * (1.f + lfo);                      // 0..1
+        float gain = 1.f - depth * (1.f - lfo);
 
         for (int ch = 0; ch < wet.getNumChannels(); ++ch)
             wet.getWritePointer(ch)[start + i] *= gain;
@@ -835,18 +857,18 @@ void FxProcessor::prepareEnigma()
 void FxProcessor::processEnigmaJet(juce::AudioBuffer<float>& wet,
                                     int start, int n, float amount)
 {
-    // Deep phaser: 8 all-pass stages, very slow LFO (jet sweep)
-    const float phaseLfoRate = 0.05f + amount * 0.45f; // 0.05–0.5 Hz
+    // Deep phaser: 8 all-pass stages, slow LFO (jet sweep)
+    const float phaseLfoRate = 0.03f + amount * 0.67f; // 0.03–0.70 Hz (wider slow sweep)
     const float phaseLfoInc  = phaseLfoRate / static_cast<float>(m_sampleRate);
     const float twoPiOverSr  = 2.f * juce::MathConstants<float>::pi
                                / static_cast<float>(m_sampleRate);
-    const float fMin = 80.f, fMax = 8000.f;
-    const float feedback = 0.7f;
+    const float fMin = 60.f, fMax = 10000.f; // wider sweep: sub → bright air
+    const float feedback = 0.65f + amount * 0.12f; // 0.65 → 0.77 — deeper resonance at full
 
-    // Detune: small LFO-modulated delay (chorus-like pitch wobble)
-    const float detLfoRate = 0.3f + amount * 1.2f;
+    // Detune: modulated chorus delay adds pitch-wobble depth
+    const float detLfoRate = 0.2f + amount * 1.5f;
     const float detLfoInc  = detLfoRate / static_cast<float>(m_sampleRate);
-    const float detDepth   = static_cast<float>(m_sampleRate) * 0.005f; // 5ms
+    const float detDepth   = static_cast<float>(m_sampleRate) * (0.003f + amount * 0.007f);
     const int   detBufSize = static_cast<int>(m_enigmaState.detBufL.size());
     if (detBufSize == 0) return;
 
@@ -959,9 +981,9 @@ void FxProcessor::processStretch(juce::AudioBuffer<float>& wet,
 void FxProcessor::processRoll(juce::AudioBuffer<float>& wet,
                                int start, int n, float amount, bool slip)
 {
-    // Loop length: amount 0 = ~half bar (~512ms at 120BPM), amount 1 = 1/32 bar (~16ms)
+    // Loop length: amount 0 = ~500ms, amount 1 = ~88ms (2^-2.5 × 0.5 × sampleRate)
     const int targetLen = static_cast<int>(m_sampleRate
-                          * std::pow(2.f, -amount * 5.f) * 0.5f); // 500ms → 16ms
+                          * std::pow(2.f, -amount * 2.5f) * 0.5f);
     const int loopLen   = std::max(64, std::min(targetLen, kRollBuf / 2));
 
     auto& st = m_rollState;
@@ -1023,17 +1045,22 @@ void FxProcessor::processRoll(juce::AudioBuffer<float>& wet,
 void FxProcessor::processMobius(juce::AudioBuffer<float>& wet,
                                  int start, int n, float amount, bool nobius)
 {
-    // Loop length: 100ms → 1s based on amount
-    const int loopLen = std::max(512,
-        static_cast<int>(m_sampleRate * (0.1f + amount * 0.9f)));
+    // Loop length: 150 ms → 1.2 s — slightly wider range for more expression
+    const int loopLen    = std::max(512,
+        static_cast<int>(m_sampleRate * (0.15f + amount * 1.05f)));
     const int clampedLen = std::min(loopLen, kMobiusBuf);
 
     auto& st = m_mobiusState;
     if (st.loopLen != clampedLen)
     {
         st.loopLen = clampedLen;
-        st.readPos = 0.0;
-        st.forward = true;
+        // Reuse current readPos if it fits the new length to avoid a hard click.
+        // Only reset to 0 if the old read position would be out of range.
+        if (static_cast<int>(st.readPos) >= clampedLen)
+        {
+            st.readPos = static_cast<double>(st.writePos % clampedLen);
+            st.forward = true;
+        }
     }
 
     for (int i = 0; i < n; ++i)
