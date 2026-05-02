@@ -139,6 +139,7 @@ bool LibraryDatabase::open()
             qWarning() << "[LibraryDatabase] Failed to refresh backup DB from primary";
     } else if (!primaryHealthy && !backupHealthy) {
         qWarning() << "[LibraryDatabase] Neither DB copy is healthy, creating a fresh database";
+        m_lastRecoveryEvent = QStringLiteral("Beide Datenbanken fehlend/beschaedigt - frische Datenbank erstellt");
     }
 
     // ── Open via QSqlDatabase ────────────────────────────────────────────
@@ -168,6 +169,10 @@ bool LibraryDatabase::open()
         m_primaryMirrorDegraded = true;
     if (primaryHealthy && !backupHealthy)
         m_backupMirrorDegraded = true;
+    if (!primaryHealthy && !backupHealthy) {
+        m_primaryMirrorDegraded = true;
+        m_backupMirrorDegraded = true;
+    }
 
     m_cachedMirrorStatus = mirroredDatabaseStatus();
     emit mirroredDatabaseStatusChanged();
@@ -755,6 +760,9 @@ QString LibraryDatabase::filePath(const QString& trackId) const
 
 QString LibraryDatabase::mirroredDatabaseStatus() const
 {
+    if (m_lastRecoveryEvent.isEmpty())
+        return QStringLiteral("DB A: OK | DB B: OK");
+
     const auto describe = [this](const QString& path, bool degraded) -> QString {
         if (path.isEmpty())
             return QStringLiteral("unbekannt");
@@ -772,13 +780,12 @@ QString LibraryDatabase::mirroredDatabaseStatus() const
     };
 
     const QString activeLabel = (m_activeDbPath == m_backupDbPath) ? QStringLiteral("B") : QStringLiteral("A");
-    const QString recovery = m_lastRecoveryEvent.isEmpty() ? QStringLiteral("keine") : m_lastRecoveryEvent;
 
     return QStringLiteral("DB A: %1 | DB B: %2 | Aktiv: %3 | Recovery: %4")
         .arg(describe(m_dbPath, m_primaryMirrorDegraded),
              describe(m_backupDbPath, m_backupMirrorDegraded),
              activeLabel,
-             recovery);
+             m_lastRecoveryEvent);
 }
 
 void LibraryDatabase::shutdown(bool syncBackup)
@@ -1407,17 +1414,22 @@ void LibraryDatabase::performMirrorSelfCheck()
         if (m_db.isOpen()) {
             if (recreateDatabaseFileFromLiveConnection(m_dbPath)) {
                 repaired = true;
-                m_lastRecoveryEvent = QStringLiteral("beide Spiegel aus Live-Session wiederhergestellt");
-                if (!recreateDatabaseFileFromLiveConnection(m_backupDbPath)) {
+                if (!recreateDatabaseFileFromLiveConnection(m_backupDbPath))
                     qWarning() << "[LibraryDatabase] Failed to recreate backup during both-files-missing recovery";
-                }
+                m_lastRecoveryEvent = QStringLiteral("beide Spiegel aus Live-Session wiederhergestellt");
             } else {
                 qWarning() << "[LibraryDatabase] Failed to recreate primary during both-files-missing recovery";
-                return;
+                m_lastRecoveryEvent = QStringLiteral("Wiederherstellung beider Spiegel fehlgeschlagen");
             }
         }
         m_primaryMirrorDegraded = true;
         m_backupMirrorDegraded = true;
+        const QString currentStatus = mirroredDatabaseStatus();
+        if (currentStatus != m_cachedMirrorStatus || repaired) {
+            m_cachedMirrorStatus = currentStatus;
+            emit mirroredDatabaseStatusChanged();
+        }
+        return;
     }
 
     if (desiredActivePath == m_dbPath && !primaryHealthy && backupHealthy) {
