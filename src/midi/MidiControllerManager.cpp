@@ -84,6 +84,8 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, QObject* par
 
     if (!m_selectedMappingFile.isEmpty())
         loadMixxxXmlMapping(m_selectedMappingFile);
+
+    loadNativeMappingIfExists();
 }
 
 MidiControllerManager::~MidiControllerManager()
@@ -612,21 +614,144 @@ QString MidiControllerManager::mapMixxxControlToInternalParam(const QString& gro
     const QString k = key.trimmed().toLower();
 
     if (g == "[Channel1]") {
-        if (k == "play") return "deckA_play";
+        if (k == "play" || k == "play_indicator") return "deckA_play";
+        if (k == "cue_default" || k == "cue_cdj" || k == "cue_simple") return "deckA_cue";
         if (k == "volume") return "deckA_vol";
         if (k == "pregain") return "deckA_gain";
+        if (k == "filterhi")  return "deckA_eqHigh";
+        if (k == "filtermid") return "deckA_eqMid";
+        if (k == "filterlow") return "deckA_eqLow";
+        if (k == "filter" || k == "superknob") return "deckA_filter";
+        if (k == "rate") return "deckA_tempo";
     }
 
     if (g == "[Channel2]") {
-        if (k == "play") return "deckB_play";
+        if (k == "play" || k == "play_indicator") return "deckB_play";
+        if (k == "cue_default" || k == "cue_cdj" || k == "cue_simple") return "deckB_cue";
         if (k == "volume") return "deckB_vol";
         if (k == "pregain") return "deckB_gain";
+        if (k == "filterhi")  return "deckB_eqHigh";
+        if (k == "filtermid") return "deckB_eqMid";
+        if (k == "filterlow") return "deckB_eqLow";
+        if (k == "filter" || k == "superknob") return "deckB_filter";
+        if (k == "rate") return "deckB_tempo";
+    }
+
+    // Mixxx EQ rack groups: [EqualizerRack1_[ChannelX]_Effect1]
+    if (g.contains("[Channel1]") && g.contains("EqualizerRack")) {
+        if (k == "parameter1") return "deckA_eqLow";
+        if (k == "parameter2") return "deckA_eqMid";
+        if (k == "parameter3") return "deckA_eqHigh";
+    }
+    if (g.contains("[Channel2]") && g.contains("EqualizerRack")) {
+        if (k == "parameter1") return "deckB_eqLow";
+        if (k == "parameter2") return "deckB_eqMid";
+        if (k == "parameter3") return "deckB_eqHigh";
+    }
+
+    // Mixxx QuickEffect (filter) rack
+    if (g.contains("[Channel1]") && g.contains("QuickEffectRack")) {
+        if (k == "super1") return "deckA_filter";
+    }
+    if (g.contains("[Channel2]") && g.contains("QuickEffectRack")) {
+        if (k == "super1") return "deckB_filter";
     }
 
     if (g == "[Master]" && k == "crossfader")
         return "crossfader";
 
     return {};
+}
+
+QString MidiControllerManager::nativeMappingFilePath() const
+{
+    return SettingsManager::getInstance().getConfigDirectoryPath() + "/midi_mapping_native.xml";
+}
+
+QString MidiControllerManager::getMappingLabel(const QString& paramId) const
+{
+    const auto it = m_paramToMidi.find(paramId);
+    if (it == m_paramToMidi.end())
+        return {};
+    const int msgId = it->second;
+    if (msgId >= 1000)
+        return QStringLiteral("CC %1").arg(msgId - 1000);
+    return QStringLiteral("Note %1").arg(msgId);
+}
+
+void MidiControllerManager::clearLearnedMapping(const QString& paramId)
+{
+    const auto paramIt = m_paramToMidi.find(paramId);
+    if (paramIt == m_paramToMidi.end())
+        return;
+
+    const int msgId = paramIt->second;
+    m_paramToMidi.erase(paramIt);
+    m_midiToParam.erase(msgId);
+
+    saveNativeMapping();
+    emit mappingUpdated();
+}
+
+void MidiControllerManager::saveNativeMapping()
+{
+    const QString path = nativeMappingFilePath();
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        qWarning() << "[MIDI] Could not write native mapping to" << path;
+        return;
+    }
+
+    QXmlStreamWriter xml(&file);
+    xml.setAutoFormatting(true);
+    xml.writeStartDocument();
+    xml.writeStartElement("RamsbrockDJ_Mapping");
+    xml.writeAttribute("version", "1");
+
+    for (const auto& [msgId, paramId] : m_midiToParam) {
+        xml.writeStartElement("Entry");
+        xml.writeAttribute("paramId", paramId);
+        xml.writeAttribute("msgId", QString::number(msgId));
+        xml.writeEndElement();
+    }
+
+    xml.writeEndElement();
+    xml.writeEndDocument();
+
+    qDebug() << "[MIDI] Native mapping saved:" << path
+             << "entries:" << static_cast<int>(m_midiToParam.size());
+}
+
+void MidiControllerManager::loadNativeMappingIfExists()
+{
+    const QString path = nativeMappingFilePath();
+    QFile file(path);
+    if (!file.exists())
+        return;
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        qWarning() << "[MIDI] Could not read native mapping from" << path;
+        return;
+    }
+
+    QXmlStreamReader xml(&file);
+    int count = 0;
+
+    while (!xml.atEnd()) {
+        xml.readNext();
+        if (!xml.isStartElement() || xml.name().toString() != "Entry")
+            continue;
+
+        const QString paramId = xml.attributes().value("paramId").toString();
+        bool ok = false;
+        const int msgId = xml.attributes().value("msgId").toString().toInt(&ok);
+        if (ok && !paramId.isEmpty()) {
+            m_midiToParam[msgId] = paramId;
+            m_paramToMidi[paramId] = msgId;
+            ++count;
+        }
+    }
+
+    qDebug() << "[MIDI] Native mapping loaded:" << path << "entries:" << count;
 }
 
 bool MidiControllerManager::loadMixxxXmlMapping(const QString& mappingFileName)
@@ -728,6 +853,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
         m_isLearning = false;
 
         qDebug() << "[MIDI] Learned" << msgId << "->" << m_learnParameterId;
+        saveNativeMapping();
         emit mappingUpdated();
         return;
     }

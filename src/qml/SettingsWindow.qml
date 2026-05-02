@@ -834,6 +834,7 @@ Window {
                     anchors.top: parent.top
                     anchors.left: parent.left
                     anchors.right: parent.right
+                    anchors.bottom: parent.bottom
                     anchors.margins: 30
                     spacing: 20
 
@@ -1145,17 +1146,60 @@ Window {
                         color: "#2a2a2a"
                     }
 
-                    Text {
-                        text: "Mappings"
-                        color: "#eee"
-                        font.pixelSize: 14
-                        font.bold: true
+                    RowLayout {
+                        Layout.fillWidth: true
+
+                        Text {
+                            text: "Mappings"
+                            color: "#eee"
+                            font.pixelSize: 14
+                            font.bold: true
+                            Layout.fillWidth: true
+                        }
+
+                        // Auto-save feedback pill
+                        Rectangle {
+                            id: savedPill
+                            width: savedPillText.implicitWidth + 16
+                            height: 20
+                            radius: 3
+                            color: "#1a3a1a"
+                            border.color: "#2a5a2a"
+                            opacity: 0.0
+
+                            Text {
+                                id: savedPillText
+                                anchors.centerIn: parent
+                                text: "● Gespeichert"
+                                color: "#4ac84a"
+                                font.pixelSize: 10
+                            }
+
+                            Connections {
+                                target: midiManager
+                                function onMappingUpdated() {
+                                    savedPill.opacity = 1.0
+                                    savedPillFade.restart()
+                                }
+                            }
+
+                            NumberAnimation {
+                                id: savedPillFade
+                                target: savedPill
+                                property: "opacity"
+                                from: 1.0; to: 0.0
+                                duration: 1800
+                                easing.type: Easing.InQuad
+                            }
+                        }
                     }
 
-                    // Mappings List
-                    ColumnLayout {
+                    // Scrollable mapping list
+                    ScrollView {
                         Layout.fillWidth: true
-                        spacing: 10
+                        Layout.fillHeight: true
+                        clip: true
+                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                         // Helper component for mapping rows
                         component MappingRow: RowLayout {
@@ -1163,59 +1207,169 @@ Window {
                             required property string paramId
 
                             Layout.fillWidth: true
-                            spacing: 16
+                            spacing: 6
+
+                            property string currentMapping: midiManager
+                                ? midiManager.getMappingLabel(paramId) : ""
+
+                            Connections {
+                                target: midiManager
+                                function onMappingUpdated() {
+                                    learnBtn.isLearning = false
+                                    if (midiManager)
+                                        currentMapping = midiManager.getMappingLabel(paramId)
+                                }
+                            }
 
                             Text {
                                 text: labelStr
                                 color: "#aaa"
                                 font.pixelSize: 12
-                                Layout.preferredWidth: 130
+                                Layout.preferredWidth: 120
+                                elide: Text.ElideRight
                             }
 
+                            // Current assignment badge
                             Rectangle {
-                                id: learnButton
-                                Layout.fillWidth: true
-                                height: 32
-                                color: isLearning ? "#ff9900" : "#252525"
-                                border.color: isLearning ? "#ffb732" : "#3a3a3a"
-                                radius: 4
-
-                                property bool isLearning: false
-
-                                // Listen for C++ signal to reset learn state
-                                Connections {
-                                    target: midiManager
-                                    function onMappingUpdated() {
-                                        learnButton.isLearning = false
-                                    }
-                                }
+                                Layout.preferredWidth: 58
+                                height: 26
+                                color: currentMapping !== "" ? "#162816" : "transparent"
+                                border.color: currentMapping !== "" ? "#2a4a2a" : "transparent"
+                                radius: 3
+                                visible: true
 
                                 Text {
                                     anchors.centerIn: parent
-                                    text: parent.isLearning ? "Waiting for MIDI..." : "Learn"
-                                    color: parent.isLearning ? "#1a1a1a" : "#ccc"
-                                    font.pixelSize: 12
-                                    font.bold: parent.isLearning
+                                    text: parent.parent.currentMapping
+                                    color: "#5aba5a"
+                                    font.pixelSize: 10
+                                    font.bold: true
+                                }
+                            }
+
+                            // Learn button
+                            Rectangle {
+                                id: learnBtn
+                                Layout.fillWidth: true
+                                height: 26
+                                color: isLearning ? "#7a4800" : "#252525"
+                                border.color: isLearning ? "#c07800" : "#3a3a3a"
+                                radius: 3
+
+                                property bool isLearning: false
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: learnBtn.isLearning ? "Warte auf MIDI..." : "Learn"
+                                    color: learnBtn.isLearning ? "#ffd080" : "#aaa"
+                                    font.pixelSize: 11
+                                    font.bold: learnBtn.isLearning
                                 }
 
                                 MouseArea {
                                     anchors.fill: parent
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
-                                        if (midiManager && !learnButton.isLearning) {
-                                            learnButton.isLearning = true
+                                        if (midiManager && !learnBtn.isLearning) {
+                                            learnBtn.isLearning = true
                                             midiManager.startMidiLearn(paramId)
                                         }
                                     }
                                 }
                             }
+
+                            // Clear button – only visible when mapped
+                            Rectangle {
+                                width: 26; height: 26
+                                visible: currentMapping !== ""
+                                color: clearArea.pressed ? "#4a1818" : "#2a1010"
+                                border.color: "#4a2020"
+                                radius: 3
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "✕"
+                                    color: "#d04040"
+                                    font.pixelSize: 11
+                                }
+
+                                MouseArea {
+                                    id: clearArea
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        if (midiManager)
+                                            midiManager.clearLearnedMapping(paramId)
+                                    }
+                                }
+                            }
+
+                            // Spacer so rows have equal width when no clear button
+                            Item {
+                                width: 26
+                                visible: currentMapping === ""
+                            }
                         }
 
-                        MappingRow { labelStr: "Deck A Play";   paramId: "deckA_play" }
-                        MappingRow { labelStr: "Deck B Play";   paramId: "deckB_play" }
-                        MappingRow { labelStr: "Deck A Volume"; paramId: "deckA_vol" }
-                        MappingRow { labelStr: "Deck B Volume"; paramId: "deckB_vol" }
-                        MappingRow { labelStr: "Crossfader";    paramId: "crossfader" }
+                        ColumnLayout {
+                            width: parent.width
+                            spacing: 6
+
+                            // ── Transport ────────────────────────────────
+                            Text { text: "Transport"
+                                   color: "#666"; font.pixelSize: 11; font.bold: true
+                                   topPadding: 4 }
+
+                            MappingRow { labelStr: "Deck A Play"; paramId: "deckA_play" }
+                            MappingRow { labelStr: "Deck A Cue";  paramId: "deckA_cue"  }
+                            MappingRow { labelStr: "Deck B Play"; paramId: "deckB_play" }
+                            MappingRow { labelStr: "Deck B Cue";  paramId: "deckB_cue"  }
+
+                            Rectangle { Layout.fillWidth: true; height: 1; color: "#222" }
+
+                            // ── Mixer ────────────────────────────────────
+                            Text { text: "Mixer"
+                                   color: "#666"; font.pixelSize: 11; font.bold: true }
+
+                            MappingRow { labelStr: "Deck A Volume"; paramId: "deckA_vol"   }
+                            MappingRow { labelStr: "Deck B Volume"; paramId: "deckB_vol"   }
+                            MappingRow { labelStr: "Crossfader";    paramId: "crossfader"  }
+
+                            Rectangle { Layout.fillWidth: true; height: 1; color: "#222" }
+
+                            // ── Deck A Klangformung ──────────────────────
+                            Text { text: "Deck A – Klangformung"
+                                   color: "#666"; font.pixelSize: 11; font.bold: true }
+
+                            MappingRow { labelStr: "Trim";    paramId: "deckA_gain"   }
+                            MappingRow { labelStr: "EQ High"; paramId: "deckA_eqHigh" }
+                            MappingRow { labelStr: "EQ Mid";  paramId: "deckA_eqMid"  }
+                            MappingRow { labelStr: "EQ Low";  paramId: "deckA_eqLow"  }
+                            MappingRow { labelStr: "Filter";  paramId: "deckA_filter" }
+
+                            Rectangle { Layout.fillWidth: true; height: 1; color: "#222" }
+
+                            // ── Deck B Klangformung ──────────────────────
+                            Text { text: "Deck B – Klangformung"
+                                   color: "#666"; font.pixelSize: 11; font.bold: true }
+
+                            MappingRow { labelStr: "Trim";    paramId: "deckB_gain"   }
+                            MappingRow { labelStr: "EQ High"; paramId: "deckB_eqHigh" }
+                            MappingRow { labelStr: "EQ Mid";  paramId: "deckB_eqMid"  }
+                            MappingRow { labelStr: "EQ Low";  paramId: "deckB_eqLow"  }
+                            MappingRow { labelStr: "Filter";  paramId: "deckB_filter" }
+
+                            Rectangle { Layout.fillWidth: true; height: 1; color: "#222" }
+
+                            // ── Tempo ────────────────────────────────────
+                            Text { text: "Tempo (±8%)"
+                                   color: "#666"; font.pixelSize: 11; font.bold: true }
+
+                            MappingRow { labelStr: "Deck A Tempo"; paramId: "deckA_tempo" }
+                            MappingRow { labelStr: "Deck B Tempo"; paramId: "deckB_tempo" }
+
+                            Item { height: 8 }
+                        }
                     }
                 }
             }

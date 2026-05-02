@@ -126,6 +126,39 @@ int main(int argc, char *argv[])
     ParameterStore parameterStore;
     MidiControllerManager midiManager(&parameterStore);
 
+    // Route MIDI parameter changes to the appropriate deck controls.
+    // Volume and crossfader are handled by MixerSection.qml via parameterStore.
+    // Button events: value > 0 = press/on, value == 0 = release/off.
+    QObject::connect(&parameterStore, &ParameterStore::parameterChanged,
+        [deckAPtr = deckA.get(), deckBPtr = deckB.get()](const QString& id, float value)
+    {
+        if (id == "deckA_play") { if (value > 0.0f) deckAPtr->togglePlay(); }
+        else if (id == "deckB_play") { if (value > 0.0f) deckBPtr->togglePlay(); }
+        else if (id == "deckA_cue") {
+            if (value > 0.0f) deckAPtr->cueButtonPress();
+            else              deckAPtr->cueButtonRelease();
+        }
+        else if (id == "deckB_cue") {
+            if (value > 0.0f) deckBPtr->cueButtonPress();
+            else              deckBPtr->cueButtonRelease();
+        }
+        // Trim: MIDI 0-1 → engine 0-2 (center = 1.0 = unity)
+        else if (id == "deckA_gain")   deckAPtr->setTrim(static_cast<double>(value) * 2.0);
+        else if (id == "deckB_gain")   deckBPtr->setTrim(static_cast<double>(value) * 2.0);
+        // EQ/filter: MIDI 0-1 → engine -1 to +1 (center = 0.0)
+        else if (id == "deckA_eqHigh") deckAPtr->setEqHigh(static_cast<double>(value) * 2.0 - 1.0);
+        else if (id == "deckB_eqHigh") deckBPtr->setEqHigh(static_cast<double>(value) * 2.0 - 1.0);
+        else if (id == "deckA_eqMid")  deckAPtr->setEqMid(static_cast<double>(value) * 2.0 - 1.0);
+        else if (id == "deckB_eqMid")  deckBPtr->setEqMid(static_cast<double>(value) * 2.0 - 1.0);
+        else if (id == "deckA_eqLow")  deckAPtr->setEqLow(static_cast<double>(value) * 2.0 - 1.0);
+        else if (id == "deckB_eqLow")  deckBPtr->setEqLow(static_cast<double>(value) * 2.0 - 1.0);
+        else if (id == "deckA_filter") deckAPtr->setFilter(static_cast<double>(value) * 2.0 - 1.0);
+        else if (id == "deckB_filter") deckBPtr->setFilter(static_cast<double>(value) * 2.0 - 1.0);
+        // Tempo fader: MIDI 0-1 → engine -8% to +8%
+        else if (id == "deckA_tempo")  deckAPtr->setTempoPercent(static_cast<double>(value) * 16.0 - 8.0);
+        else if (id == "deckB_tempo")  deckBPtr->setTempoPercent(static_cast<double>(value) * 16.0 - 8.0);
+    });
+
     engine.addImageProvider("coverart", coverProvider.release());
 
     engine.rootContext()->setContextProperty("settingsManager", &settingsManager);

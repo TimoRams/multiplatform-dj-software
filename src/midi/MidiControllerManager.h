@@ -51,7 +51,10 @@ public:
 
     // QML Mapping Functions
     Q_INVOKABLE void startMidiLearn(const QString& parameterId);
-    
+    Q_INVOKABLE QString getMappingLabel(const QString& paramId) const;
+    Q_INVOKABLE void clearLearnedMapping(const QString& paramId);
+    Q_INVOKABLE void saveNativeMapping();
+
 signals:
     void mappingUpdated();
     void midiDevicesUpdated();
@@ -109,6 +112,8 @@ private:
     QString normalizeControllerKeyFromJsBase(const QString& baseName) const;
     QStringList getAvailableXmlMappingFilesForController(const QString& controllerName) const;
     bool loadMixxxXmlMapping(const QString& mappingFileName);
+    void loadNativeMappingIfExists();
+    QString nativeMappingFilePath() const;
     int parseMixxxNumber(const QString& rawValue) const;
     QString mapMixxxControlToInternalParam(const QString& group, const QString& key) const;
 };

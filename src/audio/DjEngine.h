@@ -188,6 +188,8 @@ public:
     [[nodiscard]] bool    hasCoverArt()   const { return m_hasCoverArt; }
     [[nodiscard]] QVariantList currentSegments() const { return m_currentSegments; }
     [[nodiscard]] double  getTempoPercent() const { return m_tempoPercent; }
+    // Beat phase: 0.0 = on the beat, 0.5 = halfway between beats, approaches 1.0 just before the next beat.
+    [[nodiscard]] Q_INVOKABLE double getBeatPhase() const;
     // Returns the analysed BPM multiplied by the current tempo ratio.
     // Shows 0.0 until BPM analysis is complete.
     [[nodiscard]] double  getCurrentBpm()   const {
@@ -392,6 +394,9 @@ private:
 
     // Tempo control: ±6/8/16/32/100% (WIDE) selectable range
     double m_tempoPercent = 0.0;
+    // Phase correction nudge added to m_tempoPercent inside updateSpeedAndPitch().
+    // Cleared on scratch and when sync is disabled. Never > ±4%.
+    double m_phaseNudge = 0.0;
 
     bool m_vinylBrakeActive = false;
     bool m_echoOutActive    = false;
@@ -426,6 +431,11 @@ private:
     void clearLoopRangeOnAudioSource();
 
     void updateSpeedAndPitch();
+    void updatePhaseCorrection();
+    // Bypass for internal/sync use — no follower-lock guard, no master propagation.
+    void applyTempoPercent(double percent);
+    // Seek this deck so its beat phase matches master's. Called when sync is first enabled.
+    void snapPhaseToMaster(DjEngine* master);
     void refreshHardwareLatency();
     void setSnapAnchor(double positionSec, bool valid);
     void armSnapFromTransportPosition();

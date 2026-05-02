@@ -1756,7 +1756,7 @@ void DjEngine::propagateMasterTempoLocked(DjEngine* master)
         if (baseBpm <= 0.0)
             continue;
         const double pct = ((masterBpm / baseBpm) - 1.0) * 100.0;
-        d->setTempoPercent(pct);
+        d->applyTempoPercent(pct);
     }
 }
 
@@ -3056,6 +3056,10 @@ void DjEngine::onTimer()
         m_atomicPlayheadPos.store(transportSource.getCurrentPosition(),
                                    std::memory_order_relaxed);
     }
+    // Phase-lock correction for sync followers (not during scratch).
+    if (m_syncEnabled && !m_isSyncMaster && !m_isScrubbing && !m_scratchReleaseActive)
+        updatePhaseCorrection();
+
     // Always emit VU level updates (30 Hz timer = nice for meters)
     emit vuLevelChanged();
     emit gainReductionChanged();
@@ -3371,6 +3375,8 @@ void DjEngine::pauseForScrub()
 {
     if (m_isScrubbing)
         return;
+
+    m_phaseNudge = 0.0;
 
     bool wasPlayingBeforeGrab = m_playRequested || transportSource.isPlaying();
     if (m_scratchReleaseActive) {
@@ -3730,9 +3736,138 @@ void DjEngine::setAntiClip(bool enabled) {
 
 // ──────────────────────────────────────────────────────────────────────────────
 
+double DjEngine::getBeatPhase() const
+{
+    if (!m_trackData) return 0.0;
+    const double bpm = m_trackData->getBpm();
+    if (bpm <= 0.0) return 0.0;
+
+    const double pos    = getPosition();
+    const double nomLen = 60.0 / bpm;   // nominal beat length from BPM
+    const auto&  grid   = m_trackData->getBeatGrid();
+
+    if (grid.size() >= 2) {
+        // Find the last beat marker at or before the current position.
+        const auto it = std::upper_bound(grid.begin(), grid.end(), pos,
+            [](double v, const TrackData::BeatMarker& m) { return v < m.positionSec; });
+
+        const auto prev = (it != grid.begin()) ? std::prev(it) : grid.begin();
+        const double prevSec = prev->positionSec;
+
+        // Beat length: use distance to next grid marker when available.
+        double beatLen = nomLen;
+        if (std::next(prev) != grid.end()) {
+            const double candidate = std::next(prev)->positionSec - prevSec;
+            if (candidate > 0.01)
+                beatLen = candidate;
+        }
+
+        return std::clamp((pos - prevSec) / beatLen, 0.0, 0.9999);
+    }
+
+    // No usable beat grid — phase from BPM alone.
+    return std::fmod(pos / nomLen, 1.0);
+}
+
+void DjEngine::updatePhaseCorrection()
+{
+    // Only sync followers with a valid, playing track should phase-correct.
+    if (!m_syncEnabled || m_isSyncMaster || !isPlaying() || !m_trackData) {
+        if (m_phaseNudge != 0.0) {
+            m_phaseNudge = 0.0;
+            updateSpeedAndPitch();
+        }
+        return;
+    }
+
+    DjEngine* master = nullptr;
+    {
+        std::lock_guard<std::mutex> g(s_syncMutex);
+        master = s_syncMasterDeck;
+    }
+
+    if (!master || !master->isPlaying() || !master->m_trackData
+            || master->m_trackData->getBpm() <= 0.0) {
+        if (m_phaseNudge != 0.0) {
+            m_phaseNudge = 0.0;
+            updateSpeedAndPitch();
+        }
+        return;
+    }
+
+    const double masterPhase = master->getBeatPhase();
+    const double myPhase     = getBeatPhase();
+
+    // Signed phase error wrapped to [-0.5, +0.5] of a beat.
+    double diff = masterPhase - myPhase;
+    if (diff >  0.5) diff -= 1.0;
+    if (diff < -0.5) diff += 1.0;
+
+    // Dead-zone: within 2% of a beat → no nudge, already aligned.
+    constexpr double kTolerance = 0.02;
+    // Max nudge ±4% — audible but not jarring; corrects a half-beat in ~3 s.
+    constexpr double kMaxNudge  = 4.0;
+    // P-gain: 0.5 beat error → full 4% nudge.
+    constexpr double kGain      = kMaxNudge / 0.5;
+
+    const double newNudge = (std::abs(diff) < kTolerance)
+        ? 0.0
+        : std::clamp(diff * kGain, -kMaxNudge, kMaxNudge);
+
+    if (newNudge != m_phaseNudge) {
+        m_phaseNudge = newNudge;
+        updateSpeedAndPitch();
+    }
+}
+
+void DjEngine::snapPhaseToMaster(DjEngine* master)
+{
+    if (!master || !master->m_trackData || !m_trackData)
+        return;
+
+    const double bpm = m_trackData->getBpm();
+    if (bpm <= 0.0)
+        return;
+
+    const double masterPhase = master->getBeatPhase();
+    const double myPhase     = getBeatPhase();
+
+    // Signed phase error wrapped to [-0.5, +0.5].
+    double diff = masterPhase - myPhase;
+    if (diff >  0.5) diff -= 1.0;
+    if (diff < -0.5) diff += 1.0;
+
+    // Nothing to do if already aligned.
+    if (std::abs(diff) < 0.005)
+        return;
+
+    // Compute actual beat length at current position.
+    double beatLen = 60.0 / bpm;
+    const auto& grid = m_trackData->getBeatGrid();
+    if (grid.size() >= 2) {
+        const double pos = getPosition();
+        const auto it = std::upper_bound(grid.begin(), grid.end(), pos,
+            [](double v, const TrackData::BeatMarker& m) { return v < m.positionSec; });
+        if (it != grid.begin()) {
+            const auto prev = std::prev(it);
+            if (std::next(prev) != grid.end()) {
+                const double candidate = std::next(prev)->positionSec - prev->positionSec;
+                if (candidate > 0.01)
+                    beatLen = candidate;
+            }
+        }
+    }
+
+    const double seekOffset = diff * beatLen;
+    const double newPos = std::max(0.0, getPosition() + seekOffset);
+    transportSource.setPosition(newPos);
+    m_phaseNudge = 0.0;
+    armSnapFromTransportPosition();
+}
+
 void DjEngine::updateSpeedAndPitch()
 {
-    double speedMultiplier = 1.0 + (m_tempoPercent / 100.0);
+    double speedMultiplier = 1.0 + ((m_tempoPercent + m_phaseNudge) / 100.0);
 
     // Keep one tempo authority (resampler) so fader response is identical
     // with and without keylock.
@@ -3753,17 +3888,12 @@ void DjEngine::setKeylock(bool on)
     emit keylockChanged();
 }
 
-void DjEngine::setTempoPercent(double percent)
+void DjEngine::applyTempoPercent(double percent)
 {
-    // Clamp to ±100% range (WIDE mode)
     percent = std::clamp(percent, -100.0, 100.0);
-    
     if (m_tempoPercent == percent) return;
-    
     m_tempoPercent = percent;
 
-    // Keep scratch/release baseline speed aligned with the tempo fader so
-    // releasing the record never snaps toward a hardcoded 1.0 speed.
     if (m_isScrubbing || m_scratchReleaseActive) {
         m_scratchBaseRate = std::max(0.01, std::abs(getTempoRatio()));
         if (m_scratchReleaseActive && m_scrubWasPlaying) {
@@ -3773,7 +3903,6 @@ void DjEngine::setTempoPercent(double percent)
     }
 
     updateSpeedAndPitch();
-    
     emit tempoChanged();
 
     if (m_syncEnabled) {
@@ -3786,6 +3915,15 @@ void DjEngine::setTempoPercent(double percent)
         if (amMaster)
             propagateMasterTempoLocked(this);
     }
+}
+
+void DjEngine::setTempoPercent(double percent)
+{
+    // Sync followers ignore tempo-fader moves — only the master drives tempo.
+    if (m_syncEnabled && !m_isSyncMaster)
+        return;
+
+    applyTempoPercent(percent);
 }
 
 void DjEngine::setManualBpm(double bpm)
@@ -3826,6 +3964,12 @@ void DjEngine::setSyncEnabled(bool enabled)
         return;
 
     m_syncEnabled = enabled;
+
+    if (!enabled && m_phaseNudge != 0.0) {
+        m_phaseNudge = 0.0;
+        updateSpeedAndPitch();
+    }
+
     emit syncChanged();
 
     bool amMaster = false;
@@ -3846,9 +3990,10 @@ void DjEngine::setSyncEnabled(bool enabled)
                 const double baseBpm = m_trackData->getBpm();
                 if (masterBpm > 0.0 && baseBpm > 0.0) {
                     const double pct = ((masterBpm / baseBpm) - 1.0) * 100.0;
-                    setTempoPercent(pct);
+                    applyTempoPercent(pct);
                 }
             }
+            snapPhaseToMaster(masterDeck);
             return;
         }
     }
