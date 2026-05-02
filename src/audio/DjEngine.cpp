@@ -3376,7 +3376,8 @@ void DjEngine::pauseForScrub()
     if (m_isScrubbing)
         return;
 
-    m_phaseNudge = 0.0;
+    m_phaseNudge  = 0.0;
+    m_resyncBoost = false;
 
     bool wasPlayingBeforeGrab = m_playRequested || transportSource.isPlaying();
     if (m_scratchReleaseActive) {
@@ -3803,16 +3804,19 @@ void DjEngine::updatePhaseCorrection()
     if (diff >  0.5) diff -= 1.0;
     if (diff < -0.5) diff += 1.0;
 
-    // Dead-zone: within 2% of a beat → no nudge, already aligned.
     constexpr double kTolerance = 0.02;
-    // Max nudge ±4% — audible but not jarring; corrects a half-beat in ~3 s.
-    constexpr double kMaxNudge  = 4.0;
-    // P-gain: 0.5 beat error → full 4% nudge.
-    constexpr double kGain      = kMaxNudge / 0.5;
+    // Normal: ±4% nudge. Boosted (reSync()): ±15% — after the 85% seek the remaining
+    // 15% of error converges in ~2 s (τ = 50 * beatLen / kMaxNudge ≈ 1.6 s at 128 BPM).
+    const double kMaxNudge = m_resyncBoost ? 15.0 : 4.0;
+    const double kGain     = kMaxNudge / 0.5;
 
     const double newNudge = (std::abs(diff) < kTolerance)
         ? 0.0
         : std::clamp(diff * kGain, -kMaxNudge, kMaxNudge);
+
+    // Clear boost once we're within tolerance.
+    if (m_resyncBoost && std::abs(diff) < kTolerance)
+        m_resyncBoost = false;
 
     if (newNudge != m_phaseNudge) {
         m_phaseNudge = newNudge;
@@ -3965,9 +3969,12 @@ void DjEngine::setSyncEnabled(bool enabled)
 
     m_syncEnabled = enabled;
 
-    if (!enabled && m_phaseNudge != 0.0) {
-        m_phaseNudge = 0.0;
-        updateSpeedAndPitch();
+    if (!enabled) {
+        m_resyncBoost = false;
+        if (m_phaseNudge != 0.0) {
+            m_phaseNudge = 0.0;
+            updateSpeedAndPitch();
+        }
     }
 
     emit syncChanged();
@@ -3997,6 +4004,57 @@ void DjEngine::setSyncEnabled(bool enabled)
             return;
         }
     }
+}
+
+void DjEngine::reSync()
+{
+    if (!m_syncEnabled || m_isSyncMaster || !m_trackData)
+        return;
+
+    DjEngine* master = nullptr;
+    { std::lock_guard<std::mutex> g(s_syncMutex); master = s_syncMasterDeck; }
+    if (!master || !master->m_trackData)
+        return;
+
+    const double bpm = m_trackData->getBpm();
+    if (bpm <= 0.0)
+        return;
+
+    const double masterPhase = master->getBeatPhase();
+    const double myPhase     = getBeatPhase();
+    double diff = masterPhase - myPhase;
+    if (diff >  0.5) diff -= 1.0;
+    if (diff < -0.5) diff += 1.0;
+
+    if (std::abs(diff) < 0.005)
+        return;
+
+    // Actual beat length at current position.
+    double beatLen = 60.0 / bpm;
+    const auto& grid = m_trackData->getBeatGrid();
+    if (grid.size() >= 2) {
+        const double pos = getPosition();
+        const auto it = std::upper_bound(grid.begin(), grid.end(), pos,
+            [](double v, const TrackData::BeatMarker& m) { return v < m.positionSec; });
+        if (it != grid.begin()) {
+            const auto prev = std::prev(it);
+            if (std::next(prev) != grid.end()) {
+                const double candidate = std::next(prev)->positionSec - prev->positionSec;
+                if (candidate > 0.01)
+                    beatLen = candidate;
+            }
+        }
+    }
+
+    // Seek 85% of the phase error immediately (barely audible for errors up to half a beat),
+    // then let the boosted P-controller handle the remaining 15% in ~2 seconds.
+    const double seekOffset = diff * beatLen * 0.85;
+    const double newPos = std::max(0.0, getPosition() + seekOffset);
+    transportSource.setPosition(newPos);
+    m_phaseNudge  = 0.0;
+    m_resyncBoost = true;
+    armSnapFromTransportPosition();
+    updatePhaseCorrection();
 }
 
 void DjEngine::updateGain()

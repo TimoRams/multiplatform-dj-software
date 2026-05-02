@@ -67,13 +67,18 @@ Item {
         }
 
         signal clicked()
+        signal rightClicked()
         signal btnPressed()
         signal btnReleased()
 
         MouseArea {
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
-            onClicked: fb.clicked()
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
+            onClicked: (mouse) => {
+                if (mouse.button === Qt.RightButton) fb.rightClicked()
+                else fb.clicked()
+            }
             onPressed: fb.btnPressed()
             onReleased: fb.btnReleased()
         }
@@ -599,7 +604,12 @@ Item {
                             fbActive: deck.engine ? deck.engine.syncEnabled : false
                             fbActiveColor: deck.engine && deck.engine.syncMaster ? "#2a2000" : "#0a2a0a"
                             fbActiveTxtColor: deck.engine && deck.engine.syncMaster ? "#ffd24d" : deck.accentGrn
-                            onClicked: { if (deck.engine) deck.engine.setSyncEnabled(!deck.engine.syncEnabled) }
+                            onClicked: {
+                                if (!deck.engine) return
+                                if (deck.engine.syncEnabled) deck.engine.reSync()
+                                else deck.engine.setSyncEnabled(true)
+                            }
+                            onRightClicked: { if (deck.engine) deck.engine.setSyncEnabled(false) }
                         }
 
                         // LINK

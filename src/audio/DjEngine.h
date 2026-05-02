@@ -265,6 +265,9 @@ public slots:
     void setCueEnabled(bool value);
     void setQuantizeEnabled(bool enabled);
     void setSyncEnabled(bool enabled);
+    // Re-aligns the beat phase with the sync master using a tempo nudge (no seek).
+    // Intended for "press SYNC again while already synced" — turns off nothing.
+    Q_INVOKABLE void reSync();
     void setKeylock(bool value);
 
     // FX chain
@@ -395,8 +398,9 @@ private:
     // Tempo control: ±6/8/16/32/100% (WIDE) selectable range
     double m_tempoPercent = 0.0;
     // Phase correction nudge added to m_tempoPercent inside updateSpeedAndPitch().
-    // Cleared on scratch and when sync is disabled. Never > ±4%.
+    // Cleared on scratch and when sync is disabled. Normally capped at ±4%; ±8% during reSync.
     double m_phaseNudge = 0.0;
+    bool   m_resyncBoost = false;
 
     bool m_vinylBrakeActive = false;
     bool m_echoOutActive    = false;
