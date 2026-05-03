@@ -240,17 +240,18 @@ Item {
 
                 Rectangle {
                     required property var modelData
-                    visible: modelData && modelData["set"]
+                    // Compute cue screen position once; gate visibility so the label
+                    // disappears when the cue line itself is off-screen.
+                    property real cuePosX: {
+                        root.cueOverlayTick
+                        return root.cueX(modelData ? modelData["positionSec"] : -999999)
+                    }
+                    visible: modelData && modelData["set"] && cuePosX >= 0 && cuePosX <= parent.width
                     width: 18
                     height: 12
                     radius: 0
                     y: 1
-                    x: {
-                        root.cueOverlayTick
-                        var cx = root.cueX(modelData["positionSec"])
-                        // Attach label to the top-right side of the cue bar.
-                        return Math.max(0, Math.min(parent.width - width, cx + 4))
-                    }
+                    x: Math.max(0, Math.min(parent.width - width, cuePosX + 4))
                     color: modelData["color"]
                     border.color: "#111"
                     border.width: 0

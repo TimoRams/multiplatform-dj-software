@@ -12,15 +12,10 @@ static inline QColor mixDjWaveColor(float low, float mid, float high, float rms)
     high = std::clamp(high, 0.0f, 1.0f);
     rms = std::clamp(rms, 0.0f, 1.0f);
 
-    // Stronger DJ palette:
-    //   low  -> red
-    //   mid  -> yellow/green
-    //   high -> blue
     float r = std::pow(low, 0.52f) * 1.18f + std::pow(mid, 0.85f) * 0.36f;
     float g = std::pow(mid, 0.50f) * 1.20f + std::pow(high, 0.95f) * 0.10f + std::pow(low, 1.20f) * 0.06f;
     float b = std::pow(high, 0.50f) * 1.22f + std::pow(mid, 1.00f) * 0.08f;
 
-    // Keep some transient whitening, but lower than before to avoid washed colors.
     const float whiteLift = std::pow(std::max({low, mid, high}), 0.70f) * (0.06f + 0.16f * rms);
     r += whiteLift;
     g += whiteLift;
@@ -32,13 +27,14 @@ static inline QColor mixDjWaveColor(float low, float mid, float high, float rms)
         std::clamp(b, 0.0f, 1.0f),
         1.0f);
 
-    // Extra vibrance pass: saturate and brighten without shifting hue semantics.
     float h = 0.0f;
     float s = 0.0f;
     float v = 0.0f;
     c.getHsvF(&h, &s, &v);
-    s = std::clamp(static_cast<float>(s * 1.30 + 0.08), 0.0f, 1.0f);
-    v = std::clamp(static_cast<float>(v * 1.12 + 0.03 + 0.07 * rms), 0.0f, 1.0f);
+    // Stronger vibrance than the scrolling waveform — the overview's QPainter path
+    // doesn't benefit from scene-graph linear-light blending, so we compensate here.
+    s = std::clamp(static_cast<float>(s * 1.80f + 0.15f), 0.0f, 1.0f);
+    v = std::clamp(static_cast<float>(v * 1.35f + 0.08f + 0.12f * rms), 0.0f, 1.0f);
     c.setHsvF(h, s, v, 1.0);
     return c;
 }
@@ -48,6 +44,13 @@ struct OverviewBin {
     float low = 0.0f;
     float mid = 0.0f;
     float high = 0.0f;
+};
+
+struct RenderCol {
+    QColor base;
+    float glowH  = 0.0f;
+    float bodyH  = 0.0f;
+    float coreH  = 0.0f;
 };
 
 } // namespace
@@ -156,46 +159,58 @@ void RgbWaveformItem::paint(QPainter* painter)
         bins[static_cast<size_t>(x)] = bin;
     }
 
-    // Gentle horizontal smoothing: keeps detail but removes jagged pixel noise.
-    if (drawWidth >= 5) {
-        std::vector<OverviewBin> smoothed = bins;
-        for (int x = 2; x < drawWidth - 2; ++x) {
-            const auto b0 = bins[static_cast<size_t>(x - 2)];
-            const auto b1 = bins[static_cast<size_t>(x - 1)];
-            const auto b2 = bins[static_cast<size_t>(x)];
-            const auto b3 = bins[static_cast<size_t>(x + 1)];
-            const auto b4 = bins[static_cast<size_t>(x + 2)];
 
-            smoothed[static_cast<size_t>(x)].rms = b0.rms * 0.08f + b1.rms * 0.24f + b2.rms * 0.36f + b3.rms * 0.24f + b4.rms * 0.08f;
-            smoothed[static_cast<size_t>(x)].low = b0.low * 0.08f + b1.low * 0.24f + b2.low * 0.36f + b3.low * 0.24f + b4.low * 0.08f;
-            smoothed[static_cast<size_t>(x)].mid = b0.mid * 0.08f + b1.mid * 0.24f + b2.mid * 0.36f + b3.mid * 0.24f + b4.mid * 0.08f;
-            smoothed[static_cast<size_t>(x)].high = b0.high * 0.08f + b1.high * 0.24f + b2.high * 0.36f + b3.high * 0.24f + b4.high * 0.08f;
-        }
-        bins.swap(smoothed);
-    }
-
+    // Pre-compute colors and amplitudes — mirrors ScrollingWaveformItem's 3-layer model.
+    std::vector<RenderCol> cols(static_cast<size_t>(drawWidth));
     for (int x = 0; x < drawWidth; ++x) {
         const auto& bin = bins[static_cast<size_t>(x)];
-        if (bin.rms <= 0.0001f)
-            continue;
-
-        const QColor base = mixDjWaveColor(bin.low, bin.mid, bin.high, bin.rms);
-        const QColor body(base.red(), base.green(), base.blue(), 236);
+        if (bin.rms <= 0.0001f) continue;
         const float bodyH = std::clamp(bin.rms, 0.0f, 1.0f) * maxBarH;
+        cols[static_cast<size_t>(x)] = {
+            mixDjWaveColor(bin.low, bin.mid, bin.high, bin.rms),
+            std::min(maxBarH, bodyH * 1.34f + 0.7f),
+            bodyH,
+            bodyH * 0.56f
+        };
+    }
 
-        if (m_rectified) {
-            painter->setBrush(body);
-            painter->drawRect(QRectF(static_cast<qreal>(x),
-                                     static_cast<qreal>(baseline - bodyH),
-                                     1.0,
-                                     static_cast<qreal>(bodyH + 1.0f)));
-        } else {
-            painter->setBrush(body);
-            painter->drawRect(QRectF(static_cast<qreal>(x),
-                                     static_cast<qreal>(baseline - bodyH),
-                                     1.0,
-                                     static_cast<qreal>(2.0f * bodyH + 1.0f)));
-        }
+    // Pass 1: Outer glow (2px wide, low alpha — same soft-halo as scrolling waveform).
+    for (int x = 0; x < drawWidth; ++x) {
+        const auto& col = cols[static_cast<size_t>(x)];
+        if (col.bodyH <= 0.0f) continue;
+        const auto& c = col.base;
+        painter->setBrush(QColor(c.red(), c.green(), c.blue(), 84));
+        if (m_rectified)
+            painter->drawRect(QRectF(x - 0.5, baseline - col.glowH,  2.0, col.glowH + 1.0));
+        else
+            painter->drawRect(QRectF(x - 0.5, baseline - col.glowH,  2.0, 2.0 * col.glowH + 1.0));
+    }
+
+    // Pass 2: Main body.
+    for (int x = 0; x < drawWidth; ++x) {
+        const auto& col = cols[static_cast<size_t>(x)];
+        if (col.bodyH <= 0.0f) continue;
+        const auto& c = col.base;
+        painter->setBrush(QColor(c.red(), c.green(), c.blue(), 255));
+        if (m_rectified)
+            painter->drawRect(QRectF(x, baseline - col.bodyH, 1.0, col.bodyH + 1.0));
+        else
+            painter->drawRect(QRectF(x, baseline - col.bodyH, 1.0, 2.0 * col.bodyH + 1.0));
+    }
+
+    // Pass 3: Bright core (inner portion, slightly lighter — same as scrolling waveform core).
+    for (int x = 0; x < drawWidth; ++x) {
+        const auto& col = cols[static_cast<size_t>(x)];
+        if (col.coreH <= 0.5f) continue;
+        const auto& c = col.base;
+        const int cR = std::min(255, static_cast<int>(c.red()   * 1.10f + 10.0f));
+        const int cG = std::min(255, static_cast<int>(c.green() * 1.10f + 10.0f));
+        const int cB = std::min(255, static_cast<int>(c.blue()  * 1.10f + 10.0f));
+        painter->setBrush(QColor(cR, cG, cB, 248));
+        if (m_rectified)
+            painter->drawRect(QRectF(x, baseline - col.coreH, 1.0, col.coreH + 1.0));
+        else
+            painter->drawRect(QRectF(x, baseline - col.coreH, 1.0, 2.0 * col.coreH + 1.0));
     }
 
     const float durationSec = std::max(0.001f, m_engine->getDuration());
