@@ -93,7 +93,6 @@ void ScrollingWaveformItem::setEngine(DjEngine* engine)
     }
     emit engineChanged();
     m_forceUpdate = true;
-    m_centerHistoryValid = false;
     update();
 }
 
@@ -104,7 +103,6 @@ void ScrollingWaveformItem::setPixelsPerPoint(float ppp)
     m_pixelsPerPoint = ppp;
     emit pixelsPerPointChanged();
     m_forceUpdate = true;
-    m_centerHistoryValid = false;
     update();
 }
 
@@ -139,7 +137,6 @@ void ScrollingWaveformItem::onTrackLoaded()
         connect(m_engine->getTrackData(), &TrackData::bpmAnalyzed, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
     }
     m_forceUpdate = true;
-    m_centerHistoryValid = false;
     update();
 }
 
@@ -194,12 +191,28 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             return node;
         };
 
-        makeStrip(rootNode);     // 0: low
-        makeStrip(rootNode);     // 1: lowMid
-        makeStrip(rootNode);     // 2: mid
-        makeStrip(rootNode);     // 3: high
-        makeLinesNode(rootNode); // 4: regular beat lines (DrawLines, white)
-        makeLinesNode(rootNode); // 5: downbeat lines + triangle markers (DrawLines red + DrawTriangles)
+        // Beat/downbeat lines are rendered as explicit 1-device-pixel-wide quads
+        // (DrawTriangles) instead of DrawLines to guarantee consistent thickness on
+        // all GPUs and DPR settings — Vulkan DrawLines can vary between 1 and 2px
+        // depending on sub-pixel x position.
+        auto makeQuadLinesNode = [](QSGNode* parent) -> QSGGeometryNode* {
+            auto* node = new QSGGeometryNode();
+            auto* geo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
+            geo->setDrawingMode(QSGGeometry::DrawTriangles);
+            node->setGeometry(geo);
+            node->setFlag(QSGNode::OwnsGeometry);
+            node->setMaterial(new QSGVertexColorMaterial());
+            node->setFlag(QSGNode::OwnsMaterial);
+            parent->appendChildNode(node);
+            return node;
+        };
+
+        makeStrip(rootNode);          // 0: low
+        makeStrip(rootNode);          // 1: lowMid
+        makeStrip(rootNode);          // 2: mid
+        makeStrip(rootNode);          // 3: high
+        makeQuadLinesNode(rootNode);  // 4: regular beat lines (DrawTriangles, white)
+        makeQuadLinesNode(rootNode);  // 5: downbeat lines (DrawTriangles, red)
         // Note: node 5 is reused for BOTH the red vertical line AND the triangle.
         // We allocate two separate geometry nodes inside it: the child QSGNode
         // approach would require more nodes, so instead we use a shared Lines node
@@ -303,24 +316,10 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     const double pointsPerSec = m_engine->waveformPointsPerSecond();
     const double tempoRatio   = m_engine->getTempoRatio();
     const double pixelsPerPoint = static_cast<double>(m_pixelsPerPoint) / std::max(0.0001, tempoRatio);
-    const double centerIndexReal = static_cast<double>(m_engine->getVisualPosition()) * pointsPerSec;
-    // Adaptive quantization:
-    // - very slow movement: keep sub-pixel precision (no snapping)
-    // - slow movement: quarter-pixel snapping
-    // - faster movement: full device-pixel snapping for visual stability
-    double centerIndexRender = centerIndexReal;
-    if (m_centerHistoryValid) {
-        const double deltaPx = std::abs(centerIndexReal - m_lastCenterIndexReal) * pixelsPerPoint;
-        if (deltaPx >= 0.80) {
-            centerIndexRender = std::round(centerIndexReal * pixelsPerPoint * snapScale)
-                / (pixelsPerPoint * snapScale);
-        } else if (deltaPx >= 0.22) {
-            centerIndexRender = std::round(centerIndexReal * pixelsPerPoint * snapScale * 4.0)
-                / (pixelsPerPoint * snapScale * 4.0);
-        }
-    }
-    m_lastCenterIndexReal = centerIndexReal;
-    m_centerHistoryValid = true;
+    // Use exact sub-pixel position so the waveform body scrolls smoothly.
+    // Individual sharp elements (beat lines, cues) are independently snapped
+    // to device-pixel boundaries via snapDevicePixelX.
+    const double centerIndexRender = static_cast<double>(m_engine->getVisualPosition()) * pointsPerSec;
 
     const auto snapDevicePixelX = [snapScale](double x) -> float {
         return static_cast<float>(std::round(x * snapScale) / snapScale);
@@ -491,25 +490,44 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         const double leftSec       = (centerIndexRender - visiblePoints / 2.0) / pps;
         const double rightSec      = (centerIndexRender + visiblePoints / 2.0) / pps;
 
+        // Anchor beat lines to a device-pixel-aligned center that is monotonically
+        // non-decreasing.  floor() — not round() — is critical here: round() oscillates
+        // at snap boundaries when the interpolated position has sub-frame backward jitter
+        // (e.g. the audio timer fires slightly early and resets m_snapPosition a fraction
+        // of a device pixel behind where linear interpolation placed it).  That 1-device-
+        // pixel back-and-forth makes MSAA sample coverage alternate frame-to-frame, which
+        // appears as bright/dark flickering.  floor() absorbs any backward jitter smaller
+        // than one snap step and only ever steps forward.
+        const double centerForBeats = std::floor(centerIndexRender * ppp * snapScale)
+                                      / (ppp * snapScale);
+        // One device pixel expressed in logical-pixel space.
+        const float invDpr = 1.0f / static_cast<float>(snapScale);
+
+        // Converts a continuous beat position to the LEFT edge of the device pixel it
+        // falls on.  Using floor (not round) guarantees the resulting quad spans exactly
+        // [N, N+1] device coordinates — never straddling two columns, which is what
+        // caused the "±halfPx from center" approach to flicker on pixel boundaries.
+        const auto beatPixelLeft = [ppp, snapScale, &centerForBeats, w](double beatPoint) -> float {
+            const double bx = w / 2.0 + (beatPoint - centerForBeats) * ppp;
+            return static_cast<float>(std::floor(bx * snapScale) / snapScale);
+        };
+
         // Collect visible markers, separated into regular and downbeat lists.
-        struct VisibleBeat { float x; bool isDownbeat; int barNumber; };
+        struct VisibleBeat { float xl; bool isDownbeat; int barNumber; };
         std::vector<VisibleBeat> visible;
         visible.reserve(256);
 
         if (hasElasticGrid) {
-            // Binary-search: find first marker that could be visible.
             auto cmp = [](const TrackData::BeatMarker& m, double t){
                 return m.positionSec < t; };
             auto it = std::lower_bound(beatGrid.begin(), beatGrid.end(),
                                        leftSec - 0.5, cmp);
             for (; it != beatGrid.end() && it->positionSec <= rightSec + 0.5; ++it) {
-                double beatPoint = it->positionSec * pps;
-                const float bx = snapDevicePixelX(w / 2.0 + (beatPoint - centerIndexRender) * ppp);
-                if (bx >= 0.0f && bx <= w)
-                    visible.push_back({bx, it->isDownbeat, it->barNumber});
+                const float xl = beatPixelLeft(it->positionSec * pps);
+                if (xl >= -invDpr && xl <= w)
+                    visible.push_back({xl, it->isDownbeat, it->barNumber});
             }
         } else {
-            // Legacy rigid-grid fallback.
             double bpm          = td->getBpm();
             qint64 firstBeatSamp = td->getFirstBeatSample();
             double firstBeatSec  = static_cast<double>(firstBeatSamp) / sr;
@@ -519,11 +537,9 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             beatStart = std::max(beatStart, -1);
             beatEnd   = std::min(beatEnd,   100000);
             for (int b = beatStart; b <= beatEnd; ++b) {
-                double beatSec  = firstBeatSec + b * beatPeriod;
-                double beatPoint = beatSec * pps;
-                const float bx = snapDevicePixelX(w / 2.0 + (beatPoint - centerIndexRender) * ppp);
-                if (bx >= 0.0f && bx <= w)
-                    visible.push_back({bx, (b % 4 == 0), b / 4 + 1});
+                const float xl = beatPixelLeft((firstBeatSec + b * beatPeriod) * pps);
+                if (xl >= -invDpr && xl <= w)
+                    visible.push_back({xl, (b % 4 == 0), b / 4 + 1});
             }
         }
 
@@ -534,29 +550,67 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             if (v.isDownbeat) ++numDownbeat; else ++numRegular;
         }
 
-        // ── Node 4: regular beat lines (white, thin) ─────────────────────────
-        beatGeo->allocate(numRegular * 2);
+        const float hF = static_cast<float>(height());
+
+        // Beat lines: dark shadow backing + bright core.
+        // Core is 2 device pixels wide — robust against sub-pixel positioning so
+        // coverage is always full regardless of zoom level or display DPR.
+        // Shadow is 6 device pixels wide (2 px either side of core) for contrast
+        // against bright waveform peaks at beat positions.
+        // All widths are expressed in logical pixels via invDpr so they are
+        // physically constant across all zoom levels and screen densities.
+        const float corePx   = 2.0f * invDpr;   // 2 device pixels
+        const float shadowPx = 6.0f * invDpr;   // 6 device pixels (1 px each side beyond core)
+
+        // ── Node 4: regular beat lines (shadow + white core) ──────────────────
+        beatGeo->allocate(numRegular * 12);
         {
             auto* v = beatGeo->vertexDataAsColoredPoint2D();
             int idx = 0;
             for (auto& vb : visible) {
                 if (vb.isDownbeat) continue;
-                v[idx  ].set(vb.x, 0.0f,    200, 200, 200, 110);
-                v[idx+1].set(vb.x, height(), 200, 200, 200, 110);
-                idx += 2;
+                const float cxl = vb.xl;
+                const float cxr = cxl + corePx;
+                const float sxl = cxl - (shadowPx - corePx) * 0.5f;
+                const float sxr = cxl + (shadowPx + corePx) * 0.5f;
+                v[idx++].set(sxl, 0.0f,  0,   0,   0, 120);
+                v[idx++].set(sxl, hF,    0,   0,   0, 120);
+                v[idx++].set(sxr, hF,    0,   0,   0, 120);
+                v[idx++].set(sxl, 0.0f,  0,   0,   0, 120);
+                v[idx++].set(sxr, hF,    0,   0,   0, 120);
+                v[idx++].set(sxr, 0.0f,  0,   0,   0, 120);
+                v[idx++].set(cxl, 0.0f, 220, 220, 220, 230);
+                v[idx++].set(cxl, hF,   220, 220, 220, 230);
+                v[idx++].set(cxr, hF,   220, 220, 220, 230);
+                v[idx++].set(cxl, 0.0f, 220, 220, 220, 230);
+                v[idx++].set(cxr, hF,   220, 220, 220, 230);
+                v[idx++].set(cxr, 0.0f, 220, 220, 220, 230);
             }
         }
 
-        // ── Node 5: downbeat lines (red, full height) ─────────────────────────
-        downGeo->allocate(numDownbeat * 2);
+        // ── Node 5: downbeat lines (shadow + red core) ────────────────────────
+        downGeo->allocate(numDownbeat * 12);
         {
             auto* v = downGeo->vertexDataAsColoredPoint2D();
             int idx = 0;
             for (auto& vb : visible) {
                 if (!vb.isDownbeat) continue;
-                v[idx  ].set(vb.x, 0.0f,    230, 0, 0, 220);
-                v[idx+1].set(vb.x, height(), 230, 0, 0, 180);
-                idx += 2;
+                const float cxl = vb.xl;
+                const float cxr = cxl + corePx;
+                const float sxl = cxl - (shadowPx - corePx) * 0.5f;
+                const float sxr = cxl + (shadowPx + corePx) * 0.5f;
+                v[idx++].set(sxl, 0.0f,  0,   0,   0, 140);
+                v[idx++].set(sxl, hF,    0,   0,   0, 140);
+                v[idx++].set(sxr, hF,    0,   0,   0, 140);
+                v[idx++].set(sxl, 0.0f,  0,   0,   0, 140);
+                v[idx++].set(sxr, hF,    0,   0,   0, 140);
+                v[idx++].set(sxr, 0.0f,  0,   0,   0, 140);
+                v[idx++].set(cxl, 0.0f, 235,   0,   0, 245);
+                v[idx++].set(cxl, hF,   235,   0,   0, 210);
+                v[idx++].set(cxr, hF,   235,   0,   0, 210);
+                v[idx++].set(cxl, 0.0f, 235,   0,   0, 245);
+                v[idx++].set(cxr, hF,   235,   0,   0, 210);
+                v[idx++].set(cxr, 0.0f, 235,   0,   0, 245);
             }
         }
 
@@ -576,9 +630,10 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             int idx = 0;
             for (auto& vb : visible) {
                 if (!vb.isDownbeat) continue;
-                v[idx  ].set(vb.x - triW, 0.0f, 230, 0, 0, 230); // top-left
-                v[idx+1].set(vb.x + triW, 0.0f, 230, 0, 0, 230); // top-right
-                v[idx+2].set(vb.x,        triH, 230, 0, 0, 200); // tip
+                const float cx = vb.xl + invDpr * 0.5f; // visual center of the 1px line
+                v[idx  ].set(cx - triW, 0.0f, 230, 0, 0, 230);
+                v[idx+1].set(cx + triW, 0.0f, 230, 0, 0, 230);
+                v[idx+2].set(cx,        triH, 230, 0, 0, 200);
                 idx += 3;
             }
         }
