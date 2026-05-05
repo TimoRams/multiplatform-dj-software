@@ -11,7 +11,15 @@
 #include <QFont>
 #include <QIcon>
 #include <QSize>
+#include <QElapsedTimer>
+#include <QStandardPaths>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QQuickGraphicsConfiguration>
 #include <QtGlobal>
+#include <QVersionNumber>
+#include <QVulkanInstance>
 
 #include "DjEngine.h"
 #include "WaveformItem.h"
@@ -32,6 +40,42 @@ namespace {
 QtMessageHandler g_previousMessageHandler = nullptr;
 const QString kBreezeDialOverrideWarning = QStringLiteral("Member fillColor of the object BreezeDial overrides a member of the base object");
 
+QString pickDefaultVulkanIcd()
+{
+#if defined(Q_OS_LINUX)
+    const QString icdDirPath = QStringLiteral("/usr/share/vulkan/icd.d");
+    QDir icdDir(icdDirPath);
+    if (!icdDir.exists())
+        return {};
+
+    const QStringList files = icdDir.entryList({QStringLiteral("*.json")}, QDir::Files);
+    if (files.isEmpty())
+        return {};
+
+    const auto hasFile = [&files](const QString& name) { return files.contains(name); };
+    const auto filePath = [&icdDir](const QString& name) { return icdDir.absoluteFilePath(name); };
+
+    const QString glVendor = qEnvironmentVariable("__GLX_VENDOR_LIBRARY_NAME").trimmed().toLower();
+    const bool wantNvidia = qEnvironmentVariable("__NV_PRIME_RENDER_OFFLOAD") == "1"
+        || qEnvironmentVariable("DRI_PRIME") == "1"
+        || glVendor == "nvidia";
+
+    if (wantNvidia && hasFile("nvidia_icd.json"))
+        return filePath("nvidia_icd.json");
+
+    if (hasFile("intel_icd.json"))
+        return filePath("intel_icd.json");
+
+    if (hasFile("intel_hasvk_icd.json"))
+        return filePath("intel_hasvk_icd.json");
+
+    if (files.size() == 1)
+        return filePath(files.first());
+#endif
+
+    return {};
+}
+
 void filteredMessageHandler(QtMsgType type, const QMessageLogContext& context, const QString& message)
 {
     if (message.contains(kBreezeDialOverrideWarning))
@@ -44,6 +88,17 @@ void filteredMessageHandler(QtMsgType type, const QMessageLogContext& context, c
 
 int main(int argc, char *argv[])
 {
+    bool useVulkan = false;
+    QVersionNumber requestedVkApi;
+    QString requestedVkApiRaw;
+    QString requestedVkIcd;
+    QElapsedTimer startupTimer;
+    startupTimer.start();
+
+    auto logStartupStep = [&startupTimer](const char* step) {
+        qDebug() << "[startup]" << step << startupTimer.elapsed() << "ms";
+    };
+
     std::cout << "========================================" << std::endl;
     std::cout << "RAMSBROCK DJ ENGINE - INITIAL BUILD TEST" << std::endl;
     std::cout << "JUCE Version:   " << juce::SystemStats::getJUCEVersion() << std::endl;
@@ -72,15 +127,85 @@ int main(int argc, char *argv[])
     }
 
 #if !defined(Q_OS_MACOS)
-    // Enforce Vulkan on Linux/Windows.
-    const QString rhiBackend = qEnvironmentVariable("QSG_RHI_BACKEND");
-    if (rhiBackend.compare("vulkan", Qt::CaseInsensitive) != 0)
+    // Vulkan is required for production; allow env override for diagnostics.
+    QString rhiBackend = qEnvironmentVariable("RAMSBROCKDJ_RHI_BACKEND").trimmed().toLower();
+    if (rhiBackend.isEmpty())
+        rhiBackend = QStringLiteral("vulkan");
+
+    if (rhiBackend == "vulkan") {
         qputenv("QSG_RHI_BACKEND", "vulkan");
-    QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
+        useVulkan = true;
+        qDebug() << "[startup] RHI backend forced to vulkan";
+    } else if (rhiBackend == "opengl") {
+        qputenv("QSG_RHI_BACKEND", "opengl");
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+        qWarning() << "[startup] RHI backend forced to opengl (diagnostics only)";
+    } else if (rhiBackend == "auto") {
+        qDebug() << "[startup] RHI backend auto (RAMSBROCKDJ_RHI_BACKEND=auto)";
+    } else {
+        qWarning() << "[startup] Unknown RAMSBROCKDJ_RHI_BACKEND value, forcing vulkan:" << rhiBackend;
+        qputenv("QSG_RHI_BACKEND", "vulkan");
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
+        useVulkan = true;
+    }
+
+    if (useVulkan) {
+        requestedVkIcd = qEnvironmentVariable("RAMSBROCKDJ_VK_ICD").trimmed();
+        if (requestedVkIcd.isEmpty() && qEnvironmentVariableIsEmpty("VK_ICD_FILENAMES")) {
+            const QString autoMode = qEnvironmentVariable("RAMSBROCKDJ_VK_ICD_AUTO").trimmed().toLower();
+            const bool allowAuto = autoMode.isEmpty() || autoMode == "1" || autoMode == "true" || autoMode == "on";
+            if (allowAuto)
+                requestedVkIcd = pickDefaultVulkanIcd();
+        }
+
+        if (!requestedVkIcd.isEmpty())
+            qputenv("VK_ICD_FILENAMES", requestedVkIcd.toUtf8());
+
+        requestedVkApiRaw = qEnvironmentVariable("RAMSBROCKDJ_VK_API").trimmed();
+        QString apiEnv = requestedVkApiRaw;
+        apiEnv.remove('"');
+        apiEnv.remove('\'');
+        apiEnv = apiEnv.trimmed().toLower();
+
+        if (!apiEnv.isEmpty()) {
+            if (apiEnv == "latest")
+                requestedVkApi = QVersionNumber(1, 4);
+            else
+                requestedVkApi = QVersionNumber::fromString(apiEnv);
+        }
+    }
 #endif
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::RoundPreferFloor);
 
     QGuiApplication app(argc, argv);
+    logStartupStep("QGuiApplication created");
+
+    std::unique_ptr<QVulkanInstance> vkInstance;
+    if (useVulkan) {
+        if (!requestedVkIcd.isEmpty())
+            qDebug() << "[startup] Vulkan ICD override:" << requestedVkIcd;
+
+        if (!requestedVkApiRaw.isEmpty()) {
+            if (!requestedVkApi.isNull())
+                qDebug() << "[startup] Vulkan API override:" << requestedVkApi;
+            else
+                qWarning() << "[startup] Invalid RAMSBROCKDJ_VK_API value:" << requestedVkApiRaw;
+        }
+
+        vkInstance = std::make_unique<QVulkanInstance>();
+        if (!requestedVkApi.isNull())
+            vkInstance->setApiVersion(requestedVkApi);
+
+        QElapsedTimer vkTimer;
+        vkTimer.start();
+        const bool vkOk = vkInstance->create();
+        qDebug() << "[startup] Vulkan instance create" << (vkOk ? "ok" : "failed")
+                 << vkTimer.elapsed() << "ms";
+
+        if (!vkOk)
+            vkInstance.reset();
+    }
 
     // Load app icon from embedded QRC (generated by scripts/generate_icons.sh).
     // Multiple sizes let Qt pick the sharpest one for each use (taskbar, title bar, dock).
@@ -101,13 +226,16 @@ int main(int argc, char *argv[])
     app.setFont(defaultFont);
 
     juce::ScopedJuceInitialiser_GUI juceInit;
+    logStartupStep("JUCE GUI initialised");
 
     SettingsManager::getInstance().init();
+    logStartupStep("SettingsManager init done");
 
     auto& settingsManager = SettingsManager::getInstance();
 
     auto deckA = std::make_unique<DjEngine>();
     auto deckB = std::make_unique<DjEngine>();
+    logStartupStep("DjEngines constructed");
 
     deckA->applyAudioDeviceSettings(settingsManager.getAudioMasterDeviceType(),
                                     settingsManager.getAudioMasterOutputDevice(),
@@ -116,6 +244,7 @@ int main(int argc, char *argv[])
                                     settingsManager.getAudioMasterFirstChannel(),
                                     settingsManager.getAudioHeadphonesFirstChannel(),
                                     settingsManager.getAudioBoothFirstChannel());
+    logStartupStep("Audio device settings applied");
 
     auto coverProvider = std::make_unique<CoverArtProvider>();
     deckA->setCoverArtProvider(coverProvider.get(), "deckA");
@@ -160,6 +289,7 @@ int main(int argc, char *argv[])
     });
 
     engine.addImageProvider("coverart", coverProvider.release());
+    logStartupStep("Cover art provider installed");
 
     engine.rootContext()->setContextProperty("settingsManager", &settingsManager);
     engine.rootContext()->setContextProperty("deckA", deckA.get());
@@ -171,10 +301,12 @@ int main(int argc, char *argv[])
     LibraryDatabase libraryDb;
     if (!libraryDb.open())
         qWarning() << "[main] LibraryDatabase failed to open – library features disabled.";
+    logStartupStep("LibraryDatabase open attempted");
 
     LibraryTableModel libraryTableModel("library_conn");
     libraryDb.setTableModel(&libraryTableModel);
     libraryTableModel.refresh();
+    logStartupStep("LibraryTableModel refreshed");
 
     engine.rootContext()->setContextProperty("libraryDb",    &libraryDb);
     engine.rootContext()->setContextProperty("libraryModel", &libraryTableModel);
@@ -203,12 +335,87 @@ int main(int argc, char *argv[])
     }, Qt::QueuedConnection);
 
     engine.load(url);
+    logStartupStep("QML load requested");
 
     if (!engine.rootObjects().isEmpty()) {
         if (auto* rootWindow = qobject_cast<QWindow*>(engine.rootObjects().first())) {
             qDebug() << "[main] Root window found, setting size and visibility";
+
+            if (auto* quickWindow = qobject_cast<QQuickWindow*>(rootWindow)) {
+                const bool usingVulkan = (QQuickWindow::graphicsApi() == QSGRendererInterface::Vulkan);
+                if (usingVulkan && vkInstance)
+                    quickWindow->setVulkanInstance(vkInstance.get());
+                if (usingVulkan) {
+                    const QString cacheMode = qEnvironmentVariable("RAMSBROCKDJ_VK_CACHE").trimmed().toLower();
+                    const bool enableCache = cacheMode.isEmpty() || cacheMode == "1" || cacheMode == "on" || cacheMode == "true";
+                    const bool resetCache = (cacheMode == "reset");
+
+                    if (enableCache) {
+                        // Set up Vulkan pipeline cache before show() so compiled shaders are persisted.
+                        // First launch compiles everything; subsequent launches load in milliseconds.
+                        const QString cacheDir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+                        QDir().mkpath(cacheDir);
+                        const QString cacheFile = cacheDir + "/vk_pipeline_cache.bin";
+                        if (resetCache)
+                            QFile::remove(cacheFile);
+
+                        QQuickGraphicsConfiguration cfg = quickWindow->graphicsConfiguration();
+                        cfg.setPipelineCacheSaveFile(cacheFile);
+                        if (!resetCache)
+                            cfg.setPipelineCacheLoadFile(cacheFile);
+                        quickWindow->setGraphicsConfiguration(cfg);
+
+                        QFileInfo cacheInfo(cacheFile);
+                        if (cacheInfo.exists())
+                            qDebug() << "[main] Vulkan pipeline cache:" << cacheFile << cacheInfo.size() << "bytes";
+                        else
+                            qDebug() << "[main] Vulkan pipeline cache (new):" << cacheFile;
+                    } else {
+                        qDebug() << "[main] Vulkan pipeline cache disabled (RAMSBROCKDJ_VK_CACHE=0)";
+                    }
+                }
+
+                QObject::connect(
+                    quickWindow,
+                    &QQuickWindow::sceneGraphInitialized,
+                    &app,
+                    [&startupTimer]() {
+                    qDebug() << "[startup] Scene graph initialized" << startupTimer.elapsed() << "ms";
+                    },
+                    static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::SingleShotConnection));
+
+                QObject::connect(
+                    quickWindow,
+                    &QQuickWindow::sceneGraphError,
+                    &app,
+                    [&startupTimer](QQuickWindow::SceneGraphError error, const QString& message) {
+                    qWarning() << "[startup] Scene graph error" << error << message
+                               << "at" << startupTimer.elapsed() << "ms";
+                    },
+                    Qt::DirectConnection);
+
+                QObject::connect(
+                    quickWindow,
+                    &QQuickWindow::beforeRendering,
+                    &app,
+                    [&startupTimer]() {
+                    qDebug() << "[startup] First render started" << startupTimer.elapsed() << "ms";
+                    },
+                    static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::SingleShotConnection));
+
+                QObject::connect(
+                    quickWindow,
+                    &QQuickWindow::afterRendering,
+                    &app,
+                    [&startupTimer]() {
+                    qDebug() << "[startup] FIRST FRAME RENDERED" << startupTimer.elapsed() << "ms";
+                    },
+                    static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::SingleShotConnection));
+            }
+
             rootWindow->show();
-            
+            logStartupStep("Root window shown");
+
 #if defined(Q_OS_MACOS)
             // macOS requires extra steps to properly show the window
             rootWindow->raise();
@@ -220,11 +427,13 @@ int main(int argc, char *argv[])
         }
     } else {
         qCritical() << "[main] No root objects found after loading QML!";
+        settingsManager.shutdown();
         return -1;
     }
 
     const int ret = app.exec();
 
+    settingsManager.shutdown();
     engine.rootContext()->setContextProperty("deckA", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("deckB", static_cast<QObject*>(nullptr));
 

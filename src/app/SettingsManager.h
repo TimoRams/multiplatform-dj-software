@@ -29,6 +29,7 @@ public:
     explicit SettingsManager(QObject* parent = nullptr);
 
     void init();
+    void shutdown();
 
     juce::ApplicationProperties& getAppProperties() { return appProperties; }
 

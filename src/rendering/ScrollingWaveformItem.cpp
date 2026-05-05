@@ -88,6 +88,7 @@ void ScrollingWaveformItem::setEngine(DjEngine* engine)
         connect(m_engine, &DjEngine::loopChanged, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
         connect(m_engine, &DjEngine::segmentsChanged, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
         connect(m_engine, &DjEngine::hotCuesChanged, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
+        connect(m_engine, &DjEngine::mainCueChanged, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
     } else {
         // nothing to stop — FrameAnimation in QML will have stopped already
     }
@@ -218,7 +219,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         // approach would require more nodes, so instead we use a shared Lines node
         // for the line and a sibling TrianglesNode appended directly to rootNode.
 
-        // 6: downbeat triangle markers (DrawTriangles, red filled)
+        // 6: beat triangle markers — all beats, top + bottom (DrawTriangles)
+        //    downbeat = red larger, regular = gray/white smaller
         auto* triNode = new QSGGeometryNode();
         auto* triGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
         triGeo->setDrawingMode(QSGGeometry::DrawTriangles);
@@ -280,6 +282,37 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         hotCueNode->setMaterial(new QSGVertexColorMaterial());
         hotCueNode->setFlag(QSGNode::OwnsMaterial);
         rootNode->appendChildNode(hotCueNode);
+
+        // 12: hotcue triangle markers (DrawTriangles, colored top+bottom)
+        auto* hotCueTriNode = new QSGGeometryNode();
+        auto* hotCueTriGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
+        hotCueTriGeo->setDrawingMode(QSGGeometry::DrawTriangles);
+        hotCueTriNode->setGeometry(hotCueTriGeo);
+        hotCueTriNode->setFlag(QSGNode::OwnsGeometry);
+        hotCueTriNode->setMaterial(new QSGVertexColorMaterial());
+        hotCueTriNode->setFlag(QSGNode::OwnsMaterial);
+        rootNode->appendChildNode(hotCueTriNode);
+
+        // 13: main cue line (DrawLines, gray)
+        auto* mainCueLineNode = new QSGGeometryNode();
+        auto* mainCueLineGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
+        mainCueLineGeo->setDrawingMode(QSGGeometry::DrawLines);
+        mainCueLineGeo->setLineWidth(2.0f);
+        mainCueLineNode->setGeometry(mainCueLineGeo);
+        mainCueLineNode->setFlag(QSGNode::OwnsGeometry);
+        mainCueLineNode->setMaterial(new QSGVertexColorMaterial());
+        mainCueLineNode->setFlag(QSGNode::OwnsMaterial);
+        rootNode->appendChildNode(mainCueLineNode);
+
+        // 14: main cue triangles (DrawTriangles, orange top+bottom)
+        auto* mainCueTriNode = new QSGGeometryNode();
+        auto* mainCueTriGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
+        mainCueTriGeo->setDrawingMode(QSGGeometry::DrawTriangles);
+        mainCueTriNode->setGeometry(mainCueTriGeo);
+        mainCueTriNode->setFlag(QSGNode::OwnsGeometry);
+        mainCueTriNode->setMaterial(new QSGVertexColorMaterial());
+        mainCueTriNode->setFlag(QSGNode::OwnsMaterial);
+        rootNode->appendChildNode(mainCueTriNode);
     }
 
     auto* lowNode      = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(0));
@@ -294,6 +327,9 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     auto* segmentNode  = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(9));
     auto* hotCueShadowNode = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(10));
     auto* hotCueNode       = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(11));
+    auto* hotCueTriNode    = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(12));
+    auto* mainCueLineNode  = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(13));
+    auto* mainCueTriNode   = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(14));
 
     int wInt = static_cast<int>(std::lround(width()));
     if (wInt <= 0) return rootNode;
@@ -614,27 +650,34 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             }
         }
 
-        // ── Node 6: downbeat triangle markers (red filled, top of waveform) ──
-        // Each triangle: tip points down at y=10, base at y=0,
-        // centred on the downbeat x position, width=8px.
-        //
-        //    x-4      x      x+4
-        //     *-------*-------*   y = 0   (base)
-        //              *           y = 10  (tip)
-        //
-        const float triH = 10.0f;  // height of triangle in pixels
-        const float triW =  4.0f;  // half-width of triangle base
-        triGeo2->allocate(numDownbeat * 3);
+        // ── Node 6: beat triangle markers — every beat line, top AND bottom ──
+        // Downbeat: red,   triH=10, triW=4.5  (prominent)
+        // Regular:  gray,  triH=7,  triW=3.5  (subtle)
+        // Top triangle: base at y=0,  tip points down at y=+triH
+        // Bottom triangle: base at y=hF, tip points up at y=hF-triH
+        const float triHD = 10.0f, triWD = 4.5f;
+        const float triHR =  7.0f, triWR = 3.5f;
+        triGeo2->allocate(static_cast<int>(visible.size()) * 6);
         {
             auto* v = triGeo2->vertexDataAsColoredPoint2D();
             int idx = 0;
             for (auto& vb : visible) {
-                if (!vb.isDownbeat) continue;
-                const float cx = vb.xl + invDpr * 0.5f; // visual center of the 1px line
-                v[idx  ].set(cx - triW, 0.0f, 230, 0, 0, 230);
-                v[idx+1].set(cx + triW, 0.0f, 230, 0, 0, 230);
-                v[idx+2].set(cx,        triH, 230, 0, 0, 200);
-                idx += 3;
+                const float cx = vb.xl + invDpr;  // center of 2-device-pixel core
+                if (vb.isDownbeat) {
+                    v[idx++].set(cx - triWD, 0.0f,       230,   0,   0, 230);
+                    v[idx++].set(cx + triWD, 0.0f,       230,   0,   0, 230);
+                    v[idx++].set(cx,         triHD,       230,   0,   0, 195);
+                    v[idx++].set(cx - triWD, hF,          230,   0,   0, 230);
+                    v[idx++].set(cx + triWD, hF,          230,   0,   0, 230);
+                    v[idx++].set(cx,         hF - triHD,  230,   0,   0, 195);
+                } else {
+                    v[idx++].set(cx - triWR, 0.0f,       185, 185, 185, 145);
+                    v[idx++].set(cx + triWR, 0.0f,       185, 185, 185, 145);
+                    v[idx++].set(cx,         triHR,       185, 185, 185, 100);
+                    v[idx++].set(cx - triWR, hF,          185, 185, 185, 145);
+                    v[idx++].set(cx + triWR, hF,          185, 185, 185, 145);
+                    v[idx++].set(cx,         hF - triHR,  185, 185, 185, 100);
+                }
             }
         }
 
@@ -757,6 +800,79 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
 
     hotCueShadowNode->markDirty(QSGNode::DirtyGeometry);
     hotCueNode->markDirty(QSGNode::DirtyGeometry);
+
+    // ── Hot cue triangle markers (top + bottom, in each cue's color) ──────
+    {
+        const float hF      = static_cast<float>(height());
+        const float cTriH   = 9.0f;
+        const float cTriW   = 4.0f;
+        QSGGeometry* hotCueTriGeo = hotCueTriNode->geometry();
+        // re-use visibleCues collected above — rebuild since the struct is local
+        const QVariantList cuesAgain = m_engine->hotCues();
+        struct CuePos { float x; uchar r, g, b; };
+        std::vector<CuePos> cuePositions;
+        cuePositions.reserve(static_cast<size_t>(cuesAgain.size()));
+        for (const QVariant& qv : cuesAgain) {
+            const QVariantMap m = qv.toMap();
+            if (!m.value("set").toBool()) continue;
+            const double cueSec = m.value("positionSec").toDouble();
+            const float cx = snapDevicePixelX(w / 2.0 + (cueSec * pointsPerSec - centerIndexRender) * pixelsPerPoint);
+            if (cx < 0.0f || cx > w) continue;
+            QColor c(m.value("color").toString());
+            if (!c.isValid()) c = QColor("#e04040");
+            cuePositions.push_back({cx, static_cast<uchar>(c.red()), static_cast<uchar>(c.green()), static_cast<uchar>(c.blue())});
+        }
+        hotCueTriGeo->allocate(static_cast<int>(cuePositions.size()) * 6);
+        {
+            auto* v = hotCueTriGeo->vertexDataAsColoredPoint2D();
+            int idx = 0;
+            for (const auto& cp : cuePositions) {
+                v[idx++].set(cp.x - cTriW, 0.0f,        cp.r, cp.g, cp.b, 230);
+                v[idx++].set(cp.x + cTriW, 0.0f,        cp.r, cp.g, cp.b, 230);
+                v[idx++].set(cp.x,         cTriH,        cp.r, cp.g, cp.b, 190);
+                v[idx++].set(cp.x - cTriW, hF,           cp.r, cp.g, cp.b, 230);
+                v[idx++].set(cp.x + cTriW, hF,           cp.r, cp.g, cp.b, 230);
+                v[idx++].set(cp.x,         hF - cTriH,   cp.r, cp.g, cp.b, 190);
+            }
+        }
+        hotCueTriNode->markDirty(QSGNode::DirtyGeometry);
+    }
+
+    // ── Main cue point (gray line + orange triangles) ─────────────────────
+    {
+        const float hF = static_cast<float>(height());
+        const double mainCueSec = m_engine->mainCueSec();
+        QSGGeometry* mainCueLineGeo = mainCueLineNode->geometry();
+        QSGGeometry* mainCueTriGeo  = mainCueTriNode->geometry();
+
+        if (mainCueSec >= 0.0) {
+            const float mx = snapDevicePixelX(w / 2.0 + (mainCueSec * pointsPerSec - centerIndexRender) * pixelsPerPoint);
+            if (mx >= 0.0f && mx <= w) {
+                mainCueLineGeo->allocate(2);
+                auto* lv = mainCueLineGeo->vertexDataAsColoredPoint2D();
+                lv[0].set(mx, 0.0f, 160, 160, 160, 210);
+                lv[1].set(mx, hF,   160, 160, 160, 170);
+
+                const float mTriH = 11.0f, mTriW = 5.0f;
+                mainCueTriGeo->allocate(6);
+                auto* tv = mainCueTriGeo->vertexDataAsColoredPoint2D();
+                tv[0].set(mx - mTriW, 0.0f,        255, 145,  0, 240);
+                tv[1].set(mx + mTriW, 0.0f,        255, 145,  0, 240);
+                tv[2].set(mx,         mTriH,        255, 145,  0, 200);
+                tv[3].set(mx - mTriW, hF,           255, 145,  0, 240);
+                tv[4].set(mx + mTriW, hF,           255, 145,  0, 240);
+                tv[5].set(mx,         hF - mTriH,   255, 145,  0, 200);
+            } else {
+                mainCueLineGeo->allocate(0);
+                mainCueTriGeo->allocate(0);
+            }
+        } else {
+            mainCueLineGeo->allocate(0);
+            mainCueTriGeo->allocate(0);
+        }
+        mainCueLineNode->markDirty(QSGNode::DirtyGeometry);
+        mainCueTriNode->markDirty(QSGNode::DirtyGeometry);
+    }
 
     // ── Segment strip rendering (tiny colored bar at bottom) ───────────────
     // Draw each segment as a 4px-high rectangle aligned to the waveform timeline.

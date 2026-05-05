@@ -3,6 +3,7 @@
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QDebug>
+#include <QElapsedTimer>
 
 LibraryTableModel::LibraryTableModel(const QString& connectionName,
                                      QObject* parent)
@@ -127,6 +128,9 @@ void LibraryTableModel::setFilterText(const QString& text)
 
 void LibraryTableModel::refresh()
 {
+    QElapsedTimer timer;
+    timer.start();
+
     auto db = QSqlDatabase::database(m_connectionName, false);
     if (!db.isOpen()) {
         qWarning() << "[LibraryTableModel] DB not open for refresh";
@@ -180,6 +184,8 @@ void LibraryTableModel::refresh()
     endResetModel();
 
     emit countChanged();
+
+    qDebug() << "[LibraryTableModel] refresh() loaded" << m_rows.size() << "rows in" << timer.elapsed() << "ms";
 }
 
 void LibraryTableModel::updateAnalysisForTrack(const QString& trackId,

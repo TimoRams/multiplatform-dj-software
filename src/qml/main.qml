@@ -22,11 +22,11 @@ ApplicationWindow {
     property bool exitCleanupTriggered: false
     property real exitProgress: 0.0
     readonly property color unifiedGray: "#2a2a2a"
-    
+
     property int resizeThrottleCounter: 0
     property int lastProcessedWidth: width
     property int lastProcessedHeight: height
-    
+
     onWidthChanged: {
         resizeThrottleCounter++
         if (resizeThrottleCounter >= 5) {
@@ -34,7 +34,7 @@ ApplicationWindow {
             resizeThrottleCounter = 0
         }
     }
-    
+
     onHeightChanged: {
         resizeThrottleCounter++
         if (resizeThrottleCounter >= 5) {
@@ -42,7 +42,7 @@ ApplicationWindow {
             resizeThrottleCounter = 0
         }
     }
-    
+
     function requestAppClose() {
         if (exitShutdownInProgress)
             return
@@ -50,67 +50,67 @@ ApplicationWindow {
         exitPromptVisible = true
     }
 
-        function cancelAppClosePrompt() {
-            if (exitShutdownInProgress)
-                return
-            exitManualBackupRequested = false
-            exitPromptVisible = false
+    function cancelAppClosePrompt() {
+        if (exitShutdownInProgress)
+            return
+        exitManualBackupRequested = false
+        exitPromptVisible = false
+    }
+
+    function confirmAppClose() {
+        if (exitShutdownInProgress)
+            return
+
+        exitShutdownInProgress = true
+        exitCleanupTriggered = false
+        exitProgress = 0.0
+        exitShutdownTimer.restart()
+    }
+
+    function finalizeAppClose() {
+        allowDirectClose = true
+        exitPromptVisible = false
+        window.close()
+        Qt.callLater(Qt.quit)
+    }
+
+    onClosing: function(close) {
+        if (allowDirectClose) {
+            close.accepted = true
+            return
         }
 
-        function confirmAppClose() {
-            if (exitShutdownInProgress)
-                return
+        close.accepted = false
+        requestAppClose()
+    }
 
-            exitShutdownInProgress = true
-            exitCleanupTriggered = false
-            exitProgress = 0.0
-            exitShutdownTimer.restart()
-        }
-
-        function finalizeAppClose() {
-            allowDirectClose = true
-            exitPromptVisible = false
-            window.close()
-            Qt.callLater(Qt.quit)
-        }
-
-        onClosing: function(close) {
-            if (allowDirectClose) {
-                close.accepted = true
+    Timer {
+        id: exitShutdownTimer
+        interval: 70
+        repeat: true
+        running: false
+        onTriggered: {
+            if (!window.exitShutdownInProgress) {
+                stop()
                 return
             }
 
-            close.accepted = false
-            requestAppClose()
-        }
+            window.exitProgress = Math.min(1.0, window.exitProgress + 0.09)
 
-        Timer {
-            id: exitShutdownTimer
-            interval: 70
-            repeat: true
-            running: false
-            onTriggered: {
-                if (!window.exitShutdownInProgress) {
-                    stop()
-                    return
-                }
+            if (!window.exitCleanupTriggered && window.exitProgress >= 0.25) {
+                window.exitCleanupTriggered = true
+                if (typeof settingsManager !== "undefined" && settingsManager && settingsManager.flushToDisk)
+                    settingsManager.flushToDisk()
+                if (typeof libraryDb !== "undefined" && libraryDb && libraryDb.shutdown)
+                    libraryDb.shutdown(window.exitManualBackupRequested)
+            }
 
-                window.exitProgress = Math.min(1.0, window.exitProgress + 0.09)
-
-                if (!window.exitCleanupTriggered && window.exitProgress >= 0.25) {
-                    window.exitCleanupTriggered = true
-                    if (typeof settingsManager !== "undefined" && settingsManager && settingsManager.flushToDisk)
-                        settingsManager.flushToDisk()
-                    if (typeof libraryDb !== "undefined" && libraryDb && libraryDb.shutdown)
-                        libraryDb.shutdown(window.exitManualBackupRequested)
-                }
-
-                if (window.exitProgress >= 1.0) {
-                    stop()
-                    window.finalizeAppClose()
-                }
+            if (window.exitProgress >= 1.0) {
+                stop()
+                window.finalizeAppClose()
             }
         }
+    }
 
     readonly property real baseWaveformHeight: 150
     readonly property real baseDeckMixerHeight: baseUiHeight - baseWaveformHeight
@@ -142,10 +142,9 @@ ApplicationWindow {
             linkManager.enabledChanged.disconnect(window._handleLinkEnabledChanged)
     }
 
-    // Timer to hide the loading indicator and show the main content
     Timer {
         id: loadingTimer
-        interval: 2000 // 2 seconds
+        interval: 2000
         running: true
         repeat: false
         onTriggered: {
@@ -160,6 +159,7 @@ ApplicationWindow {
         property bool running: true
         anchors.centerIn: parent
         visible: true
+        z: 1000
 
         width: 260
         height: 120
@@ -239,7 +239,7 @@ ApplicationWindow {
         }
     }
 
-    // ── Global font sizing (non-transformed areas stay stable on resize) ─────
+    // ── Global font sizing ───────────────────────────────────────────────────
     readonly property real _refHeight: 800
     readonly property real responsiveFontScale: 1.0
 
@@ -254,7 +254,6 @@ ApplicationWindow {
         if (!isFinite(rawScale) || rawScale <= 0)
             rawScale = 1.0
         var dpr = _dpr()
-        // Keep scaled design width aligned to whole physical pixels.
         var scaledPhysicalWidth = Math.round(window.baseUiWidth * rawScale * dpr)
         if (!isFinite(scaledPhysicalWidth) || scaledPhysicalWidth <= 0)
             return 1.0
@@ -265,7 +264,6 @@ ApplicationWindow {
         var scale = responsiveFontScale
         var scaled = basePx * scale
 
-        // Keep tiny labels readable in dense UI areas.
         if (basePx <= 8)
             scaled *= 1.24
         else if (basePx <= 10)
@@ -278,17 +276,13 @@ ApplicationWindow {
         return Math.max(1, snapped)
     }
 
-    // Standard scaling for non-transformed areas (header, FX bar, library).
     function sp(basePx) {
         return Math.round(_scaledFontSize(basePx))
     }
 
-    // Viewport-aware sizing for the top deck area.
-    // Keep it independent from width scaling to avoid text distortion.
     function spViewport(basePx) {
         var logicalPx = _scaledFontSize(basePx)
 
-        // Keep tiny labels readable without large layout jumps.
         if (basePx <= 6)
             logicalPx += 1.4
         else if (basePx <= 8)
@@ -301,16 +295,12 @@ ApplicationWindow {
         return Math.max(1, Math.round(snapped))
     }
 
-    // Globaler Waveform-Zoom (beide Decks synchron, wie in professioneller DJ-Software)
-    // Zusätzliche Rauszoom-Stufen am Anfang; 0.22 (vorher weitester Rauszoom) bleibt als neuer Default.
     readonly property var waveformZoomLevels: [0.10, 0.14, 0.18, 0.22, 0.29, 0.38, 0.52, 0.70, 0.95, 1.30, 1.80, 2.50, 3.50, 5.00, 7.20]
     readonly property int  zoomStepMin: 0
     readonly property int  zoomStepMax: waveformZoomLevels.length - 1
-    // Default ist jetzt der bisher weiteste Rauszoom.
     property int  waveformZoomStep: waveformZoomLevels.indexOf(0.22)
     readonly property real waveformZoom: waveformZoomLevels[waveformZoomStep]
 
-    // Ctrl+ = Reinzoomen (mehr Detail, weniger Sekunden sichtbar)
     Shortcut {
         sequence: "Ctrl+="
         onActivated: {
@@ -323,7 +313,6 @@ ApplicationWindow {
             window.waveformZoomStep = Math.min(window.zoomStepMax, window.waveformZoomStep + 1)
         }
     }
-    // Ctrl- = Rauszoomen (weniger Detail, mehr Sekunden sichtbar)
     Shortcut {
         sequence: "Ctrl+-"
         onActivated: {
@@ -365,33 +354,27 @@ ApplicationWindow {
 
     // -------------------------------------------------------------------------
     // VIEWPORT SCALING
-    // Referenzbreite, auf die das gesamte obere UI-Design ausgelegt ist.
-    // uiScale passt alles proportional an, wenn das Fenster schmaler/breiter wird.
     // -------------------------------------------------------------------------
     readonly property real baseUiWidth: 1600
     readonly property real rawUiScale: width / baseUiWidth
     readonly property real uiScale: _snapScaleToPhysicalPixels(rawUiScale)
     readonly property int scaledWaveformHeight: Math.round(window.baseWaveformHeight * window.uiScale)
     readonly property int scaledDeckMixerHeight: Math.round(window.baseDeckMixerHeight * window.uiScale)
-    // Keep header height fixed to prevent resize jitter and control shifts.
     readonly property int topBarHeight: 34
     readonly property int fxBarHeight: 40
     readonly property int mixerBaseWidth: 180
 
-    // Referenz height of the top section at baseUiWidth (waveforms + decks + mixer).
-    // The deck/mixer block is intentionally kept about 25% shorter so the library
-    // can use more vertical space.
     readonly property real baseUiHeight: 150 + (baseUiWidth / 5.0) + 4
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // MAIN LAYOUT – direct child, no async Loader wrapping
+    // ─────────────────────────────────────────────────────────────────────────
     ColumnLayout {
         id: mainLayout
         anchors.fill: parent
         spacing: 0
         visible: false
 
-        // --------------------------------------------------------------------
-        // GLOBAL HEADER (Traktor-Style)
-        // --------------------------------------------------------------------
         TopHeader {
             id: topHeader
             Layout.fillWidth: true
@@ -409,7 +392,6 @@ ApplicationWindow {
             color: "#000000"
         }
 
-        // Viewport wrapper: reserves the scaled height in the ColumnLayout.
         Item {
             id: waveformViewport
             Layout.fillWidth: true
@@ -418,7 +400,6 @@ ApplicationWindow {
             Layout.maximumHeight: window.scaledWaveformHeight
             clip: true
 
-            // Use direct viewport sizing instead of transform-scaling to keep text crisp.
             Item {
                 id: waveformCanvas
                 anchors.fill: parent
@@ -494,7 +475,6 @@ ApplicationWindow {
                         engine: deckA
                     }
 
-                    // MIXER SECTION - proportional zur Fenster-Breite
                     MixerSection {
                         Layout.preferredWidth: window.mixerBaseWidth
                         Layout.minimumWidth: window.mixerBaseWidth
@@ -513,10 +493,6 @@ ApplicationWindow {
             }
         }
 
-        // --------------------------------------------------------------------
-        // FX RACK  –  horizontale Effekt-Leiste in der Mitte des Bildschirms
-        // (zwischen Decks/Mixer-Sektion und Library)
-        // --------------------------------------------------------------------
         FxBar {
             id: fxBarSection
             Layout.fillWidth: true
@@ -526,10 +502,6 @@ ApplicationWindow {
             visible: !window.libraryExpanded
         }
 
-        // --------------------------------------------------------------------
-        // UNTERER BEREICH: TRACK LIBRARY
-        // fillHeight: true → schluckt jeden vertikalen Restplatz.
-        // --------------------------------------------------------------------
         Library {
             id: librarySection
             Layout.fillWidth: true

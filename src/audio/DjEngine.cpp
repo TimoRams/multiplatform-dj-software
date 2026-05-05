@@ -3264,6 +3264,7 @@ void DjEngine::loadMainCueForCurrentTrack()
 
     const double storedCue = m_libraryDb->mainCuePointForTrack(m_currentTrackId);
     m_mainCueSec = storedCue >= 0.0 ? storedCue : -1.0;
+    emit mainCueChanged();
 }
 
 void DjEngine::persistMainCuePoint()
@@ -3289,6 +3290,7 @@ void DjEngine::cueButtonPress()
         if (m_mainCueSec < 0.0) {
             m_mainCueSec = std::clamp(static_cast<double>(getVisualPosition()), 0.0, trackLen);
             persistMainCuePoint();
+            emit mainCueChanged();
         }
 
         const double cuePos = std::clamp(m_mainCueSec, 0.0, trackLen);
@@ -3302,6 +3304,7 @@ void DjEngine::cueButtonPress()
     const double cuePos = std::clamp(static_cast<double>(getVisualPosition()), 0.0, trackLen);
     m_mainCueSec = cuePos;
     persistMainCuePoint();
+    emit mainCueChanged();
 
     transportSource.setPosition(cuePos);
     setSnapAnchor(cuePos, true);

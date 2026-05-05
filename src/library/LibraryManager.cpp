@@ -1,5 +1,6 @@
 #include "LibraryManager.h"
 #include <QDir>
+#include <QTimer>
 
 static const QStringList kAudioFilters = {
     "*.mp3", "*.flac", "*.wav", "*.aif", "*.aiff",
@@ -12,7 +13,9 @@ LibraryManager::LibraryManager(QObject* parent)
     QStringList musicLocations = QStandardPaths::standardLocations(QStandardPaths::MusicLocation);
     m_rootPath = musicLocations.isEmpty() ? QDir::homePath() : musicLocations.first();
     m_currentFolder = m_rootPath;
-    refresh();
+
+    // Defer the initial filesystem scan so the UI can show immediately.
+    QTimer::singleShot(0, this, &LibraryManager::refresh);
 }
 
 void LibraryManager::enterFolder(const QString& folderName)

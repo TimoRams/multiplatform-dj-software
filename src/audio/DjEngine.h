@@ -74,6 +74,7 @@ class DjEngine : public QObject
     
     Q_PROPERTY(float gainReduction READ gainReduction NOTIFY gainReductionChanged)
     Q_PROPERTY(QVariantList hotCues READ hotCues NOTIFY hotCuesChanged)
+    Q_PROPERTY(double mainCueSec READ mainCueSec NOTIFY mainCueChanged)
     Q_PROPERTY(bool vinylBrakeActive READ isVinylBrakeActive NOTIFY vinylBrakeChanged)
     Q_PROPERTY(bool echoOutActive    READ isEchoOutActive    NOTIFY echoOutChanged)
     Q_PROPERTY(bool backspinActive   READ isBackspinActive   NOTIFY backspinChanged)
@@ -226,6 +227,7 @@ public:
     [[nodiscard]] bool clipDetected() const;
     [[nodiscard]] float gainReduction() const;
     [[nodiscard]] QVariantList hotCues() const;
+    [[nodiscard]] double mainCueSec() const { return m_mainCueSec; }
 
     void setCoverArtProvider(CoverArtProvider* provider, const QString& deckId);
     void setLibraryDatabase(LibraryDatabase* db);
@@ -313,6 +315,7 @@ signals:
     void gainReductionChanged();
     void segmentsChanged();
     void hotCuesChanged();
+    void mainCueChanged();
     void vinylBrakeChanged();
     void echoOutChanged();
     void backspinChanged();

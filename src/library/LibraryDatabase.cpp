@@ -15,6 +15,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QUuid>
+#include <QElapsedTimer>
 
 namespace {
 
@@ -95,6 +96,9 @@ LibraryDatabase::~LibraryDatabase()
 
 bool LibraryDatabase::open()
 {
+    QElapsedTimer timer;
+    timer.start();
+
     // ── Determine the database directory ─────────────────────────────────
     // Use the same config directory as SettingsManager for consistency.
     // This ensures all config files, settings, and database live in the same place.
@@ -151,6 +155,7 @@ bool LibraryDatabase::open()
         qWarning() << "[LibraryDatabase] Failed to open:" << m_db.lastError().text();
         return false;
     }
+    qDebug() << "[LibraryDatabase] open(): connection established in" << timer.elapsed() << "ms";
 
     // Enable WAL mode for better concurrency and foreign keys.
     {
@@ -161,6 +166,7 @@ bool LibraryDatabase::open()
 
     if (!createSchema())
         return false;
+    qDebug() << "[LibraryDatabase] open(): schema ready in" << timer.elapsed() << "ms";
 
     if (!syncBackupFromPrimary())
         qWarning() << "[LibraryDatabase] Failed to sync backup DB after open";
@@ -178,6 +184,8 @@ bool LibraryDatabase::open()
     emit mirroredDatabaseStatusChanged();
     if (!m_mirrorSelfCheckTimer.isActive())
         m_mirrorSelfCheckTimer.start();
+
+    qDebug() << "[LibraryDatabase] open(): finished in" << timer.elapsed() << "ms";
 
     return true;
 }

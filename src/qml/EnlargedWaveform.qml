@@ -231,38 +231,120 @@ Item {
         }
 
         // Top hotcue labels in cue color with visible slot number.
+        // ── Cue labels (hot cues + main cue) ───────────────────────────────
         Item {
             anchors.fill: parent
             z: 12
 
+            // Hot cue tags: colored badge + downward pointer triangle
             Repeater {
                 model: root.engine ? root.engine.hotCues : []
 
-                Rectangle {
+                Item {
                     required property var modelData
-                    // Compute cue screen position once; gate visibility so the label
-                    // disappears when the cue line itself is off-screen.
                     property real cuePosX: {
                         root.cueOverlayTick
                         return root.cueX(modelData ? modelData["positionSec"] : -999999)
                     }
                     visible: modelData && modelData["set"] && cuePosX >= 0 && cuePosX <= parent.width
-                    width: 18
-                    height: 12
-                    radius: 0
+                    width: 20
+                    height: 17  // badge 13 + pointer 4
                     y: 1
-                    x: Math.max(0, Math.min(parent.width - width, cuePosX + 4))
-                    color: modelData["color"]
-                    border.color: "#111"
-                    border.width: 0
+                    x: Math.max(0, Math.min(parent.width - width, cuePosX - width * 0.5))
+
+                    Rectangle {
+                        id: hotCueBadge
+                        anchors.top: parent.top
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: 20
+                        height: 13
+                        radius: 3
+                        color: modelData ? modelData["color"] : "#e04040"
+                        border.color: Qt.rgba(0, 0, 0, 0.45)
+                        border.width: 1
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: modelData ? (modelData["index"] + 1).toString() : ""
+                            color: "#ffffff"
+                            font.pixelSize: window.spViewport(8)
+                            font.bold: true
+                            font.family: "monospace"
+                        }
+                    }
+
+                    Canvas {
+                        anchors.top: hotCueBadge.bottom
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: 8; height: 4
+                        property string tagColor: modelData ? modelData["color"] : "#e04040"
+                        onTagColorChanged: requestPaint()
+                        Component.onCompleted: requestPaint()
+                        onPaint: {
+                            var ctx = getContext("2d")
+                            ctx.clearRect(0, 0, width, height)
+                            ctx.beginPath()
+                            ctx.moveTo(0, 0)
+                            ctx.lineTo(width, 0)
+                            ctx.lineTo(width / 2, height)
+                            ctx.closePath()
+                            ctx.fillStyle = tagColor
+                            ctx.fill()
+                        }
+                    }
+                }
+            }
+
+            // Main cue tag: orange badge + pointer
+            Item {
+                property real mainCuePosX: {
+                    root.cueOverlayTick
+                    if (!root.engine || root.engine.mainCueSec < 0) return -9999
+                    return root.cueX(root.engine.mainCueSec)
+                }
+                visible: root.engine !== null && root.engine.mainCueSec >= 0
+                         && mainCuePosX >= 0 && mainCuePosX <= parent.width
+                width: 28
+                height: 17
+                y: 1
+                x: Math.max(0, Math.min(parent.width - width, mainCuePosX - width * 0.5))
+
+                Rectangle {
+                    id: mainCueBadge
+                    anchors.top: parent.top
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: 28
+                    height: 13
+                    radius: 3
+                    color: "#ff9100"
+                    border.color: Qt.rgba(0, 0, 0, 0.45)
+                    border.width: 1
 
                     Text {
                         anchors.centerIn: parent
-                        text: (modelData["index"] + 1).toString()
+                        text: "CUE"
                         color: "#ffffff"
-                        font.pixelSize: window.spViewport(8)
+                        font.pixelSize: window.spViewport(7)
                         font.bold: true
                         font.family: "monospace"
+                    }
+                }
+
+                Canvas {
+                    anchors.top: mainCueBadge.bottom
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: 8; height: 4
+                    Component.onCompleted: requestPaint()
+                    onPaint: {
+                        var ctx = getContext("2d")
+                        ctx.clearRect(0, 0, width, height)
+                        ctx.beginPath()
+                        ctx.moveTo(0, 0)
+                        ctx.lineTo(width, 0)
+                        ctx.lineTo(width / 2, height)
+                        ctx.closePath()
+                        ctx.fillStyle = "#ff9100"
+                        ctx.fill()
                     }
                 }
             }

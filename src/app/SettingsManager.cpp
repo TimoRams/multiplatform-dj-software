@@ -60,6 +60,12 @@ void SettingsManager::init()
              << QString::fromUtf8(userSettings->getFile().getFullPathName().toRawUTF8());
 }
 
+void SettingsManager::shutdown()
+{
+    flushToDisk();
+    appProperties.closeFiles();
+}
+
 juce::PropertiesFile* SettingsManager::getUserSettingsOrNull()
 {
     return appProperties.getUserSettings();
