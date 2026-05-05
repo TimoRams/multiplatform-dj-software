@@ -269,6 +269,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/link/LinkManager.cpp
     src/app/SystemMonitor.h
     src/app/SystemMonitor.cpp
+    src/app/LsanSuppressions.cpp
     src/midi/ParameterStore.h
     src/midi/ParameterStore.cpp
     src/midi/MidiControllerManager.h
