@@ -364,8 +364,7 @@ Window {
             : false
 
         if (applied) {
-            // For JACK: server controls sample rate and buffer size — sync back actual device values.
-            if (isJackDeviceSelected && deckToApply && deckToApply.getCurrentAudioSampleRate) {
+            if (deckToApply && deckToApply.getCurrentAudioSampleRate) {
                 var actualSR = deckToApply.getCurrentAudioSampleRate()
                 var actualBuf = deckToApply.getCurrentAudioBufferSize()
                 if (actualSR > 0) {

@@ -244,6 +244,14 @@ int main(int argc, char *argv[])
                                     settingsManager.getAudioMasterFirstChannel(),
                                     settingsManager.getAudioHeadphonesFirstChannel(),
                                     settingsManager.getAudioBoothFirstChannel());
+    // Sync back what the driver actually opened — JACK ignores requested buffer/SR,
+    // and ALSA may round to the nearest supported value.
+    {
+        const int actualSR  = deckA->getCurrentAudioSampleRate();
+        const int actualBuf = deckA->getCurrentAudioBufferSize();
+        if (actualSR  > 0) settingsManager.setAudioSampleRate(actualSR);
+        if (actualBuf > 0) settingsManager.setAudioBufferSize(actualBuf);
+    }
     logStartupStep("Audio device settings applied");
 
     auto coverProvider = std::make_unique<CoverArtProvider>();
