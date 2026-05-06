@@ -342,6 +342,15 @@ Window {
         var deckToApply = deckA && deckA.applyAudioDeviceSettings ? deckA
             : (deckB && deckB.applyAudioDeviceSettings ? deckB : null)
 
+        if (deviceType && String(deviceType).toLowerCase().indexOf("jack") >= 0
+            && deckToApply && deckToApply.isJackServerRunning && !deckToApply.isJackServerRunning()) {
+            audioApplyStatus.text = deckToApply.jackServerStatus
+                ? deckToApply.jackServerStatus()
+                : "JACK server not running. Start PipeWire-JACK or jackd."
+            audioApplyStatus.color = "#ffb86c"
+            return
+        }
+
         var applied = deckToApply
             ? deckToApply.applyAudioDeviceSettings(deviceType,
                                                    masterOutputDevice,
@@ -361,7 +370,10 @@ Window {
             audioApplyStatus.text = note
             audioApplyStatus.color = "#8fe388"
         } else {
-            audioApplyStatus.text = "Saved, but the requested device, channels, or buffer could not be applied right now."
+            var errText = (deckToApply && deckToApply.lastAudioDeviceError)
+                ? deckToApply.lastAudioDeviceError
+                : "Saved, but the requested device, channels, or buffer could not be applied right now."
+            audioApplyStatus.text = errText
             audioApplyStatus.color = "#ffb86c"
         }
     }

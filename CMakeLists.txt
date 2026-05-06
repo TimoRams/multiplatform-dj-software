@@ -341,6 +341,12 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(${PROJECT_NAME} PRIVATE
         ThirdParty::ALSA
     )
+
+    if(TARGET PkgConfig::JACK)
+        target_link_libraries(${PROJECT_NAME} PRIVATE
+            PkgConfig::JACK
+        )
+    endif()
 endif()
 
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)

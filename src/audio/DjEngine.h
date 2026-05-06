@@ -75,6 +75,7 @@ class DjEngine : public QObject
     Q_PROPERTY(float gainReduction READ gainReduction NOTIFY gainReductionChanged)
     Q_PROPERTY(QVariantList hotCues READ hotCues NOTIFY hotCuesChanged)
     Q_PROPERTY(double mainCueSec READ mainCueSec NOTIFY mainCueChanged)
+    Q_PROPERTY(QString lastAudioDeviceError READ lastAudioDeviceError NOTIFY audioDeviceErrorChanged)
     Q_PROPERTY(bool vinylBrakeActive READ isVinylBrakeActive NOTIFY vinylBrakeChanged)
     Q_PROPERTY(bool echoOutActive    READ isEchoOutActive    NOTIFY echoOutChanged)
     Q_PROPERTY(bool backspinActive   READ isBackspinActive   NOTIFY backspinChanged)
@@ -228,6 +229,7 @@ public:
     [[nodiscard]] float gainReduction() const;
     [[nodiscard]] QVariantList hotCues() const;
     [[nodiscard]] double mainCueSec() const { return m_mainCueSec; }
+    [[nodiscard]] QString lastAudioDeviceError() const { return m_lastAudioDeviceError; }
 
     void setCoverArtProvider(CoverArtProvider* provider, const QString& deckId);
     void setLibraryDatabase(LibraryDatabase* db);
@@ -252,6 +254,8 @@ public slots:
                                                            const QString& outputDevice = QString()) const;
     Q_INVOKABLE QString getCurrentAudioDeviceType() const;
     Q_INVOKABLE QString getCurrentAudioOutputDevice() const;
+    Q_INVOKABLE bool isJackServerRunning() const;
+    Q_INVOKABLE QString jackServerStatus() const;
     
     // Playback control
     Q_INVOKABLE void play();
@@ -316,6 +320,7 @@ signals:
     void segmentsChanged();
     void hotCuesChanged();
     void mainCueChanged();
+    void audioDeviceErrorChanged();
     void vinylBrakeChanged();
     void echoOutChanged();
     void backspinChanged();
@@ -353,6 +358,7 @@ private:
     bool isValidHotCueIndex(int index) const;
     void loadMainCueForCurrentTrack();
     void persistMainCuePoint();
+    void setLastAudioDeviceError(const QString& error);
 
     struct HotCueSlot {
         bool set = false;
@@ -397,6 +403,7 @@ private:
     std::array<HotCueSlot, 8> m_hotCueSlots;
     double m_mainCueSec = -1.0;
     bool m_mainCuePreviewActive = false;
+    QString m_lastAudioDeviceError;
 
     // Tempo control: ±6/8/16/32/100% (WIDE) selectable range
     double m_tempoPercent = 0.0;

@@ -21,6 +21,9 @@
 #include <cstring>
 #include <algorithm>
 #include <cmath>
+#if JUCE_JACK && (JUCE_LINUX || JUCE_BSD)
+#include <jack/jack.h>
+#endif
 
 // Metadata utilities: normalise and query JUCE StringPairArray across all tag formats
 // (ID3v2, Vorbis comments, MP4 atoms, etc.).
@@ -35,6 +38,29 @@ constexpr double kEqMax = 1.0;
 constexpr double kFilterMin = -1.0;
 constexpr double kFilterMax = 1.0;
 constexpr double kParamEpsilon = 1e-6;
+
+#if JUCE_JACK && (JUCE_LINUX || JUCE_BSD)
+bool probeJackServer(QString& message)
+{
+    jack_status_t status = JackFailure;
+    jack_client_t* client = jack_client_open("RamsbrockDJProbe", JackNoStartServer, &status);
+    if (client == nullptr) {
+        if (status & JackVersionError)
+            message = QStringLiteral("JACK protocol version mismatch.");
+        else if (status & JackServerError)
+            message = QStringLiteral("JACK server error. Is PipeWire-JACK running?");
+        else if (status & JackServerFailed)
+            message = QStringLiteral("JACK server not running. Start PipeWire or jackd.");
+        else
+            message = QStringLiteral("JACK server not available. Start PipeWire-JACK.");
+        return false;
+    }
+
+    jack_client_close(client);
+    message = QStringLiteral("JACK server running.");
+    return true;
+}
+#endif
 
 bool nearlyEqual(double a, double b) {
     return std::abs(a - b) <= kParamEpsilon;
@@ -2111,6 +2137,10 @@ QStringList DjEngine::getAvailableOutputChannelPairs(const QString& deviceType,
     if (selectedOutput.isEmpty())
         selectedOutput = getCurrentAudioOutputDevice();
 
+    const QString loweredType = selectedType.trimmed().toLower();
+    if (loweredType == QStringLiteral("jack") || loweredType.contains(QStringLiteral("jack")))
+        return buildChannelPairList(kMaxSupportedOutputChannel);
+
     int channelCount = readCurrentDeviceOutputChannelCount(deviceManager, selectedType, selectedOutput);
     if (channelCount < 2)
         channelCount = readDeviceOutputChannelCount(selectedType, selectedOutput);
@@ -2130,6 +2160,27 @@ QString DjEngine::getCurrentAudioOutputDevice() const
     return QString();
 }
 
+bool DjEngine::isJackServerRunning() const
+{
+#if JUCE_JACK && (JUCE_LINUX || JUCE_BSD)
+    QString msg;
+    return probeJackServer(msg);
+#else
+    return false;
+#endif
+}
+
+QString DjEngine::jackServerStatus() const
+{
+#if JUCE_JACK && (JUCE_LINUX || JUCE_BSD)
+    QString msg;
+    probeJackServer(msg);
+    return msg;
+#else
+    return QStringLiteral("JACK backend not built in this binary.");
+#endif
+}
+
 bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
                                         const QString& outputDevice,
                                         int sampleRate,
@@ -2140,6 +2191,10 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
 {
     sampleRate = std::clamp(sampleRate, 44100, 96000);
     bufferSize = std::clamp(bufferSize, 64, 4096);
+
+    setLastAudioDeviceError(QString());
+
+    const auto previousRouting = unpackRouting(s_outputRoutingPacked.load(std::memory_order_relaxed));
 
 #if JUCE_LINUX || JUCE_BSD
     const QString requestedType = !deviceType.isEmpty() ? deviceType : getCurrentAudioDeviceType();
@@ -2153,6 +2208,19 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     const bool jackBackendRequested = deviceType.toLower().contains(QStringLiteral("jack"));
 #endif
 
+    if (jackBackendRequested) {
+#if JUCE_JACK && (JUCE_LINUX || JUCE_BSD)
+        QString jackMsg;
+        if (!probeJackServer(jackMsg)) {
+            setLastAudioDeviceError(jackMsg);
+            return false;
+        }
+#else
+        setLastAudioDeviceError(QStringLiteral("JACK backend not built in this binary."));
+        return false;
+#endif
+    }
+
     masterFirstChannel = clampFirstChannelForPack(masterFirstChannel);
     headphonesFirstChannel = clampFirstChannelForPack(headphonesFirstChannel);
     boothFirstChannel = clampFirstChannelForPack(boothFirstChannel);
@@ -2163,6 +2231,9 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     }), std::memory_order_relaxed);
 
     auto& manager = deviceManager;
+    const juce::String previousType = manager.getCurrentAudioDeviceType();
+    juce::AudioDeviceManager::AudioDeviceSetup previousSetup;
+    manager.getAudioDeviceSetup(previousSetup);
     if (manager.getCurrentAudioDevice() == nullptr) {
         qWarning() << "[DjEngine] No current audio device before setup; trying default initialisation";
         const juce::String initErr = manager.initialiseWithDefaultDevices(0, 2);
@@ -2171,7 +2242,19 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     }
     
     auto* type = findDeviceType(manager, deviceType);
-    if (!deviceType.isEmpty() && type != nullptr && QString::fromUtf8(manager.getCurrentAudioDeviceType().toRawUTF8()) != deviceType) {
+    if (!deviceType.isEmpty() && type == nullptr) {
+        manager.setCurrentAudioDeviceType(toJuceString(deviceType), true);
+        type = findDeviceType(manager, deviceType);
+    }
+    if (!deviceType.isEmpty() && type == nullptr) {
+        const QString msg = jackBackendRequested
+            ? QStringLiteral("JACK backend not available. Start JACK or install JACK support.")
+            : QStringLiteral("Audio backend not available: %1").arg(deviceType);
+        qWarning() << "[DjEngine]" << msg;
+        setLastAudioDeviceError(msg);
+        return false;
+    }
+    if (!deviceType.isEmpty() && QString::fromUtf8(manager.getCurrentAudioDeviceType().toRawUTF8()) != deviceType) {
         manager.setCurrentAudioDeviceType(toJuceString(deviceType), true);
         type = findDeviceType(manager, deviceType);
     }
@@ -2206,9 +2289,23 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     setup.useDefaultOutputChannels = true;
     
     if (jackBackendRequested) {
-        // JACK exposes a single backend endpoint; forcing a specific output
-        // name can put JUCE into a zero-buffer callback state on some systems.
-        setup.outputDeviceName.clear();
+        if (sanitizedOutput.isEmpty()) {
+            if (type != nullptr) {
+                type->scanForDevices();
+                const auto names = type->getDeviceNames(false);
+                if (names.size() > 0)
+                    setup.outputDeviceName = names[0];
+            }
+
+            if (setup.outputDeviceName.isEmpty()) {
+                const QString msg = QStringLiteral("No JACK output ports available. Start PipeWire-JACK or jackd.");
+                qWarning() << "[DjEngine]" << msg;
+                setLastAudioDeviceError(msg);
+                return false;
+            }
+        } else {
+            setup.outputDeviceName = toJuceString(sanitizedOutput);
+        }
     } else if (sanitizedOutput.isEmpty()) {
         if (auto* device = manager.getCurrentAudioDevice()) {
             setup.outputDeviceName = device->getName();
@@ -2221,9 +2318,17 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     }
 
     int maxOutputChannels = 2;  // Safe default
+    const auto maxRoutedChannel = [](int firstChannel) -> int {
+        return firstChannel >= 1 ? firstChannel + 1 : 0;
+    };
+    int maxRequestedChannel = std::max({
+        maxRoutedChannel(masterFirstChannel),
+        maxRoutedChannel(headphonesFirstChannel),
+        maxRoutedChannel(boothFirstChannel),
+        2
+    });
     
-    // JACK setup should stay minimal: avoid extra device probing because it
-    // can block and the backend ignores per-output routing anyway.
+    // JACK setup should avoid extra device probing because it can block.
     if (!jackBackendRequested) {
         if (auto* device = manager.getCurrentAudioDevice()) {
         const int namesCount = device->getOutputChannelNames().size();
@@ -2240,6 +2345,8 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
             
             setup.bufferSize = choosePreferredBufferSize(device, setup.bufferSize);
         }
+    } else {
+        maxOutputChannels = std::clamp(maxRequestedChannel, 2, kMaxSupportedOutputChannel);
     }
     
     // Validate and clamp requested channels to actual device channels
@@ -2275,12 +2382,14 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     setPairBits(masterFirstChannel);
     setPairBits(headphonesFirstChannel);
     setPairBits(boothFirstChannel);
-    if (!jackBackendRequested && selectedOutputChannels.countNumberOfSetBits() > 0) {
+    if (jackBackendRequested) {
+        setup.useDefaultOutputChannels = false;
+        setup.outputChannels.clear();
+        for (int ch = 0; ch < maxOutputChannels; ++ch)
+            setup.outputChannels.setBit(ch);
+    } else if (selectedOutputChannels.countNumberOfSetBits() > 0) {
         setup.useDefaultOutputChannels = false;
         setup.outputChannels = selectedOutputChannels;
-    } else if (jackBackendRequested) {
-        setup.useDefaultOutputChannels = true;
-        setup.outputChannels.clear();
     }
 
     auto* currentDevice = manager.getCurrentAudioDevice();
@@ -2325,9 +2434,35 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
         
         if (error.isNotEmpty()) {
             qWarning() << "[DjEngine] Failed to apply audio device settings after all fallbacks:" << QString::fromStdString(error.toStdString());
-            return false;
         }
     }
+
+    auto* activeDevice = manager.getCurrentAudioDevice();
+    const bool deviceReady = activeDevice != nullptr && activeDevice->isOpen();
+    if (error.isNotEmpty() || !deviceReady) {
+        if (!deviceReady)
+            qWarning() << "[DjEngine] Audio device not available after apply; restoring previous device";
+
+        if (!previousType.isEmpty() && previousType != manager.getCurrentAudioDeviceType())
+            manager.setCurrentAudioDeviceType(previousType, true);
+
+        const juce::String restoreErr = manager.setAudioDeviceSetup(previousSetup, true);
+        if (restoreErr.isNotEmpty()) {
+            qWarning() << "[DjEngine] Failed to restore previous audio device:" << QString::fromStdString(restoreErr.toStdString());
+        }
+
+        s_outputRoutingPacked.store(packRouting(previousRouting), std::memory_order_relaxed);
+
+        QString errorText = QString::fromStdString(error.toStdString());
+        if (errorText.isEmpty())
+            errorText = QStringLiteral("Audio device setup failed.");
+        if (jackBackendRequested && !errorText.contains(QStringLiteral("JACK"), Qt::CaseInsensitive))
+            errorText = QStringLiteral("JACK device failed to open. Is the JACK server running?");
+        setLastAudioDeviceError(errorText);
+        return false;
+    }
+
+    setLastAudioDeviceError(QString());
 
     refreshHardwareLatency();
 
@@ -3272,6 +3407,14 @@ void DjEngine::persistMainCuePoint()
     if (!m_libraryDb || m_currentTrackId.isEmpty())
         return;
     m_libraryDb->upsertMainCuePoint(m_currentTrackId, m_mainCueSec);
+}
+
+void DjEngine::setLastAudioDeviceError(const QString& error)
+{
+    if (m_lastAudioDeviceError == error)
+        return;
+    m_lastAudioDeviceError = error;
+    emit audioDeviceErrorChanged();
 }
 
 void DjEngine::cueButtonPress()
