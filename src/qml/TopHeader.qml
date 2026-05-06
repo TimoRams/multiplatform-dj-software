@@ -176,6 +176,218 @@ Rectangle {
         }
     }
 
+    // ── View menu popup ──────────────────────────────────────────────────────
+    Popup {
+        id: viewMenuPopup
+        parent: Overlay.overlay
+        modal: false; focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        padding: 0
+        width: 210
+        background: Rectangle { color: "#0e0e0e"; border.color: "#222"; border.width: 1 }
+
+        contentItem: Column {
+            spacing: 0
+
+            Rectangle {
+                width: viewMenuPopup.width; height: 28
+                color: "#161616"
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left; anchors.leftMargin: 12
+                    text: "VIEW TOGGLES"
+                    color: "#999"; font.pixelSize: root.sp(9); font.bold: true; font.letterSpacing: 0.6
+                }
+            }
+
+            Rectangle {
+                id: vt_waveforms
+                width: viewMenuPopup.width; height: 26
+                readonly property bool on: root.Window.window ? root.Window.window.showWaveforms : true
+                color: vt_wfMouse.containsMouse ? "#191919" : "#131313"
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left; anchors.leftMargin: 12
+                    anchors.right: vt_wfPill.left; anchors.rightMargin: 8
+                    text: "Scrolling Waveforms"
+                    color: vt_waveforms.on ? "#c0c0c0" : "#484848"
+                    font.pixelSize: root.sp(9); elide: Text.ElideRight
+                }
+                Rectangle {
+                    id: vt_wfPill
+                    width: 24; height: 12; radius: 6
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.right: parent.right; anchors.rightMargin: 12
+                    color: vt_waveforms.on ? "#1e7bd4" : "#252525"
+                    Rectangle {
+                        width: 8; height: 8; radius: 4; color: "#e0e0e0"; y: 2
+                        x: vt_waveforms.on ? parent.width - 10 : 2
+                        Behavior on x { NumberAnimation { duration: 80 } }
+                    }
+                }
+                MouseArea {
+                    id: vt_wfMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                    onClicked: if (root.Window.window) root.Window.window.showWaveforms = !root.Window.window.showWaveforms
+                }
+            }
+
+            Rectangle {
+                id: vt_deckA
+                width: viewMenuPopup.width; height: 26
+                readonly property bool on: root.Window.window ? root.Window.window.showDeckA : true
+                color: vt_deckAMouse.containsMouse ? "#191919" : "#131313"
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left; anchors.leftMargin: 12
+                    anchors.right: vt_deckAPill.left; anchors.rightMargin: 8
+                    text: "Deck A"
+                    color: vt_deckA.on ? "#c0c0c0" : "#484848"
+                    font.pixelSize: root.sp(9); elide: Text.ElideRight
+                }
+                Rectangle {
+                    id: vt_deckAPill
+                    width: 24; height: 12; radius: 6
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.right: parent.right; anchors.rightMargin: 12
+                    color: vt_deckA.on ? "#1e7bd4" : "#252525"
+                    Rectangle {
+                        width: 8; height: 8; radius: 4; color: "#e0e0e0"; y: 2
+                        x: vt_deckA.on ? parent.width - 10 : 2
+                        Behavior on x { NumberAnimation { duration: 80 } }
+                    }
+                }
+                MouseArea {
+                    id: vt_deckAMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                    onClicked: if (root.Window.window) root.Window.window.showDeckA = !root.Window.window.showDeckA
+                }
+            }
+
+            Rectangle {
+                id: vt_deckB
+                width: viewMenuPopup.width; height: 26
+                readonly property bool on: root.Window.window ? root.Window.window.showDeckB : true
+                color: vt_deckBMouse.containsMouse ? "#191919" : "#131313"
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left; anchors.leftMargin: 12
+                    anchors.right: vt_deckBPill.left; anchors.rightMargin: 8
+                    text: "Deck B"
+                    color: vt_deckB.on ? "#c0c0c0" : "#484848"
+                    font.pixelSize: root.sp(9); elide: Text.ElideRight
+                }
+                Rectangle {
+                    id: vt_deckBPill
+                    width: 24; height: 12; radius: 6
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.right: parent.right; anchors.rightMargin: 12
+                    color: vt_deckB.on ? "#1e7bd4" : "#252525"
+                    Rectangle {
+                        width: 8; height: 8; radius: 4; color: "#e0e0e0"; y: 2
+                        x: vt_deckB.on ? parent.width - 10 : 2
+                        Behavior on x { NumberAnimation { duration: 80 } }
+                    }
+                }
+                MouseArea {
+                    id: vt_deckBMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                    onClicked: if (root.Window.window) root.Window.window.showDeckB = !root.Window.window.showDeckB
+                }
+            }
+
+            Rectangle {
+                id: vt_mixer
+                width: viewMenuPopup.width; height: 26
+                readonly property bool on: root.Window.window ? root.Window.window.showMixer : true
+                color: vt_mixerMouse.containsMouse ? "#191919" : "#131313"
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left; anchors.leftMargin: 12
+                    anchors.right: vt_mixerPill.left; anchors.rightMargin: 8
+                    text: "Mixer"
+                    color: vt_mixer.on ? "#c0c0c0" : "#484848"
+                    font.pixelSize: root.sp(9); elide: Text.ElideRight
+                }
+                Rectangle {
+                    id: vt_mixerPill
+                    width: 24; height: 12; radius: 6
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.right: parent.right; anchors.rightMargin: 12
+                    color: vt_mixer.on ? "#1e7bd4" : "#252525"
+                    Rectangle {
+                        width: 8; height: 8; radius: 4; color: "#e0e0e0"; y: 2
+                        x: vt_mixer.on ? parent.width - 10 : 2
+                        Behavior on x { NumberAnimation { duration: 80 } }
+                    }
+                }
+                MouseArea {
+                    id: vt_mixerMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                    onClicked: if (root.Window.window) root.Window.window.showMixer = !root.Window.window.showMixer
+                }
+            }
+
+            Rectangle {
+                id: vt_fxBar
+                width: viewMenuPopup.width; height: 26
+                readonly property bool on: root.Window.window ? root.Window.window.showFxBar : true
+                color: vt_fxMouse.containsMouse ? "#191919" : "#131313"
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left; anchors.leftMargin: 12
+                    anchors.right: vt_fxPill.left; anchors.rightMargin: 8
+                    text: "FX Bar"
+                    color: vt_fxBar.on ? "#c0c0c0" : "#484848"
+                    font.pixelSize: root.sp(9); elide: Text.ElideRight
+                }
+                Rectangle {
+                    id: vt_fxPill
+                    width: 24; height: 12; radius: 6
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.right: parent.right; anchors.rightMargin: 12
+                    color: vt_fxBar.on ? "#1e7bd4" : "#252525"
+                    Rectangle {
+                        width: 8; height: 8; radius: 4; color: "#e0e0e0"; y: 2
+                        x: vt_fxBar.on ? parent.width - 10 : 2
+                        Behavior on x { NumberAnimation { duration: 80 } }
+                    }
+                }
+                MouseArea {
+                    id: vt_fxMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                    onClicked: if (root.Window.window) root.Window.window.showFxBar = !root.Window.window.showFxBar
+                }
+            }
+
+            Rectangle {
+                id: vt_library
+                width: viewMenuPopup.width; height: 26
+                readonly property bool on: root.Window.window ? root.Window.window.showLibrary : true
+                color: vt_libMouse.containsMouse ? "#191919" : "#131313"
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left; anchors.leftMargin: 12
+                    anchors.right: vt_libPill.left; anchors.rightMargin: 8
+                    text: "Library"
+                    color: vt_library.on ? "#c0c0c0" : "#484848"
+                    font.pixelSize: root.sp(9); elide: Text.ElideRight
+                }
+                Rectangle {
+                    id: vt_libPill
+                    width: 24; height: 12; radius: 6
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.right: parent.right; anchors.rightMargin: 12
+                    color: vt_library.on ? "#1e7bd4" : "#252525"
+                    Rectangle {
+                        width: 8; height: 8; radius: 4; color: "#e0e0e0"; y: 2
+                        x: vt_library.on ? parent.width - 10 : 2
+                        Behavior on x { NumberAnimation { duration: 80 } }
+                    }
+                }
+                MouseArea {
+                    id: vt_libMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                    onClicked: if (root.Window.window) root.Window.window.showLibrary = !root.Window.window.showLibrary
+                }
+            }
+        }
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // MAIN ROW
     // ════════════════════════════════════════════════════════════════════════
@@ -651,6 +863,41 @@ Rectangle {
                 id: stgMouse
                 anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                 onClicked: { settingsWin.show(); settingsWin.raise(); settingsWin.requestActivate() }
+            }
+        }
+
+        // ── Separator ────────────────────────────────────────────────────────
+        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
+
+        // ── View toggles ──────────────────────────────────────────────────────
+        Rectangle {
+            id: viewMenuBtn
+            Layout.preferredWidth: root.btnH + 4
+            Layout.fillHeight: true
+            color: viewBtnMouse.pressed ? "#1e1e1e" : (viewBtnMouse.containsMouse ? "#181818" : "#121212")
+
+            Column {
+                anchors.centerIn: parent
+                spacing: 3
+                Repeater {
+                    model: 3
+                    Rectangle { width: 11; height: 1; color: "#555555" }
+                }
+            }
+
+            MouseArea {
+                id: viewBtnMouse
+                anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    if (viewMenuPopup.opened) {
+                        viewMenuPopup.close()
+                    } else {
+                        var p = viewMenuBtn.mapToItem(viewMenuPopup.parent, 0, viewMenuBtn.height + 2)
+                        viewMenuPopup.x = p.x - viewMenuPopup.width + viewMenuBtn.width
+                        viewMenuPopup.y = p.y
+                        viewMenuPopup.open()
+                    }
+                }
             }
         }
     }

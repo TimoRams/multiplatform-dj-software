@@ -23,6 +23,13 @@ ApplicationWindow {
     property real exitProgress: 0.0
     readonly property color unifiedGray: "#2a2a2a"
 
+    property bool showWaveforms: true
+    property bool showDeckA: true
+    property bool showDeckB: true
+    property bool showMixer: true
+    property bool showFxBar: true
+    property bool showLibrary: true
+
     property int resizeThrottleCounter: 0
     property int lastProcessedWidth: width
     property int lastProcessedHeight: height
@@ -398,6 +405,7 @@ ApplicationWindow {
             Layout.minimumHeight: window.scaledWaveformHeight
             Layout.preferredHeight: window.scaledWaveformHeight
             Layout.maximumHeight: window.scaledWaveformHeight
+            visible: window.showWaveforms
             clip: true
 
             Item {
@@ -442,7 +450,7 @@ ApplicationWindow {
             Layout.minimumHeight: window.libraryExpanded ? 0 : window.scaledDeckMixerHeight
             Layout.preferredHeight: window.libraryExpanded ? 0 : window.scaledDeckMixerHeight
             Layout.maximumHeight: window.libraryExpanded ? 0 : window.scaledDeckMixerHeight
-            visible: !window.libraryExpanded
+            visible: !window.libraryExpanded && (window.showDeckA || window.showDeckB || window.showMixer)
             clip: true
 
             readonly property real designWidth: window.baseUiWidth
@@ -470,12 +478,14 @@ ApplicationWindow {
 
                     DeckControl {
                         deckName: "A"
+                        visible: window.showDeckA
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         engine: deckA
                     }
 
                     MixerSection {
+                        visible: window.showMixer
                         Layout.preferredWidth: window.mixerBaseWidth
                         Layout.minimumWidth: window.mixerBaseWidth
                         Layout.fillHeight: true
@@ -485,6 +495,7 @@ ApplicationWindow {
 
                     DeckControl {
                         deckName: "B"
+                        visible: window.showDeckB
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         engine: deckB
@@ -499,13 +510,14 @@ ApplicationWindow {
             Layout.minimumHeight: window.libraryExpanded ? 0 : window.fxBarHeight
             Layout.preferredHeight: window.libraryExpanded ? 0 : window.fxBarHeight
             Layout.maximumHeight: window.libraryExpanded ? 0 : window.fxBarHeight
-            visible: !window.libraryExpanded
+            visible: !window.libraryExpanded && window.showFxBar
         }
 
         Library {
             id: librarySection
             Layout.fillWidth: true
             Layout.fillHeight: true
+            visible: window.showLibrary
         }
     }
 
