@@ -369,7 +369,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     int sliceBaseIndex = 0;
     QVector<TrackData::RgbWaveformFrame> rgbData = td->getRgbWaveformSlice(sliceStart, sliceEnd, &sliceBaseIndex);
     if (rgbData.isEmpty()) {
-        if (oldNode) delete oldNode;
+        delete rootNode;
         return nullptr;
     }
 
