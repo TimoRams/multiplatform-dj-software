@@ -2495,6 +2495,8 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
 DjEngine::LatencySnapshot DjEngine::buildLatencySnapshot() const
 {
     LatencySnapshot snapshot;
+    if (m_lastLatencySnapshot.sampleRate > 0.0)
+        snapshot.sampleRate = m_lastLatencySnapshot.sampleRate;
 
     if (auto* device = deviceManager.getCurrentAudioDevice()) {
         const auto latency = readOutputLatencySnapshot(device);
@@ -2503,19 +2505,18 @@ DjEngine::LatencySnapshot DjEngine::buildLatencySnapshot() const
         snapshot.outputEffectiveSamples = latency.effectiveOutputSamples;
         if (latency.sampleRate > 0.0)
             snapshot.sampleRate = latency.sampleRate;
-
-        m_lastLatencySnapshot = snapshot;
-        return snapshot;
+    } else if (m_lastLatencySnapshot.sampleRate > 0.0) {
+        snapshot.outputRawSamples = m_lastLatencySnapshot.outputRawSamples;
+        snapshot.bufferSamples = m_lastLatencySnapshot.bufferSamples;
+        snapshot.outputEffectiveSamples = m_lastLatencySnapshot.outputEffectiveSamples;
     }
-
-    if (m_lastLatencySnapshot.sampleRate > 0.0)
-        return m_lastLatencySnapshot;
 
     if (timeStretchSource)
         snapshot.rubberbandSamples = std::max(0, timeStretchSource->getLatencySamples());
 
     // BrickwallLimiter default lookahead is 1.5 ms (set in BrickwallLimiter.h).
     snapshot.limiterSamples = std::max(0, static_cast<int>(std::lround(snapshot.sampleRate * 0.0015)));
+    m_lastLatencySnapshot = snapshot;
     return snapshot;
 }
 
