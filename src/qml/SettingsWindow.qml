@@ -77,6 +77,8 @@ Window {
         { label: "Legal",           icon: "§" },
     ]
 
+    readonly property bool isJackDeviceSelected: String(pendingAudioDeviceType).toLowerCase().indexOf("jack") >= 0
+
     readonly property var sampleRateOptions: [
         { label: "44.1 kHz", value: 44100 },
         { label: "48 kHz", value: 48000 },
@@ -362,8 +364,37 @@ Window {
             : false
 
         if (applied) {
+            // For JACK: server controls sample rate and buffer size — sync back actual device values.
+            if (isJackDeviceSelected && deckToApply && deckToApply.getCurrentAudioSampleRate) {
+                var actualSR = deckToApply.getCurrentAudioSampleRate()
+                var actualBuf = deckToApply.getCurrentAudioBufferSize()
+                if (actualSR > 0) {
+                    pendingAudioSampleRate = actualSR
+                    settingsManager.audioSampleRate = actualSR
+                    audioUiSyncing = true
+                    sampleRateCombo.currentIndex = indexForValue(sampleRateOptions, actualSR)
+                    audioUiSyncing = false
+                }
+                if (actualBuf > 0) {
+                    pendingAudioBufferSize = actualBuf
+                    settingsManager.audioBufferSize = actualBuf
+                    audioUiSyncing = true
+                    bufferSizeCombo.currentIndex = indexForValue(bufferSizeOptions, actualBuf)
+                    audioUiSyncing = false
+                }
+            }
+
             var note = "Applied: Sound API selected once, role devices and channels updated."
-            if ((headphonesOutputDevice && masterOutputDevice && headphonesOutputDevice !== masterOutputDevice)
+            if (isJackDeviceSelected) {
+                var actualSRNote = (deckToApply && deckToApply.getCurrentAudioSampleRate)
+                    ? deckToApply.getCurrentAudioSampleRate() : 0
+                var actualBufNote = (deckToApply && deckToApply.getCurrentAudioBufferSize)
+                    ? deckToApply.getCurrentAudioBufferSize() : 0
+                note = "Applied (JACK). Buffer size and sample rate are set by the JACK server"
+                    + (actualBufNote > 0 && actualSRNote > 0
+                        ? " (" + actualBufNote + " samples @ " + (actualSRNote / 1000).toFixed(1) + " kHz)."
+                        : ".")
+            } else if ((headphonesOutputDevice && masterOutputDevice && headphonesOutputDevice !== masterOutputDevice)
                 || (boothOutputDevice && masterOutputDevice && boothOutputDevice !== masterOutputDevice)) {
                 note = "Applied: Pre-cue uses channel pairs on the master device. Separate devices are not yet supported."
             }
@@ -700,6 +731,8 @@ Window {
                                 height: 32
                                 model: settingsWindow.sampleRateOptions
                                 textRole: "label"
+                                enabled: !settingsWindow.isJackDeviceSelected
+                                opacity: enabled ? 1.0 : 0.4
 
                                 contentItem: Text {
                                     text: sampleRateCombo.currentIndex >= 0 ? sampleRateCombo.displayText : "44.1 kHz"
@@ -750,6 +783,8 @@ Window {
                                 height: 32
                                 model: settingsWindow.bufferSizeOptions
                                 textRole: "label"
+                                enabled: !settingsWindow.isJackDeviceSelected
+                                opacity: enabled ? 1.0 : 0.4
 
                                 contentItem: Text {
                                     text: bufferSizeCombo.currentIndex >= 0 ? bufferSizeCombo.displayText : "512 samples"
@@ -783,8 +818,10 @@ Window {
                         }
 
                         Text {
-                            text: "Use the lowest stable buffer your device supports. On Windows, ASIO will appear here when available; on macOS and Linux this lists the active system audio backends and outputs."
-                            color: "#7b7b7b"
+                            text: settingsWindow.isJackDeviceSelected
+                                ? "JACK controls buffer size and sample rate. These values are set by the JACK server (PipeWire or jackd) and cannot be changed here."
+                                : "Use the lowest stable buffer your device supports. On Windows, ASIO will appear here when available; on macOS and Linux this lists the active system audio backends and outputs."
+                            color: settingsWindow.isJackDeviceSelected ? "#ffb86c" : "#7b7b7b"
                             font.pixelSize: 11
                             wrapMode: Text.WordWrap
                             Layout.fillWidth: true

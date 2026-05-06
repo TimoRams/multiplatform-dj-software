@@ -254,6 +254,8 @@ public slots:
                                                            const QString& outputDevice = QString()) const;
     Q_INVOKABLE QString getCurrentAudioDeviceType() const;
     Q_INVOKABLE QString getCurrentAudioOutputDevice() const;
+    Q_INVOKABLE int getCurrentAudioSampleRate() const;
+    Q_INVOKABLE int getCurrentAudioBufferSize() const;
     Q_INVOKABLE bool isJackServerRunning() const;
     Q_INVOKABLE QString jackServerStatus() const;
     

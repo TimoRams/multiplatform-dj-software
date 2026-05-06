@@ -2160,6 +2160,20 @@ QString DjEngine::getCurrentAudioOutputDevice() const
     return QString();
 }
 
+int DjEngine::getCurrentAudioSampleRate() const
+{
+    if (auto* device = deviceManager.getCurrentAudioDevice())
+        return static_cast<int>(std::lround(device->getCurrentSampleRate()));
+    return 0;
+}
+
+int DjEngine::getCurrentAudioBufferSize() const
+{
+    if (auto* device = deviceManager.getCurrentAudioDevice())
+        return device->getCurrentBufferSizeSamples();
+    return 0;
+}
+
 bool DjEngine::isJackServerRunning() const
 {
 #if JUCE_JACK && (JUCE_LINUX || JUCE_BSD)
