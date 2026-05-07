@@ -1248,6 +1248,76 @@ QVariantList LibraryDatabase::getPlaylistTracks(const QString& playlistId) const
     return result;
 }
 
+QVariantList LibraryDatabase::getAllTrackAnalysisItems(bool includeAnalyzed) const
+{
+    QVariantList result;
+    if (!m_db.isOpen())
+        return result;
+
+    QSqlQuery q(m_db);
+    QString sql =
+        "SELECT Tracks.id, COALESCE(Locations.file_path, ''), "
+        "       COALESCE(Tracks.title, ''), COALESCE(Tracks.is_analyzed, 0) "
+        "FROM Tracks "
+        "JOIN Locations ON Tracks.id = Locations.track_id ";
+    if (!includeAnalyzed)
+        sql += "WHERE COALESCE(Tracks.is_analyzed, 0) = 0 ";
+    sql += "ORDER BY Tracks.title COLLATE NOCASE ASC";
+
+    if (!q.exec(sql)) {
+        qWarning() << "[LibraryDatabase] getAllTrackAnalysisItems:" << q.lastError().text();
+        return result;
+    }
+
+    while (q.next()) {
+        QVariantMap m;
+        m.insert("trackId", q.value(0).toString());
+        m.insert("filePath", q.value(1).toString());
+        m.insert("title", q.value(2).toString());
+        m.insert("isAnalyzed", q.value(3).toBool());
+        result.push_back(m);
+    }
+
+    return result;
+}
+
+QVariantList LibraryDatabase::getPlaylistAnalysisItems(const QString& playlistId, bool includeAnalyzed) const
+{
+    QVariantList result;
+    if (!m_db.isOpen() || playlistId.isEmpty())
+        return result;
+
+    QSqlQuery q(m_db);
+    QString sql =
+        "SELECT Tracks.id, COALESCE(Locations.file_path, ''), "
+        "       COALESCE(Tracks.title, ''), COALESCE(Tracks.is_analyzed, 0) "
+        "FROM PlaylistItems "
+        "JOIN Tracks ON PlaylistItems.track_id = Tracks.id "
+        "JOIN Locations ON Tracks.id = Locations.track_id "
+        "WHERE PlaylistItems.playlist_id = :pid ";
+    if (!includeAnalyzed)
+        sql += "AND COALESCE(Tracks.is_analyzed, 0) = 0 ";
+    sql += "ORDER BY PlaylistItems.position ASC";
+
+    q.prepare(sql);
+    q.bindValue(":pid", playlistId);
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] getPlaylistAnalysisItems:" << q.lastError().text();
+        return result;
+    }
+
+    while (q.next()) {
+        QVariantMap m;
+        m.insert("trackId", q.value(0).toString());
+        m.insert("filePath", q.value(1).toString());
+        m.insert("title", q.value(2).toString());
+        m.insert("isAnalyzed", q.value(3).toBool());
+        result.push_back(m);
+    }
+
+    return result;
+}
+
 bool LibraryDatabase::isTrackInPlaylist(const QString& playlistId, const QString& trackId) const
 {
     if (!m_db.isOpen() || playlistId.isEmpty() || trackId.isEmpty())

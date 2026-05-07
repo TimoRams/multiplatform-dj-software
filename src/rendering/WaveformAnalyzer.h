@@ -4,6 +4,8 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <QString>
 #include <QDebug>
+#include <functional>
+#include <mutex>
 #include "TrackData.h"
 
 class WaveformAnalyzer : public juce::Thread
@@ -15,10 +17,14 @@ public:
     void startAnalysis(const QString& filePath);
     void stopAnalysis();
     void run() override;
+    void setCompletionCallback(std::function<void(bool completed)> callback);
+    void notifyCompletion(bool completed);
 
 private:
    TrackData* m_trackData = nullptr;
    juce::AudioFormatManager* m_formatManager = nullptr;
    QString m_filePath;
    int m_pointsPerSecond;
+   std::mutex m_callbackMutex;
+   std::function<void(bool completed)> m_completionCallback;
 };

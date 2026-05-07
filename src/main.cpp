@@ -33,6 +33,7 @@
 #include "SettingsManager.h"
 #include "library/LibraryDatabase.h"
 #include "library/LibraryTableModel.h"
+#include "library/LibraryAnalysisManager.h"
 
 using namespace Qt::StringLiterals;
 
@@ -322,8 +323,12 @@ int main(int argc, char *argv[])
     libraryTableModel.refresh();
     logStartupStep("LibraryTableModel refreshed");
 
+    LibraryAnalysisManager libraryAnalysisManager;
+    libraryAnalysisManager.setLibraryDatabase(&libraryDb);
+
     engine.rootContext()->setContextProperty("libraryDb",    &libraryDb);
     engine.rootContext()->setContextProperty("libraryModel", &libraryTableModel);
+    engine.rootContext()->setContextProperty("libraryAnalyzer", &libraryAnalysisManager);
 
     deckA->setLibraryDatabase(&libraryDb);
     deckB->setLibraryDatabase(&libraryDb);

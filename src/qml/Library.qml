@@ -180,6 +180,14 @@ Rectangle {
         savePlaylistSort(currentPlaylistId)
     }
 
+    function startAnalyzeCurrentView() {
+        if (!libraryAnalyzer) return
+        if (activeTab === "playlist" && currentPlaylistId)
+            libraryAnalyzer.analyzePlaylist(currentPlaylistId, true)
+        else
+            libraryAnalyzer.analyzeAll(true)
+    }
+
     Component.onCompleted: {
         loadPlaylists()
         // Restore All Tracks sort (default: title A→Z)
@@ -194,6 +202,10 @@ Rectangle {
         target: libraryDb
         function onPlaylistsChanged() {
             libraryRoot.loadPlaylists()
+            if (libraryRoot.activeTab === "playlist")
+                libraryRoot.loadPlaylistTracks()
+        }
+        function onAnalysisUpdated(trackId) {
             if (libraryRoot.activeTab === "playlist")
                 libraryRoot.loadPlaylistTracks()
         }
@@ -968,6 +980,71 @@ Rectangle {
                         Layout.alignment: Qt.AlignVCenter
                     }
 
+                    Rectangle {
+                        Layout.preferredWidth: 78
+                        Layout.preferredHeight: 23
+                        Layout.alignment: Qt.AlignVCenter
+                        radius: 3
+                        color: analyzeHover.containsMouse ? "#252525" : "#181818"
+                        border.color: libraryAnalyzer && libraryAnalyzer.running ? libraryRoot.accentBlue : "#303030"
+                        border.width: 1
+                        opacity: (libraryRoot.activeTab === "library" || libraryRoot.activeTab === "playlist") ? 1.0 : 0.45
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: libraryAnalyzer && libraryAnalyzer.running ? "Stop" : "Analyse"
+                            color: libraryRoot.textPrimary
+                            font.pixelSize: window.sp(10)
+                            font.bold: true
+                        }
+
+                        MouseArea {
+                            id: analyzeHover
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            enabled: libraryRoot.activeTab === "library" || libraryRoot.activeTab === "playlist"
+                            onClicked: {
+                                if (!libraryAnalyzer) return
+                                if (libraryAnalyzer.running)
+                                    libraryAnalyzer.cancel()
+                                else
+                                    libraryRoot.startAnalyzeCurrentView()
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.preferredWidth: 150
+                        Layout.preferredHeight: 12
+                        Layout.alignment: Qt.AlignVCenter
+                        radius: 2
+                        color: "#101010"
+                        border.color: "#292929"
+                        border.width: 1
+                        clip: true
+
+                        Rectangle {
+                            anchors.left: parent.left
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            width: parent.width * (libraryAnalyzer ? libraryAnalyzer.progress : 0)
+                            color: libraryAnalyzer && libraryAnalyzer.running
+                                   ? libraryRoot.accentBlue
+                                   : "#2e2e2e"
+                        }
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: libraryAnalyzer && libraryAnalyzer.total > 0
+                                  ? (libraryAnalyzer.completed + "/" + libraryAnalyzer.total)
+                                  : "0/0"
+                            color: "#a8a8a8"
+                            font.pixelSize: window.sp(8)
+                            font.family: "monospace"
+                        }
+                    }
+
                     Item { Layout.fillWidth: true }
 
                     // Search field
@@ -1534,6 +1611,20 @@ Rectangle {
             contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
             background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
             onTriggered: { if (deckB) deckB.loadTrack(libraryRoot.ctxFilePath) }
+        }
+        MenuSeparator {
+            contentItem: Rectangle { height: 1; color: "#2a2a2a" }
+        }
+        MenuItem {
+            text: "Track analysieren / erneut analysieren"
+            contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+            onTriggered: {
+                if (libraryAnalyzer && libraryRoot.ctxTrackId && libraryRoot.ctxFilePath)
+                    libraryAnalyzer.analyzeTrack(libraryRoot.ctxTrackId,
+                                                 libraryRoot.ctxFilePath,
+                                                 libraryRoot.ctxTitle)
+            }
         }
         MenuSeparator {
             contentItem: Rectangle { height: 1; color: "#2a2a2a" }

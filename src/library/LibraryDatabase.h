@@ -94,6 +94,9 @@ public:
     // Returns list of full track maps {trackId, title, artist, durationSec, bpm, key,
     // bitrateKbps, isAnalyzed, filePath} ordered by position.
     Q_INVOKABLE QVariantList getPlaylistTracks(const QString& playlistId) const;
+    Q_INVOKABLE QVariantList getAllTrackAnalysisItems(bool includeAnalyzed = false) const;
+    Q_INVOKABLE QVariantList getPlaylistAnalysisItems(const QString& playlistId,
+                                                      bool includeAnalyzed = false) const;
     Q_INVOKABLE bool isTrackInPlaylist(const QString& playlistId, const QString& trackId) const;
     Q_INVOKABLE int getPlaylistTrackCount(const QString& playlistId) const;
     // Move a playlist to a new parent (empty string = top level).

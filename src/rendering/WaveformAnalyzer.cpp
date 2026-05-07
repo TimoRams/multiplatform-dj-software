@@ -9,7 +9,68 @@
 #include <complex>
 #include <map>
 #include <mutex>
+#include <condition_variable>
+#include <chrono>
 namespace {
+
+constexpr int kMaxConcurrentAnalyses = 1;
+
+std::mutex g_analysisSlotsMutex;
+std::condition_variable g_analysisSlotsCv;
+int g_activeAnalyses = 0;
+
+class AnalysisSlot
+{
+public:
+    explicit AnalysisSlot(juce::Thread& owner)
+    {
+        while (!owner.threadShouldExit()) {
+            std::unique_lock<std::mutex> lock(g_analysisSlotsMutex);
+            if (g_activeAnalyses < kMaxConcurrentAnalyses) {
+                ++g_activeAnalyses;
+                m_acquired = true;
+                return;
+            }
+
+            g_analysisSlotsCv.wait_for(lock, std::chrono::milliseconds(50));
+        }
+    }
+
+    ~AnalysisSlot()
+    {
+        if (!m_acquired)
+            return;
+
+        {
+            std::lock_guard<std::mutex> lock(g_analysisSlotsMutex);
+            g_activeAnalyses = std::max(0, g_activeAnalyses - 1);
+        }
+        g_analysisSlotsCv.notify_one();
+    }
+
+    bool acquired() const { return m_acquired; }
+
+private:
+    bool m_acquired = false;
+};
+
+class AnalysisCompletionNotifier
+{
+public:
+    explicit AnalysisCompletionNotifier(WaveformAnalyzer& analyzer)
+        : m_analyzer(analyzer) {}
+
+    ~AnalysisCompletionNotifier()
+    {
+        m_analyzer.notifyCompletion(m_completed);
+    }
+
+    void markCompleted() { m_completed = true; }
+
+private:
+    WaveformAnalyzer& m_analyzer;
+    bool m_completed = false;
+};
 
 QVector<TrackData::RgbWaveformFrame> blendRgbPreferDynamics(
     const QVector<TrackData::RgbWaveformFrame>& current,
@@ -259,13 +320,31 @@ void WaveformAnalyzer::startAnalysis(const QString& filePath)
 {
     stopAnalysis();
     m_filePath = filePath;
-    startThread();
+    startThread(juce::Thread::Priority::background);
 }
 
 void WaveformAnalyzer::stopAnalysis()
 {
     signalThreadShouldExit();
     stopThread(2000);
+}
+
+void WaveformAnalyzer::setCompletionCallback(std::function<void(bool)> callback)
+{
+    std::lock_guard<std::mutex> lock(m_callbackMutex);
+    m_completionCallback = std::move(callback);
+}
+
+void WaveformAnalyzer::notifyCompletion(bool completed)
+{
+    std::function<void(bool)> callback;
+    {
+        std::lock_guard<std::mutex> lock(m_callbackMutex);
+        callback = m_completionCallback;
+    }
+
+    if (callback)
+        callback(completed);
 }
 
 // Envelope follower with separate attack and release time constants.
@@ -311,6 +390,12 @@ struct EnvelopeFollower {
 
 void WaveformAnalyzer::run()
 {
+    AnalysisCompletionNotifier completion(*this);
+
+    AnalysisSlot slot(*this);
+    if (!slot.acquired())
+        return;
+
     juce::File file(m_filePath.toStdString());
     if (!file.existsAsFile()) return;
 
@@ -1308,5 +1393,7 @@ void WaveformAnalyzer::run()
             }
         }
     }
-}
 
+    if (!threadShouldExit())
+        completion.markCompleted();
+}

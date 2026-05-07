@@ -280,6 +280,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/library/TrackIdGenerator.h
     src/library/LibraryDatabase.h
     src/library/LibraryDatabase.cpp
+    src/library/LibraryAnalysisManager.h
+    src/library/LibraryAnalysisManager.cpp
     src/library/LibraryTableModel.h
     src/library/LibraryTableModel.cpp
     src/fx/BrickwallLimiter.h
