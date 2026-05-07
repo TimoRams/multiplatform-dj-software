@@ -61,6 +61,11 @@ RgbWaveformItem::RgbWaveformItem(QQuickItem* parent)
     setAntialiasing(true);
     setOpaquePainting(false);
     setRenderTarget(QQuickPaintedItem::FramebufferObject);
+
+    m_updateThrottle = new QTimer(this);
+    m_updateThrottle->setSingleShot(true);
+    m_updateThrottle->setInterval(200);  // ≤5 fps during progressive analysis
+    connect(m_updateThrottle, &QTimer::timeout, this, [this]() { update(); });
 }
 
 void RgbWaveformItem::setEngine(DjEngine* engine)
@@ -74,9 +79,9 @@ void RgbWaveformItem::setEngine(DjEngine* engine)
     m_engine = engine;
 
     if (m_engine) {
-        connect(m_engine, &DjEngine::trackLoaded, this, &RgbWaveformItem::onTrackLoaded, Qt::UniqueConnection);
+        connect(m_engine, &DjEngine::trackLoaded,    this, &RgbWaveformItem::onTrackLoaded,    Qt::UniqueConnection);
         connect(m_engine, &DjEngine::progressChanged, this, &RgbWaveformItem::onRgbDataChanged, Qt::UniqueConnection);
-        connect(m_engine, &DjEngine::hotCuesChanged, this, &RgbWaveformItem::onRgbDataChanged, Qt::UniqueConnection);
+        connect(m_engine, &DjEngine::hotCuesChanged,  this, &RgbWaveformItem::onHotCuesChanged,  Qt::UniqueConnection);
     }
 
     emit engineChanged();
@@ -101,13 +106,27 @@ void RgbWaveformItem::onTrackLoaded()
     }
 
     auto* td = m_engine->getTrackData();
-    connect(td, &TrackData::rgbWaveformUpdated, this, &RgbWaveformItem::onRgbDataChanged, Qt::UniqueConnection);
-    connect(td, &TrackData::dataCleared, this, &RgbWaveformItem::onRgbDataChanged, Qt::UniqueConnection);
+    connect(td, &TrackData::rgbWaveformUpdated, this, &RgbWaveformItem::onRgbDataChanged,  Qt::UniqueConnection);
+    connect(td, &TrackData::dataCleared,        this, &RgbWaveformItem::onRgbDataChanged,  Qt::UniqueConnection);
+    // Overview arrives once after cache load — repaint immediately when ready.
+    connect(td, &TrackData::overviewRgbUpdated, this, [this]() { update(); }, Qt::UniqueConnection);
     update();
 }
 
 void RgbWaveformItem::onRgbDataChanged()
 {
+    // During progressive analysis, rgbWaveformUpdated fires with every new chunk
+    // and progressChanged fires at ~30 fps. Throttle so paint() (which still needs
+    // to bin the growing full-res data) doesn't hammer the render thread.
+    // Once overviewRgbUpdated fires, paint() switches to the pre-downsampled path
+    // and subsequent calls are O(kOverviewBins), so the throttle becomes a no-op cost.
+    if (!m_updateThrottle->isActive())
+        m_updateThrottle->start();
+}
+
+void RgbWaveformItem::onHotCuesChanged()
+{
+    // Cue pins must jump immediately — bypass the throttle.
     update();
 }
 
@@ -118,12 +137,27 @@ void RgbWaveformItem::paint(QPainter* painter)
     if (!m_engine || !m_engine->getTrackData())
         return;
 
-    const QVector<TrackData::RgbWaveformFrame> frames = m_engine->getTrackData()->getRgbWaveformData();
+    auto* td = m_engine->getTrackData();
+
+    // Use the pre-downsampled overview (≤4096 bins) when available — this keeps
+    // paint() O(kOverviewBins) instead of O(total_frames) for long mixes.
+    // Fall back to full data only during progressive analysis before the overview
+    // has been computed (first-time analysis, no waveform cache yet).
+    const QVector<TrackData::RgbWaveformFrame> overview = td->getOverviewRgbData();
+    const bool hasOverview = !overview.isEmpty();
+    const QVector<TrackData::RgbWaveformFrame> frames = hasOverview
+        ? overview
+        : td->getRgbWaveformData();
+
     if (frames.isEmpty())
         return;
 
-    const int totalExpected = std::max(1, m_engine->getTrackData()->getTotalExpected());
-    const int analyzedFrames = std::min(static_cast<int>(frames.size()), totalExpected);
+    // When the overview is ready the track is fully cached — draw the full width.
+    // During analysis, draw only the fraction that has been processed so far.
+    const int totalExpected   = hasOverview ? frames.size()
+                                            : std::max(1, td->getTotalExpected());
+    const int analyzedFrames  = hasOverview ? frames.size()
+                                            : std::min(static_cast<int>(frames.size()), totalExpected);
 
     const int w = std::max(1, static_cast<int>(width()));
     const int h = std::max(1, static_cast<int>(height()));

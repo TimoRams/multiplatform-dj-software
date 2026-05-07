@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QQuickPaintedItem>
+#include <QTimer>
 #include <QtQml/qqml.h>
 
 #include "DjEngine.h"
@@ -29,9 +30,11 @@ signals:
 
 private slots:
     void onTrackLoaded();
-    void onRgbDataChanged();
+    void onRgbDataChanged();   // throttled — analysis progress & waveform updates
+    void onHotCuesChanged();   // immediate — cue pin positions must update at once
 
 private:
-    DjEngine* m_engine = nullptr;
-    bool m_rectified = true;
+    DjEngine* m_engine       = nullptr;
+    bool      m_rectified    = true;
+    QTimer*   m_updateThrottle = nullptr;  // max 5 fps during progressive analysis
 };

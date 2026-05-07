@@ -280,6 +280,7 @@ public:
             QMutexLocker locker(&m_mutex);
             m_data.clear();
             m_rgbData.clear();
+            m_overviewRgb.clear();
             m_totalExpected = 0;
             m_globalMaxPeak = 0.001f;
             m_bpm = 0.0;
@@ -299,6 +300,22 @@ public:
             m_rgbData = std::move(frames);
         }
         emit rgbWaveformUpdated();
+    }
+
+    // Pre-downsampled overview (≤4096 bins) computed off the main thread.
+    // When available, RgbWaveformItem uses this instead of the full RGB data
+    // so paint() stays O(4096) regardless of track length.
+    void setOverviewRgbData(QVector<RgbWaveformFrame>&& data) {
+        {
+            QMutexLocker locker(&m_mutex);
+            m_overviewRgb = std::move(data);
+        }
+        emit overviewRgbUpdated();
+    }
+
+    QVector<RgbWaveformFrame> getOverviewRgbData() const {
+        QMutexLocker locker(&m_mutex);
+        return m_overviewRgb;
     }
 
     void appendRgbWaveformData(const QVector<RgbWaveformFrame>& frames) {
@@ -380,6 +397,7 @@ signals:
     void dataUpdated();
     void dataCleared();
     void rgbWaveformUpdated();
+    void overviewRgbUpdated();
     void bpmAnalyzed();
     void keyAnalyzed();
     void beatgridChanged();  // emitted after a manual grid shift
@@ -388,6 +406,7 @@ signals:
 private:
     QVector<FrequencyData> m_data;
     QVector<RgbWaveformFrame> m_rgbData;
+    QVector<RgbWaveformFrame> m_overviewRgb;
     int m_totalExpected;
     float m_globalMaxPeak;
 

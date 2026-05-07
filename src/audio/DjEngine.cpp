@@ -2810,39 +2810,27 @@ void DjEngine::loadTrack(const QString& rawPath)
         return;
     }
 
-    auto* reader = formatManager.createReaderFor(file);
-    if (reader == nullptr) {
-        qWarning() << "[DjEngine] loadTrack failed: unsupported or unreadable format:" << rawPath;
-        return;
-    }
-
     const quint64 gen = ++m_loadGen;
 
+    // Immediately clear previous track state so the UI shows a clean slate.
     resetTrackLoadState();
-    populateMetadataFromReader(*reader, rawPath, file);
-
-    const double durationSec = static_cast<double>(reader->lengthInSamples) / reader->sampleRate;
-    updateTrackDuration(durationSec);
-
-    m_hasTrack = true;
-    clearLoop();
-
-    const bool hasDbAnalysis = hydrateLibraryStateForTrack(rawPath, durationSec);
-
-    // Clear stale cover art synchronously so the first emit shows no cover.
-    m_hasCoverArt = false;
-    m_coverArtUrl.clear();
+    m_trackTitle.clear(); m_trackArtist.clear(); m_trackAlbum.clear();
+    m_trackKey.clear();   m_trackDuration.clear(); m_trackDurationSec = 0.0;
+    m_hasCoverArt = false; m_coverArtUrl.clear();
     if (m_coverProvider)
         m_coverProvider->clearCover(m_deckId);
-
     emit trackMetadataChanged();
-    attachReaderToTransport(reader);
-    emit trackLoaded();
-    emit progressChanged();
 
-    // Cover art (TagLib) and waveform cache I/O run off the main thread to avoid UI stutter.
+    // All heavy file I/O (format detection, cover art, waveform cache) runs off the
+    // main thread so the UI stays responsive during loading.
     const int pps = static_cast<int>(WAVEFORM_POINTS_PER_SECOND);
-    std::thread([this, rawPath, gen, hasDbAnalysis, pps]() {
+    std::thread([this, rawPath, file, gen, pps]() {
+        auto* reader = formatManager.createReaderFor(file);
+        if (!reader) {
+            qWarning() << "[DjEngine] loadTrack: unsupported or unreadable format:" << rawPath;
+            return;
+        }
+
         QByteArray coverData = CoverArtExtractor::extractCoverArt(rawPath).first;
 
         WaveformCache::Payload cache;
@@ -2856,14 +2844,51 @@ void DjEngine::loadTrack(const QString& rawPath)
                        && cache.rgb.size()      >= static_cast<int>(expected * 0.98);
         }
 
+        // Pre-downsample the full RGB data to at most kOverviewBins bins so the
+        // overview waveform's paint() stays O(kOverviewBins) instead of O(total_frames).
+        // Takes the max of each band per bin so transient peaks are preserved.
+        static constexpr int kOverviewBins = 4096;
+        QVector<TrackData::RgbWaveformFrame> overview;
+        if (wfLoaded && !cache.rgb.isEmpty()) {
+            const int total  = cache.rgb.size();
+            const int factor = std::max(1, (total + kOverviewBins - 1) / kOverviewBins);
+            overview.reserve((total + factor - 1) / factor);
+            for (int i = 0; i < total; i += factor) {
+                const int end = std::min(i + factor, total);
+                float rms = 0.0f, low = 0.0f, mid = 0.0f, high = 0.0f;
+                for (int j = i; j < end; ++j) {
+                    const auto& f = cache.rgb[j];
+                    rms  = std::max(rms,  f.rms);
+                    low  = std::max(low,  f.low);
+                    mid  = std::max(mid,  f.mid);
+                    high = std::max(high, f.high);
+                }
+                TrackData::RgbWaveformFrame bin;
+                bin.rms = rms; bin.low = low; bin.mid = mid; bin.high = high;
+                overview.push_back(bin);
+            }
+        }
+
         QMetaObject::invokeMethod(this,
-            [this, gen,
+            [this, gen, reader, file, rawPath,
              coverData = std::move(coverData),
              cache     = std::move(cache),
-             wfLoaded, hasDbAnalysis, rawPath]() mutable
+             overview  = std::move(overview),
+             wfLoaded]() mutable
             {
-                if (m_loadGen != gen)
+                if (m_loadGen != gen) {
+                    delete reader;
                     return;
+                }
+
+                populateMetadataFromReader(*reader, rawPath, file);
+                const double durationSec =
+                    static_cast<double>(reader->lengthInSamples) / reader->sampleRate;
+                updateTrackDuration(durationSec);
+                m_hasTrack = true;
+                clearLoop();
+
+                const bool hasDbAnalysis = hydrateLibraryStateForTrack(rawPath, durationSec);
 
                 if (!coverData.isEmpty() && m_coverProvider) {
                     m_coverProvider->setCover(m_deckId, coverData);
@@ -2874,13 +2899,19 @@ void DjEngine::loadTrack(const QString& rawPath)
                 }
 
                 if (wfLoaded) {
-                    const int expected = cache.totalExpected > 0 ? cache.totalExpected : cache.waveform.size();
+                    const int expected =
+                        cache.totalExpected > 0 ? cache.totalExpected : cache.waveform.size();
                     m_trackData->setTotalExpected(expected);
-                    m_trackData->replaceAllData(std::move(cache.waveform), std::max(0.001f, cache.globalMaxPeak));
+                    m_trackData->replaceAllData(
+                        std::move(cache.waveform), std::max(0.001f, cache.globalMaxPeak));
                     m_trackData->setRgbWaveformData(std::move(cache.rgb));
+                    m_trackData->setOverviewRgbData(std::move(overview));
                 }
 
                 emit trackMetadataChanged();
+                attachReaderToTransport(reader);
+                emit trackLoaded();
+                emit progressChanged();
 
                 // Skip heavy analysis only when BOTH waveform cache and analysis metadata
                 // (BPM/key/grid) are already available.
