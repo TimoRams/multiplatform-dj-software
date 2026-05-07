@@ -38,6 +38,23 @@ Item {
         { name: "ROLLOUT", effect: "RollOut",    baseColor: "#1e1440", activeColor: "#4428a0" },
     ]
 
+    // Clear all active pad FX and reset visual state — call on tab switch or lost focus.
+    function padFxClearAll() {
+        if (padFxMomentaryHeld >= 0) {
+            padFxRelease(padFxMomentaryHeld)
+            padFxMomentaryHeld = -1
+        }
+        if (padFxActiveToggle >= 0) {
+            padFxDeactivate(padFxActiveToggle)
+            padFxActiveToggle = -1
+        }
+    }
+
+    onActiveTabChanged: {
+        // Always clean up any held/toggled FX when leaving the PAD FX tab.
+        padFxClearAll()
+    }
+
     // ── PAD FX helpers ────────────────────────────────────────────────────────
     function padFxApply(defIndex) {
         if (!root.engine) return
@@ -332,9 +349,21 @@ Item {
                                 }
 
                                 // ── PAD FX momentary release ──────────────────
-                                if (isPadFxMomentary && root.padFxMomentaryHeld === index) {
+                                if (root.padFxMomentaryHeld === index) {
                                     root.padFxMomentaryHeld = -1
                                     root.padFxRelease(index)
+                                }
+                            }
+
+                            onCanceled: {
+                                // Pointer cancelled (window focus lost, gesture, etc.) — always clean up.
+                                if (root.hotCueHoldPressedIndex === index) {
+                                    root.hotCueHoldPressedIndex = -1
+                                    root.hotCueHoldCuePosition  = 0.0
+                                }
+                                if (root.padFxMomentaryHeld === index) {
+                                    root.padFxMomentaryHeld = -1
+                                    if (root.engine) root.padFxRelease(index)
                                 }
                             }
 

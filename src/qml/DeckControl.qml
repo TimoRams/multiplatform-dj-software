@@ -53,9 +53,12 @@ Item {
         Layout.maximumHeight:   deck.btnH
 
         radius: 2
-        color: hovH.hovered ? "#2c2c2c" : (fbActive ? fbActiveColor : fbInactiveColor)
+        color: fbMouse.containsMouse ? "#2c2c2c" : (fbActive ? fbActiveColor : fbInactiveColor)
 
-        HoverHandler { id: hovH }
+        signal clicked()
+        signal rightClicked()
+        signal btnPressed()
+        signal btnReleased()
 
         Text {
             anchors.centerIn: parent
@@ -69,13 +72,10 @@ Item {
             elide: Text.ElideRight
         }
 
-        signal clicked()
-        signal rightClicked()
-        signal btnPressed()
-        signal btnReleased()
-
         MouseArea {
+            id: fbMouse
             anchors.fill: parent
+            hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             onClicked: (mouse) => {
