@@ -21,6 +21,7 @@
 #include <cstring>
 #include <algorithm>
 #include <cmath>
+#include <thread>
 #if JUCE_JACK && (JUCE_LINUX || JUCE_BSD)
 #include <jack/jack.h>
 #endif
@@ -2737,27 +2738,6 @@ void DjEngine::updateTrackDuration(double durationSec)
     m_trackDuration = QString("%1:%2").arg(mins).arg(secs, 2, 10, QChar('0'));
 }
 
-void DjEngine::refreshCoverArtForTrack(const QString& rawPath)
-{
-    m_hasCoverArt = false;
-    m_coverArtUrl.clear();
-
-    if (!m_coverProvider)
-        return;
-
-    auto [coverData, _coverFmt] = CoverArtExtractor::extractCoverArt(rawPath);
-    if (!coverData.isEmpty()) {
-        m_coverProvider->setCover(m_deckId, coverData);
-        // Append a timestamp query parameter to bust QML's image:// URL cache.
-        m_coverArtUrl = QString("image://coverart/%1?t=%2")
-                            .arg(m_deckId)
-                            .arg(QDateTime::currentMSecsSinceEpoch());
-        m_hasCoverArt = true;
-    } else {
-        m_coverProvider->clearCover(m_deckId);
-    }
-}
-
 bool DjEngine::hydrateLibraryStateForTrack(const QString& rawPath, double durationSec)
 {
     if (!m_libraryDb)
@@ -2807,29 +2787,6 @@ bool DjEngine::hydrateLibraryStateForTrack(const QString& rawPath, double durati
     return hasDbAnalysis;
 }
 
-bool DjEngine::tryRestoreWaveformCacheForTrack(const QString& rawPath)
-{
-    WaveformCache::Payload cache;
-    const int pps = static_cast<int>(WAVEFORM_POINTS_PER_SECOND);
-    if (!WaveformCache::loadForFile(rawPath, pps, &cache)
-        || cache.waveform.isEmpty()
-        || cache.rgb.isEmpty()) {
-        return false;
-    }
-
-    const int expected = cache.totalExpected > 0 ? cache.totalExpected : cache.waveform.size();
-    const bool wfComplete = cache.waveform.size() >= static_cast<int>(expected * 0.98);
-    const bool rgbComplete = cache.rgb.size() >= static_cast<int>(expected * 0.98);
-
-    if (expected <= 0 || !wfComplete || !rgbComplete)
-        return false;
-
-    m_trackData->setTotalExpected(expected);
-    m_trackData->replaceAllData(std::move(cache.waveform), std::max(0.001f, cache.globalMaxPeak));
-    m_trackData->setRgbWaveformData(std::move(cache.rgb));
-    return true;
-}
-
 void DjEngine::attachReaderToTransport(juce::AudioFormatReader* reader)
 {
     transportSource.stop();
@@ -2859,31 +2816,79 @@ void DjEngine::loadTrack(const QString& rawPath)
         return;
     }
 
+    const quint64 gen = ++m_loadGen;
+
     resetTrackLoadState();
     populateMetadataFromReader(*reader, rawPath, file);
 
     const double durationSec = static_cast<double>(reader->lengthInSamples) / reader->sampleRate;
     updateTrackDuration(durationSec);
-    refreshCoverArtForTrack(rawPath);
 
     m_hasTrack = true;
     clearLoop();
 
     const bool hasDbAnalysis = hydrateLibraryStateForTrack(rawPath, durationSec);
-    const bool loadedWaveformCache = tryRestoreWaveformCacheForTrack(rawPath);
+
+    // Clear stale cover art synchronously so the first emit shows no cover.
+    m_hasCoverArt = false;
+    m_coverArtUrl.clear();
+    if (m_coverProvider)
+        m_coverProvider->clearCover(m_deckId);
 
     emit trackMetadataChanged();
-
     attachReaderToTransport(reader);
-
-    // Skip heavy analysis only when BOTH waveform cache and analysis metadata
-    // (BPM/key/grid) are already available.
-    if (!(loadedWaveformCache && hasDbAnalysis))
-        m_analyzer->startAnalysis(rawPath);
-
     emit trackLoaded();
     emit progressChanged();
 
+    // Cover art (TagLib) and waveform cache I/O run off the main thread to avoid UI stutter.
+    const int pps = static_cast<int>(WAVEFORM_POINTS_PER_SECOND);
+    std::thread([this, rawPath, gen, hasDbAnalysis, pps]() {
+        QByteArray coverData = CoverArtExtractor::extractCoverArt(rawPath).first;
+
+        WaveformCache::Payload cache;
+        bool wfLoaded = WaveformCache::loadForFile(rawPath, pps, &cache)
+                        && !cache.waveform.isEmpty()
+                        && !cache.rgb.isEmpty();
+        if (wfLoaded) {
+            const int expected = cache.totalExpected > 0 ? cache.totalExpected : cache.waveform.size();
+            wfLoaded = expected > 0
+                       && cache.waveform.size() >= static_cast<int>(expected * 0.98)
+                       && cache.rgb.size()      >= static_cast<int>(expected * 0.98);
+        }
+
+        QMetaObject::invokeMethod(this,
+            [this, gen,
+             coverData = std::move(coverData),
+             cache     = std::move(cache),
+             wfLoaded, hasDbAnalysis, rawPath]() mutable
+            {
+                if (m_loadGen != gen)
+                    return;
+
+                if (!coverData.isEmpty() && m_coverProvider) {
+                    m_coverProvider->setCover(m_deckId, coverData);
+                    m_coverArtUrl = QString("image://coverart/%1?t=%2")
+                                        .arg(m_deckId)
+                                        .arg(QDateTime::currentMSecsSinceEpoch());
+                    m_hasCoverArt = true;
+                }
+
+                if (wfLoaded) {
+                    const int expected = cache.totalExpected > 0 ? cache.totalExpected : cache.waveform.size();
+                    m_trackData->setTotalExpected(expected);
+                    m_trackData->replaceAllData(std::move(cache.waveform), std::max(0.001f, cache.globalMaxPeak));
+                    m_trackData->setRgbWaveformData(std::move(cache.rgb));
+                }
+
+                emit trackMetadataChanged();
+
+                // Skip heavy analysis only when BOTH waveform cache and analysis metadata
+                // (BPM/key/grid) are already available.
+                if (!(wfLoaded && hasDbAnalysis))
+                    m_analyzer->startAnalysis(rawPath);
+            },
+            Qt::QueuedConnection);
+    }).detach();
 }
 
 void DjEngine::togglePlay()

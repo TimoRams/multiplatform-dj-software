@@ -348,9 +348,7 @@ private:
                                     const QString& rawPath,
                                     const juce::File& file);
     void updateTrackDuration(double durationSec);
-    void refreshCoverArtForTrack(const QString& rawPath);
     bool hydrateLibraryStateForTrack(const QString& rawPath, double durationSec);
-    bool tryRestoreWaveformCacheForTrack(const QString& rawPath);
     void attachReaderToTransport(juce::AudioFormatReader* reader);
 
     void persistCurrentAnalysisToLibrary();
@@ -401,6 +399,7 @@ private:
     QString m_currentTrackId;
     QString m_coverArtUrl;
     bool    m_hasCoverArt = false;
+    std::atomic<quint64> m_loadGen{0};
     QVariantList m_currentSegments;
     std::array<HotCueSlot, 8> m_hotCueSlots;
     double m_mainCueSec = -1.0;
