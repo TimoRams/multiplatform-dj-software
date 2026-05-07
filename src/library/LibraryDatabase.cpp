@@ -16,6 +16,9 @@
 #include <QJsonObject>
 #include <QUuid>
 #include <QElapsedTimer>
+#include <QMetaObject>
+#include <QPointer>
+#include <thread>
 
 namespace {
 
@@ -31,6 +34,43 @@ bool tableHasColumn(QSqlDatabase& db, const QString& tableName, const QString& c
     }
 
     return false;
+}
+
+bool syncBackupFromPath(const QString& activePath, const QString& mirrorPath)
+{
+    if (activePath.isEmpty() || mirrorPath.isEmpty())
+        return false;
+
+    const QString connectionName =
+        QStringLiteral("library_backup_sync_%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+
+    bool ok = false;
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
+        db.setDatabaseName(activePath);
+
+        if (db.open()) {
+            QSqlQuery q(db);
+            q.exec(QStringLiteral("PRAGMA wal_checkpoint(PASSIVE)"));
+
+            QFile::remove(mirrorPath);
+            QFile::remove(mirrorPath + QStringLiteral("-wal"));
+            QFile::remove(mirrorPath + QStringLiteral("-shm"));
+
+            QString vacuumTarget = mirrorPath;
+            vacuumTarget.replace(QLatin1Char('\''), QStringLiteral("''"));
+            ok = q.exec(QStringLiteral("VACUUM INTO '%1'").arg(vacuumTarget));
+            if (!ok)
+                qWarning() << "[LibraryDatabase] Deferred VACUUM INTO failed for"
+                           << mirrorPath << ':' << q.lastError().text();
+        } else {
+            qWarning() << "[LibraryDatabase] Deferred backup DB open failed:" << db.lastError().text();
+        }
+
+        db.close();
+    }
+    QSqlDatabase::removeDatabase(connectionName);
+    return ok;
 }
 
 }
@@ -86,6 +126,11 @@ LibraryDatabase::LibraryDatabase(QObject* parent)
     m_mirrorSelfCheckTimer.setInterval(3000);
     m_mirrorSelfCheckTimer.setTimerType(Qt::CoarseTimer);
     connect(&m_mirrorSelfCheckTimer, &QTimer::timeout, this, &LibraryDatabase::performMirrorSelfCheck);
+
+    m_backupSyncTimer.setSingleShot(true);
+    m_backupSyncTimer.setInterval(1500);
+    m_backupSyncTimer.setTimerType(Qt::VeryCoarseTimer);
+    connect(&m_backupSyncTimer, &QTimer::timeout, this, &LibraryDatabase::startDeferredBackupSync);
 }
 
 LibraryDatabase::~LibraryDatabase()
@@ -435,8 +480,7 @@ bool LibraryDatabase::addTrack(const QString& trackId,
         scheduleTableModelRefresh();
 
     emit trackAdded(trackId);
-    if (!syncBackupFromPrimary())
-        qWarning() << "[LibraryDatabase] Failed to sync backup DB after addTrack";
+    scheduleBackupSync();
     return true;
 }
 
@@ -522,8 +566,7 @@ void LibraryDatabase::updateAnalysisData(const QString& trackId,
                                              newBpm > 0.0f || !newKey.trimmed().isEmpty());
 
     emit analysisUpdated(trackId);
-    if (!syncBackupFromPrimary())
-        qWarning() << "[LibraryDatabase] Failed to sync backup DB after updateAnalysisData";
+    scheduleBackupSync();
 }
 
 bool LibraryDatabase::tryGetAnalysisData(const QString& trackId, AnalysisSnapshot* out) const
@@ -612,8 +655,7 @@ bool LibraryDatabase::updateTrackSegments(const QString& trackId,
 
     scheduleTableModelRefresh();
 
-    if (!syncBackupFromPrimary())
-        qWarning() << "[LibraryDatabase] Failed to sync backup DB after updateTrackSegments";
+    scheduleBackupSync();
 
     return true;
 }
@@ -662,8 +704,7 @@ bool LibraryDatabase::upsertCuePoint(const QString& trackId,
         return false;
     }
 
-    if (!syncBackupFromPrimary())
-        qWarning() << "[LibraryDatabase] Failed to sync backup DB after upsertCuePoint";
+    scheduleBackupSync();
 
     return true;
 }
@@ -683,8 +724,7 @@ bool LibraryDatabase::deleteCuePoint(const QString& trackId, int cueIndex)
         return false;
     }
 
-    if (!syncBackupFromPrimary())
-        qWarning() << "[LibraryDatabase] Failed to sync backup DB after deleteCuePoint";
+    scheduleBackupSync();
 
     return true;
 }
@@ -732,8 +772,7 @@ bool LibraryDatabase::upsertMainCuePoint(const QString& trackId, double position
         return false;
     }
 
-    if (!syncBackupFromPrimary())
-        qWarning() << "[LibraryDatabase] Failed to sync backup DB after upsertMainCuePoint";
+    scheduleBackupSync();
 
     return true;
 }
@@ -801,17 +840,21 @@ void LibraryDatabase::shutdown(bool syncBackup)
     if (!m_db.isValid() || !m_db.isOpen())
         return;
 
+    const bool pendingBackupSync = m_backupSyncTimer.isActive() || m_backupSyncAgain;
     m_mirrorSelfCheckTimer.stop();
+    m_backupSyncTimer.stop();
 
     {
         QSqlQuery q(m_db);
         q.exec("PRAGMA wal_checkpoint(FULL)");
     }
 
-    if (syncBackup) {
+    if ((syncBackup || pendingBackupSync) && !m_backupSyncRunning) {
         if (!syncBackupFromPrimary())
             qWarning() << "[LibraryDatabase] Failed to sync backup DB during shutdown";
+    }
 
+    if (syncBackup) {
         const QString activePath = !m_activeDbPath.isEmpty() ? m_activeDbPath : m_dbPath;
         if (!m_manualBackupDbPath.isEmpty() && !copyDatabaseFile(activePath, m_manualBackupDbPath))
             qWarning() << "[LibraryDatabase] Failed to write manual backup DB during shutdown";
@@ -839,6 +882,55 @@ void LibraryDatabase::scheduleTableModelRefresh()
         if (m_tableModel != nullptr)
             m_tableModel->refresh();
     });
+}
+
+void LibraryDatabase::scheduleBackupSync()
+{
+    if (!m_db.isValid() || !m_db.isOpen())
+        return;
+
+    m_backupSyncTimer.start();
+}
+
+void LibraryDatabase::startDeferredBackupSync()
+{
+    if (!m_db.isValid() || !m_db.isOpen())
+        return;
+
+    if (m_backupSyncRunning) {
+        m_backupSyncAgain = true;
+        return;
+    }
+
+    const QString activePath = !m_activeDbPath.isEmpty() ? m_activeDbPath : m_dbPath;
+    const QString mirrorPath = (activePath == m_dbPath) ? m_backupDbPath : m_dbPath;
+    if (activePath.isEmpty() || mirrorPath.isEmpty())
+        return;
+
+    m_backupSyncRunning = true;
+    QPointer<LibraryDatabase> self(this);
+    std::thread([self, activePath, mirrorPath]() {
+        const bool ok = syncBackupFromPath(activePath, mirrorPath);
+
+        if (!self)
+            return;
+
+        QMetaObject::invokeMethod(self, [self, ok]() {
+            if (!self)
+                return;
+
+            self->m_backupSyncRunning = false;
+            if (!ok)
+                qWarning() << "[LibraryDatabase] Deferred backup DB sync failed";
+
+            if (self->m_backupSyncAgain) {
+                self->m_backupSyncAgain = false;
+                self->scheduleBackupSync();
+            }
+
+            emit self->mirroredDatabaseStatusChanged();
+        }, Qt::QueuedConnection);
+    }).detach();
 }
 
 // ── Playlist management ────────────────────────────────────────────────────
@@ -873,7 +965,7 @@ QString LibraryDatabase::createPlaylist(const QString& name, const QString& pare
     }
 
     emit playlistsChanged();
-    syncBackupFromPrimary();
+    scheduleBackupSync();
     return id;
 }
 
@@ -892,7 +984,7 @@ bool LibraryDatabase::deletePlaylist(const QString& playlistId)
     }
 
     emit playlistsChanged();
-    syncBackupFromPrimary();
+    scheduleBackupSync();
     return true;
 }
 
@@ -912,7 +1004,7 @@ bool LibraryDatabase::renamePlaylist(const QString& playlistId, const QString& n
     }
 
     emit playlistsChanged();
-    syncBackupFromPrimary();
+    scheduleBackupSync();
     return true;
 }
 
@@ -932,7 +1024,7 @@ bool LibraryDatabase::setPlaylistSortOrder(const QString& playlistId, int sortOr
     }
 
     emit playlistsChanged();
-    syncBackupFromPrimary();
+    scheduleBackupSync();
     return true;
 }
 
@@ -971,7 +1063,7 @@ bool LibraryDatabase::setPlaylistParent(const QString& playlistId, const QString
     }
 
     emit playlistsChanged();
-    syncBackupFromPrimary();
+    scheduleBackupSync();
     return true;
 }
 
@@ -1029,7 +1121,7 @@ bool LibraryDatabase::addTrackToPlaylist(const QString& playlistId, const QStrin
 
     if (q.numRowsAffected() > 0) {
         emit playlistsChanged();
-        syncBackupFromPrimary();
+        scheduleBackupSync();
     }
     return true;
 }
@@ -1051,7 +1143,7 @@ bool LibraryDatabase::removeTrackFromPlaylist(const QString& playlistId, const Q
 
     if (q.numRowsAffected() > 0) {
         emit playlistsChanged();
-        syncBackupFromPrimary();
+        scheduleBackupSync();
     }
     return true;
 }
@@ -1114,7 +1206,7 @@ bool LibraryDatabase::setPlaylistTrackPosition(const QString& playlistId, const 
     }
     
     emit playlistsChanged();
-    syncBackupFromPrimary();
+    scheduleBackupSync();
     return true;
 }
 
@@ -1254,7 +1346,7 @@ bool LibraryDatabase::removeTrackFromLibrary(const QString& trackId)
     scheduleTableModelRefresh();
     emit playlistsChanged();          // playlist track-counts may have changed
     emit trackRemovedFromLibrary(trackId);
-    syncBackupFromPrimary();
+    scheduleBackupSync();
     return true;
 }
 

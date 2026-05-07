@@ -15,6 +15,7 @@
 #include <QDateTime>
 #include <QRegularExpression>
 #include <QVariantMap>
+#include <QImage>
 #include <juce_core/juce_core.h>
 #include <juce_dsp/juce_dsp.h>
 #include <rubberband/RubberBandStretcher.h>
@@ -2831,7 +2832,10 @@ void DjEngine::loadTrack(const QString& rawPath)
             return;
         }
 
-        QByteArray coverData = CoverArtExtractor::extractCoverArt(rawPath).first;
+        QImage coverImage;
+        const QByteArray coverData = CoverArtExtractor::extractCoverArt(rawPath).first;
+        if (!coverData.isEmpty())
+            coverImage.loadFromData(coverData);
 
         WaveformCache::Payload cache;
         bool wfLoaded = WaveformCache::loadForFile(rawPath, pps, &cache)
@@ -2871,7 +2875,7 @@ void DjEngine::loadTrack(const QString& rawPath)
 
         QMetaObject::invokeMethod(this,
             [this, gen, reader, file, rawPath,
-             coverData = std::move(coverData),
+             coverImage = std::move(coverImage),
              cache     = std::move(cache),
              overview  = std::move(overview),
              wfLoaded]() mutable
@@ -2890,8 +2894,8 @@ void DjEngine::loadTrack(const QString& rawPath)
 
                 const bool hasDbAnalysis = hydrateLibraryStateForTrack(rawPath, durationSec);
 
-                if (!coverData.isEmpty() && m_coverProvider) {
-                    m_coverProvider->setCover(m_deckId, coverData);
+                if (!coverImage.isNull() && m_coverProvider) {
+                    m_coverProvider->setCoverImage(m_deckId, coverImage);
                     m_coverArtUrl = QString("image://coverart/%1?t=%2")
                                         .arg(m_deckId)
                                         .arg(QDateTime::currentMSecsSinceEpoch());

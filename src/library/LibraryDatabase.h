@@ -126,6 +126,8 @@ signals:
 private:
     bool createSchema();
     void scheduleTableModelRefresh();
+    void scheduleBackupSync();
+    void startDeferredBackupSync();
     bool isHealthyDatabaseFile(const QString& path) const;
     bool recreateDatabaseFileFromLiveConnection(const QString& targetPath);
     bool reopenDatabaseConnection();
@@ -144,9 +146,12 @@ private:
     QString m_lastRecoveryEvent;
     QString m_cachedMirrorStatus;
     QTimer m_mirrorSelfCheckTimer;
+    QTimer m_backupSyncTimer;
     bool m_primaryMirrorDegraded = false;
     bool m_backupMirrorDegraded = false;
     bool m_tableModelRefreshPending = false;
+    bool m_backupSyncRunning = false;
+    bool m_backupSyncAgain = false;
 
     static constexpr int kSchemaVersion = 7;
 };

@@ -472,6 +472,18 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         const int vIdx = x * 2;
 
         const float rms = std::clamp(pixels[x].rms, 0.0f, 1.0f);
+        if (rms <= 0.0005f) {
+            lowV[vIdx  ].set(fx, midY, 0, 0, 0, 0);
+            lowV[vIdx+1].set(fx, midY, 0, 0, 0, 0);
+            lowMidV[vIdx  ].set(fx, midY, 0, 0, 0, 0);
+            lowMidV[vIdx+1].set(fx, midY, 0, 0, 0, 0);
+            midV[vIdx  ].set(fx, midY, 0, 0, 0, 0);
+            midV[vIdx+1].set(fx, midY, 0, 0, 0, 0);
+            highV[vIdx  ].set(fx, midY, 0, 0, 0, 0);
+            highV[vIdx+1].set(fx, midY, 0, 0, 0, 0);
+            continue;
+        }
+
         const float bodyAmp = rms * midY;
         const float glowAmp = std::min(midY, bodyAmp * 1.34f + 0.7f);
         const float coreAmp = bodyAmp * 0.56f;

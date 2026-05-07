@@ -9,8 +9,8 @@
 
 // QML image provider for cover art.
 // Access in QML: Image { source: "image://coverart/deckA" }
-// C++ side calls setCover(id, bytes) after loading a track; the URL must include
-// a timestamp query parameter to bust QML's image:// cache (see DjEngine::loadTrack).
+// C++ side calls setCoverImage(id, image) after loading a track; the URL must
+// include a timestamp query parameter to bust QML's image:// cache.
 class CoverArtProvider : public QQuickImageProvider
 {
 public:
@@ -46,11 +46,16 @@ public:
 
     void setCover(const QString& id, const QByteArray& data)
     {
-        QMutexLocker lock(&m_mutex);
         QImage img;
         if (!data.isEmpty())
             img.loadFromData(data);
-        m_covers[id] = img;
+        setCoverImage(id, img);
+    }
+
+    void setCoverImage(const QString& id, const QImage& image)
+    {
+        QMutexLocker lock(&m_mutex);
+        m_covers[id] = image;
     }
 
     void clearCover(const QString& id)
