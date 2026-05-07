@@ -12,33 +12,18 @@ Rectangle {
     property bool cueBActive: false
     property string channelAId: "deckA"
     property string channelBId: "deckB"
-    property string crossfaderId: "crossfader"
 
-    property real volA: 0.8
-    property real volB: 0.8
     readonly property real vuACombined: engineA ? Math.max(engineA.preFaderVuLevelL, engineA.preFaderVuLevelR) : 0.0
     readonly property real vuBCombined: engineB ? Math.max(engineB.preFaderVuLevelL, engineB.preFaderVuLevelR) : 0.0
 
     readonly property color clrA: "#ff9900"
     readonly property color clrB: "#00ccff"
 
-    function updateVolumes() {
-        if (engineA) {
-            let cfA = crossfader.value > 0 ? 1.0 - crossfader.value : 1.0
-            engineA.volume = volA * cfA
-        }
-        if (engineB) {
-            let cfB = crossfader.value < 0 ? 1.0 + crossfader.value : 1.0
-            engineB.volume = volB * cfB
-        }
-    }
-
     Connections {
         target: parameterStore
         function onParameterChanged(id, value) {
             if      (id === mixer.channelAId + "_vol")  volFaderA.value = value
             else if (id === mixer.channelBId + "_vol")  volFaderB.value = value
-            else if (id === mixer.crossfaderId)          crossfader.value = (value * 2.0) - 1.0
         }
     }
 
@@ -404,7 +389,6 @@ Rectangle {
                             orientation: Qt.Vertical
                             from: 0.0; to: 1.0; value: 1.0
                             onValueChanged: {
-                                mixer.volA = value; mixer.updateVolumes()
                                 if (parameterStore && parameterStore.getParameter(mixer.channelAId + "_vol") !== value)
                                     parameterStore.setParameter(mixer.channelAId + "_vol", value)
                             }
@@ -532,7 +516,6 @@ Rectangle {
                             orientation: Qt.Vertical
                             from: 0.0; to: 1.0; value: 1.0
                             onValueChanged: {
-                                mixer.volB = value; mixer.updateVolumes()
                                 if (parameterStore && parameterStore.getParameter(mixer.channelBId + "_vol") !== value)
                                     parameterStore.setParameter(mixer.channelBId + "_vol", value)
                             }
@@ -553,68 +536,5 @@ Rectangle {
             }
         }
 
-        Rectangle { Layout.fillWidth: true; height: 1; color: "#1c1c1c" }
-
-        // ── Crossfader ────────────────────────────────────────────────────
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 36
-            color: "#080808"
-
-            // Center notch
-            Rectangle {
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.top: parent.top
-                width: 1; height: 5; color: "#2a2a2a"
-            }
-
-            Row {
-                anchors.left: parent.left; anchors.leftMargin: 6
-                anchors.verticalCenter: parent.verticalCenter; spacing: 4
-                Rectangle {
-                    width: 5; height: 5; radius: 2.5; color: mixer.clrA
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-                Text {
-                    text: "A"; color: mixer.clrA
-                    font.pixelSize: window.spViewport(8); font.bold: true; font.family: "monospace"
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-            }
-            Row {
-                anchors.right: parent.right; anchors.rightMargin: 6
-                anchors.verticalCenter: parent.verticalCenter; spacing: 4
-                Text {
-                    text: "B"; color: mixer.clrB
-                    font.pixelSize: window.spViewport(8); font.bold: true; font.family: "monospace"
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-                Rectangle {
-                    width: 5; height: 5; radius: 2.5; color: mixer.clrB
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-            }
-
-            MixerSlider {
-                id: crossfader
-                anchors.left: parent.left; anchors.right: parent.right
-                anchors.leftMargin: 20; anchors.rightMargin: 20
-                anchors.verticalCenter: parent.verticalCenter
-                height: 22
-                centerFill: true
-                from: -1.0; to: 1.0; value: 0.0; stepSize: 0.01
-                onValueChanged: {
-                    mixer.updateVolumes()
-                    if (parameterStore) {
-                        var normValue = (value + 1.0) / 2.0
-                        if (Math.abs(parameterStore.getParameter(mixer.crossfaderId) - normValue) > 0.01)
-                            parameterStore.setParameter(mixer.crossfaderId, normValue)
-                    }
-                }
-                TapHandler {
-                    onDoubleTapped: { crossfader.enabled = false; crossfader.value = 0.0; crossfader.enabled = true }
-                }
-            }
-        }
     }
 }

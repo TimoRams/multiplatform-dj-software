@@ -240,6 +240,7 @@ qt_add_qml_module(${PROJECT_NAME}
         src/qml/SettingsWindow.qml
         src/qml/FxUnit.qml
         src/qml/FxBar.qml
+        src/qml/CrossfaderBar.qml
 )
 
 target_sources(${PROJECT_NAME} PRIVATE

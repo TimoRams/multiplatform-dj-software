@@ -23,7 +23,7 @@ Item {
     property string _currentBpm:    ""
     readonly property bool linkAvailable: (typeof linkManager !== "undefined" && linkManager !== null && linkManager.enabled)
     readonly property bool linkMode: (typeof window !== "undefined" && window !== null && window.linkedDeckName === deck.deckName)
-    readonly property int headerCellHeight: 24
+    readonly property int headerCellHeight: 20
     property double _linkSuppressPublishUntilMs: 0
     property double _linkFollowBlockedUntilMs: 0
     property double _lastLinkPublishMs: 0
@@ -36,7 +36,7 @@ Item {
                                      : "#44ddaa"
     readonly property color accentGrn: "#4dd98a"
     readonly property color accentBlu: "#5bb6ff"
-    readonly property int   btnH:      26
+    readonly property int   btnH:      22
 
     // ── Reusable flat button component ───────────────────────────────────
     component FlatBtn: Rectangle {
@@ -537,13 +537,13 @@ Item {
             OverallWaveform {
                 engine: deck.engine
                 Layout.fillWidth: true
-                Layout.preferredHeight: 34
+                Layout.preferredHeight: 28
                 stripeColor: "#0d0d0d"
             }
 
             SegmentBar {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 6
+                Layout.preferredHeight: 4
                 segments: deck.engine ? deck.engine.currentSegments : []
                 totalTrackDuration: deck.engine ? deck.engine.trackDurationSec : 0
             }
@@ -745,7 +745,6 @@ Item {
             RowLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.maximumHeight: Math.round(deck.height * 0.37)
                 spacing: 0
 
                 PerformancePads {

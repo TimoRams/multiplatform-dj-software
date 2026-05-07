@@ -29,6 +29,7 @@ ApplicationWindow {
     property bool showMixer: true
     property bool showFxBar: true
     property bool showLibrary: true
+    property bool showCrossfader: true
     property bool fourDeckMode: false
 
     property int resizeThrottleCounter: 0
@@ -372,7 +373,7 @@ ApplicationWindow {
     readonly property int fxBarHeight: 40
     readonly property int mixerBaseWidth: 180
 
-    readonly property real baseUiHeight: 150 + (baseUiWidth / 5.0) + 4
+    readonly property real baseUiHeight: 150 + (baseUiWidth / 6.5) + 4
 
     // ─────────────────────────────────────────────────────────────────────────
     // MAIN LAYOUT – direct child, no async Loader wrapping
@@ -568,7 +569,6 @@ ApplicationWindow {
                         engineB: deckD
                         channelAId: "deckC"
                         channelBId: "deckD"
-                        crossfaderId: "crossfader2"
                     }
 
                     DeckControl {
@@ -587,6 +587,31 @@ ApplicationWindow {
             Layout.minimumHeight: visible ? 1 : 0
             Layout.preferredHeight: visible ? 1 : 0
             Layout.maximumHeight: visible ? 1 : 0
+            color: "#000000"
+        }
+
+        CrossfaderBar {
+            id: crossfaderBar
+            property bool _vis: window.showCrossfader && !window.libraryExpanded
+            Layout.fillWidth: true
+            Layout.minimumHeight:  _vis ? 36 : 0
+            Layout.preferredHeight: _vis ? 36 : 0
+            Layout.maximumHeight:  _vis ? 36 : 0
+            visible: _vis
+            engineA: deckA
+            engineB: deckB
+            engineC: deckC
+            engineD: deckD
+            fourDeckMode: window.fourDeckMode
+        }
+
+        Rectangle {
+            property bool _vis: window.showCrossfader && !window.libraryExpanded
+            visible: _vis
+            Layout.fillWidth: true
+            Layout.minimumHeight:  _vis ? 1 : 0
+            Layout.preferredHeight: _vis ? 1 : 0
+            Layout.maximumHeight:  _vis ? 1 : 0
             color: "#000000"
         }
 
