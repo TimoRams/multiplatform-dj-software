@@ -869,6 +869,57 @@ Rectangle {
         // ── Separator ────────────────────────────────────────────────────────
         Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
 
+        // ── Deck count selector ───────────────────────────────────────────────
+        Rectangle {
+            id: deckModeBlock
+            Layout.preferredWidth: deckModeRow.implicitWidth + root.padH * 2
+            Layout.fillHeight: true
+            color: "#121212"
+
+            readonly property bool fourDeck: root.Window.window ? root.Window.window.fourDeckMode : false
+
+            Row {
+                id: deckModeRow
+                anchors.centerIn: parent
+                spacing: 2
+
+                Rectangle {
+                    width: 24; height: Math.max(14, Math.round(root.btnH * 0.55))
+                    anchors.verticalCenter: parent.verticalCenter
+                    radius: 2
+                    color: !deckModeBlock.fourDeck ? "#1e7bd4" : "#1c1c1c"
+                    Text {
+                        anchors.centerIn: parent
+                        text: "2"; color: !deckModeBlock.fourDeck ? "#ffffff" : "#555"
+                        font.pixelSize: root.sp(9); font.bold: true; font.family: "monospace"
+                    }
+                    MouseArea {
+                        anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                        onClicked: if (root.Window.window) root.Window.window.fourDeckMode = false
+                    }
+                }
+
+                Rectangle {
+                    width: 24; height: Math.max(14, Math.round(root.btnH * 0.55))
+                    anchors.verticalCenter: parent.verticalCenter
+                    radius: 2
+                    color: deckModeBlock.fourDeck ? "#1e7bd4" : "#1c1c1c"
+                    Text {
+                        anchors.centerIn: parent
+                        text: "4"; color: deckModeBlock.fourDeck ? "#ffffff" : "#555"
+                        font.pixelSize: root.sp(9); font.bold: true; font.family: "monospace"
+                    }
+                    MouseArea {
+                        anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                        onClicked: if (root.Window.window) root.Window.window.fourDeckMode = true
+                    }
+                }
+            }
+        }
+
+        // ── Separator ────────────────────────────────────────────────────────
+        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
+
         // ── View toggles ──────────────────────────────────────────────────────
         Rectangle {
             id: viewMenuBtn

@@ -235,6 +235,8 @@ int main(int argc, char *argv[])
 
     auto deckA = std::make_unique<DjEngine>();
     auto deckB = std::make_unique<DjEngine>();
+    auto deckC = std::make_unique<DjEngine>();
+    auto deckD = std::make_unique<DjEngine>();
     logStartupStep("DjEngines constructed");
 
     deckA->applyAudioDeviceSettings(settingsManager.getAudioMasterDeviceType(),
@@ -257,6 +259,8 @@ int main(int argc, char *argv[])
     auto coverProvider = std::make_unique<CoverArtProvider>();
     deckA->setCoverArtProvider(coverProvider.get(), "deckA");
     deckB->setCoverArtProvider(coverProvider.get(), "deckB");
+    deckC->setCoverArtProvider(coverProvider.get(), "deckC");
+    deckD->setCoverArtProvider(coverProvider.get(), "deckD");
 
     QQmlApplicationEngine engine;
 
@@ -302,6 +306,8 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("settingsManager", &settingsManager);
     engine.rootContext()->setContextProperty("deckA", deckA.get());
     engine.rootContext()->setContextProperty("deckB", deckB.get());
+    engine.rootContext()->setContextProperty("deckC", deckC.get());
+    engine.rootContext()->setContextProperty("deckD", deckD.get());
 
     LibraryManager libraryManager;
     engine.rootContext()->setContextProperty("libraryManager", &libraryManager);
@@ -321,6 +327,8 @@ int main(int argc, char *argv[])
 
     deckA->setLibraryDatabase(&libraryDb);
     deckB->setLibraryDatabase(&libraryDb);
+    deckC->setLibraryDatabase(&libraryDb);
+    deckD->setLibraryDatabase(&libraryDb);
 
     FxManager fxManager;
     fxManager.registerEngines(deckA.get(), deckB.get());
@@ -444,7 +452,11 @@ int main(int argc, char *argv[])
     settingsManager.shutdown();
     engine.rootContext()->setContextProperty("deckA", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("deckB", static_cast<QObject*>(nullptr));
+    engine.rootContext()->setContextProperty("deckC", static_cast<QObject*>(nullptr));
+    engine.rootContext()->setContextProperty("deckD", static_cast<QObject*>(nullptr));
 
+    deckD.reset();
+    deckC.reset();
     deckB.reset();
     deckA.reset();
 

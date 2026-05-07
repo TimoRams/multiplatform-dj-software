@@ -29,6 +29,7 @@ ApplicationWindow {
     property bool showMixer: true
     property bool showFxBar: true
     property bool showLibrary: true
+    property bool fourDeckMode: false
 
     property int resizeThrottleCounter: 0
     property int lastProcessedWidth: width
@@ -418,6 +419,15 @@ ApplicationWindow {
                     spacing: 0
 
                     EnlargedWaveform {
+                        visible: window.fourDeckMode
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        engine: deckC
+                        backgroundColor: "#2a2a2a"
+                        waveformZoom: window.waveformZoom
+                    }
+
+                    EnlargedWaveform {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         engine: deckA
@@ -429,6 +439,15 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         engine: deckB
+                        backgroundColor: "#2a2a2a"
+                        waveformZoom: window.waveformZoom
+                    }
+
+                    EnlargedWaveform {
+                        visible: window.fourDeckMode
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        engine: deckD
                         backgroundColor: "#2a2a2a"
                         waveformZoom: window.waveformZoom
                     }
@@ -502,6 +521,73 @@ ApplicationWindow {
                     }
                 }
             }
+        }
+
+        // ── Second deck row (4-deck mode) ─────────────────────────────────
+        Item {
+            id: deckMixerViewport2
+            property bool _vis: window.fourDeckMode && !window.libraryExpanded
+            Layout.fillWidth: true
+            Layout.minimumHeight: _vis ? window.scaledDeckMixerHeight : 0
+            Layout.preferredHeight: _vis ? window.scaledDeckMixerHeight : 0
+            Layout.maximumHeight: _vis ? window.scaledDeckMixerHeight : 0
+            visible: _vis
+            clip: true
+
+            readonly property real designWidth: window.baseUiWidth
+            readonly property real designHeight: window.baseDeckMixerHeight
+            readonly property real uniformScaleRaw: Math.min(
+                width  / Math.max(1, designWidth),
+                height / Math.max(1, designHeight)
+            )
+            readonly property real uniformScale: window._snapScaleToPhysicalPixels(Math.max(0.1, uniformScaleRaw))
+
+            Item {
+                width: deckMixerViewport2.designWidth
+                height: deckMixerViewport2.designHeight
+                anchors.centerIn: parent
+                scale: deckMixerViewport2.uniformScale
+                transformOrigin: Item.Center
+
+                RowLayout {
+                    anchors.fill: parent
+                    spacing: 0
+
+                    DeckControl {
+                        deckName: "C"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        engine: deckC
+                    }
+
+                    MixerSection {
+                        Layout.preferredWidth: window.mixerBaseWidth
+                        Layout.minimumWidth: window.mixerBaseWidth
+                        Layout.fillHeight: true
+                        engineA: deckC
+                        engineB: deckD
+                        channelAId: "deckC"
+                        channelBId: "deckD"
+                        crossfaderId: "crossfader2"
+                    }
+
+                    DeckControl {
+                        deckName: "D"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        engine: deckD
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            visible: window.fourDeckMode && !window.libraryExpanded
+            Layout.fillWidth: true
+            Layout.minimumHeight: visible ? 1 : 0
+            Layout.preferredHeight: visible ? 1 : 0
+            Layout.maximumHeight: visible ? 1 : 0
+            color: "#000000"
         }
 
         FxBar {

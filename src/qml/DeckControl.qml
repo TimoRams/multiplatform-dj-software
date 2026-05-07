@@ -30,7 +30,10 @@ Item {
     property double _lastLinkPublishBpm: 0
 
     // ── Theme ────────────────────────────────────────────────────────────
-    readonly property color accent:    deckName === "A" ? "#ff9900" : "#00ccff"
+    readonly property color accent:    deckName === "A" ? "#ff9900"
+                                     : deckName === "B" ? "#00ccff"
+                                     : deckName === "C" ? "#cc44ff"
+                                     : "#44ddaa"
     readonly property color accentGrn: "#4dd98a"
     readonly property color accentBlu: "#5bb6ff"
     readonly property int   btnH:      26
@@ -742,6 +745,7 @@ Item {
             RowLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                Layout.maximumHeight: Math.round(deck.height * 0.37)
                 spacing: 0
 
                 PerformancePads {
