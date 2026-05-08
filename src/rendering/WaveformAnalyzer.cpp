@@ -697,39 +697,72 @@ void WaveformAnalyzer::run()
 
     int mainChunkStart = 0;
 
+    // Bins before the priority region are buffered here and flushed only after
+    // the forward region (priorityEnd..N) begins, so the user sees waveform
+    // continue forward from the seek point before the earlier section fills in.
+    QVector<TrackData::RgbWaveformFrame> earlyRgbBuf;
+    if (hasPriority) earlyRgbBuf.reserve(priorityWarmupStart);
+    int earlyRgbStart = 0;
+    bool earlyFlushed = !hasPriority;
+
+    // Tracks how far ahead we've pre-rendered via cold-start priority passes.
+    // Advances by kPriorityBins every 200 main-loop iterations so the waveform
+    // continues filling forward from the seek point instead of restarting at 0.
+    int forwardFrontier = hasPriority ? priorityEnd : 0;
+    // Tracks which hint position the current frontier run was started from.
+    // When the user seeks significantly (forward or backward), frontier resets.
+    int lastActedHint = hasPriority ? hintBin : 0;
+
     for (int bin = 0; bin < numPoints; ++bin)
     {
         if (threadShouldExit()) break;
 
-        // If we're entering the priority region, flush any pending batch first
-        // then skip emitting RGB (already done by priority pass).
-        if (hasPriority && bin == priorityWarmupStart && !previewRgbBatch.isEmpty()) {
+        // When entering the priority region: flush only the appendData batch
+        // (overview waveform). RGB for early bins stays in earlyRgbBuf.
+        if (hasPriority && bin == priorityWarmupStart && !previewBatch.isEmpty()) {
             m_trackData->appendData(previewBatch);
-            m_trackData->writeRgbWaveformRange(mainChunkStart, previewRgbBatch);
             previewBatch.clear();
             previewRgbBatch.clear();
         }
 
-        // Every 200 bins, check for an updated seek hint that's far ahead.
+        // When leaving the priority region: flush the early-bin RGB buffer so
+        // the forward fill is visible before going back to fill the beginning.
+        if (!earlyFlushed && bin >= priorityEnd) {
+            if (!earlyRgbBuf.isEmpty())
+                m_trackData->writeRgbWaveformRange(earlyRgbStart, earlyRgbBuf);
+            earlyRgbBuf.clear();
+            earlyFlushed = true;
+        }
+
+        // Every 200 bins, advance the forward frontier ahead of the main loop.
+        // Each pass extends the pre-rendered region by kPriorityBins, so the waveform
+        // continues filling forward continuously until the main loop catches up.
         if (bin > 0 && bin % 200 == 0) {
-            const int newHintBin = std::clamp(
-                static_cast<int>(m_seekHintSec.load(std::memory_order_relaxed) * m_pointsPerSecond),
-                0, numPoints - 1);
-            if (newHintBin > bin + kPriorityBins) {
-                // New seek hint is far ahead — do a fresh priority pass for that region.
-                const int nWarmStart = std::max(0, newHintBin - kWarmupBins);
-                const int nPriorityEnd = std::min(numPoints, newHintBin + kPriorityBins);
-                if (nWarmStart > bin) {
+            // Check for a new user seek in either direction — must happen before
+            // the frontier gate so a backward seek (or cold start) still takes effect.
+            {
+                const int latestHint = std::clamp(
+                    static_cast<int>(m_seekHintSec.load(std::memory_order_relaxed) * m_pointsPerSecond),
+                    0, numPoints - 1);
+                if (std::abs(latestHint - lastActedHint) > kPriorityBins) {
+                    forwardFrontier = latestHint;
+                    lastActedHint   = latestHint;
+                }
+            }
+            if (forwardFrontier < numPoints && forwardFrontier > bin) {
+            const int nWarmStart   = std::max(0, forwardFrontier - kWarmupBins);
+            const int nPriorityEnd = std::min(numPoints, forwardFrontier + kPriorityBins);
+            if (nWarmStart > bin) {
                     FiltState nFilt;
                     nFilt.reset(numCh, sampleRate);
                     juce::AudioBuffer<float> nBuf(static_cast<int>(reader->numChannels), static_cast<int>(maxSamplesPerBin));
                     float nRunMaxLow = 0.1f, nRunMaxLowMid = 0.1f, nRunMaxMid = 0.1f, nRunMaxHigh = 0.1f;
                     QVector<TrackData::RgbWaveformFrame> nChunk;
                     nChunk.reserve(kChunk);
-                    int nChunkStart = newHintBin;
+                    int nChunkStart = forwardFrontier;
 
                     // Warmup
-                    for (int wb = nWarmStart; wb < newHintBin && !threadShouldExit(); ++wb) {
+                    for (int wb = nWarmStart; wb < forwardFrontier && !threadShouldExit(); ++wb) {
                         const juce::int64 wBinStart = (static_cast<juce::int64>(wb) * totalSamples) / numPoints;
                         juce::int64 wBinEnd = (static_cast<juce::int64>(wb + 1) * totalSamples) / numPoints;
                         if (wBinEnd <= wBinStart) wBinEnd = std::min(totalSamples, wBinStart + 1);
@@ -771,7 +804,7 @@ void WaveformAnalyzer::run()
                     }
 
                     // Priority window
-                    for (int pb = newHintBin; pb < nPriorityEnd && !threadShouldExit(); ++pb) {
+                    for (int pb = forwardFrontier; pb < nPriorityEnd && !threadShouldExit(); ++pb) {
                         const juce::int64 pBinStart = (static_cast<juce::int64>(pb) * totalSamples) / numPoints;
                         juce::int64 pBinEnd = (static_cast<juce::int64>(pb + 1) * totalSamples) / numPoints;
                         if (pBinEnd <= pBinStart) pBinEnd = std::min(totalSamples, pBinStart + 1);
@@ -835,6 +868,8 @@ void WaveformAnalyzer::run()
                     }
                     if (!nChunk.isEmpty())
                         m_trackData->writeRgbWaveformRange(nChunkStart, nChunk);
+
+                    forwardFrontier = nPriorityEnd; // advance frontier for next iteration
                 }
             }
         }
@@ -940,6 +975,7 @@ void WaveformAnalyzer::run()
 
         // Skip emitting RGB for bins already covered by the priority pass.
         const bool inPriorityRegion = hasPriority && bin >= priorityWarmupStart && bin < priorityEnd;
+        const bool beforePriority   = hasPriority && !earlyFlushed && bin < priorityWarmupStart;
         if (!inPriorityRegion) {
             TrackData::RgbWaveformFrame rgb;
             // Progressive preview: same RGB heuristic as final mapping.
@@ -960,8 +996,14 @@ void WaveformAnalyzer::run()
             rgb.low = lowN;
             rgb.mid = midN;
             rgb.high = highN;
-            if (previewRgbBatch.isEmpty()) mainChunkStart = bin;
-            previewRgbBatch.append(rgb);
+            if (beforePriority) {
+                // Defer: emit the early section only after the forward fill starts.
+                if (earlyRgbBuf.isEmpty()) earlyRgbStart = bin;
+                earlyRgbBuf.append(rgb);
+            } else {
+                if (previewRgbBatch.isEmpty()) mainChunkStart = bin;
+                previewRgbBatch.append(rgb);
+            }
         }
 
         if (previewBatch.size() >= kChunk) {
@@ -978,6 +1020,9 @@ void WaveformAnalyzer::run()
         if (!previewRgbBatch.isEmpty())
             m_trackData->writeRgbWaveformRange(mainChunkStart, previewRgbBatch);
     }
+    // Flush early-region buffer if priorityEnd was never reached (e.g. hint near end of track).
+    if (!earlyFlushed && !earlyRgbBuf.isEmpty())
+        m_trackData->writeRgbWaveformRange(earlyRgbStart, earlyRgbBuf);
 
     if (threadShouldExit()) return;
 
