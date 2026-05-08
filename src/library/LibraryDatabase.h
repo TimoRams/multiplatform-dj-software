@@ -76,6 +76,9 @@ public:
     // Retrieve the file_path for a given trackId (first location).
     Q_INVOKABLE QString filePath(const QString& trackId) const;
 
+    // Retrieve the track_id for a given file path (returns empty string if not found).
+    Q_INVOKABLE QString trackIdForFilePath(const QString& filePath) const;
+
     // ── Playlist management ────────────────────────────────────────────────
     // Returns new playlist id, or empty string on failure.
     Q_INVOKABLE QString createPlaylist(const QString& name,

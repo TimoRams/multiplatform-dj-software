@@ -408,17 +408,8 @@ bool LibraryDatabase::createSchema()
     }
 
     if (currentVersion < 8) {
-        // Fix title/artist swap caused by JUCE's FLAC reader ignoring Vorbis comments.
-        // All .flac tracks were stored via the filename heuristic which assumed "ARTIST - TITLE"
-        // order, but the user's files are named "TITLE - ARTIST.flac".
-        bool ok = q.exec(
-            "UPDATE Tracks SET title = artist, artist = title "
-            "WHERE id IN ("
-            "  SELECT t.id FROM Tracks t "
-            "  JOIN Locations l ON t.id = l.track_id "
-            "  WHERE lower(l.file_path) LIKE '%.flac'"
-            ")");
-        if (!ok) qWarning() << "[LibraryDatabase] v8 FLAC title/artist swap fix:" << q.lastError().text();
+        // Version 8: reserved (FLAC metadata fix applied manually to existing databases;
+        // code-level fix via TagLib means new data is stored correctly from the start).
     }
 
     // ── Stamp current version ────────────────────────────────────────────
@@ -824,6 +815,15 @@ QString LibraryDatabase::filePath(const QString& trackId) const
     return q.next() ? q.value(0).toString() : QString();
 }
 
+QString LibraryDatabase::trackIdForFilePath(const QString& filePath) const
+{
+    QSqlQuery q(m_db);
+    q.prepare("SELECT track_id FROM Locations WHERE file_path = :fp LIMIT 1");
+    q.bindValue(":fp", filePath);
+    q.exec();
+    return q.next() ? q.value(0).toString() : QString();
+}
+
 QString LibraryDatabase::mirroredDatabaseStatus() const
 {
     if (m_lastRecoveryEvent.isEmpty())
@@ -894,13 +894,14 @@ void LibraryDatabase::scheduleTableModelRefresh()
 
     m_tableModelRefreshPending = true;
 
-    // Defer reset-heavy model refreshes until after the current UI interaction.
-    QTimer::singleShot(120, this, [this]() {
+    // Use QueuedConnection (not a native timer) to avoid macOS CFRunLoop re-entrancy
+    // that can destroy ListView delegates while signal handlers are still on the stack.
+    QMetaObject::invokeMethod(this, [this]() {
         m_tableModelRefreshPending = false;
 
         if (m_tableModel != nullptr)
             m_tableModel->refresh();
-    });
+    }, Qt::QueuedConnection);
 }
 
 void LibraryDatabase::scheduleBackupSync()

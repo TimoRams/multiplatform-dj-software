@@ -2766,8 +2766,12 @@ bool DjEngine::hydrateLibraryStateForTrack(const QString& rawPath, double durati
         bitrateKbps = static_cast<int>(std::lround((bytes * 8.0) / durationSec / 1000.0));
     }
 
-    m_currentTrackId = TrackIdGenerator::generate(
-        m_trackArtist, m_trackTitle, durSec, rawPath);
+    // Prefer the existing DB id for this file path so that analysis data and cue points
+    // are preserved even when metadata (and thus a freshly-generated hash) has changed.
+    const QString existingId = m_libraryDb->trackIdForFilePath(rawPath);
+    m_currentTrackId = existingId.isEmpty()
+        ? TrackIdGenerator::generate(m_trackArtist, m_trackTitle, durSec, rawPath)
+        : existingId;
     m_libraryDb->addTrack(m_currentTrackId,
                           m_trackTitle, m_trackArtist, durSec, rawPath, bitrateKbps);
 
