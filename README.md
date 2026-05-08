@@ -1,141 +1,174 @@
-# 🎧 [Name TBD] – Multiplatform DJ Software
+# 🎧 [Name TBD]
 
-> *I don't have a name for this yet — suggestions welcome!*
+> A modern, multiplatform DJ application — GPU-accelerated waveforms, professional mixing, and deep hardware integration.
 
-A modern DJ application built on **JUCE** (Audio/DSP) and **Qt 6 / QML** (UI).
-Waveform rendering is fully hardware-accelerated via **Qt RHI** on the GPU using Vulkan — no CPU software rendering.
+![License](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)
+![C++](https://img.shields.io/badge/C%2B%2B-23-informational?style=flat-square)
+![Qt](https://img.shields.io/badge/Qt-6-41CD52?style=flat-square)
+![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey?style=flat-square)
+
+Built on **JUCE** for real-time audio and **Qt 6 / QML** for the UI.
+Waveforms are rendered entirely on the GPU via **Qt RHI** (Vulkan on Linux/Windows, Metal on macOS) — no CPU software rendering.
+
+> *No name yet — suggestions welcome!*
 
 ---
 
-## ✅ Features
+## Features
 
 ### Playback & Transport
 
-| Feature | Details |
-| --- | --- |
-| **Dual-Deck Playback** | Two independent decks — FLAC / WAV / OGG / MP3 |
-| **4-Band RGB Waveforms** | GPU-rendered (low / low-mid / mid / high) with beat grid overlay |
-| **BPM & Key Detection** | Autocorrelation + Krumhansl-Schmuckler; manual override and beat-grid correction |
-| **Scratch & Jog** | Velocity-based scratch with spring-damped physics; up to 12× playback rate |
-| **Loop Controls** | Set in/out points, 4-beat toggle, halve / double length, beat-quantized |
-| **Hot Cues** | 8 cue points per deck with color, label, and database persistence |
-| **Slip Mode** | Loops and reverses run silently while the playhead continues; restores on exit |
-| **Sync & Quantize** | Master/follower deck sync with beat-phase nudge; quantize-aware cue triggers |
-| **Key Lock** | Pitch-preserved time-stretching via RubberBand during tempo changes |
-| **Reverse Playback** | Full reverse audio streaming, scratch-compatible |
-| **Turntable FX** | Vinyl Brake, Backspin, Echo Out, Roll Out |
+- Dual-deck playback — FLAC / WAV / OGG / MP3
+- 4-band RGB waveforms (GPU-rendered) with beat grid overlay
+- BPM & key detection — autocorrelation + Krumhansl-Schmuckler; manual override and beat-grid correction
+- Scratch & jog with spring-damped physics, up to 12× playback rate
+- Loop controls — set in/out, 4-beat toggle, halve / double length, beat-quantized
+- 8 hot cues per deck with color, label, and database persistence
+- Slip mode — loops and reverses run silently while the playhead continues
+- Master / follower sync with beat-phase nudge correction + quantize-aware cue triggers
+- Key lock — pitch-preserved time-stretching via RubberBand
+- Reverse playback, scratch-compatible
+- Turntable FX: Vinyl Brake, Backspin, Echo Out, Roll Out
 
 ### Mixer & Effects
 
-| Feature | Details |
-| --- | --- |
-| **3-Band EQ & Filter** | Per-deck High / Mid / Low EQ, resonant filter, trim / gain staging |
-| **Crossfader** | Adjustable curve (smooth to sharp) with per-deck A / B assignment |
-| **VU Metering** | Pre-fader metering per deck with peak hold and clip indicator |
-| **24 Effect Types** | 2 FX units + Sound Color knob: Reverb, Echo, Flanger, Phaser, Bitcrusher, PitchShifter, Stretch, Spiral, Roll, Mobius and more |
-| **Performance Pads** | 4×2 grid — Hot Cue, Pad FX, Beatjump, Sampler *(coming soon)* |
+- 3-band EQ + resonant filter per deck, trim / gain staging
+- Crossfader with adjustable curve (smooth to sharp) and per-deck A / B assignment
+- Pre-fader VU metering with peak hold and clip indicator
+- 24 effect types across 2 FX units + Sound Color centre knob
+- Performance pads — 4×2 grid, 4 modes: Hot Cue, Pad FX, Beatjump, Sampler *(coming soon)*
 
 ### Library
 
-| Feature | Details |
-| --- | --- |
-| **Library Management** | 3-column panel, folder tree navigation, drag & drop to decks |
-| **Persistent Analysis** | SQLite-backed BPM / key analysis cache; background analysis worker |
-| **Metadata Extraction** | ID3v2 / Vorbis / M4A + filename fallback |
-| **Cover Art** | Extracted via TagLib (MP3, FLAC, MP4, OGG, WAV) |
+- Folder tree navigation with drag & drop to decks
+- SQLite-backed BPM / key analysis cache + background analysis worker
+- Metadata extraction: ID3v2 / Vorbis / M4A + filename fallback
+- Cover art: MP3, FLAC, MP4, OGG, WAV
 
-### Integration & Sync
+### Integration
 
-| Feature | Details |
-| --- | --- |
-| **Ableton Link** | Network tempo and beat-phase sync with other Link-enabled apps |
-| **MIDI Control** | Full MIDI input/output binding, MIDI learn mode, persistent controller mappings |
-| **AV-Sync** | Hardware latency compensation + sub-frame visual interpolation |
+- **Ableton Link** — network tempo and beat-phase sync with other Link-enabled apps
+- MIDI — full input/output binding, learn mode, persistent controller mappings
+- Hardware latency compensation + sub-frame visual interpolation
 
 ---
 
-## 🛠 Architecture
+## Architecture
 
-    JUCE Audio Thread  →  WaveformAnalyzer Thread  →  Qt Main Thread / QML
-    (Real-time audio)     (BPM, Waveform Bins)        (UI, Signals, Rendering)
-                                                             ↓
-                                                       Qt RHI → Vulkan (GPU)
+```text
+JUCE Audio Thread  →  WaveformAnalyzer Thread  →  Qt Main Thread / QML
+(Real-time audio)     (BPM, Waveform Bins)        (UI, Signals, Rendering)
+                                                         ↓
+                                                   Qt RHI → Vulkan / Metal (GPU)
+```
 
 All cross-thread communication goes through Qt Queued Connections — zero direct cross-thread access.
-The playhead position is shared via `std::atomic<double>` for wait-free VSync-frame reads by the render thread.
+The playhead position is exposed to the render thread via `std::atomic<double>` for wait-free VSync-frame reads.
 
 ---
 
-## 🐧 Linux-First
+## Build
 
-- Native Wayland support (Vulkan, no XWayland required)
-- PipeWire / ALSA out-of-the-box without extra configuration
-- All dependencies available via standard package managers
+### Dependencies
+
+| Library | Purpose |
+| --- | --- |
+| Qt 6 (Core, Gui, Qml, Quick, Quick3D, Sql) | UI & rendering |
+| TagLib | Metadata extraction |
+| libkeyfinder | Key detection |
+| RubberBand | Key lock / time-stretch |
+| CMake ≥ 3.22 | Build system |
+
+> **JUCE** and **Ableton Link** are included as submodules under `libs/` — no separate installation required.
 
 ---
 
-## 💻 Build Instructions
+<details>
+<summary>🐧 Linux — Vulkan + ALSA/PipeWire</summary>
 
-### Required dependencies
+Install dependencies (Debian/Ubuntu):
 
-- Qt 6 (Core, Gui, Qml, Quick, Quick3D, Sql)
-- TagLib
-- libkeyfinder
-- RubberBand
-- CMake >= 3.22
-- C++23 compiler
+```bash
+sudo apt update
+sudo apt install -y \
+  build-essential cmake pkg-config \
+  qt6-base-dev qt6-declarative-dev qt6-quick3d-dev \
+  libtag1-dev libkeyfinder-dev librubberband-dev libasound2-dev
+```
 
-> JUCE and Ableton Link are included as submodules under `libs/` — no separate installation required.
+Build:
 
-### Linux (Vulkan + ALSA)
+```bash
+git clone --recurse-submodules https://github.com/TimoRams/multiplatform-dj-software.git
+cd multiplatform-dj-software
+cmake -S . -B build
+cmake --build build -j$(nproc)
+./build/bin/RamsbrockDJ
+```
 
-    sudo apt update
-    sudo apt install -y \
-      build-essential cmake pkg-config \
-      qt6-base-dev qt6-declarative-dev qt6-quick3d-dev \
-      libtag1-dev libkeyfinder-dev librubberband-dev libasound2-dev
+</details>
 
-    git clone --recurse-submodules https://github.com/TimoRams/multiplatform-dj-software.git
-    cd multiplatform-dj-software
-    cmake -S . -B build
-    cmake --build build -j$(nproc)
-    ./build/bin/RamsbrockDJ
+<details>
+<summary>🍎 macOS — Metal</summary>
 
-Target-native SIMD is enabled automatically on Linux, Windows x64, and Intel macOS. Override explicitly with:
+Install dependencies (Homebrew):
 
-    cmake -S . -B build -DRDBJ_ENABLE_NATIVE_SIMD=ON   # force on
-    cmake -S . -B build -DRDBJ_ENABLE_NATIVE_SIMD=OFF  # force off
+```bash
+brew install cmake pkg-config qt@6 taglib rubberband libkeyfinder
+```
 
-### macOS (Metal backend)
+Build:
 
-    brew install cmake pkg-config qt@6 taglib rubberband libkeyfinder
+```bash
+git clone --recurse-submodules https://github.com/TimoRams/multiplatform-dj-software.git
+cd multiplatform-dj-software
+cmake -S . -B build -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
+cmake --build build -j
+./build/bin/RamsbrockDJ
+```
 
-    git clone --recurse-submodules https://github.com/TimoRams/multiplatform-dj-software.git
-    cd multiplatform-dj-software
-    cmake -S . -B build -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
-    cmake --build build -j
-    ./build/bin/RamsbrockDJ
+> On Apple Silicon, build the arm64 target natively to get the platform's SIMD path automatically.
 
-On Apple Silicon, build the arm64 target natively to get the platform's SIMD path automatically.
+</details>
 
-### Windows (Vulkan backend)
+<details>
+<summary>🪟 Windows — Vulkan</summary>
 
-    vcpkg install taglib rubberband libkeyfinder
+Install dependencies via vcpkg:
 
-    cmake -S . -B build ^
-      -DCMAKE_TOOLCHAIN_FILE=C:/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake ^
-      -DCMAKE_PREFIX_PATH=C:/Qt/6.x.x/msvcxxxx_64
+```bash
+vcpkg install taglib rubberband libkeyfinder
+```
 
-    cmake --build build --config Release
+Configure and build:
+
+```bat
+cmake -S . -B build ^
+  -DCMAKE_TOOLCHAIN_FILE=C:/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake ^
+  -DCMAKE_PREFIX_PATH=C:/Qt/6.x.x/msvcxxxx_64
+
+cmake --build build --config Release
+```
+
+</details>
+
+---
+
+### SIMD
+
+Target-native SIMD is enabled automatically on Linux, Windows x64, and Intel macOS. Override if needed:
+
+```bash
+cmake -S . -B build -DRDBJ_ENABLE_NATIVE_SIMD=ON   # force on
+cmake -S . -B build -DRDBJ_ENABLE_NATIVE_SIMD=OFF  # force off
+```
 
 ---
 
 ## License
 
 Licensed under the **GNU Affero General Public License v3.0 or later** (AGPL-3.0-or-later).
-
-- Full license text: `LICENSE`
-- Copyright and third-party notices: `NOTICE`
+See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE) for details.
 
 ---
 
@@ -145,4 +178,4 @@ Licensed under the **GNU Affero General Public License v3.0 or later** (AGPL-3.0
 
 ---
 
-Built with love on Linux | JUCE + Qt 6 + Vulkan RHI
+Built with love on Linux · JUCE + Qt 6 + Vulkan RHI
