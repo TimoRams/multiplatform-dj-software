@@ -316,11 +316,17 @@ WaveformAnalyzer::~WaveformAnalyzer()
     stopAnalysis();
 }
 
-void WaveformAnalyzer::startAnalysis(const QString& filePath)
+void WaveformAnalyzer::startAnalysis(const QString& filePath, double seekHintSec)
 {
     stopAnalysis();
     m_filePath = filePath;
+    m_seekHintSec.store(seekHintSec, std::memory_order_relaxed);
     startThread(juce::Thread::Priority::background);
+}
+
+void WaveformAnalyzer::setSeekHint(double positionSec)
+{
+    m_seekHintSec.store(positionSec, std::memory_order_relaxed);
 }
 
 void WaveformAnalyzer::stopAnalysis()
@@ -373,6 +379,28 @@ struct EnvelopeFollower {
     }
 
     void reset() { state = 0.0f; }
+};
+
+struct FiltState {
+    std::vector<float> lp110;
+    std::vector<float> hp150s1, hp150s2, lp160;
+    std::vector<float> hp180s1, hp180s2, lp800;
+    std::vector<float> hp19k;
+    std::vector<float> svfIc1, svfIc2;
+    EnvelopeFollower envLow, envLowMid, envMid, envHigh;
+
+    void reset(int numCh, double sampleRate) {
+        const size_t n = static_cast<size_t>(numCh);
+        lp110.assign(n, 0.0f);
+        hp150s1.assign(n, 0.0f); hp150s2.assign(n, 0.0f); lp160.assign(n, 0.0f);
+        hp180s1.assign(n, 0.0f); hp180s2.assign(n, 0.0f); lp800.assign(n, 0.0f);
+        hp19k.assign(n, 0.0f);
+        svfIc1.assign(n, 0.0f); svfIc2.assign(n, 0.0f);
+        envLow.reset();    envLow.prepare(sampleRate, 0.0f, 35.0f);
+        envLowMid.reset(); envLowMid.prepare(sampleRate, 0.0f, 25.0f);
+        envMid.reset();    envMid.prepare(sampleRate, 0.0f, 15.0f);
+        envHigh.reset();   envHigh.prepare(sampleRate, 0.0f, 5.0f);
+    }
 };
 
 // Linkwitz-Riley 4th-order crossover (LR4, -24 dB/oct).
@@ -458,49 +486,32 @@ void WaveformAnalyzer::run()
 
     // ── Band 1: LP @ 110 Hz (1st order = 6 dB/oct) ──────────────────────────
     const float aLP110 = lpCoef1(110.0f);
-    std::vector<float> lp110state(static_cast<size_t>(numCh), 0.0f);
 
     // ── Band 2: HP @ 150 Hz (2nd order) + LP @ 160 Hz (1st order) ───────────
     //    2nd order HP = two cascaded 1st-order HP stages.
     //    HP coefficient: same as LP but applied as HP (out = in - lp).
     const float aHP150 = lpCoef1(150.0f);
     const float aLP160 = lpCoef1(160.0f);
-    std::vector<float> hp150s1(static_cast<size_t>(numCh), 0.0f);  // HP stage 1
-    std::vector<float> hp150s2(static_cast<size_t>(numCh), 0.0f);  // HP stage 2
-    std::vector<float> lp160state(static_cast<size_t>(numCh), 0.0f);
 
     // ── Band 3: HP @ 180 Hz (2nd order) + LP @ 800 Hz (1st order) ───────────
     const float aHP180 = lpCoef1(180.0f);
     const float aLP800 = lpCoef1(800.0f);
-    std::vector<float> hp180s1(static_cast<size_t>(numCh), 0.0f);
-    std::vector<float> hp180s2(static_cast<size_t>(numCh), 0.0f);
-    std::vector<float> lp800state(static_cast<size_t>(numCh), 0.0f);
 
     // ── Band 4: BP @ 2750 Hz (resonant) + HP @ 19000 Hz ─────────────────────
     //    Sub-path A: 2nd-order resonant BP at 2750 Hz using SVF (State Variable TPT).
     //    Sub-path B: HP @ 19000 Hz (1st order) for extreme hi-hat ticks.
     //    Final = abs(A) + abs(B).
     const float aHP19k = lpCoef1(19000.0f);
-    std::vector<float> hp19kstate(static_cast<size_t>(numCh), 0.0f);
 
     // SVF (State Variable Filter) for the 2750 Hz resonant BP.
     // g = tan(π·fc/sr), R = 1/(2·Q) — Q=2 for moderate resonance.
     const float svfG = std::tan(juce::MathConstants<float>::pi * 2750.0f / sr);
     const float svfR = 1.0f / (2.0f * 2.0f);  // Q = 2
     const float svfD = 1.0f / (1.0f + 2.0f * svfR * svfG + svfG * svfG);
-    // Per-channel SVF states (ic1eq, ic2eq)
-    std::vector<float> svfIc1(static_cast<size_t>(numCh), 0.0f);
-    std::vector<float> svfIc2(static_cast<size_t>(numCh), 0.0f);
 
-    // ── Envelope followers (instant attack, exponential release) ─────────────
-    EnvelopeFollower envLow;      // 0 ms attack, 35 ms release
-    EnvelopeFollower envLowMid;   // 0 ms attack, 25 ms release
-    EnvelopeFollower envMid;      // 0 ms attack, 15 ms release
-    EnvelopeFollower envHigh;     // 0 ms attack,  5 ms release
-    envLow   .prepare(sampleRate, 0.0f, 35.0f);
-    envLowMid.prepare(sampleRate, 0.0f, 25.0f);
-    envMid   .prepare(sampleRate, 0.0f, 15.0f);
-    envHigh  .prepare(sampleRate, 0.0f,  5.0f);
+    // ── Filter state (main sequential pass) ──────────────────────────────────
+    FiltState mainFilt;
+    mainFilt.reset(numCh, sampleRate);
 
     // =========================================================================
     // PASS 1 — Raw Analysis + Live Preview (progressive rendering)
@@ -517,8 +528,7 @@ void WaveformAnalyzer::run()
         float mid    = 0.0f;
         float high   = 0.0f;
     };
-    std::vector<RawBin> rawBins;
-    rawBins.reserve(static_cast<size_t>(numPoints));
+    std::vector<RawBin> rawBins(static_cast<size_t>(numPoints));
 
     // Global per-band maxima — tracked across the entire track (for Pass 2).
     float globalMaxLow    = 0.0f;
@@ -534,11 +544,11 @@ void WaveformAnalyzer::run()
     float runMaxMid    = 0.1f;
     float runMaxHigh   = 0.1f;
 
-    constexpr int previewChunk = 50;
+    constexpr int kChunk = 20;
     QVector<TrackData::WaveformBin> previewBatch;
-    previewBatch.reserve(previewChunk);
+    previewBatch.reserve(kChunk);
     QVector<TrackData::RgbWaveformFrame> previewRgbBatch;
-    previewRgbBatch.reserve(previewChunk);
+    previewRgbBatch.reserve(kChunk);
 
     // Shared shaping helper — used identically in preview AND final pass.
     auto shapeBin = [](float norm, float expo, float gain) -> float {
@@ -547,9 +557,287 @@ void WaveformAnalyzer::run()
 
     juce::AudioBuffer<float> readBuf(static_cast<int>(reader->numChannels), static_cast<int>(maxSamplesPerBin));
 
+    // ─── Priority window: analyze around seek hint first ─────────────────
+    // This gives immediate waveform feedback at the seek position before the
+    // sequential fill pass reaches it. Uses cold-start filters (tiny warmup
+    // error in first ~20 bins, invisible at display scale).
+    constexpr int kWarmupBins    = 30;   // ~50 ms at 600 pps
+    constexpr int kPriorityBins  = 1800; // 3 s ahead of hint
+
+    m_trackData->preallocateRgbWaveform(numPoints);
+
+    const int hintBin = std::clamp(
+        static_cast<int>(m_seekHintSec.load(std::memory_order_relaxed) * m_pointsPerSecond),
+        0, numPoints - 1);
+    const int priorityWarmupStart = std::max(0, hintBin - kWarmupBins);
+    const int priorityEnd         = std::min(numPoints, hintBin + kPriorityBins);
+    const bool hasPriority = hintBin > kPriorityBins; // only if actually ahead
+
+    if (hasPriority) {
+        FiltState pFilt;
+        pFilt.reset(numCh, sampleRate);
+        juce::AudioBuffer<float> pBuf(static_cast<int>(reader->numChannels), static_cast<int>(maxSamplesPerBin));
+
+        float pRunMaxLow = 0.1f, pRunMaxLowMid = 0.1f, pRunMaxMid = 0.1f, pRunMaxHigh = 0.1f;
+        QVector<TrackData::RgbWaveformFrame> pChunk;
+        pChunk.reserve(kChunk);
+        int pChunkStart = hintBin;
+
+        // Warmup (no emit)
+        for (int bin = priorityWarmupStart; bin < hintBin && !threadShouldExit(); ++bin) {
+            const juce::int64 binStart = (static_cast<juce::int64>(bin) * totalSamples) / numPoints;
+            juce::int64 binEnd = (static_cast<juce::int64>(bin + 1) * totalSamples) / numPoints;
+            if (binEnd <= binStart) binEnd = std::min(totalSamples, binStart + 1);
+            const int toRead = static_cast<int>(std::max<juce::int64>(1, binEnd - binStart));
+            reader->read(&pBuf, 0, toRead, binStart, true, false);
+
+            for (int s = 0; s < toRead; ++s) {
+                float bL = 0, bLM = 0, bM = 0, bH = 0;
+                for (int ch = 0; ch < numCh; ++ch) {
+                    const size_t ci = static_cast<size_t>(ch);
+                    const float in = pBuf.getReadPointer(ch)[s];
+                    pFilt.lp110[ci] = aLP110 * in + (1.0f - aLP110) * pFilt.lp110[ci];
+                    const float b1 = std::abs(pFilt.lp110[ci]);
+                    pFilt.hp150s1[ci] = aHP150 * in + (1.0f - aHP150) * pFilt.hp150s1[ci];
+                    const float hp1o = in - pFilt.hp150s1[ci];
+                    pFilt.hp150s2[ci] = aHP150 * hp1o + (1.0f - aHP150) * pFilt.hp150s2[ci];
+                    pFilt.lp160[ci] = aLP160 * (hp1o - pFilt.hp150s2[ci]) + (1.0f - aLP160) * pFilt.lp160[ci];
+                    const float b2 = std::abs(pFilt.lp160[ci]);
+                    pFilt.hp180s1[ci] = aHP180 * in + (1.0f - aHP180) * pFilt.hp180s1[ci];
+                    const float hp3o = in - pFilt.hp180s1[ci];
+                    pFilt.hp180s2[ci] = aHP180 * hp3o + (1.0f - aHP180) * pFilt.hp180s2[ci];
+                    pFilt.lp800[ci] = aLP800 * (hp3o - pFilt.hp180s2[ci]) + (1.0f - aLP800) * pFilt.lp800[ci];
+                    const float b3 = std::abs(pFilt.lp800[ci]);
+                    const float v3 = in - pFilt.svfIc2[ci];
+                    const float v1 = svfD * (pFilt.svfIc1[ci] + svfG * v3);
+                    const float v2 = pFilt.svfIc2[ci] + svfG * v1;
+                    pFilt.svfIc1[ci] = 2.0f * v1 - pFilt.svfIc1[ci];
+                    pFilt.svfIc2[ci] = 2.0f * v2 - pFilt.svfIc2[ci];
+                    pFilt.hp19k[ci] = aHP19k * in + (1.0f - aHP19k) * pFilt.hp19k[ci];
+                    const float b4 = std::abs(v1) + std::abs(in - pFilt.hp19k[ci]);
+                    if (b1 > bL) bL = b1; if (b2 > bLM) bLM = b2;
+                    if (b3 > bM) bM = b3; if (b4 > bH)  bH  = b4;
+                }
+                pFilt.envLow.process(bL); pFilt.envLowMid.process(bLM);
+                pFilt.envMid.process(bM); pFilt.envHigh.process(bH);
+            }
+            RawBin rb; rb.low = pFilt.envLow.state; rb.lowMid = pFilt.envLowMid.state;
+            rb.mid = pFilt.envMid.state; rb.high = pFilt.envHigh.state;
+            rawBins[static_cast<size_t>(bin)] = rb;
+        }
+
+        // Priority window — emit immediately
+        for (int bin = hintBin; bin < priorityEnd && !threadShouldExit(); ++bin) {
+            const juce::int64 binStart = (static_cast<juce::int64>(bin) * totalSamples) / numPoints;
+            juce::int64 binEnd = (static_cast<juce::int64>(bin + 1) * totalSamples) / numPoints;
+            if (binEnd <= binStart) binEnd = std::min(totalSamples, binStart + 1);
+            const int toRead = static_cast<int>(std::max<juce::int64>(1, binEnd - binStart));
+            reader->read(&pBuf, 0, toRead, binStart, true, false);
+
+            for (int s = 0; s < toRead; ++s) {
+                float bL = 0, bLM = 0, bM = 0, bH = 0;
+                for (int ch = 0; ch < numCh; ++ch) {
+                    const size_t ci = static_cast<size_t>(ch);
+                    const float in = pBuf.getReadPointer(ch)[s];
+                    pFilt.lp110[ci] = aLP110 * in + (1.0f - aLP110) * pFilt.lp110[ci];
+                    const float b1 = std::abs(pFilt.lp110[ci]);
+                    pFilt.hp150s1[ci] = aHP150 * in + (1.0f - aHP150) * pFilt.hp150s1[ci];
+                    const float hp1o = in - pFilt.hp150s1[ci];
+                    pFilt.hp150s2[ci] = aHP150 * hp1o + (1.0f - aHP150) * pFilt.hp150s2[ci];
+                    pFilt.lp160[ci] = aLP160 * (hp1o - pFilt.hp150s2[ci]) + (1.0f - aLP160) * pFilt.lp160[ci];
+                    const float b2 = std::abs(pFilt.lp160[ci]);
+                    pFilt.hp180s1[ci] = aHP180 * in + (1.0f - aHP180) * pFilt.hp180s1[ci];
+                    const float hp3o = in - pFilt.hp180s1[ci];
+                    pFilt.hp180s2[ci] = aHP180 * hp3o + (1.0f - aHP180) * pFilt.hp180s2[ci];
+                    pFilt.lp800[ci] = aLP800 * (hp3o - pFilt.hp180s2[ci]) + (1.0f - aLP800) * pFilt.lp800[ci];
+                    const float b3 = std::abs(pFilt.lp800[ci]);
+                    const float v3 = in - pFilt.svfIc2[ci];
+                    const float v1 = svfD * (pFilt.svfIc1[ci] + svfG * v3);
+                    const float v2 = pFilt.svfIc2[ci] + svfG * v1;
+                    pFilt.svfIc1[ci] = 2.0f * v1 - pFilt.svfIc1[ci];
+                    pFilt.svfIc2[ci] = 2.0f * v2 - pFilt.svfIc2[ci];
+                    pFilt.hp19k[ci] = aHP19k * in + (1.0f - aHP19k) * pFilt.hp19k[ci];
+                    const float b4 = std::abs(v1) + std::abs(in - pFilt.hp19k[ci]);
+                    if (b1 > bL) bL = b1; if (b2 > bLM) bLM = b2;
+                    if (b3 > bM) bM = b3; if (b4 > bH)  bH  = b4;
+                }
+                pFilt.envLow.process(bL); pFilt.envLowMid.process(bLM);
+                pFilt.envMid.process(bM); pFilt.envHigh.process(bH);
+            }
+            RawBin rb; rb.low = pFilt.envLow.state; rb.lowMid = pFilt.envLowMid.state;
+            rb.mid = pFilt.envMid.state; rb.high = pFilt.envHigh.state;
+            rawBins[static_cast<size_t>(bin)] = rb;
+
+            if (rb.low > pRunMaxLow) pRunMaxLow = rb.low;
+            if (rb.lowMid > pRunMaxLowMid) pRunMaxLowMid = rb.lowMid;
+            if (rb.mid > pRunMaxMid) pRunMaxMid = rb.mid;
+            if (rb.high > pRunMaxHigh) pRunMaxHigh = rb.high;
+
+            TrackData::RgbWaveformFrame rgb;
+            const float lowN  = shapeBin(rb.low    / pRunMaxLow,    1.8f, 1.0f);
+            const float midN  = shapeBin(rb.mid    / pRunMaxMid,    1.5f, 0.7f);
+            const float highN = shapeBin(rb.high   / pRunMaxHigh,   1.3f, 0.5f);
+            const float rmsN  = std::clamp(0.55f * std::max({lowN, midN, highN}) + 0.45f * ((lowN + midN + highN) / 3.0f), 0.0f, 1.0f);
+            int r = std::clamp(static_cast<int>(std::pow(lowN,  0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
+            int g = std::clamp(static_cast<int>(std::pow(midN,  0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
+            int b = std::clamp(static_cast<int>(std::pow(highN, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
+            if (lowN + midN + highN > 0.06f) { r = std::max(r, 18); g = std::max(g, 18); b = std::max(b, 18); }
+            rgb.color = QColor(r, g, b, 230); rgb.rms = rmsN; rgb.low = lowN; rgb.mid = midN; rgb.high = highN;
+            if (pChunk.isEmpty()) pChunkStart = bin;
+            pChunk.append(rgb);
+            if (pChunk.size() >= kChunk) {
+                m_trackData->writeRgbWaveformRange(pChunkStart, pChunk);
+                pChunk.clear();
+            }
+        }
+        if (!pChunk.isEmpty())
+            m_trackData->writeRgbWaveformRange(pChunkStart, pChunk);
+    }
+    // ─────────────────────────────────────────────────────────────────────
+
+    int mainChunkStart = 0;
+
     for (int bin = 0; bin < numPoints; ++bin)
     {
         if (threadShouldExit()) break;
+
+        // If we're entering the priority region, flush any pending batch first
+        // then skip emitting RGB (already done by priority pass).
+        if (hasPriority && bin == priorityWarmupStart && !previewRgbBatch.isEmpty()) {
+            m_trackData->appendData(previewBatch);
+            m_trackData->writeRgbWaveformRange(mainChunkStart, previewRgbBatch);
+            previewBatch.clear();
+            previewRgbBatch.clear();
+        }
+
+        // Every 200 bins, check for an updated seek hint that's far ahead.
+        if (bin > 0 && bin % 200 == 0) {
+            const int newHintBin = std::clamp(
+                static_cast<int>(m_seekHintSec.load(std::memory_order_relaxed) * m_pointsPerSecond),
+                0, numPoints - 1);
+            if (newHintBin > bin + kPriorityBins) {
+                // New seek hint is far ahead — do a fresh priority pass for that region.
+                const int nWarmStart = std::max(0, newHintBin - kWarmupBins);
+                const int nPriorityEnd = std::min(numPoints, newHintBin + kPriorityBins);
+                if (nWarmStart > bin) {
+                    FiltState nFilt;
+                    nFilt.reset(numCh, sampleRate);
+                    juce::AudioBuffer<float> nBuf(static_cast<int>(reader->numChannels), static_cast<int>(maxSamplesPerBin));
+                    float nRunMaxLow = 0.1f, nRunMaxLowMid = 0.1f, nRunMaxMid = 0.1f, nRunMaxHigh = 0.1f;
+                    QVector<TrackData::RgbWaveformFrame> nChunk;
+                    nChunk.reserve(kChunk);
+                    int nChunkStart = newHintBin;
+
+                    // Warmup
+                    for (int wb = nWarmStart; wb < newHintBin && !threadShouldExit(); ++wb) {
+                        const juce::int64 wBinStart = (static_cast<juce::int64>(wb) * totalSamples) / numPoints;
+                        juce::int64 wBinEnd = (static_cast<juce::int64>(wb + 1) * totalSamples) / numPoints;
+                        if (wBinEnd <= wBinStart) wBinEnd = std::min(totalSamples, wBinStart + 1);
+                        const int wToRead = static_cast<int>(std::max<juce::int64>(1, wBinEnd - wBinStart));
+                        reader->read(&nBuf, 0, wToRead, wBinStart, true, false);
+                        for (int s = 0; s < wToRead; ++s) {
+                            float bL = 0, bLM = 0, bM = 0, bH = 0;
+                            for (int ch = 0; ch < numCh; ++ch) {
+                                const size_t ci = static_cast<size_t>(ch);
+                                const float in = nBuf.getReadPointer(ch)[s];
+                                nFilt.lp110[ci] = aLP110 * in + (1.0f - aLP110) * nFilt.lp110[ci];
+                                const float b1 = std::abs(nFilt.lp110[ci]);
+                                nFilt.hp150s1[ci] = aHP150 * in + (1.0f - aHP150) * nFilt.hp150s1[ci];
+                                const float hp1o = in - nFilt.hp150s1[ci];
+                                nFilt.hp150s2[ci] = aHP150 * hp1o + (1.0f - aHP150) * nFilt.hp150s2[ci];
+                                nFilt.lp160[ci] = aLP160 * (hp1o - nFilt.hp150s2[ci]) + (1.0f - aLP160) * nFilt.lp160[ci];
+                                const float b2 = std::abs(nFilt.lp160[ci]);
+                                nFilt.hp180s1[ci] = aHP180 * in + (1.0f - aHP180) * nFilt.hp180s1[ci];
+                                const float hp3o = in - nFilt.hp180s1[ci];
+                                nFilt.hp180s2[ci] = aHP180 * hp3o + (1.0f - aHP180) * nFilt.hp180s2[ci];
+                                nFilt.lp800[ci] = aLP800 * (hp3o - nFilt.hp180s2[ci]) + (1.0f - aLP800) * nFilt.lp800[ci];
+                                const float b3 = std::abs(nFilt.lp800[ci]);
+                                const float v3 = in - nFilt.svfIc2[ci];
+                                const float v1 = svfD * (nFilt.svfIc1[ci] + svfG * v3);
+                                const float v2 = nFilt.svfIc2[ci] + svfG * v1;
+                                nFilt.svfIc1[ci] = 2.0f * v1 - nFilt.svfIc1[ci];
+                                nFilt.svfIc2[ci] = 2.0f * v2 - nFilt.svfIc2[ci];
+                                nFilt.hp19k[ci] = aHP19k * in + (1.0f - aHP19k) * nFilt.hp19k[ci];
+                                const float b4 = std::abs(v1) + std::abs(in - nFilt.hp19k[ci]);
+                                if (b1 > bL) bL = b1; if (b2 > bLM) bLM = b2;
+                                if (b3 > bM) bM = b3; if (b4 > bH)  bH  = b4;
+                            }
+                            nFilt.envLow.process(bL); nFilt.envLowMid.process(bLM);
+                            nFilt.envMid.process(bM); nFilt.envHigh.process(bH);
+                        }
+                        RawBin nrb; nrb.low = nFilt.envLow.state; nrb.lowMid = nFilt.envLowMid.state;
+                        nrb.mid = nFilt.envMid.state; nrb.high = nFilt.envHigh.state;
+                        rawBins[static_cast<size_t>(wb)] = nrb;
+                    }
+
+                    // Priority window
+                    for (int pb = newHintBin; pb < nPriorityEnd && !threadShouldExit(); ++pb) {
+                        const juce::int64 pBinStart = (static_cast<juce::int64>(pb) * totalSamples) / numPoints;
+                        juce::int64 pBinEnd = (static_cast<juce::int64>(pb + 1) * totalSamples) / numPoints;
+                        if (pBinEnd <= pBinStart) pBinEnd = std::min(totalSamples, pBinStart + 1);
+                        const int pToRead = static_cast<int>(std::max<juce::int64>(1, pBinEnd - pBinStart));
+                        reader->read(&nBuf, 0, pToRead, pBinStart, true, false);
+                        for (int s = 0; s < pToRead; ++s) {
+                            float bL = 0, bLM = 0, bM = 0, bH = 0;
+                            for (int ch = 0; ch < numCh; ++ch) {
+                                const size_t ci = static_cast<size_t>(ch);
+                                const float in = nBuf.getReadPointer(ch)[s];
+                                nFilt.lp110[ci] = aLP110 * in + (1.0f - aLP110) * nFilt.lp110[ci];
+                                const float b1 = std::abs(nFilt.lp110[ci]);
+                                nFilt.hp150s1[ci] = aHP150 * in + (1.0f - aHP150) * nFilt.hp150s1[ci];
+                                const float hp1o = in - nFilt.hp150s1[ci];
+                                nFilt.hp150s2[ci] = aHP150 * hp1o + (1.0f - aHP150) * nFilt.hp150s2[ci];
+                                nFilt.lp160[ci] = aLP160 * (hp1o - nFilt.hp150s2[ci]) + (1.0f - aLP160) * nFilt.lp160[ci];
+                                const float b2 = std::abs(nFilt.lp160[ci]);
+                                nFilt.hp180s1[ci] = aHP180 * in + (1.0f - aHP180) * nFilt.hp180s1[ci];
+                                const float hp3o = in - nFilt.hp180s1[ci];
+                                nFilt.hp180s2[ci] = aHP180 * hp3o + (1.0f - aHP180) * nFilt.hp180s2[ci];
+                                nFilt.lp800[ci] = aLP800 * (hp3o - nFilt.hp180s2[ci]) + (1.0f - aLP800) * nFilt.lp800[ci];
+                                const float b3 = std::abs(nFilt.lp800[ci]);
+                                const float v3 = in - nFilt.svfIc2[ci];
+                                const float v1 = svfD * (nFilt.svfIc1[ci] + svfG * v3);
+                                const float v2 = nFilt.svfIc2[ci] + svfG * v1;
+                                nFilt.svfIc1[ci] = 2.0f * v1 - nFilt.svfIc1[ci];
+                                nFilt.svfIc2[ci] = 2.0f * v2 - nFilt.svfIc2[ci];
+                                nFilt.hp19k[ci] = aHP19k * in + (1.0f - aHP19k) * nFilt.hp19k[ci];
+                                const float b4 = std::abs(v1) + std::abs(in - nFilt.hp19k[ci]);
+                                if (b1 > bL) bL = b1; if (b2 > bLM) bLM = b2;
+                                if (b3 > bM) bM = b3; if (b4 > bH)  bH  = b4;
+                            }
+                            nFilt.envLow.process(bL); nFilt.envLowMid.process(bLM);
+                            nFilt.envMid.process(bM); nFilt.envHigh.process(bH);
+                        }
+                        RawBin nrb; nrb.low = nFilt.envLow.state; nrb.lowMid = nFilt.envLowMid.state;
+                        nrb.mid = nFilt.envMid.state; nrb.high = nFilt.envHigh.state;
+                        rawBins[static_cast<size_t>(pb)] = nrb;
+
+                        if (nrb.low > nRunMaxLow) nRunMaxLow = nrb.low;
+                        if (nrb.lowMid > nRunMaxLowMid) nRunMaxLowMid = nrb.lowMid;
+                        if (nrb.mid > nRunMaxMid) nRunMaxMid = nrb.mid;
+                        if (nrb.high > nRunMaxHigh) nRunMaxHigh = nrb.high;
+
+                        TrackData::RgbWaveformFrame rgb;
+                        const float lowN  = shapeBin(nrb.low    / nRunMaxLow,    1.8f, 1.0f);
+                        const float midN  = shapeBin(nrb.mid    / nRunMaxMid,    1.5f, 0.7f);
+                        const float highN = shapeBin(nrb.high   / nRunMaxHigh,   1.3f, 0.5f);
+                        const float rmsN  = std::clamp(0.55f * std::max({lowN, midN, highN}) + 0.45f * ((lowN + midN + highN) / 3.0f), 0.0f, 1.0f);
+                        int r = std::clamp(static_cast<int>(std::pow(lowN,  0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
+                        int g = std::clamp(static_cast<int>(std::pow(midN,  0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
+                        int b = std::clamp(static_cast<int>(std::pow(highN, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
+                        if (lowN + midN + highN > 0.06f) { r = std::max(r, 18); g = std::max(g, 18); b = std::max(b, 18); }
+                        rgb.color = QColor(r, g, b, 230); rgb.rms = rmsN; rgb.low = lowN; rgb.mid = midN; rgb.high = highN;
+                        if (nChunk.isEmpty()) nChunkStart = pb;
+                        nChunk.append(rgb);
+                        if (nChunk.size() >= kChunk) {
+                            m_trackData->writeRgbWaveformRange(nChunkStart, nChunk);
+                            nChunk.clear();
+                        }
+                    }
+                    if (!nChunk.isEmpty())
+                        m_trackData->writeRgbWaveformRange(nChunkStart, nChunk);
+                }
+            }
+        }
 
         const juce::int64 binStart = (static_cast<juce::int64>(bin) * totalSamples)
                                    / static_cast<juce::int64>(numPoints);
@@ -571,37 +859,37 @@ void WaveformAnalyzer::run()
                 const float in = readBuf.getReadPointer(ch)[s];
 
                 // ── Band 1: LP @ 110 Hz (1st order) ─────────────────────────
-                lp110state[ci] = aLP110 * in + (1.0f - aLP110) * lp110state[ci];
-                const float b1 = std::abs(lp110state[ci]);
+                mainFilt.lp110[ci] = aLP110 * in + (1.0f - aLP110) * mainFilt.lp110[ci];
+                const float b1 = std::abs(mainFilt.lp110[ci]);
 
                 // ── Band 2: HP @ 150 Hz (2nd order) → LP @ 160 Hz ───────────
-                hp150s1[ci] = aHP150 * in + (1.0f - aHP150) * hp150s1[ci];
-                const float hp1out = in - hp150s1[ci];
-                hp150s2[ci] = aHP150 * hp1out + (1.0f - aHP150) * hp150s2[ci];
-                const float hp2out = hp1out - hp150s2[ci];
-                lp160state[ci] = aLP160 * hp2out + (1.0f - aLP160) * lp160state[ci];
-                const float b2 = std::abs(lp160state[ci]);
+                mainFilt.hp150s1[ci] = aHP150 * in + (1.0f - aHP150) * mainFilt.hp150s1[ci];
+                const float hp1out = in - mainFilt.hp150s1[ci];
+                mainFilt.hp150s2[ci] = aHP150 * hp1out + (1.0f - aHP150) * mainFilt.hp150s2[ci];
+                const float hp2out = hp1out - mainFilt.hp150s2[ci];
+                mainFilt.lp160[ci] = aLP160 * hp2out + (1.0f - aLP160) * mainFilt.lp160[ci];
+                const float b2 = std::abs(mainFilt.lp160[ci]);
 
                 // ── Band 3: HP @ 180 Hz (2nd order) → LP @ 800 Hz ───────────
-                hp180s1[ci] = aHP180 * in + (1.0f - aHP180) * hp180s1[ci];
-                const float hp3out = in - hp180s1[ci];
-                hp180s2[ci] = aHP180 * hp3out + (1.0f - aHP180) * hp180s2[ci];
-                const float hp4out = hp3out - hp180s2[ci];
-                lp800state[ci] = aLP800 * hp4out + (1.0f - aLP800) * lp800state[ci];
-                const float b3 = std::abs(lp800state[ci]);
+                mainFilt.hp180s1[ci] = aHP180 * in + (1.0f - aHP180) * mainFilt.hp180s1[ci];
+                const float hp3out = in - mainFilt.hp180s1[ci];
+                mainFilt.hp180s2[ci] = aHP180 * hp3out + (1.0f - aHP180) * mainFilt.hp180s2[ci];
+                const float hp4out = hp3out - mainFilt.hp180s2[ci];
+                mainFilt.lp800[ci] = aLP800 * hp4out + (1.0f - aLP800) * mainFilt.lp800[ci];
+                const float b3 = std::abs(mainFilt.lp800[ci]);
 
                 // ── Band 4: Resonant BP @ 2750 Hz + HP @ 19 kHz ─────────────
-                const float v3 = in - svfIc2[ci];
-                const float v1 = svfD * (svfIc1[ci] + svfG * v3);
-                const float v2 = svfIc2[ci] + svfG * v1;
-                svfIc1[ci] = 2.0f * v1 - svfIc1[ci];
-                svfIc2[ci] = 2.0f * v2 - svfIc2[ci];
+                const float v3 = in - mainFilt.svfIc2[ci];
+                const float v1 = svfD * (mainFilt.svfIc1[ci] + svfG * v3);
+                const float v2 = mainFilt.svfIc2[ci] + svfG * v1;
+                mainFilt.svfIc1[ci] = 2.0f * v1 - mainFilt.svfIc1[ci];
+                mainFilt.svfIc2[ci] = 2.0f * v2 - mainFilt.svfIc2[ci];
                 const float bp2750 = v1;
 
-                hp19kstate[ci] = aHP19k * in + (1.0f - aHP19k) * hp19kstate[ci];
-                const float hp19k = in - hp19kstate[ci];
+                mainFilt.hp19k[ci] = aHP19k * in + (1.0f - aHP19k) * mainFilt.hp19k[ci];
+                const float hp19kVal = in - mainFilt.hp19k[ci];
 
-                const float b4 = std::abs(bp2750) + std::abs(hp19k);
+                const float b4 = std::abs(bp2750) + std::abs(hp19kVal);
 
                 if (b1 > bestLow)    bestLow    = b1;
                 if (b2 > bestLowMid) bestLowMid = b2;
@@ -609,19 +897,19 @@ void WaveformAnalyzer::run()
                 if (b4 > bestHigh)   bestHigh   = b4;
             }
 
-            envLow   .process(bestLow);
-            envLowMid.process(bestLowMid);
-            envMid   .process(bestMid);
-            envHigh  .process(bestHigh);
+            mainFilt.envLow   .process(bestLow);
+            mainFilt.envLowMid.process(bestLowMid);
+            mainFilt.envMid   .process(bestMid);
+            mainFilt.envHigh  .process(bestHigh);
         }
 
         // Store RAW envelope values for the final pass.
         RawBin rb;
-        rb.low    = envLow   .state;
-        rb.lowMid = envLowMid.state;
-        rb.mid    = envMid   .state;
-        rb.high   = envHigh  .state;
-        rawBins.push_back(rb);
+        rb.low    = mainFilt.envLow   .state;
+        rb.lowMid = mainFilt.envLowMid.state;
+        rb.mid    = mainFilt.envMid   .state;
+        rb.high   = mainFilt.envHigh  .state;
+        rawBins[static_cast<size_t>(bin)] = rb;
 
         // Track global per-band maxima (for Pass 2+3).
         if (rb.low    > globalMaxLow)    globalMaxLow    = rb.low;
@@ -649,7 +937,10 @@ void WaveformAnalyzer::run()
         pbin.transientDelta = 0.0f;
 
         previewBatch.append(pbin);
-        {
+
+        // Skip emitting RGB for bins already covered by the priority pass.
+        const bool inPriorityRegion = hasPriority && bin >= priorityWarmupStart && bin < priorityEnd;
+        if (!inPriorityRegion) {
             TrackData::RgbWaveformFrame rgb;
             // Progressive preview: same RGB heuristic as final mapping.
             const float lowN = std::clamp(pbin.low, 0.0f, 1.0f);
@@ -669,19 +960,23 @@ void WaveformAnalyzer::run()
             rgb.low = lowN;
             rgb.mid = midN;
             rgb.high = highN;
+            if (previewRgbBatch.isEmpty()) mainChunkStart = bin;
             previewRgbBatch.append(rgb);
         }
 
-        if (previewBatch.size() >= previewChunk) {
+        if (previewBatch.size() >= kChunk) {
             m_trackData->appendData(previewBatch);
-            m_trackData->appendRgbWaveformData(previewRgbBatch);
+            if (!previewRgbBatch.isEmpty()) {
+                m_trackData->writeRgbWaveformRange(mainChunkStart, previewRgbBatch);
+                previewRgbBatch.clear();
+            }
             previewBatch.clear();
-            previewRgbBatch.clear();
         }
     }
     if (!previewBatch.isEmpty()) {
         m_trackData->appendData(previewBatch);
-        m_trackData->appendRgbWaveformData(previewRgbBatch);
+        if (!previewRgbBatch.isEmpty())
+            m_trackData->writeRgbWaveformRange(mainChunkStart, previewRgbBatch);
     }
 
     if (threadShouldExit()) return;

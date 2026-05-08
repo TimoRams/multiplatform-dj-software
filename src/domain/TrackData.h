@@ -318,6 +318,28 @@ public:
         return m_overviewRgb;
     }
 
+    // Pre-allocate the full RGB array with zero frames so the renderer can
+    // index any position immediately (unanalyzed bins render as silence).
+    void preallocateRgbWaveform(int numBins) {
+        QMutexLocker locker(&m_mutex);
+        m_rgbData.fill(RgbWaveformFrame{}, numBins);
+    }
+
+    // Write analyzed frames at a specific bin offset.
+    // Called by the analyzer's priority and fill passes.
+    void writeRgbWaveformRange(int fromBin, const QVector<RgbWaveformFrame>& data) {
+        if (data.isEmpty()) return;
+        {
+            QMutexLocker locker(&m_mutex);
+            const int avail = m_rgbData.size() - fromBin;
+            if (avail <= 0) return;
+            const int n = std::min(static_cast<int>(data.size()), avail);
+            for (int i = 0; i < n; ++i)
+                m_rgbData[fromBin + i] = data[i];
+        }
+        emit rgbWaveformUpdated();
+    }
+
     void appendRgbWaveformData(const QVector<RgbWaveformFrame>& frames) {
         if (frames.isEmpty())
             return;

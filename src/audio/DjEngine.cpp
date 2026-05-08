@@ -2934,7 +2934,7 @@ void DjEngine::loadTrack(const QString& rawPath)
                 // Skip heavy analysis only when BOTH waveform cache and analysis metadata
                 // (BPM/key/grid) are already available.
                 if (!(wfLoaded && hasDbAnalysis))
-                    m_analyzer->startAnalysis(rawPath);
+                    m_analyzer->startAnalysis(rawPath, transportSource.getCurrentPosition());
             },
             Qt::QueuedConnection);
     }).detach();
@@ -3048,8 +3048,11 @@ void DjEngine::setPosition(float progress)
 {
     double len = transportSource.getLengthInSeconds();
     if (len > 0.0) {
-        transportSource.setPosition(progress * len);
+        const double newPos = progress * len;
+        transportSource.setPosition(newPos);
         ensureTransportRunningForPlayIntent();
+        if (m_analyzer && m_analyzer->isThreadRunning())
+            m_analyzer->setSeekHint(newPos);
     }
     emit progressChanged();
 }
@@ -3434,6 +3437,8 @@ void DjEngine::triggerHotCue(int index)
     m_snapClock.restart();
     m_snapValid = true;
     m_atomicPlayheadPos.store(pos, std::memory_order_relaxed);
+    if (m_analyzer && m_analyzer->isThreadRunning())
+        m_analyzer->setSeekHint(pos);
     emit progressChanged();
 }
 
@@ -3520,6 +3525,8 @@ void DjEngine::cueButtonPress()
         const double cuePos = std::clamp(m_mainCueSec, 0.0, trackLen);
         transportSource.setPosition(cuePos);
         setSnapAnchor(cuePos, true);
+        if (m_analyzer && m_analyzer->isThreadRunning())
+            m_analyzer->setSeekHint(cuePos);
         emit progressChanged();
         return;
     }
@@ -3532,6 +3539,8 @@ void DjEngine::cueButtonPress()
 
     transportSource.setPosition(cuePos);
     setSnapAnchor(cuePos, true);
+    if (m_analyzer && m_analyzer->isThreadRunning())
+        m_analyzer->setSeekHint(cuePos);
 
     m_mainCuePreviewActive = true;
     transportSource.start();
