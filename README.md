@@ -2,33 +2,67 @@
 
 > *I don't have a name for this yet — suggestions welcome!*
 
-A modern DJ application built on **JUCE** (Audio/DSP) and **Qt 6 / QML** (UI). Waveform rendering is fully hardware-accelerated via **Qt RHI** directly on the GPU using Vulkan – no CPU software rendering.
+A modern DJ application built on **JUCE** (Audio/DSP) and **Qt 6 / QML** (UI).
+Waveform rendering is fully hardware-accelerated via **Qt RHI** on the GPU using Vulkan — no CPU software rendering.
 
 ---
 
-## ✅ Current Features
+## ✅ Features
+
+### Playback & Transport
 
 | Feature | Details |
 | --- | --- |
-| **Dual-Deck Playback** | Two independent decks supporting FLAC / WAV / OGG / MP3 |
-| **3-Band Waveforms** | GPU-rendered waveforms with beatgrid overlay |
-| **BPM & Key Detection** | Autocorrelation + Krumhansl-Schmuckler, Harmonic Mixing Format |
+| **Dual-Deck Playback** | Two independent decks — FLAC / WAV / OGG / MP3 |
+| **4-Band RGB Waveforms** | GPU-rendered (low / low-mid / mid / high) with beat grid overlay |
+| **BPM & Key Detection** | Autocorrelation + Krumhansl-Schmuckler; manual override and beat-grid correction |
+| **Scratch & Jog** | Velocity-based scratch with spring-damped physics; up to 12× playback rate |
+| **Loop Controls** | Set in/out points, 4-beat toggle, halve / double length, beat-quantized |
+| **Hot Cues** | 8 cue points per deck with color, label, and database persistence |
+| **Slip Mode** | Loops and reverses run silently while the playhead continues; restores on exit |
+| **Sync & Quantize** | Master/follower deck sync with beat-phase nudge; quantize-aware cue triggers |
+| **Key Lock** | Pitch-preserved time-stretching via RubberBand during tempo changes |
+| **Reverse Playback** | Full reverse audio streaming, scratch-compatible |
+| **Turntable FX** | Vinyl Brake, Backspin, Echo Out, Roll Out |
+
+### Mixer & Effects
+
+| Feature | Details |
+| --- | --- |
+| **3-Band EQ & Filter** | Per-deck High / Mid / Low EQ, resonant filter, trim / gain staging |
+| **Crossfader** | Adjustable curve (smooth to sharp) with per-deck A / B assignment |
+| **VU Metering** | Pre-fader metering per deck with peak hold and clip indicator |
+| **24 Effect Types** | 2 FX units + Sound Color knob: Reverb, Echo, Flanger, Phaser, Bitcrusher, PitchShifter, Stretch, Spiral, Roll, Mobius and more |
+| **Performance Pads** | 4×2 grid — Hot Cue, Pad FX, Beatjump, Sampler *(coming soon)* |
+
+### Library
+
+| Feature | Details |
+| --- | --- |
+| **Library Management** | 3-column panel, folder tree navigation, drag & drop to decks |
+| **Persistent Analysis** | SQLite-backed BPM / key analysis cache; background analysis worker |
 | **Metadata Extraction** | ID3v2 / Vorbis / M4A + filename fallback |
 | **Cover Art** | Extracted via TagLib (MP3, FLAC, MP4, OGG, WAV) |
-| **Library Management** | 3-column panel, folder tree navigation, drag & drop to decks |
-| **Performance Pads UI** | 4×2 grid, 4 mode tabs (Hot Cue, Pad FX, Beatjump, Stems) |
+
+### Integration & Sync
+
+| Feature | Details |
+| --- | --- |
+| **Ableton Link** | Network tempo and beat-phase sync with other Link-enabled apps |
+| **MIDI Control** | Full MIDI input/output binding, MIDI learn mode, persistent controller mappings |
 | **AV-Sync** | Hardware latency compensation + sub-frame visual interpolation |
 
 ---
 
-## 🛠 Architecture (Brief)
+## 🛠 Architecture
 
     JUCE Audio Thread  →  WaveformAnalyzer Thread  →  Qt Main Thread / QML
     (Real-time audio)     (BPM, Waveform Bins)        (UI, Signals, Rendering)
                                                              ↓
                                                        Qt RHI → Vulkan (GPU)
 
-These three threads communicate exclusively via Qt Queued Connections – zero direct cross-thread access ensures audio stability.
+All cross-thread communication goes through Qt Queued Connections — zero direct cross-thread access.
+The playhead position is shared via `std::atomic<double>` for wait-free VSync-frame reads by the render thread.
 
 ---
 
@@ -42,7 +76,7 @@ These three threads communicate exclusively via Qt Queued Connections – zero d
 
 ## 💻 Build Instructions
 
-### Required dependencies (all platforms)
+### Required dependencies
 
 - Qt 6 (Core, Gui, Qml, Quick, Quick3D, Sql)
 - TagLib
@@ -51,9 +85,9 @@ These three threads communicate exclusively via Qt Queued Connections – zero d
 - CMake >= 3.22
 - C++23 compiler
 
-### Linux (Vulkan + ALSA)
+> JUCE and Ableton Link are included as submodules under `libs/` — no separate installation required.
 
-Example dependency install (Debian/Ubuntu):
+### Linux (Vulkan + ALSA)
 
     sudo apt update
     sudo apt install -y \
@@ -61,28 +95,20 @@ Example dependency install (Debian/Ubuntu):
       qt6-base-dev qt6-declarative-dev qt6-quick3d-dev \
       libtag1-dev libkeyfinder-dev librubberband-dev libasound2-dev
 
-Build:
-
     git clone --recurse-submodules https://github.com/TimoRams/multiplatform-dj-software.git
     cd multiplatform-dj-software
     cmake -S . -B build
     cmake --build build -j$(nproc)
     ./build/bin/RamsbrockDJ
 
-Target-native SIMD code generation is enabled automatically on Linux, Windows x64, and Intel-based macOS builds. You can still force it on or off explicitly with:
+Target-native SIMD is enabled automatically on Linux, Windows x64, and Intel macOS. Override explicitly with:
 
-    cmake -S . -B build -DRDBJ_ENABLE_NATIVE_SIMD=ON
-    cmake -S . -B build -DRDBJ_ENABLE_NATIVE_SIMD=OFF
-
-That lets the compiler emit ISA-specific code such as AVX2 on capable x86_64 systems, while Apple Intel builds use the matching x86 SIMD path.
+    cmake -S . -B build -DRDBJ_ENABLE_NATIVE_SIMD=ON   # force on
+    cmake -S . -B build -DRDBJ_ENABLE_NATIVE_SIMD=OFF  # force off
 
 ### macOS (Metal backend)
 
-Example dependency install (Homebrew):
-
     brew install cmake pkg-config qt@6 taglib rubberband libkeyfinder
-
-Build:
 
     git clone --recurse-submodules https://github.com/TimoRams/multiplatform-dj-software.git
     cd multiplatform-dj-software
@@ -90,17 +116,11 @@ Build:
     cmake --build build -j
     ./build/bin/RamsbrockDJ
 
-On Apple Silicon, build the arm64 target natively to get the platform's SIMD path automatically; keep universal builds off if you want the compiler to specialise for one CPU family.
+On Apple Silicon, build the arm64 target natively to get the platform's SIMD path automatically.
 
 ### Windows (Vulkan backend)
 
-Recommended: install Qt 6 (with Quick/QML/Quick3D) via Qt Online Installer and use vcpkg for C/C++ dependencies.
-
-Example vcpkg dependency set:
-
     vcpkg install taglib rubberband libkeyfinder
-
-Then configure using the vcpkg toolchain and your Qt 6 path:
 
     cmake -S . -B build ^
       -DCMAKE_TOOLCHAIN_FILE=C:/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake ^
@@ -108,18 +128,14 @@ Then configure using the vcpkg toolchain and your Qt 6 path:
 
     cmake --build build --config Release
 
-> JUCE is included as a submodule under `libs/JUCE/` – no separate installation required.
-
 ---
 
 ## License
 
-This project is licensed under the GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later).
+Licensed under the **GNU Affero General Public License v3.0 or later** (AGPL-3.0-or-later).
 
-- Full license text: LICENSE
-- Copyright and project notices: NOTICE
-
-License and third-party notice details are documented in NOTICE.
+- Full license text: `LICENSE`
+- Copyright and third-party notices: `NOTICE`
 
 ---
 
