@@ -42,6 +42,7 @@ class DjEngine : public QObject
     Q_PROPERTY(double loopLengthBeats READ loopLengthBeats NOTIFY loopChanged)
     Q_PROPERTY(double loopInPosition READ loopInPosition NOTIFY loopChanged)
     Q_PROPERTY(double loopOutPosition READ loopOutPosition NOTIFY loopChanged)
+    Q_PROPERTY(bool slipActive READ slipActive NOTIFY slipChanged)
 
     Q_PROPERTY(QString trackTitle   READ trackTitle   NOTIFY trackMetadataChanged)
     Q_PROPERTY(QString trackArtist  READ trackArtist  NOTIFY trackMetadataChanged)
@@ -287,6 +288,9 @@ public slots:
     [[nodiscard]] bool isReverse() const { return m_isReverse; }
     Q_INVOKABLE void setReverse(bool on);
 
+    [[nodiscard]] bool slipActive() const { return m_slipActive; }
+    Q_INVOKABLE void setSlip(bool on);
+
     // Keep the engine's pixel-scale in sync with the waveform renderer.
     void setPixelsPerSecond(double pps) {
         if (m_pixelsPerSecond == pps) return;
@@ -316,6 +320,7 @@ signals:
     void syncChanged();
     void syncMasterChanged();
     void loopChanged();
+    void slipChanged();
     void keylockChanged();
     void vuLevelChanged();
     void gainReductionChanged();
@@ -350,6 +355,8 @@ private:
     void updateTrackDuration(double durationSec);
     bool hydrateLibraryStateForTrack(const QString& rawPath, double durationSec);
     void attachReaderToTransport(juce::AudioFormatReader* reader);
+    void returnToSlipPosition();
+    bool isSlipDiverted() const { return m_slipActive && (m_loopActive || m_isReverse); }
 
     void persistCurrentAnalysisToLibrary();
     void clearHotCueState();
@@ -426,6 +433,8 @@ private:
     double m_eqLow = 0.0;
     double m_filter = 0.0;
     bool   m_isReverse = false;
+    bool   m_slipActive   = false;
+    double m_slipPosition = 0.0;
     std::atomic<bool> m_cueEnabled { false };
     bool m_playRequested = false;
     bool m_keylock = false;

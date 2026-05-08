@@ -656,9 +656,10 @@ Item {
                         FlatBtn {
                             btnText: "SLIP"
                             Layout.preferredWidth: deckControlsCol.unit
-                            fbActive: false
+                            fbActive: deck.engine ? deck.engine.slipActive : false
                             fbActiveColor: deck.deckName === "A" ? "#2a1e00" : "#002233"
                             fbActiveTxtColor: deck.accent
+                            onClicked: { if (deck.engine) deck.engine.setSlip(!deck.engine.slipActive) }
                         }
 
                         Item { Layout.fillWidth: true }

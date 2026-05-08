@@ -3237,9 +3237,21 @@ void DjEngine::onTimer()
     if (transportSource.isPlaying()) {
         // Store a fresh snapshot from the transport each control tick.
         // Interpolation happens only between these anchors.
+        const double dtSec = m_snapValid
+            ? std::clamp(static_cast<double>(m_snapClock.nsecsElapsed()) * 1e-9, 0.001, 0.050)
+            : 0.004;
+
         const double measuredPos = transportSource.getCurrentPosition();
         m_snapPosition = measuredPos;
         m_snapTempoRatio = getTempoRatio();
+
+        // Slip shadow: advance continuously while loop/reverse diverts the transport.
+        if (isSlipDiverted()) {
+            const double dur = std::max(0.001, static_cast<double>(getDuration()));
+            m_slipPosition = std::min(m_slipPosition + dtSec * getTempoRatio(), dur);
+        } else {
+            m_slipPosition = measuredPos;
+        }
 
         if (m_loopActive && m_loopOutSec > m_loopInSec) {
             if (m_isReverse && m_snapPosition <= m_loopInSec) {
@@ -4580,12 +4592,15 @@ void DjEngine::clearLoop()
 {
     if (!m_loopActive && !m_loopInSet && m_loopLengthBeats == 0.0)
         return;
+    const bool wasSlipDiverted = isSlipDiverted();
     m_loopActive = false;
     m_loopInSet = false;
     m_loopLengthBeats = 0.0;
     m_loopInSec = 0.0;
     m_loopOutSec = 0.0;
     clearLoopRangeOnAudioSource();
+    if (wasSlipDiverted && !isSlipDiverted())
+        returnToSlipPosition();
     emit loopChanged();
 }
 
@@ -4737,6 +4752,7 @@ void DjEngine::setFxSCParam(float param)
 void DjEngine::setReverse(bool on)
 {
     if (m_isReverse == on) return;
+    const bool wasSlipDiverted = isSlipDiverted();
     m_isReverse = on;
     if (reverseWrapSource) {
         static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get())->setReverse(on);
@@ -4744,5 +4760,27 @@ void DjEngine::setReverse(bool on)
             applyLoopRangeToAudioSource();
     }
     updateSpeedAndPitch();
+    if (!on && wasSlipDiverted && !isSlipDiverted())
+        returnToSlipPosition();
     emit reverseChanged();
+}
+
+void DjEngine::setSlip(bool on)
+{
+    if (m_slipActive == on) return;
+    m_slipActive = on;
+    if (on)
+        m_slipPosition = transportSource.getCurrentPosition();
+    emit slipChanged();
+}
+
+void DjEngine::returnToSlipPosition()
+{
+    const double dur = std::max(0.001, static_cast<double>(getDuration()));
+    const double pos = std::clamp(m_slipPosition, 0.0, dur);
+    transportSource.setPosition(pos);
+    m_snapPosition = pos;
+    m_snapClock.restart();
+    m_snapValid = true;
+    m_atomicPlayheadPos.store(pos, std::memory_order_relaxed);
 }
