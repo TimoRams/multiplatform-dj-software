@@ -19,6 +19,8 @@
 #include <juce_core/juce_core.h>
 #include <juce_dsp/juce_dsp.h>
 #include <rubberband/RubberBandStretcher.h>
+#include <taglib/fileref.h>
+#include <taglib/tag.h>
 #include <cstring>
 #include <algorithm>
 #include <cmath>
@@ -2716,6 +2718,18 @@ void DjEngine::populateMetadataFromReader(const juce::AudioFormatReader& reader,
     const double bpmVal = parseBpmString(tagBpm);
     if (bpmVal > 0.0)
         m_trackData->setBpmData(bpmVal, 0, reader.sampleRate);
+
+    // TagLib fills gaps left by JUCE readers — JUCE's FLAC reader skips Vorbis comments entirely.
+    {
+        TagLib::FileRef tlFile(rawPath.toLocal8Bit().constData());
+        if (!tlFile.isNull() && tlFile.tag()) {
+            const TagLib::Tag* tag = tlFile.tag();
+            const QString tlTitle  = cleanup(QString::fromStdString(tag->title().to8Bit(true)));
+            const QString tlArtist = cleanup(QString::fromStdString(tag->artist().to8Bit(true)));
+            if (m_trackTitle.isEmpty()  && !tlTitle.isEmpty())  m_trackTitle  = tlTitle;
+            if (m_trackArtist.isEmpty() && !tlArtist.isEmpty()) m_trackArtist = tlArtist;
+        }
+    }
 
     const auto v1 = readId3v1(rawPath);
     if (v1) {

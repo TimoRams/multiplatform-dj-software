@@ -407,6 +407,20 @@ bool LibraryDatabase::createSchema()
         if (!ok) return false;
     }
 
+    if (currentVersion < 8) {
+        // Fix title/artist swap caused by JUCE's FLAC reader ignoring Vorbis comments.
+        // All .flac tracks were stored via the filename heuristic which assumed "ARTIST - TITLE"
+        // order, but the user's files are named "TITLE - ARTIST.flac".
+        bool ok = q.exec(
+            "UPDATE Tracks SET title = artist, artist = title "
+            "WHERE id IN ("
+            "  SELECT t.id FROM Tracks t "
+            "  JOIN Locations l ON t.id = l.track_id "
+            "  WHERE lower(l.file_path) LIKE '%.flac'"
+            ")");
+        if (!ok) qWarning() << "[LibraryDatabase] v8 FLAC title/artist swap fix:" << q.lastError().text();
+    }
+
     // ── Stamp current version ────────────────────────────────────────────
     q.prepare("INSERT OR REPLACE INTO Meta (key, value) VALUES ('schema_version', :v)");
     q.bindValue(":v", kSchemaVersion);
@@ -455,13 +469,18 @@ bool LibraryDatabase::addTrack(const QString& trackId,
     }
     trackInserted = q.numRowsAffected() > 0;
 
-    // Keep bitrate up to date if a previously known track is reloaded with new metadata.
-    q.prepare("UPDATE Tracks SET bitrate_kbps = CASE WHEN :kbps > 0 THEN :kbps ELSE bitrate_kbps END "
+    // Update mutable fields when a previously-known track is reloaded with fresh metadata.
+    q.prepare("UPDATE Tracks SET "
+              "  bitrate_kbps = CASE WHEN :kbps > 0 THEN :kbps ELSE bitrate_kbps END,"
+              "  title  = CASE WHEN :title  <> '' THEN :title  ELSE title  END,"
+              "  artist = CASE WHEN :artist <> '' THEN :artist ELSE artist END "
               "WHERE id = :id");
-    q.bindValue(":kbps", bitrateKbps);
-    q.bindValue(":id", trackId);
+    q.bindValue(":kbps",   bitrateKbps);
+    q.bindValue(":title",  title);
+    q.bindValue(":artist", artist);
+    q.bindValue(":id",     trackId);
     if (!q.exec()) {
-        qWarning() << "[LibraryDatabase] addTrack bitrate update:" << q.lastError().text();
+        qWarning() << "[LibraryDatabase] addTrack metadata update:" << q.lastError().text();
     }
 
     // Insert location (UNIQUE on file_path prevents duplicates).

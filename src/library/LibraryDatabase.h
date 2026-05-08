@@ -156,5 +156,5 @@ private:
     bool m_backupSyncRunning = false;
     bool m_backupSyncAgain = false;
 
-    static constexpr int kSchemaVersion = 7;
+    static constexpr int kSchemaVersion = 8;
 };
