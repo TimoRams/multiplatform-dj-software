@@ -188,7 +188,7 @@ bool LibraryDatabase::open()
             qWarning() << "[LibraryDatabase] Failed to refresh backup DB from primary";
     } else if (!primaryHealthy && !backupHealthy) {
         qWarning() << "[LibraryDatabase] Neither DB copy is healthy, creating a fresh database";
-        m_lastRecoveryEvent = QStringLiteral("Beide Datenbanken fehlend/beschaedigt - frische Datenbank erstellt");
+        m_lastRecoveryEvent = QStringLiteral("Both databases missing/corrupted — fresh database created");
     }
 
     // ── Open via QSqlDatabase ────────────────────────────────────────────
@@ -831,13 +831,13 @@ QString LibraryDatabase::mirroredDatabaseStatus() const
 
     const auto describe = [this](const QString& path, bool degraded) -> QString {
         if (path.isEmpty())
-            return QStringLiteral("unbekannt");
+            return QStringLiteral("unknown");
 
         const QFileInfo info(path);
         if (!info.exists())
-            return QStringLiteral("fehlend");
+            return QStringLiteral("missing");
         if (info.size() <= 0)
-            return QStringLiteral("leer");
+            return QStringLiteral("empty");
 
         if (degraded)
             return QStringLiteral("degraded");
@@ -1599,16 +1599,16 @@ void LibraryDatabase::performMirrorSelfCheck()
 
     QString desiredActivePath = !m_activeDbPath.isEmpty() ? m_activeDbPath : m_dbPath;
     if (!primaryHealthy && !backupHealthy) {
-        m_lastRecoveryEvent = QStringLiteral("beide Spiegel fehlend/beschaedigt -> rekonstruiere aus Live-Session");
+        m_lastRecoveryEvent = QStringLiteral("both mirrors missing/corrupted — rebuilding from live session");
         if (m_db.isOpen()) {
             if (recreateDatabaseFileFromLiveConnection(m_dbPath)) {
                 repaired = true;
                 if (!recreateDatabaseFileFromLiveConnection(m_backupDbPath))
                     qWarning() << "[LibraryDatabase] Failed to recreate backup during both-files-missing recovery";
-                m_lastRecoveryEvent = QStringLiteral("beide Spiegel aus Live-Session wiederhergestellt");
+                m_lastRecoveryEvent = QStringLiteral("both mirrors restored from live session");
             } else {
                 qWarning() << "[LibraryDatabase] Failed to recreate primary during both-files-missing recovery";
-                m_lastRecoveryEvent = QStringLiteral("Wiederherstellung beider Spiegel fehlgeschlagen");
+                m_lastRecoveryEvent = QStringLiteral("restore of both mirrors failed");
             }
         }
         m_primaryMirrorDegraded = true;
@@ -1646,9 +1646,9 @@ void LibraryDatabase::performMirrorSelfCheck()
         if (recreateDatabaseFileFromLiveConnection(m_dbPath)) {
             m_primaryMirrorDegraded = true;
             repaired = true;
-            m_lastRecoveryEvent = QStringLiteral("DB A aus Live-Session wiederhergestellt");
+            m_lastRecoveryEvent = QStringLiteral("DB A restored from live session");
         } else {
-            m_lastRecoveryEvent = QStringLiteral("DB A Wiederherstellung fehlgeschlagen");
+            m_lastRecoveryEvent = QStringLiteral("DB A restore failed");
         }
     }
 
@@ -1656,9 +1656,9 @@ void LibraryDatabase::performMirrorSelfCheck()
         if (syncBackupFromPrimary()) {
             m_backupMirrorDegraded = true;
             repaired = true;
-            m_lastRecoveryEvent = QStringLiteral("DB B aus aktivem Spiegel wiederhergestellt");
+            m_lastRecoveryEvent = QStringLiteral("DB B restored from active mirror");
         } else {
-            m_lastRecoveryEvent = QStringLiteral("DB B Wiederherstellung fehlgeschlagen");
+            m_lastRecoveryEvent = QStringLiteral("DB B restore failed");
         }
     }
 

@@ -851,7 +851,7 @@ Rectangle {
                             anchors.left: parent.left; anchors.leftMargin: 16; spacing: 9
                             Text { text: "📁"; font.pixelSize: window.sp(12); anchors.verticalCenter: parent.verticalCenter }
                             Text {
-                                text: "Dateien"
+                                text: "Files"
                                 color: libraryRoot.activeTab === "files" ? libraryRoot.textPrimary : "#999999"
                                 font.pixelSize: window.sp(12); anchors.verticalCenter: parent.verticalCenter
                             }
@@ -962,9 +962,9 @@ Rectangle {
                     spacing: 10
 
                     Text {
-                        text: libraryRoot.activeTab === "library"   ? "Bibliothek"
+                        text: libraryRoot.activeTab === "library"   ? "Library"
                             : libraryRoot.activeTab === "playlist"  ? libraryRoot.currentPlaylistName
-                            : libraryRoot.activeTab === "files"     ? "Dateibrowser"
+                            : libraryRoot.activeTab === "files"     ? "File Browser"
                             : libraryRoot.activeTab === "streaming" ? "Streaming"
                             : "USB"
                         color: libraryRoot.textSecond
@@ -1062,7 +1062,7 @@ Rectangle {
                             spacing: 5
                             visible: !searchField.activeFocus && searchField.text.length === 0
                             Text { text: "🔍"; font.pixelSize: window.sp(9); color: libraryRoot.textSecond; anchors.verticalCenter: parent.verticalCenter }
-                            Text { text: "Suche…"; color: libraryRoot.textSecond; font.pixelSize: window.sp(11); anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: "Search…"; color: libraryRoot.textSecond; font.pixelSize: window.sp(11); anchors.verticalCenter: parent.verticalCenter }
                         }
 
                         TextField {
@@ -1213,7 +1213,7 @@ Rectangle {
                             visible: libTrackList.count === 0
                             spacing: 10
                             Text { anchors.horizontalCenter: parent.horizontalCenter; text: "♫"; color: "#252525"; font.pixelSize: 42 }
-                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "Bibliothek ist leer"; color: "#333333"; font.pixelSize: window.sp(12) }
+                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "Library is empty"; color: "#333333"; font.pixelSize: window.sp(12) }
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 text: "Lade einen Track auf ein Deck, um ihn hinzuzufügen"
@@ -1562,7 +1562,7 @@ Rectangle {
 
                                 Text {
                                     anchors.centerIn: parent; visible: trackList.count === 0
-                                    text: "Keine Audiodateien im gewählten Ordner"; color: "#2e2e2e"; font.pixelSize: window.sp(12)
+                                    text: "No audio files in the selected folder"; color: "#2e2e2e"; font.pixelSize: window.sp(12)
                                 }
                             }
                         }
@@ -1582,7 +1582,7 @@ Rectangle {
                         Text { anchors.horizontalCenter: parent.horizontalCenter; text: libraryRoot.activeTab === "streaming" ? "◉" : "⎘"; color: "#252525"; font.pixelSize: 44 }
                         Text {
                             anchors.horizontalCenter: parent.horizontalCenter
-                            text: (libraryRoot.activeTab.charAt(0).toUpperCase() + libraryRoot.activeTab.slice(1)) + " — Demnächst verfügbar"
+                            text: (libraryRoot.activeTab.charAt(0).toUpperCase() + libraryRoot.activeTab.slice(1)) + " — Coming soon"
                             color: "#333333"; font.pixelSize: window.sp(12)
                         }
                     }
@@ -1677,7 +1677,7 @@ Rectangle {
         }
         MenuSeparator { contentItem: Rectangle { height: 1; color: "#2a2a2a" } }
         MenuItem {
-            text: "Aus Bibliothek entfernen"
+            text: "Remove from Library"
             contentItem: Text { text: parent.text; color: "#e06060"; font.pixelSize: window.sp(11); leftPadding: 12 }
             background: Rectangle { color: parent.highlighted ? "#3a1a1a" : "transparent" }
             onTriggered: {
@@ -1783,7 +1783,7 @@ Rectangle {
                     width: 64; height: 24; radius: 2
                     color: cancelCreate.containsMouse ? "#2e2e2e" : "#242424"
                     border.color: "#333"; border.width: 1
-                    Text { anchors.centerIn: parent; text: "Abbrechen"; color: "#888"; font.pixelSize: window.sp(10) }
+                    Text { anchors.centerIn: parent; text: "Cancel"; color: "#888"; font.pixelSize: window.sp(10) }
                     MouseArea {
                         id: cancelCreate; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: createPlaylistDialog.close()
@@ -1856,7 +1856,7 @@ Rectangle {
                     width: 64; height: 24; radius: 2
                     color: cancelRename.containsMouse ? "#2e2e2e" : "#242424"
                     border.color: "#333"; border.width: 1
-                    Text { anchors.centerIn: parent; text: "Abbrechen"; color: "#888"; font.pixelSize: window.sp(10) }
+                    Text { anchors.centerIn: parent; text: "Cancel"; color: "#888"; font.pixelSize: window.sp(10) }
                     MouseArea {
                         id: cancelRename; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: renamePlaylistDialog.close()
@@ -1902,10 +1902,10 @@ Rectangle {
         Column {
             anchors.fill: parent; anchors.margins: 14; spacing: 10
 
-            Text { text: "Aus Bibliothek entfernen?"; color: libraryRoot.textPrimary; font.pixelSize: window.sp(12); font.bold: true }
+            Text { text: "Remove from Library?"; color: libraryRoot.textPrimary; font.pixelSize: window.sp(12); font.bold: true }
             Text {
                 width: parent.width
-                text: '"' + removeFromLibraryPopup.trackTitle + '" wird aus der Bibliothek entfernt. Die Datei wird nicht gelöscht.'
+                text: '"' + removeFromLibraryPopup.trackTitle + '" will be removed from the library. The file will not be deleted.'
                 color: libraryRoot.textSecond; font.pixelSize: window.sp(10); wrapMode: Text.Wrap
             }
 
@@ -1916,7 +1916,7 @@ Rectangle {
                     width: 64; height: 24; radius: 2
                     color: cancelRmLib.containsMouse ? "#2e2e2e" : "#242424"
                     border.color: "#333"; border.width: 1
-                    Text { anchors.centerIn: parent; text: "Abbrechen"; color: "#888"; font.pixelSize: window.sp(10) }
+                    Text { anchors.centerIn: parent; text: "Cancel"; color: "#888"; font.pixelSize: window.sp(10) }
                     MouseArea {
                         id: cancelRmLib; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: removeFromLibraryPopup.close()
@@ -1971,7 +1971,7 @@ Rectangle {
                     width: 64; height: 24; radius: 2
                     color: cancelDel.containsMouse ? "#2e2e2e" : "#242424"
                     border.color: "#333"; border.width: 1
-                    Text { anchors.centerIn: parent; text: "Abbrechen"; color: "#888"; font.pixelSize: window.sp(10) }
+                    Text { anchors.centerIn: parent; text: "Cancel"; color: "#888"; font.pixelSize: window.sp(10) }
                     MouseArea {
                         id: cancelDel; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: deleteConfirmPopup.close()

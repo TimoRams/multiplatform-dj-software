@@ -13,7 +13,7 @@ Item {
     property double hotCueHoldCuePosition: 0.0
     property bool hotCueHoldWasPlaying: false
 
-    readonly property var tabs: ["HOT CUE", "PAD FX", "BEATJUMP", "STEMS"]
+    readonly property var tabs: ["HOT CUE", "PAD FX", "BEATJUMP", "SAMPLER"]
     readonly property var beatJumpPads: [-16, -8, -4, -2, 2, 4, 8, 16]
 
     property int colorTargetIndex: -1

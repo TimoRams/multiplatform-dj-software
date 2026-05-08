@@ -652,8 +652,8 @@ ApplicationWindow {
             Text {
                 width: parent.width
                 text: window.exitShutdownInProgress
-                      ? "Programm wird beendet..."
-                      : "Moechtest du das Programm wirklich beenden?"
+                      ? "Closing..."
+                      : "Are you sure you want to quit?"
                 color: "#e5e5e5"
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
@@ -700,7 +700,7 @@ ApplicationWindow {
 
                     Text {
                         anchors.centerIn: parent
-                        text: "Abbrechen"
+                        text: "Cancel"
                         color: "#f0f0f0"
                         font.pixelSize: window.sp(13)
                         font.bold: true
@@ -733,7 +733,7 @@ ApplicationWindow {
             Text {
                 width: parent.width
                 visible: window.exitShutdownInProgress
-                text: "Datenbank und Einstellungen werden gespeichert..."
+                text: "Saving database and settings..."
                 color: "#cfcfcf"
                 horizontalAlignment: Text.AlignHCenter
                 font.pixelSize: window.sp(11)
@@ -743,8 +743,8 @@ ApplicationWindow {
                 width: parent.width
                 visible: !window.exitShutdownInProgress
                 text: (typeof libraryDb !== "undefined" && libraryDb !== null)
-                      ? (libraryDb.mirroredDatabaseStatus ? libraryDb.mirroredDatabaseStatus : "DB A: unbekannt | DB B: unbekannt")
-                      : "DB A: unbekannt | DB B: unbekannt"
+                      ? (libraryDb.mirroredDatabaseStatus ? libraryDb.mirroredDatabaseStatus : "DB A: unknown | DB B: unknown")
+                      : "DB A: unknown | DB B: unknown"
                 color: "#b8b8b8"
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
@@ -757,7 +757,7 @@ ApplicationWindow {
                 checked: false
                 padding: 0
                 spacing: 8
-                text: "Datenbank-Backup manuell speichern"
+                text: "Save manual database backup"
                 indicator: Rectangle {
                     implicitWidth: 16
                     implicitHeight: 16
@@ -793,7 +793,7 @@ ApplicationWindow {
             Text {
                 width: parent.width
                 visible: !window.exitShutdownInProgress
-                text: "Wenn aktiv, wird beim Beenden eine separate Datei gespeichert, die nur durch diese Option aktualisiert wird."
+                text: "When enabled, a separate backup file is saved on exit, only updated through this option."
                 color: "#a8a8a8"
                 font.pixelSize: window.sp(10)
                 horizontalAlignment: Text.AlignHCenter

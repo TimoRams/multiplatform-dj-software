@@ -891,7 +891,7 @@ Window {
                     property bool hasMidiDevices: false
                     property bool hasMappings: false
                     property int availableMappingCount: 0
-                    readonly property string noMappingLabel: "Kein Mapping (manuell)"
+                    readonly property string noMappingLabel: "No Mapping (manual)"
 
                     ListModel { id: midiDeviceModel }
                     ListModel { id: mappingModel }
@@ -930,7 +930,7 @@ Window {
                             availableMappingCount = mappingList.length
 
                             if (!hasMidiDevices)
-                                midiDeviceList = ["Kein MIDI-Gerät gefunden"]
+                                midiDeviceList = ["No MIDI device found"]
 
                             // Always allow manual mapping without a Mixxx XML file.
                             mappingList = [noMappingLabel].concat(mappingList)
@@ -1003,7 +1003,7 @@ Window {
                             textRole: "text"
 
                             contentItem: Text {
-                                text: midiDeviceCombo.currentIndex >= 0 ? midiDeviceCombo.displayText : "Kein MIDI-Gerät"
+                                text: midiDeviceCombo.currentIndex >= 0 ? midiDeviceCombo.displayText : "No MIDI device"
                                 color: "#ccc"
                                 font.pixelSize: 12
                                 verticalAlignment: Text.AlignVCenter
@@ -1083,7 +1083,7 @@ Window {
                             textRole: "text"
 
                             contentItem: Text {
-                                text: mappingCombo.currentIndex >= 0 ? mappingCombo.displayText : "Kein Mapping"
+                                text: mappingCombo.currentIndex >= 0 ? mappingCombo.displayText : "No Mapping"
                                 color: "#ccc"
                                 font.pixelSize: 12
                                 verticalAlignment: Text.AlignVCenter
