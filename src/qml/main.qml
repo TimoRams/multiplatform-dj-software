@@ -371,7 +371,7 @@ ApplicationWindow {
     readonly property int scaledDeckMixerHeight: Math.round(window.baseDeckMixerHeight * window.uiScale)
     readonly property int topBarHeight: 34
     readonly property int fxBarHeight: 40
-    readonly property int mixerBaseWidth: 180
+    readonly property int mixerBaseWidth: 280
 
     readonly property real baseUiHeight: 150 + (baseUiWidth / 6.5) + 4
 
