@@ -2,100 +2,99 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
 
-// FxUnit – a single effects unit (deck assignment + effect type + wet/dry knob)
 Rectangle {
     id: root
 
-    property int unitId: 1
-    property alias deck1Active: btnDeck1.checked
-    property alias deck2Active: btnDeck2.checked
-    property alias effectType: effectCombo.currentText
-    property alias wetDry: wetDryDial.value
+    property int   unitId:      1
+    property bool  deck1Active: btnDeck1.active
+    property bool  deck2Active: btnDeck2.active
+    property alias effectType:  effectCombo.currentText
+    property alias wetDry:      mixKnob.value
     property color accentColor: unitId === 1 ? "#1e90ff" : "#ff6a00"
 
     signal deck1Toggled(bool active)
     signal deck2Toggled(bool active)
 
-    height: 40
-    color: "#161616"
+    color: "#181818"
+
+    // ── Compact toggle button ─────────────────────────────────────────────
+    component AssignBtn: Rectangle {
+        id: ab
+        required property string label
+        property bool  active: false
+        property color accent: root.accentColor
+
+        implicitWidth:  26
+        implicitHeight: 22
+        radius: 0
+        color:  active ? "#222222" : "#1e1e1e"
+
+        Rectangle {
+            anchors.bottom: parent.bottom
+            anchors.left:   parent.left
+            anchors.right:  parent.right
+            height: 1
+            color:  ab.active ? ab.accent : "#333333"
+        }
+
+        Text {
+            anchors.centerIn: parent
+            text:           ab.label
+            color:          ab.active ? ab.accent : "#666666"
+            font.pixelSize: 10
+            font.bold:      ab.active
+            font.family:    "monospace"
+        }
+
+        HoverHandler { id: abHov }
+        Rectangle { anchors.fill: parent; color: "#ffffff"; opacity: abHov.hovered ? 0.03 : 0 }
+
+        MouseArea {
+            anchors.fill: parent
+            cursorShape:  Qt.PointingHandCursor
+            onClicked:    ab.active = !ab.active
+        }
+
+        onActiveChanged: ab.parent  // trigger parent bindings
+    }
 
     RowLayout {
-        anchors.fill: parent
-        anchors.leftMargin: 8
+        anchors.fill:        parent
+        anchors.leftMargin:  8
         anchors.rightMargin: 8
         spacing: 6
 
         Text {
-            text: "FX" + root.unitId
-            color: "#8d8d8d"
-            font.pixelSize: 9
-            font.bold: true
-            font.family: "monospace"
+            text:             "FX" + root.unitId
+            color:            "#666666"
+            font.pixelSize:   9
+            font.bold:        true
+            font.family:      "monospace"
             Layout.alignment: Qt.AlignVCenter
             Layout.preferredWidth: 24
         }
 
-        Button {
+        AssignBtn {
             id: btnDeck1
-            text: "1"
-            checkable: true
-            checked: false
-            Layout.preferredWidth: 26
-            Layout.preferredHeight: 22
+            label:  "1"
+            accent: root.accentColor
             Layout.alignment: Qt.AlignVCenter
-
-            contentItem: Text {
-                text: parent.text
-                color: parent.checked ? root.accentColor : "#8f8f8f"
-                font.pixelSize: 10
-                font.bold: true
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-            }
-
-            background: Rectangle {
-                color: parent.checked ? "#222222" : "#1f1f1f"
-                radius: 0
-                border.color: parent.checked ? root.accentColor : "#353535"
-                border.width: 0
-            }
-
-            onCheckedChanged: {
-                root.deck1Toggled(checked)
+            onActiveChanged: {
+                root.deck1Toggled(active)
                 if (typeof fxManager !== "undefined")
-                    fxManager.setDeckAssignment(root.unitId, 1, checked)
+                    fxManager.setDeckAssignment(root.unitId, 1, active)
             }
         }
 
-        Button {
+        AssignBtn {
             id: btnDeck2
-            text: "2"
-            checkable: true
-            checked: false
-            Layout.preferredWidth: 26
-            Layout.preferredHeight: 22
+            label:  "2"
+            accent: root.accentColor
             Layout.alignment: Qt.AlignVCenter
-
-            contentItem: Text {
-                text: parent.text
-                color: parent.checked ? root.accentColor : "#8f8f8f"
-                font.pixelSize: 10
-                font.bold: true
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-            }
-
-            background: Rectangle {
-                color: parent.checked ? "#222222" : "#1f1f1f"
-                radius: 0
-                border.color: parent.checked ? root.accentColor : "#353535"
-                border.width: 0
-            }
-
-            onCheckedChanged: {
-                root.deck2Toggled(checked)
+            onActiveChanged: {
+                root.deck2Toggled(active)
                 if (typeof fxManager !== "undefined")
-                    fxManager.setDeckAssignment(root.unitId, 2, checked)
+                    fxManager.setDeckAssignment(root.unitId, 2, active)
             }
         }
 
@@ -103,90 +102,85 @@ Rectangle {
             id: effectCombo
             model: [
                 "---",
-                "Echo",
-                "Low Cut Echo",
-                "MT Delay",
-                "Reverb",
-                "Spiral",
-                "Flanger",
-                "Phaser",
-                "Trans",
-                "Enigma Jet",
-                "Bitcrusher",
-                "Pitch Shifter",
-                "Stretch",
-                "Slip Roll",
-                "Roll",
-                "Nobius",
-                "Mobius"
+                "Echo", "Low Cut Echo", "MT Delay",
+                "Reverb", "Spiral", "Flanger", "Phaser",
+                "Trans", "Enigma Jet", "Bitcrusher", "Pitch Shifter",
+                "Stretch", "Slip Roll", "Roll", "Nobius", "Mobius"
             ]
-            Layout.fillWidth: true
+            Layout.fillWidth:       true
             Layout.preferredHeight: 24
-            Layout.alignment: Qt.AlignVCenter
+            Layout.alignment:       Qt.AlignVCenter
 
             contentItem: Text {
-                leftPadding: 6
-                rightPadding: 18
-                text: effectCombo.displayText
-                color: "#d5d5d5"
-                font.pixelSize: 10
-                font.family: "monospace"
+                leftPadding:       6
+                rightPadding:      18
+                text:              effectCombo.displayText
+                color:             "#e8e8e8"
+                font.pixelSize:    10
+                font.family:       "monospace"
                 verticalAlignment: Text.AlignVCenter
-                elide: Text.ElideRight
+                elide:             Text.ElideRight
             }
 
             indicator: Canvas {
                 x: effectCombo.width - width - 7
                 y: effectCombo.topPadding + (effectCombo.availableHeight - height) / 2
-                width: 8
-                height: 6
+                width:  8; height: 6
                 contextType: "2d"
-
                 onPaint: {
                     context.reset()
-                    context.moveTo(0, 0)
-                    context.lineTo(width, 0)
-                    context.lineTo(width / 2, height)
-                    context.closePath()
-                    context.fillStyle = "#777"
-                    context.fill()
+                    context.moveTo(0, 0); context.lineTo(width, 0)
+                    context.lineTo(width / 2, height); context.closePath()
+                    context.fillStyle = "#777777"; context.fill()
                 }
             }
 
             background: Rectangle {
-                color: effectCombo.pressed ? "#242424" : "#1f1f1f"
+                color:  effectCombo.pressed ? "#2d2d2d" : "#1e1e1e"
                 radius: 0
-                border.color: effectCombo.visualFocus ? root.accentColor : "#353535"
-                border.width: 0
+
+                Rectangle {
+                    anchors.bottom: parent.bottom
+                    anchors.left:   parent.left
+                    anchors.right:  parent.right
+                    height: 1
+                    color:  effectCombo.visualFocus ? root.accentColor : "#333333"
+                }
             }
 
             delegate: ItemDelegate {
-                width: effectCombo.width
-                height: 24
+                width: effectCombo.width; height: 24
                 highlighted: effectCombo.highlightedIndex === index
 
                 contentItem: Text {
-                    text: modelData
-                    color: highlighted ? "#f1f1f1" : "#bcbcbc"
-                    font.pixelSize: 10
-                    font.family: "monospace"
-                    leftPadding: 8
+                    text:              modelData
+                    color:             highlighted ? "#e8e8e8" : "#999999"
+                    font.pixelSize:    10
+                    font.family:       "monospace"
+                    leftPadding:       8
                     verticalAlignment: Text.AlignVCenter
                 }
 
                 background: Rectangle {
-                    color: highlighted ? "#262626" : "#171717"
-                    border.color: highlighted ? root.accentColor : "transparent"
-                    border.width: 0
+                    color:  highlighted ? "#252525" : "#181818"
                     radius: 0
+                    Rectangle {
+                        anchors.top:   parent.top
+                        anchors.left:  parent.left
+                        anchors.right: parent.right
+                        height: 1; color: highlighted ? root.accentColor : "#1c1c1c"
+                    }
                 }
             }
 
             popup.background: Rectangle {
-                color: "#171717"
-                border.color: "#303030"
-                border.width: 0
-                radius: 0
+                color: "#181818"; radius: 0
+                Rectangle {
+                    anchors.top:   parent.top
+                    anchors.left:  parent.left
+                    anchors.right: parent.right
+                    height: 1; color: "#333333"
+                }
             }
 
             onCurrentTextChanged: {
@@ -195,112 +189,32 @@ Rectangle {
             }
         }
 
-        Item {
-            Layout.preferredWidth: 36
-            Layout.preferredHeight: 32
-            Layout.alignment: Qt.AlignVCenter
+        // MIX knob
+        Column {
+            Layout.preferredWidth:  38
+            Layout.preferredHeight: 38
+            Layout.alignment:       Qt.AlignVCenter
+            spacing: 2
 
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
-                anchors.top: parent.top
-                text: "MIX"
-                color: "#666"
+                text:           "MIX"
+                color:          "#555555"
                 font.pixelSize: 8
-                font.family: "monospace"
+                font.family:    "monospace"
             }
 
-            Dial {
-                id: wetDryDial
+            Knob {
+                id: mixKnob
                 anchors.horizontalCenter: parent.horizontalCenter
-                anchors.bottom: parent.bottom
-                width: 26
-                height: 26
-                from: 0.0
-                to: 1.0
-                value: 0.0
-                stepSize: 0.01
-
-                background: Rectangle {
-                    x: wetDryDial.width / 2 - width / 2
-                    y: wetDryDial.height / 2 - height / 2
-                    width: wetDryDial.width
-                    height: wetDryDial.height
-                    radius: 0
-                    color: "transparent"
-                    border.color: "transparent"
-
-                    Canvas {
-                        id: wetDryArc
-                        anchors.fill: parent
-                        antialiasing: true
-                        onPaint: {
-                            var ctx = getContext("2d")
-                            ctx.reset()
-
-                            var cx = width / 2
-                            var cy = height / 2
-                            var radius = Math.min(width, height) * 0.44
-                            var startDeg = 120
-                            var spanDeg = 300
-                            var norm = Math.max(0, Math.min(1, (wetDryDial.value - wetDryDial.from) / (wetDryDial.to - wetDryDial.from)))
-
-                            ctx.lineWidth = Math.max(1, Math.round(width * 0.06))
-                            ctx.lineCap = "round"
-                            ctx.strokeStyle = root.accentColor
-                            ctx.beginPath()
-                            ctx.arc(cx, cy, radius, startDeg * Math.PI / 180, (startDeg + norm * spanDeg) * Math.PI / 180, false)
-                            ctx.stroke()
-                        }
-
-                        Connections {
-                            target: wetDryDial
-                            function onValueChanged() { wetDryArc.requestPaint() }
-                        }
-                    }
-
-                    Rectangle {
-                        anchors.centerIn: parent
-                        width: parent.width * 0.85
-                        height: parent.height * 0.85
-                        radius: 0
-                        color: "#1f1f1f"
-                        border.color: wetDryDial.value > 0 ? root.accentColor : "#444"
-                        border.width: 0
-                    }
-                }
-
-                handle: Rectangle {
-                    id: dialHandle
-                    x: wetDryDial.background.x + wetDryDial.background.width / 2 - width / 2
-                    y: wetDryDial.background.y + wetDryDial.background.height / 2 - height / 2
-                    width: wetDryDial.width * 0.85
-                    height: wetDryDial.height * 0.85
-                    color: "transparent"
-
-                    Rectangle {
-                        color: "#aaa"
-                        width: 2
-                        height: parent.height * 0.48
-                        radius: 0
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.top: parent.top
-                        anchors.topMargin: -2
-                    }
-
-                    transform: Rotation {
-                        angle: wetDryDial.angle
-                        origin.x: dialHandle.width / 2
-                        origin.y: dialHandle.height / 2
-                    }
-                }
-
-                TapHandler {
-                    onDoubleTapped: {
-                        wetDryDial.enabled = false
-                        wetDryDial.value = 0.0
-                        wetDryDial.enabled = true
-                    }
-                }
+                width:        26
+                height:       26
+                from:         0.0
+                to:           1.0
+                value:        0.0
+                stepSize:     0.01
+                accentColor:  root.accentColor
+                defaultValue: 0.0
 
                 onValueChanged: {
                     if (typeof fxManager !== "undefined")

@@ -227,6 +227,11 @@ qt_add_qml_module(${PROJECT_NAME}
     VERSION 1.0
     QML_FILES
         src/qml/main.qml
+        src/qml/UiTheme.qml
+        src/qml/Knob.qml
+        src/qml/Button.qml
+        src/qml/Slider.qml
+        src/qml/ComboBox.qml
         src/qml/TopHeader.qml
         src/qml/EnlargedWaveform.qml
         src/qml/OverallWaveform.qml

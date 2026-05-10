@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
-import QtQuick.Controls
+import QtQuick.Controls as Controls
 
 Item {
     id: deck
@@ -43,17 +43,27 @@ Item {
         id: fb
         required property string btnText
         property bool   fbActive:           false
-        property color  fbActiveColor:      "#1a2e1a"
+        property color  fbActiveColor:      "#0d2018"
         property color  fbActiveTxtColor:   deck.accentGrn
         property color  fbInactiveColor:    "#1e1e1e"
-        property color  fbInactiveTxtColor: "#888"
+        property color  fbInactiveTxtColor: "#666666"
 
         Layout.preferredHeight: deck.btnH
         Layout.minimumHeight:   deck.btnH
         Layout.maximumHeight:   deck.btnH
 
-        radius: 2
-        color: fbMouse.containsMouse ? "#2c2c2c" : (fbActive ? fbActiveColor : fbInactiveColor)
+        radius: 0
+        color: fbMouse.containsMouse ? "#252525" : (fbActive ? fbActiveColor : fbInactiveColor)
+
+        // Bottom accent line
+        Rectangle {
+            anchors.bottom: parent.bottom
+            anchors.left:   parent.left
+            anchors.right:  parent.right
+            height: 1
+            color:  fb.fbActive ? fb.fbActiveTxtColor : "#333333"
+            opacity: fb.fbActive ? 1.0 : (fbMouse.containsMouse ? 0.5 : 0.0)
+        }
 
         signal clicked()
         signal rightClicked()
@@ -61,84 +71,86 @@ Item {
         signal btnReleased()
 
         Text {
-            anchors.centerIn: parent
-            text: fb.btnText
-            color: fb.fbActive ? fb.fbActiveTxtColor : fb.fbInactiveTxtColor
-            font.pixelSize: window.spViewport(9)
-            font.bold: fb.fbActive
-            font.letterSpacing: 0.4
-            font.family: "monospace"
+            anchors.centerIn:    parent
+            text:                fb.btnText
+            color:               fb.fbActive ? fb.fbActiveTxtColor : fb.fbInactiveTxtColor
+            font.pixelSize:      window.spViewport(9)
+            font.bold:           fb.fbActive
+            font.letterSpacing:  0.4
+            font.family:         "monospace"
             horizontalAlignment: Text.AlignHCenter
-            elide: Text.ElideRight
+            elide:               Text.ElideRight
         }
 
         MouseArea {
             id: fbMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
+            anchors.fill:    parent
+            hoverEnabled:    true
+            cursorShape:     Qt.PointingHandCursor
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             onClicked: (mouse) => {
                 if (mouse.button === Qt.RightButton) fb.rightClicked()
                 else fb.clicked()
             }
-            onPressed: fb.btnPressed()
+            onPressed:  fb.btnPressed()
             onReleased: fb.btnReleased()
         }
     }
 
-    // ── Tempo slider component ───────────────────────────────────────────
-    component DeckSlider: Slider {
-        id: control
+    // ── Tempo slider ──────────────────────────────────────────────────────
+    component DeckSlider: Controls.Slider {
+        id: ds
         property bool centerFill: false
 
         implicitWidth:  orientation === Qt.Vertical ? 22 : 150
         implicitHeight: orientation === Qt.Vertical ? 150 : 22
 
         background: Rectangle {
-            x: control.orientation === Qt.Horizontal ? control.leftPadding : control.width / 2 - 2
-            y: control.orientation === Qt.Horizontal ? control.height / 2 - 2 : control.topPadding
-            width:  control.orientation === Qt.Horizontal ? control.availableWidth  : 4
-            height: control.orientation === Qt.Horizontal ? 4 : control.availableHeight
+            x: ds.orientation === Qt.Horizontal ? ds.leftPadding  : ds.width  / 2 - 2
+            y: ds.orientation === Qt.Horizontal ? ds.height / 2 - 2 : ds.topPadding
+            width:  ds.orientation === Qt.Horizontal ? ds.availableWidth  : 4
+            height: ds.orientation === Qt.Horizontal ? 4 : ds.availableHeight
             radius: 1
-            color: "#181818"
+            color:  "#111111"
 
             Rectangle {
-                visible: control.orientation === Qt.Vertical && !control.centerFill
+                visible: ds.orientation === Qt.Vertical && !ds.centerFill
                 x: 1
-                y: parent.height - 1 - Math.max(0, (1.0 - control.visualPosition) * (parent.height - 2))
-                width: parent.width - 2
-                height: Math.max(0, (1.0 - control.visualPosition) * (parent.height - 2))
-                radius: 0
-                color: control.pressed ? "#5a5a5a" : "#3e3e3e"
+                y: parent.height - 1 - Math.max(0, (1.0 - ds.visualPosition) * (parent.height - 2))
+                width:  parent.width  - 2
+                height: Math.max(0, (1.0 - ds.visualPosition) * (parent.height - 2))
+                radius: 1
+                color:  ds.pressed ? "#555555" : "#3a3a3a"
             }
 
             Rectangle {
-                visible: control.orientation === Qt.Vertical && control.centerFill
-                x: 1
-                width: parent.width - 2
-                radius: 0
-                color: control.pressed ? "#5a5a5a" : "#3e3e3e"
-
+                visible: ds.orientation === Qt.Vertical && ds.centerFill
+                x: 1; width: parent.width - 2; radius: 1
+                color:  ds.pressed ? "#555555" : "#3a3a3a"
                 readonly property real midPy: parent.height / 2
-                readonly property real posPy: 1 + control.visualPosition * (parent.height - 2)
-
-                y: Math.min(midPy, posPy)
+                readonly property real posPy: 1 + ds.visualPosition * (parent.height - 2)
+                y:      Math.min(midPy, posPy)
                 height: Math.max(0, Math.abs(posPy - midPy))
             }
         }
 
         handle: Rectangle {
-            implicitWidth:  control.orientation === Qt.Vertical ? 26 : 18
-            implicitHeight: control.orientation === Qt.Vertical ? 10 : 22
-            x: control.orientation === Qt.Horizontal
-               ? control.leftPadding + control.visualPosition * (control.availableWidth - width)
-               : control.width / 2 - width / 2
-            y: control.orientation === Qt.Horizontal
-               ? control.height / 2 - height / 2
-               : control.topPadding + control.visualPosition * (control.availableHeight - height)
-            radius: 2
-            color: control.pressed ? "#e8e8e8" : "#c8c8c8"
+            implicitWidth:  ds.orientation === Qt.Vertical ? 26 : 18
+            implicitHeight: ds.orientation === Qt.Vertical ? 10 : 22
+            x: ds.orientation === Qt.Horizontal
+               ? ds.leftPadding + ds.visualPosition * (ds.availableWidth - width)
+               : ds.width / 2 - width / 2
+            y: ds.orientation === Qt.Horizontal
+               ? ds.height / 2 - height / 2
+               : ds.topPadding + ds.visualPosition * (ds.availableHeight - height)
+            radius: 1
+            color:  ds.pressed ? "#e0e0e0" : "#c8c8c8"
+
+            Rectangle {
+                anchors.centerIn: parent
+                width: 2; height: parent.height * 0.48
+                color: "#888888"
+            }
         }
     }
 
@@ -361,7 +373,7 @@ Item {
     // ── Visual ────────────────────────────────────────────────────────────
     Rectangle {
         anchors.fill: parent
-        color: "#131313"
+        color: "#111111"
 
         ColumnLayout {
             anchors.fill: parent
@@ -371,7 +383,7 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: deck.headerCellHeight * 2
-                color: "#0f0f0f"
+                color: "#0a0a0a"
 
                 RowLayout {
                     anchors.fill: parent
@@ -390,7 +402,7 @@ Item {
                         Layout.minimumWidth:   deck.headerCellHeight * 2
                         Layout.maximumWidth:   deck.headerCellHeight * 2
                         Layout.fillHeight: true
-                        color: "#0d0d0d"
+                        color: "#0a0a0a"
 
                         Text {
                             anchors.centerIn: parent
@@ -466,7 +478,7 @@ Item {
                         Rectangle {
                             id: bpmBadge
                             Layout.preferredWidth: 82; Layout.preferredHeight: deck.headerCellHeight
-                            color: "#0d1a0d"
+                            color: "#0a180a"
 
                             Row { anchors.fill: parent; anchors.leftMargin: 5; spacing: 4
                                 Text { anchors.verticalCenter: parent.verticalCenter; text: "BPM"; color: "#3a6a3a"; font.pixelSize: window.spViewport(7); font.bold: true; font.family: "monospace" }
@@ -488,7 +500,7 @@ Item {
 
                         Rectangle {
                             Layout.preferredWidth: 82; Layout.preferredHeight: deck.headerCellHeight
-                            color: "#0d0d1c"
+                            color: "#0a0a1a"
 
                             Row { anchors.fill: parent; anchors.leftMargin: 5; spacing: 4
                                 Text { anchors.verticalCenter: parent.verticalCenter; text: "LIVE"; color: "#3a3a6a"; font.pixelSize: window.spViewport(7); font.bold: true; font.family: "monospace" }
@@ -509,7 +521,7 @@ Item {
 
                         Rectangle {
                             Layout.preferredWidth: 82; Layout.preferredHeight: deck.headerCellHeight
-                            color: "#0d0d1c"
+                            color: "#0a0a1a"
 
                             Row { anchors.fill: parent; anchors.leftMargin: 5; spacing: 4
                                 Text { anchors.verticalCenter: parent.verticalCenter; text: "KEY"; color: "#3a3a6a"; font.pixelSize: window.spViewport(7); font.bold: true; font.family: "monospace" }
@@ -519,7 +531,7 @@ Item {
 
                         Rectangle {
                             Layout.preferredWidth: 82; Layout.preferredHeight: deck.headerCellHeight
-                            color: "#151515"
+                            color: "#111111"
 
                             Row { anchors.fill: parent; anchors.leftMargin: 5; spacing: 4
                                 Text { anchors.verticalCenter: parent.verticalCenter; text: "LEN"; color: "#444"; font.pixelSize: window.spViewport(7); font.bold: true; font.family: "monospace" }
@@ -562,7 +574,7 @@ Item {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: deck.btnH
-                    color: "#181818"
+                    color: "#181818"   // intentionally slightly elevated from deck bg
 
                     RowLayout {
                         anchors.fill: parent
@@ -672,7 +684,7 @@ Item {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: deck.btnH
-                    color: "#151515"
+                    color: "#111111"
 
                     RowLayout {
                         anchors.fill: parent
@@ -761,7 +773,7 @@ Item {
                     id: tempoPanel
                     Layout.preferredWidth: 56
                     Layout.fillHeight: true
-                    color: "#111111"
+                    color: "#0a0a0a"
 
                     property real tempoRange: 8
 
@@ -903,7 +915,7 @@ Item {
             Column {
                 anchors.fill: parent; anchors.margins: 6; spacing: 6
                 Text { text: "MANUAL BPM"; color: deck.accentGrn; font.pixelSize: window.spViewport(9); font.bold: true; font.family: "monospace" }
-                TextField {
+                Controls.TextField {
                     id: manualBpmField
                     width: parent.width; height: 30
                     placeholderText: "e.g. 124.50"; color: "#111"; placeholderTextColor: "#666"

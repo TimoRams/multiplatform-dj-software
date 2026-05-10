@@ -2,22 +2,18 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
 
-// FxBar – horizontal FX strip that sits between the Deck/Mixer section and the
-// library. Two FxUnits flank a simpler Sound Color selector in the center.
 Rectangle {
     id: root
 
-    color: "#2a2a2a"
-    
-    // Height controlled by parent layout (main.qml fxBarHeight) to avoid double scaling
+    color: "#181818"
     height: window.fxBarHeight
 
     Rectangle {
-        anchors.top: parent.top
-        anchors.left: parent.left
+        anchors.top:   parent.top
+        anchors.left:  parent.left
         anchors.right: parent.right
         height: 1
-        color: "#000000"
+        color:  "#0a0a0a"
     }
 
     RowLayout {
@@ -26,210 +22,133 @@ Rectangle {
 
         FxUnit {
             id: fxUnit1
-            unitId: 1
+            unitId:      1
             accentColor: "#1e90ff"
-            Layout.fillWidth: true
+            Layout.fillWidth:  true
             Layout.fillHeight: true
         }
 
-        Rectangle {
-            width: 1
-            Layout.fillHeight: true
-            color: "#000000"
-        }
+        Rectangle { width: 1; Layout.fillHeight: true; color: "#0a0a0a" }
 
+        // ── Sound Color panel ─────────────────────────────────────────────
         Rectangle {
-            id: soundColorPanel
-            color: "#2a2a2a"
+            id: scPanel
+            color: "#181818"
             Layout.preferredWidth: 240
-            Layout.fillHeight: true
+            Layout.fillHeight:     true
 
-            property string fallbackMode: "Filter"
-            property real fallbackParam: 0.5
+            property string fallbackMode:  "Filter"
+            property real   fallbackParam: 0.5
             readonly property var modes: ["Space", "D.Echo", "Crush", "Pitch", "Noise", "Sweep", "Filter"]
 
-            function isActiveMode(modeName) {
+            function isActiveMode(name) {
                 if (typeof fxManager !== "undefined" && fxManager !== null)
-                    return fxManager.soundColorMode === modeName
-                return fallbackMode === modeName
+                    return fxManager.soundColorMode === name
+                return fallbackMode === name
             }
 
             Connections {
                 target: (typeof fxManager !== "undefined" && fxManager !== null) ? fxManager : null
-
-                function onSoundColorModeChanged() {
-                    soundColorPanel.fallbackMode = fxManager.soundColorMode
-                }
-
-                function onSoundColorParamChanged() {
-                    soundColorPanel.fallbackParam = fxManager.soundColorParam
-                }
+                function onSoundColorModeChanged()  { scPanel.fallbackMode  = fxManager.soundColorMode }
+                function onSoundColorParamChanged() { scPanel.fallbackParam = fxManager.soundColorParam }
             }
 
             Component.onCompleted: {
                 if (typeof fxManager !== "undefined" && fxManager !== null) {
-                    fallbackMode = fxManager.soundColorMode
+                    fallbackMode  = fxManager.soundColorMode
                     fallbackParam = fxManager.soundColorParam
                 }
             }
 
             ColumnLayout {
-                anchors.fill: parent
-                anchors.topMargin: 4
+                anchors.fill:         parent
+                anchors.topMargin:    4
                 anchors.bottomMargin: 4
-                anchors.leftMargin: 6
-                anchors.rightMargin: 6
+                anchors.leftMargin:   6
+                anchors.rightMargin:  6
                 spacing: 3
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 4
+                    spacing: 6
 
+                    // Param knob
                     Column {
-                        Layout.preferredWidth: 28
-                        Layout.alignment: Qt.AlignVCenter
-                        spacing: 1
+                        Layout.preferredWidth: 30
+                        Layout.alignment:      Qt.AlignVCenter
+                        spacing: 2
 
-                        Dial {
-                            id: scParamKnob
+                        Text {
                             anchors.horizontalCenter: parent.horizontalCenter
-                            width: 22
-                            height: 22
-                            from: 0.0
-                            to: 1.0
-                            stepSize: 0.01
-                            value: soundColorPanel.fallbackParam
+                            text:           "SC"
+                            color:          "#555555"
+                            font.pixelSize: 8
+                            font.family:    "monospace"
+                        }
 
-                            background: Rectangle {
-                                x: scParamKnob.width / 2 - width / 2
-                                y: scParamKnob.height / 2 - height / 2
-                                width: scParamKnob.width
-                                height: scParamKnob.height
-                                radius: width / 2
-                                color: "transparent"
-                                border.color: "transparent"
-
-                                Canvas {
-                                    id: scArc
-                                    anchors.fill: parent
-                                    antialiasing: true
-                                    onPaint: {
-                                        var ctx = getContext("2d")
-                                        ctx.reset()
-
-                                        var cx = width / 2
-                                        var cy = height / 2
-                                        var radius = Math.min(width, height) * 0.44
-                                        var startDeg = 120
-                                        var spanDeg = 300
-                                        var norm = Math.max(0, Math.min(1, (scParamKnob.value - scParamKnob.from) / (scParamKnob.to - scParamKnob.from)))
-
-                                        ctx.lineWidth = Math.max(1, Math.round(width * 0.06))
-                                        ctx.lineCap = "round"
-                                        ctx.strokeStyle = "#5f6368"
-                                        ctx.beginPath()
-                                        ctx.arc(cx, cy, radius, startDeg * Math.PI / 180, (startDeg + norm * spanDeg) * Math.PI / 180, false)
-                                        ctx.stroke()
-                                    }
-
-                                    Connections {
-                                        target: scParamKnob
-                                        function onValueChanged() { scArc.requestPaint() }
-                                    }
-                                }
-
-                                Rectangle {
-                                    anchors.centerIn: parent
-                                    width: parent.width * 0.86
-                                    height: parent.height * 0.86
-                                    radius: 0
-                                    color: "#1f1f1f"
-                                    border.color: "#000000"
-                                    border.width: 1
-                                }
-                            }
-
-                            handle: Rectangle {
-                                id: scParamHandle
-                                x: scParamKnob.background.x + scParamKnob.background.width / 2 - width / 2
-                                y: scParamKnob.background.y + scParamKnob.background.height / 2 - height / 2
-                                width: scParamKnob.width * 0.86
-                                height: scParamKnob.height * 0.86
-                                color: "transparent"
-
-                                Rectangle {
-                                    color: "#d0d0d0"
-                                    width: 2
-                                    height: parent.height * 0.48
-                                    radius: 0
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    anchors.top: parent.top
-                                    anchors.topMargin: -2
-                                }
-
-                                transform: Rotation {
-                                    angle: scParamKnob.angle
-                                    origin.x: scParamHandle.width / 2
-                                    origin.y: scParamHandle.height / 2
-                                }
-                            }
+                        Knob {
+                            id: scKnob
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            width:        22
+                            height:       22
+                            from:         0.0
+                            to:           1.0
+                            stepSize:     0.01
+                            value:        scPanel.fallbackParam
+                            accentColor:  "#999999"
+                            defaultValue: 0.5
 
                             onValueChanged: {
-                                soundColorPanel.fallbackParam = value
+                                scPanel.fallbackParam = value
                                 if (typeof fxManager !== "undefined" && fxManager !== null)
                                     fxManager.setSoundColorParam(value)
                             }
                         }
                     }
 
-                    RowLayout {
+                    // Mode buttons
+                    Grid {
                         Layout.fillWidth: true
-                        spacing: 4
+                        columns: 4
+                        rowSpacing: 2
+                        columnSpacing: 2
 
                         Repeater {
-                            model: soundColorPanel.modes
+                            model: scPanel.modes
                             delegate: Rectangle {
-                                Layout.fillWidth: true
+                                readonly property bool isActive: scPanel.isActiveMode(modelData)
+
+                                width:  (scPanel.width - 36 - 6 * 3 - 12) / 4
                                 height: 18
                                 radius: 0
-                                color: soundColorPanel.isActiveMode(modelData)
-                                       ? "#2a2a2a"
-                                       : "#1f1f1f"
-                                border.color: soundColorPanel.isActiveMode(modelData)
-                                              ? "#666"
-                                              : "#000000"
-                                border.width: 1
+                                color:  isActive ? "#252525" : "#1e1e1e"
+
+                                Rectangle {
+                                    anchors.bottom: parent.bottom
+                                    anchors.left:   parent.left
+                                    anchors.right:  parent.right
+                                    height: 1
+                                    color:  isActive ? "#999999" : "#333333"
+                                }
 
                                 Text {
                                     anchors.centerIn: parent
-                                    text: modelData
+                                    text:           modelData
                                     font.pixelSize: 8
-                                    font.bold: true
-                                    font.family: "monospace"
-                                    color: soundColorPanel.isActiveMode(modelData)
-                                           ? "#f0f0f0"
-                                           : "#767676"
-                                    elide: Text.ElideRight
+                                    font.bold:      isActive
+                                    font.family:    "monospace"
+                                    color:          isActive ? "#e8e8e8" : "#666666"
+                                    elide:          Text.ElideRight
                                 }
 
-                                Rectangle {
-                                    anchors.left: parent.left
-                                    anchors.right: parent.right
-                                    anchors.bottom: parent.bottom
-                                    anchors.leftMargin: 4
-                                    anchors.rightMargin: 4
-                                    height: 2
-                                    radius: 0
-                                    visible: soundColorPanel.isActiveMode(modelData)
-                                    color: "#d6d6d6"
-                                }
+                                HoverHandler { id: modeHov }
+                                Rectangle { anchors.fill: parent; color: "#ffffff"; opacity: modeHov.hovered ? 0.03 : 0 }
 
                                 MouseArea {
                                     anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-
+                                    cursorShape:  Qt.PointingHandCursor
                                     onClicked: {
-                                        soundColorPanel.fallbackMode = modelData
+                                        scPanel.fallbackMode = modelData
                                         if (typeof fxManager !== "undefined")
                                             fxManager.setSoundColorMode(modelData)
                                     }
@@ -241,17 +160,13 @@ Rectangle {
             }
         }
 
-        Rectangle {
-            width: 1
-            Layout.fillHeight: true
-            color: "#000000"
-        }
+        Rectangle { width: 1; Layout.fillHeight: true; color: "#0a0a0a" }
 
         FxUnit {
             id: fxUnit2
-            unitId: 2
+            unitId:      2
             accentColor: "#ff6a00"
-            Layout.fillWidth: true
+            Layout.fillWidth:  true
             Layout.fillHeight: true
         }
     }

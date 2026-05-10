@@ -1,13 +1,13 @@
 import QtQuick
 import QtQuick.Layouts
-import QtQuick.Controls
+import QtQuick.Controls as Controls
 
 Rectangle {
     id: mixer
-    color: "#0f0f0f"
+    color: "#0a0a0a"
 
-    property var engineA: null
-    property var engineB: null
+    property var  engineA: null
+    property var  engineB: null
     property bool cueAActive: false
     property bool cueBActive: false
     property string channelAId: "deckA"
@@ -19,11 +19,15 @@ Rectangle {
     readonly property color clrA: "#ff9900"
     readonly property color clrB: "#00ccff"
 
+    // Dimmed deck accent colors used for knob arcs
+    readonly property color clrAKnob: Qt.darker(clrA, 1.4)   // "#b86c00"
+    readonly property color clrBKnob: Qt.darker(clrB, 1.4)   // "#0099cc"
+
     Connections {
         target: parameterStore
         function onParameterChanged(id, value) {
-            if      (id === mixer.channelAId + "_vol")  volFaderA.value = value
-            else if (id === mixer.channelBId + "_vol")  volFaderB.value = value
+            if      (id === mixer.channelAId + "_vol") volFaderA.value = value
+            else if (id === mixer.channelBId + "_vol") volFaderB.value = value
         }
     }
 
@@ -36,124 +40,46 @@ Rectangle {
         function onCueEnabledChanged() { mixer.cueBActive = engineB ? engineB.cueEnabled : false }
     }
 
-    // ── Knob component ───────────────────────────────────────────────────
-    component MixerKnob: Item {
-        id: knobRoot
-        property alias text: label.text
-        property alias from: dial.from
-        property alias to:   dial.to
-        property alias knobValue: dial.value
-        property real  knobSize:    Math.max(18, Math.min(22, mixer.width * 0.12))
-        property real  labelSpace:  11
-        property real  defaultValue: (dial.from + dial.to) / 2
-        property real  columnWidth: knobSize + 18
-        property string labelSide: "left"
-        property color accentColor: "#2d7dd2"
+    // ── Knob label wrapper ────────────────────────────────────────────────
+    // Places a Knob + text label inside a fixed-size Layout cell.
+    component KnobCell: Item {
+        id: kc
+        property alias knob:     innerKnob
+        property string label:   ""
+        property real   cellSize: Math.max(20, Math.min(24, mixer.width * 0.12))
 
-        Layout.preferredWidth:  columnWidth
-        Layout.minimumWidth:    columnWidth
-        Layout.maximumWidth:    columnWidth
-        Layout.preferredHeight: knobSize + labelSpace
-        Layout.minimumHeight:   knobSize + labelSpace
-        Layout.maximumHeight:   knobSize + labelSpace
+        Layout.preferredWidth:  cellSize + 18
+        Layout.minimumWidth:    cellSize + 18
+        Layout.maximumWidth:    cellSize + 18
+        Layout.preferredHeight: cellSize + 13
+        Layout.minimumHeight:   cellSize + 13
+        Layout.maximumHeight:   cellSize + 13
         Layout.alignment: Qt.AlignHCenter
 
-        Dial {
-            id: dial
+        Knob {
+            id: innerKnob
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.top: parent.top
-            width: knobRoot.knobSize; height: knobRoot.knobSize
-
-            background: Rectangle {
-                x: dial.width / 2 - width / 2; y: dial.height / 2 - height / 2
-                width: dial.width; height: dial.height
-                radius: width / 2
-                color: "transparent"; border.color: "transparent"
-
-                Canvas {
-                    id: knobArc
-                    anchors.fill: parent
-                    antialiasing: true
-                    onPaint: {
-                        var ctx = getContext("2d")
-                        ctx.reset()
-                        var cx = width / 2; var cy = height / 2
-                        var r  = Math.min(width, height) * 0.44
-                        var startDeg = 120; var spanDeg = 300
-                        function clamp01(v) { return Math.max(0, Math.min(1, v)) }
-                        var from = dial.from; var to = dial.to
-                        var norm = clamp01((dial.value - from) / (to - from))
-                        ctx.lineWidth  = Math.max(2, Math.round(width * 0.08))
-                        ctx.lineCap    = "round"
-                        ctx.strokeStyle = "#222"
-                        ctx.beginPath()
-                        ctx.arc(cx, cy, r, startDeg * Math.PI / 180, (startDeg + spanDeg) * Math.PI / 180, false)
-                        ctx.stroke()
-                        ctx.strokeStyle = knobRoot.accentColor
-                        if (from < 0 && to > 0) {
-                            var neutral = clamp01((0 - from) / (to - from))
-                            var a0 = (startDeg + neutral * spanDeg) * Math.PI / 180
-                            var a1 = (startDeg + norm    * spanDeg) * Math.PI / 180
-                            ctx.beginPath(); ctx.arc(cx, cy, r, a0, a1, norm < neutral); ctx.stroke()
-                        } else {
-                            var s = startDeg * Math.PI / 180
-                            var e = (startDeg + norm * spanDeg) * Math.PI / 180
-                            ctx.beginPath(); ctx.arc(cx, cy, r, s, e, false); ctx.stroke()
-                        }
-                    }
-                    Connections {
-                        target: dial
-                        function onValueChanged() { knobArc.requestPaint() }
-                        function onFromChanged()  { knobArc.requestPaint() }
-                        function onToChanged()    { knobArc.requestPaint() }
-                    }
-                }
-
-                Rectangle {
-                    anchors.centerIn: parent
-                    width: parent.width * 0.78; height: parent.height * 0.78
-                    radius: width / 2
-                    color: "#1a1a1a"
-                }
-            }
-
-            handle: Rectangle {
-                id: handleItem
-                x: dial.background.x + dial.background.width / 2 - width / 2
-                y: dial.background.y + dial.background.height / 2 - height / 2
-                width: dial.width * 0.78; height: dial.height * 0.78
-                color: "transparent"
-
-                Rectangle {
-                    color: "#cccccc"
-                    width: 1.5; height: parent.height * 0.42
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.top: parent.top; anchors.topMargin: -1
-                }
-                transform: Rotation {
-                    angle: dial.angle
-                    origin.x: handleItem.width / 2; origin.y: handleItem.height / 2
-                }
-            }
-
-            TapHandler {
-                onDoubleTapped: { dial.enabled = false; dial.value = knobRoot.defaultValue; dial.enabled = true }
-            }
+            width:  kc.cellSize
+            height: kc.cellSize
         }
 
         Text {
-            id: label
             anchors.horizontalCenter: parent.horizontalCenter
-            anchors.top: dial.bottom; anchors.topMargin: 2
-            color: "#777"
-            font.pixelSize: window.spViewport(7); font.bold: true; font.family: "monospace"
+            anchors.top: innerKnob.bottom
+            anchors.topMargin: 2
+            text:           kc.label
+            color:          "#555555"
+            font.pixelSize: 7
+            font.bold:      true
+            font.family:    "monospace"
             font.letterSpacing: 0.3
         }
     }
 
-    // ── VU meter component ────────────────────────────────────────────────
+    // ── VU meter ──────────────────────────────────────────────────────────
     component VuMeterVertical: Rectangle {
-        id: vuMeter
+        id: vu
         required property real   levelLinear
         required property string deckName
 
@@ -162,13 +88,13 @@ Rectangle {
         radius: 1
 
         property real peakHoldLevel: 0.0
-        readonly property int totalSegments: 24
+        readonly property int  totalSegments: 24
         readonly property real segmentH: (height - (totalSegments - 1)) / totalSegments
 
-        function getBarColor(seg) {
-            if (seg >= Math.floor(totalSegments * 0.88)) return "#e03535"
-            if (seg >= Math.floor(totalSegments * 0.72)) return "#d48000"
-            if (seg >= Math.floor(totalSegments * 0.50)) return "#5aba52"
+        function segColor(i) {
+            if (i >= Math.floor(totalSegments * 0.88)) return "#e03535"
+            if (i >= Math.floor(totalSegments * 0.72)) return "#d48000"
+            if (i >= Math.floor(totalSegments * 0.50)) return "#5aba52"
             return "#2a9640"
         }
 
@@ -176,27 +102,25 @@ Rectangle {
             if (levelLinear > peakHoldLevel) { peakHoldLevel = levelLinear; decayTimer.restart() }
         }
 
-        Timer    { id: decayTimer; interval: 350; onTriggered: decayAnim.start() }
+        Timer { id: decayTimer; interval: 350; onTriggered: decayAnim.start() }
         NumberAnimation {
-            id: decayAnim; target: vuMeter; property: "peakHoldLevel"
-            from: vuMeter.peakHoldLevel; to: 0.0; duration: 900; easing.type: Easing.InQuad
+            id: decayAnim; target: vu; property: "peakHoldLevel"
+            from: vu.peakHoldLevel; to: 0.0; duration: 900; easing.type: Easing.InQuad
         }
 
         Column {
             anchors.fill: parent; spacing: 1
             Repeater {
-                model: vuMeter.totalSegments
+                model: vu.totalSegments
                 delegate: Rectangle {
                     required property int index
-                    width: vuMeter.width
-                    height: vuMeter.segmentH
-                    radius: 0
+                    width: vu.width; height: vu.segmentH; radius: 0
                     color: {
-                        const ri = vuMeter.totalSegments - 1 - index
-                        const lit  = Math.floor(vuMeter.levelLinear  * vuMeter.totalSegments)
-                        const peak = Math.floor(vuMeter.peakHoldLevel * vuMeter.totalSegments) - 1
+                        const ri   = vu.totalSegments - 1 - index
+                        const lit  = Math.floor(vu.levelLinear  * vu.totalSegments)
+                        const peak = Math.floor(vu.peakHoldLevel * vu.totalSegments) - 1
                         if (ri === peak && peak >= 0) return "#ffffff"
-                        if (ri < lit)                 return vuMeter.getBarColor(ri)
+                        if (ri < lit)                 return vu.segColor(ri)
                         return "#141414"
                     }
                 }
@@ -204,56 +128,58 @@ Rectangle {
         }
     }
 
-    // ── Volume/crossfader slider component ───────────────────────────────
-    component MixerSlider: Slider {
-        id: control
+    // ── Channel fader/slider ──────────────────────────────────────────────
+    component MixerSlider: Controls.Slider {
+        id: ms
         property bool centerFill: false
 
         background: Rectangle {
-            x: control.orientation === Qt.Horizontal ? control.leftPadding : control.width / 2 - 2
-            y: control.orientation === Qt.Horizontal ? control.height / 2 - 2 : control.topPadding
-            width:  control.orientation === Qt.Horizontal ? control.availableWidth : 4
-            height: control.orientation === Qt.Horizontal ? 4 : control.availableHeight
-            radius: 1; color: "#161616"
-            border.width: 1; border.color: "#0a0a0a"
+            x: ms.orientation === Qt.Horizontal ? ms.leftPadding  : ms.width  / 2 - 2
+            y: ms.orientation === Qt.Horizontal ? ms.height / 2 - 2 : ms.topPadding
+            width:  ms.orientation === Qt.Horizontal ? ms.availableWidth  : 4
+            height: ms.orientation === Qt.Horizontal ? 4 : ms.availableHeight
+            radius: 1
+            color:  "#111111"
+            border.width: 1; border.color: "#080808"
 
             Rectangle {
-                visible: control.orientation === Qt.Horizontal && control.centerFill
+                visible: ms.orientation === Qt.Horizontal && ms.centerFill
                 y: 1; height: parent.height - 2; radius: 1
-                color: control.pressed ? "#4a4a4a" : "#303030"
+                color:  ms.pressed ? "#555555" : "#333333"
                 readonly property real midPx: parent.width / 2
-                readonly property real posPx: 1 + control.visualPosition * (parent.width - 2)
-                x: Math.min(midPx, posPx)
+                readonly property real posPx: 1 + ms.visualPosition * (parent.width - 2)
+                x:     Math.min(midPx, posPx)
                 width: Math.max(0, Math.abs(posPx - midPx))
             }
             Rectangle {
-                visible: control.orientation === Qt.Vertical
+                visible: ms.orientation === Qt.Vertical
                 x: 1
-                y: parent.height - 1 - Math.max(0, (1.0 - control.visualPosition) * (parent.height - 2))
-                width: parent.width - 2
-                height: Math.max(0, (1.0 - control.visualPosition) * (parent.height - 2))
-                radius: 1; color: control.pressed ? "#555" : "#363636"
+                y: parent.height - 1 - Math.max(0, (1.0 - ms.visualPosition) * (parent.height - 2))
+                width:  parent.width  - 2
+                height: Math.max(0, (1.0 - ms.visualPosition) * (parent.height - 2))
+                radius: 1
+                color:  ms.pressed ? "#555555" : "#333333"
             }
         }
 
         handle: Rectangle {
-            implicitWidth:  control.orientation === Qt.Vertical ? 26 : 18
-            implicitHeight: control.orientation === Qt.Vertical ? 12 : 22
-            x: control.orientation === Qt.Horizontal
-               ? control.leftPadding + control.visualPosition * (control.availableWidth - width)
-               : control.width / 2 - width / 2
-            y: control.orientation === Qt.Horizontal
-               ? control.height / 2 - height / 2
-               : control.topPadding + control.visualPosition * (control.availableHeight - height)
-            radius: 2
-            color: control.pressed ? "#f0f0f0" : "#d0d0d0"
-            border.width: 1; border.color: "#888"
+            implicitWidth:  ms.orientation === Qt.Vertical ? 26 : 18
+            implicitHeight: ms.orientation === Qt.Vertical ? 12 : 22
+            x: ms.orientation === Qt.Horizontal
+               ? ms.leftPadding + ms.visualPosition * (ms.availableWidth - width)
+               : ms.width / 2 - width / 2
+            y: ms.orientation === Qt.Horizontal
+               ? ms.height / 2 - height / 2
+               : ms.topPadding + ms.visualPosition * (ms.availableHeight - height)
+            radius: 1
+            color:  ms.pressed ? "#e0e0e0" : "#c8c8c8"
+            border.width: 1; border.color: "#555555"
 
             Rectangle {
                 anchors.centerIn: parent
-                width: control.orientation === Qt.Vertical ? parent.width * 0.48 : 2
-                height: control.orientation === Qt.Vertical ? 1 : parent.height * 0.48
-                color: "#888"
+                width:  ms.orientation === Qt.Vertical ? parent.width * 0.48 : 2
+                height: ms.orientation === Qt.Vertical ? 1 : parent.height * 0.48
+                color:  "#888888"
             }
         }
     }
@@ -261,82 +187,79 @@ Rectangle {
     // ── Layout ────────────────────────────────────────────────────────────
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 0
         spacing: 0
 
-        // Channel strips
         RowLayout {
-            Layout.fillWidth: true
+            Layout.fillWidth:  true
             Layout.fillHeight: true
             spacing: 0
 
             // ── Channel A ─────────────────────────────────────────────────
             ColumnLayout {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
+                Layout.fillWidth: true; Layout.fillHeight: true
                 spacing: 0
 
-                // Channel label
                 Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 26
-                    color: "#0a0a0a"
-
+                    Layout.fillWidth: true; Layout.preferredHeight: 26
+                    color: "#080808"
                     Rectangle { width: 3; height: parent.height; color: mixer.clrA; opacity: 0.85 }
-
                     Text {
-                        anchors.centerIn: parent
-                        text: "A"; color: mixer.clrA
-                        font.pixelSize: window.spViewport(11); font.bold: true; font.family: "monospace"
-                        font.letterSpacing: 2.0
+                        anchors.centerIn: parent; text: "A"; color: mixer.clrA
+                        font.pixelSize: window.spViewport(11); font.bold: true
+                        font.family: "monospace"; font.letterSpacing: 2.0
                     }
                     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#1c1c1c" }
                 }
 
-                // EQ knobs
                 ColumnLayout {
-                    Layout.fillWidth: true
-                    Layout.alignment: Qt.AlignHCenter
+                    Layout.fillWidth: true; Layout.alignment: Qt.AlignHCenter
                     spacing: 1
 
-                    MixerKnob { text: "T"; from: 0; to: 2; knobValue: 1.0; accentColor: "#c87010"
-                        onKnobValueChanged: { if (engineA) engineA.trim = knobValue } }
+                    KnobCell {
+                        label: "T"; knob.from: 0; knob.to: 2; knob.value: 1.0
+                        knob.accentColor: mixer.clrAKnob; knob.defaultValue: 1.0
+                        knob.onValueChanged: { if (engineA) engineA.trim = knob.value }
+                    }
 
-                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1
-                        color: "#1c1c1c"; Layout.leftMargin: 6; Layout.rightMargin: 6 }
+                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#1c1c1c"; Layout.leftMargin: 6; Layout.rightMargin: 6 }
 
-                    MixerKnob { text: "H"; from: -1; to: 1; knobValue: 0; accentColor: "#c87010"
-                        onKnobValueChanged: { if (engineA) engineA.eqHigh = knobValue } }
-                    MixerKnob { text: "M"; from: -1; to: 1; knobValue: 0; accentColor: "#c87010"
-                        onKnobValueChanged: { if (engineA) engineA.eqMid = knobValue } }
-                    MixerKnob { text: "L"; from: -1; to: 1; knobValue: 0; accentColor: "#c87010"
-                        onKnobValueChanged: { if (engineA) engineA.eqLow = knobValue } }
+                    KnobCell {
+                        label: "H"; knob.from: -1; knob.to: 1; knob.value: 0
+                        knob.accentColor: mixer.clrAKnob
+                        knob.onValueChanged: { if (engineA) engineA.eqHigh = knob.value }
+                    }
+                    KnobCell {
+                        label: "M"; knob.from: -1; knob.to: 1; knob.value: 0
+                        knob.accentColor: mixer.clrAKnob
+                        knob.onValueChanged: { if (engineA) engineA.eqMid = knob.value }
+                    }
+                    KnobCell {
+                        label: "L"; knob.from: -1; knob.to: 1; knob.value: 0
+                        knob.accentColor: mixer.clrAKnob
+                        knob.onValueChanged: { if (engineA) engineA.eqLow = knob.value }
+                    }
 
-                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1
-                        color: "#1c1c1c"; Layout.leftMargin: 6; Layout.rightMargin: 6 }
+                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#1c1c1c"; Layout.leftMargin: 6; Layout.rightMargin: 6 }
 
-                    MixerKnob {
-                        id: scKnobA; text: "SC"; from: -1; to: 1; knobValue: 0.0; defaultValue: 0.0
-                        accentColor: "#b06010"
-                        onKnobValueChanged: {
+                    KnobCell {
+                        id: scCellA; label: "SC"; knob.from: -1; knob.to: 1; knob.value: 0.0
+                        knob.defaultValue: 0.0; knob.accentColor: Qt.darker(mixer.clrA, 1.6)
+                        knob.onValueChanged: {
                             if (typeof fxManager !== "undefined") {
-                                fxManager.setSoundColorDeck(1, knobValue)
-                                if (fxManager.soundColorMode === "Filter") { if (engineA) engineA.filter = knobValue }
+                                fxManager.setSoundColorDeck(1, knob.value)
+                                if (fxManager.soundColorMode === "Filter") { if (engineA) engineA.filter = knob.value }
                                 else { if (engineA) engineA.filter = 0.0 }
-                            } else { if (engineA) engineA.filter = knobValue }
+                            } else { if (engineA) engineA.filter = knob.value }
                         }
                     }
                 }
 
                 Rectangle { Layout.fillWidth: true; height: 1; color: "#1c1c1c" }
 
-                // VU + CUE + Fader (VU spans full height)
                 RowLayout {
-                    Layout.fillWidth: true; Layout.fillHeight: true
-                    spacing: 0
+                    Layout.fillWidth: true; Layout.fillHeight: true; spacing: 0
 
                     VuMeterVertical {
-                        id: vuAMeter
                         Layout.fillHeight: true; Layout.preferredWidth: 10
                         levelLinear: mixer.vuACombined; deckName: "A"
                     }
@@ -344,31 +267,27 @@ Rectangle {
                     Rectangle { width: 1; Layout.fillHeight: true; color: "#1c1c1c" }
 
                     ColumnLayout {
-                        Layout.fillWidth: true; Layout.fillHeight: true
-                        spacing: 0
+                        Layout.fillWidth: true; Layout.fillHeight: true; spacing: 0
 
+                        // CUE button
                         Rectangle {
                             Layout.fillWidth: true; Layout.preferredHeight: 22
-                            color: mixer.cueAActive ? "#0c2016" : "#141414"
+                            color:        mixer.cueAActive ? "#0c2016" : "#141414"
                             border.width: 1
                             border.color: mixer.cueAActive ? "#1e5030" : "#1c1c1c"
 
                             HoverHandler { id: cueAHov }
-                            Rectangle {
-                                anchors.fill: parent
-                                color: "#ffffff"; opacity: cueAHov.hovered && !mixer.cueAActive ? 0.04 : 0
-                            }
+                            Rectangle { anchors.fill: parent; color: "#ffffff"; opacity: cueAHov.hovered && !mixer.cueAActive ? 0.04 : 0 }
 
                             Text {
                                 anchors.centerIn: parent; text: "CUE"
-                                color: mixer.cueAActive ? "#5de89a" : "#606060"
-                                font.pixelSize: window.spViewport(9); font.bold: true; font.family: "monospace"
-                                font.letterSpacing: 0.8
+                                color: mixer.cueAActive ? "#4dd98a" : "#555555"
+                                font.pixelSize: window.spViewport(9); font.bold: true
+                                font.family: "monospace"; font.letterSpacing: 0.8
                             }
 
                             Rectangle {
-                                anchors.bottom: parent.bottom
-                                anchors.left: parent.left; anchors.right: parent.right
+                                anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
                                 height: 2; color: "#4dd98a"; visible: mixer.cueAActive
                             }
 
@@ -386,8 +305,7 @@ Rectangle {
                         MixerSlider {
                             id: volFaderA
                             Layout.fillHeight: true; Layout.fillWidth: true
-                            orientation: Qt.Vertical
-                            from: 0.0; to: 1.0; value: 1.0
+                            orientation: Qt.Vertical; from: 0.0; to: 1.0; value: 1.0
                             onValueChanged: {
                                 if (parameterStore && parameterStore.getParameter(mixer.channelAId + "_vol") !== value)
                                     parameterStore.setParameter(mixer.channelAId + "_vol", value)
@@ -404,98 +322,90 @@ Rectangle {
 
             // ── Channel B ─────────────────────────────────────────────────
             ColumnLayout {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
+                Layout.fillWidth: true; Layout.fillHeight: true
                 spacing: 0
 
-                // Channel label
                 Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 26
-                    color: "#0a0a0a"
-
-                    Rectangle {
-                        anchors.right: parent.right
-                        width: 3; height: parent.height; color: mixer.clrB; opacity: 0.85
-                    }
-
+                    Layout.fillWidth: true; Layout.preferredHeight: 26
+                    color: "#080808"
+                    Rectangle { anchors.right: parent.right; width: 3; height: parent.height; color: mixer.clrB; opacity: 0.85 }
                     Text {
-                        anchors.centerIn: parent
-                        text: "B"; color: mixer.clrB
-                        font.pixelSize: window.spViewport(11); font.bold: true; font.family: "monospace"
-                        font.letterSpacing: 2.0
+                        anchors.centerIn: parent; text: "B"; color: mixer.clrB
+                        font.pixelSize: window.spViewport(11); font.bold: true
+                        font.family: "monospace"; font.letterSpacing: 2.0
                     }
                     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#1c1c1c" }
                 }
 
-                // EQ knobs
                 ColumnLayout {
-                    Layout.fillWidth: true
-                    Layout.alignment: Qt.AlignHCenter
+                    Layout.fillWidth: true; Layout.alignment: Qt.AlignHCenter
                     spacing: 1
 
-                    MixerKnob { text: "T"; from: 0; to: 2; knobValue: 1.0; accentColor: "#1a6ab8"
-                        onKnobValueChanged: { if (engineB) engineB.trim = knobValue } }
+                    KnobCell {
+                        label: "T"; knob.from: 0; knob.to: 2; knob.value: 1.0
+                        knob.accentColor: mixer.clrBKnob; knob.defaultValue: 1.0
+                        knob.onValueChanged: { if (engineB) engineB.trim = knob.value }
+                    }
 
-                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1
-                        color: "#1c1c1c"; Layout.leftMargin: 6; Layout.rightMargin: 6 }
+                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#1c1c1c"; Layout.leftMargin: 6; Layout.rightMargin: 6 }
 
-                    MixerKnob { text: "H"; from: -1; to: 1; knobValue: 0; accentColor: "#1a6ab8"
-                        onKnobValueChanged: { if (engineB) engineB.eqHigh = knobValue } }
-                    MixerKnob { text: "M"; from: -1; to: 1; knobValue: 0; accentColor: "#1a6ab8"
-                        onKnobValueChanged: { if (engineB) engineB.eqMid = knobValue } }
-                    MixerKnob { text: "L"; from: -1; to: 1; knobValue: 0; accentColor: "#1a6ab8"
-                        onKnobValueChanged: { if (engineB) engineB.eqLow = knobValue } }
+                    KnobCell {
+                        label: "H"; knob.from: -1; knob.to: 1; knob.value: 0
+                        knob.accentColor: mixer.clrBKnob
+                        knob.onValueChanged: { if (engineB) engineB.eqHigh = knob.value }
+                    }
+                    KnobCell {
+                        label: "M"; knob.from: -1; knob.to: 1; knob.value: 0
+                        knob.accentColor: mixer.clrBKnob
+                        knob.onValueChanged: { if (engineB) engineB.eqMid = knob.value }
+                    }
+                    KnobCell {
+                        label: "L"; knob.from: -1; knob.to: 1; knob.value: 0
+                        knob.accentColor: mixer.clrBKnob
+                        knob.onValueChanged: { if (engineB) engineB.eqLow = knob.value }
+                    }
 
-                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1
-                        color: "#1c1c1c"; Layout.leftMargin: 6; Layout.rightMargin: 6 }
+                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#1c1c1c"; Layout.leftMargin: 6; Layout.rightMargin: 6 }
 
-                    MixerKnob {
-                        id: scKnobB; text: "SC"; from: -1; to: 1; knobValue: 0.0; defaultValue: 0.0
-                        accentColor: "#155a9e"
-                        onKnobValueChanged: {
+                    KnobCell {
+                        id: scCellB; label: "SC"; knob.from: -1; knob.to: 1; knob.value: 0.0
+                        knob.defaultValue: 0.0; knob.accentColor: Qt.darker(mixer.clrB, 1.6)
+                        knob.onValueChanged: {
                             if (typeof fxManager !== "undefined") {
-                                fxManager.setSoundColorDeck(2, knobValue)
-                                if (fxManager.soundColorMode === "Filter") { if (engineB) engineB.filter = knobValue }
+                                fxManager.setSoundColorDeck(2, knob.value)
+                                if (fxManager.soundColorMode === "Filter") { if (engineB) engineB.filter = knob.value }
                                 else { if (engineB) engineB.filter = 0.0 }
-                            } else { if (engineB) engineB.filter = knobValue }
+                            } else { if (engineB) engineB.filter = knob.value }
                         }
                     }
                 }
 
                 Rectangle { Layout.fillWidth: true; height: 1; color: "#1c1c1c" }
 
-                // VU + CUE + Fader (VU spans full height)
                 RowLayout {
-                    Layout.fillWidth: true; Layout.fillHeight: true
-                    spacing: 0
+                    Layout.fillWidth: true; Layout.fillHeight: true; spacing: 0
 
                     ColumnLayout {
-                        Layout.fillWidth: true; Layout.fillHeight: true
-                        spacing: 0
+                        Layout.fillWidth: true; Layout.fillHeight: true; spacing: 0
 
                         Rectangle {
                             Layout.fillWidth: true; Layout.preferredHeight: 22
-                            color: mixer.cueBActive ? "#0c2016" : "#141414"
+                            color:        mixer.cueBActive ? "#0c2016" : "#141414"
                             border.width: 1
                             border.color: mixer.cueBActive ? "#1e5030" : "#1c1c1c"
 
                             HoverHandler { id: cueBHov }
-                            Rectangle {
-                                anchors.fill: parent
-                                color: "#ffffff"; opacity: cueBHov.hovered && !mixer.cueBActive ? 0.04 : 0
-                            }
+                            Rectangle { anchors.fill: parent; color: "#ffffff"; opacity: cueBHov.hovered && !mixer.cueBActive ? 0.04 : 0 }
 
                             Text {
                                 anchors.centerIn: parent; text: "CUE"
-                                color: mixer.cueBActive ? "#5de89a" : "#606060"
-                                font.pixelSize: window.spViewport(9); font.bold: true; font.family: "monospace"
-                                font.letterSpacing: 0.8
+                                color: mixer.cueBActive ? "#4dd98a" : "#555555"
+                                font.pixelSize: window.spViewport(9); font.bold: true
+                                font.family: "monospace"; font.letterSpacing: 0.8
                             }
 
                             Rectangle {
-                                anchors.bottom: parent.bottom
-                                anchors.left: parent.left; anchors.right: parent.right
+                                anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
                                 height: 2; color: "#4dd98a"; visible: mixer.cueBActive
                             }
 
@@ -513,8 +423,7 @@ Rectangle {
                         MixerSlider {
                             id: volFaderB
                             Layout.fillHeight: true; Layout.fillWidth: true
-                            orientation: Qt.Vertical
-                            from: 0.0; to: 1.0; value: 1.0
+                            orientation: Qt.Vertical; from: 0.0; to: 1.0; value: 1.0
                             onValueChanged: {
                                 if (parameterStore && parameterStore.getParameter(mixer.channelBId + "_vol") !== value)
                                     parameterStore.setParameter(mixer.channelBId + "_vol", value)
@@ -528,13 +437,11 @@ Rectangle {
                     Rectangle { width: 1; Layout.fillHeight: true; color: "#1c1c1c" }
 
                     VuMeterVertical {
-                        id: vuBMeter
                         Layout.fillHeight: true; Layout.preferredWidth: 10
                         levelLinear: mixer.vuBCombined; deckName: "B"
                     }
                 }
             }
         }
-
     }
 }
