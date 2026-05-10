@@ -25,6 +25,8 @@
 #include <algorithm>
 #include <cmath>
 #include <thread>
+#include <future>
+#include <chrono>
 #if JUCE_JACK && (JUCE_LINUX || JUCE_BSD)
 #include <jack/jack.h>
 #endif
@@ -223,12 +225,47 @@ juce::AudioDeviceManager& sharedAudioDeviceManager()
     return manager;
 }
 
+// Set to true if any initialiseWithTimeout call was abandoned due to timeout.
+// Subsequent init attempts are skipped to avoid multiple multi-second stalls.
+static std::atomic<bool> s_audioInitTimedOut{false};
+
+// Runs initialiseWithDefaultDevices on a background thread with a timeout so that
+// a frozen macOS CoreAudio daemon (coreaudiod) cannot hang the entire application.
+// If the deadline is exceeded the thread is detached; the app starts without audio.
+static juce::String initialiseWithTimeout(juce::AudioDeviceManager& manager,
+                                          int numInputChannels,
+                                          int numOutputChannels,
+                                          std::chrono::seconds timeout = std::chrono::seconds(6))
+{
+    if (s_audioInitTimedOut.load())
+        return {};  // skip — a previous attempt already timed out
+
+    std::promise<juce::String> prom;
+    auto fut = prom.get_future();
+
+    std::thread t([&manager, numInputChannels, numOutputChannels, p = std::move(prom)]() mutable {
+        p.set_value(manager.initialiseWithDefaultDevices(numInputChannels, numOutputChannels));
+    });
+
+    if (fut.wait_for(timeout) == std::future_status::timeout) {
+        s_audioInitTimedOut = true;
+        qCritical() << "[DjEngine] Audio device initialization timed out after"
+                    << timeout.count() << "s — starting without audio."
+                    << "To fix: restart the app, or run: sudo killall coreaudiod";
+        t.detach();
+        return {};
+    }
+
+    t.join();
+    return fut.get();
+}
+
 void ensureSharedAudioDeviceManagerReady(juce::AudioDeviceManager& manager)
 {
     if (manager.getCurrentAudioDevice() != nullptr)
         return;
 
-    const juce::String err = manager.initialiseWithDefaultDevices(0, 2);
+    const juce::String err = initialiseWithTimeout(manager, 0, 2);
     if (err.isNotEmpty())
         qWarning() << "JUCE AudioDeviceManager err:" << QString::fromStdString(err.toStdString());
 }
@@ -324,8 +361,8 @@ int readDeviceOutputChannelCount(const QString& deviceType, const QString& outpu
     int channelCount = 2;
 
     juce::AudioDeviceManager probe;
-    const juce::String initErr = probe.initialiseWithDefaultDevices(0, 2);
-    if (initErr.isNotEmpty()) {
+    const juce::String initErr = initialiseWithTimeout(probe, 0, 2, std::chrono::seconds(4));
+    if (initErr.isNotEmpty() || probe.getCurrentAudioDevice() == nullptr) {
         std::lock_guard<std::mutex> lock(s_outputChannelCountCacheMutex);
         s_outputChannelCountCache.insert(key, channelCount);
         return channelCount;
@@ -2253,8 +2290,11 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     juce::AudioDeviceManager::AudioDeviceSetup previousSetup;
     manager.getAudioDeviceSetup(previousSetup);
     if (manager.getCurrentAudioDevice() == nullptr) {
+        // The user explicitly requested a settings change — clear the timeout flag so
+        // we retry even if startup init timed out (coreaudiod may have recovered).
+        s_audioInitTimedOut = false;
         qWarning() << "[DjEngine] No current audio device before setup; trying default initialisation";
-        const juce::String initErr = manager.initialiseWithDefaultDevices(0, 2);
+        const juce::String initErr = initialiseWithTimeout(manager, 0, 2);
         if (initErr.isNotEmpty())
             qWarning() << "[DjEngine] initialiseWithDefaultDevices failed:" << QString::fromStdString(initErr.toStdString());
     }
@@ -2997,9 +3037,9 @@ void DjEngine::ensureTransportRunningForPlayIntent()
 
     if (deviceManager.getCurrentAudioDevice() == nullptr) {
         qWarning() << "[DjEngine] Play requested without active audio device; trying to recover";
-        const juce::String initErr = deviceManager.initialiseWithDefaultDevices(0, 2);
-        if (initErr.isNotEmpty()) {
-            qWarning() << "[DjEngine] Could not recover audio device on play:" << QString::fromStdString(initErr.toStdString());
+        const juce::String initErr = initialiseWithTimeout(deviceManager, 0, 2, std::chrono::seconds(4));
+        if (initErr.isNotEmpty() || deviceManager.getCurrentAudioDevice() == nullptr) {
+            qWarning() << "[DjEngine] Could not recover audio device on play";
             return;
         }
         refreshHardwareLatency();
