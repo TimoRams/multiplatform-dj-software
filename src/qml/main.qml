@@ -569,6 +569,8 @@ ApplicationWindow {
                         engineB: deckD
                         channelAId: "deckC"
                         channelBId: "deckD"
+                        deckNameA: "C"
+                        deckNameB: "D"
                     }
 
                     DeckControl {

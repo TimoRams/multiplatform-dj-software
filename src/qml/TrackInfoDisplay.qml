@@ -14,6 +14,7 @@ Item {
     property string trackDuration: ""
     property bool   hasTrack:     false
     property url    coverArtUrl:  ""
+    signal ejectClicked()
 
     implicitHeight: 80
     implicitWidth: 300
@@ -61,6 +62,31 @@ Item {
                     source: root.coverArtUrl
                     fillMode: Image.PreserveAspectCrop
                     visible: status === Image.Ready
+                }
+
+                // Eject overlay – appears on hover when a track is loaded
+                Rectangle {
+                    id: ejectOverlay
+                    anchors.fill: parent
+                    radius: parent.radius
+                    color: "#000000"
+                    opacity: root.hasTrack && ejectHov.containsMouse ? 0.72 : 0.0
+                    Behavior on opacity { NumberAnimation { duration: 100 } }
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "⏏"
+                        color: "#ffffff"
+                        font.pixelSize: window.sp(20)
+                        opacity: ejectOverlay.opacity > 0.1 ? 1.0 : 0.0
+                    }
+
+                    HoverHandler { id: ejectHov }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: root.hasTrack ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        onClicked: { if (root.hasTrack) root.ejectClicked() }
+                    }
                 }
             }
 

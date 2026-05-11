@@ -2901,6 +2901,29 @@ void DjEngine::attachReaderToTransport(juce::AudioFormatReader* reader)
     ensureTransportRunningForPlayIntent();
 }
 
+void DjEngine::ejectTrack()
+{
+    ++m_loadGen;
+    if (m_analyzer)
+        m_analyzer->stopAnalysis();
+
+    m_playRequested = false;
+    transportSource.stop();
+    transportSource.setSource(nullptr);
+    reverseWrapSource.reset();
+    readerSource.reset();
+
+    resetTrackLoadState();
+    m_trackTitle.clear();  m_trackArtist.clear(); m_trackAlbum.clear();
+    m_trackKey.clear();    m_trackDuration.clear(); m_trackDurationSec = 0.0;
+    m_hasCoverArt = false; m_coverArtUrl.clear();
+    if (m_coverProvider)
+        m_coverProvider->clearCover(m_deckId);
+    m_hasTrack = false;
+    emit trackMetadataChanged();
+    emit progressChanged();
+}
+
 void DjEngine::loadTrack(const QString& rawPath)
 {
     juce::File file(rawPath.toStdString());

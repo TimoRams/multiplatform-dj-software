@@ -141,6 +141,8 @@ public:
     Q_INVOKABLE void doubleLoopLength();
     Q_INVOKABLE void clearLoop();
 
+    Q_INVOKABLE void ejectTrack();
+
     // Master volume + anti-clip (global, shared across all decks)
     Q_INVOKABLE void setMasterVolume(float v);
     Q_INVOKABLE void setAntiClip(bool enabled);

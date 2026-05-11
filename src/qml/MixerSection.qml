@@ -20,12 +20,20 @@ Rectangle {
     property bool cueBActive: false
     property string channelAId: "deckA"
     property string channelBId: "deckB"
+    property string deckNameA: "A"
+    property string deckNameB: "B"
 
     readonly property real vuACombined: engineA ? Math.max(engineA.preFaderVuLevelL, engineA.preFaderVuLevelR) : 0.0
     readonly property real vuBCombined: engineB ? Math.max(engineB.preFaderVuLevelL, engineB.preFaderVuLevelR) : 0.0
 
-    readonly property color clrA:     "#ff9900"
-    readonly property color clrB:     "#00ccff"
+    readonly property color clrA:     deckNameA === "A" ? "#ff9900"
+                                     : deckNameA === "B" ? "#00ccff"
+                                     : deckNameA === "C" ? "#cc44ff"
+                                     : "#44ddaa"
+    readonly property color clrB:     deckNameB === "A" ? "#ff9900"
+                                     : deckNameB === "B" ? "#00ccff"
+                                     : deckNameB === "C" ? "#cc44ff"
+                                     : "#44ddaa"
     readonly property color clrAKnob: Qt.darker(clrA, 1.4)
     readonly property color clrBKnob: Qt.darker(clrB, 1.4)
 
@@ -206,7 +214,7 @@ Rectangle {
                 Rectangle { width: 3; height: parent.height; color: mixer.clrA; opacity: 0.85 }
                 Text {
                     anchors.centerIn:   parent
-                    text:               "A"
+                    text:               mixer.deckNameA
                     color:              mixer.clrA
                     font.pixelSize:     window.spViewport(10)
                     font.bold:          true
@@ -388,7 +396,7 @@ Rectangle {
                 Rectangle { anchors.right: parent.right; width: 3; height: parent.height; color: mixer.clrB; opacity: 0.85 }
                 Text {
                     anchors.centerIn:   parent
-                    text:               "B"
+                    text:               mixer.deckNameB
                     color:              mixer.clrB
                     font.pixelSize:     window.spViewport(10)
                     font.bold:          true

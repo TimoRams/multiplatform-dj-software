@@ -398,6 +398,7 @@ Item {
 
                     // Cover art
                     Rectangle {
+                        id: coverArtBox
                         Layout.preferredWidth: deck.headerCellHeight * 2
                         Layout.minimumWidth:   deck.headerCellHeight * 2
                         Layout.maximumWidth:   deck.headerCellHeight * 2
@@ -419,6 +420,44 @@ Item {
                             source: deck.engine && deck.engine.hasCoverArt ? deck.engine.coverArtUrl : ""
                             fillMode: Image.PreserveAspectCrop
                             visible: status === Image.Ready
+                        }
+
+                        // Eject overlay — HoverHandler sits on the container so it
+                        // always fires regardless of child opacity.
+                        HoverHandler { id: coverHov }
+
+                        Rectangle {
+                            anchors.fill: parent
+                            color: "#000000"
+                            opacity: deck._hasTrack && coverHov.hovered ? 0.72 : 0.0
+                            Behavior on opacity { NumberAnimation { duration: 100 } }
+
+                            Column {
+                                anchors.centerIn: parent
+                                spacing: 2
+
+                                Text {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    text: "▲"
+                                    color: "#ffffff"
+                                    font.pixelSize: window.spViewport(13)
+                                    font.bold: true
+                                }
+                                Text {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    text: "EJECT"
+                                    color: "#aaaaaa"
+                                    font.pixelSize: window.spViewport(7)
+                                    font.bold: true
+                                    font.letterSpacing: 0.5
+                                }
+                            }
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: deck._hasTrack ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            onClicked: { if (deck._hasTrack && deck.engine) deck.engine.ejectTrack() }
                         }
                     }
 
