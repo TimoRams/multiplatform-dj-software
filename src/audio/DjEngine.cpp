@@ -480,9 +480,18 @@ OutputLatencySnapshot readOutputLatencySnapshot(juce::AudioIODevice* device)
 
     const int outputRawSamples = std::max(0, device->getOutputLatencyInSamples());
     const int callbackBufferSamples = std::max(0, device->getCurrentBufferSizeSamples());
-    int effectiveSamples = outputRawSamples > 0 ? outputRawSamples : callbackBufferSamples;
-    if (effectiveSamples <= 0)
-        effectiveSamples = 512;
+    int effectiveSamples;
+    if (outputRawSamples <= 0) {
+        effectiveSamples = callbackBufferSamples > 0 ? callbackBufferSamples : 512;
+    } else if (callbackBufferSamples > 0
+               && outputRawSamples % callbackBufferSamples == 0
+               && outputRawSamples >= 2 * callbackBufferSamples) {
+        // ALSA over-reports: getOutputLatencyInSamples() returns numPeriods*periodSize.
+        // The current period is already counted as the callback buffer, so subtract one.
+        effectiveSamples = outputRawSamples - callbackBufferSamples;
+    } else {
+        effectiveSamples = outputRawSamples;
+    }
     return {
         .outputRawSamples = outputRawSamples,
         .callbackBufferSamples = callbackBufferSamples,
@@ -884,7 +893,7 @@ public:
     static constexpr int kMaxPullSize = 512;
     static constexpr int kMaxPrefillSamples = 2048;
     static constexpr int kDefaultPrefillCapSamples = 256;
-    static constexpr int kPrefillMaxBlocks = 2;
+    static constexpr int kPrefillMaxBlocks = 1;
     static constexpr int kPullLoopLimit = 24;
     static constexpr double kPrefillDeadbandTempoDelta = 0.01;
     static constexpr double kPrefillDynamicFactor = 0.005;
@@ -911,7 +920,7 @@ public:
         sampleRate = sr;
         if (source) source->prepareToPlay(samplesPerBlockExpected, sr);
         stretcher = std::make_unique<RubberBand::RubberBandStretcher>(
-            sr, 2, 
+            sr, 2,
             RubberBand::RubberBandStretcher::OptionProcessRealTime |
             RubberBand::RubberBandStretcher::OptionWindowShort |
             RubberBand::RubberBandStretcher::OptionPitchHighSpeed);
@@ -930,13 +939,14 @@ public:
 
         updateStretcherRatios();
 
-        m_startPadRemaining.store(static_cast<int>(stretcher->getPreferredStartPad()), std::memory_order_relaxed);
-        m_startDelayTrimRemaining.store(static_cast<int>(stretcher->getStartDelay()), std::memory_order_relaxed);
-        
         scratchBuffer.setSize(2, 8192);
         outputBuffer.setSize(2, 65536);
         trimBuffer.setSize(2, 1024);
         fifo = std::make_unique<juce::AbstractFifo>(65536);
+
+        // Pre-warm upfront: startup delay is absorbed here, never trimmed
+        // on-the-fly during audio callbacks.
+        prewarmStretcher();
     }
 
     void releaseResources() override {
@@ -1032,7 +1042,7 @@ public:
             --maxPullLoops;
         }
 
-        updateReportedLatency(std::max(m_prefillTargetSamples, fifo->getNumReady()));
+        updateReportedLatency(m_prefillTargetSamples);
 
         const int ready = fifo->getNumReady();
         const int toRead = std::min(ready, framesNeeded);
@@ -1138,6 +1148,43 @@ private:
             stretcher->retrieve(trimOut, chunk);
             samplesToTrim -= chunk;
         }
+    }
+
+    // Pre-warm the stretcher by feeding silence equal to its start pad and
+    // draining the startup delay output. This absorbs algorithmic latency
+    // upfront so on-the-fly trimming is never needed during audio callbacks.
+    void prewarmStretcher() {
+        if (!stretcher) return;
+
+        const int pad = static_cast<int>(stretcher->getPreferredStartPad());
+        if (pad > 0) {
+            juce::AudioBuffer<float> zeros(2, pad);
+            zeros.clear();
+            const float* ptrs[2] = { zeros.getReadPointer(0), zeros.getReadPointer(1) };
+            stretcher->process(ptrs, pad, false);
+        }
+
+        // Keep feeding zeros and draining until the full start delay is consumed.
+        juce::AudioBuffer<float> tmp(2, kMaxPullSize);
+        tmp.clear();
+        int remaining = static_cast<int>(stretcher->getStartDelay());
+        for (int guard = 128; guard > 0 && remaining > 0; --guard) {
+            int avail = stretcher->available();
+            if (avail <= 0) {
+                const float* ptrs[2] = { tmp.getReadPointer(0), tmp.getReadPointer(1) };
+                stretcher->process(ptrs, kMinPullSize, false);
+                avail = stretcher->available();
+            }
+            if (avail > 0) {
+                const int chunk = std::min(remaining, avail);
+                float* ptrs[2] = { tmp.getWritePointer(0), tmp.getWritePointer(1) };
+                stretcher->retrieve(ptrs, chunk);
+                remaining -= chunk;
+            }
+        }
+
+        m_startPadRemaining.store(0, std::memory_order_relaxed);
+        m_startDelayTrimRemaining.store(0, std::memory_order_relaxed);
     }
 
     void updateStretcherRatios() {
@@ -2584,7 +2631,8 @@ double DjEngine::totalLatencyMs() const
     if (snapshot.sampleRate <= 0.0)
         return 0.0;
 
-    const int totalSamples = snapshot.outputEffectiveSamples
+    const int totalSamples = snapshot.bufferSamples
+                           + snapshot.outputEffectiveSamples
                            + snapshot.rubberbandSamples
                            + snapshot.limiterSamples;
     return (static_cast<double>(totalSamples) / snapshot.sampleRate) * 1000.0;
@@ -2602,36 +2650,29 @@ QVariantList DjEngine::latencyBreakdown() const
 
     QVariantList rows;
 
-    QVariantMap effectiveOutputRow;
-    effectiveOutputRow.insert("name", QStringLiteral("Output to Speakers"));
-    effectiveOutputRow.insert("samples", snapshot.outputEffectiveSamples);
-    effectiveOutputRow.insert("ms", toMs(snapshot.outputEffectiveSamples));
-    effectiveOutputRow.insert("countInTotal", true);
-    rows.push_back(effectiveOutputRow);
-
-    QVariantMap rawOutputRow;
-    rawOutputRow.insert("name", QStringLiteral("JUCE Output (Raw)"));
-    rawOutputRow.insert("samples", snapshot.outputRawSamples);
-    rawOutputRow.insert("ms", toMs(snapshot.outputRawSamples));
-    rawOutputRow.insert("countInTotal", false);
-    rows.push_back(rawOutputRow);
-
     QVariantMap bufferRow;
-    bufferRow.insert("name", QStringLiteral("Callback Buffer (Info)"));
+    bufferRow.insert("name", QStringLiteral("Audio Buffer"));
     bufferRow.insert("samples", snapshot.bufferSamples);
     bufferRow.insert("ms", toMs(snapshot.bufferSamples));
-    bufferRow.insert("countInTotal", false);
+    bufferRow.insert("countInTotal", true);
     rows.push_back(bufferRow);
 
+    QVariantMap driverRow;
+    driverRow.insert("name", QStringLiteral("Driver / Hardware"));
+    driverRow.insert("samples", snapshot.outputEffectiveSamples);
+    driverRow.insert("ms", toMs(snapshot.outputEffectiveSamples));
+    driverRow.insert("countInTotal", true);
+    rows.push_back(driverRow);
+
     QVariantMap rubberbandRow;
-    rubberbandRow.insert("name", QStringLiteral("RubberBand / Keylock"));
+    rubberbandRow.insert("name", QStringLiteral("Keylock Processing"));
     rubberbandRow.insert("samples", snapshot.rubberbandSamples);
     rubberbandRow.insert("ms", toMs(snapshot.rubberbandSamples));
     rubberbandRow.insert("countInTotal", true);
     rows.push_back(rubberbandRow);
 
     QVariantMap limiterRow;
-    limiterRow.insert("name", QStringLiteral("DSP Limiter Lookahead"));
+    limiterRow.insert("name", QStringLiteral("Limiter Lookahead"));
     limiterRow.insert("samples", snapshot.limiterSamples);
     limiterRow.insert("ms", toMs(snapshot.limiterSamples));
     limiterRow.insert("countInTotal", true);

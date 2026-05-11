@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <rubberband/RubberBandStretcher.h>
 
 TurntableSimulation::~TurntableSimulation() = default;
 
@@ -102,19 +101,12 @@ void TurntableSimulation::setSpinDownBrake(double v)
 void TurntableSimulation::prepareToPlay(int, double sampleRate)
 {
     m_sampleRate = std::max(1.0, sampleRate);
-    m_stretcher = std::make_unique<RubberBand::RubberBandStretcher>(
-        m_sampleRate,
-        2,
-        RubberBand::RubberBandStretcher::OptionProcessRealTime |
-        RubberBand::RubberBandStretcher::OptionWindowShort |
-        RubberBand::RubberBandStretcher::OptionPitchHighSpeed);
     m_lastUsedBypass = true;
     m_crossfadeRemaining = 0;
 }
 
 void TurntableSimulation::releaseResources()
 {
-    m_stretcher.reset();
     m_dryBuffer.setSize(0, 0);
     m_wetBuffer.setSize(0, 0);
 }
@@ -152,10 +144,6 @@ void TurntableSimulation::getNextAudioBlock(const juce::AudioSourceChannelInfo& 
     bool usingBypass = mustBypassKeylock;
 
     if (!mustBypassKeylock) {
-        // Leaving scratch/reverse mode back into keylock: reset phase vocoder state.
-        if (m_lastUsedBypass && m_stretcher)
-            m_stretcher->reset();
-
         if (!renderKeylockPath(m_dryBuffer, m_wetBuffer, outSamples))
             usingBypass = true;
     }
@@ -247,39 +235,15 @@ bool TurntableSimulation::renderKeylockPath(const juce::AudioBuffer<float>& inpu
                                             juce::AudioBuffer<float>& output,
                                             int outSamples)
 {
-    if (!m_stretcher)
+    // Pitch compensation for turntable keylock is not yet implemented;
+    // route audio directly so no extra latency is introduced.
+    const int outCh = output.getNumChannels();
+    const int inCh  = input.getNumChannels();
+    if (outCh <= 0 || inCh <= 0)
         return false;
 
-    output.clear();
-
-    const int channels = std::min(2, input.getNumChannels());
-    if (channels <= 0)
-        return false;
-
-    const float* inPtrs[2] = { nullptr, nullptr };
-    float* outPtrs[2] = { nullptr, nullptr };
-
-    inPtrs[0] = input.getReadPointer(0);
-    inPtrs[1] = (channels > 1) ? input.getReadPointer(1) : input.getReadPointer(0);
-
-    outPtrs[0] = output.getWritePointer(0);
-    outPtrs[1] = (output.getNumChannels() > 1) ? output.getWritePointer(1) : output.getWritePointer(0);
-
-    m_stretcher->setTimeRatio(1.0);
-    m_stretcher->setPitchScale(1.0);
-    m_stretcher->process(inPtrs, outSamples, false);
-
-    const int avail = m_stretcher->available();
-    if (avail <= 0)
-        return false;
-
-    const int toRead = std::min(outSamples, avail);
-    m_stretcher->retrieve(outPtrs, toRead);
-
-    if (toRead < outSamples) {
-        for (int ch = 0; ch < output.getNumChannels(); ++ch)
-            output.copyFrom(ch, toRead, input, std::min(ch, input.getNumChannels() - 1), toRead, outSamples - toRead);
-    }
+    for (int ch = 0; ch < outCh; ++ch)
+        output.copyFrom(ch, 0, input, std::min(ch, inCh - 1), 0, outSamples);
 
     return true;
 }

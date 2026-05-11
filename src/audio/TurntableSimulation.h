@@ -2,9 +2,6 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <atomic>
-#include <memory>
-
-namespace RubberBand { class RubberBandStretcher; }
 
 class TurntableSimulation : public juce::AudioSource
 {
@@ -75,7 +72,6 @@ private:
     // Minimal LPF against touch jitter when grabbed.
     double m_touchVelocityLpf = 0.25;
 
-    std::unique_ptr<RubberBand::RubberBandStretcher> m_stretcher;
     juce::AudioBuffer<float> m_dryBuffer;
     juce::AudioBuffer<float> m_wetBuffer;
     bool m_lastUsedBypass = true;

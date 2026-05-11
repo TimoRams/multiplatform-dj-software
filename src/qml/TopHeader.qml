@@ -73,15 +73,9 @@ Rectangle {
         var rows = deckA.latencyBreakdown()
         if (!rows || rows.length === 0) return
         latencyRows = rows
-        if (deckA.totalLatencyMs) {
-            var exact = Number(deckA.totalLatencyMs())
-            if (isFinite(exact) && exact >= 0) { totalLatencyMs = exact; return }
-        }
         var sum = 0.0
         for (var i = 0; i < rows.length; ++i) {
-            var inc = rows[i].countInTotal
-            if (inc === undefined) inc = true
-            if (!inc) continue
+            if (rows[i].countInTotal === false) continue
             var ms = Number(rows[i].ms)
             if (!isNaN(ms) && isFinite(ms)) sum += ms
         }
