@@ -106,9 +106,49 @@ Controls.Dial {
         }
     }
 
-    // ── Double-tap to reset ───────────────────────────────────────────────
-    TapHandler {
-        onDoubleTapped: {
+    // ── Drag-lock: cursor vanishes on drag, reappears at click origin ─────
+    MouseArea {
+        id: knobDrag
+        anchors.fill: parent
+        z: 100
+        acceptedButtons: Qt.LeftButton
+        preventStealing: true
+
+        property real _pressGX:  0
+        property real _pressGY:  0
+        property real _pressVal: 0
+        property bool _active:   false   // true once movement threshold exceeded
+
+        onPressed: (mouse) => {
+            var g    = knobDrag.mapToGlobal(mouse.x, mouse.y)
+            _pressGX  = g.x
+            _pressGY  = g.y
+            _pressVal = knob.value
+            _active   = false
+            mouse.accepted = true
+        }
+
+        onPositionChanged: (mouse) => {
+            var g  = knobDrag.mapToGlobal(mouse.x, mouse.y)
+            var dy = _pressGY - g.y   // positive = mouse moved up = increase value
+            if (!_active) {
+                if (Math.abs(dy) < 4) return
+                _active = true
+                cursorControl.hideCursor()
+            }
+            var newVal = _pressVal + dy * (knob.to - knob.from) / 150.0
+            knob.value = Math.min(knob.to, Math.max(knob.from, newVal))
+        }
+
+        onReleased: {
+            if (_active) {
+                _active = false
+                cursorControl.restoreCursor()
+                cursorControl.moveCursor(_pressGX, _pressGY)
+            }
+        }
+
+        onDoubleClicked: {
             knob.enabled = false
             knob.value   = knob.defaultValue
             knob.enabled = true

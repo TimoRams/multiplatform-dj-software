@@ -180,7 +180,49 @@ Rectangle {
                 from: 0.0; to: 1.0; value: 0.0; stepSize: 0.01
                 onValueChanged: cfBar.cfSharpness = value
 
-                TapHandler { onDoubleTapped: { curveDial.value = 0.0 } }
+                MouseArea {
+                    id: curveDragLock
+                    anchors.fill: parent
+                    z: 100
+                    acceptedButtons: Qt.LeftButton
+                    preventStealing: true
+
+                    property real _pressGX:  0
+                    property real _pressGY:  0
+                    property real _pressVal: 0
+                    property bool _active:   false
+
+                    onPressed: (mouse) => {
+                        var g    = curveDragLock.mapToGlobal(mouse.x, mouse.y)
+                        _pressGX  = g.x
+                        _pressGY  = g.y
+                        _pressVal = curveDial.value
+                        _active   = false
+                        mouse.accepted = true
+                    }
+
+                    onPositionChanged: (mouse) => {
+                        var g  = curveDragLock.mapToGlobal(mouse.x, mouse.y)
+                        var dy = _pressGY - g.y
+                        if (!_active) {
+                            if (Math.abs(dy) < 4) return
+                            _active = true
+                            cursorControl.hideCursor()
+                        }
+                        var newVal = _pressVal + dy * (curveDial.to - curveDial.from) / 150.0
+                        curveDial.value = Math.min(curveDial.to, Math.max(curveDial.from, newVal))
+                    }
+
+                    onReleased: {
+                        if (_active) {
+                            _active = false
+                            cursorControl.restoreCursor()
+                            cursorControl.moveCursor(_pressGX, _pressGY)
+                        }
+                    }
+
+                    onDoubleClicked: { curveDial.value = 0.0 }
+                }
 
                 background: Rectangle {
                     x: curveDial.width/2 - width/2; y: curveDial.height/2 - height/2
@@ -316,9 +358,7 @@ Rectangle {
                 from: -1.0; to: 1.0; value: 0.0; stepSize: 0.005
                 onValueChanged: cfBar.cfPos = value
 
-                TapHandler {
-                    onDoubleTapped: { cfSlider.enabled = false; cfSlider.value = 0.0; cfSlider.enabled = true }
-                }
+                property bool cfDragActive: false
 
                 background: Rectangle {
                     x: cfSlider.leftPadding; y: cfSlider.height/2 - height/2
@@ -337,9 +377,59 @@ Rectangle {
                     x: cfSlider.leftPadding + cfSlider.visualPosition * (cfSlider.availableWidth - width)
                     y: cfSlider.height / 2 - height / 2
                     implicitWidth: 18; implicitHeight: 22; radius: 2
-                    color: cfSlider.pressed ? "#f0f0f0" : "#d0d0d0"
+                    color: cfSlider.pressed || cfSlider.cfDragActive ? "#f0f0f0" : "#d0d0d0"
                     border.width: 1; border.color: "#888"
                     Rectangle { anchors.centerIn: parent; width: 2; height: parent.height * 0.48; color: "#888" }
+                }
+
+                MouseArea {
+                    id: cfDragLock
+                    anchors.fill: parent
+                    z: 100
+                    acceptedButtons: Qt.LeftButton
+                    preventStealing: true
+
+                    property real _pressGX:  0
+                    property real _pressGY:  0
+                    property real _pressVal: 0
+                    property bool _active:   false
+
+                    onPressed: (mouse) => {
+                        var g    = cfDragLock.mapToGlobal(mouse.x, mouse.y)
+                        _pressGX  = g.x
+                        _pressGY  = g.y
+                        _pressVal = cfSlider.value
+                        _active   = false
+                        mouse.accepted = true
+                    }
+
+                    onPositionChanged: (mouse) => {
+                        var g     = cfDragLock.mapToGlobal(mouse.x, mouse.y)
+                        var delta = g.x - _pressGX
+                        if (!_active) {
+                            if (Math.abs(delta) < 4) return
+                            _active = true
+                            cfSlider.cfDragActive = true
+                            cursorControl.hideCursor()
+                        }
+                        var newVal = _pressVal + delta * (cfSlider.to - cfSlider.from) / 200.0
+                        cfSlider.value = Math.max(cfSlider.from, Math.min(cfSlider.to, newVal))
+                    }
+
+                    onReleased: {
+                        if (_active) {
+                            _active = false
+                            cfSlider.cfDragActive = false
+                            cursorControl.restoreCursor()
+                            cursorControl.moveCursor(_pressGX, _pressGY)
+                        }
+                    }
+
+                    onDoubleClicked: {
+                        cfSlider.enabled = false
+                        cfSlider.value   = 0.0
+                        cfSlider.enabled = true
+                    }
                 }
             }
         }

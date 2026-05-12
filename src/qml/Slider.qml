@@ -5,6 +5,8 @@ Controls.Slider {
     id: control
 
     property bool centerFill: false
+    property real defaultValue: 0.0
+    property bool dragActive: false
 
     implicitWidth:  orientation === Qt.Vertical ? 22 : 150
     implicitHeight: orientation === Qt.Vertical ? 150 : 22
@@ -71,7 +73,7 @@ Controls.Slider {
            ? control.height / 2 - height / 2
            : control.topPadding + control.visualPosition * (control.availableHeight - height)
         radius: 1
-        color:  control.pressed ? "#e0e0e0" : "#c8c8c8"
+        color:  control.pressed || control.dragActive ? "#e0e0e0" : "#c8c8c8"
 
         // Center tick
         Rectangle {
@@ -79,6 +81,62 @@ Controls.Slider {
             width:  control.orientation === Qt.Vertical ? parent.width * 0.48 : 2
             height: control.orientation === Qt.Vertical ? 1 : parent.height * 0.48
             color:  "#888888"
+        }
+    }
+
+    // ── Drag-lock: cursor vanishes on drag, reappears at click origin ─────
+    MouseArea {
+        id: sliderDrag
+        anchors.fill: parent
+        z: 100
+        acceptedButtons: Qt.LeftButton
+        preventStealing: true
+
+        property real _pressGX:  0
+        property real _pressGY:  0
+        property real _pressVal: 0
+        property bool _active:   false
+
+        onPressed: (mouse) => {
+            var g    = sliderDrag.mapToGlobal(mouse.x, mouse.y)
+            _pressGX  = g.x
+            _pressGY  = g.y
+            _pressVal = control.value
+            _active   = false
+            mouse.accepted = true
+        }
+
+        onPositionChanged: (mouse) => {
+            var g     = sliderDrag.mapToGlobal(mouse.x, mouse.y)
+            var isV   = control.orientation === Qt.Vertical
+            // Vertical: up = increase (dy positive when mouse moved up)
+            // Horizontal: right = increase (dx positive when mouse moved right)
+            var delta = isV ? (_pressGY - g.y) : (g.x - _pressGX)
+            if (!_active) {
+                if (Math.abs(delta) < 4) return
+                _active = true
+                control.dragActive = true
+                cursorControl.hideCursor()
+            }
+            var newVal = _pressVal + delta * (control.to - control.from) / 150.0
+            var lo = Math.min(control.from, control.to)
+            var hi = Math.max(control.from, control.to)
+            control.value = Math.max(lo, Math.min(hi, newVal))
+        }
+
+        onReleased: {
+            if (_active) {
+                _active = false
+                control.dragActive = false
+                cursorControl.restoreCursor()
+                cursorControl.moveCursor(_pressGX, _pressGY)
+            }
+        }
+
+        onDoubleClicked: {
+            control.enabled = false
+            control.value   = control.defaultValue
+            control.enabled = true
         }
     }
 }

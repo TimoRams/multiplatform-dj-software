@@ -276,6 +276,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/app/SystemMonitor.h
     src/app/SystemMonitor.cpp
     src/app/LsanSuppressions.cpp
+    src/app/CursorControl.h
+    src/app/CursorControl.cpp
     src/midi/ParameterStore.h
     src/midi/ParameterStore.cpp
     src/midi/MidiControllerManager.h

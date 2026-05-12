@@ -36,6 +36,7 @@
 #include "library/LibraryDatabase.h"
 #include "library/LibraryTableModel.h"
 #include "library/LibraryAnalysisManager.h"
+#include "app/CursorControl.h"
 
 using namespace Qt::StringLiterals;
 
@@ -351,6 +352,9 @@ int main(int argc, char *argv[])
 
     engine.rootContext()->setContextProperty("parameterStore", &parameterStore);
     engine.rootContext()->setContextProperty("midiManager", &midiManager);
+
+    CursorControl cursorControl;
+    engine.rootContext()->setContextProperty("cursorControl", &cursorControl);
 
     const auto url = QUrl(u"qrc:/DJSoftware/src/qml/main.qml"_s);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,

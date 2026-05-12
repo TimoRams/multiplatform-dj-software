@@ -149,7 +149,9 @@ Rectangle {
     // ── Volume fader ──────────────────────────────────────────────────────
     component MixerSlider: Controls.Slider {
         id: ms
-        property bool centerFill: false
+        property bool centerFill:   false
+        property bool dragActive:   false
+        property real defaultValue: 1.0
 
         background: Rectangle {
             x: ms.orientation === Qt.Horizontal ? ms.leftPadding  : ms.width  / 2 - 2
@@ -178,7 +180,7 @@ Rectangle {
             y: ms.orientation === Qt.Horizontal
                ? ms.height / 2 - height / 2
                : ms.topPadding + ms.visualPosition * (ms.availableHeight - height)
-            radius: 1; color: ms.pressed ? "#e0e0e0" : "#c8c8c8"
+            radius: 1; color: ms.pressed || ms.dragActive ? "#e0e0e0" : "#c8c8c8"
             border.width: 1; border.color: "#555555"
 
             Rectangle {
@@ -186,6 +188,56 @@ Rectangle {
                 width:  ms.orientation === Qt.Vertical ? parent.width * 0.48 : 2
                 height: ms.orientation === Qt.Vertical ? 1 : parent.height * 0.48
                 color:  "#888888"
+            }
+        }
+
+        MouseArea {
+            id: msDragLock
+            anchors.fill: parent
+            z: 100
+            acceptedButtons: Qt.LeftButton
+            preventStealing: true
+
+            property real _pressGX:  0
+            property real _pressGY:  0
+            property real _pressVal: 0
+
+            onPressed: (mouse) => {
+                var g    = msDragLock.mapToGlobal(mouse.x, mouse.y)
+                _pressGX  = g.x
+                _pressGY  = g.y
+                _pressVal = ms.value
+                ms.dragActive = false
+                mouse.accepted = true
+            }
+
+            onPositionChanged: (mouse) => {
+                var g     = msDragLock.mapToGlobal(mouse.x, mouse.y)
+                var isV   = ms.orientation === Qt.Vertical
+                var delta = isV ? (_pressGY - g.y) : (g.x - _pressGX)
+                if (!ms.dragActive) {
+                    if (Math.abs(delta) < 4) return
+                    ms.dragActive = true
+                    cursorControl.hideCursor()
+                }
+                var newVal = _pressVal + delta * (ms.to - ms.from) / 150.0
+                var lo = Math.min(ms.from, ms.to)
+                var hi = Math.max(ms.from, ms.to)
+                ms.value = Math.max(lo, Math.min(hi, newVal))
+            }
+
+            onReleased: {
+                if (ms.dragActive) {
+                    ms.dragActive = false
+                    cursorControl.restoreCursor()
+                    cursorControl.moveCursor(_pressGX, _pressGY)
+                }
+            }
+
+            onDoubleClicked: {
+                ms.enabled = false
+                ms.value   = ms.defaultValue
+                ms.enabled = true
             }
         }
     }
@@ -368,9 +420,6 @@ Rectangle {
                             if (parameterStore && parameterStore.getParameter(mixer.channelAId + "_vol") !== value)
                                 parameterStore.setParameter(mixer.channelAId + "_vol", value)
                         }
-                        TapHandler {
-                            onDoubleTapped: { volFaderA.enabled = false; volFaderA.value = 1.0; volFaderA.enabled = true }
-                        }
                     }
                 }
             }
@@ -480,9 +529,6 @@ Rectangle {
                         onValueChanged: {
                             if (parameterStore && parameterStore.getParameter(mixer.channelBId + "_vol") !== value)
                                 parameterStore.setParameter(mixer.channelBId + "_vol", value)
-                        }
-                        TapHandler {
-                            onDoubleTapped: { volFaderB.enabled = false; volFaderB.value = 1.0; volFaderB.enabled = true }
                         }
                     }
                 }
