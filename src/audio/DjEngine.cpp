@@ -235,7 +235,7 @@ static std::atomic<bool> s_audioInitTimedOut{false};
 static juce::String initialiseWithTimeout(juce::AudioDeviceManager& manager,
                                           int numInputChannels,
                                           int numOutputChannels,
-                                          std::chrono::seconds timeout = std::chrono::seconds(6))
+                                          std::chrono::duration<double> timeout = std::chrono::seconds(6))
 {
     if (s_audioInitTimedOut.load())
         return {};  // skip — a previous attempt already timed out
@@ -249,8 +249,9 @@ static juce::String initialiseWithTimeout(juce::AudioDeviceManager& manager,
 
     if (fut.wait_for(timeout) == std::future_status::timeout) {
         s_audioInitTimedOut = true;
+        const double timeoutSec = std::chrono::duration<double>(timeout).count();
         qCritical() << "[DjEngine] Audio device initialization timed out after"
-                    << timeout.count() << "s — starting without audio."
+                    << timeoutSec << "s — starting without audio."
                     << "To fix: restart the app, or run: sudo killall coreaudiod";
         t.detach();
         return {};
@@ -2436,39 +2437,31 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     // JACK setup should avoid extra device probing because it can block.
     if (!jackBackendRequested) {
         if (auto* device = manager.getCurrentAudioDevice()) {
-        const int namesCount = device->getOutputChannelNames().size();
-        const int activeSetBits = device->getActiveOutputChannels().countNumberOfSetBits();
-        if (namesCount > 0)
-            maxOutputChannels = namesCount;
-        else if (activeSetBits > 0)
-            maxOutputChannels = activeSetBits;
-        else
-            maxOutputChannels = 2;
-            
-            // Clamp to reasonable max
+            const int namesCount = device->getOutputChannelNames().size();
+            const int activeSetBits = device->getActiveOutputChannels().countNumberOfSetBits();
+            int deviceChannels = 2;
+            if (namesCount > 0)
+                deviceChannels = namesCount;
+            else if (activeSetBits > 0)
+                deviceChannels = activeSetBits;
+            deviceChannels = std::clamp(deviceChannels, 2, kMaxSupportedOutputChannel);
+
+            // Use the larger of what the device currently has and what is being
+            // requested.  If we only took the current active count (often 2 for a
+            // default stereo open) we would wrongly reject e.g. ch 3-4 on a
+            // 4-channel interface before JUCE even tries to open them.
+            maxOutputChannels = std::max(maxRequestedChannel, deviceChannels);
             maxOutputChannels = std::clamp(maxOutputChannels, 2, kMaxSupportedOutputChannel);
-            
+
             setup.bufferSize = choosePreferredBufferSize(device, setup.bufferSize);
+        } else {
+            // No device open yet — trust the requested channels; JUCE will error
+            // if the hardware doesn't support them and the fallback path kicks in.
+            maxOutputChannels = std::clamp(maxRequestedChannel, 2, kMaxSupportedOutputChannel);
         }
     } else {
         maxOutputChannels = std::clamp(maxRequestedChannel, 2, kMaxSupportedOutputChannel);
     }
-    
-    // Validate and clamp requested channels to actual device channels
-    auto validateChannelForDevice = [maxOutputChannels](int& firstChannel) {
-        if (firstChannel < 1)
-            return;
-        // Ensure both left and right channels fit within device
-        // firstChannel is 1-based, so rightChannel = firstChannel + 1
-        if (firstChannel < 1 || (firstChannel + 1) > maxOutputChannels) {
-            qWarning() << "[DjEngine] Channel" << firstChannel << "out of range [1-" 
-                       << maxOutputChannels - 1 << "], disabling this route";
-            firstChannel = -1;  // Mark as disabled
-        }
-    };
-    validateChannelForDevice(masterFirstChannel);
-    validateChannelForDevice(headphonesFirstChannel);
-    validateChannelForDevice(boothFirstChannel);
     
     // Update routing after validation
     s_outputRoutingPacked.store(packRouting({
@@ -3052,12 +3045,10 @@ void DjEngine::togglePlay()
 {
     if (m_playRequested) {
         m_playRequested = false;
-        if (transportSource.isPlaying()) {
-            // Compute the interpolated visual position BEFORE stopping so we can
-            // freeze the transport at exactly the position the waveform was showing.
-            // This eliminates the visible jump when pressing pause.
-            freezeTransportAt(getVisualPosition());
-        }
+        // Always freeze: calling stop() on an already-stopped transport is safe.
+        // Skipping this when isPlaying()==false left the transport in a live state
+        // whenever there was a brief race between the audio thread and this call.
+        freezeTransportAt(getVisualPosition());
     } else {
         m_playRequested = true;
         ensureTransportRunningForPlayIntent();
@@ -3081,12 +3072,7 @@ void DjEngine::pause()
         return; // Already paused
 
     m_playRequested = false;
-
-    if (transportSource.isPlaying()) {
-        // Compute the interpolated visual position BEFORE stopping so we can
-        // freeze the transport at exactly the position the waveform was showing.
-        freezeTransportAt(getVisualPosition());
-    }
+    freezeTransportAt(getVisualPosition());
     emit playingChanged();
 }
 
@@ -3101,7 +3087,10 @@ void DjEngine::ensureTransportRunningForPlayIntent()
 
     if (deviceManager.getCurrentAudioDevice() == nullptr) {
         qWarning() << "[DjEngine] Play requested without active audio device; trying to recover";
-        const juce::String initErr = initialiseWithTimeout(deviceManager, 0, 2, std::chrono::seconds(4));
+        // Use a very short timeout so the UI thread is never frozen for more than
+        // ~800 ms.  If the device cannot init quickly enough, skip playback and
+        // let the user open Settings → Audio to reconfigure.
+        const juce::String initErr = initialiseWithTimeout(deviceManager, 0, 2, std::chrono::milliseconds(800));
         if (initErr.isNotEmpty() || deviceManager.getCurrentAudioDevice() == nullptr) {
             qWarning() << "[DjEngine] Could not recover audio device on play";
             return;
@@ -3344,6 +3333,16 @@ void DjEngine::onTimer()
 
     if (mixerSource)
         mixerSource->setScratchTimbre(0.0f);
+
+    // Safety: transport must not run when there's no play intent and no cue preview.
+    // Catches any leftover transport state that togglePlay/pause missed (e.g. if
+    // isPlaying() was momentarily false during a race between scratch and normal play).
+    if (transportSource.isPlaying() && !m_playRequested && !m_mainCuePreviewActive) {
+        freezeTransportAt(transportSource.getCurrentPosition());
+        emit vuLevelChanged();
+        emit gainReductionChanged();
+        return;
+    }
 
     if (transportSource.isPlaying()) {
         // Store a fresh snapshot from the transport each control tick.
@@ -3694,7 +3693,10 @@ void DjEngine::applyScratchNeutralRouting()
 void DjEngine::restorePostScrubPlaybackState()
 {
     if (reverseWrapSource)
-        static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get())->setReverse(m_scrubSavedReverseState);
+        // Restore m_isReverse, not m_scrubSavedReverseState: the user may have
+        // pressed the REVERSE button while scratch was active; using the saved
+        // pre-scratch state would silently discard that change.
+        static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get())->setReverse(m_isReverse);
     if (resamplingSource)
         resamplingSource->setResamplingRatio(1.0);
     if (timeStretchSource)
