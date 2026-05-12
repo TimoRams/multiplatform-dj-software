@@ -363,6 +363,10 @@ Window {
                                                    boothFirstChannel)
             : false
 
+        // Keep DeckB on the pair immediately after DeckA (e.g. DeckA=ch1+2 → DeckB=ch3+4).
+        if (applied && deckB && deckB.setOutputFirstChannel)
+            deckB.setOutputFirstChannel(masterFirstChannel + 2)
+
         if (applied) {
             if (deckToApply && deckToApply.getCurrentAudioSampleRate) {
                 var actualSR = deckToApply.getCurrentAudioSampleRate()
@@ -932,7 +936,7 @@ Window {
                             if (!hasMidiDevices)
                                 midiDeviceList = ["No MIDI device found"]
 
-                            // Always allow manual mapping without a Mixxx XML file.
+                            // Always allow manual mapping without a mapping file.
                             mappingList = [noMappingLabel].concat(mappingList)
 
                             fillModel(midiDeviceModel, midiDeviceList)
@@ -1069,7 +1073,7 @@ Window {
                     RowLayout {
                         spacing: 16
                         Text {
-                            text: "Mixxx Mapping"
+                            text: "Mapping File"
                             color: "#aaa"
                             font.pixelSize: 12
                             Layout.preferredWidth: 130
@@ -1144,7 +1148,7 @@ Window {
                     }
 
                     Text {
-                        text: midiManager ? "Mappings Ordner: " + midiManager.getMappingsDirectoryPath() : ""
+                        text: midiManager ? "Mapping-Ordner: " + midiManager.getMappingsDirectoryPath() : ""
                         color: "#777"
                         font.pixelSize: 11
                         elide: Text.ElideMiddle
@@ -1242,192 +1246,195 @@ Window {
                         }
                     }
 
-                    // Scrollable mapping list
-                    ScrollView {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        clip: true
-                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                    // ── MappingRow component ──────────────────────────────────────────
+                    // Declared here (outside the Flickable) so Qt 6 doesn't confuse it
+                    // with the Flickable's content item.  Uses Item + anchors instead of
+                    // RowLayout so TapHandler works without Flickable interference.
+                    component MappingRow: Item {
+                        required property string labelStr
+                        required property string paramId
+                        height: 28
 
-                        // Helper component for mapping rows
-                        component MappingRow: RowLayout {
-                            required property string labelStr
-                            required property string paramId
+                        property string currentMapping: midiManager
+                            ? midiManager.getMappingLabel(paramId) : ""
+                        property bool isLearning: false
 
-                            Layout.fillWidth: true
-                            spacing: 6
-
-                            property string currentMapping: midiManager
-                                ? midiManager.getMappingLabel(paramId) : ""
-
-                            Connections {
-                                target: midiManager
-                                function onMappingUpdated() {
-                                    learnBtn.isLearning = false
-                                    if (midiManager)
-                                        currentMapping = midiManager.getMappingLabel(paramId)
-                                }
+                        Connections {
+                            target: midiManager
+                            function onMappingUpdated() {
+                                isLearning = false
+                                currentMapping = midiManager ? midiManager.getMappingLabel(paramId) : ""
                             }
-
-                            Text {
-                                text: labelStr
-                                color: "#aaa"
-                                font.pixelSize: 12
-                                Layout.preferredWidth: 120
-                                elide: Text.ElideRight
-                            }
-
-                            // Current assignment badge
-                            Rectangle {
-                                Layout.preferredWidth: 58
-                                height: 26
-                                color: currentMapping !== "" ? "#162816" : "transparent"
-                                border.color: currentMapping !== "" ? "#2a4a2a" : "transparent"
-                                radius: 3
-                                visible: true
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: parent.parent.currentMapping
-                                    color: "#5aba5a"
-                                    font.pixelSize: 10
-                                    font.bold: true
-                                }
-                            }
-
-                            // Learn button
-                            Rectangle {
-                                id: learnBtn
-                                Layout.fillWidth: true
-                                height: 26
-                                color: isLearning ? "#7a4800" : "#252525"
-                                border.color: isLearning ? "#c07800" : "#3a3a3a"
-                                radius: 3
-
-                                property bool isLearning: false
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: learnBtn.isLearning ? "Warte auf MIDI..." : "Learn"
-                                    color: learnBtn.isLearning ? "#ffd080" : "#aaa"
-                                    font.pixelSize: 11
-                                    font.bold: learnBtn.isLearning
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        if (midiManager && !learnBtn.isLearning) {
-                                            learnBtn.isLearning = true
-                                            midiManager.startMidiLearn(paramId)
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Clear button – only visible when mapped
-                            Rectangle {
-                                width: 26; height: 26
-                                visible: currentMapping !== ""
-                                color: clearArea.pressed ? "#4a1818" : "#2a1010"
-                                border.color: "#4a2020"
-                                radius: 3
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "✕"
-                                    color: "#d04040"
-                                    font.pixelSize: 11
-                                }
-
-                                MouseArea {
-                                    id: clearArea
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        if (midiManager)
-                                            midiManager.clearLearnedMapping(paramId)
-                                    }
-                                }
-                            }
-
-                            // Spacer so rows have equal width when no clear button
-                            Item {
-                                width: 26
-                                visible: currentMapping === ""
+                            function onLearnStarted(activeParamId) {
+                                if (activeParamId !== paramId) isLearning = false
                             }
                         }
 
-                        ColumnLayout {
-                            width: parent.width
-                            spacing: 6
+                        // Label
+                        Text {
+                            id: rowLabel
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 118
+                            text: labelStr
+                            color: "#888"
+                            font.pixelSize: 12
+                            elide: Text.ElideRight
+                        }
 
-                            // ── Transport ────────────────────────────────
-                            Text { text: "Transport"
-                                   color: "#666"; font.pixelSize: 11; font.bold: true
-                                   topPadding: 4 }
+                        // Assignment badge
+                        Rectangle {
+                            id: rowBadge
+                            anchors.left: rowLabel.right
+                            anchors.leftMargin: 6
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 72; height: 20
+                            color: currentMapping !== "" ? "#0c1e11" : "transparent"
+                            border.color: currentMapping !== "" ? "#194d27" : "transparent"
+                            radius: 4
+                            Text {
+                                anchors.centerIn: parent
+                                text: currentMapping
+                                color: "#40b85a"
+                                font.pixelSize: 10; font.bold: true
+                            }
+                        }
 
-                            MappingRow { labelStr: "Deck A Play"; paramId: "deckA_play" }
-                            MappingRow { labelStr: "Deck A Cue";  paramId: "deckA_cue"  }
-                            MappingRow { labelStr: "Deck B Play"; paramId: "deckB_play" }
-                            MappingRow { labelStr: "Deck B Cue";  paramId: "deckB_cue"  }
+                        // Clear button (right-anchored, only when mapped)
+                        Rectangle {
+                            id: rowClear
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 24; height: 20
+                            visible: currentMapping !== ""
+                            color: xHov.hovered ? "#330d0d" : "#1c0808"
+                            border.color: "#3a1414"
+                            radius: 4
+                            Text { anchors.centerIn: parent; text: "✕"; color: "#c04040"; font.pixelSize: 10 }
+                            HoverHandler { id: xHov; cursorShape: Qt.PointingHandCursor }
+                            TapHandler { onTapped: { if (midiManager) midiManager.clearLearnedMapping(paramId) } }
+                        }
 
-                            Rectangle { Layout.fillWidth: true; height: 1; color: "#222" }
+                        // Learn button (fills remaining width)
+                        Rectangle {
+                            anchors.left: rowBadge.right
+                            anchors.leftMargin: 5
+                            anchors.right: currentMapping !== "" ? rowClear.left : parent.right
+                            anchors.rightMargin: currentMapping !== "" ? 4 : 0
+                            anchors.verticalCenter: parent.verticalCenter
+                            height: 20
+                            color: isLearning ? "#2a1600" : (lHov.hovered ? "#222" : "#181818")
+                            border.color: isLearning ? "#d08000" : (lHov.hovered ? "#353535" : "#222")
+                            radius: 4
+                            Text {
+                                anchors.centerIn: parent
+                                text: isLearning ? "⬤  Warte auf MIDI..." : "Learn"
+                                color: isLearning ? "#ff9900" : "#555"
+                                font.pixelSize: 11; font.bold: isLearning
+                            }
+                            HoverHandler { id: lHov; cursorShape: Qt.PointingHandCursor }
+                            TapHandler {
+                                onTapped: {
+                                    if (midiManager && !isLearning) {
+                                        isLearning = true
+                                        midiManager.startMidiLearn(paramId)
+                                    }
+                                }
+                            }
+                        }
+                    }
 
-                            // ── Mixer ────────────────────────────────────
-                            Text { text: "Mixer"
-                                   color: "#666"; font.pixelSize: 11; font.bold: true }
+                    // ── Scrollable mapping list via bare Flickable ─────────────────────
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        clip: true
 
-                            MappingRow { labelStr: "Deck A Volume"; paramId: "deckA_vol"   }
-                            MappingRow { labelStr: "Deck B Volume"; paramId: "deckB_vol"   }
-                            MappingRow { labelStr: "Crossfader";    paramId: "crossfader"  }
+                        Flickable {
+                            id: mappingFlickable
+                            anchors.fill: parent
+                            contentWidth: width
+                            contentHeight: mappingCol.implicitHeight + 12
+                            flickableDirection: Flickable.VerticalFlick
+                            boundsBehavior: Flickable.StopAtBounds
+                            ScrollBar.vertical: ScrollBar {
+                                id: mScrollBar
+                                width: 5
+                                policy: ScrollBar.AsNeeded
+                                contentItem: Rectangle { radius: 2; color: mScrollBar.active ? "#666" : "#3a3a3a" }
+                                background: Rectangle { color: "transparent" }
+                            }
 
-                            Rectangle { Layout.fillWidth: true; height: 1; color: "#222" }
+                            Column {
+                                id: mappingCol
+                                width: mappingFlickable.width - 9
+                                spacing: 1
 
-                            // ── Deck A Klangformung ──────────────────────
-                            Text { text: "Deck A – Klangformung"
-                                   color: "#666"; font.pixelSize: 11; font.bold: true }
+                                // ── TRANSPORT ──────────────────────────────────
+                                Item { width: parent.width; height: 26
+                                    Text { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left
+                                           text: "TRANSPORT"; color: "#3a3a3a"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.5 } }
+                                MappingRow { width: parent.width; labelStr: "Deck A – Play";  paramId: "deckA_play" }
+                                MappingRow { width: parent.width; labelStr: "Deck A – Cue";   paramId: "deckA_cue"  }
+                                MappingRow { width: parent.width; labelStr: "Deck B – Play";  paramId: "deckB_play" }
+                                MappingRow { width: parent.width; labelStr: "Deck B – Cue";   paramId: "deckB_cue"  }
 
-                            MappingRow { labelStr: "Trim";    paramId: "deckA_gain"   }
-                            MappingRow { labelStr: "EQ High"; paramId: "deckA_eqHigh" }
-                            MappingRow { labelStr: "EQ Mid";  paramId: "deckA_eqMid"  }
-                            MappingRow { labelStr: "EQ Low";  paramId: "deckA_eqLow"  }
-                            MappingRow { labelStr: "Filter";  paramId: "deckA_filter" }
+                                Item { width: parent.width; height: 10 }
 
-                            Rectangle { Layout.fillWidth: true; height: 1; color: "#222" }
+                                // ── MIXER ──────────────────────────────────────
+                                Item { width: parent.width; height: 26
+                                    Text { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left
+                                           text: "MIXER"; color: "#3a3a3a"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.5 } }
+                                MappingRow { width: parent.width; labelStr: "Volume A";   paramId: "deckA_vol"   }
+                                MappingRow { width: parent.width; labelStr: "Volume B";   paramId: "deckB_vol"   }
+                                MappingRow { width: parent.width; labelStr: "Crossfader"; paramId: "crossfader"  }
 
-                            // ── Deck B Klangformung ──────────────────────
-                            Text { text: "Deck B – Klangformung"
-                                   color: "#666"; font.pixelSize: 11; font.bold: true }
+                                Item { width: parent.width; height: 10 }
 
-                            MappingRow { labelStr: "Trim";    paramId: "deckB_gain"   }
-                            MappingRow { labelStr: "EQ High"; paramId: "deckB_eqHigh" }
-                            MappingRow { labelStr: "EQ Mid";  paramId: "deckB_eqMid"  }
-                            MappingRow { labelStr: "EQ Low";  paramId: "deckB_eqLow"  }
-                            MappingRow { labelStr: "Filter";  paramId: "deckB_filter" }
+                                // ── DECK A ─────────────────────────────────────
+                                Item { width: parent.width; height: 26
+                                    Text { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left
+                                           text: "DECK A — EQ & FILTER"; color: "#3a3a3a"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.5 } }
+                                MappingRow { width: parent.width; labelStr: "Trim";    paramId: "deckA_gain"   }
+                                MappingRow { width: parent.width; labelStr: "EQ High"; paramId: "deckA_eqHigh" }
+                                MappingRow { width: parent.width; labelStr: "EQ Mid";  paramId: "deckA_eqMid"  }
+                                MappingRow { width: parent.width; labelStr: "EQ Low";  paramId: "deckA_eqLow"  }
+                                MappingRow { width: parent.width; labelStr: "Filter";  paramId: "deckA_filter" }
 
-                            Rectangle { Layout.fillWidth: true; height: 1; color: "#222" }
+                                Item { width: parent.width; height: 10 }
 
-                            // ── Tempo ────────────────────────────────────
-                            Text { text: "Tempo (±8%)"
-                                   color: "#666"; font.pixelSize: 11; font.bold: true }
+                                // ── DECK B ─────────────────────────────────────
+                                Item { width: parent.width; height: 26
+                                    Text { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left
+                                           text: "DECK B — EQ & FILTER"; color: "#3a3a3a"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.5 } }
+                                MappingRow { width: parent.width; labelStr: "Trim";    paramId: "deckB_gain"   }
+                                MappingRow { width: parent.width; labelStr: "EQ High"; paramId: "deckB_eqHigh" }
+                                MappingRow { width: parent.width; labelStr: "EQ Mid";  paramId: "deckB_eqMid"  }
+                                MappingRow { width: parent.width; labelStr: "EQ Low";  paramId: "deckB_eqLow"  }
+                                MappingRow { width: parent.width; labelStr: "Filter";  paramId: "deckB_filter" }
 
-                            MappingRow { labelStr: "Deck A Tempo"; paramId: "deckA_tempo" }
-                            MappingRow { labelStr: "Deck B Tempo"; paramId: "deckB_tempo" }
+                                Item { width: parent.width; height: 10 }
 
-                            Rectangle { Layout.fillWidth: true; height: 1; color: "#222" }
+                                // ── TEMPO ──────────────────────────────────────
+                                Item { width: parent.width; height: 26
+                                    Text { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left
+                                           text: "TEMPO"; color: "#3a3a3a"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.5 } }
+                                MappingRow { width: parent.width; labelStr: "Tempo A"; paramId: "deckA_tempo" }
+                                MappingRow { width: parent.width; labelStr: "Tempo B"; paramId: "deckB_tempo" }
 
-                            // ── Jog Wheels ───────────────────────────────
-                            Text { text: "Jog Wheels"
-                                   color: "#666"; font.pixelSize: 11; font.bold: true }
+                                Item { width: parent.width; height: 10 }
 
-                            MappingRow { labelStr: "Deck A Touch";  paramId: "deckA_jog_touch" }
-                            MappingRow { labelStr: "Deck A Move";   paramId: "deckA_jog_move"  }
-                            MappingRow { labelStr: "Deck B Touch";  paramId: "deckB_jog_touch" }
-                            MappingRow { labelStr: "Deck B Move";   paramId: "deckB_jog_move"  }
+                                // ── JOG WHEELS ─────────────────────────────────
+                                Item { width: parent.width; height: 26
+                                    Text { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left
+                                           text: "JOG WHEELS"; color: "#3a3a3a"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.5 } }
+                                MappingRow { width: parent.width; labelStr: "Touch A"; paramId: "deckA_jog_touch" }
+                                MappingRow { width: parent.width; labelStr: "Move A";  paramId: "deckA_jog_move"  }
+                                MappingRow { width: parent.width; labelStr: "Touch B"; paramId: "deckB_jog_touch" }
+                                MappingRow { width: parent.width; labelStr: "Move B";  paramId: "deckB_jog_move"  }
 
-                            Item { height: 8 }
+                                Item { width: parent.width; height: 12 }
+                            }
                         }
                     }
                 }

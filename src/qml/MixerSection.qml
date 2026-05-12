@@ -47,8 +47,21 @@ Rectangle {
     Connections {
         target: parameterStore
         function onParameterChanged(id, value) {
-            if      (id === mixer.channelAId + "_vol") volFaderA.value = value
-            else if (id === mixer.channelBId + "_vol") volFaderB.value = value
+            if      (id === mixer.channelAId + "_vol")     volFaderA.value          = value
+            else if (id === mixer.channelBId + "_vol")     volFaderB.value          = value
+            // EQ: MIDI 0-1 → knob -1..+1
+            else if (id === mixer.channelAId + "_eqHigh")  eqHighCellA.knob.value  = value * 2.0 - 1.0
+            else if (id === mixer.channelAId + "_eqMid")   eqMidCellA.knob.value   = value * 2.0 - 1.0
+            else if (id === mixer.channelAId + "_eqLow")   eqLowCellA.knob.value   = value * 2.0 - 1.0
+            else if (id === mixer.channelBId + "_eqHigh")  eqHighCellB.knob.value  = value * 2.0 - 1.0
+            else if (id === mixer.channelBId + "_eqMid")   eqMidCellB.knob.value   = value * 2.0 - 1.0
+            else if (id === mixer.channelBId + "_eqLow")   eqLowCellB.knob.value   = value * 2.0 - 1.0
+            // Gain/trim: MIDI 0-1 → knob 0..2
+            else if (id === mixer.channelAId + "_gain")    gainCellA.knob.value    = value * 2.0
+            else if (id === mixer.channelBId + "_gain")    gainCellB.knob.value    = value * 2.0
+            // Filter/SC: MIDI 0-1 → knob -1..+1
+            else if (id === mixer.channelAId + "_filter")  scCellA.knob.value      = value * 2.0 - 1.0
+            else if (id === mixer.channelBId + "_filter")  scCellB.knob.value      = value * 2.0 - 1.0
         }
     }
     Connections {
@@ -385,6 +398,7 @@ Rectangle {
                             Layout.maximumHeight:   mixer.eqRowH
 
                             KnobCell {
+                                id: eqHighCellA
                                 label: "H"; size: 22
                                 Layout.alignment: Qt.AlignHCenter
                                 knob.from: -1; knob.to: 1; knob.value: 0
@@ -392,6 +406,7 @@ Rectangle {
                                 knob.onValueChanged: { if (engineA) engineA.eqHigh = knob.value }
                             }
                             KnobCell {
+                                id: eqMidCellA
                                 label: "M"; size: 22
                                 Layout.alignment: Qt.AlignHCenter
                                 knob.from: -1; knob.to: 1; knob.value: 0
@@ -399,6 +414,7 @@ Rectangle {
                                 knob.onValueChanged: { if (engineA) engineA.eqMid = knob.value }
                             }
                             KnobCell {
+                                id: eqLowCellA
                                 label: "L"; size: 22
                                 Layout.alignment: Qt.AlignHCenter
                                 knob.from: -1; knob.to: 1; knob.value: 0
@@ -483,6 +499,7 @@ Rectangle {
                             Layout.maximumHeight:   mixer.eqRowH
 
                             KnobCell {
+                                id: eqHighCellB
                                 label: "H"; size: 22
                                 Layout.alignment: Qt.AlignHCenter
                                 knob.from: -1; knob.to: 1; knob.value: 0
@@ -490,6 +507,7 @@ Rectangle {
                                 knob.onValueChanged: { if (engineB) engineB.eqHigh = knob.value }
                             }
                             KnobCell {
+                                id: eqMidCellB
                                 label: "M"; size: 22
                                 Layout.alignment: Qt.AlignHCenter
                                 knob.from: -1; knob.to: 1; knob.value: 0
@@ -497,6 +515,7 @@ Rectangle {
                                 knob.onValueChanged: { if (engineB) engineB.eqMid = knob.value }
                             }
                             KnobCell {
+                                id: eqLowCellB
                                 label: "L"; size: 22
                                 Layout.alignment: Qt.AlignHCenter
                                 knob.from: -1; knob.to: 1; knob.value: 0
@@ -545,6 +564,7 @@ Rectangle {
                     spacing: 0
 
                     KnobCell {
+                        id: gainCellB
                         label: "GAIN"; size: mixer.outerKnob
                         Layout.alignment: Qt.AlignHCenter
                         knob.from: 0; knob.to: 2; knob.value: 1.0
@@ -554,6 +574,7 @@ Rectangle {
                     }
 
                     KnobCell {
+                        id: scCellB
                         label: "SC"; size: mixer.outerKnob
                         Layout.alignment: Qt.AlignHCenter
                         knob.from: -1; knob.to: 1; knob.value: 0.0; knob.defaultValue: 0.0

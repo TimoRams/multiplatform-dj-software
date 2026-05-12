@@ -283,6 +283,23 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                     const int channelAwareMsgId = 10000 + clampMidi7bit(ch) * 2000 + note;
                     const int msgId             = resolveMsgId(channelAwareMsgId, note);
                     processDecodedMidiEvent(msgId, 0.0f, true);
+                } else if ((line.contains("Pitchbend", Qt::CaseInsensitive) ||
+                            line.contains("Pitch bend", Qt::CaseInsensitive)) &&
+                           decodeTriple(ch, a, b)) {
+                    // aseqdump: "Pitchbend  <ch>, value <signed>" — b is raw +8192 offset
+                    // decodeTriple gives last 3 numbers; for negative aseqdump values the
+                    // sign is stripped by the digit regex, so use the channel-only 2-number
+                    // form and parse signed value directly.
+                    static const QRegularExpression pbRx(R"((?:pitchbend|pitch\s+bend)\s+(\d+),\s*value\s+(-?\d+))",
+                                                         QRegularExpression::CaseInsensitiveOption);
+                    const auto pbMatch = pbRx.match(line);
+                    if (pbMatch.hasMatch()) {
+                        const int pbCh  = pbMatch.captured(1).toInt();
+                        const int pbRaw = pbMatch.captured(2).toInt(); // -8192..+8191
+                        const int msgId = 10000 + std::max(0, std::min(15, pbCh)) * 2000 + 1500;
+                        const float value = static_cast<float>(pbRaw + 8192) / 16383.0f;
+                        processDecodedMidiEvent(msgId, value, false);
+                    }
                 }
             }
 
@@ -711,6 +728,8 @@ QString MidiControllerManager::getMappingLabel(const QString& paramId) const
         const int remainder = msgId - 10000;
         const int channel   = remainder / 2000;
         const int sub       = remainder % 2000;
+        if (sub == 1500)
+            return QStringLiteral("Ch%1 Pitch").arg(channel + 1);
         if (sub >= 1000)
             return QStringLiteral("Ch%1 CC %2").arg(channel + 1).arg(sub - 1000);
         return QStringLiteral("Ch%1 Note %2").arg(channel + 1).arg(sub);
@@ -886,6 +905,7 @@ void MidiControllerManager::startMidiLearn(const QString& parameterId)
     m_learnParameterId = parameterId;
     m_isLearning = true;
     qDebug() << "[MIDI] Learn started for" << parameterId;
+    emit learnStarted(parameterId);
 }
 
 void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool isNoteOff)
@@ -916,50 +936,69 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
 
 void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*/, const juce::MidiMessage& message)
 {
-    int msgId = -1;
-    float value = 0.0f;
-    bool noteOff = false;
+    // Runs on the JUCE MIDI thread — decode raw bytes (cheap, no allocation),
+    // then dispatch to the Qt main thread so processDecodedMidiEvent can safely
+    // read/write m_isLearning and the maps without a data race.
+    const int ch = message.getChannel() - 1; // 0-based
 
-    // JUCE returns 1-based channel; convert to 0-based for msgId encoding
-    const int ch = message.getChannel() - 1;
-
-    auto resolveMsgId = [this](int channelAware, int legacy) -> int
-    {
-        if (m_midiToParam.count(channelAware)) return channelAware;
-        if (m_midiToParam.count(legacy))       return legacy;
-        return channelAware; // learning: always store channel-aware
-    };
+    // rawEnc encoding by type:
+    //   CC         → raw controller value 0-127 (int stored as float)
+    //   Note On/Off→ velocity 0.0-1.0 float
+    //   Pitch Bend → (raw + 8192) as float, range 0-16383
+    int   msgId   = -1;
+    float rawEnc  = 0.0f;
+    bool  noteOff = false;
 
     if (message.isController()) {
-        const int cc              = message.getControllerNumber();
-        const int channelAwareMsgId = 10000 + ch * 2000 + 1000 + cc;
-        const int legacyMsgId       = cc + 1000;
-        msgId                       = resolveMsgId(channelAwareMsgId, legacyMsgId);
-
-        const auto it = m_midiToParam.find(msgId);
-        if (it != m_midiToParam.end() && it->second.endsWith("_jog_move")) {
-            // Two's-complement 7-bit relative CC: 1–63 = forward, 65–127 = backward
-            const int raw = message.getControllerValue();
-            value = static_cast<float>(raw < 64 ? raw : raw - 128);
-        } else {
-            value = clampMidi7bit(message.getControllerValue()) / 127.0f;
-        }
+        msgId  = 10000 + ch * 2000 + 1000 + message.getControllerNumber();
+        rawEnc = static_cast<float>(message.getControllerValue()); // 0-127
     } else if (message.isNoteOn()) {
-        const int note              = message.getNoteNumber();
-        const int channelAwareMsgId = 10000 + ch * 2000 + note;
-        msgId                       = resolveMsgId(channelAwareMsgId, note);
-        value                       = message.getFloatVelocity();
+        msgId  = 10000 + ch * 2000 + message.getNoteNumber();
+        rawEnc = message.getFloatVelocity();
     } else if (message.isNoteOff()) {
-        const int note              = message.getNoteNumber();
-        const int channelAwareMsgId = 10000 + ch * 2000 + note;
-        msgId                       = resolveMsgId(channelAwareMsgId, note);
-        value                       = 0.0f;
-        noteOff                     = true;
+        msgId  = 10000 + ch * 2000 + message.getNoteNumber();
+        noteOff = true;
+    } else if (message.isPitchWheel()) {
+        // sub-ID 1500 is reserved for pitch bend (per channel, no note/cc number)
+        msgId  = 10000 + ch * 2000 + 1500;
+        rawEnc = static_cast<float>(message.getPitchWheelValue() + 8192); // 0-16383
     } else {
         return;
     }
 
-    processDecodedMidiEvent(msgId, value, noteOff);
+    // Marshal to Qt main thread. Qt cancels the call automatically if `this`
+    // is destroyed before the event loop processes it.
+    QMetaObject::invokeMethod(this, [this, msgId, rawEnc, noteOff]() mutable
+    {
+        int   resolvedId    = msgId;
+        float resolvedValue = rawEnc;
+
+        if (msgId >= 10000) {
+            const int sub = (msgId - 10000) % 2000;
+
+            if (sub >= 1000 && sub < 1500) {
+                // Regular CC: check legacy (channel-stripped) mapping too
+                const int cc       = sub - 1000;
+                const int legacyId = cc + 1000;
+                if (!m_midiToParam.count(msgId) && m_midiToParam.count(legacyId))
+                    resolvedId = legacyId;
+
+                const auto it = m_midiToParam.find(resolvedId);
+                if (it != m_midiToParam.end() && it->second.endsWith("_jog_move")) {
+                    const int raw = static_cast<int>(rawEnc);
+                    resolvedValue = static_cast<float>(raw < 64 ? raw : raw - 128);
+                } else {
+                    resolvedValue = clampMidi7bit(static_cast<int>(rawEnc)) / 127.0f;
+                }
+            } else if (sub == 1500) {
+                // Pitch bend: normalise 0-16383 → 0.0-1.0
+                resolvedValue = rawEnc / 16383.0f;
+            }
+            // sub < 1000 → Note On/Off: rawEnc is already a normalised float velocity
+        }
+
+        processDecodedMidiEvent(resolvedId, resolvedValue, noteOff);
+    }, Qt::QueuedConnection);
 }
 
 void MidiControllerManager::onParameterChanged(const QString& id, float value)

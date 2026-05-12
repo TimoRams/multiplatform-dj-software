@@ -143,6 +143,10 @@ public:
 
     Q_INVOKABLE void ejectTrack();
 
+    // Per-deck output channel assignment (1-indexed first channel of the stereo pair).
+    // DeckA defaults to masterFirstChannel; DeckB is set to masterFirstChannel+2.
+    Q_INVOKABLE void setOutputFirstChannel(int firstChannel);
+
     // Master volume + anti-clip (global, shared across all decks)
     Q_INVOKABLE void setMasterVolume(float v);
     Q_INVOKABLE void setAntiClip(bool enabled);
@@ -438,6 +442,9 @@ private:
     bool   m_slipActive   = false;
     double m_slipPosition = 0.0;
     std::atomic<bool> m_cueEnabled { false };
+    // Per-instance output channel pair (1-indexed). DeckA defaults to 1 (ch1+2),
+    // DeckB is auto-assigned to masterFirstChannel+2 (ch3+4) at startup.
+    std::atomic<int>  m_masterFirstChannelAtomic { 1 };
     bool m_playRequested = false;
     bool m_keylock = false;
     bool m_quantizeEnabled = false;

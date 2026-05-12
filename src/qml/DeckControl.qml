@@ -397,13 +397,10 @@ Item {
         target: parameterStore
         function onParameterChanged(id, value) {
             if (!deck.engine) return
-            var expectedId = "deck" + deck.deckName + "_play"
-            if (id === expectedId) {
-                if (value > 0.5 && !deck.engine.isPlaying)
-                    deck.engine.togglePlay()
-                else if (value <= 0.5 && deck.engine.isPlaying)
-                    deck.engine.togglePlay()
-            }
+            // Tempo: MIDI 0-1 → slider percentage ±range
+            // (play/cue are handled in main.cpp; duplicating here causes double-toggle bugs)
+            if (id === "deck" + deck.deckName + "_tempo")
+                tempoSlider.value = value * 2.0 * tempoPanel.tempoRange - tempoPanel.tempoRange
         }
     }
 

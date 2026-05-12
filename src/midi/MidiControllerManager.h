@@ -60,6 +60,7 @@ signals:
     void midiDevicesUpdated();
     void controllerListUpdated();
     void mappingListUpdated();
+    void learnStarted(const QString& parameterId);
 
 public slots:
     void onParameterChanged(const QString& id, float value);

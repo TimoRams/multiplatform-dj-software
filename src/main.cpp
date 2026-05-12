@@ -260,6 +260,8 @@ int main(int argc, char *argv[])
         if (actualSR  > 0) settingsManager.setAudioSampleRate(actualSR);
         if (actualBuf > 0) settingsManager.setAudioBufferSize(actualBuf);
     }
+    // DeckB outputs to the pair immediately after DeckA (e.g. DeckA=ch1+2 → DeckB=ch3+4).
+    deckB->setOutputFirstChannel(settingsManager.getAudioMasterFirstChannel() + 2);
     logStartupStep("Audio device settings applied");
 
     auto coverProvider = std::make_unique<CoverArtProvider>();

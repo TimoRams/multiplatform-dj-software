@@ -77,10 +77,12 @@ Rectangle {
     Connections {
         target: parameterStore
         function onParameterChanged(id, value) {
-            if      (id === "deckA_vol") { cfBar.volA = value; cfBar.applyVolumes() }
-            else if (id === "deckB_vol") { cfBar.volB = value; cfBar.applyVolumes() }
-            else if (id === "deckC_vol") { cfBar.volC = value; cfBar.applyVolumes() }
-            else if (id === "deckD_vol") { cfBar.volD = value; cfBar.applyVolumes() }
+            if      (id === "deckA_vol")   { cfBar.volA = value; cfBar.applyVolumes() }
+            else if (id === "deckB_vol")   { cfBar.volB = value; cfBar.applyVolumes() }
+            else if (id === "deckC_vol")   { cfBar.volC = value; cfBar.applyVolumes() }
+            else if (id === "deckD_vol")   { cfBar.volD = value; cfBar.applyVolumes() }
+            // Crossfader: MIDI 0-1 → slider -1..+1
+            else if (id === "crossfader")  cfSlider.value = value * 2.0 - 1.0
         }
     }
 

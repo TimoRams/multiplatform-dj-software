@@ -1245,6 +1245,7 @@ public:
         if (source) source->prepareToPlay(samplesPerBlockExpected, sampleRate);
 
         m_routeScratch.setSize(2, std::max(64, samplesPerBlockExpected), false, true, true);
+        m_preFaderScratch.setSize(2, std::max(64, samplesPerBlockExpected), false, true, true);
 
         m_fx.prepare(sampleRate, samplesPerBlockExpected, 2);
         m_padFx.prepare(sampleRate, samplesPerBlockExpected, 2);
@@ -1334,7 +1335,12 @@ public:
         }
 
         juce::dsp::AudioBlock<float> block(*bufferToFill.buffer);
-        auto slicedBlock = block.getSubBlock(bufferToFill.startSample, bufferToFill.numSamples);
+        auto fullBlock   = block.getSubBlock(bufferToFill.startSample, bufferToFill.numSamples);
+        // EQ/filter chain is prepared for exactly 2 channels; clamp here so the
+        // ProcessorDuplicator never accesses an uninitialised filter instance when
+        // the device buffer is wider (e.g. user selects output channels 3+4).
+        auto slicedBlock = fullBlock.getSubsetChannelBlock(
+                               0, std::min(fullBlock.getNumChannels(), static_cast<size_t>(2)));
         juce::dsp::ProcessContextReplacing<float> context(slicedBlock);
 
         // Apply trim pre-EQ/pre-fader (QML trim range: 0..2).
@@ -1542,6 +1548,13 @@ public:
 
             m_preFaderPeakL.store(peakPreL, std::memory_order_relaxed);
             m_preFaderPeakR.store(peakPreR, std::memory_order_relaxed);
+
+            // Capture for PFL routing: headphones always hear this pre-fader signal
+            // so cue works even when the channel fader or crossfader is closed.
+            if (m_preFaderScratch.getNumSamples() >= n) {
+                m_preFaderScratch.copyFrom(0, 0, *buf, 0, s, n);
+                m_preFaderScratch.copyFrom(1, 0, *buf, std::min(1, buf->getNumChannels() - 1), s, n);
+            }
         }
 
         // Apply channel volume (includes crossfader contribution from UI).
@@ -1676,25 +1689,35 @@ private:
 
         const auto routing = unpackRouting(s_outputRoutingPacked.load(std::memory_order_relaxed));
         const bool cueActive = m_owner != nullptr && m_owner->cueEnabled();
+        // Per-deck master channel; falls back to shared routing if owner is null.
+        const int masterCh = (m_owner != nullptr)
+            ? m_owner->m_masterFirstChannelAtomic.load(std::memory_order_relaxed)
+            : routing.masterFirstChannel;
+
+        // Pre-fader signal for PFL routing (headphones/booth).
+        // Falls back to post-fader srcL/R if PFL buffer isn't ready yet.
+        const bool hasPfl = (m_preFaderScratch.getNumSamples() >= n);
+        const float* pflL = hasPfl ? m_preFaderScratch.getReadPointer(0) : srcL;
+        const float* pflR = hasPfl ? m_preFaderScratch.getReadPointer(1) : srcR;
 
         for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
             buffer.clear(ch, start, n);
 
         bool hasOutput = false;
-        if (routing.masterFirstChannel >= 1) {
-            routeStereoToPair(buffer, srcL, srcR, start, n, routing.masterFirstChannel, false);
+        if (masterCh >= 1) {
+            routeStereoToPair(buffer, srcL, srcR, start, n, masterCh, false);
             hasOutput = true;
         }
 
         if (routing.boothFirstChannel >= 1) {
             const bool add = hasOutput;
-            routeStereoToPair(buffer, srcL, srcR, start, n, routing.boothFirstChannel, add);
+            routeStereoToPair(buffer, pflL, pflR, start, n, routing.boothFirstChannel, add);
             hasOutput = true;
         }
 
         if (cueActive && routing.headphonesFirstChannel >= 1) {
             const bool add = hasOutput;
-            routeStereoToPair(buffer, srcL, srcR, start, n, routing.headphonesFirstChannel, add);
+            routeStereoToPair(buffer, pflL, pflR, start, n, routing.headphonesFirstChannel, add);
         }
     }
 
@@ -1797,6 +1820,7 @@ private:
     float m_rollOutRampDown  = 0.0f;
     int   m_rollOutLoopLen   = 0;
     juce::AudioBuffer<float> m_routeScratch;
+    juce::AudioBuffer<float> m_preFaderScratch;  // PFL tap: pre-channel-fader stereo signal
     std::atomic<float> scratchTimbre { 0.0f };
     float m_scratchWarmLpState[2] { 0.0f, 0.0f };
 
@@ -2327,6 +2351,8 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     masterFirstChannel = clampFirstChannelForPack(masterFirstChannel);
     headphonesFirstChannel = clampFirstChannelForPack(headphonesFirstChannel);
     boothFirstChannel = clampFirstChannelForPack(boothFirstChannel);
+    const int previousMasterFirstChannel = m_masterFirstChannelAtomic.load(std::memory_order_relaxed);
+    m_masterFirstChannelAtomic.store(masterFirstChannel, std::memory_order_relaxed);
     s_outputRoutingPacked.store(packRouting({
         .masterFirstChannel = masterFirstChannel,
         .headphonesFirstChannel = headphonesFirstChannel,
@@ -2429,6 +2455,7 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     };
     int maxRequestedChannel = std::max({
         maxRoutedChannel(masterFirstChannel),
+        maxRoutedChannel(masterFirstChannel + 2),  // second deck auto-assigned to next pair
         maxRoutedChannel(headphonesFirstChannel),
         maxRoutedChannel(boothFirstChannel),
         2
@@ -2478,6 +2505,7 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
         selectedOutputChannels.setBit(firstChannel);
     };
     setPairBits(masterFirstChannel);
+    setPairBits(masterFirstChannel + 2);  // second deck output pair
     setPairBits(headphonesFirstChannel);
     setPairBits(boothFirstChannel);
     if (jackBackendRequested) {
@@ -2550,6 +2578,7 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
         }
 
         s_outputRoutingPacked.store(packRouting(previousRouting), std::memory_order_relaxed);
+        m_masterFirstChannelAtomic.store(previousMasterFirstChannel, std::memory_order_relaxed);
 
         QString errorText = QString::fromStdString(error.toStdString());
         if (errorText.isEmpty())
@@ -4071,6 +4100,12 @@ void DjEngine::halveBpm()
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+
+void DjEngine::setOutputFirstChannel(int firstChannel)
+{
+    const int clamped = std::max(1, firstChannel);
+    m_masterFirstChannelAtomic.store(clamped, std::memory_order_relaxed);
+}
 
 void DjEngine::setMasterVolume(float v) {
     MixerDspSource::s_masterVolume.store(std::clamp(v, 0.0f, 1.5f),
