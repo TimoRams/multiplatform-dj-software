@@ -237,24 +237,52 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                 while (it.hasNext())
                     numbers.push_back(it.next().captured(1).toInt());
 
-                auto decodePair = [&numbers](int& first, int& second) -> bool
+                // aseqdump line format: "... Ch, controller/note N, value/velocity V"
+                // Numbers from end: [..., channel, controllerOrNote, value]
+                auto decodeTriple = [&numbers](int& ch, int& first, int& second) -> bool
                 {
-                    if (numbers.size() < 2)
+                    if (numbers.size() < 3)
                         return false;
-                    first = numbers.at(numbers.size() - 2);
+                    ch     = numbers.at(numbers.size() - 3);
+                    first  = numbers.at(numbers.size() - 2);
                     second = numbers.at(numbers.size() - 1);
                     return true;
                 };
 
-                int a = 0;
-                int b = 0;
+                // Helper: prefer channel-aware msgId if already mapped, else use it for new learns
+                auto resolveMsgId = [this](int channelAware, int legacy) -> int
+                {
+                    if (m_midiToParam.count(channelAware)) return channelAware;
+                    if (m_midiToParam.count(legacy))       return legacy;
+                    return channelAware; // learning: store channel-aware
+                };
 
-                if (line.contains("Control change", Qt::CaseInsensitive) && decodePair(a, b)) {
-                    processDecodedMidiEvent(clampMidi7bit(a) + 1000, clampMidi7bit(b) / 127.0f, false);
-                } else if (line.contains("Note on", Qt::CaseInsensitive) && decodePair(a, b)) {
-                    processDecodedMidiEvent(clampMidi7bit(a), clampMidi7bit(b) / 127.0f, false);
-                } else if (line.contains("Note off", Qt::CaseInsensitive) && decodePair(a, b)) {
-                    processDecodedMidiEvent(clampMidi7bit(a), clampMidi7bit(b) / 127.0f, true);
+                int ch = 0, a = 0, b = 0;
+
+                if (line.contains("Control change", Qt::CaseInsensitive) && decodeTriple(ch, a, b)) {
+                    const int cc              = clampMidi7bit(a);
+                    const int channelAwareMsgId = 10000 + clampMidi7bit(ch) * 2000 + 1000 + cc;
+                    const int legacyMsgId       = cc + 1000;
+                    const int msgId             = resolveMsgId(channelAwareMsgId, legacyMsgId);
+                    const auto it               = m_midiToParam.find(msgId);
+                    float value;
+                    if (it != m_midiToParam.end() && it->second.endsWith("_jog_move")) {
+                        // Two's-complement 7-bit relative CC: 1–63 = forward, 65–127 = backward
+                        value = static_cast<float>(b < 64 ? b : b - 128);
+                    } else {
+                        value = clampMidi7bit(b) / 127.0f;
+                    }
+                    processDecodedMidiEvent(msgId, value, false);
+                } else if (line.contains("Note on", Qt::CaseInsensitive) && decodeTriple(ch, a, b)) {
+                    const int note              = clampMidi7bit(a);
+                    const int channelAwareMsgId = 10000 + clampMidi7bit(ch) * 2000 + note;
+                    const int msgId             = resolveMsgId(channelAwareMsgId, note);
+                    processDecodedMidiEvent(msgId, clampMidi7bit(b) / 127.0f, false);
+                } else if (line.contains("Note off", Qt::CaseInsensitive) && decodeTriple(ch, a, b)) {
+                    const int note              = clampMidi7bit(a);
+                    const int channelAwareMsgId = 10000 + clampMidi7bit(ch) * 2000 + note;
+                    const int msgId             = resolveMsgId(channelAwareMsgId, note);
+                    processDecodedMidiEvent(msgId, 0.0f, true);
                 }
             }
 
@@ -623,6 +651,8 @@ QString MidiControllerManager::mapMixxxControlToInternalParam(const QString& gro
         if (k == "filterlow") return "deckA_eqLow";
         if (k == "filter" || k == "superknob") return "deckA_filter";
         if (k == "rate") return "deckA_tempo";
+        if (k == "jog") return "deckA_jog_move";
+        if (k == "scratch2_enable") return "deckA_jog_touch";
     }
 
     if (g == "[Channel2]") {
@@ -635,6 +665,8 @@ QString MidiControllerManager::mapMixxxControlToInternalParam(const QString& gro
         if (k == "filterlow") return "deckB_eqLow";
         if (k == "filter" || k == "superknob") return "deckB_filter";
         if (k == "rate") return "deckB_tempo";
+        if (k == "jog") return "deckB_jog_move";
+        if (k == "scratch2_enable") return "deckB_jog_touch";
     }
 
     // Mixxx EQ rack groups: [EqualizerRack1_[ChannelX]_Effect1]
@@ -674,6 +706,15 @@ QString MidiControllerManager::getMappingLabel(const QString& paramId) const
     if (it == m_paramToMidi.end())
         return {};
     const int msgId = it->second;
+    // Channel-aware format: 10000 + channel*2000 + (isCc ? 1000+cc : note)
+    if (msgId >= 10000) {
+        const int remainder = msgId - 10000;
+        const int channel   = remainder / 2000;
+        const int sub       = remainder % 2000;
+        if (sub >= 1000)
+            return QStringLiteral("Ch%1 CC %2").arg(channel + 1).arg(sub - 1000);
+        return QStringLiteral("Ch%1 Note %2").arg(channel + 1).arg(sub);
+    }
     if (msgId >= 1000)
         return QStringLiteral("CC %1").arg(msgId - 1000);
     return QStringLiteral("Note %1").arg(msgId);
@@ -804,9 +845,11 @@ bool MidiControllerManager::loadMixxxXmlMapping(const QString& mappingFileName)
             if (midiNo < 0 || statusNo < 0)
                 continue;
 
-            const int statusHi = (statusNo & 0xF0);
-            const bool isCc = (statusHi == 0xB0);
-            const int msgId = isCc ? (clampMidi7bit(midiNo) + 1000) : clampMidi7bit(midiNo);
+            const int statusHi  = (statusNo & 0xF0);
+            const bool isCc     = (statusHi == 0xB0);
+            const int midiCh    = statusNo & 0x0F; // 0-based channel from status byte
+            const int msgId     = 10000 + midiCh * 2000
+                                  + (isCc ? 1000 + clampMidi7bit(midiNo) : clampMidi7bit(midiNo));
 
             nextMidiToParam[msgId] = param;
             nextParamToMidi[param] = msgId;
@@ -877,16 +920,41 @@ void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*
     float value = 0.0f;
     bool noteOff = false;
 
+    // JUCE returns 1-based channel; convert to 0-based for msgId encoding
+    const int ch = message.getChannel() - 1;
+
+    auto resolveMsgId = [this](int channelAware, int legacy) -> int
+    {
+        if (m_midiToParam.count(channelAware)) return channelAware;
+        if (m_midiToParam.count(legacy))       return legacy;
+        return channelAware; // learning: always store channel-aware
+    };
+
     if (message.isController()) {
-        msgId = message.getControllerNumber() + 1000;
-        value = clampMidi7bit(message.getControllerValue()) / 127.0f;
+        const int cc              = message.getControllerNumber();
+        const int channelAwareMsgId = 10000 + ch * 2000 + 1000 + cc;
+        const int legacyMsgId       = cc + 1000;
+        msgId                       = resolveMsgId(channelAwareMsgId, legacyMsgId);
+
+        const auto it = m_midiToParam.find(msgId);
+        if (it != m_midiToParam.end() && it->second.endsWith("_jog_move")) {
+            // Two's-complement 7-bit relative CC: 1–63 = forward, 65–127 = backward
+            const int raw = message.getControllerValue();
+            value = static_cast<float>(raw < 64 ? raw : raw - 128);
+        } else {
+            value = clampMidi7bit(message.getControllerValue()) / 127.0f;
+        }
     } else if (message.isNoteOn()) {
-        msgId = message.getNoteNumber();
-        value = message.getFloatVelocity();
+        const int note              = message.getNoteNumber();
+        const int channelAwareMsgId = 10000 + ch * 2000 + note;
+        msgId                       = resolveMsgId(channelAwareMsgId, note);
+        value                       = message.getFloatVelocity();
     } else if (message.isNoteOff()) {
-        msgId = message.getNoteNumber();
-        value = 0.0f;
-        noteOff = true;
+        const int note              = message.getNoteNumber();
+        const int channelAwareMsgId = 10000 + ch * 2000 + note;
+        msgId                       = resolveMsgId(channelAwareMsgId, note);
+        value                       = 0.0f;
+        noteOff                     = true;
     } else {
         return;
     }
@@ -899,6 +967,10 @@ void MidiControllerManager::onParameterChanged(const QString& id, float value)
     if (!m_midiOutput)
         return;
 
+    // Jog params are input-only; no MIDI feedback needed
+    if (id.endsWith("_jog_move") || id.endsWith("_jog_touch"))
+        return;
+
     const auto it = m_paramToMidi.find(id);
     if (it == m_paramToMidi.end())
         return;
@@ -906,13 +978,23 @@ void MidiControllerManager::onParameterChanged(const QString& id, float value)
     const int msgId = it->second;
     juce::MidiMessage msg;
 
-    if (msgId >= 1000) {
-        msg = juce::MidiMessage::controllerEvent(1, msgId - 1000, clampMidi7bit(static_cast<int>(value * 127.0f)));
+    // Decode channel and sub-id from channel-aware format (≥10000) or legacy format
+    int channel = 1; // 1-based for JUCE
+    int subId   = msgId;
+    if (msgId >= 10000) {
+        const int remainder = msgId - 10000;
+        channel = (remainder / 2000) + 1; // convert 0-based channel to 1-based
+        subId   = remainder % 2000;
+    }
+
+    if (subId >= 1000) {
+        msg = juce::MidiMessage::controllerEvent(channel, subId - 1000,
+                                                  clampMidi7bit(static_cast<int>(value * 127.0f)));
     } else {
         if (value > 0.0f)
-            msg = juce::MidiMessage::noteOn(1, clampMidi7bit(msgId), value);
+            msg = juce::MidiMessage::noteOn(channel, clampMidi7bit(subId), value);
         else
-            msg = juce::MidiMessage::noteOff(1, clampMidi7bit(msgId), 0.0f);
+            msg = juce::MidiMessage::noteOff(channel, clampMidi7bit(subId), 0.0f);
     }
 
     m_midiOutput->sendMessageNow(msg);

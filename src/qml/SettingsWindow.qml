@@ -1416,6 +1416,17 @@ Window {
                             MappingRow { labelStr: "Deck A Tempo"; paramId: "deckA_tempo" }
                             MappingRow { labelStr: "Deck B Tempo"; paramId: "deckB_tempo" }
 
+                            Rectangle { Layout.fillWidth: true; height: 1; color: "#222" }
+
+                            // ── Jog Wheels ───────────────────────────────
+                            Text { text: "Jog Wheels"
+                                   color: "#666"; font.pixelSize: 11; font.bold: true }
+
+                            MappingRow { labelStr: "Deck A Touch";  paramId: "deckA_jog_touch" }
+                            MappingRow { labelStr: "Deck A Move";   paramId: "deckA_jog_move"  }
+                            MappingRow { labelStr: "Deck B Touch";  paramId: "deckB_jog_touch" }
+                            MappingRow { labelStr: "Deck B Move";   paramId: "deckB_jog_move"  }
+
                             Item { height: 8 }
                         }
                     }

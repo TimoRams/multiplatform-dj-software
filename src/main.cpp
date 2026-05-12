@@ -304,6 +304,36 @@ int main(int argc, char *argv[])
         // Tempo fader: MIDI 0-1 → engine -8% to +8%
         else if (id == "deckA_tempo")  deckAPtr->setTempoPercent(static_cast<double>(value) * 16.0 - 8.0);
         else if (id == "deckB_tempo")  deckBPtr->setTempoPercent(static_cast<double>(value) * 16.0 - 8.0);
+        // Jog touch: value > 0 = finger down (enter scratch), 0 = lift (resume)
+        else if (id == "deckA_jog_touch") {
+            static bool jogATouched = false;
+            const bool touched = (value > 0.5f);
+            if (touched != jogATouched) {
+                jogATouched = touched;
+                if (touched) deckAPtr->pauseForScrub();
+                else         deckAPtr->resumeAfterScrub();
+            }
+        }
+        else if (id == "deckB_jog_touch") {
+            static bool jogBTouched = false;
+            const bool touched = (value > 0.5f);
+            if (touched != jogBTouched) {
+                jogBTouched = touched;
+                if (touched) deckBPtr->pauseForScrub();
+                else         deckBPtr->resumeAfterScrub();
+            }
+        }
+        // Jog move: value = signed tick delta; 128 ticks/rev at 33.33 RPM vinyl
+        else if (id == "deckA_jog_move") {
+            const double deltaSeconds = static_cast<double>(value) * (60.0 / 33.333) / 128.0;
+            if (deckAPtr->isScrubbing())
+                deckAPtr->scratchBySeconds(deltaSeconds);
+        }
+        else if (id == "deckB_jog_move") {
+            const double deltaSeconds = static_cast<double>(value) * (60.0 / 33.333) / 128.0;
+            if (deckBPtr->isScrubbing())
+                deckBPtr->scratchBySeconds(deltaSeconds);
+        }
     });
 
     engine.addImageProvider("coverart", coverProvider.release());
