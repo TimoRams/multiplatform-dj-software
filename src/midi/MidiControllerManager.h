@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QElapsedTimer>
 #include <QObject>
 #include <QStringList>
 #include <QTimer>
@@ -55,12 +56,18 @@ public:
     Q_INVOKABLE void clearLearnedMapping(const QString& paramId);
     Q_INVOKABLE void saveNativeMapping();
 
+    // Live MIDI monitor: last received event as a short human-readable string.
+    // Updated on EVERY incoming message so the UI can show what the controller sends.
+    Q_PROPERTY(QString lastMidiEvent READ lastMidiEvent NOTIFY lastMidiEventChanged)
+    QString lastMidiEvent() const { return m_lastMidiEvent; }
+
 signals:
     void mappingUpdated();
     void midiDevicesUpdated();
     void controllerListUpdated();
     void mappingListUpdated();
     void learnStarted(const QString& parameterId);
+    void lastMidiEventChanged();
 
 public slots:
     void onParameterChanged(const QString& id, float value);
@@ -93,6 +100,13 @@ private:
     // Learn State
     bool m_isLearning = false;
     QString m_learnParameterId;
+    QElapsedTimer m_learnTimer; // grace-period guard
+
+    // 14-bit CC accumulation: paramId → last 7-bit MSB value
+    std::map<QString, int> m_msbAccumulator;
+
+    // Live MIDI monitor
+    QString m_lastMidiEvent;
 
 #if defined(Q_OS_LINUX)
     std::unique_ptr<QProcess> m_alsaInputMonitor;
@@ -105,6 +119,7 @@ private:
     void startAlsaInputMonitor(const juce::String& pseudoIdentifier);
     void stopAlsaInputMonitor();
     void processDecodedMidiEvent(int msgId, float value, bool isNoteOff);
+    void learnMapping(int msgId);
     void restoreSavedDeviceSelections();
     void openMidiInputByIdentifier(const juce::String& identifier);
     void openMidiOutputByIdentifier(const juce::String& identifier);

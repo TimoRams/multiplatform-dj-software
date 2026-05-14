@@ -273,16 +273,62 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                         value = clampMidi7bit(b) / 127.0f;
                     }
                     processDecodedMidiEvent(msgId, value, false);
-                } else if (line.contains("Note on", Qt::CaseInsensitive) && decodeTriple(ch, a, b)) {
-                    const int note              = clampMidi7bit(a);
-                    const int channelAwareMsgId = 10000 + clampMidi7bit(ch) * 2000 + note;
-                    const int msgId             = resolveMsgId(channelAwareMsgId, note);
-                    processDecodedMidiEvent(msgId, clampMidi7bit(b) / 127.0f, false);
-                } else if (line.contains("Note off", Qt::CaseInsensitive) && decodeTriple(ch, a, b)) {
-                    const int note              = clampMidi7bit(a);
-                    const int channelAwareMsgId = 10000 + clampMidi7bit(ch) * 2000 + note;
-                    const int msgId             = resolveMsgId(channelAwareMsgId, note);
-                    processDecodedMidiEvent(msgId, 0.0f, true);
+                } else if (line.contains("Note on", Qt::CaseInsensitive) ||
+                           line.contains("Note off", Qt::CaseInsensitive)) {
+                    const bool isOff = line.contains("Note off", Qt::CaseInsensitive);
+
+                    // --- Format A: "Chan N ... (statusByte note vel)"  ← newer aseqdump ---
+                    // Extract channel from "Chan N" (1-based) and note/vel from the 3-number
+                    // parenthetical. The first number in the paren is the MIDI status byte:
+                    // either treat "Chan N" for channel OR decode status & 0x0F.
+                    static const QRegularExpression noteParenRx(
+                        R"((?:Chan|Channel)\s+(\d+).*?\((\d+)\s+(\d+)\s+(\d+)\))",
+                        QRegularExpression::CaseInsensitiveOption);
+
+                    // --- Format B: "Chan N, Note on/off NOTE vel VELOCITY"  ← older aseqdump ---
+                    static const QRegularExpression noteVerboseRx(
+                        R"((?:Chan|Channel)\s+(\d+).*?(?:velocity|vel)[^\d]*(\d+))",
+                        QRegularExpression::CaseInsensitiveOption);
+
+                    int ch0  = -1;
+                    int note = -1;
+                    int vel  = 0;
+
+                    const auto nmA = noteParenRx.match(line);
+                    if (nmA.hasMatch()) {
+                        ch0  = std::max(0, std::min(15, nmA.captured(1).toInt() - 1));
+                        note = clampMidi7bit(nmA.captured(3).toInt());
+                        vel  = clampMidi7bit(nmA.captured(4).toInt());
+                    } else {
+                        // Format B: get note from note-name number or last available digit,
+                        // velocity from "velocity N" or "vel N" suffix.
+                        // Extract channel from Chan/Channel N
+                        static const QRegularExpression chanRx(
+                            R"((?:Chan|Channel)\s+(\d+))", QRegularExpression::CaseInsensitiveOption);
+                        const auto chanM = chanRx.match(line);
+                        if (chanM.hasMatch())
+                            ch0 = std::max(0, std::min(15, chanM.captured(1).toInt() - 1));
+
+                        const auto nmB = noteVerboseRx.match(line);
+                        if (nmB.hasMatch()) {
+                            vel = clampMidi7bit(nmB.captured(2).toInt());
+                            // Note number: second-to-last digit group before "velocity"
+                            // Fall back to decodeTriple last 2 numbers
+                            if (ch0 >= 0 && decodeTriple(ch, a, b)) {
+                                note = clampMidi7bit(a); // 'a' is second-from-last number
+                            }
+                        }
+                    }
+
+                    if (ch0 >= 0 && note >= 0) {
+                        const int channelAwareMsgId = 10000 + ch0 * 2000 + note;
+                        const int msgId             = resolveMsgId(channelAwareMsgId, note);
+                        const bool zeroVelocity     = isOff || (vel == 0);
+                        qDebug() << "[MIDI ALSA]" << (isOff ? "NoteOff" : "NoteOn")
+                                 << "ch0:" << ch0 << "note:" << note << "vel:" << vel
+                                 << "msgId:" << msgId;
+                        processDecodedMidiEvent(msgId, zeroVelocity ? 0.0f : vel / 127.0f, zeroVelocity);
+                    }
                 } else if ((line.contains("Pitchbend", Qt::CaseInsensitive) ||
                             line.contains("Pitch bend", Qt::CaseInsensitive)) &&
                            decodeTriple(ch, a, b)) {
@@ -296,7 +342,8 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                     if (pbMatch.hasMatch()) {
                         const int pbCh  = pbMatch.captured(1).toInt();
                         const int pbRaw = pbMatch.captured(2).toInt(); // -8192..+8191
-                        const int msgId = 10000 + std::max(0, std::min(15, pbCh)) * 2000 + 1500;
+                        const int channelAwareMsgId = 10000 + std::max(0, std::min(15, pbCh)) * 2000 + 1500;
+                        const int msgId = resolveMsgId(channelAwareMsgId, 1500);
                         const float value = static_cast<float>(pbRaw + 8192) / 16383.0f;
                         processDecodedMidiEvent(msgId, value, false);
                     }
@@ -734,6 +781,8 @@ QString MidiControllerManager::getMappingLabel(const QString& paramId) const
             return QStringLiteral("Ch%1 CC %2").arg(channel + 1).arg(sub - 1000);
         return QStringLiteral("Ch%1 Note %2").arg(channel + 1).arg(sub);
     }
+    if (msgId == 1500)
+        return QStringLiteral("Pitch");
     if (msgId >= 1000)
         return QStringLiteral("CC %1").arg(msgId - 1000);
     return QStringLiteral("Note %1").arg(msgId);
@@ -864,11 +913,17 @@ bool MidiControllerManager::loadMixxxXmlMapping(const QString& mappingFileName)
             if (midiNo < 0 || statusNo < 0)
                 continue;
 
-            const int statusHi  = (statusNo & 0xF0);
-            const bool isCc     = (statusHi == 0xB0);
-            const int midiCh    = statusNo & 0x0F; // 0-based channel from status byte
-            const int msgId     = 10000 + midiCh * 2000
-                                  + (isCc ? 1000 + clampMidi7bit(midiNo) : clampMidi7bit(midiNo));
+            const int statusHi = (statusNo & 0xF0);
+            const int midiCh   = statusNo & 0x0F; // 0-based channel from status byte
+            int subId = clampMidi7bit(midiNo);
+            if (statusHi == 0xB0)
+                subId = 1000 + clampMidi7bit(midiNo);
+            else if (statusHi == 0xE0)
+                subId = 1500;
+            else if (statusHi != 0x80 && statusHi != 0x90)
+                continue;
+
+            const int msgId = 10000 + midiCh * 2000 + subId;
 
             nextMidiToParam[msgId] = param;
             nextParamToMidi[param] = msgId;
@@ -904,28 +959,78 @@ void MidiControllerManager::startMidiLearn(const QString& parameterId)
 
     m_learnParameterId = parameterId;
     m_isLearning = true;
+    m_learnTimer.start(); // start grace-period clock
+    // Clear live monitor so the UI immediately shows the next incoming event
+    m_lastMidiEvent.clear();
+    emit lastMidiEventChanged();
     qDebug() << "[MIDI] Learn started for" << parameterId;
     emit learnStarted(parameterId);
 }
 
 void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool isNoteOff)
 {
-    if (m_isLearning && !isNoteOff) {
-        m_midiToParam[msgId] = m_learnParameterId;
-        m_paramToMidi[m_learnParameterId] = msgId;
-        m_isLearning = false;
+    // Live MIDI monitor — update for every event (both JUCE and ALSA paths)
+    {
+        const int sub  = (msgId >= 10000) ? (msgId - 10000) % 2000 : -1;
+        const int chNo = (msgId >= 10000) ? (msgId - 10000) / 2000 : 0;
+        QString evtLabel;
+        if (isNoteOff)        evtLabel = QStringLiteral("Ch%1 NoteOff %2").arg(chNo+1).arg(sub);
+        else if (sub == 1500) evtLabel = QStringLiteral("Ch%1 PitchBend").arg(chNo+1);
+        else if (sub >= 1000) evtLabel = QStringLiteral("Ch%1 CC %2 = %3").arg(chNo+1).arg(sub-1000).arg(static_cast<int>(value*127));
+        else if (sub >= 0)    evtLabel = QStringLiteral("Ch%1 Note %2  vel %3").arg(chNo+1).arg(sub).arg(static_cast<int>(value*127));
 
-        qDebug() << "[MIDI] Learned" << msgId << "->" << m_learnParameterId;
-        saveNativeMapping();
-        emit mappingUpdated();
+        qDebug() << "[MIDI IN]" << evtLabel << (m_isLearning ? "(LEARNING)" : "");
+        if (!evtLabel.isEmpty() && evtLabel != m_lastMidiEvent) {
+            m_lastMidiEvent = evtLabel;
+            emit lastMidiEventChanged();
+        }
+    }
+
+    if (m_isLearning && !isNoteOff) {
+        // 150 ms grace period prevents CC jitter from resting faders from
+        // stealing Learn the instant the user clicks the Learn button.
+        if (m_learnTimer.elapsed() >= 150)
+            learnMapping(msgId);
+        return; // always skip dispatch while in learn mode
+    }
+
+    if (!m_parameterStore)
         return;
+
+    // 14-bit CC handling: accumulate MSB (CC 0-31) and combine with LSB (CC 32-63).
+    // The DDJ-FLX10 (and most modern controllers) send every analog control as a
+    // MSB+LSB pair for 14-bit resolution instead of 7-bit.
+    {
+        const int sub = (msgId >= 10000) ? (msgId - 10000) % 2000 : -1;
+
+        if (!isNoteOff && sub >= 1000 && sub < 1032) {
+            // MSB CC (CC 0-31): accumulate the 7-bit value for later LSB pairing
+            const auto msbIt = m_midiToParam.find(msgId);
+            if (msbIt != m_midiToParam.end())
+                m_msbAccumulator[msbIt->second] = static_cast<int>(value * 127.0f);
+            // fall through to standard 7-bit dispatch below so the control moves
+            // immediately, even before the LSB arrives
+        } else if (!isNoteOff && sub >= 1032 && sub < 1064) {
+            // LSB CC (CC 32-63): combine with stored MSB for 14-bit precision
+            const int msbMsgId = msgId - 32; // paired MSB is always 32 less
+            const auto msbIt = m_midiToParam.find(msbMsgId);
+            if (msbIt != m_midiToParam.end()) {
+                const QString& pId = msbIt->second;
+                const int lsb = static_cast<int>(value * 127.0f);
+                const int msb = m_msbAccumulator.count(pId) ? m_msbAccumulator.at(pId) : 64;
+                const float combined = static_cast<float>((msb << 7) | lsb) / 16383.0f;
+                QMetaObject::invokeMethod(m_parameterStore, "setParameter",
+                                          Qt::QueuedConnection,
+                                          Q_ARG(QString, pId),
+                                          Q_ARG(float, combined));
+                return; // handled via 14-bit pairing; don't double-dispatch
+            }
+            // No paired MSB found → fall through to standard dispatch
+        }
     }
 
     const auto it = m_midiToParam.find(msgId);
     if (it == m_midiToParam.end())
-        return;
-
-    if (!m_parameterStore)
         return;
 
     const QString paramId = it->second;
@@ -934,8 +1039,50 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
                               Q_ARG(float, value));
 }
 
+void MidiControllerManager::learnMapping(int msgId)
+{
+    if (m_learnParameterId.isEmpty())
+        return;
+
+    // Keep the maps one-to-one. Re-learning a control must not leave an old
+    // MIDI event still driving the same parameter, and stealing a MIDI event
+    // must clear the previous parameter's reverse lookup.
+    const auto oldParamForMidi = m_midiToParam.find(msgId);
+    if (oldParamForMidi != m_midiToParam.end())
+        m_paramToMidi.erase(oldParamForMidi->second);
+
+    const auto oldMidiForParam = m_paramToMidi.find(m_learnParameterId);
+    if (oldMidiForParam != m_paramToMidi.end())
+        m_midiToParam.erase(oldMidiForParam->second);
+
+    const QString learnedParamId = m_learnParameterId;
+    m_midiToParam[msgId] = learnedParamId;
+    m_paramToMidi[learnedParamId] = msgId;
+    m_learnParameterId.clear();
+    m_isLearning = false;
+
+    qDebug() << "[MIDI] Learned" << msgId << "->" << learnedParamId;
+    saveNativeMapping();
+    emit mappingUpdated();
+}
+
 void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*/, const juce::MidiMessage& message)
 {
+    // Diagnostic: log every incoming MIDI message so we can see if JUCE is even
+    // receiving Note On events.  The raw status byte tells us the truth.
+    {
+        const auto* d = message.getRawData();
+        const int   sz = message.getRawDataSize();
+        const int   status = sz > 0 ? static_cast<unsigned char>(d[0]) : 0;
+        const int   d1     = sz > 1 ? static_cast<unsigned char>(d[1]) : -1;
+        const int   d2     = sz > 2 ? static_cast<unsigned char>(d[2]) : -1;
+        qDebug() << "[MIDI JUCE]" << "status:" << status
+                 << "d1:" << d1 << "d2:" << d2
+                 << "isNoteOn:" << message.isNoteOn()
+                 << "isNoteOff:" << message.isNoteOff()
+                 << "isCC:" << message.isController();
+    }
+
     // Runs on the JUCE MIDI thread — decode raw bytes (cheap, no allocation),
     // then dispatch to the Qt main thread so processDecodedMidiEvent can safely
     // read/write m_isLearning and the maps without a data race.
@@ -944,7 +1091,7 @@ void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*
     // rawEnc encoding by type:
     //   CC         → raw controller value 0-127 (int stored as float)
     //   Note On/Off→ velocity 0.0-1.0 float
-    //   Pitch Bend → (raw + 8192) as float, range 0-16383
+    //   Pitch Bend → raw 14-bit value 0-16383
     int   msgId   = -1;
     float rawEnc  = 0.0f;
     bool  noteOff = false;
@@ -961,7 +1108,8 @@ void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*
     } else if (message.isPitchWheel()) {
         // sub-ID 1500 is reserved for pitch bend (per channel, no note/cc number)
         msgId  = 10000 + ch * 2000 + 1500;
-        rawEnc = static_cast<float>(message.getPitchWheelValue() + 8192); // 0-16383
+        // getPitchWheelValue() returns -8192..+8191; shift to 0..16383
+        rawEnc = static_cast<float>(message.getPitchWheelValue() + 8192);
     } else {
         return;
     }
@@ -991,6 +1139,10 @@ void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*
                     resolvedValue = clampMidi7bit(static_cast<int>(rawEnc)) / 127.0f;
                 }
             } else if (sub == 1500) {
+                const int legacyId = 1500;
+                if (!m_midiToParam.count(msgId) && m_midiToParam.count(legacyId))
+                    resolvedId = legacyId;
+
                 // Pitch bend: normalise 0-16383 → 0.0-1.0
                 resolvedValue = rawEnc / 16383.0f;
             }
@@ -1026,7 +1178,10 @@ void MidiControllerManager::onParameterChanged(const QString& id, float value)
         subId   = remainder % 2000;
     }
 
-    if (subId >= 1000) {
+    if (subId == 1500) {
+        const int pitch = std::max(0, std::min(16383, static_cast<int>(value * 16383.0f)));
+        msg = juce::MidiMessage::pitchWheel(channel, pitch);
+    } else if (subId >= 1000 && subId < 1500) {
         msg = juce::MidiMessage::controllerEvent(channel, subId - 1000,
                                                   clampMidi7bit(static_cast<int>(value * 127.0f)));
     } else {

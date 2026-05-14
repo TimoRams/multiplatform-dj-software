@@ -1246,6 +1246,39 @@ Window {
                         }
                     }
 
+                    // ── Live MIDI monitor ─────────────────────────────────────────────
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 26
+                        color: "#0d0d0d"
+                        border.color: "#1c1c1c"
+                        radius: 4
+
+                        Row {
+                            anchors.fill: parent
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 8
+                            spacing: 6
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "MIDI IN:"
+                                color: "#444"
+                                font.pixelSize: 10
+                                font.bold: true
+                                font.letterSpacing: 0.5
+                            }
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: midiManager ? (midiManager.lastMidiEvent || "–  (bewege einen Regler oder drücke eine Taste)") : "–"
+                                color: midiManager && midiManager.lastMidiEvent ? "#7cdb9a" : "#333"
+                                font.pixelSize: 11
+                                font.family: "monospace"
+                            }
+                        }
+                    }
+
                     // ── MappingRow component ──────────────────────────────────────────
                     // Declared here (outside the Flickable) so Qt 6 doesn't confuse it
                     // with the Flickable's content item.  Uses Item + anchors instead of
