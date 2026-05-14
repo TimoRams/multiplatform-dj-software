@@ -1,4 +1,6 @@
 #include "DjEngine.h"
+#include <iostream>
+#include <chrono>
 #include "fx/BrickwallLimiter.h"
 #include "library/CoverArtExtractor.h"
 #include "library/CoverArtProvider.h"
@@ -24,9 +26,6 @@
 #include <cstring>
 #include <algorithm>
 #include <cmath>
-#include <thread>
-#include <future>
-#include <chrono>
 #if JUCE_JACK && (JUCE_LINUX || JUCE_BSD)
 #include <jack/jack.h>
 #endif
@@ -221,55 +220,16 @@ juce::AudioIODeviceType* findDeviceType(juce::AudioDeviceManager& deviceManager,
 
 juce::AudioDeviceManager& sharedAudioDeviceManager()
 {
+    static bool s_creating = false;
+    if (!s_creating) {
+        s_creating = true;
+        std::cerr << "[sharedADM] creating AudioDeviceManager\n" << std::flush;
+    }
     static juce::AudioDeviceManager manager;
+    std::cerr << "[sharedADM] AudioDeviceManager ready\n" << std::flush;
     return manager;
 }
 
-// Set to true if any initialiseWithTimeout call was abandoned due to timeout.
-// Subsequent init attempts are skipped to avoid multiple multi-second stalls.
-static std::atomic<bool> s_audioInitTimedOut{false};
-
-// Runs initialiseWithDefaultDevices on a background thread with a timeout so that
-// a frozen macOS CoreAudio daemon (coreaudiod) cannot hang the entire application.
-// If the deadline is exceeded the thread is detached; the app starts without audio.
-static juce::String initialiseWithTimeout(juce::AudioDeviceManager& manager,
-                                          int numInputChannels,
-                                          int numOutputChannels,
-                                          std::chrono::duration<double> timeout = std::chrono::seconds(6))
-{
-    if (s_audioInitTimedOut.load())
-        return {};  // skip — a previous attempt already timed out
-
-    std::promise<juce::String> prom;
-    auto fut = prom.get_future();
-
-    std::thread t([&manager, numInputChannels, numOutputChannels, p = std::move(prom)]() mutable {
-        p.set_value(manager.initialiseWithDefaultDevices(numInputChannels, numOutputChannels));
-    });
-
-    if (fut.wait_for(timeout) == std::future_status::timeout) {
-        s_audioInitTimedOut = true;
-        const double timeoutSec = std::chrono::duration<double>(timeout).count();
-        qCritical() << "[DjEngine] Audio device initialization timed out after"
-                    << timeoutSec << "s — starting without audio."
-                    << "To fix: restart the app, or run: sudo killall coreaudiod";
-        t.detach();
-        return {};
-    }
-
-    t.join();
-    return fut.get();
-}
-
-void ensureSharedAudioDeviceManagerReady(juce::AudioDeviceManager& manager)
-{
-    if (manager.getCurrentAudioDevice() != nullptr)
-        return;
-
-    const juce::String err = initialiseWithTimeout(manager, 0, 2);
-    if (err.isNotEmpty())
-        qWarning() << "JUCE AudioDeviceManager err:" << QString::fromStdString(err.toStdString());
-}
 
 struct OutputLatencySnapshot {
     int outputRawSamples = 0;
@@ -362,7 +322,7 @@ int readDeviceOutputChannelCount(const QString& deviceType, const QString& outpu
     int channelCount = 2;
 
     juce::AudioDeviceManager probe;
-    const juce::String initErr = initialiseWithTimeout(probe, 0, 2, std::chrono::seconds(4));
+    const juce::String initErr = probe.initialiseWithDefaultDevices(0, 2);
     if (initErr.isNotEmpty() || probe.getCurrentAudioDevice() == nullptr) {
         std::lock_guard<std::mutex> lock(s_outputChannelCountCacheMutex);
         s_outputChannelCountCache.insert(key, channelCount);
@@ -1903,18 +1863,22 @@ DjEngine::DjEngine(QObject* parent)
     : QObject(parent)
     , deviceManager(sharedAudioDeviceManager())
 {
-    ensureSharedAudioDeviceManagerReady(deviceManager);
-
+    static auto s_ctorStart = std::chrono::steady_clock::now();
+    const auto ctorMs = [](){ return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - s_ctorStart).count(); };
+    std::cerr << "[DjEngine ctor] enter " << ctorMs() << "ms\n" << std::flush;
     {
         std::lock_guard<std::mutex> g(s_syncMutex);
         s_syncDecks.push_back(this);
     }
+    std::cerr << "[DjEngine ctor] syncDecks done " << ctorMs() << "ms\n" << std::flush;
 
     m_trackData = new TrackData(this);
+    std::cerr << "[DjEngine ctor] TrackData done " << ctorMs() << "ms\n" << std::flush;
     m_analyzer  = new WaveformAnalyzer(
         m_trackData,
         &formatManager,
         static_cast<int>(WAVEFORM_POINTS_PER_SECOND));
+    std::cerr << "[DjEngine ctor] WaveformAnalyzer done " << ctorMs() << "ms\n" << std::flush;
     clearHotCueState();
 
     // When the analyzer detects a key, override the (often absent) ID3 key field.
@@ -1974,8 +1938,11 @@ DjEngine::DjEngine(QObject* parent)
             m_libraryDb->updateTrackSegments(m_currentTrackId, segments);
     });
 
+    std::cerr << "[DjEngine ctor] signals connected " << ctorMs() << "ms\n" << std::flush;
     juce::MessageManager::getInstance();
+    std::cerr << "[DjEngine ctor] MessageManager ok " << ctorMs() << "ms\n" << std::flush;
     formatManager.registerBasicFormats();
+    std::cerr << "[DjEngine ctor] formats registered " << ctorMs() << "ms\n" << std::flush;
 
     // Prefer lower output buffer sizes for better scratch responsiveness.
     // Keep this conservative and only apply when the driver explicitly supports it.
@@ -1996,8 +1963,10 @@ DjEngine::DjEngine(QObject* parent)
         }
     }
 
+    std::cerr << "[DjEngine ctor] adding audio callback " << ctorMs() << "ms\n" << std::flush;
     deviceManager.addAudioCallback(&sourcePlayer);
-    
+    std::cerr << "[DjEngine ctor] audio callback added " << ctorMs() << "ms\n" << std::flush;
+
     // Create the resampling source that wraps the transport source.
     // This allows us to control tempo/speed without changing the pitch.
     resamplingSource = std::make_unique<juce::ResamplingAudioSource>(
@@ -2013,7 +1982,9 @@ DjEngine::DjEngine(QObject* parent)
     mixerSource->setTrim(static_cast<float>(m_trim));
     mixerSource->setFader(static_cast<float>(m_volume));
 
+    std::cerr << "[DjEngine ctor] setting source " << ctorMs() << "ms\n" << std::flush;
     sourcePlayer.setSource(mixerSource.get());
+    std::cerr << "[DjEngine ctor] source set " << ctorMs() << "ms\n" << std::flush;
 
     refreshHardwareLatency();
     clearOutputChannelCountCache();
@@ -2021,8 +1992,10 @@ DjEngine::DjEngine(QObject* parent)
 
     connect(&timer, &QTimer::timeout, this, &DjEngine::onTimer);
     timer.setTimerType(Qt::PreciseTimer);
+    std::cerr << "[DjEngine ctor] starting timer " << ctorMs() << "ms\n" << std::flush;
     // Faster control snapshots reduce audible speed stepping while scratching.
     timer.start(4);
+    std::cerr << "[DjEngine ctor] exit " << ctorMs() << "ms\n" << std::flush;
 }
 
 DjEngine::~DjEngine()
@@ -2364,11 +2337,8 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     juce::AudioDeviceManager::AudioDeviceSetup previousSetup;
     manager.getAudioDeviceSetup(previousSetup);
     if (manager.getCurrentAudioDevice() == nullptr) {
-        // The user explicitly requested a settings change — clear the timeout flag so
-        // we retry even if startup init timed out (coreaudiod may have recovered).
-        s_audioInitTimedOut = false;
         qWarning() << "[DjEngine] No current audio device before setup; trying default initialisation";
-        const juce::String initErr = initialiseWithTimeout(manager, 0, 2);
+        const juce::String initErr = manager.initialiseWithDefaultDevices(0, 2);
         if (initErr.isNotEmpty())
             qWarning() << "[DjEngine] initialiseWithDefaultDevices failed:" << QString::fromStdString(initErr.toStdString());
     }
@@ -3116,10 +3086,7 @@ void DjEngine::ensureTransportRunningForPlayIntent()
 
     if (deviceManager.getCurrentAudioDevice() == nullptr) {
         qWarning() << "[DjEngine] Play requested without active audio device; trying to recover";
-        // Use a very short timeout so the UI thread is never frozen for more than
-        // ~800 ms.  If the device cannot init quickly enough, skip playback and
-        // let the user open Settings → Audio to reconfigure.
-        const juce::String initErr = initialiseWithTimeout(deviceManager, 0, 2, std::chrono::milliseconds(800));
+        const juce::String initErr = deviceManager.initialiseWithDefaultDevices(0, 2);
         if (initErr.isNotEmpty() || deviceManager.getCurrentAudioDevice() == nullptr) {
             qWarning() << "[DjEngine] Could not recover audio device on play";
             return;

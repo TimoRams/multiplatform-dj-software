@@ -12,6 +12,7 @@
 #include <QIcon>
 #include <QSize>
 #include <QElapsedTimer>
+#include <QTimer>
 #include <QStandardPaths>
 #include <QDir>
 #include <QFile>
@@ -238,261 +239,282 @@ int main(int argc, char *argv[])
     logStartupStep("SettingsManager init done");
 
     auto& settingsManager = SettingsManager::getInstance();
+    QQmlApplicationEngine engine;
 
-    auto deckA = std::make_unique<DjEngine>();
-    auto deckB = std::make_unique<DjEngine>();
-    auto deckC = std::make_unique<DjEngine>();
-    auto deckD = std::make_unique<DjEngine>();
-    logStartupStep("DjEngines constructed");
+    std::unique_ptr<DjEngine> deckA;
+    std::unique_ptr<DjEngine> deckB;
+    std::unique_ptr<DjEngine> deckC;
+    std::unique_ptr<DjEngine> deckD;
+    std::unique_ptr<ParameterStore> parameterStore;
+    std::unique_ptr<MidiControllerManager> midiManager;
+    std::unique_ptr<LibraryManager> libraryManager;
+    std::unique_ptr<LibraryDatabase> libraryDb;
+    std::unique_ptr<LibraryTableModel> libraryTableModel;
+    std::unique_ptr<LibraryAnalysisManager> libraryAnalysisManager;
+    std::unique_ptr<FxManager> fxManager;
+    std::unique_ptr<LinkManager> linkManager;
+    std::unique_ptr<SystemMonitor> sysMonitor;
+    std::unique_ptr<CursorControl> cursorControl;
 
-    deckA->applyAudioDeviceSettings(settingsManager.getAudioMasterDeviceType(),
-                                    settingsManager.getAudioMasterOutputDevice(),
-                                    settingsManager.getAudioSampleRate(),
-                                    settingsManager.getAudioBufferSize(),
-                                    settingsManager.getAudioMasterFirstChannel(),
-                                    settingsManager.getAudioHeadphonesFirstChannel(),
-                                    settingsManager.getAudioBoothFirstChannel());
-    // Sync back what the driver actually opened — JACK ignores requested buffer/SR,
-    // and ALSA may round to the nearest supported value.
-    {
+    // Defer heavy deck/QML init until the event loop spins to avoid CoreAudio deadlocks on macOS.
+    QTimer::singleShot(0, &app, [&]() {
+        std::cerr << "[main] making deckA\n" << std::flush;
+        deckA = std::make_unique<DjEngine>();
+        std::cerr << "[main] deckA done\n" << std::flush;
+        deckB = std::make_unique<DjEngine>();
+        std::cerr << "[main] deckB done\n" << std::flush;
+        deckC = std::make_unique<DjEngine>();
+        std::cerr << "[main] deckC done\n" << std::flush;
+        deckD = std::make_unique<DjEngine>();
+        std::cerr << "[main] deckD done - about to logStartupStep\n" << std::flush;
+        logStartupStep("DjEngines constructed");
+        std::cerr << "[main] logStartupStep done\n" << std::flush;
+
+        auto coverProvider = std::make_unique<CoverArtProvider>();
+        deckA->setCoverArtProvider(coverProvider.get(), "deckA");
+        deckB->setCoverArtProvider(coverProvider.get(), "deckB");
+        deckC->setCoverArtProvider(coverProvider.get(), "deckC");
+        deckD->setCoverArtProvider(coverProvider.get(), "deckD");
+
+        parameterStore = std::make_unique<ParameterStore>();
+        midiManager = std::make_unique<MidiControllerManager>(parameterStore.get());
+
+        // Route MIDI parameter changes to the appropriate deck controls.
+        // Volume and crossfader are handled by MixerSection.qml via parameterStore.
+        // Button events: value > 0 = press/on, value == 0 = release/off.
+        QObject::connect(parameterStore.get(), &ParameterStore::parameterChanged,
+            [deckAPtr = deckA.get(), deckBPtr = deckB.get()](const QString& id, float value)
+        {
+            if (id == "deckA_play") { if (value > 0.0f) deckAPtr->togglePlay(); }
+            else if (id == "deckB_play") { if (value > 0.0f) deckBPtr->togglePlay(); }
+            else if (id == "deckA_cue") {
+                if (value > 0.0f) deckAPtr->cueButtonPress();
+                else              deckAPtr->cueButtonRelease();
+            }
+            else if (id == "deckB_cue") {
+                if (value > 0.0f) deckBPtr->cueButtonPress();
+                else              deckBPtr->cueButtonRelease();
+            }
+            // Trim: MIDI 0-1 → engine 0-2 (center = 1.0 = unity)
+            else if (id == "deckA_gain")   deckAPtr->setTrim(static_cast<double>(value) * 2.0);
+            else if (id == "deckB_gain")   deckBPtr->setTrim(static_cast<double>(value) * 2.0);
+            // EQ/filter: MIDI 0-1 → engine -1 to +1 (center = 0.0)
+            else if (id == "deckA_eqHigh") deckAPtr->setEqHigh(static_cast<double>(value) * 2.0 - 1.0);
+            else if (id == "deckB_eqHigh") deckBPtr->setEqHigh(static_cast<double>(value) * 2.0 - 1.0);
+            else if (id == "deckA_eqMid")  deckAPtr->setEqMid(static_cast<double>(value) * 2.0 - 1.0);
+            else if (id == "deckB_eqMid")  deckBPtr->setEqMid(static_cast<double>(value) * 2.0 - 1.0);
+            else if (id == "deckA_eqLow")  deckAPtr->setEqLow(static_cast<double>(value) * 2.0 - 1.0);
+            else if (id == "deckB_eqLow")  deckBPtr->setEqLow(static_cast<double>(value) * 2.0 - 1.0);
+            else if (id == "deckA_filter") deckAPtr->setFilter(static_cast<double>(value) * 2.0 - 1.0);
+            else if (id == "deckB_filter") deckBPtr->setFilter(static_cast<double>(value) * 2.0 - 1.0);
+            // Tempo fader: MIDI 0-1 → engine -8% to +8%
+            else if (id == "deckA_tempo")  deckAPtr->setTempoPercent(static_cast<double>(value) * 16.0 - 8.0);
+            else if (id == "deckB_tempo")  deckBPtr->setTempoPercent(static_cast<double>(value) * 16.0 - 8.0);
+            // Jog touch: value > 0 = finger down (enter scratch), 0 = lift (resume)
+            else if (id == "deckA_jog_touch") {
+                static bool jogATouched = false;
+                const bool touched = (value > 0.5f);
+                if (touched != jogATouched) {
+                    jogATouched = touched;
+                    if (touched) deckAPtr->pauseForScrub();
+                    else         deckAPtr->resumeAfterScrub();
+                }
+            }
+            else if (id == "deckB_jog_touch") {
+                static bool jogBTouched = false;
+                const bool touched = (value > 0.5f);
+                if (touched != jogBTouched) {
+                    jogBTouched = touched;
+                    if (touched) deckBPtr->pauseForScrub();
+                    else         deckBPtr->resumeAfterScrub();
+                }
+            }
+            // Jog move: value = signed tick delta; 128 ticks/rev at 33.33 RPM vinyl
+            else if (id == "deckA_jog_move") {
+                const double deltaSeconds = static_cast<double>(value) * (60.0 / 33.333) / 128.0;
+                if (deckAPtr->isScrubbing())
+                    deckAPtr->scratchBySeconds(deltaSeconds);
+            }
+            else if (id == "deckB_jog_move") {
+                const double deltaSeconds = static_cast<double>(value) * (60.0 / 33.333) / 128.0;
+                if (deckBPtr->isScrubbing())
+                    deckBPtr->scratchBySeconds(deltaSeconds);
+            }
+        });
+
+        engine.addImageProvider("coverart", coverProvider.release());
+        logStartupStep("Cover art provider installed");
+
+        engine.rootContext()->setContextProperty("settingsManager", &settingsManager);
+        engine.rootContext()->setContextProperty("deckA", deckA.get());
+        engine.rootContext()->setContextProperty("deckB", deckB.get());
+        engine.rootContext()->setContextProperty("deckC", deckC.get());
+        engine.rootContext()->setContextProperty("deckD", deckD.get());
+
+        libraryManager = std::make_unique<LibraryManager>();
+        engine.rootContext()->setContextProperty("libraryManager", libraryManager.get());
+
+        libraryDb = std::make_unique<LibraryDatabase>();
+        if (!libraryDb->open())
+            qWarning() << "[main] LibraryDatabase failed to open – library features disabled.";
+        logStartupStep("LibraryDatabase open attempted");
+
+        libraryTableModel = std::make_unique<LibraryTableModel>("library_conn");
+        libraryDb->setTableModel(libraryTableModel.get());
+        libraryTableModel->refresh();
+        logStartupStep("LibraryTableModel refreshed");
+
+        libraryAnalysisManager = std::make_unique<LibraryAnalysisManager>();
+        libraryAnalysisManager->setLibraryDatabase(libraryDb.get());
+
+        engine.rootContext()->setContextProperty("libraryDb",    libraryDb.get());
+        engine.rootContext()->setContextProperty("libraryModel", libraryTableModel.get());
+        engine.rootContext()->setContextProperty("libraryAnalyzer", libraryAnalysisManager.get());
+
+        deckA->setLibraryDatabase(libraryDb.get());
+        deckB->setLibraryDatabase(libraryDb.get());
+        deckC->setLibraryDatabase(libraryDb.get());
+        deckD->setLibraryDatabase(libraryDb.get());
+
+        fxManager = std::make_unique<FxManager>();
+        fxManager->registerEngines(deckA.get(), deckB.get());
+        engine.rootContext()->setContextProperty("fxManager", fxManager.get());
+
+        linkManager = std::make_unique<LinkManager>();
+        engine.rootContext()->setContextProperty("linkManager", linkManager.get());
+
+        sysMonitor = std::make_unique<SystemMonitor>();
+        engine.rootContext()->setContextProperty("sysMonitor", sysMonitor.get());
+
+        engine.rootContext()->setContextProperty("parameterStore", parameterStore.get());
+        engine.rootContext()->setContextProperty("midiManager", midiManager.get());
+
+        cursorControl = std::make_unique<CursorControl>();
+        engine.rootContext()->setContextProperty("cursorControl", cursorControl.get());
+
+        const auto url = QUrl(u"qrc:/DJSoftware/src/qml/main.qml"_s);
+        QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
+                         &app, [url](QObject* obj, const QUrl& objUrl) {
+            if (!obj && url == objUrl)
+                QCoreApplication::exit(-1);
+        }, Qt::QueuedConnection);
+
+        engine.load(url);
+        logStartupStep("QML load requested");
+
+        if (!engine.rootObjects().isEmpty()) {
+            if (auto* rootWindow = qobject_cast<QWindow*>(engine.rootObjects().first())) {
+                qDebug() << "[main] Root window found, setting size and visibility";
+
+                if (auto* quickWindow = qobject_cast<QQuickWindow*>(rootWindow)) {
+                    const bool usingVulkan = (QQuickWindow::graphicsApi() == QSGRendererInterface::Vulkan);
+#if !defined(Q_OS_MACOS)
+                    if (usingVulkan && vkInstance)
+                        quickWindow->setVulkanInstance(vkInstance.get());
+#endif
+                    if (usingVulkan) {
+                        const QString cacheMode = qEnvironmentVariable("RAMSBROCKDJ_VK_CACHE").trimmed().toLower();
+                        const bool enableCache = cacheMode.isEmpty() || cacheMode == "1" || cacheMode == "on" || cacheMode == "true";
+                        const bool resetCache = (cacheMode == "reset");
+
+                        if (enableCache) {
+                            // Set up Vulkan pipeline cache before show() so compiled shaders are persisted.
+                            // First launch compiles everything; subsequent launches load in milliseconds.
+                            const QString cacheDir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+                            QDir().mkpath(cacheDir);
+                            const QString cacheFile = cacheDir + "/vk_pipeline_cache.bin";
+                            if (resetCache)
+                                QFile::remove(cacheFile);
+
+                            QQuickGraphicsConfiguration cfg = quickWindow->graphicsConfiguration();
+                            cfg.setPipelineCacheSaveFile(cacheFile);
+                            if (!resetCache)
+                                cfg.setPipelineCacheLoadFile(cacheFile);
+                            quickWindow->setGraphicsConfiguration(cfg);
+
+                            QFileInfo cacheInfo(cacheFile);
+                            if (cacheInfo.exists())
+                                qDebug() << "[main] Vulkan pipeline cache:" << cacheFile << cacheInfo.size() << "bytes";
+                            else
+                                qDebug() << "[main] Vulkan pipeline cache (new):" << cacheFile;
+                        } else {
+                            qDebug() << "[main] Vulkan pipeline cache disabled (RAMSBROCKDJ_VK_CACHE=0)";
+                        }
+                    }
+
+                    QObject::connect(
+                        quickWindow,
+                        &QQuickWindow::sceneGraphInitialized,
+                        &app,
+                        [&startupTimer]() {
+                        qDebug() << "[startup] Scene graph initialized" << startupTimer.elapsed() << "ms";
+                        },
+                        static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::SingleShotConnection));
+
+                    QObject::connect(
+                        quickWindow,
+                        &QQuickWindow::sceneGraphError,
+                        &app,
+                        [&startupTimer](QQuickWindow::SceneGraphError error, const QString& message) {
+                        qWarning() << "[startup] Scene graph error" << error << message
+                                   << "at" << startupTimer.elapsed() << "ms";
+                        },
+                        Qt::DirectConnection);
+
+                    QObject::connect(
+                        quickWindow,
+                        &QQuickWindow::beforeRendering,
+                        &app,
+                        [&startupTimer]() {
+                        qDebug() << "[startup] First render started" << startupTimer.elapsed() << "ms";
+                        },
+                        static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::SingleShotConnection));
+
+                    QObject::connect(
+                        quickWindow,
+                        &QQuickWindow::afterRendering,
+                        &app,
+                        [&startupTimer]() {
+                        qDebug() << "[startup] FIRST FRAME RENDERED" << startupTimer.elapsed() << "ms";
+                        },
+                        static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::SingleShotConnection));
+                }
+
+                rootWindow->show();
+                logStartupStep("Root window shown");
+
+#if defined(Q_OS_MACOS)
+                // macOS requires extra steps to properly show the window
+                rootWindow->raise();
+                rootWindow->requestActivate();
+                qDebug() << "[main] macOS: Window raised and activated";
+#endif
+            } else {
+                qWarning() << "[main] Root object is not a QWindow!";
+            }
+        } else {
+            qCritical() << "[main] No root objects found after loading QML!";
+            settingsManager.shutdown();
+            QCoreApplication::exit(-1);
+            return;
+        }
+
+        deckA->applyAudioDeviceSettings(settingsManager.getAudioMasterDeviceType(),
+                                        settingsManager.getAudioMasterOutputDevice(),
+                                        settingsManager.getAudioSampleRate(),
+                                        settingsManager.getAudioBufferSize(),
+                                        settingsManager.getAudioMasterFirstChannel(),
+                                        settingsManager.getAudioHeadphonesFirstChannel(),
+                                        settingsManager.getAudioBoothFirstChannel());
+        // Sync back what the driver actually opened.
         const int actualSR  = deckA->getCurrentAudioSampleRate();
         const int actualBuf = deckA->getCurrentAudioBufferSize();
         if (actualSR  > 0) settingsManager.setAudioSampleRate(actualSR);
         if (actualBuf > 0) settingsManager.setAudioBufferSize(actualBuf);
-    }
-    // DeckB outputs to the pair immediately after DeckA (e.g. DeckA=ch1+2 → DeckB=ch3+4).
-    deckB->setOutputFirstChannel(settingsManager.getAudioMasterFirstChannel() + 2);
-    logStartupStep("Audio device settings applied");
-
-    auto coverProvider = std::make_unique<CoverArtProvider>();
-    deckA->setCoverArtProvider(coverProvider.get(), "deckA");
-    deckB->setCoverArtProvider(coverProvider.get(), "deckB");
-    deckC->setCoverArtProvider(coverProvider.get(), "deckC");
-    deckD->setCoverArtProvider(coverProvider.get(), "deckD");
-
-    QQmlApplicationEngine engine;
-
-    ParameterStore parameterStore;
-    MidiControllerManager midiManager(&parameterStore);
-
-    // Route MIDI parameter changes to the appropriate deck controls.
-    // Volume and crossfader are handled by MixerSection.qml via parameterStore.
-    // Button events: value > 0 = press/on, value == 0 = release/off.
-    QObject::connect(&parameterStore, &ParameterStore::parameterChanged,
-        [deckAPtr = deckA.get(), deckBPtr = deckB.get()](const QString& id, float value)
-    {
-        if (id == "deckA_play") { if (value > 0.0f) deckAPtr->togglePlay(); }
-        else if (id == "deckB_play") { if (value > 0.0f) deckBPtr->togglePlay(); }
-        else if (id == "deckA_cue") {
-            if (value > 0.0f) deckAPtr->cueButtonPress();
-            else              deckAPtr->cueButtonRelease();
-        }
-        else if (id == "deckB_cue") {
-            if (value > 0.0f) deckBPtr->cueButtonPress();
-            else              deckBPtr->cueButtonRelease();
-        }
-        // Trim: MIDI 0-1 → engine 0-2 (center = 1.0 = unity)
-        else if (id == "deckA_gain")   deckAPtr->setTrim(static_cast<double>(value) * 2.0);
-        else if (id == "deckB_gain")   deckBPtr->setTrim(static_cast<double>(value) * 2.0);
-        // EQ/filter: MIDI 0-1 → engine -1 to +1 (center = 0.0)
-        else if (id == "deckA_eqHigh") deckAPtr->setEqHigh(static_cast<double>(value) * 2.0 - 1.0);
-        else if (id == "deckB_eqHigh") deckBPtr->setEqHigh(static_cast<double>(value) * 2.0 - 1.0);
-        else if (id == "deckA_eqMid")  deckAPtr->setEqMid(static_cast<double>(value) * 2.0 - 1.0);
-        else if (id == "deckB_eqMid")  deckBPtr->setEqMid(static_cast<double>(value) * 2.0 - 1.0);
-        else if (id == "deckA_eqLow")  deckAPtr->setEqLow(static_cast<double>(value) * 2.0 - 1.0);
-        else if (id == "deckB_eqLow")  deckBPtr->setEqLow(static_cast<double>(value) * 2.0 - 1.0);
-        else if (id == "deckA_filter") deckAPtr->setFilter(static_cast<double>(value) * 2.0 - 1.0);
-        else if (id == "deckB_filter") deckBPtr->setFilter(static_cast<double>(value) * 2.0 - 1.0);
-        // Tempo fader: MIDI 0-1 → engine -8% to +8%
-        else if (id == "deckA_tempo")  deckAPtr->setTempoPercent(static_cast<double>(value) * 16.0 - 8.0);
-        else if (id == "deckB_tempo")  deckBPtr->setTempoPercent(static_cast<double>(value) * 16.0 - 8.0);
-        // Jog touch: value > 0 = finger down (enter scratch), 0 = lift (resume)
-        else if (id == "deckA_jog_touch") {
-            static bool jogATouched = false;
-            const bool touched = (value > 0.5f);
-            if (touched != jogATouched) {
-                jogATouched = touched;
-                if (touched) deckAPtr->pauseForScrub();
-                else         deckAPtr->resumeAfterScrub();
-            }
-        }
-        else if (id == "deckB_jog_touch") {
-            static bool jogBTouched = false;
-            const bool touched = (value > 0.5f);
-            if (touched != jogBTouched) {
-                jogBTouched = touched;
-                if (touched) deckBPtr->pauseForScrub();
-                else         deckBPtr->resumeAfterScrub();
-            }
-        }
-        // Jog move: value = signed tick delta; 128 ticks/rev at 33.33 RPM vinyl
-        else if (id == "deckA_jog_move") {
-            const double deltaSeconds = static_cast<double>(value) * (60.0 / 33.333) / 128.0;
-            if (deckAPtr->isScrubbing())
-                deckAPtr->scratchBySeconds(deltaSeconds);
-        }
-        else if (id == "deckB_jog_move") {
-            const double deltaSeconds = static_cast<double>(value) * (60.0 / 33.333) / 128.0;
-            if (deckBPtr->isScrubbing())
-                deckBPtr->scratchBySeconds(deltaSeconds);
-        }
+        // DeckB outputs to the pair immediately after DeckA (e.g. ch1+2 → ch3+4).
+        deckB->setOutputFirstChannel(settingsManager.getAudioMasterFirstChannel() + 2);
+        qDebug() << "[startup] Audio device settings applied" << startupTimer.elapsed() << "ms";
     });
-
-    engine.addImageProvider("coverart", coverProvider.release());
-    logStartupStep("Cover art provider installed");
-
-    engine.rootContext()->setContextProperty("settingsManager", &settingsManager);
-    engine.rootContext()->setContextProperty("deckA", deckA.get());
-    engine.rootContext()->setContextProperty("deckB", deckB.get());
-    engine.rootContext()->setContextProperty("deckC", deckC.get());
-    engine.rootContext()->setContextProperty("deckD", deckD.get());
-
-    LibraryManager libraryManager;
-    engine.rootContext()->setContextProperty("libraryManager", &libraryManager);
-
-    LibraryDatabase libraryDb;
-    if (!libraryDb.open())
-        qWarning() << "[main] LibraryDatabase failed to open – library features disabled.";
-    logStartupStep("LibraryDatabase open attempted");
-
-    LibraryTableModel libraryTableModel("library_conn");
-    libraryDb.setTableModel(&libraryTableModel);
-    libraryTableModel.refresh();
-    logStartupStep("LibraryTableModel refreshed");
-
-    LibraryAnalysisManager libraryAnalysisManager;
-    libraryAnalysisManager.setLibraryDatabase(&libraryDb);
-
-    engine.rootContext()->setContextProperty("libraryDb",    &libraryDb);
-    engine.rootContext()->setContextProperty("libraryModel", &libraryTableModel);
-    engine.rootContext()->setContextProperty("libraryAnalyzer", &libraryAnalysisManager);
-
-    deckA->setLibraryDatabase(&libraryDb);
-    deckB->setLibraryDatabase(&libraryDb);
-    deckC->setLibraryDatabase(&libraryDb);
-    deckD->setLibraryDatabase(&libraryDb);
-
-    FxManager fxManager;
-    fxManager.registerEngines(deckA.get(), deckB.get());
-    engine.rootContext()->setContextProperty("fxManager", &fxManager);
-
-    LinkManager linkManager;
-    engine.rootContext()->setContextProperty("linkManager", &linkManager);
-
-    SystemMonitor sysMonitor;
-    engine.rootContext()->setContextProperty("sysMonitor", &sysMonitor);
-
-    engine.rootContext()->setContextProperty("parameterStore", &parameterStore);
-    engine.rootContext()->setContextProperty("midiManager", &midiManager);
-
-    CursorControl cursorControl;
-    engine.rootContext()->setContextProperty("cursorControl", &cursorControl);
-
-    const auto url = QUrl(u"qrc:/DJSoftware/src/qml/main.qml"_s);
-    QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
-                     &app, [url](QObject* obj, const QUrl& objUrl) {
-        if (!obj && url == objUrl)
-            QCoreApplication::exit(-1);
-    }, Qt::QueuedConnection);
-
-    engine.load(url);
-    logStartupStep("QML load requested");
-
-    if (!engine.rootObjects().isEmpty()) {
-        if (auto* rootWindow = qobject_cast<QWindow*>(engine.rootObjects().first())) {
-            qDebug() << "[main] Root window found, setting size and visibility";
-
-            if (auto* quickWindow = qobject_cast<QQuickWindow*>(rootWindow)) {
-                const bool usingVulkan = (QQuickWindow::graphicsApi() == QSGRendererInterface::Vulkan);
-#if !defined(Q_OS_MACOS)
-                if (usingVulkan && vkInstance)
-                    quickWindow->setVulkanInstance(vkInstance.get());
-#endif
-                if (usingVulkan) {
-                    const QString cacheMode = qEnvironmentVariable("RAMSBROCKDJ_VK_CACHE").trimmed().toLower();
-                    const bool enableCache = cacheMode.isEmpty() || cacheMode == "1" || cacheMode == "on" || cacheMode == "true";
-                    const bool resetCache = (cacheMode == "reset");
-
-                    if (enableCache) {
-                        // Set up Vulkan pipeline cache before show() so compiled shaders are persisted.
-                        // First launch compiles everything; subsequent launches load in milliseconds.
-                        const QString cacheDir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
-                        QDir().mkpath(cacheDir);
-                        const QString cacheFile = cacheDir + "/vk_pipeline_cache.bin";
-                        if (resetCache)
-                            QFile::remove(cacheFile);
-
-                        QQuickGraphicsConfiguration cfg = quickWindow->graphicsConfiguration();
-                        cfg.setPipelineCacheSaveFile(cacheFile);
-                        if (!resetCache)
-                            cfg.setPipelineCacheLoadFile(cacheFile);
-                        quickWindow->setGraphicsConfiguration(cfg);
-
-                        QFileInfo cacheInfo(cacheFile);
-                        if (cacheInfo.exists())
-                            qDebug() << "[main] Vulkan pipeline cache:" << cacheFile << cacheInfo.size() << "bytes";
-                        else
-                            qDebug() << "[main] Vulkan pipeline cache (new):" << cacheFile;
-                    } else {
-                        qDebug() << "[main] Vulkan pipeline cache disabled (RAMSBROCKDJ_VK_CACHE=0)";
-                    }
-                }
-
-                QObject::connect(
-                    quickWindow,
-                    &QQuickWindow::sceneGraphInitialized,
-                    &app,
-                    [&startupTimer]() {
-                    qDebug() << "[startup] Scene graph initialized" << startupTimer.elapsed() << "ms";
-                    },
-                    static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::SingleShotConnection));
-
-                QObject::connect(
-                    quickWindow,
-                    &QQuickWindow::sceneGraphError,
-                    &app,
-                    [&startupTimer](QQuickWindow::SceneGraphError error, const QString& message) {
-                    qWarning() << "[startup] Scene graph error" << error << message
-                               << "at" << startupTimer.elapsed() << "ms";
-                    },
-                    Qt::DirectConnection);
-
-                QObject::connect(
-                    quickWindow,
-                    &QQuickWindow::beforeRendering,
-                    &app,
-                    [&startupTimer]() {
-                    qDebug() << "[startup] First render started" << startupTimer.elapsed() << "ms";
-                    },
-                    static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::SingleShotConnection));
-
-                QObject::connect(
-                    quickWindow,
-                    &QQuickWindow::afterRendering,
-                    &app,
-                    [&startupTimer]() {
-                    qDebug() << "[startup] FIRST FRAME RENDERED" << startupTimer.elapsed() << "ms";
-                    },
-                    static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::SingleShotConnection));
-            }
-
-            rootWindow->show();
-            logStartupStep("Root window shown");
-
-#if defined(Q_OS_MACOS)
-            // macOS requires extra steps to properly show the window
-            rootWindow->raise();
-            rootWindow->requestActivate();
-            qDebug() << "[main] macOS: Window raised and activated";
-#endif
-        } else {
-            qWarning() << "[main] Root object is not a QWindow!";
-        }
-    } else {
-        qCritical() << "[main] No root objects found after loading QML!";
-        settingsManager.shutdown();
-        return -1;
-    }
 
     const int ret = app.exec();
 
