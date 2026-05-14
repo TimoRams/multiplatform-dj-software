@@ -61,9 +61,10 @@ Window {
         }
     }
 
+    // Backup refresh in case device enumeration (ALSA/JACK) wasn't complete at first open.
     Timer {
         id: audioDeviceListTimer
-        interval: 16
+        interval: 500
         repeat: false
         onTriggered: {
             settingsWindow.refreshAudioDeviceLists()
@@ -293,6 +294,10 @@ Window {
         sampleRateCombo.currentIndex = indexForValue(sampleRateOptions, pendingAudioSampleRate)
         bufferSizeCombo.currentIndex = indexForValue(bufferSizeOptions, pendingAudioBufferSize)
         audioUiSyncing = false
+
+        // Populate device type and output combos immediately using the pending values
+        // we just set — no separate timer needed for the first open.
+        refreshAudioDeviceLists()
     }
 
     function applyAudioSettings() {
@@ -363,9 +368,10 @@ Window {
                                                    boothFirstChannel)
             : false
 
-        // Keep DeckB on the pair immediately after DeckA (e.g. DeckA=ch1+2 → DeckB=ch3+4).
+        // Both decks output to the same master channel pair.
+        // Volume scaling (crossfader) provides the mix; JUCE adds both streams.
         if (applied && deckB && deckB.setOutputFirstChannel)
-            deckB.setOutputFirstChannel(masterFirstChannel + 2)
+            deckB.setOutputFirstChannel(masterFirstChannel)
 
         if (applied) {
             if (deckToApply && deckToApply.getCurrentAudioSampleRate) {

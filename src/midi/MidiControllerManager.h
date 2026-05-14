@@ -78,7 +78,7 @@ private:
 
     ParameterStore* m_parameterStore = nullptr;
     
-    std::unique_ptr<juce::MidiInput> m_midiInput;
+    std::vector<std::unique_ptr<juce::MidiInput>> m_midiInputs;
     std::unique_ptr<juce::MidiOutput> m_midiOutput;
 
     // Mapping: Midi Note/CC Number -> Parameter ID

@@ -17,6 +17,8 @@
 #include <algorithm>
 
 namespace {
+const juce::String kAllMidiInputsIdentifier("__all_midi_inputs__");
+
 QString toQString(const juce::String& value)
 {
     return QString::fromStdString(value.toStdString());
@@ -90,8 +92,10 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, QObject* par
 
 MidiControllerManager::~MidiControllerManager()
 {
-    if (m_midiInput)
-        m_midiInput->stop();
+    for (auto& input : m_midiInputs) {
+        if (input)
+            input->stop();
+    }
 
     stopAlsaInputMonitor();
 }
@@ -116,6 +120,9 @@ void MidiControllerManager::refreshMidiDeviceCache()
     m_availableInputDeviceIdentifiers.clear();
     m_availableInputDeviceNames.clear();
 
+    m_availableInputDeviceIdentifiers.push_back(kAllMidiInputsIdentifier);
+    m_availableInputDeviceNames.push_back(QStringLiteral("All MIDI Inputs"));
+
     appendMidiDeviceNames(juce::MidiInput::getAvailableDevices(),
                           m_availableInputDeviceIdentifiers,
                           m_availableInputDeviceNames);
@@ -128,8 +135,10 @@ void MidiControllerManager::refreshMidiDeviceCache()
                           m_availableOutputDeviceNames);
 
 #if defined(Q_OS_LINUX)
-    if (m_availableInputDeviceNames.isEmpty())
-        populateFromAlsaFallback();
+    // JUCE does not reliably expose every ALSA sequencer port for larger DJ
+    // controllers. Keep the direct ALSA ports visible too, so devices like the
+    // DDJ-FLX10 can be selected by the port that actually emits button events.
+    populateFromAlsaFallback();
 #endif
 }
 
@@ -277,7 +286,12 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                            line.contains("Note off", Qt::CaseInsensitive)) {
                     const bool isOff = line.contains("Note off", Qt::CaseInsensitive);
 
-                    // --- Format A: "Chan N ... (statusByte note vel)"  ← newer aseqdump ---
+                    // --- Format A: "Note on 0, note 11, velocity 127"  ← common aseqdump ---
+                    static const QRegularExpression noteCommonRx(
+                        R"((?:Note\s+on|Note\s+off)\s+(\d+),\s*note\s+(\d+),\s*velocity\s+(\d+))",
+                        QRegularExpression::CaseInsensitiveOption);
+
+                    // --- Format B: "Chan N ... (statusByte note vel)"  ← newer aseqdump ---
                     // Extract channel from "Chan N" (1-based) and note/vel from the 3-number
                     // parenthetical. The first number in the paren is the MIDI status byte:
                     // either treat "Chan N" for channel OR decode status & 0x0F.
@@ -285,7 +299,7 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                         R"((?:Chan|Channel)\s+(\d+).*?\((\d+)\s+(\d+)\s+(\d+)\))",
                         QRegularExpression::CaseInsensitiveOption);
 
-                    // --- Format B: "Chan N, Note on/off NOTE vel VELOCITY"  ← older aseqdump ---
+                    // --- Format C: "Chan N, Note on/off NOTE vel VELOCITY"  ← older aseqdump ---
                     static const QRegularExpression noteVerboseRx(
                         R"((?:Chan|Channel)\s+(\d+).*?(?:velocity|vel)[^\d]*(\d+))",
                         QRegularExpression::CaseInsensitiveOption);
@@ -294,28 +308,41 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                     int note = -1;
                     int vel  = 0;
 
-                    const auto nmA = noteParenRx.match(line);
-                    if (nmA.hasMatch()) {
-                        ch0  = std::max(0, std::min(15, nmA.captured(1).toInt() - 1));
-                        note = clampMidi7bit(nmA.captured(3).toInt());
-                        vel  = clampMidi7bit(nmA.captured(4).toInt());
+                    const auto nmCommon = noteCommonRx.match(line);
+                    if (nmCommon.hasMatch()) {
+                        ch0  = std::max(0, std::min(15, nmCommon.captured(1).toInt()));
+                        note = clampMidi7bit(nmCommon.captured(2).toInt());
+                        vel  = clampMidi7bit(nmCommon.captured(3).toInt());
+                    } else if (decodeTriple(ch, a, b) && !line.contains("Chan", Qt::CaseInsensitive)) {
+                        // Fallback for variants with decorated note names:
+                        // the last three numbers are channel, note, velocity.
+                        ch0  = std::max(0, std::min(15, ch));
+                        note = clampMidi7bit(a);
+                        vel  = clampMidi7bit(b);
                     } else {
-                        // Format B: get note from note-name number or last available digit,
-                        // velocity from "velocity N" or "vel N" suffix.
-                        // Extract channel from Chan/Channel N
-                        static const QRegularExpression chanRx(
-                            R"((?:Chan|Channel)\s+(\d+))", QRegularExpression::CaseInsensitiveOption);
-                        const auto chanM = chanRx.match(line);
-                        if (chanM.hasMatch())
-                            ch0 = std::max(0, std::min(15, chanM.captured(1).toInt() - 1));
+                        const auto nmA = noteParenRx.match(line);
+                        if (nmA.hasMatch()) {
+                            ch0  = std::max(0, std::min(15, nmA.captured(1).toInt() - 1));
+                            note = clampMidi7bit(nmA.captured(3).toInt());
+                            vel  = clampMidi7bit(nmA.captured(4).toInt());
+                        } else {
+                            // Format C: get note from note-name number or last available digit,
+                            // velocity from "velocity N" or "vel N" suffix.
+                            // Extract channel from Chan/Channel N
+                            static const QRegularExpression chanRx(
+                                R"((?:Chan|Channel)\s+(\d+))", QRegularExpression::CaseInsensitiveOption);
+                            const auto chanM = chanRx.match(line);
+                            if (chanM.hasMatch())
+                                ch0 = std::max(0, std::min(15, chanM.captured(1).toInt() - 1));
 
-                        const auto nmB = noteVerboseRx.match(line);
-                        if (nmB.hasMatch()) {
-                            vel = clampMidi7bit(nmB.captured(2).toInt());
-                            // Note number: second-to-last digit group before "velocity"
-                            // Fall back to decodeTriple last 2 numbers
-                            if (ch0 >= 0 && decodeTriple(ch, a, b)) {
-                                note = clampMidi7bit(a); // 'a' is second-from-last number
+                            const auto nmB = noteVerboseRx.match(line);
+                            if (nmB.hasMatch()) {
+                                vel = clampMidi7bit(nmB.captured(2).toInt());
+                                // Note number: second-to-last digit group before "velocity"
+                                // Fall back to decodeTriple last 2 numbers
+                                if (ch0 >= 0 && decodeTriple(ch, a, b)) {
+                                    note = clampMidi7bit(a); // 'a' is second-from-last number
+                                }
                             }
                         }
                     }
@@ -409,13 +436,34 @@ void MidiControllerManager::openMidiInputByIdentifier(const juce::String& identi
 {
     stopAlsaInputMonitor();
 
-    if (m_midiInput) {
-        m_midiInput->stop();
-        m_midiInput.reset();
+    for (auto& input : m_midiInputs) {
+        if (input)
+            input->stop();
     }
+    m_midiInputs.clear();
 
     if (identifier.isEmpty())
         return;
+
+    if (identifier == kAllMidiInputsIdentifier) {
+        const auto devices = juce::MidiInput::getAvailableDevices();
+        for (const auto& dev : devices) {
+            auto input = juce::MidiInput::openDevice(dev.identifier, this);
+            if (!input) {
+                qWarning() << "[MIDI] Failed to open input:" << toQString(dev.identifier);
+                continue;
+            }
+
+            input->start();
+            qDebug() << "[MIDI] Opened input:" << toQString(dev.name)
+                     << "id:" << toQString(dev.identifier);
+            m_midiInputs.push_back(std::move(input));
+        }
+
+        if (m_midiInputs.empty())
+            qWarning() << "[MIDI] All MIDI Inputs selected, but no JUCE inputs could be opened";
+        return;
+    }
 
     if (isPseudoAlsaIdentifier(identifier)) {
         startAlsaInputMonitor(identifier);
@@ -429,7 +477,7 @@ void MidiControllerManager::openMidiInputByIdentifier(const juce::String& identi
     }
 
     input->start();
-    m_midiInput = std::move(input);
+    m_midiInputs.push_back(std::move(input));
 }
 
 void MidiControllerManager::openMidiOutputByIdentifier(const juce::String& identifier)
@@ -452,11 +500,13 @@ void MidiControllerManager::openMidiOutputByIdentifier(const juce::String& ident
 void MidiControllerManager::restoreSavedDeviceSelections()
 {
     const auto inputId = SettingsManager::getInstance().getMidiInputIdentifier();
-    if (!inputId.isEmpty()) {
-        const juce::String savedInput = juce::String::fromUTF8(inputId.toUtf8().constData());
-        if (containsIdentifier(m_availableInputDeviceIdentifiers, savedInput))
-            openMidiInputByIdentifier(savedInput);
-    }
+    const juce::String savedInput = inputId.isEmpty()
+        ? kAllMidiInputsIdentifier
+        : juce::String::fromUTF8(inputId.toUtf8().constData());
+    if (containsIdentifier(m_availableInputDeviceIdentifiers, savedInput))
+        openMidiInputByIdentifier(savedInput);
+    else
+        openMidiInputByIdentifier(kAllMidiInputsIdentifier);
 
     const auto outputId = SettingsManager::getInstance().getMidiOutputIdentifier();
     if (!outputId.isEmpty()) {
@@ -490,8 +540,9 @@ void MidiControllerManager::selectMidiDevice(int index)
 {
     selectMidiInputDevice(index);
 
-    if (index >= 0 && index < static_cast<int>(m_availableOutputDeviceIdentifiers.size()))
-        selectMidiOutputDevice(index);
+    const int outputIndex = (index > 0) ? index - 1 : -1;
+    if (outputIndex >= 0 && outputIndex < static_cast<int>(m_availableOutputDeviceIdentifiers.size()))
+        selectMidiOutputDevice(outputIndex);
 
     emit midiDevicesUpdated();
 }
@@ -500,7 +551,7 @@ int MidiControllerManager::getSelectedMidiInputIndex() const
 {
     const QString selected = SettingsManager::getInstance().getMidiInputIdentifier();
     if (selected.isEmpty())
-        return -1;
+        return 0;
 
     const juce::String selectedId = juce::String::fromUTF8(selected.toUtf8().constData());
     return indexOfIdentifier(m_availableInputDeviceIdentifiers, selectedId);
@@ -950,12 +1001,8 @@ void MidiControllerManager::startMidiLearn(const QString& parameterId)
     hasLinuxAlsaMonitor = (m_alsaInputMonitor != nullptr);
 #endif
 
-    if (!m_midiInput && !hasLinuxAlsaMonitor) {
-        const auto savedInput = SettingsManager::getInstance().getMidiInputIdentifier();
-        if (!savedInput.isEmpty()) {
-            openMidiInputByIdentifier(juce::String::fromUTF8(savedInput.toUtf8().constData()));
-        }
-    }
+    if (!hasLinuxAlsaMonitor)
+        openMidiInputByIdentifier(kAllMidiInputsIdentifier);
 
     m_learnParameterId = parameterId;
     m_isLearning = true;
@@ -987,9 +1034,11 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
     }
 
     if (m_isLearning && !isNoteOff) {
-        // 150 ms grace period prevents CC jitter from resting faders from
-        // stealing Learn the instant the user clicks the Learn button.
-        if (m_learnTimer.elapsed() >= 150)
+        // Grace period only applies to CC events (faders/knobs jitter at rest).
+        // Notes (buttons) are learned immediately so you don't have to wait.
+        const int sub = (msgId >= 10000) ? (msgId - 10000) % 2000 : msgId;
+        const bool isCC = (sub >= 1000 && sub < 1500);
+        if (!isCC || m_learnTimer.elapsed() >= 150)
             learnMapping(msgId);
         return; // always skip dispatch while in learn mode
     }
@@ -1108,8 +1157,7 @@ void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*
     } else if (message.isPitchWheel()) {
         // sub-ID 1500 is reserved for pitch bend (per channel, no note/cc number)
         msgId  = 10000 + ch * 2000 + 1500;
-        // getPitchWheelValue() returns -8192..+8191; shift to 0..16383
-        rawEnc = static_cast<float>(message.getPitchWheelValue() + 8192);
+        rawEnc = static_cast<float>(message.getPitchWheelValue()); // 0-16383
     } else {
         return;
     }
