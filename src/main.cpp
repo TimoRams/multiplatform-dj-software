@@ -114,11 +114,7 @@ int main(int argc, char *argv[])
     qDebug() << "Essentia disabled by project policy; using internal analysis pipeline.";
 
     g_previousMessageHandler = qInstallMessageHandler(filteredMessageHandler);
-#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
     QQuickWindow::setTextRenderType(QQuickWindow::CurveTextRendering);
-#else
-    QQuickWindow::setTextRenderType(QQuickWindow::QtTextRendering);
-#endif
 
     if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE"))
         qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
@@ -444,8 +440,6 @@ int main(int argc, char *argv[])
                         const bool resetCache = (cacheMode == "reset");
 
                         if (enableCache) {
-                            // Set up Vulkan pipeline cache before show() so compiled shaders are persisted.
-                            // First launch compiles everything; subsequent launches load in milliseconds.
                             const QString cacheDir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
                             QDir().mkpath(cacheDir);
                             const QString cacheFile = cacheDir + "/vk_pipeline_cache.bin";
