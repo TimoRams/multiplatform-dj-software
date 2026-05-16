@@ -55,6 +55,9 @@ public:
     Q_INVOKABLE void clearLearnedMapping(const QString& paramId);
     Q_INVOKABLE void saveNativeMapping();
 
+    Q_INVOKABLE bool isMappingInverted(const QString& paramId) const;
+    Q_INVOKABLE void setMappingInverted(const QString& paramId, bool inverted);
+
     // Live MIDI monitor: last received event as a short human-readable string.
     // Updated on EVERY incoming message so the UI can show what the controller sends.
     Q_PROPERTY(QString lastMidiEvent READ lastMidiEvent NOTIFY lastMidiEventChanged)
@@ -62,6 +65,7 @@ public:
 
 signals:
     void mappingUpdated();
+    void mappingInversionUpdated();
     void midiDevicesUpdated();
     void controllerListUpdated();
     void mappingListUpdated();
@@ -95,6 +99,8 @@ private:
     QString m_selectedController;
     QString m_selectedMappingFile;
     juce::MidiDeviceListConnection m_midiDeviceListConnection;
+
+    std::map<QString, bool> m_paramInverted;
 
     // Learn State
     bool m_isLearning = false;

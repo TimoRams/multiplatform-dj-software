@@ -859,6 +859,22 @@ void MidiControllerManager::clearLearnedMapping(const QString& paramId)
     emit mappingUpdated();
 }
 
+bool MidiControllerManager::isMappingInverted(const QString& paramId) const
+{
+    const auto it = m_paramInverted.find(paramId);
+    return it != m_paramInverted.end() && it->second;
+}
+
+void MidiControllerManager::setMappingInverted(const QString& paramId, bool inverted)
+{
+    if (inverted)
+        m_paramInverted[paramId] = true;
+    else
+        m_paramInverted.erase(paramId);
+    saveNativeMapping();
+    emit mappingInversionUpdated();
+}
+
 void MidiControllerManager::saveNativeMapping()
 {
     const QString path = nativeMappingFilePath();
@@ -878,6 +894,9 @@ void MidiControllerManager::saveNativeMapping()
         xml.writeStartElement("Entry");
         xml.writeAttribute("paramId", paramId);
         xml.writeAttribute("msgId", QString::number(msgId));
+        const auto invIt = m_paramInverted.find(paramId);
+        if (invIt != m_paramInverted.end() && invIt->second)
+            xml.writeAttribute("inverted", "1");
         xml.writeEndElement();
     }
 
@@ -910,9 +929,12 @@ void MidiControllerManager::loadNativeMappingIfExists()
         const QString paramId = xml.attributes().value("paramId").toString();
         bool ok = false;
         const int msgId = xml.attributes().value("msgId").toString().toInt(&ok);
+        const bool inverted = xml.attributes().value("inverted").toString() == QStringLiteral("1");
         if (ok && !paramId.isEmpty()) {
             m_midiToParam[msgId] = paramId;
             m_paramToMidi[paramId] = msgId;
+            if (inverted)
+                m_paramInverted[paramId] = true;
             ++count;
         }
     }
@@ -1083,9 +1105,19 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
         return;
 
     const QString paramId = it->second;
+    float dispatchValue = value;
+    {
+        const auto invIt = m_paramInverted.find(paramId);
+        if (invIt != m_paramInverted.end() && invIt->second) {
+            if (paramId.endsWith(QStringLiteral("_jog_move")))
+                dispatchValue = -dispatchValue;
+            else
+                dispatchValue = 1.0f - dispatchValue;
+        }
+    }
     QMetaObject::invokeMethod(m_parameterStore, "setMidiParameter", Qt::QueuedConnection,
                               Q_ARG(QString, paramId),
-                              Q_ARG(float, value));
+                              Q_ARG(float, dispatchValue));
 }
 
 void MidiControllerManager::learnMapping(int msgId)

@@ -1204,54 +1204,6 @@ Window {
                         color: "#2a2a2a"
                     }
 
-                    RowLayout {
-                        Layout.fillWidth: true
-
-                        Text {
-                            text: "Mappings"
-                            color: "#eee"
-                            font.pixelSize: 14
-                            font.bold: true
-                            Layout.fillWidth: true
-                        }
-
-                        // Auto-save feedback pill
-                        Rectangle {
-                            id: savedPill
-                            width: savedPillText.implicitWidth + 16
-                            height: 20
-                            radius: 3
-                            color: "#1a3a1a"
-                            border.color: "#2a5a2a"
-                            opacity: 0.0
-
-                            Text {
-                                id: savedPillText
-                                anchors.centerIn: parent
-                                text: "● Gespeichert"
-                                color: "#4ac84a"
-                                font.pixelSize: 10
-                            }
-
-                            Connections {
-                                target: midiManager
-                                function onMappingUpdated() {
-                                    savedPill.opacity = 1.0
-                                    savedPillFade.restart()
-                                }
-                            }
-
-                            NumberAnimation {
-                                id: savedPillFade
-                                target: savedPill
-                                property: "opacity"
-                                from: 1.0; to: 0.0
-                                duration: 1800
-                                easing.type: Easing.InQuad
-                            }
-                        }
-                    }
-
                     // ── Live MIDI monitor ─────────────────────────────────────────────
                     Rectangle {
                         Layout.fillWidth: true
@@ -1285,209 +1237,46 @@ Window {
                         }
                     }
 
-                    // ── MappingRow component ──────────────────────────────────────────
-                    // Declared here (outside the Flickable) so Qt 6 doesn't confuse it
-                    // with the Flickable's content item.  Uses Item + anchors instead of
-                    // RowLayout so TapHandler works without Flickable interference.
-                    component MappingRow: Item {
-                        required property string labelStr
-                        required property string paramId
-                        height: 28
-
-                        property string currentMapping: midiManager
-                            ? midiManager.getMappingLabel(paramId) : ""
-                        property bool isLearning: false
-
-                        Connections {
-                            target: midiManager
-                            function onMappingUpdated() {
-                                isLearning = false
-                                currentMapping = midiManager ? midiManager.getMappingLabel(paramId) : ""
-                            }
-                            function onLearnStarted(activeParamId) {
-                                if (activeParamId !== paramId) isLearning = false
-                            }
-                        }
-
-                        // Label
-                        Text {
-                            id: rowLabel
-                            anchors.left: parent.left
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 118
-                            text: labelStr
-                            color: "#888"
-                            font.pixelSize: 12
-                            elide: Text.ElideRight
-                        }
-
-                        // Assignment badge
-                        Rectangle {
-                            id: rowBadge
-                            anchors.left: rowLabel.right
-                            anchors.leftMargin: 6
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 72; height: 20
-                            color: currentMapping !== "" ? "#0c1e11" : "transparent"
-                            border.color: currentMapping !== "" ? "#194d27" : "transparent"
-                            radius: 4
-                            Text {
-                                anchors.centerIn: parent
-                                text: currentMapping
-                                color: "#40b85a"
-                                font.pixelSize: 10; font.bold: true
-                            }
-                        }
-
-                        // Clear button (right-anchored, only when mapped)
-                        Rectangle {
-                            id: rowClear
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 24; height: 20
-                            visible: currentMapping !== ""
-                            color: xHov.hovered ? "#330d0d" : "#1c0808"
-                            border.color: "#3a1414"
-                            radius: 4
-                            Text { anchors.centerIn: parent; text: "✕"; color: "#c04040"; font.pixelSize: 10 }
-                            HoverHandler { id: xHov; cursorShape: Qt.PointingHandCursor }
-                            TapHandler { onTapped: { if (midiManager) midiManager.clearLearnedMapping(paramId) } }
-                        }
-
-                        // Learn button (fills remaining width)
-                        Rectangle {
-                            anchors.left: rowBadge.right
-                            anchors.leftMargin: 5
-                            anchors.right: currentMapping !== "" ? rowClear.left : parent.right
-                            anchors.rightMargin: currentMapping !== "" ? 4 : 0
-                            anchors.verticalCenter: parent.verticalCenter
-                            height: 20
-                            color: isLearning ? "#2a1600" : (lHov.hovered ? "#222" : "#181818")
-                            border.color: isLearning ? "#d08000" : (lHov.hovered ? "#353535" : "#222")
-                            radius: 4
-                            Text {
-                                anchors.centerIn: parent
-                                text: isLearning ? "⬤  Warte auf MIDI..." : "Learn"
-                                color: isLearning ? "#ff9900" : "#555"
-                                font.pixelSize: 11; font.bold: isLearning
-                            }
-                            HoverHandler { id: lHov; cursorShape: Qt.PointingHandCursor }
-                            TapHandler {
-                                onTapped: {
-                                    if (midiManager && !isLearning) {
-                                        isLearning = true
-                                        midiManager.startMidiLearn(paramId)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // ── Scrollable mapping list via bare Flickable ─────────────────────
-                    Item {
+                    // ── Open mapping editor ────────────────────────────────────────────
+                    RowLayout {
                         Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        clip: true
+                        spacing: 10
 
-                        Flickable {
-                            id: mappingFlickable
-                            anchors.fill: parent
-                            contentWidth: width
-                            contentHeight: mappingCol.implicitHeight + 12
-                            flickableDirection: Flickable.VerticalFlick
-                            boundsBehavior: Flickable.StopAtBounds
-                            ScrollBar.vertical: ScrollBar {
-                                id: mScrollBar
-                                width: 5
-                                policy: ScrollBar.AsNeeded
-                                contentItem: Rectangle { radius: 2; color: mScrollBar.active ? "#666" : "#3a3a3a" }
-                                background: Rectangle { color: "transparent" }
+                        Item { Layout.fillWidth: true }
+
+                        Button {
+                            text: "Mappings bearbeiten"
+                            Layout.preferredHeight: 34
+
+                            background: Rectangle {
+                                color: parent.down ? "#3d2200" : (parent.hovered ? "#2a1a00" : "#1e1300")
+                                border.color: parent.hovered ? "#d08000" : "#7a4800"
+                                radius: 4
                             }
 
-                            Column {
-                                id: mappingCol
-                                width: mappingFlickable.width - 9
-                                spacing: 1
+                            contentItem: Text {
+                                text: parent.text
+                                color: "#ff9900"
+                                font.pixelSize: 12
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
 
-                                // ── TRANSPORT ──────────────────────────────────
-                                Item { width: parent.width; height: 26
-                                    Text { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left
-                                           text: "TRANSPORT"; color: "#3a3a3a"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.5 } }
-                                MappingRow { width: parent.width; labelStr: "Deck A – Play";  paramId: "deckA_play" }
-                                MappingRow { width: parent.width; labelStr: "Deck A – Cue";   paramId: "deckA_cue"  }
-                                MappingRow { width: parent.width; labelStr: "Deck B – Play";  paramId: "deckB_play" }
-                                MappingRow { width: parent.width; labelStr: "Deck B – Cue";   paramId: "deckB_cue"  }
-
-                                Item { width: parent.width; height: 10 }
-
-                                // ── HEADPHONES ───────────────────────────────
-                                Item { width: parent.width; height: 26
-                                    Text { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left
-                                           text: "HEADPHONES"; color: "#3a3a3a"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.5 } }
-                                MappingRow { width: parent.width; labelStr: "Cue A";      paramId: "deckA_headphone_cue" }
-                                MappingRow { width: parent.width; labelStr: "Cue B";      paramId: "deckB_headphone_cue" }
-                                MappingRow { width: parent.width; labelStr: "Master Cue"; paramId: "master_cue" }
-                                MappingRow { width: parent.width; labelStr: "Cue Mix";    paramId: "headphone_mix" }
-
-                                Item { width: parent.width; height: 10 }
-
-                                // ── MIXER ──────────────────────────────────────
-                                Item { width: parent.width; height: 26
-                                    Text { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left
-                                           text: "MIXER"; color: "#3a3a3a"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.5 } }
-                                MappingRow { width: parent.width; labelStr: "Volume A";   paramId: "deckA_vol"   }
-                                MappingRow { width: parent.width; labelStr: "Volume B";   paramId: "deckB_vol"   }
-                                MappingRow { width: parent.width; labelStr: "Crossfader"; paramId: "crossfader"  }
-
-                                Item { width: parent.width; height: 10 }
-
-                                // ── DECK A ─────────────────────────────────────
-                                Item { width: parent.width; height: 26
-                                    Text { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left
-                                           text: "DECK A — EQ & FILTER"; color: "#3a3a3a"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.5 } }
-                                MappingRow { width: parent.width; labelStr: "Trim";    paramId: "deckA_gain"   }
-                                MappingRow { width: parent.width; labelStr: "EQ High"; paramId: "deckA_eqHigh" }
-                                MappingRow { width: parent.width; labelStr: "EQ Mid";  paramId: "deckA_eqMid"  }
-                                MappingRow { width: parent.width; labelStr: "EQ Low";  paramId: "deckA_eqLow"  }
-                                MappingRow { width: parent.width; labelStr: "Filter";  paramId: "deckA_filter" }
-
-                                Item { width: parent.width; height: 10 }
-
-                                // ── DECK B ─────────────────────────────────────
-                                Item { width: parent.width; height: 26
-                                    Text { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left
-                                           text: "DECK B — EQ & FILTER"; color: "#3a3a3a"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.5 } }
-                                MappingRow { width: parent.width; labelStr: "Trim";    paramId: "deckB_gain"   }
-                                MappingRow { width: parent.width; labelStr: "EQ High"; paramId: "deckB_eqHigh" }
-                                MappingRow { width: parent.width; labelStr: "EQ Mid";  paramId: "deckB_eqMid"  }
-                                MappingRow { width: parent.width; labelStr: "EQ Low";  paramId: "deckB_eqLow"  }
-                                MappingRow { width: parent.width; labelStr: "Filter";  paramId: "deckB_filter" }
-
-                                Item { width: parent.width; height: 10 }
-
-                                // ── TEMPO ──────────────────────────────────────
-                                Item { width: parent.width; height: 26
-                                    Text { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left
-                                           text: "TEMPO"; color: "#3a3a3a"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.5 } }
-                                MappingRow { width: parent.width; labelStr: "Tempo A"; paramId: "deckA_tempo" }
-                                MappingRow { width: parent.width; labelStr: "Tempo B"; paramId: "deckB_tempo" }
-
-                                Item { width: parent.width; height: 10 }
-
-                                // ── JOG WHEELS ─────────────────────────────────
-                                Item { width: parent.width; height: 26
-                                    Text { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left
-                                           text: "JOG WHEELS"; color: "#3a3a3a"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.5 } }
-                                MappingRow { width: parent.width; labelStr: "Touch A"; paramId: "deckA_jog_touch" }
-                                MappingRow { width: parent.width; labelStr: "Move A";  paramId: "deckA_jog_move"  }
-                                MappingRow { width: parent.width; labelStr: "Touch B"; paramId: "deckB_jog_touch" }
-                                MappingRow { width: parent.width; labelStr: "Move B";  paramId: "deckB_jog_move"  }
-
-                                Item { width: parent.width; height: 12 }
+                            onClicked: {
+                                mappingEditorWindow.show()
+                                mappingEditorWindow.raise()
+                                mappingEditorWindow.requestActivate()
                             }
                         }
                     }
+
+                    Item { Layout.fillHeight: true }
                 }
+            }
+
+            MappingEditorWindow {
+                id: mappingEditorWindow
             }
 
             // ── Page 2: Library ────────────────────────────────────────────

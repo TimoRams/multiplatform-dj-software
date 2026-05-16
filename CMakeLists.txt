@@ -243,6 +243,7 @@ qt_add_qml_module(${PROJECT_NAME}
         src/qml/TurntableIndicator.qml
         src/qml/MixerSection.qml
         src/qml/SettingsWindow.qml
+        src/qml/MappingEditorWindow.qml
         src/qml/FxUnit.qml
         src/qml/FxBar.qml
         src/qml/CrossfaderBar.qml
