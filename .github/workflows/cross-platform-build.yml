@@ -83,8 +83,9 @@ jobs:
           ARCH=$(uname -m)
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-$ARCH.AppImage
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-$ARCH.AppImage
-          chmod +x linuxdeploy*.AppImage
-          
+          wget -q "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-$ARCH.AppImage"
+          chmod +x linuxdeploy*.AppImage appimagetool-$ARCH.AppImage
+
           export QMAKE=$(which qmake 2>/dev/null || which qmake6)
           export QML_SOURCES_PATHS=../src/qml
           export QML_IMPORT_PATHS=$($QMAKE -query QT_INSTALL_QML)
@@ -97,11 +98,19 @@ jobs:
           rm -f "$QT_PLUGINS/sqldrivers/libqsqlmimer.so" \
                 "$QT_PLUGINS/sqldrivers/libqsqlmysql.so"
 
-          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir -e AppDir/usr/bin/RamsbrockDJ --plugin qt
-          # Restore the real binary in case the plugin replaced it with a wrapper script.
-          cp -f ../build/bin/RamsbrockDJ AppDir/usr/bin/RamsbrockDJ
+          # Bundle Qt libs, plugins and QML modules (plugin-qt may wrap the binary with a shell script)
+          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run \
+              --appdir AppDir \
+              -e AppDir/usr/bin/RamsbrockDJ \
+              --plugin qt
 
-          # Keep Vulkan/GPU libraries dynamic so the AppImage always uses the host driver stack.
+          # plugin-qt replaces the binary with a wrapper script; restore the real ELF
+          # and remove any wrapper artifacts (.bin / .real) it left behind
+          cp -f ../build/bin/RamsbrockDJ AppDir/usr/bin/RamsbrockDJ
+          chmod +x AppDir/usr/bin/RamsbrockDJ
+          rm -f AppDir/usr/bin/RamsbrockDJ.bin AppDir/usr/bin/RamsbrockDJ.real
+
+          # Keep Vulkan/GPU libraries dynamic so the AppImage uses the host driver stack
           find AppDir -type f \( \
             -name 'libEGL*.so*' -o -name 'libGL*.so*' -o -name 'libGLESv2*.so*' -o -name 'libglapi*.so*' \
             -o -name 'libvulkan*.so*' -o -name 'libdrm*.so*' -o -name 'libgbm*.so*' \
@@ -109,7 +118,7 @@ jobs:
             -o -name 'libva*.so*' -o -name 'libva-drm*.so*' -o -name 'libva-x11*.so*' \
           \) -print0 | xargs -0 -r rm -f
 
-          # Force Qt to load everything from inside the AppImage at runtime
+          # Tell Qt where to find plugins/QML relative to the binary location
           cat <<EOF > AppDir/usr/bin/qt.conf
           [Paths]
           Prefix=..
@@ -118,31 +127,23 @@ jobs:
           Qml2Imports=qml
           EOF
 
-          # Ensure runtime uses AppImage-local Qt paths
-          cat <<'EOF' > AppDir/AppRun
+          # Minimal AppRun — AppImage runtime always mounts at a stable path,
+          # so $0's directory is always the correct AppDir root.
+          cat <<'APPRUN' > AppDir/AppRun
           #!/bin/sh
-          APPDIR="$(dirname "$(readlink -f "$0")")"
-          if [ ! -x "$APPDIR/usr/bin/RamsbrockDJ" ]; then
-            if [ -x "$APPDIR/../usr/bin/RamsbrockDJ" ]; then
-              APPDIR="$(readlink -f "$APPDIR/..")"
-            elif [ -x "$APPDIR/../../usr/bin/RamsbrockDJ" ]; then
-              APPDIR="$(readlink -f "$APPDIR/../..")"
-            fi
-          fi
-          export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-          export QT_PLUGIN_PATH="$APPDIR/usr/plugins"
-          export QML2_IMPORT_PATH="$APPDIR/usr/qml"
-          if [ -z "$QT_QPA_PLATFORM" ] || [ "$QT_QPA_PLATFORM" = "wayland" ]; then
-            if [ -z "$RDBJ_ALLOW_WAYLAND" ]; then
-              export QT_QPA_PLATFORM="xcb"
-            fi
-          fi
-          export QSG_RHI_PREFER_SOFTWARE_RENDERER=0
-          exec "$APPDIR/usr/bin/RamsbrockDJ" "$@"
-          EOF
+          HERE="$(dirname "$(readlink -f "$0")")"
+          export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          export QT_PLUGIN_PATH="$HERE/usr/plugins"
+          export QML2_IMPORT_PATH="$HERE/usr/qml"
+          export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
+          exec "$HERE/usr/bin/RamsbrockDJ" "$@"
+          APPRUN
           chmod +x AppDir/AppRun
 
-          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir --output appimage
+          # Pack with appimagetool directly — avoids a second linuxdeploy pass
+          # that would re-wrap the binary and break the AppRun → binary chain.
+          ./appimagetool-$ARCH.AppImage --appimage-extract-and-run \
+              AppDir "RamsbrockDJ-${VERSION}-${ARCH}.AppImage"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -331,8 +332,9 @@ jobs:
           ARCH=$(uname -m)
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-$ARCH.AppImage
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-$ARCH.AppImage
-          chmod +x linuxdeploy*.AppImage
-          
+          wget -q "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-$ARCH.AppImage"
+          chmod +x linuxdeploy*.AppImage appimagetool-$ARCH.AppImage
+
           export QMAKE=$(which qmake 2>/dev/null || which qmake6)
           export QML_SOURCES_PATHS=../src/qml
           export QML_IMPORT_PATHS=$($QMAKE -query QT_INSTALL_QML)
@@ -344,11 +346,18 @@ jobs:
           rm -f "$QT_PLUGINS/sqldrivers/libqsqlmimer.so" \
                 "$QT_PLUGINS/sqldrivers/libqsqlmysql.so"
 
-          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir -e AppDir/usr/bin/RamsbrockDJ --plugin qt
-          # Restore the real binary in case the plugin replaced it with a wrapper script.
-          cp -f ../build/bin/RamsbrockDJ AppDir/usr/bin/RamsbrockDJ
+          # Bundle Qt libs, plugins and QML modules
+          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run \
+              --appdir AppDir \
+              -e AppDir/usr/bin/RamsbrockDJ \
+              --plugin qt
 
-          # Keep Vulkan/GPU libraries dynamic so the AppImage always uses the host driver stack.
+          # plugin-qt replaces the binary with a wrapper script; restore the real ELF
+          cp -f ../build/bin/RamsbrockDJ AppDir/usr/bin/RamsbrockDJ
+          chmod +x AppDir/usr/bin/RamsbrockDJ
+          rm -f AppDir/usr/bin/RamsbrockDJ.bin AppDir/usr/bin/RamsbrockDJ.real
+
+          # Keep Vulkan/GPU libraries dynamic so the AppImage uses the host driver stack
           find AppDir -type f \( \
             -name 'libEGL*.so*' -o -name 'libGL*.so*' -o -name 'libGLESv2*.so*' -o -name 'libglapi*.so*' \
             -o -name 'libvulkan*.so*' -o -name 'libdrm*.so*' -o -name 'libgbm*.so*' \
@@ -356,7 +365,6 @@ jobs:
             -o -name 'libva*.so*' -o -name 'libva-drm*.so*' -o -name 'libva-x11*.so*' \
           \) -print0 | xargs -0 -r rm -f
 
-          # Force Qt to load everything from inside the AppImage at runtime
           cat <<EOF > AppDir/usr/bin/qt.conf
           [Paths]
           Prefix=..
@@ -365,31 +373,19 @@ jobs:
           Qml2Imports=qml
           EOF
 
-          # Ensure runtime uses AppImage-local Qt paths
-          cat <<'EOF' > AppDir/AppRun
+          cat <<'APPRUN' > AppDir/AppRun
           #!/bin/sh
-          APPDIR="$(dirname "$(readlink -f "$0")")"
-          if [ ! -x "$APPDIR/usr/bin/RamsbrockDJ" ]; then
-            if [ -x "$APPDIR/../usr/bin/RamsbrockDJ" ]; then
-              APPDIR="$(readlink -f "$APPDIR/..")"
-            elif [ -x "$APPDIR/../../usr/bin/RamsbrockDJ" ]; then
-              APPDIR="$(readlink -f "$APPDIR/../..")"
-            fi
-          fi
-          export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-          export QT_PLUGIN_PATH="$APPDIR/usr/plugins"
-          export QML2_IMPORT_PATH="$APPDIR/usr/qml"
-          if [ -z "$QT_QPA_PLATFORM" ] || [ "$QT_QPA_PLATFORM" = "wayland" ]; then
-            if [ -z "$RDBJ_ALLOW_WAYLAND" ]; then
-              export QT_QPA_PLATFORM="xcb"
-            fi
-          fi
-          export QSG_RHI_PREFER_SOFTWARE_RENDERER=0
-          exec "$APPDIR/usr/bin/RamsbrockDJ" "$@"
-          EOF
+          HERE="$(dirname "$(readlink -f "$0")")"
+          export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          export QT_PLUGIN_PATH="$HERE/usr/plugins"
+          export QML2_IMPORT_PATH="$HERE/usr/qml"
+          export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
+          exec "$HERE/usr/bin/RamsbrockDJ" "$@"
+          APPRUN
           chmod +x AppDir/AppRun
 
-          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir --output appimage
+          ./appimagetool-$ARCH.AppImage --appimage-extract-and-run \
+              AppDir "RamsbrockDJ-${VERSION}-${ARCH}.AppImage"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
