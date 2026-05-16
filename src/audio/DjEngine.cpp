@@ -2310,6 +2310,7 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     bufferSize = std::clamp(bufferSize, 64, 4096);
 
     setLastAudioDeviceError(QString());
+    setAudioDeviceFallbackMessage(QString());
 
     const auto previousRouting = unpackRouting(s_outputRoutingPacked.load(std::memory_order_relaxed));
 
@@ -2394,7 +2395,11 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
         }
         if (!found) {
             qWarning() << "[DjEngine] Requested output device not found:" << sanitizedOutput
-                       << "- using default";
+                       << "- falling back to system default";
+            setAudioDeviceFallbackMessage(
+                QStringLiteral("Saved audio device \"%1\" is no longer available. "
+                               "Falling back to system default — open Settings → Audio Setup to reconfigure.")
+                .arg(sanitizedOutput));
             sanitizedOutput.clear();
         }
     }
@@ -2428,10 +2433,17 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     } else if (sanitizedOutput.isEmpty()) {
         if (auto* device = manager.getCurrentAudioDevice()) {
             setup.outputDeviceName = device->getName();
-        } else {
-            qWarning() << "[DjEngine] No current audio device to get name from";
-            return false;
+        } else if (type != nullptr) {
+            // No device open yet (first startup or empty saved config).
+            // Scan and pick the first available device so audio starts automatically.
+            type->scanForDevices();
+            const auto names = type->getDeviceNames(false);
+            if (!names.isEmpty())
+                setup.outputDeviceName = names[0];
+            qDebug() << "[DjEngine] No current device; using first available:"
+                     << QString::fromUtf8(setup.outputDeviceName.toRawUTF8());
         }
+        // setup.outputDeviceName may still be empty — JUCE will use its own default.
     } else {
         setup.outputDeviceName = toJuceString(sanitizedOutput);
     }
@@ -3647,6 +3659,14 @@ void DjEngine::setLastAudioDeviceError(const QString& error)
         return;
     m_lastAudioDeviceError = error;
     emit audioDeviceErrorChanged();
+}
+
+void DjEngine::setAudioDeviceFallbackMessage(const QString& message)
+{
+    if (m_audioDeviceFallbackMessage == message)
+        return;
+    m_audioDeviceFallbackMessage = message;
+    emit audioDeviceFallbackChanged();
 }
 
 void DjEngine::cueButtonPress()

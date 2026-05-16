@@ -79,6 +79,7 @@ class DjEngine : public QObject
     Q_PROPERTY(QVariantList hotCues READ hotCues NOTIFY hotCuesChanged)
     Q_PROPERTY(double mainCueSec READ mainCueSec NOTIFY mainCueChanged)
     Q_PROPERTY(QString lastAudioDeviceError READ lastAudioDeviceError NOTIFY audioDeviceErrorChanged)
+    Q_PROPERTY(QString audioDeviceFallbackMessage READ audioDeviceFallbackMessage NOTIFY audioDeviceFallbackChanged)
     Q_PROPERTY(bool vinylBrakeActive READ isVinylBrakeActive NOTIFY vinylBrakeChanged)
     Q_PROPERTY(bool echoOutActive    READ isEchoOutActive    NOTIFY echoOutChanged)
     Q_PROPERTY(bool backspinActive   READ isBackspinActive   NOTIFY backspinChanged)
@@ -243,6 +244,7 @@ public:
     [[nodiscard]] QVariantList hotCues() const;
     [[nodiscard]] double mainCueSec() const { return m_mainCueSec; }
     [[nodiscard]] QString lastAudioDeviceError() const { return m_lastAudioDeviceError; }
+    [[nodiscard]] QString audioDeviceFallbackMessage() const { return m_audioDeviceFallbackMessage; }
 
     void setCoverArtProvider(CoverArtProvider* provider, const QString& deckId);
     void setLibraryDatabase(LibraryDatabase* db);
@@ -344,6 +346,7 @@ signals:
     void hotCuesChanged();
     void mainCueChanged();
     void audioDeviceErrorChanged();
+    void audioDeviceFallbackChanged();
     void vinylBrakeChanged();
     void echoOutChanged();
     void backspinChanged();
@@ -382,6 +385,7 @@ private:
     void loadMainCueForCurrentTrack();
     void persistMainCuePoint();
     void setLastAudioDeviceError(const QString& error);
+    void setAudioDeviceFallbackMessage(const QString& message);
 
     struct HotCueSlot {
         bool set = false;
@@ -428,6 +432,7 @@ private:
     double m_mainCueSec = -1.0;
     bool m_mainCuePreviewActive = false;
     QString m_lastAudioDeviceError;
+    QString m_audioDeviceFallbackMessage;
 
     // Tempo control: ±6/8/16/32/100% (WIDE) selectable range
     double m_tempoPercent = 0.0;

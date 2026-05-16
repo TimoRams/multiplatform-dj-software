@@ -177,7 +177,12 @@ Window {
         if (!outputOptions || outputOptions.length === 0)
             outputOptions = ["None"]
 
-        if (indexForText(outputOptions, selections.outputDevice) < 0)
+        // Only override the saved device when the list actually has real devices.
+        // If the list contains only "None" the device scan is still incomplete —
+        // preserve the saved name so it is found on the next (500 ms) refresh.
+        var listHasRealDevices = outputOptions.length > 1 ||
+            (outputOptions.length === 1 && String(outputOptions[0]).toLowerCase() !== "none")
+        if (listHasRealDevices && indexForText(outputOptions, selections.outputDevice) < 0)
             selections.outputDevice = outputOptions[0]
 
         setRoleSelections(role, selections.outputDevice, selections.firstChannel)

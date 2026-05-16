@@ -636,6 +636,85 @@ ApplicationWindow {
         }
     }
 
+    // ── Audio device fallback notification ───────────────────────────────────
+    Rectangle {
+        id: audioFallbackToast
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 20
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: Math.min(parent.width * 0.9, 600)
+        height: toastCol.implicitHeight + 20
+        radius: 6
+        color: "#1a1200"
+        border.color: "#7a4800"
+        z: 998
+        visible: opacity > 0
+        opacity: 0.0
+
+        property string message: ""
+
+        Connections {
+            target: typeof deckA !== "undefined" && deckA ? deckA : null
+            function onAudioDeviceFallbackChanged() {
+                var msg = deckA ? deckA.audioDeviceFallbackMessage : ""
+                if (msg) {
+                    audioFallbackToast.message = msg
+                    audioFallbackToast.opacity = 1.0
+                    audioFallbackDismissTimer.restart()
+                } else {
+                    audioFallbackToast.opacity = 0.0
+                }
+            }
+        }
+
+        Timer {
+            id: audioFallbackDismissTimer
+            interval: 12000
+            repeat: false
+            onTriggered: audioFallbackToast.opacity = 0.0
+        }
+
+        Behavior on opacity {
+            NumberAnimation { duration: 300; easing.type: Easing.InOutQuad }
+        }
+
+        Row {
+            id: toastCol
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: 12
+            spacing: 10
+
+            Text {
+                text: "⚠"
+                color: "#ff9900"
+                font.pixelSize: 14
+                anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Text {
+                width: parent.width - 60
+                text: audioFallbackToast.message
+                color: "#ccaa66"
+                font.pixelSize: 11
+                wrapMode: Text.WordWrap
+                anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Rectangle {
+                width: 22; height: 22
+                radius: 3
+                anchors.verticalCenter: parent.verticalCenter
+                color: dismissH.hovered ? "#2a0000" : "#1a0000"
+                border.color: "#442222"
+                HoverHandler { id: dismissH; cursorShape: Qt.PointingHandCursor }
+                TapHandler { onTapped: audioFallbackToast.opacity = 0.0 }
+                Text { anchors.centerIn: parent; text: "✕"; color: "#885555"; font.pixelSize: 10 }
+            }
+        }
+    }
+
     WelcomeScreen {
         id: welcomeOverlay
         active: false
