@@ -1,6 +1,5 @@
 #pragma once
 
-#include <QElapsedTimer>
 #include <QObject>
 #include <QStringList>
 #include <QTimer>
@@ -100,8 +99,6 @@ private:
     // Learn State
     bool m_isLearning = false;
     QString m_learnParameterId;
-    QElapsedTimer m_learnTimer; // grace-period guard
-
     // 14-bit CC accumulation: paramId → last 7-bit MSB value
     std::map<QString, int> m_msbAccumulator;
 

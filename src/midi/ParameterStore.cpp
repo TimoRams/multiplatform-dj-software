@@ -13,6 +13,12 @@ void ParameterStore::setParameter(const QString& id, float value)
     }
 }
 
+void ParameterStore::setMidiParameter(const QString& id, float value)
+{
+    m_parameters[id] = value;
+    emit parameterChanged(id, value);
+}
+
 float ParameterStore::getParameter(const QString& id) const
 {
     auto it = m_parameters.find(id);

@@ -295,6 +295,21 @@ int main(int argc, char *argv[])
                 if (value > 0.0f) deckBPtr->cueButtonPress();
                 else              deckBPtr->cueButtonRelease();
             }
+            else if (id == "deckA_headphone_cue") {
+                if (value > 0.0f)
+                    deckAPtr->setCueEnabled(!deckAPtr->cueEnabled());
+            }
+            else if (id == "deckB_headphone_cue") {
+                if (value > 0.0f)
+                    deckBPtr->setCueEnabled(!deckBPtr->cueEnabled());
+            }
+            else if (id == "master_cue") {
+                if (value > 0.0f)
+                    deckAPtr->setMasterCueEnabled(!deckAPtr->masterCueEnabled());
+            }
+            else if (id == "headphone_mix") {
+                deckAPtr->setHeadphoneMix(static_cast<double>(value));
+            }
             // Trim: MIDI 0-1 → engine 0-2 (center = 1.0 = unity)
             else if (id == "deckA_gain")   deckAPtr->setTrim(static_cast<double>(value) * 2.0);
             else if (id == "deckB_gain")   deckBPtr->setTrim(static_cast<double>(value) * 2.0);
@@ -313,7 +328,7 @@ int main(int argc, char *argv[])
             // Jog touch: value > 0 = finger down (enter scratch), 0 = lift (resume)
             else if (id == "deckA_jog_touch") {
                 static bool jogATouched = false;
-                const bool touched = (value > 0.5f);
+                const bool touched = (value > 0.0f);
                 if (touched != jogATouched) {
                     jogATouched = touched;
                     if (touched) deckAPtr->pauseForScrub();
@@ -322,7 +337,7 @@ int main(int argc, char *argv[])
             }
             else if (id == "deckB_jog_touch") {
                 static bool jogBTouched = false;
-                const bool touched = (value > 0.5f);
+                const bool touched = (value > 0.0f);
                 if (touched != jogBTouched) {
                     jogBTouched = touched;
                     if (touched) deckBPtr->pauseForScrub();

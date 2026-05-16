@@ -12,6 +12,7 @@ public:
     explicit ParameterStore(QObject* parent = nullptr);
 
     Q_INVOKABLE void setParameter(const QString& id, float value);
+    Q_INVOKABLE void setMidiParameter(const QString& id, float value);
     Q_INVOKABLE float getParameter(const QString& id) const;
 
 signals:

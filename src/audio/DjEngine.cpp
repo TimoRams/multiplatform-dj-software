@@ -288,6 +288,8 @@ OutputRoutingConfig unpackRouting(uint64_t packed)
 }
 
 std::atomic<uint64_t> s_outputRoutingPacked { packRouting(OutputRoutingConfig{}) };
+std::atomic<bool> s_masterCueEnabled { false };
+std::atomic<float> s_headphoneMix { 0.5f };
 std::mutex s_outputChannelCountCacheMutex;
 QHash<QString, int> s_outputChannelCountCache;
 
@@ -1598,10 +1600,13 @@ private:
                            int start,
                            int n,
                            int firstChannel,
-                           bool add)
+                           bool add,
+                           float gain = 1.0f)
     {
         // Null pointer checks
         if (!srcL || !srcR || n <= 0)
+            return;
+        if (std::abs(gain) <= 0.0001f)
             return;
         
         if (firstChannel < 1)
@@ -1626,11 +1631,11 @@ private:
 
         for (int i = 0; i < n; ++i) {
             if (add) {
-                dstL[i] += srcL[i];
-                dstR[i] += srcR[i];
+                dstL[i] += srcL[i] * gain;
+                dstR[i] += srcR[i] * gain;
             } else {
-                dstL[i] = srcL[i];
-                dstR[i] = srcR[i];
+                dstL[i] = srcL[i] * gain;
+                dstR[i] = srcR[i] * gain;
             }
         }
     }
@@ -1649,6 +1654,10 @@ private:
 
         const auto routing = unpackRouting(s_outputRoutingPacked.load(std::memory_order_relaxed));
         const bool cueActive = m_owner != nullptr && m_owner->cueEnabled();
+        const bool masterCueActive = s_masterCueEnabled.load(std::memory_order_relaxed);
+        const float cueMix = std::clamp(s_headphoneMix.load(std::memory_order_relaxed), 0.0f, 1.0f);
+        const float cueGain = 1.0f - cueMix;
+        const float masterCueGain = masterCueActive ? cueMix : 0.0f;
         // Per-deck master channel; falls back to shared routing if owner is null.
         const int masterCh = (m_owner != nullptr)
             ? m_owner->m_masterFirstChannelAtomic.load(std::memory_order_relaxed)
@@ -1675,9 +1684,17 @@ private:
             hasOutput = true;
         }
 
-        if (cueActive && routing.headphonesFirstChannel >= 1) {
+        if (routing.headphonesFirstChannel >= 1) {
             const bool add = hasOutput;
-            routeStereoToPair(buffer, pflL, pflR, start, n, routing.headphonesFirstChannel, add);
+            bool phonesHaveSignal = false;
+            if (cueActive && cueGain > 0.0001f) {
+                routeStereoToPair(buffer, pflL, pflR, start, n, routing.headphonesFirstChannel, add, cueGain);
+                phonesHaveSignal = true;
+            }
+            if (masterCueGain > 0.0001f) {
+                routeStereoToPair(buffer, srcL, srcR, start, n, routing.headphonesFirstChannel,
+                                  add || phonesHaveSignal, masterCueGain);
+            }
         }
     }
 
@@ -4502,6 +4519,31 @@ void DjEngine::setCueEnabled(bool value)
     const bool prev = m_cueEnabled.exchange(value, std::memory_order_relaxed);
     if (prev != value)
         emit cueEnabledChanged();
+}
+
+bool DjEngine::masterCueEnabled() const
+{
+    return s_masterCueEnabled.load(std::memory_order_relaxed);
+}
+
+double DjEngine::headphoneMix() const
+{
+    return static_cast<double>(s_headphoneMix.load(std::memory_order_relaxed));
+}
+
+void DjEngine::setMasterCueEnabled(bool value)
+{
+    const bool prev = s_masterCueEnabled.exchange(value, std::memory_order_relaxed);
+    if (prev != value)
+        emit masterCueEnabledChanged();
+}
+
+void DjEngine::setHeadphoneMix(double value)
+{
+    const float clamped = static_cast<float>(std::clamp(value, 0.0, 1.0));
+    const float prev = s_headphoneMix.exchange(clamped, std::memory_order_relaxed);
+    if (std::abs(prev - clamped) > 0.0001f)
+        emit headphoneMixChanged();
 }
 
 void DjEngine::setQuantizeEnabled(bool enabled)

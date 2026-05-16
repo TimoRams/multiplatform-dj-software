@@ -689,6 +689,161 @@ Rectangle {
         // ── Separator ────────────────────────────────────────────────────────
         Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
 
+        // ── Headphone cue ────────────────────────────────────────────────────
+        Rectangle {
+            id: headphoneCueBlock
+            Layout.preferredWidth: root.dialSz + root.padH * 2 + 58
+            Layout.fillHeight: true
+            color: "#121212"
+
+            property bool syncingCueMix: false
+            readonly property bool masterCueOn: deckA ? deckA.masterCueEnabled : false
+
+            Connections {
+                target: deckA
+                function onHeadphoneMixChanged() {
+                    headphoneCueBlock.syncingCueMix = true
+                    cueMixDial.value = deckA ? deckA.headphoneMix : 0.0
+                    headphoneCueBlock.syncingCueMix = false
+                }
+            }
+
+            Row {
+                anchors.centerIn: parent
+                spacing: 7
+
+                Rectangle {
+                    width: 42
+                    height: Math.max(20, root.btnH * 0.48)
+                    radius: 3
+                    color: headphoneCueBlock.masterCueOn ? "#0c1e2f" : "#171717"
+                    border.color: headphoneCueBlock.masterCueOn ? "#1e7bd4" : "#2a2a2a"
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "M CUE"
+                        color: headphoneCueBlock.masterCueOn ? "#7ab8f5" : "#555"
+                        font.pixelSize: root.sp(8)
+                        font.bold: true
+                        font.letterSpacing: 0.5
+                    }
+
+                    HoverHandler { id: masterCueHover; cursorShape: Qt.PointingHandCursor }
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: parent.radius
+                        color: "#ffffff"
+                        opacity: masterCueHover.hovered && !headphoneCueBlock.masterCueOn ? 0.04 : 0.0
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: if (deckA) deckA.setMasterCueEnabled(!deckA.masterCueEnabled)
+                    }
+                }
+
+                Text {
+                    text: "CUE"
+                    color: "#3f3f3f"
+                    font.pixelSize: root.sp(8)
+                    font.bold: true
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+
+                Dial {
+                    id: cueMixDial
+                    width: root.dialSz
+                    height: root.dialSz
+                    from: 0.0
+                    to: 1.0
+                    value: deckA ? deckA.headphoneMix : 0.0
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    background: Rectangle {
+                        x: cueMixDial.width / 2 - width / 2
+                        y: cueMixDial.height / 2 - height / 2
+                        width: cueMixDial.width
+                        height: cueMixDial.height
+                        radius: width / 2
+                        color: "transparent"
+
+                        Canvas {
+                            id: cueMixArc
+                            anchors.fill: parent
+                            antialiasing: true
+                            onPaint: {
+                                var ctx = getContext("2d"); ctx.reset()
+                                var cx = width / 2; var cy = height / 2
+                                var r = Math.min(width, height) * 0.44
+                                var norm = Math.max(0, Math.min(1, cueMixDial.value))
+                                ctx.lineWidth = Math.max(1.5, width * 0.07)
+                                ctx.lineCap = "butt"
+                                ctx.strokeStyle = "#222"
+                                ctx.beginPath()
+                                ctx.arc(cx, cy, r, 120 * Math.PI / 180, 420 * Math.PI / 180)
+                                ctx.stroke()
+                                ctx.strokeStyle = "#7ab8f5"
+                                ctx.beginPath()
+                                ctx.arc(cx, cy, r, 120 * Math.PI / 180, (120 + norm * 300) * Math.PI / 180)
+                                ctx.stroke()
+                            }
+                            Connections {
+                                target: cueMixDial
+                                function onValueChanged() { cueMixArc.requestPaint() }
+                            }
+                        }
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: parent.width * 0.72
+                            height: parent.height * 0.72
+                            radius: width / 2
+                            color: "#1c1c1c"
+                        }
+                    }
+
+                    handle: Item {
+                        id: cueMixHandle
+                        x: cueMixDial.background.x + cueMixDial.background.width / 2 - width / 2
+                        y: cueMixDial.background.y + cueMixDial.background.height / 2 - height / 2
+                        width: cueMixDial.width * 0.72
+                        height: cueMixDial.height * 0.72
+                        Rectangle {
+                            width: 1.5
+                            height: parent.height * 0.42
+                            color: "#c0c0c0"
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.top: parent.top
+                            anchors.topMargin: -1
+                        }
+                        transform: Rotation {
+                            angle: cueMixDial.angle
+                            origin.x: cueMixHandle.width / 2
+                            origin.y: cueMixHandle.height / 2
+                        }
+                    }
+
+                    onValueChanged: {
+                        if (!headphoneCueBlock.syncingCueMix && deckA)
+                            deckA.setHeadphoneMix(value)
+                    }
+                    TapHandler {
+                        onDoubleTapped: cueMixDial.value = 0.5
+                    }
+                }
+
+                Text {
+                    text: "MST"
+                    color: headphoneCueBlock.masterCueOn ? "#7ab8f5" : "#3f3f3f"
+                    font.pixelSize: root.sp(8)
+                    font.bold: true
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+        }
+
+        // ── Separator ────────────────────────────────────────────────────────
+        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
+
         // ── Latency ───────────────────────────────────────────────────────────
         Rectangle {
             id: latBlock

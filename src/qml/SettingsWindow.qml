@@ -1420,6 +1420,17 @@ Window {
 
                                 Item { width: parent.width; height: 10 }
 
+                                // ── HEADPHONES ───────────────────────────────
+                                Item { width: parent.width; height: 26
+                                    Text { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left
+                                           text: "HEADPHONES"; color: "#3a3a3a"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.5 } }
+                                MappingRow { width: parent.width; labelStr: "Cue A";      paramId: "deckA_headphone_cue" }
+                                MappingRow { width: parent.width; labelStr: "Cue B";      paramId: "deckB_headphone_cue" }
+                                MappingRow { width: parent.width; labelStr: "Master Cue"; paramId: "master_cue" }
+                                MappingRow { width: parent.width; labelStr: "Cue Mix";    paramId: "headphone_mix" }
+
+                                Item { width: parent.width; height: 10 }
+
                                 // ── MIXER ──────────────────────────────────────
                                 Item { width: parent.width; height: 26
                                     Text { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left

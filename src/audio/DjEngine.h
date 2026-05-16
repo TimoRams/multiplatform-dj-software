@@ -66,6 +66,8 @@ class DjEngine : public QObject
     Q_PROPERTY(double eqLow READ eqLow WRITE setEqLow NOTIFY eqLowChanged)
     Q_PROPERTY(double filter READ filter WRITE setFilter NOTIFY filterChanged)
     Q_PROPERTY(bool cueEnabled READ cueEnabled WRITE setCueEnabled NOTIFY cueEnabledChanged)
+    Q_PROPERTY(bool masterCueEnabled READ masterCueEnabled WRITE setMasterCueEnabled NOTIFY masterCueEnabledChanged)
+    Q_PROPERTY(double headphoneMix READ headphoneMix WRITE setHeadphoneMix NOTIFY headphoneMixChanged)
 
     Q_PROPERTY(float vuLevelL READ vuLevelL NOTIFY vuLevelChanged)
     Q_PROPERTY(float vuLevelR READ vuLevelR NOTIFY vuLevelChanged)
@@ -218,6 +220,8 @@ public:
     [[nodiscard]] double eqLow() const { return m_eqLow; }
     [[nodiscard]] double filter() const { return m_filter; }
     [[nodiscard]] bool cueEnabled() const { return m_cueEnabled.load(std::memory_order_relaxed); }
+    [[nodiscard]] bool masterCueEnabled() const;
+    [[nodiscard]] double headphoneMix() const;
     [[nodiscard]] bool quantizeEnabled() const { return m_quantizeEnabled; }
     [[nodiscard]] bool syncEnabled() const { return m_syncEnabled; }
     [[nodiscard]] bool isSyncMaster() const { return m_isSyncMaster; }
@@ -278,6 +282,8 @@ public slots:
     void setEqLow(double value);
     void setFilter(double value);
     void setCueEnabled(bool value);
+    Q_INVOKABLE void setMasterCueEnabled(bool value);
+    Q_INVOKABLE void setHeadphoneMix(double value);
     void setQuantizeEnabled(bool enabled);
     void setSyncEnabled(bool enabled);
     // Re-aligns the beat phase with the sync master using a tempo nudge (no seek).
@@ -322,6 +328,8 @@ signals:
     void eqLowChanged();
     void filterChanged();
     void cueEnabledChanged();
+    void masterCueEnabledChanged();
+    void headphoneMixChanged();
     void quantizeEnabledChanged();
     void syncChanged();
     void syncMasterChanged();

@@ -759,6 +759,7 @@ QString MidiControllerManager::mapMixxxControlToInternalParam(const QString& gro
     if (g == "[Channel1]") {
         if (k == "play" || k == "play_indicator") return "deckA_play";
         if (k == "cue_default" || k == "cue_cdj" || k == "cue_simple") return "deckA_cue";
+        if (k == "pfl" || k == "pfl_indicator" || k == "cue_preview") return "deckA_headphone_cue";
         if (k == "volume") return "deckA_vol";
         if (k == "pregain") return "deckA_gain";
         if (k == "filterhi")  return "deckA_eqHigh";
@@ -773,6 +774,7 @@ QString MidiControllerManager::mapMixxxControlToInternalParam(const QString& gro
     if (g == "[Channel2]") {
         if (k == "play" || k == "play_indicator") return "deckB_play";
         if (k == "cue_default" || k == "cue_cdj" || k == "cue_simple") return "deckB_cue";
+        if (k == "pfl" || k == "pfl_indicator" || k == "cue_preview") return "deckB_headphone_cue";
         if (k == "volume") return "deckB_vol";
         if (k == "pregain") return "deckB_gain";
         if (k == "filterhi")  return "deckB_eqHigh";
@@ -806,6 +808,10 @@ QString MidiControllerManager::mapMixxxControlToInternalParam(const QString& gro
 
     if (g == "[Master]" && k == "crossfader")
         return "crossfader";
+    if (g == "[Master]" && (k == "headmix" || k == "head_mix" || k == "cue_mix"))
+        return "headphone_mix";
+    if (g == "[Master]" && (k == "headphones" || k == "master_cue" || k == "mastercue"))
+        return "master_cue";
 
     return {};
 }
@@ -1006,7 +1012,6 @@ void MidiControllerManager::startMidiLearn(const QString& parameterId)
 
     m_learnParameterId = parameterId;
     m_isLearning = true;
-    m_learnTimer.start(); // start grace-period clock
     // Clear live monitor so the UI immediately shows the next incoming event
     m_lastMidiEvent.clear();
     emit lastMidiEventChanged();
@@ -1034,12 +1039,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
     }
 
     if (m_isLearning && !isNoteOff) {
-        // Grace period only applies to CC events (faders/knobs jitter at rest).
-        // Notes (buttons) are learned immediately so you don't have to wait.
-        const int sub = (msgId >= 10000) ? (msgId - 10000) % 2000 : msgId;
-        const bool isCC = (sub >= 1000 && sub < 1500);
-        if (!isCC || m_learnTimer.elapsed() >= 150)
-            learnMapping(msgId);
+        learnMapping(msgId);
         return; // always skip dispatch while in learn mode
     }
 
@@ -1068,7 +1068,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
                 const int lsb = static_cast<int>(value * 127.0f);
                 const int msb = m_msbAccumulator.count(pId) ? m_msbAccumulator.at(pId) : 64;
                 const float combined = static_cast<float>((msb << 7) | lsb) / 16383.0f;
-                QMetaObject::invokeMethod(m_parameterStore, "setParameter",
+                QMetaObject::invokeMethod(m_parameterStore, "setMidiParameter",
                                           Qt::QueuedConnection,
                                           Q_ARG(QString, pId),
                                           Q_ARG(float, combined));
@@ -1083,7 +1083,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
         return;
 
     const QString paramId = it->second;
-    QMetaObject::invokeMethod(m_parameterStore, "setParameter", Qt::QueuedConnection,
+    QMetaObject::invokeMethod(m_parameterStore, "setMidiParameter", Qt::QueuedConnection,
                               Q_ARG(QString, paramId),
                               Q_ARG(float, value));
 }
