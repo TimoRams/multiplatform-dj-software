@@ -160,6 +160,8 @@ ApplicationWindow {
             loadingIndicator.running = false
             loadingIndicator.visible = false
             mainLayout.visible = true
+            if (typeof appConfig !== "undefined" && appConfig && !appConfig.firstRunCompleted)
+                welcomeOverlay.active = true
         }
     }
 
@@ -632,6 +634,11 @@ ApplicationWindow {
             Layout.fillHeight: true
             visible: window.showLibrary
         }
+    }
+
+    WelcomeScreen {
+        id: welcomeOverlay
+        active: false
     }
 
     Rectangle {

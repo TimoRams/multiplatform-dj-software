@@ -34,6 +34,7 @@
 #include "midi/ParameterStore.h"
 #include "midi/MidiControllerManager.h"
 #include "SettingsManager.h"
+#include "app/AppConfig.h"
 #include "library/LibraryDatabase.h"
 #include "library/LibraryTableModel.h"
 #include "library/LibraryAnalysisManager.h"
@@ -239,6 +240,10 @@ int main(int argc, char *argv[])
     logStartupStep("SettingsManager init done");
 
     auto& settingsManager = SettingsManager::getInstance();
+
+    AppConfig appConfig;
+    appConfig.init(settingsManager.getConfigDirectoryPath());
+    logStartupStep("AppConfig init done");
     QQmlApplicationEngine engine;
 
     std::unique_ptr<DjEngine> deckA;
@@ -366,6 +371,7 @@ int main(int argc, char *argv[])
         logStartupStep("Cover art provider installed");
 
         engine.rootContext()->setContextProperty("settingsManager", &settingsManager);
+        engine.rootContext()->setContextProperty("appConfig", &appConfig);
         engine.rootContext()->setContextProperty("deckA", deckA.get());
         engine.rootContext()->setContextProperty("deckB", deckB.get());
         engine.rootContext()->setContextProperty("deckC", deckC.get());

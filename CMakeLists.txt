@@ -244,6 +244,7 @@ qt_add_qml_module(${PROJECT_NAME}
         src/qml/MixerSection.qml
         src/qml/SettingsWindow.qml
         src/qml/MappingEditorWindow.qml
+        src/qml/WelcomeScreen.qml
         src/qml/FxUnit.qml
         src/qml/FxBar.qml
         src/qml/CrossfaderBar.qml
@@ -285,6 +286,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/midi/MidiControllerManager.cpp
     src/app/SettingsManager.h
     src/app/SettingsManager.cpp
+    src/app/AppConfig.h
+    src/app/AppConfig.cpp
     src/library/TrackIdGenerator.h
     src/library/LibraryDatabase.h
     src/library/LibraryDatabase.cpp
