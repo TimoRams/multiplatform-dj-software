@@ -153,18 +153,26 @@ jobs:
 
   build-extra-platforms:
     if: ${{ github.event_name == 'workflow_dispatch' }}
-    name: Build (${{ matrix.runner }})
+    name: Build (${{ matrix.artifact }})
     runs-on: ${{ matrix.runner }}
     continue-on-error: true
 
     strategy:
       fail-fast: false
       matrix:
-        runner:
-          - ubuntu-24.04-arm  # Linux ARM
-          - macos-13          # Latest Intel macOS supported by GitHub
-          - macos-latest      # Latest Apple Silicon (ARM) macOS
-          - windows-latest    # Windows x64
+        include:
+          - runner: ubuntu-24.04-arm
+            os: linux-arm
+            artifact: Linux-ARM
+          - runner: macos-latest       # Apple Silicon runner
+            os: macos-arm
+            artifact: macOS-AppleSilicon
+          - runner: macos-latest       # Same runner, Intel build via Rosetta + Intel Homebrew
+            os: macos-intel
+            artifact: macOS-Intel
+          - runner: windows-latest
+            os: windows
+            artifact: Windows
 
     steps:
       - name: Checkout
@@ -172,14 +180,14 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Setup ccache (macOS/Linux)
-        if: matrix.runner != 'windows-latest'
+      - name: Setup ccache
+        if: matrix.os != 'windows' && matrix.os != 'macos-intel'
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: ${{ matrix.runner }}
+          key: ${{ matrix.os }}
 
       - name: Install Qt (Linux ARM)
-        if: matrix.runner == 'ubuntu-24.04-arm'
+        if: matrix.os == 'linux-arm'
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.0'
@@ -188,7 +196,7 @@ jobs:
           cache: true
 
       - name: Cache vcpkg (Windows)
-        if: matrix.runner == 'windows-latest'
+        if: matrix.os == 'windows'
         uses: actions/cache@v4
         with:
           path: |
@@ -197,17 +205,17 @@ jobs:
             C:\vcpkg\downloads
             C:\vcpkg\packages
             C:\vcpkg\buildtrees
-          key: vcpkg-${{ matrix.runner }}-${{ hashFiles('**/CMakeLists.txt') }}
+          key: vcpkg-windows-${{ hashFiles('**/CMakeLists.txt') }}
 
       - name: Install Qt (Windows)
-        if: matrix.runner == 'windows-latest'
+        if: matrix.os == 'windows'
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.7.2'
           modules: 'qtquick3d'
 
       - name: Install Dependencies (Linux ARM)
-        if: matrix.runner == 'ubuntu-24.04-arm'
+        if: matrix.os == 'linux-arm'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -220,21 +228,46 @@ jobs:
             libwayland-dev libwayland-egl1 libwayland-cursor0 libxcb1-dev libxcb-icccm4-dev
 
       - name: Install libkeyfinder (Linux ARM)
-        if: matrix.runner == 'ubuntu-24.04-arm'
+        if: matrix.os == 'linux-arm'
         run: |
           git clone --depth 1 https://github.com/mixxxdj/libkeyfinder.git
           cmake -S libkeyfinder -B libkeyfinder/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
           cmake --build libkeyfinder/build --parallel
           sudo cmake --install libkeyfinder/build
 
-      - name: Install Dependencies (macOS)
-        if: startsWith(matrix.runner, 'macos')
+      - name: Install Dependencies (macOS Apple Silicon)
+        if: matrix.os == 'macos-arm'
         run: |
           brew update
-          brew install cmake pkg-config qt@6 taglib rubberband libkeyfinder ccache
+          brew install cmake ninja pkg-config qt@6 taglib rubberband libkeyfinder ccache
 
-      - name: Install Dependencies (Windows, vcpkg)
-        if: matrix.runner == 'windows-latest'
+      - name: Install Intel Homebrew + Dependencies (macOS Intel)
+        if: matrix.os == 'macos-intel'
+        run: |
+          # Rosetta 2 is pre-installed on GitHub Apple Silicon runners.
+          # Bootstrap the Intel (x86_64) Homebrew at /usr/local if needed.
+          if [ ! -x /usr/local/bin/brew ]; then
+            NONINTERACTIVE=1 arch -x86_64 /bin/bash -c \
+              "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          fi
+          arch -x86_64 /usr/local/bin/brew update
+          arch -x86_64 /usr/local/bin/brew install cmake ninja pkg-config qt@6 taglib rubberband ccache
+
+      - name: Build libkeyfinder (macOS Intel)
+        if: matrix.os == 'macos-intel'
+        run: |
+          git clone --depth 1 https://github.com/mixxxdj/libkeyfinder.git
+          arch -x86_64 /usr/local/bin/cmake \
+            -S libkeyfinder -B libkeyfinder/build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64
+          arch -x86_64 /usr/local/bin/cmake --build libkeyfinder/build --parallel
+          arch -x86_64 sudo /usr/local/bin/cmake --install libkeyfinder/build
+
+      - name: Install Dependencies (Windows)
+        if: matrix.os == 'windows'
         shell: pwsh
         run: |
           if (-not (Test-Path 'C:\vcpkg\.git')) {
@@ -245,18 +278,25 @@ jobs:
           C:\vcpkg\bootstrap-vcpkg.bat
           C:\vcpkg\vcpkg.exe install taglib rubberband libkeyfinder --triplet x64-windows
 
-      - name: Configure (macOS)
-        if: startsWith(matrix.runner, 'macos')
+      - name: Configure (macOS Apple Silicon)
+        if: matrix.os == 'macos-arm'
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
 
+      - name: Configure (macOS Intel)
+        if: matrix.os == 'macos-intel'
+        run: |
+          arch -x86_64 /usr/local/bin/cmake -S . -B build -G Ninja \
+            -DCMAKE_PREFIX_PATH=/usr/local/opt/qt@6 \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64
+
       - name: Configure (Linux ARM)
-        if: matrix.runner == 'ubuntu-24.04-arm'
+        if: matrix.os == 'linux-arm'
         run: |
           cmake -S . -B build -G Ninja
 
       - name: Configure (Windows)
-        if: matrix.runner == 'windows-latest'
+        if: matrix.os == 'windows'
         shell: pwsh
         run: |
           $qt6Dir = $env:Qt6_DIR
@@ -280,31 +320,39 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake `
             -DQt6_DIR="$qt6Dir"
 
-      - name: Build (macOS)
-        if: startsWith(matrix.runner, 'macos')
-        run: |
-          cmake --build build --parallel
+      - name: Build (macOS Apple Silicon)
+        if: matrix.os == 'macos-arm'
+        run: cmake --build build --parallel
+
+      - name: Build (macOS Intel)
+        if: matrix.os == 'macos-intel'
+        run: arch -x86_64 /usr/local/bin/cmake --build build --parallel
 
       - name: Build (Linux ARM)
-        if: matrix.runner == 'ubuntu-24.04-arm'
-        run: |
-          cmake --build build --parallel
+        if: matrix.os == 'linux-arm'
+        run: cmake --build build --parallel
 
       - name: Build (Windows)
-        if: matrix.runner == 'windows-latest'
+        if: matrix.os == 'windows'
         shell: pwsh
-        run: |
-          cmake --build build --config Release --parallel
+        run: cmake --build build --config Release --parallel
 
-      - name: Deploy macOS
-        if: startsWith(matrix.runner, 'macos')
+      - name: Deploy (macOS Apple Silicon)
+        if: matrix.os == 'macos-arm'
         run: |
           mkdir -p deploy/RamsbrockDJ.app/Contents/MacOS
           cp build/bin/RamsbrockDJ deploy/RamsbrockDJ.app/Contents/MacOS/
-          $(brew --prefix qt@6)/bin/macdeployqt deploy/RamsbrockDJ.app -qmldir=src/qml
+          "$(brew --prefix qt@6)/bin/macdeployqt" deploy/RamsbrockDJ.app -qmldir=src/qml
 
-      - name: Deploy Windows
-        if: matrix.runner == 'windows-latest'
+      - name: Deploy (macOS Intel)
+        if: matrix.os == 'macos-intel'
+        run: |
+          mkdir -p deploy/RamsbrockDJ.app/Contents/MacOS
+          cp build/bin/RamsbrockDJ deploy/RamsbrockDJ.app/Contents/MacOS/
+          /usr/local/opt/qt@6/bin/macdeployqt deploy/RamsbrockDJ.app -qmldir=src/qml
+
+      - name: Deploy (Windows)
+        if: matrix.os == 'windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path deploy\RamsbrockDJ
@@ -314,8 +362,8 @@ jobs:
           & $windeployqt --qmldir src\qml deploy\RamsbrockDJ\RamsbrockDJ.exe
           Copy-Item "C:\vcpkg\installed\x64-windows\bin\*.dll" -Destination deploy\RamsbrockDJ\
 
-      - name: Deploy Linux ARM
-        if: matrix.runner == 'ubuntu-24.04-arm'
+      - name: Deploy (Linux ARM)
+        if: matrix.os == 'linux-arm'
         run: |
           mkdir -p deploy/AppDir/usr/bin deploy/AppDir/usr/share/applications deploy/AppDir/usr/share/icons/hicolor/256x256/apps
           cp build/bin/RamsbrockDJ deploy/AppDir/usr/bin/
@@ -341,23 +389,19 @@ jobs:
           export EXTRA_QT_PLUGINS=wayland,xcb
           export VERSION=1.0.0
 
-          # Remove Qt SQL drivers that depend on unavailable system libraries
           QT_PLUGINS=$($QMAKE -query QT_INSTALL_PLUGINS)
           rm -f "$QT_PLUGINS/sqldrivers/libqsqlmimer.so" \
                 "$QT_PLUGINS/sqldrivers/libqsqlmysql.so"
 
-          # Bundle Qt libs, plugins and QML modules
           ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run \
               --appdir AppDir \
               -e AppDir/usr/bin/RamsbrockDJ \
               --plugin qt
 
-          # plugin-qt replaces the binary with a wrapper script; restore the real ELF
           cp -f ../build/bin/RamsbrockDJ AppDir/usr/bin/RamsbrockDJ
           chmod +x AppDir/usr/bin/RamsbrockDJ
           rm -f AppDir/usr/bin/RamsbrockDJ.bin AppDir/usr/bin/RamsbrockDJ.real
 
-          # Keep Vulkan/GPU libraries dynamic so the AppImage uses the host driver stack
           find AppDir -type f \( \
             -name 'libEGL*.so*' -o -name 'libGL*.so*' -o -name 'libGLESv2*.so*' -o -name 'libglapi*.so*' \
             -o -name 'libvulkan*.so*' -o -name 'libdrm*.so*' -o -name 'libgbm*.so*' \
@@ -390,7 +434,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RamsbrockDJ-${{ matrix.runner }}
+          name: RamsbrockDJ-${{ matrix.artifact }}
           path: |
             deploy/RamsbrockDJ.app/
             deploy/RamsbrockDJ/
