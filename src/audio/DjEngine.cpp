@@ -3256,6 +3256,17 @@ void DjEngine::onTimer()
                 : 1.0;
             hasIdleSample = true;
 
+            // Auto-exit scratch mode if the jog touch sensor never sent a release event
+            // (some controllers only send a "touch on" and rely on a timeout).
+            // 800ms of no jog input while in scratch mode = implicit release.
+            constexpr double kScratchAutoReleaseSec = 0.80;
+            if (idleSec > kScratchAutoReleaseSec) {
+                qDebug() << "[JOG] auto-release: no jog input for" << idleSec
+                         << "s, calling resumeAfterScrub()";
+                resumeAfterScrub();
+                return;
+            }
+
             targetRate = m_scratchAbsolutePositionControl
                 ? m_scratchTargetRate
                 : ((idleSec > m_scratchIdleTimeoutSec) ? 0.0 : m_scratchTargetRate);
@@ -3346,6 +3357,21 @@ void DjEngine::onTimer()
 
     if (mixerSource)
         mixerSource->setScratchTimbre(0.0f);
+
+    // Jog outer-rim nudge decay: fade back to 0% after ~150ms of no new jog events.
+    if (m_jogNudgePercent != 0.0) {
+        const double idleSec = m_lastJogNudgeClock.isValid()
+            ? static_cast<double>(m_lastJogNudgeClock.nsecsElapsed()) * 1e-9
+            : 1.0;
+        if (idleSec > 0.080) {
+            constexpr double kNudgeDecayTau = 0.080;
+            const double alpha = 1.0 - std::exp(-idleSec / kNudgeDecayTau);
+            m_jogNudgePercent -= m_jogNudgePercent * alpha;
+            if (std::abs(m_jogNudgePercent) < 0.05)
+                m_jogNudgePercent = 0.0;
+            updateSpeedAndPitch();
+        }
+    }
 
     // Safety: transport must not run when there's no play intent and no cue preview.
     // Catches any leftover transport state that togglePlay/pause missed (e.g. if
@@ -3635,7 +3661,7 @@ void DjEngine::cueButtonPress()
     const bool wasPlaying = m_playRequested;
 
     if (wasPlaying) {
-        // While playing, CUE should jump to the stored cue and continue playback.
+        // While playing, CUE jumps to the stored cue and continues playback.
         if (m_mainCueSec < 0.0) {
             m_mainCueSec = std::clamp(static_cast<double>(getVisualPosition()), 0.0, trackLen);
             persistMainCuePoint();
@@ -3674,6 +3700,13 @@ void DjEngine::cueButtonRelease()
         return;
 
     m_mainCuePreviewActive = false;
+
+    // CUE+Play trick (Serato/Rekordbox behavior): if PLAY was pressed while CUE was
+    // held, continue playing normally instead of snapping back to the cue point.
+    if (m_playRequested) {
+        emit playingChanged();
+        return;
+    }
 
     const double trackLen = transportSource.getLengthInSeconds();
     if (trackLen <= 0.0)
@@ -3717,6 +3750,18 @@ void DjEngine::restorePostScrubPlaybackState()
 
     updateSpeedAndPitch();
 
+    // Sync m_playRequested with the pre-scratch intent captured in m_scrubWasPlaying.
+    // Normally they match, but if some edge case clears m_playRequested during scratch
+    // (e.g. a race with a toggle event), m_scrubWasPlaying is the authoritative record.
+    if (m_scrubWasPlaying && !m_playRequested) {
+        qDebug() << "[JOG] restorePostScrubPlaybackState: m_playRequested was false but "
+                    "m_scrubWasPlaying=true — restoring play intent";
+        m_playRequested = true;
+    }
+
+    qDebug() << "[JOG] restorePostScrubPlaybackState: m_playRequested=" << m_playRequested
+             << "isPlaying=" << transportSource.isPlaying();
+
     if (m_playRequested)
         transportSource.start();
     else
@@ -3735,7 +3780,11 @@ void DjEngine::pauseForScrub()
     if (m_isScrubbing)
         return;
 
-    m_phaseNudge  = 0.0;
+    qDebug() << "[JOG] pauseForScrub: m_playRequested=" << m_playRequested
+             << "isPlaying=" << transportSource.isPlaying();
+
+    m_phaseNudge      = 0.0;
+    m_jogNudgePercent = 0.0;
     m_resyncBoost = false;
 
     bool wasPlayingBeforeGrab = m_playRequested || transportSource.isPlaying();
@@ -3982,13 +4031,24 @@ void DjEngine::resumeAfterScrub()
     if (!m_isScrubbing)
         return;
 
+    qDebug() << "[JOG] resumeAfterScrub: m_scrubWasPlaying=" << m_scrubWasPlaying
+             << "m_playRequested=" << m_playRequested
+             << "smoothedRate=" << m_scratchSmoothedRate
+             << "accumulated=" << m_scratchAccumulatedMoveSec;
+
     m_isScrubbing = false;
     m_scratchAbsolutePositionControl = false;
     m_scratchAbsoluteFollowVelocity = 0.0;
     m_scratchInputFilteredRate = m_scratchSmoothedRate;
 
-    // Touch/hold without meaningful movement: resume immediately with no glide.
-    if (m_scratchAccumulatedMoveSec < m_scratchInertiaMoveThresholdSec) {
+    // Touch/hold without meaningful spin: resume immediately with no glide.
+    // Covers: pure press-release (no ticks), and light/jitter movement where the
+    // platter never reached real scratch speed.  Threshold 0.30x: up to ~30% of
+    // normal playback speed snaps directly back — a jitter tick at 33 RPM lands at
+    // ~0.14x when spaced 100 ms apart, well below the cutoff; actual scratching
+    // reaches 1x+ quickly.
+    if (m_scratchAccumulatedMoveSec < m_scratchInertiaMoveThresholdSec
+            || std::abs(m_scratchSmoothedRate) < 0.30) {
         m_scratchReleaseActive = false;
         m_scratchReleaseTargetRate = 0.0;
         m_scratchTargetRate = 0.0;
@@ -4018,6 +4078,19 @@ void DjEngine::resumeAfterScrub()
     m_scrubPhysicsClock.restart();
 
     emit scrubbingChanged();
+}
+
+void DjEngine::applyJogNudge(double signedTicks)
+{
+    if (m_isScrubbing || m_scratchReleaseActive)
+        return;
+
+    // Each tick maps to ~3% speed offset; clamp to ±8% so a fast spin doesn't overshoot.
+    constexpr double kPercentPerTick = 3.0;
+    constexpr double kMaxNudgePercent = 8.0;
+    m_jogNudgePercent = std::clamp(signedTicks * kPercentPerTick, -kMaxNudgePercent, kMaxNudgePercent);
+    m_lastJogNudgeClock.restart();
+    updateSpeedAndPitch();
 }
 
 void DjEngine::setDownbeatAtCurrentPosition()
@@ -4236,7 +4309,7 @@ void DjEngine::snapPhaseToMaster(DjEngine* master)
 
 void DjEngine::updateSpeedAndPitch()
 {
-    double speedMultiplier = 1.0 + ((m_tempoPercent + m_phaseNudge) / 100.0);
+    double speedMultiplier = 1.0 + ((m_tempoPercent + m_phaseNudge + m_jogNudgePercent) / 100.0);
 
     // Keep one tempo authority (resampler) so fader response is identical
     // with and without keylock.

@@ -122,6 +122,8 @@ public:
     // This decouples UI deltas from the audio scratch model (usable for MIDI/HID jog ticks).
     Q_INVOKABLE void pushScratchVelocityTick(double velocityRate);
     Q_INVOKABLE void resumeAfterScrub();
+    // Outer-rim jog nudge: temporarily speeds up/slows down playback without entering scratch mode.
+    Q_INVOKABLE void applyJogNudge(double signedTicks);
 
     // Manual beat-grid correction: rebuilds the BeatMarker array so that the
     // current playhead position becomes beat 1 / bar 1.  Emits beatgridChanged
@@ -434,6 +436,10 @@ private:
     double m_phaseNudge = 0.0;
     bool   m_resyncBoost = false;
 
+    // Jog outer-rim nudge: temporary speed offset from rim turning (no touch press).
+    double m_jogNudgePercent = 0.0;
+    QElapsedTimer m_lastJogNudgeClock;
+
     bool m_vinylBrakeActive = false;
     bool m_echoOutActive    = false;
     bool m_backspinActive   = false;
@@ -511,9 +517,9 @@ private:
         static constexpr double kRateReleaseTauSec = 0.055;
         static constexpr double kIdleTimeoutSec = 0.120;
         static constexpr double kMaxRate = 12.0;
-        static constexpr double kReleaseToPlayTauSec = 0.36;
+        static constexpr double kReleaseToPlayTauSec = 0.14;   // faster spin-up to normal play
         static constexpr double kReleaseToStopTauSec = 0.20;
-        static constexpr double kReleaseSettleThreshold = 0.015;
+        static constexpr double kReleaseSettleThreshold = 0.025; // slightly wider window for faster tau
         static constexpr double kControlResumeThresholdRate = 0.0012;
         static constexpr double kControlStopThresholdRate = 0.0006;
         static constexpr double kDirectStepLimitSec = 0.02;

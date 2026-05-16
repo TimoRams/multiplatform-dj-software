@@ -344,16 +344,21 @@ int main(int argc, char *argv[])
                     else         deckBPtr->resumeAfterScrub();
                 }
             }
-            // Jog move: value = signed tick delta; 128 ticks/rev at 33.33 RPM vinyl
+            // Jog move: value = signed tick delta; 128 ticks/rev at 33.33 RPM vinyl.
+            // With touch (scrubbing): scratch. Without touch (rim turn): speed nudge.
             else if (id == "deckA_jog_move") {
                 const double deltaSeconds = static_cast<double>(value) * (60.0 / 33.333) / 128.0;
                 if (deckAPtr->isScrubbing())
                     deckAPtr->scratchBySeconds(deltaSeconds);
+                else
+                    deckAPtr->applyJogNudge(static_cast<double>(value));
             }
             else if (id == "deckB_jog_move") {
                 const double deltaSeconds = static_cast<double>(value) * (60.0 / 33.333) / 128.0;
                 if (deckBPtr->isScrubbing())
                     deckBPtr->scratchBySeconds(deltaSeconds);
+                else
+                    deckBPtr->applyJogNudge(static_cast<double>(value));
             }
         });
 
