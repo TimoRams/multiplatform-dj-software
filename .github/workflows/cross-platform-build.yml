@@ -91,6 +91,12 @@ jobs:
           export EXTRA_QT_PLUGINS=wayland,xcb
           export VERSION=1.0.0
 
+          # Remove Qt SQL drivers that depend on unavailable system libraries
+          # (libqsqlmimer needs libmimerapi.so from Mimer SQL, not in Ubuntu repos)
+          QT_PLUGINS=$($QMAKE -query QT_INSTALL_PLUGINS)
+          rm -f "$QT_PLUGINS/sqldrivers/libqsqlmimer.so" \
+                "$QT_PLUGINS/sqldrivers/libqsqlmysql.so"
+
           ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir -e AppDir/usr/bin/RamsbrockDJ --plugin qt
           # Restore the real binary in case the plugin replaced it with a wrapper script.
           cp -f ../build/bin/RamsbrockDJ AppDir/usr/bin/RamsbrockDJ
@@ -332,6 +338,11 @@ jobs:
           export QML_IMPORT_PATHS=$($QMAKE -query QT_INSTALL_QML)
           export EXTRA_QT_PLUGINS=wayland,xcb
           export VERSION=1.0.0
+
+          # Remove Qt SQL drivers that depend on unavailable system libraries
+          QT_PLUGINS=$($QMAKE -query QT_INSTALL_PLUGINS)
+          rm -f "$QT_PLUGINS/sqldrivers/libqsqlmimer.so" \
+                "$QT_PLUGINS/sqldrivers/libqsqlmysql.so"
 
           ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run --appdir AppDir -e AppDir/usr/bin/RamsbrockDJ --plugin qt
           # Restore the real binary in case the plugin replaced it with a wrapper script.
