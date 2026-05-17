@@ -131,12 +131,14 @@ jobs:
           # so $0's directory is always the correct AppDir root.
           cat <<'APPRUN' > AppDir/AppRun
           #!/bin/sh
-          HERE="$(dirname "$(readlink -f "$0")")"
-          export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-          export QT_PLUGIN_PATH="$HERE/usr/plugins"
-          export QML2_IMPORT_PATH="$HERE/usr/qml"
+          # $APPDIR is set by the AppImage type-2 runtime to the squashfs mount point.
+          # Fall back to $0-based detection only when running AppRun directly.
+          APPDIR="${APPDIR:-$(dirname "$(readlink -f "$0")")}"
+          export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          export QT_PLUGIN_PATH="$APPDIR/usr/plugins"
+          export QML2_IMPORT_PATH="$APPDIR/usr/qml"
           export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
-          exec "$HERE/usr/bin/RamsbrockDJ" "$@"
+          exec "$APPDIR/usr/bin/RamsbrockDJ" "$@"
           APPRUN
           chmod +x AppDir/AppRun
 
@@ -419,12 +421,14 @@ jobs:
 
           cat <<'APPRUN' > AppDir/AppRun
           #!/bin/sh
-          HERE="$(dirname "$(readlink -f "$0")")"
-          export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-          export QT_PLUGIN_PATH="$HERE/usr/plugins"
-          export QML2_IMPORT_PATH="$HERE/usr/qml"
+          # $APPDIR is set by the AppImage type-2 runtime to the squashfs mount point.
+          # Fall back to $0-based detection only when running AppRun directly.
+          APPDIR="${APPDIR:-$(dirname "$(readlink -f "$0")")}"
+          export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          export QT_PLUGIN_PATH="$APPDIR/usr/plugins"
+          export QML2_IMPORT_PATH="$APPDIR/usr/qml"
           export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
-          exec "$HERE/usr/bin/RamsbrockDJ" "$@"
+          exec "$APPDIR/usr/bin/RamsbrockDJ" "$@"
           APPRUN
           chmod +x AppDir/AppRun
 
