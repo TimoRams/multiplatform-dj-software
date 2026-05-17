@@ -211,8 +211,8 @@ jobs:
         if: matrix.os == 'windows'
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.7.2'
-          modules: 'qtquick3d'
+          version: '6.8.0'
+          modules: 'qtquick3d qtshadertools'
 
       - name: Install Dependencies (Linux ARM)
         if: matrix.os == 'linux-arm'
@@ -251,7 +251,7 @@ jobs:
               "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
           fi
           arch -x86_64 /usr/local/bin/brew update
-          arch -x86_64 /usr/local/bin/brew install cmake ninja pkg-config qt@6 taglib rubberband ccache
+          arch -x86_64 /usr/local/bin/brew install cmake ninja pkg-config qt@6 taglib rubberband fftw ccache
 
       - name: Build libkeyfinder (macOS Intel)
         if: matrix.os == 'macos-intel'
