@@ -66,15 +66,13 @@ Item {
                         var loopInProgress  = root.engine.loopInPosition  / trackLength
                         var loopOutProgress = root.engine.loopOutPosition / trackLength
 
-                        if (progress < loopInProgress) {
-                            // Clicking before loop start is the only way to exit an active loop.
-                            root.engine.clearLoop()
-                            // fall through: setPosition with current progress
-                        } else if (progress > loopOutProgress) {
-                            // Clicking past loop end wraps back to loop start.
+                        if (progress > loopOutProgress) {
+                            // Past loop end → wrap to loop start, loop stays active.
                             progress = loopInProgress
                         }
-                        // else: click inside loop — normal jump, loop stays active
+                        // Before loop start → jump there, audio plays through to loop.
+                        // Inside loop → normal jump.
+                        // Loop stays active in all cases.
                     }
                 }
 

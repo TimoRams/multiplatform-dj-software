@@ -531,7 +531,8 @@ public:
         m_loopEnabled = true;
         m_pendingFadeInSamples = 0;
 
-        if (m_logicalPos < m_loopInSample || m_logicalPos >= m_loopOutSample)
+        // Only snap when past the end; positions before loopIn play through naturally.
+        if (m_logicalPos >= m_loopOutSample)
             m_logicalPos = m_loopInSample;
     }
 
@@ -735,9 +736,30 @@ private:
         int destOffset = 0;
 
         while (remaining > 0) {
-            if (m_logicalPos < m_loopInSample || m_logicalPos >= m_loopOutSample)
+            // Past the loop end — wrap to start.
+            if (m_logicalPos >= m_loopOutSample) {
                 m_logicalPos = m_loopInSample;
+                continue;
+            }
 
+            // Before the loop start — play through normally until the loop entry
+            // point (e.g. the user jumped here from the overview waveform).
+            // No crossfade; the audio is continuous at this transition.
+            if (m_logicalPos < m_loopInSample) {
+                const int toEntry = static_cast<int>(
+                    std::min<juce::int64>(remaining, m_loopInSample - m_logicalPos));
+                juce::AudioSourceChannelInfo readInfo(bufferToFill);
+                readInfo.startSample = bufferToFill.startSample + destOffset;
+                readInfo.numSamples  = toEntry;
+                m_source->setNextReadPosition(m_logicalPos);
+                m_source->getNextAudioBlock(readInfo);
+                m_logicalPos += toEntry;
+                destOffset   += toEntry;
+                remaining    -= toEntry;
+                continue;
+            }
+
+            // Normal loop range [loopIn, loopOut).
             const juce::int64 samplesToBoundary = m_loopOutSample - m_logicalPos;
             if (samplesToBoundary <= 0) {
                 m_logicalPos = m_loopInSample;
