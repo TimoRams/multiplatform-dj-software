@@ -416,7 +416,7 @@ Item {
             TurntableIndicator {
                 engine: root.engine
                 Layout.alignment: Qt.AlignVCenter
-                Layout.preferredWidth:  Math.min(contentRow.height, Math.max(72, root.width * 0.14))
+                Layout.preferredWidth:  Math.round(Math.min(contentRow.height, Math.max(72, root.width * 0.14)))
                 Layout.preferredHeight: Layout.preferredWidth
                 Layout.maximumWidth:    Layout.preferredWidth
                 Layout.maximumHeight:   Layout.preferredHeight

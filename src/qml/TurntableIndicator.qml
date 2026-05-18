@@ -3,205 +3,188 @@ import QtQuick
 Item {
     id: root
 
-    property var engine: null
+    property var   engine: null
     property color ringColor: "#3a3a3a"
-    property real ringThickness: 7
-    property real cutoutAngleDeg: 16
-    // Real platter baseline: 33 1/3 RPM at normal playback speed.
-    property real baseRpm: 33.3333333333
+    property real  ringThickness: 7
+    property real  cutoutAngleDeg: 16
+    property real  baseRpm: 33.0 + 1.0/3.0   // 33⅓ RPM = 200 °/s
+    property real  scratchDeadzoneDeg: 1.4
+
+    // Internal drag state
     property bool dragActive: false
     property bool _scratchEngaged: false
-    property real _accumDragAngle: 0.0
-    property real scratchDeadzoneDeg: 1.4
+    property real _accumDragAngle: 0.0      // absolute sum for deadzone
+    property real _totalScratchedAngle: 0.0 // signed total this drag
+    property real _pressRotation: 0.0       // ringRotator.rotation at press time
+    property real _lastCursorAngle: 0.0
 
-    property real _lastDragAngle: 0.0
-    property real _grabOffsetAngle: 0.0
+    // 33⅓ RPM = (100/3 * 360) / 60 = exactly 200 °/s
+    readonly property real degreesPerSecond: 200.0
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
 
     function updateRotation() {
-        if (root.dragActive)
-            return
-
-        if (!root.engine) {
-            markerRotator.rotation = 0
-            return
-        }
+        if (root.dragActive) return
+        if (!root.engine) { ringRotator.rotation = 0; return }
 
         var playheadSec = root.engine.getPlayheadPositionAtomic()
-        var degreesPerSecond = (root.baseRpm * 360.0) / 60.0
-
-        // Rotation follows actual playhead direction. In reverse, playheadSec
-        // moves backwards, so the wheel naturally rotates backwards as well.
-        var angle = (playheadSec * degreesPerSecond) % 360.0
-        if (angle < 0)
-            angle += 360.0
-        markerRotator.rotation = angle
+        var angle = (playheadSec * root.degreesPerSecond) % 360.0
+        if (angle < 0) angle += 360.0
+        ringRotator.rotation = angle
     }
 
     function angleForPoint(xPos, yPos) {
-        var dx = xPos - root.width / 2
-        var dy = yPos - root.height / 2
-        var angle = Math.atan2(dy, dx) * 180.0 / Math.PI
-        if (angle < 0)
-            angle += 360.0
-        return angle
-    }
-
-    function applyDragDelta(deltaAngle) {
-        if (!root.engine)
-            return
-
-        var secondsPerRevolution = 60.0 / root.baseRpm
-        var deltaSeconds = (deltaAngle / 360.0) * secondsPerRevolution
-
-        root.engine.scratchBySeconds(deltaSeconds)
-    }
-
-    function normalizeAngle(angle) {
-        var a = angle % 360.0
-        if (a < 0)
-            a += 360.0
+        var dx = xPos - root.width  * 0.5
+        var dy = yPos - root.height * 0.5
+        var a = Math.atan2(dy, dx) * 180.0 / Math.PI
+        if (a < 0) a += 360.0
         return a
     }
 
-    function shortestAngleDelta(fromAngle, toAngle) {
-        var delta = toAngle - fromAngle
-        if (delta > 180)
-            delta -= 360
-        else if (delta < -180)
-            delta += 360
-        return delta
+    function applyDragDelta(deltaAngle) {
+        if (!root.engine) return
+        // 1 revolution = 60 / baseRpm seconds = 1.8 s at 33⅓ RPM
+        root.engine.scratchBySeconds((deltaAngle / 360.0) * (60.0 / root.baseRpm))
     }
+
+    function shortestAngleDelta(from, to) {
+        var d = to - from
+        if (d >  180) d -= 360
+        if (d < -180) d += 360
+        return d
+    }
+
+    // ── Visual ───────────────────────────────────────────────────────────────
 
     implicitWidth: 120
     implicitHeight: 120
 
+    // Single rotation item — no intermediate wrapper so the pivot and the
+    // drawn arc centre share the exact same coordinate.
     Item {
-        id: platter
+        id: ringRotator
+        x: 0; y: 0
+        width: parent.width; height: parent.height
+        transformOrigin: Item.Center
+
+        Canvas {
+            id: ringCanvas
+            anchors.fill: parent
+            antialiasing: true
+
+            onPaint: {
+                var ctx = getContext("2d")
+                ctx.clearRect(0, 0, width, height)
+
+                var cx  = width  * 0.5
+                var cy  = height * 0.5
+                var lw  = Math.max(2, root.ringThickness)
+                var rad = Math.min(width, height) * 0.5 - lw * 0.5 - 1
+                var gap = root.cutoutAngleDeg * Math.PI / 180.0
+                var s   = -Math.PI * 0.5 + gap * 0.5
+                var e   = s + (Math.PI * 2.0 - gap)
+
+                ctx.beginPath()
+                ctx.arc(cx, cy, rad, s, e, false)
+                ctx.lineWidth   = lw
+                ctx.lineCap     = "butt"
+                ctx.strokeStyle = root.ringColor
+                ctx.stroke()
+            }
+        }
+    }
+
+    onWidthChanged:  ringCanvas.requestPaint()
+    onHeightChanged: ringCanvas.requestPaint()
+
+    // ── Mouse / scratch ──────────────────────────────────────────────────────
+
+    MouseArea {
         anchors.fill: parent
+        hoverEnabled: true
+        acceptedButtons: Qt.LeftButton
+        cursorShape: root.dragActive ? Qt.ClosedHandCursor : Qt.OpenHandCursor
 
-        Item {
-            id: markerRotator
-            anchors.fill: parent
-            transformOrigin: Item.Center
-
-            Canvas {
-                id: ringCanvas
-                anchors.fill: parent
-                antialiasing: true
-
-                onPaint: {
-                    var ctx = getContext("2d")
-                    ctx.clearRect(0, 0, width, height)
-
-                    var cx = width * 0.5
-                    var cy = height * 0.5
-                    var lw = Math.max(2, root.ringThickness)
-                    var radius = Math.min(width, height) * 0.5 - lw * 0.5 - 1
-                    var gap = (Math.max(1, root.cutoutAngleDeg) * Math.PI) / 180.0
-                    var start = -Math.PI * 0.5 + gap * 0.5
-                    var end = start + (Math.PI * 2.0 - gap)
-
-                    ctx.beginPath()
-                    ctx.arc(cx, cy, radius, start, end, false)
-                    ctx.lineWidth = lw
-                    ctx.lineCap = "round"
-                    ctx.strokeStyle = root.ringColor
-                    ctx.stroke()
-                }
-            }
-
-            FrameAnimation {
-                // Keep platter locked to actual playhead during play and scrub/seek.
-                running: root.engine !== null
-                onTriggered: root.updateRotation()
-            }
+        function inPlatter(mouse) {
+            var r  = root.width * 0.5
+            var dx = mouse.x - r
+            var dy = mouse.y - r
+            return dx * dx + dy * dy <= r * r
         }
 
-        onWidthChanged: ringCanvas.requestPaint()
-        onHeightChanged: ringCanvas.requestPaint()
+        onPressed: (mouse) => {
+            if (!root.engine || !inPlatter(mouse)) { mouse.accepted = false; return }
 
-        MouseArea {
-            id: turntableMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            acceptedButtons: Qt.LeftButton
-            cursorShape: root.dragActive ? Qt.ClosedHandCursor : Qt.OpenHandCursor
-
-            function inPlatter(mouse) {
-                var dx = mouse.x - platter.width / 2
-                var dy = mouse.y - platter.height / 2
-                return (dx * dx + dy * dy) <= (platter.width * platter.width / 4)
-            }
-
-            onPressed: (mouse) => {
-                if (!root.engine || !inPlatter(mouse)) {
-                    mouse.accepted = false
-                    return
-                }
-
-                root.dragActive = true
-                root._scratchEngaged = false
-                root._accumDragAngle = 0.0
-                var cursorAngle = root.angleForPoint(mouse.x, mouse.y)
-                root._grabOffsetAngle = root.shortestAngleDelta(cursorAngle, markerRotator.rotation)
-                root._lastDragAngle = markerRotator.rotation
-                root.engine.pauseForScrub()
-            }
-
-            onPositionChanged: (mouse) => {
-                if (!root.dragActive || !root.engine)
-                    return
-
-                var cursorAngle = root.angleForPoint(mouse.x, mouse.y)
-                var nextVisualAngle = root.normalizeAngle(cursorAngle + root._grabOffsetAngle)
-                var delta = root.shortestAngleDelta(root._lastDragAngle, nextVisualAngle)
-
-                if (!root._scratchEngaged) {
-                    root._accumDragAngle += Math.abs(delta)
-                    root._lastDragAngle = nextVisualAngle
-
-                    if (root._accumDragAngle < root.scratchDeadzoneDeg)
-                        return
-
-                    root._scratchEngaged = true
-                }
-
-                markerRotator.rotation = nextVisualAngle
-                root._lastDragAngle = nextVisualAngle
-                root.applyDragDelta(delta)
-            }
-
-            onReleased: {
-                if (!root.dragActive || !root.engine)
-                    return
-
-                root.dragActive = false
-                root.engine.resumeAfterScrub()
-                root._scratchEngaged = false
-                root._accumDragAngle = 0.0
-                root.updateRotation()
-            }
-
-            onCanceled: {
-                root.dragActive = false
-                if (root.engine)
-                    root.engine.resumeAfterScrub()
-                root._scratchEngaged = false
-                root._accumDragAngle = 0.0
-                root.updateRotation()
-            }
+            root.dragActive           = true
+            root._scratchEngaged      = false
+            root._accumDragAngle      = 0.0
+            root._totalScratchedAngle = 0.0
+            root._pressRotation       = ringRotator.rotation
+            root._lastCursorAngle     = root.angleForPoint(mouse.x, mouse.y)
+            root.engine.pauseForScrub()
         }
+
+        onPositionChanged: (mouse) => {
+            if (!root.dragActive || !root.engine) return
+
+            var cur   = root.angleForPoint(mouse.x, mouse.y)
+            var delta = root.shortestAngleDelta(root._lastCursorAngle, cur)
+            root._lastCursorAngle = cur
+
+            if (!root._scratchEngaged) {
+                root._accumDragAngle += Math.abs(delta)
+                if (root._accumDragAngle < root.scratchDeadzoneDeg) return
+                root._scratchEngaged = true
+            }
+
+            root._totalScratchedAngle += delta
+
+            // Visual angle is exactly press-time angle + total scratched angle.
+            // This mirrors what we've applied to the engine, so on release
+            // updateRotation() computes the same value with no jump.
+            var visual = (root._pressRotation + root._totalScratchedAngle) % 360.0
+            if (visual < 0) visual += 360.0
+            ringRotator.rotation = visual
+
+            root.applyDragDelta(delta)
+        }
+
+        onReleased: {
+            if (!root.dragActive || !root.engine) return
+            root.dragActive = false
+            root.engine.resumeAfterScrub()
+            root._scratchEngaged      = false
+            root._accumDragAngle      = 0.0
+            root._totalScratchedAngle = 0.0
+            root.updateRotation()
+        }
+
+        onCanceled: {
+            root.dragActive = false
+            if (root.engine) root.engine.resumeAfterScrub()
+            root._scratchEngaged      = false
+            root._accumDragAngle      = 0.0
+            root._totalScratchedAngle = 0.0
+            root.updateRotation()
+        }
+    }
+
+    // ── Playback tracking ────────────────────────────────────────────────────
+
+    FrameAnimation {
+        running: root.engine !== null
+        onTriggered: root.updateRotation()
     }
 
     Connections {
         target: root.engine
-        function onPlayingChanged() { root.updateRotation() }
+        function onPlayingChanged()  { root.updateRotation() }
         function onProgressChanged() { root.updateRotation() }
-        function onTempoChanged() { root.updateRotation() }
-        function onReverseChanged() { root.updateRotation() }
-        function onTrackLoaded() { root.updateRotation() }
+        function onTempoChanged()    { root.updateRotation() }
+        function onReverseChanged()  { root.updateRotation() }
+        function onTrackLoaded()     { root.updateRotation() }
     }
 
-    onEngineChanged: updateRotation()
+    onEngineChanged:       updateRotation()
     Component.onCompleted: updateRotation()
 }
