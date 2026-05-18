@@ -6,7 +6,6 @@ Item {
     anchors.fill: parent
     z: 999
 
-    // Filled from outside — set to true once the loading screen has finished
     property bool active: false
 
     visible: active
@@ -20,7 +19,7 @@ Item {
     Rectangle {
         anchors.fill: parent
         color: "#000000"
-        opacity: 0.72
+        opacity: 0.78
         MouseArea { anchors.fill: parent }
     }
 
@@ -28,18 +27,11 @@ Item {
     Rectangle {
         id: card
         anchors.centerIn: parent
-        width: Math.min(parent.width * 0.88, 560)
-        height: cardContent.implicitHeight + 52
-        color: "#18181580" // semi-transparent dark
-        border.color: "#ff990044"
-        radius: 6
-
-        // Solid background so text is readable
-        Rectangle {
-            anchors.fill: parent
-            color: "#18181a"
-            radius: parent.radius
-        }
+        width: Math.min(parent.width * 0.92, 620)
+        height: cardContent.implicitHeight + 56
+        color: "#18181a"
+        border.color: "#2a2a2a"
+        radius: 8
 
         // Top accent line
         Rectangle {
@@ -51,7 +43,8 @@ Item {
             gradient: Gradient {
                 orientation: Gradient.Horizontal
                 GradientStop { position: 0.0; color: "#ff9900" }
-                GradientStop { position: 1.0; color: "#cc6600" }
+                GradientStop { position: 0.6; color: "#e07000" }
+                GradientStop { position: 1.0; color: "#5a2d00" }
             }
         }
 
@@ -60,57 +53,147 @@ Item {
             anchors.top: parent.top
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.topMargin: 36
-            anchors.leftMargin: 36
-            anchors.rightMargin: 36
+            anchors.topMargin: 40
+            anchors.leftMargin: 40
+            anchors.rightMargin: 40
             spacing: 0
 
-            // Title
+            // App name
             Text {
                 Layout.fillWidth: true
-                text: "Welcome to RamsbrockDJ"
+                text: "RamsbrockDJ"
                 color: "#ff9900"
-                font.pixelSize: 22
+                font.pixelSize: 28
                 font.bold: true
+                font.letterSpacing: 1.2
                 horizontalAlignment: Text.AlignHCenter
             }
 
-            Item { Layout.preferredHeight: 12 }
+            Item { Layout.preferredHeight: 10 }
 
-            // Subtitle
+            // Status badges
+            Item {
+                Layout.fillWidth: true
+                Layout.preferredHeight: badgeRow.implicitHeight
+
+                Row {
+                    id: badgeRow
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    spacing: 8
+
+                    Rectangle {
+                        height: 20
+                        width: preAlphaText.implicitWidth + 14
+                        color: "#1f0d00"
+                        border.color: "#7a3d00"
+                        radius: 3
+                        Text {
+                            id: preAlphaText
+                            anchors.centerIn: parent
+                            text: "PRE-ALPHA"
+                            color: "#e07000"
+                            font.pixelSize: 10
+                            font.bold: true
+                            font.letterSpacing: 1.0
+                        }
+                    }
+
+                    Rectangle {
+                        height: 20
+                        width: devBuildText.implicitWidth + 14
+                        color: "#111a11"
+                        border.color: "#2a4a2a"
+                        radius: 3
+                        Text {
+                            id: devBuildText
+                            anchors.centerIn: parent
+                            text: "DEVELOPER BUILD"
+                            color: "#3a8a3a"
+                            font.pixelSize: 10
+                            font.bold: true
+                            font.letterSpacing: 1.0
+                        }
+                    }
+                }
+            }
+
+            Item { Layout.preferredHeight: 20 }
+
+            Rectangle { Layout.fillWidth: true; height: 1; color: "#242424" }
+
+            Item { Layout.preferredHeight: 20 }
+
+            // Vision paragraph
             Text {
                 Layout.fillWidth: true
-                text: "An open-source DJ software built for experimentation and real-world use."
+                text: "RamsbrockDJ is being built to become a full-featured, performance-grade DJ platform — designed for live venues, club sets, and professional hardware integration. The goal is a fast, modern tool that holds up under real-world stage conditions."
                 color: "#aaaaaa"
                 font.pixelSize: 13
+                wrapMode: Text.WordWrap
+                horizontalAlignment: Text.AlignHCenter
+            }
+
+            Item { Layout.preferredHeight: 20 }
+
+            // ── Warning box ──────────────────────────────────────────────────
+            Rectangle {
+                Layout.fillWidth: true
+                // contentHeight is the reliable rendered height for word-wrapped
+                // text; avoids Column/implicitHeight timing issues with scaling.
+                height: warnTitle.contentHeight + warnBody.contentHeight + 64
+                color: "#120c00"
+                border.color: "#3d2500"
+                radius: 5
+
+                // Left accent stripe — positioned without bottom-anchor to
+                // avoid a circular dependency on parent.height
+                Rectangle {
+                    x: 0
+                    y: 6
+                    width: 3
+                    height: parent.height - 12
+                    radius: 2
+                    color: "#cc6600"
+                }
+
+                Text {
+                    id: warnTitle
+                    x: 18
+                    y: 12
+                    width: parent.width - 32
+                    text: "⚠  Ultra-Early State — Not Suitable for Live Use"
+                    color: "#cc7700"
+                    font.pixelSize: 12
+                    font.bold: true
+                    wrapMode: Text.WordWrap
+                }
+
+                Text {
+                    id: warnBody
+                    x: 18
+                    y: warnTitle.y + warnTitle.contentHeight + 8
+                    width: parent.width - 32
+                    text: "This software is in an extremely early stage of development. Core features are still actively being built, APIs are unstable, and crashes or audio glitches are to be expected. Do not use this for live events, professional performances, or any situation where reliability matters."
+                    color: "#886644"
+                    font.pixelSize: 12
+                    wrapMode: Text.WordWrap
+                }
+            }
+
+            Item { Layout.preferredHeight: 18 }
+
+            // Feedback + GitHub
+            Text {
+                Layout.fillWidth: true
+                text: "Your testing and feedback directly shape what this project becomes."
+                color: "#606060"
+                font.pixelSize: 12
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
             }
 
-            Item { Layout.preferredHeight: 24 }
+            Item { Layout.preferredHeight: 10 }
 
-            // Divider
-            Rectangle {
-                Layout.fillWidth: true
-                height: 1
-                color: "#2a2a2a"
-            }
-
-            Item { Layout.preferredHeight: 20 }
-
-            // Body text
-            Text {
-                Layout.fillWidth: true
-                text: "This is early-stage developer software. Features are actively being built and may change between versions. Your feedback helps shape the direction of the project."
-                color: "#888888"
-                font.pixelSize: 12
-                wrapMode: Text.WordWrap
-                lineHeight: 1.5
-            }
-
-            Item { Layout.preferredHeight: 20 }
-
-            // GitHub link
             Row {
                 Layout.alignment: Qt.AlignHCenter
                 spacing: 8
@@ -118,7 +201,7 @@ Item {
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
                     text: "Source & updates:"
-                    color: "#666"
+                    color: "#505050"
                     font.pixelSize: 12
                 }
 
@@ -144,23 +227,17 @@ Item {
                 }
             }
 
-            Item { Layout.preferredHeight: 28 }
+            Item { Layout.preferredHeight: 24 }
 
-            // Divider
-            Rectangle {
-                Layout.fillWidth: true
-                height: 1
-                color: "#2a2a2a"
-            }
+            Rectangle { Layout.fillWidth: true; height: 1; color: "#242424" }
 
             Item { Layout.preferredHeight: 18 }
 
-            // Bottom row: checkbox + Start button
+            // Bottom row: checkbox + button
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 12
 
-                // Don't show again checkbox
                 Row {
                     spacing: 8
                     Layout.alignment: Qt.AlignVCenter
@@ -172,7 +249,6 @@ Item {
                         color: dontShowAgain ? "#ff9900" : "#1e1e1e"
                         border.color: dontShowAgain ? "#ff9900" : "#444"
                         anchors.verticalCenter: parent.verticalCenter
-
                         property bool dontShowAgain: true
 
                         Text {
@@ -191,7 +267,7 @@ Item {
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
                         text: "Don't show again on startup"
-                        color: "#666"
+                        color: "#555"
                         font.pixelSize: 12
                         HoverHandler { cursorShape: Qt.PointingHandCursor }
                         TapHandler { onTapped: checkBox.dontShowAgain = !checkBox.dontShowAgain }
@@ -200,16 +276,15 @@ Item {
 
                 Item { Layout.fillWidth: true }
 
-                // Start button
                 Rectangle {
-                    width: 110; height: 36
+                    width: 120; height: 36
                     radius: 4
                     color: startHov.hovered ? "#d08000" : "#ff9900"
                     HoverHandler { id: startHov; cursorShape: Qt.PointingHandCursor }
 
                     Text {
                         anchors.centerIn: parent
-                        text: "Start"
+                        text: "Let's Go"
                         color: "#000"
                         font.pixelSize: 13
                         font.bold: true
