@@ -10,28 +10,31 @@ Item {
     property real  baseRpm: 33.0 + 1.0/3.0   // 33⅓ RPM = 200 °/s
     property real  scratchDeadzoneDeg: 1.4
 
+    // 33⅓ RPM → (100/3 × 360) / 60 = exactly 200 °/s
+    readonly property real degreesPerSecond: 200.0
+
     // Internal drag state
     property bool dragActive: false
     property bool _scratchEngaged: false
     property real _accumDragAngle: 0.0      // absolute sum for deadzone
-    property real _totalScratchedAngle: 0.0 // signed total this drag
-    property real _pressRotation: 0.0       // ringRotator.rotation at press time
+    property real _totalScratchedAngle: 0.0 // signed total this drag — drives setScrubPosition
+    property real _pressPlayheadSec: 0.0    // playhead captured at press time
     property real _lastCursorAngle: 0.0
 
-    // 33⅓ RPM = (100/3 * 360) / 60 = exactly 200 °/s
-    readonly property real degreesPerSecond: 200.0
-
-    // ── Helpers ─────────────────────────────────────────────────────────────
+    // ── Rotation ─────────────────────────────────────────────────────────────
+    // Always derived from getPlayheadPositionAtomic() — both during play and
+    // during drag.  setScrubPosition() updates the atomic immediately, so the
+    // ring always reflects the actual audio position with no jump on release.
 
     function updateRotation() {
-        if (root.dragActive) return
         if (!root.engine) { ringRotator.rotation = 0; return }
-
         var playheadSec = root.engine.getPlayheadPositionAtomic()
         var angle = (playheadSec * root.degreesPerSecond) % 360.0
         if (angle < 0) angle += 360.0
         ringRotator.rotation = angle
     }
+
+    // ── Geometry helpers ─────────────────────────────────────────────────────
 
     function angleForPoint(xPos, yPos) {
         var dx = xPos - root.width  * 0.5
@@ -39,12 +42,6 @@ Item {
         var a = Math.atan2(dy, dx) * 180.0 / Math.PI
         if (a < 0) a += 360.0
         return a
-    }
-
-    function applyDragDelta(deltaAngle) {
-        if (!root.engine) return
-        // 1 revolution = 60 / baseRpm seconds = 1.8 s at 33⅓ RPM
-        root.engine.scratchBySeconds((deltaAngle / 360.0) * (60.0 / root.baseRpm))
     }
 
     function shortestAngleDelta(from, to) {
@@ -119,7 +116,9 @@ Item {
             root._scratchEngaged      = false
             root._accumDragAngle      = 0.0
             root._totalScratchedAngle = 0.0
-            root._pressRotation       = ringRotator.rotation
+            // Capture press-time playhead so we can feed absolute target positions
+            // to setScrubPosition() — same model used by the scrolling waveform.
+            root._pressPlayheadSec    = root.engine.getPlayheadPositionAtomic()
             root._lastCursorAngle     = root.angleForPoint(mouse.x, mouse.y)
             root.engine.pauseForScrub()
         }
@@ -139,14 +138,14 @@ Item {
 
             root._totalScratchedAngle += delta
 
-            // Visual angle is exactly press-time angle + total scratched angle.
-            // This mirrors what we've applied to the engine, so on release
-            // updateRotation() computes the same value with no jump.
-            var visual = (root._pressRotation + root._totalScratchedAngle) % 360.0
-            if (visual < 0) visual += 360.0
-            ringRotator.rotation = visual
-
-            root.applyDragDelta(delta)
+            // Target position = where the vinyl "should" be given total rotation.
+            // setScrubPosition uses the same absolute spring-follower path as the
+            // waveform drag, so the atomic position updates immediately and the
+            // ring (read via updateRotation / FrameAnimation) stays in sync with
+            // the audio without any jump on release.
+            var targetSec = root._pressPlayheadSec
+                          + root._totalScratchedAngle / root.degreesPerSecond
+            root.engine.setScrubPosition(targetSec)
         }
 
         onReleased: {
@@ -156,7 +155,6 @@ Item {
             root._scratchEngaged      = false
             root._accumDragAngle      = 0.0
             root._totalScratchedAngle = 0.0
-            root.updateRotation()
         }
 
         onCanceled: {
@@ -165,7 +163,6 @@ Item {
             root._scratchEngaged      = false
             root._accumDragAngle      = 0.0
             root._totalScratchedAngle = 0.0
-            root.updateRotation()
         }
     }
 
