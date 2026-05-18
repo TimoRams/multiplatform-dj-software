@@ -1272,14 +1272,28 @@ public:
 
         if (m_sampleRate <= 0.0 || bufferToFill.buffer->getNumChannels() == 0 || bufferToFill.numSamples == 0) return;
 
-        // Rate-proportional 2-pole anti-alias LP + gentle soft-clip during scratch.
-        // scratchTimbre carries absRate (0–1); 2-pole cascade (12 dB/oct) at
-        // rate × Nyquist × 0.36 removes linear-interpolation aliasing cleanly.
+        // Rate-proportional 4-pole anti-alias LP + gentle soft-clip during scratch.
+        // scratchTimbre carries absRate (0–1); cutoff at rate × sr × 0.25 places
+        // the first linear-interp alias image at 4× cutoff → ~48 dB rejection.
         const float scratchRate = scratchTimbre.load(std::memory_order_relaxed);
-        if (scratchRate > 0.001f && scratchRate < 0.98f) {
+        const bool  scratchLpActive = (scratchRate > 0.001f && scratchRate < 0.98f);
+        if (scratchLpActive) {
             const int numChannels = std::min(bufferToFill.buffer->getNumChannels(), 2);
+
+            // On activation, seed all pole states from the first input sample so
+            // the filter output starts at the correct level with no convergence noise.
+            if (!m_scratchLpWasActive) {
+                for (int ch = 0; ch < numChannels; ++ch) {
+                    const float seed = bufferToFill.buffer->getSample(ch, bufferToFill.startSample);
+                    m_scratchWarmLpState[ch]     = seed;
+                    m_scratchWarmLpState[ch + 2] = seed;
+                    m_scratchWarmLpState[ch + 4] = seed;
+                    m_scratchWarmLpState[ch + 6] = seed;
+                }
+            }
+
             const float cutoffHz = std::max(50.0f,
-                scratchRate * static_cast<float>(m_sampleRate) * 0.36f);
+                scratchRate * static_cast<float>(m_sampleRate) * 0.25f);
             const float pole = std::exp(-2.0f * juce::MathConstants<float>::pi * cutoffHz
                                         / static_cast<float>(m_sampleRate));
             const float alpha = 1.0f - std::clamp(pole, 0.0f, 0.9999f);
@@ -1307,6 +1321,7 @@ public:
                 m_scratchWarmLpState[ch + 6] = s4;
             }
         }
+        m_scratchLpWasActive = scratchLpActive;
 
         juce::dsp::AudioBlock<float> block(*bufferToFill.buffer);
         auto fullBlock   = block.getSubBlock(bufferToFill.startSample, bufferToFill.numSamples);
@@ -1812,6 +1827,7 @@ private:
     juce::AudioBuffer<float> m_preFaderScratch;  // PFL tap: pre-channel-fader stereo signal
     std::atomic<float> scratchTimbre { 0.0f };
     float m_scratchWarmLpState[8] {}; // 4 poles × 2 ch: [ch+0] p1, [ch+2] p2, [ch+4] p3, [ch+6] p4
+    bool  m_scratchLpWasActive = false;
 
 public:
     // VU meter peak levels — written on audio thread, read from UI thread
