@@ -1273,24 +1273,28 @@ public:
 
         if (m_sampleRate <= 0.0 || bufferToFill.buffer->getNumChannels() == 0 || bufferToFill.numSamples == 0) return;
 
-        // Dynamic scratch timbre: at very slow platter speed, soften highs and
-        // add a tiny saturation curve so drags sound less metallic/robotic.
-        const float timbre = scratchTimbre.load(std::memory_order_relaxed);
-        if (timbre > 0.0001f) {
+        // Rate-proportional anti-alias LP + gentle soft-clip during scratch.
+        // scratchTimbre carries absRate (0–1); cutoff tracks rate × Nyquist × 0.44
+        // to suppress aliasing from linear-interpolation resampling at slow rates.
+        const float scratchRate = scratchTimbre.load(std::memory_order_relaxed);
+        if (scratchRate > 0.001f && scratchRate < 0.98f) {
             const int numChannels = std::min(bufferToFill.buffer->getNumChannels(), 2);
-            const float cutoffHz = 1400.0f + (1.0f - timbre) * 9000.0f;
+            const float cutoffHz = std::max(50.0f,
+                scratchRate * static_cast<float>(m_sampleRate) * 0.44f);
             const float pole = std::exp(-2.0f * juce::MathConstants<float>::pi * cutoffHz
                                         / static_cast<float>(m_sampleRate));
             const float alpha = 1.0f - std::clamp(pole, 0.0f, 0.9999f);
-            const float drive = 1.0f + timbre * 1.2f;
-            const float norm = std::max(0.001f, std::tanh(drive));
+            // Soft-clip only kicks in below 0.70× — preserves small-signal linearity at normal speeds
+            const float satK = std::max(0.0f, (0.70f - scratchRate) / 0.70f) * 0.50f;
 
             for (int ch = 0; ch < numChannels; ++ch) {
                 float state = m_scratchWarmLpState[ch];
                 float* w = bufferToFill.buffer->getWritePointer(ch, bufferToFill.startSample);
                 for (int i = 0; i < bufferToFill.numSamples; ++i) {
                     state += alpha * (w[i] - state);
-                    w[i] = std::tanh(state * drive) / norm;
+                    w[i] = satK > 0.001f
+                         ? state / (1.0f + std::abs(state) * satK)
+                         : state;
                 }
                 m_scratchWarmLpState[ch] = state;
             }
@@ -3356,11 +3360,11 @@ void DjEngine::onTimer()
         }
 
         if (mixerSource) {
-            // Stronger coloration at very low platter speeds, fading out naturally
-            // into clean playback at faster scratches.
-            const double slowZone = std::clamp(1.0 - (absRate / 1.4), 0.0, 1.0);
-            const float timbre = static_cast<float>(std::pow(slowZone, 1.25) * 0.85);
-            mixerSource->setScratchTimbre(timbre);
+            // Pass the actual playback rate (clamped 0–1) so the audio thread can
+            // derive a rate-proportional anti-alias cutoff from it.  Above 1× the
+            // filter is not needed (no down-sampling aliasing).
+            mixerSource->setScratchTimbre(
+                static_cast<float>(std::clamp(absRate, 0.0, 1.0)));
         }
 
         if (resamplingSource) {
