@@ -3395,9 +3395,12 @@ void DjEngine::onTimer()
         if (!m_isScrubbing && m_scratchReleaseActive
             && std::abs(m_scratchSmoothedRate - m_scratchReleaseTargetRate) <= m_scratchReleaseSettleThreshold) {
             m_scratchReleaseActive = false;
-            m_scratchTargetRate = 0.0;
-            m_scratchSmoothedRate = 0.0;
-            m_scratchInputFilteredRate = 0.0;
+            m_scratchTargetRate    = 0.0;
+            // Pin smoothed rate to the converged target (not 0) so the resampling
+            // source is already at the right ratio when restorePostScrubPlaybackState
+            // calls setResamplingRatio(1.0) — avoids a rate-discontinuity click.
+            m_scratchSmoothedRate       = m_scratchReleaseTargetRate;
+            m_scratchInputFilteredRate  = 0.0;
 
             if (mixerSource)
                 mixerSource->setScratchTimbre(0.0f);
@@ -3808,12 +3811,6 @@ void DjEngine::restorePostScrubPlaybackState()
         // pressed the REVERSE button while scratch was active; using the saved
         // pre-scratch state would silently discard that change.
         static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get())->setReverse(m_isReverse);
-    if (resamplingSource)
-        resamplingSource->setResamplingRatio(1.0);
-    if (timeStretchSource)
-        timeStretchSource->setTempoRatio(1.0);
-
-    updateSpeedAndPitch();
 
     // Sync m_playRequested with the pre-scratch intent captured in m_scrubWasPlaying.
     // Normally they match, but if some edge case clears m_playRequested during scratch
@@ -3824,13 +3821,25 @@ void DjEngine::restorePostScrubPlaybackState()
         m_playRequested = true;
     }
 
+    // When stopping: halt the transport BEFORE resetting the resampling ratio.
+    // If we reset ratio first while still running, the audio thread may process
+    // one buffer at 1.0× speed while the slow-rate tail is still audible — that
+    // produces the click/pop on stop.  Stopping first ensures silence before reset.
+    if (!m_playRequested)
+        transportSource.stop();
+
+    if (resamplingSource)
+        resamplingSource->setResamplingRatio(1.0);
+    if (timeStretchSource)
+        timeStretchSource->setTempoRatio(1.0);
+
+    updateSpeedAndPitch();
+
     qDebug() << "[JOG] restorePostScrubPlaybackState: m_playRequested=" << m_playRequested
              << "isPlaying=" << transportSource.isPlaying();
 
     if (m_playRequested)
         transportSource.start();
-    else
-        transportSource.stop();
 
     m_scrubWasPlaying = false;
     m_snapTempoRatio = getTempoRatio();

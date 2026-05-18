@@ -522,9 +522,9 @@ private:
         static constexpr double kRateReleaseTauSec = 0.055;
         static constexpr double kIdleTimeoutSec = 0.120;
         static constexpr double kMaxRate = 12.0;
-        static constexpr double kReleaseToPlayTauSec = 0.14;   // faster spin-up to normal play
-        static constexpr double kReleaseToStopTauSec = 0.20;
-        static constexpr double kReleaseSettleThreshold = 0.025; // slightly wider window for faster tau
+        static constexpr double kReleaseToPlayTauSec = 0.075;  // snappy spin-up to normal play
+        static constexpr double kReleaseToStopTauSec = 0.075;  // decisive stop, no drag tail
+        static constexpr double kReleaseSettleThreshold = 0.030; // settle window matched to shorter tau
         static constexpr double kControlResumeThresholdRate = 0.0012;
         static constexpr double kControlStopThresholdRate = 0.0006;
         static constexpr double kDirectStepLimitSec = 0.02;
