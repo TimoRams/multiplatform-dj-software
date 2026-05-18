@@ -81,6 +81,15 @@ Rectangle {
         return value.toString().toLowerCase().indexOf(searchText.toLowerCase()) !== -1
     }
 
+    function _isContextClick(mouse) {
+        return mouse.button === Qt.RightButton
+            || (mouse.button === Qt.LeftButton && (mouse.modifiers & Qt.ControlModifier))
+    }
+
+    function _popupMenuAt(menu) {
+        Qt.callLater(function() { menu.popup() })
+    }
+
     readonly property var filteredFileTracks: {
         if (!libraryManager || !libraryManager.tracks) return []
         if (!searchText || searchText.length === 0) return libraryManager.tracks
@@ -439,36 +448,53 @@ Rectangle {
             hoverEnabled: true
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             cursorShape: trDragPayload.dragging ? Qt.DragMoveCursor : Qt.PointingHandCursor
-            property real pressX: 0; property real pressY: 0
+            property real pressX: 0
+            property real pressY: 0
+            property bool rightDragging: false
 
             onPressed: (mouse) => {
-                pressX = mouse.x; pressY = mouse.y
-                trDragPayload.dragging = false
-            }
-            onPositionChanged: (mouse) => {
-                if (!pressed || trDragPayload.dragging) return
-                if (Math.abs(mouse.x - pressX) + Math.abs(mouse.y - pressY) >= 8) {
-                    trDragPayload.dragging = true
-                    trDragPayload.Drag.active = true
+                pressX = mouse.x
+                pressY = mouse.y
+                if (mouse.button === Qt.RightButton) {
+                    rightDragging = false
+                    trDragPayload.dragging = false
+                } else if (mouse.button === Qt.LeftButton && (mouse.modifiers & Qt.ControlModifier)) {
+                    libraryRoot.ctxTrackId  = tr.rowTrackId
+                    libraryRoot.ctxFilePath = tr.rowFilePath
+                    libraryRoot.ctxTitle    = tr.rowTitle
+                    libraryRoot._popupMenuAt(trackContextMenu)
+                } else {
+                    trDragPayload.dragging = false
                 }
             }
-            onReleased: {
-                if (trDragPayload.dragging) trDragPayload.Drag.drop()
+            onPositionChanged: (mouse) => {
+                if (!pressed) return
+                var moved = Math.abs(mouse.x - pressX) + Math.abs(mouse.y - pressY) >= 8
+                if (!trDragPayload.dragging && moved) {
+                    trDragPayload.dragging = true
+                    trDragPayload.Drag.active = true
+                    if (mouse.buttons & Qt.RightButton) rightDragging = true
+                }
+            }
+            onReleased: (mouse) => {
+                if (trDragPayload.dragging) {
+                    trDragPayload.Drag.drop()
+                } else if (mouse.button === Qt.RightButton && !rightDragging) {
+                    libraryRoot.ctxTrackId  = tr.rowTrackId
+                    libraryRoot.ctxFilePath = tr.rowFilePath
+                    libraryRoot.ctxTitle    = tr.rowTitle
+                    libraryRoot._popupMenuAt(trackContextMenu)
+                }
                 trDragPayload.Drag.active = false
                 trDragPayload.dragging = false
+                rightDragging = false
             }
             onCanceled: {
                 trDragPayload.Drag.active = false
                 trDragPayload.dragging = false
+                rightDragging = false
             }
-            onClicked: (mouse) => {
-                if (mouse.button === Qt.RightButton) {
-                    libraryRoot.ctxTrackId  = tr.rowTrackId
-                    libraryRoot.ctxFilePath = tr.rowFilePath
-                    libraryRoot.ctxTitle    = tr.rowTitle
-                    trackContextMenu.popup()
-                }
-            }
+            onClicked: (mouse) => {}
         }
     }
 
@@ -726,14 +752,16 @@ Rectangle {
                                 }
                                 onCanceled: { plDrag.x = 0; plDrag.y = 0 }
 
-                                onClicked: (mouse) => {
-                                    if (mouse.button === Qt.RightButton) {
+                                onPressed: (mouse) => {
+                                    if (libraryRoot._isContextClick(mouse)) {
                                         playlistContextMenu.targetId       = modelData.id
                                         playlistContextMenu.targetName     = modelData.name
                                         playlistContextMenu.targetParentId = modelData.parentId || ""
-                                        playlistContextMenu.popup()
+                                        libraryRoot._popupMenuAt(playlistContextMenu)
                                         return
                                     }
+                                }
+                                onClicked: (mouse) => {
                                     // Arrow area: toggle expand only, don't select
                                     var arrowX = 14 + modelData.depth * 14
                                     if (modelData.hasChildren && mouse.x >= arrowX && mouse.x < arrowX + 12) {
@@ -1598,7 +1626,7 @@ Rectangle {
     // Track right-click menu
     Menu {
         id: trackContextMenu
-        background: Rectangle { color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
+        background: Rectangle { implicitWidth: 260; color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
 
         MenuItem {
             text: "Load to Deck A"
@@ -1632,7 +1660,7 @@ Rectangle {
         Menu {
             id: addToPlaylistMenu
             title: "Zu Playlist hinzufügen"
-            background: Rectangle { color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
+            background: Rectangle { implicitWidth: 220; color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
 
             // Show ALL playlists (top-level and sub-crates) with depth indent.
             Repeater {
@@ -1695,7 +1723,7 @@ Rectangle {
         property string targetName:     ""
         property string targetParentId: ""
 
-        background: Rectangle { color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
+        background: Rectangle { implicitWidth: 200; color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
 
         MenuItem {
             text: "Umbenennen"
