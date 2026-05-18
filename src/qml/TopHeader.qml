@@ -442,7 +442,7 @@ Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 1
                     Text {
-                        text: "RAMBSROCKDJ"
+                        text: "RAMSBROCKDJ"
                         color: "#e8e8e8"
                         font.pixelSize: root.sp(11)
                         font.bold: true
@@ -535,10 +535,7 @@ Rectangle {
         // ── Separator ────────────────────────────────────────────────────────
         Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
 
-        // ── Spacer (pushes center overlay to center) ──────────────────────────
-        Item { Layout.fillWidth: true }
-
-        // ── Spacer (mirrors left) ─────────────────────────────────────────────
+        // ── Spacer ───────────────────────────────────────────────────────────
         Item { Layout.fillWidth: true }
 
         // ── Separator ────────────────────────────────────────────────────────
@@ -844,35 +841,77 @@ Rectangle {
         // ── Separator ────────────────────────────────────────────────────────
         Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
 
-        // ── Latency ───────────────────────────────────────────────────────────
+        // ── System monitor — LAT + CPU/RAM in one compact block ───────────────
         Rectangle {
-            id: latBlock
-            Layout.preferredWidth: latRow.implicitWidth + root.padH * 2
+            id: monitorBlock
+            Layout.preferredWidth: monitorCol.implicitWidth + root.padH * 2
             Layout.fillHeight: true
             color: latMouse.pressed ? "#1a1a1a" : "#121212"
 
             readonly property color latClr: root.totalLatencyMs >= 35.0 ? "#ff5f52"
                                            : root.totalLatencyMs >= 20.0 ? "#ffcc44"
                                            : "#7ab8f5"
-            Row {
-                id: latRow
-                anchors.centerIn: parent
-                spacing: 6
 
-                Text {
-                    text: "LAT"
-                    color: "#3a3a3a"; font.pixelSize: root.sp(8); font.bold: true; font.letterSpacing: 0.5
-                    anchors.verticalCenter: parent.verticalCenter
+            Column {
+                id: monitorCol
+                anchors.centerIn: parent
+                spacing: 3
+
+                // Latency row
+                Row {
+                    spacing: 4
+                    anchors.horizontalCenter: parent.horizontalCenter
+
+                    Text {
+                        text: "LAT"; color: "#2e2e2e"
+                        font.pixelSize: root.sp(7); font.bold: true; font.letterSpacing: 0.4
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                    Text {
+                        text: root.totalLatencyMs > 0 ? root.totalLatencyMs.toFixed(1) + "ms" : "—ms"
+                        color: monitorBlock.latClr
+                        font.pixelSize: root.sp(9); font.bold: true; font.family: "monospace"
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                    Text {
+                        text: latencyPopup.opened ? "▴" : "▾"
+                        color: "#383838"; font.pixelSize: root.sp(7)
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
                 }
-                Text {
-                    text: root.totalLatencyMs > 0 ? root.totalLatencyMs.toFixed(1) + " ms" : "— ms"
-                    color: latBlock.latClr; font.pixelSize: root.sp(10); font.bold: true; font.family: "monospace"
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-                Text {
-                    text: latencyPopup.opened ? "▴" : "▾"
-                    color: "#444"; font.pixelSize: root.sp(8)
-                    anchors.verticalCenter: parent.verticalCenter
+
+                // CPU · RAM row
+                Row {
+                    spacing: 4
+                    anchors.horizontalCenter: parent.horizontalCenter
+
+                    Text {
+                        text: (sysMonitor ? Math.round(sysMonitor.cpuUsage * 100) : 0) + "%"
+                        color: (sysMonitor && sysMonitor.cpuUsage > 0.8) ? "#cc4444"
+                             : (sysMonitor && sysMonitor.cpuUsage > 0.5) ? "#cc8800"
+                             : "#3a3a3a"
+                        font.pixelSize: root.sp(7); font.family: "monospace"; font.bold: true
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                    Text {
+                        text: "cpu"; color: "#272727"
+                        font.pixelSize: root.sp(7)
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                    Rectangle { width: 1; height: 7; color: "#232323"; anchors.verticalCenter: parent.verticalCenter }
+                    Text {
+                        text: (sysMonitor ? Math.round(sysMonitor.ramUsage * 100) : 0) + "%"
+                        color: (sysMonitor && sysMonitor.ramUsage > 0.8) ? "#cc4444"
+                             : (sysMonitor && sysMonitor.ramUsage > 0.5) ? "#cc8800"
+                             : "#3a3a3a"
+                        font.pixelSize: root.sp(7); font.family: "monospace"; font.bold: true
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                    Text {
+                        text: "ram"; color: "#272727"
+                        font.pixelSize: root.sp(7)
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
                 }
             }
 
@@ -882,78 +921,10 @@ Rectangle {
                 onClicked: {
                     root.refreshLatencyInfo()
                     if (latencyPopup.opened) { latencyPopup.close(); return }
-                    var p = latBlock.mapToItem(latencyPopup.parent, 0, latBlock.height + 2)
+                    var p = monitorBlock.mapToItem(latencyPopup.parent, 0, monitorBlock.height + 2)
                     latencyPopup.width = 320
                     latencyPopup.x = p.x; latencyPopup.y = p.y
                     latencyPopup.open()
-                }
-            }
-        }
-
-        // ── Separator ────────────────────────────────────────────────────────
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
-
-        // ── CPU / RAM ─────────────────────────────────────────────────────────
-        Rectangle {
-            Layout.preferredWidth: sysCol.implicitWidth + root.padH * 2
-            Layout.fillHeight: true
-            color: "#121212"
-
-            Column {
-                id: sysCol
-                anchors.centerIn: parent
-                spacing: 4
-
-                Row {
-                    spacing: 5
-                    Text {
-                        text: "CPU"; color: "#333"; font.pixelSize: root.sp(7)
-                        font.bold: true; width: 24
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                    Rectangle {
-                        width: 64; height: 3; color: "#181818"
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle {
-                            width: (sysMonitor ? sysMonitor.cpuUsage : 0) * parent.width
-                            height: parent.height
-                            color: (sysMonitor && sysMonitor.cpuUsage > 0.8) ? "#cc3333"
-                                 : (sysMonitor && sysMonitor.cpuUsage > 0.5) ? "#cc8800"
-                                 : "#1e7bd4"
-                        }
-                    }
-                    Text {
-                        text: sysMonitor ? Math.round(sysMonitor.cpuUsage * 100) + "%" : "—"
-                        color: "#3a3a3a"; font.pixelSize: root.sp(7); font.family: "monospace"
-                        width: 26; horizontalAlignment: Text.AlignRight
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                }
-
-                Row {
-                    spacing: 5
-                    Text {
-                        text: "RAM"; color: "#333"; font.pixelSize: root.sp(7)
-                        font.bold: true; width: 24
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                    Rectangle {
-                        width: 64; height: 3; color: "#181818"
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle {
-                            width: (sysMonitor ? sysMonitor.ramUsage : 0) * parent.width
-                            height: parent.height
-                            color: (sysMonitor && sysMonitor.ramUsage > 0.8) ? "#cc3333"
-                                 : (sysMonitor && sysMonitor.ramUsage > 0.5) ? "#cc8800"
-                                 : "#2a7a4a"
-                        }
-                    }
-                    Text {
-                        text: sysMonitor ? Math.round(sysMonitor.ramUsage * 100) + "%" : "—"
-                        color: "#3a3a3a"; font.pixelSize: root.sp(7); font.family: "monospace"
-                        width: 26; horizontalAlignment: Text.AlignRight
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
                 }
             }
         }
