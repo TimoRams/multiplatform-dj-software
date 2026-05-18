@@ -1090,7 +1090,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
                 const int lsb = static_cast<int>(value * 127.0f);
                 const int msb = m_msbAccumulator.count(pId) ? m_msbAccumulator.at(pId) : 64;
                 const float combined = static_cast<float>((msb << 7) | lsb) / 16383.0f;
-                QMetaObject::invokeMethod(m_parameterStore, "setMidiParameter",
+                QMetaObject::invokeMethod(m_parameterStore, "setParameter",
                                           Qt::QueuedConnection,
                                           Q_ARG(QString, pId),
                                           Q_ARG(float, combined));
@@ -1111,13 +1111,20 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
         if (invIt != m_paramInverted.end() && invIt->second) {
             if (paramId.endsWith(QStringLiteral("_jog_move")))
                 dispatchValue = -dispatchValue;
-            else
+            else if (!isNoteOff)  // never invert a release — NoteOff is always 0
                 dispatchValue = 1.0f - dispatchValue;
         }
     }
-    QMetaObject::invokeMethod(m_parameterStore, "setMidiParameter", Qt::QueuedConnection,
-                              Q_ARG(QString, paramId),
-                              Q_ARG(float, dispatchValue));
+    // jog_move sends relative delta ticks: consecutive identical values ARE distinct ticks,
+    // so always dispatch. All other params deduplicate to break MIDI feedback echo loops
+    // (common on PipeWire/ALSA: the software's own LED feedback is echoed back as input).
+    if (paramId.endsWith(QStringLiteral("_jog_move"))) {
+        QMetaObject::invokeMethod(m_parameterStore, "setMidiParameter", Qt::QueuedConnection,
+                                  Q_ARG(QString, paramId), Q_ARG(float, dispatchValue));
+    } else {
+        QMetaObject::invokeMethod(m_parameterStore, "setParameter", Qt::QueuedConnection,
+                                  Q_ARG(QString, paramId), Q_ARG(float, dispatchValue));
+    }
 }
 
 void MidiControllerManager::learnMapping(int msgId)
