@@ -1222,6 +1222,8 @@ public:
         m_sampleRate = sampleRate;
         m_scratchWarmLpState[0] = 0.0f;
         m_scratchWarmLpState[1] = 0.0f;
+        m_scratchWarmLpState[2] = 0.0f;
+        m_scratchWarmLpState[3] = 0.0f;
 
         // 1.15 s ramp from full speed to a complete stop
         m_vinylBrakeRampDown  = 1.0f / (1.15f * static_cast<float>(sampleRate));
@@ -1273,30 +1275,33 @@ public:
 
         if (m_sampleRate <= 0.0 || bufferToFill.buffer->getNumChannels() == 0 || bufferToFill.numSamples == 0) return;
 
-        // Rate-proportional anti-alias LP + gentle soft-clip during scratch.
-        // scratchTimbre carries absRate (0–1); cutoff tracks rate × Nyquist × 0.44
-        // to suppress aliasing from linear-interpolation resampling at slow rates.
+        // Rate-proportional 2-pole anti-alias LP + gentle soft-clip during scratch.
+        // scratchTimbre carries absRate (0–1); 2-pole cascade (12 dB/oct) at
+        // rate × Nyquist × 0.36 removes linear-interpolation aliasing cleanly.
         const float scratchRate = scratchTimbre.load(std::memory_order_relaxed);
         if (scratchRate > 0.001f && scratchRate < 0.98f) {
             const int numChannels = std::min(bufferToFill.buffer->getNumChannels(), 2);
             const float cutoffHz = std::max(50.0f,
-                scratchRate * static_cast<float>(m_sampleRate) * 0.44f);
+                scratchRate * static_cast<float>(m_sampleRate) * 0.36f);
             const float pole = std::exp(-2.0f * juce::MathConstants<float>::pi * cutoffHz
                                         / static_cast<float>(m_sampleRate));
             const float alpha = 1.0f - std::clamp(pole, 0.0f, 0.9999f);
-            // Soft-clip only kicks in below 0.70× — preserves small-signal linearity at normal speeds
+            // Soft-clip only below 0.70× — x/(1+|x|·k) preserves small-signal linearity
             const float satK = std::max(0.0f, (0.70f - scratchRate) / 0.70f) * 0.50f;
 
             for (int ch = 0; ch < numChannels; ++ch) {
-                float state = m_scratchWarmLpState[ch];
+                float s1 = m_scratchWarmLpState[ch];
+                float s2 = m_scratchWarmLpState[ch + 2];
                 float* w = bufferToFill.buffer->getWritePointer(ch, bufferToFill.startSample);
                 for (int i = 0; i < bufferToFill.numSamples; ++i) {
-                    state += alpha * (w[i] - state);
+                    s1 += alpha * (w[i] - s1);   // pole 1
+                    s2 += alpha * (s1    - s2);   // pole 2
                     w[i] = satK > 0.001f
-                         ? state / (1.0f + std::abs(state) * satK)
-                         : state;
+                         ? s2 / (1.0f + std::abs(s2) * satK)
+                         : s2;
                 }
-                m_scratchWarmLpState[ch] = state;
+                m_scratchWarmLpState[ch]     = s1;
+                m_scratchWarmLpState[ch + 2] = s2;
             }
         }
 
@@ -1803,7 +1808,7 @@ private:
     juce::AudioBuffer<float> m_routeScratch;
     juce::AudioBuffer<float> m_preFaderScratch;  // PFL tap: pre-channel-fader stereo signal
     std::atomic<float> scratchTimbre { 0.0f };
-    float m_scratchWarmLpState[2] { 0.0f, 0.0f };
+    float m_scratchWarmLpState[4] { 0.0f, 0.0f, 0.0f, 0.0f }; // [ch] pole1, [ch+2] pole2
 
 public:
     // VU meter peak levels — written on audio thread, read from UI thread
