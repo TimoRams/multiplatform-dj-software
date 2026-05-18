@@ -55,26 +55,30 @@ Item {
             onPositionChanged: (mouse) => seekTo(mouse.x)
 
             function seekTo(xPos) {
-                if (root.engine) {
-                    var progress = xPos / width;
-                    if (progress < 0.0) progress = 0.0;
-                    if (progress > 1.0) progress = 1.0;
+                if (!root.engine) return
+                var progress = xPos / width
+                if (progress < 0.0) progress = 0.0
+                if (progress > 1.0) progress = 1.0
 
-                    if (root.engine.loopActive && root.engine.loopOutPosition > root.engine.loopInPosition) {
-                        var trackLength = root.engine.duration;
-                        if (trackLength > 0.0) {
-                            var loopInProgress = root.engine.loopInPosition / trackLength;
-                            var loopOutProgress = root.engine.loopOutPosition / trackLength;
+                if (root.engine.loopActive && root.engine.loopOutPosition > root.engine.loopInPosition) {
+                    var trackLength = root.engine.duration
+                    if (trackLength > 0.0) {
+                        var loopInProgress  = root.engine.loopInPosition  / trackLength
+                        var loopOutProgress = root.engine.loopOutPosition / trackLength
 
-                            if (progress < loopInProgress)
-                                progress = loopInProgress;
-                            else if (progress > loopOutProgress)
-                                progress = loopOutProgress;
+                        if (progress < loopInProgress) {
+                            // Clicking before loop start is the only way to exit an active loop.
+                            root.engine.clearLoop()
+                            // fall through: setPosition with current progress
+                        } else if (progress > loopOutProgress) {
+                            // Clicking past loop end wraps back to loop start.
+                            progress = loopInProgress
                         }
+                        // else: click inside loop — normal jump, loop stays active
                     }
-
-                    root.engine.setPosition(progress);
                 }
+
+                root.engine.setPosition(progress)
             }
         }
     }

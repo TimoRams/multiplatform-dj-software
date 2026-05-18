@@ -138,13 +138,23 @@ Item {
 
             root._totalScratchedAngle += delta
 
-            // Target position = where the vinyl "should" be given total rotation.
-            // setScrubPosition uses the same absolute spring-follower path as the
-            // waveform drag, so the atomic position updates immediately and the
-            // ring (read via updateRotation / FrameAnimation) stays in sync with
-            // the audio without any jump on release.
             var targetSec = root._pressPlayheadSec
                           + root._totalScratchedAngle / root.degreesPerSecond
+
+            // Clamp to loop boundaries during scratch — no wrapping/teleport.
+            // Re-anchor at the wall so reversing direction responds immediately.
+            if (root.engine.loopActive
+                    && root.engine.loopOutPosition > root.engine.loopInPosition) {
+                var loopIn  = root.engine.loopInPosition
+                var loopOut = root.engine.loopOutPosition
+                var clamped = Math.max(loopIn, Math.min(loopOut - 0.0001, targetSec))
+                if (clamped !== targetSec) {
+                    root._pressPlayheadSec    = clamped
+                    root._totalScratchedAngle = 0.0
+                }
+                targetSec = clamped
+            }
+
             root.engine.setScrubPosition(targetSec)
         }
 

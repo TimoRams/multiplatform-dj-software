@@ -115,21 +115,17 @@ Item {
 
                 var targetSec = pressPlayheadSec - (dragPx / effectivePixelsPerSecond)
 
-                // Wrap within loop boundaries (Serato/Rekordbox style): reaching one
-                // end jumps to the other side. Re-anchor so subsequent drag is smooth.
+                // Clamp to loop boundaries during scrub — no wrapping/teleport.
+                // Re-anchor at the wall so reversing direction responds immediately.
                 if (root.engine.loopActive && root.engine.loopOutPosition > root.engine.loopInPosition) {
                     var loopIn  = root.engine.loopInPosition
                     var loopOut = root.engine.loopOutPosition
-                    var loopLen = loopOut - loopIn
-                    if (targetSec < loopIn) {
-                        targetSec = loopOut - (loopIn - targetSec) % loopLen
-                        pressPlayheadSec = targetSec
-                        pressMouseX = mouse.x
-                    } else if (targetSec > loopOut) {
-                        targetSec = loopIn + (targetSec - loopOut) % loopLen
-                        pressPlayheadSec = targetSec
+                    var clamped = Math.max(loopIn, Math.min(loopOut - 0.0001, targetSec))
+                    if (clamped !== targetSec) {
+                        pressPlayheadSec = clamped
                         pressMouseX = mouse.x
                     }
+                    targetSec = clamped
                 }
 
                 root.engine.setScrubPosition(targetSec)
