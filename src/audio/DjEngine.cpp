@@ -1220,10 +1220,7 @@ public:
         colorFilter.prepare(spec);
 
         m_sampleRate = sampleRate;
-        m_scratchWarmLpState[0] = 0.0f;
-        m_scratchWarmLpState[1] = 0.0f;
-        m_scratchWarmLpState[2] = 0.0f;
-        m_scratchWarmLpState[3] = 0.0f;
+        for (int i = 0; i < 8; ++i) m_scratchWarmLpState[i] = 0.0f;
 
         // 1.15 s ramp from full speed to a complete stop
         m_vinylBrakeRampDown  = 1.0f / (1.15f * static_cast<float>(sampleRate));
@@ -1292,16 +1289,22 @@ public:
             for (int ch = 0; ch < numChannels; ++ch) {
                 float s1 = m_scratchWarmLpState[ch];
                 float s2 = m_scratchWarmLpState[ch + 2];
+                float s3 = m_scratchWarmLpState[ch + 4];
+                float s4 = m_scratchWarmLpState[ch + 6];
                 float* w = bufferToFill.buffer->getWritePointer(ch, bufferToFill.startSample);
                 for (int i = 0; i < bufferToFill.numSamples; ++i) {
-                    s1 += alpha * (w[i] - s1);   // pole 1
-                    s2 += alpha * (s1    - s2);   // pole 2
+                    s1 += alpha * (w[i] - s1);
+                    s2 += alpha * (s1   - s2);
+                    s3 += alpha * (s2   - s3);
+                    s4 += alpha * (s3   - s4);
                     w[i] = satK > 0.001f
-                         ? s2 / (1.0f + std::abs(s2) * satK)
-                         : s2;
+                         ? s4 / (1.0f + std::abs(s4) * satK)
+                         : s4;
                 }
                 m_scratchWarmLpState[ch]     = s1;
                 m_scratchWarmLpState[ch + 2] = s2;
+                m_scratchWarmLpState[ch + 4] = s3;
+                m_scratchWarmLpState[ch + 6] = s4;
             }
         }
 
@@ -1808,7 +1811,7 @@ private:
     juce::AudioBuffer<float> m_routeScratch;
     juce::AudioBuffer<float> m_preFaderScratch;  // PFL tap: pre-channel-fader stereo signal
     std::atomic<float> scratchTimbre { 0.0f };
-    float m_scratchWarmLpState[4] { 0.0f, 0.0f, 0.0f, 0.0f }; // [ch] pole1, [ch+2] pole2
+    float m_scratchWarmLpState[8] {}; // 4 poles × 2 ch: [ch+0] p1, [ch+2] p2, [ch+4] p3, [ch+6] p4
 
 public:
     // VU meter peak levels — written on audio thread, read from UI thread
