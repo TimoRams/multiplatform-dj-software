@@ -249,7 +249,7 @@ int main(int argc, char *argv[])
     std::unique_ptr<DjEngine> deckC;
     std::unique_ptr<DjEngine> deckD;
     auto parameterStore = std::make_unique<ParameterStore>();
-    auto midiManager = std::make_unique<MidiControllerManager>(parameterStore.get());
+    std::unique_ptr<MidiControllerManager> midiManager; // constructed after app.exec() — CoreMIDI needs CFRunLoop
     auto libraryManager = std::make_unique<LibraryManager>();
     auto libraryDb = std::make_unique<LibraryDatabase>();
     auto libraryTableModel = std::make_unique<LibraryTableModel>("library_conn");
@@ -288,7 +288,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("linkManager", linkManager.get());
     engine.rootContext()->setContextProperty("sysMonitor", sysMonitor.get());
     engine.rootContext()->setContextProperty("parameterStore", parameterStore.get());
-    engine.rootContext()->setContextProperty("midiManager", midiManager.get());
+    engine.rootContext()->setContextProperty("midiManager", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("cursorControl", cursorControl.get());
 
     const auto url = QUrl(u"qrc:/DJSoftware/src/qml/main.qml"_s);
@@ -503,6 +503,10 @@ int main(int argc, char *argv[])
         engine.rootContext()->setContextProperty("deckB", deckB.get());
         engine.rootContext()->setContextProperty("deckC", deckC.get());
         engine.rootContext()->setContextProperty("deckD", deckD.get());
+
+        // Defer MIDI init: CoreMIDI on macOS needs the CFRunLoop (app.exec) running first.
+        midiManager = std::make_unique<MidiControllerManager>(parameterStore.get());
+        engine.rootContext()->setContextProperty("midiManager", midiManager.get());
 
         deckA->setLibraryDatabase(libraryDb.get());
         deckB->setLibraryDatabase(libraryDb.get());
