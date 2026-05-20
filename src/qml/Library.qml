@@ -47,11 +47,15 @@ Rectangle {
     readonly property color accentRed:   "#ef5350"
     readonly property color accentKey:   "#5bb6ff"
     readonly property color sidebarSel:  "#0d2e52"
+    readonly property color textMeta:    "#888888"
+    readonly property color textNav:     "#aaaaaa"
 
-    readonly property int rowH:      24
-    readonly property int hdrH:      26
-    readonly property int toolbarH:  36
-    readonly property int sidebarW:  172
+    readonly property int rowH:       24
+    readonly property int rowHNormal: 56
+    readonly property int hdrH:       26
+    readonly property int toolbarH:   36
+    readonly property int sidebarW:   200
+    property string viewMode: "compact"
 
     // ── Fixed column widths ────────────────────────────────────────────────
     readonly property int colStatus: 26
@@ -273,6 +277,49 @@ Rectangle {
         }
     }
 
+    // ── Inline component: sortable playlist column header cell ───────────────
+    component PlSortHeader: Rectangle {
+        id: psh
+        required property string field
+        required property string label
+        property bool centerAlign: false
+        property bool isLast: false
+
+        height: parent.height
+        color: "transparent"
+
+        Row {
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.horizontalCenter: psh.centerAlign ? parent.horizontalCenter : undefined
+            anchors.left: psh.centerAlign ? undefined : parent.left
+            spacing: 4
+            Text {
+                text: psh.label
+                color: libraryRoot.playlistSortField === psh.field
+                       ? libraryRoot.textPrimary : libraryRoot.textSecond
+                font.pixelSize: window.sp(10); font.bold: true
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            Text {
+                visible: libraryRoot.playlistSortField === psh.field
+                text: libraryRoot.playlistSortAscending ? "▲" : "▼"
+                color: libraryRoot.accentBlue
+                font.pixelSize: window.sp(8)
+                anchors.verticalCenter: parent.verticalCenter
+            }
+        }
+        Rectangle {
+            anchors.bottom: parent.bottom; anchors.left: parent.left
+            width: psh.isLast ? parent.width : parent.width - 2
+            height: 2; color: libraryRoot.accentBlue
+            visible: libraryRoot.playlistSortField === psh.field
+        }
+        MouseArea {
+            anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+            onClicked: libraryRoot.togglePlaylistSort(psh.field)
+        }
+    }
+
     // ── Inline component: track row (shared between library + playlist) ────
     component TrackRow: Rectangle {
         id: tr
@@ -290,7 +337,15 @@ Rectangle {
         property bool isPlaylistTrack: false  // Set to true when in playlist view
         property string playlistId: ""  // Set when in playlist view
 
-        height: libraryRoot.rowH
+        readonly property color artBgColor: {
+            var s = rowTitle || rowArtist || ""
+            if (s.length === 0) return "#1a2535"
+            var h = 0
+            for (var i = 0; i < s.length && i < 20; i++) h = (h * 31 + s.charCodeAt(i)) & 0xFFFF
+            return Qt.hsla((h % 360) / 360.0, 0.42, 0.20, 1.0)
+        }
+
+        height: libraryRoot.viewMode === "normal" ? libraryRoot.rowHNormal : libraryRoot.rowH
         color: trMouse.containsMouse
                ? libraryRoot.bgRowHover
              : (rowIndex % 2 === 0 ? libraryRoot.bgRowEven : libraryRoot.bgRowOdd)
@@ -317,7 +372,9 @@ Rectangle {
             visible: tr.isPlaylistTrack && trDropArea.containsDrag && trDropArea.dropPosition === 1
         }
 
+        // ── Compact layout ────────────────────────────────────────────────────
         Row {
+            visible: libraryRoot.viewMode === "compact"
             anchors.verticalCenter: parent.verticalCenter
             anchors.left: parent.left; anchors.leftMargin: 6
 
@@ -351,7 +408,7 @@ Rectangle {
                 text: tr.rowDurationSec > 0
                       ? (Math.floor(tr.rowDurationSec / 60) + ":" + ("0" + (tr.rowDurationSec % 60)).slice(-2))
                       : "—"
-                color: tr.rowDurationSec > 0 ? "#888888" : libraryRoot.textDim
+                color: tr.rowDurationSec > 0 ? libraryRoot.textMeta : libraryRoot.textDim
                 font.pixelSize: window.sp(11); font.family: "monospace"
                 horizontalAlignment: Text.AlignHCenter
             }
@@ -375,9 +432,95 @@ Rectangle {
                 width: libraryRoot.colKbps
                 anchors.verticalCenter: parent.verticalCenter
                 text: tr.rowBitrateKbps > 0 ? tr.rowBitrateKbps.toString() : "—"
-                color: tr.rowBitrateKbps > 0 ? "#606060" : libraryRoot.textDim
+                color: tr.rowBitrateKbps > 0 ? libraryRoot.textSecond : libraryRoot.textDim
                 font.pixelSize: window.sp(10); font.family: "monospace"
                 horizontalAlignment: Text.AlignHCenter
+            }
+        }
+
+        // ── Normal layout ─────────────────────────────────────────────────────
+        Item {
+            visible: libraryRoot.viewMode === "normal"
+            anchors.fill: parent
+
+            // Art placeholder
+            Rectangle {
+                id: trArtBox
+                anchors.left: parent.left; anchors.leftMargin: 10
+                anchors.verticalCenter: parent.verticalCenter
+                width: 44; height: 44; radius: 5
+                color: tr.artBgColor
+
+                Rectangle {
+                    anchors.top: parent.top; anchors.right: parent.right
+                    anchors.topMargin: 3; anchors.rightMargin: 3
+                    width: 8; height: 8; radius: 4
+                    color: tr.rowIsAnalyzed ? libraryRoot.accentGreen : "#252525"
+                    border.color: Qt.rgba(0, 0, 0, 0.4); border.width: 1
+                }
+
+                Text {
+                    anchors.centerIn: parent
+                    text: (tr.rowTitle || tr.rowArtist || "?").charAt(0).toUpperCase()
+                    color: Qt.rgba(1, 1, 1, 0.60)
+                    font.pixelSize: window.sp(17); font.bold: true
+                }
+            }
+
+            // Title + Artist column
+            Column {
+                anchors.left: trArtBox.right; anchors.leftMargin: 12
+                anchors.right: trInfoCol.left; anchors.rightMargin: 8
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 5
+
+                Text {
+                    width: parent.width
+                    text: tr.rowTitle || "—"
+                    color: libraryRoot.textPrimary
+                    font.pixelSize: window.sp(12); font.weight: Font.Medium
+                    elide: Text.ElideRight
+                }
+                Text {
+                    width: parent.width
+                    text: tr.rowArtist || "—"
+                    color: libraryRoot.textSecond
+                    font.pixelSize: window.sp(10)
+                    elide: Text.ElideRight
+                }
+            }
+
+            // Right info column
+            Column {
+                id: trInfoCol
+                anchors.right: parent.right; anchors.rightMargin: 14
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 6
+
+                Text {
+                    anchors.right: parent.right
+                    text: tr.rowDurationSec > 0
+                          ? (Math.floor(tr.rowDurationSec / 60) + ":" + ("0" + (tr.rowDurationSec % 60)).slice(-2))
+                          : "—"
+                    color: tr.rowDurationSec > 0 ? libraryRoot.textMeta : libraryRoot.textDim
+                    font.pixelSize: window.sp(11); font.family: "monospace"
+                }
+
+                Row {
+                    anchors.right: parent.right
+                    spacing: 8
+
+                    Text {
+                        text: tr.rowBpm > 0 ? tr.rowBpm.toFixed(1) : "—"
+                        color: tr.rowBpm > 0 ? libraryRoot.accentGreen : libraryRoot.textDim
+                        font.pixelSize: window.sp(10); font.family: "monospace"
+                    }
+                    Text {
+                        text: tr.rowKey || "—"
+                        color: tr.rowKey ? libraryRoot.accentKey : libraryRoot.textDim
+                        font.pixelSize: window.sp(10); font.family: "monospace"
+                    }
+                }
             }
         }
 
@@ -498,6 +641,123 @@ Rectangle {
         }
     }
 
+    // ── Inline component: sidebar nav button ──────────────────────────────
+    component NavButton: Rectangle {
+        id: navBtn
+        required property string tabKey
+        required property string btnIcon
+        required property string btnLabel
+        property int badgeCount: -1
+        property var customAction: null
+
+        width: parent ? parent.width : 0; height: 42
+        color: libraryRoot.activeTab === tabKey
+               ? libraryRoot.sidebarSel
+               : (navMa.containsMouse ? libraryRoot.bgSidebarHv : "transparent")
+        Behavior on color { ColorAnimation { duration: 120 } }
+
+        Rectangle {
+            anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+            width: 3; color: libraryRoot.accentBlue
+            visible: libraryRoot.activeTab === navBtn.tabKey
+        }
+
+        Row {
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.left: parent.left; anchors.leftMargin: 14
+            spacing: 10
+
+            Rectangle {
+                width: 26; height: 26; radius: 5
+                color: libraryRoot.activeTab === navBtn.tabKey ? "#132840" : "#181818"
+                border.color: libraryRoot.activeTab === navBtn.tabKey ? "#1e4070" : "#222222"
+                border.width: 1
+                anchors.verticalCenter: parent.verticalCenter
+
+                Text {
+                    anchors.centerIn: parent
+                    text: navBtn.btnIcon
+                    color: libraryRoot.activeTab === navBtn.tabKey
+                           ? libraryRoot.accentBlueLt : libraryRoot.textSecond
+                    font.pixelSize: window.sp(11)
+                }
+            }
+
+            Text {
+                text: navBtn.btnLabel
+                color: libraryRoot.activeTab === navBtn.tabKey
+                       ? libraryRoot.textPrimary : libraryRoot.textNav
+                font.pixelSize: window.sp(12)
+                anchors.verticalCenter: parent.verticalCenter
+            }
+        }
+
+        Rectangle {
+            id: navBadgeRect
+            visible: navBtn.badgeCount > 0
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.right: parent.right; anchors.rightMargin: 10
+            width: Math.max(24, navBadgeLabel.implicitWidth + 10); height: 16; radius: 8
+            color: libraryRoot.activeTab === navBtn.tabKey ? "#1a3a52" : "#202020"
+            border.color: libraryRoot.activeTab === navBtn.tabKey ? "#2a5070" : "#282828"
+            border.width: 1
+
+            Text {
+                id: navBadgeLabel
+                anchors.centerIn: parent
+                text: navBtn.badgeCount > 0 ? navBtn.badgeCount : ""
+                color: libraryRoot.activeTab === navBtn.tabKey
+                       ? libraryRoot.accentBlueLt : "#666666"
+                font.pixelSize: window.sp(9)
+            }
+        }
+
+        MouseArea {
+            id: navMa; anchors.fill: parent; hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: {
+                libraryRoot.activeTab = navBtn.tabKey
+                if (navBtn.customAction) navBtn.customAction()
+            }
+        }
+    }
+
+    // ── Inline component: sort pill button (normal view sort bar) ────────────
+    component SortPill: Rectangle {
+        id: pill
+        required property string label
+        required property bool   isActive
+        required property bool   ascending
+        signal tapped()
+
+        height: 20; radius: 10
+        width: pillLabel.implicitWidth + (isActive ? pillArrow.implicitWidth + 28 : 20)
+        color: isActive ? "#1a3a52" : "#181818"
+        border.color: isActive ? libraryRoot.accentBlue : "#262626"; border.width: 1
+        Behavior on color        { ColorAnimation { duration: 110 } }
+        Behavior on border.color { ColorAnimation { duration: 110 } }
+        Behavior on width        { NumberAnimation { duration: 120; easing.type: Easing.OutQuad } }
+
+        Row {
+            anchors.centerIn: parent; spacing: 4
+            Text {
+                id: pillLabel
+                text: pill.label
+                color: pill.isActive ? libraryRoot.textPrimary : libraryRoot.textSecond
+                font.pixelSize: window.sp(10)
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            Text {
+                id: pillArrow
+                visible: pill.isActive
+                text: pill.ascending ? "▲" : "▼"
+                color: libraryRoot.accentBlueLt; font.pixelSize: window.sp(8)
+                anchors.verticalCenter: parent.verticalCenter
+            }
+        }
+        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: pill.tapped() }
+    }
+
     // ── Layout ─────────────────────────────────────────────────────────────
     RowLayout {
         anchors.fill: parent
@@ -526,102 +786,65 @@ Rectangle {
                 Column {
                     id: sidebarColumn
                     width: parent.width
-                    topPadding: 10
+
+                    Item { width: parent.width; height: 8 }
 
                     // ── SAMMLUNG ─────────────────────────────────────────────
-                    Item {
-                        width: parent.width; height: 18
-                        Text {
-                            anchors.verticalCenter: parent.verticalCenter
-                            anchors.left: parent.left; anchors.leftMargin: 14
-                            text: "SAMMLUNG"
-                            color: libraryRoot.textDim
-                            font.pixelSize: window.sp(9); font.bold: true; font.letterSpacing: 1.0
-                        }
-                    }
-
-                    // All Tracks
                     Rectangle {
                         width: parent.width; height: 30
-                        color: libraryRoot.activeTab === "library"
-                               ? libraryRoot.bgRowActive
-                               : (allMouse.containsMouse ? libraryRoot.bgSidebarHv : "transparent")
-                        
-                        Behavior on color { ColorAnimation { duration: 150 } }
-
+                        color: "transparent"
                         Rectangle {
-                            anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-                            width: 2; color: libraryRoot.accentBlue
-                            visible: libraryRoot.activeTab === "library"
+                            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                            height: 1; color: libraryRoot.borderSub
                         }
-                        Row {
-                            anchors.verticalCenter: parent.verticalCenter
-                            anchors.left: parent.left; anchors.leftMargin: 16
-                            spacing: 9
-                            Text {
-                                text: "♫"
-                                color: libraryRoot.activeTab === "library"
-                                       ? libraryRoot.accentBlueLt : libraryRoot.textSecond
-                                font.pixelSize: window.sp(13)
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                            Text {
-                                text: "All Tracks"
-                                color: libraryRoot.activeTab === "library"
-                                       ? libraryRoot.textPrimary : "#999999"
-                                font.pixelSize: window.sp(12)
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                        }
-                        Rectangle {
-                            visible: libraryModel && libraryModel.count > 0
-                            anchors.verticalCenter: parent.verticalCenter
-                            anchors.right: parent.right; anchors.rightMargin: 12
-                            width: allBadge.implicitWidth + 10; height: 15; radius: 2
-                            color: libraryRoot.activeTab === "library" ? "#1a3a52" : "#1e1e1e"
-                            Text {
-                                id: allBadge
-                                anchors.centerIn: parent
-                                text: libraryModel ? libraryModel.count : ""
-                                color: libraryRoot.activeTab === "library" ? libraryRoot.accentBlueLt : libraryRoot.textSecond; font.pixelSize: window.sp(9)
-                            }
-                        }
-                        MouseArea {
-                            id: allMouse; anchors.fill: parent; hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                libraryRoot.activeTab = "library"
-                                libraryRoot.librarySubTab = "allSongs"
-                            }
+                        Text {
+                            anchors.left: parent.left; anchors.leftMargin: 14
+                            anchors.bottom: parent.bottom; anchors.bottomMargin: 4
+                            text: "SAMMLUNG"
+                            color: "#484848"
+                            font.pixelSize: window.sp(9); font.bold: true; font.letterSpacing: 1.3
                         }
                     }
 
-                    // ── PLAYLISTS header ─────────────────────────────────────
-                    Item { width: parent.width; height: 14 }
+                    NavButton {
+                        tabKey: "library"
+                        btnIcon: "♫"
+                        btnLabel: "All Tracks"
+                        badgeCount: libraryModel ? libraryModel.count : 0
+                        customAction: function() { libraryRoot.librarySubTab = "allSongs" }
+                    }
 
+                    Item { width: parent.width; height: 8 }
+
+                    // ── PLAYLISTS ─────────────────────────────────────────────
                     Rectangle {
-                        width: parent.width; height: 22
+                        width: parent.width; height: 32
                         color: "transparent"
 
+                        Rectangle {
+                            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                            height: 1; color: libraryRoot.borderSub
+                        }
                         Text {
-                            anchors.verticalCenter: parent.verticalCenter
                             anchors.left: parent.left; anchors.leftMargin: 14
+                            anchors.bottom: parent.bottom; anchors.bottomMargin: 5
                             text: "PLAYLISTS"
-                            color: libraryRoot.textDim
-                            font.pixelSize: window.sp(9); font.bold: true; font.letterSpacing: 1.0
+                            color: "#484848"
+                            font.pixelSize: window.sp(9); font.bold: true; font.letterSpacing: 1.3
                         }
 
-                        // "+" create playlist button
                         Rectangle {
-                            anchors.verticalCenter: parent.verticalCenter
                             anchors.right: parent.right; anchors.rightMargin: 10
-                            width: 18; height: 18; radius: 2
-                            color: addPlaylistHover.containsMouse ? "#2a2a2a" : "transparent"
+                            anchors.bottom: parent.bottom; anchors.bottomMargin: 4
+                            width: 22; height: 22; radius: 4
+                            color: addPlaylistHover.containsMouse ? "#2a2a2a" : "#1c1c1c"
+                            border.color: addPlaylistHover.containsMouse ? "#3a3a3a" : "#272727"
+                            border.width: 1
 
                             Text {
                                 anchors.centerIn: parent; text: "+"
                                 color: addPlaylistHover.containsMouse ? libraryRoot.textPrimary : libraryRoot.textSecond
-                                font.pixelSize: window.sp(13)
+                                font.pixelSize: window.sp(14)
                             }
                             MouseArea {
                                 id: addPlaylistHover; anchors.fill: parent
@@ -643,15 +866,14 @@ Rectangle {
                             required property var modelData
                             required property int index
 
-                            // "before" = green line at top, "into" = tinted bg, "after" = green line at bottom
                             property string dropZone: ""
 
                             readonly property bool isSelected:
                                 libraryRoot.activeTab === "playlist" &&
                                 libraryRoot.currentPlaylistId === modelData.id
 
-                            width: parent.width; height: 28
-                            color: isSelected        ? libraryRoot.bgRowActive
+                            width: parent.width; height: 36
+                            color: isSelected          ? libraryRoot.sidebarSel
                                  : dropZone === "into" ? "#0d2a18"
                                  : plMouse.containsMouse ? libraryRoot.bgSidebarHv
                                  : "transparent"
@@ -661,7 +883,7 @@ Rectangle {
 
                             Rectangle {
                                 anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-                                width: 2; color: libraryRoot.accentBlue; visible: isSelected
+                                width: 3; color: libraryRoot.accentBlue; visible: isSelected
                             }
                             Rectangle {
                                 anchors { left: parent.left; right: parent.right; top: parent.top }
@@ -697,9 +919,9 @@ Rectangle {
                                 }
                                 Text {
                                     text: modelData.name
-                                    color: isSelected ? libraryRoot.textPrimary : "#999999"
+                                    color: isSelected ? libraryRoot.textPrimary : libraryRoot.textNav
                                     font.pixelSize: window.sp(12); elide: Text.ElideRight
-                                    width: libraryRoot.sidebarW - 90 - modelData.depth * 14
+                                    width: libraryRoot.sidebarW - 88 - modelData.depth * 14
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
                             }
@@ -708,19 +930,16 @@ Rectangle {
                                 visible: modelData.trackCount > 0
                                 anchors.verticalCenter: parent.verticalCenter
                                 anchors.right: parent.right; anchors.rightMargin: 10
-                                width: plBadge.implicitWidth + 8; height: 14; radius: 2
+                                width: Math.max(22, plBadge.implicitWidth + 10); height: 16; radius: 8
                                 color: "#1a1a1a"
+                                border.color: "#252525"; border.width: 1
                                 Text {
                                     id: plBadge; anchors.centerIn: parent
                                     text: modelData.trackCount
-                                    color: libraryRoot.textSecond; font.pixelSize: window.sp(8)
+                                    color: "#666666"; font.pixelSize: window.sp(8)
                                 }
                             }
 
-                            // ── Drag source ───────────────────────────────────
-                            // Uses Drag.Internal (no OS drag layer) so no "forbidden"
-                            // cursor and no drag.accept() needed on DropAreas.
-                            // Data is read from these properties in onDropped via drop.source.
                             Item {
                                 id: plDrag
                                 x: 0; y: 0
@@ -735,7 +954,6 @@ Rectangle {
                                 Drag.hotSpot.y: height / 2
                             }
 
-                            // ── Mouse / drag handler ──────────────────────────
                             MouseArea {
                                 id: plMouse
                                 anchors.fill: parent
@@ -762,7 +980,6 @@ Rectangle {
                                     }
                                 }
                                 onClicked: (mouse) => {
-                                    // Arrow area: toggle expand only, don't select
                                     var arrowX = 14 + modelData.depth * 14
                                     if (modelData.hasChildren && mouse.x >= arrowX && mouse.x < arrowX + 12) {
                                         libraryRoot.toggleExpanded(modelData.id)
@@ -777,7 +994,6 @@ Rectangle {
                                 }
                             }
 
-                            // ── Drop target ───────────────────────────────────
                             DropArea {
                                 id: plDropArea
                                 anchors.fill: parent
@@ -800,11 +1016,6 @@ Rectangle {
                                 onExited: { plRow.dropZone = "" }
 
                                 onDropped: (drop) => {
-                                    // Capture everything we need NOW, before any DB call.
-                                    // setPlaylistParent emits playlistsChanged → loadPlaylists
-                                    // → Repeater rebuilds → THIS delegate is destroyed.
-                                    // After that, modelData / libraryRoot / libraryDb are gone
-                                    // from this scope. Captured JS vars (db, root, …) stay valid.
                                     var zone      = plRow.dropZone
                                     var targetId  = modelData.id
                                     var tParentId = modelData.parentId || ""
@@ -825,7 +1036,6 @@ Rectangle {
                                             root.expandedPlaylists = ex
                                         } else {
                                             db.setPlaylistParent(dragId, tParentId)
-                                            // allPlaylists refreshed synchronously by playlistsChanged
                                             var siblings = root.allPlaylists
                                                 .filter(function(p) { return (p.parentId || "") === tParentId })
                                                 .sort(function(a, b) { return a.sortOrder - b.sortOrder })
@@ -848,120 +1058,43 @@ Rectangle {
                         }
                     }
 
+                    Item { width: parent.width; height: 8 }
+
                     // ── QUELLEN ──────────────────────────────────────────────
-                    Item { width: parent.width; height: 14 }
-
                     Item {
-                        width: parent.width; height: 18
+                        width: parent.width; height: 30
+                        Rectangle {
+                            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                            height: 1; color: libraryRoot.borderSub
+                        }
                         Text {
-                            anchors.verticalCenter: parent.verticalCenter
                             anchors.left: parent.left; anchors.leftMargin: 14
+                            anchors.bottom: parent.bottom; anchors.bottomMargin: 4
                             text: "QUELLEN"
-                            color: libraryRoot.textDim
-                            font.pixelSize: window.sp(9); font.bold: true; font.letterSpacing: 1.0
+                            color: "#484848"
+                            font.pixelSize: window.sp(9); font.bold: true; font.letterSpacing: 1.3
                         }
                     }
 
-                    // Files
-                    Rectangle {
-                        width: parent.width; height: 30
-                        color: libraryRoot.activeTab === "files"
-                               ? libraryRoot.sidebarSel
-                               : (filesMouse.containsMouse ? "#161616" : "transparent")
-
-                        Rectangle {
-                            anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-                            width: 2; color: libraryRoot.accentBlue
-                            visible: libraryRoot.activeTab === "files"
-                        }
-                        Row {
-                            anchors.verticalCenter: parent.verticalCenter
-                            anchors.left: parent.left; anchors.leftMargin: 16; spacing: 9
-                            Text { text: "📁"; font.pixelSize: window.sp(12); anchors.verticalCenter: parent.verticalCenter }
-                            Text {
-                                text: "Files"
-                                color: libraryRoot.activeTab === "files" ? libraryRoot.textPrimary : "#999999"
-                                font.pixelSize: window.sp(12); anchors.verticalCenter: parent.verticalCenter
-                            }
-                        }
-                        MouseArea {
-                            id: filesMouse; anchors.fill: parent; hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: libraryRoot.activeTab = "files"
-                        }
+                    NavButton {
+                        tabKey: "files"
+                        btnIcon: "≡"
+                        btnLabel: "Files"
                     }
 
-                    // Streaming
-                    Rectangle {
-                        width: parent.width; height: 30
-                           color: libraryRoot.activeTab === "streaming"
-                               ? libraryRoot.bgRowActive
-                               : (streamMouse.containsMouse ? libraryRoot.bgSidebarHv : "transparent")
-                        
-                           Behavior on color { ColorAnimation { duration: 120 } }
-
-                        Rectangle {
-                            anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-                            width: 2; color: libraryRoot.accentBlue
-                            visible: libraryRoot.activeTab === "streaming"
-                        }
-                        Row {
-                            anchors.verticalCenter: parent.verticalCenter
-                            anchors.left: parent.left; anchors.leftMargin: 16; spacing: 9
-                            Text {
-                                text: "◉"
-                                color: libraryRoot.activeTab === "streaming" ? libraryRoot.accentBlue : libraryRoot.textSecond
-                                font.pixelSize: window.sp(13); anchors.verticalCenter: parent.verticalCenter
-                            }
-                            Text {
-                                text: "Streaming"
-                                color: libraryRoot.activeTab === "streaming" ? libraryRoot.textPrimary : "#999999"
-                                font.pixelSize: window.sp(12); anchors.verticalCenter: parent.verticalCenter
-                            }
-                        }
-                        MouseArea {
-                            id: streamMouse; anchors.fill: parent; hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: libraryRoot.activeTab = "streaming"
-                        }
+                    NavButton {
+                        tabKey: "streaming"
+                        btnIcon: "◎"
+                        btnLabel: "Streaming"
                     }
 
-                    // USB
-                    Rectangle {
-                        width: parent.width; height: 30
-                           color: libraryRoot.activeTab === "usb"
-                               ? libraryRoot.bgRowActive
-                               : (usbMouse.containsMouse ? libraryRoot.bgSidebarHv : "transparent")
-                        
-                           Behavior on color { ColorAnimation { duration: 120 } }
-
-                        Rectangle {
-                            anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-                            width: 2; color: libraryRoot.accentBlue
-                            visible: libraryRoot.activeTab === "usb"
-                        }
-                        Row {
-                            anchors.verticalCenter: parent.verticalCenter
-                            anchors.left: parent.left; anchors.leftMargin: 16; spacing: 9
-                            Text {
-                                text: "⎘"
-                                color: libraryRoot.activeTab === "usb" ? libraryRoot.accentBlueLt : libraryRoot.textSecond
-                                font.pixelSize: window.sp(13); anchors.verticalCenter: parent.verticalCenter
-                            }
-                            Text {
-                                text: "USB"
-                                color: libraryRoot.activeTab === "usb" ? libraryRoot.textPrimary : "#999999"
-                                font.pixelSize: window.sp(12); anchors.verticalCenter: parent.verticalCenter
-                            }
-                        }
-                        MouseArea {
-                            id: usbMouse; anchors.fill: parent; hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: libraryRoot.activeTab = "usb"
-                        }
+                    NavButton {
+                        tabKey: "usb"
+                        btnIcon: "⊕"
+                        btnLabel: "USB"
                     }
 
-                    Item { width: parent.width; height: 10 }
+                    Item { width: parent.width; height: 12 }
                 }
             }
         }
@@ -986,111 +1119,224 @@ Rectangle {
                 }
 
                 RowLayout {
-                    anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 10
-                    spacing: 10
+                    anchors.fill: parent; anchors.leftMargin: 14; anchors.rightMargin: 12
+                    spacing: 8
 
-                    Text {
-                        text: libraryRoot.activeTab === "library"   ? "Library"
-                            : libraryRoot.activeTab === "playlist"  ? libraryRoot.currentPlaylistName
-                            : libraryRoot.activeTab === "files"     ? "File Browser"
-                            : libraryRoot.activeTab === "streaming" ? "Streaming"
-                            : "USB"
-                        color: libraryRoot.textSecond
-                        font.pixelSize: window.sp(11); font.bold: true
+                    // ── Tab icon + title ───────────────────────────────────
+                    Row {
                         Layout.alignment: Qt.AlignVCenter
-                    }
+                        spacing: 7
 
-                    // Playlist crumb trail
-                    Text {
-                        visible: libraryRoot.activeTab === "playlist"
-                        text: "▸ Playlist"
-                        color: libraryRoot.textDim; font.pixelSize: window.sp(10)
-                        Layout.alignment: Qt.AlignVCenter
-                    }
+                        Rectangle {
+                            width: 22; height: 22; radius: 4
+                            color: "#132840"
+                            border.color: "#1e4070"; border.width: 1
+                            anchors.verticalCenter: parent.verticalCenter
 
-                    Rectangle {
-                        Layout.preferredWidth: 78
-                        Layout.preferredHeight: 23
-                        Layout.alignment: Qt.AlignVCenter
-                        radius: 3
-                        color: analyzeHover.containsMouse ? "#252525" : "#181818"
-                        border.color: libraryAnalyzer && libraryAnalyzer.running ? libraryRoot.accentBlue : "#303030"
-                        border.width: 1
-                        opacity: (libraryRoot.activeTab === "library" || libraryRoot.activeTab === "playlist") ? 1.0 : 0.45
+                            Text {
+                                anchors.centerIn: parent
+                                text: libraryRoot.activeTab === "library"   ? "♫"
+                                    : libraryRoot.activeTab === "playlist"  ? "☰"
+                                    : libraryRoot.activeTab === "files"     ? "≡"
+                                    : libraryRoot.activeTab === "streaming" ? "◎"
+                                    : "⊕"
+                                color: libraryRoot.accentBlueLt
+                                font.pixelSize: window.sp(10)
+                            }
+                        }
 
                         Text {
-                            anchors.centerIn: parent
-                            text: libraryAnalyzer && libraryAnalyzer.running ? "Stop" : "Analyse"
+                            text: libraryRoot.activeTab === "library"   ? "Library"
+                                : libraryRoot.activeTab === "playlist"  ? libraryRoot.currentPlaylistName
+                                : libraryRoot.activeTab === "files"     ? "File Browser"
+                                : libraryRoot.activeTab === "streaming" ? "Streaming"
+                                : "USB"
                             color: libraryRoot.textPrimary
-                            font.pixelSize: window.sp(10)
-                            font.bold: true
+                            font.pixelSize: window.sp(12); font.weight: Font.Medium
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+
+                    // ── Divider ────────────────────────────────────────────
+                    Rectangle {
+                        width: 1; height: 16; color: libraryRoot.borderMain
+                        Layout.alignment: Qt.AlignVCenter
+                        visible: libraryRoot.activeTab === "library" || libraryRoot.activeTab === "playlist"
+                    }
+
+                    // ── Analyse button (combined with progress fill) ────────
+                    Rectangle {
+                        id: analyzeBtn
+                        Layout.preferredWidth: 148
+                        Layout.preferredHeight: 26
+                        Layout.alignment: Qt.AlignVCenter
+                        radius: 4; clip: true
+                        color: analyzeHover.containsMouse ? "#1a1a1a" : "#111111"
+                        border.color: libraryAnalyzer && libraryAnalyzer.running
+                                      ? libraryRoot.accentBlue : "#2a2a2a"
+                        border.width: 1
+                        visible: libraryRoot.activeTab === "library" || libraryRoot.activeTab === "playlist"
+
+                        Behavior on border.color { ColorAnimation { duration: 200 } }
+
+                        // Progress fill
+                        Rectangle {
+                            anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+                            width: parent.width * (libraryAnalyzer ? libraryAnalyzer.progress : 0)
+                            color: "#0d2840"
+                            visible: libraryAnalyzer && libraryAnalyzer.running
+                            Behavior on width { NumberAnimation { duration: 180; easing.type: Easing.OutQuad } }
+                        }
+
+                        Row {
+                            anchors.centerIn: parent
+                            spacing: 6
+
+                            Text {
+                                text: libraryAnalyzer && libraryAnalyzer.running ? "◼" : "◎"
+                                color: libraryAnalyzer && libraryAnalyzer.running
+                                       ? libraryRoot.accentRed : libraryRoot.accentBlueLt
+                                font.pixelSize: window.sp(9)
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            Text {
+                                text: libraryAnalyzer && libraryAnalyzer.running ? "Stop" : "Analyse"
+                                color: libraryRoot.textPrimary
+                                font.pixelSize: window.sp(10); font.weight: Font.Medium
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            Text {
+                                visible: libraryAnalyzer !== null && libraryAnalyzer !== undefined
+                                         && libraryAnalyzer.running && libraryAnalyzer.total > 0
+                                text: (libraryAnalyzer ? libraryAnalyzer.completed : 0)
+                                      + "/" + (libraryAnalyzer ? libraryAnalyzer.total : 0)
+                                color: libraryRoot.textSecond
+                                font.pixelSize: window.sp(9); font.family: "monospace"
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
                         }
 
                         MouseArea {
                             id: analyzeHover
                             anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            enabled: libraryRoot.activeTab === "library" || libraryRoot.activeTab === "playlist"
+                            hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 if (!libraryAnalyzer) return
-                                if (libraryAnalyzer.running)
-                                    libraryAnalyzer.cancel()
-                                else
-                                    libraryRoot.startAnalyzeCurrentView()
+                                if (libraryAnalyzer.running) libraryAnalyzer.cancel()
+                                else libraryRoot.startAnalyzeCurrentView()
                             }
-                        }
-                    }
-
-                    Rectangle {
-                        Layout.preferredWidth: 150
-                        Layout.preferredHeight: 12
-                        Layout.alignment: Qt.AlignVCenter
-                        radius: 2
-                        color: "#101010"
-                        border.color: "#292929"
-                        border.width: 1
-                        clip: true
-
-                        Rectangle {
-                            anchors.left: parent.left
-                            anchors.top: parent.top
-                            anchors.bottom: parent.bottom
-                            width: parent.width * (libraryAnalyzer ? libraryAnalyzer.progress : 0)
-                            color: libraryAnalyzer && libraryAnalyzer.running
-                                   ? libraryRoot.accentBlue
-                                   : "#2e2e2e"
-                        }
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: libraryAnalyzer && libraryAnalyzer.total > 0
-                                  ? (libraryAnalyzer.completed + "/" + libraryAnalyzer.total)
-                                  : "0/0"
-                            color: "#a8a8a8"
-                            font.pixelSize: window.sp(8)
-                            font.family: "monospace"
                         }
                     }
 
                     Item { Layout.fillWidth: true }
 
-                    // Search field
+                    // ── View mode toggle ───────────────────────────────────
                     Rectangle {
-                        Layout.preferredWidth: Math.min(280, Math.max(160, parent.width * 0.3))
-                        Layout.preferredHeight: 23
+                        Layout.preferredWidth: 54
+                        Layout.preferredHeight: 26
                         Layout.alignment: Qt.AlignVCenter
-                        color: "#111111"; radius: 3
-                        border.color: searchField.activeFocus ? libraryRoot.accentBlue : "#2c2c2c"
-                        border.width: 1
+                        radius: 4
+                        color: "#111111"
+                        border.color: "#2a2a2a"; border.width: 1
+                        clip: true
 
                         Row {
+                            anchors.fill: parent
+
+                            Rectangle {
+                                width: parent.width / 2; height: parent.height
+                                color: libraryRoot.viewMode === "compact" ? libraryRoot.accentBlue : "transparent"
+                                Behavior on color { ColorAnimation { duration: 120 } }
+
+                                Text {
+                                    anchors.centerIn: parent; text: "≡"
+                                    color: libraryRoot.viewMode === "compact" ? "#ffffff" : libraryRoot.textSecond
+                                    font.pixelSize: window.sp(12)
+                                }
+                                MouseArea {
+                                    anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                    onClicked: libraryRoot.viewMode = "compact"
+                                }
+                            }
+
+                            Rectangle {
+                                width: parent.width / 2; height: parent.height
+                                color: libraryRoot.viewMode === "normal" ? libraryRoot.accentBlue : "transparent"
+                                Behavior on color { ColorAnimation { duration: 120 } }
+
+                                Text {
+                                    anchors.centerIn: parent; text: "▤"
+                                    color: libraryRoot.viewMode === "normal" ? "#ffffff" : libraryRoot.textSecond
+                                    font.pixelSize: window.sp(11)
+                                }
+                                MouseArea {
+                                    anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                    onClicked: libraryRoot.viewMode = "normal"
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Search field ───────────────────────────────────────
+                    Rectangle {
+                        Layout.preferredWidth: Math.min(260, Math.max(150, parent.width * 0.28))
+                        Layout.preferredHeight: 26
+                        Layout.alignment: Qt.AlignVCenter
+                        color: "#0e0e0e"; radius: 4
+                        border.color: searchField.activeFocus ? libraryRoot.accentBlue : "#2a2a2a"
+                        border.width: 1
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
+
+                        // Search icon
+                        Item {
+                            id: searchIconItem
+                            anchors.left: parent.left; anchors.leftMargin: 8
                             anchors.verticalCenter: parent.verticalCenter
-                            anchors.left: parent.left; anchors.leftMargin: 7
-                            spacing: 5
+                            width: 13; height: 13
+                            opacity: searchField.activeFocus ? 0.75 : 0.30
+
+                            Rectangle {
+                                width: 9; height: 9; radius: 4.5
+                                color: "transparent"
+                                border.color: libraryRoot.textPrimary; border.width: 1.5
+                                anchors.top: parent.top; anchors.left: parent.left
+                            }
+                            Rectangle {
+                                width: 1.5; height: 5
+                                color: libraryRoot.textPrimary
+                                rotation: -45; transformOrigin: Item.Top
+                                anchors.bottom: parent.bottom; anchors.right: parent.right
+                            }
+                        }
+
+                        // Placeholder text
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.left: parent.left; anchors.leftMargin: 27
+                            text: "Suchen…"
+                            color: "#3a3a3a"
+                            font.pixelSize: window.sp(11)
                             visible: !searchField.activeFocus && searchField.text.length === 0
-                            Text { text: "🔍"; font.pixelSize: window.sp(9); color: libraryRoot.textSecond; anchors.verticalCenter: parent.verticalCenter }
-                            Text { text: "Search…"; color: libraryRoot.textSecond; font.pixelSize: window.sp(11); anchors.verticalCenter: parent.verticalCenter }
+                        }
+
+                        // Clear button
+                        Rectangle {
+                            anchors.right: parent.right; anchors.rightMargin: 6
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 16; height: 16; radius: 8
+                            color: clearHover.containsMouse ? "#303030" : "#1e1e1e"
+                            visible: searchField.text.length > 0
+                            Behavior on color { ColorAnimation { duration: 100 } }
+
+                            Text {
+                                anchors.centerIn: parent; text: "×"
+                                color: libraryRoot.textMeta; font.pixelSize: window.sp(11)
+                            }
+                            MouseArea {
+                                id: clearHover; anchors.fill: parent
+                                hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                onClicked: { searchField.text = ""; libraryRoot.searchText = "" }
+                            }
                         }
 
                         TextField {
@@ -1098,7 +1344,9 @@ Rectangle {
                             anchors.fill: parent
                             selectByMouse: true; color: libraryRoot.textPrimary
                             placeholderText: ""; font.pixelSize: window.sp(11)
-                            leftPadding: 24; topPadding: 0; bottomPadding: 0
+                            leftPadding: 27
+                            rightPadding: searchField.text.length > 0 ? 26 : 8
+                            topPadding: 0; bottomPadding: 0
                             onTextEdited: libraryRoot.searchText = text
                             Component.onCompleted: text = libraryRoot.searchText
                             background: Item {}
@@ -1137,7 +1385,9 @@ Rectangle {
                     Rectangle {
                         id: libHeader
                         anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
-                        height: libraryRoot.hdrH; color: libraryRoot.bgHeader
+                        height: libraryRoot.viewMode === "normal" ? 0 : libraryRoot.hdrH
+                        visible: libraryRoot.viewMode === "compact"
+                        color: libraryRoot.bgHeader
 
                         Rectangle {
                             anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
@@ -1201,10 +1451,67 @@ Rectangle {
                         }
                     }
 
+                    // ── Normal-view sort bar ───────────────────────────────
+                    Rectangle {
+                        id: libSortBar
+                        anchors.top: libHeader.bottom; anchors.left: parent.left; anchors.right: parent.right
+                        height: libraryRoot.viewMode === "normal" ? 30 : 0
+                        visible: libraryRoot.viewMode === "normal"
+                        color: libraryRoot.bgHeader
+                        clip: true
+
+                        Rectangle {
+                            anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
+                            height: 1; color: libraryRoot.borderMain
+                        }
+
+                        Row {
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.left: parent.left; anchors.leftMargin: 10
+                            spacing: 5
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "SORT"
+                                color: libraryRoot.textDim
+                                font.pixelSize: window.sp(9); font.bold: true; font.letterSpacing: 1.0
+                            }
+                            Rectangle {
+                                width: 1; height: 12; color: libraryRoot.borderMain
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            SortPill {
+                                label: "Titel"; ascending: libraryModel ? libraryModel.sortAscending : true
+                                isActive: libraryModel ? libraryModel.sortField === "title" : false
+                                onTapped: if (libraryModel) libraryModel.toggleSort("title")
+                            }
+                            SortPill {
+                                label: "Künstler"; ascending: libraryModel ? libraryModel.sortAscending : true
+                                isActive: libraryModel ? libraryModel.sortField === "artist" : false
+                                onTapped: if (libraryModel) libraryModel.toggleSort("artist")
+                            }
+                            SortPill {
+                                label: "Dauer"; ascending: libraryModel ? libraryModel.sortAscending : true
+                                isActive: libraryModel ? libraryModel.sortField === "time" : false
+                                onTapped: if (libraryModel) libraryModel.toggleSort("time")
+                            }
+                            SortPill {
+                                label: "BPM"; ascending: libraryModel ? libraryModel.sortAscending : true
+                                isActive: libraryModel ? libraryModel.sortField === "bpm" : false
+                                onTapped: if (libraryModel) libraryModel.toggleSort("bpm")
+                            }
+                            SortPill {
+                                label: "Key"; ascending: libraryModel ? libraryModel.sortAscending : true
+                                isActive: libraryModel ? libraryModel.sortField === "key" : false
+                                onTapped: if (libraryModel) libraryModel.toggleSort("key")
+                            }
+                        }
+                    }
+
                     // ── Track list ─────────────────────────────────────────
                     ListView {
                         id: libTrackList
-                        anchors.top: libHeader.bottom; anchors.left: parent.left
+                        anchors.top: libSortBar.bottom; anchors.left: parent.left
                         anchors.right: parent.right; anchors.bottom: parent.bottom
                         clip: true
                         model: libraryModel ? libraryModel : null
@@ -1240,7 +1547,7 @@ Rectangle {
                             anchors.centerIn: parent
                             visible: libTrackList.count === 0
                             spacing: 10
-                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "♫"; color: "#252525"; font.pixelSize: 42 }
+                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "♫"; color: "#252525"; font.pixelSize: window.sp(42) }
                             Text { anchors.horizontalCenter: parent.horizontalCenter; text: "Library is empty"; color: "#333333"; font.pixelSize: window.sp(12) }
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
@@ -1264,7 +1571,9 @@ Rectangle {
                     Rectangle {
                         id: plHeader
                         anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
-                        height: libraryRoot.hdrH; color: libraryRoot.bgHeader
+                        height: libraryRoot.viewMode === "normal" ? 0 : libraryRoot.hdrH
+                        visible: libraryRoot.viewMode === "compact"
+                        color: libraryRoot.bgHeader
 
                         Rectangle {
                             anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
@@ -1273,142 +1582,106 @@ Rectangle {
 
                         Row {
                             anchors.fill: parent; anchors.leftMargin: 6
-                            spacing: 0
 
                             Item {
                                 width: libraryRoot.colStatus; height: parent.height
                                 Text { anchors.centerIn: parent; text: "●"; color: libraryRoot.textDim; font.pixelSize: window.sp(8) }
                             }
 
-                            // TITEL — resizable + sortable
                             Item {
                                 width: libraryRoot.colTitle(playlistView.width); height: parent.height
-                                Row {
-                                    anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left; spacing: 4
-                                    Text {
-                                        text: "TITEL"
-                                        color: libraryRoot.playlistSortField === "title" ? libraryRoot.textPrimary : libraryRoot.textSecond
-                                        font.pixelSize: window.sp(10); font.bold: true; anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                    Text {
-                                        visible: libraryRoot.playlistSortField === "title"
-                                        text: libraryRoot.playlistSortAscending ? "▲" : "▼"
-                                        color: libraryRoot.accentBlue; font.pixelSize: window.sp(8); anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                }
+                                PlSortHeader { width: parent.width; height: parent.height; field: "title"; label: "TITEL" }
                                 Rectangle {
-                                    anchors.bottom: parent.bottom; anchors.left: parent.left
-                                    width: parent.width - 2; height: 2; color: libraryRoot.accentBlue
-                                    visible: libraryRoot.playlistSortField === "title"
-                                }
-                                MouseArea {
-                                    anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                                    onClicked: libraryRoot.togglePlaylistSort("title")
-                                }
-                                // Resize handle
-                                MouseArea {
                                     anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom
-                                    width: 6; cursorShape: Qt.SizeHorCursor; hoverEnabled: true
-                                    property real startX: 0; property real startFrac: 0
-                                    onPressed: (mouse) => { startX = mapToItem(playlistView, mouse.x, 0).x; startFrac = libraryRoot.titleFraction }
-                                    onPositionChanged: (mouse) => {
-                                        if (!pressed) return
-                                        var dx = mapToItem(playlistView, mouse.x, 0).x - startX
-                                        var fw = libraryRoot.flexWidth(playlistView.width)
-                                        if (fw > 0) libraryRoot.titleFraction = Math.max(0.2, Math.min(0.8, startFrac + dx / fw))
+                                    width: 6; color: "transparent"
+                                    Rectangle {
+                                        anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom
+                                        width: 1
+                                        color: plResizeMa.containsMouse || plResizeMa.pressed ? "#44ffffff" : "#1a1a1a"
+                                    }
+                                    MouseArea {
+                                        id: plResizeMa; anchors.fill: parent
+                                        hoverEnabled: true; cursorShape: Qt.SizeHorCursor
+                                        property real startX: 0; property real startFrac: 0
+                                        onPressed: (mouse) => { startX = mapToItem(playlistView, mouse.x, 0).x; startFrac = libraryRoot.titleFraction }
+                                        onPositionChanged: (mouse) => {
+                                            if (!pressed) return
+                                            var dx = mapToItem(playlistView, mouse.x, 0).x - startX
+                                            var fw = libraryRoot.flexWidth(playlistView.width)
+                                            if (fw > 0) libraryRoot.titleFraction = Math.max(0.2, Math.min(0.8, startFrac + dx / fw))
+                                        }
                                     }
                                 }
                             }
 
-                            // KÜNSTLER — sortable
-                            Item {
-                                width: libraryRoot.colArtist(playlistView.width); height: parent.height
-                                Row {
-                                    anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left; spacing: 4
-                                    Text {
-                                        text: "KÜNSTLER"
-                                        color: libraryRoot.playlistSortField === "artist" ? libraryRoot.textPrimary : libraryRoot.textSecond
-                                        font.pixelSize: window.sp(10); font.bold: true; anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                    Text {
-                                        visible: libraryRoot.playlistSortField === "artist"
-                                        text: libraryRoot.playlistSortAscending ? "▲" : "▼"
-                                        color: libraryRoot.accentBlue; font.pixelSize: window.sp(8); anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                }
-                                Rectangle { anchors.bottom: parent.bottom; anchors.left: parent.left; width: parent.width - 2; height: 2; color: libraryRoot.accentBlue; visible: libraryRoot.playlistSortField === "artist" }
-                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: libraryRoot.togglePlaylistSort("artist") }
-                            }
+                            PlSortHeader { width: libraryRoot.colArtist(playlistView.width); height: parent.height; field: "artist";      label: "KÜNSTLER" }
+                            PlSortHeader { width: libraryRoot.colTime;  height: parent.height; field: "durationSec"; label: "ZEIT";       centerAlign: true }
+                            PlSortHeader { width: libraryRoot.colBpm;   height: parent.height; field: "bpm";         label: "BPM";        centerAlign: true }
+                            PlSortHeader { width: libraryRoot.colKey;   height: parent.height; field: "key";         label: "KEY";        centerAlign: true }
+                            PlSortHeader { width: libraryRoot.colKbps;  height: parent.height; field: "bitrateKbps"; label: "KBPS";       centerAlign: true; isLast: true }
+                        }
+                    }
 
-                            // ZEIT — sortable
-                            Item {
-                                width: libraryRoot.colTime; height: parent.height
-                                Row {
-                                    anchors.centerIn: parent; spacing: 3
-                                    Text {
-                                        text: "ZEIT"
-                                        color: libraryRoot.playlistSortField === "durationSec" ? libraryRoot.textPrimary : libraryRoot.textSecond
-                                        font.pixelSize: window.sp(10); font.bold: true; anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                    Text { visible: libraryRoot.playlistSortField === "durationSec"; text: libraryRoot.playlistSortAscending ? "▲" : "▼"; color: libraryRoot.accentBlue; font.pixelSize: window.sp(8); anchors.verticalCenter: parent.verticalCenter }
-                                }
-                                Rectangle { anchors.bottom: parent.bottom; anchors.left: parent.left; width: parent.width; height: 2; color: libraryRoot.accentBlue; visible: libraryRoot.playlistSortField === "durationSec" }
-                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: libraryRoot.togglePlaylistSort("durationSec") }
-                            }
+                    // ── Normal-view sort bar ───────────────────────────────
+                    Rectangle {
+                        id: plSortBar
+                        anchors.top: plHeader.bottom; anchors.left: parent.left; anchors.right: parent.right
+                        height: libraryRoot.viewMode === "normal" ? 30 : 0
+                        visible: libraryRoot.viewMode === "normal"
+                        color: libraryRoot.bgHeader
+                        clip: true
 
-                            // BPM — sortable
-                            Item {
-                                width: libraryRoot.colBpm; height: parent.height
-                                Row {
-                                    anchors.centerIn: parent; spacing: 3
-                                    Text {
-                                        text: "BPM"
-                                        color: libraryRoot.playlistSortField === "bpm" ? libraryRoot.textPrimary : libraryRoot.textSecond
-                                        font.pixelSize: window.sp(10); font.bold: true; anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                    Text { visible: libraryRoot.playlistSortField === "bpm"; text: libraryRoot.playlistSortAscending ? "▲" : "▼"; color: libraryRoot.accentBlue; font.pixelSize: window.sp(8); anchors.verticalCenter: parent.verticalCenter }
-                                }
-                                Rectangle { anchors.bottom: parent.bottom; anchors.left: parent.left; width: parent.width; height: 2; color: libraryRoot.accentBlue; visible: libraryRoot.playlistSortField === "bpm" }
-                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: libraryRoot.togglePlaylistSort("bpm") }
-                            }
+                        Rectangle {
+                            anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
+                            height: 1; color: libraryRoot.borderMain
+                        }
 
-                            // KEY — sortable
-                            Item {
-                                width: libraryRoot.colKey; height: parent.height
-                                Row {
-                                    anchors.centerIn: parent; spacing: 3
-                                    Text {
-                                        text: "KEY"
-                                        color: libraryRoot.playlistSortField === "key" ? libraryRoot.textPrimary : libraryRoot.textSecond
-                                        font.pixelSize: window.sp(10); font.bold: true; anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                    Text { visible: libraryRoot.playlistSortField === "key"; text: libraryRoot.playlistSortAscending ? "▲" : "▼"; color: libraryRoot.accentBlue; font.pixelSize: window.sp(8); anchors.verticalCenter: parent.verticalCenter }
-                                }
-                                Rectangle { anchors.bottom: parent.bottom; anchors.left: parent.left; width: parent.width; height: 2; color: libraryRoot.accentBlue; visible: libraryRoot.playlistSortField === "key" }
-                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: libraryRoot.togglePlaylistSort("key") }
-                            }
+                        Row {
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.left: parent.left; anchors.leftMargin: 10
+                            spacing: 5
 
-                            // KBPS — sortable
-                            Item {
-                                width: libraryRoot.colKbps; height: parent.height
-                                Row {
-                                    anchors.centerIn: parent; spacing: 3
-                                    Text {
-                                        text: "KBPS"
-                                        color: libraryRoot.playlistSortField === "bitrateKbps" ? libraryRoot.textPrimary : libraryRoot.textSecond
-                                        font.pixelSize: window.sp(10); font.bold: true; anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                    Text { visible: libraryRoot.playlistSortField === "bitrateKbps"; text: libraryRoot.playlistSortAscending ? "▲" : "▼"; color: libraryRoot.accentBlue; font.pixelSize: window.sp(8); anchors.verticalCenter: parent.verticalCenter }
-                                }
-                                Rectangle { anchors.bottom: parent.bottom; anchors.left: parent.left; width: parent.width; height: 2; color: libraryRoot.accentBlue; visible: libraryRoot.playlistSortField === "bitrateKbps" }
-                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: libraryRoot.togglePlaylistSort("bitrateKbps") }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "SORT"
+                                color: libraryRoot.textDim
+                                font.pixelSize: window.sp(9); font.bold: true; font.letterSpacing: 1.0
+                            }
+                            Rectangle {
+                                width: 1; height: 12; color: libraryRoot.borderMain
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            SortPill {
+                                label: "Titel"; ascending: libraryRoot.playlistSortAscending
+                                isActive: libraryRoot.playlistSortField === "title"
+                                onTapped: libraryRoot.togglePlaylistSort("title")
+                            }
+                            SortPill {
+                                label: "Künstler"; ascending: libraryRoot.playlistSortAscending
+                                isActive: libraryRoot.playlistSortField === "artist"
+                                onTapped: libraryRoot.togglePlaylistSort("artist")
+                            }
+                            SortPill {
+                                label: "Dauer"; ascending: libraryRoot.playlistSortAscending
+                                isActive: libraryRoot.playlistSortField === "durationSec"
+                                onTapped: libraryRoot.togglePlaylistSort("durationSec")
+                            }
+                            SortPill {
+                                label: "BPM"; ascending: libraryRoot.playlistSortAscending
+                                isActive: libraryRoot.playlistSortField === "bpm"
+                                onTapped: libraryRoot.togglePlaylistSort("bpm")
+                            }
+                            SortPill {
+                                label: "Key"; ascending: libraryRoot.playlistSortAscending
+                                isActive: libraryRoot.playlistSortField === "key"
+                                onTapped: libraryRoot.togglePlaylistSort("key")
                             }
                         }
                     }
 
                     ListView {
                         id: plTrackList
-                        anchors.top: plHeader.bottom; anchors.left: parent.left
+                        anchors.top: plSortBar.bottom; anchors.left: parent.left
                         anchors.right: parent.right; anchors.bottom: parent.bottom
                         clip: true
                         model: libraryRoot.sortedPlaylistTracks
@@ -1447,7 +1720,7 @@ Rectangle {
                             anchors.centerIn: parent
                             visible: plTrackList.count === 0
                             spacing: 10
-                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "☰"; color: "#252525"; font.pixelSize: 42 }
+                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "☰"; color: "#252525"; font.pixelSize: window.sp(42) }
                             Text { anchors.horizontalCenter: parent.horizontalCenter; text: "Playlist ist leer"; color: "#333333"; font.pixelSize: window.sp(12) }
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
@@ -1607,7 +1880,7 @@ Rectangle {
 
                     Column {
                         anchors.centerIn: parent; spacing: 12
-                        Text { anchors.horizontalCenter: parent.horizontalCenter; text: libraryRoot.activeTab === "streaming" ? "◉" : "⎘"; color: "#252525"; font.pixelSize: 44 }
+                        Text { anchors.horizontalCenter: parent.horizontalCenter; text: libraryRoot.activeTab === "streaming" ? "◉" : "⎘"; color: "#252525"; font.pixelSize: window.sp(44) }
                         Text {
                             anchors.horizontalCenter: parent.horizontalCenter
                             text: (libraryRoot.activeTab.charAt(0).toUpperCase() + libraryRoot.activeTab.slice(1)) + " — Coming soon"
