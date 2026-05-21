@@ -370,8 +370,10 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     const int guardPoints = 96;
     const int sliceStart = static_cast<int>(std::floor(centerIndexRender - visiblePoints * 0.5)) - guardPoints - 4;
     const int sliceEnd = static_cast<int>(std::ceil(centerIndexRender + visiblePoints * 0.5)) + guardPoints + 4;
-    int sliceBaseIndex = 0;
-    QVector<TrackData::RgbWaveformFrame> rgbData = td->getRgbWaveformSlice(sliceStart, sliceEnd, &sliceBaseIndex);
+    // fillRgbWaveformSlice reuses m_rgbSliceBuf's capacity — no heap allocation once
+    // the buffer has grown to the typical slice size (viewport + guard points).
+    const int sliceBaseIndex = td->fillRgbWaveformSlice(m_rgbSliceBuf, sliceStart, sliceEnd);
+    const QVector<TrackData::RgbWaveformFrame>& rgbData = m_rgbSliceBuf;
     if (rgbData.isEmpty()) {
         delete rootNode;
         return nullptr;
@@ -419,13 +421,16 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     const bool usePeakData = (td->getPeakMipSize() > 0);
     constexpr int PEAK_RATIO = TrackData::PEAK_POINTS_PER_SECOND
                                / static_cast<int>(DjEngine::WAVEFORM_POINTS_PER_SECOND);
-    QVector<TrackData::PeakFrame> peakData;
     int peakSliceBase = 0;
-    if (usePeakData && td->getPeakMipSize() > 0) {
+    if (usePeakData) {
         const int peakStart = (sliceStart - 4) * PEAK_RATIO;
         const int peakEnd   = (sliceEnd   + 4) * PEAK_RATIO;
-        peakData = td->getPeakMipSlice(std::max(0, peakStart), peakEnd, &peakSliceBase);
+        // fillPeakMipSlice reuses m_peakSliceBuf's capacity — no heap allocation once warm.
+        peakSliceBase = td->fillPeakMipSlice(m_peakSliceBuf, std::max(0, peakStart), peakEnd);
+    } else {
+        m_peakSliceBuf.clear();
     }
+    const QVector<TrackData::PeakFrame>& peakData = m_peakSliceBuf;
 
     const auto getPeakMinF = [&](int idx) -> float {
         const int local = idx - peakSliceBase;

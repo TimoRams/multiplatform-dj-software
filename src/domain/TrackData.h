@@ -91,6 +91,10 @@ public:
     // At max zoom (40 px/pt) each bin spans 40/8 = 5 px → sub-pixel with Catmull-Rom.
     static constexpr int PEAK_POINTS_PER_SECOND = 9600;
 
+    // Fixed bin count for the progressive downsampled overview (built incrementally
+    // during analysis). Renderers stay O(kProgressiveBins) instead of O(track_length).
+    static constexpr int kProgressiveBins = 2048;
+
     explicit TrackData(QObject* parent = nullptr)
         : QObject(parent), m_totalExpected(0), m_globalMaxPeak(0.001f),
           m_bpm(0.0), m_firstBeatSample(0), m_sampleRate(44100.0),
@@ -283,6 +287,8 @@ public:
             m_data.clear();
             m_rgbData.clear();
             m_peakMip.clear();
+            m_progressiveOvr.clear();
+            m_progressiveLastFrame = 0;
             m_totalExpected = 0;
             m_globalMaxPeak = 0.001f;
         }
@@ -296,6 +302,8 @@ public:
             m_rgbData.clear();
             m_overviewRgb.clear();
             m_peakMip.clear();
+            m_progressiveOvr.clear();
+            m_progressiveLastFrame = 0;
             m_totalExpected = 0;
             m_globalMaxPeak = 0.001f;
             m_bpm = 0.0;
@@ -350,6 +358,10 @@ public:
         {
             QMutexLocker locker(&m_mutex);
             m_rgbData = std::move(frames);
+            // Clear progressive overview — this is an atomic full-data replacement
+            // (end of Pass 2 or cache load); setOverviewRgbData() follows shortly.
+            m_progressiveOvr.clear();
+            m_progressiveLastFrame = 0;
         }
         emit rgbWaveformUpdated();
     }
@@ -361,6 +373,9 @@ public:
         {
             QMutexLocker locker(&m_mutex);
             m_overviewRgb = std::move(data);
+            // Pre-computed overview supersedes the progressive one — release memory.
+            m_progressiveOvr.clear();
+            m_progressiveLastFrame = 0;
         }
         emit overviewRgbUpdated();
     }
@@ -388,6 +403,7 @@ public:
             const int n = std::min(static_cast<int>(data.size()), avail);
             for (int i = 0; i < n; ++i)
                 m_rgbData[fromBin + i] = data[i];
+            _updateProgressiveOvr(fromBin, fromBin + n);
         }
         emit rgbWaveformUpdated();
     }
@@ -397,7 +413,9 @@ public:
             return;
         {
             QMutexLocker locker(&m_mutex);
+            const int oldSize = m_rgbData.size();
             m_rgbData.append(frames);
+            _updateProgressiveOvr(oldSize, m_rgbData.size());
         }
         emit rgbWaveformUpdated();
     }
@@ -410,6 +428,15 @@ public:
     int getRgbWaveformSize() const {
         QMutexLocker locker(&m_mutex);
         return m_rgbData.size();
+    }
+
+    // Progressive kProgressiveBins-bin overview updated incrementally during analysis.
+    // Use as fallback when getOverviewRgbData() is empty (analysis not yet complete).
+    // outProcessed receives the number of source frames folded into the overview.
+    QVector<RgbWaveformFrame> getProgressiveOvrData(int* outProcessed = nullptr) const {
+        QMutexLocker locker(&m_mutex);
+        if (outProcessed) *outProcessed = m_progressiveLastFrame;
+        return m_progressiveOvr;
     }
 
     QVector<RgbWaveformFrame> getRgbWaveformSlice(int startIndex, int endIndex, int* outStartIndex = nullptr) const {
@@ -435,6 +462,36 @@ public:
             *outStartIndex = lo;
 
         return slice;
+    }
+
+    // Fill variants: write into caller's pre-allocated buffer, reusing its capacity
+    // to avoid a new heap allocation every frame. Returns the base index.
+    int fillRgbWaveformSlice(QVector<RgbWaveformFrame>& dst, int startIndex, int endIndex) const {
+        QMutexLocker locker(&m_mutex);
+        dst.clear();
+        if (m_rgbData.isEmpty()) return 0;
+        const int lo = std::max(0, startIndex);
+        const int hi = std::min(endIndex, static_cast<int>(m_rgbData.size()));
+        if (lo >= hi) return lo;
+        const int n = hi - lo;
+        dst.resize(n);
+        for (int i = 0; i < n; ++i)
+            dst[i] = m_rgbData[lo + i];
+        return lo;
+    }
+
+    int fillPeakMipSlice(QVector<PeakFrame>& dst, int startIdx, int endIdx) const {
+        QMutexLocker locker(&m_mutex);
+        dst.clear();
+        if (m_peakMip.isEmpty()) return 0;
+        const int lo = std::max(0, startIdx);
+        const int hi = std::min(endIdx, static_cast<int>(m_peakMip.size()));
+        if (lo >= hi) return lo;
+        const int n = hi - lo;
+        dst.resize(n);
+        for (int i = 0; i < n; ++i)
+            dst[i] = m_peakMip[lo + i];
+        return lo;
     }
 
     void appendData(const QVector<FrequencyData>& newData) {
@@ -497,4 +554,32 @@ private:
     bool    m_isKeyAnalyzed;
 
     mutable QMutex m_mutex;
+
+    QVector<RgbWaveformFrame> m_progressiveOvr;   // kProgressiveBins bins, max-folded
+    int                       m_progressiveLastFrame = 0;
+
+    // Fold m_rgbData[from..to) into m_progressiveOvr using max() per band.
+    // Must be called with m_mutex already held.
+    void _updateProgressiveOvr(int from, int to) {
+        if (m_totalExpected <= 0 || to <= from) return;
+        if (m_progressiveOvr.size() != kProgressiveBins) {
+            m_progressiveOvr.fill(RgbWaveformFrame{}, kProgressiveBins);
+            m_progressiveLastFrame = 0;
+        }
+        const int dataSize = static_cast<int>(m_rgbData.size());
+        const int end = std::min(to, dataSize);
+        for (int i = from; i < end; ++i) {
+            const int bin = static_cast<int>(
+                (static_cast<int64_t>(i) * kProgressiveBins) / m_totalExpected);
+            if (bin < 0 || bin >= kProgressiveBins) continue;
+            auto& b = m_progressiveOvr[bin];
+            const auto& f = m_rgbData[i];
+            if (f.rms    > b.rms)    b.rms    = f.rms;
+            if (f.low    > b.low)    b.low    = f.low;
+            if (f.lowMid > b.lowMid) b.lowMid = f.lowMid;
+            if (f.mid    > b.mid)    b.mid    = f.mid;
+            if (f.high   > b.high)   b.high   = f.high;
+        }
+        m_progressiveLastFrame = end;
+    }
 };

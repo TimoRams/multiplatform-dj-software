@@ -138,25 +138,33 @@ void RgbWaveformItem::paint(QPainter* painter)
 
     auto* td = m_engine->getTrackData();
 
-    // Use the pre-downsampled overview (≤4096 bins) when available — this keeps
-    // paint() O(kOverviewBins) instead of O(total_frames) for long mixes.
-    // Fall back to full data only during progressive analysis before the overview
-    // has been computed (first-time analysis, no waveform cache yet).
+    // Use pre-computed overview (post-analysis) or progressive overview (during analysis).
+    // Never call getRgbWaveformData() — that copies the entire track (O(track_length)),
+    // which is catastrophic for long mixes. The progressive overview is maintained
+    // incrementally in TrackData so this path stays O(kProgressiveBins) at all times.
     const QVector<TrackData::RgbWaveformFrame> overview = td->getOverviewRgbData();
     const bool hasOverview = !overview.isEmpty();
-    const QVector<TrackData::RgbWaveformFrame> frames = hasOverview
-        ? overview
-        : td->getRgbWaveformData();
 
+    int ovrProcessed = 0;
+    const QVector<TrackData::RgbWaveformFrame> progressiveOvr =
+        hasOverview ? QVector<TrackData::RgbWaveformFrame>()
+                    : td->getProgressiveOvrData(&ovrProcessed);
+
+    const QVector<TrackData::RgbWaveformFrame>& frames = hasOverview ? overview : progressiveOvr;
     if (frames.isEmpty())
         return;
 
-    // When the overview is ready the track is fully cached — draw the full width.
-    // During analysis, draw only the fraction that has been processed so far.
-    const int totalExpected   = hasOverview ? frames.size()
-                                            : std::max(1, td->getTotalExpected());
-    const int analyzedFrames  = hasOverview ? frames.size()
-                                            : std::min(static_cast<int>(frames.size()), totalExpected);
+    // Post-analysis: draw the full overview.
+    // During analysis: draw only the analyzed fraction of the progressive overview bins.
+    const int totalExpected  = hasOverview
+        ? frames.size()
+        : TrackData::kProgressiveBins;
+    const int analyzedFrames = hasOverview
+        ? frames.size()
+        : std::clamp(
+            static_cast<int>((static_cast<int64_t>(ovrProcessed) * TrackData::kProgressiveBins)
+                             / std::max(1, td->getTotalExpected())),
+            0, TrackData::kProgressiveBins);
 
     const int w = std::max(1, static_cast<int>(width()));
     const int h = std::max(1, static_cast<int>(height()));

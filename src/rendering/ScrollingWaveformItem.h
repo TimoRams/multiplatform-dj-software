@@ -50,6 +50,11 @@ private:
     // Zoom level in pixels per data point.
     float m_pixelsPerPoint = 1.5f;
 
+    // Per-frame scratch buffers — pre-allocated to avoid heap churn at render rate.
+    // Only accessed from the render thread (inside updatePaintNode).
+    mutable QVector<TrackData::RgbWaveformFrame> m_rgbSliceBuf;
+    mutable QVector<TrackData::PeakFrame>        m_peakSliceBuf;
+
     static constexpr std::array<float, 20> ZOOM_LEVELS = {
         0.10f, 0.14f, 0.18f, 0.22f, 0.29f, 0.38f, 0.52f, 0.70f, 0.95f,
         1.30f, 1.80f, 2.50f, 3.50f, 5.00f, 7.20f, 10.00f, 14.00f,
