@@ -72,11 +72,24 @@ public:
     // rms controls bar height, color encodes frequency balance (low/mid/high).
     struct RgbWaveformFrame {
         QColor color = QColor(255, 255, 255);
-        float rms = 0.0f;
-        float low = 0.0f;
-        float mid = 0.0f;
-        float high = 0.0f;
+        float rms    = 0.0f;
+        float low    = 0.0f;
+        float lowMid = 0.0f;
+        float mid    = 0.0f;
+        float high   = 0.0f;
     };
+
+    // High-resolution signed min/max peak pair for oscillation rendering.
+    // Stored at PEAK_POINTS_PER_SECOND resolution (4× the analysis rate).
+    // Values quantized to [-127, +127] representing normalized amplitude [-1, +1].
+    // Used by the renderer to show actual audio oscillations at high zoom.
+    struct PeakFrame {
+        qint8 minSample = 0;
+        qint8 maxSample = 0;
+    };
+    // 8× the analysis rate (1200 pps). At 48 kHz, 1 bin covers 5 samples.
+    // At max zoom (40 px/pt) each bin spans 40/8 = 5 px → sub-pixel with Catmull-Rom.
+    static constexpr int PEAK_POINTS_PER_SECOND = 9600;
 
     explicit TrackData(QObject* parent = nullptr)
         : QObject(parent), m_totalExpected(0), m_globalMaxPeak(0.001f),
@@ -269,6 +282,7 @@ public:
             QMutexLocker locker(&m_mutex);
             m_data.clear();
             m_rgbData.clear();
+            m_peakMip.clear();
             m_totalExpected = 0;
             m_globalMaxPeak = 0.001f;
         }
@@ -281,6 +295,7 @@ public:
             m_data.clear();
             m_rgbData.clear();
             m_overviewRgb.clear();
+            m_peakMip.clear();
             m_totalExpected = 0;
             m_globalMaxPeak = 0.001f;
             m_bpm = 0.0;
@@ -292,6 +307,43 @@ public:
             m_segments.clear();
         }
         emit dataCleared();
+    }
+
+    void setPeakMipData(QVector<PeakFrame>&& data) {
+        {
+            QMutexLocker locker(&m_mutex);
+            m_peakMip = std::move(data);
+        }
+        emit peakMipUpdated();
+    }
+
+    int getPeakMipSize() const {
+        QMutexLocker locker(&m_mutex);
+        return m_peakMip.size();
+    }
+
+    QVector<PeakFrame> getPeakMipSlice(int startIdx, int endIdx, int* outStartIdx = nullptr) const {
+        QMutexLocker locker(&m_mutex);
+        if (outStartIdx)
+            *outStartIdx = 0;
+        if (m_peakMip.isEmpty())
+            return {};
+        const int lo = std::max(0, startIdx);
+        const int hi = std::min(endIdx, static_cast<int>(m_peakMip.size()));
+        if (lo >= hi)
+            return {};
+        QVector<PeakFrame> slice;
+        slice.reserve(hi - lo);
+        for (int i = lo; i < hi; ++i)
+            slice.push_back(m_peakMip[i]);
+        if (outStartIdx)
+            *outStartIdx = lo;
+        return slice;
+    }
+
+    QVector<PeakFrame> getPeakMipData() const {
+        QMutexLocker locker(&m_mutex);
+        return m_peakMip;
     }
 
     void setRgbWaveformData(QVector<RgbWaveformFrame>&& frames) {
@@ -420,6 +472,7 @@ signals:
     void dataCleared();
     void rgbWaveformUpdated();
     void overviewRgbUpdated();
+    void peakMipUpdated();
     void bpmAnalyzed();
     void keyAnalyzed();
     void beatgridChanged();  // emitted after a manual grid shift
@@ -429,6 +482,7 @@ private:
     QVector<FrequencyData> m_data;
     QVector<RgbWaveformFrame> m_rgbData;
     QVector<RgbWaveformFrame> m_overviewRgb;
+    QVector<PeakFrame> m_peakMip;
     int m_totalExpected;
     float m_globalMaxPeak;
 

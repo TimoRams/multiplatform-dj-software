@@ -3052,16 +3052,18 @@ void DjEngine::loadTrack(const QString& rawPath)
             overview.reserve((total + factor - 1) / factor);
             for (int i = 0; i < total; i += factor) {
                 const int end = std::min(i + factor, total);
-                float rms = 0.0f, low = 0.0f, mid = 0.0f, high = 0.0f;
+                float rms = 0.0f, low = 0.0f, lowMid = 0.0f, mid = 0.0f, high = 0.0f;
                 for (int j = i; j < end; ++j) {
                     const auto& f = cache.rgb[j];
-                    rms  = std::max(rms,  f.rms);
-                    low  = std::max(low,  f.low);
-                    mid  = std::max(mid,  f.mid);
-                    high = std::max(high, f.high);
+                    rms    = std::max(rms,    f.rms);
+                    low    = std::max(low,    f.low);
+                    lowMid = std::max(lowMid, f.lowMid);
+                    mid    = std::max(mid,    f.mid);
+                    high   = std::max(high,   f.high);
                 }
                 TrackData::RgbWaveformFrame bin;
-                bin.rms = rms; bin.low = low; bin.mid = mid; bin.high = high;
+                bin.rms = rms; bin.low = low; bin.lowMid = lowMid;
+                bin.mid = mid; bin.high = high;
                 overview.push_back(bin);
             }
         }
@@ -3103,6 +3105,8 @@ void DjEngine::loadTrack(const QString& rawPath)
                         std::move(cache.waveform), std::max(0.001f, cache.globalMaxPeak));
                     m_trackData->setRgbWaveformData(std::move(cache.rgb));
                     m_trackData->setOverviewRgbData(std::move(overview));
+                    if (!cache.peakMip.isEmpty())
+                        m_trackData->setPeakMipData(std::move(cache.peakMip));
                 }
 
                 emit trackMetadataChanged();

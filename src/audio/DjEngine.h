@@ -86,7 +86,7 @@ class DjEngine : public QObject
     Q_PROPERTY(bool rollOutActive    READ isRollOutActive    NOTIFY rollOutChanged)
 
 public:
-    static constexpr double WAVEFORM_POINTS_PER_SECOND = 600.0;
+    static constexpr double WAVEFORM_POINTS_PER_SECOND = 1200.0;
     static void shutdownSharedAudioDeviceManager();
 
     explicit DjEngine(QObject* parent = nullptr);

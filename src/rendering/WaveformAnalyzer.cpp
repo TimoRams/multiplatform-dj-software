@@ -530,6 +530,14 @@ void WaveformAnalyzer::run()
     };
     std::vector<RawBin> rawBins(static_cast<size_t>(numPoints));
 
+    // Peak mipmap: signed min/max per high-res bin (4× analysis rate).
+    // Allows the renderer to show actual audio oscillations at high zoom.
+    struct RawPeak { float minRaw = 0.0f; float maxRaw = 0.0f; };
+    const int PEAK_RATIO = TrackData::PEAK_POINTS_PER_SECOND / m_pointsPerSecond;  // = 4
+    const int numPeakPoints = numPoints * PEAK_RATIO;
+    std::vector<RawPeak> rawPeakBuf(static_cast<size_t>(numPeakPoints));
+    float globalMaxSample = 0.001f;
+
     // Global per-band maxima — tracked across the entire track (for Pass 2).
     float globalMaxLow    = 0.0f;
     float globalMaxLowMid = 0.0f;
@@ -674,15 +682,13 @@ void WaveformAnalyzer::run()
             if (rb.high > pRunMaxHigh) pRunMaxHigh = rb.high;
 
             TrackData::RgbWaveformFrame rgb;
-            const float lowN  = shapeBin(rb.low    / pRunMaxLow,    1.8f, 1.0f);
-            const float midN  = shapeBin(rb.mid    / pRunMaxMid,    1.5f, 0.7f);
-            const float highN = shapeBin(rb.high   / pRunMaxHigh,   1.3f, 0.5f);
-            const float rmsN  = std::clamp(0.55f * std::max({lowN, midN, highN}) + 0.45f * ((lowN + midN + highN) / 3.0f), 0.0f, 1.0f);
-            int r = std::clamp(static_cast<int>(std::pow(lowN,  0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
-            int g = std::clamp(static_cast<int>(std::pow(midN,  0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
-            int b = std::clamp(static_cast<int>(std::pow(highN, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
-            if (lowN + midN + highN > 0.06f) { r = std::max(r, 18); g = std::max(g, 18); b = std::max(b, 18); }
-            rgb.color = QColor(r, g, b, 230); rgb.rms = rmsN; rgb.low = lowN; rgb.mid = midN; rgb.high = highN;
+            const float lowN    = shapeBin(rb.low    / pRunMaxLow,    1.8f, 1.0f);
+            const float lowMidN = shapeBin(rb.lowMid / pRunMaxLowMid, 1.6f, 0.9f);
+            const float midN    = shapeBin(rb.mid    / pRunMaxMid,    1.5f, 0.7f);
+            const float highN   = shapeBin(rb.high   / pRunMaxHigh,   1.3f, 0.5f);
+            const float rmsN    = std::clamp(0.5f * std::max({lowN, lowMidN, midN, highN}) + 0.5f * ((lowN + lowMidN + midN + highN) / 4.0f), 0.0f, 1.0f);
+            rgb.color = QColor(255, 255, 255, 230);
+            rgb.rms = rmsN; rgb.low = lowN; rgb.lowMid = lowMidN; rgb.mid = midN; rgb.high = highN;
             if (pChunk.isEmpty()) pChunkStart = bin;
             pChunk.append(rgb);
             if (pChunk.size() >= kChunk) {
@@ -850,15 +856,13 @@ void WaveformAnalyzer::run()
                         if (nrb.high > nRunMaxHigh) nRunMaxHigh = nrb.high;
 
                         TrackData::RgbWaveformFrame rgb;
-                        const float lowN  = shapeBin(nrb.low    / nRunMaxLow,    1.8f, 1.0f);
-                        const float midN  = shapeBin(nrb.mid    / nRunMaxMid,    1.5f, 0.7f);
-                        const float highN = shapeBin(nrb.high   / nRunMaxHigh,   1.3f, 0.5f);
-                        const float rmsN  = std::clamp(0.55f * std::max({lowN, midN, highN}) + 0.45f * ((lowN + midN + highN) / 3.0f), 0.0f, 1.0f);
-                        int r = std::clamp(static_cast<int>(std::pow(lowN,  0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
-                        int g = std::clamp(static_cast<int>(std::pow(midN,  0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
-                        int b = std::clamp(static_cast<int>(std::pow(highN, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
-                        if (lowN + midN + highN > 0.06f) { r = std::max(r, 18); g = std::max(g, 18); b = std::max(b, 18); }
-                        rgb.color = QColor(r, g, b, 230); rgb.rms = rmsN; rgb.low = lowN; rgb.mid = midN; rgb.high = highN;
+                        const float lowN    = shapeBin(nrb.low    / nRunMaxLow,    1.8f, 1.0f);
+                        const float lowMidN = shapeBin(nrb.lowMid / nRunMaxLowMid, 1.6f, 0.9f);
+                        const float midN    = shapeBin(nrb.mid    / nRunMaxMid,    1.5f, 0.7f);
+                        const float highN   = shapeBin(nrb.high   / nRunMaxHigh,   1.3f, 0.5f);
+                        const float rmsN    = std::clamp(0.5f * std::max({lowN, lowMidN, midN, highN}) + 0.5f * ((lowN + lowMidN + midN + highN) / 4.0f), 0.0f, 1.0f);
+                        rgb.color = QColor(255, 255, 255, 230);
+                        rgb.rms = rmsN; rgb.low = lowN; rgb.lowMid = lowMidN; rgb.mid = midN; rgb.high = highN;
                         if (nChunk.isEmpty()) nChunkStart = pb;
                         nChunk.append(rgb);
                         if (nChunk.size() >= kChunk) {
@@ -883,6 +887,28 @@ void WaveformAnalyzer::run()
 
         const int toRead = static_cast<int>(std::max<juce::int64>(1, binEnd - binStart));
         reader->read(&readBuf, 0, toRead, binStart, true, false);
+
+        // Peak mipmap: subdivide this analysis bin into PEAK_RATIO sub-bins.
+        // Each sub-bin tracks signed min/max of the mono-summed samples.
+        {
+            const int peakBinBase = bin * PEAK_RATIO;
+            for (int pb = 0; pb < PEAK_RATIO; ++pb) {
+                const int sStart = (pb * toRead) / PEAK_RATIO;
+                const int sEnd   = ((pb + 1) * toRead) / PEAK_RATIO;
+                float pMin = 0.0f, pMax = 0.0f;
+                for (int s = sStart; s < sEnd; ++s) {
+                    float mono = 0.0f;
+                    for (int ch = 0; ch < numCh; ++ch)
+                        mono += readBuf.getReadPointer(ch)[s];
+                    mono /= static_cast<float>(numCh);
+                    if (mono < pMin) pMin = mono;
+                    if (mono > pMax) pMax = mono;
+                }
+                rawPeakBuf[static_cast<size_t>(peakBinBase + pb)] = { pMin, pMax };
+                if (pMax > globalMaxSample) globalMaxSample = pMax;
+                if (-pMin > globalMaxSample) globalMaxSample = -pMin;
+            }
+        }
 
         for (int s = 0; s < toRead; ++s)
         {
@@ -978,24 +1004,13 @@ void WaveformAnalyzer::run()
         const bool beforePriority   = hasPriority && !earlyFlushed && bin < priorityWarmupStart;
         if (!inPriorityRegion) {
             TrackData::RgbWaveformFrame rgb;
-            // Progressive preview: same RGB heuristic as final mapping.
-            const float lowN = std::clamp(pbin.low, 0.0f, 1.0f);
-            const float midN = std::clamp(pbin.mid, 0.0f, 1.0f);
-            const float highN = std::clamp(pbin.high, 0.0f, 1.0f);
-            const float rmsN = std::clamp(0.55f * std::max({lowN, midN, highN}) + 0.45f * ((lowN + midN + highN) / 3.0f), 0.0f, 1.0f);
-            int r = std::clamp(static_cast<int>(std::pow(lowN, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
-            int g = std::clamp(static_cast<int>(std::pow(midN, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
-            int b = std::clamp(static_cast<int>(std::pow(highN, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
-            if (lowN + midN + highN > 0.06f) {
-                r = std::max(r, 18);
-                g = std::max(g, 18);
-                b = std::max(b, 18);
-            }
-            rgb.color = QColor(r, g, b, 230);
-            rgb.rms = rmsN;
-            rgb.low = lowN;
-            rgb.mid = midN;
-            rgb.high = highN;
+            const float lowN    = std::clamp(pbin.low,    0.0f, 1.0f);
+            const float lowMidN = std::clamp(pbin.lowMid, 0.0f, 1.0f);
+            const float midN    = std::clamp(pbin.mid,    0.0f, 1.0f);
+            const float highN   = std::clamp(pbin.high,   0.0f, 1.0f);
+            const float rmsN    = std::clamp(0.5f * std::max({lowN, lowMidN, midN, highN}) + 0.5f * ((lowN + lowMidN + midN + highN) / 4.0f), 0.0f, 1.0f);
+            rgb.color = QColor(255, 255, 255, 230);
+            rgb.rms = rmsN; rgb.low = lowN; rgb.lowMid = lowMidN; rgb.mid = midN; rgb.high = highN;
             if (beforePriority) {
                 // Defer: emit the early section only after the forward fill starts.
                 if (earlyRgbBuf.isEmpty()) earlyRgbStart = bin;
@@ -1065,23 +1080,13 @@ void WaveformAnalyzer::run()
         finalData.append(wbin);
 
         TrackData::RgbWaveformFrame rgb;
-        const float lowN = std::clamp(wbin.low, 0.0f, 1.0f);
-        const float midN = std::clamp(wbin.mid, 0.0f, 1.0f);
-        const float highN = std::clamp(wbin.high, 0.0f, 1.0f);
-        const float rmsN = std::clamp(0.55f * std::max({lowN, midN, highN}) + 0.45f * ((lowN + midN + highN) / 3.0f), 0.0f, 1.0f);
-        int r = std::clamp(static_cast<int>(std::pow(lowN, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
-        int g = std::clamp(static_cast<int>(std::pow(midN, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
-        int b = std::clamp(static_cast<int>(std::pow(highN, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
-        if (lowN + midN + highN > 0.06f) {
-            r = std::max(r, 18);
-            g = std::max(g, 18);
-            b = std::max(b, 18);
-        }
-        rgb.color = QColor(r, g, b, 230);
-        rgb.rms = rmsN;
-        rgb.low = lowN;
-        rgb.mid = midN;
-        rgb.high = highN;
+        const float lowN    = std::clamp(wbin.low,    0.0f, 1.0f);
+        const float lowMidN = std::clamp(wbin.lowMid, 0.0f, 1.0f);
+        const float midN    = std::clamp(wbin.mid,    0.0f, 1.0f);
+        const float highN   = std::clamp(wbin.high,   0.0f, 1.0f);
+        const float rmsN    = std::clamp(0.5f * std::max({lowN, lowMidN, midN, highN}) + 0.5f * ((lowN + lowMidN + midN + highN) / 4.0f), 0.0f, 1.0f);
+        rgb.color = QColor(255, 255, 255, 230);
+        rgb.rms = rmsN; rgb.low = lowN; rgb.lowMid = lowMidN; rgb.mid = midN; rgb.high = highN;
         polishedRgbData.append(rgb);
     }
 
@@ -1091,6 +1096,22 @@ void WaveformAnalyzer::run()
         const auto currentRgb = m_trackData->getRgbWaveformData();
         auto blended = blendRgbPreferDynamics(currentRgb, polishedRgbData);
         m_trackData->setRgbWaveformData(std::move(blended));
+
+        // Normalize and commit the peak mipmap now that globalMaxSample is known.
+        if (!rawPeakBuf.empty()) {
+            const float normScale = 127.0f / std::max(0.001f, globalMaxSample);
+            QVector<TrackData::PeakFrame> peakMip;
+            peakMip.reserve(static_cast<int>(rawPeakBuf.size()));
+            for (const auto& raw : rawPeakBuf) {
+                TrackData::PeakFrame pf;
+                pf.minSample = static_cast<qint8>(
+                    std::clamp(static_cast<int>(raw.minRaw * normScale), -127, 127));
+                pf.maxSample = static_cast<qint8>(
+                    std::clamp(static_cast<int>(raw.maxRaw * normScale), -127, 127));
+                peakMip.append(pf);
+            }
+            m_trackData->setPeakMipData(std::move(peakMip));
+        }
     }
 
     if (threadShouldExit()) return;
@@ -1723,6 +1744,7 @@ void WaveformAnalyzer::run()
         payload.globalMaxPeak = m_trackData->getGlobalMaxPeak();
         payload.waveform = m_trackData->getWaveformData();
         payload.rgb = m_trackData->getRgbWaveformData();
+        payload.peakMip = m_trackData->getPeakMipData();
 
         if (!payload.waveform.isEmpty() && !payload.rgb.isEmpty()) {
             if (!WaveformCache::saveForFile(m_filePath, payload)) {

@@ -5,52 +5,52 @@
 
 namespace {
 
-static inline QColor mixDjWaveColor(float low, float mid, float high, float rms)
+static inline QColor mixRekordboxColor(float low, float lowMid, float mid, float high, float rms)
 {
-    low = std::clamp(low, 0.0f, 1.0f);
-    mid = std::clamp(mid, 0.0f, 1.0f);
-    high = std::clamp(high, 0.0f, 1.0f);
-    rms = std::clamp(rms, 0.0f, 1.0f);
+    // Rekordbox-style RGB palette — same mapping as ScrollingWaveformItem.
+    constexpr float lR = 255.0f, lG = 20.0f,  lB = 20.0f;   // vivid red
+    constexpr float mR = 255.0f, mG = 130.0f, mB = 0.0f;    // orange
+    constexpr float hR = 210.0f, hG = 255.0f, hB = 0.0f;    // yellow-lime
+    constexpr float xR = 0.0f,   xG = 185.0f, xB = 255.0f;  // electric cyan
 
-    float r = std::pow(low, 0.52f) * 1.18f + std::pow(mid, 0.85f) * 0.36f;
-    float g = std::pow(mid, 0.50f) * 1.20f + std::pow(high, 0.95f) * 0.10f + std::pow(low, 1.20f) * 0.06f;
-    float b = std::pow(high, 0.50f) * 1.22f + std::pow(mid, 1.00f) * 0.08f;
+    // Same higher exponents as ScrollingWaveformItem — dominant band wins clearly.
+    const float wL  = std::pow(low,    2.8f);
+    const float wLM = std::pow(lowMid, 2.5f);
+    const float wM  = std::pow(mid,    2.2f);
+    const float wH  = std::pow(high,   1.6f);
+    const float wSum = wL + wLM + wM + wH + 1e-7f;
 
-    const float whiteLift = std::pow(std::max({low, mid, high}), 0.70f) * (0.06f + 0.16f * rms);
-    r += whiteLift;
-    g += whiteLift;
-    b += whiteLift;
+    float r = (wL * lR + wLM * mR + wM * hR + wH * xR) / wSum;
+    float g = (wL * lG + wLM * mG + wM * hG + wH * xG) / wSum;
+    float b = (wL * lB + wLM * mB + wM * hB + wH * xB) / wSum;
 
-    QColor c = QColor::fromRgbF(
-        std::clamp(r, 0.0f, 1.0f),
-        std::clamp(g, 0.0f, 1.0f),
-        std::clamp(b, 0.0f, 1.0f),
-        1.0f);
+    // QPainter lacks scene-graph linear blending — apply brightness + saturation boost.
+    const float bright = std::pow(rms, 0.35f);
+    r *= bright;
+    g *= bright;
+    b *= bright;
 
-    float h = 0.0f;
-    float s = 0.0f;
-    float v = 0.0f;
-    c.getHsvF(&h, &s, &v);
-    // Stronger vibrance than the scrolling waveform — the overview's QPainter path
-    // doesn't benefit from scene-graph linear-light blending, so we compensate here.
-    s = std::clamp(static_cast<float>(s * 1.80f + 0.15f), 0.0f, 1.0f);
-    v = std::clamp(static_cast<float>(v * 1.35f + 0.08f + 0.12f * rms), 0.0f, 1.0f);
-    c.setHsvF(h, s, v, 1.0);
-    return c;
+    float h2 = 0.0f, s2 = 0.0f, v2 = 0.0f;
+    QColor tmp(std::clamp(int(r), 0, 255), std::clamp(int(g), 0, 255), std::clamp(int(b), 0, 255));
+    tmp.getHsvF(&h2, &s2, &v2);
+    s2 = std::clamp(static_cast<float>(s2 * 1.40f + 0.06f), 0.0f, 1.0f);
+    v2 = std::clamp(static_cast<float>(v2 * 1.15f + 0.04f), 0.0f, 1.0f);
+    tmp.setHsvF(h2, s2, v2, 1.0);
+    return tmp;
 }
 
 struct OverviewBin {
-    float rms = 0.0f;
-    float low = 0.0f;
-    float mid = 0.0f;
-    float high = 0.0f;
+    float rms    = 0.0f;
+    float low    = 0.0f;
+    float lowMid = 0.0f;
+    float mid    = 0.0f;
+    float high   = 0.0f;
 };
 
 struct RenderCol {
-    QColor base;
-    float glowH  = 0.0f;
-    float bodyH  = 0.0f;
-    float coreH  = 0.0f;
+    QColor color;
+    float bodyH = 0.0f;
+    float coreH = 0.0f;
 };
 
 } // namespace
@@ -184,63 +184,55 @@ void RgbWaveformItem::paint(QPainter* painter)
 
         for (int i = i0; i < i1; ++i) {
             const auto& f = frames[i];
-            bin.rms = std::max(bin.rms, f.rms);
-            bin.low = std::max(bin.low, f.low);
-            bin.mid = std::max(bin.mid, f.mid);
-            bin.high = std::max(bin.high, f.high);
+            bin.rms    = std::max(bin.rms,    f.rms);
+            bin.low    = std::max(bin.low,    f.low);
+            bin.lowMid = std::max(bin.lowMid, f.lowMid);
+            bin.mid    = std::max(bin.mid,    f.mid);
+            bin.high   = std::max(bin.high,   f.high);
         }
 
         bins[static_cast<size_t>(x)] = bin;
     }
 
 
-    // Pre-compute colors and amplitudes — mirrors ScrollingWaveformItem's 3-layer model.
+    // Rekordbox-style 2-pass overview rendering.
+    // Pass 1: main body bar — vivid, fully opaque.
+    // Pass 2: narrow central spine mixed 50% toward white — "lit from inside" depth.
+    // No outer glow (avoids smear), no fixed-color high strip (highs tint body naturally).
     std::vector<RenderCol> cols(static_cast<size_t>(drawWidth));
     for (int x = 0; x < drawWidth; ++x) {
         const auto& bin = bins[static_cast<size_t>(x)];
         if (bin.rms <= 0.0001f) continue;
-        const float bodyH = std::clamp(bin.rms, 0.0f, 1.0f) * maxBarH;
+        const float rms   = std::clamp(bin.rms, 0.0f, 1.0f);
+        const float bodyH = rms * maxBarH;
         cols[static_cast<size_t>(x)] = {
-            mixDjWaveColor(bin.low, bin.mid, bin.high, bin.rms),
-            std::min(maxBarH, bodyH * 1.34f + 0.7f),
+            mixRekordboxColor(bin.low, bin.lowMid, bin.mid, bin.high, rms),
             bodyH,
-            bodyH * 0.56f
+            bodyH * 0.32f
         };
     }
 
-    // Pass 1: Outer glow (2px wide, low alpha — same soft-halo as scrolling waveform).
+    // Pass 1: vivid body bars.
     for (int x = 0; x < drawWidth; ++x) {
         const auto& col = cols[static_cast<size_t>(x)];
         if (col.bodyH <= 0.0f) continue;
-        const auto& c = col.base;
-        painter->setBrush(QColor(c.red(), c.green(), c.blue(), 84));
-        if (m_rectified)
-            painter->drawRect(QRectF(x - 0.5, baseline - col.glowH,  2.0, col.glowH + 1.0));
-        else
-            painter->drawRect(QRectF(x - 0.5, baseline - col.glowH,  2.0, 2.0 * col.glowH + 1.0));
-    }
-
-    // Pass 2: Main body.
-    for (int x = 0; x < drawWidth; ++x) {
-        const auto& col = cols[static_cast<size_t>(x)];
-        if (col.bodyH <= 0.0f) continue;
-        const auto& c = col.base;
-        painter->setBrush(QColor(c.red(), c.green(), c.blue(), 255));
+        const auto& c = col.color;
+        painter->setBrush(QColor(c.red(), c.green(), c.blue(), 242));
         if (m_rectified)
             painter->drawRect(QRectF(x, baseline - col.bodyH, 1.0, col.bodyH + 1.0));
         else
             painter->drawRect(QRectF(x, baseline - col.bodyH, 1.0, 2.0 * col.bodyH + 1.0));
     }
 
-    // Pass 3: Bright core (inner portion, slightly lighter — same as scrolling waveform core).
+    // Pass 2: bright central spine — 50% mix toward white for inner depth.
     for (int x = 0; x < drawWidth; ++x) {
         const auto& col = cols[static_cast<size_t>(x)];
-        if (col.coreH <= 0.5f) continue;
-        const auto& c = col.base;
-        const int cR = std::min(255, static_cast<int>(c.red()   * 1.10f + 10.0f));
-        const int cG = std::min(255, static_cast<int>(c.green() * 1.10f + 10.0f));
-        const int cB = std::min(255, static_cast<int>(c.blue()  * 1.10f + 10.0f));
-        painter->setBrush(QColor(cR, cG, cB, 248));
+        if (col.coreH <= 0.0f) continue;
+        const auto& c = col.color;
+        const int sr = c.red()   + (255 - c.red())   / 2;
+        const int sg = c.green() + (255 - c.green()) / 2;
+        const int sb = c.blue()  + (255 - c.blue())  / 2;
+        painter->setBrush(QColor(sr, sg, sb, 255));
         if (m_rectified)
             painter->drawRect(QRectF(x, baseline - col.coreH, 1.0, col.coreH + 1.0));
         else

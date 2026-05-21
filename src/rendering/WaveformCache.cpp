@@ -13,7 +13,7 @@
 namespace {
 
 constexpr quint32 kMagic = 0x52574631; // RWF1
-constexpr qint32 kVersion = 2;
+constexpr qint32 kVersion = 5;         // v5: peak mipmap at 8× analysis rate (9600/sec)
 constexpr int kBlockSize = 4096;
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
@@ -97,13 +97,14 @@ bool WaveformCache::loadForFile(const QString& filePath, int pointsPerSecond, Pa
     float globalMaxPeak = 0.001f;
     qint32 wfCount = 0;
     qint32 rgbCount = 0;
+    qint32 peakCount = 0;
 
-    in >> magic >> version >> pps >> totalExpected >> globalMaxPeak >> wfCount >> rgbCount;
+    in >> magic >> version >> pps >> totalExpected >> globalMaxPeak >> wfCount >> rgbCount >> peakCount;
     if (in.status() != QDataStream::Ok)
         return false;
     if (magic != kMagic || version != kVersion || pps != pointsPerSecond)
         return false;
-    if (wfCount < 0 || rgbCount < 0)
+    if (wfCount < 0 || rgbCount < 0 || peakCount < 0)
         return false;
 
     Payload payload;
@@ -112,6 +113,7 @@ bool WaveformCache::loadForFile(const QString& filePath, int pointsPerSecond, Pa
     payload.globalMaxPeak = globalMaxPeak;
     payload.waveform.reserve(wfCount);
     payload.rgb.reserve(rgbCount);
+    payload.peakMip.reserve(peakCount);
 
     int wfRead = 0;
     while (wfRead < wfCount) {
@@ -140,22 +142,36 @@ bool WaveformCache::loadForFile(const QString& filePath, int pointsPerSecond, Pa
         for (int i = 0; i < n; ++i) {
             float rms = 0.0f;
             float low = 0.0f;
+            float lowMid = 0.0f;
             float mid = 0.0f;
             float high = 0.0f;
             quint8 r = 255;
             quint8 g = 255;
             quint8 b = 255;
-            in >> rms >> low >> mid >> high >> r >> g >> b;
+            in >> rms >> low >> lowMid >> mid >> high >> r >> g >> b;
 
             TrackData::RgbWaveformFrame frame;
-            frame.rms = rms;
-            frame.low = low;
-            frame.mid = mid;
-            frame.high = high;
-            frame.color = QColor(r, g, b, 230);
+            frame.rms    = rms;
+            frame.low    = low;
+            frame.lowMid = lowMid;
+            frame.mid    = mid;
+            frame.high   = high;
+            frame.color  = QColor(r, g, b, 230);
             payload.rgb.push_back(frame);
         }
         rgbRead += n;
+    }
+
+    int peakRead = 0;
+    while (peakRead < peakCount) {
+        const int n = std::min(kBlockSize, peakCount - peakRead);
+        for (int i = 0; i < n; ++i) {
+            qint8 minV = 0;
+            qint8 maxV = 0;
+            in >> minV >> maxV;
+            payload.peakMip.push_back(TrackData::PeakFrame{ minV, maxV });
+        }
+        peakRead += n;
     }
 
     if (in.status() != QDataStream::Ok)
@@ -183,7 +199,8 @@ bool WaveformCache::saveForFile(const QString& filePath, const Payload& payload)
         << static_cast<qint32>(payload.totalExpected)
         << payload.globalMaxPeak
         << static_cast<qint32>(payload.waveform.size())
-        << static_cast<qint32>(payload.rgb.size());
+        << static_cast<qint32>(payload.rgb.size())
+        << static_cast<qint32>(payload.peakMip.size());
 
     const qsizetype wfTotal = payload.waveform.size();
     qsizetype wfWritten = 0;
@@ -204,6 +221,7 @@ bool WaveformCache::saveForFile(const QString& filePath, const Payload& payload)
             const auto& fr = payload.rgb[rgbWritten + i];
             out << fr.rms
                 << fr.low
+                << fr.lowMid
                 << fr.mid
                 << fr.high
                 << static_cast<quint8>(fr.color.red())
@@ -211,6 +229,17 @@ bool WaveformCache::saveForFile(const QString& filePath, const Payload& payload)
                 << static_cast<quint8>(fr.color.blue());
         }
         rgbWritten += n;
+    }
+
+    const qsizetype peakTotal = payload.peakMip.size();
+    qsizetype peakWritten = 0;
+    while (peakWritten < peakTotal) {
+        const int n = std::min(kBlockSize, static_cast<int>(peakTotal - peakWritten));
+        for (int i = 0; i < n; ++i) {
+            const auto& pf = payload.peakMip[peakWritten + i];
+            out << pf.minSample << pf.maxSample;
+        }
+        peakWritten += n;
     }
 
     if (out.status() != QDataStream::Ok)

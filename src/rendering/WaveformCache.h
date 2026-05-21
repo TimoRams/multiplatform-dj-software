@@ -14,6 +14,7 @@ public:
         float globalMaxPeak = 0.001f;
         QVector<TrackData::FrequencyData> waveform;
         QVector<TrackData::RgbWaveformFrame> rgb;
+        QVector<TrackData::PeakFrame> peakMip;  // high-res signed min/max peaks
     };
 
     static QString cachePathFor(const QString& filePath, int pointsPerSecond);

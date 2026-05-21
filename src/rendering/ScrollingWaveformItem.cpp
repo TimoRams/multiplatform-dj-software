@@ -10,43 +10,48 @@
 
 namespace {
 
-// Multiband DJ color mapping from spectral band energies.
-static inline QColor mixDjWaveColor(float low, float mid, float high, float rms)
+// Rekordbox-style RGB waveform color blend.
+// Frequency → hue mapping mirrors the industry-standard DJ color scheme:
+//   low     → vivid red      (sub-bass / kick)
+//   lowMid  → orange         (bass body / warmth)
+//   mid     → yellow-lime    (snare / melody / vocals)
+//   high    → electric cyan  (hi-hat / transients / air)
+// Brightness scales with pow(rms, 0.40) — vivid even at moderate levels.
+static inline QColor mixRekordboxColor(float low, float lowMid, float mid, float high, float rms)
 {
-    low = std::clamp(low, 0.0f, 1.0f);
-    mid = std::clamp(mid, 0.0f, 1.0f);
-    high = std::clamp(high, 0.0f, 1.0f);
-    rms = std::clamp(rms, 0.0f, 1.0f);
+    low    = std::clamp(low,    0.0f, 1.0f);
+    lowMid = std::clamp(lowMid, 0.0f, 1.0f);
+    mid    = std::clamp(mid,    0.0f, 1.0f);
+    high   = std::clamp(high,   0.0f, 1.0f);
+    rms    = std::clamp(rms,    0.0f, 1.0f);
 
-    // Stronger DJ palette:
-    //   low  -> red
-    //   mid  -> yellow/green
-    //   high -> blue
-    float r = std::pow(low, 0.52f) * 1.18f + std::pow(mid, 0.85f) * 0.36f;
-    float g = std::pow(mid, 0.50f) * 1.20f + std::pow(high, 0.95f) * 0.10f + std::pow(low, 1.20f) * 0.06f;
-    float b = std::pow(high, 0.50f) * 1.22f + std::pow(mid, 1.00f) * 0.08f;
+    constexpr float lR = 255.0f, lG = 20.0f,  lB = 20.0f;   // vivid red
+    constexpr float mR = 255.0f, mG = 130.0f, mB = 0.0f;    // orange
+    constexpr float hR = 210.0f, hG = 255.0f, hB = 0.0f;    // yellow-lime
+    constexpr float xR = 0.0f,   xG = 185.0f, xB = 255.0f;  // electric cyan
 
-    // Keep some transient whitening, but lower than before to avoid washed colors.
-    const float whiteLift = std::pow(std::max({low, mid, high}), 0.70f) * (0.06f + 0.16f * rms);
-    r += whiteLift;
-    g += whiteLift;
-    b += whiteLift;
+    // Higher exponents → dominant frequency band wins more decisively (Rekordbox look).
+    // Highs use a lower exponent so transient detail shows through bass content.
+    const float wL  = std::pow(low,    2.8f);
+    const float wLM = std::pow(lowMid, 2.5f);
+    const float wM  = std::pow(mid,    2.2f);
+    const float wH  = std::pow(high,   1.6f);
+    const float wSum = wL + wLM + wM + wH + 1e-7f;
 
-    QColor c = QColor::fromRgbF(
-        std::clamp(r, 0.0f, 1.0f),
-        std::clamp(g, 0.0f, 1.0f),
-        std::clamp(b, 0.0f, 1.0f),
-        1.0f);
+    float r = (wL * lR + wLM * mR + wM * hR + wH * xR) / wSum;
+    float g = (wL * lG + wLM * mG + wM * hG + wH * xG) / wSum;
+    float b = (wL * lB + wLM * mB + wM * hB + wH * xB) / wSum;
 
-    // Extra vibrance pass: saturate and brighten without shifting hue semantics.
-    float h = 0.0f;
-    float s = 0.0f;
-    float v = 0.0f;
-    c.getHsvF(&h, &s, &v);
-    s = std::clamp(static_cast<float>(s * 1.30 + 0.08), 0.0f, 1.0f);
-    v = std::clamp(static_cast<float>(v * 1.12 + 0.03 + 0.07 * rms), 0.0f, 1.0f);
-    c.setHsvF(h, s, v, 1.0);
-    return c;
+    // pow(rms, 0.35) → vivid at moderate volumes, not just at full amplitude.
+    const float bright = std::pow(rms, 0.35f);
+    r *= bright;
+    g *= bright;
+    b *= bright;
+
+    return QColor(
+        std::clamp(static_cast<int>(r), 0, 255),
+        std::clamp(static_cast<int>(g), 0, 255),
+        std::clamp(static_cast<int>(b), 0, 255));
 }
 
 } // namespace
@@ -136,6 +141,7 @@ void ScrollingWaveformItem::onTrackLoaded()
         connect(m_engine->getTrackData(), &TrackData::rgbWaveformUpdated, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
         connect(m_engine->getTrackData(), &TrackData::dataCleared, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
         connect(m_engine->getTrackData(), &TrackData::bpmAnalyzed, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
+        connect(m_engine->getTrackData(), &TrackData::peakMipUpdated, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
     }
     m_forceUpdate = true;
     update();
@@ -373,12 +379,19 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         return nullptr;
     }
 
-    // Catmull-Rom Spline
+    // Catmull-Rom Spline — clamps to ≥ 0 (safe for RMS / band envelope values).
     auto catmull = [](float p0, float p1, float p2, float p3, float t) {
         float v = 0.5f * ((2.0f*p1) + (-p0+p2)*t
                           + (2.0f*p0 - 5.0f*p1 + 4.0f*p2 - p3)*t*t
                           + (-p0 + 3.0f*p1 - 3.0f*p2 + p3)*t*t*t);
         return std::max(0.0f, v);
+    };
+    // Signed variant for peak-mip data: no zero clamp so negative minSample
+    // values survive interpolation and produce the correct bottom waveform trace.
+    auto catmullSigned = [](float p0, float p1, float p2, float p3, float t) -> float {
+        return 0.5f * ((2.0f*p1) + (-p0+p2)*t
+                       + (2.0f*p0 - 5.0f*p1 + 4.0f*p2 - p3)*t*t
+                       + (-p0 + 3.0f*p1 - 3.0f*p2 + p3)*t*t*t);
     };
 
     const TrackData::RgbWaveformFrame zeroFD{};
@@ -391,15 +404,47 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         return rgbData[local];
     };
 
-    // Catmull-Rom interpolation per output pixel (bands + amplitude).
+    // Catmull-Rom interpolation per output pixel (bands + amplitude + peak oscillation).
     struct ScrollPixel {
-        float rms = 0.0f;
-        float low = 0.0f;
-        float mid = 0.0f;
-        float high = 0.0f;
-        QColor color;
+        float rms     = 0.0f;
+        float low     = 0.0f;
+        float lowMid  = 0.0f;
+        float mid     = 0.0f;
+        float high    = 0.0f;
+        float peakMin = 0.0f;  // signed min amplitude (oscillation mode)
+        float peakMax = 0.0f;  // signed max amplitude (oscillation mode)
     };
     std::vector<ScrollPixel> pixels(wInt);
+
+    // LOD smoothstep blend over [kBlendStart, kBlendEnd] px/pt.
+    // Peak data is fetched from kBlendStart so the bar→line morph begins before
+    // the hard oscilloscope threshold.  lodBlend=0 → pure bar, lodBlend=1 → pure line.
+    constexpr float kBlendStart = 2.50f;
+    constexpr float kBlendEnd   = 7.20f;
+    const float blendRaw = std::clamp(
+        (m_pixelsPerPoint - kBlendStart) / (kBlendEnd - kBlendStart), 0.0f, 1.0f);
+    const float lodBlend = blendRaw * blendRaw * (3.0f - 2.0f * blendRaw);  // smoothstep
+    const bool usePeakData = (m_pixelsPerPoint >= kBlendStart);
+    constexpr int PEAK_RATIO = TrackData::PEAK_POINTS_PER_SECOND
+                               / static_cast<int>(DjEngine::WAVEFORM_POINTS_PER_SECOND);
+    QVector<TrackData::PeakFrame> peakData;
+    int peakSliceBase = 0;
+    if (usePeakData && td->getPeakMipSize() > 0) {
+        const int peakStart = (sliceStart - 4) * PEAK_RATIO;
+        const int peakEnd   = (sliceEnd   + 4) * PEAK_RATIO;
+        peakData = td->getPeakMipSlice(std::max(0, peakStart), peakEnd, &peakSliceBase);
+    }
+
+    const auto getPeakMinF = [&](int idx) -> float {
+        const int local = idx - peakSliceBase;
+        if (local < 0 || local >= peakData.size()) return 0.0f;
+        return peakData[local].minSample / 127.0f;
+    };
+    const auto getPeakMaxF = [&](int idx) -> float {
+        const int local = idx - peakSliceBase;
+        if (local < 0 || local >= peakData.size()) return 0.0f;
+        return peakData[local].maxSample / 127.0f;
+    };
 
     // Mixxx-style no-wiggle lock: keep sample lookup on a deterministic visual
     // sample grid when zoomed out, so transient spikes do not morph per frame.
@@ -413,10 +458,11 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         const double dataPos = lockVisualSampleGrid
             ? std::round(dataPosRaw / visualSamplesPerPixel) * visualSamplesPerPixel
             : dataPosRaw;
-        float maxRms = 0.0f;
-        float sumLow = 0.0f;
-        float sumMid = 0.0f;
-        float sumHigh = 0.0f;
+        float maxRms    = 0.0f;
+        float sumLow    = 0.0f;
+        float sumLowMid = 0.0f;
+        float sumMid    = 0.0f;
+        float sumHigh   = 0.0f;
 
         for (int s = 0; s < subSamples; ++s) {
             const double ofs = (subSamples == 1)
@@ -432,83 +478,140 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             const auto& d2 = getD(i0+2);
             const auto& d3 = getD(i0+3);
 
-            const float rms = catmull(d0.rms, d1.rms, d2.rms, d3.rms, t);
-            const float low = catmull(d0.low, d1.low, d2.low, d3.low, t);
-            const float mid = catmull(d0.mid, d1.mid, d2.mid, d3.mid, t);
-            const float high = catmull(d0.high, d1.high, d2.high, d3.high, t);
+            const float rms    = catmull(d0.rms,    d1.rms,    d2.rms,    d3.rms,    t);
+            const float low    = catmull(d0.low,    d1.low,    d2.low,    d3.low,    t);
+            const float lowMid = catmull(d0.lowMid, d1.lowMid, d2.lowMid, d3.lowMid, t);
+            const float mid    = catmull(d0.mid,    d1.mid,    d2.mid,    d3.mid,    t);
+            const float high   = catmull(d0.high,   d1.high,   d2.high,   d3.high,   t);
 
             maxRms = std::max(maxRms, rms);
-            sumLow += low;
-            sumMid += mid;
-            sumHigh += high;
+            sumLow    += low;
+            sumLowMid += lowMid;
+            sumMid    += mid;
+            sumHigh   += high;
         }
 
         const float invN = 1.0f / static_cast<float>(subSamples);
-        pixels[x].rms = maxRms;
-        pixels[x].low = sumLow * invN;
-        pixels[x].mid = sumMid * invN;
-        pixels[x].high = sumHigh * invN;
+        pixels[x].rms    = maxRms;
+        pixels[x].low    = sumLow    * invN;
+        pixels[x].lowMid = sumLowMid * invN;
+        pixels[x].mid    = sumMid    * invN;
+        pixels[x].high   = sumHigh   * invN;
+
+        // Peak mip: Catmull-Rom on high-res signed min/max data.
+        // dataPosRaw is already computed above.
+        if (usePeakData && !peakData.isEmpty()) {
+            const double peakPos = dataPosRaw * static_cast<double>(PEAK_RATIO);
+            const int pi  = static_cast<int>(std::floor(peakPos));
+            const float pt2 = static_cast<float>(peakPos - std::floor(peakPos));
+            pixels[x].peakMin = catmullSigned(getPeakMinF(pi-1), getPeakMinF(pi), getPeakMinF(pi+1), getPeakMinF(pi+2), pt2);
+            pixels[x].peakMax = catmullSigned(getPeakMaxF(pi-1), getPeakMaxF(pi), getPeakMaxF(pi+1), getPeakMaxF(pi+2), pt2);
+        }
     }
 
     // Lightweight horizontal smoothing to avoid blocky edges at high zoom-out.
+    // peakMin/peakMax are excluded — smoothing destroys oscillation shape.
     if (wInt >= 3 && pixelsPerPoint < 0.95) {
         std::vector<ScrollPixel> smooth = pixels;
         for (int x = 1; x < wInt - 1; ++x) {
-            smooth[x].rms  = pixels[x - 1].rms * 0.16f + pixels[x].rms * 0.68f + pixels[x + 1].rms * 0.16f;
-            smooth[x].low  = pixels[x - 1].low * 0.16f + pixels[x].low * 0.68f + pixels[x + 1].low * 0.16f;
-            smooth[x].mid  = pixels[x - 1].mid * 0.16f + pixels[x].mid * 0.68f + pixels[x + 1].mid * 0.16f;
-            smooth[x].high = pixels[x - 1].high * 0.16f + pixels[x].high * 0.68f + pixels[x + 1].high * 0.16f;
+            smooth[x].rms    = pixels[x-1].rms    * 0.16f + pixels[x].rms    * 0.68f + pixels[x+1].rms    * 0.16f;
+            smooth[x].low    = pixels[x-1].low    * 0.16f + pixels[x].low    * 0.68f + pixels[x+1].low    * 0.16f;
+            smooth[x].lowMid = pixels[x-1].lowMid * 0.16f + pixels[x].lowMid * 0.68f + pixels[x+1].lowMid * 0.16f;
+            smooth[x].mid    = pixels[x-1].mid    * 0.16f + pixels[x].mid    * 0.68f + pixels[x+1].mid    * 0.16f;
+            smooth[x].high   = pixels[x-1].high   * 0.16f + pixels[x].high   * 0.68f + pixels[x+1].high   * 0.16f;
+            // peakMin/peakMax intentionally not smoothed
         }
         pixels.swap(smooth);
     }
 
-    for (int x = 0; x < wInt; ++x) {
-        pixels[x].color = mixDjWaveColor(pixels[x].low, pixels[x].mid, pixels[x].high, pixels[x].rms);
-    }
+    // LOD-blended waveform renderer.
+    //
+    // lodBlend=0 (low zoom): symmetric DJ bars — glow edge (node 0), main body (node 1),
+    //   bright spine (node 2).  Height driven by RMS amplitude.
+    //
+    // lodBlend=1 (high zoom): PCM oscilloscope thin line — node 1 only, positioned at
+    //   the instantaneous signal midpoint (peakMax+peakMin)/2, ±lineHalfW pixels.
+    //
+    // In between: all geometry and alpha values are continuously interpolated so there
+    // is no visible mode switch at any zoom level.
+    const bool hasPeakData = usePeakData && !peakData.isEmpty();
 
-    // Premium multi-layer body: soft glow + main body + bright core.
     for (int x = 0; x < wInt; ++x) {
         const float fx = snapDevicePixelX(static_cast<double>(x) + 0.5);
         const int vIdx = x * 2;
 
-        const float rms = std::clamp(pixels[x].rms, 0.0f, 1.0f);
-        if (rms <= 0.0005f) {
-            lowV[vIdx  ].set(fx, midY, 0, 0, 0, 0);
-            lowV[vIdx+1].set(fx, midY, 0, 0, 0, 0);
-            lowMidV[vIdx  ].set(fx, midY, 0, 0, 0, 0);
-            lowMidV[vIdx+1].set(fx, midY, 0, 0, 0, 0);
-            midV[vIdx  ].set(fx, midY, 0, 0, 0, 0);
-            midV[vIdx+1].set(fx, midY, 0, 0, 0, 0);
-            highV[vIdx  ].set(fx, midY, 0, 0, 0, 0);
-            highV[vIdx+1].set(fx, midY, 0, 0, 0, 0);
+        const float rms    = std::clamp(pixels[x].rms,    0.0f, 1.0f);
+        const float low    = std::clamp(pixels[x].low,    0.0f, 1.0f);
+        const float lowMid = std::clamp(pixels[x].lowMid, 0.0f, 1.0f);
+        const float mid    = std::clamp(pixels[x].mid,    0.0f, 1.0f);
+        const float high   = std::clamp(pixels[x].high,   0.0f, 1.0f);
+
+        // Amplitude for color: blend RMS (bar mode) → peak-abs (line mode).
+        float peakAbs = 0.0f;
+        float signal  = 0.0f;
+        if (hasPeakData) {
+            const float rawMax = pixels[x].peakMax;
+            const float rawMin = pixels[x].peakMin;
+            peakAbs = std::clamp(std::max(std::abs(rawMax), std::abs(rawMin)), 0.0f, 1.0f);
+            signal  = (rawMax + rawMin) * 0.5f;
+        }
+        const float amp = rms + (peakAbs - rms) * lodBlend;
+
+        if (amp <= 0.0005f) {
+            lowV[vIdx].set(fx, midY, 0, 0, 0, 0);    lowV[vIdx+1].set(fx, midY, 0, 0, 0, 0);
+            lowMidV[vIdx].set(fx, midY, 0, 0, 0, 0); lowMidV[vIdx+1].set(fx, midY, 0, 0, 0, 0);
+            midV[vIdx].set(fx, midY, 0, 0, 0, 0);    midV[vIdx+1].set(fx, midY, 0, 0, 0, 0);
+            highV[vIdx].set(fx, midY, 0, 0, 0, 0);   highV[vIdx+1].set(fx, midY, 0, 0, 0, 0);
             continue;
         }
 
-        const float bodyAmp = rms * midY;
-        const float glowAmp = std::min(midY, bodyAmp * 1.34f + 0.7f);
-        const float coreAmp = bodyAmp * 0.56f;
+        const QColor c = mixRekordboxColor(low, lowMid, mid, high, amp);
+        const uchar cr = static_cast<uchar>(c.red());
+        const uchar cg = static_cast<uchar>(c.green());
+        const uchar cb = static_cast<uchar>(c.blue());
 
-        const QColor c = pixels[x].color;
-        const int r = c.red();
-        const int g = c.green();
-        const int b = c.blue();
-        const int coreR = std::clamp(static_cast<int>(r * 1.10f + 10.0f), 0, 255);
-        const int coreG = std::clamp(static_cast<int>(g * 1.10f + 10.0f), 0, 255);
-        const int coreB = std::clamp(static_cast<int>(b * 1.10f + 10.0f), 0, 255);
+        // Bar mode geometry.
+        const float bodyAmp = amp * midY;
+        const float glowAmp = bodyAmp * 1.04f;
+        const float coreAmp = bodyAmp * 0.28f;
 
-        // Node 0: outer glow.
-        lowV[vIdx  ].set(fx, midY - glowAmp, r, g, b, 84);
-        lowV[vIdx+1].set(fx, midY + glowAmp, r, g, b, 84);
+        // Line mode geometry.
+        const float signalY   = midY - std::clamp(signal, -1.0f, 1.0f) * midY;
+        const float lineHalfW = std::clamp(0.70f + m_pixelsPerPoint * 0.025f, 0.70f, 1.5f);
 
-        // Node 1: main waveform body.
-        lowMidV[vIdx  ].set(fx, midY - bodyAmp, r, g, b, 232);
-        lowMidV[vIdx+1].set(fx, midY + bodyAmp, r, g, b, 232);
+        // Morph body: bar edges [midY ± bodyAmp] → line edges [signalY ± lineHalfW].
+        const float bodyTop = (midY - bodyAmp) + (signalY - lineHalfW - (midY - bodyAmp)) * lodBlend;
+        const float bodyBot = (midY + bodyAmp) + (signalY + lineHalfW - (midY + bodyAmp)) * lodBlend;
 
-        // Node 2: bright center core for depth/contrast.
-        midV[vIdx  ].set(fx, midY - coreAmp, coreR, coreG, coreB, 248);
-        midV[vIdx+1].set(fx, midY + coreAmp, coreR, coreG, coreB, 248);
+        // Glow and spine fade out as lodBlend → 1.
+        const uchar glowA  = static_cast<uchar>(18.0f  * (1.0f - lodBlend) + 0.5f);
+        const uchar spineA = static_cast<uchar>(255.0f * (1.0f - lodBlend) + 0.5f);
 
-        // Node 3 unused in RGB mode.
+        // Spine collapses toward midY as lodBlend → 1.
+        const float coreScale = 1.0f - lodBlend;
+        const uchar coreR = static_cast<uchar>(static_cast<int>(cr) + (255 - static_cast<int>(cr)) * 55 / 100);
+        const uchar coreG = static_cast<uchar>(static_cast<int>(cg) + (255 - static_cast<int>(cg)) * 55 / 100);
+        const uchar coreB = static_cast<uchar>(static_cast<int>(cb) + (255 - static_cast<int>(cb)) * 55 / 100);
+
+        if (glowA > 0) {
+            lowV[vIdx  ].set(fx, midY - glowAmp, cr, cg, cb, glowA);
+            lowV[vIdx+1].set(fx, midY + glowAmp, cr, cg, cb, glowA);
+        } else {
+            lowV[vIdx  ].set(fx, midY, 0, 0, 0, 0);
+            lowV[vIdx+1].set(fx, midY, 0, 0, 0, 0);
+        }
+
+        lowMidV[vIdx  ].set(fx, bodyTop, cr, cg, cb, 252);
+        lowMidV[vIdx+1].set(fx, bodyBot, cr, cg, cb, 252);
+
+        if (spineA > 0) {
+            midV[vIdx  ].set(fx, midY - coreAmp * coreScale, coreR, coreG, coreB, spineA);
+            midV[vIdx+1].set(fx, midY + coreAmp * coreScale, coreR, coreG, coreB, spineA);
+        } else {
+            midV[vIdx  ].set(fx, midY, 0, 0, 0, 0);
+            midV[vIdx+1].set(fx, midY, 0, 0, 0, 0);
+        }
+
         highV[vIdx  ].set(fx, midY, 0, 0, 0, 0);
         highV[vIdx+1].set(fx, midY, 0, 0, 0, 0);
     }
