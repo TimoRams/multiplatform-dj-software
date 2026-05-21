@@ -48,7 +48,7 @@ constexpr double kParamEpsilon = 1e-6;
 bool probeJackServer(QString& message)
 {
     jack_status_t status = JackFailure;
-    jack_client_t* client = jack_client_open("RamsbrockDJProbe", JackNoStartServer, &status);
+    jack_client_t* client = jack_client_open("BrockDJProbe", JackNoStartServer, &status);
     if (client == nullptr) {
         if (status & JackVersionError)
             message = QStringLiteral("JACK protocol version mismatch.");

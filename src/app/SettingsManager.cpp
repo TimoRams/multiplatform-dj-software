@@ -20,7 +20,7 @@ SettingsManager::SettingsManager(QObject* parent)
 void SettingsManager::init()
 {
     juce::PropertiesFile::Options options;
-    options.applicationName      = "RamsbrockDJ";
+    options.applicationName      = "BrockDJ";
     options.filenameSuffix       = ".xml";
     options.osxLibrarySubFolder  = "Application Support";
     options.commonToAllUsers     = false;
@@ -30,9 +30,9 @@ void SettingsManager::init()
     // On Linux, PropertiesFile resolves paths as ~/folderName/ (not ~/.config/folderName/).
     // To land in the XDG-compliant ~/.config directory we must prepend ".config/".
    #if JUCE_LINUX || JUCE_BSD
-    options.folderName = ".config/RamsbrockDJ";
+    options.folderName = ".config/BrockDJ";
    #else
-    options.folderName = "RamsbrockDJ";
+    options.folderName = "BrockDJ";
    #endif
 
     appProperties.setStorageParameters(options);

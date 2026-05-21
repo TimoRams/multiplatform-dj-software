@@ -1,6 +1,8 @@
-# 🎧 [Name TBD]
+# 🎧 BrockDJ
 
 > A modern, multiplatform DJ application — GPU-accelerated waveforms, professional mixing, and deep hardware integration.
+>
+> **by [Ramsbrock.net](https://ramsbrock.net)**
 
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)
 ![C++](https://img.shields.io/badge/C%2B%2B-23-informational?style=flat-square)
@@ -9,8 +11,6 @@
 
 Built on **JUCE** for real-time audio and **Qt 6 / QML** for the UI.
 Waveforms are rendered entirely on the GPU via **Qt RHI** (Vulkan on Linux/Windows, Metal on macOS) — no CPU software rendering.
-
-> *No name yet — suggestions welcome!*
 
 ---
 
@@ -103,7 +103,7 @@ git clone --recurse-submodules https://github.com/TimoRams/multiplatform-dj-soft
 cd multiplatform-dj-software
 cmake -S . -B build
 cmake --build build -j$(nproc)
-./build/bin/RamsbrockDJ
+./build/bin/BrockDJ
 ```
 
 </details>
@@ -124,7 +124,7 @@ git clone --recurse-submodules https://github.com/TimoRams/multiplatform-dj-soft
 cd multiplatform-dj-software
 cmake -S . -B build -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
 cmake --build build -j
-./build/bin/RamsbrockDJ
+./build/bin/BrockDJ
 ```
 
 > On Apple Silicon, build the arm64 target natively to get the platform's SIMD path automatically.

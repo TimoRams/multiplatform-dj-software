@@ -51,7 +51,7 @@ void AppConfig::save()
     QXmlStreamWriter xml(&file);
     xml.setAutoFormatting(true);
     xml.writeStartDocument();
-    xml.writeStartElement("RamsbrockDJ_AppConfig");
+    xml.writeStartElement("BrockDJ_AppConfig");
     xml.writeAttribute("version", "1");
 
     xml.writeStartElement("FirstRun");

@@ -107,7 +107,7 @@ int main(int argc, char *argv[])
     };
 
     std::cout << "========================================" << std::endl;
-    std::cout << "RAMSBROCK DJ ENGINE - INITIAL BUILD TEST" << std::endl;
+    std::cout << "BROCK DJ ENGINE - INITIAL BUILD TEST" << std::endl;
     std::cout << "JUCE Version:   " << juce::SystemStats::getJUCEVersion() << std::endl;
     std::cout << "C++ Standard:   " << __cplusplus << std::endl;
     std::cout << "========================================" << std::endl;
@@ -131,7 +131,7 @@ int main(int argc, char *argv[])
 
 #if defined(Q_OS_LINUX)
     // Vulkan is required for production; allow env override for diagnostics.
-    QString rhiBackend = qEnvironmentVariable("RAMSBROCKDJ_RHI_BACKEND").trimmed().toLower();
+    QString rhiBackend = qEnvironmentVariable("BROCKDJ_RHI_BACKEND").trimmed().toLower();
     if (rhiBackend.isEmpty())
         rhiBackend = QStringLiteral("vulkan");
 
@@ -145,18 +145,18 @@ int main(int argc, char *argv[])
         QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
         qWarning() << "[startup] RHI backend forced to opengl (diagnostics only)";
     } else if (rhiBackend == "auto") {
-        qDebug() << "[startup] RHI backend auto (RAMSBROCKDJ_RHI_BACKEND=auto)";
+        qDebug() << "[startup] RHI backend auto (BROCKDJ_RHI_BACKEND=auto)";
     } else {
-        qWarning() << "[startup] Unknown RAMSBROCKDJ_RHI_BACKEND value, forcing vulkan:" << rhiBackend;
+        qWarning() << "[startup] Unknown BROCKDJ_RHI_BACKEND value, forcing vulkan:" << rhiBackend;
         qputenv("QSG_RHI_BACKEND", "vulkan");
         QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
         useVulkan = true;
     }
 
     if (useVulkan) {
-        requestedVkIcd = qEnvironmentVariable("RAMSBROCKDJ_VK_ICD").trimmed();
+        requestedVkIcd = qEnvironmentVariable("BROCKDJ_VK_ICD").trimmed();
         if (requestedVkIcd.isEmpty() && qEnvironmentVariableIsEmpty("VK_ICD_FILENAMES")) {
-            const QString autoMode = qEnvironmentVariable("RAMSBROCKDJ_VK_ICD_AUTO").trimmed().toLower();
+            const QString autoMode = qEnvironmentVariable("BROCKDJ_VK_ICD_AUTO").trimmed().toLower();
             const bool allowAuto = autoMode.isEmpty() || autoMode == "1" || autoMode == "true" || autoMode == "on";
             if (allowAuto)
                 requestedVkIcd = pickDefaultVulkanIcd();
@@ -165,7 +165,7 @@ int main(int argc, char *argv[])
         if (!requestedVkIcd.isEmpty())
             qputenv("VK_ICD_FILENAMES", requestedVkIcd.toUtf8());
 
-        requestedVkApiRaw = qEnvironmentVariable("RAMSBROCKDJ_VK_API").trimmed();
+        requestedVkApiRaw = qEnvironmentVariable("BROCKDJ_VK_API").trimmed();
         QString apiEnv = requestedVkApiRaw;
         apiEnv.remove('"');
         apiEnv.remove('\'');
@@ -194,7 +194,7 @@ int main(int argc, char *argv[])
             if (!requestedVkApi.isNull())
                 qDebug() << "[startup] Vulkan API override:" << requestedVkApi;
             else
-                qWarning() << "[startup] Invalid RAMSBROCKDJ_VK_API value:" << requestedVkApiRaw;
+                qWarning() << "[startup] Invalid BROCKDJ_VK_API value:" << requestedVkApiRaw;
         }
 
         vkInstance = std::make_unique<QVulkanInstance>();
@@ -312,7 +312,7 @@ int main(int argc, char *argv[])
                     quickWindow->setVulkanInstance(vkInstance.get());
 #endif
                 if (usingVulkan) {
-                    const QString cacheMode = qEnvironmentVariable("RAMSBROCKDJ_VK_CACHE").trimmed().toLower();
+                    const QString cacheMode = qEnvironmentVariable("BROCKDJ_VK_CACHE").trimmed().toLower();
                     const bool enableCache = cacheMode.isEmpty() || cacheMode == "1" || cacheMode == "on" || cacheMode == "true";
                     const bool resetCache = (cacheMode == "reset");
 
@@ -335,7 +335,7 @@ int main(int argc, char *argv[])
                         else
                             qDebug() << "[main] Vulkan pipeline cache (new):" << cacheFile;
                     } else {
-                        qDebug() << "[main] Vulkan pipeline cache disabled (RAMSBROCKDJ_VK_CACHE=0)";
+                        qDebug() << "[main] Vulkan pipeline cache disabled (BROCKDJ_VK_CACHE=0)";
                     }
                 }
 

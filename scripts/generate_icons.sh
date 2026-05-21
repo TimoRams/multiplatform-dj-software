@@ -130,7 +130,7 @@ rm -rf "$ICONSET"
 
 echo ""
 echo "Done! Now re-run CMake so the new icons are picked up:"
-echo "  cmake --build build --target RamsbrockDJ"
+echo "  cmake --build build --target BrockDJ"
 echo ""
 echo "macOS 26 Liquid Glass tip:"
 echo "  Your SVG should have a TRANSPARENT background (no background rect)."

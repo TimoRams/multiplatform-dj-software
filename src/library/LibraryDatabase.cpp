@@ -161,11 +161,26 @@ bool LibraryDatabase::open()
         }
     }
 
-    const QString legacyDbPath = dbDir.filePath("RamsbrockDJ_Library.db");
-    m_dbPath = dbDir.filePath("RamsbrockDJ_Library_A.db");
-    m_backupDbPath = dbDir.filePath("RamsbrockDJ_Library_B.db");
+    const QString legacyDbPath   = dbDir.filePath("RamsbrockDJ_Library.db");
+    const QString legacyPrimary  = dbDir.filePath("RamsbrockDJ_Library_A.db");
+    const QString legacyBackup   = dbDir.filePath("RamsbrockDJ_Library_B.db");
+    m_dbPath = dbDir.filePath("BrockDJ_Library_A.db");
+    m_backupDbPath = dbDir.filePath("BrockDJ_Library_B.db");
     m_activeDbPath = m_dbPath;
-    m_manualBackupDbPath = dbDir.filePath("RamsbrockDJ_Library_backup_manual.db");
+    m_manualBackupDbPath = dbDir.filePath("BrockDJ_Library_backup_manual.db");
+
+    // One-time migration: copy old RamsbrockDJ databases into new BrockDJ paths
+    if (!QFile::exists(m_dbPath) && !QFile::exists(m_backupDbPath)) {
+        if (isHealthyDatabaseFile(legacyPrimary)) {
+            qWarning() << "[LibraryDatabase] Migrating RamsbrockDJ → BrockDJ (primary)";
+            copyDatabaseFile(legacyPrimary, m_dbPath);
+            if (isHealthyDatabaseFile(legacyBackup))
+                copyDatabaseFile(legacyBackup, m_backupDbPath);
+        } else if (isHealthyDatabaseFile(legacyBackup)) {
+            qWarning() << "[LibraryDatabase] Migrating RamsbrockDJ → BrockDJ (backup only)";
+            copyDatabaseFile(legacyBackup, m_dbPath);
+        }
+    }
 
     qDebug() << "[LibraryDatabase] DB primary path:" << m_dbPath;
     qDebug() << "[LibraryDatabase] DB backup path:" << m_backupDbPath;

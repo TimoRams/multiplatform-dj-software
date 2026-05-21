@@ -442,7 +442,7 @@ Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 1
                     Text {
-                        text: "RAMSBROCKDJ"
+                        text: "BROCKDJ"
                         color: "#e8e8e8"
                         font.pixelSize: root.sp(11)
                         font.bold: true

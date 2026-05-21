@@ -61,7 +61,7 @@ Item {
             // App name
             Text {
                 Layout.fillWidth: true
-                text: "RamsbrockDJ"
+                text: "BrockDJ"
                 color: "#ff9900"
                 font.pixelSize: 28
                 font.bold: true
@@ -126,7 +126,7 @@ Item {
             // Vision paragraph
             Text {
                 Layout.fillWidth: true
-                text: "RamsbrockDJ is being built to become a full-featured, performance-grade DJ platform — designed for live venues, club sets, and professional hardware integration. The goal is a fast, modern tool that holds up under real-world stage conditions."
+                text: "BrockDJ is being built to become a full-featured, performance-grade DJ platform — designed for live venues, club sets, and professional hardware integration. The goal is a fast, modern tool that holds up under real-world stage conditions."
                 color: "#aaaaaa"
                 font.pixelSize: 13
                 wrapMode: Text.WordWrap

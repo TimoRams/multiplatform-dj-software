@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-set(PROJECT_NAME "RamsbrockDJ")
+set(PROJECT_NAME "BrockDJ")
 project(${PROJECT_NAME} VERSION 0.0.1 LANGUAGES C CXX)
 
 set(RDBJ_ENABLE_NATIVE_SIMD_DEFAULT OFF)
@@ -217,7 +217,7 @@ if(EXISTS "${_icons_generated}/256.png")
 endif()
 
 juce_add_console_app(${PROJECT_NAME}
-    PRODUCT_NAME "RamsbrockDJ"
+    PRODUCT_NAME "BrockDJ"
     COMPANY_NAME "Ramsbrock.net"
 )
 
@@ -400,7 +400,7 @@ if(_icons_ready)
         set_target_properties(${PROJECT_NAME} PROPERTIES
             MACOSX_BUNDLE TRUE
             MACOSX_BUNDLE_ICON_FILE AppIcon.icns
-            MACOSX_BUNDLE_BUNDLE_NAME "RamsbrockDJ"
+            MACOSX_BUNDLE_BUNDLE_NAME "BrockDJ"
             MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
             MACOSX_BUNDLE_COPYRIGHT "© Ramsbrock.net"
         )

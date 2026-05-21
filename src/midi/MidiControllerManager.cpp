@@ -184,7 +184,7 @@ void MidiControllerManager::populateFromAlsaFallback()
         if (lowerClient == "system"
             || lowerClient == "midi through"
             || lowerClient.startsWith("pipewire")
-            || lowerClient.contains("ramsbrock")
+            || lowerClient.contains("brockdj")
             || lowerClient.contains("aseqdump"))
             continue;
 
@@ -887,7 +887,7 @@ void MidiControllerManager::saveNativeMapping()
     QXmlStreamWriter xml(&file);
     xml.setAutoFormatting(true);
     xml.writeStartDocument();
-    xml.writeStartElement("RamsbrockDJ_Mapping");
+    xml.writeStartElement("BrockDJ_Mapping");
     xml.writeAttribute("version", "1");
 
     for (const auto& [msgId, paramId] : m_midiToParam) {

@@ -10,7 +10,7 @@ ApplicationWindow {
     minimumWidth: 800
     minimumHeight: 600
     visible: true
-    title: "RamsbrockDJ"
+    title: "BrockDJ"
     color: "#2a2a2a"
     font.hintingPreference: Font.PreferFullHinting
     property bool libraryExpanded: false
@@ -185,7 +185,7 @@ ApplicationWindow {
             spacing: 12
 
             Text {
-                text: "RAMSBROCK DJ"
+                text: "BROCK DJ"
                 color: "#e0e0e0"
                 font.pixelSize: window.sp(18)
                 font.bold: true

@@ -565,7 +565,7 @@ Window {
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: 12
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: "Ramsbrock DJ Engine"
+                text: "Brock DJ Engine"
                 color: "#333"
                 font.pixelSize: 10
                 font.family: "monospace"

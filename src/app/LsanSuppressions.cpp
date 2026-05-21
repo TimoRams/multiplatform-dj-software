@@ -24,7 +24,7 @@ const char kLsanSuppressions[] =
 
 extern "C" const char* __lsan_default_suppressions()
 {
-    const char* disable = std::getenv("RAMSBROCKDJ_LSAN_SUPPRESS");
+    const char* disable = std::getenv("BROCKDJ_LSAN_SUPPRESS");
     if (disable && disable[0] == '0')
         return "";
     return kLsanSuppressions;
