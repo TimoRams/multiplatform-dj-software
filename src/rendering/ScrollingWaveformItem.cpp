@@ -416,15 +416,9 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     };
     std::vector<ScrollPixel> pixels(wInt);
 
-    // LOD smoothstep blend over [kBlendStart, kBlendEnd] px/pt.
-    // Peak data is fetched from kBlendStart so the bar→line morph begins before
-    // the hard oscilloscope threshold.  lodBlend=0 → pure bar, lodBlend=1 → pure line.
-    constexpr float kBlendStart = 2.50f;
-    constexpr float kBlendEnd   = 7.20f;
-    const float blendRaw = std::clamp(
-        (m_pixelsPerPoint - kBlendStart) / (kBlendEnd - kBlendStart), 0.0f, 1.0f);
-    const float lodBlend = blendRaw * blendRaw * (3.0f - 2.0f * blendRaw);  // smoothstep
-    const bool usePeakData = (m_pixelsPerPoint >= kBlendStart);
+    // Always use peak min/max data — waveform shape is driven by the real audio
+    // envelope at every zoom level, never by a separate rendering mode.
+    const bool usePeakData = (td->getPeakMipSize() > 0);
     constexpr int PEAK_RATIO = TrackData::PEAK_POINTS_PER_SECOND
                                / static_cast<int>(DjEngine::WAVEFORM_POINTS_PER_SECOND);
     QVector<TrackData::PeakFrame> peakData;
@@ -498,14 +492,37 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         pixels[x].mid    = sumMid    * invN;
         pixels[x].high   = sumHigh   * invN;
 
-        // Peak mip: Catmull-Rom on high-res signed min/max data.
-        // dataPosRaw is already computed above.
+        // Peak envelope: Catmull-Rom when zoomed in (< 1 peak frame/pixel),
+        // min/max binning when zoomed out (many peak frames per pixel).
+        // Both paths preserve the real waveform silhouette at their resolution.
         if (usePeakData && !peakData.isEmpty()) {
-            const double peakPos = dataPosRaw * static_cast<double>(PEAK_RATIO);
-            const int pi  = static_cast<int>(std::floor(peakPos));
-            const float pt2 = static_cast<float>(peakPos - std::floor(peakPos));
-            pixels[x].peakMin = catmullSigned(getPeakMinF(pi-1), getPeakMinF(pi), getPeakMinF(pi+1), getPeakMinF(pi+2), pt2);
-            pixels[x].peakMax = catmullSigned(getPeakMaxF(pi-1), getPeakMaxF(pi), getPeakMaxF(pi+1), getPeakMaxF(pi+2), pt2);
+            if (pixelsPerPoint >= 1.0) {
+                const double peakPos = dataPosRaw * static_cast<double>(PEAK_RATIO);
+                const int pi  = static_cast<int>(std::floor(peakPos));
+                const float pt2 = static_cast<float>(peakPos - std::floor(peakPos));
+                // Clamp to invariants (peakMax >= 0, peakMin <= 0) — Catmull-Rom
+                // can overshoot its control points, making peakMax negative or
+                // peakMin positive, which inverts bodyTop/bodyBot and flickers.
+                pixels[x].peakMax = std::max(0.0f, catmullSigned(getPeakMaxF(pi-1), getPeakMaxF(pi), getPeakMaxF(pi+1), getPeakMaxF(pi+2), pt2));
+                pixels[x].peakMin = std::min(0.0f, catmullSigned(getPeakMinF(pi-1), getPeakMinF(pi), getPeakMinF(pi+1), getPeakMinF(pi+2), pt2));
+            } else {
+                // Snap the window center to the same deterministic grid as band
+                // data — prevents per-frame jitter from continuously-shifting
+                // peak frame inclusions as dataPosRaw drifts between frames.
+                const double snappedCenter = std::round(dataPosRaw / visualSamplesPerPixel) * visualSamplesPerPixel;
+                const double halfSpan = 0.5 / std::max(0.0001, pixelsPerPoint);
+                const int p0 = std::max(0, static_cast<int>(std::floor((snappedCenter - halfSpan) * PEAK_RATIO)));
+                const int p1 = static_cast<int>(std::ceil((snappedCenter + halfSpan) * PEAK_RATIO));
+                float pMin = 0.0f, pMax = 0.0f;
+                for (int pi = p0; pi <= p1; ++pi) {
+                    const float mn = getPeakMinF(pi);
+                    const float mx = getPeakMaxF(pi);
+                    if (mn < pMin) pMin = mn;
+                    if (mx > pMax) pMax = mx;
+                }
+                pixels[x].peakMin = pMin;
+                pixels[x].peakMax = pMax;
+            }
         }
     }
 
@@ -524,17 +541,10 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         pixels.swap(smooth);
     }
 
-    // LOD-blended waveform renderer.
-    //
-    // lodBlend=0 (low zoom): symmetric DJ bars — glow edge (node 0), main body (node 1),
-    //   bright spine (node 2).  Height driven by RMS amplitude.
-    //
-    // lodBlend=1 (high zoom): PCM oscilloscope thin line — node 1 only, positioned at
-    //   the instantaneous signal midpoint (peakMax+peakMin)/2, ±lineHalfW pixels.
-    //
-    // In between: all geometry and alpha values are continuously interpolated so there
-    // is no visible mode switch at any zoom level.
-    const bool hasPeakData = usePeakData && !peakData.isEmpty();
+    // Single waveform rendering style — consistent at all zoom levels.
+    // Shape: peak min/max envelope (actual audio silhouette).
+    // Color: frequency-band weighted RGB blend (same at every zoom).
+    const bool hasPeakData = !peakData.isEmpty();
 
     for (int x = 0; x < wInt; ++x) {
         const float fx = snapDevicePixelX(static_cast<double>(x) + 0.5);
@@ -546,18 +556,24 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         const float mid    = std::clamp(pixels[x].mid,    0.0f, 1.0f);
         const float high   = std::clamp(pixels[x].high,   0.0f, 1.0f);
 
-        // Amplitude for color: blend RMS (bar mode) → peak-abs (line mode).
-        float peakAbs = 0.0f;
-        float signal  = 0.0f;
+        float bodyTop, bodyBot, signalY, peakAbs;
         if (hasPeakData) {
-            const float rawMax = pixels[x].peakMax;
-            const float rawMin = pixels[x].peakMin;
-            peakAbs = std::clamp(std::max(std::abs(rawMax), std::abs(rawMin)), 0.0f, 1.0f);
-            signal  = (rawMax + rawMin) * 0.5f;
+            // Enforce invariants: peakMax ∈ [0,1], peakMin ∈ [-1,0].
+            // With these bounds: bodyTop ≤ midY ≤ bodyBot (never inverted).
+            const float pMax = std::clamp(pixels[x].peakMax, 0.0f, 1.0f);
+            const float pMin = std::clamp(pixels[x].peakMin, -1.0f, 0.0f);
+            bodyTop = midY * (1.0f - pMax);
+            bodyBot = midY * (1.0f - pMin);
+            signalY = midY - (pMax + pMin) * 0.5f * midY;
+            peakAbs = std::max(pMax, -pMin);
+        } else {
+            peakAbs = rms;
+            bodyTop = midY - rms * midY;
+            bodyBot = midY + rms * midY;
+            signalY = midY;
         }
-        const float amp = rms + (peakAbs - rms) * lodBlend;
 
-        if (amp <= 0.0005f) {
+        if (peakAbs <= 0.0005f) {
             lowV[vIdx].set(fx, midY, 0, 0, 0, 0);    lowV[vIdx+1].set(fx, midY, 0, 0, 0, 0);
             lowMidV[vIdx].set(fx, midY, 0, 0, 0, 0); lowMidV[vIdx+1].set(fx, midY, 0, 0, 0, 0);
             midV[vIdx].set(fx, midY, 0, 0, 0, 0);    midV[vIdx+1].set(fx, midY, 0, 0, 0, 0);
@@ -565,52 +581,26 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             continue;
         }
 
-        const QColor c = mixRekordboxColor(low, lowMid, mid, high, amp);
+        const QColor c = mixRekordboxColor(low, lowMid, mid, high, peakAbs);
         const uchar cr = static_cast<uchar>(c.red());
         const uchar cg = static_cast<uchar>(c.green());
         const uchar cb = static_cast<uchar>(c.blue());
 
-        // Bar mode geometry.
-        const float bodyAmp = amp * midY;
-        const float glowAmp = bodyAmp * 1.04f;
-        const float coreAmp = bodyAmp * 0.28f;
+        // Outer glow: slightly wider outline, semi-transparent.
+        lowV[vIdx  ].set(fx, bodyTop - 0.5f, cr, cg, cb, 18);
+        lowV[vIdx+1].set(fx, bodyBot + 0.5f, cr, cg, cb, 18);
 
-        // Line mode geometry.
-        const float signalY   = midY - std::clamp(signal, -1.0f, 1.0f) * midY;
-        const float lineHalfW = std::clamp(0.70f + m_pixelsPerPoint * 0.025f, 0.70f, 1.5f);
-
-        // Morph body: bar edges [midY ± bodyAmp] → line edges [signalY ± lineHalfW].
-        const float bodyTop = (midY - bodyAmp) + (signalY - lineHalfW - (midY - bodyAmp)) * lodBlend;
-        const float bodyBot = (midY + bodyAmp) + (signalY + lineHalfW - (midY + bodyAmp)) * lodBlend;
-
-        // Glow and spine fade out as lodBlend → 1.
-        const uchar glowA  = static_cast<uchar>(18.0f  * (1.0f - lodBlend) + 0.5f);
-        const uchar spineA = static_cast<uchar>(255.0f * (1.0f - lodBlend) + 0.5f);
-
-        // Spine collapses toward midY as lodBlend → 1.
-        const float coreScale = 1.0f - lodBlend;
-        const uchar coreR = static_cast<uchar>(static_cast<int>(cr) + (255 - static_cast<int>(cr)) * 55 / 100);
-        const uchar coreG = static_cast<uchar>(static_cast<int>(cg) + (255 - static_cast<int>(cg)) * 55 / 100);
-        const uchar coreB = static_cast<uchar>(static_cast<int>(cb) + (255 - static_cast<int>(cb)) * 55 / 100);
-
-        if (glowA > 0) {
-            lowV[vIdx  ].set(fx, midY - glowAmp, cr, cg, cb, glowA);
-            lowV[vIdx+1].set(fx, midY + glowAmp, cr, cg, cb, glowA);
-        } else {
-            lowV[vIdx  ].set(fx, midY, 0, 0, 0, 0);
-            lowV[vIdx+1].set(fx, midY, 0, 0, 0, 0);
-        }
-
+        // Main waveform body: filled peak envelope.
         lowMidV[vIdx  ].set(fx, bodyTop, cr, cg, cb, 252);
         lowMidV[vIdx+1].set(fx, bodyBot, cr, cg, cb, 252);
 
-        if (spineA > 0) {
-            midV[vIdx  ].set(fx, midY - coreAmp * coreScale, coreR, coreG, coreB, spineA);
-            midV[vIdx+1].set(fx, midY + coreAmp * coreScale, coreR, coreG, coreB, spineA);
-        } else {
-            midV[vIdx  ].set(fx, midY, 0, 0, 0, 0);
-            midV[vIdx+1].set(fx, midY, 0, 0, 0, 0);
-        }
+        // Central spine: bright strip following the signal midpoint.
+        const float coreAmp = peakAbs * midY * 0.28f;
+        const uchar coreR = static_cast<uchar>(static_cast<int>(cr) + (255 - static_cast<int>(cr)) * 55 / 100);
+        const uchar coreG = static_cast<uchar>(static_cast<int>(cg) + (255 - static_cast<int>(cg)) * 55 / 100);
+        const uchar coreB = static_cast<uchar>(static_cast<int>(cb) + (255 - static_cast<int>(cb)) * 55 / 100);
+        midV[vIdx  ].set(fx, signalY - coreAmp, coreR, coreG, coreB, 255);
+        midV[vIdx+1].set(fx, signalY + coreAmp, coreR, coreG, coreB, 255);
 
         highV[vIdx  ].set(fx, midY, 0, 0, 0, 0);
         highV[vIdx+1].set(fx, midY, 0, 0, 0, 0);
