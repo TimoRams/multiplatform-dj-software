@@ -171,7 +171,7 @@ QSGNode* WaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
 
         // Draw 4 STACKED layers (back to front).
         // Each band adds its height ON TOP of the previous one so all 4 colors
-        // are visible as distinct stripes (DJ-style).
+        // are visible as distinct stripes.
         //
         // Rectified mode: baseline at bottom, bars grow up.
         // Normal mode:    baseline at centre, bars grow symmetrically up+down.

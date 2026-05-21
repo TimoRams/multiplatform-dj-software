@@ -151,7 +151,7 @@ QVector<TrackData::RgbWaveformFrame> analyzeRgbFramesWithEssentia(
         AlgorithmFactory::create("Spectrum",
                                  "size", frameSize));
 
-    // DJ RGB bands: low 20-250 Hz, mid 250-4000 Hz, high 4000-20000 Hz.
+    // RGB bands: low 20-250 Hz, mid 250-4000 Hz, high 4000-20000 Hz.
     std::unique_ptr<Algorithm> bandLow(
         AlgorithmFactory::create("EnergyBand",
                                  "sampleRate", static_cast<Real>(sampleRate),
@@ -230,7 +230,7 @@ QVector<TrackData::RgbWaveformFrame> analyzeRgbFramesWithEssentia(
         const float hn = std::clamp(highs[i] / maxHigh, 0.0f, 1.0f);
         const float rmsN = std::clamp(rmsVals[i] / maxRms, 0.0f, 1.0f);
 
-        // DJ color mixing: R=low, G=mid, B=high with stronger lift for readability.
+        // Color mixing: R=low, G=mid, B=high with stronger lift for readability.
         int r = std::clamp(static_cast<int>(std::pow(ln, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
         int g = std::clamp(static_cast<int>(std::pow(mn, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
         int b = std::clamp(static_cast<int>(std::pow(hn, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
@@ -450,7 +450,7 @@ void WaveformAnalyzer::run()
             / static_cast<juce::int64>(numPoints));
 
     // -------------------------------------------------------------------------
-    // DSP-Kette: Parallel 4-Band Filterbank (DJ-style, overlapping)
+    // DSP-Kette: Parallel 4-Band Filterbank (overlapping)
     //
     //  Band 1 — LOW  (Dark Blue):  LP @ 110 Hz, 6 dB/oct (1st order)
     //     Sub-bass + Kick fundamental. Single 1-pole LP.

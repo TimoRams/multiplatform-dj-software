@@ -10,14 +10,12 @@
 
 namespace {
 
-// Rekordbox-style RGB waveform color blend.
-// Frequency → hue mapping mirrors the industry-standard DJ color scheme:
+// Frequency-band RGB color blend.
 //   low     → vivid red      (sub-bass / kick)
 //   lowMid  → orange         (bass body / warmth)
 //   mid     → yellow-lime    (snare / melody / vocals)
 //   high    → electric cyan  (hi-hat / transients / air)
-// Brightness scales with pow(rms, 0.40) — vivid even at moderate levels.
-static inline QColor mixRekordboxColor(float low, float lowMid, float mid, float high, float rms)
+static inline QColor mixBandColor(float low, float lowMid, float mid, float high, float rms)
 {
     low    = std::clamp(low,    0.0f, 1.0f);
     lowMid = std::clamp(lowMid, 0.0f, 1.0f);
@@ -30,7 +28,7 @@ static inline QColor mixRekordboxColor(float low, float lowMid, float mid, float
     constexpr float hR = 210.0f, hG = 255.0f, hB = 0.0f;    // yellow-lime
     constexpr float xR = 0.0f,   xG = 185.0f, xB = 255.0f;  // electric cyan
 
-    // Higher exponents → dominant frequency band wins more decisively (Rekordbox look).
+    // Higher exponents → dominant frequency band wins more decisively.
     // Highs use a lower exponent so transient detail shows through bass content.
     const float wL  = std::pow(low,    2.8f);
     const float wLM = std::pow(lowMid, 2.5f);
@@ -440,8 +438,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         return peakData[local].maxSample / 127.0f;
     };
 
-    // Mixxx-style no-wiggle lock: keep sample lookup on a deterministic visual
-    // sample grid when zoomed out, so transient spikes do not morph per frame.
+    // No-wiggle lock: keep sample lookup on a deterministic visual sample grid
+    // when zoomed out, so transient spikes do not morph per frame.
     const bool lockVisualSampleGrid = pixelsPerPoint <= 1.25;
     const double visualSamplesPerPixel =
         std::max(1.0, 1.0 / std::max(0.0001, pixelsPerPoint));
@@ -581,7 +579,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             continue;
         }
 
-        const QColor c = mixRekordboxColor(low, lowMid, mid, high, peakAbs);
+        const QColor c = mixBandColor(low, lowMid, mid, high, peakAbs);
         const uchar cr = static_cast<uchar>(c.red());
         const uchar cg = static_cast<uchar>(c.green());
         const uchar cb = static_cast<uchar>(c.blue());
@@ -611,7 +609,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     midNode   ->markDirty(QSGNode::DirtyGeometry);
     highNode  ->markDirty(QSGNode::DirtyGeometry);
 
-    // ── Beat-grid rendering (DJ style) ───────────────────────────────────────
+    // ── Beat-grid rendering ──────────────────────────────────────────────────
     // Node 4: regular beat lines     — white, 1px, alpha 110
     // Node 5: downbeat lines         — red (#e6, 0, 0), 1px, alpha 220
     // Node 6: downbeat triangles     — red filled, pointing down from top edge

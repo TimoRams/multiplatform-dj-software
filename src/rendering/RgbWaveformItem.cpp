@@ -5,15 +5,14 @@
 
 namespace {
 
-static inline QColor mixRekordboxColor(float low, float lowMid, float mid, float high, float rms)
+static inline QColor mixBandColor(float low, float lowMid, float mid, float high, float rms)
 {
-    // Rekordbox-style RGB palette — same mapping as ScrollingWaveformItem.
     constexpr float lR = 255.0f, lG = 20.0f,  lB = 20.0f;   // vivid red
     constexpr float mR = 255.0f, mG = 130.0f, mB = 0.0f;    // orange
     constexpr float hR = 210.0f, hG = 255.0f, hB = 0.0f;    // yellow-lime
     constexpr float xR = 0.0f,   xG = 185.0f, xB = 255.0f;  // electric cyan
 
-    // Same higher exponents as ScrollingWaveformItem — dominant band wins clearly.
+    // Higher exponents → dominant band wins clearly.
     const float wL  = std::pow(low,    2.8f);
     const float wLM = std::pow(lowMid, 2.5f);
     const float wM  = std::pow(mid,    2.2f);
@@ -195,10 +194,9 @@ void RgbWaveformItem::paint(QPainter* painter)
     }
 
 
-    // Rekordbox-style 2-pass overview rendering.
+    // 2-pass overview rendering.
     // Pass 1: main body bar — vivid, fully opaque.
     // Pass 2: narrow central spine mixed 50% toward white — "lit from inside" depth.
-    // No outer glow (avoids smear), no fixed-color high strip (highs tint body naturally).
     std::vector<RenderCol> cols(static_cast<size_t>(drawWidth));
     for (int x = 0; x < drawWidth; ++x) {
         const auto& bin = bins[static_cast<size_t>(x)];
@@ -206,7 +204,7 @@ void RgbWaveformItem::paint(QPainter* painter)
         const float rms   = std::clamp(bin.rms, 0.0f, 1.0f);
         const float bodyH = rms * maxBarH;
         cols[static_cast<size_t>(x)] = {
-            mixRekordboxColor(bin.low, bin.lowMid, bin.mid, bin.high, rms),
+            mixBandColor(bin.low, bin.lowMid, bin.mid, bin.high, rms),
             bodyH,
             bodyH * 0.32f
         };
