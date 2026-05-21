@@ -32,24 +32,27 @@ static inline QColor mixBandColor(float low, float lowMid, float mid, float high
     float h2 = 0.0f, s2 = 0.0f, v2 = 0.0f;
     QColor tmp(std::clamp(int(r), 0, 255), std::clamp(int(g), 0, 255), std::clamp(int(b), 0, 255));
     tmp.getHsvF(&h2, &s2, &v2);
-    s2 = std::clamp(static_cast<float>(s2 * 1.40f + 0.06f), 0.0f, 1.0f);
-    v2 = std::clamp(static_cast<float>(v2 * 1.15f + 0.04f), 0.0f, 1.0f);
+    // Boost saturation + brightness for vivid, immediately readable overview colors.
+    s2 = std::clamp(static_cast<float>(s2 * 1.70f + 0.10f), 0.0f, 1.0f);
+    v2 = std::clamp(static_cast<float>(v2 * 1.22f + 0.05f), 0.0f, 1.0f);
     tmp.setHsvF(h2, s2, v2, 1.0);
     return tmp;
 }
 
 struct OverviewBin {
-    float rms    = 0.0f;
+    float rms    = 0.0f;   // max rms in bin (peak energy)
+    float rmsSum = 0.0f;   // sum for mean — used for transient detection
     float low    = 0.0f;
     float lowMid = 0.0f;
     float mid    = 0.0f;
     float high   = 0.0f;
+    int   count  = 0;      // number of source frames in this bin
 };
 
 struct RenderCol {
     QColor color;
     float bodyH = 0.0f;
-    float coreH = 0.0f;
+    float tipH  = 0.0f;   // top-edge highlight height (upper portion of bar)
 };
 
 } // namespace
@@ -192,6 +195,8 @@ void RgbWaveformItem::paint(QPainter* painter)
         for (int i = i0; i < i1; ++i) {
             const auto& f = frames[i];
             bin.rms    = std::max(bin.rms,    f.rms);
+            bin.rmsSum += f.rms;
+            ++bin.count;
             bin.low    = std::max(bin.low,    f.low);
             bin.lowMid = std::max(bin.lowMid, f.lowMid);
             bin.mid    = std::max(bin.mid,    f.mid);
@@ -202,47 +207,101 @@ void RgbWaveformItem::paint(QPainter* painter)
     }
 
 
-    // 2-pass overview rendering.
-    // Pass 1: main body bar — vivid, fully opaque.
-    // Pass 2: narrow central spine mixed 50% toward white — "lit from inside" depth.
+    // ── Height computation: log1p compression + transient emphasis ──────────────
+    // log1p(rms × k) / log1p(k) expands the lower dynamic range so breakdowns and
+    // builds show as shorter-but-visible bars rather than a flat near-zero baseline.
+    // Transient bins (peak >> mean) receive a small extra boost so kicks / snares
+    // remain readable as slightly taller bars against their section background.
+    std::vector<float> rawH(static_cast<size_t>(drawWidth));
+    for (int x = 0; x < drawWidth; ++x) {
+        const auto& b = bins[static_cast<size_t>(x)];
+        if (b.rms <= 0.001f) { rawH[static_cast<size_t>(x)] = 0.0f; continue; }
+        const float logH    = std::log1p(b.rms * 9.0f) / std::log1p(9.0f);
+        const float rmsMean = b.count > 0 ? b.rmsSum / static_cast<float>(b.count) : b.rms;
+        const float tBoost  = std::clamp((b.rms - rmsMean) / (rmsMean + 0.02f), 0.0f, 0.25f);
+        rawH[static_cast<size_t>(x)] = std::clamp(logH + tBoost * 0.08f, 0.0f, 1.0f);
+    }
+
+    // ── Gaussian-approximate temporal smoothing ──────────────────────────────────
+    // Two passes of a symmetric 3-tap kernel [0.25, 0.50, 0.25] → σ ≈ √2 pixels.
+    // Removes per-bin noise so drops, builds, and breakdowns read as smooth regions.
+    // Peak preservation: restore 82% of the pre-smooth height so transients remain
+    // slightly taller than their smoothed neighbors.
+    std::vector<float> smoothH = rawH;
+    for (int pass = 0; pass < 2; ++pass) {
+        std::vector<float> tmp = smoothH;
+        for (int x = 1; x < drawWidth - 1; ++x) {
+            tmp[static_cast<size_t>(x)] =
+                smoothH[static_cast<size_t>(x - 1)] * 0.25f +
+                smoothH[static_cast<size_t>(x)]     * 0.50f +
+                smoothH[static_cast<size_t>(x + 1)] * 0.25f;
+        }
+        smoothH = std::move(tmp);
+    }
+    for (int x = 0; x < drawWidth; ++x) {
+        smoothH[static_cast<size_t>(x)] = std::max(
+            smoothH[static_cast<size_t>(x)],
+            rawH[static_cast<size_t>(x)] * 0.82f);
+    }
+
+    // ── Render column computation ────────────────────────────────────────────────
     std::vector<RenderCol> cols(static_cast<size_t>(drawWidth));
     for (int x = 0; x < drawWidth; ++x) {
         const auto& bin = bins[static_cast<size_t>(x)];
         if (bin.rms <= 0.0001f) continue;
         const float rms   = std::clamp(bin.rms, 0.0f, 1.0f);
-        const float bodyH = rms * maxBarH;
+        const float bodyH = smoothH[static_cast<size_t>(x)] * maxBarH;
         cols[static_cast<size_t>(x)] = {
             mixBandColor(bin.low, bin.lowMid, bin.mid, bin.high, rms),
             bodyH,
-            bodyH * 0.32f
+            bodyH * 0.20f   // top-edge highlight covers upper 20% of each bar
         };
     }
 
-    // Pass 1: vivid body bars.
+    // ── Overview rendering: 3 passes ─────────────────────────────────────────────
+    // Pass 1: Soft background glow — 2px wide at very low alpha creates a halo that
+    //         adds spatial depth without muddying the color.
     for (int x = 0; x < drawWidth; ++x) {
         const auto& col = cols[static_cast<size_t>(x)];
         if (col.bodyH <= 0.0f) continue;
         const auto& c = col.color;
-        painter->setBrush(QColor(c.red(), c.green(), c.blue(), 242));
+        painter->setBrush(QColor(c.red(), c.green(), c.blue(), 24));
+        const double glowH = static_cast<double>(col.bodyH) * 1.08;
+        if (m_rectified)
+            painter->drawRect(QRectF(x - 0.5, baseline - glowH, 2.0, glowH + 1.0));
+        else
+            painter->drawRect(QRectF(x - 0.5, baseline - glowH, 2.0, 2.0 * glowH + 1.0));
+    }
+
+    // Pass 2: Main body bar — vivid, nearly opaque.
+    for (int x = 0; x < drawWidth; ++x) {
+        const auto& col = cols[static_cast<size_t>(x)];
+        if (col.bodyH <= 0.0f) continue;
+        const auto& c = col.color;
+        painter->setBrush(QColor(c.red(), c.green(), c.blue(), 235));
         if (m_rectified)
             painter->drawRect(QRectF(x, baseline - col.bodyH, 1.0, col.bodyH + 1.0));
         else
             painter->drawRect(QRectF(x, baseline - col.bodyH, 1.0, 2.0 * col.bodyH + 1.0));
     }
 
-    // Pass 2: bright central spine — 50% mix toward white for inner depth.
+    // Pass 3: Top-edge highlight — upper 20% of each bar mixed 65% toward white.
+    //         Energy peaks glow brightly at the bar tip; drops are immediately vivid.
     for (int x = 0; x < drawWidth; ++x) {
         const auto& col = cols[static_cast<size_t>(x)];
-        if (col.coreH <= 0.0f) continue;
+        if (col.tipH <= 0.5f) continue;
         const auto& c = col.color;
-        const int sr = c.red()   + (255 - c.red())   / 2;
-        const int sg = c.green() + (255 - c.green()) / 2;
-        const int sb = c.blue()  + (255 - c.blue())  / 2;
-        painter->setBrush(QColor(sr, sg, sb, 255));
-        if (m_rectified)
-            painter->drawRect(QRectF(x, baseline - col.coreH, 1.0, col.coreH + 1.0));
-        else
-            painter->drawRect(QRectF(x, baseline - col.coreH, 1.0, 2.0 * col.coreH + 1.0));
+        const int tr = c.red()   + (255 - c.red())   * 65 / 100;
+        const int tg = c.green() + (255 - c.green()) * 65 / 100;
+        const int tb = c.blue()  + (255 - c.blue())  * 65 / 100;
+        painter->setBrush(QColor(tr, tg, tb, 255));
+        if (m_rectified) {
+            painter->drawRect(QRectF(x, baseline - col.bodyH, 1.0, col.tipH + 0.5));
+        } else {
+            // Bright tip at both the top and bottom edges of the symmetric bar.
+            painter->drawRect(QRectF(x, baseline - col.bodyH, 1.0, col.tipH + 0.5));
+            painter->drawRect(QRectF(x, baseline + col.bodyH - col.tipH, 1.0, col.tipH + 0.5));
+        }
     }
 
     const float durationSec = std::max(0.001f, m_engine->getDuration());
