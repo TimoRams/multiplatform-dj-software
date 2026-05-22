@@ -189,10 +189,10 @@ ScrollingWaveformItem::getLabelTex(const QString& text, bool downbeat, double dp
     if (it != m_texCache.end() && it->valid())
         return *it;
 
-    const int px = static_cast<int>(std::round((downbeat ? 11.0 : 10.0) * dpr));
+    const int px = static_cast<int>(std::round(10.0 * dpr));
     QFont font(QStringLiteral("monospace"));
     font.setPixelSize(px);
-    font.setBold(downbeat);
+    font.setBold(false);
     QFontMetrics fm(font);
     const int imgW = fm.horizontalAdvance(text) + 4;
     const int imgH = fm.height() + 2;
@@ -204,7 +204,7 @@ ScrollingWaveformItem::getLabelTex(const QString& text, bool downbeat, double dp
         QPainter p(&img);
         p.setFont(font);
         p.setRenderHint(QPainter::TextAntialiasing);
-        p.setPen(downbeat ? QColor(255, 80, 80, 235) : QColor(200, 200, 200, 153));
+        p.setPen(QColor(255, 255, 255, 200));
         p.drawText(2, fm.ascent() + 1, text);
     }
 
@@ -288,12 +288,13 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     TrackData* td = m_engine->getTrackData();
 
     // Scene graph node order (back to front):
-    //   0: lowNode    - dark blue     (sub-bass / kick,    LP @ 110 Hz)
-    //   1: lowMidNode  - gold/ocker    (bass body / warmth, BP 150–160 Hz)
-    //   2: midNode     - orange/red    (snare / vocals,     BP 180–800 Hz)
-    //   3: highNode    - pure white    (hi-hat / perc,      BP@2750 + HP@19k)
-    //   4: beatNode    - regular beat lines (white, thin)
-    //   5: downbeatNode- downbeat lines (red) + triangle markers
+    //   0: audioRegionNode - subtle background fill for the audio region
+    //   1: lowNode    - dark blue     (sub-bass / kick,    LP @ 110 Hz)
+    //   2: lowMidNode  - gold/ocker    (bass body / warmth, BP 150–160 Hz)
+    //   3: midNode     - orange/red    (snare / vocals,     BP 180–800 Hz)
+    //   4: highNode    - pure white    (hi-hat / perc,      BP@2750 + HP@19k)
+    //   5: beatNode    - regular beat lines (white, thin)
+    //   6: downbeatNode- downbeat lines (red) + rectangular block markers
     QSGNode* rootNode = oldNode;
     if (!rootNode) {
         rootNode = new QSGNode();
@@ -339,148 +340,129 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             return node;
         };
 
-        makeStrip(rootNode);          // 0: low
-        makeStrip(rootNode);          // 1: lowMid
-        makeStrip(rootNode);          // 2: mid
-        makeStrip(rootNode);          // 3: high
-        makeQuadLinesNode(rootNode);  // 4: regular beat lines (DrawTriangles, white)
-        makeQuadLinesNode(rootNode);  // 5: downbeat lines (DrawTriangles, red)
-        // Note: node 5 is reused for BOTH the red vertical line AND the triangle.
-        // We allocate two separate geometry nodes inside it: the child QSGNode
-        // approach would require more nodes, so instead we use a shared Lines node
-        // for the line and a sibling TrianglesNode appended directly to rootNode.
+        // 0: audio region background fill (DrawTriangleStrip) — must be first (behind all)
+        {
+            auto* n = new QSGGeometryNode();
+            auto* g = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
+            g->setDrawingMode(QSGGeometry::DrawTriangleStrip);
+            n->setGeometry(g);
+            n->setFlag(QSGNode::OwnsGeometry);
+            n->setMaterial(new QSGVertexColorMaterial());
+            n->setFlag(QSGNode::OwnsMaterial);
+            rootNode->appendChildNode(n);
+        }
 
-        // 6: beat triangle markers — all beats, top + bottom (DrawTriangles)
-        //    downbeat = red larger, regular = gray/white smaller
-        auto* triNode = new QSGGeometryNode();
-        auto* triGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
-        triGeo->setDrawingMode(QSGGeometry::DrawTriangles);
-        triNode->setGeometry(triGeo);
-        triNode->setFlag(QSGNode::OwnsGeometry);
-        triNode->setMaterial(new QSGVertexColorMaterial());
-        triNode->setFlag(QSGNode::OwnsMaterial);
-        rootNode->appendChildNode(triNode);
+        makeStrip(rootNode);          // 1: low
+        makeStrip(rootNode);          // 2: lowMid
+        makeStrip(rootNode);          // 3: mid
+        makeStrip(rootNode);          // 4: high
+        makeQuadLinesNode(rootNode);  // 5: regular beat lines (DrawTriangles, white)
+        makeQuadLinesNode(rootNode);  // 6: downbeat lines (DrawTriangles, red)
 
-        // 7: loop overlay rectangle (DrawTriangleStrip)
-        auto* loopFillNode = new QSGGeometryNode();
-        auto* loopFillGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
-        loopFillGeo->setDrawingMode(QSGGeometry::DrawTriangleStrip);
-        loopFillNode->setGeometry(loopFillGeo);
-        loopFillNode->setFlag(QSGNode::OwnsGeometry);
-        loopFillNode->setMaterial(new QSGVertexColorMaterial());
-        loopFillNode->setFlag(QSGNode::OwnsMaterial);
-        rootNode->appendChildNode(loopFillNode);
+        // 7: downbeat block markers — top + bottom (DrawTriangles)
+        {
+            auto* n = new QSGGeometryNode();
+            auto* g = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
+            g->setDrawingMode(QSGGeometry::DrawTriangles);
+            n->setGeometry(g);
+            n->setFlag(QSGNode::OwnsGeometry);
+            n->setMaterial(new QSGVertexColorMaterial());
+            n->setFlag(QSGNode::OwnsMaterial);
+            rootNode->appendChildNode(n);
+        }
 
-        // 8: loop in/out markers (DrawLines)
-        auto* loopLineNode = new QSGGeometryNode();
-        auto* loopLineGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
-        loopLineGeo->setDrawingMode(QSGGeometry::DrawLines);
-        loopLineGeo->setLineWidth(1.0f);
-        loopLineNode->setGeometry(loopLineGeo);
-        loopLineNode->setFlag(QSGNode::OwnsGeometry);
-        loopLineNode->setMaterial(new QSGVertexColorMaterial());
-        loopLineNode->setFlag(QSGNode::OwnsMaterial);
-        rootNode->appendChildNode(loopLineNode);
+        // 8: loop overlay rectangle (DrawTriangleStrip)
+        {
+            auto* n = new QSGGeometryNode();
+            auto* g = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
+            g->setDrawingMode(QSGGeometry::DrawTriangleStrip);
+            n->setGeometry(g);
+            n->setFlag(QSGNode::OwnsGeometry);
+            n->setMaterial(new QSGVertexColorMaterial());
+            n->setFlag(QSGNode::OwnsMaterial);
+            rootNode->appendChildNode(n);
+        }
 
-        // 9: segment strip at the bottom (DrawTriangles)
-        auto* segmentNode = new QSGGeometryNode();
-        auto* segmentGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
-        segmentGeo->setDrawingMode(QSGGeometry::DrawTriangles);
-        segmentNode->setGeometry(segmentGeo);
-        segmentNode->setFlag(QSGNode::OwnsGeometry);
-        segmentNode->setMaterial(new QSGVertexColorMaterial());
-        segmentNode->setFlag(QSGNode::OwnsMaterial);
-        rootNode->appendChildNode(segmentNode);
+        // 9: loop in/out markers (DrawLines)
+        makeLinesNode(rootNode);
 
-        // 10: hotcue marker shadow (DrawLines)
-        auto* hotCueShadowNode = new QSGGeometryNode();
-        auto* hotCueShadowGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
-        hotCueShadowGeo->setDrawingMode(QSGGeometry::DrawLines);
-        hotCueShadowGeo->setLineWidth(4.2f);
-        hotCueShadowNode->setGeometry(hotCueShadowGeo);
-        hotCueShadowNode->setFlag(QSGNode::OwnsGeometry);
-        hotCueShadowNode->setMaterial(new QSGVertexColorMaterial());
-        hotCueShadowNode->setFlag(QSGNode::OwnsMaterial);
-        rootNode->appendChildNode(hotCueShadowNode);
+        // 10: segment strip at the bottom (DrawTriangles)
+        makeQuadLinesNode(rootNode);
 
-        // 11: hotcue markers (DrawLines)
-        auto* hotCueNode = new QSGGeometryNode();
-        auto* hotCueGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
-        hotCueGeo->setDrawingMode(QSGGeometry::DrawLines);
-        hotCueGeo->setLineWidth(2.6f);
-        hotCueNode->setGeometry(hotCueGeo);
-        hotCueNode->setFlag(QSGNode::OwnsGeometry);
-        hotCueNode->setMaterial(new QSGVertexColorMaterial());
-        hotCueNode->setFlag(QSGNode::OwnsMaterial);
-        rootNode->appendChildNode(hotCueNode);
+        // 11: hotcue marker shadow (DrawLines, 4.2px)
+        {
+            auto* n = new QSGGeometryNode();
+            auto* g = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
+            g->setDrawingMode(QSGGeometry::DrawLines);
+            g->setLineWidth(4.2f);
+            n->setGeometry(g);
+            n->setFlag(QSGNode::OwnsGeometry);
+            n->setMaterial(new QSGVertexColorMaterial());
+            n->setFlag(QSGNode::OwnsMaterial);
+            rootNode->appendChildNode(n);
+        }
 
-        // 12: hotcue triangle markers (DrawTriangles, colored top+bottom)
-        auto* hotCueTriNode = new QSGGeometryNode();
-        auto* hotCueTriGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
-        hotCueTriGeo->setDrawingMode(QSGGeometry::DrawTriangles);
-        hotCueTriNode->setGeometry(hotCueTriGeo);
-        hotCueTriNode->setFlag(QSGNode::OwnsGeometry);
-        hotCueTriNode->setMaterial(new QSGVertexColorMaterial());
-        hotCueTriNode->setFlag(QSGNode::OwnsMaterial);
-        rootNode->appendChildNode(hotCueTriNode);
+        // 12: hotcue markers (DrawLines, 2.6px)
+        {
+            auto* n = new QSGGeometryNode();
+            auto* g = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
+            g->setDrawingMode(QSGGeometry::DrawLines);
+            g->setLineWidth(2.6f);
+            n->setGeometry(g);
+            n->setFlag(QSGNode::OwnsGeometry);
+            n->setMaterial(new QSGVertexColorMaterial());
+            n->setFlag(QSGNode::OwnsMaterial);
+            rootNode->appendChildNode(n);
+        }
 
-        // 13: main cue line (DrawLines, gray)
-        auto* mainCueLineNode = new QSGGeometryNode();
-        auto* mainCueLineGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
-        mainCueLineGeo->setDrawingMode(QSGGeometry::DrawLines);
-        mainCueLineGeo->setLineWidth(2.0f);
-        mainCueLineNode->setGeometry(mainCueLineGeo);
-        mainCueLineNode->setFlag(QSGNode::OwnsGeometry);
-        mainCueLineNode->setMaterial(new QSGVertexColorMaterial());
-        mainCueLineNode->setFlag(QSGNode::OwnsMaterial);
-        rootNode->appendChildNode(mainCueLineNode);
+        // 13: hotcue triangle markers (DrawTriangles, colored top+bottom)
+        makeQuadLinesNode(rootNode);
 
-        // 14: main cue triangles (DrawTriangles, orange top+bottom)
-        auto* mainCueTriNode = new QSGGeometryNode();
-        auto* mainCueTriGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
-        mainCueTriGeo->setDrawingMode(QSGGeometry::DrawTriangles);
-        mainCueTriNode->setGeometry(mainCueTriGeo);
-        mainCueTriNode->setFlag(QSGNode::OwnsGeometry);
-        mainCueTriNode->setMaterial(new QSGVertexColorMaterial());
-        mainCueTriNode->setFlag(QSGNode::OwnsMaterial);
-        rootNode->appendChildNode(mainCueTriNode);
+        // 14: main cue line (DrawLines, 2px)
+        {
+            auto* n = new QSGGeometryNode();
+            auto* g = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
+            g->setDrawingMode(QSGGeometry::DrawLines);
+            g->setLineWidth(2.0f);
+            n->setGeometry(g);
+            n->setFlag(QSGNode::OwnsGeometry);
+            n->setMaterial(new QSGVertexColorMaterial());
+            n->setFlag(QSGNode::OwnsMaterial);
+            rootNode->appendChildNode(n);
+        }
 
-        // 15: track-start boundary line at time=0 (DrawTriangles, bright white quad)
-        // Drawn on top of everything so it is always clearly visible in pre-roll.
-        auto* trackStartNode = new QSGGeometryNode();
-        auto* trackStartGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
-        trackStartGeo->setDrawingMode(QSGGeometry::DrawTriangles);
-        trackStartNode->setGeometry(trackStartGeo);
-        trackStartNode->setFlag(QSGNode::OwnsGeometry);
-        trackStartNode->setMaterial(new QSGVertexColorMaterial());
-        trackStartNode->setFlag(QSGNode::OwnsMaterial);
-        rootNode->appendChildNode(trackStartNode);
+        // 15: main cue triangles (DrawTriangles, orange top+bottom)
+        makeQuadLinesNode(rootNode);
 
-        // 16: beat label text container — plain parent, children are QSGSimpleTextureNode
+        // 16: retired — was track-start boundary line (kept as empty placeholder)
+        makeQuadLinesNode(rootNode);
+
+        // 17: beat label text container — plain parent, children are QSGSimpleTextureNode
         rootNode->appendChildNode(new QSGNode());
 
-        // 17: cue/hotcue badge text container — same pattern
+        // 18: cue/hotcue badge text container — same pattern
         rootNode->appendChildNode(new QSGNode());
     }
 
-    auto* lowNode      = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(0));
-    auto* lowMidNode   = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(1));
-    auto* midNode      = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(2));
-    auto* highNode     = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(3));
-    auto* beatNode     = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(4));
-    auto* downbeatNode = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(5));
-    auto* triNode      = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(6));
-    auto* loopFillNode = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(7));
-    auto* loopLineNode = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(8));
-    auto* segmentNode  = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(9));
-    auto* hotCueShadowNode = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(10));
-    auto* hotCueNode       = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(11));
-    auto* hotCueTriNode    = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(12));
-    auto* mainCueLineNode  = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(13));
-    auto* mainCueTriNode   = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(14));
-    auto* trackStartNode   = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(15));
-    QSGNode* beatLabelNode = rootNode->childAtIndex(16);  // container for beat label textures
-    QSGNode* badgeNode     = rootNode->childAtIndex(17);  // container for cue badge textures
+    auto* audioRegionNode  = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(0));
+    auto* lowNode          = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(1));
+    auto* lowMidNode       = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(2));
+    auto* midNode          = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(3));
+    auto* highNode         = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(4));
+    auto* beatNode         = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(5));
+    auto* downbeatNode     = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(6));
+    auto* triNode          = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(7));
+    auto* loopFillNode     = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(8));
+    auto* loopLineNode     = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(9));
+    auto* segmentNode      = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(10));
+    auto* hotCueShadowNode = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(11));
+    auto* hotCueNode       = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(12));
+    auto* hotCueTriNode    = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(13));
+    auto* mainCueLineNode  = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(14));
+    auto* mainCueTriNode   = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(15));
+    // node 16: retired placeholder (was track-start boundary line)
+    QSGNode* beatLabelNode = rootNode->childAtIndex(17);  // container for beat label textures
+    QSGNode* badgeNode     = rootNode->childAtIndex(18);  // container for cue badge textures
 
     int wInt = static_cast<int>(std::lround(width()));
     if (wInt <= 0) return rootNode;
@@ -488,6 +470,10 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     const float w             = static_cast<float>(wInt);
     const double wD           = static_cast<double>(wInt);
     const float midY          = static_cast<float>(height()) / 2.0f;
+    // Reserve space for the top and bottom downbeat blocks (8 px) plus a small gap.
+    // The waveform amplitude is scaled to this half-height so it never touches the edges.
+    constexpr float kWaveMargin = 11.0f;
+    const float waveHalf = std::max(0.0f, midY - kWaveMargin);
     const double dpr          = window() ? std::max(1.0, static_cast<double>(window()->effectiveDevicePixelRatio())) : 1.0;
     const double snapScale    = dpr;
     const double pointsPerSec = m_engine->waveformPointsPerSecond();
@@ -513,8 +499,36 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     const QVector<TrackData::RgbWaveformFrame>& rgbData = m_rgbSliceBuf;
     // rgbData can be empty when the viewport is entirely in the pre-roll zone
     // (before sample 0). In that case, skip waveform bars but still render
-    // the beatgrid, hotcues, and the track-start boundary.
+    // the beatgrid, hotcues, and the audio region background.
     const bool hasWaveformData = !rgbData.isEmpty();
+
+    // ── Audio region background fill ─────────────────────────────────────────
+    // Renders a subtle fill behind the audio content so the track region is
+    // visually distinct from the pre-roll / post-track void without any lines.
+    {
+        const float hF    = midY * 2.0f;
+        const int waveSize = td->getRgbWaveformSize();
+        QSGGeometry* arGeo = audioRegionNode->geometry();
+        if (waveSize > 0) {
+            const float ax1 = snapDevicePixelX(wD / 2.0 + (0.0 - centerIndexRender) * pixelsPerPoint);
+            const float ax2 = snapDevicePixelX(wD / 2.0 + (static_cast<double>(waveSize) - centerIndexRender) * pixelsPerPoint);
+            const float rx1 = std::max(0.0f, ax1);
+            const float rx2 = std::min(w, ax2);
+            if (rx2 > rx1) {
+                arGeo->allocate(4);
+                auto* av = arGeo->vertexDataAsColoredPoint2D();
+                av[0].set(rx1, 0.0f, 42, 42, 42, 255);
+                av[1].set(rx1, hF,   42, 42, 42, 255);
+                av[2].set(rx2, 0.0f, 42, 42, 42, 255);
+                av[3].set(rx2, hF,   42, 42, 42, 255);
+            } else {
+                arGeo->allocate(0);
+            }
+        } else {
+            arGeo->allocate(0);
+        }
+        audioRegionNode->markDirty(QSGNode::DirtyGeometry);
+    }
 
     if (hasWaveformData) {
     lowNode   ->geometry()->allocate(wInt * 2);
@@ -713,14 +727,14 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             // With these bounds: bodyTop ≤ midY ≤ bodyBot (never inverted).
             const float pMax = std::clamp(pixels[x].peakMax, 0.0f, 1.0f);
             const float pMin = std::clamp(pixels[x].peakMin, -1.0f, 0.0f);
-            bodyTop = midY * (1.0f - pMax);
-            bodyBot = midY * (1.0f - pMin);
-            signalY = midY - (pMax + pMin) * 0.5f * midY;
+            bodyTop = midY - pMax * waveHalf;
+            bodyBot = midY - pMin * waveHalf;
+            signalY = midY - (pMax + pMin) * 0.5f * waveHalf;
             peakAbs = std::max(pMax, -pMin);
         } else {
             peakAbs = rms;
-            bodyTop = midY - rms * midY;
-            bodyBot = midY + rms * midY;
+            bodyTop = midY - rms * waveHalf;
+            bodyBot = midY + rms * waveHalf;
             signalY = midY;
         }
 
@@ -746,7 +760,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         lowMidV[vIdx+1].set(fx, bodyBot, cr, cg, cb, 252);
 
         // Central spine: bright strip following the signal midpoint.
-        const float coreAmp = peakAbs * midY * 0.28f;
+        const float coreAmp = peakAbs * waveHalf * 0.28f;
         const uchar coreR = static_cast<uchar>(static_cast<int>(cr) + (255 - static_cast<int>(cr)) * 55 / 100);
         const uchar coreG = static_cast<uchar>(static_cast<int>(cg) + (255 - static_cast<int>(cg)) * 55 / 100);
         const uchar coreB = static_cast<uchar>(static_cast<int>(cb) + (255 - static_cast<int>(cb)) * 55 / 100);
@@ -924,56 +938,60 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             }
         }
 
-        // ── Node 6: beat triangle markers — every beat line, top AND bottom ──
-        // Downbeat: red,   triH=10, triW=4.5  (prominent)
-        // Regular:  gray,  triH=7,  triW=3.5  (subtle)
-        // Top triangle: base at y=0,  tip points down at y=+triH
-        // Bottom triangle: base at y=hF, tip points up at y=hF-triH
-        const float triHD = 10.0f, triWD = 4.5f;
-        const float triHR =  7.0f, triWR = 3.5f;
-        triGeo2->allocate(static_cast<int>(visible.size()) * 6);
+        // ── Node 6: downbeat rectangular blocks — top AND bottom edges ──────
+        // CDJ/Engine DJ style: solid red rectangles mark bar starts.
+        // Regular beats get no symbol — their white line is sufficient.
+        const float blockW = 6.0f * invDpr;   // 6 device pixels, centered on beat line
+        const float blockH = 8.0f;             // logical pixels tall
+        triGeo2->allocate(numDownbeat * 12);   // 2 rects × 2 triangles × 3 verts
         {
             auto* v = triGeo2->vertexDataAsColoredPoint2D();
             int idx = 0;
             for (auto& vb : visible) {
-                const float cx = vb.xl + invDpr;  // center of 2-device-pixel core
-                if (vb.isDownbeat) {
-                    v[idx++].set(cx - triWD, 0.0f,       230,   0,   0, 230);
-                    v[idx++].set(cx + triWD, 0.0f,       230,   0,   0, 230);
-                    v[idx++].set(cx,         triHD,       230,   0,   0, 195);
-                    v[idx++].set(cx - triWD, hF,          230,   0,   0, 230);
-                    v[idx++].set(cx + triWD, hF,          230,   0,   0, 230);
-                    v[idx++].set(cx,         hF - triHD,  230,   0,   0, 195);
-                } else {
-                    v[idx++].set(cx - triWR, 0.0f,       185, 185, 185, 145);
-                    v[idx++].set(cx + triWR, 0.0f,       185, 185, 185, 145);
-                    v[idx++].set(cx,         triHR,       185, 185, 185, 100);
-                    v[idx++].set(cx - triWR, hF,          185, 185, 185, 145);
-                    v[idx++].set(cx + triWR, hF,          185, 185, 185, 145);
-                    v[idx++].set(cx,         hF - triHR,  185, 185, 185, 100);
-                }
+                if (!vb.isDownbeat) continue;
+                const float cx  = vb.xl + corePx * 0.5f;
+                const float bxl = cx - blockW * 0.5f;
+                const float bxr = cx + blockW * 0.5f;
+                // Top block: y = [0, blockH]
+                v[idx++].set(bxl, 0.0f,   230,   0,   0, 255);
+                v[idx++].set(bxr, 0.0f,   230,   0,   0, 255);
+                v[idx++].set(bxr, blockH, 230,   0,   0, 210);
+                v[idx++].set(bxl, 0.0f,   230,   0,   0, 255);
+                v[idx++].set(bxr, blockH, 230,   0,   0, 210);
+                v[idx++].set(bxl, blockH, 230,   0,   0, 210);
+                // Bottom block: y = [hF - blockH, hF]
+                v[idx++].set(bxl, hF - blockH, 230,   0,   0, 210);
+                v[idx++].set(bxr, hF - blockH, 230,   0,   0, 210);
+                v[idx++].set(bxr, hF,           230,   0,   0, 255);
+                v[idx++].set(bxl, hF - blockH,  230,   0,   0, 210);
+                v[idx++].set(bxr, hF,            230,   0,   0, 255);
+                v[idx++].set(bxl, hF,            230,   0,   0, 255);
             }
         }
 
         // ── Beat label textures (node 16) ──────────────────────────────────────
-        // Same updatePaintNode() call as beat lines above — guaranteed same centerForBeats.
+        // Only downbeats get bar numbers. Positioned just below and to the right
+        // of the top red block so they feel anchored to the marker.
         {
             drainToPool(beatLabelNode);
             constexpr float kMinLabelSpacing = 20.0f;
+            constexpr float kBlockH  = 8.0f;
+            constexpr float kGapX    = 2.0f;  // gap between label right-edge and beat line
+            constexpr float kGapY    = 1.0f;  // gap between label bottom-edge and block top
             float lastLabelX = -1e6f;
-            const float labelY = 1.0f;
             for (const auto& vb : visible) {
+                if (!vb.isDownbeat) continue;
                 if (vb.xl - lastLabelX < kMinLabelSpacing) continue;
-                const QString txt = vb.isDownbeat
-                    ? QString::number(vb.barNumber)
-                    : QString::number(vb.beatInBar);
-                const LabelTex lt = getLabelTex(txt, vb.isDownbeat, snapScale);
+                const LabelTex lt = getLabelTex(QString::number(vb.barNumber), true, snapScale);
                 if (!lt.valid()) continue;
-                const float lx = std::clamp(vb.xl - lt.logW * 0.5f, 0.0f, w - lt.logW);
+                // Anchor bottom-left: label sits just above the bottom red block,
+                // right-edge aligned slightly left of the beat line.
+                const float lx = std::clamp(vb.xl - lt.logW - kGapX, 0.0f, w - lt.logW);
+                const float ly = hF - kBlockH - lt.logH - kGapY;
                 auto* tn = getFromPool();
                 tn->setTexture(lt.tex);
                 tn->setOwnsTexture(false);
-                tn->setRect(QRectF(static_cast<double>(lx), static_cast<double>(labelY),
+                tn->setRect(QRectF(static_cast<double>(lx), static_cast<double>(ly),
                                    static_cast<double>(lt.logW), static_cast<double>(lt.logH)));
                 beatLabelNode->appendChildNode(tn);
                 lastLabelX = vb.xl;
@@ -1171,30 +1189,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         mainCueTriNode->markDirty(QSGNode::DirtyGeometry);
     }
 
-    // ── Track-start boundary (time = 0) ─────────────────────────────────────
-    // Only shown when the waveform is scrolled into pre-roll (visualPos < 0).
-    // A bright white 3-device-pixel-wide quad marks where audio actually begins.
-    {
-        const float hF = static_cast<float>(height());
-        QSGGeometry* tsGeo = trackStartNode->geometry();
-        const double trackStartPoint = 0.0;  // beat 1 / sample 0 in waveform coords
-        const float tsx = snapDevicePixelX(w / 2.0 + (trackStartPoint - centerIndexRender) * pixelsPerPoint);
-        if (tsx >= -2.0f && tsx <= w + 2.0f) {
-            const float invDpr2 = 1.0f / static_cast<float>(snapScale);
-            const float lineW   = 3.0f * invDpr2;
-            tsGeo->allocate(6);
-            auto* tv = tsGeo->vertexDataAsColoredPoint2D();
-            tv[0].set(tsx,        0.0f, 255, 255, 255, 210);
-            tv[1].set(tsx,        hF,   255, 255, 255, 170);
-            tv[2].set(tsx + lineW, hF,  255, 255, 255, 170);
-            tv[3].set(tsx,        0.0f, 255, 255, 255, 210);
-            tv[4].set(tsx + lineW, hF,  255, 255, 255, 170);
-            tv[5].set(tsx + lineW, 0.0f, 255, 255, 255, 210);
-        } else {
-            tsGeo->allocate(0);
-        }
-        trackStartNode->markDirty(QSGNode::DirtyGeometry);
-    }
+    // Node 16 retired — audio start/end boundary lines removed.
+    // The audio region background fill (node 0) provides the visual separation.
 
     // ── Segment strip rendering (tiny colored bar at bottom) ───────────────
     // Draw each segment as a 4px-high rectangle aligned to the waveform timeline.
