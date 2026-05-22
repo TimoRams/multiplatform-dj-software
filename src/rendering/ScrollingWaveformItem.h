@@ -2,8 +2,14 @@
 
 #include <QQuickItem>
 #include <QSGGeometryNode>
+#include <QSGSimpleTextureNode>
 #include <QSGVertexColorMaterial>
+#include <QVariantList>
+#include <QHash>
+#include <QImage>
+#include <atomic>
 #include <array>
+#include <vector>
 #include "DjEngine.h"
 #include "TrackData.h"
 
@@ -16,6 +22,7 @@ class ScrollingWaveformItem : public QQuickItem
 
 public:
     explicit ScrollingWaveformItem(QQuickItem* parent = nullptr);
+    ~ScrollingWaveformItem() override;
 
     DjEngine* engine() const;
     void setEngine(DjEngine* engine);
@@ -25,10 +32,9 @@ public:
 
     Q_INVOKABLE void zoomIn();
     Q_INVOKABLE void zoomOut();
-    // Called by the QML FrameAnimation every VSync frame to request a repaint.
-    // When isPlaying == false the FrameAnimation stops, so this is never called
-    // unnecessarily — exactly what we want for instant-freeze on pause.
     Q_INVOKABLE void requestUpdate() { update(); }
+    // Returns beat label data for external callers; not used for waveform rendering.
+    Q_INVOKABLE QVariantList beatLabels() const;
 
 signals:
     void engineChanged();
@@ -40,6 +46,7 @@ protected:
 private slots:
     void onTrackLoaded();
     void onDataUpdated();
+    void cleanupSgResources(); // called from render thread via sceneGraphInvalidated
 
 private:
     static float clampToZoomLevel(float ppp);
@@ -47,13 +54,40 @@ private:
     DjEngine* m_engine = nullptr;
     bool m_forceUpdate = false;
 
-    // Zoom level in pixels per data point.
     float m_pixelsPerPoint = 1.5f;
 
-    // Per-frame scratch buffers — pre-allocated to avoid heap churn at render rate.
-    // Only accessed from the render thread (inside updatePaintNode).
     mutable QVector<TrackData::RgbWaveformFrame> m_rgbSliceBuf;
     mutable QVector<TrackData::PeakFrame>        m_peakSliceBuf;
+
+    // Coordinate cache for beatLabels() — render thread writes, main thread reads.
+    mutable std::atomic<double> m_lastCenterForBeats{0.0};
+    mutable std::atomic<double> m_lastBeatPpp{1.5};
+    mutable std::atomic<double> m_lastRenderedWidth{100.0};
+
+    // ── Texture-based overlay (beat labels + cue badges) ──────────────────────
+    // All created and destroyed on the render thread.
+    struct LabelTex {
+        QSGTexture* tex  = nullptr;
+        float       logW = 0.0f;
+        float       logH = 0.0f;
+        bool valid() const { return tex != nullptr; }
+    };
+
+    // Text and badge texture cache — keyed by content+style hash.
+    QHash<quint64, LabelTex> m_texCache;
+    QVector<QSGTexture*>     m_allTextures; // owns every texture for cleanup
+
+    // Reusable QSGSimpleTextureNode pool — avoids per-frame allocation.
+    std::vector<QSGSimpleTextureNode*> m_texNodePool;
+
+    // Render-thread helpers. Must only be called from updatePaintNode().
+    LabelTex getLabelTex(const QString& text, bool downbeat, double dpr);
+    LabelTex getBadgeTex(const QString& text, const QColor& color,
+                         float logW, float logH, double dpr);
+    // Detach all children of container and return them to the pool.
+    void drainToPool(QSGNode* container);
+    // Get a node from pool or create a new one.
+    QSGSimpleTextureNode* getFromPool();
 
     static constexpr std::array<float, 20> ZOOM_LEVELS = {
         0.10f, 0.14f, 0.18f, 0.22f, 0.29f, 0.38f, 0.52f, 0.70f, 0.95f,

@@ -1,9 +1,13 @@
 #include "ScrollingWaveformItem.h"
 #include <QDebug>
 #include <QSGGeometry>
+#include <QSGSimpleTextureNode>
 #include <QSGVertexColorMaterial>
 #include <QQuickWindow>
 #include <QColor>
+#include <QPainter>
+#include <QFont>
+#include <QFontMetrics>
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -71,6 +75,20 @@ float ScrollingWaveformItem::clampToZoomLevel(float ppp)
 ScrollingWaveformItem::ScrollingWaveformItem(QQuickItem* parent) : QQuickItem(parent)
 {
     setFlag(ItemHasContents, true);
+    // When the item moves to a new window, wire up scene-graph cleanup.
+    connect(this, &QQuickItem::windowChanged, this, [this](QQuickWindow* win) {
+        if (win)
+            connect(win, &QQuickWindow::sceneGraphInvalidated,
+                    this, &ScrollingWaveformItem::cleanupSgResources,
+                    Qt::DirectConnection);
+    });
+}
+
+ScrollingWaveformItem::~ScrollingWaveformItem()
+{
+    // cleanupSgResources() is the authoritative path (render thread).
+    // If we're destroyed without that signal, pool nodes still need freeing.
+    for (auto* n : m_texNodePool) delete n;
 }
 
 DjEngine* ScrollingWaveformItem::engine() const
@@ -149,6 +167,115 @@ void ScrollingWaveformItem::onDataUpdated()
 {
     m_forceUpdate = true;
     update();
+}
+
+// ── Scene-graph resource helpers ──────────────────────────────────────────────
+
+void ScrollingWaveformItem::cleanupSgResources()
+{
+    // Called on the render thread via sceneGraphInvalidated (DirectConnection).
+    for (auto* t : m_allTextures) delete t;
+    m_allTextures.clear();
+    m_texCache.clear();
+    for (auto* n : m_texNodePool) delete n;
+    m_texNodePool.clear();
+}
+
+ScrollingWaveformItem::LabelTex
+ScrollingWaveformItem::getLabelTex(const QString& text, bool downbeat, double dpr)
+{
+    const quint64 key = qHash(text) ^ (static_cast<quint64>(downbeat ? 0xFFFF0000u : 0u));
+    auto it = m_texCache.find(key);
+    if (it != m_texCache.end() && it->valid())
+        return *it;
+
+    const int px = static_cast<int>(std::round((downbeat ? 11.0 : 10.0) * dpr));
+    QFont font(QStringLiteral("monospace"));
+    font.setPixelSize(px);
+    font.setBold(downbeat);
+    QFontMetrics fm(font);
+    const int imgW = fm.horizontalAdvance(text) + 4;
+    const int imgH = fm.height() + 2;
+    if (imgW <= 0 || imgH <= 0) return {};
+
+    QImage img(imgW, imgH, QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::transparent);
+    {
+        QPainter p(&img);
+        p.setFont(font);
+        p.setRenderHint(QPainter::TextAntialiasing);
+        p.setPen(downbeat ? QColor(255, 80, 80, 235) : QColor(200, 200, 200, 153));
+        p.drawText(2, fm.ascent() + 1, text);
+    }
+
+    LabelTex lt;
+    lt.tex  = window()->createTextureFromImage(img, QQuickWindow::TextureCanUseAtlas);
+    lt.logW = static_cast<float>(imgW) / static_cast<float>(dpr);
+    lt.logH = static_cast<float>(imgH) / static_cast<float>(dpr);
+    m_allTextures.append(lt.tex);
+    m_texCache[key] = lt;
+    return lt;
+}
+
+ScrollingWaveformItem::LabelTex
+ScrollingWaveformItem::getBadgeTex(const QString& text, const QColor& color,
+                                    float logW, float logH, double dpr)
+{
+    const quint64 key = qHash(text) ^ (static_cast<quint64>(color.rgb()) << 20)
+                        ^ (static_cast<quint64>(static_cast<int>(logW * 10)) << 50);
+    auto it = m_texCache.find(key);
+    if (it != m_texCache.end() && it->valid())
+        return *it;
+
+    const int imgW = std::max(1, static_cast<int>(std::round(logW * dpr)));
+    const int imgH = std::max(1, static_cast<int>(std::round(logH * dpr)));
+    QImage img(imgW, imgH, QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::transparent);
+    {
+        QPainter p(&img);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.scale(dpr, dpr);
+        p.setPen(QPen(QColor(0, 0, 0, 115), 1.0));
+        p.setBrush(color);
+        p.drawRoundedRect(QRectF(0.5, 0.5, logW - 1.0, logH - 1.0), 3.0, 3.0);
+
+        QFont font(QStringLiteral("monospace"));
+        font.setPixelSize(static_cast<int>(std::round(8.0 * dpr)));
+        font.setBold(true);
+        p.setFont(font);
+        p.setPen(Qt::white);
+        p.drawText(QRectF(0, 0, logW, logH), Qt::AlignCenter, text);
+    }
+
+    LabelTex lt;
+    lt.tex  = window()->createTextureFromImage(img, QQuickWindow::TextureCanUseAtlas);
+    lt.logW = logW;
+    lt.logH = logH;
+    m_allTextures.append(lt.tex);
+    m_texCache[key] = lt;
+    return lt;
+}
+
+void ScrollingWaveformItem::drainToPool(QSGNode* container)
+{
+    while (container->childCount() > 0) {
+        auto* child = static_cast<QSGSimpleTextureNode*>(container->firstChild());
+        container->removeChildNode(child);
+        m_texNodePool.push_back(child);
+    }
+}
+
+QSGSimpleTextureNode* ScrollingWaveformItem::getFromPool()
+{
+    if (!m_texNodePool.empty()) {
+        auto* n = m_texNodePool.back();
+        m_texNodePool.pop_back();
+        return n;
+    }
+    auto* n = new QSGSimpleTextureNode();
+    n->setOwnsTexture(false);
+    n->setFiltering(QSGTexture::Linear);
+    return n;
 }
 
 QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
@@ -317,6 +444,23 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         mainCueTriNode->setMaterial(new QSGVertexColorMaterial());
         mainCueTriNode->setFlag(QSGNode::OwnsMaterial);
         rootNode->appendChildNode(mainCueTriNode);
+
+        // 15: track-start boundary line at time=0 (DrawTriangles, bright white quad)
+        // Drawn on top of everything so it is always clearly visible in pre-roll.
+        auto* trackStartNode = new QSGGeometryNode();
+        auto* trackStartGeo  = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
+        trackStartGeo->setDrawingMode(QSGGeometry::DrawTriangles);
+        trackStartNode->setGeometry(trackStartGeo);
+        trackStartNode->setFlag(QSGNode::OwnsGeometry);
+        trackStartNode->setMaterial(new QSGVertexColorMaterial());
+        trackStartNode->setFlag(QSGNode::OwnsMaterial);
+        rootNode->appendChildNode(trackStartNode);
+
+        // 16: beat label text container — plain parent, children are QSGSimpleTextureNode
+        rootNode->appendChildNode(new QSGNode());
+
+        // 17: cue/hotcue badge text container — same pattern
+        rootNode->appendChildNode(new QSGNode());
     }
 
     auto* lowNode      = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(0));
@@ -334,19 +478,12 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     auto* hotCueTriNode    = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(12));
     auto* mainCueLineNode  = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(13));
     auto* mainCueTriNode   = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(14));
+    auto* trackStartNode   = static_cast<QSGGeometryNode*>(rootNode->childAtIndex(15));
+    QSGNode* beatLabelNode = rootNode->childAtIndex(16);  // container for beat label textures
+    QSGNode* badgeNode     = rootNode->childAtIndex(17);  // container for cue badge textures
 
     int wInt = static_cast<int>(std::lround(width()));
     if (wInt <= 0) return rootNode;
-
-    lowNode   ->geometry()->allocate(wInt * 2);
-    lowMidNode->geometry()->allocate(wInt * 2);
-    midNode   ->geometry()->allocate(wInt * 2);
-    highNode  ->geometry()->allocate(wInt * 2);
-
-    auto* lowV    = lowNode   ->geometry()->vertexDataAsColoredPoint2D();
-    auto* lowMidV = lowMidNode->geometry()->vertexDataAsColoredPoint2D();
-    auto* midV    = midNode   ->geometry()->vertexDataAsColoredPoint2D();
-    auto* highV   = highNode  ->geometry()->vertexDataAsColoredPoint2D();
 
     const float w             = static_cast<float>(wInt);
     const double wD           = static_cast<double>(wInt);
@@ -374,10 +511,21 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     // the buffer has grown to the typical slice size (viewport + guard points).
     const int sliceBaseIndex = td->fillRgbWaveformSlice(m_rgbSliceBuf, sliceStart, sliceEnd);
     const QVector<TrackData::RgbWaveformFrame>& rgbData = m_rgbSliceBuf;
-    if (rgbData.isEmpty()) {
-        delete rootNode;
-        return nullptr;
-    }
+    // rgbData can be empty when the viewport is entirely in the pre-roll zone
+    // (before sample 0). In that case, skip waveform bars but still render
+    // the beatgrid, hotcues, and the track-start boundary.
+    const bool hasWaveformData = !rgbData.isEmpty();
+
+    if (hasWaveformData) {
+    lowNode   ->geometry()->allocate(wInt * 2);
+    lowMidNode->geometry()->allocate(wInt * 2);
+    midNode   ->geometry()->allocate(wInt * 2);
+    highNode  ->geometry()->allocate(wInt * 2);
+
+    auto* lowV    = lowNode   ->geometry()->vertexDataAsColoredPoint2D();
+    auto* lowMidV = lowMidNode->geometry()->vertexDataAsColoredPoint2D();
+    auto* midV    = midNode   ->geometry()->vertexDataAsColoredPoint2D();
+    auto* highV   = highNode  ->geometry()->vertexDataAsColoredPoint2D();
 
     // Catmull-Rom Spline — clamps to ≥ 0 (safe for RMS / band envelope values).
     auto catmull = [](float p0, float p1, float p2, float p3, float t) {
@@ -614,6 +762,18 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     midNode   ->markDirty(QSGNode::DirtyGeometry);
     highNode  ->markDirty(QSGNode::DirtyGeometry);
 
+    } else {
+        // Pre-roll zone: no waveform data, render empty strips.
+        lowNode   ->geometry()->allocate(0);
+        lowMidNode->geometry()->allocate(0);
+        midNode   ->geometry()->allocate(0);
+        highNode  ->geometry()->allocate(0);
+        lowNode   ->markDirty(QSGNode::DirtyGeometry);
+        lowMidNode->markDirty(QSGNode::DirtyGeometry);
+        midNode   ->markDirty(QSGNode::DirtyGeometry);
+        highNode  ->markDirty(QSGNode::DirtyGeometry);
+    }
+
     // ── Beat-grid rendering ──────────────────────────────────────────────────
     // Node 4: regular beat lines     — white, 1px, alpha 110
     // Node 5: downbeat lines         — red (#e6, 0, 0), 1px, alpha 220
@@ -644,6 +804,11 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         // than one snap step and only ever steps forward.
         const double centerForBeats = std::floor(centerIndexRender * ppp * snapScale)
                                       / (ppp * snapScale);
+        // Publish render-thread values for beatLabels() on the main thread.
+        // Atomics guarantee beatLabels() uses the same coordinate origin as these lines.
+        m_lastCenterForBeats.store(centerForBeats, std::memory_order_relaxed);
+        m_lastBeatPpp.store(ppp, std::memory_order_relaxed);
+        m_lastRenderedWidth.store(static_cast<double>(w), std::memory_order_relaxed);
         // One device pixel expressed in logical-pixel space.
         const float invDpr = 1.0f / static_cast<float>(snapScale);
 
@@ -657,7 +822,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         };
 
         // Collect visible markers, separated into regular and downbeat lists.
-        struct VisibleBeat { float xl; bool isDownbeat; int barNumber; };
+        struct VisibleBeat { float xl; bool isDownbeat; int barNumber; int beatInBar; };
         std::vector<VisibleBeat> visible;
         visible.reserve(256);
 
@@ -669,7 +834,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             for (; it != beatGrid.end() && it->positionSec <= rightSec + 0.5; ++it) {
                 const float xl = beatPixelLeft(it->positionSec * pps);
                 if (xl >= -invDpr && xl <= w)
-                    visible.push_back({xl, it->isDownbeat, it->barNumber});
+                    visible.push_back({xl, it->isDownbeat, it->barNumber, it->beatInBar});
             }
         } else {
             double bpm          = td->getBpm();
@@ -678,12 +843,13 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             double beatPeriod    = 60.0 / bpm;
             int beatStart = static_cast<int>(std::floor((leftSec  - firstBeatSec) / beatPeriod));
             int beatEnd   = static_cast<int>(std::ceil ((rightSec - firstBeatSec) / beatPeriod));
-            beatStart = std::max(beatStart, -1);
+            beatStart = std::max(beatStart, -200);
             beatEnd   = std::min(beatEnd,   100000);
             for (int b = beatStart; b <= beatEnd; ++b) {
+                const int mod4 = ((b % 4) + 4) % 4;
                 const float xl = beatPixelLeft((firstBeatSec + b * beatPeriod) * pps);
                 if (xl >= -invDpr && xl <= w)
-                    visible.push_back({xl, (b % 4 == 0), b / 4 + 1});
+                    visible.push_back({xl, mod4 == 0, b / 4 + 1, mod4 + 1});
             }
         }
 
@@ -789,10 +955,35 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             }
         }
 
+        // ── Beat label textures (node 16) ──────────────────────────────────────
+        // Same updatePaintNode() call as beat lines above — guaranteed same centerForBeats.
+        {
+            drainToPool(beatLabelNode);
+            constexpr float kMinLabelSpacing = 20.0f;
+            float lastLabelX = -1e6f;
+            const float labelY = 1.0f;
+            for (const auto& vb : visible) {
+                if (vb.xl - lastLabelX < kMinLabelSpacing) continue;
+                const QString txt = vb.isDownbeat
+                    ? QString::number(vb.barNumber)
+                    : QString::number(vb.beatInBar);
+                const LabelTex lt = getLabelTex(txt, vb.isDownbeat, snapScale);
+                if (!lt.valid()) continue;
+                const float lx = std::clamp(vb.xl - lt.logW * 0.5f, 0.0f, w - lt.logW);
+                auto* tn = getFromPool();
+                tn->setTexture(lt.tex);
+                tn->setOwnsTexture(false);
+                tn->setRect(QRectF(static_cast<double>(lx), static_cast<double>(labelY),
+                                   static_cast<double>(lt.logW), static_cast<double>(lt.logH)));
+                beatLabelNode->appendChildNode(tn);
+                lastLabelX = vb.xl;
+            }
+        }
     } else {
         beatGeo ->allocate(0);
         downGeo ->allocate(0);
         triGeo2 ->allocate(0);
+        drainToPool(beatLabelNode);
     }
 
     beatNode    ->markDirty(QSGNode::DirtyGeometry);
@@ -854,106 +1045,88 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     loopFillNode->markDirty(QSGNode::DirtyGeometry);
     loopLineNode->markDirty(QSGNode::DirtyGeometry);
 
-    // ── Hotcue markers ─────────────────────────────────────────────────────
-    QSGGeometry* hotCueShadowGeo = hotCueShadowNode->geometry();
-    QSGGeometry* hotCueGeo = hotCueNode->geometry();
-    const QVariantList cues = m_engine->hotCues();
-    if (!cues.isEmpty()) {
-        struct CueLine {
-            float x;
-            QColor color;
-        };
-        std::vector<CueLine> visibleCues;
-        visibleCues.reserve(static_cast<size_t>(cues.size()));
-
-        for (const QVariant& v : cues) {
-            const QVariantMap m = v.toMap();
-            if (!m.value("set").toBool())
-                continue;
-
-            const double cueSec = m.value("positionSec").toDouble();
-            const double cuePoint = cueSec * pointsPerSec;
-            const float x = snapDevicePixelX(w / 2.0 + (cuePoint - centerIndexRender) * pixelsPerPoint);
-            if (x < 0.0f || x > w)
-                continue;
-
-            QColor c(m.value("color").toString());
-            if (!c.isValid())
-                c = QColor("#e04040");
-            visibleCues.push_back({x, c});
-        }
-
-        hotCueShadowGeo->allocate(static_cast<int>(visibleCues.size()) * 2);
-        hotCueGeo->allocate(static_cast<int>(visibleCues.size()) * 2);
-        auto* shadowVtx = hotCueShadowGeo->vertexDataAsColoredPoint2D();
-        auto* vtx = hotCueGeo->vertexDataAsColoredPoint2D();
-        int idx = 0;
-        for (const auto& cue : visibleCues) {
-            const auto r = static_cast<uchar>(cue.color.red());
-            const auto g = static_cast<uchar>(cue.color.green());
-            const auto b = static_cast<uchar>(cue.color.blue());
-
-            const int base = idx;
-            shadowVtx[base].set(cue.x, 0.0f,                         0, 0, 0, 170);
-            shadowVtx[base + 1].set(cue.x, static_cast<float>(height()), 0, 0, 0, 140);
-
-            vtx[base].set(cue.x, 0.0f,                         r, g, b, 255);
-            vtx[base + 1].set(cue.x, static_cast<float>(height()), r, g, b, 220);
-            idx += 2;
-        }
-    } else {
-        hotCueShadowGeo->allocate(0);
-        hotCueGeo->allocate(0);
-    }
-
-    hotCueShadowNode->markDirty(QSGNode::DirtyGeometry);
-    hotCueNode->markDirty(QSGNode::DirtyGeometry);
-
-    // ── Hot cue triangle markers (top + bottom, in each cue's color) ──────
+    // ── Hotcue markers (lines, triangles, badges — single pass) ───────────
+    drainToPool(badgeNode);
     {
-        const float hF      = static_cast<float>(height());
-        const float cTriH   = 9.0f;
-        const float cTriW   = 4.0f;
-        QSGGeometry* hotCueTriGeo = hotCueTriNode->geometry();
-        // re-use visibleCues collected above — rebuild since the struct is local
-        const QVariantList cuesAgain = m_engine->hotCues();
-        struct CuePos { float x; uchar r, g, b; };
-        std::vector<CuePos> cuePositions;
-        cuePositions.reserve(static_cast<size_t>(cuesAgain.size()));
-        for (const QVariant& qv : cuesAgain) {
-            const QVariantMap m = qv.toMap();
+        struct VisibleCue { float x; uchar r, g, b; QColor color; int index; };
+        std::vector<VisibleCue> visibleCues;
+
+        const QVariantList cues = m_engine->hotCues();
+        visibleCues.reserve(static_cast<size_t>(cues.size()));
+        for (int i = 0; i < cues.size(); ++i) {
+            const QVariantMap m = cues[i].toMap();
             if (!m.value("set").toBool()) continue;
             const double cueSec = m.value("positionSec").toDouble();
             const float cx = snapDevicePixelX(w / 2.0 + (cueSec * pointsPerSec - centerIndexRender) * pixelsPerPoint);
             if (cx < 0.0f || cx > w) continue;
             QColor c(m.value("color").toString());
             if (!c.isValid()) c = QColor("#e04040");
-            cuePositions.push_back({cx, static_cast<uchar>(c.red()), static_cast<uchar>(c.green()), static_cast<uchar>(c.blue())});
+            visibleCues.push_back({cx,
+                static_cast<uchar>(c.red()), static_cast<uchar>(c.green()), static_cast<uchar>(c.blue()),
+                c, i});
         }
-        hotCueTriGeo->allocate(static_cast<int>(cuePositions.size()) * 6);
-        {
-            auto* v = hotCueTriGeo->vertexDataAsColoredPoint2D();
-            int idx = 0;
-            for (const auto& cp : cuePositions) {
-                v[idx++].set(cp.x - cTriW, 0.0f,        cp.r, cp.g, cp.b, 230);
-                v[idx++].set(cp.x + cTriW, 0.0f,        cp.r, cp.g, cp.b, 230);
-                v[idx++].set(cp.x,         cTriH,        cp.r, cp.g, cp.b, 190);
-                v[idx++].set(cp.x - cTriW, hF,           cp.r, cp.g, cp.b, 230);
-                v[idx++].set(cp.x + cTriW, hF,           cp.r, cp.g, cp.b, 230);
-                v[idx++].set(cp.x,         hF - cTriH,   cp.r, cp.g, cp.b, 190);
+
+        QSGGeometry* hotCueShadowGeo = hotCueShadowNode->geometry();
+        QSGGeometry* hotCueGeo       = hotCueNode->geometry();
+        QSGGeometry* hotCueTriGeo    = hotCueTriNode->geometry();
+        const float hF     = static_cast<float>(height());
+        const float cTriH  = 9.0f;
+        const float cTriW  = 4.0f;
+        const int   n      = static_cast<int>(visibleCues.size());
+
+        hotCueShadowGeo->allocate(n * 2);
+        hotCueGeo      ->allocate(n * 2);
+        hotCueTriGeo   ->allocate(n * 6);
+
+        auto* shadowVtx = hotCueShadowGeo->vertexDataAsColoredPoint2D();
+        auto* lineVtx   = hotCueGeo      ->vertexDataAsColoredPoint2D();
+        auto* triVtx    = hotCueTriGeo   ->vertexDataAsColoredPoint2D();
+        int si = 0, li = 0, ti = 0;
+
+        constexpr float kBadgeW = 20.0f, kBadgeH = 13.0f;
+        for (const auto& vc : visibleCues) {
+            shadowVtx[si++].set(vc.x, 0.0f, 0, 0, 0, 170);
+            shadowVtx[si++].set(vc.x, hF,   0, 0, 0, 140);
+
+            lineVtx[li++].set(vc.x, 0.0f, vc.r, vc.g, vc.b, 255);
+            lineVtx[li++].set(vc.x, hF,   vc.r, vc.g, vc.b, 220);
+
+            triVtx[ti++].set(vc.x - cTriW, 0.0f,       vc.r, vc.g, vc.b, 230);
+            triVtx[ti++].set(vc.x + cTriW, 0.0f,       vc.r, vc.g, vc.b, 230);
+            triVtx[ti++].set(vc.x,         cTriH,       vc.r, vc.g, vc.b, 190);
+            triVtx[ti++].set(vc.x - cTriW, hF,          vc.r, vc.g, vc.b, 230);
+            triVtx[ti++].set(vc.x + cTriW, hF,          vc.r, vc.g, vc.b, 230);
+            triVtx[ti++].set(vc.x,         hF - cTriH,  vc.r, vc.g, vc.b, 190);
+
+            // Badge texture above the top triangle
+            const QString label = QString::number(vc.index + 1);
+            const LabelTex lt = getBadgeTex(label, vc.color, kBadgeW, kBadgeH, snapScale);
+            if (lt.valid()) {
+                const float bx = std::clamp(vc.x - lt.logW * 0.5f, 0.0f, w - lt.logW);
+                auto* tn = getFromPool();
+                tn->setTexture(lt.tex);
+                tn->setOwnsTexture(false);
+                tn->setRect(QRectF(static_cast<double>(bx), static_cast<double>(cTriH + 1.0f),
+                                   static_cast<double>(lt.logW), static_cast<double>(lt.logH)));
+                badgeNode->appendChildNode(tn);
             }
         }
-        hotCueTriNode->markDirty(QSGNode::DirtyGeometry);
+
+        hotCueShadowNode->markDirty(QSGNode::DirtyGeometry);
+        hotCueNode      ->markDirty(QSGNode::DirtyGeometry);
+        hotCueTriNode   ->markDirty(QSGNode::DirtyGeometry);
+        badgeNode       ->markDirty(QSGNode::DirtyForceUpdate);
     }
 
-    // ── Main cue point (gray line + orange triangles) ─────────────────────
+    // ── Main cue point (gray line + orange triangles + CUE badge) ───────────
     {
         const float hF = static_cast<float>(height());
         const double mainCueSec = m_engine->mainCueSec();
         QSGGeometry* mainCueLineGeo = mainCueLineNode->geometry();
         QSGGeometry* mainCueTriGeo  = mainCueTriNode->geometry();
 
-        if (mainCueSec >= 0.0) {
+        // Allow pre-roll cue positions (negative seconds)
+        if (mainCueSec >= -DjEngine::PRE_ROLL_SECONDS) {
             const float mx = snapDevicePixelX(w / 2.0 + (mainCueSec * pointsPerSec - centerIndexRender) * pixelsPerPoint);
             if (mx >= 0.0f && mx <= w) {
                 mainCueLineGeo->allocate(2);
@@ -970,6 +1143,22 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                 tv[3].set(mx - mTriW, hF,           255, 145,  0, 240);
                 tv[4].set(mx + mTriW, hF,           255, 145,  0, 240);
                 tv[5].set(mx,         hF - mTriH,   255, 145,  0, 200);
+
+                // CUE badge just below the top triangle
+                constexpr float kCueBadgeW = 28.0f, kCueBadgeH = 13.0f;
+                const LabelTex lt = getBadgeTex(QStringLiteral("CUE"),
+                                                QColor(255, 145, 0),
+                                                kCueBadgeW, kCueBadgeH, snapScale);
+                if (lt.valid()) {
+                    const float bx = std::clamp(mx - lt.logW * 0.5f, 0.0f, w - lt.logW);
+                    auto* tn = getFromPool();
+                    tn->setTexture(lt.tex);
+                    tn->setOwnsTexture(false);
+                    tn->setRect(QRectF(static_cast<double>(bx), static_cast<double>(mTriH + 1.0f),
+                                       static_cast<double>(lt.logW), static_cast<double>(lt.logH)));
+                    badgeNode->appendChildNode(tn);
+                    badgeNode->markDirty(QSGNode::DirtyForceUpdate);
+                }
             } else {
                 mainCueLineGeo->allocate(0);
                 mainCueTriGeo->allocate(0);
@@ -980,6 +1169,31 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         }
         mainCueLineNode->markDirty(QSGNode::DirtyGeometry);
         mainCueTriNode->markDirty(QSGNode::DirtyGeometry);
+    }
+
+    // ── Track-start boundary (time = 0) ─────────────────────────────────────
+    // Only shown when the waveform is scrolled into pre-roll (visualPos < 0).
+    // A bright white 3-device-pixel-wide quad marks where audio actually begins.
+    {
+        const float hF = static_cast<float>(height());
+        QSGGeometry* tsGeo = trackStartNode->geometry();
+        const double trackStartPoint = 0.0;  // beat 1 / sample 0 in waveform coords
+        const float tsx = snapDevicePixelX(w / 2.0 + (trackStartPoint - centerIndexRender) * pixelsPerPoint);
+        if (tsx >= -2.0f && tsx <= w + 2.0f) {
+            const float invDpr2 = 1.0f / static_cast<float>(snapScale);
+            const float lineW   = 3.0f * invDpr2;
+            tsGeo->allocate(6);
+            auto* tv = tsGeo->vertexDataAsColoredPoint2D();
+            tv[0].set(tsx,        0.0f, 255, 255, 255, 210);
+            tv[1].set(tsx,        hF,   255, 255, 255, 170);
+            tv[2].set(tsx + lineW, hF,  255, 255, 255, 170);
+            tv[3].set(tsx,        0.0f, 255, 255, 255, 210);
+            tv[4].set(tsx + lineW, hF,  255, 255, 255, 170);
+            tv[5].set(tsx + lineW, 0.0f, 255, 255, 255, 210);
+        } else {
+            tsGeo->allocate(0);
+        }
+        trackStartNode->markDirty(QSGNode::DirtyGeometry);
     }
 
     // ── Segment strip rendering (tiny colored bar at bottom) ───────────────
@@ -1053,6 +1267,77 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     }
 
     segmentNode->markDirty(QSGNode::DirtyGeometry);
-    
+
     return rootNode;
+}
+
+QVariantList ScrollingWaveformItem::beatLabels() const
+{
+    QVariantList result;
+    if (!m_engine)
+        return result;
+
+    TrackData* td = m_engine->getTrackData();
+    if (!td || !td->isBpmAnalyzed())
+        return result;
+
+    // Read the values written by the render thread in updatePaintNode().
+    // Using these exact values guarantees our x-positions match the beatgrid lines pixel-for-pixel.
+    const double centerForBeats = m_lastCenterForBeats.load(std::memory_order_relaxed);
+    const double ppp            = m_lastBeatPpp.load(std::memory_order_relaxed);
+    const double w              = m_lastRenderedWidth.load(std::memory_order_relaxed);
+    if (w <= 0.0 || ppp <= 0.0)
+        return result;
+
+    const double pointsPerSec = m_engine->waveformPointsPerSecond();
+    const double visiblePts   = w / ppp;
+    const double leftSec      = (centerForBeats - visiblePts * 0.5) / pointsPerSec;
+    const double rightSec     = (centerForBeats + visiblePts * 0.5) / pointsPerSec;
+
+    // Same formula as beatPixelLeft() in updatePaintNode — no floor-snap here because
+    // Canvas text is centered; sub-pixel accuracy is sufficient for centering.
+    const auto beatX = [&](double beatSec) -> double {
+        return w * 0.5 + (beatSec * pointsPerSec - centerForBeats) * ppp;
+    };
+
+    const std::vector<TrackData::BeatMarker> beatGrid = td->getBeatGrid();
+    const bool hasElastic = !beatGrid.empty();
+
+    constexpr double kMinSpacingPx = 20.0;
+    double lastLabelX = -1e9;
+
+    auto addMarker = [&](double beatSec, bool isDownbeat, int barNumber, int beatInBar) {
+        const double x = beatX(beatSec);
+        if (x < -20.0 || x > w + 20.0)
+            return;
+        if (x - lastLabelX < kMinSpacingPx)
+            return;
+        lastLabelX = x;
+        QVariantMap m;
+        m[QStringLiteral("x")]          = x;
+        m[QStringLiteral("text")]       = isDownbeat ? QString::number(barNumber)
+                                                     : QString::number(beatInBar);
+        m[QStringLiteral("isDownbeat")] = isDownbeat;
+        result.append(m);
+    };
+
+    if (hasElastic) {
+        auto cmp = [](const TrackData::BeatMarker& mk, double t){ return mk.positionSec < t; };
+        auto it = std::lower_bound(beatGrid.begin(), beatGrid.end(), leftSec - 0.5, cmp);
+        for (; it != beatGrid.end() && it->positionSec <= rightSec + 0.5; ++it)
+            addMarker(it->positionSec, it->isDownbeat, it->barNumber, it->beatInBar);
+    } else {
+        const double bpm          = td->getBpm();
+        const double sr           = td->getSampleRate();
+        const double firstBeatSec = static_cast<double>(td->getFirstBeatSample()) / sr;
+        const double beatPeriod   = 60.0 / bpm;
+        const int beatStart = std::max(static_cast<int>(std::floor((leftSec  - firstBeatSec) / beatPeriod)), -200);
+        const int beatEnd   = std::min(static_cast<int>(std::ceil ((rightSec - firstBeatSec) / beatPeriod)), 100000);
+        for (int b = beatStart; b <= beatEnd; ++b) {
+            const int mod4 = ((b % 4) + 4) % 4;
+            addMarker(firstBeatSec + b * beatPeriod, mod4 == 0, b / 4 + 1, mod4 + 1);
+        }
+    }
+
+    return result;
 }

@@ -11,29 +11,7 @@ Item {
     
     // Zoom controlled externally (main.qml) so both decks zoom in sync.
     property real waveformZoom: 1.5
-    property int cueOverlayTick: 0
     property bool dropHovered: false
-
-    function cueX(cueSec) {
-        if (!root.engine)
-            return -1000
-
-        // Use interpolated visual position, matching the C++ waveform renderer.
-        var pos = root.engine.getVisualPositionQml()
-        if (pos === undefined || isNaN(pos))
-            pos = root.engine.progress * root.engine.getDuration()
-
-        var ratio = root.engine.tempoRatio
-        if (ratio <= 0.0001)
-            ratio = 1.0
-        var pps = root.engine.waveformPointsPerSecond
-        if (pps <= 0.0)
-            pps = 300.0
-        var effectivePpp = root.waveformZoom / ratio
-        var rawX = width * 0.5 + (cueSec - pos) * pps * effectivePpp
-        var dpr = Math.max(1.0, Screen.devicePixelRatio)
-        return Math.round(rawX * dpr) / dpr
-    }
 
     Layout.fillWidth: true
     Layout.fillHeight: true
@@ -183,26 +161,23 @@ Item {
             function onPlayingChanged() {
                 if (!root.engine.isPlaying)
                     waveItem.requestUpdate()
-                root.cueOverlayTick++
             }
             function onProgressChanged() {
                 // Repaint scrolling waveform on paused seek and during scratch.
                 if (root.engine && (!root.engine.isPlaying || root.engine.scrubbing))
                     waveItem.requestUpdate()
-                root.cueOverlayTick++
             }
             function onLoopChanged() {
                 waveItem.requestUpdate()
-                root.cueOverlayTick++
             }
             function onScrubbingChanged() {
                 waveItem.requestUpdate()
             }
             function onHotCuesChanged() {
-                root.cueOverlayTick++
+                waveItem.requestUpdate()
             }
             function onTempoChanged() {
-                root.cueOverlayTick++
+                waveItem.requestUpdate()
             }
         }
 
@@ -224,126 +199,6 @@ Item {
             anchors.centerIn: parent
             z: 10
             // NO Behavior, NO SmoothedAnimation, NO SpringAnimation on this element.
-        }
-
-        // Top hotcue labels in cue color with visible slot number.
-        // ── Cue labels (hot cues + main cue) ───────────────────────────────
-        Item {
-            anchors.fill: parent
-            z: 12
-
-            // Hot cue tags: colored badge + downward pointer triangle
-            Repeater {
-                model: root.engine ? root.engine.hotCues : []
-
-                Item {
-                    required property var modelData
-                    property real cuePosX: {
-                        root.cueOverlayTick
-                        return root.cueX(modelData ? modelData["positionSec"] : -999999)
-                    }
-                    visible: modelData && modelData["set"] && cuePosX >= 0 && cuePosX <= parent.width
-                    width: 20
-                    height: 17  // badge 13 + pointer 4
-                    y: 1
-                    x: Math.max(0, Math.min(parent.width - width, cuePosX - width * 0.5))
-
-                    Rectangle {
-                        id: hotCueBadge
-                        anchors.top: parent.top
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: 20
-                        height: 13
-                        radius: 3
-                        color: modelData ? modelData["color"] : "#e04040"
-                        border.color: Qt.rgba(0, 0, 0, 0.45)
-                        border.width: 1
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: modelData ? (modelData["index"] + 1).toString() : ""
-                            color: "#ffffff"
-                            font.pixelSize: window.spViewport(8)
-                            font.bold: true
-                            font.family: "monospace"
-                        }
-                    }
-
-                    Canvas {
-                        anchors.top: hotCueBadge.bottom
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: 8; height: 4
-                        property string tagColor: modelData ? modelData["color"] : "#e04040"
-                        onTagColorChanged: requestPaint()
-                        Component.onCompleted: requestPaint()
-                        onPaint: {
-                            var ctx = getContext("2d")
-                            ctx.clearRect(0, 0, width, height)
-                            ctx.beginPath()
-                            ctx.moveTo(0, 0)
-                            ctx.lineTo(width, 0)
-                            ctx.lineTo(width / 2, height)
-                            ctx.closePath()
-                            ctx.fillStyle = tagColor
-                            ctx.fill()
-                        }
-                    }
-                }
-            }
-
-            // Main cue tag: orange badge + pointer
-            Item {
-                property real mainCuePosX: {
-                    root.cueOverlayTick
-                    if (!root.engine || root.engine.mainCueSec < 0) return -9999
-                    return root.cueX(root.engine.mainCueSec)
-                }
-                visible: root.engine !== null && root.engine.mainCueSec >= 0
-                         && mainCuePosX >= 0 && mainCuePosX <= parent.width
-                width: 28
-                height: 17
-                y: 1
-                x: Math.max(0, Math.min(parent.width - width, mainCuePosX - width * 0.5))
-
-                Rectangle {
-                    id: mainCueBadge
-                    anchors.top: parent.top
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: 28
-                    height: 13
-                    radius: 3
-                    color: "#ff9100"
-                    border.color: Qt.rgba(0, 0, 0, 0.45)
-                    border.width: 1
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "CUE"
-                        color: "#ffffff"
-                        font.pixelSize: window.spViewport(7)
-                        font.bold: true
-                        font.family: "monospace"
-                    }
-                }
-
-                Canvas {
-                    anchors.top: mainCueBadge.bottom
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: 8; height: 4
-                    Component.onCompleted: requestPaint()
-                    onPaint: {
-                        var ctx = getContext("2d")
-                        ctx.clearRect(0, 0, width, height)
-                        ctx.beginPath()
-                        ctx.moveTo(0, 0)
-                        ctx.lineTo(width, 0)
-                        ctx.lineTo(width / 2, height)
-                        ctx.closePath()
-                        ctx.fillStyle = "#ff9100"
-                        ctx.fill()
-                    }
-                }
-            }
         }
 
         // ─── Beat-grid toolbar (left edge, full deck height) ────────────────

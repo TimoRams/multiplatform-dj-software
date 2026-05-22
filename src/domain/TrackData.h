@@ -26,10 +26,12 @@ public:
     // Beat marker: one entry per beat in the track.
     // isDownbeat = true for beat 1 of each bar (every 4th beat, 4/4 time).
     // barNumber  = 1-based bar counter (bar 1 = first detected downbeat).
+    // beatInBar  = 1..4, beat position within the current bar.
     struct BeatMarker {
         double positionSec = 0.0;  // exact, micro-snapped timestamp (seconds)
         bool   isDownbeat  = false;
         int    barNumber   = 0;
+        int    beatInBar   = 1;    // 1=downbeat, 2, 3, 4
     };
 
     // Per-block bin (≈ samplesPerBin samples): envelope per frequency band.
@@ -159,18 +161,16 @@ public:
         std::vector<BeatMarker> grid;
         grid.reserve(static_cast<size_t>(trackLengthSec / beatDur) + 4);
 
-        // ── Backward pass (i = -1, -2, …) until we go past the track start ──
+        // Extend backward into pre-roll (up to 8 bars, capped at 32 s before beat 1).
+        // Positions below -preRollSec are discarded; no clamping to 0.
+        const double preRollSec = std::min(8.0 * 4.0 * beatDur, 32.0);
+        // ── Backward pass (i = -1, -2, …) until we exceed the pre-roll zone ──
         for (int i = -1; ; --i) {
             double pos = newAnchorSec + i * beatDur;
-            if (pos < -beatDur * 0.5) break;   // a little past 0 is fine; clamp below
-            if (pos < 0.0) pos = 0.0;
-            // Rebase: how many beats before the anchor?  Use (-i) as the offset.
-            // "beat index" from anchor perspective is i (negative).
-            // To assign barNumber we normalise to a non-negative beat counter:
-            // beatIdx = i  (negative), barNumber = floor(beatIdx/4).  We correct
-            // this after the sort when we renumber from the first marker.
+            if (pos < -(preRollSec + beatDur * 0.5)) break;
+            if (pos < -preRollSec) pos = -preRollSec;
             grid.push_back(BeatMarker{ pos, false, i });
-            if (pos <= 0.0) break;
+            if (pos <= -preRollSec) break;
         }
 
         // ── Forward pass (i = 0, 1, 2, …) ──────────────────────────────────
@@ -207,6 +207,7 @@ public:
             int mod4 = ((beatIdx % 4) + 4) % 4;
             grid[k].isDownbeat = (mod4 == 0);
             grid[k].barNumber  = beatIdx / 4 + 1;  // 1-based, may be ≤ 0 before anchor
+            grid[k].beatInBar  = mod4 + 1;          // 1=downbeat, 2, 3, 4
         }
 
         {

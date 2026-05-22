@@ -87,6 +87,9 @@ class DjEngine : public QObject
 
 public:
     static constexpr double WAVEFORM_POINTS_PER_SECOND = 1200.0;
+    // Silent pre-roll zone before beat 1: waveform/beatgrid extends backward,
+    // audio output is silence (JUCE transport stays at 0 during pre-roll).
+    static constexpr double PRE_ROLL_SECONDS = 32.0;
     static void shutdownSharedAudioDeviceManager();
 
     explicit DjEngine(QObject* parent = nullptr);
@@ -429,7 +432,7 @@ private:
     std::atomic<quint64> m_loadGen{0};
     QVariantList m_currentSegments;
     std::array<HotCueSlot, 8> m_hotCueSlots;
-    double m_mainCueSec = -1.0;
+    double m_mainCueSec = -(PRE_ROLL_SECONDS + 1.0);
     bool m_mainCuePreviewActive = false;
     QString m_lastAudioDeviceError;
     QString m_audioDeviceFallbackMessage;
@@ -501,6 +504,9 @@ private:
     void updateGain();
     void applyMixerEq();
     void applyMixerFilter();
+
+    // Returns the BPM-based pre-roll length: 8 bars at current BPM, capped at 32 s.
+    [[nodiscard]] double getPreRollSeconds() const;
 
     // m_latencySeconds tracks effective output latency reported by the audio device.
     // getOutputLatencyInSamples() is JUCE's callback->speaker delay and already
@@ -583,6 +589,12 @@ private:
     double m_scratchAbsoluteSnapVelocitySecPerSec = ScratchConfig::kAbsoluteSnapVelocitySecPerSec;
     bool   m_scrubSavedReverseState = false;
     double m_loadedTrackSampleRate = 44100.0;
+
+    // Pre-roll countdown: when play is pressed while visual position is negative,
+    // we advance the visual clock ourselves until it reaches 0, then start transport.
+    bool          m_preRollCountdownActive = false;
+    double        m_preRollVisualStartPos  = 0.0;
+    QElapsedTimer m_preRollClock;
 
     static std::mutex s_syncMutex;
     static std::vector<DjEngine*> s_syncDecks;
