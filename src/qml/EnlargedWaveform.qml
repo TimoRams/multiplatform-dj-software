@@ -93,17 +93,14 @@ Item {
 
                 var targetSec = pressPlayheadSec - (dragPx / effectivePixelsPerSecond)
 
-                // Clamp to loop boundaries during scrub — no wrapping/teleport.
-                // Re-anchor at the wall so reversing direction responds immediately.
+                // Wrap around loop boundaries — circular scrubbing with no hard stops.
+                // pressPlayheadSec stays as an unbounded virtual anchor; modulo maps it
+                // into the loop range so the DJ can spin freely in either direction.
                 if (root.engine.loopActive && root.engine.loopOutPosition > root.engine.loopInPosition) {
                     var loopIn  = root.engine.loopInPosition
-                    var loopOut = root.engine.loopOutPosition
-                    var clamped = Math.max(loopIn, Math.min(loopOut - 0.0001, targetSec))
-                    if (clamped !== targetSec) {
-                        pressPlayheadSec = clamped
-                        pressMouseX = mouse.x
-                    }
-                    targetSec = clamped
+                    var loopLen = root.engine.loopOutPosition - loopIn
+                    var offset  = targetSec - loopIn
+                    targetSec = loopIn + ((offset % loopLen) + loopLen) % loopLen
                 }
 
                 root.engine.setScrubPosition(targetSec)

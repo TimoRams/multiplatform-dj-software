@@ -4062,14 +4062,17 @@ void DjEngine::pauseForScrub()
     m_preRollCountdownActive = false;
     if (m_scrubHoldPosition >= 0.0)
         m_scrubHoldPosition = transportSource.getCurrentPosition();
-    // Clamp hold position to loop range at grab time — prevents a one-tick
-    // race window where getCurrentPosition() returns a pre-wrap boundary value.
+    // Wrap hold position into loop range at grab time — same circular model as
+    // scratchBySeconds / setScrubPosition; no hard boundaries anywhere.
     if (m_loopActive && m_loopOutSec > m_loopInSec) {
-        const double len = transportSource.getLengthInSeconds();
-        const double lo  = m_loopInSec;
-        const double hi  = std::min(len > 0.0 ? len : 1e9, m_loopOutSec);
-        if (hi > lo && (m_scrubHoldPosition < lo || m_scrubHoldPosition >= hi))
-            m_scrubHoldPosition = lo;
+        const double len     = transportSource.getLengthInSeconds();
+        const double lo      = m_loopInSec;
+        const double hi      = std::min(len > 0.0 ? len : 1e9, m_loopOutSec);
+        const double loopLen = hi - lo;
+        if (loopLen > 0.0) {
+            const double offset = m_scrubHoldPosition - lo;
+            m_scrubHoldPosition = lo + std::fmod(std::fmod(offset, loopLen) + loopLen, loopLen);
+        }
     }
     m_scratchAbsoluteTargetPosition = m_scrubHoldPosition;
     m_scratchAbsoluteFollowVelocity = 0.0;
@@ -4172,10 +4175,13 @@ void DjEngine::scratchBySeconds(double deltaSeconds)
     const double currentPos = m_scrubHoldPosition;
     double nextPos = std::clamp(currentPos + directStep, -PRE_ROLL_SECONDS, len);
     if (m_loopActive && m_loopOutSec > m_loopInSec) {
-        const double lo = m_loopInSec;
-        const double hi = std::min(len, m_loopOutSec);
-        if (hi > lo)
-            nextPos = std::clamp(nextPos, lo, hi - 1e-4);
+        const double lo      = m_loopInSec;
+        const double hi      = std::min(len, m_loopOutSec);
+        const double loopLen = hi - lo;
+        if (loopLen > 0.0) {
+            const double offset = nextPos - lo;
+            nextPos = lo + std::fmod(std::fmod(offset, loopLen) + loopLen, loopLen);
+        }
     }
     transportSource.setPosition(std::max(0.0, nextPos));
 
@@ -4203,10 +4209,11 @@ void DjEngine::setScrubPosition(double positionSeconds)
     if (m_loopActive && m_loopOutSec > m_loopInSec) {
         const double loopStart = std::clamp(m_loopInSec, -PRE_ROLL_SECONDS, len);
         const double loopEnd   = std::clamp(m_loopOutSec, loopStart, len);
-        // Clamp to [loopStart, loopEnd) — QML already handles boundaries, this is
-        // the C++ safety net. Hard clamp avoids teleports during manual scratch.
-        if (loopEnd > loopStart)
-            nextPos = std::clamp(nextPos, loopStart, loopEnd - 1e-4);
+        const double loopLen   = loopEnd - loopStart;
+        if (loopLen > 0.0) {
+            const double offset = nextPos - loopStart;
+            nextPos = loopStart + std::fmod(std::fmod(offset, loopLen) + loopLen, loopLen);
+        }
     }
 
     const double prevTargetPos = m_scratchAbsolutePositionControl
