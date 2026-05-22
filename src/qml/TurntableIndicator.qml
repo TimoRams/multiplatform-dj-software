@@ -141,18 +141,15 @@ Item {
             var targetSec = root._pressPlayheadSec
                           + root._totalScratchedAngle / root.degreesPerSecond
 
-            // Clamp to loop boundaries during scratch — no wrapping/teleport.
-            // Re-anchor at the wall so reversing direction responds immediately.
+            // Wrap around loop boundaries — circular platter model.
+            // _pressPlayheadSec and _totalScratchedAngle are never reset here;
+            // they accumulate unbounded so the platter rotates forever.
             if (root.engine.loopActive
                     && root.engine.loopOutPosition > root.engine.loopInPosition) {
                 var loopIn  = root.engine.loopInPosition
-                var loopOut = root.engine.loopOutPosition
-                var clamped = Math.max(loopIn, Math.min(loopOut - 0.0001, targetSec))
-                if (clamped !== targetSec) {
-                    root._pressPlayheadSec    = clamped
-                    root._totalScratchedAngle = 0.0
-                }
-                targetSec = clamped
+                var loopLen = root.engine.loopOutPosition - loopIn
+                var offset  = targetSec - loopIn
+                targetSec = loopIn + ((offset % loopLen) + loopLen) % loopLen
             }
 
             root.engine.setScrubPosition(targetSec)
