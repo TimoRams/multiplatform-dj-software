@@ -79,6 +79,12 @@ public:
     float      getSCKnob()     const { return m_scKnobAtomic.load(); }
     float      getSCParam()    const { return m_scParamAtomic.load(); }
 
+    // Returns true for Sound Color FX types (17-23) that belong pre-EQ in the signal chain.
+    // All other non-None types are Beat FX that run post-fader.
+    static bool isColorFxType(EffectType type) {
+        return type >= EffectType::SoundColorFilter && type <= EffectType::SoundColorSweep;
+    }
+
 private:
     // ── Shared state ─────────────────────────────────────────────────────────
     std::atomic<int>   m_typeAtomic   { static_cast<int>(EffectType::None) };

@@ -1362,20 +1362,16 @@ public:
             }
         }
 
+        // ── Color FX (pre-EQ: timbre-shaping effects that act on raw source color) ─
+        if (FxProcessor::isColorFxType(m_fx.getEffectType()))
+            m_fx.process(*bufferToFill.buffer,
+                         bufferToFill.startSample,
+                         bufferToFill.numSamples);
+
         lowEq.process(context);
         midEq.process(context);
         highEq.process(context);
         colorFilter.process(context);
-
-        // ── FX slot (Reverb / Bitcrusher / PitchShifter) ──────────────────────
-        m_fx.process(*bufferToFill.buffer,
-                     bufferToFill.startSample,
-                     bufferToFill.numSamples);
-
-        // ── PAD FX slot (Performance Pads — independent of FX bar) ────────────
-        m_padFx.process(*bufferToFill.buffer,
-                        bufferToFill.startSample,
-                        bufferToFill.numSamples);
 
         // ── Circular buffer: always records; vinyl brake + backspin read from it ──
         {
@@ -1575,6 +1571,15 @@ public:
                 juce::FloatVectorOperations::multiply(slicedBlock.getChannelPointer(ch), faderGain, static_cast<int>(slicedBlock.getNumSamples()));
             }
         }
+
+        // ── Beat FX + PAD FX (post-fader: tails continue after fader closes) ──
+        if (!FxProcessor::isColorFxType(m_fx.getEffectType()))
+            m_fx.process(*bufferToFill.buffer,
+                         bufferToFill.startSample,
+                         bufferToFill.numSamples);
+        m_padFx.process(*bufferToFill.buffer,
+                        bufferToFill.startSample,
+                        bufferToFill.numSamples);
 
         // ── Master Volume + Anti-Clip Limiter ───────────────────────────
         {
