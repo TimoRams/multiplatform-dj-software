@@ -456,6 +456,24 @@ Window {
                     MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Touch B","deckB_jog_touch"); labelStr: "Touch B"; paramId: "deckB_jog_touch" }
                     MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Move B","deckB_jog_move");   labelStr: "Move B";  paramId: "deckB_jog_move" }
 
+                    Item { width: parent.width; height: visible ? 8 : 0
+                        visible: mappingEditorWindow.catVisible([["Touch A","deckA_jog_touch"],["Move A","deckA_jog_move"],["Touch B","deckB_jog_touch"],["Move B","deckB_jog_move"]]) }
+
+                    // ── BROWSER ─────────────────────────────────────────────
+                    Item {
+                        width: parent.width; height: visible ? 30 : 0
+                        visible: mappingEditorWindow.catVisible([["Browse","library_browse"],["Load to Deck A","library_load_deck_a"],["Load to Deck B","library_load_deck_b"],["Back","library_back"],["Expand","library_expand"],["Collapse","library_collapse"],["Next Playlist","library_playlist_next"],["Prev Playlist","library_playlist_prev"]])
+                        Text { anchors.verticalCenter: parent.verticalCenter; text: "BROWSER"; color: "#3d3d3d"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.5 }
+                    }
+                    MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Browse","library_browse");                    labelStr: "Browse";          paramId: "library_browse" }
+                    MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Load to Deck A","library_load_deck_a");       labelStr: "Load to Deck A";  paramId: "library_load_deck_a" }
+                    MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Load to Deck B","library_load_deck_b");       labelStr: "Load to Deck B";  paramId: "library_load_deck_b" }
+                    MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Back","library_back");                        labelStr: "Back";            paramId: "library_back" }
+                    MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Expand","library_expand");                    labelStr: "Expand";          paramId: "library_expand" }
+                    MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Collapse","library_collapse");                labelStr: "Collapse";        paramId: "library_collapse" }
+                    MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Next Playlist","library_playlist_next");      labelStr: "Next Playlist";   paramId: "library_playlist_next" }
+                    MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Prev Playlist","library_playlist_prev");      labelStr: "Prev Playlist";   paramId: "library_playlist_prev" }
+
                     Item { width: parent.width; height: 14 }
                 }
             }

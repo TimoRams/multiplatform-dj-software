@@ -5,6 +5,7 @@ import QtQuick.Controls
 Rectangle {
     id: libraryRoot
     color: "#141414"
+    focus: true
 
     // ── External API ───────────────────────────────────────────────────────
     property string activeTab:         "library"  // "library" | "playlist" | "files" | "streaming" | "usb"
@@ -22,6 +23,29 @@ Rectangle {
     property string ctxTrackId:   ""
     property string ctxFilePath:  ""
     property string ctxTitle:     ""
+
+    // ── Browser cursor + focus system ─────────────────────────────────────
+    // focusedPanel: which panel receives keyboard input
+    //   "tracks"  — main track list (default)
+    //   "sidebar" — playlist tree
+    //   "search"  — search TextField has active focus
+    property string focusedPanel: "tracks"
+
+    property int  browserCursorIndex:  -1
+    property bool browserCursorActive: false
+
+    property int  sidebarCursorIndex:  -1
+    property bool sidebarCursorActive: false
+
+    onActiveTabChanged: {
+        browserCursorIndex = -1
+        browserCursorActive = false
+    }
+
+    onVisiblePlaylistsChanged: {
+        if (sidebarCursorIndex >= visiblePlaylists.length)
+            sidebarCursorIndex = Math.max(-1, visiblePlaylists.length - 1)
+    }
 
     // ── Theme ───────────────────────────────────────────────────────────────
     readonly property color bgBase:      "#141414"
@@ -201,6 +225,159 @@ Rectangle {
             libraryAnalyzer.analyzeAll(true)
     }
 
+    // ── Cursor navigation ──────────────────────────────────────────────────
+
+    function moveCursor(rawDelta) {
+        if (activeTab !== "library" && activeTab !== "playlist") return
+        var list = (activeTab === "playlist") ? plTrackList : libTrackList
+        var count = list.count
+        if (count === 0) { browserCursorActive = false; return }
+
+        var absD = Math.abs(rawDelta)
+        var steps = absD <= 1 ? 1 : (absD <= 3 ? absD * 2 : absD * 3)
+        steps = Math.min(steps, 24)
+        var delta = rawDelta >= 0 ? steps : -steps
+
+        var newIdx
+        if (!browserCursorActive) {
+            newIdx = delta >= 0 ? 0 : count - 1
+        } else {
+            newIdx = Math.max(0, Math.min(count - 1, browserCursorIndex + delta))
+        }
+        browserCursorIndex = newIdx
+        browserCursorActive = true
+        list.positionViewAtIndex(newIdx, ListView.Contain)
+    }
+
+    function getCursorFilePath() {
+        if (!browserCursorActive || browserCursorIndex < 0) return ""
+        if (activeTab === "playlist") {
+            var t = sortedPlaylistTracks[browserCursorIndex]
+            return t ? (t.filePath || "") : ""
+        }
+        if (activeTab !== "library") return ""
+        return libraryModel ? libraryModel.filePathAtRow(browserCursorIndex) : ""
+    }
+
+    function selectNextPlaylist(direction) {
+        if (visiblePlaylists.length === 0) return
+        var curIdx = -1
+        for (var i = 0; i < visiblePlaylists.length; i++) {
+            if (visiblePlaylists[i].id === currentPlaylistId) { curIdx = i; break }
+        }
+        var newIdx = curIdx + direction
+        if (newIdx < 0) newIdx = visiblePlaylists.length - 1
+        if (newIdx >= visiblePlaylists.length) newIdx = 0
+        var pl = visiblePlaylists[newIdx]
+        currentPlaylistId   = pl.id
+        currentPlaylistName = pl.name
+        activeTab           = "playlist"
+        loadPlaylistTracks()
+    }
+
+    // ── Sidebar cursor ─────────────────────────────────────────────────────
+
+    function moveSidebarCursor(delta) {
+        var count = visiblePlaylists.length
+        if (count === 0) { sidebarCursorActive = false; return }
+        var newIdx
+        if (!sidebarCursorActive) {
+            newIdx = delta >= 0 ? 0 : count - 1
+        } else {
+            newIdx = Math.max(0, Math.min(count - 1, sidebarCursorIndex + delta))
+        }
+        sidebarCursorIndex = newIdx
+        sidebarCursorActive = true
+        _ensureSidebarVisible(newIdx)
+    }
+
+    function _ensureSidebarVisible(index) {
+        var item = sidebarPlaylistRepeater.itemAt(index)
+        if (!item) return
+        var itemY  = item.y
+        var itemH  = item.height
+        var viewY  = sidebarFlickable.contentY
+        var viewH  = sidebarFlickable.height
+        if (itemY < viewY)
+            sidebarFlickable.contentY = Math.max(0, itemY - 4)
+        else if (itemY + itemH > viewY + viewH)
+            sidebarFlickable.contentY = itemY + itemH - viewH + 4
+    }
+
+    function selectSidebarItem() {
+        if (!sidebarCursorActive || sidebarCursorIndex < 0 || sidebarCursorIndex >= visiblePlaylists.length) return
+        var pl = visiblePlaylists[sidebarCursorIndex]
+        if (pl.hasChildren) {
+            toggleExpanded(pl.id)
+        } else {
+            currentPlaylistId   = pl.id
+            currentPlaylistName = pl.name
+            activeTab           = "playlist"
+            loadPlaylistTracks()
+        }
+        // After selection transition focus to track list
+        focusedPanel = "tracks"
+        forceActiveFocus()
+    }
+
+    function expandSidebarItem() {
+        if (!sidebarCursorActive || sidebarCursorIndex < 0) return
+        var pl = visiblePlaylists[sidebarCursorIndex]
+        if (pl && pl.hasChildren && !expandedPlaylists[pl.id])
+            toggleExpanded(pl.id)
+    }
+
+    function collapseSidebarItem() {
+        if (!sidebarCursorActive || sidebarCursorIndex < 0) return
+        var pl = visiblePlaylists[sidebarCursorIndex]
+        if (!pl) return
+        if (expandedPlaylists[pl.id]) {
+            toggleExpanded(pl.id)
+        } else if (pl.parentId) {
+            for (var i = 0; i < visiblePlaylists.length; i++) {
+                if (visiblePlaylists[i].id === pl.parentId) {
+                    sidebarCursorIndex = i
+                    sidebarCursorActive = true
+                    _ensureSidebarVisible(i)
+                    break
+                }
+            }
+        }
+    }
+
+    // ── Panel focus management ─────────────────────────────────────────────
+
+    function cyclePanel(direction) {
+        var panels = ["tracks", "sidebar", "search"]
+        var idx = panels.indexOf(focusedPanel)
+        if (idx < 0) idx = 0
+        idx = (idx + direction + panels.length) % panels.length
+        setFocusedPanel(panels[idx])
+    }
+
+    function setFocusedPanel(panel) {
+        focusedPanel = panel
+        if (panel === "search") {
+            searchField.forceActiveFocus()
+        } else {
+            forceActiveFocus()
+            if (panel === "sidebar") {
+                if (!sidebarCursorActive && visiblePlaylists.length > 0) {
+                    sidebarCursorIndex = 0
+                    sidebarCursorActive = true
+                    _ensureSidebarVisible(0)
+                }
+            } else if (panel === "tracks") {
+                var list = (activeTab === "playlist") ? plTrackList : libTrackList
+                if (!browserCursorActive && list && list.count > 0) {
+                    browserCursorIndex = 0
+                    browserCursorActive = true
+                    list.positionViewAtIndex(0, ListView.Contain)
+                }
+            }
+        }
+    }
+
     Component.onCompleted: {
         loadPlaylists()
         // Restore All Tracks sort (default: title A→Z)
@@ -230,6 +407,82 @@ Rectangle {
             if (libraryDb && libraryModel) {
                 libraryDb.setSetting("allTracks_sf", libraryModel.sortField)
                 libraryDb.setSetting("allTracks_sa", libraryModel.sortAscending ? "1" : "0")
+            }
+        }
+    }
+
+    // ── MIDI browser navigation ────────────────────────────────────────────
+    Connections {
+        target: parameterStore
+        function onParameterChanged(id, value) {
+            if (id === "library_browse") {
+                if (value !== 0) libraryRoot.moveCursor(value)
+            } else if (id === "library_load_deck_a") {
+                if (value > 0) {
+                    var fpA = libraryRoot.getCursorFilePath()
+                    if (fpA && deckA) deckA.loadTrack(fpA)
+                }
+            } else if (id === "library_load_deck_b") {
+                if (value > 0) {
+                    var fpB = libraryRoot.getCursorFilePath()
+                    if (fpB && deckB) deckB.loadTrack(fpB)
+                }
+            } else if (id === "library_playlist_next") {
+                if (value > 0) libraryRoot.selectNextPlaylist(1)
+            } else if (id === "library_playlist_prev") {
+                if (value > 0) libraryRoot.selectNextPlaylist(-1)
+            } else if (id === "library_back") {
+                if (value > 0) libraryRoot.activeTab = "library"
+            } else if (id === "library_expand") {
+                if (value > 0 && libraryRoot.currentPlaylistId)
+                    libraryRoot.toggleExpanded(libraryRoot.currentPlaylistId)
+            } else if (id === "library_collapse") {
+                if (value > 0 && libraryRoot.currentPlaylistId) {
+                    var ex = Object.assign({}, libraryRoot.expandedPlaylists)
+                    delete ex[libraryRoot.currentPlaylistId]
+                    libraryRoot.expandedPlaylists = ex
+                }
+            }
+        }
+    }
+
+    // ── Keyboard navigation ────────────────────────────────────────────────
+    Keys.onPressed: (event) => {
+        // Tab / Shift+Tab cycle focus between panels
+        if (event.key === Qt.Key_Tab) {
+            cyclePanel(1); event.accepted = true; return
+        }
+        if (event.key === Qt.Key_Backtab) {
+            cyclePanel(-1); event.accepted = true; return
+        }
+
+        if (focusedPanel === "tracks") {
+            if (event.key === Qt.Key_Up) {
+                moveCursor(-1); event.accepted = true
+            } else if (event.key === Qt.Key_Down) {
+                moveCursor(1); event.accepted = true
+            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                var fp = getCursorFilePath()
+                if (fp && deckA) deckA.loadTrack(fp)
+                event.accepted = true
+            } else if (event.key === Qt.Key_Escape) {
+                browserCursorActive = false; event.accepted = true
+            }
+        } else if (focusedPanel === "sidebar") {
+            if (event.key === Qt.Key_Up) {
+                moveSidebarCursor(-1); event.accepted = true
+            } else if (event.key === Qt.Key_Down) {
+                moveSidebarCursor(1); event.accepted = true
+            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                selectSidebarItem(); event.accepted = true
+            } else if (event.key === Qt.Key_Right) {
+                expandSidebarItem(); event.accepted = true
+            } else if (event.key === Qt.Key_Left) {
+                collapseSidebarItem(); event.accepted = true
+            } else if (event.key === Qt.Key_Escape) {
+                sidebarCursorActive = false
+                focusedPanel = "tracks"
+                event.accepted = true
             }
         }
     }
@@ -337,6 +590,12 @@ Rectangle {
         property bool isPlaylistTrack: false  // Set to true when in playlist view
         property string playlistId: ""  // Set when in playlist view
 
+        readonly property bool isCursorRow: libraryRoot.browserCursorActive
+                                           && libraryRoot.browserCursorIndex === rowIndex
+                                           && (isPlaylistTrack
+                                               ? libraryRoot.activeTab === "playlist"
+                                               : libraryRoot.activeTab === "library")
+
         readonly property color artBgColor: {
             var s = rowTitle || rowArtist || ""
             if (s.length === 0) return "#1a2535"
@@ -348,13 +607,16 @@ Rectangle {
         height: libraryRoot.viewMode === "normal" ? libraryRoot.rowHNormal : libraryRoot.rowH
         color: trMouse.containsMouse
                ? libraryRoot.bgRowHover
-             : (rowIndex % 2 === 0 ? libraryRoot.bgRowEven : libraryRoot.bgRowOdd)
+             : (isCursorRow
+                ? "#163328"
+                : (rowIndex % 2 === 0 ? libraryRoot.bgRowEven : libraryRoot.bgRowOdd))
         opacity: trDragPayload.dragging ? 0.4 : 1.0
 
         Rectangle {
             anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-            width: 2; color: libraryRoot.accentBlue
-            visible: trMouse.containsMouse
+            width: 2
+            color: tr.isCursorRow ? libraryRoot.accentGreen : libraryRoot.accentBlue
+            visible: trMouse.containsMouse || tr.isCursorRow
         }
         
         // Drop zone indicators for playlist track reordering
@@ -637,7 +899,14 @@ Rectangle {
                 trDragPayload.dragging = false
                 rightDragging = false
             }
-            onClicked: (mouse) => {}
+            onClicked: (mouse) => {
+                if (mouse.button === Qt.LeftButton && !(mouse.modifiers & Qt.ControlModifier)) {
+                    libraryRoot.browserCursorIndex = tr.rowIndex
+                    libraryRoot.browserCursorActive = true
+                    libraryRoot.focusedPanel = "tracks"
+                    libraryRoot.forceActiveFocus()
+                }
+            }
         }
     }
 
@@ -777,7 +1046,16 @@ Rectangle {
                 width: 1; color: libraryRoot.borderMain; z: 2
             }
 
+            // Focus indicator — top accent line when sidebar is focused
+            Rectangle {
+                anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
+                height: 2; color: libraryRoot.accentGreen
+                visible: libraryRoot.focusedPanel === "sidebar"
+                z: 10
+            }
+
             Flickable {
+                id: sidebarFlickable
                 anchors.fill: parent
                 contentHeight: sidebarColumn.implicitHeight
                 clip: true
@@ -859,6 +1137,7 @@ Rectangle {
 
                     // ── Playlist tree ────────────────────────────────────────
                     Repeater {
+                        id: sidebarPlaylistRepeater
                         model: libraryRoot.visiblePlaylists
 
                         Rectangle {
@@ -872,18 +1151,30 @@ Rectangle {
                                 libraryRoot.activeTab === "playlist" &&
                                 libraryRoot.currentPlaylistId === modelData.id
 
+                            readonly property bool isSidebarCursor:
+                                libraryRoot.sidebarCursorActive &&
+                                libraryRoot.sidebarCursorIndex === index
+
                             width: parent.width; height: 36
                             color: isSelected          ? libraryRoot.sidebarSel
                                  : dropZone === "into" ? "#0d2a18"
+                                 : isSidebarCursor     ? "#0f2816"
                                  : plMouse.containsMouse ? libraryRoot.bgSidebarHv
                                  : "transparent"
 
                             Behavior on color { ColorAnimation { duration: 100 } }
                             opacity: plMouse.drag.active ? 0.45 : 1.0
 
+                            // Selection accent (blue)
                             Rectangle {
                                 anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
                                 width: 3; color: libraryRoot.accentBlue; visible: isSelected
+                            }
+                            // Keyboard cursor accent (green)
+                            Rectangle {
+                                anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+                                width: 3; color: libraryRoot.accentGreen
+                                visible: plRow.isSidebarCursor && !isSelected
                             }
                             Rectangle {
                                 anchors { left: parent.left; right: parent.right; top: parent.top }
@@ -983,6 +1274,10 @@ Rectangle {
                                     var arrowX = 14 + modelData.depth * 14
                                     if (modelData.hasChildren && mouse.x >= arrowX && mouse.x < arrowX + 12) {
                                         libraryRoot.toggleExpanded(modelData.id)
+                                        // Sync sidebar cursor to this item
+                                        libraryRoot.sidebarCursorIndex = plRow.index
+                                        libraryRoot.sidebarCursorActive = true
+                                        libraryRoot.forceActiveFocus()
                                         return
                                     }
                                     if (modelData.hasChildren && !libraryRoot.expandedPlaylists[modelData.id])
@@ -991,6 +1286,11 @@ Rectangle {
                                     libraryRoot.currentPlaylistName = modelData.name
                                     libraryRoot.activeTab           = "playlist"
                                     libraryRoot.loadPlaylistTracks()
+                                    // Clicking a playlist: focus goes to track list for immediate browsing
+                                    libraryRoot.sidebarCursorIndex = plRow.index
+                                    libraryRoot.sidebarCursorActive = true
+                                    libraryRoot.focusedPanel = "tracks"
+                                    libraryRoot.forceActiveFocus()
                                 }
                             }
 
@@ -1350,6 +1650,27 @@ Rectangle {
                             onTextEdited: libraryRoot.searchText = text
                             Component.onCompleted: text = libraryRoot.searchText
                             background: Item {}
+
+                            onActiveFocusChanged: {
+                                if (activeFocus)
+                                    libraryRoot.focusedPanel = "search"
+                                else if (libraryRoot.focusedPanel === "search")
+                                    libraryRoot.focusedPanel = "tracks"
+                            }
+                            Keys.onEscapePressed: {
+                                focus = false
+                                libraryRoot.forceActiveFocus()
+                            }
+                            Keys.onTabPressed: (event) => {
+                                focus = false
+                                libraryRoot.cyclePanel(1)
+                                event.accepted = true
+                            }
+                            Keys.onBacktabPressed: (event) => {
+                                focus = false
+                                libraryRoot.cyclePanel(-1)
+                                event.accepted = true
+                            }
                         }
                     }
                 }
@@ -1358,6 +1679,13 @@ Rectangle {
             // ── View area ──────────────────────────────────────────────────
             Item {
                 Layout.fillWidth: true
+                // Focus indicator — top accent line when track list is focused
+                Rectangle {
+                    anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
+                    height: 2; color: libraryRoot.accentGreen
+                    visible: libraryRoot.focusedPanel === "tracks"
+                    z: 200
+                }
                 Layout.fillHeight: true
 
                 // ════════════════════════════════════════════════

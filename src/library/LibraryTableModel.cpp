@@ -188,6 +188,13 @@ void LibraryTableModel::refresh()
     qDebug() << "[LibraryTableModel] refresh() loaded" << m_rows.size() << "rows in" << timer.elapsed() << "ms";
 }
 
+QString LibraryTableModel::filePathAtRow(int row) const
+{
+    if (row < 0 || row >= m_rows.size())
+        return {};
+    return m_rows[row].filePath;
+}
+
 void LibraryTableModel::updateAnalysisForTrack(const QString& trackId,
                                                double bpm,
                                                const QString& key,

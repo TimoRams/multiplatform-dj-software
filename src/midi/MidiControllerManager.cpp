@@ -275,7 +275,7 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                     const int msgId             = resolveMsgId(channelAwareMsgId, legacyMsgId);
                     const auto it               = m_midiToParam.find(msgId);
                     float value;
-                    if (it != m_midiToParam.end() && it->second.endsWith("_jog_move")) {
+                    if (it != m_midiToParam.end() && (it->second.endsWith("_jog_move") || it->second == "library_browse")) {
                         // Two's-complement 7-bit relative CC: 1–63 = forward, 65–127 = backward
                         value = static_cast<float>(b < 64 ? b : b - 128);
                     } else {
@@ -1109,7 +1109,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
     {
         const auto invIt = m_paramInverted.find(paramId);
         if (invIt != m_paramInverted.end() && invIt->second) {
-            if (paramId.endsWith(QStringLiteral("_jog_move")))
+            if (paramId.endsWith(QStringLiteral("_jog_move")) || paramId == QStringLiteral("library_browse"))
                 dispatchValue = -dispatchValue;
             else if (!isNoteOff)  // never invert a release — NoteOff is always 0
                 dispatchValue = 1.0f - dispatchValue;
@@ -1118,7 +1118,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
     // jog_move sends relative delta ticks: consecutive identical values ARE distinct ticks,
     // so always dispatch. All other params deduplicate to break MIDI feedback echo loops
     // (common on PipeWire/ALSA: the software's own LED feedback is echoed back as input).
-    if (paramId.endsWith(QStringLiteral("_jog_move"))) {
+    if (paramId.endsWith(QStringLiteral("_jog_move")) || paramId == QStringLiteral("library_browse")) {
         QMetaObject::invokeMethod(m_parameterStore, "setMidiParameter", Qt::QueuedConnection,
                                   Q_ARG(QString, paramId), Q_ARG(float, dispatchValue));
     } else {
