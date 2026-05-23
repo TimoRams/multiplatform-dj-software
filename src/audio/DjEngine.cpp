@@ -1,4 +1,5 @@
 #include "DjEngine.h"
+#include "DjMasterBus.h"
 #include <iostream>
 #include <chrono>
 #include "fx/BrickwallLimiter.h"
@@ -288,8 +289,6 @@ OutputRoutingConfig unpackRouting(uint64_t packed)
 }
 
 std::atomic<uint64_t> s_outputRoutingPacked { packRouting(OutputRoutingConfig{}) };
-std::atomic<bool> s_masterCueEnabled { false };
-std::atomic<float> s_headphoneMix { 0.5f };
 std::mutex s_outputChannelCountCacheMutex;
 QHash<QString, int> s_outputChannelCountCache;
 
@@ -1225,15 +1224,16 @@ public:
     void setRollOutActive   (bool active) { m_rollOutWanted.store(active,     std::memory_order_relaxed); }
     void setScratchTimbre(float amount)   { scratchTimbre.store(std::clamp(amount, 0.0f, 1.0f), std::memory_order_relaxed); }
 
+    // Returns the pre-fader PFL buffer captured during getNextAudioBlock.
+    const juce::AudioBuffer<float>& getPflBuffer() const { return m_preFaderScratch; }
+
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override {
         if (source) source->prepareToPlay(samplesPerBlockExpected, sampleRate);
 
-        m_routeScratch.setSize(2, std::max(64, samplesPerBlockExpected), false, true, true);
         m_preFaderScratch.setSize(2, std::max(64, samplesPerBlockExpected), false, true, true);
 
         m_fx.prepare(sampleRate, samplesPerBlockExpected, 2);
         m_padFx.prepare(sampleRate, samplesPerBlockExpected, 2);
-        m_limiter.prepare(sampleRate, samplesPerBlockExpected, 2);
         
         juce::dsp::ProcessSpec spec { sampleRate, static_cast<juce::uint32>(samplesPerBlockExpected), 2 };
         lowEq.prepare(spec);
@@ -1581,53 +1581,17 @@ public:
                         bufferToFill.startSample,
                         bufferToFill.numSamples);
 
-        // ── Master Volume + Anti-Clip Limiter ───────────────────────────
+        // ── Post-fader per-deck VU (channels 0+1 after Beat FX) ─────────────
         {
             auto* buf = bufferToFill.buffer;
             const int s = bufferToFill.startSample;
             const int n = bufferToFill.numSamples;
-
-            // Apply master volume
-            float masterGain = s_masterVolume.load(std::memory_order_relaxed);
-            if (std::abs(masterGain - 1.0f) > 0.001f) {
-                for (int ch = 0; ch < buf->getNumChannels(); ++ch)
-                    buf->applyGain(ch, s, n, masterGain);
-            }
-
-            // ── VU peak level measurement (BEFORE limiter, real incoming signal) ───
-            // Measure true peaks before anti-clip processing so VU shows real levels.
-            {
-                float peakL = 0.0f, peakR = 0.0f;
-                if (buf->getNumChannels() > 0)
-                    peakL = buf->getMagnitude(0, s, n);
-                if (buf->getNumChannels() > 1)
-                    peakR = buf->getMagnitude(1, s, n);
-                m_peakL.store(peakL, std::memory_order_relaxed);
-                m_peakR.store(peakR, std::memory_order_relaxed);
-                // Strict digital clip indicator: only flag when real incoming signal
-                // overshoots full scale with a small margin.
-                constexpr float kClipThreshold = 1.001f;
-                m_clipDetected.store((peakL > kClipThreshold) || (peakR > kClipThreshold),
-                                     std::memory_order_relaxed);
-            }
-
-            // Brickwall Limiter: always processes (consistent latency),
-            // seamless crossfade handled internally via setEnabled()
-            {
-                m_limiter.setEnabled(s_antiClipEnabled.load(std::memory_order_relaxed));
-
-                float* channelPtrs[16];
-                const int numCh = std::min(buf->getNumChannels(), 16);
-                for (int ch = 0; ch < numCh; ++ch)
-                    channelPtrs[ch] = buf->getWritePointer(ch);
-
-                float gr = m_limiter.processBlock(channelPtrs, numCh, s, n);
-                s_gainReduction.store(m_limiter.isEnabled() ? gr : 1.0f,
-                                      std::memory_order_relaxed);
-            }
-
-            applyOutputRouting(*buf, s, n);
+            if (buf->getNumChannels() > 0)
+                m_peakL.store(buf->getMagnitude(0, s, n), std::memory_order_relaxed);
+            if (buf->getNumChannels() > 1)
+                m_peakR.store(buf->getMagnitude(1, s, n), std::memory_order_relaxed);
         }
+        // Master volume, limiter, and output routing are handled by DjMasterBus.
     }
 
     void setTrim(float val) { trimVal = val; }
@@ -1645,111 +1609,6 @@ public:
     void setFilterVal(float f) {
         filterVal = f;
         updateFilters();
-    }
-
-private:
-    void routeStereoToPair(juce::AudioBuffer<float>& buffer,
-                           const float* srcL,
-                           const float* srcR,
-                           int start,
-                           int n,
-                           int firstChannel,
-                           bool add,
-                           float gain = 1.0f)
-    {
-        // Null pointer checks
-        if (!srcL || !srcR || n <= 0)
-            return;
-        if (std::abs(gain) <= 0.0001f)
-            return;
-        
-        if (firstChannel < 1)
-            return;
-
-        const int leftChannel = firstChannel - 1;
-        const int rightChannel = leftChannel + 1;
-        
-        // Bounds check: ensure both channels exist in buffer
-        if (leftChannel < 0 || rightChannel >= buffer.getNumChannels())
-            return;
-        
-        // Additional safety: verify buffer is valid and has enough samples
-        if (buffer.getNumSamples() < (start + n))
-            return;
-
-        float* dstL = buffer.getWritePointer(leftChannel, start);
-        float* dstR = buffer.getWritePointer(rightChannel, start);
-        
-        if (!dstL || !dstR)
-            return;
-
-        for (int i = 0; i < n; ++i) {
-            if (add) {
-                dstL[i] += srcL[i] * gain;
-                dstR[i] += srcR[i] * gain;
-            } else {
-                dstL[i] = srcL[i] * gain;
-                dstR[i] = srcR[i] * gain;
-            }
-        }
-    }
-
-    void applyOutputRouting(juce::AudioBuffer<float>& buffer, int start, int n)
-    {
-        if (buffer.getNumChannels() < 2)
-            return;
-        if (m_routeScratch.getNumSamples() < n)
-            return;
-
-        m_routeScratch.copyFrom(0, 0, buffer, 0, start, n);
-        m_routeScratch.copyFrom(1, 0, buffer, std::min(1, buffer.getNumChannels() - 1), start, n);
-        const float* srcL = m_routeScratch.getReadPointer(0);
-        const float* srcR = m_routeScratch.getReadPointer(1);
-
-        const auto routing = unpackRouting(s_outputRoutingPacked.load(std::memory_order_relaxed));
-        const bool cueActive = m_owner != nullptr && m_owner->cueEnabled();
-        const bool masterCueActive = s_masterCueEnabled.load(std::memory_order_relaxed);
-        const float cueMix = std::clamp(s_headphoneMix.load(std::memory_order_relaxed), 0.0f, 1.0f);
-        const float cueGain = 1.0f - cueMix;
-        const float masterCueGain = masterCueActive ? cueMix : 0.0f;
-        // Per-deck master channel; falls back to shared routing if owner is null.
-        const int masterCh = (m_owner != nullptr)
-            ? m_owner->m_masterFirstChannelAtomic.load(std::memory_order_relaxed)
-            : routing.masterFirstChannel;
-
-        // Pre-fader signal for PFL routing (headphones/booth).
-        // Falls back to post-fader srcL/R if PFL buffer isn't ready yet.
-        const bool hasPfl = (m_preFaderScratch.getNumSamples() >= n);
-        const float* pflL = hasPfl ? m_preFaderScratch.getReadPointer(0) : srcL;
-        const float* pflR = hasPfl ? m_preFaderScratch.getReadPointer(1) : srcR;
-
-        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-            buffer.clear(ch, start, n);
-
-        bool hasOutput = false;
-        if (masterCh >= 1) {
-            routeStereoToPair(buffer, srcL, srcR, start, n, masterCh, false);
-            hasOutput = true;
-        }
-
-        if (routing.boothFirstChannel >= 1) {
-            const bool add = hasOutput;
-            routeStereoToPair(buffer, pflL, pflR, start, n, routing.boothFirstChannel, add);
-            hasOutput = true;
-        }
-
-        if (routing.headphonesFirstChannel >= 1) {
-            const bool add = hasOutput;
-            bool phonesHaveSignal = false;
-            if (cueActive && cueGain > 0.0001f) {
-                routeStereoToPair(buffer, pflL, pflR, start, n, routing.headphonesFirstChannel, add, cueGain);
-                phonesHaveSignal = true;
-            }
-            if (masterCueGain > 0.0001f) {
-                routeStereoToPair(buffer, srcL, srcR, start, n, routing.headphonesFirstChannel,
-                                  add || phonesHaveSignal, masterCueGain);
-            }
-        }
     }
 
     float getDecibelsFromKnob(float kb) const {
@@ -1850,30 +1709,18 @@ private:
     float m_rollOutGain      = 1.0f;
     float m_rollOutRampDown  = 0.0f;
     int   m_rollOutLoopLen   = 0;
-    juce::AudioBuffer<float> m_routeScratch;
     juce::AudioBuffer<float> m_preFaderScratch;  // PFL tap: pre-channel-fader stereo signal
     std::atomic<float> scratchTimbre { 0.0f };
     float m_scratchWarmLpState[8] {}; // 4 poles × 2 ch: [ch+0] p1, [ch+2] p2, [ch+4] p3, [ch+6] p4
     bool  m_scratchLpWasActive = false;
 
 public:
-    // VU meter peak levels — written on audio thread, read from UI thread
+    // Per-deck VU meter peak levels — written on audio thread, read from UI thread
     std::atomic<float> m_peakL { 0.0f };
     std::atomic<float> m_peakR { 0.0f };
     std::atomic<float> m_preFaderPeakL { 0.0f };
     std::atomic<float> m_preFaderPeakR { 0.0f };
-    std::atomic<bool>  m_clipDetected { false };
-
-    // Global shared state: master volume + anti-clip (shared across all decks)
-    static std::atomic<float> s_masterVolume;
-    static std::atomic<bool>  s_antiClipEnabled;
-    static std::atomic<float> s_gainReduction;
 };
-
-// Static shared state: master volume + anti-clip
-std::atomic<float> DjEngine::MixerDspSource::s_masterVolume{1.0f};
-std::atomic<bool>  DjEngine::MixerDspSource::s_antiClipEnabled{false};
-std::atomic<float> DjEngine::MixerDspSource::s_gainReduction{1.0f};
 
 std::mutex DjEngine::s_syncMutex;
 std::vector<DjEngine*> DjEngine::s_syncDecks;
@@ -2035,9 +1882,7 @@ DjEngine::DjEngine(QObject* parent)
         }
     }
 
-    std::cerr << "[DjEngine ctor] adding audio callback " << ctorMs() << "ms\n" << std::flush;
-    deviceManager.addAudioCallback(&sourcePlayer);
-    std::cerr << "[DjEngine ctor] audio callback added " << ctorMs() << "ms\n" << std::flush;
+    // Audio callback is registered by DjMasterBus, not per-deck.
 
     // Create the resampling source that wraps the transport source.
     // This allows us to control tempo/speed without changing the pitch.
@@ -2054,9 +1899,7 @@ DjEngine::DjEngine(QObject* parent)
     mixerSource->setTrim(static_cast<float>(m_trim));
     mixerSource->setFader(static_cast<float>(m_volume));
 
-    std::cerr << "[DjEngine ctor] setting source " << ctorMs() << "ms\n" << std::flush;
-    sourcePlayer.setSource(mixerSource.get());
-    std::cerr << "[DjEngine ctor] source set " << ctorMs() << "ms\n" << std::flush;
+    // DjMasterBus calls prepareToPlay on this source via addDeck().
 
     refreshHardwareLatency();
     clearOutputChannelCountCache();
@@ -2084,8 +1927,6 @@ DjEngine::~DjEngine()
         m_analyzer->stopAnalysis();
         delete m_analyzer;
     }
-    sourcePlayer.setSource(nullptr);
-    deviceManager.removeAudioCallback(&sourcePlayer);
     transportSource.setSource(nullptr);
 }
 
@@ -2093,6 +1934,11 @@ void DjEngine::shutdownSharedAudioDeviceManager()
 {
     auto& manager = sharedAudioDeviceManager();
     manager.closeAudioDevice();
+}
+
+juce::AudioDeviceManager& DjEngine::getSharedAudioDeviceManager()
+{
+    return sharedAudioDeviceManager();
 }
 
 float DjEngine::getProgress() const
@@ -2404,6 +2250,7 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
         .headphonesFirstChannel = headphonesFirstChannel,
         .boothFirstChannel = boothFirstChannel
     }), std::memory_order_relaxed);
+    DjMasterBus::setOutputRouting(masterFirstChannel, boothFirstChannel, headphonesFirstChannel);
 
     auto& manager = deviceManager;
     const juce::String previousType = manager.getCurrentAudioDeviceType();
@@ -2550,7 +2397,8 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
         .headphonesFirstChannel = headphonesFirstChannel,
         .boothFirstChannel = boothFirstChannel
     }), std::memory_order_relaxed);
-    
+    DjMasterBus::setOutputRouting(masterFirstChannel, boothFirstChannel, headphonesFirstChannel);
+
     juce::BigInteger selectedOutputChannels;
     const auto setPairBits = [&selectedOutputChannels](int firstChannel) {
         if (firstChannel < 1)
@@ -3684,13 +3532,23 @@ float DjEngine::preFaderVuLevelR() const
 
 bool DjEngine::clipDetected() const
 {
-    return mixerSource ? mixerSource->m_clipDetected.load(std::memory_order_relaxed) : false;
+    // Master clip detection now comes from DjMasterBus (summed signal).
+    return DjMasterBus::masterClipDetected_s();
 }
 
 float DjEngine::gainReduction() const
 {
-    // s_gainReduction is a static atomic shared across all instances
-    return MixerDspSource::s_gainReduction.load(std::memory_order_relaxed);
+    return DjMasterBus::gainReduction();
+}
+
+juce::AudioSource* DjEngine::getAudioSource() const
+{
+    return mixerSource.get();
+}
+
+const juce::AudioBuffer<float>& DjEngine::getPflBuffer() const
+{
+    return mixerSource->getPflBuffer();
 }
 
 QVariantList DjEngine::hotCues() const
@@ -4469,12 +4327,11 @@ void DjEngine::setOutputFirstChannel(int firstChannel)
 }
 
 void DjEngine::setMasterVolume(float v) {
-    MixerDspSource::s_masterVolume.store(std::clamp(v, 0.0f, 1.5f),
-                                         std::memory_order_relaxed);
+    DjMasterBus::setMasterVolume(v);
 }
 
 void DjEngine::setAntiClip(bool enabled) {
-    MixerDspSource::s_antiClipEnabled.store(enabled, std::memory_order_relaxed);
+    DjMasterBus::setAntiClipEnabled(enabled);
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -4909,17 +4766,18 @@ void DjEngine::setCueEnabled(bool value)
 
 bool DjEngine::masterCueEnabled() const
 {
-    return s_masterCueEnabled.load(std::memory_order_relaxed);
+    return DjMasterBus::masterCueEnabled();
 }
 
 double DjEngine::headphoneMix() const
 {
-    return static_cast<double>(s_headphoneMix.load(std::memory_order_relaxed));
+    return static_cast<double>(DjMasterBus::headphoneMix());
 }
 
 void DjEngine::setMasterCueEnabled(bool value)
 {
-    const bool prev = s_masterCueEnabled.exchange(value, std::memory_order_relaxed);
+    const bool prev = DjMasterBus::masterCueEnabled();
+    DjMasterBus::setMasterCueEnabled(value);
     if (prev != value)
         emit masterCueEnabledChanged();
 }
@@ -4927,7 +4785,8 @@ void DjEngine::setMasterCueEnabled(bool value)
 void DjEngine::setHeadphoneMix(double value)
 {
     const float clamped = static_cast<float>(std::clamp(value, 0.0, 1.0));
-    const float prev = s_headphoneMix.exchange(clamped, std::memory_order_relaxed);
+    const float prev = static_cast<float>(DjMasterBus::headphoneMix());
+    DjMasterBus::setHeadphoneMix(clamped);
     if (std::abs(prev - clamped) > 0.0001f)
         emit headphoneMixChanged();
 }

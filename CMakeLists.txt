@@ -253,6 +253,8 @@ qt_add_qml_module(${PROJECT_NAME}
 target_sources(${PROJECT_NAME} PRIVATE
     src/main.cpp
     src/audio/DjEngine.cpp
+    src/audio/DjMasterBus.h
+    src/audio/DjMasterBus.cpp
     src/analysis/PhraseAnalyzer.h
     src/analysis/PhraseAnalyzer.cpp
     src/rendering/RgbWaveformItem.h

@@ -26,6 +26,7 @@
 #endif
 
 #include "DjEngine.h"
+#include "audio/DjMasterBus.h"
 #include "WaveformItem.h"
 #include "library/LibraryManager.h"
 #include "library/CoverArtProvider.h"
@@ -248,6 +249,7 @@ int main(int argc, char *argv[])
     std::unique_ptr<DjEngine> deckB;
     std::unique_ptr<DjEngine> deckC;
     std::unique_ptr<DjEngine> deckD;
+    std::unique_ptr<DjMasterBus> masterBus;
     auto parameterStore = std::make_unique<ParameterStore>();
     std::unique_ptr<MidiControllerManager> midiManager; // constructed after app.exec() — CoreMIDI needs CFRunLoop
     auto libraryManager = std::make_unique<LibraryManager>();
@@ -515,6 +517,12 @@ int main(int argc, char *argv[])
 
         fxManager->registerEngines(deckA.get(), deckB.get());
 
+        masterBus = std::make_unique<DjMasterBus>();
+        masterBus->addDeck(deckA.get());
+        masterBus->addDeck(deckB.get());
+        masterBus->addDeck(deckC.get());
+        masterBus->addDeck(deckD.get());
+
         deckA->applyAudioDeviceSettings(settingsManager.getAudioMasterDeviceType(),
                                         settingsManager.getAudioMasterOutputDevice(),
                                         settingsManager.getAudioSampleRate(),
@@ -527,8 +535,8 @@ int main(int argc, char *argv[])
         const int actualBuf = deckA->getCurrentAudioBufferSize();
         if (actualSR  > 0) settingsManager.setAudioSampleRate(actualSR);
         if (actualBuf > 0) settingsManager.setAudioBufferSize(actualBuf);
-        // DeckB outputs to the pair immediately after DeckA (e.g. ch1+2 → ch3+4).
-        deckB->setOutputFirstChannel(settingsManager.getAudioMasterFirstChannel() + 2);
+
+        masterBus->registerCallback(DjEngine::getSharedAudioDeviceManager());
         qDebug() << "[startup] Audio device settings applied" << startupTimer.elapsed() << "ms";
     });
 
@@ -539,6 +547,10 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("deckB", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("deckC", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("deckD", static_cast<QObject*>(nullptr));
+
+    if (masterBus)
+        masterBus->unregisterCallback(DjEngine::getSharedAudioDeviceManager());
+    masterBus.reset();
 
     deckD.reset();
     deckC.reset();

@@ -91,6 +91,7 @@ public:
     // audio output is silence (JUCE transport stays at 0 during pre-roll).
     static constexpr double PRE_ROLL_SECONDS = 32.0;
     static void shutdownSharedAudioDeviceManager();
+    static juce::AudioDeviceManager& getSharedAudioDeviceManager();
 
     explicit DjEngine(QObject* parent = nullptr);
     ~DjEngine() override;
@@ -244,6 +245,14 @@ public:
     [[nodiscard]] float preFaderVuLevelR() const;
     [[nodiscard]] bool clipDetected() const;
     [[nodiscard]] float gainReduction() const;
+
+    // ── Master bus integration ────────────────────────────────────────────────
+    // Returns the raw audio source for this deck (MixerDspSource).
+    // Used by DjMasterBus to pull audio in the correct signal-chain order.
+    [[nodiscard]] juce::AudioSource* getAudioSource() const;
+    // Returns the pre-fader PFL buffer populated during getNextAudioBlock().
+    // Valid only from the audio thread (or after a getNextAudioBlock call).
+    [[nodiscard]] const juce::AudioBuffer<float>& getPflBuffer() const;
     [[nodiscard]] QVariantList hotCues() const;
     [[nodiscard]] double mainCueSec() const { return m_mainCueSec; }
     [[nodiscard]] QString lastAudioDeviceError() const { return m_lastAudioDeviceError; }
