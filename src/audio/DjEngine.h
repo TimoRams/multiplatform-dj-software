@@ -572,6 +572,7 @@ private:
     double m_scratchFineMoveThresholdSec = ScratchConfig::kFineMoveThresholdSec;
     double m_scratchEventSpikeClampSec = ScratchConfig::kEventSpikeClampSec;
     double m_scratchAccumulatedMoveSec = 0.0;
+    double m_scratchLastRawInput = 0.0;
     double m_scratchInertiaMoveThresholdSec = ScratchConfig::kInertiaMoveThresholdSec;
     double m_scratchBaseRate = 1.0;
     double m_scratchInputFilteredRate = 0.0;

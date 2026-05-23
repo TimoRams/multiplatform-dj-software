@@ -2766,6 +2766,13 @@ double DjEngine::getPosition() const
 
 double DjEngine::getVisualPosition() const
 {
+    // In absolute scratch mode the waveform must track the raw input target
+    // directly, not the spring-lagged m_scrubHoldPosition.  Spring lag at
+    // normal scratch speed is ~20–160 ms, making the wrap appear to fire
+    // before the loop boundary marker from the user's perspective.
+    if (m_isScrubbing && m_scratchAbsolutePositionControl)
+        return m_scratchAbsoluteTargetPosition;
+
     // Pre-roll countdown: visual position is m_scrubHoldPosition advancing by wall clock,
     // not from the transport snapshot (which is clamped at 0 during pre-roll).
     if (m_preRollCountdownActive)
@@ -3370,12 +3377,15 @@ void DjEngine::updateScrubPlayheadAnchor()
         transportSource.stop();
 
     if (m_isScrubbing && m_scratchAbsolutePositionControl) {
-        // Absolute drag mode: keep transport pinned to the grabbed target.
-        // This avoids tiny left/right visual wobble between sparse input events.
+        // Audio: transport follows the spring so scratch motion is smooth.
         transportSource.setPosition(std::max(0.0, m_scrubHoldPosition));
-        m_atomicPlayheadPos.store(m_scrubHoldPosition,
+        // Visual: atomic and snap track the raw input target so the waveform
+        // and turntable indicator show exactly where the user is dragging.
+        // Spring lag (~20–160 ms at typical scratch speeds) would otherwise
+        // make the loop wrap appear to fire before the boundary marker.
+        m_atomicPlayheadPos.store(m_scratchAbsoluteTargetPosition,
                                   std::memory_order_relaxed);
-        m_snapPosition = m_scrubHoldPosition;
+        m_snapPosition = m_scratchAbsoluteTargetPosition;
         return;
     }
 
@@ -4062,18 +4072,19 @@ void DjEngine::pauseForScrub()
     m_preRollCountdownActive = false;
     if (m_scrubHoldPosition >= 0.0)
         m_scrubHoldPosition = transportSource.getCurrentPosition();
-    // Wrap hold position into loop range at grab time — same circular model as
-    // scratchBySeconds / setScrubPosition; no hard boundaries anywhere.
+    // Wrap hold position into loop range at grab time — only if actually outside.
+    // Conditional guard prevents FP drift when the position is already valid.
     if (m_loopActive && m_loopOutSec > m_loopInSec) {
         const double len     = transportSource.getLengthInSeconds();
         const double lo      = m_loopInSec;
         const double hi      = std::min(len > 0.0 ? len : 1e9, m_loopOutSec);
         const double loopLen = hi - lo;
-        if (loopLen > 0.0) {
+        if (loopLen > 0.0 && (m_scrubHoldPosition < lo || m_scrubHoldPosition >= hi)) {
             const double offset = m_scrubHoldPosition - lo;
             m_scrubHoldPosition = lo + std::fmod(std::fmod(offset, loopLen) + loopLen, loopLen);
         }
     }
+    m_scratchLastRawInput = m_scrubHoldPosition;
     m_scratchAbsoluteTargetPosition = m_scrubHoldPosition;
     m_scratchAbsoluteFollowVelocity = 0.0;
     m_scratchBaseRate = std::max(0.01, std::abs(getTempoRatio()));
@@ -4090,6 +4101,15 @@ void DjEngine::pauseForScrub()
     m_scrubSavedReverseState = m_isReverse;
     m_scratchDirectionSign = m_scrubSavedReverseState ? -1.0 : 1.0;
     applyScratchNeutralRouting();
+
+    // Suspend hardware loop during scratch. The audio source's internal
+    // loop (m_logicalPos >= m_loopOutSample → m_loopInSample) fires
+    // independently between onTimer ticks, fighting the software wrapping
+    // in setScrubPosition(). On short loops this produces rapid bounce
+    // between loopIn/loopOut within a single buffer, causing silence and
+    // instability. setScrubPosition() owns all loop boundary logic while
+    // scrubbing; the hardware loop is not needed.
+    clearLoopRangeOnAudioSource();
 
     // Immediate touch brake: no scratch noise on plain click/hold.
     transportSource.stop();
@@ -4178,7 +4198,7 @@ void DjEngine::scratchBySeconds(double deltaSeconds)
         const double lo      = m_loopInSec;
         const double hi      = std::min(len, m_loopOutSec);
         const double loopLen = hi - lo;
-        if (loopLen > 0.0) {
+        if (loopLen > 0.0 && (nextPos < lo || nextPos >= hi)) {
             const double offset = nextPos - lo;
             nextPos = lo + std::fmod(std::fmod(offset, loopLen) + loopLen, loopLen);
         }
@@ -4205,54 +4225,52 @@ void DjEngine::setScrubPosition(double positionSeconds)
     if (len <= 0.0)
         return;
 
+    // Track the continuous (pre-wrap) virtual delta so velocity is correct
+    // regardless of how many loop lengths are crossed in a single update.
+    // QML accumulates unbounded virtual positions; we derive hand speed from
+    // this, never from the wrapped position delta.
+    const double virtualDelta = positionSeconds - m_scratchLastRawInput;
+    m_scratchLastRawInput = positionSeconds;
+
     double nextPos = std::clamp(positionSeconds, -PRE_ROLL_SECONDS, len);
+    bool wrapped = false;
     if (m_loopActive && m_loopOutSec > m_loopInSec) {
         const double loopStart = std::clamp(m_loopInSec, -PRE_ROLL_SECONDS, len);
         const double loopEnd   = std::clamp(m_loopOutSec, loopStart, len);
         const double loopLen   = loopEnd - loopStart;
-        if (loopLen > 0.0) {
+        if (loopLen > 0.0 && (nextPos < loopStart || nextPos >= loopEnd)) {
             const double offset = nextPos - loopStart;
             nextPos = loopStart + std::fmod(std::fmod(offset, loopLen) + loopLen, loopLen);
+            wrapped = true;
         }
     }
 
-    const double prevTargetPos = m_scratchAbsolutePositionControl
-        ? m_scratchAbsoluteTargetPosition
-        : m_scrubHoldPosition;
-    const double deltaSec = nextPos - prevTargetPos;
-    if (std::abs(deltaSec) <= 2e-5)
+    if (std::abs(virtualDelta) <= 2e-5)
         return;
 
-    // A large position jump while a loop is active means the QML wrapped the
-    // scrub target across a loop boundary (Serato-style). Snap to the new
-    // position immediately instead of deriving a bogus reverse velocity from
-    // the jump delta — the next input event will supply the correct velocity.
-    if (m_loopActive && m_loopOutSec > m_loopInSec) {
-        const double halfLoop = (m_loopOutSec - m_loopInSec) * 0.5;
-        if (std::abs(deltaSec) > halfLoop) {
-            m_scratchReleaseActive = false;
-            m_scratchAbsolutePositionControl = true;
-            m_scratchAbsoluteTargetPosition = nextPos;
-            m_scrubHoldPosition = nextPos;
-            m_scratchAbsoluteFollowVelocity = 0.0;
-            transportSource.setPosition(std::max(0.0, nextPos));
-            m_atomicPlayheadPos.store(nextPos, std::memory_order_relaxed);
-            m_lastScrubInputClock.restart();
-            return;
-        }
-    }
-
-    // Absolute grab mode with preserved scratch feel:
-    // derive a velocity target from absolute pointer movement so scratching
-    // remains audible and release inertia still works.
     m_scratchReleaseActive = false;
     m_scratchAbsolutePositionControl = true;
     m_scratchAbsoluteTargetPosition = nextPos;
+    // NOTE: m_scrubHoldPosition is the spring's *current* position; only snap
+    // it on an actual loop wrap.  Setting it every frame collapses the spring
+    // error to zero → motionRate = 0 → resampling ratio = 0 → silent audio.
+
+    if (wrapped) {
+        // Hard-snap spring, transport, and atomic to the new loop-relative
+        // position.  Zero the follow velocity so the spring doesn't fight the
+        // jump; the velocity path below re-establishes the scratch rate.
+        m_scrubHoldPosition = nextPos;
+        transportSource.setPosition(std::max(0.0, nextPos));
+        m_atomicPlayheadPos.store(nextPos, std::memory_order_relaxed);
+        m_scratchAbsoluteFollowVelocity = 0.0;
+    }
 
     const double dtSecRaw = m_lastScrubInputClock.isValid()
         ? std::max(0.001, static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9)
         : 0.008;
-    const double rawRate = deltaSec / dtSecRaw;
+    // Use the virtual (pre-wrap) delta: sign and magnitude are correct even
+    // when the position wrapped across the loop boundary.
+    const double rawRate = virtualDelta / dtSecRaw;
     const double baseRate = std::max(0.01, m_scratchBaseRate);
     const double absRaw = std::abs(rawRate);
 
@@ -4277,7 +4295,7 @@ void DjEngine::setScrubPosition(double positionSeconds)
 
     // Hand movement itself contributes to release intent, while actual travel
     // is accumulated in onTimer() via the spring follower.
-    m_scratchAccumulatedMoveSec += std::abs(deltaSec) * 0.45;
+    m_scratchAccumulatedMoveSec += std::abs(virtualDelta) * 0.45;
 }
 
 void DjEngine::pushScratchVelocityTick(double velocityRate)
@@ -4314,6 +4332,13 @@ void DjEngine::resumeAfterScrub()
     m_scratchAbsolutePositionControl = false;
     m_scratchAbsoluteFollowVelocity = 0.0;
     m_scratchInputFilteredRate = m_scratchSmoothedRate;
+
+    // Re-enable hardware loop immediately — needed for both the release
+    // glide (transport plays freely) and the no-inertia stop path.
+    // restorePostScrubPlaybackState() will call this again at glide end;
+    // the redundant call is harmless.
+    if (m_loopActive)
+        applyLoopRangeToAudioSource();
 
     // Touch/hold without meaningful spin: resume immediately with no glide.
     // Covers: pure press-release (no ticks), and light/jitter movement where the

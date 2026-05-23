@@ -138,20 +138,11 @@ Item {
 
             root._totalScratchedAngle += delta
 
+            // Send the raw (unbounded) virtual position to C++ — loop wrapping
+            // is handled exclusively in setScrubPosition() so velocity remains
+            // correct at any rotation speed, including multiple loop crossings per frame.
             var targetSec = root._pressPlayheadSec
                           + root._totalScratchedAngle / root.degreesPerSecond
-
-            // Wrap around loop boundaries — circular platter model.
-            // _pressPlayheadSec and _totalScratchedAngle are never reset here;
-            // they accumulate unbounded so the platter rotates forever.
-            if (root.engine.loopActive
-                    && root.engine.loopOutPosition > root.engine.loopInPosition) {
-                var loopIn  = root.engine.loopInPosition
-                var loopLen = root.engine.loopOutPosition - loopIn
-                var offset  = targetSec - loopIn
-                targetSec = loopIn + ((offset % loopLen) + loopLen) % loopLen
-            }
-
             root.engine.setScrubPosition(targetSec)
         }
 

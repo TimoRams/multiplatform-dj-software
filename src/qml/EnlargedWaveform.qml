@@ -91,18 +91,10 @@ Item {
                 if (effectivePixelsPerSecond <= 0.0)
                     return
 
-                var targetSec = pressPlayheadSec - (dragPx / effectivePixelsPerSecond)
-
-                // Wrap around loop boundaries — circular scrubbing with no hard stops.
-                // pressPlayheadSec stays as an unbounded virtual anchor; modulo maps it
-                // into the loop range so the DJ can spin freely in either direction.
-                if (root.engine.loopActive && root.engine.loopOutPosition > root.engine.loopInPosition) {
-                    var loopIn  = root.engine.loopInPosition
-                    var loopLen = root.engine.loopOutPosition - loopIn
-                    var offset  = targetSec - loopIn
-                    targetSec = loopIn + ((offset % loopLen) + loopLen) % loopLen
-                }
-
+                // Send the raw (unbounded) virtual position to C++ — loop wrapping
+                // is handled exclusively in setScrubPosition() so velocity remains
+                // correct at any speed, including multiple loop crossings per frame.
+                const targetSec = pressPlayheadSec - (dragPx / effectivePixelsPerSecond)
                 root.engine.setScrubPosition(targetSec)
 
                 // Keep waveform repainting during scrub (transport is stopped).
