@@ -158,6 +158,7 @@ void ScrollingWaveformItem::onTrackLoaded()
         connect(m_engine->getTrackData(), &TrackData::dataCleared, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
         connect(m_engine->getTrackData(), &TrackData::bpmAnalyzed, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
         connect(m_engine->getTrackData(), &TrackData::peakMipUpdated, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
+        connect(m_engine->getTrackData(), &TrackData::overviewRgbUpdated, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
     }
     m_forceUpdate = true;
     update();

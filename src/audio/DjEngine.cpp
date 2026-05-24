@@ -2991,12 +2991,9 @@ void DjEngine::loadTrack(const QString& rawPath)
             },
             Qt::QueuedConnection);
 
-        // Heavy I/O tasks run after playback is attached.
-        QImage coverImage;
-        const QByteArray coverData = CoverArtExtractor::extractCoverArt(rawPath).first;
-        if (!coverData.isEmpty())
-            coverImage.loadFromData(coverData);
-
+        // Waveform work has first priority after playback is attached.  Cover art
+        // and cue scanning are useful, but they must never delay the first visible
+        // waveform chunk for long files or mixtapes.
         WaveformCache::Payload cache;
         bool wfLoaded = WaveformCache::loadForFile(rawPath, pps, &cache)
                         && !cache.waveform.isEmpty()
@@ -3034,6 +3031,41 @@ void DjEngine::loadTrack(const QString& rawPath)
                 overview.push_back(bin);
             }
         }
+
+        QMetaObject::invokeMethod(this,
+            [this, gen, rawPath,
+             cache    = std::move(cache),
+             overview = std::move(overview),
+             analysisState,
+             wfLoaded]() mutable
+            {
+                if (m_loadGen != gen)
+                    return;
+
+                if (wfLoaded) {
+                    const int expected =
+                        cache.totalExpected > 0 ? cache.totalExpected : cache.waveform.size();
+                    m_trackData->setTotalExpected(expected);
+                    m_trackData->replaceAllData(
+                        std::move(cache.waveform), std::max(0.001f, cache.globalMaxPeak));
+                    m_trackData->setRgbWaveformData(std::move(cache.rgb));
+                    m_trackData->setOverviewRgbData(std::move(overview));
+                    if (!cache.peakMip.isEmpty())
+                        m_trackData->setPeakMipData(std::move(cache.peakMip));
+                }
+
+                const bool hasDbAnalysis = analysisState->load(std::memory_order_relaxed);
+                if (!(wfLoaded && hasDbAnalysis))
+                    m_analyzer->startAnalysis(rawPath, transportSource.getCurrentPosition());
+            },
+            Qt::QueuedConnection);
+
+        // Remaining heavy I/O tasks are intentionally decoupled from waveform
+        // startup. They can finish later without holding back progressive paint.
+        QImage coverImage;
+        const QByteArray coverData = CoverArtExtractor::extractCoverArt(rawPath).first;
+        if (!coverData.isEmpty())
+            coverImage.loadFromData(coverData);
 
         double autoCueSec = -1.0;
         {
@@ -3073,12 +3105,8 @@ void DjEngine::loadTrack(const QString& rawPath)
         }
 
         QMetaObject::invokeMethod(this,
-            [this, gen, rawPath,
+            [this, gen,
              coverImage = std::move(coverImage),
-             cache     = std::move(cache),
-             overview  = std::move(overview),
-             analysisState,
-             wfLoaded,
              autoCueSec]() mutable
             {
                 if (m_loadGen != gen)
@@ -3093,18 +3121,6 @@ void DjEngine::loadTrack(const QString& rawPath)
                     emit trackMetadataChanged();
                 }
 
-                if (wfLoaded) {
-                    const int expected =
-                        cache.totalExpected > 0 ? cache.totalExpected : cache.waveform.size();
-                    m_trackData->setTotalExpected(expected);
-                    m_trackData->replaceAllData(
-                        std::move(cache.waveform), std::max(0.001f, cache.globalMaxPeak));
-                    m_trackData->setRgbWaveformData(std::move(cache.rgb));
-                    m_trackData->setOverviewRgbData(std::move(overview));
-                    if (!cache.peakMip.isEmpty())
-                        m_trackData->setPeakMipData(std::move(cache.peakMip));
-                }
-
                 if (autoCueSec > 0.0
                     && m_mainCueSec < 0.0
                     && !m_playRequested
@@ -3113,10 +3129,6 @@ void DjEngine::loadTrack(const QString& rawPath)
                     emit mainCueChanged();
                     transportSource.setPosition(autoCueSec);
                 }
-
-                const bool hasDbAnalysis = analysisState->load(std::memory_order_relaxed);
-                if (!(wfLoaded && hasDbAnalysis))
-                    m_analyzer->startAnalysis(rawPath, transportSource.getCurrentPosition());
             },
             Qt::QueuedConnection);
     }).detach();
