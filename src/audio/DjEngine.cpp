@@ -2958,13 +2958,40 @@ void DjEngine::loadTrack(const QString& rawPath)
     // All heavy file I/O (format detection, cover art, waveform cache) runs off the
     // main thread so the UI stays responsive during loading.
     const int pps = static_cast<int>(WAVEFORM_POINTS_PER_SECOND);
-    std::thread([this, rawPath, file, gen, pps]() {
+    auto analysisState = std::make_shared<std::atomic<bool>>(false);
+    std::thread([this, rawPath, file, gen, pps, analysisState]() {
         auto* reader = formatManager.createReaderFor(file);
         if (!reader) {
             qWarning() << "[DjEngine] loadTrack: unsupported or unreadable format:" << rawPath;
             return;
         }
+        QMetaObject::invokeMethod(this,
+            [this, gen, reader, file, rawPath, analysisState]() mutable
+            {
+                if (m_loadGen != gen) {
+                    delete reader;
+                    return;
+                }
 
+                m_hasTrack = true;
+                attachReaderToTransport(reader);
+
+                populateMetadataFromReader(*reader, rawPath, file);
+                const double durationSec =
+                    static_cast<double>(reader->lengthInSamples) / reader->sampleRate;
+                updateTrackDuration(durationSec);
+                clearLoop();
+
+                const bool hasDbAnalysis = hydrateLibraryStateForTrack(rawPath, durationSec);
+                analysisState->store(hasDbAnalysis, std::memory_order_relaxed);
+
+                emit trackMetadataChanged();
+                emit trackLoaded();
+                emit progressChanged();
+            },
+            Qt::QueuedConnection);
+
+        // Heavy I/O tasks run after playback is attached.
         QImage coverImage;
         const QByteArray coverData = CoverArtExtractor::extractCoverArt(rawPath).first;
         if (!coverData.isEmpty())
@@ -3008,26 +3035,54 @@ void DjEngine::loadTrack(const QString& rawPath)
             }
         }
 
+        double autoCueSec = -1.0;
+        {
+            auto* cueReader = formatManager.createReaderFor(file);
+            if (cueReader) {
+                const double sr = cueReader->sampleRate;
+                if (sr > 0.0) {
+                    static constexpr double kMaxScanSec      = 10.0;
+                    static constexpr float  kSilenceThreshold = 0.001f; // ~-60 dBFS
+                    static constexpr int    kBlockSize        = 1024;
+
+                    const juce::int64 maxScan = static_cast<juce::int64>(sr * kMaxScanSec);
+                    const int numCh = static_cast<int>(std::max<unsigned int>(cueReader->numChannels, 1u));
+                    juce::AudioBuffer<float> buf(numCh, kBlockSize);
+
+                    juce::int64 firstAudibleSample = -1;
+                    for (juce::int64 pos = 0; pos < maxScan && firstAudibleSample < 0; pos += kBlockSize) {
+                        const int toRead = static_cast<int>(
+                            std::min<juce::int64>(kBlockSize, maxScan - pos));
+                        buf.clear();
+                        cueReader->read(&buf, 0, toRead, pos, true, true);
+                        for (int i = 0; i < toRead && firstAudibleSample < 0; ++i) {
+                            for (int ch = 0; ch < numCh; ++ch) {
+                                if (std::abs(buf.getSample(ch, i)) >= kSilenceThreshold) {
+                                    firstAudibleSample = pos + i;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (firstAudibleSample > 0)
+                        autoCueSec = static_cast<double>(firstAudibleSample) / sr;
+                }
+                delete cueReader;
+            }
+        }
+
         QMetaObject::invokeMethod(this,
-            [this, gen, reader, file, rawPath,
+            [this, gen, rawPath,
              coverImage = std::move(coverImage),
              cache     = std::move(cache),
              overview  = std::move(overview),
-             wfLoaded]() mutable
+             analysisState,
+             wfLoaded,
+             autoCueSec]() mutable
             {
-                if (m_loadGen != gen) {
-                    delete reader;
+                if (m_loadGen != gen)
                     return;
-                }
-
-                populateMetadataFromReader(*reader, rawPath, file);
-                const double durationSec =
-                    static_cast<double>(reader->lengthInSamples) / reader->sampleRate;
-                updateTrackDuration(durationSec);
-                m_hasTrack = true;
-                clearLoop();
-
-                const bool hasDbAnalysis = hydrateLibraryStateForTrack(rawPath, durationSec);
 
                 if (!coverImage.isNull() && m_coverProvider) {
                     m_coverProvider->setCoverImage(m_deckId, coverImage);
@@ -3035,6 +3090,7 @@ void DjEngine::loadTrack(const QString& rawPath)
                                         .arg(m_deckId)
                                         .arg(QDateTime::currentMSecsSinceEpoch());
                     m_hasCoverArt = true;
+                    emit trackMetadataChanged();
                 }
 
                 if (wfLoaded) {
@@ -3049,58 +3105,16 @@ void DjEngine::loadTrack(const QString& rawPath)
                         m_trackData->setPeakMipData(std::move(cache.peakMip));
                 }
 
-                emit trackMetadataChanged();
-                attachReaderToTransport(reader);
-
-                // Auto-cue: place the playhead at the first audible sample so
-                // pressing play skips leading silence. Only runs when no stored
-                // cue point exists for this track (respect user-set cue points).
-                {
-                    auto* r = readerSource->getAudioFormatReader();
-                    const double sr = r->sampleRate;
-
-                    if (m_mainCueSec < 0.0 && sr > 0.0) {
-                        static constexpr double kMaxScanSec      = 10.0;
-                        static constexpr float  kSilenceThreshold = 0.001f; // ~-60 dBFS
-                        static constexpr int    kBlockSize        = 1024;
-
-                        const juce::int64 maxScan = static_cast<juce::int64>(sr * kMaxScanSec);
-                        const int numCh = static_cast<int>(std::max<unsigned int>(r->numChannels, 1u));
-                        juce::AudioBuffer<float> buf(numCh, kBlockSize);
-
-                        juce::int64 firstAudibleSample = -1;
-                        for (juce::int64 pos = 0; pos < maxScan && firstAudibleSample < 0; pos += kBlockSize) {
-                            const int toRead = static_cast<int>(
-                                std::min<juce::int64>(kBlockSize, maxScan - pos));
-                            buf.clear();
-                            r->read(&buf, 0, toRead, pos, true, true);
-                            for (int i = 0; i < toRead && firstAudibleSample < 0; ++i) {
-                                for (int ch = 0; ch < numCh; ++ch) {
-                                    if (std::abs(buf.getSample(ch, i)) >= kSilenceThreshold) {
-                                        firstAudibleSample = pos + i;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-
-                        if (firstAudibleSample > 0) {
-                            m_mainCueSec = static_cast<double>(firstAudibleSample) / sr;
-                            emit mainCueChanged();
-                        }
-                    }
-
-                    // Seek transport to cue point (auto-detected or stored).
-                    const double cuePos = m_mainCueSec >= 0.0 ? m_mainCueSec : 0.0;
-                    if (cuePos > 0.0)
-                        transportSource.setPosition(cuePos);
+                if (autoCueSec > 0.0
+                    && m_mainCueSec < 0.0
+                    && !m_playRequested
+                    && !transportSource.isPlaying()) {
+                    m_mainCueSec = autoCueSec;
+                    emit mainCueChanged();
+                    transportSource.setPosition(autoCueSec);
                 }
 
-                emit trackLoaded();
-                emit progressChanged();
-
-                // Skip heavy analysis only when BOTH waveform cache and analysis metadata
-                // (BPM/key/grid) are already available.
+                const bool hasDbAnalysis = analysisState->load(std::memory_order_relaxed);
                 if (!(wfLoaded && hasDbAnalysis))
                     m_analyzer->startAnalysis(rawPath, transportSource.getCurrentPosition());
             },
