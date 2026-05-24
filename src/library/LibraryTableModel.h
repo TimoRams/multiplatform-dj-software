@@ -57,6 +57,8 @@ public:
     Q_INVOKABLE void setSort(const QString& field, bool ascending);
     Q_INVOKABLE void setFilterText(const QString& text);
     Q_INVOKABLE QString filePathAtRow(int row) const;
+    Q_INVOKABLE QString trackIdAtRow(int row) const;
+    Q_INVOKABLE int indexOfTrackId(const QString& trackId) const;
 
     QString sortField() const { return m_sortField; }
     bool sortAscending() const { return m_sortAscending; }

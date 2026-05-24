@@ -37,14 +37,40 @@ Rectangle {
     property int  sidebarCursorIndex:  -1
     property bool sidebarCursorActive: false
 
+    // ── Active track selection (single source of truth) ─────────────────
+    property string activeTrackId:       ""
+    property string activeTrackFilePath: ""
+    property int    activeTrackIndex:    -1
+    property string activeTrackSource:   ""   // "library" | "playlist"
+
+    // ── Sidebar keyboard navigation map ─────────────────────────────────
+    readonly property int sidebarTopNavCount: 1   // All Tracks
+    readonly property int sidebarBottomNavCount: 3 // Files / Streaming / USB
+    readonly property int sidebarPlaylistStartIndex: sidebarTopNavCount
+
     onActiveTabChanged: {
-        browserCursorIndex = -1
-        browserCursorActive = false
+        syncSidebarCursorToSelection()
+        ensureActiveTrackForCurrentTab()
     }
 
     onVisiblePlaylistsChanged: {
-        if (sidebarCursorIndex >= visiblePlaylists.length)
-            sidebarCursorIndex = Math.max(-1, visiblePlaylists.length - 1)
+        syncSidebarCursorToSelection()
+    }
+
+    onCurrentPlaylistIdChanged: {
+        syncSidebarCursorToSelection()
+    }
+
+    onPlaylistTracksChanged: {
+        if (activeTab === "playlist") ensureActiveTrackForCurrentTab()
+    }
+
+    onPlaylistSortFieldChanged: {
+        if (activeTab === "playlist") ensureActiveTrackForCurrentTab()
+    }
+
+    onPlaylistSortAscendingChanged: {
+        if (activeTab === "playlist") ensureActiveTrackForCurrentTab()
     }
 
     // ── Theme ───────────────────────────────────────────────────────────────
@@ -227,6 +253,136 @@ Rectangle {
 
     // ── Cursor navigation ──────────────────────────────────────────────────
 
+    function sidebarTotalCount() {
+        return sidebarTopNavCount + visiblePlaylists.length + sidebarBottomNavCount
+    }
+
+    function sidebarIndexForTab(tab) {
+        if (tab === "library") return 0
+        var bottomStart = sidebarTopNavCount + visiblePlaylists.length
+        if (tab === "files") return bottomStart
+        if (tab === "streaming") return bottomStart + 1
+        if (tab === "usb") return bottomStart + 2
+        return -1
+    }
+
+    function _playlistIndexForId(playlistId) {
+        if (!playlistId) return -1
+        for (var i = 0; i < visiblePlaylists.length; i++) {
+            if (visiblePlaylists[i].id === playlistId) return i
+        }
+        return -1
+    }
+
+    function sidebarEntryAt(index) {
+        if (index < 0) return null
+
+        var bottomStart = sidebarTopNavCount + visiblePlaylists.length
+        if (index === 0) {
+            return { type: "nav", tab: "library", item: navAllTracks }
+        }
+
+        var plIndex = index - sidebarTopNavCount
+        if (plIndex >= 0 && plIndex < visiblePlaylists.length) {
+            return {
+                type: "playlist",
+                data: visiblePlaylists[plIndex],
+                item: sidebarPlaylistRepeater.itemAt(plIndex)
+            }
+        }
+
+        var bottomIndex = index - bottomStart
+        if (bottomIndex === 0) return { type: "nav", tab: "files", item: navFiles }
+        if (bottomIndex === 1) return { type: "nav", tab: "streaming", item: navStreaming }
+        if (bottomIndex === 2) return { type: "nav", tab: "usb", item: navUsb }
+
+        return null
+    }
+
+    function _applyActiveTrack(index, trackId, filePath, source) {
+        activeTrackIndex = index
+        activeTrackId = trackId || ""
+        activeTrackFilePath = filePath || ""
+        activeTrackSource = source || ""
+    }
+
+    function setActiveTrackFromRow(index, trackId, filePath, source) {
+        browserCursorIndex = index
+        browserCursorActive = true
+        _applyActiveTrack(index, trackId, filePath, source || activeTab)
+    }
+
+    function _playlistIndexForTrackId(trackId) {
+        if (!trackId) return -1
+        for (var i = 0; i < sortedPlaylistTracks.length; i++) {
+            if (sortedPlaylistTracks[i].trackId === trackId) return i
+        }
+        return -1
+    }
+
+    function syncActiveTrackFromCursor() {
+        if (!browserCursorActive || browserCursorIndex < 0) {
+            _applyActiveTrack(-1, "", "", "")
+            return
+        }
+        if (activeTab === "playlist") {
+            var t = sortedPlaylistTracks[browserCursorIndex]
+            _applyActiveTrack(browserCursorIndex, t ? t.trackId : "", t ? t.filePath : "", "playlist")
+            return
+        }
+        if (activeTab === "library") {
+            var id = libraryModel ? libraryModel.trackIdAtRow(browserCursorIndex) : ""
+            var fp = libraryModel ? libraryModel.filePathAtRow(browserCursorIndex) : ""
+            _applyActiveTrack(browserCursorIndex, id, fp, "library")
+        }
+    }
+
+    function ensureActiveTrackForCurrentTab() {
+        if (activeTab !== "library" && activeTab !== "playlist") {
+            browserCursorActive = false
+            _applyActiveTrack(-1, "", "", "")
+            return
+        }
+
+        var list = (activeTab === "playlist") ? plTrackList : libTrackList
+        var count = list ? list.count : 0
+        if (count === 0) {
+            browserCursorActive = false
+            _applyActiveTrack(-1, "", "", "")
+            return
+        }
+
+        var idx = -1
+        if (activeTrackId) {
+            if (activeTab === "playlist") {
+                idx = _playlistIndexForTrackId(activeTrackId)
+            } else if (libraryModel) {
+                idx = libraryModel.indexOfTrackId(activeTrackId)
+            }
+        }
+        if (idx < 0) idx = 0
+
+        browserCursorIndex = idx
+        browserCursorActive = true
+        syncActiveTrackFromCursor()
+        if (list) list.positionViewAtIndex(idx, ListView.Contain)
+    }
+
+    function syncSidebarCursorToSelection() {
+        var idx = -1
+        if (activeTab === "playlist" && currentPlaylistId) {
+            var plIdx = _playlistIndexForId(currentPlaylistId)
+            if (plIdx >= 0) idx = sidebarPlaylistStartIndex + plIdx
+        }
+        if (idx < 0) idx = sidebarIndexForTab(activeTab)
+        if (idx < 0 && activeTab === "playlist") idx = 0
+        if (idx >= 0) {
+            sidebarCursorIndex = idx
+            sidebarCursorActive = true
+            _ensureSidebarVisible(idx)
+        }
+    }
+
     function moveCursor(rawDelta) {
         if (activeTab !== "library" && activeTab !== "playlist") return
         var list = (activeTab === "playlist") ? plTrackList : libTrackList
@@ -246,17 +402,14 @@ Rectangle {
         }
         browserCursorIndex = newIdx
         browserCursorActive = true
+        syncActiveTrackFromCursor()
         list.positionViewAtIndex(newIdx, ListView.Contain)
     }
 
     function getCursorFilePath() {
         if (!browserCursorActive || browserCursorIndex < 0) return ""
-        if (activeTab === "playlist") {
-            var t = sortedPlaylistTracks[browserCursorIndex]
-            return t ? (t.filePath || "") : ""
-        }
-        if (activeTab !== "library") return ""
-        return libraryModel ? libraryModel.filePathAtRow(browserCursorIndex) : ""
+        if (activeTrackIndex !== browserCursorIndex) syncActiveTrackFromCursor()
+        return activeTrackFilePath || ""
     }
 
     function selectNextPlaylist(direction) {
@@ -273,12 +426,13 @@ Rectangle {
         currentPlaylistName = pl.name
         activeTab           = "playlist"
         loadPlaylistTracks()
+        syncSidebarCursorToSelection()
     }
 
     // ── Sidebar cursor ─────────────────────────────────────────────────────
 
     function moveSidebarCursor(delta) {
-        var count = visiblePlaylists.length
+        var count = sidebarTotalCount()
         if (count === 0) { sidebarCursorActive = false; return }
         var newIdx
         if (!sidebarCursorActive) {
@@ -292,8 +446,9 @@ Rectangle {
     }
 
     function _ensureSidebarVisible(index) {
-        var item = sidebarPlaylistRepeater.itemAt(index)
-        if (!item) return
+        var entry = sidebarEntryAt(index)
+        if (!entry || !entry.item) return
+        var item = entry.item
         var itemY  = item.y
         var itemH  = item.height
         var viewY  = sidebarFlickable.contentY
@@ -305,42 +460,53 @@ Rectangle {
     }
 
     function selectSidebarItem() {
-        if (!sidebarCursorActive || sidebarCursorIndex < 0 || sidebarCursorIndex >= visiblePlaylists.length) return
-        var pl = visiblePlaylists[sidebarCursorIndex]
-        if (pl.hasChildren) {
+        if (!sidebarCursorActive || sidebarCursorIndex < 0) return
+        var entry = sidebarEntryAt(sidebarCursorIndex)
+        if (!entry) return
+        if (entry.type === "nav") {
+            activeTab = entry.tab
+            if (entry.tab === "library")
+                librarySubTab = "allSongs"
+            focusedPanel = "sidebar"
+            forceActiveFocus()
+            return
+        }
+        var pl = entry.data
+        if (pl && pl.hasChildren) {
             toggleExpanded(pl.id)
-        } else {
+        } else if (pl) {
             currentPlaylistId   = pl.id
             currentPlaylistName = pl.name
             activeTab           = "playlist"
             loadPlaylistTracks()
         }
-        // After selection transition focus to track list
-        focusedPanel = "tracks"
+        focusedPanel = "sidebar"
         forceActiveFocus()
     }
 
     function expandSidebarItem() {
         if (!sidebarCursorActive || sidebarCursorIndex < 0) return
-        var pl = visiblePlaylists[sidebarCursorIndex]
+        var entry = sidebarEntryAt(sidebarCursorIndex)
+        if (!entry || entry.type !== "playlist") return
+        var pl = entry.data
         if (pl && pl.hasChildren && !expandedPlaylists[pl.id])
             toggleExpanded(pl.id)
     }
 
     function collapseSidebarItem() {
         if (!sidebarCursorActive || sidebarCursorIndex < 0) return
-        var pl = visiblePlaylists[sidebarCursorIndex]
+        var entry = sidebarEntryAt(sidebarCursorIndex)
+        if (!entry || entry.type !== "playlist") return
+        var pl = entry.data
         if (!pl) return
         if (expandedPlaylists[pl.id]) {
             toggleExpanded(pl.id)
         } else if (pl.parentId) {
-            for (var i = 0; i < visiblePlaylists.length; i++) {
-                if (visiblePlaylists[i].id === pl.parentId) {
-                    sidebarCursorIndex = i
-                    sidebarCursorActive = true
-                    _ensureSidebarVisible(i)
-                    break
-                }
+            var parentIdx = _playlistIndexForId(pl.parentId)
+            if (parentIdx >= 0) {
+                sidebarCursorIndex = sidebarPlaylistStartIndex + parentIdx
+                sidebarCursorActive = true
+                _ensureSidebarVisible(sidebarCursorIndex)
             }
         }
     }
@@ -362,30 +528,32 @@ Rectangle {
         } else {
             forceActiveFocus()
             if (panel === "sidebar") {
-                if (!sidebarCursorActive && visiblePlaylists.length > 0) {
-                    sidebarCursorIndex = 0
-                    sidebarCursorActive = true
-                    _ensureSidebarVisible(0)
-                }
+                syncSidebarCursorToSelection()
             } else if (panel === "tracks") {
-                var list = (activeTab === "playlist") ? plTrackList : libTrackList
-                if (!browserCursorActive && list && list.count > 0) {
-                    browserCursorIndex = 0
-                    browserCursorActive = true
-                    list.positionViewAtIndex(0, ListView.Contain)
-                }
+                ensureActiveTrackForCurrentTab()
             }
         }
     }
 
     Component.onCompleted: {
         loadPlaylists()
+        if (libraryDb) {
+            var vm = libraryDb.getSetting("library_view_mode", viewMode)
+            if (vm === "compact" || vm === "normal") viewMode = vm
+        }
         // Restore All Tracks sort (default: title A→Z)
         if (libraryDb && libraryModel) {
             var sf = libraryDb.getSetting("allTracks_sf", "title")
             var sa = libraryDb.getSetting("allTracks_sa", "1") === "1"
             libraryModel.setSort(sf, sa)
         }
+        syncSidebarCursorToSelection()
+        ensureActiveTrackForCurrentTab()
+    }
+
+    onViewModeChanged: {
+        if (libraryDb && (viewMode === "compact" || viewMode === "normal"))
+            libraryDb.setSetting("library_view_mode", viewMode)
     }
 
     Connections {
@@ -408,6 +576,10 @@ Rectangle {
                 libraryDb.setSetting("allTracks_sf", libraryModel.sortField)
                 libraryDb.setSetting("allTracks_sa", libraryModel.sortAscending ? "1" : "0")
             }
+        }
+        function onCountChanged() {
+            if (libraryRoot.activeTab === "library")
+                libraryRoot.ensureActiveTrackForCurrentTab()
         }
     }
 
@@ -858,6 +1030,14 @@ Rectangle {
             property bool rightDragging: false
 
             onPressed: (mouse) => {
+                libraryRoot.setActiveTrackFromRow(
+                    tr.rowIndex,
+                    tr.rowTrackId,
+                    tr.rowFilePath,
+                    tr.isPlaylistTrack ? "playlist" : "library")
+                libraryRoot.focusedPanel = "tracks"
+                libraryRoot.forceActiveFocus()
+
                 pressX = mouse.x
                 pressY = mouse.y
                 if (mouse.button === Qt.RightButton) {
@@ -901,8 +1081,6 @@ Rectangle {
             }
             onClicked: (mouse) => {
                 if (mouse.button === Qt.LeftButton && !(mouse.modifiers & Qt.ControlModifier)) {
-                    libraryRoot.browserCursorIndex = tr.rowIndex
-                    libraryRoot.browserCursorActive = true
                     libraryRoot.focusedPanel = "tracks"
                     libraryRoot.forceActiveFocus()
                 }
@@ -918,17 +1096,28 @@ Rectangle {
         required property string btnLabel
         property int badgeCount: -1
         property var customAction: null
+         property int cursorIndex: -1
+
+         readonly property bool isCursor: libraryRoot.focusedPanel === "sidebar"
+                              && libraryRoot.sidebarCursorActive
+                              && libraryRoot.sidebarCursorIndex === cursorIndex
 
         width: parent ? parent.width : 0; height: 42
-        color: libraryRoot.activeTab === tabKey
-               ? libraryRoot.sidebarSel
-               : (navMa.containsMouse ? libraryRoot.bgSidebarHv : "transparent")
+         color: libraryRoot.activeTab === tabKey
+             ? libraryRoot.sidebarSel
+             : (isCursor ? "#0f2816" : (navMa.containsMouse ? libraryRoot.bgSidebarHv : "transparent"))
         Behavior on color { ColorAnimation { duration: 120 } }
 
         Rectangle {
             anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
             width: 3; color: libraryRoot.accentBlue
             visible: libraryRoot.activeTab === navBtn.tabKey
+        }
+
+        Rectangle {
+            anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+            width: 3; color: libraryRoot.accentGreen
+            visible: navBtn.isCursor && libraryRoot.activeTab !== navBtn.tabKey
         }
 
         Row {
@@ -987,6 +1176,10 @@ Rectangle {
             onClicked: {
                 libraryRoot.activeTab = navBtn.tabKey
                 if (navBtn.customAction) navBtn.customAction()
+                libraryRoot.sidebarCursorIndex = navBtn.cursorIndex
+                libraryRoot.sidebarCursorActive = true
+                libraryRoot.focusedPanel = "sidebar"
+                libraryRoot.forceActiveFocus()
             }
         }
     }
@@ -1085,11 +1278,13 @@ Rectangle {
                     }
 
                     NavButton {
+                        id: navAllTracks
                         tabKey: "library"
                         btnIcon: "♫"
                         btnLabel: "All Tracks"
                         badgeCount: libraryModel ? libraryModel.count : 0
                         customAction: function() { libraryRoot.librarySubTab = "allSongs" }
+                        cursorIndex: 0
                     }
 
                     Item { width: parent.width; height: 8 }
@@ -1147,13 +1342,16 @@ Rectangle {
 
                             property string dropZone: ""
 
+                            readonly property int sidebarIndex: libraryRoot.sidebarPlaylistStartIndex + index
+
                             readonly property bool isSelected:
                                 libraryRoot.activeTab === "playlist" &&
                                 libraryRoot.currentPlaylistId === modelData.id
 
                             readonly property bool isSidebarCursor:
+                                libraryRoot.focusedPanel === "sidebar" &&
                                 libraryRoot.sidebarCursorActive &&
-                                libraryRoot.sidebarCursorIndex === index
+                                libraryRoot.sidebarCursorIndex === sidebarIndex
 
                             width: parent.width; height: 36
                             color: isSelected          ? libraryRoot.sidebarSel
@@ -1275,8 +1473,9 @@ Rectangle {
                                     if (modelData.hasChildren && mouse.x >= arrowX && mouse.x < arrowX + 12) {
                                         libraryRoot.toggleExpanded(modelData.id)
                                         // Sync sidebar cursor to this item
-                                        libraryRoot.sidebarCursorIndex = plRow.index
+                                        libraryRoot.sidebarCursorIndex = plRow.sidebarIndex
                                         libraryRoot.sidebarCursorActive = true
+                                        libraryRoot.focusedPanel = "sidebar"
                                         libraryRoot.forceActiveFocus()
                                         return
                                     }
@@ -1286,10 +1485,10 @@ Rectangle {
                                     libraryRoot.currentPlaylistName = modelData.name
                                     libraryRoot.activeTab           = "playlist"
                                     libraryRoot.loadPlaylistTracks()
-                                    // Clicking a playlist: focus goes to track list for immediate browsing
-                                    libraryRoot.sidebarCursorIndex = plRow.index
+                                    // Clicking a playlist: keep sidebar focus for keyboard navigation
+                                    libraryRoot.sidebarCursorIndex = plRow.sidebarIndex
                                     libraryRoot.sidebarCursorActive = true
-                                    libraryRoot.focusedPanel = "tracks"
+                                    libraryRoot.focusedPanel = "sidebar"
                                     libraryRoot.forceActiveFocus()
                                 }
                             }
@@ -1377,21 +1576,27 @@ Rectangle {
                     }
 
                     NavButton {
+                        id: navFiles
                         tabKey: "files"
                         btnIcon: "≡"
                         btnLabel: "Files"
+                        cursorIndex: libraryRoot.sidebarTopNavCount + libraryRoot.visiblePlaylists.length
                     }
 
                     NavButton {
+                        id: navStreaming
                         tabKey: "streaming"
                         btnIcon: "◎"
                         btnLabel: "Streaming"
+                        cursorIndex: libraryRoot.sidebarTopNavCount + libraryRoot.visiblePlaylists.length + 1
                     }
 
                     NavButton {
+                        id: navUsb
                         tabKey: "usb"
                         btnIcon: "⊕"
                         btnLabel: "USB"
+                        cursorIndex: libraryRoot.sidebarTopNavCount + libraryRoot.visiblePlaylists.length + 2
                     }
 
                     Item { width: parent.width; height: 12 }

@@ -195,6 +195,24 @@ QString LibraryTableModel::filePathAtRow(int row) const
     return m_rows[row].filePath;
 }
 
+QString LibraryTableModel::trackIdAtRow(int row) const
+{
+    if (row < 0 || row >= m_rows.size())
+        return {};
+    return m_rows[row].id;
+}
+
+int LibraryTableModel::indexOfTrackId(const QString& trackId) const
+{
+    if (trackId.isEmpty())
+        return -1;
+    for (int i = 0; i < m_rows.size(); ++i) {
+        if (m_rows[i].id == trackId)
+            return i;
+    }
+    return -1;
+}
+
 void LibraryTableModel::updateAnalysisForTrack(const QString& trackId,
                                                double bpm,
                                                const QString& key,
