@@ -1206,10 +1206,11 @@ public:
     MixerDspSource(juce::AudioSource* inSource, DjEngine* owner)
         : source(inSource), m_owner(owner) {}
     // ── FxProcessor slot (called from Qt main thread) ──────────────────────
-    void setFxEffectType(EffectType type) { m_fx.setEffectType(type); }
-    void setFxAmount(float amount)        { m_fx.setAmount(amount); }
-    void setFxSCKnob(float knob)          { m_fx.setSCKnobValue(knob); }
-    void setFxSCParam(float param)        { m_fx.setSCParamValue(param); }
+    void setFxEffectType(EffectType type)        { m_fx.setEffectType(type); }
+    void setFxAmount(float amount)               { m_fx.setAmount(amount); }
+    void setFxSCKnob(float knob)                 { m_fx.setSCKnobValue(knob); }
+    void setFxSCParam(float param)               { m_fx.setSCParamValue(param); }
+    void setFxExternalDelayTime(float seconds)   { m_fx.setExternalDelayTime(seconds); }
 
     // ── PAD FX slot (independent of the FX bar chain) ──────────────────────
     void setPadFxEffectType(EffectType type) { m_padFx.setEffectType(type); }
@@ -5061,6 +5062,11 @@ void DjEngine::setFxEffectType(EffectType type)
 void DjEngine::setFxWetDry(float amount)
 {
     if (mixerSource) mixerSource->setFxAmount(amount);
+}
+
+void DjEngine::setFxExternalDelayTime(float seconds)
+{
+    if (mixerSource) mixerSource->setFxExternalDelayTime(seconds);
 }
 
 void DjEngine::setPadFx(const QString& effectName, float wet)

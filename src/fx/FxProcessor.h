@@ -76,6 +76,10 @@ public:
     void setSCKnobValue(float knob);
     /// param: 0.0..1.0 generic Sound Color parameter (mode-specific behavior).
     void setSCParamValue(float param);
+    /// Override delay time for BPM-synced effects. seconds < 0 disables the
+    /// override and falls back to amount-derived timing. Only affects Echo,
+    /// LowCutEcho, and MtDelay — other effects ignore this.
+    void setExternalDelayTime(float seconds);
 
     EffectType getEffectType() const { return static_cast<EffectType>(m_typeAtomic.load()); }
     float      getAmount()     const { return m_amountAtomic.load(); }
@@ -94,6 +98,9 @@ private:
     std::atomic<float> m_amountAtomic { 0.0f };
     std::atomic<float> m_scKnobAtomic { 0.0f };  // bipolar -1..+1 for Sound Color
     std::atomic<float> m_scParamAtomic{ 0.5f };  // generic 0..1 parameter for SC modes
+    // BPM sync: overrides amount-derived delay when ≥ 0. Stored in seconds;
+    // processEcho/processMtDelay multiply by m_sampleRate. -1 = disabled.
+    std::atomic<float> m_externalDelaySeconds { -1.f };
 
     double m_sampleRate    = 44100.0;
     int    m_maxBlockSize  = 512;

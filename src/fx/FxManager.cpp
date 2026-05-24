@@ -1,6 +1,7 @@
 #include "FxManager.h"
 #include "DjEngine.h"
 #include <cmath>
+#include <algorithm>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FxManager implementation
@@ -16,6 +17,30 @@ void FxManager::registerEngines(DjEngine* deckA, DjEngine* deckB)
 {
     m_engineA = deckA;
     m_engineB = deckB;
+
+    if (m_engineA) {
+        connect(m_engineA, &DjEngine::tempoChanged, this, [this]() {
+            const double bpm = m_engineA->getCurrentBpm();
+            if (qFuzzyCompare(bpm, m_cachedBpmA)) return;
+            m_cachedBpmA = bpm;
+            emit displayBpm1Changed();
+            emit displayBpm2Changed();
+            pushSyncedDelay(1);
+            pushSyncedDelay(2);
+        });
+    }
+    if (m_engineB) {
+        connect(m_engineB, &DjEngine::tempoChanged, this, [this]() {
+            const double bpm = m_engineB->getCurrentBpm();
+            if (qFuzzyCompare(bpm, m_cachedBpmB)) return;
+            m_cachedBpmB = bpm;
+            emit displayBpm1Changed();
+            emit displayBpm2Changed();
+            pushSyncedDelay(1);
+            pushSyncedDelay(2);
+        });
+    }
+
     qDebug() << "[FxManager] engines registered";
 }
 
@@ -102,6 +127,7 @@ void FxManager::setDeckAssignment(int unitId, int deck, bool active)
         if (!active) {
             target->setFxEffectType(EffectType::None);
             target->setFxWetDry(0.0f);
+            target->setFxExternalDelayTime(-1.f);
         } else {
             const QString& et = (unitId == 1) ? m_effectType1 : m_effectType2;
             const float    wd = (unitId == 1) ? m_wetDry1     : m_wetDry2;
@@ -109,6 +135,10 @@ void FxManager::setDeckAssignment(int unitId, int deck, bool active)
             target->setFxWetDry(wd);
         }
     }
+    // Re-push synced delay so newly assigned/unassigned engines get the right timing.
+    emit displayBpm1Changed();
+    emit displayBpm2Changed();
+    pushSyncedDelay(unitId);
 }
 
 // ── SoundColor ────────────────────────────────────────────────────────────────
@@ -227,6 +257,59 @@ void FxManager::applySoundColorToEngine(DjEngine* engine, const QString& mode, f
     // setFxWetDry(1.0) ensures the SmoothedValue wrapper doesn't attenuate us.
     engine->setFxWetDry(1.0f);
     engine->setFxSCKnob(value);
+}
+
+// ── BPM sync ──────────────────────────────────────────────────────────────────
+
+double FxManager::bpmForUnit(int unitId) const
+{
+    if (unitId == 1) {
+        if (m_deck1A && m_cachedBpmA > 0.0) return m_cachedBpmA;
+        if (m_deck1B && m_cachedBpmB > 0.0) return m_cachedBpmB;
+    } else {
+        if (m_deck2B && m_cachedBpmB > 0.0) return m_cachedBpmB;
+        if (m_deck2A && m_cachedBpmA > 0.0) return m_cachedBpmA;
+    }
+    return 0.0;
+}
+
+double FxManager::displayBpm1() const { return bpmForUnit(1); }
+double FxManager::displayBpm2() const { return bpmForUnit(2); }
+
+void FxManager::pushSyncedDelay(int unitId)
+{
+    const bool enabled = m_syncEnabled[unitId - 1];
+    const float seconds = enabled
+        ? static_cast<float>((60.0 / std::max(1.0, bpmForUnit(unitId))) * m_beatDiv[unitId - 1])
+        : -1.f;
+
+    if (unitId == 1) {
+        if (m_deck1A && m_engineA) m_engineA->setFxExternalDelayTime(seconds);
+        if (m_deck1B && m_engineB) m_engineB->setFxExternalDelayTime(seconds);
+    } else {
+        if (m_deck2A && m_engineA) m_engineA->setFxExternalDelayTime(seconds);
+        if (m_deck2B && m_engineB) m_engineB->setFxExternalDelayTime(seconds);
+    }
+}
+
+void FxManager::setSyncEnabled(int unitId, bool enabled)
+{
+    const int idx = unitId - 1;
+    if (idx < 0 || idx > 1 || m_syncEnabled[idx] == enabled) return;
+    m_syncEnabled[idx] = enabled;
+    if (unitId == 1) emit syncEnabled1Changed();
+    else             emit syncEnabled2Changed();
+    pushSyncedDelay(unitId);
+}
+
+void FxManager::setBeatDivision(int unitId, float div)
+{
+    const int idx = unitId - 1;
+    if (idx < 0 || idx > 1 || qFuzzyCompare(m_beatDiv[idx], div)) return;
+    m_beatDiv[idx] = div;
+    if (unitId == 1) emit beatDiv1Changed();
+    else             emit beatDiv2Changed();
+    pushSyncedDelay(unitId);
 }
 
 // ── Unit 1 setters ────────────────────────────────────────────────────────────

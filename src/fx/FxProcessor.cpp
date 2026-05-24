@@ -366,6 +366,11 @@ void FxProcessor::setSCParamValue(float param)
     m_scParamAtomic.store(std::clamp(param, 0.0f, 1.0f), std::memory_order_relaxed);
 }
 
+void FxProcessor::setExternalDelayTime(float seconds)
+{
+    m_externalDelaySeconds.store(seconds, std::memory_order_relaxed);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Reverb
 // ─────────────────────────────────────────────────────────────────────────────
@@ -505,9 +510,11 @@ void FxProcessor::prepareDelay()
 void FxProcessor::processEcho(juce::AudioBuffer<float>& wet,
                               int start, int n, float amount, bool lowCut)
 {
-    // Target delay time: 100 ms → 600 ms (in samples, float for smooth ramp).
+    const float extSec = m_externalDelaySeconds.load(std::memory_order_relaxed);
     const float targetDelay = std::clamp(
-        static_cast<float>(m_sampleRate * (0.1 + amount * 0.5)),
+        extSec >= 0.f
+            ? extSec * static_cast<float>(m_sampleRate)
+            : static_cast<float>(m_sampleRate * (0.1 + amount * 0.5)),
         1.0f, static_cast<float>(kMaxDelaySamples - 1));
     m_echoDelaySmooth.setTargetValue(targetDelay);
 
@@ -562,8 +569,11 @@ void FxProcessor::processEcho(juce::AudioBuffer<float>& wet,
 void FxProcessor::processMtDelay(juce::AudioBuffer<float>& wet,
                                   int start, int n, float amount)
 {
+    const float extSec = m_externalDelaySeconds.load(std::memory_order_relaxed);
     const float targetMax = std::clamp(
-        static_cast<float>(m_sampleRate * (0.1 + amount * 0.5)),
+        extSec >= 0.f
+            ? extSec * static_cast<float>(m_sampleRate)
+            : static_cast<float>(m_sampleRate * (0.1 + amount * 0.5)),
         4.0f, static_cast<float>(kMaxDelaySamples - 1));
     m_mtDelayTimeSmooth.setTargetValue(targetMax);
 
