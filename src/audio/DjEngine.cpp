@@ -1246,6 +1246,13 @@ public:
         m_sampleRate = sampleRate;
         for (int i = 0; i < 8; ++i) m_scratchWarmLpState[i] = 0.0f;
 
+        // Initialise per-sample gain smoothers so the first block has no ramp glitch.
+        const float sr = static_cast<float>(sampleRate);
+        m_trimSmooth .reset(sr, 0.010f);   // 10 ms — trim rarely changes rapidly
+        m_trimSmooth .setCurrentAndTargetValue(trimVal .load(std::memory_order_relaxed));
+        m_faderSmooth.reset(sr, 0.020f);   // 20 ms — crossfader can move very fast
+        m_faderSmooth.setCurrentAndTargetValue(faderVal.load(std::memory_order_relaxed));
+
         // 1.15 s ramp from full speed to a complete stop
         m_vinylBrakeRampDown  = 1.0f / (1.15f * static_cast<float>(sampleRate));
         m_vinylBrakeFactor    = 1.0f;
@@ -1295,6 +1302,12 @@ public:
         }
 
         if (m_sampleRate <= 0.0 || bufferToFill.buffer->getNumChannels() == 0 || bufferToFill.numSamples == 0) return;
+
+        // Apply deferred EQ / filter coefficient updates on the audio thread.
+        // This prevents the data race of writing IIR coefficients from the UI
+        // thread while the audio thread reads them inside lowEq.process().
+        if (m_filtersDirty.exchange(false, std::memory_order_acquire))
+            updateFilters();
 
         // Rate-proportional 4-pole anti-alias LP + gentle soft-clip during scratch.
         // scratchTimbre carries absRate (0–1); cutoff at rate × sr × 0.25 places
@@ -1356,11 +1369,17 @@ public:
                                0, std::min(fullBlock.getNumChannels(), static_cast<size_t>(2)));
         juce::dsp::ProcessContextReplacing<float> context(slicedBlock);
 
-        // Apply trim pre-EQ/pre-fader (QML trim range: 0..2).
-        float gain = trimVal.load(std::memory_order_relaxed);
-        if (std::abs(gain - 1.0f) > 0.001f) {
-            for (size_t ch = 0; ch < slicedBlock.getNumChannels(); ++ch) {
-                juce::FloatVectorOperations::multiply(slicedBlock.getChannelPointer(ch), gain, static_cast<int>(slicedBlock.getNumSamples()));
+        // Apply trim pre-EQ/pre-fader with per-sample smoothing.
+        // Reading the atomic each block and setting a target lets the SmoothedValue
+        // ramp across the block — no step changes, no clicks.
+        m_trimSmooth.setTargetValue(trimVal.load(std::memory_order_relaxed));
+        if (m_trimSmooth.isSmoothing() || std::abs(m_trimSmooth.getTargetValue() - 1.0f) > 0.001f) {
+            const size_t nc = slicedBlock.getNumChannels();
+            const int    ns = static_cast<int>(slicedBlock.getNumSamples());
+            for (int i = 0; i < ns; ++i) {
+                const float g = m_trimSmooth.getNextValue();
+                for (size_t ch = 0; ch < nc; ++ch)
+                    slicedBlock.getChannelPointer(ch)[i] *= g;
             }
         }
 
@@ -1566,11 +1585,18 @@ public:
             }
         }
 
-        // Apply channel volume (includes crossfader contribution from UI).
-        const float faderGain = faderVal.load(std::memory_order_relaxed);
-        if (std::abs(faderGain - 1.0f) > 0.001f) {
-            for (size_t ch = 0; ch < slicedBlock.getNumChannels(); ++ch) {
-                juce::FloatVectorOperations::multiply(slicedBlock.getChannelPointer(ch), faderGain, static_cast<int>(slicedBlock.getNumSamples()));
+        // Apply channel volume (crossfader + channel fader) with per-sample smoothing.
+        // The crossfader fires applyVolumes() on every pixel of slider movement, so
+        // faderVal can change every block.  Smoothing over 20 ms eliminates the
+        // step-change pops that occur at block boundaries.
+        m_faderSmooth.setTargetValue(faderVal.load(std::memory_order_relaxed));
+        if (m_faderSmooth.isSmoothing() || std::abs(m_faderSmooth.getTargetValue() - 1.0f) > 0.001f) {
+            const size_t nc = slicedBlock.getNumChannels();
+            const int    ns = static_cast<int>(slicedBlock.getNumSamples());
+            for (int i = 0; i < ns; ++i) {
+                const float g = m_faderSmooth.getNextValue();
+                for (size_t ch = 0; ch < nc; ++ch)
+                    slicedBlock.getChannelPointer(ch)[i] *= g;
             }
         }
 
@@ -1600,17 +1626,18 @@ public:
     void setFader(float val) { faderVal = val; }
 
     void setEq(float l, float m, float h) {
-        // -1 to +1 -> approx -32 dB to +6 dB (Pioneer DJM A9 is -infinity to +6)
         lowVol = l;
         midVol = m;
         highVol = h;
-        // avoid continuous recomputation; just flag it or recompute directly
-        updateFilters();
+        // Signal the audio thread to recompute coefficients.  Writing the
+        // atomics first + release on the flag ensures the audio thread sees
+        // all three values before it reads m_filtersDirty = true.
+        m_filtersDirty.store(true, std::memory_order_release);
     }
 
     void setFilterVal(float f) {
         filterVal = f;
-        updateFilters();
+        m_filtersDirty.store(true, std::memory_order_release);
     }
 
     float getDecibelsFromKnob(float kb) const {
@@ -1653,12 +1680,24 @@ public:
 
     std::atomic<float> trimVal{1.0f};
     std::atomic<float> faderVal{1.0f};
-    
+
+    // Per-sample gain smoothers (audio-thread only).
+    // The atomics above are the communication channel from the UI thread;
+    // these smoothers ramp toward each new target value within the block so
+    // there are no step-changes at block boundaries → no pops or clicks.
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_trimSmooth;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_faderSmooth;
+
     // UI vals from -1 to 1
     std::atomic<float> lowVol{0.0f};
     std::atomic<float> midVol{0.0f};
     std::atomic<float> highVol{0.0f};
     std::atomic<float> filterVal{0.0f};
+
+    // Set by the UI thread when EQ or filter params change; consumed (cleared)
+    // by the audio thread at the start of each block before lowEq.process().
+    // Using release/acquire ordering ensures coefficient writes are visible.
+    std::atomic<bool> m_filtersDirty { false };
 
     using FilterType = juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>, juce::dsp::IIR::Coefficients<float>>;
     FilterType lowEq;
