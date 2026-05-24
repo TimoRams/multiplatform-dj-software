@@ -32,9 +32,11 @@ class FxManager : public QObject
     Q_PROPERTY(float   wetDry2      READ wetDry2      WRITE setWetDry2      NOTIFY wetDry2Changed)
     Q_PROPERTY(bool    deck2A       READ deck2A       WRITE setDeck2A       NOTIFY deck2AChanged)
     Q_PROPERTY(bool    deck2B       READ deck2B       WRITE setDeck2B       NOTIFY deck2BChanged)
-    Q_PROPERTY(bool    syncEnabled2 READ syncEnabled2                       NOTIFY syncEnabled2Changed)
-    Q_PROPERTY(float   beatDiv2     READ beatDiv2                           NOTIFY beatDiv2Changed)
-    Q_PROPERTY(double  displayBpm2  READ displayBpm2                        NOTIFY displayBpm2Changed)
+    Q_PROPERTY(bool    syncEnabled2  READ syncEnabled2  NOTIFY syncEnabled2Changed)
+    Q_PROPERTY(float   beatDiv2      READ beatDiv2      NOTIFY beatDiv2Changed)
+    Q_PROPERTY(double  displayBpm2   READ displayBpm2   NOTIFY displayBpm2Changed)
+    Q_PROPERTY(float   primaryParam1 READ primaryParam1 NOTIFY primaryParam1Changed)
+    Q_PROPERTY(float   primaryParam2 READ primaryParam2 NOTIFY primaryParam2Changed)
 
     // ── SoundColor (centre knob) ──────────────────────────────────────────────
     Q_PROPERTY(QString soundColorMode READ soundColorMode WRITE setSoundColorMode NOTIFY soundColorModeChanged)
@@ -85,12 +87,14 @@ public:
     void setDeck2B(bool active);
 
     // ── BPM sync accessors ────────────────────────────────────────────────────
-    bool   syncEnabled1() const { return m_syncEnabled[0]; }
-    bool   syncEnabled2() const { return m_syncEnabled[1]; }
-    float  beatDiv1()     const { return m_beatDiv[0]; }
-    float  beatDiv2()     const { return m_beatDiv[1]; }
-    double displayBpm1()  const;
-    double displayBpm2()  const;
+    bool   syncEnabled1()  const { return m_syncEnabled[0]; }
+    bool   syncEnabled2()  const { return m_syncEnabled[1]; }
+    float  beatDiv1()      const { return m_beatDiv[0]; }
+    float  beatDiv2()      const { return m_beatDiv[1]; }
+    double displayBpm1()   const;
+    double displayBpm2()   const;
+    float  primaryParam1() const { return m_primaryParam[0]; }
+    float  primaryParam2() const { return m_primaryParam[1]; }
 
     // ── QML-callable API ─────────────────────────────────────────────────────
     Q_INVOKABLE void setEffectType(int unitId, const QString& type);
@@ -101,6 +105,8 @@ public:
     Q_INVOKABLE void setSyncEnabled(int unitId, bool enabled);
     /// Set beat division for synced delay (e.g. 0.25 = 1/4 note, 1.0 = 1 bar).
     Q_INVOKABLE void setBeatDivision(int unitId, float div);
+    /// Set effect-specific primary parameter (0..1). Reverb: room size.
+    Q_INVOKABLE void setPrimaryParam(int unitId, float v);
 
 signals:
     void effectType1Changed();
@@ -118,6 +124,8 @@ signals:
     void syncEnabled2Changed();
     void beatDiv2Changed();
     void displayBpm2Changed();
+    void primaryParam1Changed();
+    void primaryParam2Changed();
 
     void soundColorModeChanged();
     void soundColorParamChanged();
@@ -152,8 +160,9 @@ private:
     void routeToEngines(int unitId, EffectType type, float wetDry);
 
     // ── BPM sync state ────────────────────────────────────────────────────────
-    bool   m_syncEnabled[2] { false, false };
-    float  m_beatDiv[2]     { 0.25f, 0.25f }; // default 1/4 note
+    bool   m_syncEnabled[2]   { false, false };
+    float  m_beatDiv[2]       { 0.25f, 0.25f }; // default 1/4 note
+    float  m_primaryParam[2]  { 0.5f,  0.5f  }; // default mid (Reverb: 50% room)
     double m_cachedBpmA     { 0.0 };
     double m_cachedBpmB     { 0.0 };
 

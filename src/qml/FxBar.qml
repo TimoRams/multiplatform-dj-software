@@ -34,18 +34,31 @@ Rectangle {
         Rectangle {
             id: scPanel
             color: "#181818"
-            Layout.preferredWidth: 240
+            Layout.preferredWidth: 248
             Layout.fillHeight:     true
 
             property string fallbackMode:  "Filter"
             property real   fallbackParam: 0.5
             readonly property var modes: ["Space", "D.Echo", "Crush", "Pitch", "Noise", "Sweep", "Filter"]
 
-            function isActiveMode(name) {
+            // Per-mode label for the param knob — shown below the knob
+            readonly property var paramLabels: ({
+                "Space":  "SIZE",
+                "D.Echo": "TIME",
+                "Crush":  "DEPTH",
+                "Pitch":  "RANGE",
+                "Noise":  "LEVEL",
+                "Sweep":  "RESO",
+                "Filter": "RESO"
+            })
+
+            readonly property string activeMode: {
                 if (typeof fxManager !== "undefined" && fxManager !== null)
-                    return fxManager.soundColorMode === name
-                return fallbackMode === name
+                    return fxManager.soundColorMode
+                return fallbackMode
             }
+
+            function isActiveMode(name) { return scPanel.activeMode === name }
 
             Connections {
                 target: (typeof fxManager !== "undefined" && fxManager !== null) ? fxManager : null
@@ -62,35 +75,37 @@ Rectangle {
 
             ColumnLayout {
                 anchors.fill:         parent
-                anchors.topMargin:    4
-                anchors.bottomMargin: 4
+                anchors.topMargin:    5
+                anchors.bottomMargin: 5
                 anchors.leftMargin:   6
                 anchors.rightMargin:  6
-                spacing: 3
+                spacing: 4
+
+                // Row 1: Section label
+                Text {
+                    Layout.fillWidth: true
+                    text:           "COLOR FX"
+                    color:          "#444444"
+                    font.pixelSize: 7
+                    font.family:    "monospace"
+                    font.letterSpacing: 1
+                }
 
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 6
 
-                    // Param knob
+                    // Param knob with mode-specific label
                     Column {
-                        Layout.preferredWidth: 30
+                        Layout.preferredWidth: 32
                         Layout.alignment:      Qt.AlignVCenter
                         spacing: 2
-
-                        Text {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            text:           "SC"
-                            color:          "#555555"
-                            font.pixelSize: 8
-                            font.family:    "monospace"
-                        }
 
                         Knob {
                             id: scKnob
                             anchors.horizontalCenter: parent.horizontalCenter
-                            width:        22
-                            height:       22
+                            width:        24
+                            height:       24
                             from:         0.0
                             to:           1.0
                             stepSize:     0.01
@@ -104,9 +119,17 @@ Rectangle {
                                     fxManager.setSoundColorParam(value)
                             }
                         }
+
+                        Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text:           scPanel.paramLabels[scPanel.activeMode] ?? "PARAM"
+                            color:          "#555555"
+                            font.pixelSize: 7
+                            font.family:    "monospace"
+                        }
                     }
 
-                    // Mode buttons
+                    // Mode buttons — 4 columns, 2 rows
                     Grid {
                         Layout.fillWidth: true
                         columns: 4
@@ -118,17 +141,18 @@ Rectangle {
                             delegate: Rectangle {
                                 readonly property bool isActive: scPanel.isActiveMode(modelData)
 
-                                width:  (scPanel.width - 36 - 6 * 3 - 12) / 4
-                                height: 18
-                                radius: 0
-                                color:  isActive ? "#252525" : "#1e1e1e"
+                                width:  Math.floor((scPanel.width - 44 - 5 * 3) / 4)
+                                height: 20
+                                radius: 1
+                                color:  isActive ? "#2a2a2a" : "#1c1c1c"
 
+                                // Active accent bar at top
                                 Rectangle {
-                                    anchors.bottom: parent.bottom
-                                    anchors.left:   parent.left
-                                    anchors.right:  parent.right
-                                    height: 1
-                                    color:  isActive ? "#999999" : "#333333"
+                                    anchors.top:   parent.top
+                                    anchors.left:  parent.left
+                                    anchors.right: parent.right
+                                    height: isActive ? 2 : 1
+                                    color:  isActive ? "#aaaaaa" : "#2e2e2e"
                                 }
 
                                 Text {
@@ -142,7 +166,7 @@ Rectangle {
                                 }
 
                                 HoverHandler { id: modeHov }
-                                Rectangle { anchors.fill: parent; color: "#ffffff"; opacity: modeHov.hovered ? 0.03 : 0 }
+                                Rectangle { anchors.fill: parent; radius: parent.radius; color: "#ffffff"; opacity: modeHov.hovered ? 0.04 : 0 }
 
                                 MouseArea {
                                     anchors.fill: parent

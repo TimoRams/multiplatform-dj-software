@@ -372,7 +372,7 @@ ApplicationWindow {
     readonly property int scaledWaveformHeight: Math.round(window.baseWaveformHeight * window.uiScale)
     readonly property int scaledDeckMixerHeight: Math.round(window.baseDeckMixerHeight * window.uiScale)
     readonly property int topBarHeight: 34
-    readonly property int fxBarHeight: 68
+    readonly property int fxBarHeight: 90
     readonly property int mixerBaseWidth: 280
 
     readonly property real baseUiHeight: 150 + (baseUiWidth / 6.5) + 4

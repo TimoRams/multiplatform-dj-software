@@ -1211,6 +1211,7 @@ public:
     void setFxSCKnob(float knob)                 { m_fx.setSCKnobValue(knob); }
     void setFxSCParam(float param)               { m_fx.setSCParamValue(param); }
     void setFxExternalDelayTime(float seconds)   { m_fx.setExternalDelayTime(seconds); }
+    void setFxPrimaryParam(float v)              { m_fx.setPrimaryParam(v); }
 
     // ── PAD FX slot (independent of the FX bar chain) ──────────────────────
     void setPadFxEffectType(EffectType type) { m_padFx.setEffectType(type); }
@@ -5067,6 +5068,11 @@ void DjEngine::setFxWetDry(float amount)
 void DjEngine::setFxExternalDelayTime(float seconds)
 {
     if (mixerSource) mixerSource->setFxExternalDelayTime(seconds);
+}
+
+void DjEngine::setFxPrimaryParam(float v)
+{
+    if (mixerSource) mixerSource->setFxPrimaryParam(v);
 }
 
 void DjEngine::setPadFx(const QString& effectName, float wet)

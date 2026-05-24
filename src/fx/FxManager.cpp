@@ -52,19 +52,21 @@ EffectType FxManager::effectTypeFromString(const QString& name)
     if (name == "Bitcrusher")    return EffectType::Bitcrusher;
     if (name == "Pitch Shifter" || name == "PitchShifter")
                                  return EffectType::PitchShifter;
-    if (name == "Echo")          return EffectType::Echo;
-    if (name == "Low Cut Echo")  return EffectType::LowCutEcho;
-    if (name == "MT Delay")      return EffectType::MtDelay;
-    if (name == "Spiral")        return EffectType::Spiral;
-    if (name == "Flanger")       return EffectType::Flanger;
-    if (name == "Phaser")        return EffectType::Phaser;
-    if (name == "Trans")         return EffectType::Trans;
-    if (name == "Enigma Jet")    return EffectType::EnigmaJet;
-    if (name == "Stretch")       return EffectType::Stretch;
-    if (name == "Slip Roll")     return EffectType::SlipRoll;
-    if (name == "Roll")          return EffectType::Roll;
-    if (name == "Nobius")        return EffectType::Nobius;
-    if (name == "Mobius")        return EffectType::Mobius;
+    if (name == "Echo")                          return EffectType::Echo;
+    if (name == "Low Cut Echo")                  return EffectType::LowCutEcho;
+    if (name == "MT Delay" ||
+        name == "Multi-Tap Delay")               return EffectType::MtDelay;
+    if (name == "Spiral")                        return EffectType::Spiral;
+    if (name == "Flanger")                       return EffectType::Flanger;
+    if (name == "Phaser")                        return EffectType::Phaser;
+    if (name == "Trans" || name == "Tremolo")    return EffectType::Trans;
+    if (name == "Enigma Jet")                    return EffectType::EnigmaJet;
+    if (name == "Stretch")                       return EffectType::Stretch;
+    if (name == "Slip Roll")                     return EffectType::SlipRoll;
+    if (name == "Roll")                          return EffectType::Roll;
+    if (name == "Roll Out")                      return EffectType::RollOut;
+    if (name == "Nobius")                        return EffectType::Nobius;
+    if (name == "Mobius")                        return EffectType::Mobius;
     // ── SoundColor mode aliases ──────────────────────────────────────────────
     if (name == "Space")         return EffectType::SoundColorSpace;
     if (name == "D.Echo")        return EffectType::SoundColorDubEcho;
@@ -129,10 +131,12 @@ void FxManager::setDeckAssignment(int unitId, int deck, bool active)
             target->setFxWetDry(0.0f);
             target->setFxExternalDelayTime(-1.f);
         } else {
-            const QString& et = (unitId == 1) ? m_effectType1 : m_effectType2;
-            const float    wd = (unitId == 1) ? m_wetDry1     : m_wetDry2;
+            const QString& et  = (unitId == 1) ? m_effectType1    : m_effectType2;
+            const float    wd  = (unitId == 1) ? m_wetDry1        : m_wetDry2;
+            const float    pp  = m_primaryParam[unitId - 1];
             target->setFxEffectType(effectTypeFromString(et));
             target->setFxWetDry(wd);
+            target->setFxPrimaryParam(pp);
         }
     }
     // Re-push synced delay so newly assigned/unassigned engines get the right timing.
@@ -310,6 +314,25 @@ void FxManager::setBeatDivision(int unitId, float div)
     if (unitId == 1) emit beatDiv1Changed();
     else             emit beatDiv2Changed();
     pushSyncedDelay(unitId);
+}
+
+void FxManager::setPrimaryParam(int unitId, float v)
+{
+    const int idx = unitId - 1;
+    if (idx < 0 || idx > 1) return;
+    const float clamped = std::clamp(v, 0.0f, 1.0f);
+    if (qFuzzyCompare(m_primaryParam[idx], clamped)) return;
+    m_primaryParam[idx] = clamped;
+    if (unitId == 1) emit primaryParam1Changed();
+    else             emit primaryParam2Changed();
+    // Route to all assigned engines
+    if (unitId == 1) {
+        if (m_deck1A && m_engineA) m_engineA->setFxPrimaryParam(clamped);
+        if (m_deck1B && m_engineB) m_engineB->setFxPrimaryParam(clamped);
+    } else {
+        if (m_deck2A && m_engineA) m_engineA->setFxPrimaryParam(clamped);
+        if (m_deck2B && m_engineB) m_engineB->setFxPrimaryParam(clamped);
+    }
 }
 
 // ── Unit 1 setters ────────────────────────────────────────────────────────────

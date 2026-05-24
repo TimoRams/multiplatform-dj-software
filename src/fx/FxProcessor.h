@@ -6,7 +6,9 @@
 #include <vector>
 
 #include "../dsp/SsDelay.h"
+#include "../dsp/SsLfo.h"
 #include "../dsp/SvfSmoothed.h"
+#include "filters.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FxProcessor
@@ -77,9 +79,11 @@ public:
     /// param: 0.0..1.0 generic Sound Color parameter (mode-specific behavior).
     void setSCParamValue(float param);
     /// Override delay time for BPM-synced effects. seconds < 0 disables the
-    /// override and falls back to amount-derived timing. Only affects Echo,
-    /// LowCutEcho, and MtDelay — other effects ignore this.
+    /// override and falls back to amount-derived timing. Affects all timing-
+    /// based effects (Echo, Flanger, Phaser, Tremolo, Roll, Mobius, etc.).
     void setExternalDelayTime(float seconds);
+    /// Effect-specific primary parameter (0..1). Reverb: room size.
+    void setPrimaryParam(float v);
 
     EffectType getEffectType() const { return static_cast<EffectType>(m_typeAtomic.load()); }
     float      getAmount()     const { return m_amountAtomic.load(); }
@@ -101,6 +105,10 @@ private:
     // BPM sync: overrides amount-derived delay when ≥ 0. Stored in seconds;
     // processEcho/processMtDelay multiply by m_sampleRate. -1 = disabled.
     std::atomic<float> m_externalDelaySeconds { -1.f };
+    // Effect-specific primary parameter (0..1).  Meaning is per-effect:
+    //   Reverb → room size (0 = tiny, 1 = huge)
+    //   Others → reserved for future per-effect parameter expansion.
+    std::atomic<float> m_primaryParamAtomic { 0.5f };
 
     double m_sampleRate    = 44100.0;
     int    m_maxBlockSize  = 512;
@@ -115,7 +123,7 @@ private:
 
     void prepareReverb();
     void processReverb(juce::AudioBuffer<float>& wet, int start, int n);
-    void updateReverbParams(float amount);
+    void updateReverbParams(); // uses m_primaryParamAtomic for room character
 
     // ── Bitcrusher ────────────────────────────────────────────────────────────
     // Per-channel sample-and-hold state
@@ -147,7 +155,9 @@ private:
     struct DelayState {
         DelayLine lineL, lineR;
         float hpStateL = 0.f, hpStateR = 0.f;
-        float lpFbL    = 0.f, lpFbR    = 0.f;
+        // Biquad LP in the feedback path — warmer and more musical than the
+        // 1-pole it replaces; Q=0.85 gives a slight resonant bump at cutoff.
+        signalsmith::filters::BiquadStatic<float> lpBiquadL, lpBiquadR;
     };
     DelayState m_delayState;
     // Per-sample delay-time smoothers for Echo and MT Delay: eliminates the
@@ -161,9 +171,8 @@ private:
 
     // ── Spiral (chorus-style) ─────────────────────────────────────────────────
     struct SpiralState {
-        std::vector<float> bufL, bufR;
-        int   writePos = 0;
-        float lfoPhase = 0.f;
+        dsp::SsDelay lineL, lineR;
+        dsp::SsLfo   lfo;
     };
     SpiralState m_spiralState;
     void prepareSpiral();
@@ -171,9 +180,8 @@ private:
 
     // ── Flanger ───────────────────────────────────────────────────────────────
     struct FlangerState {
-        std::vector<float> bufL, bufR;
-        int   writePos = 0;
-        float lfoPhase = 0.f;
+        dsp::SsDelay lineL, lineR;
+        dsp::SsLfo   lfo;
     };
     FlangerState m_flangerState;
     void prepareFlanger();
@@ -181,29 +189,25 @@ private:
 
     // ── Phaser (4-stage all-pass) ─────────────────────────────────────────────
     struct PhaserState {
-        // 1st-order all-pass per stage: y[n] = coeff*(x[n] - y[n-1]) + x[n-1]
-        // We store x[n-1] and y[n-1] per channel per stage
-        float xPrev[2][4] = {};  // [ch][stage] previous input
-        float yPrev[2][4] = {};  // [ch][stage] previous output
-        float lfoPhase = 0.f;
+        float      xPrev[2][4] = {};  // [ch][stage] previous input
+        float      yPrev[2][4] = {};  // [ch][stage] previous output
+        dsp::SsLfo lfo;
     };
     PhaserState m_phaserState;
     void processPhaser(juce::AudioBuffer<float>& wet, int start, int n, float amount);
 
     // ── Trans (Tremolo) ───────────────────────────────────────────────────────
-    struct TransState { float lfoPhase = 0.f; };
+    struct TransState { dsp::SsLfo lfo; };
     TransState m_transState;
     void processTrans(juce::AudioBuffer<float>& wet, int start, int n, float amount);
 
     // ── Enigma Jet (Phaser + Pitch-detune) ────────────────────────────────────
     struct EnigmaState {
-        float xPrev[2][8] = {};  // [ch][stage] previous input for all-pass
-        float yPrev[2][8] = {};  // [ch][stage] previous output for all-pass
-        float lfoPhase = 0.f;
-        // small detune delay
-        std::vector<float> detBufL, detBufR;
-        int detWritePos = 0;
-        float detLfo    = 0.f;
+        float      xPrev[2][8] = {};
+        float      yPrev[2][8] = {};
+        dsp::SsLfo phaseLfo;      // slow sweep for 8-stage all-pass
+        dsp::SsDelay detLineL, detLineR;  // chorus detune delay
+        dsp::SsLfo detLfo;        // faster LFO for the detune modulation
     };
     EnigmaState m_enigmaState;
     void prepareEnigma();
@@ -280,6 +284,9 @@ private:
         float bp1[2] = {};
         float lp2[2] = {};
         float bp2[2] = {};
+        // Per-sample smoothers — eliminate zipper noise when knob is swept
+        juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> fcSmooth;
+        juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>         rSmooth;
     };
 
     SCFilterState  m_scFilterState;
@@ -290,6 +297,17 @@ private:
     SCSweepState   m_scSweepState;
 
     void prepareSCDelays();
+
+    // Shared per-sample wet/dry smoother — one instance serves all SC effects
+    // (only one runs per block).  Target is set by each process function.
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_scAbsKSmooth;
+    // SC Dub Echo: independent smoother for feedback level to prevent spikes
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_scDubFbSmooth;
+
+    // Apply per-sample smoothed wet/dry blend of wetBuf into buffer.
+    // m_scAbsKSmooth target must already be set by the caller.
+    void mixSCSmoothed(juce::AudioBuffer<float>& dst,
+                       const juce::AudioBuffer<float>& wet, int start, int n);
 
     // SC process functions — all take raw bipolar knob value (-1..+1)
     void processSC_Filter  (juce::AudioBuffer<float>& buf, int start, int n, float knob);

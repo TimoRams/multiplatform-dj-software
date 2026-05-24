@@ -313,6 +313,7 @@ public slots:
     void setFxSCKnob(float knob);              // bipolar -1..+1 for Sound Color
     void setFxSCParam(float param);            // 0..1 mode parameter for Sound Color
     void setFxExternalDelayTime(float seconds); // ≥0 = BPM-synced override; <0 = off
+    void setFxPrimaryParam(float v);            // effect-specific primary param (0..1)
 
     [[nodiscard]] bool isReverse() const { return m_isReverse; }
     Q_INVOKABLE void setReverse(bool on);
