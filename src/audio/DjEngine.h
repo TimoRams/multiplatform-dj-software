@@ -540,8 +540,8 @@ private:
         static constexpr double kIdleTimeoutSec = 0.120;
         static constexpr double kMaxRate = 12.0;
         static constexpr double kReleaseToPlayTauSec = 0.075;  // snappy spin-up to normal play
-        static constexpr double kReleaseToStopTauSec = 0.075;  // decisive stop, no drag tail
-        static constexpr double kReleaseSettleThreshold = 0.030; // settle window matched to shorter tau
+        static constexpr double kReleaseToStopTauSec = 0.350;  // platter spindown on paused-deck release
+        static constexpr double kReleaseSettleThreshold = 0.015; // tighter settle for slower stop tau
         static constexpr double kControlResumeThresholdRate = 0.0012;
         static constexpr double kControlStopThresholdRate = 0.0006;
         static constexpr double kDirectStepLimitSec = 0.02;
@@ -551,8 +551,8 @@ private:
         static constexpr double kInputRateFilterAlpha = 0.34;
         static constexpr double kInputRateSlewPerSec = 28.0;
         static constexpr double kDirectionFlipThresholdRate = 0.08;
-        static constexpr double kAbsoluteFollowStiffness = 150.0;
-        static constexpr double kAbsoluteFollowDamping = 24.0;
+        static constexpr double kAbsoluteFollowStiffness = 45.0;  // softer = visible platter lag
+        static constexpr double kAbsoluteFollowDamping   = 11.0;  // underdamped: natural bounce at stop
         static constexpr double kAbsoluteMaxFollowRate = 16.0;
         static constexpr double kAbsoluteSnapDistanceSec = 0.00035;
         static constexpr double kAbsoluteSnapVelocitySecPerSec = 0.015;
