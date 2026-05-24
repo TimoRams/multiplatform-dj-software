@@ -11,8 +11,8 @@ class DjEngine;
 // FxManager  –  bridges the QML FX-UI to the JUCE audio engines.
 //
 // Call registerEngines(deckA, deckB) from main() after both DjEngines are
-// constructed.  All QML invokable methods forward directly to the matching
-// DjEngine::setFxEffectType() / setFxWetDry().
+// constructed.  FX unit controls route to per-deck FX chain slots in order
+// (slot 1 → slot 2 → slot 3).  Sound Color uses the dedicated color slot.
 // ─────────────────────────────────────────────────────────────────────────────
 class FxManager : public QObject
 {

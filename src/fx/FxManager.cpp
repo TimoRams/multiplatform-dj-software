@@ -83,11 +83,11 @@ void FxManager::routeToEngines(int unitId, EffectType type, float wetDry)
     // Unit 1 routes to DeckA when deck1A==true, optionally also DeckB when deck1B==true.
     // Unit 2 routes to DeckB when deck2B==true, optionally also DeckA when deck2A==true.
     if (unitId == 1) {
-        if (m_deck1A && m_engineA) { m_engineA->setFxEffectType(type); m_engineA->setFxWetDry(wetDry); }
-        if (m_deck1B && m_engineB) { m_engineB->setFxEffectType(type); m_engineB->setFxWetDry(wetDry); }
+        if (m_deck1A && m_engineA) { m_engineA->setFxSlotEffectType(1, type); m_engineA->setFxSlotWetDry(1, wetDry); }
+        if (m_deck1B && m_engineB) { m_engineB->setFxSlotEffectType(1, type); m_engineB->setFxSlotWetDry(1, wetDry); }
     } else {
-        if (m_deck2A && m_engineA) { m_engineA->setFxEffectType(type); m_engineA->setFxWetDry(wetDry); }
-        if (m_deck2B && m_engineB) { m_engineB->setFxEffectType(type); m_engineB->setFxWetDry(wetDry); }
+        if (m_deck2A && m_engineA) { m_engineA->setFxSlotEffectType(2, type); m_engineA->setFxSlotWetDry(2, wetDry); }
+        if (m_deck2B && m_engineB) { m_engineB->setFxSlotEffectType(2, type); m_engineB->setFxSlotWetDry(2, wetDry); }
     }
 }
 
@@ -127,16 +127,16 @@ void FxManager::setDeckAssignment(int unitId, int deck, bool active)
 
     if (target) {
         if (!active) {
-            target->setFxEffectType(EffectType::None);
-            target->setFxWetDry(0.0f);
-            target->setFxExternalDelayTime(-1.f);
+            target->setFxSlotEffectType(unitId, EffectType::None);
+            target->setFxSlotWetDry(unitId, 0.0f);
+            target->setFxSlotExternalDelayTime(unitId, -1.f);
         } else {
             const QString& et  = (unitId == 1) ? m_effectType1    : m_effectType2;
             const float    wd  = (unitId == 1) ? m_wetDry1        : m_wetDry2;
             const float    pp  = m_primaryParam[unitId - 1];
-            target->setFxEffectType(effectTypeFromString(et));
-            target->setFxWetDry(wd);
-            target->setFxPrimaryParam(pp);
+            target->setFxSlotEffectType(unitId, effectTypeFromString(et));
+            target->setFxSlotWetDry(unitId, wd);
+            target->setFxSlotPrimaryParam(unitId, pp);
         }
     }
     // Re-push synced delay so newly assigned/unassigned engines get the right timing.
@@ -288,11 +288,11 @@ void FxManager::pushSyncedDelay(int unitId)
         : -1.f;
 
     if (unitId == 1) {
-        if (m_deck1A && m_engineA) m_engineA->setFxExternalDelayTime(seconds);
-        if (m_deck1B && m_engineB) m_engineB->setFxExternalDelayTime(seconds);
+        if (m_deck1A && m_engineA) m_engineA->setFxSlotExternalDelayTime(1, seconds);
+        if (m_deck1B && m_engineB) m_engineB->setFxSlotExternalDelayTime(1, seconds);
     } else {
-        if (m_deck2A && m_engineA) m_engineA->setFxExternalDelayTime(seconds);
-        if (m_deck2B && m_engineB) m_engineB->setFxExternalDelayTime(seconds);
+        if (m_deck2A && m_engineA) m_engineA->setFxSlotExternalDelayTime(2, seconds);
+        if (m_deck2B && m_engineB) m_engineB->setFxSlotExternalDelayTime(2, seconds);
     }
 }
 
@@ -327,11 +327,11 @@ void FxManager::setPrimaryParam(int unitId, float v)
     else             emit primaryParam2Changed();
     // Route to all assigned engines
     if (unitId == 1) {
-        if (m_deck1A && m_engineA) m_engineA->setFxPrimaryParam(clamped);
-        if (m_deck1B && m_engineB) m_engineB->setFxPrimaryParam(clamped);
+        if (m_deck1A && m_engineA) m_engineA->setFxSlotPrimaryParam(1, clamped);
+        if (m_deck1B && m_engineB) m_engineB->setFxSlotPrimaryParam(1, clamped);
     } else {
-        if (m_deck2A && m_engineA) m_engineA->setFxPrimaryParam(clamped);
-        if (m_deck2B && m_engineB) m_engineB->setFxPrimaryParam(clamped);
+        if (m_deck2A && m_engineA) m_engineA->setFxSlotPrimaryParam(2, clamped);
+        if (m_deck2B && m_engineB) m_engineB->setFxSlotPrimaryParam(2, clamped);
     }
 }
 

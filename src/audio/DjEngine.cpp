@@ -1205,13 +1205,29 @@ class DjEngine::MixerDspSource : public juce::AudioSource {
 public:
     MixerDspSource(juce::AudioSource* inSource, DjEngine* owner)
         : source(inSource), m_owner(owner) {}
-    // ── FxProcessor slot (called from Qt main thread) ──────────────────────
-    void setFxEffectType(EffectType type)        { m_fx.setEffectType(type); }
-    void setFxAmount(float amount)               { m_fx.setAmount(amount); }
-    void setFxSCKnob(float knob)                 { m_fx.setSCKnobValue(knob); }
-    void setFxSCParam(float param)               { m_fx.setSCParamValue(param); }
-    void setFxExternalDelayTime(float seconds)   { m_fx.setExternalDelayTime(seconds); }
-    void setFxPrimaryParam(float v)              { m_fx.setPrimaryParam(v); }
+    static constexpr int kFxChainSlots = 3;
+
+    // ── Color FX (Sound Color) slot ───────────────────────────────────────
+    void setFxEffectType(EffectType type)        { m_colorFx.setEffectType(type); }
+    void setFxAmount(float amount)               { m_colorFx.setAmount(amount); }
+    void setFxSCKnob(float knob)                 { m_colorFx.setSCKnobValue(knob); }
+    void setFxSCParam(float param)               { m_colorFx.setSCParamValue(param); }
+    void setFxExternalDelayTime(float seconds)   { m_colorFx.setExternalDelayTime(seconds); }
+    void setFxPrimaryParam(float v)              { m_colorFx.setPrimaryParam(v); }
+
+    // ── Beat FX chain slots (1-based) ─────────────────────────────────────
+    void setFxSlotEffectType(int slot, EffectType type) {
+        if (auto* fx = fxChainSlot(slot)) fx->setEffectType(type);
+    }
+    void setFxSlotAmount(int slot, float amount) {
+        if (auto* fx = fxChainSlot(slot)) fx->setAmount(amount);
+    }
+    void setFxSlotExternalDelayTime(int slot, float seconds) {
+        if (auto* fx = fxChainSlot(slot)) fx->setExternalDelayTime(seconds);
+    }
+    void setFxSlotPrimaryParam(int slot, float v) {
+        if (auto* fx = fxChainSlot(slot)) fx->setPrimaryParam(v);
+    }
 
     // ── PAD FX slot (independent of the FX bar chain) ──────────────────────
     void setPadFxEffectType(EffectType type) { m_padFx.setEffectType(type); }
@@ -1234,7 +1250,9 @@ public:
 
         m_preFaderScratch.setSize(2, std::max(64, samplesPerBlockExpected), false, true, true);
 
-        m_fx.prepare(sampleRate, samplesPerBlockExpected, 2);
+        m_colorFx.prepare(sampleRate, samplesPerBlockExpected, 2);
+        for (auto& fx : m_fxChain)
+            fx.prepare(sampleRate, samplesPerBlockExpected, 2);
         m_padFx.prepare(sampleRate, samplesPerBlockExpected, 2);
         
         juce::dsp::ProcessSpec spec { sampleRate, static_cast<juce::uint32>(samplesPerBlockExpected), 2 };
@@ -1384,10 +1402,10 @@ public:
         }
 
         // ── Color FX (pre-EQ: timbre-shaping effects that act on raw source color) ─
-        if (FxProcessor::isColorFxType(m_fx.getEffectType()))
-            m_fx.process(*bufferToFill.buffer,
-                         bufferToFill.startSample,
-                         bufferToFill.numSamples);
+        if (FxProcessor::isColorFxType(m_colorFx.getEffectType()))
+            m_colorFx.process(*bufferToFill.buffer,
+                              bufferToFill.startSample,
+                              bufferToFill.numSamples);
 
         lowEq.process(context);
         midEq.process(context);
@@ -1600,11 +1618,13 @@ public:
             }
         }
 
-        // ── Beat FX + PAD FX (post-fader: tails continue after fader closes) ──
-        if (!FxProcessor::isColorFxType(m_fx.getEffectType()))
-            m_fx.process(*bufferToFill.buffer,
-                         bufferToFill.startSample,
-                         bufferToFill.numSamples);
+        // ── Beat FX chain + PAD FX (post-fader: tails continue after fader closes) ──
+        if (!FxProcessor::isColorFxType(m_colorFx.getEffectType())) {
+            for (auto& fx : m_fxChain)
+                fx.process(*bufferToFill.buffer,
+                           bufferToFill.startSample,
+                           bufferToFill.numSamples);
+        }
         m_padFx.process(*bufferToFill.buffer,
                         bufferToFill.startSample,
                         bufferToFill.numSamples);
@@ -1674,6 +1694,11 @@ public:
         }
     }
 
+    FxProcessor* fxChainSlot(int slot) {
+        if (slot < 1 || slot > kFxChainSlots) return nullptr;
+        return &m_fxChain[static_cast<size_t>(slot - 1)];
+    }
+
     juce::AudioSource* source = nullptr;
     DjEngine* m_owner = nullptr;
     double m_sampleRate = 0;
@@ -1705,7 +1730,8 @@ public:
     FilterType highEq;
     FilterType colorFilter;
 
-    FxProcessor m_fx;
+    FxProcessor m_colorFx;
+    std::array<FxProcessor, kFxChainSlots> m_fxChain;
     FxProcessor m_padFx;
     BrickwallLimiter m_limiter;
 
@@ -5103,6 +5129,26 @@ void DjEngine::setFxExternalDelayTime(float seconds)
 void DjEngine::setFxPrimaryParam(float v)
 {
     if (mixerSource) mixerSource->setFxPrimaryParam(v);
+}
+
+void DjEngine::setFxSlotEffectType(int slot, EffectType type)
+{
+    if (mixerSource) mixerSource->setFxSlotEffectType(slot, type);
+}
+
+void DjEngine::setFxSlotWetDry(int slot, float amount)
+{
+    if (mixerSource) mixerSource->setFxSlotAmount(slot, amount);
+}
+
+void DjEngine::setFxSlotExternalDelayTime(int slot, float seconds)
+{
+    if (mixerSource) mixerSource->setFxSlotExternalDelayTime(slot, seconds);
+}
+
+void DjEngine::setFxSlotPrimaryParam(int slot, float v)
+{
+    if (mixerSource) mixerSource->setFxSlotPrimaryParam(slot, v);
 }
 
 void DjEngine::setPadFx(const QString& effectName, float wet)

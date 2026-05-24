@@ -308,12 +308,19 @@ public slots:
     void setKeylock(bool value);
 
     // FX chain
+    // Color FX (Sound Color) slot
     void setFxEffectType(EffectType type);
     void setFxWetDry(float amount);
-    void setFxSCKnob(float knob);              // bipolar -1..+1 for Sound Color
-    void setFxSCParam(float param);            // 0..1 mode parameter for Sound Color
+    void setFxSCKnob(float knob);               // bipolar -1..+1 for Sound Color
+    void setFxSCParam(float param);             // 0..1 mode parameter for Sound Color
     void setFxExternalDelayTime(float seconds); // ≥0 = BPM-synced override; <0 = off
     void setFxPrimaryParam(float v);            // effect-specific primary param (0..1)
+
+    // Beat FX chain slots (1-based slot index)
+    void setFxSlotEffectType(int slot, EffectType type);
+    void setFxSlotWetDry(int slot, float amount);
+    void setFxSlotExternalDelayTime(int slot, float seconds);
+    void setFxSlotPrimaryParam(int slot, float v);
 
     [[nodiscard]] bool isReverse() const { return m_isReverse; }
     Q_INVOKABLE void setReverse(bool on);
