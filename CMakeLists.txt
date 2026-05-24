@@ -202,6 +202,11 @@ if(UNIX AND NOT APPLE)
     endif()
 endif()
 
+# ---- Signalsmith DSP (header-only, MIT) -----------------------------------
+# Vendored subset of https://github.com/Signalsmith-Audio/signalsmith-dsp
+# Only dsp/delay.h is included — the Delay<> circular buffer + Linear interpolator.
+set(SIGNALSMITH_DSP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/libs/signalsmith-dsp")
+
 add_subdirectory(libs/JUCE)
 
 # Ableton Link — header-only library for tempo/beat sync
@@ -313,6 +318,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     src/analysis
     src/domain
     src/app
+    ${SIGNALSMITH_DSP_DIR}
 )
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE

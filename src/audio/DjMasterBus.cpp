@@ -27,9 +27,12 @@ void DjMasterBus::addDeck(DjEngine* deck)
     if (deck && std::find(m_decks.begin(), m_decks.end(), deck) == m_decks.end())
     {
         m_decks.push_back(deck);
-        // Prepare the new deck's source if we're already running.
-        if (auto* src = deck->getAudioSource(); src && m_maxBlockSize > 0 && m_sampleRate > 0)
-            src->prepareToPlay(m_maxBlockSize, m_sampleRate);
+        // Only prepare the deck if the bus has been prepared by the ADM.
+        // Avoids calling prepareToPlay with stale defaults before the audio
+        // device opens with its actual block size and sample rate.
+        if (m_isPrepared)
+            if (auto* src = deck->getAudioSource())
+                src->prepareToPlay(m_maxBlockSize, m_sampleRate);
     }
 }
 
@@ -58,6 +61,7 @@ void DjMasterBus::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
 {
     m_sampleRate   = sampleRate;
     m_maxBlockSize = samplesPerBlockExpected;
+    m_isPrepared   = true;
 
     // Prepare summing buffers
     m_deckScratch.setSize(2, samplesPerBlockExpected, false, true, true);
@@ -74,6 +78,7 @@ void DjMasterBus::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
 
 void DjMasterBus::releaseResources()
 {
+    m_isPrepared = false;
     for (auto* deck : m_decks)
         if (auto* src = deck->getAudioSource())
             src->releaseResources();

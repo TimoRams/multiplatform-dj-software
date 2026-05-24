@@ -5,6 +5,9 @@
 #include <atomic>
 #include <vector>
 
+#include "../dsp/SsDelay.h"
+#include "../dsp/SvfSmoothed.h"
+
 // ─────────────────────────────────────────────────────────────────────────────
 // FxProcessor
 //
@@ -131,19 +134,19 @@ private:
 
     // ── Echo / Low-Cut Echo / MT Delay ────────────────────────────────────────
     static constexpr int kMaxDelaySamples = 192000; // up to ~4 s at 48 kHz
-    struct DelayLine {
-        std::vector<float> buf;
-        int writePos = 0;
-        float read(int delaySamples) const;
-        void  write(float sample);
-        void  prepare(int maxSamples);
-    };
+    // Fractional-delay line from the DSP layer — drop-in for the old hand-rolled
+    // integer DelayLine, with an additional readFrac() for smooth time transitions.
+    using DelayLine = dsp::SsDelay;
     struct DelayState {
         DelayLine lineL, lineR;
-        float hpStateL = 0.f, hpStateR = 0.f; // low-cut echo HP state
-        float lpFbL    = 0.f, lpFbR    = 0.f; // tape-warmth LP in echo feedback
+        float hpStateL = 0.f, hpStateR = 0.f;
+        float lpFbL    = 0.f, lpFbR    = 0.f;
     };
     DelayState m_delayState;
+    // Per-sample delay-time smoothers for Echo and MT Delay: eliminates the
+    // click that occurs when the amount knob moves between audio blocks.
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_echoDelaySmooth;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_mtDelayTimeSmooth;
     void prepareDelay();
     void processEcho(juce::AudioBuffer<float>& wet, int start, int n,
                      float amount, bool lowCut);
@@ -240,12 +243,10 @@ private:
                        float amount, bool nobius);
 
     // ── Sound Color: shared bipolar biquad filter helper ─────────────────────
-    // A 2-pole State-Variable Filter (SVF) that morphs LPF↔HPF based on sign.
+    // A 2-pole State Variable Filter with per-sample parameter smoothing.
     // knob < 0 → LPF (cutoff 20kHz→20Hz), knob > 0 → HPF (cutoff 20Hz→20kHz)
-    struct SVFState {
-        float s1[2] = {};  // integrator 1, per channel
-        float s2[2] = {};  // integrator 2, per channel
-    };
+    // Using dsp::SvfSmoothed eliminates zipper noise when the knob is swept.
+    using SVFState = dsp::SvfSmoothed;
 
     // Apply the bipolar SVF in-place to the wet buffer.
     // knob: -1..+1  (0 = transparent/bypass)
@@ -258,8 +259,9 @@ private:
     struct SCDubEchoState {
         DelayLine lineL, lineR;
         SVFState  svf;
-        float     lpL = 0.f, lpR = 0.f;  // tape-style low-pass in feedback
+        float     lpL = 0.f, lpR = 0.f;
     };
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_scDubDelaySmooth;
     struct SCCrushState   { SVFState svf; std::vector<BitcrusherState> bc; };
     struct SCSpaceState   { SVFState svf; };
     struct SCNoiseState   {
