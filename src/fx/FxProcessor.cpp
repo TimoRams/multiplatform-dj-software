@@ -1178,6 +1178,13 @@ void FxProcessor::mixSCSmoothed(juce::AudioBuffer<float>& dst,
     }
 }
 
+// ── SC knob response curves ────────────────────────────────────────────────────
+// t ∈ [0,1] → [0,1]. Applied to |knob| before DSP so the perceptual response
+// matches professional DJ mixer behavior — most control in the musically useful range.
+static float scMapSCurve(float t)    { return t * t * (3.f - 2.f * t); }
+static float scMapExpRamp(float t)   { return std::pow(t, 1.5f); }
+static float scMapFastOnset(float t) { return 1.f - (1.f - t) * (1.f - t); }
+
 // ── Bipolar SVF helper ────────────────────────────────────────────────────────
 //
 // Delegates per-sample processing to dsp::SvfSmoothed so filter coefficients
@@ -1212,18 +1219,19 @@ float FxProcessor::applySCFilter(juce::AudioBuffer<float>& buf, int start, int n
 void FxProcessor::processSC_Filter(juce::AudioBuffer<float>& buffer,
                                     int start, int n, float knob)
 {
-    const float absK = std::abs(knob);
-    m_scAbsKSmooth.setTargetValue(absK < 0.005f ? 0.f : absK);
-    if (!m_scAbsKSmooth.isSmoothing() && absK < 0.005f) return;
+    const float absK   = std::abs(knob);
+    const float mapped = scMapSCurve(absK);
+    m_scAbsKSmooth.setTargetValue(mapped < 0.005f ? 0.f : mapped);
+    if (!m_scAbsKSmooth.isSmoothing() && mapped < 0.005f) return;
 
     const float param = m_scParamAtomic.load(std::memory_order_relaxed);
     const float q     = std::max(0.2f, 0.70f + param * 15.30f);
 
     float fc;
     if (knob < 0.f)
-        fc = 20000.f * std::pow(20.f / 20000.f, absK);
+        fc = 20000.f * std::pow(20.f / 20000.f, mapped);
     else
-        fc = 20.f * std::pow(20000.f / 20.f, absK);
+        fc = 20.f * std::pow(20000.f / 20.f, mapped);
     fc = std::clamp(fc, 20.f, 20000.f);
 
     auto& wetBuf = m_wetScratch;
@@ -1256,9 +1264,10 @@ void FxProcessor::processSC_Filter(juce::AudioBuffer<float>& buffer,
 void FxProcessor::processSC_DubEcho(juce::AudioBuffer<float>& buffer,
                                      int start, int n, float knob)
 {
-    const float absK = std::abs(knob);
-    m_scAbsKSmooth.setTargetValue(absK < 0.005f ? 0.f : absK);
-    if (!m_scAbsKSmooth.isSmoothing() && absK < 0.005f) return;
+    const float absK   = std::abs(knob);
+    const float mapped = scMapSCurve(absK);
+    m_scAbsKSmooth.setTargetValue(mapped < 0.005f ? 0.f : mapped);
+    if (!m_scAbsKSmooth.isSmoothing() && mapped < 0.005f) return;
 
     const float param = m_scParamAtomic.load(std::memory_order_relaxed);
 
@@ -1309,7 +1318,7 @@ void FxProcessor::processSC_DubEcho(juce::AudioBuffer<float>& buffer,
         }
     }
 
-    applySCFilter(wetBuf, 0, n, knob, m_scDubEchoState.svf);
+    applySCFilter(wetBuf, 0, n, (knob < 0.f ? -1.f : 1.f) * mapped, m_scDubEchoState.svf);
     mixSCSmoothed(buffer, wetBuf, start, n);
 }
 
@@ -1321,9 +1330,10 @@ void FxProcessor::processSC_DubEcho(juce::AudioBuffer<float>& buffer,
 void FxProcessor::processSC_Crush(juce::AudioBuffer<float>& buffer,
                                    int start, int n, float knob)
 {
-    const float absK = std::abs(knob);
-    const float param = m_scParamAtomic.load(std::memory_order_relaxed);
-    const float intensity = std::clamp(absK * (0.15f + 0.85f * param), 0.0f, 1.0f);
+    const float absK      = std::abs(knob);
+    const float mapped    = scMapFastOnset(absK);
+    const float param     = m_scParamAtomic.load(std::memory_order_relaxed);
+    const float intensity = std::clamp(mapped * (0.15f + 0.85f * param), 0.0f, 1.0f);
 
     m_scAbsKSmooth.setTargetValue(intensity);
     if (!m_scAbsKSmooth.isSmoothing() && intensity < 0.001f) return;
@@ -1357,7 +1367,7 @@ void FxProcessor::processSC_Crush(juce::AudioBuffer<float>& buffer,
         }
     }
 
-    applySCFilter(wetBuf, 0, n, knob, m_scCrushState.svf);
+    applySCFilter(wetBuf, 0, n, (knob < 0.f ? -1.f : 1.f) * mapped, m_scCrushState.svf);
     mixSCSmoothed(buffer, wetBuf, start, n);
 }
 
@@ -1369,9 +1379,10 @@ void FxProcessor::processSC_Crush(juce::AudioBuffer<float>& buffer,
 void FxProcessor::processSC_Space(juce::AudioBuffer<float>& buffer,
                                    int start, int n, float knob)
 {
-    const float absK = std::abs(knob);
-    m_scAbsKSmooth.setTargetValue(absK < 0.005f ? 0.f : absK);
-    if (!m_scAbsKSmooth.isSmoothing() && absK < 0.005f) return;
+    const float absK   = std::abs(knob);
+    const float mapped = scMapSCurve(absK);
+    m_scAbsKSmooth.setTargetValue(mapped < 0.005f ? 0.f : mapped);
+    if (!m_scAbsKSmooth.isSmoothing() && mapped < 0.005f) return;
 
     const float param = m_scParamAtomic.load(std::memory_order_relaxed);
 
@@ -1388,7 +1399,7 @@ void FxProcessor::processSC_Space(juce::AudioBuffer<float>& buffer,
     m_reverb.setParameters(p);
 
     processReverb(wetBuf, 0, n);
-    applySCFilter(wetBuf, 0, n, knob, m_scSpaceState.svf);
+    applySCFilter(wetBuf, 0, n, (knob < 0.f ? -1.f : 1.f) * mapped, m_scSpaceState.svf);
     mixSCSmoothed(buffer, wetBuf, start, n);
 }
 
@@ -1427,12 +1438,13 @@ void FxProcessor::processSC_Pitch(juce::AudioBuffer<float>& buffer,
 void FxProcessor::processSC_Noise(juce::AudioBuffer<float>& buffer,
                                    int start, int n, float knob)
 {
-    const float absK = std::abs(knob);
-    const float param = m_scParamAtomic.load(std::memory_order_relaxed);
+    const float absK   = std::abs(knob);
+    const float mapped = scMapExpRamp(absK);
+    const float param  = m_scParamAtomic.load(std::memory_order_relaxed);
 
     // Conservative gain range: max 0.35 at full knob + full param
     // Stays well within safe level even with a hot input signal
-    const float targetGain = absK * (0.05f + param * 0.30f);
+    const float targetGain = mapped * (0.05f + param * 0.30f);
     m_scAbsKSmooth.setTargetValue(targetGain);
     if (!m_scAbsKSmooth.isSmoothing() && targetGain < 0.001f) return;
 
@@ -1450,7 +1462,7 @@ void FxProcessor::processSC_Noise(juce::AudioBuffer<float>& buffer,
             noiseBuf.getWritePointer(ch)[i] = white;
     }
 
-    applySCFilter(noiseBuf, 0, n, knob, m_scNoiseState.svf);
+    applySCFilter(noiseBuf, 0, n, (knob < 0.f ? -1.f : 1.f) * mapped, m_scNoiseState.svf);
 
     // Additive blend: dry is preserved 100%, noise ramps in/out via m_scAbsKSmooth
     const float* srcs[2] = {
@@ -1477,9 +1489,10 @@ void FxProcessor::processSC_Noise(juce::AudioBuffer<float>& buffer,
 void FxProcessor::processSC_Sweep(juce::AudioBuffer<float>& buffer,
                                    int start, int n, float knob, float param)
 {
-    const float absK = std::abs(knob);
-    m_scAbsKSmooth.setTargetValue(absK < 0.005f ? 0.f : absK);
-    if (!m_scAbsKSmooth.isSmoothing() && absK < 0.005f) return;
+    const float absK   = std::abs(knob);
+    const float mapped = scMapSCurve(absK);
+    m_scAbsKSmooth.setTargetValue(mapped < 0.005f ? 0.f : mapped);
+    if (!m_scAbsKSmooth.isSmoothing() && mapped < 0.005f) return;
 
     auto& wetBuf = m_wetScratch;
     copyToWet(buffer, wetBuf, start, n);
@@ -1490,9 +1503,9 @@ void FxProcessor::processSC_Sweep(juce::AudioBuffer<float>& buffer,
 
     float fc;
     if (knob < 0.f)
-        fc = 18000.f * std::pow(80.f / 18000.f, absK);
+        fc = 18000.f * std::pow(80.f / 18000.f, mapped);
     else
-        fc = 80.f * std::pow(18000.f / 80.f, absK);
+        fc = 80.f * std::pow(18000.f / 80.f, mapped);
     fc = std::clamp(fc, 20.f, 20000.f);
 
     // Push targets to per-sample smoothers — eliminates zipper noise on knob movement
