@@ -500,6 +500,8 @@ private:
     double m_loopLengthBeats = 0.0;
     bool m_loopInSet = false;
 
+    struct BeatInterval { double prevSec; double lengthSec; };
+    BeatInterval beatIntervalAt(double positionSec) const;
     double quantizedBeatAt(double sec) const;
     double beatDurationAround(double sec) const;
     void startLoopAt(double startSec, double lengthBeats);
@@ -522,6 +524,10 @@ private:
     void restorePostScrubPlaybackState();
     void advanceAbsoluteScrubFollower(double dtSec);
     void updateScrubPlayheadAnchor();
+    void tickScratchPhysics();
+    void decayJogNudge();
+    bool tickTransportPlaying();   // returns false → onTimer should return early
+    void tickTransportStopped();
 
     void updateGain();
     void applyMixerEq();
@@ -536,6 +542,13 @@ private:
     // m_snapPosition + m_snapClock enable sub-frame interpolation in getVisualPosition().
     float          m_latencySeconds  = 0.0f;
     mutable LatencySnapshot m_lastLatencySnapshot;
+
+    // Per-instance latency log state (avoids shared-static bug with multiple decks).
+    int  m_lastLoggedEffectiveSamples  = -1;
+    int  m_lastLoggedOutputRawSamples  = -1;
+    int  m_lastLoggedBufferSamples     = -1;
+    int  m_lastLoggedSampleRateRounded = -1;
+    bool m_latencyLoggedNoDevice       = false;
     double         m_snapPosition    = 0.0;
     double         m_snapTempoRatio  = 1.0;
     QElapsedTimer  m_snapClock;
@@ -579,38 +592,17 @@ private:
     QElapsedTimer m_scrubPhysicsClock;
     double m_scratchTargetRate = 0.0;
     double m_scratchSmoothedRate = 0.0;
-    double m_scratchRateAttackTauSec = ScratchConfig::kRateAttackTauSec;
-    double m_scratchRateReleaseTauSec = ScratchConfig::kRateReleaseTauSec;
-    double m_scratchIdleTimeoutSec = ScratchConfig::kIdleTimeoutSec;
-    double m_scratchMaxRate = ScratchConfig::kMaxRate;
     bool   m_scratchReleaseActive = false;
     double m_scratchReleaseTargetRate = 0.0;
-    double m_scratchReleaseToPlayTauSec = ScratchConfig::kReleaseToPlayTauSec;
-    double m_scratchReleaseToStopTauSec = ScratchConfig::kReleaseToStopTauSec;
-    double m_scratchReleaseSettleThreshold = ScratchConfig::kReleaseSettleThreshold;
-    double m_scratchControlResumeThresholdRate = ScratchConfig::kControlResumeThresholdRate;
-    double m_scratchControlStopThresholdRate = ScratchConfig::kControlStopThresholdRate;
-    double m_scratchDirectStepLimitSec = ScratchConfig::kDirectStepLimitSec;
-    double m_scratchFineMoveThresholdSec = ScratchConfig::kFineMoveThresholdSec;
-    double m_scratchEventSpikeClampSec = ScratchConfig::kEventSpikeClampSec;
     double m_scratchAccumulatedMoveSec = 0.0;
     double m_scratchLastRawInput = 0.0;
-    double m_scratchInertiaMoveThresholdSec = ScratchConfig::kInertiaMoveThresholdSec;
     double m_scratchBaseRate = 1.0;
     double m_scratchInputFilteredRate = 0.0;
-    double m_scratchInputRateFilterAlpha = ScratchConfig::kInputRateFilterAlpha;
-    double m_scratchInputRateSlewPerSec = ScratchConfig::kInputRateSlewPerSec;
     double m_scratchDirectionSign = 1.0;
-    double m_scratchDirectionFlipThresholdRate = ScratchConfig::kDirectionFlipThresholdRate;
     bool   m_scrubLoopLockedToActiveLoop = false;
     bool   m_scratchAbsolutePositionControl = false;
     double m_scratchAbsoluteTargetPosition = 0.0;
     double m_scratchAbsoluteFollowVelocity = 0.0;
-    double m_scratchAbsoluteFollowStiffness = ScratchConfig::kAbsoluteFollowStiffness;
-    double m_scratchAbsoluteFollowDamping = ScratchConfig::kAbsoluteFollowDamping;
-    double m_scratchAbsoluteMaxFollowRate = ScratchConfig::kAbsoluteMaxFollowRate;
-    double m_scratchAbsoluteSnapDistanceSec = ScratchConfig::kAbsoluteSnapDistanceSec;
-    double m_scratchAbsoluteSnapVelocitySecPerSec = ScratchConfig::kAbsoluteSnapVelocitySecPerSec;
     bool   m_scrubSavedReverseState = false;
     double m_loadedTrackSampleRate = 44100.0;
 

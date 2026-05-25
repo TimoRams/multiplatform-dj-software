@@ -1,8 +1,5 @@
 #include "DjEngine.h"
 #include "DjMasterBus.h"
-#include <iostream>
-#include <chrono>
-#include "fx/BrickwallLimiter.h"
 #include "library/CoverArtExtractor.h"
 #include "library/CoverArtProvider.h"
 #include "fx/FxProcessor.h"
@@ -221,13 +218,7 @@ juce::AudioIODeviceType* findDeviceType(juce::AudioDeviceManager& deviceManager,
 
 juce::AudioDeviceManager& sharedAudioDeviceManager()
 {
-    static bool s_creating = false;
-    if (!s_creating) {
-        s_creating = true;
-        std::cerr << "[sharedADM] creating AudioDeviceManager\n" << std::flush;
-    }
     static juce::AudioDeviceManager manager;
-    std::cerr << "[sharedADM] AudioDeviceManager ready\n" << std::flush;
     return manager;
 }
 
@@ -875,6 +866,7 @@ class DjEngine::TimeStretchAudioSource : public juce::AudioSource {
 public:
     static constexpr int kMinPullSize = 64;
     static constexpr int kMaxPullSize = 512;
+    static constexpr int kFifoCapacity = 65536;
     static constexpr int kMaxPrefillSamples = 2048;
     static constexpr int kDefaultPrefillCapSamples = 256;
     static constexpr int kPrefillMaxBlocks = 1;
@@ -923,10 +915,11 @@ public:
 
         updateStretcherRatios();
 
-        scratchBuffer.setSize(2, 8192);
-        outputBuffer.setSize(2, 65536);
-        trimBuffer.setSize(2, 1024);
-        fifo = std::make_unique<juce::AbstractFifo>(65536);
+        const int scratchCapacity = std::max(kMaxPullSize, m_maxProcessSize);
+        scratchBuffer.setSize(2, scratchCapacity);
+        outputBuffer.setSize(2, kFifoCapacity);
+        trimBuffer.setSize(2, kMaxPullSize);
+        fifo = std::make_unique<juce::AbstractFifo>(kFifoCapacity);
 
         // Pre-warm upfront: startup delay is absorbed here, never trimmed
         // on-the-fly during audio callbacks.
@@ -962,10 +955,13 @@ public:
             int pullSize = stretcher->getSamplesRequired();
             if (pullSize <= 0)
                 pullSize = std::max(kMinPullSize, shortfall);
-            pullSize = std::clamp(pullSize, kMinPullSize, std::min(kMaxPullSize, m_maxProcessSize));
-
-            if (scratchBuffer.getNumSamples() < pullSize)
-                scratchBuffer.setSize(2, pullSize, true);
+            const int scratchCapacity = scratchBuffer.getNumSamples();
+            if (scratchCapacity < kMinPullSize) {
+                info.clearActiveBufferRegion();
+                return;
+            }
+            const int maxPull = std::min({kMaxPullSize, m_maxProcessSize, scratchCapacity});
+            pullSize = std::clamp(pullSize, kMinPullSize, maxPull);
 
             juce::AudioSourceChannelInfo pullInfo;
             pullInfo.buffer = &scratchBuffer;
@@ -1005,8 +1001,14 @@ public:
             }
 
             if (avail > 0) {
-                if (outputBuffer.getNumSamples() < avail)
-                    outputBuffer.setSize(2, std::max((int) outputBuffer.getNumSamples(), avail * 2), true);
+                const int fifoCapacity = fifo->getTotalSize();
+                const int outputCapacity = outputBuffer.getNumSamples();
+                const int writeCapacity = std::min(fifoCapacity, outputCapacity);
+                avail = std::min(avail, writeCapacity);
+                if (avail <= 0) {
+                    --maxPullLoops;
+                    continue;
+                }
 
                 int start1, size1, start2, size2;
                 fifo->prepareToWrite(avail, start1, size1, start2, size2);
@@ -1121,9 +1123,11 @@ private:
             if (avail <= 0)
                 break;
 
-            const int chunk = std::min(samplesToTrim, avail);
-            if (trimBuffer.getNumSamples() < chunk)
-                trimBuffer.setSize(2, chunk, false, false, true);
+            const int trimCapacity = trimBuffer.getNumSamples();
+            if (trimCapacity <= 0)
+                break;
+
+            const int chunk = std::min({samplesToTrim, avail, trimCapacity});
 
             float* trimOut[2] = {
                 trimBuffer.getWritePointer(0),
@@ -1739,20 +1743,19 @@ public:
     FxProcessor m_colorFx;
     std::array<FxProcessor, kFxChainSlots> m_fxChain;
     FxProcessor m_padFx;
-    BrickwallLimiter m_limiter;
 
     // Vinyl brake + Backspin — shared circular buffer, transport is unaffected
     static constexpr int kVinylBrakeBuf  = 1 << 18;
     static constexpr int kVinylBrakeMask = kVinylBrakeBuf - 1;
     std::atomic<bool> m_vinylBrakeWanted { false };
     std::atomic<bool> m_backspinWanted   { false };
-    float m_vinylBrakeFactor   = 1.0f;
-    float m_vinylBrakeRampDown = 0.0f;
-    int   m_vinylBrakeWritePos = 0;
-    float m_vinylBrakeReadPos  = 0.0f;
-    float m_backspinReadPos    = 0.0f;
-    bool  m_vinylBrakeNeedSync = true;  // audio-thread only
-    bool  m_backspinNeedSync   = true;  // audio-thread only
+    float    m_vinylBrakeFactor   = 1.0f;
+    float    m_vinylBrakeRampDown = 0.0f;
+    uint32_t m_vinylBrakeWritePos = 0;
+    float    m_vinylBrakeReadPos  = 0.0f;
+    float    m_backspinReadPos    = 0.0f;
+    bool     m_vinylBrakeNeedSync = true;  // audio-thread only
+    bool     m_backspinNeedSync   = true;  // audio-thread only
     std::array<float, kVinylBrakeBuf> m_vinylBrakeBufL {};
     std::array<float, kVinylBrakeBuf> m_vinylBrakeBufR {};
 
@@ -1760,9 +1763,9 @@ public:
     static constexpr int   kEchoOutBuf      = 65536;
     static constexpr int   kEchoOutMask     = kEchoOutBuf - 1;
     static constexpr float kEchoOutFeedback = 0.68f;
-    std::atomic<bool>  m_echoOutWanted      { false };
-    bool           m_echoOutAudioActive     = false;  // audio thread only
-    int            m_echoOutWritePos        = 0;
+    std::atomic<bool> m_echoOutWanted       { false };
+    bool             m_echoOutAudioActive  = false;  // audio thread only
+    uint32_t         m_echoOutWritePos     = 0;
     int            m_echoOutDelaySamples    = 0;
     float          m_echoOutLpCoef          = 0.0f;
     float          m_echoOutLpStateL        = 0.0f;
@@ -1855,22 +1858,16 @@ DjEngine::DjEngine(QObject* parent)
     : QObject(parent)
     , deviceManager(sharedAudioDeviceManager())
 {
-    static auto s_ctorStart = std::chrono::steady_clock::now();
-    const auto ctorMs = [](){ return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - s_ctorStart).count(); };
-    std::cerr << "[DjEngine ctor] enter " << ctorMs() << "ms\n" << std::flush;
     {
         std::lock_guard<std::mutex> g(s_syncMutex);
         s_syncDecks.push_back(this);
     }
-    std::cerr << "[DjEngine ctor] syncDecks done " << ctorMs() << "ms\n" << std::flush;
 
     m_trackData = new TrackData(this);
-    std::cerr << "[DjEngine ctor] TrackData done " << ctorMs() << "ms\n" << std::flush;
     m_analyzer  = new WaveformAnalyzer(
         m_trackData,
         &formatManager,
         static_cast<int>(WAVEFORM_POINTS_PER_SECOND));
-    std::cerr << "[DjEngine ctor] WaveformAnalyzer done " << ctorMs() << "ms\n" << std::flush;
     clearHotCueState();
 
     // When the analyzer detects a key, override the (often absent) ID3 key field.
@@ -1930,11 +1927,8 @@ DjEngine::DjEngine(QObject* parent)
             m_libraryDb->updateTrackSegments(m_currentTrackId, segments);
     });
 
-    std::cerr << "[DjEngine ctor] signals connected " << ctorMs() << "ms\n" << std::flush;
     juce::MessageManager::getInstance();
-    std::cerr << "[DjEngine ctor] MessageManager ok " << ctorMs() << "ms\n" << std::flush;
     formatManager.registerBasicFormats();
-    std::cerr << "[DjEngine ctor] formats registered " << ctorMs() << "ms\n" << std::flush;
 
     // Prefer lower output buffer sizes for better scratch responsiveness.
     // Keep this conservative and only apply when the driver explicitly supports it.
@@ -1980,10 +1974,8 @@ DjEngine::DjEngine(QObject* parent)
 
     connect(&timer, &QTimer::timeout, this, &DjEngine::onTimer);
     timer.setTimerType(Qt::PreciseTimer);
-    std::cerr << "[DjEngine ctor] starting timer " << ctorMs() << "ms\n" << std::flush;
     // Faster control snapshots reduce audible speed stepping while scratching.
     timer.start(4);
-    std::cerr << "[DjEngine ctor] exit " << ctorMs() << "ms\n" << std::flush;
 }
 
 DjEngine::~DjEngine()
@@ -2028,22 +2020,16 @@ float DjEngine::getDuration() const
 
 void DjEngine::refreshHardwareLatency()
 {
-    static int s_lastEffectiveSamples = -1;
-    static int s_lastOutputRawSamples = -1;
-    static int s_lastBufferSamples = -1;
-    static int s_lastSampleRateRounded = -1;
-    static bool s_loggedNoDevice = false;
-
     if (auto* device = deviceManager.getCurrentAudioDevice()) {
         const auto latency = readOutputLatencySnapshot(device);
         if (latency.sampleRate > 0.0)
             m_latencySeconds = static_cast<float>(static_cast<double>(latency.effectiveOutputSamples) / latency.sampleRate);
 
-        const bool changed = (latency.effectiveOutputSamples != s_lastEffectiveSamples)
-                          || (latency.outputRawSamples != s_lastOutputRawSamples)
-                          || (latency.callbackBufferSamples != s_lastBufferSamples)
-                          || (latency.roundedSampleRate() != s_lastSampleRateRounded)
-                          || s_loggedNoDevice;
+        const bool changed = (latency.effectiveOutputSamples != m_lastLoggedEffectiveSamples)
+                          || (latency.outputRawSamples != m_lastLoggedOutputRawSamples)
+                          || (latency.callbackBufferSamples != m_lastLoggedBufferSamples)
+                          || (latency.roundedSampleRate() != m_lastLoggedSampleRateRounded)
+                          || m_latencyLoggedNoDevice;
 
         if (changed) {
             qInfo() << "[DjEngine] Output latency:" << latency.effectiveOutputSamples
@@ -2051,16 +2037,16 @@ void DjEngine::refreshHardwareLatency()
                     << "raw:" << latency.outputRawSamples
                     << "buf:" << latency.callbackBufferSamples
                     << "sr:" << latency.roundedSampleRate();
-            s_lastEffectiveSamples = latency.effectiveOutputSamples;
-            s_lastOutputRawSamples = latency.outputRawSamples;
-            s_lastBufferSamples = latency.callbackBufferSamples;
-            s_lastSampleRateRounded = latency.roundedSampleRate();
-            s_loggedNoDevice = false;
+            m_lastLoggedEffectiveSamples  = latency.effectiveOutputSamples;
+            m_lastLoggedOutputRawSamples  = latency.outputRawSamples;
+            m_lastLoggedBufferSamples     = latency.callbackBufferSamples;
+            m_lastLoggedSampleRateRounded = latency.roundedSampleRate();
+            m_latencyLoggedNoDevice = false;
         }
     } else {
-        if (!s_loggedNoDevice) {
+        if (!m_latencyLoggedNoDevice) {
             qInfo() << "[DjEngine] No audio device yet; keeping last known latency";
-            s_loggedNoDevice = true;
+            m_latencyLoggedNoDevice = true;
         }
     }
 }
@@ -2463,14 +2449,6 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     } else {
         maxOutputChannels = std::clamp(maxRequestedChannel, 2, kMaxSupportedOutputChannel);
     }
-    
-    // Update routing after validation
-    s_outputRoutingPacked.store(packRouting({
-        .masterFirstChannel = masterFirstChannel,
-        .headphonesFirstChannel = headphonesFirstChannel,
-        .boothFirstChannel = boothFirstChannel
-    }), std::memory_order_relaxed);
-    DjMasterBus::setOutputRouting(masterFirstChannel, boothFirstChannel, headphonesFirstChannel);
 
     juce::BigInteger selectedOutputChannels;
     const auto setPairBits = [&selectedOutputChannels](int firstChannel) {
@@ -3286,13 +3264,13 @@ void DjEngine::advanceAbsoluteScrubFollower(double dtSec)
 
     // Mass-spring-damper follower: slightly lagging, velocity-aware
     // and naturally braking before target to mimic platter inertia.
-    const double accel = (errorSec * m_scratchAbsoluteFollowStiffness)
-                       - (m_scratchAbsoluteFollowVelocity * m_scratchAbsoluteFollowDamping);
+    const double accel = (errorSec * ScratchConfig::kAbsoluteFollowStiffness)
+                       - (m_scratchAbsoluteFollowVelocity * ScratchConfig::kAbsoluteFollowDamping);
     m_scratchAbsoluteFollowVelocity += accel * dtSec;
     m_scratchAbsoluteFollowVelocity = std::clamp(
         m_scratchAbsoluteFollowVelocity,
-        -m_scratchAbsoluteMaxFollowRate,
-        m_scratchAbsoluteMaxFollowRate);
+        -ScratchConfig::kAbsoluteMaxFollowRate,
+        ScratchConfig::kAbsoluteMaxFollowRate);
 
     double stepSec = m_scratchAbsoluteFollowVelocity * dtSec;
     if (std::abs(stepSec) > std::abs(errorSec))
@@ -3301,8 +3279,8 @@ void DjEngine::advanceAbsoluteScrubFollower(double dtSec)
     m_scrubHoldPosition = std::clamp(m_scrubHoldPosition + stepSec, -PRE_ROLL_SECONDS, len);
 
     const double residualError = targetPos - m_scrubHoldPosition;
-    if (std::abs(residualError) <= m_scratchAbsoluteSnapDistanceSec
-        && std::abs(m_scratchAbsoluteFollowVelocity) <= m_scratchAbsoluteSnapVelocitySecPerSec) {
+    if (std::abs(residualError) <= ScratchConfig::kAbsoluteSnapDistanceSec
+        && std::abs(m_scratchAbsoluteFollowVelocity) <= ScratchConfig::kAbsoluteSnapVelocitySecPerSec) {
         m_scrubHoldPosition = targetPos;
         m_scratchAbsoluteFollowVelocity = 0.0;
     }
@@ -3311,11 +3289,11 @@ void DjEngine::advanceAbsoluteScrubFollower(double dtSec)
     m_scratchAccumulatedMoveSec += std::abs(movedSec);
 
     const double motionRate = (dtSec > 1e-6)
-        ? std::clamp(movedSec / dtSec, -m_scratchMaxRate, m_scratchMaxRate)
+        ? std::clamp(movedSec / dtSec, -ScratchConfig::kMaxRate, ScratchConfig::kMaxRate)
         : 0.0;
     m_scratchTargetRate = motionRate;
 
-    if (std::abs(targetPos - m_scrubHoldPosition) > m_scratchAbsoluteSnapDistanceSec
+    if (std::abs(targetPos - m_scrubHoldPosition) > ScratchConfig::kAbsoluteSnapDistanceSec
         || std::abs(motionRate) > 0.001) {
         m_lastScrubInputClock.restart();
     }
@@ -3353,180 +3331,17 @@ void DjEngine::updateScrubPlayheadAnchor()
 void DjEngine::onTimer()
 {
     if (m_isScrubbing || m_scratchReleaseActive) {
-        double idleSec = 0.0;
-        bool hasIdleSample = false;
-        const double dtSec = m_scrubPhysicsClock.isValid()
-            ? std::clamp(static_cast<double>(m_scrubPhysicsClock.nsecsElapsed()) * 1e-9,
-                         0.001, 0.050)
-            : 0.016;
-        m_scrubPhysicsClock.restart();
-
-        double targetRate = 0.0;
-        double tau = m_scratchRateReleaseTauSec;
-        if (m_isScrubbing) {
-            advanceAbsoluteScrubFollower(dtSec);
-
-            idleSec = m_lastScrubInputClock.isValid()
-                ? static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9
-                : 1.0;
-            hasIdleSample = true;
-
-            // Auto-exit scratch mode if the jog touch sensor never sent a release event
-            // (some controllers only send a "touch on" and rely on a timeout).
-            // 800ms of no jog input while in scratch mode = implicit release.
-            constexpr double kScratchAutoReleaseSec = 0.80;
-            if (idleSec > kScratchAutoReleaseSec) {
-                qDebug() << "[JOG] auto-release: no jog input for" << idleSec
-                         << "s, calling resumeAfterScrub()";
-                resumeAfterScrub();
-                return;
-            }
-
-            targetRate = m_scratchAbsolutePositionControl
-                ? m_scratchTargetRate
-                : ((idleSec > m_scratchIdleTimeoutSec) ? 0.0 : m_scratchTargetRate);
-
-            tau = (std::abs(targetRate) > std::abs(m_scratchSmoothedRate))
-                ? m_scratchRateAttackTauSec
-                : m_scratchRateReleaseTauSec;
-
-            // Very slow hand motion needs stronger smoothing to avoid
-            // "steppy"/digital sounding micro modulation.
-            if (std::abs(targetRate) < 0.35)
-                tau = std::max(tau, 0.080);
-        } else {
-            targetRate = m_scratchReleaseTargetRate;
-            tau = (std::abs(targetRate) < 0.001)
-                ? m_scratchReleaseToStopTauSec
-                : m_scratchReleaseToPlayTauSec;
-        }
-
-        const double alpha = 1.0 - std::exp(-dtSec / std::max(0.001, tau));
-        m_scratchSmoothedRate += (targetRate - m_scratchSmoothedRate) * alpha;
-
-        if (std::abs(m_scratchSmoothedRate) >= m_scratchDirectionFlipThresholdRate)
-            m_scratchDirectionSign = (m_scratchSmoothedRate < 0.0) ? -1.0 : 1.0;
-
-        const double absRate = std::abs(m_scratchSmoothedRate);
-        if (reverseWrapSource) {
-            auto* reverseSource = static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get());
-            reverseSource->setReverse(m_scratchDirectionSign < 0.0);
-        }
-
-        if (mixerSource) {
-            // Pass the actual playback rate (clamped 0–1) so the audio thread can
-            // derive a rate-proportional anti-alias cutoff from it.  Above 1× the
-            // filter is not needed (no down-sampling aliasing).
-            mixerSource->setScratchTimbre(
-                static_cast<float>(std::clamp(absRate, 0.0, 1.0)));
-        }
-
-        if (resamplingSource) {
-            // Lower floor while scrubbing preserves low-speed nuance and avoids
-            // hard quantization to a fixed tiny speed.
-            const double minRatio = m_isScrubbing ? 0.002 : 0.004;
-            const double ratio = std::clamp(absRate, minRatio, m_scratchMaxRate);
-            resamplingSource->setResamplingRatio(ratio);
-        }
-
-        // Playback hysteresis: avoid rapid start/stop toggling around zero.
-        const double targetDistance = m_scratchAbsolutePositionControl
-            ? std::abs(m_scratchAbsoluteTargetPosition - m_scrubHoldPosition)
-            : 0.0;
-        const bool absoluteMotionPending = m_isScrubbing
-            && m_scratchAbsolutePositionControl
-            && targetDistance > (m_scratchAbsoluteSnapDistanceSec * 1.5);
-        const bool allowStopForIdleGrab = !m_isScrubbing
-            || ((hasIdleSample && idleSec > 0.040) && !absoluteMotionPending);
-
-        if (absRate < m_scratchControlStopThresholdRate && allowStopForIdleGrab) {
-            if (transportSource.isPlaying())
-                transportSource.stop();
-        } else if ((absRate > m_scratchControlResumeThresholdRate || absoluteMotionPending)
-                   && !transportSource.isPlaying()
-                   && m_scrubHoldPosition >= 0.0) {
-            // Only start transport when in-track: pre-roll has no audio to play.
-            transportSource.start();
-        }
-
-        updateScrubPlayheadAnchor();
-
-        // Rate-based loop wrap: hardware loop is suspended during scratch so we
-        // enforce loop boundaries here at timer granularity (~20 ms).
-        // fmod handles the case where multiple loop lengths are crossed per tick.
-        // The pre-loop area must remain free: when a stored active loop lies in
-        // the future, scratching before loopIn must not snap forward into it.
-        if ((m_isScrubbing || (m_scratchReleaseActive && m_scrubLoopLockedToActiveLoop))
-                && m_loopActive && m_loopOutSec > m_loopInSec) {
-            const double lo      = m_loopInSec;
-            const double hi      = std::min(transportSource.getLengthInSeconds(), m_loopOutSec);
-            const double loopLen = hi - lo;
-            if (loopLen > 0.0) {
-                if (!m_scrubLoopLockedToActiveLoop && m_scrubHoldPosition >= lo)
-                    m_scrubLoopLockedToActiveLoop = true;
-
-                if (m_scrubLoopLockedToActiveLoop && m_scrubHoldPosition >= hi) {
-                    const double w = lo + std::fmod(m_scrubHoldPosition - lo, loopLen);
-                    m_scrubHoldPosition = w;
-                    transportSource.setPosition(std::max(0.0, w));
-                    m_atomicPlayheadPos.store(w, std::memory_order_relaxed);
-                } else if (m_scrubLoopLockedToActiveLoop && m_scrubHoldPosition < lo) {
-                    const double dist = lo - m_scrubHoldPosition;
-                    const double w    = hi - std::fmod(dist, loopLen);
-                    m_scrubHoldPosition = w;
-                    transportSource.setPosition(std::max(0.0, w));
-                    m_atomicPlayheadPos.store(w, std::memory_order_relaxed);
-                }
-            }
-        }
-
-        m_snapTempoRatio = getTempoRatio();
-
-        if (!m_isScrubbing && m_scratchReleaseActive
-            && std::abs(m_scratchSmoothedRate - m_scratchReleaseTargetRate) <= m_scratchReleaseSettleThreshold) {
-            m_scratchReleaseActive = false;
-            m_scratchTargetRate    = 0.0;
-            // Pin smoothed rate to the converged target (not 0) so the resampling
-            // source is already at the right ratio when restorePostScrubPlaybackState
-            // calls setResamplingRatio(1.0) — avoids a rate-discontinuity click.
-            m_scratchSmoothedRate       = m_scratchReleaseTargetRate;
-            m_scratchInputFilteredRate  = 0.0;
-
-            if (mixerSource)
-                mixerSource->setScratchTimbre(0.0f);
-
-            restorePostScrubPlaybackState();
-            m_scrubLoopLockedToActiveLoop = false;
-            emit playingChanged();
-        }
-
-        emit progressChanged();
-        emit vuLevelChanged();
-        emit gainReductionChanged();
+        tickScratchPhysics();
         return;
     }
 
     if (mixerSource)
         mixerSource->setScratchTimbre(0.0f);
 
-    // Jog outer-rim nudge decay: fade back to 0% after ~150ms of no new jog events.
-    if (m_jogNudgePercent != 0.0) {
-        const double idleSec = m_lastJogNudgeClock.isValid()
-            ? static_cast<double>(m_lastJogNudgeClock.nsecsElapsed()) * 1e-9
-            : 1.0;
-        if (idleSec > 0.080) {
-            constexpr double kNudgeDecayTau = 0.080;
-            const double alpha = 1.0 - std::exp(-idleSec / kNudgeDecayTau);
-            m_jogNudgePercent -= m_jogNudgePercent * alpha;
-            if (std::abs(m_jogNudgePercent) < 0.05)
-                m_jogNudgePercent = 0.0;
-            updateSpeedAndPitch();
-        }
-    }
+    decayJogNudge();
 
     // Safety: transport must not run when there's no play intent and no cue preview.
-    // Catches any leftover transport state that togglePlay/pause missed (e.g. if
-    // isPlaying() was momentarily false during a race between scratch and normal play).
+    // Catches any leftover transport state that togglePlay/pause missed.
     if (transportSource.isPlaying() && !m_playRequested && !m_mainCuePreviewActive) {
         freezeTransportAt(transportSource.getCurrentPosition());
         emit vuLevelChanged();
@@ -3535,111 +3350,289 @@ void DjEngine::onTimer()
     }
 
     // Safety: transport must not run during pre-roll countdown (visual position is
-    // negative; transport is clamped at 0 and driven by wall-clock in the else branch).
-    // A stale start() from scratch-release glide can reach here; stop it cleanly.
-    if (transportSource.isPlaying() && m_preRollCountdownActive) {
+    // negative; transport is clamped at 0 and driven by wall-clock).
+    if (transportSource.isPlaying() && m_preRollCountdownActive)
         transportSource.stop();
-    }
 
     if (transportSource.isPlaying()) {
-        // Store a fresh snapshot from the transport each control tick.
-        // Interpolation happens only between these anchors.
-        const double dtSec = m_snapValid
-            ? std::clamp(static_cast<double>(m_snapClock.nsecsElapsed()) * 1e-9, 0.001, 0.050)
-            : 0.004;
-
-        const double measuredPos = transportSource.getCurrentPosition();
-        m_snapPosition = measuredPos;
-        m_snapTempoRatio = getTempoRatio();
-
-        // Slip shadow: advance continuously while loop/reverse diverts the transport.
-        if (isSlipDiverted()) {
-            const double dur = std::max(0.001, static_cast<double>(getDuration()));
-            m_slipPosition = std::min(m_slipPosition + dtSec * getTempoRatio(), dur);
-        } else {
-            m_slipPosition = measuredPos;
-        }
-
-        if (m_loopActive && m_loopOutSec > m_loopInSec) {
-            if (m_isReverse && m_snapPosition <= m_loopInSec) {
-                transportSource.setPosition(m_loopOutSec);
-                m_snapPosition = m_loopOutSec;
-            } else if (!m_isReverse && m_loopInSec < 0.0
-                       && m_snapPosition >= m_loopOutSec) {
-                // Loop with pre-roll IN point: the audio source cannot enforce this
-                // (no negative samples).  Software-wrap: stop transport and start a
-                // pre-roll countdown from the true (negative) loop-in position.
-                transportSource.stop();
-                m_snapValid = false;
-                m_scrubHoldPosition = m_loopInSec;
-                m_preRollCountdownActive = true;
-                m_preRollVisualStartPos  = m_loopInSec;
-                m_preRollClock.restart();
-                m_atomicPlayheadPos.store(m_loopInSec, std::memory_order_relaxed);
-                emit progressChanged();
-                emit vuLevelChanged();
-                emit gainReductionChanged();
-                return;
-            }
-        }
-
-        m_snapClock.restart();
-        m_snapValid = true;
-        // Also update the atomic so QML FrameAnimation can poll it lock-free.
-        m_atomicPlayheadPos.store(m_snapPosition, std::memory_order_relaxed);
-        emit progressChanged();
+        if (!tickTransportPlaying())
+            return;
     } else {
-        m_snapValid = false;
-        if (m_preRollCountdownActive) {
-            // Advance visual position from negative toward 0 at playback rate.
-            const double elapsed = static_cast<double>(m_preRollClock.nsecsElapsed()) * 1e-9;
-            const double visualPos = m_preRollVisualStartPos + elapsed * getTempoRatio();
-            m_scrubHoldPosition = visualPos;
-            m_atomicPlayheadPos.store(visualPos, std::memory_order_relaxed);
-
-            // Loop entirely in pre-roll: both endpoints negative, wrap back to loop IN.
-            if (m_loopActive && m_loopOutSec <= 0.0 && m_loopOutSec > m_loopInSec
-                    && visualPos >= m_loopOutSec) {
-                m_preRollVisualStartPos = m_loopInSec;
-                m_scrubHoldPosition = m_loopInSec;
-                m_preRollClock.restart();
-                m_atomicPlayheadPos.store(m_loopInSec, std::memory_order_relaxed);
-                emit progressChanged();
-                return;
-            }
-
-            if (visualPos >= 0.0) {
-                m_preRollCountdownActive = false;
-                m_scrubHoldPosition = 0.0;
-                transportSource.setPosition(0.0);
-                armSnapFromTransportPosition();
-                transportSource.start();
-                // For loops crossing 0: re-apply audio-source loop now that transport
-                // is in-track.  applyLoopRangeToAudioSource() was a no-op while
-                // loopIn was negative; with loopIn < 0 the audio loop [0, loopOut]
-                // is software-enforced via the transport-playing branch above.
-            }
-            emit progressChanged();
-        } else {
-            ensureTransportRunningForPlayIntent();
-            // In pre-roll the transport is clamped at 0, so syncing from transport
-            // erases the negative visual position. Preserve m_scrubHoldPosition when negative.
-            const double transportPos = transportSource.getCurrentPosition();
-            const double atomicPos = (m_scrubHoldPosition < 0.0)
-                ? m_scrubHoldPosition
-                : transportPos;
-            m_atomicPlayheadPos.store(atomicPos, std::memory_order_relaxed);
-        }
+        tickTransportStopped();
     }
-    // Phase-lock correction for sync followers (not during scratch).
+
     if (m_syncEnabled && !m_isSyncMaster && !m_isScrubbing && !m_scratchReleaseActive)
         updatePhaseCorrection();
 
     updateFxBeatSyncPosition();
-
-    // Always emit VU level updates (30 Hz timer = nice for meters)
     emit vuLevelChanged();
     emit gainReductionChanged();
+}
+
+void DjEngine::tickScratchPhysics()
+{
+    double idleSec = 0.0;
+    bool hasIdleSample = false;
+    const double dtSec = m_scrubPhysicsClock.isValid()
+        ? std::clamp(static_cast<double>(m_scrubPhysicsClock.nsecsElapsed()) * 1e-9,
+                     0.001, 0.050)
+        : 0.016;
+    m_scrubPhysicsClock.restart();
+
+    double targetRate = 0.0;
+    double tau = ScratchConfig::kRateReleaseTauSec;
+    if (m_isScrubbing) {
+        advanceAbsoluteScrubFollower(dtSec);
+
+        idleSec = m_lastScrubInputClock.isValid()
+            ? static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9
+            : 1.0;
+        hasIdleSample = true;
+
+        // Auto-exit scratch mode if the jog touch sensor never sent a release event
+        // (some controllers only send a "touch on" and rely on a timeout).
+        // 800ms of no jog input while in scratch mode = implicit release.
+        constexpr double kScratchAutoReleaseSec = 0.80;
+        if (idleSec > kScratchAutoReleaseSec) {
+            resumeAfterScrub();
+            return;
+        }
+
+        targetRate = m_scratchAbsolutePositionControl
+            ? m_scratchTargetRate
+            : ((idleSec > ScratchConfig::kIdleTimeoutSec) ? 0.0 : m_scratchTargetRate);
+
+        tau = (std::abs(targetRate) > std::abs(m_scratchSmoothedRate))
+            ? ScratchConfig::kRateAttackTauSec
+            : ScratchConfig::kRateReleaseTauSec;
+
+        // Very slow hand motion needs stronger smoothing to avoid
+        // "steppy"/digital sounding micro modulation.
+        if (std::abs(targetRate) < 0.35)
+            tau = std::max(tau, 0.080);
+    } else {
+        targetRate = m_scratchReleaseTargetRate;
+        tau = (std::abs(targetRate) < 0.001)
+            ? ScratchConfig::kReleaseToStopTauSec
+            : ScratchConfig::kReleaseToPlayTauSec;
+    }
+
+    const double alpha = 1.0 - std::exp(-dtSec / std::max(0.001, tau));
+    m_scratchSmoothedRate += (targetRate - m_scratchSmoothedRate) * alpha;
+
+    if (std::abs(m_scratchSmoothedRate) >= ScratchConfig::kDirectionFlipThresholdRate)
+        m_scratchDirectionSign = (m_scratchSmoothedRate < 0.0) ? -1.0 : 1.0;
+
+    const double absRate = std::abs(m_scratchSmoothedRate);
+    if (reverseWrapSource)
+        reverseWrapSource->setReverse(m_scratchDirectionSign < 0.0);
+
+    if (mixerSource) {
+        // Pass the actual playback rate (clamped 0–1) so the audio thread can
+        // derive a rate-proportional anti-alias cutoff from it.  Above 1× the
+        // filter is not needed (no down-sampling aliasing).
+        mixerSource->setScratchTimbre(
+            static_cast<float>(std::clamp(absRate, 0.0, 1.0)));
+    }
+
+    if (resamplingSource) {
+        // Lower floor while scrubbing preserves low-speed nuance and avoids
+        // hard quantization to a fixed tiny speed.
+        const double minRatio = m_isScrubbing ? 0.002 : 0.004;
+        const double ratio = std::clamp(absRate, minRatio, ScratchConfig::kMaxRate);
+        resamplingSource->setResamplingRatio(ratio);
+    }
+
+    // Playback hysteresis: avoid rapid start/stop toggling around zero.
+    const double targetDistance = m_scratchAbsolutePositionControl
+        ? std::abs(m_scratchAbsoluteTargetPosition - m_scrubHoldPosition)
+        : 0.0;
+    const bool absoluteMotionPending = m_isScrubbing
+        && m_scratchAbsolutePositionControl
+        && targetDistance > (ScratchConfig::kAbsoluteSnapDistanceSec * 1.5);
+    const bool allowStopForIdleGrab = !m_isScrubbing
+        || ((hasIdleSample && idleSec > 0.040) && !absoluteMotionPending);
+
+    if (absRate < ScratchConfig::kControlStopThresholdRate && allowStopForIdleGrab) {
+        if (transportSource.isPlaying())
+            transportSource.stop();
+    } else if ((absRate > ScratchConfig::kControlResumeThresholdRate || absoluteMotionPending)
+               && !transportSource.isPlaying()
+               && m_scrubHoldPosition >= 0.0) {
+        // Only start transport when in-track: pre-roll has no audio to play.
+        transportSource.start();
+    }
+
+    updateScrubPlayheadAnchor();
+
+    // Rate-based loop wrap: hardware loop is suspended during scratch so we
+    // enforce loop boundaries here at timer granularity (~20 ms).
+    // fmod handles the case where multiple loop lengths are crossed per tick.
+    // The pre-loop area must remain free: when a stored active loop lies in
+    // the future, scratching before loopIn must not snap forward into it.
+    if ((m_isScrubbing || (m_scratchReleaseActive && m_scrubLoopLockedToActiveLoop))
+            && m_loopActive && m_loopOutSec > m_loopInSec) {
+        const double lo      = m_loopInSec;
+        const double hi      = std::min(transportSource.getLengthInSeconds(), m_loopOutSec);
+        const double loopLen = hi - lo;
+        if (loopLen > 0.0) {
+            if (!m_scrubLoopLockedToActiveLoop && m_scrubHoldPosition >= lo)
+                m_scrubLoopLockedToActiveLoop = true;
+
+            if (m_scrubLoopLockedToActiveLoop && m_scrubHoldPosition >= hi) {
+                const double w = lo + std::fmod(m_scrubHoldPosition - lo, loopLen);
+                m_scrubHoldPosition = w;
+                transportSource.setPosition(std::max(0.0, w));
+                m_atomicPlayheadPos.store(w, std::memory_order_relaxed);
+            } else if (m_scrubLoopLockedToActiveLoop && m_scrubHoldPosition < lo) {
+                const double dist = lo - m_scrubHoldPosition;
+                const double w    = hi - std::fmod(dist, loopLen);
+                m_scrubHoldPosition = w;
+                transportSource.setPosition(std::max(0.0, w));
+                m_atomicPlayheadPos.store(w, std::memory_order_relaxed);
+            }
+        }
+    }
+
+    m_snapTempoRatio = getTempoRatio();
+
+    if (!m_isScrubbing && m_scratchReleaseActive
+        && std::abs(m_scratchSmoothedRate - m_scratchReleaseTargetRate) <= ScratchConfig::kReleaseSettleThreshold) {
+        m_scratchReleaseActive = false;
+        m_scratchTargetRate    = 0.0;
+        // Pin smoothed rate to the converged target (not 0) so the resampling
+        // source is already at the right ratio when restorePostScrubPlaybackState
+        // calls setResamplingRatio(1.0) — avoids a rate-discontinuity click.
+        m_scratchSmoothedRate       = m_scratchReleaseTargetRate;
+        m_scratchInputFilteredRate  = 0.0;
+
+        if (mixerSource)
+            mixerSource->setScratchTimbre(0.0f);
+
+        restorePostScrubPlaybackState();
+        m_scrubLoopLockedToActiveLoop = false;
+        emit playingChanged();
+    }
+
+    emit progressChanged();
+    emit vuLevelChanged();
+    emit gainReductionChanged();
+}
+
+void DjEngine::decayJogNudge()
+{
+    if (m_jogNudgePercent == 0.0)
+        return;
+
+    // Fade jog outer-rim nudge back to 0% after ~150ms of no new jog events.
+    const double idleSec = m_lastJogNudgeClock.isValid()
+        ? static_cast<double>(m_lastJogNudgeClock.nsecsElapsed()) * 1e-9
+        : 1.0;
+    if (idleSec > 0.080) {
+        constexpr double kNudgeDecayTau = 0.080;
+        const double alpha = 1.0 - std::exp(-idleSec / kNudgeDecayTau);
+        m_jogNudgePercent -= m_jogNudgePercent * alpha;
+        if (std::abs(m_jogNudgePercent) < 0.05)
+            m_jogNudgePercent = 0.0;
+        updateSpeedAndPitch();
+    }
+}
+
+// Returns true if onTimer should continue to the phase-correction/VU path,
+// false if it should return immediately (pre-roll loop wrap triggered).
+bool DjEngine::tickTransportPlaying()
+{
+    // Store a fresh snapshot from the transport each control tick.
+    // Interpolation happens only between these anchors.
+    const double dtSec = m_snapValid
+        ? std::clamp(static_cast<double>(m_snapClock.nsecsElapsed()) * 1e-9, 0.001, 0.050)
+        : 0.004;
+
+    const double measuredPos = transportSource.getCurrentPosition();
+    m_snapPosition   = measuredPos;
+    m_snapTempoRatio = getTempoRatio();
+
+    // Slip shadow: advance continuously while loop/reverse diverts the transport.
+    if (isSlipDiverted()) {
+        const double dur = std::max(0.001, static_cast<double>(getDuration()));
+        m_slipPosition = std::min(m_slipPosition + dtSec * getTempoRatio(), dur);
+    } else {
+        m_slipPosition = measuredPos;
+    }
+
+    if (m_loopActive && m_loopOutSec > m_loopInSec) {
+        if (m_isReverse && m_snapPosition <= m_loopInSec) {
+            transportSource.setPosition(m_loopOutSec);
+            m_snapPosition = m_loopOutSec;
+        } else if (!m_isReverse && m_loopInSec < 0.0
+                   && m_snapPosition >= m_loopOutSec) {
+            // Loop with pre-roll IN point: the audio source cannot enforce this
+            // (no negative samples).  Software-wrap: stop transport and start a
+            // pre-roll countdown from the true (negative) loop-in position.
+            transportSource.stop();
+            m_snapValid = false;
+            m_scrubHoldPosition = m_loopInSec;
+            m_preRollCountdownActive = true;
+            m_preRollVisualStartPos  = m_loopInSec;
+            m_preRollClock.restart();
+            m_atomicPlayheadPos.store(m_loopInSec, std::memory_order_relaxed);
+            emit progressChanged();
+            emit vuLevelChanged();
+            emit gainReductionChanged();
+            return false;
+        }
+    }
+
+    m_snapClock.restart();
+    m_snapValid = true;
+    m_atomicPlayheadPos.store(m_snapPosition, std::memory_order_relaxed);
+    emit progressChanged();
+    return true;
+}
+
+void DjEngine::tickTransportStopped()
+{
+    m_snapValid = false;
+    if (m_preRollCountdownActive) {
+        // Advance visual position from negative toward 0 at playback rate.
+        const double elapsed   = static_cast<double>(m_preRollClock.nsecsElapsed()) * 1e-9;
+        const double visualPos = m_preRollVisualStartPos + elapsed * getTempoRatio();
+        m_scrubHoldPosition = visualPos;
+        m_atomicPlayheadPos.store(visualPos, std::memory_order_relaxed);
+
+        // Loop entirely in pre-roll: both endpoints negative, wrap back to loop IN.
+        if (m_loopActive && m_loopOutSec <= 0.0 && m_loopOutSec > m_loopInSec
+                && visualPos >= m_loopOutSec) {
+            m_preRollVisualStartPos = m_loopInSec;
+            m_scrubHoldPosition     = m_loopInSec;
+            m_preRollClock.restart();
+            m_atomicPlayheadPos.store(m_loopInSec, std::memory_order_relaxed);
+            emit progressChanged();
+            return;
+        }
+
+        if (visualPos >= 0.0) {
+            m_preRollCountdownActive = false;
+            m_scrubHoldPosition = 0.0;
+            transportSource.setPosition(0.0);
+            armSnapFromTransportPosition();
+            transportSource.start();
+            // For loops crossing 0: re-apply audio-source loop now that transport
+            // is in-track.  applyLoopRangeToAudioSource() was a no-op while
+            // loopIn was negative; with loopIn < 0 the audio loop [0, loopOut]
+            // is software-enforced via the transport-playing branch above.
+        }
+        emit progressChanged();
+    } else {
+        ensureTransportRunningForPlayIntent();
+        // In pre-roll the transport is clamped at 0, so syncing from transport
+        // erases the negative visual position. Preserve m_scrubHoldPosition when negative.
+        const double transportPos = transportSource.getCurrentPosition();
+        const double atomicPos    = (m_scrubHoldPosition < 0.0)
+            ? m_scrubHoldPosition
+            : transportPos;
+        m_atomicPlayheadPos.store(atomicPos, std::memory_order_relaxed);
+    }
 }
 
 float DjEngine::vuLevelL() const
@@ -3972,7 +3965,7 @@ void DjEngine::applyScratchNeutralRouting()
     if (resamplingSource)
         resamplingSource->setResamplingRatio(1.0);
     if (reverseWrapSource)
-        static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get())->setReverse(false);
+        reverseWrapSource->setReverse(false);
 }
 
 void DjEngine::restorePostScrubPlaybackState()
@@ -3981,16 +3974,13 @@ void DjEngine::restorePostScrubPlaybackState()
         // Restore m_isReverse, not m_scrubSavedReverseState: the user may have
         // pressed the REVERSE button while scratch was active; using the saved
         // pre-scratch state would silently discard that change.
-        static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get())->setReverse(m_isReverse);
+        reverseWrapSource->setReverse(m_isReverse);
 
     // Sync m_playRequested with the pre-scratch intent captured in m_scrubWasPlaying.
     // Normally they match, but if some edge case clears m_playRequested during scratch
     // (e.g. a race with a toggle event), m_scrubWasPlaying is the authoritative record.
-    if (m_scrubWasPlaying && !m_playRequested) {
-        qDebug() << "[JOG] restorePostScrubPlaybackState: m_playRequested was false but "
-                    "m_scrubWasPlaying=true — restoring play intent";
+    if (m_scrubWasPlaying && !m_playRequested)
         m_playRequested = true;
-    }
 
     // When stopping: halt the transport BEFORE resetting the resampling ratio.
     // If we reset ratio first while still running, the audio thread may process
@@ -4005,9 +3995,6 @@ void DjEngine::restorePostScrubPlaybackState()
         timeStretchSource->setTempoRatio(1.0);
 
     updateSpeedAndPitch();
-
-    qDebug() << "[JOG] restorePostScrubPlaybackState: m_playRequested=" << m_playRequested
-             << "isPlaying=" << transportSource.isPlaying();
 
     // Re-apply loop range to the audio source — scratch neutral routing may have
     // changed the reverse state, which gates loop enforcement in applyLoopRangeToAudioSource.
@@ -4040,9 +4027,6 @@ void DjEngine::pauseForScrub()
 {
     if (m_isScrubbing)
         return;
-
-    qDebug() << "[JOG] pauseForScrub: m_playRequested=" << m_playRequested
-             << "isPlaying=" << transportSource.isPlaying();
 
     m_phaseNudge      = 0.0;
     m_jogNudgePercent = 0.0;
@@ -4137,20 +4121,33 @@ void DjEngine::scrubBy(double pixelDelta)
     scratchBySeconds(timeDelta);
 }
 
+// Shape a raw scratch rate into a smoothed output rate.
+// Below baseRate, blends linear and cubic response (linearWeight controls the mix, 0..1).
+// Above baseRate, extrapolates with overSpeedFactor.
+static double shapeScratchRate(double absRaw, double baseRate,
+                               double linearWeight, double overSpeedFactor) noexcept
+{
+    if (absRaw <= baseRate) {
+        const double t = std::clamp(absRaw / baseRate, 0.0, 1.0);
+        return baseRate * (linearWeight * t + (1.0 - linearWeight) * t * t * t);
+    }
+    return baseRate + (absRaw - baseRate) * overSpeedFactor;
+}
+
 void DjEngine::scratchBySeconds(double deltaSeconds)
 {
     if (deltaSeconds == 0.0)
         return;
 
     const double requestedDelta = std::clamp(deltaSeconds,
-                                             -m_scratchEventSpikeClampSec,
-                                             m_scratchEventSpikeClampSec);
-    const bool fineMove = std::abs(requestedDelta) <= m_scratchFineMoveThresholdSec;
+                                             -ScratchConfig::kEventSpikeClampSec,
+                                             ScratchConfig::kEventSpikeClampSec);
+    const bool fineMove = std::abs(requestedDelta) <= ScratchConfig::kFineMoveThresholdSec;
     const double directStep = fineMove
         ? requestedDelta
         : std::clamp(requestedDelta,
-                     -m_scratchDirectStepLimitSec,
-                     m_scratchDirectStepLimitSec);
+                     -ScratchConfig::kDirectStepLimitSec,
+                     ScratchConfig::kDirectStepLimitSec);
 
     const double len = transportSource.getLengthInSeconds();
     if (len <= 0.0)
@@ -4171,20 +4168,14 @@ void DjEngine::scratchBySeconds(double deltaSeconds)
     const double absRaw = std::abs(rawRate);
     double shapedAbsRate = 0.0;
 
-    if (absRaw <= baseRate) {
-        // High precision near zero movement; cubic rise avoids twitching.
-        const double t = std::clamp(absRaw / baseRate, 0.0, 1.0);
-        shapedAbsRate = baseRate * (0.15 * t + 0.85 * t * t * t);
-    } else {
-        // Above base speed, accelerate more aggressively for fast swipes.
-        shapedAbsRate = baseRate + (absRaw - baseRate) * 1.35;
-    }
+    // 0.15 linear weight: slightly more tactile response for physical delta input.
+    shapedAbsRate = shapeScratchRate(absRaw, baseRate, 0.15, 1.35);
 
     if (fineMove)
         shapedAbsRate *= 0.72;
 
     const double instantaneousRate = std::copysign(
-        std::clamp(shapedAbsRate, 0.0, m_scratchMaxRate),
+        std::clamp(shapedAbsRate, 0.0, ScratchConfig::kMaxRate),
         rawRate);
     pushScratchVelocityTick(instantaneousRate);
 
@@ -4248,17 +4239,11 @@ void DjEngine::setScrubPosition(double positionSeconds)
     const double baseRate = std::max(0.01, m_scratchBaseRate);
     const double absRaw = std::abs(rawRate);
 
-    double shapedAbsRate = 0.0;
-    if (absRaw <= baseRate) {
-        // Preserve fine control near zero without killing tactile response.
-        const double t = std::clamp(absRaw / baseRate, 0.0, 1.0);
-        shapedAbsRate = baseRate * (0.10 * t + 0.90 * t * t * t);
-    } else {
-        shapedAbsRate = baseRate + (absRaw - baseRate) * 1.25;
-    }
+    // 0.10 linear weight: more cubic for absolute-position (touch/mouse) input.
+    const double shapedAbsRate = shapeScratchRate(absRaw, baseRate, 0.10, 1.25);
 
     const double instantaneousRate = std::copysign(
-        std::clamp(shapedAbsRate, 0.0, m_scratchMaxRate),
+        std::clamp(shapedAbsRate, 0.0, ScratchConfig::kMaxRate),
         rawRate);
     pushScratchVelocityTick(instantaneousRate);
 
@@ -4272,21 +4257,21 @@ void DjEngine::setScrubPosition(double positionSeconds)
 
 void DjEngine::pushScratchVelocityTick(double velocityRate)
 {
-    const double rawTarget = std::clamp(velocityRate, -m_scratchMaxRate, m_scratchMaxRate);
+    const double rawTarget = std::clamp(velocityRate, -ScratchConfig::kMaxRate, ScratchConfig::kMaxRate);
     const double dtSec = m_lastScrubInputClock.isValid()
         ? std::clamp(static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9,
                      0.001, 0.050)
         : 0.008;
 
     m_scratchInputFilteredRate += (rawTarget - m_scratchInputFilteredRate)
-        * std::clamp(m_scratchInputRateFilterAlpha, 0.0, 1.0);
+        * std::clamp(ScratchConfig::kInputRateFilterAlpha, 0.0, 1.0);
 
-    const double maxStep = std::max(0.001, m_scratchInputRateSlewPerSec) * dtSec;
-    const double desired = std::clamp(m_scratchInputFilteredRate, -m_scratchMaxRate, m_scratchMaxRate);
+    const double maxStep = std::max(0.001, ScratchConfig::kInputRateSlewPerSec) * dtSec;
+    const double desired = std::clamp(m_scratchInputFilteredRate, -ScratchConfig::kMaxRate, ScratchConfig::kMaxRate);
     const double delta = std::clamp(desired - m_scratchTargetRate, -maxStep, maxStep);
     m_scratchTargetRate = std::clamp(m_scratchTargetRate + delta,
-                                     -m_scratchMaxRate,
-                                     m_scratchMaxRate);
+                                     -ScratchConfig::kMaxRate,
+                                     ScratchConfig::kMaxRate);
     m_lastScrubInputClock.restart();
 }
 
@@ -4294,11 +4279,6 @@ void DjEngine::resumeAfterScrub()
 {
     if (!m_isScrubbing)
         return;
-
-    qDebug() << "[JOG] resumeAfterScrub: m_scrubWasPlaying=" << m_scrubWasPlaying
-             << "m_playRequested=" << m_playRequested
-             << "smoothedRate=" << m_scratchSmoothedRate
-             << "accumulated=" << m_scratchAccumulatedMoveSec;
 
     m_isScrubbing = false;
     m_scratchAbsolutePositionControl = false;
@@ -4318,7 +4298,7 @@ void DjEngine::resumeAfterScrub()
     // normal playback speed snaps directly back — a jitter tick at 33 RPM lands at
     // ~0.14x when spaced 100 ms apart, well below the cutoff; actual scratching
     // reaches 1x+ quickly.
-    if (m_scratchAccumulatedMoveSec < m_scratchInertiaMoveThresholdSec
+    if (m_scratchAccumulatedMoveSec < ScratchConfig::kInertiaMoveThresholdSec
             || std::abs(m_scratchSmoothedRate) < 0.30) {
         m_scratchReleaseActive = false;
         m_scratchReleaseTargetRate = 0.0;
@@ -4341,7 +4321,7 @@ void DjEngine::resumeAfterScrub()
             : m_scratchDirectionSign;
         m_scratchSmoothedRate = seedDir * kMinReleaseKickRate;
     }
-    m_scratchSmoothedRate = std::clamp(m_scratchSmoothedRate, -m_scratchMaxRate, m_scratchMaxRate);
+    m_scratchSmoothedRate = std::clamp(m_scratchSmoothedRate, -ScratchConfig::kMaxRate, ScratchConfig::kMaxRate);
     const double releaseBaseRate = std::max(0.01, std::abs(getTempoRatio()));
     const double releaseDirection = m_scrubSavedReverseState ? -1.0 : 1.0;
     m_scratchReleaseTargetRate = m_scrubWasPlaying ? (releaseDirection * releaseBaseRate) : 0.0;
@@ -4446,37 +4426,49 @@ void DjEngine::setAntiClip(bool enabled) {
 
 // ──────────────────────────────────────────────────────────────────────────────
 
-double DjEngine::getBeatPhase() const
+// Returns the beat interval [prevSec, prevSec+lengthSec) that contains positionSec.
+// Requires m_trackData non-null and BPM > 0.
+DjEngine::BeatInterval DjEngine::beatIntervalAt(double positionSec) const
 {
-    if (!m_trackData) return 0.0;
-    const double bpm = m_trackData->getBpm();
-    if (bpm <= 0.0) return 0.0;
-
-    const double pos    = getPosition();
-    const double nomLen = 60.0 / bpm;   // nominal beat length from BPM
+    const double bpm    = m_trackData->getBpm();
+    const double nomLen = 60.0 / bpm;
     const auto&  grid   = m_trackData->getBeatGrid();
 
     if (grid.size() >= 2) {
-        // Find the last beat marker at or before the current position.
-        const auto it = std::upper_bound(grid.begin(), grid.end(), pos,
+        const auto it   = std::upper_bound(grid.begin(), grid.end(), positionSec,
             [](double v, const TrackData::BeatMarker& m) { return v < m.positionSec; });
-
         const auto prev = (it != grid.begin()) ? std::prev(it) : grid.begin();
         const double prevSec = prev->positionSec;
-
-        // Beat length: use distance to next grid marker when available.
         double beatLen = nomLen;
         if (std::next(prev) != grid.end()) {
             const double candidate = std::next(prev)->positionSec - prevSec;
             if (candidate > 0.01)
                 beatLen = candidate;
         }
+        return {prevSec, beatLen};
+    }
 
+    const double sr        = m_trackData->getSampleRate();
+    const double firstBeat = sr > 0.0
+        ? static_cast<double>(m_trackData->getFirstBeatSample()) / sr : 0.0;
+    const double idx = std::floor((positionSec - firstBeat) / nomLen);
+    return {firstBeat + idx * nomLen, nomLen};
+}
+
+double DjEngine::getBeatPhase() const
+{
+    if (!m_trackData) return 0.0;
+    const double bpm = m_trackData->getBpm();
+    if (bpm <= 0.0) return 0.0;
+
+    const double pos = getPosition();
+    if (m_trackData->getBeatGrid().size() >= 2) {
+        const auto [prevSec, beatLen] = beatIntervalAt(pos);
         return std::clamp((pos - prevSec) / beatLen, 0.0, 0.9999);
     }
 
     // No usable beat grid — phase from BPM alone.
-    return std::fmod(pos / nomLen, 1.0);
+    return std::fmod(pos / (60.0 / bpm), 1.0);
 }
 
 double DjEngine::getBeatPosition() const
@@ -4485,33 +4477,28 @@ double DjEngine::getBeatPosition() const
     const double bpm = m_trackData->getBpm();
     if (bpm <= 0.0) return 0.0;
 
-    const double pos = getPosition();
-    const auto& grid = m_trackData->getBeatGrid();
+    const double pos  = getPosition();
+    const auto&  grid = m_trackData->getBeatGrid();
     if (grid.size() >= 2) {
         const auto it = std::upper_bound(grid.begin(), grid.end(), pos,
             [](double v, const TrackData::BeatMarker& m) { return v < m.positionSec; });
-
-        if (it == grid.begin()) {
-            const double beatLen = std::max(0.001, std::next(grid.begin())->positionSec - grid.begin()->positionSec);
-            return (pos - grid.begin()->positionSec) / beatLen;
-        }
-
-        const auto prev = std::prev(it);
-        const int beatIndex = static_cast<int>(std::distance(grid.begin(), prev));
+        const auto prev      = (it != grid.begin()) ? std::prev(it) : grid.begin();
+        const int  beatIndex = static_cast<int>(std::distance(grid.begin(), prev));
+        // Use the same interval length as beatIntervalAt (> 0.01 threshold),
+        // except fall back to max(0.001, …) at the very first marker so
+        // pre-roll positions before the first beat return sensible fractions.
         double beatLen = 60.0 / bpm;
         if (std::next(prev) != grid.end()) {
             const double candidate = std::next(prev)->positionSec - prev->positionSec;
             if (candidate > 0.001)
                 beatLen = candidate;
         }
-
         return static_cast<double>(beatIndex) + ((pos - prev->positionSec) / beatLen);
     }
 
-    const double sr = m_trackData->getSampleRate();
+    const double sr        = m_trackData->getSampleRate();
     const double firstBeat = sr > 0.0
-        ? static_cast<double>(m_trackData->getFirstBeatSample()) / sr
-        : 0.0;
+        ? static_cast<double>(m_trackData->getFirstBeatSample()) / sr : 0.0;
     return (pos - firstBeat) / (60.0 / bpm);
 }
 
@@ -4603,25 +4590,9 @@ void DjEngine::snapPhaseToMaster(DjEngine* master)
     if (std::abs(diff) < 0.005)
         return;
 
-    // Compute actual beat length at current position.
-    double beatLen = 60.0 / bpm;
-    const auto& grid = m_trackData->getBeatGrid();
-    if (grid.size() >= 2) {
-        const double pos = getPosition();
-        const auto it = std::upper_bound(grid.begin(), grid.end(), pos,
-            [](double v, const TrackData::BeatMarker& m) { return v < m.positionSec; });
-        if (it != grid.begin()) {
-            const auto prev = std::prev(it);
-            if (std::next(prev) != grid.end()) {
-                const double candidate = std::next(prev)->positionSec - prev->positionSec;
-                if (candidate > 0.01)
-                    beatLen = candidate;
-            }
-        }
-    }
-
+    const double beatLen    = beatIntervalAt(getPosition()).lengthSec;
     const double seekOffset = diff * beatLen;
-    const double newPos = std::max(0.0, getPosition() + seekOffset);
+    const double newPos     = std::max(0.0, getPosition() + seekOffset);
     transportSource.setPosition(newPos);
     m_phaseNudge = 0.0;
     armSnapFromTransportPosition();
@@ -4787,25 +4758,9 @@ void DjEngine::reSync()
     if (std::abs(diff) < 0.005)
         return;
 
-    // Actual beat length at current position.
-    double beatLen = 60.0 / bpm;
-    const auto& grid = m_trackData->getBeatGrid();
-    if (grid.size() >= 2) {
-        const double pos = getPosition();
-        const auto it = std::upper_bound(grid.begin(), grid.end(), pos,
-            [](double v, const TrackData::BeatMarker& m) { return v < m.positionSec; });
-        if (it != grid.begin()) {
-            const auto prev = std::prev(it);
-            if (std::next(prev) != grid.end()) {
-                const double candidate = std::next(prev)->positionSec - prev->positionSec;
-                if (candidate > 0.01)
-                    beatLen = candidate;
-            }
-        }
-    }
-
     // Seek 85% of the phase error immediately (barely audible for errors up to half a beat),
     // then let the boosted P-controller handle the remaining 15% in ~2 seconds.
+    const double beatLen    = beatIntervalAt(getPosition()).lengthSec;
     const double seekOffset = diff * beatLen * 0.85;
     const double newPos = std::max(0.0, getPosition() + seekOffset);
     transportSource.setPosition(newPos);
@@ -4963,26 +4918,27 @@ double DjEngine::quantizedBeatAt(double sec) const
     if (!m_trackData)
         return sec;
 
-    const auto grid = m_trackData->getBeatGrid();
+    const auto& grid = m_trackData->getBeatGrid();
     if (!grid.empty()) {
-        double best = grid.front().positionSec;
-        double bestDist = std::abs(best - sec);
-        for (const auto& m : grid) {
-            const double d = std::abs(m.positionSec - sec);
-            if (d < bestDist) {
-                best = m.positionSec;
-                bestDist = d;
-            }
-        }
-        return best;
+        // Binary search: first marker strictly after sec.
+        const auto it = std::upper_bound(grid.begin(), grid.end(), sec,
+            [](double v, const TrackData::BeatMarker& m) { return v < m.positionSec; });
+        if (it == grid.begin())
+            return grid.front().positionSec;
+        if (it == grid.end())
+            return grid.back().positionSec;
+        const auto prev  = std::prev(it);
+        const double dPrev = sec - prev->positionSec;
+        const double dNext = it->positionSec - sec;
+        return (dPrev <= dNext) ? prev->positionSec : it->positionSec;
     }
 
     const double bpm = m_trackData->getBpm();
-    const double sr = m_trackData->getSampleRate();
+    const double sr  = m_trackData->getSampleRate();
     if (bpm <= 0.0 || sr <= 0.0)
         return sec;
 
-    const double beatDur = 60.0 / bpm;
+    const double beatDur   = 60.0 / bpm;
     const double firstBeat = static_cast<double>(m_trackData->getFirstBeatSample()) / sr;
     const double beatIndex = std::round((sec - firstBeat) / beatDur);
     return firstBeat + beatIndex * beatDur;
@@ -4993,29 +4949,19 @@ double DjEngine::beatDurationAround(double sec) const
     if (!m_trackData)
         return 0.5;
 
-    const auto grid = m_trackData->getBeatGrid();
+    const auto& grid = m_trackData->getBeatGrid();
     if (grid.size() >= 2) {
-        int nearest = 0;
-        double bestDist = std::abs(grid[0].positionSec - sec);
-        for (int i = 1; i < static_cast<int>(grid.size()); ++i) {
-            const double d = std::abs(grid[static_cast<size_t>(i)].positionSec - sec);
-            if (d < bestDist) {
-                bestDist = d;
-                nearest = i;
-            }
+        // Binary search for the containing interval [prev, next).
+        const auto it   = std::upper_bound(grid.begin(), grid.end(), sec,
+            [](double v, const TrackData::BeatMarker& m) { return v < m.positionSec; });
+        const auto prev = (it != grid.begin()) ? std::prev(it) : grid.begin();
+        if (std::next(prev) != grid.end()) {
+            const double d = std::next(prev)->positionSec - prev->positionSec;
+            if (d > 1e-3) return d;
         }
-
-        if (nearest + 1 < static_cast<int>(grid.size())) {
-            const double d = grid[static_cast<size_t>(nearest + 1)].positionSec
-                           - grid[static_cast<size_t>(nearest)].positionSec;
-            if (d > 1e-3)
-                return d;
-        }
-        if (nearest > 0) {
-            const double d = grid[static_cast<size_t>(nearest)].positionSec
-                           - grid[static_cast<size_t>(nearest - 1)].positionSec;
-            if (d > 1e-3)
-                return d;
+        if (prev != grid.begin()) {
+            const double d = prev->positionSec - std::prev(prev)->positionSec;
+            if (d > 1e-3) return d;
         }
     }
 
@@ -5212,7 +5158,7 @@ void DjEngine::applyLoopRangeToAudioSource()
         return;
     }
 
-    auto* reverseSource = static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get());
+    auto* reverseSource = reverseWrapSource.get();
     if (!reverseSource)
         return;
 
@@ -5230,7 +5176,7 @@ void DjEngine::clearLoopRangeOnAudioSource()
 {
     if (!reverseWrapSource)
         return;
-    auto* reverseSource = static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get());
+    auto* reverseSource = reverseWrapSource.get();
     if (reverseSource)
         reverseSource->clearLoopRangeSamples();
 }
@@ -5383,7 +5329,7 @@ void DjEngine::setReverse(bool on)
     const bool wasSlipDiverted = isSlipDiverted();
     m_isReverse = on;
     if (reverseWrapSource) {
-        static_cast<ReverseStreamAudioSource*>(reverseWrapSource.get())->setReverse(on);
+        reverseWrapSource->setReverse(on);
         if (m_loopActive)
             applyLoopRangeToAudioSource();
     }
