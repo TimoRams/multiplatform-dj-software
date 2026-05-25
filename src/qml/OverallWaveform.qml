@@ -26,6 +26,55 @@ Item {
             rectified: true
         }
 
+        // ── Loop region ───────────────────────────────────────────────────────
+        Rectangle {
+            visible: root.engine !== null && root.engine.loopActive
+
+            readonly property double _dur: (root.engine && root.engine.trackDurationSec > 0)
+                                           ? root.engine.trackDurationSec : 1.0
+            readonly property double _lo:  root.engine ? root.engine.loopInPosition  / _dur : 0.0
+            readonly property double _hi:  root.engine ? root.engine.loopOutPosition / _dur : 0.0
+
+            anchors.top:    overview.top
+            anchors.bottom: overview.bottom
+            x:     overview.x + _lo * overview.width
+            width: Math.max(1, (_hi - _lo) * overview.width)
+            color: "#1a009944"
+            z:     2
+
+            Rectangle { anchors.left: parent.left;   anchors.top: parent.top; anchors.bottom: parent.bottom; width: 1; color: "#55cc88" }
+            Rectangle { anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom; width: 1; color: "#55cc88" }
+        }
+
+        // ── Hot cue markers ───────────────────────────────────────────────────
+        Repeater {
+            model: root.engine ? root.engine.hotCues : []
+            delegate: Rectangle {
+                required property var modelData
+
+                visible: modelData.set === true
+                anchors.top: overview.top
+                width: 11; height: 11
+                z: 4
+
+                readonly property string _col: (modelData.color && modelData.color !== "")
+                                               ? modelData.color : "#ff8800"
+                readonly property double _dur: (root.engine && root.engine.trackDurationSec > 0)
+                                               ? root.engine.trackDurationSec : 1.0
+                x: overview.x + (modelData.positionSec / _dur) * overview.width - width / 2
+                color: _col
+
+                Text {
+                    anchors.centerIn: parent
+                    text: modelData.index + 1
+                    font.pixelSize: 7
+                    font.bold: true
+                    font.family: "monospace"
+                    color: "#000000"
+                }
+            }
+        }
+
         Rectangle {
             id: overviewPlayhead
             width: 3
