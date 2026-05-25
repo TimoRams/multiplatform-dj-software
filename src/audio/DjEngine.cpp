@@ -3443,11 +3443,14 @@ void DjEngine::onTimer()
             transportSource.start();
         }
 
+        const double scrubPosBeforeAnchor = m_scrubHoldPosition;
         updateScrubPlayheadAnchor();
 
         // Rate-based loop wrap: hardware loop is suspended during scratch so we
         // enforce loop boundaries here at timer granularity (~20 ms).
         // fmod handles the case where multiple loop lengths are crossed per tick.
+        // The pre-loop area must remain free: when a stored active loop lies in
+        // the future, scratching before loopIn must not snap forward into it.
         if (m_isScrubbing && m_loopActive && m_loopOutSec > m_loopInSec) {
             const double lo      = m_loopInSec;
             const double hi      = std::min(transportSource.getLengthInSeconds(), m_loopOutSec);
@@ -3458,7 +3461,9 @@ void DjEngine::onTimer()
                     m_scrubHoldPosition = w;
                     transportSource.setPosition(std::max(0.0, w));
                     m_atomicPlayheadPos.store(w, std::memory_order_relaxed);
-                } else if (m_scrubHoldPosition < lo && m_scratchDirectionSign < 0.0) {
+                } else if (scrubPosBeforeAnchor >= lo
+                           && m_scrubHoldPosition < lo
+                           && m_scratchDirectionSign < 0.0) {
                     const double dist = lo - m_scrubHoldPosition;
                     const double w    = hi - std::fmod(dist, loopLen);
                     m_scrubHoldPosition = w;
@@ -4052,14 +4057,15 @@ void DjEngine::pauseForScrub()
     m_preRollCountdownActive = false;
     if (m_scrubHoldPosition >= 0.0)
         m_scrubHoldPosition = transportSource.getCurrentPosition();
-    // Wrap hold position into loop range at grab time — only if actually outside.
-    // Conditional guard prevents FP drift when the position is already valid.
+    // Keep the pre-loop area playable/scratchable even when a stored future loop
+    // is active. The audio source also plays through normally until loopIn; only
+    // positions beyond loopOut need wrapping at grab time.
     if (m_loopActive && m_loopOutSec > m_loopInSec) {
         const double len     = transportSource.getLengthInSeconds();
         const double lo      = m_loopInSec;
         const double hi      = std::min(len > 0.0 ? len : 1e9, m_loopOutSec);
         const double loopLen = hi - lo;
-        if (loopLen > 0.0 && (m_scrubHoldPosition < lo || m_scrubHoldPosition >= hi)) {
+        if (loopLen > 0.0 && m_scrubHoldPosition >= hi) {
             const double offset = m_scrubHoldPosition - lo;
             m_scrubHoldPosition = lo + std::fmod(std::fmod(offset, loopLen) + loopLen, loopLen);
         }
@@ -4178,7 +4184,9 @@ void DjEngine::scratchBySeconds(double deltaSeconds)
         const double lo      = m_loopInSec;
         const double hi      = std::min(len, m_loopOutSec);
         const double loopLen = hi - lo;
-        if (loopLen > 0.0 && (nextPos < lo || nextPos >= hi)) {
+        const bool crossesLoopInBackward = currentPos >= lo && nextPos < lo;
+        const bool crossesLoopOutForward = nextPos >= hi;
+        if (loopLen > 0.0 && (crossesLoopInBackward || crossesLoopOutForward)) {
             const double offset = nextPos - lo;
             nextPos = lo + std::fmod(std::fmod(offset, loopLen) + loopLen, loopLen);
         }
