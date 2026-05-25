@@ -3450,7 +3450,8 @@ void DjEngine::onTimer()
         // fmod handles the case where multiple loop lengths are crossed per tick.
         // The pre-loop area must remain free: when a stored active loop lies in
         // the future, scratching before loopIn must not snap forward into it.
-        if (m_isScrubbing && m_loopActive && m_loopOutSec > m_loopInSec) {
+        if ((m_isScrubbing || (m_scratchReleaseActive && m_scrubLoopLockedToActiveLoop))
+                && m_loopActive && m_loopOutSec > m_loopInSec) {
             const double lo      = m_loopInSec;
             const double hi      = std::min(transportSource.getLengthInSeconds(), m_loopOutSec);
             const double loopLen = hi - lo;
@@ -3463,9 +3464,7 @@ void DjEngine::onTimer()
                     m_scrubHoldPosition = w;
                     transportSource.setPosition(std::max(0.0, w));
                     m_atomicPlayheadPos.store(w, std::memory_order_relaxed);
-                } else if (m_scrubLoopLockedToActiveLoop
-                           && m_scrubHoldPosition < lo
-                           && m_scratchDirectionSign < 0.0) {
+                } else if (m_scrubLoopLockedToActiveLoop && m_scrubHoldPosition < lo) {
                     const double dist = lo - m_scrubHoldPosition;
                     const double w    = hi - std::fmod(dist, loopLen);
                     m_scrubHoldPosition = w;
@@ -3491,6 +3490,7 @@ void DjEngine::onTimer()
                 mixerSource->setScratchTimbre(0.0f);
 
             restorePostScrubPlaybackState();
+            m_scrubLoopLockedToActiveLoop = false;
             emit playingChanged();
         }
 
@@ -4293,7 +4293,6 @@ void DjEngine::resumeAfterScrub()
              << "accumulated=" << m_scratchAccumulatedMoveSec;
 
     m_isScrubbing = false;
-    m_scrubLoopLockedToActiveLoop = false;
     m_scratchAbsolutePositionControl = false;
     m_scratchAbsoluteFollowVelocity = 0.0;
     m_scratchInputFilteredRate = m_scratchSmoothedRate;
@@ -4319,6 +4318,7 @@ void DjEngine::resumeAfterScrub()
         m_scratchSmoothedRate = 0.0;
 
         restorePostScrubPlaybackState();
+        m_scrubLoopLockedToActiveLoop = false;
         emit scrubbingChanged();
         emit playingChanged();
         return;
