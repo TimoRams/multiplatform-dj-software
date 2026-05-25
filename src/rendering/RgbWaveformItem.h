@@ -30,8 +30,9 @@ signals:
 
 private slots:
     void onTrackLoaded();
-    void onRgbDataChanged();   // throttled — analysis progress & waveform updates
-    void onHotCuesChanged();   // immediate — cue pin positions must update at once
+    void onRgbDataChanged();      // throttled — analysis progress & waveform updates
+    void onHotCuesChanged();      // immediate — cue pin positions must update at once
+    void onOverviewRgbUpdated();  // overview ready — repaint immediately
 
 private:
     DjEngine* m_engine       = nullptr;

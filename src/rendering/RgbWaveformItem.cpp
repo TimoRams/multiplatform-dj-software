@@ -111,7 +111,7 @@ void RgbWaveformItem::onTrackLoaded()
     connect(td, &TrackData::rgbWaveformUpdated, this, &RgbWaveformItem::onRgbDataChanged,  Qt::UniqueConnection);
     connect(td, &TrackData::dataCleared,        this, &RgbWaveformItem::onRgbDataChanged,  Qt::UniqueConnection);
     // Overview arrives once after cache load — repaint immediately when ready.
-    connect(td, &TrackData::overviewRgbUpdated, this, [this]() { update(); }, Qt::UniqueConnection);
+    connect(td, &TrackData::overviewRgbUpdated, this, &RgbWaveformItem::onOverviewRgbUpdated, Qt::UniqueConnection);
     update();
 }
 
@@ -124,6 +124,11 @@ void RgbWaveformItem::onRgbDataChanged()
     // and subsequent calls are O(kOverviewBins), so the throttle becomes a no-op cost.
     if (!m_updateThrottle->isActive())
         m_updateThrottle->start();
+}
+
+void RgbWaveformItem::onOverviewRgbUpdated()
+{
+    update();
 }
 
 void RgbWaveformItem::onHotCuesChanged()

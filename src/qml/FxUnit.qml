@@ -67,20 +67,20 @@ Rectangle {
 
     // ── Sync state (mirrors fxManager properties) ────────────────────────
     readonly property bool   syncOn:   unitId === 1
-        ? (typeof fxManager !== "undefined" ? fxManager.syncEnabled1 : false)
-        : (typeof fxManager !== "undefined" ? fxManager.syncEnabled2 : false)
+        ? (fxManager != null ? fxManager.syncEnabled1 : false)
+        : (fxManager != null ? fxManager.syncEnabled2 : false)
     readonly property real   activeDiv: unitId === 1
-        ? (typeof fxManager !== "undefined" ? fxManager.beatDiv1 : 0.25)
-        : (typeof fxManager !== "undefined" ? fxManager.beatDiv2 : 0.25)
+        ? (fxManager != null ? fxManager.beatDiv1 : 0.25)
+        : (fxManager != null ? fxManager.beatDiv2 : 0.25)
     readonly property double deckBpm:  unitId === 1
-        ? (typeof fxManager !== "undefined" ? fxManager.displayBpm1 : 0.0)
-        : (typeof fxManager !== "undefined" ? fxManager.displayBpm2 : 0.0)
+        ? (fxManager != null ? fxManager.displayBpm1 : 0.0)
+        : (fxManager != null ? fxManager.displayBpm2 : 0.0)
 
     // ── Room-size primary param (Reverb) ──────────────────────────────────
     // Stored in QML; pushed to fxManager when changed.
     property real activePrimaryParam: unitId === 1
-        ? (typeof fxManager !== "undefined" ? fxManager.primaryParam1 : 0.5)
-        : (typeof fxManager !== "undefined" ? fxManager.primaryParam2 : 0.5)
+        ? (fxManager != null ? fxManager.primaryParam1 : 0.5)
+        : (fxManager != null ? fxManager.primaryParam2 : 0.5)
 
     // ── Small dark button shared component ────────────────────────────────
     component DarkBtn: Rectangle {
@@ -181,7 +181,7 @@ Rectangle {
                 Layout.alignment: Qt.AlignVCenter
                 onActiveChanged: {
                     root.deck1Toggled(active)
-                    if (typeof fxManager !== "undefined")
+                    if (fxManager != null)
                         fxManager.setDeckAssignment(root.unitId, 1, active)
                 }
             }
@@ -192,7 +192,7 @@ Rectangle {
                 Layout.alignment: Qt.AlignVCenter
                 onActiveChanged: {
                     root.deck2Toggled(active)
-                    if (typeof fxManager !== "undefined")
+                    if (fxManager != null)
                         fxManager.setDeckAssignment(root.unitId, 2, active)
                 }
             }
@@ -301,7 +301,7 @@ Rectangle {
                     if (currentIndex < 0) return
                     const e = root.effectsList[currentIndex]
                     if (e.wip) { currentIndex = 0; return }
-                    if (typeof fxManager !== "undefined")
+                    if (fxManager != null)
                         fxManager.setEffectType(root.unitId, e.name)
                 }
             }
@@ -344,7 +344,7 @@ Rectangle {
                     defaultValue: 0.0
 
                     onValueChanged: {
-                        if (typeof fxManager !== "undefined")
+                        if (fxManager != null)
                             fxManager.setWetDry(root.unitId, value)
                     }
                 }
@@ -409,7 +409,7 @@ Rectangle {
                     anchors.fill: parent
                     cursorShape:  Qt.PointingHandCursor
                     onClicked:
-                        if (typeof fxManager !== "undefined")
+                        if (fxManager != null)
                             fxManager.setSyncEnabled(root.unitId, !root.syncOn)
                 }
             }
@@ -459,7 +459,7 @@ Rectangle {
                                 anchors.fill: parent
                                 cursorShape:  Qt.PointingHandCursor
                                 onClicked: {
-                                    if (typeof fxManager !== "undefined") {
+                                    if (fxManager != null) {
                                         fxManager.setBeatDivision(root.unitId, divVal)
                                         if (!root.syncOn)
                                             fxManager.setSyncEnabled(root.unitId, true)
@@ -510,7 +510,7 @@ Rectangle {
                                 cursorShape:  Qt.PointingHandCursor
                                 onClicked: {
                                     root.activePrimaryParam = roomVal
-                                    if (typeof fxManager !== "undefined")
+                                    if (fxManager != null)
                                         fxManager.setPrimaryParam(root.unitId, roomVal)
                                 }
                             }
