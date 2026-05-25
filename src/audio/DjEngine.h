@@ -600,6 +600,7 @@ private:
     double m_scratchInputRateSlewPerSec = ScratchConfig::kInputRateSlewPerSec;
     double m_scratchDirectionSign = 1.0;
     double m_scratchDirectionFlipThresholdRate = ScratchConfig::kDirectionFlipThresholdRate;
+    bool   m_scrubLoopLockedToActiveLoop = false;
     bool   m_scratchAbsolutePositionControl = false;
     double m_scratchAbsoluteTargetPosition = 0.0;
     double m_scratchAbsoluteFollowVelocity = 0.0;

@@ -3443,7 +3443,6 @@ void DjEngine::onTimer()
             transportSource.start();
         }
 
-        const double scrubPosBeforeAnchor = m_scrubHoldPosition;
         updateScrubPlayheadAnchor();
 
         // Rate-based loop wrap: hardware loop is suspended during scratch so we
@@ -3456,12 +3455,15 @@ void DjEngine::onTimer()
             const double hi      = std::min(transportSource.getLengthInSeconds(), m_loopOutSec);
             const double loopLen = hi - lo;
             if (loopLen > 0.0) {
-                if (m_scrubHoldPosition >= hi) {
+                if (!m_scrubLoopLockedToActiveLoop && m_scrubHoldPosition >= lo)
+                    m_scrubLoopLockedToActiveLoop = true;
+
+                if (m_scrubLoopLockedToActiveLoop && m_scrubHoldPosition >= hi) {
                     const double w = lo + std::fmod(m_scrubHoldPosition - lo, loopLen);
                     m_scrubHoldPosition = w;
                     transportSource.setPosition(std::max(0.0, w));
                     m_atomicPlayheadPos.store(w, std::memory_order_relaxed);
-                } else if (scrubPosBeforeAnchor >= lo
+                } else if (m_scrubLoopLockedToActiveLoop
                            && m_scrubHoldPosition < lo
                            && m_scratchDirectionSign < 0.0) {
                     const double dist = lo - m_scrubHoldPosition;
@@ -4057,6 +4059,8 @@ void DjEngine::pauseForScrub()
     m_preRollCountdownActive = false;
     if (m_scrubHoldPosition >= 0.0)
         m_scrubHoldPosition = transportSource.getCurrentPosition();
+
+    m_scrubLoopLockedToActiveLoop = false;
     // Keep the pre-loop area playable/scratchable even when a stored future loop
     // is active. The audio source also plays through normally until loopIn; only
     // positions beyond loopOut need wrapping at grab time.
@@ -4068,6 +4072,9 @@ void DjEngine::pauseForScrub()
         if (loopLen > 0.0 && m_scrubHoldPosition >= hi) {
             const double offset = m_scrubHoldPosition - lo;
             m_scrubHoldPosition = lo + std::fmod(std::fmod(offset, loopLen) + loopLen, loopLen);
+            m_scrubLoopLockedToActiveLoop = true;
+        } else if (loopLen > 0.0 && m_scrubHoldPosition >= lo) {
+            m_scrubLoopLockedToActiveLoop = true;
         }
     }
     m_scratchLastRawInput = m_scrubHoldPosition;
@@ -4184,9 +4191,11 @@ void DjEngine::scratchBySeconds(double deltaSeconds)
         const double lo      = m_loopInSec;
         const double hi      = std::min(len, m_loopOutSec);
         const double loopLen = hi - lo;
-        const bool crossesLoopInBackward = currentPos >= lo && nextPos < lo;
-        const bool crossesLoopOutForward = nextPos >= hi;
-        if (loopLen > 0.0 && (crossesLoopInBackward || crossesLoopOutForward)) {
+        if (loopLen > 0.0 && !m_scrubLoopLockedToActiveLoop && nextPos >= lo)
+            m_scrubLoopLockedToActiveLoop = true;
+
+        if (loopLen > 0.0 && m_scrubLoopLockedToActiveLoop
+                && (nextPos < lo || nextPos >= hi)) {
             const double offset = nextPos - lo;
             nextPos = lo + std::fmod(std::fmod(offset, loopLen) + loopLen, loopLen);
         }
@@ -4284,6 +4293,7 @@ void DjEngine::resumeAfterScrub()
              << "accumulated=" << m_scratchAccumulatedMoveSec;
 
     m_isScrubbing = false;
+    m_scrubLoopLockedToActiveLoop = false;
     m_scratchAbsolutePositionControl = false;
     m_scratchAbsoluteFollowVelocity = 0.0;
     m_scratchInputFilteredRate = m_scratchSmoothedRate;
@@ -5094,6 +5104,7 @@ void DjEngine::clearLoop()
         return;
     const bool wasSlipDiverted = isSlipDiverted();
     m_loopActive = false;
+    m_scrubLoopLockedToActiveLoop = false;
     m_loopInSet = false;
     m_loopLengthBeats = 0.0;
     m_loopInSec = 0.0;
@@ -5110,6 +5121,7 @@ void DjEngine::deactivateLoop()
         return;
     const bool wasSlipDiverted = isSlipDiverted();
     m_loopActive = false;
+    m_scrubLoopLockedToActiveLoop = false;
     clearLoopRangeOnAudioSource();
     if (wasSlipDiverted && !isSlipDiverted())
         returnToSlipPosition();
