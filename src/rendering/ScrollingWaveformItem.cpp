@@ -384,8 +384,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             rootNode->appendChildNode(n);
         }
 
-        // 9: loop in/out markers (DrawLines)
-        makeLinesNode(rootNode);
+        // 9: loop in/out markers (DrawTriangles quads, same approach as beat lines)
+        makeQuadLinesNode(rootNode);
 
         // 10: segment strip at the bottom (DrawTriangles)
         makeQuadLinesNode(rootNode);
@@ -1035,38 +1035,72 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         const float drawLeft  = std::max(0.0f, std::min(xLoopIn,  xLoopOut));
         const float drawRight = std::min(w,    std::max(xLoopIn,  xLoopOut));
 
+        // Fill alpha — active gets a strong tint, inactive is barely-there.
+        // Ratio ~8:1 so there is no ambiguity at a glance.
+        const uchar fa = active ? 100 : 12;
+        const float hF = static_cast<float>(height());
+
         if (drawRight > drawLeft + 0.5f) {
             loopFillGeo->allocate(4);
             auto* fv = loopFillGeo->vertexDataAsColoredPoint2D();
-            const uchar fa = active ? 36 : 10;
-            const float h  = static_cast<float>(height());
             fv[0].set(drawLeft,  0.0f, 90, 180, 255, fa);
-            fv[1].set(drawLeft,  h,    90, 180, 255, fa);
+            fv[1].set(drawLeft,  hF,   90, 180, 255, fa);
             fv[2].set(drawRight, 0.0f, 90, 180, 255, fa);
-            fv[3].set(drawRight, h,    90, 180, 255, fa);
+            fv[3].set(drawRight, hF,   90, 180, 255, fa);
         } else {
             loopFillGeo->allocate(0);
         }
 
-        // Marker lines — only render each line when its position is on screen.
-        // Never draw at a clamped/substitute position; that would look anchored.
+        // Marker lines: rendered as 2-device-pixel quads (DrawTriangles) for
+        // guaranteed consistent thickness on all GPUs and DPR settings — identical
+        // approach to beat/downbeat lines (see comment at makeQuadLinesNode).
+        //
+        // Active:   dark shadow (6px) + bright cyan core (2px) = 12 verts/marker.
+        // Inactive: dim core only (2px) = 6 verts/marker.
+        // Neither marker is drawn when its actual position is off-screen.
+        const float markerW = 2.0f / static_cast<float>(snapScale);
+        const float shadowW = 6.0f / static_cast<float>(snapScale);
+
         const bool inOnScreen  = xLoopIn  >= 0.0f && xLoopIn  <= w;
         const bool outOnScreen = xLoopOut >= 0.0f && xLoopOut <= w;
-        const int  lineVerts   = (inOnScreen ? 2 : 0) + (outOnScreen ? 2 : 0);
-        loopLineGeo->allocate(lineVerts);
-        if (lineVerts > 0) {
+        const int  vertsPerMarker = active ? 12 : 6;
+        loopLineGeo->allocate((inOnScreen ? vertsPerMarker : 0) +
+                              (outOnScreen ? vertsPerMarker : 0));
+
+        if (loopLineGeo->vertexCount() > 0) {
             auto* lv = loopLineGeo->vertexDataAsColoredPoint2D();
-            const uchar la = active ? 210 : 70;
-            const float h  = static_cast<float>(height());
             int vi = 0;
-            if (inOnScreen) {
-                lv[vi++].set(xLoopIn,  0.0f, 120, 210, 255, la);
-                lv[vi++].set(xLoopIn,  h,    120, 210, 255, la);
-            }
-            if (outOnScreen) {
-                lv[vi++].set(xLoopOut, 0.0f, 120, 210, 255, la);
-                lv[vi++].set(xLoopOut, h,    120, 210, 255, la);
-            }
+
+            auto drawMarker = [&](float xPos) {
+                const float cxl = xPos;
+                const float cxr = xPos + markerW;
+                if (active) {
+                    const float sxl = cxl - (shadowW - markerW) * 0.5f;
+                    const float sxr = cxl + (shadowW + markerW) * 0.5f;
+                    lv[vi++].set(sxl, 0.0f, 0,   0,   0,   90);
+                    lv[vi++].set(sxl, hF,   0,   0,   0,   90);
+                    lv[vi++].set(sxr, hF,   0,   0,   0,   90);
+                    lv[vi++].set(sxl, 0.0f, 0,   0,   0,   90);
+                    lv[vi++].set(sxr, hF,   0,   0,   0,   90);
+                    lv[vi++].set(sxr, 0.0f, 0,   0,   0,   90);
+                    lv[vi++].set(cxl, 0.0f, 130, 220, 255, 240);
+                    lv[vi++].set(cxl, hF,   130, 220, 255, 240);
+                    lv[vi++].set(cxr, hF,   130, 220, 255, 240);
+                    lv[vi++].set(cxl, 0.0f, 130, 220, 255, 240);
+                    lv[vi++].set(cxr, hF,   130, 220, 255, 240);
+                    lv[vi++].set(cxr, 0.0f, 130, 220, 255, 240);
+                } else {
+                    lv[vi++].set(cxl, 0.0f, 110, 170, 210, 65);
+                    lv[vi++].set(cxl, hF,   110, 170, 210, 65);
+                    lv[vi++].set(cxr, hF,   110, 170, 210, 65);
+                    lv[vi++].set(cxl, 0.0f, 110, 170, 210, 65);
+                    lv[vi++].set(cxr, hF,   110, 170, 210, 65);
+                    lv[vi++].set(cxr, 0.0f, 110, 170, 210, 65);
+                }
+            };
+
+            if (inOnScreen)  drawMarker(xLoopIn);
+            if (outOnScreen) drawMarker(xLoopOut);
         }
     } else {
         loopFillGeo->allocate(0);
