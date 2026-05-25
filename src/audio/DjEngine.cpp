@@ -5045,7 +5045,7 @@ void DjEngine::setLoopOut()
 
 void DjEngine::toggleLoop4Beats()
 {
-    if (m_loopActive && std::abs(m_loopLengthBeats - 4.0) < 0.1) {
+    if (m_loopActive) {
         clearLoop();
         return;
     }
