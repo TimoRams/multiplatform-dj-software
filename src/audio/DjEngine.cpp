@@ -1228,6 +1228,12 @@ public:
     void setFxSlotPrimaryParam(int slot, float v) {
         if (auto* fx = fxChainSlot(slot)) fx->setPrimaryParam(v);
     }
+    void setBeatSyncPosition(double beatPosition, double beatDurationSec) {
+        m_colorFx.setBeatSyncPosition(beatPosition, beatDurationSec);
+        for (auto& fx : m_fxChain)
+            fx.setBeatSyncPosition(beatPosition, beatDurationSec);
+        m_padFx.setBeatSyncPosition(beatPosition, beatDurationSec);
+    }
 
     // ── PAD FX slot (independent of the FX bar chain) ──────────────────────
     void setPadFxEffectType(EffectType type) { m_padFx.setEffectType(type); }
@@ -3629,6 +3635,8 @@ void DjEngine::onTimer()
     if (m_syncEnabled && !m_isSyncMaster && !m_isScrubbing && !m_scratchReleaseActive)
         updatePhaseCorrection();
 
+    updateFxBeatSyncPosition();
+
     // Always emit VU level updates (30 Hz timer = nice for meters)
     emit vuLevelChanged();
     emit gainReductionChanged();
@@ -4469,6 +4477,55 @@ double DjEngine::getBeatPhase() const
 
     // No usable beat grid — phase from BPM alone.
     return std::fmod(pos / nomLen, 1.0);
+}
+
+double DjEngine::getBeatPosition() const
+{
+    if (!m_trackData) return 0.0;
+    const double bpm = m_trackData->getBpm();
+    if (bpm <= 0.0) return 0.0;
+
+    const double pos = getPosition();
+    const auto& grid = m_trackData->getBeatGrid();
+    if (grid.size() >= 2) {
+        const auto it = std::upper_bound(grid.begin(), grid.end(), pos,
+            [](double v, const TrackData::BeatMarker& m) { return v < m.positionSec; });
+
+        if (it == grid.begin()) {
+            const double beatLen = std::max(0.001, std::next(grid.begin())->positionSec - grid.begin()->positionSec);
+            return (pos - grid.begin()->positionSec) / beatLen;
+        }
+
+        const auto prev = std::prev(it);
+        const int beatIndex = static_cast<int>(std::distance(grid.begin(), prev));
+        double beatLen = 60.0 / bpm;
+        if (std::next(prev) != grid.end()) {
+            const double candidate = std::next(prev)->positionSec - prev->positionSec;
+            if (candidate > 0.001)
+                beatLen = candidate;
+        }
+
+        return static_cast<double>(beatIndex) + ((pos - prev->positionSec) / beatLen);
+    }
+
+    const double sr = m_trackData->getSampleRate();
+    const double firstBeat = sr > 0.0
+        ? static_cast<double>(m_trackData->getFirstBeatSample()) / sr
+        : 0.0;
+    return (pos - firstBeat) / (60.0 / bpm);
+}
+
+void DjEngine::updateFxBeatSyncPosition()
+{
+    if (!mixerSource || !m_trackData)
+        return;
+
+    const double pos = getPosition();
+    const double beatDur = beatDurationAround(pos);
+    if (beatDur <= 0.001)
+        return;
+
+    mixerSource->setBeatSyncPosition(getBeatPosition(), beatDur);
 }
 
 void DjEngine::updatePhaseCorrection()

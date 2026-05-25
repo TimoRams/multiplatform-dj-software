@@ -168,27 +168,35 @@ void FxProcessor::prepare(double sampleRate, int maxBlockSize, int numChannels)
 
 void FxProcessor::process(juce::AudioBuffer<float>& buffer, int startSample, int numSamples)
 {
+    beginBeatSyncBlock();
+
     const auto type = static_cast<EffectType>(m_typeAtomic.load(std::memory_order_relaxed));
     const float amount = m_amountAtomic.load(std::memory_order_relaxed);
 
     m_wetSmooth.setTargetValue(amount);
     m_drySmooth.setTargetValue(1.0f - amount);
 
-    if (type == EffectType::None && !m_wetSmooth.isSmoothing() && amount < 1e-4f)
+    if (type == EffectType::None && !m_wetSmooth.isSmoothing() && amount < 1e-4f) {
+        advanceBeatSyncBlock(numSamples);
         return;
+    }
 
-    if (processSoundColorEffect(type, buffer, startSample, numSamples))
+    if (processSoundColorEffect(type, buffer, startSample, numSamples)) {
+        advanceBeatSyncBlock(numSamples);
         return;
+    }
 
     if (!ensureScratchCapacity(numSamples))
     {
         jassertfalse;
+        advanceBeatSyncBlock(numSamples);
         return;
     }
 
     copyToWet(buffer, m_wetScratch, startSample, numSamples);
     processWetEffect(type, m_wetScratch, numSamples, amount);
     mixWetDrySmoothed(buffer, m_wetScratch, startSample, numSamples);
+    advanceBeatSyncBlock(numSamples);
 }
 
 bool FxProcessor::ensureScratchCapacity(int numSamples)
@@ -371,6 +379,56 @@ void FxProcessor::setSCParamValue(float param)
 void FxProcessor::setExternalDelayTime(float seconds)
 {
     m_externalDelaySeconds.store(seconds, std::memory_order_relaxed);
+}
+
+void FxProcessor::setBeatSyncPosition(double beatPosition, double beatDurationSec)
+{
+    m_beatPosition.store(beatPosition, std::memory_order_relaxed);
+    m_beatDurationSeconds.store(std::max(0.001, beatDurationSec), std::memory_order_relaxed);
+}
+
+void FxProcessor::beginBeatSyncBlock()
+{
+    const double controlBeat = m_beatPosition.load(std::memory_order_relaxed);
+    const double controlDur = m_beatDurationSeconds.load(std::memory_order_relaxed);
+    if (std::abs(controlBeat - m_lastControlBeatPosition) > 1e-6) {
+        m_audioBeatPosition = controlBeat;
+        m_lastControlBeatPosition = controlBeat;
+    }
+    m_audioBeatDurationSeconds = std::max(0.001, controlDur);
+}
+
+void FxProcessor::advanceBeatSyncBlock(int numSamples)
+{
+    if (m_sampleRate <= 0.0 || m_audioBeatDurationSeconds <= 0.001 || numSamples <= 0)
+        return;
+    m_audioBeatPosition += static_cast<double>(numSamples) / (m_sampleRate * m_audioBeatDurationSeconds);
+}
+
+double FxProcessor::syncedDivisionPhase(float extSec) const
+{
+    const double beatDur = m_audioBeatDurationSeconds;
+    if (extSec < 0.001f || beatDur <= 0.001)
+        return 0.0;
+
+    const double divBeats = std::max(0.015625, static_cast<double>(extSec) / beatDur);
+    const double beatPos = m_audioBeatPosition;
+    double phase = std::fmod(beatPos / divBeats, 1.0);
+    if (phase < 0.0)
+        phase += 1.0;
+    return phase;
+}
+
+int FxProcessor::samplesUntilNextDivision(float extSec) const
+{
+    if (extSec < 0.001f || m_sampleRate <= 0.0)
+        return 0;
+
+    const double phase = syncedDivisionPhase(extSec);
+    const double remaining = (phase <= 0.002 || phase >= 0.998)
+        ? 0.0
+        : (1.0 - phase) * static_cast<double>(extSec);
+    return std::max(0, static_cast<int>(std::llround(remaining * m_sampleRate)));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -645,6 +703,8 @@ void FxProcessor::processSpiral(juce::AudioBuffer<float>& wet,
     const float baseDelay = static_cast<float>(m_sampleRate) * 0.018f;
 
     m_spiralState.lfo.setRate(lfoRate);
+    if (extSec >= 0.001f)
+        m_spiralState.lfo.setPhase(syncedDivisionPhase(extSec));
 
     const int numCh = std::min(wet.getNumChannels(), 2);
 
@@ -692,6 +752,8 @@ void FxProcessor::processFlanger(juce::AudioBuffer<float>& wet,
     const float feedback  = 0.20f + amount * 0.62f;
 
     m_flangerState.lfo.setRate(lfoRate);
+    if (extSec >= 0.001f)
+        m_flangerState.lfo.setPhase(syncedDivisionPhase(extSec));
 
     const int numCh = std::min(wet.getNumChannels(), 2);
 
@@ -732,6 +794,8 @@ void FxProcessor::processPhaser(juce::AudioBuffer<float>& wet,
     const int numCh = std::min(wet.getNumChannels(), 2);
 
     m_phaserState.lfo.setRate(lfoRate);
+    if (extSec >= 0.001f)
+        m_phaserState.lfo.setPhase(syncedDivisionPhase(extSec));
 
     for (int i = 0; i < n; ++i)
     {
@@ -776,6 +840,8 @@ void FxProcessor::processTrans(juce::AudioBuffer<float>& wet,
     const float hardness = 1.0f + amount * 10.0f;
 
     m_transState.lfo.setRate(lfoRate);
+    if (extSec >= 0.001f)
+        m_transState.lfo.setPhase(syncedDivisionPhase(extSec));
 
     for (int i = 0; i < n; ++i)
     {
@@ -821,6 +887,8 @@ void FxProcessor::processEnigmaJet(juce::AudioBuffer<float>& wet,
     const float detDepth   = static_cast<float>(m_sampleRate) * (0.003f + amount * 0.007f);
 
     m_enigmaState.phaseLfo.setRate(phaseLfoRate);
+    if (extSec >= 0.001f)
+        m_enigmaState.phaseLfo.setPhase(syncedDivisionPhase(extSec));
     m_enigmaState.detLfo.setRate(detLfoRate);
 
     const int numCh = std::min(wet.getNumChannels(), 2);
@@ -915,6 +983,19 @@ void FxProcessor::processRoll(juce::AudioBuffer<float>& wet,
 
     for (int i = 0; i < n; ++i)
     {
+        if (!st.loopActive && extSec >= 0.f) {
+            if (st.quantizedStartCountdown < 0)
+                st.quantizedStartCountdown = samplesUntilNextDivision(extSec);
+            if (st.quantizedStartCountdown > 0) {
+                if (slip)
+                    for (int ch = 0; ch < wet.getNumChannels() && ch < 2; ++ch)
+                        st.buf[ch][st.writePos % kRollBuf] = wet.getReadPointer(ch)[start + i];
+                st.writePos = (st.writePos + 1) % kRollBuf;
+                --st.quantizedStartCountdown;
+                continue;
+            }
+        }
+
         // For non-slip roll: only write during the initial fill phase (first loopLen samples).
         // After that the buffer is frozen — writePos never advances again, so the captured
         // loop region is never overwritten no matter how long the pad is held.
@@ -932,6 +1013,7 @@ void FxProcessor::processRoll(juce::AudioBuffer<float>& wet,
             st.readPos     = st.loopStart;
             st.loopActive  = true;
             st.stepCounter = 0;
+            st.quantizedStartCountdown = -1;
         }
 
         // Read from frozen loop
@@ -978,6 +1060,18 @@ void FxProcessor::processRollOut(juce::AudioBuffer<float>& wet,
 
     for (int i = 0; i < n; ++i)
     {
+        if (!st.loopActive && extSec >= 0.f) {
+            if (st.quantizedStartCountdown < 0)
+                st.quantizedStartCountdown = samplesUntilNextDivision(extSec);
+            if (st.quantizedStartCountdown > 0) {
+                for (int ch = 0; ch < wet.getNumChannels() && ch < 2; ++ch)
+                    st.buf[ch][st.writePos % kRollBuf] = wet.getReadPointer(ch)[start + i];
+                st.writePos = (st.writePos + 1) % kRollBuf;
+                --st.quantizedStartCountdown;
+                continue;
+            }
+        }
+
         for (int ch = 0; ch < wet.getNumChannels() && ch < 2; ++ch)
             st.buf[ch][st.writePos % kRollBuf] = wet.getReadPointer(ch)[start + i];
 
@@ -989,6 +1083,7 @@ void FxProcessor::processRollOut(juce::AudioBuffer<float>& wet,
             st.loopActive  = true;
             st.stepCounter = 0;
             st.doubleCount = 0;
+            st.quantizedStartCountdown = -1;
         }
 
         const int rp = st.readPos % kRollBuf;

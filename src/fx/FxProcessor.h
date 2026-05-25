@@ -82,6 +82,9 @@ public:
     /// override and falls back to amount-derived timing. Affects all timing-
     /// based effects (Echo, Flanger, Phaser, Tremolo, Roll, Mobius, etc.).
     void setExternalDelayTime(float seconds);
+    /// Current deck beatgrid position. beatPosition is in beats relative to the
+    /// analyzed grid; beatDurationSec is the local beat length at the playhead.
+    void setBeatSyncPosition(double beatPosition, double beatDurationSec);
     /// Effect-specific primary parameter (0..1). Reverb: room size.
     void setPrimaryParam(float v);
 
@@ -105,6 +108,11 @@ private:
     // BPM sync: overrides amount-derived delay when ≥ 0. Stored in seconds;
     // processEcho/processMtDelay multiply by m_sampleRate. -1 = disabled.
     std::atomic<float> m_externalDelaySeconds { -1.f };
+    std::atomic<double> m_beatPosition { 0.0 };
+    std::atomic<double> m_beatDurationSeconds { 0.5 };
+    double m_audioBeatPosition = 0.0;
+    double m_audioBeatDurationSeconds = 0.5;
+    double m_lastControlBeatPosition = 0.0;
     // Effect-specific primary parameter (0..1).  Meaning is per-effect:
     //   Reverb → room size (0 = tiny, 1 = huge)
     //   Others → reserved for future per-effect parameter expansion.
@@ -168,6 +176,10 @@ private:
     void processEcho(juce::AudioBuffer<float>& wet, int start, int n,
                      float amount, bool lowCut);
     void processMtDelay(juce::AudioBuffer<float>& wet, int start, int n, float amount);
+    void beginBeatSyncBlock();
+    void advanceBeatSyncBlock(int numSamples);
+    double syncedDivisionPhase(float extSec) const;
+    int samplesUntilNextDivision(float extSec) const;
 
     // ── Spiral (chorus-style) ─────────────────────────────────────────────────
     struct SpiralState {
@@ -234,6 +246,7 @@ private:
         bool   loopActive  = false;
         int    stepCounter = 0;
         int    doubleCount = 0;  // for RollOut: how many times loop has doubled
+        int    quantizedStartCountdown = -1;
     };
     RollState m_rollState;
     void processRoll(juce::AudioBuffer<float>& wet, int start, int n,

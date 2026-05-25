@@ -33,6 +33,13 @@ public:
 
     void reset() { m_phase = 0.0; }
 
+    void setPhase(double phase)
+    {
+        m_phase = phase - std::floor(phase);
+        if (m_phase < 0.0)
+            m_phase += 1.0;
+    }
+
     // Set target rate with 50 ms smooth ramp. Safe to call per block.
     void setRate(float hz)
     {

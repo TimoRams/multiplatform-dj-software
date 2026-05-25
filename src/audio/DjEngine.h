@@ -210,6 +210,7 @@ public:
     [[nodiscard]] double  getTempoPercent() const { return m_tempoPercent; }
     // Beat phase: 0.0 = on the beat, 0.5 = halfway between beats, approaches 1.0 just before the next beat.
     [[nodiscard]] Q_INVOKABLE double getBeatPhase() const;
+    [[nodiscard]] double getBeatPosition() const;
     // Returns the analysed BPM multiplied by the current tempo ratio.
     // Shows 0.0 until BPM analysis is complete.
     [[nodiscard]] double  getCurrentBpm()   const {
@@ -504,6 +505,7 @@ private:
     void startLoopAt(double startSec, double lengthBeats);
     void applyLoopRangeToAudioSource();
     void clearLoopRangeOnAudioSource();
+    void updateFxBeatSyncPosition();
 
     void updateSpeedAndPitch();
     void updatePhaseCorrection();
