@@ -1,6 +1,7 @@
 #include "ScrollingWaveformItem.h"
 #include <QDebug>
 #include <QSGGeometry>
+#include <QSGMaterial>
 #include <QSGSimpleTextureNode>
 #include <QSGVertexColorMaterial>
 #include <QQuickWindow>
@@ -54,6 +55,14 @@ static inline QColor mixBandColor(float low, float lowMid, float mid, float high
         std::clamp(static_cast<int>(r), 0, 255),
         std::clamp(static_cast<int>(g), 0, 255),
         std::clamp(static_cast<int>(b), 0, 255));
+}
+
+static QSGVertexColorMaterial* makeVertexColorMaterial(bool enableBlending = false)
+{
+    auto* material = new QSGVertexColorMaterial();
+    if (enableBlending)
+        material->setFlag(QSGMaterial::Blending, true);
+    return material;
 }
 
 } // namespace
@@ -372,20 +381,29 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             rootNode->appendChildNode(n);
         }
 
-        // 8: loop overlay rectangle (DrawTriangleStrip)
+        // 8: loop overlay rectangle/rails (DrawTriangles)
         {
             auto* n = new QSGGeometryNode();
             auto* g = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
-            g->setDrawingMode(QSGGeometry::DrawTriangleStrip);
+            g->setDrawingMode(QSGGeometry::DrawTriangles);
             n->setGeometry(g);
             n->setFlag(QSGNode::OwnsGeometry);
-            n->setMaterial(new QSGVertexColorMaterial());
+            n->setMaterial(makeVertexColorMaterial(true));
             n->setFlag(QSGNode::OwnsMaterial);
             rootNode->appendChildNode(n);
         }
 
         // 9: loop in/out markers (DrawTriangles quads, same approach as beat lines)
-        makeQuadLinesNode(rootNode);
+        {
+            auto* n = new QSGGeometryNode();
+            auto* g = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
+            g->setDrawingMode(QSGGeometry::DrawTriangles);
+            n->setGeometry(g);
+            n->setFlag(QSGNode::OwnsGeometry);
+            n->setMaterial(makeVertexColorMaterial(true));
+            n->setFlag(QSGNode::OwnsMaterial);
+            rootNode->appendChildNode(n);
+        }
 
         // 10: segment strip at the bottom (DrawTriangles)
         makeQuadLinesNode(rootNode);
@@ -1035,18 +1053,37 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         const float drawLeft  = std::max(0.0f, std::min(xLoopIn,  xLoopOut));
         const float drawRight = std::min(w,    std::max(xLoopIn,  xLoopOut));
 
-        // Fill alpha — active gets a strong tint, inactive is barely-there.
-        // Ratio ~8:1 so there is no ambiguity at a glance.
-        const uchar fa = active ? 100 : 12;
+        // Active loops use a bright cyan tint. Inactive loops darken the stored
+        // region and add subtle rails so they read as saved-but-disabled even on
+        // dense waveform sections with similar background color.
+        const uchar fa = active ? 100 : 70;
         const float hF = static_cast<float>(height());
 
         if (drawRight > drawLeft + 0.5f) {
-            loopFillGeo->allocate(4);
+            const int fillVerts = 6;
+            const int railVerts = active ? 0 : 12;
+            loopFillGeo->allocate(fillVerts + railVerts);
             auto* fv = loopFillGeo->vertexDataAsColoredPoint2D();
-            fv[0].set(drawLeft,  0.0f, 90, 180, 255, fa);
-            fv[1].set(drawLeft,  hF,   90, 180, 255, fa);
-            fv[2].set(drawRight, 0.0f, 90, 180, 255, fa);
-            fv[3].set(drawRight, hF,   90, 180, 255, fa);
+            int fi = 0;
+
+            auto appendRect = [&](float x1, float y1, float x2, float y2,
+                                  uchar r, uchar g, uchar b, uchar a) {
+                fv[fi++].set(x1, y1, r, g, b, a);
+                fv[fi++].set(x1, y2, r, g, b, a);
+                fv[fi++].set(x2, y2, r, g, b, a);
+                fv[fi++].set(x1, y1, r, g, b, a);
+                fv[fi++].set(x2, y2, r, g, b, a);
+                fv[fi++].set(x2, y1, r, g, b, a);
+            };
+
+            if (active) {
+                appendRect(drawLeft, 0.0f, drawRight, hF, 90, 180, 255, fa);
+            } else {
+                appendRect(drawLeft, 0.0f, drawRight, hF, 10, 18, 24, fa);
+                const float railH = std::max(1.0f, 2.0f / static_cast<float>(snapScale));
+                appendRect(drawLeft, 0.0f, drawRight, railH, 110, 170, 210, 120);
+                appendRect(drawLeft, hF - railH, drawRight, hF, 110, 170, 210, 120);
+            }
         } else {
             loopFillGeo->allocate(0);
         }
@@ -1090,12 +1127,12 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                     lv[vi++].set(cxr, hF,   130, 220, 255, 240);
                     lv[vi++].set(cxr, 0.0f, 130, 220, 255, 240);
                 } else {
-                    lv[vi++].set(cxl, 0.0f, 110, 170, 210, 65);
-                    lv[vi++].set(cxl, hF,   110, 170, 210, 65);
-                    lv[vi++].set(cxr, hF,   110, 170, 210, 65);
-                    lv[vi++].set(cxl, 0.0f, 110, 170, 210, 65);
-                    lv[vi++].set(cxr, hF,   110, 170, 210, 65);
-                    lv[vi++].set(cxr, 0.0f, 110, 170, 210, 65);
+                    lv[vi++].set(cxl, 0.0f, 110, 170, 210, 95);
+                    lv[vi++].set(cxl, hF,   110, 170, 210, 95);
+                    lv[vi++].set(cxr, hF,   110, 170, 210, 95);
+                    lv[vi++].set(cxl, 0.0f, 110, 170, 210, 95);
+                    lv[vi++].set(cxr, hF,   110, 170, 210, 95);
+                    lv[vi++].set(cxr, 0.0f, 110, 170, 210, 95);
                 }
             };
 
