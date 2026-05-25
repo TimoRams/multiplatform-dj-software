@@ -835,6 +835,26 @@ Item {
                             onClicked: { if (deck.engine) deck.engine.toggleLoopThreeQuarter() }
                         }
 
+                        // LOOP — re-enable / deactivate last loop region
+                        FlatBtn {
+                            btnText: "LOOP"
+                            Layout.preferredWidth: deckControlsCol.unit * 1.3
+                            Layout.minimumWidth: 38
+                            readonly property bool _hasLoop: deck.engine ? deck.engine.loopInPosition < deck.engine.loopOutPosition : false
+                            opacity: _hasLoop ? 1.0 : 0.35
+                            enabled: _hasLoop
+                            fbActive: deck.engine ? deck.engine.loopActive : false
+                            fbActiveColor: "#0a2a0a"; fbActiveTxtColor: deck.accentGrn
+                            fbInactiveColor: "#0d160d"
+                            onClicked: {
+                                if (!deck.engine) return
+                                if (deck.engine.loopActive)
+                                    deck.engine.deactivateLoop()
+                                else
+                                    deck.engine.reactivateLoop()
+                            }
+                        }
+
                         Item { Layout.fillWidth: true }
                     }
                 }

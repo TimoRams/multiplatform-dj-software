@@ -26,24 +26,26 @@ Item {
             rectified: true
         }
 
-        // ── Loop region ───────────────────────────────────────────────────────
+        // ── Loop region — active (bright) + ghost (dim when inactive but positions set) ──
         Rectangle {
-            visible: root.engine !== null && root.engine.loopActive
+            visible: root.engine !== null &&
+                     root.engine.loopInPosition < root.engine.loopOutPosition
 
-            readonly property double _dur: (root.engine && root.engine.trackDurationSec > 0)
-                                           ? root.engine.trackDurationSec : 1.0
-            readonly property double _lo:  root.engine ? root.engine.loopInPosition  / _dur : 0.0
-            readonly property double _hi:  root.engine ? root.engine.loopOutPosition / _dur : 0.0
+            readonly property bool   _active: root.engine ? root.engine.loopActive : false
+            readonly property double _dur:    (root.engine && root.engine.trackDurationSec > 0)
+                                              ? root.engine.trackDurationSec : 1.0
+            readonly property double _lo: root.engine ? root.engine.loopInPosition  / _dur : 0.0
+            readonly property double _hi: root.engine ? root.engine.loopOutPosition / _dur : 0.0
 
             anchors.top:    overview.top
             anchors.bottom: overview.bottom
             x:     overview.x + _lo * overview.width
             width: Math.max(1, (_hi - _lo) * overview.width)
-            color: "#1a009944"
+            color: _active ? "#3800cc66" : "#14334433"
             z:     2
 
-            Rectangle { anchors.left: parent.left;   anchors.top: parent.top; anchors.bottom: parent.bottom; width: 1; color: "#55cc88" }
-            Rectangle { anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom; width: 1; color: "#55cc88" }
+            Rectangle { anchors.left:  parent.left;  anchors.top: parent.top; anchors.bottom: parent.bottom; width: 1; color: parent._active ? "#99ddbb" : "#3a6655" }
+            Rectangle { anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom; width: 1; color: parent._active ? "#99ddbb" : "#3a6655" }
         }
 
         // ── Hot cue markers ───────────────────────────────────────────────────

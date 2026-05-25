@@ -52,6 +52,9 @@ Item {
             when: root.engine !== null
         }
 
+        // Loop overlay is rendered by ScrollingWaveformItem (C++ scene graph node).
+        // No QML overlay needed here.
+
         // ─── Scrub / Scratch MouseArea ─────────────────────────────────────
         // Dragging horizontally "grabs" the waveform like a record:
         //   drag right → pull back in time   (playhead moves backward)

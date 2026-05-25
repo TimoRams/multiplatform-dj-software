@@ -1010,51 +1010,63 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     triNode     ->markDirty(QSGNode::DirtyGeometry);
 
     // ── Loop overlay rendering ───────────────────────────────────────────────
-    // Draws a translucent block for active loop range and two vertical markers.
+    // Authoritative loop renderer. The QML overlay in EnlargedWaveform is
+    // intentionally empty — all loop drawing happens here.
+    //
+    // Inactive loops render as stored location markers only: loopStart→loopEnd,
+    // never influenced by the current playhead position.
     QSGGeometry* loopFillGeo = loopFillNode->geometry();
     QSGGeometry* loopLineGeo = loopLineNode->geometry();
 
-    const bool showLoopPreview = m_engine->loopActive() || m_engine->loopInSet();
-    if (showLoopPreview) {
-        const double loopInSec = m_engine->loopInPosition();
-        const double loopOutSec = m_engine->loopActive()
-            ? m_engine->loopOutPosition()
-            : static_cast<double>(m_engine->getVisualPosition());
+    const bool loopSet = m_engine->loopInPosition() < m_engine->loopOutPosition();
+    if (loopSet) {
+        const bool   active      = m_engine->loopActive();
+        const double loopInSec   = m_engine->loopInPosition();
+        const double loopOutSec  = m_engine->loopOutPosition(); // always stored end, never playhead
 
-        const double loopInPoint = loopInSec * pointsPerSec;
+        const double loopInPoint  = loopInSec  * pointsPerSec;
         const double loopOutPoint = loopOutSec * pointsPerSec;
 
-        float xIn = snapDevicePixelX(w / 2.0 + (loopInPoint - centerIndexRender) * pixelsPerPoint);
-        float xOut = snapDevicePixelX(w / 2.0 + (loopOutPoint - centerIndexRender) * pixelsPerPoint);
+        // Actual screen positions (may be outside [0,w] when off-screen).
+        const float xLoopIn  = snapDevicePixelX(w / 2.0 + (loopInPoint  - centerIndexRender) * pixelsPerPoint);
+        const float xLoopOut = snapDevicePixelX(w / 2.0 + (loopOutPoint - centerIndexRender) * pixelsPerPoint);
 
-        if (xOut < xIn)
-            std::swap(xIn, xOut);
-
-        const float drawLeft = std::max(0.0f, xIn);
-        const float drawRight = std::min(w, xOut);
+        // Clamped fill extents — swap to handle reverse direction correctly.
+        const float drawLeft  = std::max(0.0f, std::min(xLoopIn,  xLoopOut));
+        const float drawRight = std::min(w,    std::max(xLoopIn,  xLoopOut));
 
         if (drawRight > drawLeft + 0.5f) {
             loopFillGeo->allocate(4);
             auto* fv = loopFillGeo->vertexDataAsColoredPoint2D();
-            fv[0].set(drawLeft,  0.0f,            90, 180, 255, 36);
-            fv[1].set(drawLeft,  static_cast<float>(height()), 90, 180, 255, 36);
-            fv[2].set(drawRight, 0.0f,            90, 180, 255, 36);
-            fv[3].set(drawRight, static_cast<float>(height()), 90, 180, 255, 36);
-
-            loopLineGeo->allocate(4);
-            auto* lv = loopLineGeo->vertexDataAsColoredPoint2D();
-            lv[0].set(drawLeft,  0.0f,            120, 210, 255, 210);
-            lv[1].set(drawLeft,  static_cast<float>(height()), 120, 210, 255, 210);
-            lv[2].set(drawRight, 0.0f,            120, 210, 255, 210);
-            lv[3].set(drawRight, static_cast<float>(height()), 120, 210, 255, 210);
+            const uchar fa = active ? 36 : 10;
+            const float h  = static_cast<float>(height());
+            fv[0].set(drawLeft,  0.0f, 90, 180, 255, fa);
+            fv[1].set(drawLeft,  h,    90, 180, 255, fa);
+            fv[2].set(drawRight, 0.0f, 90, 180, 255, fa);
+            fv[3].set(drawRight, h,    90, 180, 255, fa);
         } else {
             loopFillGeo->allocate(0);
-            // Even with tiny width, show the loop-in marker so user gets instant feedback.
-            const float markerX = std::clamp(xIn, 0.0f, w);
-            loopLineGeo->allocate(2);
+        }
+
+        // Marker lines — only render each line when its position is on screen.
+        // Never draw at a clamped/substitute position; that would look anchored.
+        const bool inOnScreen  = xLoopIn  >= 0.0f && xLoopIn  <= w;
+        const bool outOnScreen = xLoopOut >= 0.0f && xLoopOut <= w;
+        const int  lineVerts   = (inOnScreen ? 2 : 0) + (outOnScreen ? 2 : 0);
+        loopLineGeo->allocate(lineVerts);
+        if (lineVerts > 0) {
             auto* lv = loopLineGeo->vertexDataAsColoredPoint2D();
-            lv[0].set(markerX, 0.0f, 120, 210, 255, 220);
-            lv[1].set(markerX, static_cast<float>(height()), 120, 210, 255, 220);
+            const uchar la = active ? 210 : 70;
+            const float h  = static_cast<float>(height());
+            int vi = 0;
+            if (inOnScreen) {
+                lv[vi++].set(xLoopIn,  0.0f, 120, 210, 255, la);
+                lv[vi++].set(xLoopIn,  h,    120, 210, 255, la);
+            }
+            if (outOnScreen) {
+                lv[vi++].set(xLoopOut, 0.0f, 120, 210, 255, la);
+                lv[vi++].set(xLoopOut, h,    120, 210, 255, la);
+            }
         }
     } else {
         loopFillGeo->allocate(0);

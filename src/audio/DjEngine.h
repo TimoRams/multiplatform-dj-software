@@ -149,6 +149,8 @@ public:
     Q_INVOKABLE void halveLoopLength();
     Q_INVOKABLE void doubleLoopLength();
     Q_INVOKABLE void clearLoop();
+    Q_INVOKABLE void deactivateLoop();
+    Q_INVOKABLE void reactivateLoop();
 
     Q_INVOKABLE void ejectTrack();
 

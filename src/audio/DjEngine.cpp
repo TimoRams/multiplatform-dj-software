@@ -5046,7 +5046,7 @@ void DjEngine::setLoopOut()
 void DjEngine::toggleLoop4Beats()
 {
     if (m_loopActive) {
-        clearLoop();
+        deactivateLoop();
         return;
     }
     startLoopAt(static_cast<double>(getVisualPosition()), 4.0);
@@ -5056,7 +5056,7 @@ void DjEngine::toggleLoopThreeQuarter()
 {
     // 3/4 loop = three quarters of ONE beat.
     if (m_loopActive && std::abs(m_loopLengthBeats - 0.75) < 0.06) {
-        clearLoop();
+        deactivateLoop();
         return;
     }
     startLoopAt(static_cast<double>(getVisualPosition()), 0.75);
@@ -5093,6 +5093,27 @@ void DjEngine::clearLoop()
     clearLoopRangeOnAudioSource();
     if (wasSlipDiverted && !isSlipDiverted())
         returnToSlipPosition();
+    emit loopChanged();
+}
+
+void DjEngine::deactivateLoop()
+{
+    if (!m_loopActive)
+        return;
+    const bool wasSlipDiverted = isSlipDiverted();
+    m_loopActive = false;
+    clearLoopRangeOnAudioSource();
+    if (wasSlipDiverted && !isSlipDiverted())
+        returnToSlipPosition();
+    emit loopChanged();
+}
+
+void DjEngine::reactivateLoop()
+{
+    if (m_loopActive || m_loopInSec >= m_loopOutSec)
+        return;
+    m_loopActive = true;
+    applyLoopRangeToAudioSource();
     emit loopChanged();
 }
 
