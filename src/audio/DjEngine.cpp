@@ -2691,10 +2691,14 @@ double DjEngine::getVisualPosition() const
     if (m_isScrubbing && m_scratchAbsolutePositionControl)
         return m_scratchAbsoluteTargetPosition;
 
-    // Pre-roll countdown: visual position is m_scrubHoldPosition advancing by wall clock,
-    // not from the transport snapshot (which is clamped at 0 during pre-roll).
-    if (m_preRollCountdownActive)
-        return getPosition();
+    // Pre-roll countdown: interpolate using the pre-roll wall clock so the waveform
+    // scrolls smoothly at sub-frame granularity, just like the normal snap-clock path.
+    // Clamp at 0 to avoid briefly overshooting track start before tickTransportStopped()
+    // clears the flag — the timer may lag up to one tick (~16 ms) behind the clock.
+    if (m_preRollCountdownActive) {
+        const double elapsed = static_cast<double>(m_preRollClock.nsecsElapsed()) * 1e-9;
+        return std::min(m_preRollVisualStartPos + elapsed * getTempoRatio(), 0.0);
+    }
 
     // When stopped/paused: return the frozen position (set by togglePlay).
     if (!m_snapValid || !transportSource.isPlaying())
@@ -4235,6 +4239,24 @@ void DjEngine::setScrubPosition(double positionSeconds)
     const double virtualDelta = positionSeconds - m_scratchLastRawInput;
     m_scratchLastRawInput = positionSeconds;
 
+    // Pre-roll: the velocity model cannot move m_scrubHoldPosition because the
+    // transport is clamped at sample 0 (no negative audio data exists).
+    // Directly assign the hold position, matching the scratchBySeconds() path.
+    if (positionSeconds < 0.0 || m_scrubHoldPosition < 0.0) {
+        if (std::abs(virtualDelta) <= 2e-5)
+            return;
+        const double clampedPos = std::clamp(positionSeconds, -PRE_ROLL_SECONDS, len);
+        m_scrubHoldPosition = clampedPos;
+        transportSource.setPosition(std::max(0.0, clampedPos));
+        if (clampedPos >= 0.0 && !transportSource.isPlaying())
+            transportSource.start();
+        m_atomicPlayheadPos.store(clampedPos, std::memory_order_relaxed);
+        m_scratchReleaseActive = false;
+        m_lastScrubInputClock.restart();
+        emit progressChanged();
+        return;
+    }
+
     if (std::abs(virtualDelta) <= 2e-5)
         return;
 
@@ -4600,10 +4622,21 @@ void DjEngine::snapPhaseToMaster(DjEngine* master)
 
     const double beatLen    = beatIntervalAt(getPosition()).lengthSec;
     const double seekOffset = diff * beatLen;
-    const double newPos     = std::max(0.0, getPosition() + seekOffset);
-    transportSource.setPosition(newPos);
+    const double len        = transportSource.getLengthInSeconds();
+    const double newPos     = std::clamp(getPosition() + seekOffset, -PRE_ROLL_SECONDS,
+                                         len > 0.0 ? len : PRE_ROLL_SECONDS);
+    if (newPos < 0.0) {
+        if (m_preRollCountdownActive) {
+            m_preRollVisualStartPos = newPos;
+            m_preRollClock.restart();
+        }
+        m_scrubHoldPosition = newPos;
+        m_atomicPlayheadPos.store(newPos, std::memory_order_relaxed);
+    } else {
+        transportSource.setPosition(newPos);
+        armSnapFromTransportPosition();
+    }
     m_phaseNudge = 0.0;
-    armSnapFromTransportPosition();
 }
 
 void DjEngine::updateSpeedAndPitch()
@@ -4770,11 +4803,22 @@ void DjEngine::reSync()
     // then let the boosted P-controller handle the remaining 15% in ~2 seconds.
     const double beatLen    = beatIntervalAt(getPosition()).lengthSec;
     const double seekOffset = diff * beatLen * 0.85;
-    const double newPos = std::max(0.0, getPosition() + seekOffset);
-    transportSource.setPosition(newPos);
+    const double len        = transportSource.getLengthInSeconds();
+    const double newPos     = std::clamp(getPosition() + seekOffset, -PRE_ROLL_SECONDS,
+                                         len > 0.0 ? len : PRE_ROLL_SECONDS);
+    if (newPos < 0.0) {
+        if (m_preRollCountdownActive) {
+            m_preRollVisualStartPos = newPos;
+            m_preRollClock.restart();
+        }
+        m_scrubHoldPosition = newPos;
+        m_atomicPlayheadPos.store(newPos, std::memory_order_relaxed);
+    } else {
+        transportSource.setPosition(newPos);
+        armSnapFromTransportPosition();
+    }
     m_phaseNudge  = 0.0;
     m_resyncBoost = true;
-    armSnapFromTransportPosition();
     updatePhaseCorrection();
 }
 
