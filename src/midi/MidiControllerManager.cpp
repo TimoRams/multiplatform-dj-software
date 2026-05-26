@@ -1,5 +1,6 @@
 #include "MidiControllerManager.h"
 
+#include "DjEngine.h"
 #include "ParameterStore.h"
 #include "SettingsManager.h"
 
@@ -1279,4 +1280,84 @@ void MidiControllerManager::onParameterChanged(const QString& id, float value)
     }
 
     m_midiOutput->sendMessageNow(msg);
+}
+
+void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
+{
+    m_deckA = deckA;
+    m_deckB = deckB;
+
+    if (!m_parameterStore)
+        return;
+
+    // Route ParameterStore events to deck actions.
+    // Volume and crossfader are handled in QML via parameterStore directly.
+    // Button convention: value > 0 = press/on, value == 0 = release/off.
+    QObject::connect(m_parameterStore, &ParameterStore::parameterChanged,
+        this, [this](const QString& id, float value)
+    {
+        DjEngine* const a = m_deckA;
+        DjEngine* const b = m_deckB;
+
+        if (id == "deckA_play") { if (value > 0.0f && a) a->togglePlay(); }
+        else if (id == "deckB_play") { if (value > 0.0f && b) b->togglePlay(); }
+        else if (id == "deckA_cue") {
+            if (a) { if (value > 0.0f) a->cueButtonPress(); else a->cueButtonRelease(); }
+        }
+        else if (id == "deckB_cue") {
+            if (b) { if (value > 0.0f) b->cueButtonPress(); else b->cueButtonRelease(); }
+        }
+        else if (id == "deckA_headphone_cue") {
+            if (value > 0.0f && a) a->setCueEnabled(!a->cueEnabled());
+        }
+        else if (id == "deckB_headphone_cue") {
+            if (value > 0.0f && b) b->setCueEnabled(!b->cueEnabled());
+        }
+        else if (id == "master_cue") {
+            if (value > 0.0f && a) a->setMasterCueEnabled(!a->masterCueEnabled());
+        }
+        else if (id == "headphone_mix") {
+            if (a) a->setHeadphoneMix(static_cast<double>(value));
+        }
+        // Trim: MIDI 0-1 → engine 0-2 (center = 1.0 = unity)
+        else if (id == "deckA_gain")   { if (a) a->setTrim(static_cast<double>(value) * 2.0); }
+        else if (id == "deckB_gain")   { if (b) b->setTrim(static_cast<double>(value) * 2.0); }
+        // EQ/filter: MIDI 0-1 → engine -1 to +1 (center = 0.0)
+        else if (id == "deckA_eqHigh") { if (a) a->setEqHigh(static_cast<double>(value) * 2.0 - 1.0); }
+        else if (id == "deckB_eqHigh") { if (b) b->setEqHigh(static_cast<double>(value) * 2.0 - 1.0); }
+        else if (id == "deckA_eqMid")  { if (a) a->setEqMid(static_cast<double>(value) * 2.0 - 1.0); }
+        else if (id == "deckB_eqMid")  { if (b) b->setEqMid(static_cast<double>(value) * 2.0 - 1.0); }
+        else if (id == "deckA_eqLow")  { if (a) a->setEqLow(static_cast<double>(value) * 2.0 - 1.0); }
+        else if (id == "deckB_eqLow")  { if (b) b->setEqLow(static_cast<double>(value) * 2.0 - 1.0); }
+        else if (id == "deckA_filter") { if (a) a->setFilter(static_cast<double>(value) * 2.0 - 1.0); }
+        else if (id == "deckB_filter") { if (b) b->setFilter(static_cast<double>(value) * 2.0 - 1.0); }
+        // Tempo fader: MIDI 0-1 → engine -8% to +8%
+        else if (id == "deckA_tempo")  { if (a) a->setTempoPercent(static_cast<double>(value) * 16.0 - 8.0); }
+        else if (id == "deckB_tempo")  { if (b) b->setTempoPercent(static_cast<double>(value) * 16.0 - 8.0); }
+        // Jog touch: value > 0 = finger down (enter scratch), 0 = lift (resume)
+        else if (id == "deckA_jog_touch") {
+            const bool touched = (value > 0.0f);
+            if (touched != m_jogATouched) {
+                m_jogATouched = touched;
+                if (a) { if (touched) a->pauseForScrub(); else a->resumeAfterScrub(); }
+            }
+        }
+        else if (id == "deckB_jog_touch") {
+            const bool touched = (value > 0.0f);
+            if (touched != m_jogBTouched) {
+                m_jogBTouched = touched;
+                if (b) { if (touched) b->pauseForScrub(); else b->resumeAfterScrub(); }
+            }
+        }
+        // Jog move: value = signed tick delta; 128 ticks/rev at 33.33 RPM vinyl.
+        // With touch (scrubbing): scratch. Without touch (rim turn): speed nudge.
+        else if (id == "deckA_jog_move") {
+            const double delta = static_cast<double>(value) * (60.0 / 33.333) / 128.0;
+            if (a) { if (a->isScrubbing()) a->scratchBySeconds(delta); else a->applyJogNudge(static_cast<double>(value)); }
+        }
+        else if (id == "deckB_jog_move") {
+            const double delta = static_cast<double>(value) * (60.0 / 33.333) / 128.0;
+            if (b) { if (b->isScrubbing()) b->scratchBySeconds(delta); else b->applyJogNudge(static_cast<double>(value)); }
+        }
+    });
 }

@@ -1,7 +1,6 @@
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
 #include <array>
-#include <iostream>
 #include <memory>
 
 // Qt Includes
@@ -107,11 +106,11 @@ int main(int argc, char *argv[])
         qDebug() << "[startup]" << step << startupTimer.elapsed() << "ms";
     };
 
-    std::cout << "========================================" << std::endl;
-    std::cout << "BROCK DJ ENGINE - INITIAL BUILD TEST" << std::endl;
-    std::cout << "JUCE Version:   " << juce::SystemStats::getJUCEVersion() << std::endl;
-    std::cout << "C++ Standard:   " << __cplusplus << std::endl;
-    std::cout << "========================================" << std::endl;
+    qInfo("========================================");
+    qInfo("BROCK DJ ENGINE - INITIAL BUILD TEST");
+    qInfo("JUCE Version:   %s", juce::SystemStats::getJUCEVersion().toRawUTF8());
+    qInfo("C++ Standard:   %lld", static_cast<long long>(__cplusplus));
+    qInfo("========================================");
 
     qDebug() << "Essentia disabled by project policy; using internal analysis pipeline.";
 
@@ -401,105 +400,16 @@ int main(int argc, char *argv[])
     // macOS fix: defer CoreAudio/JUCE init until the event loop runs to avoid 300s stalls.
     // This also keeps the UI responsive while decks spin up.
     QTimer::singleShot(0, &app, [&]() {
-        std::cerr << "[main] making deckA\n" << std::flush;
         deckA = std::make_unique<DjEngine>();
-        std::cerr << "[main] deckA done\n" << std::flush;
         deckB = std::make_unique<DjEngine>();
-        std::cerr << "[main] deckB done\n" << std::flush;
         deckC = std::make_unique<DjEngine>();
-        std::cerr << "[main] deckC done\n" << std::flush;
         deckD = std::make_unique<DjEngine>();
-        std::cerr << "[main] deckD done - about to logStartupStep\n" << std::flush;
         logStartupStep("DjEngines constructed");
-        std::cerr << "[main] logStartupStep done\n" << std::flush;
 
-        deckA->setCoverArtProvider(coverProviderPtr, "deckA");
-        deckB->setCoverArtProvider(coverProviderPtr, "deckB");
-        deckC->setCoverArtProvider(coverProviderPtr, "deckC");
-        deckD->setCoverArtProvider(coverProviderPtr, "deckD");
-
-        // Route MIDI parameter changes to the appropriate deck controls.
-        // Volume and crossfader are handled by MixerSection.qml via parameterStore.
-        // Button events: value > 0 = press/on, value == 0 = release/off.
-        QObject::connect(parameterStore.get(), &ParameterStore::parameterChanged,
-            [deckAPtr = deckA.get(), deckBPtr = deckB.get()](const QString& id, float value)
-        {
-            if (id == "deckA_play") { if (value > 0.0f) deckAPtr->togglePlay(); }
-            else if (id == "deckB_play") { if (value > 0.0f) deckBPtr->togglePlay(); }
-            else if (id == "deckA_cue") {
-                if (value > 0.0f) deckAPtr->cueButtonPress();
-                else              deckAPtr->cueButtonRelease();
-            }
-            else if (id == "deckB_cue") {
-                if (value > 0.0f) deckBPtr->cueButtonPress();
-                else              deckBPtr->cueButtonRelease();
-            }
-            else if (id == "deckA_headphone_cue") {
-                if (value > 0.0f)
-                    deckAPtr->setCueEnabled(!deckAPtr->cueEnabled());
-            }
-            else if (id == "deckB_headphone_cue") {
-                if (value > 0.0f)
-                    deckBPtr->setCueEnabled(!deckBPtr->cueEnabled());
-            }
-            else if (id == "master_cue") {
-                if (value > 0.0f)
-                    deckAPtr->setMasterCueEnabled(!deckAPtr->masterCueEnabled());
-            }
-            else if (id == "headphone_mix") {
-                deckAPtr->setHeadphoneMix(static_cast<double>(value));
-            }
-            // Trim: MIDI 0-1 → engine 0-2 (center = 1.0 = unity)
-            else if (id == "deckA_gain")   deckAPtr->setTrim(static_cast<double>(value) * 2.0);
-            else if (id == "deckB_gain")   deckBPtr->setTrim(static_cast<double>(value) * 2.0);
-            // EQ/filter: MIDI 0-1 → engine -1 to +1 (center = 0.0)
-            else if (id == "deckA_eqHigh") deckAPtr->setEqHigh(static_cast<double>(value) * 2.0 - 1.0);
-            else if (id == "deckB_eqHigh") deckBPtr->setEqHigh(static_cast<double>(value) * 2.0 - 1.0);
-            else if (id == "deckA_eqMid")  deckAPtr->setEqMid(static_cast<double>(value) * 2.0 - 1.0);
-            else if (id == "deckB_eqMid")  deckBPtr->setEqMid(static_cast<double>(value) * 2.0 - 1.0);
-            else if (id == "deckA_eqLow")  deckAPtr->setEqLow(static_cast<double>(value) * 2.0 - 1.0);
-            else if (id == "deckB_eqLow")  deckBPtr->setEqLow(static_cast<double>(value) * 2.0 - 1.0);
-            else if (id == "deckA_filter") deckAPtr->setFilter(static_cast<double>(value) * 2.0 - 1.0);
-            else if (id == "deckB_filter") deckBPtr->setFilter(static_cast<double>(value) * 2.0 - 1.0);
-            // Tempo fader: MIDI 0-1 → engine -8% to +8%
-            else if (id == "deckA_tempo")  deckAPtr->setTempoPercent(static_cast<double>(value) * 16.0 - 8.0);
-            else if (id == "deckB_tempo")  deckBPtr->setTempoPercent(static_cast<double>(value) * 16.0 - 8.0);
-            // Jog touch: value > 0 = finger down (enter scratch), 0 = lift (resume)
-            else if (id == "deckA_jog_touch") {
-                static bool jogATouched = false;
-                const bool touched = (value > 0.0f);
-                if (touched != jogATouched) {
-                    jogATouched = touched;
-                    if (touched) deckAPtr->pauseForScrub();
-                    else         deckAPtr->resumeAfterScrub();
-                }
-            }
-            else if (id == "deckB_jog_touch") {
-                static bool jogBTouched = false;
-                const bool touched = (value > 0.0f);
-                if (touched != jogBTouched) {
-                    jogBTouched = touched;
-                    if (touched) deckBPtr->pauseForScrub();
-                    else         deckBPtr->resumeAfterScrub();
-                }
-            }
-            // Jog move: value = signed tick delta; 128 ticks/rev at 33.33 RPM vinyl.
-            // With touch (scrubbing): scratch. Without touch (rim turn): speed nudge.
-            else if (id == "deckA_jog_move") {
-                const double deltaSeconds = static_cast<double>(value) * (60.0 / 33.333) / 128.0;
-                if (deckAPtr->isScrubbing())
-                    deckAPtr->scratchBySeconds(deltaSeconds);
-                else
-                    deckAPtr->applyJogNudge(static_cast<double>(value));
-            }
-            else if (id == "deckB_jog_move") {
-                const double deltaSeconds = static_cast<double>(value) * (60.0 / 33.333) / 128.0;
-                if (deckBPtr->isScrubbing())
-                    deckBPtr->scratchBySeconds(deltaSeconds);
-                else
-                    deckBPtr->applyJogNudge(static_cast<double>(value));
-            }
-        });
+        for (const auto [deck, name] : std::array<std::pair<DjEngine*, const char*>, 4>{{
+                {deckA.get(), "deckA"}, {deckB.get(), "deckB"},
+                {deckC.get(), "deckC"}, {deckD.get(), "deckD"}}})
+            deck->setCoverArtProvider(coverProviderPtr, name);
 
         engine.rootContext()->setContextProperty("deckA", deckA.get());
         engine.rootContext()->setContextProperty("deckB", deckB.get());
@@ -508,20 +418,17 @@ int main(int argc, char *argv[])
 
         // Defer MIDI init: CoreMIDI on macOS needs the CFRunLoop (app.exec) running first.
         midiManager = std::make_unique<MidiControllerManager>(parameterStore.get());
+        midiManager->connectDecks(deckA.get(), deckB.get());
         engine.rootContext()->setContextProperty("midiManager", midiManager.get());
 
-        deckA->setLibraryDatabase(libraryDb.get());
-        deckB->setLibraryDatabase(libraryDb.get());
-        deckC->setLibraryDatabase(libraryDb.get());
-        deckD->setLibraryDatabase(libraryDb.get());
+        for (DjEngine* deck : {deckA.get(), deckB.get(), deckC.get(), deckD.get()})
+            deck->setLibraryDatabase(libraryDb.get());
 
         fxManager->registerEngines(deckA.get(), deckB.get());
 
         masterBus = std::make_unique<DjMasterBus>();
-        masterBus->addDeck(deckA.get());
-        masterBus->addDeck(deckB.get());
-        masterBus->addDeck(deckC.get());
-        masterBus->addDeck(deckD.get());
+        for (DjEngine* deck : {deckA.get(), deckB.get(), deckC.get(), deckD.get()})
+            masterBus->addDeck(deck);
 
         deckA->applyAudioDeviceSettings(settingsManager.getAudioMasterDeviceType(),
                                         settingsManager.getAudioMasterOutputDevice(),

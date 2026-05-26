@@ -12,6 +12,7 @@
 #include <QProcess>
 #endif
 
+class DjEngine;
 class ParameterStore;
 
 class MidiControllerManager : public QObject, public juce::MidiInputCallback
@@ -49,6 +50,8 @@ public:
 
     Q_INVOKABLE void refreshMidiAndMappings();
 
+    void connectDecks(DjEngine* deckA, DjEngine* deckB);
+
     // QML Mapping Functions
     Q_INVOKABLE void startMidiLearn(const QString& parameterId);
     Q_INVOKABLE QString getMappingLabel(const QString& paramId) const;
@@ -80,6 +83,10 @@ private:
     void handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& message) override;
 
     ParameterStore* m_parameterStore = nullptr;
+    DjEngine* m_deckA = nullptr;
+    DjEngine* m_deckB = nullptr;
+    bool m_jogATouched = false;
+    bool m_jogBTouched = false;
     
     std::vector<std::unique_ptr<juce::MidiInput>> m_midiInputs;
     std::unique_ptr<juce::MidiOutput> m_midiOutput;
