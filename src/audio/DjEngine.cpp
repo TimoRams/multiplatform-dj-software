@@ -24,6 +24,7 @@
 #include <cstring>
 #include <algorithm>
 #include <cmath>
+#include <ranges>
 #if JUCE_JACK && (JUCE_LINUX || JUCE_BSD)
 #include <jack/jack.h>
 #endif
@@ -1365,20 +1366,30 @@ public:
             // Soft-clip only below 0.70× — x/(1+|x|·k) preserves small-signal linearity
             const float satK = std::max(0.0f, (0.70f - scratchRate) / 0.70f) * 0.50f;
 
+            const int ns = bufferToFill.numSamples;
             for (int ch = 0; ch < numChannels; ++ch) {
                 float s1 = m_scratchWarmLpState[ch];
                 float s2 = m_scratchWarmLpState[ch + 2];
                 float s3 = m_scratchWarmLpState[ch + 4];
                 float s4 = m_scratchWarmLpState[ch + 6];
                 float* w = bufferToFill.buffer->getWritePointer(ch, bufferToFill.startSample);
-                for (int i = 0; i < bufferToFill.numSamples; ++i) {
-                    s1 += alpha * (w[i] - s1);
-                    s2 += alpha * (s1   - s2);
-                    s3 += alpha * (s2   - s3);
-                    s4 += alpha * (s3   - s4);
-                    w[i] = satK > 0.001f
-                         ? s4 / (1.0f + std::abs(s4) * satK)
-                         : s4;
+                // satK is constant within the block; hoist the branch outside the sample loop.
+                if (satK > 0.001f) {
+                    for (int i = 0; i < ns; ++i) {
+                        s1 += alpha * (w[i] - s1);
+                        s2 += alpha * (s1   - s2);
+                        s3 += alpha * (s2   - s3);
+                        s4 += alpha * (s3   - s4);
+                        w[i] = s4 / (1.0f + std::abs(s4) * satK);
+                    }
+                } else {
+                    for (int i = 0; i < ns; ++i) {
+                        s1 += alpha * (w[i] - s1);
+                        s2 += alpha * (s1   - s2);
+                        s3 += alpha * (s2   - s3);
+                        s4 += alpha * (s3   - s4);
+                        w[i] = s4;
+                    }
                 }
                 m_scratchWarmLpState[ch]     = s1;
                 m_scratchWarmLpState[ch + 2] = s2;
@@ -1433,7 +1444,7 @@ public:
             float* dataL = numCh > 0 ? bufferToFill.buffer->getWritePointer(0, bStart) : nullptr;
             float* dataR = numCh > 1 ? bufferToFill.buffer->getWritePointer(1, bStart) : nullptr;
 
-            // Sync read positions on first sample of activation
+            // Sync read positions on first block of activation.
             if (wantBrake && m_vinylBrakeNeedSync) {
                 m_vinylBrakeReadPos  = static_cast<float>((m_vinylBrakeWritePos - 1 + kVinylBrakeBuf) & kVinylBrakeMask);
                 m_vinylBrakeFactor   = 1.0f;
@@ -1452,37 +1463,40 @@ public:
                 m_backspinSpeed    = 0.0f;
             }
 
-            for (int i = 0; i < bN; ++i) {
-                // Always record post-FX audio so backspin always has fresh material
-                const int wp = m_vinylBrakeWritePos & kVinylBrakeMask;
-                if (dataL) m_vinylBrakeBufL[wp] = dataL[i];
-                if (dataR) m_vinylBrakeBufR[wp] = dataR[i];
-                ++m_vinylBrakeWritePos;
+            // Pass 1: always record live audio into the circular buffer.
+            {
+                uint32_t wp = m_vinylBrakeWritePos;
+                for (int i = 0; i < bN; ++i, ++wp) {
+                    const int idx = wp & kVinylBrakeMask;
+                    m_vinylBrakeBufL[idx] = dataL ? dataL[i] : 0.0f;
+                    m_vinylBrakeBufR[idx] = dataR ? dataR[i] : 0.0f;
+                }
+                m_vinylBrakeWritePos = wp;
+            }
 
-                if (wantBrake || m_vinylBrakeFactor < 1.0f) {
-                    // Ramp playback rate toward zero (pitch drops to silence)
-                    if (wantBrake) {
-                        m_vinylBrakeFactor = std::max(0.0f, m_vinylBrakeFactor - m_vinylBrakeRampDown);
-                    } else {
-                        // Released: snap back to live audio immediately
-                        m_vinylBrakeFactor  = 1.0f;
-                        m_vinylBrakeReadPos = static_cast<float>((m_vinylBrakeWritePos - 1) & kVinylBrakeMask);
-                    }
+            // Pass 2: substitute output — wantBrake/wantBackspin are block-invariant so the
+            // branch is hoisted here rather than re-evaluated per sample.
+            // Live audio passes through unchanged when neither effect is active.
+            if (wantBrake) {
+                // Pitch ramps toward zero; read position advances slower than write.
+                for (int i = 0; i < bN; ++i) {
+                    m_vinylBrakeFactor = std::max(0.0f, m_vinylBrakeFactor - m_vinylBrakeRampDown);
                     const int rp = static_cast<int>(m_vinylBrakeReadPos) & kVinylBrakeMask;
-                    if (m_vinylBrakeFactor > 0.0f) {
-                        if (dataL) dataL[i] = m_vinylBrakeBufL[rp];
-                        if (dataR) dataR[i] = m_vinylBrakeBufR[rp];
-                    } else {
-                        if (dataL) dataL[i] = 0.0f;
-                        if (dataR) dataR[i] = 0.0f;
-                    }
+                    if (dataL) dataL[i] = m_vinylBrakeFactor > 0.0f ? m_vinylBrakeBufL[rp] : 0.0f;
+                    if (dataR) dataR[i] = m_vinylBrakeFactor > 0.0f ? m_vinylBrakeBufR[rp] : 0.0f;
                     m_vinylBrakeReadPos += m_vinylBrakeFactor;
                     if (m_vinylBrakeReadPos >= static_cast<float>(kVinylBrakeBuf))
                         m_vinylBrakeReadPos -= static_cast<float>(kVinylBrakeBuf);
                 }
-                else if (wantBackspin) {
+            } else if (m_vinylBrakeFactor < 1.0f) {
+                // Brake just released: snap read position to live.
+                // dataL/dataR already hold live audio from Pass 1 — no buffer read needed.
+                m_vinylBrakeFactor  = 1.0f;
+                m_vinylBrakeReadPos = static_cast<float>((m_vinylBrakeWritePos - 1) & kVinylBrakeMask);
+            } else if (wantBackspin) {
+                // Linear-interpolated backward read: high pitch → low pitch → silence.
+                for (int i = 0; i < bN; ++i) {
                     if (m_backspinSpeed > 0.0f) {
-                        // Linear-interpolated backward read: high pitch → low pitch → silence
                         const int   rp0  = static_cast<int>(m_backspinReadPos) & kVinylBrakeMask;
                         const int   rp1  = (rp0 + 1) & kVinylBrakeMask;
                         const float frac = m_backspinReadPos - std::floor(m_backspinReadPos);
@@ -3514,9 +3528,7 @@ void DjEngine::tickScratchPhysics()
         emit playingChanged();
     }
 
-    emit progressChanged();
-    emit vuLevelChanged();
-    emit gainReductionChanged();
+    emitPlaybackStateChanged();
 }
 
 void DjEngine::decayJogNudge()
@@ -3576,9 +3588,7 @@ bool DjEngine::tickTransportPlaying()
             m_preRollVisualStartPos  = m_loopInSec;
             m_preRollClock.restart();
             m_atomicPlayheadPos.store(m_loopInSec, std::memory_order_relaxed);
-            emit progressChanged();
-            emit vuLevelChanged();
-            emit gainReductionChanged();
+            emitPlaybackStateChanged();
             return false;
         }
     }
@@ -3681,14 +3691,13 @@ QVariantList DjEngine::hotCues() const
     QVariantList out;
     out.reserve(static_cast<int>(m_hotCueSlots.size()));
 
-    for (int i = 0; i < static_cast<int>(m_hotCueSlots.size()); ++i) {
-        const auto& slot = m_hotCueSlots[static_cast<size_t>(i)];
+    for (const auto [i, slot] : std::views::enumerate(m_hotCueSlots)) {
         QVariantMap m;
-        m.insert("index", i);
-        m.insert("set", slot.set);
+        m.insert("index",       static_cast<int>(i));
+        m.insert("set",         slot.set);
         m.insert("positionSec", slot.positionSec);
-        m.insert("label", slot.label);
-        m.insert("color", slot.color);
+        m.insert("label",       slot.label);
+        m.insert("color",       slot.color);
         out.push_back(m);
     }
 
@@ -3702,12 +3711,11 @@ bool DjEngine::isValidHotCueIndex(int index) const
 
 void DjEngine::clearHotCueState()
 {
-    for (int i = 0; i < static_cast<int>(m_hotCueSlots.size()); ++i) {
-        auto& slot = m_hotCueSlots[static_cast<size_t>(i)];
+    for (auto [i, slot] : std::views::enumerate(m_hotCueSlots)) {
         slot.set = false;
         slot.positionSec = 0.0;
         slot.label.clear();
-        slot.color = defaultHotCueColor(i);
+        slot.color = defaultHotCueColor(static_cast<int>(i));
     }
 }
 
@@ -3727,7 +3735,7 @@ void DjEngine::loadHotCuesForCurrentTrack()
         if (!isValidHotCueIndex(index))
             continue;
 
-        auto& slot = m_hotCueSlots[static_cast<size_t>(index)];
+        auto& slot = slotAt(index);
         slot.set = true;
         slot.positionSec = std::max(-PRE_ROLL_SECONDS, m.value("positionSec").toDouble());
         slot.label = m.value("label").toString();
@@ -3743,7 +3751,7 @@ void DjEngine::persistHotCueSlot(int index)
     if (!isValidHotCueIndex(index) || !m_libraryDb || m_currentTrackId.isEmpty())
         return;
 
-    const auto& slot = m_hotCueSlots[static_cast<size_t>(index)];
+    const auto& slot = slotAt(index);
     if (slot.set) {
         const QString label = slot.label.isEmpty()
             ? QStringLiteral("HOT CUE %1").arg(index + 1)
@@ -3763,7 +3771,7 @@ void DjEngine::storeHotCue(int index)
     if (trackLen <= 0.0)
         return;
 
-    auto& slot = m_hotCueSlots[static_cast<size_t>(index)];
+    auto& slot = slotAt(index);
     slot.set = true;
     slot.positionSec = std::clamp(static_cast<double>(getVisualPosition()), -PRE_ROLL_SECONDS, trackLen);
     if (slot.color.isEmpty())
@@ -3780,7 +3788,7 @@ void DjEngine::triggerHotCue(int index)
     if (!isValidHotCueIndex(index) || !m_hasTrack)
         return;
 
-    const auto& slot = m_hotCueSlots[static_cast<size_t>(index)];
+    const auto& slot = slotAt(index);
     if (!slot.set) {
         storeHotCue(index);
         return;
@@ -3816,7 +3824,7 @@ void DjEngine::clearHotCue(int index)
     if (!isValidHotCueIndex(index))
         return;
 
-    auto& slot = m_hotCueSlots[static_cast<size_t>(index)];
+    auto& slot = slotAt(index);
     slot.set = false;
     slot.positionSec = 0.0;
     slot.label.clear();
@@ -3836,7 +3844,7 @@ void DjEngine::setHotCueColor(int index, const QString& colorHex)
     if (color.isEmpty())
         color = defaultHotCueColor(index);
 
-    auto& slot = m_hotCueSlots[static_cast<size_t>(index)];
+    auto& slot = slotAt(index);
     slot.color = color;
 
     if (slot.set)

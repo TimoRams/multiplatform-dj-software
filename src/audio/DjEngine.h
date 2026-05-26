@@ -417,6 +417,8 @@ private:
         QString label;
         QString color = "#e04040";
     };
+    HotCueSlot&       slotAt(int i)       { return m_hotCueSlots[static_cast<size_t>(i)]; }
+    const HotCueSlot& slotAt(int i) const { return m_hotCueSlots[static_cast<size_t>(i)]; }
 
     class MixerDspSource;
     class TimeStretchAudioSource;
@@ -528,6 +530,9 @@ private:
     void decayJogNudge();
     bool tickTransportPlaying();   // returns false → onTimer should return early
     void tickTransportStopped();
+    void emitPlaybackStateChanged() {
+        emit progressChanged(); emit vuLevelChanged(); emit gainReductionChanged();
+    }
 
     void updateGain();
     void applyMixerEq();
