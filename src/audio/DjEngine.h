@@ -441,6 +441,8 @@ private:
     QString m_trackTitle;
     QString m_trackArtist;
     QString m_trackAlbum;
+    QString m_trackGenre;
+    QString m_trackComment;
     QString m_trackKey;
     QString m_trackDuration;
     double  m_trackDurationSec = 0.0;
@@ -491,6 +493,8 @@ private:
     // DeckB is auto-assigned to masterFirstChannel+2 (ch3+4) at startup.
     std::atomic<int>  m_masterFirstChannelAtomic { 1 };
     bool m_playRequested = false;
+    bool m_playLogged    = false;   // true once logPlay() has been called for the current track load
+    double m_playedAccumSec = 0.0;  // accumulated real playback seconds since last track load
     bool m_keylock = false;
     bool m_quantizeEnabled = false;
     bool m_syncEnabled = false;

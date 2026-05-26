@@ -19,10 +19,27 @@ Rectangle {
     property var playlistTracks: []   // [{trackId, title, artist, ...}, ...] for currentPlaylistId
     property var expandedPlaylists: ({})  // id → true if expanded
 
+    // ── New library data ───────────────────────────────────────────────────
+    property var favoriteTracks:          []
+    property var historyTracks:           []
+    property var prepareCrateTracks:      []
+    property var queueTracks:             []
+    property var allTags:                 []
+    property var smartCollections:        []
+    property var smartCollectionTracks:   []
+    property string currentSmartCollectionId:   ""
+    property string currentSmartCollectionName: ""
+    property string historyPeriod:        "all"  // "today" | "week" | "month" | "all"
+
     // Context menu state (shared between library + playlist views)
     property string ctxTrackId:   ""
     property string ctxFilePath:  ""
     property string ctxTitle:     ""
+
+    // Track notes panel state
+    property bool   notesPanelOpen:    false
+    property string notesPanelTrackId: ""
+    property string notesPanelTitle:   ""
 
     // ── Browser cursor + focus system ─────────────────────────────────────
     // focusedPanel: which panel receives keyboard input
@@ -44,13 +61,19 @@ Rectangle {
     property string activeTrackSource:   ""   // "library" | "playlist"
 
     // ── Sidebar keyboard navigation map ─────────────────────────────────
-    readonly property int sidebarTopNavCount: 1   // All Tracks
+    readonly property int sidebarTopNavCount: 5   // All Tracks + Favorites + History + Crate + Queue
     readonly property int sidebarBottomNavCount: 3 // Files / Streaming / USB
-    readonly property int sidebarPlaylistStartIndex: sidebarTopNavCount
+    readonly property int sidebarSmartCollCount: smartCollections.length
+    readonly property int sidebarPlaylistStartIndex: sidebarTopNavCount + sidebarSmartCollCount
 
     onActiveTabChanged: {
         syncSidebarCursorToSelection()
         ensureActiveTrackForCurrentTab()
+        if      (activeTab === "favorites")  loadFavorites()
+        else if (activeTab === "history")    loadHistory()
+        else if (activeTab === "crate")      loadCrate()
+        else if (activeTab === "queue")      loadQueue()
+        else if (activeTab === "smartcoll")  loadSmartCollectionTracks(currentSmartCollectionId)
     }
 
     onVisiblePlaylistsChanged: {
@@ -164,6 +187,22 @@ Rectangle {
         loadPlaylistSort(currentPlaylistId)
     }
 
+    function loadFavorites()  { favoriteTracks      = libraryDb ? libraryDb.getFavoriteTracks()                     : [] }
+    function loadHistory(p)   {
+        var period = p !== undefined ? p : historyPeriod
+        historyPeriod = period
+        historyTracks = libraryDb ? libraryDb.getPlayHistory(period) : []
+    }
+    function loadCrate()      { prepareCrateTracks   = libraryDb ? libraryDb.getPrepareCrateTracks()     : [] }
+    function loadQueue()      { queueTracks          = libraryDb ? libraryDb.getQueueTracks()            : [] }
+    function loadAllTags()    { allTags              = libraryDb ? libraryDb.getAllTags()                 : [] }
+    function loadSmartCollections() { smartCollections = libraryDb ? libraryDb.getAllSmartCollections()  : [] }
+    function loadSmartCollectionTracks(id) {
+        if (!id || !libraryDb) { smartCollectionTracks = []; return }
+        var sc = smartCollections.find(function(s) { return s.id === id })
+        smartCollectionTracks = sc ? libraryDb.evaluateSmartCollection(sc.rulesJson) : []
+    }
+
     function toggleExpanded(id) {
         var e = Object.assign({}, expandedPlaylists)
         if (e[id]) delete e[id]; else e[id] = true
@@ -233,6 +272,18 @@ Rectangle {
         return arr
     }
 
+    // Unified track list for all non-library/non-playlist tabs.
+    readonly property var currentListTracks: {
+        var t = activeTab
+        if (t === "favorites")  return favoriteTracks
+        if (t === "history")    return historyTracks
+        if (t === "crate")      return prepareCrateTracks
+        if (t === "queue")      return queueTracks
+        if (t === "smartcoll")  return smartCollectionTracks
+        if (t === "playlist")   return sortedPlaylistTracks
+        return []
+    }
+
     function togglePlaylistSort(field) {
         if (playlistSortField === field)
             playlistSortAscending = !playlistSortAscending
@@ -254,15 +305,25 @@ Rectangle {
     // ── Cursor navigation ──────────────────────────────────────────────────
 
     function sidebarTotalCount() {
-        return sidebarTopNavCount + visiblePlaylists.length + sidebarBottomNavCount
+        return sidebarTopNavCount + sidebarSmartCollCount + visiblePlaylists.length + sidebarBottomNavCount
     }
 
     function sidebarIndexForTab(tab) {
-        if (tab === "library") return 0
-        var bottomStart = sidebarTopNavCount + visiblePlaylists.length
-        if (tab === "files") return bottomStart
-        if (tab === "streaming") return bottomStart + 1
-        if (tab === "usb") return bottomStart + 2
+        if (tab === "library")   return 0
+        if (tab === "favorites") return 1
+        if (tab === "history")   return 2
+        if (tab === "crate")     return 3
+        if (tab === "queue")     return 4
+        if (tab === "smartcoll") {
+            for (var i = 0; i < smartCollections.length; i++)
+                if (smartCollections[i].id === currentSmartCollectionId)
+                    return sidebarTopNavCount + i
+            return sidebarTopNavCount
+        }
+        var bottomStart = sidebarTopNavCount + sidebarSmartCollCount + visiblePlaylists.length
+        if (tab === "files")      return bottomStart
+        if (tab === "streaming")  return bottomStart + 1
+        if (tab === "usb")        return bottomStart + 2
         return -1
     }
 
@@ -277,12 +338,23 @@ Rectangle {
     function sidebarEntryAt(index) {
         if (index < 0) return null
 
-        var bottomStart = sidebarTopNavCount + visiblePlaylists.length
-        if (index === 0) {
-            return { type: "nav", tab: "library", item: navAllTracks }
+        if (index === 0) return { type: "nav", tab: "library",   item: navAllTracks }
+        if (index === 1) return { type: "nav", tab: "favorites", item: navFavorites }
+        if (index === 2) return { type: "nav", tab: "history",   item: navHistory }
+        if (index === 3) return { type: "nav", tab: "crate",     item: navCrate }
+        if (index === 4) return { type: "nav", tab: "queue",     item: navQueue }
+
+        var scIndex = index - sidebarTopNavCount
+        if (scIndex >= 0 && scIndex < sidebarSmartCollCount) {
+            return {
+                type: "smartcoll",
+                data: smartCollections[scIndex],
+                item: smartCollRepeater.itemAt(scIndex)
+            }
         }
 
-        var plIndex = index - sidebarTopNavCount
+        var bottomStart = sidebarTopNavCount + sidebarSmartCollCount + visiblePlaylists.length
+        var plIndex = index - sidebarTopNavCount - sidebarSmartCollCount
         if (plIndex >= 0 && plIndex < visiblePlaylists.length) {
             return {
                 type: "playlist",
@@ -292,9 +364,9 @@ Rectangle {
         }
 
         var bottomIndex = index - bottomStart
-        if (bottomIndex === 0) return { type: "nav", tab: "files", item: navFiles }
+        if (bottomIndex === 0) return { type: "nav", tab: "files",     item: navFiles }
         if (bottomIndex === 1) return { type: "nav", tab: "streaming", item: navStreaming }
-        if (bottomIndex === 2) return { type: "nav", tab: "usb", item: navUsb }
+        if (bottomIndex === 2) return { type: "nav", tab: "usb",       item: navUsb }
 
         return null
     }
@@ -325,26 +397,31 @@ Rectangle {
             _applyActiveTrack(-1, "", "", "")
             return
         }
-        if (activeTab === "playlist") {
-            var t = sortedPlaylistTracks[browserCursorIndex]
-            _applyActiveTrack(browserCursorIndex, t ? t.trackId : "", t ? t.filePath : "", "playlist")
-            return
-        }
         if (activeTab === "library") {
             var id = libraryModel ? libraryModel.trackIdAtRow(browserCursorIndex) : ""
             var fp = libraryModel ? libraryModel.filePathAtRow(browserCursorIndex) : ""
             _applyActiveTrack(browserCursorIndex, id, fp, "library")
+            return
         }
+        // Covers playlist + all varlist tabs
+        var t = currentListTracks[browserCursorIndex]
+        if (t) _applyActiveTrack(browserCursorIndex, t.trackId || "", t.filePath || "", activeTab)
     }
 
+    readonly property var _varlistTabs: ["favorites","history","crate","queue","smartcoll"]
+
     function ensureActiveTrackForCurrentTab() {
-        if (activeTab !== "library" && activeTab !== "playlist") {
+        var isNavList = activeTab === "library" || activeTab === "playlist"
+                     || _varlistTabs.indexOf(activeTab) >= 0
+        if (!isNavList) {
             browserCursorActive = false
             _applyActiveTrack(-1, "", "", "")
             return
         }
 
-        var list = (activeTab === "playlist") ? plTrackList : libTrackList
+        var list = activeTab === "playlist" ? plTrackList
+                 : activeTab === "library"  ? libTrackList
+                 : varlistTrackList
         var count = list ? list.count : 0
         if (count === 0) {
             browserCursorActive = false
@@ -354,10 +431,13 @@ Rectangle {
 
         var idx = -1
         if (activeTrackId) {
-            if (activeTab === "playlist") {
-                idx = _playlistIndexForTrackId(activeTrackId)
-            } else if (libraryModel) {
-                idx = libraryModel.indexOfTrackId(activeTrackId)
+            if (activeTab === "library") {
+                idx = libraryModel ? libraryModel.indexOfTrackId(activeTrackId) : -1
+            } else {
+                var arr = (activeTab === "playlist") ? sortedPlaylistTracks : currentListTracks
+                for (var i = 0; i < arr.length; i++) {
+                    if (arr[i].trackId === activeTrackId) { idx = i; break }
+                }
             }
         }
         if (idx < 0) idx = 0
@@ -373,6 +453,12 @@ Rectangle {
         if (activeTab === "playlist" && currentPlaylistId) {
             var plIdx = _playlistIndexForId(currentPlaylistId)
             if (plIdx >= 0) idx = sidebarPlaylistStartIndex + plIdx
+        } else if (activeTab === "smartcoll" && currentSmartCollectionId) {
+            for (var i = 0; i < smartCollections.length; i++) {
+                if (smartCollections[i].id === currentSmartCollectionId) {
+                    idx = sidebarTopNavCount + i; break
+                }
+            }
         }
         if (idx < 0) idx = sidebarIndexForTab(activeTab)
         if (idx < 0 && activeTab === "playlist") idx = 0
@@ -384,8 +470,12 @@ Rectangle {
     }
 
     function moveCursor(rawDelta) {
-        if (activeTab !== "library" && activeTab !== "playlist") return
-        var list = (activeTab === "playlist") ? plTrackList : libTrackList
+        var isNavList = activeTab === "library" || activeTab === "playlist"
+                     || _varlistTabs.indexOf(activeTab) >= 0
+        if (!isNavList) return
+        var list = activeTab === "playlist" ? plTrackList
+                 : activeTab === "library"  ? libTrackList
+                 : varlistTrackList
         var count = list.count
         if (count === 0) { browserCursorActive = false; return }
 
@@ -465,8 +555,19 @@ Rectangle {
         if (!entry) return
         if (entry.type === "nav") {
             activeTab = entry.tab
-            if (entry.tab === "library")
-                librarySubTab = "allSongs"
+            if (entry.tab === "library") librarySubTab = "allSongs"
+            focusedPanel = "sidebar"
+            forceActiveFocus()
+            return
+        }
+        if (entry.type === "smartcoll") {
+            var sc = entry.data
+            if (sc) {
+                currentSmartCollectionId   = sc.id
+                currentSmartCollectionName = sc.name
+                activeTab = "smartcoll"
+                loadSmartCollectionTracks(sc.id)
+            }
             focusedPanel = "sidebar"
             forceActiveFocus()
             return
@@ -537,6 +638,11 @@ Rectangle {
 
     Component.onCompleted: {
         loadPlaylists()
+        loadAllTags()
+        loadSmartCollections()
+        loadFavorites()
+        loadCrate()
+        loadQueue()
         if (libraryDb) {
             var vm = libraryDb.getSetting("library_view_mode", viewMode)
             if (vm === "compact" || vm === "normal") viewMode = vm
@@ -566,6 +672,36 @@ Rectangle {
         function onAnalysisUpdated(trackId) {
             if (libraryRoot.activeTab === "playlist")
                 libraryRoot.loadPlaylistTracks()
+        }
+        function onFavoritesChanged() {
+            if (libraryRoot.activeTab === "favorites") libraryRoot.loadFavorites()
+        }
+        function onCrateChanged() {
+            if (libraryRoot.activeTab === "crate") libraryRoot.loadCrate()
+        }
+        function onQueueChanged() {
+            if (libraryRoot.activeTab === "queue") libraryRoot.loadQueue()
+        }
+        function onHistoryChanged() {
+            if (libraryRoot.activeTab === "history")
+                libraryRoot.loadHistory(libraryRoot.historyPeriod)
+        }
+        function onTagsChanged() {
+            libraryRoot.loadAllTags()
+        }
+        function onSmartCollectionsChanged() {
+            libraryRoot.loadSmartCollections()
+            if (libraryRoot.activeTab === "smartcoll")
+                libraryRoot.loadSmartCollectionTracks(libraryRoot.currentSmartCollectionId)
+        }
+        function onTrackMetaChanged(trackId) {
+            var tab = libraryRoot.activeTab
+            if      (tab === "history")   libraryRoot.loadHistory()
+            else if (tab === "smartcoll") libraryRoot.loadSmartCollectionTracks(libraryRoot.currentSmartCollectionId)
+            // Always keep badge tabs current (these are cheap queries).
+            libraryRoot.loadFavorites()
+            libraryRoot.loadCrate()
+            libraryRoot.loadQueue()
         }
     }
 
@@ -758,15 +894,18 @@ Rectangle {
         property int    rowBitrateKbps: 0
         property bool   rowIsAnalyzed: false
         property string rowFilePath: ""
+        property string rowColor:   ""
+        property int    rowRating:  0
         property real viewWidth: parent ? parent.width : 0
-        property bool isPlaylistTrack: false  // Set to true when in playlist view
-        property string playlistId: ""  // Set when in playlist view
+        property bool isPlaylistTrack: false
+        property string playlistId: ""
+        property string rowSourceTab: "library"
 
         readonly property bool isCursorRow: libraryRoot.browserCursorActive
                                            && libraryRoot.browserCursorIndex === rowIndex
                                            && (isPlaylistTrack
                                                ? libraryRoot.activeTab === "playlist"
-                                               : libraryRoot.activeTab === "library")
+                                               : libraryRoot.activeTab === rowSourceTab)
 
         readonly property color artBgColor: {
             var s = rowTitle || rowArtist || ""
@@ -786,9 +925,11 @@ Rectangle {
 
         Rectangle {
             anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-            width: 2
-            color: tr.isCursorRow ? libraryRoot.accentGreen : libraryRoot.accentBlue
-            visible: trMouse.containsMouse || tr.isCursorRow
+            width: tr.rowColor !== "" ? 3 : 2
+            color: tr.isCursorRow ? libraryRoot.accentGreen
+                 : tr.rowColor !== "" ? tr.rowColor
+                 : libraryRoot.accentBlue
+            visible: trMouse.containsMouse || tr.isCursorRow || tr.rowColor !== ""
         }
         
         // Drop zone indicators for playlist track reordering
@@ -869,6 +1010,21 @@ Rectangle {
                 color: tr.rowBitrateKbps > 0 ? libraryRoot.textSecond : libraryRoot.textDim
                 font.pixelSize: window.sp(10); font.family: "monospace"
                 horizontalAlignment: Text.AlignHCenter
+            }
+            Row {
+                width: 44
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 2
+                Repeater {
+                    model: 5
+                    Rectangle {
+                        width: 5; height: 5; radius: 2.5
+                        anchors.verticalCenter: parent.verticalCenter
+                        color: (index < tr.rowRating) ? "#e8b84b" : "#1e1e1e"
+                        border.color: (index < tr.rowRating) ? "#c89a30" : "#2a2a2a"
+                        border.width: 1
+                    }
+                }
             }
         }
 
@@ -955,6 +1111,20 @@ Rectangle {
                         font.pixelSize: window.sp(10); font.family: "monospace"
                     }
                 }
+                Row {
+                    anchors.right: parent.right
+                    spacing: 2
+                    visible: tr.rowRating > 0
+                    Repeater {
+                        model: 5
+                        Rectangle {
+                            width: 6; height: 6; radius: 3
+                            color: (index < tr.rowRating) ? "#e8b84b" : "#1e1e1e"
+                            border.color: (index < tr.rowRating) ? "#c89a30" : "#2a2a2a"
+                            border.width: 1
+                        }
+                    }
+                }
             }
         }
 
@@ -1034,7 +1204,7 @@ Rectangle {
                     tr.rowIndex,
                     tr.rowTrackId,
                     tr.rowFilePath,
-                    tr.isPlaylistTrack ? "playlist" : "library")
+                    tr.isPlaylistTrack ? "playlist" : tr.rowSourceTab)
                 libraryRoot.focusedPanel = "tracks"
                 libraryRoot.forceActiveFocus()
 
@@ -1287,7 +1457,111 @@ Rectangle {
                         cursorIndex: 0
                     }
 
-                    Item { width: parent.width; height: 8 }
+                    Item { width: parent.width; height: 4 }
+
+                    // ── TOOLS ─────────────────────────────────────────────────
+                    Item {
+                        width: parent.width; height: 26
+                        Rectangle {
+                            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                            height: 1; color: libraryRoot.borderSub
+                        }
+                        Text {
+                            anchors.left: parent.left; anchors.leftMargin: 14
+                            anchors.bottom: parent.bottom; anchors.bottomMargin: 4
+                            text: "TOOLS"
+                            color: "#484848"
+                            font.pixelSize: window.sp(9); font.bold: true; font.letterSpacing: 1.3
+                        }
+                    }
+
+                    NavButton {
+                        id: navFavorites
+                        tabKey: "favorites"
+                        btnIcon: "★"
+                        btnLabel: "Favorites"
+                        badgeCount: libraryRoot.favoriteTracks.length > 0 ? libraryRoot.favoriteTracks.length : -1
+                        cursorIndex: 1
+                    }
+                    NavButton {
+                        id: navHistory
+                        tabKey: "history"
+                        btnIcon: "⏱"
+                        btnLabel: "History"
+                        cursorIndex: 2
+                    }
+                    NavButton {
+                        id: navCrate
+                        tabKey: "crate"
+                        btnIcon: "⊞"
+                        btnLabel: "Prepare Crate"
+                        badgeCount: libraryRoot.prepareCrateTracks.length > 0 ? libraryRoot.prepareCrateTracks.length : -1
+                        cursorIndex: 3
+                    }
+                    NavButton {
+                        id: navQueue
+                        tabKey: "queue"
+                        btnIcon: "►"
+                        btnLabel: "Queue"
+                        badgeCount: libraryRoot.queueTracks.length > 0 ? libraryRoot.queueTracks.length : -1
+                        cursorIndex: 4
+                    }
+
+                    Item { width: parent.width; height: 4 }
+
+                    // ── SMART COLLECTIONS ─────────────────────────────────────
+                    Rectangle {
+                        width: parent.width; height: 30
+                        color: "transparent"
+                        Rectangle {
+                            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                            height: 1; color: libraryRoot.borderSub
+                        }
+                        Text {
+                            anchors.left: parent.left; anchors.leftMargin: 14
+                            anchors.bottom: parent.bottom; anchors.bottomMargin: 4
+                            text: "SMART"
+                            color: "#484848"
+                            font.pixelSize: window.sp(9); font.bold: true; font.letterSpacing: 1.3
+                        }
+                        Rectangle {
+                            anchors.right: parent.right; anchors.rightMargin: 10
+                            anchors.bottom: parent.bottom; anchors.bottomMargin: 4
+                            width: 18; height: 18; radius: 3
+                            color: newScMa.containsMouse ? "#2a3a4a" : "transparent"
+                            border.color: newScMa.containsMouse ? "#2d7dd2" : "#2a2a2a"
+                            border.width: 1
+                            Text { anchors.centerIn: parent; text: "+"; color: "#aaa"; font.pixelSize: window.sp(12) }
+                            MouseArea {
+                                id: newScMa; anchors.fill: parent
+                                hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                onClicked: createSmartCollDialog.open()
+                            }
+                        }
+                    }
+
+                    Repeater {
+                        id: smartCollRepeater
+                        model: libraryRoot.smartCollections
+                        NavButton {
+                            required property var modelData
+                            required property int index
+                            tabKey: "smartcoll"
+                            btnIcon: "◈"
+                            btnLabel: modelData.name
+                            cursorIndex: libraryRoot.sidebarTopNavCount + index
+                            customAction: function() {
+                                libraryRoot.currentSmartCollectionId   = modelData.id
+                                libraryRoot.currentSmartCollectionName = modelData.name
+                                libraryRoot.loadSmartCollectionTracks(modelData.id)
+                            }
+                            readonly property bool isThisSelected:
+                                libraryRoot.activeTab === "smartcoll" &&
+                                libraryRoot.currentSmartCollectionId === modelData.id
+                        }
+                    }
+
+                    Item { width: parent.width; height: 4 }
 
                     // ── PLAYLISTS ─────────────────────────────────────────────
                     Rectangle {
@@ -1580,7 +1854,7 @@ Rectangle {
                         tabKey: "files"
                         btnIcon: "≡"
                         btnLabel: "Files"
-                        cursorIndex: libraryRoot.sidebarTopNavCount + libraryRoot.visiblePlaylists.length
+                        cursorIndex: libraryRoot.sidebarTopNavCount + libraryRoot.sidebarSmartCollCount + libraryRoot.visiblePlaylists.length
                     }
 
                     NavButton {
@@ -1588,7 +1862,7 @@ Rectangle {
                         tabKey: "streaming"
                         btnIcon: "◎"
                         btnLabel: "Streaming"
-                        cursorIndex: libraryRoot.sidebarTopNavCount + libraryRoot.visiblePlaylists.length + 1
+                        cursorIndex: libraryRoot.sidebarTopNavCount + libraryRoot.sidebarSmartCollCount + libraryRoot.visiblePlaylists.length + 1
                     }
 
                     NavButton {
@@ -1596,7 +1870,7 @@ Rectangle {
                         tabKey: "usb"
                         btnIcon: "⊕"
                         btnLabel: "USB"
-                        cursorIndex: libraryRoot.sidebarTopNavCount + libraryRoot.visiblePlaylists.length + 2
+                        cursorIndex: libraryRoot.sidebarTopNavCount + libraryRoot.sidebarSmartCollCount + libraryRoot.visiblePlaylists.length + 2
                     }
 
                     Item { width: parent.width; height: 12 }
@@ -1640,10 +1914,15 @@ Rectangle {
 
                             Text {
                                 anchors.centerIn: parent
-                                text: libraryRoot.activeTab === "library"   ? "♫"
-                                    : libraryRoot.activeTab === "playlist"  ? "☰"
-                                    : libraryRoot.activeTab === "files"     ? "≡"
-                                    : libraryRoot.activeTab === "streaming" ? "◎"
+                                text: libraryRoot.activeTab === "library"    ? "♫"
+                                    : libraryRoot.activeTab === "playlist"   ? "☰"
+                                    : libraryRoot.activeTab === "favorites"  ? "★"
+                                    : libraryRoot.activeTab === "history"    ? "⏱"
+                                    : libraryRoot.activeTab === "crate"      ? "⊞"
+                                    : libraryRoot.activeTab === "queue"      ? "►"
+                                    : libraryRoot.activeTab === "smartcoll"  ? "◈"
+                                    : libraryRoot.activeTab === "files"      ? "≡"
+                                    : libraryRoot.activeTab === "streaming"  ? "◎"
                                     : "⊕"
                                 color: libraryRoot.accentBlueLt
                                 font.pixelSize: window.sp(10)
@@ -1651,10 +1930,15 @@ Rectangle {
                         }
 
                         Text {
-                            text: libraryRoot.activeTab === "library"   ? "Library"
-                                : libraryRoot.activeTab === "playlist"  ? libraryRoot.currentPlaylistName
-                                : libraryRoot.activeTab === "files"     ? "File Browser"
-                                : libraryRoot.activeTab === "streaming" ? "Streaming"
+                            text: libraryRoot.activeTab === "library"    ? "Library"
+                                : libraryRoot.activeTab === "playlist"   ? libraryRoot.currentPlaylistName
+                                : libraryRoot.activeTab === "favorites"  ? "Favorites"
+                                : libraryRoot.activeTab === "history"    ? "History"
+                                : libraryRoot.activeTab === "crate"      ? "Prepare Crate"
+                                : libraryRoot.activeTab === "queue"      ? "Queue"
+                                : libraryRoot.activeTab === "smartcoll"  ? libraryRoot.currentSmartCollectionName
+                                : libraryRoot.activeTab === "files"      ? "File Browser"
+                                : libraryRoot.activeTab === "streaming"  ? "Streaming"
                                 : "USB"
                             color: libraryRoot.textPrimary
                             font.pixelSize: window.sp(12); font.weight: Font.Medium
@@ -1881,6 +2165,279 @@ Rectangle {
                 }
             }
 
+            // ── Filter bar (library tab only) ─────────────────────────────
+            Rectangle {
+                id: filterBar
+                Layout.fillWidth: true
+                Layout.preferredHeight: visible ? 34 : 0
+                visible: libraryRoot.activeTab === "library"
+                color: "#141414"
+
+                Rectangle {
+                    anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
+                    height: 1; color: libraryRoot.borderMain
+                }
+
+                Row {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left; anchors.leftMargin: 10
+                    anchors.right: parent.right; anchors.rightMargin: 10
+                    spacing: 6
+
+                    // ── BPM range ──
+                    Row {
+                        spacing: 3
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "BPM"
+                            color: libraryRoot.textDim; font.pixelSize: window.sp(9); font.bold: true
+                        }
+
+                        Rectangle {
+                            width: 46; height: 20; radius: 3
+                            color: bpmMinField.activeFocus ? "#1a2a3a" : "#0e0e0e"
+                            border.color: bpmMinField.activeFocus ? libraryRoot.accentBlue
+                                        : (libraryModel && libraryModel.filterBpmMin > 0) ? libraryRoot.accentBlue : "#2a2a2a"
+                            border.width: 1
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            TextField {
+                                id: bpmMinField
+                                anchors.fill: parent
+                                color: libraryRoot.textPrimary; font.pixelSize: window.sp(10)
+                                placeholderText: "min"; leftPadding: 5; rightPadding: 3
+                                topPadding: 0; bottomPadding: 0
+                                background: Item {}
+                                inputMethodHints: Qt.ImhFormattedNumbersOnly
+                                onEditingFinished: {
+                                    var v = parseFloat(text) || 0
+                                    if (libraryModel) libraryModel.filterBpmMin = v
+                                }
+                                Component.onCompleted: {
+                                    if (libraryModel && libraryModel.filterBpmMin > 0)
+                                        text = libraryModel.filterBpmMin.toFixed(0)
+                                }
+                            }
+                        }
+
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "–"; color: libraryRoot.textDim; font.pixelSize: window.sp(10)
+                        }
+
+                        Rectangle {
+                            width: 46; height: 20; radius: 3
+                            color: bpmMaxField.activeFocus ? "#1a2a3a" : "#0e0e0e"
+                            border.color: bpmMaxField.activeFocus ? libraryRoot.accentBlue
+                                        : (libraryModel && libraryModel.filterBpmMax > 0) ? libraryRoot.accentBlue : "#2a2a2a"
+                            border.width: 1
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            TextField {
+                                id: bpmMaxField
+                                anchors.fill: parent
+                                color: libraryRoot.textPrimary; font.pixelSize: window.sp(10)
+                                placeholderText: "max"; leftPadding: 5; rightPadding: 3
+                                topPadding: 0; bottomPadding: 0
+                                background: Item {}
+                                inputMethodHints: Qt.ImhFormattedNumbersOnly
+                                onEditingFinished: {
+                                    var v = parseFloat(text) || 0
+                                    if (libraryModel) libraryModel.filterBpmMax = v
+                                }
+                                Component.onCompleted: {
+                                    if (libraryModel && libraryModel.filterBpmMax > 0)
+                                        text = libraryModel.filterBpmMax.toFixed(0)
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Divider ──
+                    Rectangle { width: 1; height: 18; color: "#252525"; anchors.verticalCenter: parent.verticalCenter }
+
+                    // ── Key filter ──
+                    Rectangle {
+                        width: 52; height: 20; radius: 3
+                        color: keyFilterField.activeFocus ? "#1a2a3a" : "#0e0e0e"
+                        border.color: keyFilterField.activeFocus ? libraryRoot.accentBlue
+                                    : (libraryModel && libraryModel.filterKey !== "") ? libraryRoot.accentKey : "#2a2a2a"
+                        border.width: 1
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        TextField {
+                            id: keyFilterField
+                            anchors.fill: parent
+                            color: libraryRoot.textPrimary; font.pixelSize: window.sp(10)
+                            placeholderText: "Key"; leftPadding: 6; rightPadding: 3
+                            topPadding: 0; bottomPadding: 0
+                            background: Item {}
+                            onTextEdited: {
+                                if (libraryModel) libraryModel.filterKey = text.trim()
+                            }
+                            Component.onCompleted: {
+                                if (libraryModel) text = libraryModel.filterKey
+                            }
+                        }
+                    }
+
+                    // ── Divider ──
+                    Rectangle { width: 1; height: 18; color: "#252525"; anchors.verticalCenter: parent.verticalCenter }
+
+                    // ── Genre filter ──
+                    Rectangle {
+                        width: 80; height: 20; radius: 3
+                        color: genreFilterField.activeFocus ? "#1a2a3a" : "#0e0e0e"
+                        border.color: genreFilterField.activeFocus ? libraryRoot.accentBlue
+                                    : (libraryModel && libraryModel.filterGenre !== "") ? libraryRoot.accentBlue : "#2a2a2a"
+                        border.width: 1
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        TextField {
+                            id: genreFilterField
+                            anchors.fill: parent
+                            color: libraryRoot.textPrimary; font.pixelSize: window.sp(10)
+                            placeholderText: "Genre"; leftPadding: 6; rightPadding: 3
+                            topPadding: 0; bottomPadding: 0
+                            background: Item {}
+                            onTextEdited: {
+                                if (libraryModel) libraryModel.filterGenre = text.trim()
+                            }
+                            Component.onCompleted: {
+                                if (libraryModel) text = libraryModel.filterGenre
+                            }
+                        }
+                    }
+
+                    // ── Divider ──
+                    Rectangle { width: 1; height: 18; color: "#252525"; anchors.verticalCenter: parent.verticalCenter }
+
+                    // ── Rating min ──
+                    Row {
+                        spacing: 3
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "★≥"
+                            color: libraryRoot.textDim; font.pixelSize: window.sp(10)
+                        }
+
+                        Repeater {
+                            model: 5
+                            Rectangle {
+                                width: 16; height: 16; radius: 3
+                                anchors.verticalCenter: parent.verticalCenter
+                                color: ratingStarMa.containsMouse ? "#2a2a2a" : "transparent"
+                                border.color: (libraryModel && index < libraryModel.filterRatingMin)
+                                              ? "#e8b84b" : "#2a2a2a"
+                                border.width: 1
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "★"
+                                    font.pixelSize: window.sp(9)
+                                    color: (libraryModel && index < libraryModel.filterRatingMin)
+                                           ? "#e8b84b" : "#2a2a2a"
+                                }
+                                MouseArea {
+                                    id: ratingStarMa; anchors.fill: parent
+                                    hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        if (!libraryModel) return
+                                        var newVal = index + 1
+                                        libraryModel.filterRatingMin =
+                                            (libraryModel.filterRatingMin === newVal) ? 0 : newVal
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Divider ──
+                    Rectangle { width: 1; height: 18; color: "#252525"; anchors.verticalCenter: parent.verticalCenter }
+
+                    // ── Energy min ──
+                    Row {
+                        spacing: 3
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "⚡≥"
+                            color: libraryRoot.textDim; font.pixelSize: window.sp(10)
+                        }
+
+                        Repeater {
+                            model: 5
+                            Rectangle {
+                                width: 16; height: 16; radius: 3
+                                anchors.verticalCenter: parent.verticalCenter
+                                color: energyDotMa.containsMouse ? "#2a2a2a" : "transparent"
+                                border.color: (libraryModel && index < libraryModel.filterEnergyMin)
+                                              ? "#e84b4b" : "#2a2a2a"
+                                border.width: 1
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "●"
+                                    font.pixelSize: window.sp(8)
+                                    color: (libraryModel && index < libraryModel.filterEnergyMin)
+                                           ? "#e84b4b" : "#2a2a2a"
+                                }
+                                MouseArea {
+                                    id: energyDotMa; anchors.fill: parent
+                                    hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        if (!libraryModel) return
+                                        var newVal = index + 1
+                                        libraryModel.filterEnergyMin =
+                                            (libraryModel.filterEnergyMin === newVal) ? 0 : newVal
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Spacer + clear button ──
+                    Item { width: 8; height: 1 }
+
+                    Rectangle {
+                        width: 48; height: 20; radius: 3
+                        anchors.verticalCenter: parent.verticalCenter
+                        color: clearFiltersMa.containsMouse ? "#2d2d2d" : "transparent"
+                        border.color: "#2a2a2a"; border.width: 1
+                        visible: libraryModel && (
+                            libraryModel.filterBpmMin > 0 ||
+                            libraryModel.filterBpmMax > 0 ||
+                            libraryModel.filterKey !== "" ||
+                            libraryModel.filterGenre !== "" ||
+                            libraryModel.filterRatingMin > 0 ||
+                            libraryModel.filterEnergyMin > 0)
+                        Behavior on color { ColorAnimation { duration: 100 } }
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "✕ Clear"
+                            color: "#e06060"; font.pixelSize: window.sp(9)
+                        }
+                        MouseArea {
+                            id: clearFiltersMa; anchors.fill: parent
+                            hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (libraryModel) libraryModel.clearFilters()
+                                bpmMinField.text = ""
+                                bpmMaxField.text = ""
+                                keyFilterField.text = ""
+                                genreFilterField.text = ""
+                            }
+                        }
+                    }
+                }
+            }
+
             // ── View area ──────────────────────────────────────────────────
             Item {
                 Layout.fillWidth: true
@@ -2061,6 +2618,8 @@ Rectangle {
                             required property int    bitrateKbps
                             required property bool   isAnalyzed
                             required property string filePath
+                            required property string trackColor
+                            required property int    rating
                             rowIndex: index
                             rowTrackId: trackId
                             rowTitle: title
@@ -2071,6 +2630,8 @@ Rectangle {
                             rowBitrateKbps: bitrateKbps
                             rowIsAnalyzed: isAnalyzed
                             rowFilePath: filePath
+                            rowColor: trackColor
+                            rowRating: rating
                             width: ListView.view.width
                             viewWidth: ListView.view.width
                         }
@@ -2232,6 +2793,8 @@ Rectangle {
                             readonly property int    bitrateKbps: modelData.bitrateKbps ?? 0
                             readonly property bool   isAnalyzed: modelData.isAnalyzed ?? false
                             readonly property string filePath:   modelData.filePath   ?? ""
+                            readonly property string trackColor: modelData.color      ?? ""
+                            readonly property int    trackRating: modelData.rating    ?? 0
                             rowIndex: index
                             rowTrackId: trackId
                             rowTitle: title
@@ -2242,6 +2805,8 @@ Rectangle {
                             rowBitrateKbps: bitrateKbps
                             rowIsAnalyzed: isAnalyzed
                             rowFilePath: filePath
+                            rowColor: trackColor
+                            rowRating: trackRating
                             width: ListView.view.width
                             viewWidth: ListView.view.width
                             isPlaylistTrack: true
@@ -2265,7 +2830,210 @@ Rectangle {
                 }
 
                 // ════════════════════════════════════════════════
-                // C) FILE BROWSER
+                // C) VARLIST VIEW  (Favorites / History / Crate / Queue / Smart Collection)
+                // ════════════════════════════════════════════════
+                Rectangle {
+                    id: varlistView
+                    anchors.fill: parent
+                    color: libraryRoot.bgBase
+                    visible: libraryRoot._varlistTabs.indexOf(libraryRoot.activeTab) >= 0
+
+                    // ── Column header (compact mode) ───────────────────────
+                    Rectangle {
+                        id: varlistHeader
+                        anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
+                        height: libraryRoot.hdrH
+                        color: libraryRoot.bgHeader
+                        visible: libraryRoot.viewMode === "compact"
+                        Rectangle {
+                            anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
+                            height: 1; color: libraryRoot.borderMain
+                        }
+                        Row {
+                            anchors.fill: parent; anchors.leftMargin: 6
+                            Item { width: libraryRoot.colStatus; height: parent.height
+                                Text { anchors.centerIn: parent; text: "●"; color: libraryRoot.textDim; font.pixelSize: window.sp(8) } }
+                            Text {
+                                width: libraryRoot.colTitle(varlistView.width)
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "TITEL"; color: libraryRoot.textDim
+                                font.pixelSize: window.sp(9); font.bold: true; font.letterSpacing: 0.8
+                            }
+                            Text {
+                                width: libraryRoot.colArtist(varlistView.width)
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "ARTIST"; color: libraryRoot.textDim
+                                font.pixelSize: window.sp(9); font.bold: true; font.letterSpacing: 0.8
+                            }
+                            Text { width: libraryRoot.colTime; anchors.verticalCenter: parent.verticalCenter
+                                text: "ZEIT"; color: libraryRoot.textDim; font.pixelSize: window.sp(9); font.bold: true; horizontalAlignment: Text.AlignHCenter }
+                            Text { width: libraryRoot.colBpm; anchors.verticalCenter: parent.verticalCenter
+                                text: "BPM"; color: libraryRoot.textDim; font.pixelSize: window.sp(9); font.bold: true; horizontalAlignment: Text.AlignHCenter }
+                            Text { width: libraryRoot.colKey; anchors.verticalCenter: parent.verticalCenter
+                                text: "KEY"; color: libraryRoot.textDim; font.pixelSize: window.sp(9); font.bold: true; horizontalAlignment: Text.AlignHCenter }
+                        }
+                    }
+
+                    // ── Action bar (period selector / action buttons) ───────
+                    Rectangle {
+                        id: varlistActionBar
+                        anchors.top: varlistHeader.visible ? varlistHeader.bottom : parent.top
+                        anchors.left: parent.left; anchors.right: parent.right
+                        height: 30
+                        color: "#121212"
+                        visible: libraryRoot.activeTab === "history" ||
+                                 libraryRoot.activeTab === "crate"   ||
+                                 libraryRoot.activeTab === "queue"   ||
+                                 libraryRoot.activeTab === "favorites"
+                        Rectangle {
+                            anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
+                            height: 1; color: libraryRoot.borderMain
+                        }
+
+                        // ── History: period tabs ────────────────────────────
+                        Row {
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.left: parent.left; anchors.leftMargin: 10
+                            spacing: 4
+                            visible: libraryRoot.activeTab === "history"
+
+                            Repeater {
+                                model: [
+                                    { key: "today", label: "Heute" },
+                                    { key: "week",  label: "Woche" },
+                                    { key: "month", label: "Monat" },
+                                    { key: "all",   label: "Alle"  }
+                                ]
+                                Rectangle {
+                                    required property var modelData
+                                    width: periodLbl.implicitWidth + 16; height: 20; radius: 3
+                                    color: libraryRoot.historyPeriod === modelData.key ? libraryRoot.accentBlue : "#1a1a1a"
+                                    border.color: libraryRoot.historyPeriod === modelData.key ? libraryRoot.accentBlue : "#2a2a2a"
+                                    border.width: 1
+                                    Behavior on color { ColorAnimation { duration: 100 } }
+                                    Text {
+                                        id: periodLbl
+                                        anchors.centerIn: parent
+                                        text: modelData.label
+                                        color: libraryRoot.historyPeriod === modelData.key ? "#fff" : libraryRoot.textDim
+                                        font.pixelSize: window.sp(10)
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                        onClicked: libraryRoot.loadHistory(modelData.key)
+                                    }
+                                }
+                            }
+                        }
+
+                        // ── Count label ─────────────────────────────────────
+                        Text {
+                            anchors.right: varlistActionsRight.left; anchors.rightMargin: 10
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: libraryRoot.currentListTracks.length + " Tracks"
+                            color: "#383838"; font.pixelSize: window.sp(9)
+                        }
+
+                        // ── Right-side action buttons ───────────────────────
+                        Row {
+                            id: varlistActionsRight
+                            anchors.right: parent.right; anchors.rightMargin: 10
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 6
+
+                            // Save Crate as Playlist
+                            Rectangle {
+                                width: implicitWidth + 16; height: 20; radius: 3
+                                implicitWidth: saveCrateLbl.implicitWidth
+                                color: saveCrateMa.containsMouse ? "#1a3050" : "transparent"
+                                border.color: saveCrateMa.containsMouse ? libraryRoot.accentBlue : "#2a2a2a"; border.width: 1
+                                visible: libraryRoot.activeTab === "crate" && libraryRoot.prepareCrateTracks.length > 0
+                                Text { id: saveCrateLbl; anchors.centerIn: parent
+                                    text: "→ Playlist"; color: libraryRoot.accentBlue; font.pixelSize: window.sp(9) }
+                                MouseArea { id: saveCrateMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                    onClicked: saveCrateDialog.open() }
+                            }
+
+                            // Clear Crate
+                            Rectangle {
+                                width: implicitWidth + 16; height: 20; radius: 3
+                                implicitWidth: clearCrateLbl.implicitWidth
+                                color: clearCrateMa.containsMouse ? "#3a1a1a" : "transparent"
+                                border.color: clearCrateMa.containsMouse ? "#e06060" : "#2a2a2a"; border.width: 1
+                                visible: libraryRoot.activeTab === "crate" && libraryRoot.prepareCrateTracks.length > 0
+                                Text { id: clearCrateLbl; anchors.centerIn: parent
+                                    text: "✕ Leeren"; color: "#e06060"; font.pixelSize: window.sp(9) }
+                                MouseArea { id: clearCrateMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                    onClicked: { if (libraryDb) { libraryDb.clearPrepareCrate(); libraryRoot.loadCrate() } } }
+                            }
+
+                            // Clear Queue
+                            Rectangle {
+                                width: implicitWidth + 16; height: 20; radius: 3
+                                implicitWidth: clearQueueLbl.implicitWidth
+                                color: clearQueueMa.containsMouse ? "#3a1a1a" : "transparent"
+                                border.color: clearQueueMa.containsMouse ? "#e06060" : "#2a2a2a"; border.width: 1
+                                visible: libraryRoot.activeTab === "queue" && libraryRoot.queueTracks.length > 0
+                                Text { id: clearQueueLbl; anchors.centerIn: parent
+                                    text: "✕ Leeren"; color: "#e06060"; font.pixelSize: window.sp(9) }
+                                MouseArea { id: clearQueueMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                    onClicked: { if (libraryDb) { libraryDb.clearQueue(); libraryRoot.loadQueue() } } }
+                            }
+                        }
+                    }
+
+                    ListView {
+                        id: varlistTrackList
+                        anchors.top: varlistActionBar.visible ? varlistActionBar.bottom
+                                   : varlistHeader.visible ? varlistHeader.bottom : parent.top
+                        anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+                        clip: true
+                        model: libraryRoot.currentListTracks
+                        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                        delegate: TrackRow {
+                            required property var  modelData
+                            required property int  index
+                            rowIndex:       index
+                            rowTrackId:     modelData.trackId  || ""
+                            rowTitle:       modelData.title    || ""
+                            rowArtist:      modelData.artist   || ""
+                            rowDurationSec: modelData.durationSec || 0
+                            rowBpm:         modelData.bpm      || 0
+                            rowKey:         modelData.key      || ""
+                            rowBitrateKbps: modelData.bitrateKbps || 0
+                            rowIsAnalyzed:  modelData.isAnalyzed  || false
+                            rowFilePath:    modelData.filePath || ""
+                            rowColor:       modelData.color    || ""
+                            rowRating:      modelData.rating   || 0
+                            rowSourceTab:   libraryRoot.activeTab
+                            width: ListView.view.width
+                            viewWidth: ListView.view.width
+                        }
+
+                        Column {
+                            anchors.centerIn: parent
+                            visible: varlistTrackList.count === 0
+                            spacing: 10
+                            Text { anchors.horizontalCenter: parent.horizontalCenter
+                                text: libraryRoot.activeTab === "favorites" ? "★"
+                                    : libraryRoot.activeTab === "history"   ? "⏱"
+                                    : libraryRoot.activeTab === "crate"     ? "⊞"
+                                    : libraryRoot.activeTab === "queue"     ? "►" : "◈"
+                                color: "#252525"; font.pixelSize: window.sp(42) }
+                            Text { anchors.horizontalCenter: parent.horizontalCenter
+                                text: libraryRoot.activeTab === "favorites" ? "No favorites yet"
+                                    : libraryRoot.activeTab === "history"   ? "No play history"
+                                    : libraryRoot.activeTab === "crate"     ? "Prepare crate is empty"
+                                    : libraryRoot.activeTab === "queue"     ? "Queue is empty"
+                                    : "No tracks match"
+                                color: "#333333"; font.pixelSize: window.sp(12) }
+                        }
+                    }
+                }
+
+                // ════════════════════════════════════════════════
+                // D) FILE BROWSER
                 // ════════════════════════════════════════════════
                 Rectangle {
                     anchors.fill: parent; color: libraryRoot.bgBase
@@ -2410,6 +3178,7 @@ Rectangle {
                     anchors.fill: parent; color: libraryRoot.bgBase
                     visible: libraryRoot.activeTab !== "files" && libraryRoot.activeTab !== "library"
                              && libraryRoot.activeTab !== "playlist"
+                             && libraryRoot._varlistTabs.indexOf(libraryRoot.activeTab) < 0
 
                     Column {
                         anchors.centerIn: parent; spacing: 12
@@ -2507,6 +3276,120 @@ Rectangle {
             onTriggered: {
                 if (libraryDb && libraryRoot.ctxTrackId)
                     libraryDb.removeTrackFromPlaylist(libraryRoot.currentPlaylistId, libraryRoot.ctxTrackId)
+            }
+        }
+        MenuItem {
+            text: "Notes bearbeiten…"
+            contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+            onTriggered: {
+                libraryRoot.notesPanelTrackId = libraryRoot.ctxTrackId
+                libraryRoot.notesPanelTitle   = libraryRoot.ctxTitle
+                libraryRoot.notesPanelOpen    = true
+            }
+        }
+        MenuSeparator { contentItem: Rectangle { height: 1; color: "#2a2a2a" } }
+
+        // ── Rating submenu ──────────────────────────────────────────────
+        Menu {
+            title: "Bewertung setzen"
+            background: Rectangle { implicitWidth: 160; color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
+            contentItem: Text { leftPadding: 12; text: "Bewertung setzen ★"; color: "#dcdcdc"; font.pixelSize: window.sp(11) }
+
+            Repeater {
+                model: [
+                    { stars: 0, label: "— Keine" },
+                    { stars: 1, label: "★ 1" },
+                    { stars: 2, label: "★★ 2" },
+                    { stars: 3, label: "★★★ 3" },
+                    { stars: 4, label: "★★★★ 4" },
+                    { stars: 5, label: "★★★★★ 5" }
+                ]
+                MenuItem {
+                    required property var modelData
+                    text: modelData.label
+                    contentItem: Text { text: parent.text; color: "#e8b84b"; font.pixelSize: window.sp(11); leftPadding: 12 }
+                    background: Rectangle { color: parent.highlighted ? "#2a2a10" : "transparent" }
+                    onTriggered: {
+                        if (libraryDb && libraryRoot.ctxTrackId)
+                            libraryDb.setTrackRating(libraryRoot.ctxTrackId, modelData.stars)
+                    }
+                }
+            }
+        }
+
+        // ── Color picker submenu ────────────────────────────────────────
+        Menu {
+            title: "Farbe setzen"
+            background: Rectangle { implicitWidth: 160; color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
+            contentItem: Text { leftPadding: 12; text: "Farbe setzen ●"; color: "#dcdcdc"; font.pixelSize: window.sp(11) }
+
+            Repeater {
+                model: [
+                    { hex: "",        label: "— Keine"   },
+                    { hex: "#e84040", label: "● Rot"     },
+                    { hex: "#e87830", label: "● Orange"  },
+                    { hex: "#e8c030", label: "● Gelb"    },
+                    { hex: "#40c040", label: "● Grün"    },
+                    { hex: "#4090e8", label: "● Blau"    },
+                    { hex: "#a040e8", label: "● Lila"    },
+                    { hex: "#e040a0", label: "● Pink"    }
+                ]
+                MenuItem {
+                    required property var modelData
+                    text: modelData.label
+                    contentItem: Text { text: parent.text; color: modelData.hex || "#888"; font.pixelSize: window.sp(11); leftPadding: 12 }
+                    background: Rectangle { color: parent.highlighted ? "#1a1a2a" : "transparent" }
+                    onTriggered: {
+                        if (libraryDb && libraryRoot.ctxTrackId)
+                            libraryDb.setTrackColor(libraryRoot.ctxTrackId, modelData.hex)
+                    }
+                }
+            }
+        }
+
+        MenuSeparator { contentItem: Rectangle { height: 1; color: "#2a2a2a" } }
+
+        // ── Favorites / Crate / Queue (tab-sensitive) ───────────────────
+        MenuItem {
+            id: ctxFavoriteItem
+            readonly property bool isFav: libraryDb ? libraryDb.isFavorite(libraryRoot.ctxTrackId) : false
+            text: isFav ? "★ Aus Favoriten entfernen" : "★ Zu Favoriten"
+            contentItem: Text { text: parent.text; color: "#e8b84b"; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? "#2a2a10" : "transparent" }
+            onTriggered: {
+                if (!libraryDb || !libraryRoot.ctxTrackId) return
+                if (ctxFavoriteItem.isFav)
+                    libraryDb.removeFromFavorites(libraryRoot.ctxTrackId)
+                else
+                    libraryDb.addToFavorites(libraryRoot.ctxTrackId)
+                libraryRoot.loadFavorites()
+            }
+        }
+        MenuItem {
+            text: libraryRoot.activeTab === "crate" ? "⊞ Aus Crate entfernen" : "⊞ Zu Prepare Crate"
+            contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+            onTriggered: {
+                if (!libraryDb || !libraryRoot.ctxTrackId) return
+                if (libraryRoot.activeTab === "crate")
+                    libraryDb.removeFromPrepareCrate(libraryRoot.ctxTrackId)
+                else
+                    libraryDb.addToPrepareCrate(libraryRoot.ctxTrackId)
+                libraryRoot.loadCrate()
+            }
+        }
+        MenuItem {
+            text: libraryRoot.activeTab === "queue" ? "► Aus Queue entfernen" : "► In Queue"
+            contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+            onTriggered: {
+                if (!libraryDb || !libraryRoot.ctxTrackId) return
+                if (libraryRoot.activeTab === "queue")
+                    libraryDb.dequeueTrack(libraryRoot.ctxTrackId)
+                else
+                    libraryDb.enqueueTrack(libraryRoot.ctxTrackId)
+                libraryRoot.loadQueue()
             }
         }
         MenuSeparator { contentItem: Rectangle { height: 1; color: "#2a2a2a" } }
@@ -2774,6 +3657,292 @@ Rectangle {
         }
     }
 
+    // Smart Collection creation / edit dialog
+    Popup {
+        id: createSmartCollDialog
+        property string editId: ""  // empty = create, set = edit existing
+
+        modal: true; focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        width: 420
+        height: scDialogContent.implicitHeight + 28
+        x: (parent.width  - width)  / 2
+        y: (parent.height - height) / 2
+
+        background: Rectangle { color: "#1a1a1a"; border.color: "#383838"; border.width: 1; radius: 4 }
+
+        property var ruleModels: []
+
+        function addRule() {
+            ruleModels = ruleModels.concat([{ field: "bpm", op: "gte", value: "" }])
+        }
+
+        function removeRule(idx) {
+            var a = ruleModels.slice()
+            a.splice(idx, 1)
+            ruleModels = a
+        }
+
+        function buildRulesJson() {
+            var rules = []
+            for (var i = 0; i < scRulesRepeater.count; i++) {
+                var item = scRulesRepeater.itemAt(i)
+                if (item) rules.push({ field: item.ruleField, op: item.ruleOp, value: item.ruleValue })
+            }
+            return JSON.stringify(rules)
+        }
+
+        function doSave() {
+            var n = scNameField.text.trim()
+            if (!n || !libraryDb) return
+            var rj = buildRulesJson()
+            if (editId)
+                libraryDb.updateSmartCollection(editId, n, rj)
+            else
+                libraryDb.createSmartCollection(n, rj)
+            libraryRoot.loadSmartCollections()
+        }
+
+        onOpened: {
+            scNameField.text = ""
+            ruleModels = [{ field: "bpm", op: "gte", value: "" }]
+            scNameField.forceActiveFocus()
+        }
+        onClosed: { editId = ""; ruleModels = [] }
+
+        Column {
+            id: scDialogContent
+            anchors.left: parent.left; anchors.right: parent.right
+            anchors.top: parent.top; anchors.margins: 14
+            spacing: 10
+
+            Text {
+                text: createSmartCollDialog.editId ? "Smart Collection bearbeiten" : "Neue Smart Collection"
+                color: libraryRoot.textPrimary; font.pixelSize: window.sp(12); font.bold: true
+            }
+
+            // Name field
+            Rectangle {
+                width: parent.width; height: 26; radius: 2
+                color: "#0e0e0e"
+                border.color: scNameField.activeFocus ? libraryRoot.accentBlue : "#2c2c2c"; border.width: 1
+
+                TextField {
+                    id: scNameField
+                    anchors.fill: parent
+                    color: libraryRoot.textPrimary; font.pixelSize: window.sp(11)
+                    placeholderText: "Name…"; leftPadding: 8; topPadding: 0; bottomPadding: 0
+                    background: Item {}
+                    Keys.onEscapePressed: createSmartCollDialog.close()
+                }
+            }
+
+            // Rules
+            Text {
+                text: "REGELN"
+                color: "#484848"; font.pixelSize: window.sp(9); font.bold: true; font.letterSpacing: 1.2
+            }
+
+            Column {
+                width: parent.width; spacing: 4
+
+                Repeater {
+                    id: scRulesRepeater
+                    model: createSmartCollDialog.ruleModels
+
+                    Item {
+                        id: ruleRow
+                        width: scDialogContent.width; height: 26
+                        required property var modelData
+                        required property int index
+
+                        property string ruleField: fieldBox.currentText
+                        property string ruleOp:    opBox.currentText
+                        property string ruleValue: ruleValField.text
+
+                        Row {
+                            anchors.fill: parent; spacing: 4
+
+                            ComboBox {
+                                id: fieldBox
+                                width: 90; height: parent.height
+                                model: ["bpm","key","genre","rating","energy","playCount","dateAdded","title","artist","album","isAnalyzed"]
+                                currentIndex: model.indexOf(ruleRow.modelData.field) >= 0
+                                             ? model.indexOf(ruleRow.modelData.field) : 0
+                                background: Rectangle { radius: 2; color: "#0e0e0e"; border.color: "#2c2c2c"; border.width: 1 }
+                                contentItem: Text { leftPadding: 6; text: fieldBox.currentText
+                                    color: libraryRoot.textPrimary; font.pixelSize: window.sp(10)
+                                    verticalAlignment: Text.AlignVCenter }
+                                delegate: ItemDelegate {
+                                    width: fieldBox.width
+                                    contentItem: Text { text: modelData; color: libraryRoot.textPrimary
+                                        font.pixelSize: window.sp(10); leftPadding: 6 }
+                                    background: Rectangle { color: highlighted ? "#1d5d9e" : "#1e1e1e" }
+                                }
+                                popup: Popup {
+                                    y: fieldBox.height + 2; width: fieldBox.width
+                                    padding: 0
+                                    background: Rectangle { color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
+                                    contentItem: ListView { implicitHeight: contentHeight; model: fieldBox.delegateModel; clip: true }
+                                }
+                            }
+
+                            ComboBox {
+                                id: opBox
+                                width: 90; height: parent.height
+                                model: ["gte","lte","gt","lt","eq","ne","contains","not_contains","is_empty","is_not_empty"]
+                                currentIndex: model.indexOf(ruleRow.modelData.op) >= 0
+                                             ? model.indexOf(ruleRow.modelData.op) : 0
+                                background: Rectangle { radius: 2; color: "#0e0e0e"; border.color: "#2c2c2c"; border.width: 1 }
+                                contentItem: Text { leftPadding: 6; text: opBox.currentText
+                                    color: libraryRoot.textPrimary; font.pixelSize: window.sp(10)
+                                    verticalAlignment: Text.AlignVCenter }
+                                delegate: ItemDelegate {
+                                    width: opBox.width
+                                    contentItem: Text { text: modelData; color: libraryRoot.textPrimary
+                                        font.pixelSize: window.sp(10); leftPadding: 6 }
+                                    background: Rectangle { color: highlighted ? "#1d5d9e" : "#1e1e1e" }
+                                }
+                                popup: Popup {
+                                    y: opBox.height + 2; width: opBox.width
+                                    padding: 0
+                                    background: Rectangle { color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
+                                    contentItem: ListView { implicitHeight: contentHeight; model: opBox.delegateModel; clip: true }
+                                }
+                            }
+
+                            Rectangle {
+                                width: parent.width - fieldBox.width - opBox.width - 28 - 12; height: parent.height
+                                radius: 2; color: "#0e0e0e"
+                                border.color: ruleValField.activeFocus ? libraryRoot.accentBlue : "#2c2c2c"; border.width: 1
+                                visible: opBox.currentText !== "is_empty" && opBox.currentText !== "is_not_empty"
+
+                                TextField {
+                                    id: ruleValField
+                                    anchors.fill: parent
+                                    color: libraryRoot.textPrimary; font.pixelSize: window.sp(10)
+                                    placeholderText: "Wert"; leftPadding: 6; topPadding: 0; bottomPadding: 0
+                                    text: ruleRow.modelData.value || ""
+                                    background: Item {}
+                                }
+                            }
+
+                            Rectangle {
+                                width: 24; height: parent.height; radius: 2
+                                color: rmRuleMa.containsMouse ? "#3a1a1a" : "transparent"
+                                border.color: rmRuleMa.containsMouse ? "#e06060" : "#2a2a2a"; border.width: 1
+                                Text { anchors.centerIn: parent; text: "×"; color: "#e06060"; font.pixelSize: window.sp(12) }
+                                MouseArea {
+                                    id: rmRuleMa; anchors.fill: parent
+                                    hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                    onClicked: createSmartCollDialog.removeRule(ruleRow.index)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Add rule button
+                Rectangle {
+                    width: 90; height: 22; radius: 2
+                    color: addRuleMa.containsMouse ? "#1a2a3a" : "transparent"
+                    border.color: addRuleMa.containsMouse ? libraryRoot.accentBlue : "#2a2a2a"; border.width: 1
+
+                    Text { anchors.centerIn: parent; text: "+ Regel"; color: libraryRoot.accentBlue; font.pixelSize: window.sp(10) }
+                    MouseArea {
+                        id: addRuleMa; anchors.fill: parent
+                        hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                        onClicked: createSmartCollDialog.addRule()
+                    }
+                }
+            }
+
+            // Buttons
+            Row {
+                anchors.right: parent.right; spacing: 6; bottomPadding: 0
+
+                Rectangle {
+                    width: 64; height: 24; radius: 2
+                    color: cancelScMa.containsMouse ? "#2e2e2e" : "#242424"
+                    border.color: "#333"; border.width: 1
+                    Text { anchors.centerIn: parent; text: "Cancel"; color: "#888"; font.pixelSize: window.sp(10) }
+                    MouseArea { id: cancelScMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                        onClicked: createSmartCollDialog.close() }
+                }
+                Rectangle {
+                    width: 64; height: 24; radius: 2
+                    color: saveScMa.containsMouse ? libraryRoot.accentBlue : "#1d5d9e"
+                    Text { anchors.centerIn: parent; text: "Speichern"; color: "#fff"; font.pixelSize: window.sp(10) }
+                    MouseArea { id: saveScMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                        onClicked: { createSmartCollDialog.doSave(); createSmartCollDialog.close() } }
+                }
+            }
+        }
+    }
+
+    // Save Crate as Playlist dialog
+    Popup {
+        id: saveCrateDialog
+        modal: true; focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        width: 270; height: 104
+        x: (parent.width  - width)  / 2
+        y: (parent.height - height) / 2
+        background: Rectangle { color: "#1e1e1e"; border.color: "#383838"; border.width: 1; radius: 3 }
+
+        Column {
+            anchors.fill: parent; anchors.margins: 14; spacing: 8
+
+            Text { text: "Crate als Playlist speichern"
+                color: libraryRoot.textPrimary; font.pixelSize: window.sp(12); font.bold: true }
+
+            Rectangle {
+                width: parent.width; height: 26; radius: 2
+                color: "#141414"
+                border.color: saveCrateNameField.activeFocus ? libraryRoot.accentBlue : "#2c2c2c"; border.width: 1
+
+                TextField {
+                    id: saveCrateNameField
+                    anchors.fill: parent
+                    color: libraryRoot.textPrimary; font.pixelSize: window.sp(11)
+                    background: Item {}
+                    leftPadding: 8; topPadding: 0; bottomPadding: 0
+                    placeholderText: "Playlist-Name…"
+                    Keys.onReturnPressed: { doSaveCrate(); saveCrateDialog.close() }
+                    Keys.onEscapePressed: saveCrateDialog.close()
+                }
+            }
+
+            Row {
+                anchors.right: parent.right; spacing: 6
+
+                Rectangle {
+                    width: 64; height: 24; radius: 2
+                    color: cancelSaveCrateMa.containsMouse ? "#2e2e2e" : "#242424"
+                    border.color: "#333"; border.width: 1
+                    Text { anchors.centerIn: parent; text: "Cancel"; color: "#888"; font.pixelSize: window.sp(10) }
+                    MouseArea { id: cancelSaveCrateMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                        onClicked: saveCrateDialog.close() }
+                }
+                Rectangle {
+                    width: 64; height: 24; radius: 2
+                    color: okSaveCrateMa.containsMouse ? libraryRoot.accentBlue : "#1d5d9e"
+                    Text { anchors.centerIn: parent; text: "Speichern"; color: "#fff"; font.pixelSize: window.sp(10) }
+                    MouseArea { id: okSaveCrateMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                        onClicked: { doSaveCrate(); saveCrateDialog.close() } }
+                }
+            }
+        }
+
+        function doSaveCrate() {
+            var n = saveCrateNameField.text.trim()
+            if (!n || !libraryDb) return
+            libraryDb.savePrepareCrateAsPlaylist(n)
+        }
+
+        onOpened: { saveCrateNameField.text = ""; saveCrateNameField.forceActiveFocus() }
+    }
+
     // Delete confirmation popup
     Popup {
         id: deleteConfirmPopup
@@ -2827,6 +3996,113 @@ Rectangle {
                             deleteConfirmPopup.close()
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // Track notes panel — slides up from the bottom of the content area
+    Rectangle {
+        id: notesPanel
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: libraryRoot.notesPanelOpen ? 160 : 0
+        clip: true
+        color: "#161616"
+        border.color: "#2a2a2a"; border.width: notesPanel.height > 0 ? 1 : 0
+        z: 300
+
+        Behavior on height { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+
+        // Load notes when panel opens
+        property string loadedNotes: ""
+        onVisibleChanged: if (libraryRoot.notesPanelOpen) loadNotesForPanel()
+
+        Connections {
+            target: libraryRoot
+            function onNotesPanelOpenChanged() {
+                if (libraryRoot.notesPanelOpen) notesPanel.loadNotesForPanel()
+            }
+            function onNotesPanelTrackIdChanged() {
+                if (libraryRoot.notesPanelOpen) notesPanel.loadNotesForPanel()
+            }
+        }
+
+        function loadNotesForPanel() {
+            if (!libraryDb || !libraryRoot.notesPanelTrackId) { loadedNotes = ""; return }
+            var meta = libraryDb.getTrackMeta(libraryRoot.notesPanelTrackId)
+            loadedNotes = meta ? (meta.notes || "") : ""
+            notesEdit.text = loadedNotes
+        }
+
+        Column {
+            anchors.fill: parent; anchors.margins: 10; spacing: 6
+            visible: notesPanel.height > 20
+
+            // Header row
+            Row {
+                width: parent.width
+
+                Text {
+                    text: "Notes — " + libraryRoot.notesPanelTitle
+                    color: libraryRoot.textSecond; font.pixelSize: window.sp(10)
+                    elide: Text.ElideRight
+                    width: parent.width - 50
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+
+                Row {
+                    anchors.right: parent.right
+                    spacing: 6
+
+                    Rectangle {
+                        width: 52; height: 20; radius: 2
+                        color: saveNotesMa.containsMouse ? "#1a3a1a" : "transparent"
+                        border.color: saveNotesMa.containsMouse ? libraryRoot.accentGreen : "#2a2a2a"; border.width: 1
+                        Text { anchors.centerIn: parent; text: "Speichern"; color: libraryRoot.accentGreen; font.pixelSize: window.sp(9) }
+                        MouseArea {
+                            id: saveNotesMa; anchors.fill: parent
+                            hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (libraryDb && libraryRoot.notesPanelTrackId)
+                                    libraryDb.setTrackNotes(libraryRoot.notesPanelTrackId, notesEdit.text)
+                                libraryRoot.notesPanelOpen = false
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: 20; height: 20; radius: 2
+                        color: closeNotesMa.containsMouse ? "#2d2d2d" : "transparent"
+                        border.color: "#2a2a2a"; border.width: 1
+                        Text { anchors.centerIn: parent; text: "×"; color: "#888"; font.pixelSize: window.sp(12) }
+                        MouseArea {
+                            id: closeNotesMa; anchors.fill: parent
+                            hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                            onClicked: libraryRoot.notesPanelOpen = false
+                        }
+                    }
+                }
+            }
+
+            // Notes text area
+            Rectangle {
+                width: parent.width
+                height: parent.height - 30
+                color: "#0e0e0e"; radius: 2
+                border.color: notesEdit.activeFocus ? libraryRoot.accentBlue : "#222"; border.width: 1
+
+                TextArea {
+                    id: notesEdit
+                    anchors.fill: parent
+                    anchors.margins: 4
+                    color: libraryRoot.textPrimary
+                    font.pixelSize: window.sp(11)
+                    wrapMode: TextArea.Wrap
+                    background: Item {}
+                    selectByMouse: true
+                    Keys.onEscapePressed: libraryRoot.notesPanelOpen = false
                 }
             }
         }

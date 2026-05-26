@@ -270,6 +270,10 @@ int main(int argc, char *argv[])
     libraryTableModel->refresh();
     logStartupStep("LibraryTableModel refreshed");
 
+    // Keep library view in sync when rating/color/notes/energy change.
+    QObject::connect(libraryDb.get(), &LibraryDatabase::trackMetaChanged,
+                     libraryTableModel.get(), &LibraryTableModel::refreshMetaForTrack);
+
     libraryAnalysisManager->setLibraryDatabase(libraryDb.get());
 
     engine.addImageProvider("coverart", coverProvider.release());

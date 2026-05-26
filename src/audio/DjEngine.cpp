@@ -2805,6 +2805,8 @@ void DjEngine::populateMetadataFromReader(const juce::AudioFormatReader& reader,
     m_trackTitle = metaValue(metaMap, {"title", "id3title", "tit2", "tt2", "name", "tracktitle", "song"});
     m_trackArtist = metaValue(metaMap, {"artist", "id3artist", "tpe1", "albumartist", "tpe2", "band", "performer", "leadartist"});
     m_trackAlbum = metaValue(metaMap, {"album", "id3album", "talb", "record", "albumtitle"});
+    m_trackGenre = metaValue(metaMap, {"genre", "tcon", "contenttype"});
+    m_trackComment = metaValue(metaMap, {"comment", "comm", "description"});
     m_trackKey = metaValue(metaMap, {"key", "tkey", "initialkey", "musickey", "keysig"});
 
     // Tag BPM is used immediately; the background analyzer will overwrite it later.
@@ -2818,10 +2820,14 @@ void DjEngine::populateMetadataFromReader(const juce::AudioFormatReader& reader,
         TagLib::FileRef tlFile(rawPath.toLocal8Bit().constData());
         if (!tlFile.isNull() && tlFile.tag()) {
             const TagLib::Tag* tag = tlFile.tag();
-            const QString tlTitle  = cleanup(QString::fromStdString(tag->title().to8Bit(true)));
-            const QString tlArtist = cleanup(QString::fromStdString(tag->artist().to8Bit(true)));
-            if (m_trackTitle.isEmpty()  && !tlTitle.isEmpty())  m_trackTitle  = tlTitle;
-            if (m_trackArtist.isEmpty() && !tlArtist.isEmpty()) m_trackArtist = tlArtist;
+            const QString tlTitle   = cleanup(QString::fromStdString(tag->title().to8Bit(true)));
+            const QString tlArtist  = cleanup(QString::fromStdString(tag->artist().to8Bit(true)));
+            const QString tlGenre   = cleanup(QString::fromStdString(tag->genre().to8Bit(true)));
+            const QString tlComment = cleanup(QString::fromStdString(tag->comment().to8Bit(true)));
+            if (m_trackTitle.isEmpty()   && !tlTitle.isEmpty())   m_trackTitle   = tlTitle;
+            if (m_trackArtist.isEmpty()  && !tlArtist.isEmpty())  m_trackArtist  = tlArtist;
+            if (m_trackGenre.isEmpty()   && !tlGenre.isEmpty())   m_trackGenre   = tlGenre;
+            if (m_trackComment.isEmpty() && !tlComment.isEmpty()) m_trackComment = tlComment;
         }
     }
 
@@ -2863,11 +2869,14 @@ bool DjEngine::hydrateLibraryStateForTrack(const QString& rawPath, double durati
     // Prefer the existing DB id for this file path so that analysis data and cue points
     // are preserved even when metadata (and thus a freshly-generated hash) has changed.
     const QString existingId = m_libraryDb->trackIdForFilePath(rawPath);
-    m_currentTrackId = existingId.isEmpty()
+    m_currentTrackId    = existingId.isEmpty()
         ? TrackIdGenerator::generate(m_trackArtist, m_trackTitle, durSec, rawPath)
         : existingId;
+    m_playLogged       = false;
+    m_playedAccumSec   = 0.0;
     m_libraryDb->addTrack(m_currentTrackId,
-                          m_trackTitle, m_trackArtist, durSec, rawPath, bitrateKbps);
+                          m_trackTitle, m_trackArtist, durSec, rawPath, bitrateKbps,
+                          m_trackGenre, m_trackAlbum, m_trackComment);
 
     bool hasDbAnalysis = false;
     LibraryDatabase::AnalysisSnapshot cachedAnalysis;
@@ -2927,8 +2936,9 @@ void DjEngine::ejectTrack()
     readerSource.reset();
 
     resetTrackLoadState();
-    m_trackTitle.clear();  m_trackArtist.clear(); m_trackAlbum.clear();
-    m_trackKey.clear();    m_trackDuration.clear(); m_trackDurationSec = 0.0;
+    m_trackTitle.clear();   m_trackArtist.clear();  m_trackAlbum.clear();
+    m_trackGenre.clear();   m_trackComment.clear();
+    m_trackKey.clear();     m_trackDuration.clear(); m_trackDurationSec = 0.0;
     m_hasCoverArt = false; m_coverArtUrl.clear();
     if (m_coverProvider)
         m_coverProvider->clearCover(m_deckId);
@@ -2950,8 +2960,9 @@ void DjEngine::loadTrack(const QString& rawPath)
 
     // Immediately clear previous track state so the UI shows a clean slate.
     resetTrackLoadState();
-    m_trackTitle.clear(); m_trackArtist.clear(); m_trackAlbum.clear();
-    m_trackKey.clear();   m_trackDuration.clear(); m_trackDurationSec = 0.0;
+    m_trackTitle.clear();   m_trackArtist.clear();  m_trackAlbum.clear();
+    m_trackGenre.clear();   m_trackComment.clear();
+    m_trackKey.clear();     m_trackDuration.clear(); m_trackDurationSec = 0.0;
     m_hasCoverArt = false; m_coverArtUrl.clear();
     if (m_coverProvider)
         m_coverProvider->clearCover(m_deckId);
@@ -3375,6 +3386,15 @@ void DjEngine::onTimer()
     if (transportSource.isPlaying()) {
         if (!tickTransportPlaying())
             return;
+        // Accumulate real playback time for play-count logging (30-second threshold).
+        if (!m_playLogged && !m_currentTrackId.isEmpty() && m_playRequested) {
+            m_playedAccumSec += 0.004; // 4 ms timer tick
+            if (m_playedAccumSec >= 30.0) {
+                m_playLogged = true;
+                if (m_libraryDb)
+                    m_libraryDb->logPlay(m_currentTrackId);
+            }
+        }
     } else {
         tickTransportStopped();
     }
