@@ -22,6 +22,8 @@ class SettingsManager : public QObject
     Q_PROPERTY(int audioBoothFirstChannel READ getAudioBoothFirstChannel WRITE setAudioBoothFirstChannel NOTIFY audioSettingsChanged)
     Q_PROPERTY(int audioSampleRate READ getAudioSampleRate WRITE setAudioSampleRate NOTIFY audioSettingsChanged)
     Q_PROPERTY(int audioBufferSize READ getAudioBufferSize WRITE setAudioBufferSize NOTIFY audioSettingsChanged)
+    Q_PROPERTY(bool previousRunUnclean READ previousRunUnclean CONSTANT)
+    Q_PROPERTY(QString previousRunWarningMessage READ previousRunWarningMessage CONSTANT)
 
 public:
     static SettingsManager& getInstance();
@@ -83,6 +85,10 @@ public:
     int getAudioBufferSize() const;
     void setAudioBufferSize(int bufferSize);
 
+    bool previousRunUnclean() const { return m_previousRunUnclean; }
+    QString previousRunWarningMessage() const;
+    void markCleanShutdown();
+
     Q_INVOKABLE void flushToDisk();
 
 signals:
@@ -94,6 +100,7 @@ private:
     SettingsManager& operator=(const SettingsManager&) = delete;
 
     juce::ApplicationProperties appProperties;
+    bool m_previousRunUnclean = false;
 
     juce::PropertiesFile* getUserSettingsOrNull();
     void ensureMappingsDirectoryExists() const;

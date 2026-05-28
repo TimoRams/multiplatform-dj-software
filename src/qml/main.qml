@@ -20,6 +20,7 @@ ApplicationWindow {
     property bool exitManualBackupRequested: false
     property bool allowDirectClose: false
     property bool exitCleanupTriggered: false
+    property bool uncleanShutdownWarningVisible: false
     property real exitProgress: 0.0
     readonly property color unifiedGray: "#2a2a2a"
 
@@ -162,6 +163,10 @@ ApplicationWindow {
             mainLayout.visible = true
             if (typeof appConfig !== "undefined" && appConfig && !appConfig.firstRunCompleted)
                 welcomeOverlay.active = true
+            if (typeof settingsManager !== "undefined" && settingsManager && settingsManager.previousRunUnclean) {
+                uncleanShutdownWarning.visibleMessage = settingsManager.previousRunWarningMessage
+                window.uncleanShutdownWarningVisible = true
+            }
         }
     }
 
@@ -633,6 +638,82 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: window.showLibrary
+        }
+    }
+
+    // ── Previous unsafe shutdown notification ───────────────────────────────
+    Rectangle {
+        id: uncleanShutdownWarning
+        anchors.top: parent.top
+        anchors.topMargin: 18
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: Math.min(parent.width * 0.92, 640)
+        height: unsafeShutdownRow.implicitHeight + 22
+        radius: 6
+        color: "#1d1508"
+        border.color: "#8a5a14"
+        z: 1001
+        visible: window.uncleanShutdownWarningVisible
+        opacity: visible ? 1.0 : 0.0
+
+        property string visibleMessage: ""
+
+        Behavior on opacity {
+            NumberAnimation { duration: 180; easing.type: Easing.InOutQuad }
+        }
+
+        Row {
+            id: unsafeShutdownRow
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: 12
+            spacing: 10
+
+            Rectangle {
+                width: 22
+                height: 22
+                radius: 11
+                color: "#3a2505"
+                border.color: "#a76a16"
+                anchors.verticalCenter: parent.verticalCenter
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "!"
+                    color: "#ffb347"
+                    font.pixelSize: 14
+                    font.bold: true
+                }
+            }
+
+            Text {
+                width: parent.width - 64
+                text: uncleanShutdownWarning.visibleMessage
+                color: "#dfc08a"
+                font.pixelSize: window.sp(12)
+                wrapMode: Text.WordWrap
+                anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Rectangle {
+                width: 22
+                height: 22
+                radius: 3
+                anchors.verticalCenter: parent.verticalCenter
+                color: unsafeShutdownDismissHover.hovered ? "#3a2610" : "#24180a"
+                border.color: "#6a4518"
+                HoverHandler { id: unsafeShutdownDismissHover; cursorShape: Qt.PointingHandCursor }
+                TapHandler { onTapped: window.uncleanShutdownWarningVisible = false }
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "x"
+                    color: "#b78b4a"
+                    font.pixelSize: 11
+                    font.bold: true
+                }
+            }
         }
     }
 

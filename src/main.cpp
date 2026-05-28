@@ -396,6 +396,7 @@ int main(int argc, char *argv[])
         }
     } else {
         qCritical() << "[main] No root objects found after loading QML!";
+        settingsManager.markCleanShutdown();
         settingsManager.shutdown();
         QCoreApplication::exit(-1);
         return -1;
@@ -453,7 +454,6 @@ int main(int argc, char *argv[])
 
     const int ret = app.exec();
 
-    settingsManager.shutdown();
     engine.rootContext()->setContextProperty("deckA", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("deckB", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("deckC", static_cast<QObject*>(nullptr));
@@ -472,6 +472,9 @@ int main(int argc, char *argv[])
 
     juce::MessageManager::deleteInstance();
     juce::DeletedAtShutdown::deleteAll();
+
+    settingsManager.markCleanShutdown();
+    settingsManager.shutdown();
 
     return ret;
 }

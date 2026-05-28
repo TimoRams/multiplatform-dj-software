@@ -47,6 +47,12 @@ void SettingsManager::init()
     // Ensure the target directory exists before writing.
     userSettings->getFile().getParentDirectory().createDirectory();
 
+    m_previousRunUnclean = !userSettings->getBoolValue("App/CleanShutdown", true);
+    if (m_previousRunUnclean)
+        qWarning() << "SettingsManager: previous run did not finish cleanly";
+
+    userSettings->setValue("App/CleanShutdown", false);
+    userSettings->setValue("App/CurrentRunStarted", juce::Time::getCurrentTime().toString(true, true));
     userSettings->setValue("ProofOfConcept_FileCreated", true);
     userSettings->setValue("LastRun", juce::Time::getCurrentTime().toString(true, true));
 
@@ -64,6 +70,24 @@ void SettingsManager::shutdown()
 {
     flushToDisk();
     appProperties.closeFiles();
+}
+
+QString SettingsManager::previousRunWarningMessage() const
+{
+    return m_previousRunUnclean
+        ? QStringLiteral("BrockDJ did not shut down cleanly last time. Your library was reopened on startup; please check your recent changes if anything looks off.")
+        : QString();
+}
+
+void SettingsManager::markCleanShutdown()
+{
+    auto* userSettings = getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return;
+
+    userSettings->setValue("App/CleanShutdown", true);
+    userSettings->setValue("App/LastCleanShutdown", juce::Time::getCurrentTime().toString(true, true));
+    userSettings->save();
 }
 
 juce::PropertiesFile* SettingsManager::getUserSettingsOrNull()
