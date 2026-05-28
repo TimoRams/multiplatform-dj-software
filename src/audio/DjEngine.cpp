@@ -24,7 +24,6 @@
 #include <cstring>
 #include <algorithm>
 #include <cmath>
-#include <ranges>
 #if JUCE_JACK && (JUCE_LINUX || JUCE_BSD)
 #include <jack/jack.h>
 #endif
@@ -3742,7 +3741,8 @@ QVariantList DjEngine::hotCues() const
     QVariantList out;
     out.reserve(static_cast<int>(m_hotCueSlots.size()));
 
-    for (const auto [i, slot] : std::views::enumerate(m_hotCueSlots)) {
+    for (size_t i = 0; i < m_hotCueSlots.size(); ++i) {
+        const auto& slot = m_hotCueSlots[i];
         QVariantMap m;
         m.insert("index",       static_cast<int>(i));
         m.insert("set",         slot.set);
@@ -3762,7 +3762,8 @@ bool DjEngine::isValidHotCueIndex(int index) const
 
 void DjEngine::clearHotCueState()
 {
-    for (auto [i, slot] : std::views::enumerate(m_hotCueSlots)) {
+    for (size_t i = 0; i < m_hotCueSlots.size(); ++i) {
+        auto& slot = m_hotCueSlots[i];
         slot.set = false;
         slot.positionSec = 0.0;
         slot.label.clear();
