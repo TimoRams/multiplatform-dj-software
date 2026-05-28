@@ -13,21 +13,49 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: root.stripeColor
-        border.color: "#000000"
+        color: "transparent"
+        border.color: "#050505"
         border.width: 1
+        clip: true
 
-        // Rectified (half-wave) overview — baseline at bottom, draws upward only
+        gradient: Gradient {
+            orientation: Gradient.Vertical
+            GradientStop { position: 0.00; color: "#151515" }
+            GradientStop { position: 0.48; color: root.stripeColor }
+            GradientStop { position: 1.00; color: "#060606" }
+        }
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 1
+            color: "#2c2c2c"
+            opacity: 0.7
+        }
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            height: 1
+            color: "#ffffff"
+            opacity: 0.08
+        }
+
         RgbWaveformItem {
             id: overview
             anchors.fill: parent
-            anchors.margins: 2
+            anchors.leftMargin: 2
+            anchors.rightMargin: 2
+            anchors.topMargin: 2
+            anchors.bottomMargin: 2
             engine: root.engine
             rectified: true
         }
 
         // ── Loop region — active (bright) + ghost (dim when inactive but positions set) ──
-        Rectangle {
+        Item {
             visible: root.engine !== null &&
                      root.engine.loopInPosition < root.engine.loopOutPosition
 
@@ -41,45 +69,39 @@ Item {
             anchors.bottom: overview.bottom
             x:     overview.x + _lo * overview.width
             width: Math.max(1, (_hi - _lo) * overview.width)
-            color: _active ? "#3800cc66" : "#14334433"
             z:     2
 
-            Rectangle { anchors.left:  parent.left;  anchors.top: parent.top; anchors.bottom: parent.bottom; width: 1; color: parent._active ? "#99ddbb" : "#3a6655" }
-            Rectangle { anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom; width: 1; color: parent._active ? "#99ddbb" : "#3a6655" }
-        }
-
-        // ── Hot cue markers ───────────────────────────────────────────────────
-        Repeater {
-            model: root.engine ? root.engine.hotCues : []
-            delegate: Rectangle {
-                required property var modelData
-
-                visible: modelData.set === true
-                anchors.top: overview.top
-                width: 11; height: 11
-                z: 4
-
-                readonly property string _col: (modelData.color && modelData.color !== "")
-                                               ? modelData.color : "#ff8800"
-                readonly property double _dur: (root.engine && root.engine.trackDurationSec > 0)
-                                               ? root.engine.trackDurationSec : 1.0
-                x: overview.x + (modelData.positionSec / _dur) * overview.width - width / 2
-                color: _col
-
-                Text {
-                    anchors.centerIn: parent
-                    text: modelData.index + 1
-                    font.pixelSize: 7
-                    font.bold: true
-                    font.family: "monospace"
-                    color: "#000000"
-                }
+            Rectangle {
+                anchors.fill: parent
+                color: parent._active ? "#2b7cff22" : "#7fd7ff12"
+            }
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                height: 1
+                color: parent._active ? "#a9e8ff" : "#6a8d98"
+                opacity: parent._active ? 0.75 : 0.45
+            }
+            Rectangle {
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: 1
+                color: parent._active ? "#bfffe9" : "#547b73"
+            }
+            Rectangle {
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: 1
+                color: parent._active ? "#bfffe9" : "#547b73"
             }
         }
 
-        Rectangle {
+        Item {
             id: overviewPlayhead
-            width: 3
+            width: 7
             anchors.top: overview.top
             anchors.bottom: overview.bottom
             x: {
@@ -89,11 +111,36 @@ Item {
                 if (p > 1.0) p = 1.0
                 return overview.x + p * overview.width - width / 2
             }
-            color: "#ff2b2b"
-            border.color: "#ff2b2b"
-            border.width: 0
-            radius: 0
             z: 5
+
+            Rectangle {
+                anchors.centerIn: parent
+                width: 5
+                height: parent.height
+                color: "#ff1f1f"
+                opacity: 0.18
+            }
+            Rectangle {
+                anchors.centerIn: parent
+                width: 1
+                height: parent.height
+                color: "#ffffff"
+                opacity: 0.95
+            }
+            Rectangle {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: parent.top
+                width: 5
+                height: 2
+                color: "#ff3030"
+            }
+            Rectangle {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                width: 5
+                height: 2
+                color: "#ff3030"
+            }
         }
 
         // Scrubbing / seeking

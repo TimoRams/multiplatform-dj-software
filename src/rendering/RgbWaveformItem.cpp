@@ -2,6 +2,8 @@
 
 #include <QPainter>
 #include <algorithm>
+#include <cmath>
+#include <vector>
 
 namespace {
 
@@ -52,7 +54,9 @@ struct OverviewBin {
 struct RenderCol {
     QColor color;
     float bodyH = 0.0f;
-    float tipH  = 0.0f;   // top-edge highlight height (upper portion of bar)
+    float tipH  = 0.0f;   // edge highlight height
+    float coreH = 0.0f;   // bright center detail, matching the scrolling waveform
+    float energy = 0.0f;
 };
 
 } // namespace
@@ -259,39 +263,72 @@ void RgbWaveformItem::paint(QPainter* painter)
         cols[static_cast<size_t>(x)] = {
             mixBandColor(bin.low, bin.lowMid, bin.mid, bin.high, rms),
             bodyH,
-            bodyH * 0.20f   // top-edge highlight covers upper 20% of each bar
+            bodyH * 0.18f,
+            std::max(0.8f, bodyH * 0.22f),
+            rms
         };
     }
 
     // ── Overview rendering: 3 passes ─────────────────────────────────────────────
-    // Pass 1: Soft background glow — 2px wide at very low alpha creates a halo that
-    //         adds spatial depth without muddying the color.
+    if (m_rectified) {
+        const QColor rail(255, 255, 255, 24);
+        painter->setBrush(rail);
+        painter->drawRect(QRectF(0.0, baseline - 1.0, drawWidth, 1.0));
+    }
+
+    // Pass 1: Soft dynamic glow. Louder regions get more bloom so the overview
+    // reads like a transparent energy map instead of a flat bar graph.
     for (int x = 0; x < drawWidth; ++x) {
         const auto& col = cols[static_cast<size_t>(x)];
         if (col.bodyH <= 0.0f) continue;
         const auto& c = col.color;
-        painter->setBrush(QColor(c.red(), c.green(), c.blue(), 24));
-        const double glowH = static_cast<double>(col.bodyH) * 1.08;
-        if (m_rectified)
-            painter->drawRect(QRectF(x - 0.5, baseline - glowH, 2.0, glowH + 1.0));
-        else
+        const int alpha = std::clamp(static_cast<int>(18 + col.energy * 34.0f), 18, 52);
+        painter->setBrush(QColor(c.red(), c.green(), c.blue(), alpha));
+        const double glowH = static_cast<double>(col.bodyH) * (1.20 + col.energy * 0.18);
+        if (m_rectified) {
+            painter->drawRect(QRectF(x - 1.0, baseline - glowH, 3.0, glowH + 1.0));
+            if (col.bodyH > maxBarH * 0.34f)
+                painter->drawRect(QRectF(x - 2.0, baseline - glowH * 0.82, 5.0, glowH * 0.82 + 1.0));
+        } else {
             painter->drawRect(QRectF(x - 0.5, baseline - glowH, 2.0, 2.0 * glowH + 1.0));
+        }
     }
 
-    // Pass 2: Main body bar — vivid, nearly opaque.
+    // Pass 2: Main body. Rectified overview is intentionally translucent so
+    // overlays and dense sections keep depth instead of becoming solid blocks.
     for (int x = 0; x < drawWidth; ++x) {
         const auto& col = cols[static_cast<size_t>(x)];
         if (col.bodyH <= 0.0f) continue;
         const auto& c = col.color;
-        painter->setBrush(QColor(c.red(), c.green(), c.blue(), 235));
-        if (m_rectified)
+        const int alpha = m_rectified
+            ? std::clamp(static_cast<int>(145 + col.energy * 80.0f), 145, 225)
+            : 235;
+        painter->setBrush(QColor(c.red(), c.green(), c.blue(), alpha));
+        if (m_rectified) {
             painter->drawRect(QRectF(x, baseline - col.bodyH, 1.0, col.bodyH + 1.0));
-        else
+        } else {
             painter->drawRect(QRectF(x, baseline - col.bodyH, 1.0, 2.0 * col.bodyH + 1.0));
+        }
     }
 
-    // Pass 3: Top-edge highlight — upper 20% of each bar mixed 65% toward white.
-    //         Energy peaks glow brightly at the bar tip; drops are immediately vivid.
+    // Pass 3: Inner energy detail.
+    for (int x = 0; x < drawWidth; ++x) {
+        const auto& col = cols[static_cast<size_t>(x)];
+        if (col.bodyH <= 1.0f) continue;
+        const auto& c = col.color;
+        const int cr = c.red()   + (255 - c.red())   * 52 / 100;
+        const int cg = c.green() + (255 - c.green()) * 52 / 100;
+        const int cb = c.blue()  + (255 - c.blue())  * 52 / 100;
+        painter->setBrush(QColor(cr, cg, cb, m_rectified ? 180 : 245));
+        if (m_rectified) {
+            const double y = baseline - std::max(1.0f, col.bodyH * 0.70f);
+            painter->drawRect(QRectF(x, y, 1.0, std::min<double>(col.coreH, baseline - y + 1.0)));
+        } else {
+            painter->drawRect(QRectF(x, baseline - col.coreH * 0.5f, 1.0, col.coreH));
+        }
+    }
+
+    // Pass 4: Edge highlight — energy peaks glow at the waveform silhouette.
     for (int x = 0; x < drawWidth; ++x) {
         const auto& col = cols[static_cast<size_t>(x)];
         if (col.tipH <= 0.5f) continue;
@@ -299,9 +336,9 @@ void RgbWaveformItem::paint(QPainter* painter)
         const int tr = c.red()   + (255 - c.red())   * 65 / 100;
         const int tg = c.green() + (255 - c.green()) * 65 / 100;
         const int tb = c.blue()  + (255 - c.blue())  * 65 / 100;
-        painter->setBrush(QColor(tr, tg, tb, 255));
+        painter->setBrush(QColor(tr, tg, tb, m_rectified ? 205 : 255));
         if (m_rectified) {
-            painter->drawRect(QRectF(x, baseline - col.bodyH, 1.0, col.tipH + 0.5));
+            painter->drawRect(QRectF(x, baseline - col.bodyH, 1.0, std::max(0.7f, col.tipH * 0.72f)));
         } else {
             // Bright tip at both the top and bottom edges of the symmetric bar.
             painter->drawRect(QRectF(x, baseline - col.bodyH, 1.0, col.tipH + 0.5));
