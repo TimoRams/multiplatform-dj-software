@@ -57,6 +57,7 @@ class DjEngine : public QObject
     Q_PROPERTY(QVariantList currentSegments READ currentSegments NOTIFY segmentsChanged)
 
     Q_PROPERTY(double waveformPointsPerSecond READ waveformPointsPerSecond CONSTANT)
+    Q_PROPERTY(double preRollSeconds READ getPreRollSeconds CONSTANT)
 
     Q_PROPERTY(double pixelsPerSecond READ pixelsPerSecond WRITE setPixelsPerSecond NOTIFY pixelsPerSecondChanged)
 
@@ -99,6 +100,7 @@ public:
 
     [[nodiscard]] float getProgress() const;
     [[nodiscard]] Q_INVOKABLE float getDuration() const;
+    [[nodiscard]] Q_INVOKABLE double getPreRollSeconds() const;
     [[nodiscard]] double getPosition() const;
     // Latency-compensated position in seconds, used by the waveform renderer.
     [[nodiscard]] double getVisualPosition() const;
@@ -542,9 +544,6 @@ private:
     void updateGain();
     void applyMixerEq();
     void applyMixerFilter();
-
-    // Returns the BPM-based pre-roll length: 8 bars at current BPM, capped at 32 s.
-    [[nodiscard]] double getPreRollSeconds() const;
 
     // m_latencySeconds tracks effective output latency reported by the audio device.
     // getOutputLatencyInSamples() is JUCE's callback->speaker delay and already

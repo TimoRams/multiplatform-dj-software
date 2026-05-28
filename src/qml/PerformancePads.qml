@@ -125,7 +125,8 @@ Item {
         if (current === undefined || isNaN(current))
             current = root.engine.progress * duration
         var nextPos = current + beats * root.beatDurationSeconds()
-        nextPos = Math.max(0.0, Math.min(duration, nextPos))
+        var preRoll = root.engine.preRollSeconds || 0.0
+        nextPos = Math.max(-preRoll, Math.min(duration, nextPos))
         root.engine.setPosition(nextPos / duration)
     }
 

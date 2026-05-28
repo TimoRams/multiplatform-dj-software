@@ -2685,9 +2685,7 @@ double DjEngine::getPosition() const
 double DjEngine::getVisualPosition() const
 {
     // In absolute scratch mode the waveform must track the raw input target
-    // directly, not the spring-lagged m_scrubHoldPosition.  Spring lag at
-    // normal scratch speed is ~20–160 ms, making the wrap appear to fire
-    // before the loop boundary marker from the user's perspective.
+    // directly so drag gestures stay 1:1 with the song timeline.
     if (m_isScrubbing && m_scratchAbsolutePositionControl)
         return m_scratchAbsoluteTargetPosition;
 
@@ -3269,11 +3267,29 @@ void DjEngine::setPosition(float progress)
 {
     double len = transportSource.getLengthInSeconds();
     if (len > 0.0) {
-        const double newPos = progress * len;
-        transportSource.setPosition(newPos);
-        ensureTransportRunningForPlayIntent();
+        const double newPos = std::clamp(static_cast<double>(progress) * len,
+                                         -PRE_ROLL_SECONDS,
+                                         len);
+        m_preRollCountdownActive = false;
+        if (newPos < 0.0) {
+            transportSource.stop();
+            transportSource.setPosition(0.0);
+            m_scrubHoldPosition = newPos;
+            m_atomicPlayheadPos.store(newPos, std::memory_order_relaxed);
+            m_snapValid = false;
+            if (m_playRequested) {
+                m_preRollCountdownActive = true;
+                m_preRollVisualStartPos = newPos;
+                m_preRollClock.restart();
+            }
+        } else {
+            transportSource.setPosition(newPos);
+            m_scrubHoldPosition = newPos;
+            ensureTransportRunningForPlayIntent();
+            armSnapFromTransportPosition();
+        }
         if (m_analyzer && m_analyzer->isThreadRunning())
-            m_analyzer->setSeekHint(newPos);
+            m_analyzer->setSeekHint(std::max(0.0, newPos));
     }
     emit progressChanged();
 }
@@ -3336,13 +3352,8 @@ void DjEngine::updateScrubPlayheadAnchor()
         transportSource.stop();
 
     if (m_isScrubbing && m_scratchAbsolutePositionControl) {
-        // Audio: transport follows the spring so scratch motion is smooth.
-        transportSource.setPosition(std::max(0.0, m_scrubHoldPosition));
-        // Visual: waveform tracks the spring output (m_scrubHoldPosition) so
-        // the display has natural platter inertia — it lags behind the input and
-        // drifts when released, matching the physical feel of a weighted transport.
-        // Loop hard-snaps (setScrubPosition wrapped==true path) reset m_scrubHoldPosition
-        // to the wrapped position before this runs, so loop markers stay correct.
+        // setScrubPosition() anchors the transport on every input event. Avoid
+        // re-seeking from the timer; repeated timer seeks cause micro-stutters.
         m_atomicPlayheadPos.store(m_scrubHoldPosition, std::memory_order_relaxed);
         m_snapPosition = m_scrubHoldPosition;
         return;
@@ -3420,7 +3431,8 @@ void DjEngine::tickScratchPhysics()
     double targetRate = 0.0;
     double tau = ScratchConfig::kRateReleaseTauSec;
     if (m_isScrubbing) {
-        advanceAbsoluteScrubFollower(dtSec);
+        if (!m_scratchAbsolutePositionControl)
+            advanceAbsoluteScrubFollower(dtSec);
 
         idleSec = m_lastScrubInputClock.isValid()
             ? static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9
@@ -3436,9 +3448,7 @@ void DjEngine::tickScratchPhysics()
             return;
         }
 
-        targetRate = m_scratchAbsolutePositionControl
-            ? m_scratchTargetRate
-            : ((idleSec > ScratchConfig::kIdleTimeoutSec) ? 0.0 : m_scratchTargetRate);
+        targetRate = (idleSec > ScratchConfig::kIdleTimeoutSec) ? 0.0 : m_scratchTargetRate;
 
         tau = (std::abs(targetRate) > std::abs(m_scratchSmoothedRate))
             ? ScratchConfig::kRateAttackTauSec
@@ -4275,34 +4285,11 @@ void DjEngine::setScrubPosition(double positionSeconds)
     const double virtualDelta = positionSeconds - m_scratchLastRawInput;
     m_scratchLastRawInput = positionSeconds;
 
-    // Pre-roll has no audio data, so JUCE transport cannot represent negative
-    // time. Keep the visual/scratch position authoritative while clamping audio
-    // playback to t=0; this lets waveform and platter drags cross 0 seamlessly.
-    if (positionSeconds < 0.0 || m_scrubHoldPosition < 0.0) {
-        if (std::abs(virtualDelta) <= 2e-5)
-            return;
-
-        const double clampedPos = std::clamp(positionSeconds, -PRE_ROLL_SECONDS, len);
-        m_scrubHoldPosition = clampedPos;
-        m_scratchAbsoluteTargetPosition = clampedPos;
-        m_scratchAbsoluteFollowVelocity = 0.0;
-        transportSource.setPosition(std::max(0.0, clampedPos));
-
-        if (clampedPos >= 0.0 && !transportSource.isPlaying())
-            transportSource.start();
-
-        m_atomicPlayheadPos.store(clampedPos, std::memory_order_relaxed);
-        m_snapPosition = clampedPos;
-        m_scratchReleaseActive = false;
-        m_lastScrubInputClock.restart();
-        emit progressChanged();
-        return;
-    }
-
     if (std::abs(virtualDelta) <= 2e-5)
         return;
 
     m_scratchReleaseActive = false;
+    m_scratchAbsolutePositionControl = true;
 
     const double dtSecRaw = m_lastScrubInputClock.isValid()
         ? std::max(0.001, static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9)
@@ -4319,12 +4306,39 @@ void DjEngine::setScrubPosition(double positionSeconds)
         rawRate);
     pushScratchVelocityTick(instantaneousRate);
 
-    // Don't start transport in pre-roll: silence is the correct output there.
-    if (m_isScrubbing && !transportSource.isPlaying() && std::abs(instantaneousRate) > 0.001
-            && m_scrubHoldPosition >= 0.0)
+    double targetPos = std::clamp(positionSeconds, -PRE_ROLL_SECONDS, len);
+    if (m_loopActive && m_loopOutSec > m_loopInSec) {
+        const double lo      = m_loopInSec;
+        const double hi      = std::min(len, m_loopOutSec);
+        const double loopLen = hi - lo;
+        if (loopLen > 0.0 && !m_scrubLoopLockedToActiveLoop && targetPos >= lo)
+            m_scrubLoopLockedToActiveLoop = true;
+
+        if (loopLen > 0.0 && m_scrubLoopLockedToActiveLoop
+                && (targetPos < lo || targetPos >= hi)) {
+            const double offset = targetPos - lo;
+            targetPos = lo + std::fmod(std::fmod(offset, loopLen) + loopLen, loopLen);
+        }
+    }
+
+    // Absolute UI drags must be sample-position precise: the waveform and
+    // platter already converted pixels/degrees to seconds, so keep the engine's
+    // visual position exactly there. Audio stays clamped at t=0 in pre-roll.
+    m_scrubHoldPosition = targetPos;
+    m_scratchAbsoluteTargetPosition = targetPos;
+    m_scratchAbsoluteFollowVelocity = 0.0;
+    transportSource.setPosition(std::max(0.0, targetPos));
+
+    if (targetPos < 0.0 && transportSource.isPlaying())
+        transportSource.stop();
+    else if (targetPos >= 0.0 && !transportSource.isPlaying()
+             && std::abs(instantaneousRate) > 0.001)
         transportSource.start();
 
-    m_scratchAccumulatedMoveSec += std::abs(virtualDelta) * 0.45;
+    m_atomicPlayheadPos.store(targetPos, std::memory_order_relaxed);
+    m_snapPosition = targetPos;
+    m_scratchAccumulatedMoveSec += std::abs(virtualDelta);
+    emit progressChanged();
 }
 
 void DjEngine::pushScratchVelocityTick(double velocityRate)
