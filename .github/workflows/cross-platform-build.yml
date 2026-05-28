@@ -69,7 +69,7 @@ jobs:
       - name: Deploy Linux (AppImage)
         run: |
           mkdir -p deploy/AppDir/usr/bin deploy/AppDir/usr/share/applications deploy/AppDir/usr/share/icons/hicolor/256x256/apps
-          cp build/bin/RamsbrockDJ deploy/AppDir/usr/bin/
+          cp build/bin/BrockDJ deploy/AppDir/usr/bin/RamsbrockDJ
           cat <<EOF > deploy/AppDir/usr/share/applications/RamsbrockDJ.desktop
           [Desktop Entry]
           Type=Application
@@ -106,7 +106,7 @@ jobs:
 
           # plugin-qt replaces the binary with a wrapper script; restore the real ELF
           # and remove any wrapper artifacts (.bin / .real) it left behind
-          cp -f ../build/bin/RamsbrockDJ AppDir/usr/bin/RamsbrockDJ
+          cp -f ../build/bin/BrockDJ AppDir/usr/bin/RamsbrockDJ
           chmod +x AppDir/usr/bin/RamsbrockDJ
           rm -f AppDir/usr/bin/RamsbrockDJ.bin AppDir/usr/bin/RamsbrockDJ.real
 
@@ -343,14 +343,14 @@ jobs:
         if: matrix.os == 'macos-arm'
         run: |
           mkdir -p deploy/RamsbrockDJ.app/Contents/MacOS
-          cp build/bin/RamsbrockDJ deploy/RamsbrockDJ.app/Contents/MacOS/
+          cp build/bin/BrockDJ deploy/RamsbrockDJ.app/Contents/MacOS/RamsbrockDJ
           "$(brew --prefix qt@6)/bin/macdeployqt" deploy/RamsbrockDJ.app -qmldir=src/qml
 
       - name: Deploy (macOS Intel)
         if: matrix.os == 'macos-intel'
         run: |
           mkdir -p deploy/RamsbrockDJ.app/Contents/MacOS
-          cp build/bin/RamsbrockDJ deploy/RamsbrockDJ.app/Contents/MacOS/
+          cp build/bin/BrockDJ deploy/RamsbrockDJ.app/Contents/MacOS/RamsbrockDJ
           /usr/local/opt/qt@6/bin/macdeployqt deploy/RamsbrockDJ.app -qmldir=src/qml
 
       - name: Deploy (Windows)
@@ -358,7 +358,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path deploy\RamsbrockDJ
-          Copy-Item build\bin\RamsbrockDJ.exe deploy\RamsbrockDJ\
+          Copy-Item build\bin\BrockDJ.exe deploy\RamsbrockDJ\RamsbrockDJ.exe
           $qtBin = Join-Path $env:Qt6_DIR 'bin'
           $windeployqt = Join-Path $qtBin 'windeployqt.exe'
           & $windeployqt --qmldir src\qml deploy\RamsbrockDJ\RamsbrockDJ.exe
@@ -368,7 +368,7 @@ jobs:
         if: matrix.os == 'linux-arm'
         run: |
           mkdir -p deploy/AppDir/usr/bin deploy/AppDir/usr/share/applications deploy/AppDir/usr/share/icons/hicolor/256x256/apps
-          cp build/bin/RamsbrockDJ deploy/AppDir/usr/bin/
+          cp build/bin/BrockDJ deploy/AppDir/usr/bin/RamsbrockDJ
           cat <<EOF > deploy/AppDir/usr/share/applications/RamsbrockDJ.desktop
           [Desktop Entry]
           Type=Application
@@ -400,7 +400,7 @@ jobs:
               -e AppDir/usr/bin/RamsbrockDJ \
               --plugin qt
 
-          cp -f ../build/bin/RamsbrockDJ AppDir/usr/bin/RamsbrockDJ
+          cp -f ../build/bin/BrockDJ AppDir/usr/bin/RamsbrockDJ
           chmod +x AppDir/usr/bin/RamsbrockDJ
           rm -f AppDir/usr/bin/RamsbrockDJ.bin AppDir/usr/bin/RamsbrockDJ.real
 
