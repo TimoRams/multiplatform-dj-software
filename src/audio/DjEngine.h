@@ -15,6 +15,7 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 
+#include "TransportLimits.h"
 #include "TrackData.h"
 #include "WaveformAnalyzer.h"
 #include "fx/FxProcessor.h"
@@ -87,9 +88,9 @@ class DjEngine : public QObject
 
 public:
     static constexpr double WAVEFORM_POINTS_PER_SECOND = 1200.0;
-    // Silent pre-roll zone before beat 1: waveform/beatgrid extends backward,
+    // Silent pre-roll zone before track start (t=0): waveform/beatgrid extends backward,
     // audio output is silence (JUCE transport stays at 0 during pre-roll).
-    static constexpr double PRE_ROLL_SECONDS = 32.0;
+    static constexpr double PRE_ROLL_SECONDS = TransportLimits::kPreRollSeconds;
     static void shutdownSharedAudioDeviceManager();
     static juce::AudioDeviceManager& getSharedAudioDeviceManager();
 

@@ -9,6 +9,7 @@
 #include <cmath>
 #include <limits>
 
+#include "TransportLimits.h"
 #include "TrackSegment.h"
 
 class TrackData : public QObject
@@ -161,9 +162,9 @@ public:
         std::vector<BeatMarker> grid;
         grid.reserve(static_cast<size_t>(trackLengthSec / beatDur) + 4);
 
-        // Extend backward into pre-roll (up to 8 bars, capped at 32 s before beat 1).
+        // Extend backward into pre-roll using the transport-defined limit.
         // Positions below -preRollSec are discarded; no clamping to 0.
-        const double preRollSec = std::min(8.0 * 4.0 * beatDur, 32.0);
+        const double preRollSec = TransportLimits::kPreRollSeconds;
         // ── Backward pass (i = -1, -2, …) until we exceed the pre-roll zone ──
         for (int i = -1; ; --i) {
             double pos = newAnchorSec + i * beatDur;

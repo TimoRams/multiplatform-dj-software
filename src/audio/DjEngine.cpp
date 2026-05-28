@@ -3481,6 +3481,22 @@ void DjEngine::tickScratchPhysics()
         resamplingSource->setResamplingRatio(ratio);
     }
 
+    // In pre-roll the transport is clamped at 0; advance the visual position
+    // with the same scratch rate so motion stays continuous across 0.
+    if (!m_scratchAbsolutePositionControl && m_scrubHoldPosition < 0.0) {
+        const double len = transportSource.getLengthInSeconds();
+        if (len > 0.0) {
+            const double prevPos = m_scrubHoldPosition;
+            const double nextPos = std::clamp(
+                m_scrubHoldPosition + (m_scratchSmoothedRate * dtSec),
+                -PRE_ROLL_SECONDS,
+                len);
+            m_scrubHoldPosition = nextPos;
+            if (prevPos < 0.0 && nextPos >= 0.0)
+                transportSource.setPosition(nextPos);
+        }
+    }
+
     // Playback hysteresis: avoid rapid start/stop toggling around zero.
     const double targetDistance = m_scratchAbsolutePositionControl
         ? std::abs(m_scratchAbsoluteTargetPosition - m_scrubHoldPosition)
@@ -4259,18 +4275,24 @@ void DjEngine::setScrubPosition(double positionSeconds)
     const double virtualDelta = positionSeconds - m_scratchLastRawInput;
     m_scratchLastRawInput = positionSeconds;
 
-    // Pre-roll: the velocity model cannot move m_scrubHoldPosition because the
-    // transport is clamped at sample 0 (no negative audio data exists).
-    // Directly assign the hold position, matching the scratchBySeconds() path.
+    // Pre-roll has no audio data, so JUCE transport cannot represent negative
+    // time. Keep the visual/scratch position authoritative while clamping audio
+    // playback to t=0; this lets waveform and platter drags cross 0 seamlessly.
     if (positionSeconds < 0.0 || m_scrubHoldPosition < 0.0) {
         if (std::abs(virtualDelta) <= 2e-5)
             return;
+
         const double clampedPos = std::clamp(positionSeconds, -PRE_ROLL_SECONDS, len);
         m_scrubHoldPosition = clampedPos;
+        m_scratchAbsoluteTargetPosition = clampedPos;
+        m_scratchAbsoluteFollowVelocity = 0.0;
         transportSource.setPosition(std::max(0.0, clampedPos));
+
         if (clampedPos >= 0.0 && !transportSource.isPlaying())
             transportSource.start();
+
         m_atomicPlayheadPos.store(clampedPos, std::memory_order_relaxed);
+        m_snapPosition = clampedPos;
         m_scratchReleaseActive = false;
         m_lastScrubInputClock.restart();
         emit progressChanged();
@@ -4844,11 +4866,7 @@ void DjEngine::reSync()
 
 double DjEngine::getPreRollSeconds() const
 {
-    const double bpm = getCurrentBpm();
-    if (bpm <= 0.0)
-        return PRE_ROLL_SECONDS;
-    const double secPerBeat = 60.0 / bpm;
-    return std::min(8.0 * 4.0 * secPerBeat, PRE_ROLL_SECONDS);
+    return PRE_ROLL_SECONDS;
 }
 
 void DjEngine::updateGain()
