@@ -2684,10 +2684,11 @@ double DjEngine::getPosition() const
 
 double DjEngine::getVisualPosition() const
 {
-    // In absolute scratch mode the waveform must track the raw input target
-    // directly so drag gestures stay 1:1 with the song timeline.
+    // During scratch the waveform follows the actual platter position, not the
+    // raw mouse/turntable target. The target can lead slightly; the follower
+    // below provides the velocity/inertia that makes scratching sound natural.
     if (m_isScrubbing && m_scratchAbsolutePositionControl)
-        return m_scratchAbsoluteTargetPosition;
+        return m_scrubHoldPosition;
 
     // Pre-roll countdown: interpolate using the pre-roll wall clock so the waveform
     // scrolls smoothly at sub-frame granularity, just like the normal snap-clock path.
@@ -3303,7 +3304,7 @@ void DjEngine::advanceAbsoluteScrubFollower(double dtSec)
     if (len <= 0.0)
         return;
 
-    const double targetPos = std::clamp(m_scratchAbsoluteTargetPosition, -PRE_ROLL_SECONDS, len);
+    const double targetPos = std::clamp(m_scratchAbsoluteTargetPosition, -SCRATCH_PRE_ROLL_SECONDS, len);
     const double prevPos = m_scrubHoldPosition;
     const double errorSec = targetPos - m_scrubHoldPosition;
 
@@ -3321,7 +3322,7 @@ void DjEngine::advanceAbsoluteScrubFollower(double dtSec)
     if (std::abs(stepSec) > std::abs(errorSec))
         stepSec = errorSec;
 
-    m_scrubHoldPosition = std::clamp(m_scrubHoldPosition + stepSec, -PRE_ROLL_SECONDS, len);
+    m_scrubHoldPosition = std::clamp(m_scrubHoldPosition + stepSec, -SCRATCH_PRE_ROLL_SECONDS, len);
 
     const double residualError = targetPos - m_scrubHoldPosition;
     if (std::abs(residualError) <= ScratchConfig::kAbsoluteSnapDistanceSec
@@ -3352,8 +3353,9 @@ void DjEngine::updateScrubPlayheadAnchor()
         transportSource.stop();
 
     if (m_isScrubbing && m_scratchAbsolutePositionControl) {
-        // setScrubPosition() anchors the transport on every input event. Avoid
-        // re-seeking from the timer; repeated timer seeks cause micro-stutters.
+        // Anchor audio to the physical follower, not to the raw input target.
+        // This keeps visual movement and audible scratch position together.
+        transportSource.setPosition(std::max(0.0, m_scrubHoldPosition));
         m_atomicPlayheadPos.store(m_scrubHoldPosition, std::memory_order_relaxed);
         m_snapPosition = m_scrubHoldPosition;
         return;
@@ -3431,8 +3433,7 @@ void DjEngine::tickScratchPhysics()
     double targetRate = 0.0;
     double tau = ScratchConfig::kRateReleaseTauSec;
     if (m_isScrubbing) {
-        if (!m_scratchAbsolutePositionControl)
-            advanceAbsoluteScrubFollower(dtSec);
+        advanceAbsoluteScrubFollower(dtSec);
 
         idleSec = m_lastScrubInputClock.isValid()
             ? static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9
@@ -3499,7 +3500,7 @@ void DjEngine::tickScratchPhysics()
             const double prevPos = m_scrubHoldPosition;
             const double nextPos = std::clamp(
                 m_scrubHoldPosition + (m_scratchSmoothedRate * dtSec),
-                -PRE_ROLL_SECONDS,
+                -SCRATCH_PRE_ROLL_SECONDS,
                 len);
             m_scrubHoldPosition = nextPos;
             if (prevPos < 0.0 && nextPos >= 0.0)
@@ -4243,7 +4244,7 @@ void DjEngine::scratchBySeconds(double deltaSeconds)
         transportSource.start();
 
     const double currentPos = m_scrubHoldPosition;
-    double nextPos = std::clamp(currentPos + directStep, -PRE_ROLL_SECONDS, len);
+    double nextPos = std::clamp(currentPos + directStep, -SCRATCH_PRE_ROLL_SECONDS, len);
     if (m_loopActive && m_loopOutSec > m_loopInSec) {
         const double lo      = m_loopInSec;
         const double hi      = std::min(len, m_loopOutSec);
@@ -4306,7 +4307,7 @@ void DjEngine::setScrubPosition(double positionSeconds)
         rawRate);
     pushScratchVelocityTick(instantaneousRate);
 
-    double targetPos = std::clamp(positionSeconds, -PRE_ROLL_SECONDS, len);
+    double targetPos = std::clamp(positionSeconds, -SCRATCH_PRE_ROLL_SECONDS, len);
     if (m_loopActive && m_loopOutSec > m_loopInSec) {
         const double lo      = m_loopInSec;
         const double hi      = std::min(len, m_loopOutSec);
@@ -4321,13 +4322,14 @@ void DjEngine::setScrubPosition(double positionSeconds)
         }
     }
 
-    // Absolute UI drags must be sample-position precise: the waveform and
-    // platter already converted pixels/degrees to seconds, so keep the engine's
-    // visual position exactly there. Audio stays clamped at t=0 in pre-roll.
-    m_scrubHoldPosition = targetPos;
+    // The UI provides the raw target. The actual platter/playhead follows it
+    // with a spring-damper, so fast gestures keep moving briefly like vinyl.
     m_scratchAbsoluteTargetPosition = targetPos;
-    m_scratchAbsoluteFollowVelocity = 0.0;
-    transportSource.setPosition(std::max(0.0, targetPos));
+    m_scratchAbsoluteFollowVelocity += (instantaneousRate - m_scratchAbsoluteFollowVelocity) * 0.35;
+    m_scratchAbsoluteFollowVelocity = std::clamp(
+        m_scratchAbsoluteFollowVelocity,
+        -ScratchConfig::kAbsoluteMaxFollowRate,
+        ScratchConfig::kAbsoluteMaxFollowRate);
 
     if (targetPos < 0.0 && transportSource.isPlaying())
         transportSource.stop();
@@ -4335,8 +4337,6 @@ void DjEngine::setScrubPosition(double positionSeconds)
              && std::abs(instantaneousRate) > 0.001)
         transportSource.start();
 
-    m_atomicPlayheadPos.store(targetPos, std::memory_order_relaxed);
-    m_snapPosition = targetPos;
     m_scratchAccumulatedMoveSec += std::abs(virtualDelta);
     emit progressChanged();
 }

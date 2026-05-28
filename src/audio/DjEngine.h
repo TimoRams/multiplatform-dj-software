@@ -92,6 +92,7 @@ public:
     // Silent pre-roll zone before track start (t=0): waveform/beatgrid extends backward,
     // audio output is silence (JUCE transport stays at 0 during pre-roll).
     static constexpr double PRE_ROLL_SECONDS = TransportLimits::kPreRollSeconds;
+    static constexpr double SCRATCH_PRE_ROLL_SECONDS = PRE_ROLL_SECONDS * 4.0;
     static void shutdownSharedAudioDeviceManager();
     static juce::AudioDeviceManager& getSharedAudioDeviceManager();
 
