@@ -1,5 +1,6 @@
 # --- Build-Ordner ---
 build/
+build-*/
 bin/
 out/
 x64/

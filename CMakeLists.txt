@@ -11,6 +11,7 @@ elseif(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|i[3-6]86)$")
 endif()
 
 option(RDBJ_ENABLE_NATIVE_SIMD "Enable target-specific SIMD code generation for release builds" ${RDBJ_ENABLE_NATIVE_SIMD_DEFAULT})
+option(RDBJ_ENABLE_QML_CACHEGEN "Compile QML to C++ cache files. Disable for faster local dev builds." ON)
 
 # Ensure Qt can be found when installed via pacman (Linux only)
 if(UNIX AND NOT APPLE)
@@ -226,8 +227,14 @@ juce_add_console_app(${PROJECT_NAME}
     COMPANY_NAME "Ramsbrock.net"
 )
 
-# Pack QML files into the binary under URI "DJSoftware"
+# Pack QML files into the binary under URI "DJSoftware".
+set(_rdbj_qml_module_options)
+if(NOT RDBJ_ENABLE_QML_CACHEGEN)
+    list(APPEND _rdbj_qml_module_options NO_CACHEGEN)
+endif()
+
 qt_add_qml_module(${PROJECT_NAME}
+    ${_rdbj_qml_module_options}
     URI DJSoftware
     VERSION 1.0
     QML_FILES
