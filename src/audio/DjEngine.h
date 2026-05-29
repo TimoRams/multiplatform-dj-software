@@ -43,6 +43,7 @@ class DjEngine : public QObject
     Q_PROPERTY(double loopLengthBeats READ loopLengthBeats NOTIFY loopChanged)
     Q_PROPERTY(double loopInPosition READ loopInPosition NOTIFY loopChanged)
     Q_PROPERTY(double loopOutPosition READ loopOutPosition NOTIFY loopChanged)
+    Q_PROPERTY(double loopPreviewOutPosition READ loopPreviewOutPosition NOTIFY progressChanged)
     Q_PROPERTY(bool slipActive READ slipActive NOTIFY slipChanged)
 
     Q_PROPERTY(QString trackTitle   READ trackTitle   NOTIFY trackMetadataChanged)
@@ -244,6 +245,7 @@ public:
     [[nodiscard]] double loopLengthBeats() const { return m_loopLengthBeats; }
     [[nodiscard]] double loopInPosition() const { return m_loopInSec; }
     [[nodiscard]] double loopOutPosition() const { return m_loopOutSec; }
+    [[nodiscard]] double loopPreviewOutPosition() const;
 
     // VU meter getters — read atomic peaks from the audio thread
     [[nodiscard]] float vuLevelL() const;

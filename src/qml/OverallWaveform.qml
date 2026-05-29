@@ -54,16 +54,28 @@ Item {
             rectified: true
         }
 
-        // ── Loop region — active (bright) + ghost (dim when inactive but positions set) ──
+        // ── Loop region — active, pending LOOP IN preview, or saved ghost ──
         Item {
             visible: root.engine !== null &&
-                     root.engine.loopInPosition < root.engine.loopOutPosition
+                     root.engine.loopInSet &&
+                     _hi > _lo
 
-            readonly property bool   _active: root.engine ? root.engine.loopActive : false
+            readonly property bool   _complete: root.engine
+                                               ? root.engine.loopInPosition < root.engine.loopOutPosition
+                                               : false
+            readonly property bool   _pending: root.engine ? root.engine.loopInSet && !_complete : false
+            readonly property bool   _active: root.engine ? root.engine.loopActive && _complete : false
             readonly property double _dur:    (root.engine && root.engine.trackDurationSec > 0)
                                               ? root.engine.trackDurationSec : 1.0
-            readonly property double _lo: root.engine ? root.engine.loopInPosition  / _dur : 0.0
-            readonly property double _hi: root.engine ? root.engine.loopOutPosition / _dur : 0.0
+            readonly property double _out: root.engine
+                                           ? (_complete
+                                              ? root.engine.loopOutPosition
+                                              : (_pending
+                                                 ? root.engine.loopPreviewOutPosition
+                                                 : root.engine.loopOutPosition))
+                                           : 0.0
+            readonly property double _lo: root.engine ? root.engine.loopInPosition / _dur : 0.0
+            readonly property double _hi: root.engine ? _out / _dur : 0.0
 
             anchors.top:    overview.top
             anchors.bottom: overview.bottom
@@ -73,29 +85,30 @@ Item {
 
             Rectangle {
                 anchors.fill: parent
-                color: parent._active ? "#2b7cff22" : "#7fd7ff12"
+                color: parent._active ? "#2b7cff22"
+                    : (parent._pending ? "#2b9fff18" : "#7fd7ff12")
             }
             Rectangle {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: parent.top
                 height: 1
-                color: parent._active ? "#a9e8ff" : "#6a8d98"
-                opacity: parent._active ? 0.75 : 0.45
+                color: parent._active || parent._pending ? "#a9e8ff" : "#6a8d98"
+                opacity: parent._active ? 0.75 : (parent._pending ? 0.62 : 0.45)
             }
             Rectangle {
                 anchors.left: parent.left
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
                 width: 1
-                color: parent._active ? "#bfffe9" : "#547b73"
+                color: parent._active || parent._pending ? "#bfffe9" : "#547b73"
             }
             Rectangle {
                 anchors.right: parent.right
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
                 width: 1
-                color: parent._active ? "#bfffe9" : "#547b73"
+                color: parent._active || parent._pending ? "#bfffe9" : "#547b73"
             }
         }
 

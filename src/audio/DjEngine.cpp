@@ -2909,6 +2909,34 @@ double DjEngine::getVisualPositionQml() const
     return getVisualPosition();
 }
 
+double DjEngine::loopPreviewOutPosition() const
+{
+    if (m_loopActive && m_loopOutSec > m_loopInSec)
+        return m_loopOutSec;
+
+    if (!m_loopInSet)
+        return m_loopOutSec;
+
+    const double trackLen = m_trackDurationSec;
+    if (trackLen <= 0.0)
+        return m_loopInSec;
+
+    double outPos = static_cast<double>(getVisualPosition());
+    if (m_quantizeEnabled)
+        outPos = quantizedBeatAt(outPos);
+
+    outPos = std::clamp(outPos, -PRE_ROLL_SECONDS, trackLen);
+
+    constexpr double minLenSec = 0.001;
+    if (outPos <= m_loopInSec + minLenSec) {
+        const double beatDur = beatDurationAround(m_loopInSec);
+        if (beatDur > 1e-4)
+            outPos = std::min(trackLen, m_loopInSec + beatDur);
+    }
+
+    return outPos;
+}
+
 double DjEngine::getPlayheadPositionAtomic() const
 {
     // Lock-free load — always returns the last value written by onTimer().
@@ -5322,8 +5350,12 @@ void DjEngine::setLoopIn()
     m_loopInSec = std::clamp(pos, -PRE_ROLL_SECONDS, trackLen);
     m_loopInSet = true;
 
-    if (m_loopActive && m_loopOutSec <= m_loopInSec) {
-        m_loopOutSec = std::min(trackLen, m_loopInSec + beatDurationAround(m_loopInSec));
+    if (m_loopActive) {
+        if (m_loopOutSec <= m_loopInSec)
+            m_loopOutSec = std::min(trackLen, m_loopInSec + beatDurationAround(m_loopInSec));
+    } else {
+        m_loopOutSec = m_loopInSec;
+        m_loopLengthBeats = 0.0;
     }
     if (m_loopActive)
         applyLoopRangeToAudioSource();

@@ -1031,16 +1031,22 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     // Authoritative loop renderer. The QML overlay in EnlargedWaveform is
     // intentionally empty — all loop drawing happens here.
     //
-    // Inactive loops render as stored location markers only: loopStart→loopEnd,
-    // never influenced by the current playhead position.
+    // Completed loops render loopStart→loopEnd. While only LOOP IN is set, draw
+    // a live preview from loopStart to the exact LOOP OUT position that would be
+    // committed right now, including quantize/minimum-length handling.
     QSGGeometry* loopFillGeo = loopFillNode->geometry();
     QSGGeometry* loopLineGeo = loopLineNode->geometry();
 
-    const bool loopSet = m_engine->loopInPosition() < m_engine->loopOutPosition();
+    const bool completedLoopSet = m_engine->loopInPosition() < m_engine->loopOutPosition();
+    const bool pendingLoopSet = m_engine->loopInSet() && !completedLoopSet;
+    const bool loopSet = completedLoopSet || pendingLoopSet;
     if (loopSet) {
-        const bool   active      = m_engine->loopActive();
+        const bool   active      = completedLoopSet && m_engine->loopActive();
+        const bool   pending     = pendingLoopSet;
         const double loopInSec   = m_engine->loopInPosition();
-        const double loopOutSec  = m_engine->loopOutPosition(); // always stored end, never playhead
+        const double loopOutSec  = completedLoopSet
+            ? m_engine->loopOutPosition()
+            : m_engine->loopPreviewOutPosition();
 
         const double loopInPoint  = loopInSec  * pointsPerSec;
         const double loopOutPoint = loopOutSec * pointsPerSec;
@@ -1053,10 +1059,10 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         const float drawLeft  = std::max(0.0f, std::min(xLoopIn,  xLoopOut));
         const float drawRight = std::min(w,    std::max(xLoopIn,  xLoopOut));
 
-        // Active loops use a bright cyan tint. Inactive loops darken the stored
-        // region and add subtle rails so they read as saved-but-disabled even on
-        // dense waveform sections with similar background color.
-        const uchar fa = active ? 100 : 70;
+        // Active loops use a bright cyan tint. Pending loops use the same family
+        // at lower alpha so LOOP IN + the future LOOP OUT point stay readable
+        // without looking like the loop is already armed.
+        const uchar fa = active ? 100 : (pending ? 58 : 70);
         const float hF = static_cast<float>(height());
 
         if (drawRight > drawLeft + 0.5f) {
@@ -1078,6 +1084,11 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
 
             if (active) {
                 appendRect(drawLeft, 0.0f, drawRight, hF, 90, 180, 255, fa);
+            } else if (pending) {
+                appendRect(drawLeft, 0.0f, drawRight, hF, 45, 150, 230, fa);
+                const float railH = std::max(1.0f, 2.0f / static_cast<float>(snapScale));
+                appendRect(drawLeft, 0.0f, drawRight, railH, 135, 225, 255, 150);
+                appendRect(drawLeft, hF - railH, drawRight, hF, 135, 225, 255, 150);
             } else {
                 appendRect(drawLeft, 0.0f, drawRight, hF, 10, 18, 24, fa);
                 const float railH = std::max(1.0f, 2.0f / static_cast<float>(snapScale));
@@ -1092,15 +1103,15 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         // guaranteed consistent thickness on all GPUs and DPR settings — identical
         // approach to beat/downbeat lines (see comment at makeQuadLinesNode).
         //
-        // Active:   dark shadow (6px) + bright cyan core (2px) = 12 verts/marker.
-        // Inactive: dim core only (2px) = 6 verts/marker.
+        // Active/pending: dark shadow (6px) + bright cyan core (2px) = 12 verts/marker.
+        // Inactive:       dim core only (2px) = 6 verts/marker.
         // Neither marker is drawn when its actual position is off-screen.
         const float markerW = 2.0f / static_cast<float>(snapScale);
         const float shadowW = 6.0f / static_cast<float>(snapScale);
 
         const bool inOnScreen  = xLoopIn  >= 0.0f && xLoopIn  <= w;
         const bool outOnScreen = xLoopOut >= 0.0f && xLoopOut <= w;
-        const int  vertsPerMarker = active ? 12 : 6;
+        const int  vertsPerMarker = (active || pending) ? 12 : 6;
         loopLineGeo->allocate((inOnScreen ? vertsPerMarker : 0) +
                               (outOnScreen ? vertsPerMarker : 0));
 
@@ -1111,21 +1122,22 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             auto drawMarker = [&](float xPos) {
                 const float cxl = xPos;
                 const float cxr = xPos + markerW;
-                if (active) {
+                if (active || pending) {
                     const float sxl = cxl - (shadowW - markerW) * 0.5f;
                     const float sxr = cxl + (shadowW + markerW) * 0.5f;
+                    const uchar coreAlpha = active ? 240 : 220;
                     lv[vi++].set(sxl, 0.0f, 0,   0,   0,   90);
                     lv[vi++].set(sxl, hF,   0,   0,   0,   90);
                     lv[vi++].set(sxr, hF,   0,   0,   0,   90);
                     lv[vi++].set(sxl, 0.0f, 0,   0,   0,   90);
                     lv[vi++].set(sxr, hF,   0,   0,   0,   90);
                     lv[vi++].set(sxr, 0.0f, 0,   0,   0,   90);
-                    lv[vi++].set(cxl, 0.0f, 130, 220, 255, 240);
-                    lv[vi++].set(cxl, hF,   130, 220, 255, 240);
-                    lv[vi++].set(cxr, hF,   130, 220, 255, 240);
-                    lv[vi++].set(cxl, 0.0f, 130, 220, 255, 240);
-                    lv[vi++].set(cxr, hF,   130, 220, 255, 240);
-                    lv[vi++].set(cxr, 0.0f, 130, 220, 255, 240);
+                    lv[vi++].set(cxl, 0.0f, 130, 220, 255, coreAlpha);
+                    lv[vi++].set(cxl, hF,   130, 220, 255, coreAlpha);
+                    lv[vi++].set(cxr, hF,   130, 220, 255, coreAlpha);
+                    lv[vi++].set(cxl, 0.0f, 130, 220, 255, coreAlpha);
+                    lv[vi++].set(cxr, hF,   130, 220, 255, coreAlpha);
+                    lv[vi++].set(cxr, 0.0f, 130, 220, 255, coreAlpha);
                 } else {
                     lv[vi++].set(cxl, 0.0f, 110, 170, 210, 95);
                     lv[vi++].set(cxl, hF,   110, 170, 210, 95);
