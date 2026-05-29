@@ -21,6 +21,7 @@ ApplicationWindow {
     property bool allowDirectClose: false
     property bool exitCleanupTriggered: false
     property bool uncleanShutdownWarningVisible: false
+    property bool startupLibraryReady: false
     property real exitProgress: 0.0
     readonly property color unifiedGray: "#101010"
 
@@ -142,6 +143,35 @@ ApplicationWindow {
             window.linkedDeckName = ""
     }
 
+    function _refreshLibraryAfterStartup() {
+        if (!startupLibraryReady || typeof librarySection === "undefined" || !librarySection)
+            return
+
+        librarySection.loadPlaylists()
+        librarySection.loadAllTags()
+        librarySection.loadSmartCollections()
+        librarySection.loadFavorites()
+        librarySection.loadCrate()
+        librarySection.loadQueue()
+
+        if (typeof libraryDb !== "undefined" && libraryDb) {
+            var vm = libraryDb.getSetting("library_view_mode", librarySection.viewMode)
+            if (vm === "compact" || vm === "normal")
+                librarySection.viewMode = vm
+        }
+
+        if (typeof libraryDb !== "undefined" && libraryDb && typeof libraryModel !== "undefined" && libraryModel) {
+            var sf = libraryDb.getSetting("allTracks_sf", "title")
+            var sa = libraryDb.getSetting("allTracks_sa", "1") === "1"
+            libraryModel.setSort(sf, sa)
+        }
+
+        librarySection.syncSidebarCursorToSelection()
+        librarySection.ensureActiveTrackForCurrentTab()
+    }
+
+    onStartupLibraryReadyChanged: _refreshLibraryAfterStartup()
+
     Component.onCompleted: {
         if (typeof linkManager !== "undefined" && linkManager !== null)
             linkManager.enabledChanged.connect(window._handleLinkEnabledChanged)
@@ -154,10 +184,28 @@ ApplicationWindow {
 
     Timer {
         id: loadingTimer
-        interval: 2000
+        interval: 80
         running: true
-        repeat: false
-        onTriggered: {
+        repeat: true
+
+        property real startedAtMs: Date.now()
+        readonly property int minStageMs: 1000
+        readonly property int minTotalMs: 5200
+
+        function elapsedMs() {
+            return Date.now() - startedAtMs
+        }
+
+        function coreReady() {
+            return typeof libraryDb !== "undefined" && libraryDb
+                && typeof deckA !== "undefined" && deckA
+                && typeof deckB !== "undefined" && deckB
+                && typeof deckC !== "undefined" && deckC
+                && typeof deckD !== "undefined" && deckD
+                && typeof midiManager !== "undefined" && midiManager
+        }
+
+        function finishLoading() {
             loadingIndicator.running = false
             loadingIndicator.visible = false
             mainLayout.visible = true
@@ -168,89 +216,225 @@ ApplicationWindow {
                 window.uncleanShutdownWarningVisible = true
             }
         }
+
+        onTriggered: {
+            loadingIndicator.refreshStatus()
+            if ((coreReady() && elapsedMs() >= minTotalMs) || elapsedMs() >= 9000) {
+                stop()
+                finishLoading()
+            }
+        }
     }
 
     Item {
         id: loadingIndicator
         property bool running: true
-        anchors.centerIn: parent
+        property int activeStage: 0
+        property real stageProgress: 0.04
+        property string statusTitle: "Preparing application"
+        property string statusDetail: "Loading QML interface"
+        readonly property var startupStages: [
+            {
+                shortName: "UI",
+                name: "Interface",
+                title: "Starting interface",
+                detail: "Preparing the low-latency control surface"
+            },
+            {
+                shortName: "LIB",
+                name: "Library",
+                title: "Opening library",
+                detail: "Connecting database, playlists and browser models"
+            },
+            {
+                shortName: "AUDIO",
+                name: "Audio Engine",
+                title: "Starting audio engine",
+                detail: "Creating DSP graph and device routing"
+            },
+            {
+                shortName: "DECKS",
+                name: "Decks",
+                title: "Configuring decks",
+                detail: "Preparing waveform services and deck state"
+            },
+            {
+                shortName: "MIDI",
+                name: "MIDI",
+                title: "Connecting control layer",
+                detail: "MIDI, mapping and runtime state are online"
+            }
+        ]
+        anchors.fill: parent
         visible: true
         z: 1000
 
-        width: 260
-        height: 120
+        function refreshStatus() {
+            var elapsed = loadingTimer.elapsedMs()
+            var readyStage = 0
+
+            if (typeof libraryDb !== "undefined" && libraryDb) {
+                readyStage = 1
+            }
+            if (typeof deckA !== "undefined" && deckA && typeof deckB !== "undefined" && deckB) {
+                readyStage = 2
+            }
+            if (typeof deckC !== "undefined" && deckC && typeof deckD !== "undefined" && deckD) {
+                readyStage = 3
+            }
+            if (typeof midiManager !== "undefined" && midiManager) {
+                readyStage = 4
+            }
+
+            var visualStage = Math.min(readyStage, Math.floor(elapsed / loadingTimer.minStageMs))
+            visualStage = Math.max(0, Math.min(startupStages.length - 1, visualStage))
+
+            activeStage = visualStage
+            stageProgress = Math.max(0.04, (visualStage + 1) / startupStages.length)
+            statusTitle = startupStages[visualStage].title
+            statusDetail = startupStages[visualStage].detail
+        }
 
         Rectangle {
             anchors.fill: parent
-            color: window.unifiedGray
+            color: "#070707"
         }
 
         Column {
             anchors.centerIn: parent
-            spacing: 12
+            width: Math.min(parent.width * 0.72, 560)
+            spacing: 20
 
             Text {
                 text: "BROCK DJ"
-                color: "#e0e0e0"
-                font.pixelSize: window.sp(18)
+                color: "#f2f2f2"
+                font.pixelSize: window.sp(24)
                 font.bold: true
+                font.family: "monospace"
+                font.letterSpacing: 1.8
                 horizontalAlignment: Text.AlignHCenter
-                width: 220
+                width: parent.width
+            }
+
+            Column {
+                width: parent.width
+                spacing: 6
+
+                Text {
+                    width: parent.width
+                    text: loadingIndicator.statusTitle
+                    color: "#f0f0f0"
+                    font.pixelSize: window.sp(15)
+                    font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideRight
+                }
+
+                Text {
+                    width: parent.width
+                    text: loadingIndicator.statusDetail
+                    color: "#8f8f8f"
+                    font.pixelSize: window.sp(10)
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideRight
+                    visible: false
+                }
             }
 
             Item {
-                anchors.horizontalCenter: parent.horizontalCenter
-                width: 150
-                height: 44
+                width: parent.width
+                height: 112
 
-                Row {
-                    anchors.bottom: parent.bottom
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    spacing: 6
-                    height: 40
+                Text {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    text: loadingIndicator.statusDetail
+                    color: "#8f8f8f"
+                    font.pixelSize: window.sp(10)
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideRight
+                }
 
-                    Repeater {
-                        model: 5
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.topMargin: 28
+                    height: 2
+                    color: "#1c1c1c"
 
-                        Rectangle {
-                            id: loadBar
-                            required property int index
-                            width: 16
-                            height: 18
-                            color: "#7a7a7a"
-                            border.width: 1
-                            border.color: "#000000"
-                            radius: 0
-                            anchors.bottom: parent.bottom
+                    Rectangle {
+                        anchors.left: parent.left
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        width: Math.max(2, parent.width * loadingIndicator.stageProgress)
+                        color: "#f2f2f2"
 
-                            SequentialAnimation on height {
-                                running: loadingIndicator.running
-                                loops: Animation.Infinite
-                                alwaysRunToEnd: true
-                                PauseAnimation { duration: loadBar.index * 80 }
-                                NumberAnimation { from: 18; to: 38; duration: 320; easing.type: Easing.InOutQuad }
-                                NumberAnimation { from: 38; to: 18; duration: 320; easing.type: Easing.InOutQuad }
-                                PauseAnimation { duration: Math.max(0, 240 - loadBar.index * 30) }
-                            }
+                        Behavior on width {
+                            NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
                         }
                     }
                 }
 
-                Rectangle {
-                    anchors.bottom: parent.bottom
+                Row {
                     anchors.left: parent.left
                     anchors.right: parent.right
-                    height: 2
-                    color: "#000000"
+                    anchors.top: parent.top
+                    anchors.topMargin: 62
+                    spacing: 0
+                    Repeater {
+                        model: loadingIndicator.startupStages
+
+                        Text {
+                            required property int index
+                            required property var modelData
+                            width: parent.width / loadingIndicator.startupStages.length
+                            text: modelData.name
+                            color: loadingIndicator.activeStage === index ? "#f2f2f2"
+                                  : loadingIndicator.activeStage > index ? "#7a7a7a"
+                                  : "#444444"
+                            horizontalAlignment: Text.AlignHCenter
+                            elide: Text.ElideRight
+                            font.pixelSize: window.sp(9)
+                            font.bold: loadingIndicator.activeStage === index
+                        }
+                    }
                 }
             }
 
+            Rectangle {
+                width: parent.width
+                height: 30
+                color: "transparent"
+                border.color: "#1b1b1b"
+                border.width: 1
+
+                Text {
+                    anchors.centerIn: parent
+                    text: loadingIndicator.activeStage >= 4
+                          ? "Runtime ready"
+                          : "Initializing low-latency deck environment"
+                    color: loadingIndicator.activeStage >= 4 ? "#4dd98a" : "#686868"
+                    font.pixelSize: window.sp(9)
+                    font.family: "monospace"
+                    font.letterSpacing: 0.6
+                }
+            }
+
+            Rectangle {
+                width: parent.width
+                height: 1
+                color: "#151515"
+            }
+
             Text {
-                text: "Loading audio engine..."
-                color: "#bcbcbc"
-                font.pixelSize: window.sp(11)
+                width: parent.width
+                text: "Audio device setup may take a moment on first launch."
+                color: "#5a5a5a"
+                font.pixelSize: window.sp(9)
                 horizontalAlignment: Text.AlignHCenter
-                width: 220
+                wrapMode: Text.WordWrap
             }
         }
     }

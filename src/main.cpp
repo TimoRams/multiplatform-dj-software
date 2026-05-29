@@ -17,6 +17,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QPointer>
 #include <QQuickGraphicsConfiguration>
 #include <QtGlobal>
 #include <QVersionNumber>
@@ -261,20 +262,8 @@ int main(int argc, char *argv[])
     auto cursorControl = std::make_unique<CursorControl>();
     auto coverProvider = std::make_unique<CoverArtProvider>();
     CoverArtProvider* coverProviderPtr = coverProvider.get();
-
-    if (!libraryDb->open())
-        qWarning() << "[main] LibraryDatabase failed to open – library features disabled.";
-    logStartupStep("LibraryDatabase open attempted");
-
-    libraryDb->setTableModel(libraryTableModel.get());
-    libraryTableModel->refresh();
-    logStartupStep("LibraryTableModel refreshed");
-
-    // Keep library view in sync when rating/color/notes/energy change.
-    QObject::connect(libraryDb.get(), &LibraryDatabase::trackMetaChanged,
-                     libraryTableModel.get(), &LibraryTableModel::refreshMetaForTrack);
-
-    libraryAnalysisManager->setLibraryDatabase(libraryDb.get());
+    QPointer<QObject> rootObjectForStartup;
+    bool runtimeInitStarted = false;
 
     engine.addImageProvider("coverart", coverProvider.release());
     logStartupStep("Cover art provider installed");
@@ -286,7 +275,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("deckC", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("deckD", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("libraryManager", libraryManager.get());
-    engine.rootContext()->setContextProperty("libraryDb",    libraryDb.get());
+    engine.rootContext()->setContextProperty("libraryDb",    static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("libraryModel", libraryTableModel.get());
     engine.rootContext()->setContextProperty("libraryAnalyzer", libraryAnalysisManager.get());
     engine.rootContext()->setContextProperty("fxManager", fxManager.get());
@@ -303,10 +292,84 @@ int main(int argc, char *argv[])
             QCoreApplication::exit(-1);
     }, Qt::QueuedConnection);
 
+    auto initialiseRuntime = [&]() {
+        if (runtimeInitStarted)
+            return;
+        runtimeInitStarted = true;
+
+        if (!libraryDb->open())
+            qWarning() << "[main] LibraryDatabase failed to open – library features disabled.";
+        logStartupStep("LibraryDatabase open attempted");
+
+        libraryDb->setTableModel(libraryTableModel.get());
+
+        // Keep library view in sync when rating/color/notes/energy change.
+        QObject::connect(libraryDb.get(), &LibraryDatabase::trackMetaChanged,
+                         libraryTableModel.get(), &LibraryTableModel::refreshMetaForTrack);
+
+        libraryAnalysisManager->setLibraryDatabase(libraryDb.get());
+        engine.rootContext()->setContextProperty("libraryDb", libraryDb.get());
+
+        libraryTableModel->refresh();
+        logStartupStep("LibraryTableModel refreshed");
+
+        if (rootObjectForStartup)
+            rootObjectForStartup->setProperty("startupLibraryReady", true);
+
+        QTimer::singleShot(0, &app, [&]() {
+            deckA = std::make_unique<DjEngine>();
+            deckB = std::make_unique<DjEngine>();
+            deckC = std::make_unique<DjEngine>();
+            deckD = std::make_unique<DjEngine>();
+            logStartupStep("DjEngines constructed");
+
+            for (const auto [deck, name] : std::array<std::pair<DjEngine*, const char*>, 4>{{
+                    {deckA.get(), "deckA"}, {deckB.get(), "deckB"},
+                    {deckC.get(), "deckC"}, {deckD.get(), "deckD"}}})
+                deck->setCoverArtProvider(coverProviderPtr, name);
+
+            engine.rootContext()->setContextProperty("deckA", deckA.get());
+            engine.rootContext()->setContextProperty("deckB", deckB.get());
+            engine.rootContext()->setContextProperty("deckC", deckC.get());
+            engine.rootContext()->setContextProperty("deckD", deckD.get());
+
+            // Defer MIDI init: CoreMIDI on macOS needs the CFRunLoop (app.exec) running first.
+            midiManager = std::make_unique<MidiControllerManager>(parameterStore.get());
+            midiManager->connectDecks(deckA.get(), deckB.get());
+            engine.rootContext()->setContextProperty("midiManager", midiManager.get());
+
+            for (DjEngine* deck : {deckA.get(), deckB.get(), deckC.get(), deckD.get()})
+                deck->setLibraryDatabase(libraryDb.get());
+
+            fxManager->registerEngines(deckA.get(), deckB.get());
+
+            masterBus = std::make_unique<DjMasterBus>();
+            for (DjEngine* deck : {deckA.get(), deckB.get(), deckC.get(), deckD.get()})
+                masterBus->addDeck(deck);
+
+            deckA->applyAudioDeviceSettings(settingsManager.getAudioMasterDeviceType(),
+                                            settingsManager.getAudioMasterOutputDevice(),
+                                            settingsManager.getAudioSampleRate(),
+                                            settingsManager.getAudioBufferSize(),
+                                            settingsManager.getAudioMasterFirstChannel(),
+                                            settingsManager.getAudioHeadphonesFirstChannel(),
+                                            settingsManager.getAudioBoothFirstChannel());
+            // Sync back what the driver actually opened.
+            const int actualSR  = deckA->getCurrentAudioSampleRate();
+            const int actualBuf = deckA->getCurrentAudioBufferSize();
+            if (actualSR  > 0) settingsManager.setAudioSampleRate(actualSR);
+            if (actualBuf > 0) settingsManager.setAudioBufferSize(actualBuf);
+
+            masterBus->registerCallback(DjEngine::getSharedAudioDeviceManager());
+            qDebug() << "[startup] Audio device settings applied" << startupTimer.elapsed() << "ms";
+        });
+    };
+
     engine.load(url);
     logStartupStep("QML load requested");
 
     if (!engine.rootObjects().isEmpty()) {
+        rootObjectForStartup = engine.rootObjects().first();
         if (auto* rootWindow = qobject_cast<QWindow*>(engine.rootObjects().first())) {
             qDebug() << "[main] Root window found, setting size and visibility";
 
@@ -380,6 +443,15 @@ int main(int argc, char *argv[])
                     qDebug() << "[startup] FIRST FRAME RENDERED" << startupTimer.elapsed() << "ms";
                     },
                     static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::SingleShotConnection));
+
+                QObject::connect(
+                    quickWindow,
+                    &QQuickWindow::afterRendering,
+                    &app,
+                    [&app, &initialiseRuntime]() {
+                    QMetaObject::invokeMethod(&app, initialiseRuntime, Qt::QueuedConnection);
+                    },
+                    static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::SingleShotConnection));
             }
 
             rootWindow->show();
@@ -401,56 +473,6 @@ int main(int argc, char *argv[])
         QCoreApplication::exit(-1);
         return -1;
     }
-
-    // macOS fix: defer CoreAudio/JUCE init until the event loop runs to avoid 300s stalls.
-    // This also keeps the UI responsive while decks spin up.
-    QTimer::singleShot(0, &app, [&]() {
-        deckA = std::make_unique<DjEngine>();
-        deckB = std::make_unique<DjEngine>();
-        deckC = std::make_unique<DjEngine>();
-        deckD = std::make_unique<DjEngine>();
-        logStartupStep("DjEngines constructed");
-
-        for (const auto [deck, name] : std::array<std::pair<DjEngine*, const char*>, 4>{{
-                {deckA.get(), "deckA"}, {deckB.get(), "deckB"},
-                {deckC.get(), "deckC"}, {deckD.get(), "deckD"}}})
-            deck->setCoverArtProvider(coverProviderPtr, name);
-
-        engine.rootContext()->setContextProperty("deckA", deckA.get());
-        engine.rootContext()->setContextProperty("deckB", deckB.get());
-        engine.rootContext()->setContextProperty("deckC", deckC.get());
-        engine.rootContext()->setContextProperty("deckD", deckD.get());
-
-        // Defer MIDI init: CoreMIDI on macOS needs the CFRunLoop (app.exec) running first.
-        midiManager = std::make_unique<MidiControllerManager>(parameterStore.get());
-        midiManager->connectDecks(deckA.get(), deckB.get());
-        engine.rootContext()->setContextProperty("midiManager", midiManager.get());
-
-        for (DjEngine* deck : {deckA.get(), deckB.get(), deckC.get(), deckD.get()})
-            deck->setLibraryDatabase(libraryDb.get());
-
-        fxManager->registerEngines(deckA.get(), deckB.get());
-
-        masterBus = std::make_unique<DjMasterBus>();
-        for (DjEngine* deck : {deckA.get(), deckB.get(), deckC.get(), deckD.get()})
-            masterBus->addDeck(deck);
-
-        deckA->applyAudioDeviceSettings(settingsManager.getAudioMasterDeviceType(),
-                                        settingsManager.getAudioMasterOutputDevice(),
-                                        settingsManager.getAudioSampleRate(),
-                                        settingsManager.getAudioBufferSize(),
-                                        settingsManager.getAudioMasterFirstChannel(),
-                                        settingsManager.getAudioHeadphonesFirstChannel(),
-                                        settingsManager.getAudioBoothFirstChannel());
-        // Sync back what the driver actually opened.
-        const int actualSR  = deckA->getCurrentAudioSampleRate();
-        const int actualBuf = deckA->getCurrentAudioBufferSize();
-        if (actualSR  > 0) settingsManager.setAudioSampleRate(actualSR);
-        if (actualBuf > 0) settingsManager.setAudioBufferSize(actualBuf);
-
-        masterBus->registerCallback(DjEngine::getSharedAudioDeviceManager());
-        qDebug() << "[startup] Audio device settings applied" << startupTimer.elapsed() << "ms";
-    });
 
     const int ret = app.exec();
 
