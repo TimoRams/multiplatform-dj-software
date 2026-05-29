@@ -11,7 +11,7 @@ ApplicationWindow {
     minimumHeight: 600
     visible: true
     title: "BrockDJ"
-    color: "#2a2a2a"
+    color: "#070707"
     font.hintingPreference: Font.PreferFullHinting
     property bool libraryExpanded: false
     property string linkedDeckName: ""
@@ -22,7 +22,7 @@ ApplicationWindow {
     property bool exitCleanupTriggered: false
     property bool uncleanShutdownWarningVisible: false
     property real exitProgress: 0.0
-    readonly property color unifiedGray: "#2a2a2a"
+    readonly property color unifiedGray: "#101010"
 
     property bool showWaveforms: true
     property bool showDeckA: true
@@ -381,6 +381,34 @@ ApplicationWindow {
     readonly property int mixerBaseWidth: 280
 
     readonly property real baseUiHeight: 150 + (baseUiWidth / 6.5) + 4
+    readonly property bool primaryDeckRowVisible: !window.libraryExpanded
+                                                   && (window.showDeckA || window.showDeckB || window.showMixer)
+    readonly property bool secondaryDeckRowVisible: window.fourDeckMode && !window.libraryExpanded
+    readonly property bool crossfaderVisible: window.showCrossfader && !window.libraryExpanded
+    readonly property bool fxVisible: window.showFxBar && !window.libraryExpanded
+    readonly property int waveformMinimumHeight: window.scaledWaveformHeight
+    readonly property int libraryReserveHeight: !window.showLibrary ? 0 : Math.round(180 * window.uiScale)
+    readonly property int fixedPerformanceHeight:
+        (window.primaryDeckRowVisible ? window.scaledDeckMixerHeight : 0)
+        + (window.secondaryDeckRowVisible ? window.scaledDeckMixerHeight : 0)
+        + (window.crossfaderVisible ? 37 : 0)
+        + (window.fxVisible ? window.fxBarHeight : 0)
+    readonly property int hiddenPerformanceHeight:
+        (!window.libraryExpanded && !window.primaryDeckRowVisible ? window.scaledDeckMixerHeight : 0)
+        + (!window.libraryExpanded && window.fourDeckMode && !window.secondaryDeckRowVisible ? window.scaledDeckMixerHeight : 0)
+        + (!window.libraryExpanded && !window.crossfaderVisible ? 37 : 0)
+        + (!window.libraryExpanded && !window.fxVisible ? window.fxBarHeight : 0)
+    readonly property int waveformAvailableHeight: Math.max(
+        0,
+        height - window.topBarHeight - window.fixedPerformanceHeight - window.libraryReserveHeight - 6
+    )
+    readonly property int adaptiveWaveformHeight: !window.showWaveforms ? 0 : Math.max(
+        0,
+        Math.min(
+            window.waveformAvailableHeight,
+            window.scaledWaveformHeight + Math.round(window.hiddenPerformanceHeight * 0.75)
+        )
+    )
 
     // ─────────────────────────────────────────────────────────────────────────
     // MAIN LAYOUT – direct child, no async Loader wrapping
@@ -405,15 +433,15 @@ ApplicationWindow {
             Layout.minimumHeight: 1
             Layout.preferredHeight: 1
             Layout.maximumHeight: 1
-            color: "#000000"
+            color: "#151515"
         }
 
         Item {
             id: waveformViewport
             Layout.fillWidth: true
-            Layout.minimumHeight: window.scaledWaveformHeight
-            Layout.preferredHeight: window.scaledWaveformHeight
-            Layout.maximumHeight: window.scaledWaveformHeight
+            Layout.minimumHeight: window.showWaveforms ? window.waveformMinimumHeight : 0
+            Layout.preferredHeight: window.adaptiveWaveformHeight
+            Layout.maximumHeight: window.adaptiveWaveformHeight
             visible: window.showWaveforms
             clip: true
 
@@ -431,7 +459,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         engine: deckC
-                        backgroundColor: "#2a2a2a"
+                        backgroundColor: "#070707"
                         waveformZoom: window.waveformZoom
                     }
 
@@ -439,7 +467,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         engine: deckA
-                        backgroundColor: "#2a2a2a"
+                        backgroundColor: "#070707"
                         waveformZoom: window.waveformZoom
                     }
 
@@ -447,7 +475,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         engine: deckB
-                        backgroundColor: "#2a2a2a"
+                        backgroundColor: "#070707"
                         waveformZoom: window.waveformZoom
                     }
 
@@ -456,7 +484,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         engine: deckD
-                        backgroundColor: "#2a2a2a"
+                        backgroundColor: "#070707"
                         waveformZoom: window.waveformZoom
                     }
                 }
@@ -464,20 +492,21 @@ ApplicationWindow {
         }
 
         Rectangle {
+            visible: window.showWaveforms && (window.primaryDeckRowVisible || window.secondaryDeckRowVisible || window.crossfaderVisible || window.fxVisible || window.showLibrary)
             Layout.fillWidth: true
-            Layout.minimumHeight: 1
-            Layout.preferredHeight: 1
-            Layout.maximumHeight: 1
-            color: "#000000"
+            Layout.minimumHeight: visible ? 1 : 0
+            Layout.preferredHeight: visible ? 1 : 0
+            Layout.maximumHeight: visible ? 1 : 0
+            color: "#151515"
         }
 
         Item {
             id: deckMixerViewport
             Layout.fillWidth: true
-            Layout.minimumHeight: window.libraryExpanded ? 0 : window.scaledDeckMixerHeight
-            Layout.preferredHeight: window.libraryExpanded ? 0 : window.scaledDeckMixerHeight
-            Layout.maximumHeight: window.libraryExpanded ? 0 : window.scaledDeckMixerHeight
-            visible: !window.libraryExpanded && (window.showDeckA || window.showDeckB || window.showMixer)
+            Layout.minimumHeight: window.primaryDeckRowVisible ? window.scaledDeckMixerHeight : 0
+            Layout.preferredHeight: window.primaryDeckRowVisible ? window.scaledDeckMixerHeight : 0
+            Layout.maximumHeight: window.primaryDeckRowVisible ? window.scaledDeckMixerHeight : 0
+            visible: window.primaryDeckRowVisible
             clip: true
 
             readonly property real designWidth: window.baseUiWidth
@@ -534,7 +563,7 @@ ApplicationWindow {
         // ── Second deck row (4-deck mode) ─────────────────────────────────
         Item {
             id: deckMixerViewport2
-            property bool _vis: window.fourDeckMode && !window.libraryExpanded
+            property bool _vis: window.secondaryDeckRowVisible
             Layout.fillWidth: true
             Layout.minimumHeight: _vis ? window.scaledDeckMixerHeight : 0
             Layout.preferredHeight: _vis ? window.scaledDeckMixerHeight : 0
@@ -596,12 +625,12 @@ ApplicationWindow {
             Layout.minimumHeight: visible ? 1 : 0
             Layout.preferredHeight: visible ? 1 : 0
             Layout.maximumHeight: visible ? 1 : 0
-            color: "#000000"
+            color: "#151515"
         }
 
         CrossfaderBar {
             id: crossfaderBar
-            property bool _vis: window.showCrossfader && !window.libraryExpanded
+            property bool _vis: window.crossfaderVisible
             Layout.fillWidth: true
             Layout.minimumHeight:  _vis ? 36 : 0
             Layout.preferredHeight: _vis ? 36 : 0
@@ -615,22 +644,22 @@ ApplicationWindow {
         }
 
         Rectangle {
-            property bool _vis: window.showCrossfader && !window.libraryExpanded
+            property bool _vis: window.crossfaderVisible
             visible: _vis
             Layout.fillWidth: true
             Layout.minimumHeight:  _vis ? 1 : 0
             Layout.preferredHeight: _vis ? 1 : 0
             Layout.maximumHeight:  _vis ? 1 : 0
-            color: "#000000"
+            color: "#151515"
         }
 
         FxBar {
             id: fxBarSection
             Layout.fillWidth: true
-            Layout.minimumHeight: window.libraryExpanded ? 0 : window.fxBarHeight
-            Layout.preferredHeight: window.libraryExpanded ? 0 : window.fxBarHeight
-            Layout.maximumHeight: window.libraryExpanded ? 0 : window.fxBarHeight
-            visible: !window.libraryExpanded && window.showFxBar
+            Layout.minimumHeight: window.fxVisible ? window.fxBarHeight : 0
+            Layout.preferredHeight: window.fxVisible ? window.fxBarHeight : 0
+            Layout.maximumHeight: window.fxVisible ? window.fxBarHeight : 0
+            visible: window.fxVisible
         }
 
         Library {

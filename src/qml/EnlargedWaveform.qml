@@ -41,6 +41,8 @@ Item {
             anchors.fill: parent
             engine: root.engine
             pixelsPerPoint: root.waveformZoom
+            onWidthChanged: requestUpdate()
+            onHeightChanged: requestUpdate()
         }
 
         // Keep the engine's pixel-scale in sync so scrubBy() can do correct math.
@@ -187,10 +189,53 @@ Item {
             id: playhead
             width: 2
             height: parent.height
-            color: "red"
+            color: "#f4f4f4"
             anchors.centerIn: parent
             z: 10
             // NO Behavior, NO SmoothedAnimation, NO SpringAnimation on this element.
+
+            Rectangle {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: parent.top
+                width: 10
+                height: 5
+                color: "#f4f4f4"
+            }
+
+            Rectangle {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                width: 10
+                height: 5
+                color: "#f4f4f4"
+            }
+        }
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            height: 1
+            color: "#24ffffff"
+            z: 9
+        }
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 1
+            color: "#303030"
+            z: 22
+        }
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: 1
+            color: "#030303"
+            z: 22
         }
 
         // ─── Beat-grid toolbar (left edge, full deck height) ────────────────
@@ -346,4 +391,3 @@ Item {
         visible: root.dropHovered
     }
 }       // Item (root)
-
