@@ -137,7 +137,9 @@ Window {
         if (outputChannelPairsCache[key] !== undefined)
             return outputChannelPairsCache[key]
 
-        var options = deckA.getAvailableOutputChannelPairs(pendingAudioDeviceType, outputDevice)
+        var options = (deckA && deckA.getAvailableOutputChannelPairs)
+            ? deckA.getAvailableOutputChannelPairs(pendingAudioDeviceType, outputDevice)
+            : []
         if (!options || options.length === 0)
             options = ["None", "1-2"]
 
@@ -254,8 +256,14 @@ Window {
     }
 
     function refreshAudioDeviceLists() {
-        if (!deckA || !deckA.getAvailableAudioDeviceTypes)
+        if (!deckA || !deckA.getAvailableAudioDeviceTypes) {
+            audioDeviceTypeOptions = pendingAudioDeviceType ? [pendingAudioDeviceType] : [""]
+            audioOutputDeviceOptions = pendingMasterOutputDevice ? [pendingMasterOutputDevice] : ["None"]
+            masterChannelPairOptions = ["None", "1-2"]
+            headphonesChannelPairOptions = ["None", "1-2"]
+            boothChannelPairOptions = ["None", "1-2"]
             return
+        }
 
         audioDeviceTypeOptions = deckA.getAvailableAudioDeviceTypes()
         if (!audioDeviceTypeOptions || audioDeviceTypeOptions.length === 0)
@@ -353,6 +361,12 @@ Window {
 
         var deckToApply = deckA && deckA.applyAudioDeviceSettings ? deckA
             : (deckB && deckB.applyAudioDeviceSettings ? deckB : null)
+
+        if (!deckToApply) {
+            audioApplyStatus.text = "Audio engine is still starting. Open Settings again in a moment."
+            audioApplyStatus.color = "#ffb86c"
+            return
+        }
 
         if (deviceType && String(deviceType).toLowerCase().indexOf("jack") >= 0
             && deckToApply && deckToApply.isJackServerRunning && !deckToApply.isJackServerRunning()) {
