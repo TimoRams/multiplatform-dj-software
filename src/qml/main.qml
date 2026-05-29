@@ -404,10 +404,12 @@ ApplicationWindow {
     )
     readonly property int adaptiveWaveformHeight: !window.showWaveforms ? 0 : Math.max(
         0,
-        Math.min(
-            window.waveformAvailableHeight,
-            window.scaledWaveformHeight + Math.round(window.hiddenPerformanceHeight * 0.75)
-        )
+        !window.showLibrary
+            ? window.waveformAvailableHeight
+            : Math.min(
+                window.waveformAvailableHeight,
+                window.scaledWaveformHeight + Math.round(window.hiddenPerformanceHeight * 0.75)
+            )
     )
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -665,7 +667,10 @@ ApplicationWindow {
         Library {
             id: librarySection
             Layout.fillWidth: true
-            Layout.fillHeight: true
+            Layout.fillHeight: window.showLibrary
+            Layout.minimumHeight: window.showLibrary ? 0 : 0
+            Layout.preferredHeight: 0
+            Layout.maximumHeight: window.showLibrary ? window.height : 0
             visible: window.showLibrary
         }
     }
