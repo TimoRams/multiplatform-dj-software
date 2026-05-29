@@ -466,7 +466,7 @@ int SettingsManager::getAudioSampleRate() const
 
 void SettingsManager::setAudioSampleRate(int sampleRate)
 {
-    sampleRate = std::clamp(sampleRate, 44100, 96000);
+    sampleRate = std::clamp(sampleRate, 8000, 384000);
 
     auto* userSettings = getUserSettingsOrNull();
     if (userSettings == nullptr)

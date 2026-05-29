@@ -63,6 +63,59 @@ bool probeJackServer(QString& message)
     message = QStringLiteral("JACK server running.");
     return true;
 }
+
+bool requestJackBufferSize(int requestedFrames, int& effectiveFrames, int& effectiveSampleRate, QString& message)
+{
+    effectiveFrames = requestedFrames;
+    effectiveSampleRate = 0;
+
+    if (requestedFrames <= 0) {
+        message.clear();
+        return true;
+    }
+
+    jack_status_t status = JackFailure;
+    jack_client_t* client = jack_client_open("BrockDJBufferSetup", JackNoStartServer, &status);
+    if (client == nullptr) {
+        if (status & JackVersionError)
+            message = QStringLiteral("JACK protocol version mismatch.");
+        else if (status & JackServerError)
+            message = QStringLiteral("JACK server error. Is PipeWire-JACK running?");
+        else if (status & JackServerFailed)
+            message = QStringLiteral("JACK server not running. Start PipeWire or jackd.");
+        else
+            message = QStringLiteral("JACK server not available. Start PipeWire-JACK.");
+        return false;
+    }
+
+    effectiveSampleRate = static_cast<int>(jack_get_sample_rate(client));
+    const jack_nframes_t current = jack_get_buffer_size(client);
+    const int currentFrames = static_cast<int>(current);
+
+    if (requestedFrames <= 1024 && currentFrames > 0 && currentFrames <= 1024)
+        effectiveFrames = currentFrames;
+
+    const int requestedForServer = effectiveFrames;
+    const jack_nframes_t requested = static_cast<jack_nframes_t>(requestedForServer);
+    if (current == requested) {
+        jack_client_close(client);
+        message = QStringLiteral("JACK already uses %1 frames/period.").arg(effectiveFrames);
+        return true;
+    }
+
+    const int result = jack_set_buffer_size(client, requested);
+    jack_client_close(client);
+
+    if (result != 0) {
+        effectiveFrames = currentFrames > 0 ? currentFrames : requestedFrames;
+        message = QStringLiteral("JACK rejected %1 frames/period. Change it in your JACK or PipeWire settings.")
+            .arg(requestedForServer);
+        return false;
+    }
+
+    message = QStringLiteral("Requested %1 JACK frames/period.").arg(effectiveFrames);
+    return true;
+}
 #endif
 
 bool nearlyEqual(double a, double b) {
@@ -2038,7 +2091,7 @@ DjEngine::DjEngine(QObject* parent)
     // latency, but they are too fragile while analysis and DB writes are active.
     if (auto* device = deviceManager.getCurrentAudioDevice()) {
         const int currentSize = device->getCurrentBufferSizeSamples();
-        const int stableTarget = clampToStableBufferSize(getCurrentAudioDeviceType(), 512);
+        const int stableTarget = minimumStableBufferSizeForBackend(getCurrentAudioDeviceType());
         const int targetSize = choosePreferredBufferSize(device, stableTarget);
 
         if (targetSize > 0 && targetSize != currentSize && currentSize < stableTarget) {
@@ -2481,6 +2534,30 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
 
     juce::AudioDeviceManager::AudioDeviceSetup setup;
     manager.getAudioDeviceSetup(setup);
+    if (jackBackendRequested) {
+        if (auto* device = manager.getCurrentAudioDevice()) {
+            const double currentJackRate = device->getCurrentSampleRate();
+            if (currentJackRate > 0.0)
+                sampleRate = static_cast<int>(std::lround(currentJackRate));
+
+            const int currentJackBuffer = device->getCurrentBufferSizeSamples();
+            if (bufferSize <= 1024 && currentJackBuffer > 0 && currentJackBuffer <= 1024)
+                bufferSize = currentJackBuffer;
+        }
+
+#if JUCE_JACK && (JUCE_LINUX || JUCE_BSD)
+        QString jackBufferMsg;
+        int effectiveJackBuffer = bufferSize;
+        int effectiveJackSampleRate = 0;
+        if (!requestJackBufferSize(bufferSize, effectiveJackBuffer, effectiveJackSampleRate, jackBufferMsg)) {
+            qWarning() << "[DjEngine]" << jackBufferMsg;
+            setAudioDeviceFallbackMessage(jackBufferMsg);
+        }
+        bufferSize = effectiveJackBuffer;
+        if (effectiveJackSampleRate > 0)
+            sampleRate = effectiveJackSampleRate;
+#endif
+    }
     setup.sampleRate = static_cast<double>(sampleRate);
     setup.bufferSize = bufferSize;
     setup.useDefaultInputChannels = true;

@@ -87,7 +87,7 @@ Window {
         { label: "96 kHz", value: 96000 }
     ]
 
-    readonly property var bufferSizeOptions: [
+    readonly property var standardBufferSizeOptions: [
         { label: "64 samples (unstable)", value: 64 },
         { label: "128 samples (unstable)", value: 128 },
         { label: "256 samples (low latency)", value: 256 },
@@ -97,9 +97,22 @@ Window {
         { label: "4096 samples", value: 4096 }
     ]
 
+    readonly property var jackBufferSizeOptions: [
+        { label: "<= 1024 frames/period", value: 1024, minValue: 1, maxValue: 1024 },
+        { label: "2048 frames/period", value: 2048 },
+        { label: "4096 frames/period", value: 4096 }
+    ]
+
+    readonly property var bufferSizeOptions: isJackDeviceSelected
+        ? jackBufferSizeOptions
+        : standardBufferSizeOptions
+
     function indexForValue(options, value) {
         for (var i = 0; i < options.length; ++i) {
             if (options[i].value === value)
+                return i
+            if (options[i].minValue !== undefined && options[i].maxValue !== undefined
+                    && value >= options[i].minValue && value <= options[i].maxValue)
                 return i
         }
         return 0
@@ -414,22 +427,31 @@ Window {
                 }
             }
 
+            var warningText = (deckToApply && deckToApply.audioDeviceFallbackMessage)
+                ? deckToApply.audioDeviceFallbackMessage : ""
             var note = "Applied: Sound API selected once, role devices and channels updated."
             if (isJackDeviceSelected) {
                 var actualSRNote = (deckToApply && deckToApply.getCurrentAudioSampleRate)
                     ? deckToApply.getCurrentAudioSampleRate() : 0
                 var actualBufNote = (deckToApply && deckToApply.getCurrentAudioBufferSize)
                     ? deckToApply.getCurrentAudioBufferSize() : 0
-                note = "Applied (JACK). Buffer size and sample rate are set by the JACK server"
-                    + (actualBufNote > 0 && actualSRNote > 0
-                        ? " (" + actualBufNote + " samples @ " + (actualSRNote / 1000).toFixed(1) + " kHz)."
-                        : ".")
+                var jackState = actualBufNote > 0 && actualSRNote > 0
+                    ? actualBufNote + " frames @ " + (actualSRNote / 1000).toFixed(1) + " kHz"
+                    : ""
+                if (warningText) {
+                    note = warningText + (jackState ? " Current JACK setting: " + jackState + "." : "")
+                } else {
+                    note = "Applied (JACK). Sample rate follows the JACK server; frames/period request applied"
+                        + (jackState ? " (" + jackState + ")." : ".")
+                }
+            } else if (warningText) {
+                note = warningText
             } else if ((headphonesOutputDevice && masterOutputDevice && headphonesOutputDevice !== masterOutputDevice)
                 || (boothOutputDevice && masterOutputDevice && boothOutputDevice !== masterOutputDevice)) {
                 note = "Applied: Pre-cue uses channel pairs on the master device. Separate devices are not yet supported."
             }
             audioApplyStatus.text = note
-            audioApplyStatus.color = "#8fe388"
+            audioApplyStatus.color = warningText ? "#ffb86c" : "#8fe388"
         } else {
             var errText = (deckToApply && deckToApply.lastAudioDeviceError)
                 ? deckToApply.lastAudioDeviceError
@@ -648,6 +670,10 @@ Window {
                                           return
                                       if (currentIndex >= 0 && currentIndex < settingsWindow.audioDeviceTypeOptions.length) {
                                           settingsWindow.pendingAudioDeviceType = settingsWindow.audioDeviceTypeOptions[currentIndex]
+                                          settingsWindow.audioUiSyncing = true
+                                          sampleRateCombo.currentIndex = settingsWindow.indexForValue(settingsWindow.sampleRateOptions, settingsWindow.pendingAudioSampleRate)
+                                          bufferSizeCombo.currentIndex = settingsWindow.indexForValue(settingsWindow.bufferSizeOptions, settingsWindow.pendingAudioBufferSize)
+                                          settingsWindow.audioUiSyncing = false
                                           settingsWindow.refreshOutputsForPendingType()
                                       }
                                   }
@@ -749,7 +775,7 @@ Window {
                             spacing: 16
 
                             Text {
-                                text: "Sample Rate"
+                                text: settingsWindow.isJackDeviceSelected ? "Sample Rate (JACK)" : "Sample Rate"
                                 color: "#aaa"
                                 font.pixelSize: 12
                                 Layout.preferredWidth: 130
@@ -765,7 +791,11 @@ Window {
                                 opacity: enabled ? 1.0 : 0.4
 
                                 contentItem: Text {
-                                    text: sampleRateCombo.currentIndex >= 0 ? sampleRateCombo.displayText : "44.1 kHz"
+                                    text: settingsWindow.isJackDeviceSelected
+                                          ? (settingsWindow.pendingAudioSampleRate > 0
+                                             ? "JACK server (" + (settingsWindow.pendingAudioSampleRate / 1000).toFixed(1) + " kHz)"
+                                             : "JACK server")
+                                          : (sampleRateCombo.currentIndex >= 0 ? sampleRateCombo.displayText : "44.1 kHz")
                                     color: "#ccc"
                                     font.pixelSize: 12
                                     verticalAlignment: Text.AlignVCenter
@@ -801,7 +831,7 @@ Window {
                             spacing: 16
 
                             Text {
-                                text: "Buffer Size"
+                                text: settingsWindow.isJackDeviceSelected ? "Frames / Period" : "Buffer Size"
                                 color: "#aaa"
                                 font.pixelSize: 12
                                 Layout.preferredWidth: 130
@@ -813,8 +843,8 @@ Window {
                                 height: 32
                                 model: settingsWindow.bufferSizeOptions
                                 textRole: "label"
-                                enabled: !settingsWindow.isJackDeviceSelected
-                                opacity: enabled ? 1.0 : 0.4
+                                enabled: true
+                                opacity: 1.0
 
                                 contentItem: Text {
                                     text: bufferSizeCombo.currentIndex >= 0 ? bufferSizeCombo.displayText : "512 samples"
