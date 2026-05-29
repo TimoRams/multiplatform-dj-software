@@ -98,11 +98,18 @@ void TurntableSimulation::setSpinDownBrake(double v)
     m_spinDownBrake = std::clamp(v, 0.0001, 1.0);
 }
 
-void TurntableSimulation::prepareToPlay(int, double sampleRate)
+void TurntableSimulation::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
 {
     m_sampleRate = std::max(1.0, sampleRate);
     m_lastUsedBypass = true;
     m_crossfadeRemaining = 0;
+    m_preparedBlockCapacity = std::clamp(samplesPerBlockExpected > 0
+                                             ? samplesPerBlockExpected * 2
+                                             : 512,
+                                         512,
+                                         4096);
+    m_dryBuffer.setSize(2, m_preparedBlockCapacity, false, false, true);
+    m_wetBuffer.setSize(2, m_preparedBlockCapacity, false, false, true);
 }
 
 void TurntableSimulation::releaseResources()
@@ -126,8 +133,11 @@ void TurntableSimulation::getNextAudioBlock(const juce::AudioSourceChannelInfo& 
         return;
     }
 
-    m_dryBuffer.setSize(outChannels, outSamples, false, false, true);
-    m_wetBuffer.setSize(outChannels, outSamples, false, false, true);
+    const int internalChannels = std::max(2, outChannels);
+    if (m_dryBuffer.getNumChannels() < internalChannels || m_dryBuffer.getNumSamples() < outSamples)
+        m_dryBuffer.setSize(internalChannels, std::max(outSamples, m_preparedBlockCapacity), false, false, true);
+    if (m_wetBuffer.getNumChannels() < internalChannels || m_wetBuffer.getNumSamples() < outSamples)
+        m_wetBuffer.setSize(internalChannels, std::max(outSamples, m_preparedBlockCapacity), false, false, true);
 
     // First generate the robust fractional-reader output (vinyl path).
     renderFractionalBypass(m_dryBuffer, 0, outSamples);

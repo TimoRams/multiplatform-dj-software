@@ -30,7 +30,7 @@ Window {
     // ── Navigation categories ────────────────────────────────────────────────
     property int selectedCategory: 0
     property int pendingAudioSampleRate: 44100
-    property int pendingAudioBufferSize: 128
+    property int pendingAudioBufferSize: 512
     property string pendingAudioDeviceType: ""
     property bool audioUiSyncing: false
     property bool audioSyncPending: false
@@ -88,11 +88,13 @@ Window {
     ]
 
     readonly property var bufferSizeOptions: [
-        { label: "64 samples", value: 64 },
-        { label: "128 samples", value: 128 },
-        { label: "256 samples", value: 256 },
-        { label: "512 samples", value: 512 },
-        { label: "1024 samples", value: 1024 }
+        { label: "64 samples (unstable)", value: 64 },
+        { label: "128 samples (unstable)", value: 128 },
+        { label: "256 samples (low latency)", value: 256 },
+        { label: "512 samples (safe)", value: 512 },
+        { label: "1024 samples", value: 1024 },
+        { label: "2048 samples", value: 2048 },
+        { label: "4096 samples", value: 4096 }
     ]
 
     function indexForValue(options, value) {

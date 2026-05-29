@@ -481,10 +481,10 @@ int SettingsManager::getAudioBufferSize() const
 {
     const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
     if (userSettings == nullptr)
-        return 128;
+        return 512;
 
-    const int value = userSettings->getValue("Audio/BufferSize", "128").getIntValue();
-    return value > 0 ? value : 128;
+    const int value = userSettings->getValue("Audio/BufferSize", "512").getIntValue();
+    return std::clamp(value, 64, 4096);
 }
 
 void SettingsManager::setAudioBufferSize(int bufferSize)

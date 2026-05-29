@@ -401,7 +401,8 @@ private:
                                     const juce::File& file);
     void updateTrackDuration(double durationSec);
     bool hydrateLibraryStateForTrack(const QString& rawPath, double durationSec);
-    void attachReaderToTransport(juce::AudioFormatReader* reader);
+    void attachReaderToTransport(juce::AudioFormatReader* bufferedReader,
+                                 juce::AudioFormatReader* directReader);
     void returnToSlipPosition();
     bool isSlipDiverted() const { return m_slipActive && (m_loopActive || m_isReverse); }
 
@@ -430,7 +431,10 @@ private:
     juce::AudioDeviceManager& deviceManager;
     juce::AudioFormatManager formatManager;
     std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
+    std::unique_ptr<juce::BufferingAudioSource> bufferedReaderSource;
+    std::unique_ptr<juce::AudioFormatReaderSource> directReaderSource;
     std::unique_ptr<class ReverseStreamAudioSource> reverseWrapSource;
+    juce::TimeSliceThread readAheadThread { "Deck Read-Ahead" };
     juce::AudioTransportSource transportSource;
     std::unique_ptr<juce::ResamplingAudioSource> resamplingSource;
     std::unique_ptr<TimeStretchAudioSource> timeStretchSource;
@@ -550,7 +554,8 @@ private:
     // getOutputLatencyInSamples() is JUCE's callback->speaker delay and already
     // includes the callback buffer on compliant drivers.
     // m_snapPosition + m_snapClock enable sub-frame interpolation in getVisualPosition().
-    float          m_latencySeconds  = 0.0f;
+    std::atomic<float> m_latencySeconds  { 0.0f };
+    std::atomic<float> m_visualLatencyCompensationSeconds { 0.0f };
     mutable LatencySnapshot m_lastLatencySnapshot;
 
     // Per-instance latency log state (avoids shared-static bug with multiple decks).

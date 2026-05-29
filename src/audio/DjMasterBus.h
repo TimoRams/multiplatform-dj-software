@@ -78,6 +78,7 @@ private:
     juce::AudioSourcePlayer        m_sourcePlayer;
     double                         m_sampleRate    = 44100.0;
     int                            m_maxBlockSize  = 512;
+    int                            m_bufferCapacity = 512;
     bool                           m_isPrepared    = false;
 
     std::atomic<float> m_masterPeakL       { 0.0f };

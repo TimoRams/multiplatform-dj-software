@@ -189,18 +189,34 @@ int choosePreferredBufferSize(juce::AudioIODevice* device, int requestedSize)
     if (availableSizes.contains(requestedSize))
         return requestedSize;
 
-    int bestSize = availableSizes[0];
-    int bestDistance = std::abs(bestSize - requestedSize);
-
+    int smallestAtLeastRequested = 0;
+    int largestAvailable = availableSizes[0];
     for (const int candidate : availableSizes) {
-        const int distance = std::abs(candidate - requestedSize);
-        if (distance < bestDistance || (distance == bestDistance && candidate < bestSize)) {
-            bestSize = candidate;
-            bestDistance = distance;
-        }
+        largestAvailable = std::max(largestAvailable, candidate);
+        if (candidate >= requestedSize
+            && (smallestAtLeastRequested == 0 || candidate < smallestAtLeastRequested))
+            smallestAtLeastRequested = candidate;
     }
 
-    return bestSize;
+    if (smallestAtLeastRequested > 0)
+        return smallestAtLeastRequested;
+
+    return largestAvailable;
+}
+
+int minimumStableBufferSizeForBackend(const QString& deviceType)
+{
+#if JUCE_LINUX || JUCE_BSD
+    const QString lower = deviceType.toLower();
+    if (!lower.contains(QStringLiteral("jack")))
+        return 512;
+#endif
+    return 128;
+}
+
+int clampToStableBufferSize(const QString& deviceType, int requestedSize)
+{
+    return std::clamp(requestedSize, minimumStableBufferSizeForBackend(deviceType), 4096);
 }
 
 juce::AudioIODeviceType* findDeviceType(juce::AudioDeviceManager& deviceManager, const QString& typeName)
@@ -476,17 +492,21 @@ QString describeDeviceState(juce::AudioDeviceManager& manager)
 
 class ReverseStreamAudioSource : public juce::PositionableAudioSource {
 public:
-    ReverseStreamAudioSource(juce::PositionableAudioSource* source) : m_source(source) {}
+    ReverseStreamAudioSource(juce::PositionableAudioSource* forwardSource,
+                             juce::PositionableAudioSource* directSource)
+        : m_forwardSource(forwardSource),
+          m_directSource(directSource != nullptr ? directSource : forwardSource) {}
 
     void setLoopRangeSamples(juce::int64 loopInSample, juce::int64 loopOutSample, double sampleRate) {
         const juce::SpinLock::ScopedLockType lock(m_stateLock);
-        if (!m_source)
+        auto* source = randomAccessSource();
+        if (!source)
             return;
 
         m_sampleRate = sampleRate > 1.0 ? sampleRate : 44100.0;
         m_windowSamples = std::clamp(static_cast<int>(std::lround(m_sampleRate * 0.002)), 16, 256);
 
-        const juce::int64 total = std::max<juce::int64>(0, m_source->getTotalLength());
+        const juce::int64 total = std::max<juce::int64>(0, source->getTotalLength());
         if (total <= 2) {
             m_loopEnabled = false;
             return;
@@ -534,7 +554,10 @@ public:
 
     void setNextReadPosition(juce::int64 newPosition) override {
         const juce::SpinLock::ScopedLockType lock(m_stateLock);
-        m_source->setNextReadPosition(newPosition);
+        if (m_forwardSource)
+            m_forwardSource->setNextReadPosition(newPosition);
+        if (m_directSource && m_directSource != m_forwardSource)
+            m_directSource->setNextReadPosition(newPosition);
         m_logicalPos = newPosition;
     }
 
@@ -543,15 +566,24 @@ public:
     }
 
     juce::int64 getTotalLength() const override {
-        return m_source->getTotalLength();
+        auto* source = randomAccessSource();
+        return source ? source->getTotalLength() : 0;
     }
 
-    bool isLooping() const override { return m_source->isLooping(); }
-    void setLooping(bool shouldLoop) override { m_source->setLooping(shouldLoop); }
+    bool isLooping() const override { return m_loopEnabled; }
+    void setLooping(bool shouldLoop) override {
+        if (m_forwardSource)
+            m_forwardSource->setLooping(shouldLoop);
+        if (m_directSource && m_directSource != m_forwardSource)
+            m_directSource->setLooping(shouldLoop);
+    }
 
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override {
         const juce::SpinLock::ScopedLockType lock(m_stateLock);
-        m_source->prepareToPlay(samplesPerBlockExpected, sampleRate);
+        if (m_forwardSource)
+            m_forwardSource->prepareToPlay(samplesPerBlockExpected, sampleRate);
+        if (m_directSource && m_directSource != m_forwardSource)
+            m_directSource->prepareToPlay(samplesPerBlockExpected, sampleRate);
         m_sampleRate = sampleRate > 1.0 ? sampleRate : 44100.0;
         m_windowSamples = std::clamp(static_cast<int>(std::lround(m_sampleRate * 0.002)), 16, 256);
         m_pendingFadeInSamples = 0;
@@ -560,7 +592,10 @@ public:
 
     void releaseResources() override {
         const juce::SpinLock::ScopedLockType lock(m_stateLock);
-        m_source->releaseResources();
+        if (m_forwardSource)
+            m_forwardSource->releaseResources();
+        if (m_directSource && m_directSource != m_forwardSource)
+            m_directSource->releaseResources();
     }
 
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill) override {
@@ -577,9 +612,14 @@ public:
 
         if (!m_reverse.load(std::memory_order_relaxed)) {
             // Forward playback
-            m_source->setNextReadPosition(m_logicalPos);
-            m_source->getNextAudioBlock(bufferToFill);
-            m_logicalPos = m_source->getNextReadPosition();
+            auto* source = forwardPlaybackSource();
+            if (!source) {
+                bufferToFill.clearActiveBufferRegion();
+                return;
+            }
+            source->setNextReadPosition(m_logicalPos);
+            source->getNextAudioBlock(bufferToFill);
+            m_logicalPos = source->getNextReadPosition();
             applyDirectionFadeInToRange(bufferToFill.buffer,
                                         bufferToFill.startSample,
                                         bufferToFill.numSamples,
@@ -588,6 +628,12 @@ public:
         }
 
         // Reverse playback
+        auto* source = randomAccessSource();
+        if (!source) {
+            bufferToFill.clearActiveBufferRegion();
+            return;
+        }
+
         const int numSamples = bufferToFill.numSamples;
         juce::int64 currentPos = m_logicalPos;
 
@@ -603,12 +649,12 @@ public:
         }
 
         if (samplesToRead > 0) {
-            m_source->setNextReadPosition(readStart);
+            source->setNextReadPosition(readStart);
             
             juce::AudioSourceChannelInfo readInfo(bufferToFill);
             readInfo.startSample = bufferToFill.startSample;
             readInfo.numSamples = samplesToRead;
-            m_source->getNextAudioBlock(readInfo);
+            source->getNextAudioBlock(readInfo);
 
             for (int ch = 0; ch < bufferToFill.buffer->getNumChannels(); ++ch) {
                 float* ptr = bufferToFill.buffer->getWritePointer(ch, bufferToFill.startSample);
@@ -653,6 +699,14 @@ public:
     }
 
 private:
+    juce::PositionableAudioSource* forwardPlaybackSource() const {
+        return m_forwardSource != nullptr ? m_forwardSource : m_directSource;
+    }
+
+    juce::PositionableAudioSource* randomAccessSource() const {
+        return m_directSource != nullptr ? m_directSource : m_forwardSource;
+    }
+
     void applyFadeInToRange(juce::AudioBuffer<float>* buffer,
                             int startSample,
                             int count,
@@ -716,7 +770,8 @@ private:
 
     void getLoopedForwardAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill) {
         auto* out = bufferToFill.buffer;
-        if (!out || bufferToFill.numSamples <= 0 || !m_source) {
+        auto* source = randomAccessSource();
+        if (!out || bufferToFill.numSamples <= 0 || !source) {
             bufferToFill.clearActiveBufferRegion();
             return;
         }
@@ -741,8 +796,8 @@ private:
                 juce::AudioSourceChannelInfo readInfo(bufferToFill);
                 readInfo.startSample = bufferToFill.startSample + destOffset;
                 readInfo.numSamples  = toEntry;
-                m_source->setNextReadPosition(m_logicalPos);
-                m_source->getNextAudioBlock(readInfo);
+                source->setNextReadPosition(m_logicalPos);
+                source->getNextAudioBlock(readInfo);
                 m_logicalPos += toEntry;
                 destOffset   += toEntry;
                 remaining    -= toEntry;
@@ -762,8 +817,8 @@ private:
             readInfo.startSample = bufferToFill.startSample + destOffset;
             readInfo.numSamples = chunk;
 
-            m_source->setNextReadPosition(m_logicalPos);
-            m_source->getNextAudioBlock(readInfo);
+            source->setNextReadPosition(m_logicalPos);
+            source->getNextAudioBlock(readInfo);
 
             applyFadeInToRange(out, readInfo.startSample, chunk, numChannels);
 
@@ -784,7 +839,8 @@ private:
     juce::int64 findNearestZeroCrossingUnsafe(juce::int64 approx,
                                               int radius,
                                               juce::int64 totalLength) {
-        if (!m_source || totalLength <= 2)
+        auto* source = randomAccessSource();
+        if (!source || totalLength <= 2)
             return approx;
 
         const juce::int64 start = std::clamp(approx - static_cast<juce::int64>(radius),
@@ -804,10 +860,10 @@ private:
         info.numSamples = count;
         probe.clear();
 
-        const juce::int64 oldPos = m_source->getNextReadPosition();
-        m_source->setNextReadPosition(start);
-        m_source->getNextAudioBlock(info);
-        m_source->setNextReadPosition(oldPos);
+        const juce::int64 oldPos = source->getNextReadPosition();
+        source->setNextReadPosition(start);
+        source->getNextAudioBlock(info);
+        source->setNextReadPosition(oldPos);
 
         const int ch1 = probe.getNumChannels() > 1 ? 1 : 0;
         const float* p0 = probe.getReadPointer(0);
@@ -849,7 +905,8 @@ private:
         return std::clamp(bestSample, static_cast<juce::int64>(0), totalLength - 1);
     }
 
-    juce::PositionableAudioSource* m_source;
+    juce::PositionableAudioSource* m_forwardSource;
+    juce::PositionableAudioSource* m_directSource;
     std::atomic<bool> m_reverse{false};
     juce::int64 m_logicalPos{0};
     juce::SpinLock m_stateLock;
@@ -889,6 +946,7 @@ public:
             return;
 
         m_pitchLockEnabled.store(enabled, std::memory_order_relaxed);
+        m_resetPipelineRequested.store(true, std::memory_order_release);
         updateStretcherRatios();
     }
 
@@ -937,10 +995,26 @@ public:
     }
 
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override {
-        if (!source || !stretcher || !fifo) {
+        if (!source) {
             info.clearActiveBufferRegion();
             return;
         }
+
+        if (!m_pitchLockEnabled.load(std::memory_order_relaxed)) {
+            if (m_resetPipelineRequested.exchange(false, std::memory_order_acquire))
+                resetRealtimePipeline(false);
+            m_reportedLatencySamples.store(0, std::memory_order_relaxed);
+            source->getNextAudioBlock(info);
+            return;
+        }
+
+        if (!stretcher || !fifo) {
+            info.clearActiveBufferRegion();
+            return;
+        }
+
+        if (m_resetPipelineRequested.exchange(false, std::memory_order_acquire))
+            resetRealtimePipeline(true);
 
         const int numCh = std::min(info.buffer->getNumChannels(), 2);
         const int framesNeeded = info.numSamples;
@@ -1138,6 +1212,21 @@ private:
         }
     }
 
+    void resetRealtimePipeline(bool prewarm) {
+        if (fifo)
+            fifo->reset();
+        m_prefillTargetSamples = 0;
+        m_reportedLatencySamples.store(0, std::memory_order_relaxed);
+        m_startPadRemaining.store(0, std::memory_order_relaxed);
+        m_startDelayTrimRemaining.store(0, std::memory_order_relaxed);
+        if (stretcher) {
+            stretcher->reset();
+            updateStretcherRatios();
+            if (prewarm)
+                prewarmStretcher();
+        }
+    }
+
     // Pre-warm the stretcher by feeding silence equal to its start pad and
     // draining the startup delay output. This absorbs algorithmic latency
     // upfront so on-the-fly trimming is never needed during audio callbacks.
@@ -1200,6 +1289,7 @@ private:
     std::atomic<int> m_reportedLatencySamples { 0 };
     std::atomic<int> m_startPadRemaining { 0 };
     std::atomic<int> m_startDelayTrimRemaining { 0 };
+    std::atomic<bool> m_resetPipelineRequested { false };
     int m_maxProcessSize = 512;
     int m_prefillTargetSamples = 0;
     int m_prefillHardCapSamples = kMaxPrefillSamples;
@@ -1942,22 +2032,24 @@ DjEngine::DjEngine(QObject* parent)
 
     juce::MessageManager::getInstance();
     formatManager.registerBasicFormats();
+    readAheadThread.startThread();
 
-    // Prefer lower output buffer sizes for better scratch responsiveness.
-    // Keep this conservative and only apply when the driver explicitly supports it.
+    // Keep Linux/ALSA stable by default. Tiny startup buffers are great for
+    // latency, but they are too fragile while analysis and DB writes are active.
     if (auto* device = deviceManager.getCurrentAudioDevice()) {
         const int currentSize = device->getCurrentBufferSizeSamples();
-        const int targetSize = choosePreferredBufferSize(device, 128);
+        const int stableTarget = clampToStableBufferSize(getCurrentAudioDeviceType(), 512);
+        const int targetSize = choosePreferredBufferSize(device, stableTarget);
 
-        if (targetSize < currentSize) {
+        if (targetSize > 0 && targetSize != currentSize && currentSize < stableTarget) {
             juce::AudioDeviceManager::AudioDeviceSetup setup;
             deviceManager.getAudioDeviceSetup(setup);
             setup.bufferSize = targetSize;
             const juce::String setupErr = deviceManager.setAudioDeviceSetup(setup, true);
             if (setupErr.isEmpty()) {
-                qDebug() << "[DjEngine] Reduced audio buffer size:" << currentSize << "->" << targetSize;
+                qDebug() << "[DjEngine] Raised audio buffer size for stability:" << currentSize << "->" << targetSize;
             } else {
-                qWarning() << "[DjEngine] Could not reduce audio buffer size:" << QString::fromStdString(setupErr.toStdString());
+                qWarning() << "[DjEngine] Could not adjust audio buffer size:" << QString::fromStdString(setupErr.toStdString());
             }
         }
     }
@@ -2006,6 +2098,11 @@ DjEngine::~DjEngine()
         delete m_analyzer;
     }
     transportSource.setSource(nullptr);
+    reverseWrapSource.reset();
+    bufferedReaderSource.reset();
+    directReaderSource.reset();
+    readerSource.reset();
+    readAheadThread.stopThread(1000);
 }
 
 void DjEngine::shutdownSharedAudioDeviceManager()
@@ -2035,8 +2132,15 @@ void DjEngine::refreshHardwareLatency()
 {
     if (auto* device = deviceManager.getCurrentAudioDevice()) {
         const auto latency = readOutputLatencySnapshot(device);
-        if (latency.sampleRate > 0.0)
-            m_latencySeconds = static_cast<float>(static_cast<double>(latency.effectiveOutputSamples) / latency.sampleRate);
+        if (latency.sampleRate > 0.0) {
+            m_latencySeconds.store(
+                static_cast<float>(static_cast<double>(latency.effectiveOutputSamples) / latency.sampleRate),
+                std::memory_order_relaxed);
+            const int visualCompSamples = latency.callbackBufferSamples + latency.effectiveOutputSamples;
+            m_visualLatencyCompensationSeconds.store(
+                static_cast<float>(std::clamp(static_cast<double>(visualCompSamples) / latency.sampleRate, 0.0, 0.250)),
+                std::memory_order_relaxed);
+        }
 
         const bool changed = (latency.effectiveOutputSamples != m_lastLoggedEffectiveSamples)
                           || (latency.outputRawSamples != m_lastLoggedOutputRawSamples)
@@ -2046,7 +2150,7 @@ void DjEngine::refreshHardwareLatency()
 
         if (changed) {
             qInfo() << "[DjEngine] Output latency:" << latency.effectiveOutputSamples
-                    << "smp" << "(" << m_latencySeconds << "s)"
+                    << "smp" << "(" << m_latencySeconds.load(std::memory_order_relaxed) << "s)"
                     << "raw:" << latency.outputRawSamples
                     << "buf:" << latency.callbackBufferSamples
                     << "sr:" << latency.roundedSampleRate();
@@ -2057,6 +2161,7 @@ void DjEngine::refreshHardwareLatency()
             m_latencyLoggedNoDevice = false;
         }
     } else {
+        m_visualLatencyCompensationSeconds.store(0.0f, std::memory_order_relaxed);
         if (!m_latencyLoggedNoDevice) {
             qInfo() << "[DjEngine] No audio device yet; keeping last known latency";
             m_latencyLoggedNoDevice = true;
@@ -2280,23 +2385,19 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
                                         int boothFirstChannel)
 {
     sampleRate = std::clamp(sampleRate, 44100, 96000);
-    bufferSize = std::clamp(bufferSize, 64, 4096);
 
     setLastAudioDeviceError(QString());
     setAudioDeviceFallbackMessage(QString());
 
     const auto previousRouting = unpackRouting(s_outputRoutingPacked.load(std::memory_order_relaxed));
 
-#if JUCE_LINUX || JUCE_BSD
     const QString requestedType = !deviceType.isEmpty() ? deviceType : getCurrentAudioDeviceType();
+#if JUCE_LINUX || JUCE_BSD
     const bool jackBackendRequested = requestedType.toLower().contains(QStringLiteral("jack"));
-    if (requestedType.toLower().contains(QStringLiteral("alsa"))
-        && sampleRate >= 96000
-        && bufferSize < 128) {
-        bufferSize = 128;
-    }
+    bufferSize = std::clamp(bufferSize, 64, 4096);
 #else
-    const bool jackBackendRequested = deviceType.toLower().contains(QStringLiteral("jack"));
+    const bool jackBackendRequested = requestedType.toLower().contains(QStringLiteral("jack"));
+    bufferSize = std::clamp(bufferSize, 64, 4096);
 #endif
 
     if (jackBackendRequested) {
@@ -2518,7 +2619,7 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
             qWarning() << "[DjEngine] Attempting minimum viable setup";
             manager.getAudioDeviceSetup(setup);
             setup.sampleRate = static_cast<double>(sampleRate);
-            setup.bufferSize = std::clamp(bufferSize, 128, 512);
+            setup.bufferSize = clampToStableBufferSize(requestedType, bufferSize);
             setup.useDefaultOutputChannels = true;
             setup.outputDeviceName.clear();
             error = manager.setAudioDeviceSetup(setup, true);
@@ -2714,9 +2815,11 @@ double DjEngine::getVisualPosition() const
         ? m_snapPosition - elapsed
         : m_snapPosition + elapsed;
 
-    // No latency compensation: the 46ms hardware buffer latency is imperceptible
-    // visually, and subtracting it caused a visible jump on play/pause transitions
-    // (playing = compensated, paused = uncompensated → discontinuity).
+    // Render the scrolling waveform at the speaker-time playhead. Without this,
+    // larger hardware buffers make the UI visibly lead/lag the audible beat.
+    const double visualLatency = static_cast<double>(
+        m_visualLatencyCompensationSeconds.load(std::memory_order_relaxed));
+    interpolated += m_isReverse ? visualLatency : -visualLatency;
 
     double len = transportSource.getLengthInSeconds();
     interpolated = std::clamp(interpolated, -PRE_ROLL_SECONDS, len > 0.0 ? len : interpolated);
@@ -2907,16 +3010,30 @@ bool DjEngine::hydrateLibraryStateForTrack(const QString& rawPath, double durati
     return hasDbAnalysis;
 }
 
-void DjEngine::attachReaderToTransport(juce::AudioFormatReader* reader)
+void DjEngine::attachReaderToTransport(juce::AudioFormatReader* bufferedReader,
+                                       juce::AudioFormatReader* directReader)
 {
+    static constexpr int kReaderReadAheadSamples = 1 << 18;
+    static constexpr int kReaderReadAheadChannels = 2;
+
     transportSource.stop();
     transportSource.setSource(nullptr);
 
-    readerSource = std::make_unique<juce::AudioFormatReaderSource>(reader, true);
-    reverseWrapSource = std::make_unique<ReverseStreamAudioSource>(readerSource.get());
+    readerSource = std::make_unique<juce::AudioFormatReaderSource>(bufferedReader, true);
+    directReaderSource = std::make_unique<juce::AudioFormatReaderSource>(directReader, true);
+    bufferedReaderSource = std::make_unique<juce::BufferingAudioSource>(
+        readerSource.get(),
+        readAheadThread,
+        false,
+        kReaderReadAheadSamples,
+        kReaderReadAheadChannels,
+        true);
+    reverseWrapSource = std::make_unique<ReverseStreamAudioSource>(
+        bufferedReaderSource.get(),
+        directReaderSource.get());
     reverseWrapSource->setReverse(m_isReverse);
-    transportSource.setSource(reverseWrapSource.get(), 0, nullptr, reader->sampleRate);
-    m_loadedTrackSampleRate = reader->sampleRate;
+    transportSource.setSource(reverseWrapSource.get(), 0, nullptr, bufferedReader->sampleRate);
+    m_loadedTrackSampleRate = bufferedReader->sampleRate;
     transportSource.setPosition(0.0);
     ensureTransportRunningForPlayIntent();
 }
@@ -2931,6 +3048,8 @@ void DjEngine::ejectTrack()
     transportSource.stop();
     transportSource.setSource(nullptr);
     reverseWrapSource.reset();
+    bufferedReaderSource.reset();
+    directReaderSource.reset();
     readerSource.reset();
 
     resetTrackLoadState();
@@ -2976,16 +3095,23 @@ void DjEngine::loadTrack(const QString& rawPath)
             qWarning() << "[DjEngine] loadTrack: unsupported or unreadable format:" << rawPath;
             return;
         }
+        auto* directReader = formatManager.createReaderFor(file);
+        if (!directReader) {
+            qWarning() << "[DjEngine] loadTrack: could not create direct reader:" << rawPath;
+            delete reader;
+            return;
+        }
         QMetaObject::invokeMethod(this,
-            [this, gen, reader, file, rawPath, analysisState]() mutable
+            [this, gen, reader, directReader, file, rawPath, analysisState]() mutable
             {
                 if (m_loadGen != gen) {
                     delete reader;
+                    delete directReader;
                     return;
                 }
 
                 m_hasTrack = true;
-                attachReaderToTransport(reader);
+                attachReaderToTransport(reader, directReader);
 
                 populateMetadataFromReader(*reader, rawPath, file);
                 const double durationSec =

@@ -74,6 +74,7 @@ private:
 
     juce::AudioBuffer<float> m_dryBuffer;
     juce::AudioBuffer<float> m_wetBuffer;
+    int m_preparedBlockCapacity = 512;
     bool m_lastUsedBypass = true;
     int m_crossfadeRemaining = 0;
     static constexpr int kTransitionCrossfadeSamples = 128;

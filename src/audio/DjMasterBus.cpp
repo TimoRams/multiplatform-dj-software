@@ -60,15 +60,16 @@ void DjMasterBus::unregisterCallback(juce::AudioDeviceManager& adm)
 void DjMasterBus::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
 {
     m_sampleRate   = sampleRate;
-    m_maxBlockSize = samplesPerBlockExpected;
+    m_maxBlockSize = samplesPerBlockExpected > 0 ? samplesPerBlockExpected : 512;
+    m_bufferCapacity = std::clamp(m_maxBlockSize * 2, 512, 4096);
     m_isPrepared   = true;
 
     // Prepare summing buffers
-    m_deckScratch.setSize(2, samplesPerBlockExpected, false, true, true);
-    m_masterBuf  .setSize(2, samplesPerBlockExpected, false, true, true);
+    m_deckScratch.setSize(2, m_bufferCapacity, false, true, true);
+    m_masterBuf  .setSize(2, m_bufferCapacity, false, true, true);
 
     // Prepare limiter
-    m_limiter.prepare(sampleRate, samplesPerBlockExpected, 2);
+    m_limiter.prepare(sampleRate, m_bufferCapacity, 2);
 
     // Prepare all registered deck sources
     for (auto* deck : m_decks)
