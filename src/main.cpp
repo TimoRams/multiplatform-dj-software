@@ -12,6 +12,8 @@
 #include <QIcon>
 #include <QSize>
 #include <QElapsedTimer>
+#include <QEvent>
+#include <QEventLoop>
 #include <QTimer>
 #include <QStandardPaths>
 #include <QDir>
@@ -476,14 +478,43 @@ int main(int argc, char *argv[])
 
     const int ret = app.exec();
 
-    engine.rootContext()->setContextProperty("deckA", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("deckB", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("deckC", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("deckD", static_cast<QObject*>(nullptr));
+    auto clearQmlContextProperties = [&]() {
+        engine.rootContext()->setContextProperty("settingsManager", static_cast<QObject*>(nullptr));
+        engine.rootContext()->setContextProperty("appConfig", QVariant());
+        engine.rootContext()->setContextProperty("deckA", static_cast<QObject*>(nullptr));
+        engine.rootContext()->setContextProperty("deckB", static_cast<QObject*>(nullptr));
+        engine.rootContext()->setContextProperty("deckC", static_cast<QObject*>(nullptr));
+        engine.rootContext()->setContextProperty("deckD", static_cast<QObject*>(nullptr));
+        engine.rootContext()->setContextProperty("libraryManager", static_cast<QObject*>(nullptr));
+        engine.rootContext()->setContextProperty("libraryDb", static_cast<QObject*>(nullptr));
+        engine.rootContext()->setContextProperty("libraryModel", static_cast<QObject*>(nullptr));
+        engine.rootContext()->setContextProperty("libraryAnalyzer", static_cast<QObject*>(nullptr));
+        engine.rootContext()->setContextProperty("fxManager", static_cast<QObject*>(nullptr));
+        engine.rootContext()->setContextProperty("linkManager", static_cast<QObject*>(nullptr));
+        engine.rootContext()->setContextProperty("sysMonitor", static_cast<QObject*>(nullptr));
+        engine.rootContext()->setContextProperty("parameterStore", static_cast<QObject*>(nullptr));
+        engine.rootContext()->setContextProperty("midiManager", static_cast<QObject*>(nullptr));
+        engine.rootContext()->setContextProperty("cursorControl", static_cast<QObject*>(nullptr));
+    };
+
+    // Destroy QML objects before the C++ backend objects they reference.  The
+    // QQmlApplicationEngine lives longer than most services in this function's
+    // scope, so relying on automatic reverse-order cleanup leaves dangling
+    // context properties during engine teardown.
+    clearQmlContextProperties();
+    const auto rootObjects = engine.rootObjects();
+    for (QObject* root : rootObjects) {
+        if (root)
+            root->deleteLater();
+    }
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    app.processEvents(QEventLoop::AllEvents, 50);
 
     if (masterBus)
         masterBus->unregisterCallback(DjEngine::getSharedAudioDeviceManager());
     masterBus.reset();
+
+    midiManager.reset();
 
     deckD.reset();
     deckC.reset();
@@ -492,11 +523,13 @@ int main(int argc, char *argv[])
 
     DjEngine::shutdownSharedAudioDeviceManager();
 
-    juce::MessageManager::deleteInstance();
-    juce::DeletedAtShutdown::deleteAll();
-
     settingsManager.markCleanShutdown();
     settingsManager.shutdown();
+
+    if (libraryAnalysisManager)
+        libraryAnalysisManager->cancel();
+    if (libraryDb)
+        libraryDb->shutdown(true);
 
     return ret;
 }
