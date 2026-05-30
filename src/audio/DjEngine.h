@@ -505,6 +505,7 @@ private:
     bool m_playRequested = false;
     bool m_playLogged    = false;   // true once logPlay() has been called for the current track load
     double m_playedAccumSec = 0.0;  // accumulated real playback seconds since last track load
+    QElapsedTimer m_playHistoryClock;
     bool m_keylock = false;
     bool m_quantizeEnabled = false;
     bool m_syncEnabled = false;

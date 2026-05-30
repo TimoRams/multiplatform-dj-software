@@ -42,6 +42,17 @@ constexpr double kFilterMin = -1.0;
 constexpr double kFilterMax = 1.0;
 constexpr double kParamEpsilon = 1e-6;
 
+double playHistoryThresholdSeconds(double durationSec)
+{
+    if (durationSec <= 0.0)
+        return 12.0;
+
+    if (durationSec <= 45.0)
+        return std::clamp(durationSec * 0.35, 5.0, 12.0);
+
+    return std::clamp(durationSec * 0.12, 10.0, 20.0);
+}
+
 #if JUCE_JACK && (JUCE_LINUX || JUCE_BSD)
 bool probeJackServer(QString& message)
 {
@@ -2129,6 +2140,7 @@ DjEngine::DjEngine(QObject* parent)
     refreshHardwareLatency();
     clearOutputChannelCountCache();
     m_snapClock.start();
+    m_playHistoryClock.start();
 
     connect(&timer, &QTimer::timeout, this, &DjEngine::onTimer);
     timer.setTimerType(Qt::PreciseTimer);
@@ -3080,6 +3092,7 @@ bool DjEngine::hydrateLibraryStateForTrack(const QString& rawPath, double durati
         : existingId;
     m_playLogged       = false;
     m_playedAccumSec   = 0.0;
+    m_playHistoryClock.restart();
     m_libraryDb->addTrack(m_currentTrackId,
                           m_trackTitle, m_trackArtist, durSec, rawPath, bitrateKbps,
                           m_trackGenre, m_trackAlbum, m_trackComment);
@@ -3123,6 +3136,11 @@ void DjEngine::attachReaderToTransport(juce::AudioFormatReader* bufferedReader,
 
     transportSource.stop();
     transportSource.setSource(nullptr);
+
+    reverseWrapSource.reset();
+    bufferedReaderSource.reset();
+    directReaderSource.reset();
+    readerSource.reset();
 
     readerSource = std::make_unique<juce::AudioFormatReaderSource>(bufferedReader, true);
     directReaderSource = std::make_unique<juce::AudioFormatReaderSource>(directReader, true);
@@ -3501,6 +3519,12 @@ void DjEngine::setPosition(float progress)
         const double newPos = std::clamp(static_cast<double>(progress) * len,
                                          -PRE_ROLL_SECONDS,
                                          len);
+        const double previousPos = getVisualPosition();
+        if (m_playLogged && (newPos < previousPos - 15.0 || newPos <= len * 0.10)) {
+            m_playLogged = false;
+            m_playedAccumSec = 0.0;
+            m_playHistoryClock.restart();
+        }
         m_preRollCountdownActive = false;
         if (newPos < 0.0) {
             transportSource.stop();
@@ -3629,16 +3653,29 @@ void DjEngine::onTimer()
     if (transportSource.isPlaying()) {
         if (!tickTransportPlaying())
             return;
-        // Accumulate real playback time for play-count logging (30-second threshold).
+        // Accumulate real audible playback time for play-count logging. Use wall
+        // time instead of assuming the control timer fires exactly every 4 ms.
         if (!m_playLogged && !m_currentTrackId.isEmpty() && m_playRequested) {
-            m_playedAccumSec += 0.004; // 4 ms timer tick
-            if (m_playedAccumSec >= 30.0) {
+            const double elapsedSec = m_playHistoryClock.isValid()
+                ? static_cast<double>(m_playHistoryClock.restart()) / 1000.0
+                : 0.0;
+            m_playedAccumSec += std::clamp(elapsedSec, 0.0, 0.25);
+
+            const double playheadSec = std::max(0.0, static_cast<double>(getVisualPosition()));
+            const double nearEndSec = m_trackDurationSec > 0.0 ? m_trackDurationSec * 0.80 : 1e9;
+            const double thresholdSec = playHistoryThresholdSeconds(m_trackDurationSec);
+            const bool enoughPlayback = m_playedAccumSec >= thresholdSec;
+            const bool mixedNearEnd = playheadSec >= nearEndSec
+                && m_playedAccumSec >= std::min(6.0, thresholdSec * 0.6);
+
+            if (enoughPlayback || mixedNearEnd) {
                 m_playLogged = true;
                 if (m_libraryDb)
                     m_libraryDb->logPlay(m_currentTrackId);
             }
         }
     } else {
+        m_playHistoryClock.restart();
         tickTransportStopped();
     }
 

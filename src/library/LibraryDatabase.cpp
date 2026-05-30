@@ -2385,22 +2385,29 @@ QVariantList LibraryDatabase::getPlayHistory(const QString& period) const
         "       t.bitrate_kbps, t.is_analyzed, COALESCE(l.file_path,''),"
         "       COALESCE(t.genre,''), COALESCE(t.album,''), COALESCE(t.comment,''),"
         "       COALESCE(t.rating,0), COALESCE(t.energy,0), COALESCE(t.color,''),"
-        "       COALESCE(t.notes,''), COUNT(ph.id) AS period_count,"
-        "       MAX(ph.played_at) AS last_play, COALESCE(t.date_added,0)"
+        "       COALESCE(t.notes,''), COALESCE(t.play_count,0),"
+        "       ph.played_at, COALESCE(t.date_added,0), ph.id"
         " FROM PlayHistory ph"
         " JOIN Tracks t ON ph.track_id = t.id"
         " LEFT JOIN Locations l ON t.id = l.track_id"
         " WHERE ph.played_at >= :since"
-        " GROUP BY t.id"
-        " ORDER BY last_play DESC");
+        " ORDER BY ph.played_at DESC, ph.id DESC");
     q.bindValue(":since", since);
     if (!q.exec()) {
         qWarning() << "[LibraryDatabase] getPlayHistory:" << q.lastError().text();
         return {};
     }
     QVariantList result;
-    while (q.next())
-        result << buildTrackMap(q);
+    int eventIndex = 0;
+    while (q.next()) {
+        QVariantMap map = buildTrackMap(q);
+        const qint64 playedAt = q.value(17).toLongLong();
+        map[QStringLiteral("historyId")] = q.value(19).toLongLong();
+        map[QStringLiteral("playedAt")] = playedAt;
+        map[QStringLiteral("playEventIndex")] = ++eventIndex;
+        map[QStringLiteral("playCountAtTrack")] = q.value(16).toInt();
+        result << map;
+    }
     return result;
 }
 

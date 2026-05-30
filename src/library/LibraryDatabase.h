@@ -131,7 +131,8 @@ public:
     // ── Play History ───────────────────────────────────────────────────────
     Q_INVOKABLE bool logPlay(const QString& trackId);
     // period: "today" | "week" | "month" | "all"
-    // Returns [{trackId, title, artist, bpm, key, playCount, lastPlayed, filePath, ...}, ...]
+    // Returns one row per real play event:
+    // [{historyId, playedAt, trackId, title, artist, bpm, key, playCount, lastPlayed, filePath, ...}, ...]
     Q_INVOKABLE QVariantList getPlayHistory(const QString& period = "all") const;
 
     // ── Smart Collections ──────────────────────────────────────────────────

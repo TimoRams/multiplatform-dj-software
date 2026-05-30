@@ -167,6 +167,32 @@ Rectangle {
         Qt.callLater(function() { menu.popup() })
     }
 
+    function _pad2(value) {
+        return value < 10 ? "0" + value : "" + value
+    }
+
+    function formatHistoryTime(epochSeconds) {
+        if (!epochSeconds || epochSeconds <= 0) return "Unknown time"
+        var d = new Date(epochSeconds * 1000)
+        return _pad2(d.getHours()) + ":" + _pad2(d.getMinutes()) + ":" + _pad2(d.getSeconds())
+    }
+
+    function formatHistoryDate(epochSeconds) {
+        if (!epochSeconds || epochSeconds <= 0) return "Unknown date"
+        var d = new Date(epochSeconds * 1000)
+        var today = new Date()
+        var yesterday = new Date()
+        yesterday.setDate(today.getDate() - 1)
+        if (d.toDateString() === today.toDateString()) return "Today"
+        if (d.toDateString() === yesterday.toDateString()) return "Yesterday"
+        return _pad2(d.getDate()) + "." + _pad2(d.getMonth() + 1) + "." + d.getFullYear()
+    }
+
+    function formatHistoryStamp(epochSeconds) {
+        if (!epochSeconds || epochSeconds <= 0) return "Played"
+        return "Played " + formatHistoryDate(epochSeconds) + " at " + formatHistoryTime(epochSeconds)
+    }
+
     readonly property var filteredFileTracks: {
         if (!libraryManager || !libraryManager.tracks) return []
         if (!searchText || searchText.length === 0) return libraryManager.tracks
@@ -896,6 +922,10 @@ Rectangle {
         property string rowFilePath: ""
         property string rowColor:   ""
         property int    rowRating:  0
+        property bool   rowIsHistory: false
+        property double rowPlayedAt: 0
+        property int    rowPlayEventIndex: 0
+        property int    rowTrackPlayCount: 0
         property real viewWidth: parent ? parent.width : 0
         property bool isPlaylistTrack: false
         property string playlistId: ""
@@ -956,9 +986,10 @@ Rectangle {
             Text {
                 width: libraryRoot.colStatus
                 anchors.verticalCenter: parent.verticalCenter
-                text: tr.rowIsAnalyzed ? "●" : "○"
-                color: tr.rowIsAnalyzed ? libraryRoot.accentGreen : "#2e2e2e"
-                font.pixelSize: window.sp(8)
+                text: tr.rowIsHistory ? "▶" : (tr.rowIsAnalyzed ? "●" : "○")
+                color: tr.rowIsHistory ? libraryRoot.accentBlueLt
+                    : (tr.rowIsAnalyzed ? libraryRoot.accentGreen : "#2e2e2e")
+                font.pixelSize: window.sp(tr.rowIsHistory ? 9 : 8)
                 horizontalAlignment: Text.AlignHCenter
             }
             Text {
@@ -972,7 +1003,9 @@ Rectangle {
             Text {
                 width: libraryRoot.colArtist(tr.viewWidth)
                 anchors.verticalCenter: parent.verticalCenter
-                text: tr.rowArtist || "—"
+                text: tr.rowIsHistory
+                      ? ((tr.rowArtist || "—") + (tr.rowPlayedAt > 0 ? "  ·  " + libraryRoot.formatHistoryDate(tr.rowPlayedAt) : ""))
+                      : (tr.rowArtist || "—")
                 color: libraryRoot.textSecond
                 font.pixelSize: window.sp(11)
                 elide: Text.ElideRight
@@ -980,10 +1013,13 @@ Rectangle {
             Text {
                 width: libraryRoot.colTime
                 anchors.verticalCenter: parent.verticalCenter
-                text: tr.rowDurationSec > 0
+                text: tr.rowIsHistory && tr.rowPlayedAt > 0
+                      ? libraryRoot.formatHistoryTime(tr.rowPlayedAt)
+                      : tr.rowDurationSec > 0
                       ? (Math.floor(tr.rowDurationSec / 60) + ":" + ("0" + (tr.rowDurationSec % 60)).slice(-2))
                       : "—"
-                color: tr.rowDurationSec > 0 ? libraryRoot.textMeta : libraryRoot.textDim
+                color: tr.rowIsHistory ? libraryRoot.accentBlueLt
+                    : (tr.rowDurationSec > 0 ? libraryRoot.textMeta : libraryRoot.textDim)
                 font.pixelSize: window.sp(11); font.family: "monospace"
                 horizontalAlignment: Text.AlignHCenter
             }
@@ -1062,13 +1098,21 @@ Rectangle {
                 anchors.left: trArtBox.right; anchors.leftMargin: 12
                 anchors.right: trInfoCol.left; anchors.rightMargin: 8
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: 5
+                spacing: tr.rowIsHistory ? 3 : 5
 
                 Text {
                     width: parent.width
                     text: tr.rowTitle || "—"
                     color: libraryRoot.textPrimary
                     font.pixelSize: window.sp(12); font.weight: Font.Medium
+                    elide: Text.ElideRight
+                }
+                Text {
+                    width: parent.width
+                    visible: tr.rowIsHistory
+                    text: libraryRoot.formatHistoryStamp(tr.rowPlayedAt)
+                    color: libraryRoot.accentBlueLt
+                    font.pixelSize: window.sp(9)
                     elide: Text.ElideRight
                 }
                 Text {
@@ -1089,11 +1133,23 @@ Rectangle {
 
                 Text {
                     anchors.right: parent.right
-                    text: tr.rowDurationSec > 0
+                    text: tr.rowIsHistory && tr.rowPlayedAt > 0
+                          ? libraryRoot.formatHistoryTime(tr.rowPlayedAt)
+                          : tr.rowDurationSec > 0
                           ? (Math.floor(tr.rowDurationSec / 60) + ":" + ("0" + (tr.rowDurationSec % 60)).slice(-2))
                           : "—"
-                    color: tr.rowDurationSec > 0 ? libraryRoot.textMeta : libraryRoot.textDim
+                    color: tr.rowIsHistory ? libraryRoot.accentBlueLt
+                        : (tr.rowDurationSec > 0 ? libraryRoot.textMeta : libraryRoot.textDim)
                     font.pixelSize: window.sp(11); font.family: "monospace"
+                }
+
+                Text {
+                    anchors.right: parent.right
+                    visible: tr.rowIsHistory && tr.rowTrackPlayCount > 0
+                    text: "Play #" + tr.rowTrackPlayCount
+                    color: libraryRoot.textMeta
+                    font.pixelSize: window.sp(9)
+                    font.family: "monospace"
                 }
 
                 Row {
@@ -2583,7 +2639,7 @@ Rectangle {
                             Text {
                                 width: libraryRoot.colTitle(varlistView.width)
                                 anchors.verticalCenter: parent.verticalCenter
-                                text: "TITEL"; color: libraryRoot.textDim
+                                text: libraryRoot.activeTab === "history" ? "TITLE" : "TITEL"; color: libraryRoot.textDim
                                 font.pixelSize: window.sp(9); font.bold: true; font.letterSpacing: 0.8
                             }
                             Text {
@@ -2593,7 +2649,7 @@ Rectangle {
                                 font.pixelSize: window.sp(9); font.bold: true; font.letterSpacing: 0.8
                             }
                             Text { width: libraryRoot.colTime; anchors.verticalCenter: parent.verticalCenter
-                                text: "ZEIT"; color: libraryRoot.textDim; font.pixelSize: window.sp(9); font.bold: true; horizontalAlignment: Text.AlignHCenter }
+                                text: libraryRoot.activeTab === "history" ? "PLAYED" : "ZEIT"; color: libraryRoot.textDim; font.pixelSize: window.sp(9); font.bold: true; horizontalAlignment: Text.AlignHCenter }
                             Text { width: libraryRoot.colBpm; anchors.verticalCenter: parent.verticalCenter
                                 text: "BPM"; color: libraryRoot.textDim; font.pixelSize: window.sp(9); font.bold: true; horizontalAlignment: Text.AlignHCenter }
                             Text { width: libraryRoot.colKey; anchors.verticalCenter: parent.verticalCenter
@@ -2626,10 +2682,10 @@ Rectangle {
 
                             Repeater {
                                 model: [
-                                    { key: "today", label: "Heute" },
-                                    { key: "week",  label: "Woche" },
-                                    { key: "month", label: "Monat" },
-                                    { key: "all",   label: "Alle"  }
+                                    { key: "today", label: "Today" },
+                                    { key: "week",  label: "Week" },
+                                    { key: "month", label: "Month" },
+                                    { key: "all",   label: "All"  }
                                 ]
                                 Rectangle {
                                     required property var modelData
@@ -2657,7 +2713,10 @@ Rectangle {
                         Text {
                             anchors.right: varlistActionsRight.left; anchors.rightMargin: 10
                             anchors.verticalCenter: parent.verticalCenter
-                            text: libraryRoot.currentListTracks.length + " Tracks"
+                            text: libraryRoot.currentListTracks.length
+                                  + (libraryRoot.activeTab === "history"
+                                     ? (libraryRoot.currentListTracks.length === 1 ? " play" : " plays")
+                                     : (libraryRoot.currentListTracks.length === 1 ? " track" : " tracks"))
                             color: "#383838"; font.pixelSize: window.sp(9)
                         }
 
@@ -2733,6 +2792,10 @@ Rectangle {
                             rowFilePath:    modelData.filePath || ""
                             rowColor:       modelData.color    || ""
                             rowRating:      modelData.rating   || 0
+                            rowIsHistory:   libraryRoot.activeTab === "history"
+                            rowPlayedAt:    modelData.playedAt || modelData.lastPlayed || 0
+                            rowPlayEventIndex: modelData.playEventIndex || 0
+                            rowTrackPlayCount: modelData.playCountAtTrack || modelData.playCount || 0
                             rowSourceTab:   libraryRoot.activeTab
                             width: ListView.view.width
                             viewWidth: ListView.view.width
