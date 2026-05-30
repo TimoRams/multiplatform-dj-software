@@ -677,7 +677,11 @@ Item {
                             fbActiveTxtColor: deck.accentGrn
                             fbInactiveColor: "#202020"
                             fbInactiveTxtColor: "#aaa"
-                            onClicked: { if (deck.engine) deck.engine.togglePlay() }
+                            onClicked: {
+                                if (!deck.engine) return
+                                if (performancePads.consumeHotCueHoldPlayLatch()) return
+                                deck.engine.togglePlay()
+                            }
                         }
 
                         // Thin accent divider after PLAY
@@ -868,12 +872,13 @@ Item {
                 Layout.fillHeight: true
                 spacing: 0
 
-                PerformancePads {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    engine: deck.engine
-                    accentColor: deck.accent
-                }
+                    PerformancePads {
+                        id: performancePads
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        engine: deck.engine
+                        accentColor: deck.accent
+                    }
 
                 Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: "#1c1c1c" }
 

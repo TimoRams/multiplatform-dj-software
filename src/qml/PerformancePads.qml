@@ -12,6 +12,8 @@ Item {
     property double hotCueHoldPressedIndex: -1
     property double hotCueHoldCuePosition: 0.0
     property bool hotCueHoldWasPlaying: false
+    property bool hotCueHoldHadCue: false
+    property bool hotCueHoldReturnOnRelease: false
 
     readonly property var tabs: ["HOT CUE", "PAD FX", "BEATJUMP", "SAMPLER"]
     readonly property var beatJumpPads: [-16, -8, -4, -2, 2, 4, 8, 16]
@@ -103,6 +105,22 @@ Item {
         var mins = Math.floor(sec / 60)
         var s = Math.floor(sec % 60)
         return mins.toString().padStart(2, "0") + ":" + s.toString().padStart(2, "0")
+    }
+
+    function consumeHotCueHoldPlayLatch() {
+        if (root.hotCueHoldPressedIndex < 0 || !root.hotCueHoldReturnOnRelease)
+            return false
+
+        root.hotCueHoldReturnOnRelease = false
+        return true
+    }
+
+    function clearHotCueHoldState() {
+        root.hotCueHoldPressedIndex = -1
+        root.hotCueHoldCuePosition = 0.0
+        root.hotCueHoldWasPlaying = false
+        root.hotCueHoldHadCue = false
+        root.hotCueHoldReturnOnRelease = false
     }
 
     function beatJumpLabel(index) {
@@ -314,6 +332,8 @@ Item {
                                     root.hotCueHoldPressedIndex = index
                                     root.hotCueHoldCuePosition = cueSet ? cue.positionSec : 0.0
                                     root.hotCueHoldWasPlaying = root.engine.isPlaying
+                                    root.hotCueHoldHadCue = cueSet
+                                    root.hotCueHoldReturnOnRelease = cueSet && !root.hotCueHoldWasPlaying
                                     if (cueSet) {
                                         root.engine.triggerHotCue(index)
                                         if (!root.hotCueHoldWasPlaying) root.engine.play()
@@ -336,7 +356,7 @@ Item {
                                 // ── Hot cue release ───────────────────────────
                                 if (isHotCueTab) {
                                     if (root.hotCueHoldPressedIndex !== index) return
-                                    if (!root.hotCueHoldWasPlaying) {
+                                    if (root.hotCueHoldReturnOnRelease) {
                                         root.engine.pause()
                                         var trackLen = root.engine.getDuration()
                                         if (trackLen && trackLen > 0) {
@@ -344,8 +364,7 @@ Item {
                                             root.engine.setPosition(Math.max(0, Math.min(1.0, normalizedPos)))
                                         }
                                     }
-                                    root.hotCueHoldPressedIndex = -1
-                                    root.hotCueHoldCuePosition = 0.0
+                                    root.clearHotCueHoldState()
                                     return
                                 }
 
@@ -359,8 +378,15 @@ Item {
                             onCanceled: {
                                 // Pointer cancelled (window focus lost, gesture, etc.) — always clean up.
                                 if (root.hotCueHoldPressedIndex === index) {
-                                    root.hotCueHoldPressedIndex = -1
-                                    root.hotCueHoldCuePosition  = 0.0
+                                    if (root.hotCueHoldReturnOnRelease && root.engine) {
+                                        root.engine.pause()
+                                        var trackLen = root.engine.getDuration()
+                                        if (trackLen && trackLen > 0) {
+                                            var normalizedPos = root.hotCueHoldCuePosition / trackLen
+                                            root.engine.setPosition(Math.max(0, Math.min(1.0, normalizedPos)))
+                                        }
+                                    }
+                                    root.clearHotCueHoldState()
                                 }
                                 if (root.padFxMomentaryHeld === index) {
                                     root.padFxMomentaryHeld = -1

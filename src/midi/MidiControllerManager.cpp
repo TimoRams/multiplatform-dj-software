@@ -35,6 +35,14 @@ bool containsIdentifier(const std::vector<juce::String>& ids, const juce::String
     return std::ranges::find(ids, needle) != ids.end();
 }
 
+bool isMomentaryMidiAction(const QString& paramId)
+{
+    return paramId.endsWith(QStringLiteral("_play"))
+        || paramId.endsWith(QStringLiteral("_cue"))
+        || paramId.endsWith(QStringLiteral("_jog_touch"))
+        || paramId == QStringLiteral("master_cue");
+}
+
 int indexOfIdentifier(const std::vector<juce::String>& ids, const juce::String& needle)
 {
     const auto it = std::ranges::find(ids, needle);
@@ -1091,7 +1099,12 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
                 const int lsb = static_cast<int>(value * 127.0f);
                 const int msb = m_msbAccumulator.count(pId) ? m_msbAccumulator.at(pId) : 64;
                 const float combined = static_cast<float>((msb << 7) | lsb) / 16383.0f;
-                QMetaObject::invokeMethod(m_parameterStore, "setParameter",
+                const char* setter = (pId.endsWith(QStringLiteral("_jog_move"))
+                                      || pId == QStringLiteral("library_browse")
+                                      || isMomentaryMidiAction(pId))
+                    ? "setMidiParameter"
+                    : "setParameter";
+                QMetaObject::invokeMethod(m_parameterStore, setter,
                                           Qt::QueuedConnection,
                                           Q_ARG(QString, pId),
                                           Q_ARG(float, combined));
@@ -1119,7 +1132,9 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
     // jog_move sends relative delta ticks: consecutive identical values ARE distinct ticks,
     // so always dispatch. All other params deduplicate to break MIDI feedback echo loops
     // (common on PipeWire/ALSA: the software's own LED feedback is echoed back as input).
-    if (paramId.endsWith(QStringLiteral("_jog_move")) || paramId == QStringLiteral("library_browse")) {
+    if (paramId.endsWith(QStringLiteral("_jog_move"))
+            || paramId == QStringLiteral("library_browse")
+            || isMomentaryMidiAction(paramId)) {
         QMetaObject::invokeMethod(m_parameterStore, "setMidiParameter", Qt::QueuedConnection,
                                   Q_ARG(QString, paramId), Q_ARG(float, dispatchValue));
     } else {
@@ -1246,8 +1261,10 @@ void MidiControllerManager::onParameterChanged(const QString& id, float value)
     if (!m_midiOutput)
         return;
 
-    // Jog params are input-only; no MIDI feedback needed
-    if (id.endsWith("_jog_move") || id.endsWith("_jog_touch"))
+    // Jog and momentary transport actions are input-only here. Echoing them as
+    // LED feedback can come back through ALSA/PipeWire as a fresh input event
+    // and toggle Play/Cue twice.
+    if (id.endsWith("_jog_move") || isMomentaryMidiAction(id))
         return;
 
     const auto it = m_paramToMidi.find(id);
@@ -1292,29 +1309,35 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
 
     // Route ParameterStore events to deck actions.
     // Volume and crossfader are handled in QML via parameterStore directly.
-    // Button convention: value > 0 = press/on, value == 0 = release/off.
+    // Button convention: 127/1.0 = press/on, 0 = release/off.
     QObject::connect(m_parameterStore, &ParameterStore::parameterChanged,
         this, [this](const QString& id, float value)
     {
         DjEngine* const a = m_deckA;
         DjEngine* const b = m_deckB;
 
-        if (id == "deckA_play") { if (value > 0.0f && a) a->togglePlay(); }
-        else if (id == "deckB_play") { if (value > 0.0f && b) b->togglePlay(); }
+        if (id == "deckA_play") {
+            if (value >= 0.5f && a)
+                a->togglePlay();
+        }
+        else if (id == "deckB_play") {
+            if (value >= 0.5f && b)
+                b->togglePlay();
+        }
         else if (id == "deckA_cue") {
-            if (a) { if (value > 0.0f) a->cueButtonPress(); else a->cueButtonRelease(); }
+            if (a) { if (value >= 0.5f) a->cueButtonPress(); else a->cueButtonRelease(); }
         }
         else if (id == "deckB_cue") {
-            if (b) { if (value > 0.0f) b->cueButtonPress(); else b->cueButtonRelease(); }
+            if (b) { if (value >= 0.5f) b->cueButtonPress(); else b->cueButtonRelease(); }
         }
         else if (id == "deckA_headphone_cue") {
-            if (value > 0.0f && a) a->setCueEnabled(!a->cueEnabled());
+            if (value >= 0.5f && a) a->setCueEnabled(!a->cueEnabled());
         }
         else if (id == "deckB_headphone_cue") {
-            if (value > 0.0f && b) b->setCueEnabled(!b->cueEnabled());
+            if (value >= 0.5f && b) b->setCueEnabled(!b->cueEnabled());
         }
         else if (id == "master_cue") {
-            if (value > 0.0f && a) a->setMasterCueEnabled(!a->masterCueEnabled());
+            if (value >= 0.5f && a) a->setMasterCueEnabled(!a->masterCueEnabled());
         }
         else if (id == "headphone_mix") {
             if (a) a->setHeadphoneMix(static_cast<double>(value));
@@ -1334,16 +1357,16 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
         // Tempo fader: MIDI 0-1 → engine -8% to +8%
         else if (id == "deckA_tempo")  { if (a) a->setTempoPercent(static_cast<double>(value) * 16.0 - 8.0); }
         else if (id == "deckB_tempo")  { if (b) b->setTempoPercent(static_cast<double>(value) * 16.0 - 8.0); }
-        // Jog touch: value > 0 = finger down (enter scratch), 0 = lift (resume)
+        // Jog touch: 127 = finger down (enter scratch), 0 = lift (resume)
         else if (id == "deckA_jog_touch") {
-            const bool touched = (value > 0.0f);
+            const bool touched = (value >= 0.5f);
             if (touched != m_jogATouched) {
                 m_jogATouched = touched;
                 if (a) { if (touched) a->pauseForScrub(); else a->resumeAfterScrub(); }
             }
         }
         else if (id == "deckB_jog_touch") {
-            const bool touched = (value > 0.0f);
+            const bool touched = (value >= 0.5f);
             if (touched != m_jogBTouched) {
                 m_jogBTouched = touched;
                 if (b) { if (touched) b->pauseForScrub(); else b->resumeAfterScrub(); }
@@ -1353,11 +1376,27 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
         // With touch (scrubbing): scratch. Without touch (rim turn): speed nudge.
         else if (id == "deckA_jog_move") {
             const double delta = static_cast<double>(value) * (60.0 / 33.333) / 128.0;
-            if (a) { if (a->isScrubbing()) a->scratchBySeconds(delta); else a->applyJogNudge(static_cast<double>(value)); }
+            if (a) {
+                if (m_jogATouched || a->isScrubbing()) {
+                    if (!a->isScrubbing())
+                        a->pauseForScrub();
+                    a->scratchBySeconds(delta);
+                } else {
+                    a->applyJogNudge(static_cast<double>(value));
+                }
+            }
         }
         else if (id == "deckB_jog_move") {
             const double delta = static_cast<double>(value) * (60.0 / 33.333) / 128.0;
-            if (b) { if (b->isScrubbing()) b->scratchBySeconds(delta); else b->applyJogNudge(static_cast<double>(value)); }
+            if (b) {
+                if (m_jogBTouched || b->isScrubbing()) {
+                    if (!b->isScrubbing())
+                        b->pauseForScrub();
+                    b->scratchBySeconds(delta);
+                } else {
+                    b->applyJogNudge(static_cast<double>(value));
+                }
+            }
         }
     });
 }

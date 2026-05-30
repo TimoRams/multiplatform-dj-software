@@ -16,6 +16,7 @@
 #include <QRegularExpression>
 #include <QVariantMap>
 #include <QImage>
+#include <QTimer>
 #include <juce_core/juce_core.h>
 #include <juce_dsp/juce_dsp.h>
 #include <rubberband/RubberBandStretcher.h>
@@ -41,6 +42,7 @@ constexpr double kEqMax = 1.0;
 constexpr double kFilterMin = -1.0;
 constexpr double kFilterMax = 1.0;
 constexpr double kParamEpsilon = 1e-6;
+constexpr int kMainCueHoldPreviewDelayMs = 180;
 
 double playHistoryThresholdSeconds(double durationSec)
 {
@@ -3009,7 +3011,7 @@ void DjEngine::resetTrackLoadState()
     // while no track is loaded.  The load path sets a real value after analysing
     // the first audible frame, so this value is never visible during playback.
     m_mainCueSec = -(PRE_ROLL_SECONDS + 1.0);
-    m_mainCuePreviewActive = false;
+    resetMainCueButtonState();
     emit segmentsChanged();
     emit hotCuesChanged();
 }
@@ -3398,6 +3400,7 @@ void DjEngine::togglePlay()
 {
     if (m_playRequested) {
         m_playRequested = false;
+        resetMainCueButtonState();
         m_preRollCountdownActive = false;
         // Always freeze: calling stop() on an already-stopped transport is safe.
         // Skipping this when isPlaying()==false left the transport in a live state
@@ -3438,6 +3441,7 @@ void DjEngine::pause()
         return; // Already paused
 
     m_playRequested = false;
+    resetMainCueButtonState();
     m_preRollCountdownActive = false;
     freezeTransportAt(getVisualPosition());
     emit playingChanged();
@@ -3707,10 +3711,9 @@ void DjEngine::tickScratchPhysics()
             : 1.0;
         hasIdleSample = true;
 
-        // Auto-exit scratch mode if the jog touch sensor never sent a release event
-        // (some controllers only send a "touch on" and rely on a timeout).
-        // 800ms of no jog input while in scratch mode = implicit release.
-        constexpr double kScratchAutoReleaseSec = 0.80;
+        // Safety only: a real platter touch can be held still before the next move.
+        // Keep this long enough that touch-hold-then-scratch does not fall back to nudge.
+        constexpr double kScratchAutoReleaseSec = 30.0;
         if (idleSec > kScratchAutoReleaseSec) {
             resumeAfterScrub();
             return;
@@ -4192,6 +4195,51 @@ void DjEngine::persistMainCuePoint()
     m_libraryDb->upsertMainCuePoint(m_currentTrackId, m_mainCueSec);
 }
 
+void DjEngine::resetMainCueButtonState()
+{
+    ++m_mainCuePressSerial;
+    m_mainCueButtonDown = false;
+    m_mainCueHoldPreviewPending = false;
+    m_mainCuePreviewActive = false;
+}
+
+void DjEngine::startMainCueHoldPreview(quint64 pressSerial)
+{
+    if (pressSerial != m_mainCuePressSerial
+        || !m_mainCueButtonDown
+        || !m_mainCueHoldPreviewPending
+        || m_mainCuePreviewActive
+        || m_playRequested
+        || !m_hasTrack) {
+        return;
+    }
+
+    const double trackLen = transportSource.getLengthInSeconds();
+    if (trackLen <= 0.0)
+        return;
+
+    const double cuePos = std::clamp(m_mainCueSec >= -PRE_ROLL_SECONDS ? m_mainCueSec : 0.0,
+                                     -PRE_ROLL_SECONDS,
+                                     trackLen);
+
+    m_mainCueHoldPreviewPending = false;
+    m_mainCuePreviewActive = true;
+    transportSource.setPosition(std::max(0.0, cuePos));
+    m_scrubHoldPosition = cuePos;
+    if (cuePos < 0.0) {
+        m_preRollCountdownActive = true;
+        m_preRollVisualStartPos = cuePos;
+        m_preRollClock.restart();
+        m_snapValid = false;
+        m_atomicPlayheadPos.store(cuePos, std::memory_order_relaxed);
+    } else {
+        setSnapAnchor(cuePos, true);
+        transportSource.start();
+    }
+    emit playingChanged();
+    emit progressChanged();
+}
+
 void DjEngine::setLastAudioDeviceError(const QString& error)
 {
     if (m_lastAudioDeviceError == error)
@@ -4217,6 +4265,13 @@ void DjEngine::cueButtonPress()
     if (trackLen <= 0.0)
         return;
 
+    if (m_mainCueButtonDown)
+        return;
+
+    m_mainCueButtonDown = true;
+    m_mainCueHoldPreviewPending = false;
+    const quint64 pressSerial = ++m_mainCuePressSerial;
+
     const bool wasPlaying = m_playRequested;
 
     if (wasPlaying) {
@@ -4229,6 +4284,7 @@ void DjEngine::cueButtonPress()
 
         const double cuePos = std::clamp(m_mainCueSec, -PRE_ROLL_SECONDS, trackLen);
         transportSource.setPosition(std::max(0.0, cuePos));
+        m_scrubHoldPosition = cuePos;
         setSnapAnchor(cuePos, true);
         if (m_analyzer && m_analyzer->isThreadRunning())
             m_analyzer->setSeekHint(cuePos);
@@ -4243,18 +4299,30 @@ void DjEngine::cueButtonPress()
     emit mainCueChanged();
 
     transportSource.setPosition(std::max(0.0, cuePos));
+    m_scrubHoldPosition = cuePos;
     setSnapAnchor(cuePos, true);
     if (m_analyzer && m_analyzer->isThreadRunning())
         m_analyzer->setSeekHint(cuePos);
 
-    m_mainCuePreviewActive = true;
-    transportSource.start();
-    emit playingChanged();
+    // Short press: set/update the cue point and stay paused.
+    // Hold: after a tiny intent threshold, preview from the cue until release.
+    m_mainCueHoldPreviewPending = true;
+    QTimer::singleShot(kMainCueHoldPreviewDelayMs, this, [this, pressSerial]()
+    {
+        startMainCueHoldPreview(pressSerial);
+    });
     emit progressChanged();
 }
 
 void DjEngine::cueButtonRelease()
 {
+    if (!m_mainCueButtonDown && !m_mainCuePreviewActive)
+        return;
+
+    m_mainCueButtonDown = false;
+    m_mainCueHoldPreviewPending = false;
+    ++m_mainCuePressSerial;
+
     if (!m_mainCuePreviewActive)
         return;
 
@@ -4272,6 +4340,7 @@ void DjEngine::cueButtonRelease()
         return;
 
     const double cuePos = std::clamp(m_mainCueSec >= -PRE_ROLL_SECONDS ? m_mainCueSec : 0.0, -PRE_ROLL_SECONDS, trackLen);
+    m_preRollCountdownActive = false;
     if (transportSource.isPlaying())
         transportSource.stop();
     transportSource.setPosition(std::max(0.0, cuePos));

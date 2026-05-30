@@ -415,6 +415,8 @@ private:
     bool isValidHotCueIndex(int index) const;
     void loadMainCueForCurrentTrack();
     void persistMainCuePoint();
+    void resetMainCueButtonState();
+    void startMainCueHoldPreview(quint64 pressSerial);
     void setLastAudioDeviceError(const QString& error);
     void setAudioDeviceFallbackMessage(const QString& message);
 
@@ -469,6 +471,9 @@ private:
     std::array<HotCueSlot, 8> m_hotCueSlots;
     double m_mainCueSec = -(PRE_ROLL_SECONDS + 1.0);
     bool m_mainCuePreviewActive = false;
+    bool m_mainCueButtonDown = false;
+    bool m_mainCueHoldPreviewPending = false;
+    quint64 m_mainCuePressSerial = 0;
     QString m_lastAudioDeviceError;
     QString m_audioDeviceFallbackMessage;
 
