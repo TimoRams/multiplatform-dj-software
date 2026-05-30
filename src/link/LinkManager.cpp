@@ -8,6 +8,9 @@ LinkManager::LinkManager(QObject* parent)
 {
     // Register peer count callback (called on Link-managed thread)
     m_link.setNumPeersCallback([this](std::size_t peers) {
+        if (m_shuttingDown.load(std::memory_order_acquire))
+            return;
+
         int p = static_cast<int>(peers);
         if (m_numPeers != p) {
             m_numPeers = p;
@@ -25,6 +28,15 @@ LinkManager::LinkManager(QObject* parent)
 
 LinkManager::~LinkManager()
 {
+    shutdown();
+}
+
+void LinkManager::shutdown()
+{
+    const bool alreadyShuttingDown = m_shuttingDown.exchange(true, std::memory_order_acq_rel);
+    if (alreadyShuttingDown)
+        return;
+
     m_pollTimer.stop();
     m_link.setNumPeersCallback([](std::size_t) {});
     m_link.enable(false);
@@ -32,6 +44,9 @@ LinkManager::~LinkManager()
 
 void LinkManager::setEnabled(bool on)
 {
+    if (m_shuttingDown.load(std::memory_order_acquire))
+        return;
+
     if (m_link.isEnabled() == on) return;
     m_link.enable(on);
     qDebug() << "[LinkManager] Link" << (on ? "enabled" : "disabled");
@@ -40,6 +55,9 @@ void LinkManager::setEnabled(bool on)
 
 void LinkManager::publishDeckState(double bpm, double absoluteBeat, double quantum)
 {
+    if (m_shuttingDown.load(std::memory_order_acquire))
+        return;
+
     if (!m_link.isEnabled())
         return;
     if (!std::isfinite(bpm) || bpm <= 0.0)
@@ -99,6 +117,9 @@ void LinkManager::publishDeckState(double bpm, double absoluteBeat, double quant
 
 void LinkManager::pollLinkState()
 {
+    if (m_shuttingDown.load(std::memory_order_acquire))
+        return;
+
     if (!m_link.isEnabled()) return;
 
     // captureAppSessionState() is thread-safe and non-blocking for UI threads

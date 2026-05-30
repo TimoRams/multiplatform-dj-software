@@ -478,6 +478,9 @@ int main(int argc, char *argv[])
 
     const int ret = app.exec();
 
+    if (linkManager)
+        linkManager->shutdown();
+
     auto clearQmlContextProperties = [&]() {
         engine.rootContext()->setContextProperty("settingsManager", static_cast<QObject*>(nullptr));
         engine.rootContext()->setContextProperty("appConfig", QVariant());
@@ -509,6 +512,8 @@ int main(int argc, char *argv[])
     }
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     app.processEvents(QEventLoop::AllEvents, 50);
+
+    linkManager.reset();
 
     if (masterBus)
         masterBus->unregisterCallback(DjEngine::getSharedAudioDeviceManager());

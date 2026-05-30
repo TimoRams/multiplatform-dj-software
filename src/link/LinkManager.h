@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QTimer>
+#include <atomic>
 #include <cstdint>
 #include <ableton/Link.hpp>
 
@@ -18,6 +19,8 @@ class LinkManager : public QObject
 public:
     explicit LinkManager(QObject* parent = nullptr);
     ~LinkManager() override;
+
+    void shutdown();
 
     bool   enabled()  const { return m_link.isEnabled(); }
     double bpm()      const { return m_bpm; }
@@ -42,6 +45,7 @@ private slots:
 private:
     ableton::Link m_link;
     QTimer        m_pollTimer;
+    std::atomic<bool> m_shuttingDown { false };
 
     double m_bpm      = 120.0;
     double m_phase    = 0.0;
