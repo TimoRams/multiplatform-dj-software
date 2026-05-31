@@ -7,6 +7,11 @@
 std::atomic<float> DjMasterBus::s_masterVolume       { 1.0f  };
 std::atomic<bool>  DjMasterBus::s_antiClipEnabled    { false };
 std::atomic<float> DjMasterBus::s_gainReduction      { 1.0f  };
+std::atomic<int>   DjMasterBus::s_limiterLatencySamples { 0  };
+std::atomic<uint64_t> DjMasterBus::s_callbackCount    { 0     };
+std::atomic<uint64_t> DjMasterBus::s_callbackTotalUsec { 0    };
+std::atomic<uint64_t> DjMasterBus::s_callbackWorstUsec { 0    };
+std::atomic<uint64_t> DjMasterBus::s_callbackOverruns  { 0    };
 // Instance-level clip state exposed via a static pointer to the singleton.
 static DjMasterBus* s_instance = nullptr;  // set in ctor, cleared in dtor
 std::atomic<int>   DjMasterBus::s_masterFirstChannel  { 1     };
@@ -61,7 +66,7 @@ void DjMasterBus::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
 {
     m_sampleRate   = sampleRate;
     m_maxBlockSize = samplesPerBlockExpected > 0 ? samplesPerBlockExpected : 512;
-    m_bufferCapacity = std::clamp(m_maxBlockSize * 2, 512, 4096);
+    m_bufferCapacity = 4096;
     m_isPrepared   = true;
 
     // Prepare summing buffers
@@ -70,6 +75,7 @@ void DjMasterBus::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
 
     // Prepare limiter
     m_limiter.prepare(sampleRate, m_bufferCapacity, 2);
+    s_limiterLatencySamples.store(m_limiter.getLookaheadSamples(), std::memory_order_relaxed);
 
     // Prepare all registered deck sources
     for (auto* deck : m_decks)
@@ -87,6 +93,7 @@ void DjMasterBus::releaseResources()
 
 void DjMasterBus::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill)
 {
+    const auto callbackStartTicks = juce::Time::getHighResolutionTicks();
     const int s = bufferToFill.startSample;
     const int n = bufferToFill.numSamples;
     auto* outBuf = bufferToFill.buffer;
@@ -98,11 +105,10 @@ void DjMasterBus::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
     for (int ch = 0; ch < outBuf->getNumChannels(); ++ch)
         outBuf->clear(ch, s, n);
 
-    // Ensure internal buffers are large enough.
-    if (m_deckScratch.getNumSamples() < n)
-        m_deckScratch.setSize(2, n, false, true, true);
-    if (m_masterBuf.getNumSamples() < n)
-        m_masterBuf.setSize(2, n, false, true, true);
+    if (n > m_bufferCapacity) {
+        s_callbackOverruns.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
 
     // ── 1. Pull from each deck and accumulate into master buffer ─────────────
     m_masterBuf.clear(0, 0, n);
@@ -146,12 +152,17 @@ void DjMasterBus::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
 
     // ── 4. Brickwall limiter on the summed signal ─────────────────────────────
     {
-        m_limiter.setEnabled(s_antiClipEnabled.load(std::memory_order_relaxed));
-        float* ptrs[2] = { m_masterBuf.getWritePointer(0),
-                           m_masterBuf.getWritePointer(1) };
-        const float gr = m_limiter.processBlock(ptrs, 2, 0, n);
-        s_gainReduction.store(m_limiter.isEnabled() ? gr : 1.0f,
-                              std::memory_order_relaxed);
+        const bool limitEnabled = s_antiClipEnabled.load(std::memory_order_relaxed);
+        if (limitEnabled) {
+            m_limiter.setEnabled(true);
+            float* ptrs[2] = { m_masterBuf.getWritePointer(0),
+                               m_masterBuf.getWritePointer(1) };
+            const float gr = m_limiter.processBlock(ptrs, 2, 0, n);
+            s_gainReduction.store(gr, std::memory_order_relaxed);
+        } else {
+            m_limiter.setEnabled(false);
+            s_gainReduction.store(1.0f, std::memory_order_relaxed);
+        }
     }
 
     // ── 5. Output routing ──────────────────────────────────────────────────────
@@ -205,6 +216,28 @@ void DjMasterBus::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
             first = false;
         }
     }
+
+    const auto elapsedTicks = juce::Time::getHighResolutionTicks() - callbackStartTicks;
+    const auto freq = juce::Time::getHighResolutionTicksPerSecond();
+    const uint64_t elapsedUsec = freq > 0
+        ? static_cast<uint64_t>((static_cast<long double>(elapsedTicks) * 1000000.0L)
+                                / static_cast<long double>(freq))
+        : 0;
+    s_callbackCount.fetch_add(1, std::memory_order_relaxed);
+    s_callbackTotalUsec.fetch_add(elapsedUsec, std::memory_order_relaxed);
+    uint64_t observedWorst = s_callbackWorstUsec.load(std::memory_order_relaxed);
+    while (elapsedUsec > observedWorst
+           && !s_callbackWorstUsec.compare_exchange_weak(observedWorst,
+                                                         elapsedUsec,
+                                                         std::memory_order_relaxed,
+                                                         std::memory_order_relaxed)) {
+    }
+    if (m_sampleRate > 0.0) {
+        const uint64_t budgetUsec = static_cast<uint64_t>(
+            (static_cast<double>(n) / m_sampleRate) * 1000000.0);
+        if (budgetUsec > 0 && elapsedUsec > budgetUsec)
+            s_callbackOverruns.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 // ── Static setters / getters ──────────────────────────────────────────────────
@@ -217,6 +250,48 @@ void  DjMasterBus::setMasterVolume(float v)
 void  DjMasterBus::setAntiClipEnabled(bool enabled)
 {
     s_antiClipEnabled.store(enabled, std::memory_order_relaxed);
+}
+
+bool DjMasterBus::antiClipEnabled()
+{
+    return s_antiClipEnabled.load(std::memory_order_relaxed);
+}
+
+int DjMasterBus::limiterLatencySamples()
+{
+    return antiClipEnabled() ? s_limiterLatencySamples.load(std::memory_order_relaxed) : 0;
+}
+
+double DjMasterBus::callbackAverageUsec()
+{
+    const uint64_t count = s_callbackCount.load(std::memory_order_relaxed);
+    if (count == 0)
+        return 0.0;
+    return static_cast<double>(s_callbackTotalUsec.load(std::memory_order_relaxed))
+        / static_cast<double>(count);
+}
+
+double DjMasterBus::callbackWorstUsec()
+{
+    return static_cast<double>(s_callbackWorstUsec.load(std::memory_order_relaxed));
+}
+
+uint64_t DjMasterBus::callbackCount()
+{
+    return s_callbackCount.load(std::memory_order_relaxed);
+}
+
+uint64_t DjMasterBus::callbackOverrunCount()
+{
+    return s_callbackOverruns.load(std::memory_order_relaxed);
+}
+
+void DjMasterBus::resetCallbackStats()
+{
+    s_callbackCount.store(0, std::memory_order_relaxed);
+    s_callbackTotalUsec.store(0, std::memory_order_relaxed);
+    s_callbackWorstUsec.store(0, std::memory_order_relaxed);
+    s_callbackOverruns.store(0, std::memory_order_relaxed);
 }
 
 float DjMasterBus::gainReduction()

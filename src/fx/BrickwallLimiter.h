@@ -56,6 +56,7 @@ public:
     void setTruePeakEnabled(bool enabled);
     void setEnabled(bool enabled);              // seamless on/off with crossfade
     bool isEnabled() const;
+    int getLookaheadSamples() const noexcept { return m_lookaheadSamples; }
 
 private:
     // ── Soft-knee saturation ─────────────────────────────────────────────

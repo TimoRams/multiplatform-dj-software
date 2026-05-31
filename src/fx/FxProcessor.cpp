@@ -1,7 +1,36 @@
 #include "FxProcessor.h"
 #include <cmath>
 #include <algorithm>
+#include <array>
 #include <cassert>
+
+namespace {
+constexpr int kFxProfileCount = static_cast<int>(EffectType::RollOut) + 1;
+std::array<std::atomic<uint64_t>, kFxProfileCount> s_fxCounts {};
+std::array<std::atomic<uint64_t>, kFxProfileCount> s_fxTotalUsec {};
+std::array<std::atomic<uint64_t>, kFxProfileCount> s_fxWorstUsec {};
+
+int effectProfileIndex(EffectType type) noexcept
+{
+    const int index = static_cast<int>(type);
+    return (index >= 0 && index < kFxProfileCount) ? index : 0;
+}
+
+void recordFxCpuUsec(EffectType type, uint64_t elapsedUsec) noexcept
+{
+    const int index = effectProfileIndex(type);
+    s_fxCounts[static_cast<size_t>(index)].fetch_add(1, std::memory_order_relaxed);
+    s_fxTotalUsec[static_cast<size_t>(index)].fetch_add(elapsedUsec, std::memory_order_relaxed);
+    uint64_t observedWorst = s_fxWorstUsec[static_cast<size_t>(index)].load(std::memory_order_relaxed);
+    while (elapsedUsec > observedWorst
+           && !s_fxWorstUsec[static_cast<size_t>(index)].compare_exchange_weak(
+               observedWorst,
+               elapsedUsec,
+               std::memory_order_relaxed,
+               std::memory_order_relaxed)) {
+    }
+}
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PitchShifterImpl  –  simple ring-buffer pitch shifter (no FFT required).
@@ -181,8 +210,21 @@ void FxProcessor::process(juce::AudioBuffer<float>& buffer, int startSample, int
         return;
     }
 
+    const auto profileStartTicks = juce::Time::getHighResolutionTicks();
+    const auto finishProfile = [type, profileStartTicks]()
+    {
+        const auto elapsedTicks = juce::Time::getHighResolutionTicks() - profileStartTicks;
+        const auto freq = juce::Time::getHighResolutionTicksPerSecond();
+        const uint64_t elapsedUsec = freq > 0
+            ? static_cast<uint64_t>((static_cast<long double>(elapsedTicks) * 1000000.0L)
+                                    / static_cast<long double>(freq))
+            : 0;
+        recordFxCpuUsec(type, elapsedUsec);
+    };
+
     if (processSoundColorEffect(type, buffer, startSample, numSamples)) {
         advanceBeatSyncBlock(numSamples);
+        finishProfile();
         return;
     }
 
@@ -190,6 +232,7 @@ void FxProcessor::process(juce::AudioBuffer<float>& buffer, int startSample, int
     {
         jassertfalse;
         advanceBeatSyncBlock(numSamples);
+        finishProfile();
         return;
     }
 
@@ -197,6 +240,50 @@ void FxProcessor::process(juce::AudioBuffer<float>& buffer, int startSample, int
     processWetEffect(type, m_wetScratch, numSamples, amount);
     mixWetDrySmoothed(buffer, m_wetScratch, startSample, numSamples);
     advanceBeatSyncBlock(numSamples);
+    finishProfile();
+}
+
+FxProcessor::CpuProfile FxProcessor::getCpuProfile(EffectType type)
+{
+    const int index = effectProfileIndex(type);
+    const auto arrayIndex = static_cast<size_t>(index);
+    return {
+        .count = s_fxCounts[arrayIndex].load(std::memory_order_relaxed),
+        .totalUsec = s_fxTotalUsec[arrayIndex].load(std::memory_order_relaxed),
+        .worstUsec = s_fxWorstUsec[arrayIndex].load(std::memory_order_relaxed)
+    };
+}
+
+const char* FxProcessor::effectTypeName(EffectType type) noexcept
+{
+    switch (type) {
+        case EffectType::None: return "None";
+        case EffectType::Reverb: return "Reverb";
+        case EffectType::Bitcrusher: return "Bitcrusher";
+        case EffectType::PitchShifter: return "PitchShifter";
+        case EffectType::Echo: return "Echo";
+        case EffectType::LowCutEcho: return "LowCutEcho";
+        case EffectType::MtDelay: return "MtDelay";
+        case EffectType::Spiral: return "Spiral";
+        case EffectType::Flanger: return "Flanger";
+        case EffectType::Phaser: return "Phaser";
+        case EffectType::Trans: return "Trans";
+        case EffectType::EnigmaJet: return "EnigmaJet";
+        case EffectType::Stretch: return "Stretch";
+        case EffectType::SlipRoll: return "SlipRoll";
+        case EffectType::Roll: return "Roll";
+        case EffectType::Nobius: return "Nobius";
+        case EffectType::Mobius: return "Mobius";
+        case EffectType::SoundColorFilter: return "SoundColorFilter";
+        case EffectType::SoundColorDubEcho: return "SoundColorDubEcho";
+        case EffectType::SoundColorCrush: return "SoundColorCrush";
+        case EffectType::SoundColorSpace: return "SoundColorSpace";
+        case EffectType::SoundColorPitch: return "SoundColorPitch";
+        case EffectType::SoundColorNoise: return "SoundColorNoise";
+        case EffectType::SoundColorSweep: return "SoundColorSweep";
+        case EffectType::RollOut: return "RollOut";
+    }
+    return "Unknown";
 }
 
 bool FxProcessor::ensureScratchCapacity(int numSamples)

@@ -40,6 +40,7 @@ Rectangle {
     property string currentTime: "00:00"
     property real   totalLatencyMs: 0.0
     property var    latencyRows: []
+    property var    audioPerfStats: ({})
     property int    beatUiTick: 0
 
     // ── Timers ───────────────────────────────────────────────────────────────
@@ -73,6 +74,7 @@ Rectangle {
         var rows = deckA.latencyBreakdown()
         if (!rows || rows.length === 0) return
         latencyRows = rows
+        audioPerfStats = deckA.audioPerformanceStats ? deckA.audioPerformanceStats() : ({})
         var sum = 0.0
         for (var i = 0; i < rows.length; ++i) {
             if (rows[i].countInTotal === false) continue
@@ -162,6 +164,112 @@ Rectangle {
                             width: 66; anchors.verticalCenter: parent.verticalCenter
                             text: Number(modelData.samples).toString() + " smp"
                             color: "#666"; font.pixelSize: root.sp(8); font.family: "monospace"
+                            horizontalAlignment: Text.AlignRight
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                width: latencyPopup.width; height: 28
+                color: "#161616"
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left; anchors.leftMargin: 12
+                    text: "CALLBACK PROFILE"
+                    color: "#999"; font.pixelSize: root.sp(9); font.bold: true; font.letterSpacing: 0.6
+                }
+            }
+
+            Rectangle {
+                width: latencyPopup.width; height: 28
+                color: "#121212"
+                Row {
+                    anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
+                    Text {
+                        width: 82; anchors.verticalCenter: parent.verticalCenter
+                        text: "AVG"
+                        color: "#777"; font.pixelSize: root.sp(8); font.bold: true
+                    }
+                    Text {
+                        width: 62; anchors.verticalCenter: parent.verticalCenter
+                        text: ((Number(root.audioPerfStats.callbackAverageUsec) || 0.0) / 1000.0).toFixed(3) + " ms"
+                        color: "#efefef"; font.pixelSize: root.sp(8); font.family: "monospace"
+                        horizontalAlignment: Text.AlignRight
+                    }
+                    Text {
+                        width: 54; anchors.verticalCenter: parent.verticalCenter
+                        text: "WORST"
+                        color: "#777"; font.pixelSize: root.sp(8); font.bold: true
+                    }
+                    Text {
+                        width: 62; anchors.verticalCenter: parent.verticalCenter
+                        text: ((Number(root.audioPerfStats.callbackWorstUsec) || 0.0) / 1000.0).toFixed(3) + " ms"
+                        color: "#efefef"; font.pixelSize: root.sp(8); font.family: "monospace"
+                        horizontalAlignment: Text.AlignRight
+                    }
+                }
+            }
+
+            Rectangle {
+                width: latencyPopup.width; height: 28
+                color: "#151515"
+                Row {
+                    anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
+                    Text {
+                        width: 82; anchors.verticalCenter: parent.verticalCenter
+                        text: "BUDGET"
+                        color: "#777"; font.pixelSize: root.sp(8); font.bold: true
+                    }
+                    Text {
+                        width: 62; anchors.verticalCenter: parent.verticalCenter
+                        text: ((Number(root.audioPerfStats.callbackBudgetUsec) || 0.0) / 1000.0).toFixed(3) + " ms"
+                        color: "#efefef"; font.pixelSize: root.sp(8); font.family: "monospace"
+                        horizontalAlignment: Text.AlignRight
+                    }
+                    Text {
+                        width: 54; anchors.verticalCenter: parent.verticalCenter
+                        text: "XRUNS"
+                        color: "#777"; font.pixelSize: root.sp(8); font.bold: true
+                    }
+                    Text {
+                        width: 62; anchors.verticalCenter: parent.verticalCenter
+                        text: Number(root.audioPerfStats.callbackOverruns) ? Number(root.audioPerfStats.callbackOverruns).toString() : "0"
+                        color: Number(root.audioPerfStats.callbackOverruns) > 0 ? "#ff5f52" : "#efefef"
+                        font.pixelSize: root.sp(8); font.family: "monospace"
+                        horizontalAlignment: Text.AlignRight
+                    }
+                }
+            }
+
+            Repeater {
+                model: root.audioPerfStats.fxProfiles ? root.audioPerfStats.fxProfiles : []
+                Rectangle {
+                    required property var modelData
+                    width: latencyPopup.width; height: 24
+                    color: "#121212"
+                    Row {
+                        anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
+                        Text {
+                            width: 136; anchors.verticalCenter: parent.verticalCenter
+                            text: modelData.name
+                            color: "#777"; font.pixelSize: root.sp(8); elide: Text.ElideRight
+                        }
+                        Text {
+                            width: 62; anchors.verticalCenter: parent.verticalCenter
+                            text: ((Number(modelData.averageUsec) || 0.0) / 1000.0).toFixed(3) + " ms"
+                            color: "#efefef"; font.pixelSize: root.sp(8); font.family: "monospace"
+                            horizontalAlignment: Text.AlignRight
+                        }
+                        Text {
+                            width: 46; anchors.verticalCenter: parent.verticalCenter
+                            text: "max"
+                            color: "#555"; font.pixelSize: root.sp(8); font.bold: true
+                        }
+                        Text {
+                            width: 62; anchors.verticalCenter: parent.verticalCenter
+                            text: ((Number(modelData.worstUsec) || 0.0) / 1000.0).toFixed(3) + " ms"
+                            color: "#efefef"; font.pixelSize: root.sp(8); font.family: "monospace"
                             horizontalAlignment: Text.AlignRight
                         }
                     }
@@ -953,7 +1061,7 @@ Rectangle {
                     root.refreshLatencyInfo()
                     if (latencyPopup.opened) { latencyPopup.close(); return }
                     var p = monitorBlock.mapToItem(latencyPopup.parent, 0, monitorBlock.height + 2)
-                    latencyPopup.width = 320
+                    latencyPopup.width = 340
                     latencyPopup.x = p.x; latencyPopup.y = p.y
                     latencyPopup.open()
                 }

@@ -104,10 +104,7 @@ bool requestJackBufferSize(int requestedFrames, int& effectiveFrames, int& effec
     const jack_nframes_t current = jack_get_buffer_size(client);
     const int currentFrames = static_cast<int>(current);
 
-    if (requestedFrames <= 1024 && currentFrames > 0 && currentFrames <= 1024)
-        effectiveFrames = currentFrames;
-
-    const int requestedForServer = effectiveFrames;
+    const int requestedForServer = requestedFrames;
     const jack_nframes_t requested = static_cast<jack_nframes_t>(requestedForServer);
     if (current == requested) {
         jack_client_close(client);
@@ -273,6 +270,8 @@ int minimumStableBufferSizeForBackend(const QString& deviceType)
 {
 #if JUCE_LINUX || JUCE_BSD
     const QString lower = deviceType.toLower();
+    if (lower.contains(QStringLiteral("jack")))
+        return 64;
     if (!lower.contains(QStringLiteral("jack")))
         return 512;
 #endif
@@ -307,7 +306,7 @@ juce::AudioDeviceManager& sharedAudioDeviceManager()
 struct OutputLatencySnapshot {
     int outputRawSamples = 0;
     int callbackBufferSamples = 0;
-    int effectiveOutputSamples = 0;
+    int backendOutputSamples = 0;
     double sampleRate = 0.0;
 
     [[nodiscard]] int roundedSampleRate() const noexcept
@@ -514,22 +513,22 @@ OutputLatencySnapshot readOutputLatencySnapshot(juce::AudioIODevice* device)
 
     const int outputRawSamples = std::max(0, device->getOutputLatencyInSamples());
     const int callbackBufferSamples = std::max(0, device->getCurrentBufferSizeSamples());
-    int effectiveSamples;
+    int backendSamples;
     if (outputRawSamples <= 0) {
-        effectiveSamples = callbackBufferSamples > 0 ? callbackBufferSamples : 512;
+        backendSamples = 0;
     } else if (callbackBufferSamples > 0
                && outputRawSamples % callbackBufferSamples == 0
                && outputRawSamples >= 2 * callbackBufferSamples) {
         // ALSA over-reports: getOutputLatencyInSamples() returns numPeriods*periodSize.
         // The current period is already counted as the callback buffer, so subtract one.
-        effectiveSamples = outputRawSamples - callbackBufferSamples;
+        backendSamples = outputRawSamples - callbackBufferSamples;
     } else {
-        effectiveSamples = outputRawSamples;
+        backendSamples = outputRawSamples;
     }
     return {
         .outputRawSamples = outputRawSamples,
         .callbackBufferSamples = callbackBufferSamples,
-        .effectiveOutputSamples = effectiveSamples,
+        .backendOutputSamples = backendSamples,
         .sampleRate = device->getCurrentSampleRate()
     };
 }
@@ -1042,6 +1041,8 @@ public:
         scratchBuffer.setSize(2, scratchCapacity);
         outputBuffer.setSize(2, kFifoCapacity);
         trimBuffer.setSize(2, kMaxPullSize);
+        prewarmZeroBuffer.setSize(2, std::max(kMaxPullSize, m_maxProcessSize));
+        prewarmZeroBuffer.clear();
         fifo = std::make_unique<juce::AbstractFifo>(kFifoCapacity);
 
         // Pre-warm upfront: startup delay is absorbed here, never trimmed
@@ -1300,26 +1301,40 @@ private:
 
         const int pad = static_cast<int>(stretcher->getPreferredStartPad());
         if (pad > 0) {
-            juce::AudioBuffer<float> zeros(2, pad);
-            zeros.clear();
-            const float* ptrs[2] = { zeros.getReadPointer(0), zeros.getReadPointer(1) };
-            stretcher->process(ptrs, pad, false);
+            int remainingPad = pad;
+            while (remainingPad > 0) {
+                const int chunk = std::min(remainingPad, prewarmZeroBuffer.getNumSamples());
+                if (chunk <= 0)
+                    break;
+                const float* ptrs[2] = {
+                    prewarmZeroBuffer.getReadPointer(0),
+                    prewarmZeroBuffer.getReadPointer(1)
+                };
+                stretcher->process(ptrs, chunk, false);
+                remainingPad -= chunk;
+            }
         }
 
         // Keep feeding zeros and draining until the full start delay is consumed.
-        juce::AudioBuffer<float> tmp(2, kMaxPullSize);
-        tmp.clear();
         int remaining = static_cast<int>(stretcher->getStartDelay());
         for (int guard = 128; guard > 0 && remaining > 0; --guard) {
             int avail = stretcher->available();
             if (avail <= 0) {
-                const float* ptrs[2] = { tmp.getReadPointer(0), tmp.getReadPointer(1) };
+                const float* ptrs[2] = {
+                    prewarmZeroBuffer.getReadPointer(0),
+                    prewarmZeroBuffer.getReadPointer(1)
+                };
                 stretcher->process(ptrs, kMinPullSize, false);
                 avail = stretcher->available();
             }
             if (avail > 0) {
-                const int chunk = std::min(remaining, avail);
-                float* ptrs[2] = { tmp.getWritePointer(0), tmp.getWritePointer(1) };
+                const int chunk = std::min({remaining, avail, trimBuffer.getNumSamples()});
+                if (chunk <= 0)
+                    break;
+                float* ptrs[2] = {
+                    trimBuffer.getWritePointer(0),
+                    trimBuffer.getWritePointer(1)
+                };
                 stretcher->retrieve(ptrs, chunk);
                 remaining -= chunk;
             }
@@ -1347,6 +1362,7 @@ private:
     juce::AudioBuffer<float> scratchBuffer;
     juce::AudioBuffer<float> outputBuffer;
     juce::AudioBuffer<float> trimBuffer;
+    juce::AudioBuffer<float> prewarmZeroBuffer;
     std::unique_ptr<juce::AbstractFifo> fifo;
     double sampleRate = 44100.0;
     double tempoRatio = 1.0;
@@ -2200,27 +2216,27 @@ void DjEngine::refreshHardwareLatency()
         const auto latency = readOutputLatencySnapshot(device);
         if (latency.sampleRate > 0.0) {
             m_latencySeconds.store(
-                static_cast<float>(static_cast<double>(latency.effectiveOutputSamples) / latency.sampleRate),
+                static_cast<float>(static_cast<double>(latency.backendOutputSamples) / latency.sampleRate),
                 std::memory_order_relaxed);
-            const int visualCompSamples = latency.callbackBufferSamples + latency.effectiveOutputSamples;
+            const int visualCompSamples = latency.callbackBufferSamples + latency.backendOutputSamples;
             m_visualLatencyCompensationSeconds.store(
                 static_cast<float>(std::clamp(static_cast<double>(visualCompSamples) / latency.sampleRate, 0.0, 0.250)),
                 std::memory_order_relaxed);
         }
 
-        const bool changed = (latency.effectiveOutputSamples != m_lastLoggedEffectiveSamples)
+        const bool changed = (latency.backendOutputSamples != m_lastLoggedEffectiveSamples)
                           || (latency.outputRawSamples != m_lastLoggedOutputRawSamples)
                           || (latency.callbackBufferSamples != m_lastLoggedBufferSamples)
                           || (latency.roundedSampleRate() != m_lastLoggedSampleRateRounded)
                           || m_latencyLoggedNoDevice;
 
         if (changed) {
-            qInfo() << "[DjEngine] Output latency:" << latency.effectiveOutputSamples
+            qInfo() << "[DjEngine] Backend output latency:" << latency.backendOutputSamples
                     << "smp" << "(" << m_latencySeconds.load(std::memory_order_relaxed) << "s)"
                     << "raw:" << latency.outputRawSamples
                     << "buf:" << latency.callbackBufferSamples
                     << "sr:" << latency.roundedSampleRate();
-            m_lastLoggedEffectiveSamples  = latency.effectiveOutputSamples;
+            m_lastLoggedEffectiveSamples  = latency.backendOutputSamples;
             m_lastLoggedOutputRawSamples  = latency.outputRawSamples;
             m_lastLoggedBufferSamples     = latency.callbackBufferSamples;
             m_lastLoggedSampleRateRounded = latency.roundedSampleRate();
@@ -2466,6 +2482,12 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     bufferSize = std::clamp(bufferSize, 64, 4096);
 #endif
 
+    if (jackBackendRequested && bufferSize > 256) {
+        bufferSize = 256;
+        setAudioDeviceFallbackMessage(QStringLiteral(
+            "JACK low-latency mode capped the buffer at 256 frames/period."));
+    }
+
     if (jackBackendRequested) {
 #if JUCE_JACK && (JUCE_LINUX || JUCE_BSD)
         QString jackMsg;
@@ -2552,10 +2574,6 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
             const double currentJackRate = device->getCurrentSampleRate();
             if (currentJackRate > 0.0)
                 sampleRate = static_cast<int>(std::lround(currentJackRate));
-
-            const int currentJackBuffer = device->getCurrentBufferSizeSamples();
-            if (bufferSize <= 1024 && currentJackBuffer > 0 && currentJackBuffer <= 1024)
-                bufferSize = currentJackBuffer;
         }
 
 #if JUCE_JACK && (JUCE_LINUX || JUCE_BSD)
@@ -2786,20 +2804,21 @@ DjEngine::LatencySnapshot DjEngine::buildLatencySnapshot() const
         const auto latency = readOutputLatencySnapshot(device);
         snapshot.outputRawSamples = latency.outputRawSamples;
         snapshot.bufferSamples = latency.callbackBufferSamples;
-        snapshot.outputEffectiveSamples = latency.effectiveOutputSamples;
+        snapshot.backendOutputSamples = latency.backendOutputSamples;
         if (latency.sampleRate > 0.0)
             snapshot.sampleRate = latency.sampleRate;
     } else if (m_lastLatencySnapshot.sampleRate > 0.0) {
         snapshot.outputRawSamples = m_lastLatencySnapshot.outputRawSamples;
         snapshot.bufferSamples = m_lastLatencySnapshot.bufferSamples;
-        snapshot.outputEffectiveSamples = m_lastLatencySnapshot.outputEffectiveSamples;
+        snapshot.backendOutputSamples = m_lastLatencySnapshot.backendOutputSamples;
     }
 
     if (timeStretchSource)
-        snapshot.rubberbandSamples = std::max(0, timeStretchSource->getLatencySamples());
+        snapshot.keylockSamples = std::max(0, timeStretchSource->getLatencySamples());
 
-    // BrickwallLimiter default lookahead is 1.5 ms (set in BrickwallLimiter.h).
-    snapshot.limiterSamples = std::max(0, static_cast<int>(std::lround(snapshot.sampleRate * 0.0015)));
+    snapshot.limiterSamples = std::max(0, DjMasterBus::limiterLatencySamples());
+    snapshot.resamplerSamples = 0;
+    snapshot.mixerFxSamples = 0;
     m_lastLatencySnapshot = snapshot;
     return snapshot;
 }
@@ -2811,9 +2830,11 @@ double DjEngine::totalLatencyMs() const
         return 0.0;
 
     const int totalSamples = snapshot.bufferSamples
-                           + snapshot.outputEffectiveSamples
-                           + snapshot.rubberbandSamples
-                           + snapshot.limiterSamples;
+                           + snapshot.backendOutputSamples
+                           + snapshot.keylockSamples
+                           + snapshot.resamplerSamples
+                           + snapshot.limiterSamples
+                           + snapshot.mixerFxSamples;
     return (static_cast<double>(totalSamples) / snapshot.sampleRate) * 1000.0;
 }
 
@@ -2828,27 +2849,53 @@ QVariantList DjEngine::latencyBreakdown() const
     };
 
     QVariantList rows;
+    const int audioDeviceSamples = snapshot.bufferSamples + snapshot.backendOutputSamples;
+    const int dspSamples = snapshot.keylockSamples
+                         + snapshot.resamplerSamples
+                         + snapshot.limiterSamples
+                         + snapshot.mixerFxSamples;
+
+    QVariantMap audioDeviceRow;
+    audioDeviceRow.insert("name", QStringLiteral("Audio Device Total"));
+    audioDeviceRow.insert("samples", audioDeviceSamples);
+    audioDeviceRow.insert("ms", toMs(audioDeviceSamples));
+    audioDeviceRow.insert("countInTotal", false);
+    rows.push_back(audioDeviceRow);
 
     QVariantMap bufferRow;
-    bufferRow.insert("name", QStringLiteral("Audio Buffer"));
+    bufferRow.insert("name", QStringLiteral("Device Buffer / Period"));
     bufferRow.insert("samples", snapshot.bufferSamples);
     bufferRow.insert("ms", toMs(snapshot.bufferSamples));
     bufferRow.insert("countInTotal", true);
     rows.push_back(bufferRow);
 
     QVariantMap driverRow;
-    driverRow.insert("name", QStringLiteral("Driver / Hardware"));
-    driverRow.insert("samples", snapshot.outputEffectiveSamples);
-    driverRow.insert("ms", toMs(snapshot.outputEffectiveSamples));
+    driverRow.insert("name", QStringLiteral("Backend / Hardware"));
+    driverRow.insert("samples", snapshot.backendOutputSamples);
+    driverRow.insert("ms", toMs(snapshot.backendOutputSamples));
     driverRow.insert("countInTotal", true);
     rows.push_back(driverRow);
 
+    QVariantMap dspRow;
+    dspRow.insert("name", QStringLiteral("DSP Latency"));
+    dspRow.insert("samples", dspSamples);
+    dspRow.insert("ms", toMs(dspSamples));
+    dspRow.insert("countInTotal", false);
+    rows.push_back(dspRow);
+
     QVariantMap rubberbandRow;
-    rubberbandRow.insert("name", QStringLiteral("Keylock Processing"));
-    rubberbandRow.insert("samples", snapshot.rubberbandSamples);
-    rubberbandRow.insert("ms", toMs(snapshot.rubberbandSamples));
+    rubberbandRow.insert("name", QStringLiteral("Keylock / Timestretch"));
+    rubberbandRow.insert("samples", snapshot.keylockSamples);
+    rubberbandRow.insert("ms", toMs(snapshot.keylockSamples));
     rubberbandRow.insert("countInTotal", true);
     rows.push_back(rubberbandRow);
+
+    QVariantMap resamplerRow;
+    resamplerRow.insert("name", QStringLiteral("Resampler"));
+    resamplerRow.insert("samples", snapshot.resamplerSamples);
+    resamplerRow.insert("ms", toMs(snapshot.resamplerSamples));
+    resamplerRow.insert("countInTotal", true);
+    rows.push_back(resamplerRow);
 
     QVariantMap limiterRow;
     limiterRow.insert("name", QStringLiteral("Limiter Lookahead"));
@@ -2857,7 +2904,58 @@ QVariantList DjEngine::latencyBreakdown() const
     limiterRow.insert("countInTotal", true);
     rows.push_back(limiterRow);
 
+    QVariantMap fxRow;
+    fxRow.insert("name", QStringLiteral("Mixer / FX Chain"));
+    fxRow.insert("samples", snapshot.mixerFxSamples);
+    fxRow.insert("ms", toMs(snapshot.mixerFxSamples));
+    fxRow.insert("countInTotal", true);
+    rows.push_back(fxRow);
+
+    QVariantMap totalRow;
+    totalRow.insert("name", QStringLiteral("Total Estimated Latency"));
+    totalRow.insert("samples", audioDeviceSamples + dspSamples);
+    totalRow.insert("ms", toMs(audioDeviceSamples + dspSamples));
+    totalRow.insert("countInTotal", false);
+    rows.push_back(totalRow);
+
     return rows;
+}
+
+QVariantMap DjEngine::audioPerformanceStats() const
+{
+    QVariantMap stats;
+    const auto snapshot = buildLatencySnapshot();
+    const double callbackBudgetUsec = snapshot.sampleRate > 0.0
+        ? (static_cast<double>(snapshot.bufferSamples) / snapshot.sampleRate) * 1000000.0
+        : 0.0;
+
+    stats.insert(QStringLiteral("callbackAverageUsec"), DjMasterBus::callbackAverageUsec());
+    stats.insert(QStringLiteral("callbackWorstUsec"), DjMasterBus::callbackWorstUsec());
+    stats.insert(QStringLiteral("callbackBudgetUsec"), callbackBudgetUsec);
+    stats.insert(QStringLiteral("callbackCount"),
+                 QVariant::fromValue<qulonglong>(DjMasterBus::callbackCount()));
+    stats.insert(QStringLiteral("callbackOverruns"),
+                 QVariant::fromValue<qulonglong>(DjMasterBus::callbackOverrunCount()));
+    stats.insert(QStringLiteral("sampleRate"), snapshot.sampleRate);
+    stats.insert(QStringLiteral("bufferSamples"), snapshot.bufferSamples);
+
+    QVariantList fxProfiles;
+    for (int i = 1; i <= static_cast<int>(EffectType::RollOut); ++i) {
+        const auto type = static_cast<EffectType>(i);
+        const auto profile = FxProcessor::getCpuProfile(type);
+        if (profile.count == 0)
+            continue;
+
+        QVariantMap row;
+        row.insert(QStringLiteral("name"), QString::fromLatin1(FxProcessor::effectTypeName(type)));
+        row.insert(QStringLiteral("averageUsec"),
+                   static_cast<double>(profile.totalUsec) / static_cast<double>(profile.count));
+        row.insert(QStringLiteral("worstUsec"), static_cast<double>(profile.worstUsec));
+        row.insert(QStringLiteral("count"), QVariant::fromValue<qulonglong>(profile.count));
+        fxProfiles.push_back(row);
+    }
+    stats.insert(QStringLiteral("fxProfiles"), fxProfiles);
+    return stats;
 }
 
 double DjEngine::getPosition() const

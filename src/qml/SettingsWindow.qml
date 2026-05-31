@@ -88,8 +88,8 @@ Window {
     ]
 
     readonly property var standardBufferSizeOptions: [
-        { label: "64 samples (unstable)", value: 64 },
-        { label: "128 samples (unstable)", value: 128 },
+        { label: "64 samples", value: 64 },
+        { label: "128 samples", value: 128 },
         { label: "256 samples (low latency)", value: 256 },
         { label: "512 samples (safe)", value: 512 },
         { label: "1024 samples", value: 1024 },
@@ -98,9 +98,9 @@ Window {
     ]
 
     readonly property var jackBufferSizeOptions: [
-        { label: "<= 1024 frames/period", value: 1024, minValue: 1, maxValue: 1024 },
-        { label: "2048 frames/period", value: 2048 },
-        { label: "4096 frames/period", value: 4096 }
+        { label: "64 frames/period", value: 64 },
+        { label: "128 frames/period", value: 128 },
+        { label: "256 frames/period", value: 256, minValue: 257, maxValue: 4096 }
     ]
 
     readonly property var bufferSizeOptions: isJackDeviceSelected

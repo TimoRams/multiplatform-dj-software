@@ -2,7 +2,9 @@
 
 #include <juce_dsp/juce_dsp.h>
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <array>
 #include <atomic>
+#include <cstdint>
 #include <vector>
 
 #include "../dsp/SsDelay.h"
@@ -92,6 +94,14 @@ public:
     float      getAmount()     const { return m_amountAtomic.load(); }
     float      getSCKnob()     const { return m_scKnobAtomic.load(); }
     float      getSCParam()    const { return m_scParamAtomic.load(); }
+
+    struct CpuProfile {
+        uint64_t count = 0;
+        uint64_t totalUsec = 0;
+        uint64_t worstUsec = 0;
+    };
+    static CpuProfile getCpuProfile(EffectType type);
+    static const char* effectTypeName(EffectType type) noexcept;
 
     // Returns true for Sound Color FX types (17-23) that belong pre-EQ in the signal chain.
     // All other non-None types are Beat FX that run post-fader.

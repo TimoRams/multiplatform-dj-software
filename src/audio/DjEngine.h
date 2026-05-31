@@ -6,6 +6,7 @@
 #include <QTimer>
 #include <QVector>
 #include <QVariantList>
+#include <QVariantMap>
 #include <QElapsedTimer>
 #include <atomic>
 #include <array>
@@ -168,6 +169,7 @@ public:
     Q_INVOKABLE void setAntiClip(bool enabled);
     [[nodiscard]] Q_INVOKABLE double totalLatencyMs() const;
     [[nodiscard]] Q_INVOKABLE QVariantList latencyBreakdown() const;
+    [[nodiscard]] Q_INVOKABLE QVariantMap audioPerformanceStats() const;
     Q_INVOKABLE void triggerHotCue(int index);
     Q_INVOKABLE void storeHotCue(int index);
     Q_INVOKABLE void clearHotCue(int index);
@@ -387,11 +389,13 @@ private slots:
 
 private:
     struct LatencySnapshot {
-        int outputEffectiveSamples = 0;
+        int backendOutputSamples = 0;
         int outputRawSamples = 0;
         int bufferSamples = 0;
-        int rubberbandSamples = 0;
+        int keylockSamples = 0;
+        int resamplerSamples = 0;
         int limiterSamples = 0;
+        int mixerFxSamples = 0;
         double sampleRate = 44100.0;
     };
 

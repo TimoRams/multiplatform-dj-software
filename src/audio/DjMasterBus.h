@@ -2,6 +2,7 @@
 
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <atomic>
+#include <cstdint>
 #include <vector>
 #include "../fx/BrickwallLimiter.h"
 
@@ -47,7 +48,14 @@ public:
     // ── Master volume + clip protection ──────────────────────────────────────
     static void  setMasterVolume(float v);
     static void  setAntiClipEnabled(bool enabled);
+    static bool  antiClipEnabled();
     static float gainReduction();       // last block's gain-reduction factor
+    static int   limiterLatencySamples();
+    static double callbackAverageUsec();
+    static double callbackWorstUsec();
+    static uint64_t callbackCount();
+    static uint64_t callbackOverrunCount();
+    static void resetCallbackStats();
 
     // ── Output routing config ─────────────────────────────────────────────────
     // firstChannel is 1-based; -1 = disabled.
@@ -89,6 +97,11 @@ private:
     static std::atomic<float> s_masterVolume;
     static std::atomic<bool>  s_antiClipEnabled;
     static std::atomic<float> s_gainReduction;
+    static std::atomic<int>   s_limiterLatencySamples;
+    static std::atomic<uint64_t> s_callbackCount;
+    static std::atomic<uint64_t> s_callbackTotalUsec;
+    static std::atomic<uint64_t> s_callbackWorstUsec;
+    static std::atomic<uint64_t> s_callbackOverruns;
 
     static std::atomic<int>   s_masterFirstChannel;
     static std::atomic<int>   s_boothFirstChannel;
