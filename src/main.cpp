@@ -476,11 +476,6 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    const int ret = app.exec();
-
-    if (linkManager)
-        linkManager->shutdown();
-
     auto clearQmlContextProperties = [&]() {
         engine.rootContext()->setContextProperty("settingsManager", static_cast<QObject*>(nullptr));
         engine.rootContext()->setContextProperty("appConfig", QVariant());
@@ -500,41 +495,60 @@ int main(int argc, char *argv[])
         engine.rootContext()->setContextProperty("cursorControl", static_cast<QObject*>(nullptr));
     };
 
-    // Destroy QML objects before the C++ backend objects they reference.  The
-    // QQmlApplicationEngine lives longer than most services in this function's
-    // scope, so relying on automatic reverse-order cleanup leaves dangling
-    // context properties during engine teardown.
-    clearQmlContextProperties();
-    const auto rootObjects = engine.rootObjects();
-    for (QObject* root : rootObjects) {
-        if (root)
-            root->deleteLater();
-    }
-    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-    app.processEvents(QEventLoop::AllEvents, 50);
+    bool shutdownDone = false;
+    auto shutdownRuntime = [&]() {
+        if (shutdownDone)
+            return;
+        shutdownDone = true;
 
-    linkManager.reset();
+        if (linkManager)
+            linkManager->shutdown();
 
-    if (masterBus)
-        masterBus->unregisterCallback(DjEngine::getSharedAudioDeviceManager());
-    masterBus.reset();
+        if (masterBus) {
+            masterBus->unregisterCallback(DjEngine::getSharedAudioDeviceManager());
+            for (DjEngine* deck : {deckA.get(), deckB.get(), deckC.get(), deckD.get()})
+                masterBus->removeDeck(deck);
+        }
 
-    midiManager.reset();
+        midiManager.reset();
 
-    deckD.reset();
-    deckC.reset();
-    deckB.reset();
-    deckA.reset();
+        // Destroy QML objects while the backend objects they reference are still
+        // alive, but after the realtime audio callback has been stopped.
+        const auto rootObjects = engine.rootObjects();
+        for (QObject* root : rootObjects) {
+            if (auto* window = qobject_cast<QQuickWindow*>(root)) {
+                window->hide();
+                window->releaseResources();
+            }
+            delete root;
+        }
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        app.processEvents(QEventLoop::AllEvents, 50);
+        clearQmlContextProperties();
 
-    DjEngine::shutdownSharedAudioDeviceManager();
+        linkManager.reset();
+        masterBus.reset();
 
-    settingsManager.markCleanShutdown();
-    settingsManager.shutdown();
+        deckD.reset();
+        deckC.reset();
+        deckB.reset();
+        deckA.reset();
 
-    if (libraryAnalysisManager)
-        libraryAnalysisManager->cancel();
-    if (libraryDb)
-        libraryDb->shutdown(true);
+        DjEngine::shutdownSharedAudioDeviceManager();
+
+        settingsManager.markCleanShutdown();
+        settingsManager.shutdown();
+
+        if (libraryAnalysisManager)
+            libraryAnalysisManager->cancel();
+        if (libraryDb)
+            libraryDb->shutdown(true);
+    };
+
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, shutdownRuntime, Qt::DirectConnection);
+
+    const int ret = app.exec();
+    shutdownRuntime();
 
     return ret;
 }

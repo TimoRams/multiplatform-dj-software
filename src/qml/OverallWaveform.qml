@@ -13,16 +13,14 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: "transparent"
-        border.color: "#050505"
-        border.width: 1
+        color: "#151719"
         clip: true
 
         gradient: Gradient {
             orientation: Gradient.Vertical
-            GradientStop { position: 0.00; color: "#151515" }
-            GradientStop { position: 0.48; color: root.stripeColor }
-            GradientStop { position: 1.00; color: "#060606" }
+            GradientStop { position: 0.00; color: "#202326" }
+            GradientStop { position: 0.45; color: "#151719" }
+            GradientStop { position: 1.00; color: "#0a0b0c" }
         }
 
         Rectangle {
@@ -30,28 +28,37 @@ Item {
             anchors.right: parent.right
             anchors.top: parent.top
             height: 1
-            color: "#2c2c2c"
-            opacity: 0.7
+            color: "#ffffff"
+            opacity: 0.08
         }
 
         Rectangle {
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
+            anchors.bottom: parent.bottom
             height: 1
-            color: "#ffffff"
-            opacity: 0.08
+            color: root.stripeColor
+            opacity: 0.28
         }
 
-        RgbWaveformItem {
-            id: overview
+        Item {
+            id: overviewViewport
             anchors.fill: parent
             anchors.leftMargin: 2
             anchors.rightMargin: 2
             anchors.topMargin: 2
             anchors.bottomMargin: 2
-            engine: root.engine
-            rectified: true
+            clip: true
+
+            RgbWaveformItem {
+                id: overview
+                width: parent.width
+                height: parent.height * 2
+                x: 0
+                y: 0
+                engine: root.engine
+                rectified: false
+            }
         }
 
         // ── Loop region — active, pending LOOP IN preview, or saved ghost ──
@@ -77,24 +84,24 @@ Item {
             readonly property double _lo: root.engine ? root.engine.loopInPosition / _dur : 0.0
             readonly property double _hi: root.engine ? _out / _dur : 0.0
 
-            anchors.top:    overview.top
-            anchors.bottom: overview.bottom
-            x:     overview.x + _lo * overview.width
-            width: Math.max(1, (_hi - _lo) * overview.width)
+            anchors.top:    overviewViewport.top
+            anchors.bottom: overviewViewport.bottom
+            x:     overviewViewport.x + _lo * overviewViewport.width
+            width: Math.max(1, (_hi - _lo) * overviewViewport.width)
             z:     2
 
             Rectangle {
                 anchors.fill: parent
-                color: parent._active ? "#2b7cff22"
-                    : (parent._pending ? "#2b9fff18" : "#7fd7ff12")
+                color: parent._active ? "#2b7cff1c"
+                    : (parent._pending ? "#2b9fff14" : "#7fd7ff10")
             }
             Rectangle {
                 anchors.left: parent.left
                 anchors.right: parent.right
-                anchors.top: parent.top
+                anchors.bottom: parent.bottom
                 height: 1
                 color: parent._active || parent._pending ? "#a9e8ff" : "#6a8d98"
-                opacity: parent._active ? 0.75 : (parent._pending ? 0.62 : 0.45)
+                opacity: parent._active ? 0.62 : (parent._pending ? 0.52 : 0.38)
             }
             Rectangle {
                 anchors.left: parent.left
@@ -114,45 +121,45 @@ Item {
 
         Item {
             id: overviewPlayhead
-            width: 7
-            anchors.top: overview.top
-            anchors.bottom: overview.bottom
+            width: 9
+            anchors.top: overviewViewport.top
+            anchors.bottom: overviewViewport.bottom
             x: {
-                if (!root.engine) return overview.x
+                if (!root.engine) return overviewViewport.x
                 var p = root.engine.progress
                 if (p < 0.0) p = 0.0
                 if (p > 1.0) p = 1.0
-                return overview.x + p * overview.width - width / 2
+                return overviewViewport.x + p * overviewViewport.width - width / 2
             }
             z: 5
 
             Rectangle {
                 anchors.centerIn: parent
-                width: 5
+                width: 7
                 height: parent.height
-                color: "#ff1f1f"
+                color: "#ff2018"
                 opacity: 0.18
             }
             Rectangle {
                 anchors.centerIn: parent
-                width: 1
+                width: 2
                 height: parent.height
-                color: "#ffffff"
+                color: "#f4f4f4"
                 opacity: 0.95
             }
             Rectangle {
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.top: parent.top
-                width: 5
-                height: 2
-                color: "#ff3030"
+                width: 10
+                height: 3
+                color: "#f4f4f4"
             }
             Rectangle {
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom
-                width: 5
+                width: 10
                 height: 2
-                color: "#ff3030"
+                color: "#ff2018"
             }
         }
 
