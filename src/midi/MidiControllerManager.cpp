@@ -12,6 +12,7 @@
 #include <QMetaObject>
 #include <QRegularExpression>
 #include <QSet>
+#include <QThread>
 #include <QtGlobal>
 #include <QUrl>
 #include <QXmlStreamReader>
@@ -1301,9 +1302,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
         if (delta == 0.0f)
             return true;
 
-        QMetaObject::invokeMethod(m_parameterStore, "setMidiParameter", Qt::QueuedConnection,
-                                  Q_ARG(QString, pairedParamId),
-                                  Q_ARG(float, delta));
+        dispatchMidiParameterToStore(pairedParamId, delta);
         return true;
     };
 
@@ -1334,10 +1333,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
                 const int lsb = static_cast<int>(value * 127.0f);
                 const int msb = m_msbAccumulator.count(pId) ? m_msbAccumulator.at(pId) : 64;
                 const float combined = static_cast<float>((msb << 7) | lsb) / 16383.0f;
-                QMetaObject::invokeMethod(m_parameterStore, "setParameter",
-                                          Qt::QueuedConnection,
-                                          Q_ARG(QString, pId),
-                                          Q_ARG(float, combined));
+                dispatchParameterToStore(pId, combined);
                 return; // handled via 14-bit pairing; don't double-dispatch
             }
             // No paired MSB found → fall through to standard dispatch
@@ -1425,12 +1421,40 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
     // are semantically distinct events, so always emit them. Analog controls
     // use deduplication to avoid MIDI feedback echo loops.
     if (shouldAlwaysDispatch(interactionType)) {
-        QMetaObject::invokeMethod(m_parameterStore, "setMidiParameter", Qt::QueuedConnection,
-                                  Q_ARG(QString, paramId), Q_ARG(float, dispatchValue));
+        dispatchMidiParameterToStore(paramId, dispatchValue);
     } else {
-        QMetaObject::invokeMethod(m_parameterStore, "setParameter", Qt::QueuedConnection,
-                                  Q_ARG(QString, paramId), Q_ARG(float, dispatchValue));
+        dispatchParameterToStore(paramId, dispatchValue);
     }
+}
+
+void MidiControllerManager::dispatchParameterToStore(const QString& paramId, float value)
+{
+    if (!m_parameterStore)
+        return;
+
+    if (QThread::currentThread() == m_parameterStore->thread()) {
+        m_parameterStore->setParameter(paramId, value);
+        return;
+    }
+
+    QMetaObject::invokeMethod(m_parameterStore, "setParameter", Qt::QueuedConnection,
+                              Q_ARG(QString, paramId),
+                              Q_ARG(float, value));
+}
+
+void MidiControllerManager::dispatchMidiParameterToStore(const QString& paramId, float value)
+{
+    if (!m_parameterStore)
+        return;
+
+    if (QThread::currentThread() == m_parameterStore->thread()) {
+        m_parameterStore->setMidiParameter(paramId, value);
+        return;
+    }
+
+    QMetaObject::invokeMethod(m_parameterStore, "setMidiParameter", Qt::QueuedConnection,
+                              Q_ARG(QString, paramId),
+                              Q_ARG(float, value));
 }
 
 void MidiControllerManager::learnMapping(int msgId)

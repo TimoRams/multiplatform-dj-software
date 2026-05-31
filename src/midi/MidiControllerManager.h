@@ -94,6 +94,8 @@ public slots:
 private:
     // juce::MidiInputCallback overrides
     void handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& message) override;
+    void dispatchParameterToStore(const QString& paramId, float value);
+    void dispatchMidiParameterToStore(const QString& paramId, float value);
 
     ParameterStore* m_parameterStore = nullptr;
     DjEngine* m_deckA = nullptr;
