@@ -992,17 +992,23 @@ public:
     static constexpr int kDefaultPrefillCapSamples = 256;
     static constexpr int kPrefillMaxBlocks = 1;
     static constexpr int kPullLoopLimit = 24;
+    static constexpr int kSwitchFadeSamples = 256;
     static constexpr double kPrefillDeadbandTempoDelta = 0.01;
     static constexpr double kPrefillDynamicFactor = 0.005;
     static constexpr double kPrefillExtremeThreshold = 0.30;
     static constexpr double kPrefillExtremeFactor = 0.010;
+    static constexpr double kTempoUpdateEpsilon = 0.0005;
+    static constexpr double kMaxTempoRatioStepPerBlock = 0.025;
 
     TimeStretchAudioSource(juce::AudioSource* inSource) : source(inSource) {}
 
     void setTempoRatio(double ratio) {
-        if (std::abs(tempoRatio - ratio) < 0.001) return;
-        tempoRatio = std::clamp(ratio, 0.01, 8.0);
-        updateStretcherRatios();
+        const double clamped = std::clamp(ratio, 0.01, 8.0);
+        const double current = m_targetTempoRatio.load(std::memory_order_relaxed);
+        if (std::abs(current - clamped) < kTempoUpdateEpsilon)
+            return;
+
+        m_targetTempoRatio.store(clamped, std::memory_order_release);
     }
 
     void setPitchLockEnabled(bool enabled) {
@@ -1011,7 +1017,6 @@ public:
 
         m_pitchLockEnabled.store(enabled, std::memory_order_relaxed);
         m_resetPipelineRequested.store(true, std::memory_order_release);
-        updateStretcherRatios();
     }
 
     void prepareToPlay(int samplesPerBlockExpected, double sr) override {
@@ -1035,6 +1040,7 @@ public:
                                              kMinPullSize,
                                              kMaxPrefillSamples);
 
+        m_appliedTempoRatio = m_targetTempoRatio.load(std::memory_order_relaxed);
         updateStretcherRatios();
 
         const int scratchCapacity = std::max(kMaxPullSize, m_maxProcessSize);
@@ -1058,6 +1064,7 @@ public:
         m_reportedLatencySamples.store(0, std::memory_order_relaxed);
         m_startPadRemaining.store(0, std::memory_order_relaxed);
         m_startDelayTrimRemaining.store(0, std::memory_order_relaxed);
+        m_switchFadeRemaining.store(0, std::memory_order_relaxed);
     }
 
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override {
@@ -1066,11 +1073,14 @@ public:
             return;
         }
 
+        applyPendingRatioChange();
+
         if (!m_pitchLockEnabled.load(std::memory_order_relaxed)) {
             if (m_resetPipelineRequested.exchange(false, std::memory_order_acquire))
                 resetRealtimePipeline(false);
             m_reportedLatencySamples.store(0, std::memory_order_relaxed);
             source->getNextAudioBlock(info);
+            applySwitchFade(info);
             return;
         }
 
@@ -1198,6 +1208,7 @@ public:
                 info.buffer->clear(ch, remainderStart, remainderLen);
         }
 
+        applySwitchFade(info);
     }
 
     // Return total latency introduced by this component in samples
@@ -1229,7 +1240,7 @@ private:
         if (!m_pitchLockEnabled.load(std::memory_order_relaxed))
             return 0;
 
-        const double tempoDelta = std::abs(tempoRatio - 1.0);
+        const double tempoDelta = std::abs(m_appliedTempoRatio - 1.0);
         if (tempoDelta < kPrefillDeadbandTempoDelta)
             return 0;
 
@@ -1285,6 +1296,7 @@ private:
         m_reportedLatencySamples.store(0, std::memory_order_relaxed);
         m_startPadRemaining.store(0, std::memory_order_relaxed);
         m_startDelayTrimRemaining.store(0, std::memory_order_relaxed);
+        m_switchFadeRemaining.store(kSwitchFadeSamples, std::memory_order_relaxed);
         if (stretcher) {
             stretcher->reset();
             updateStretcherRatios();
@@ -1348,13 +1360,46 @@ private:
         if (!stretcher)
             return;
 
-        const double safeTempoRatio = std::clamp(std::abs(tempoRatio), 0.01, 8.0);
+        const double safeTempoRatio = std::clamp(std::abs(m_appliedTempoRatio), 0.01, 8.0);
         const bool pitchLock = m_pitchLockEnabled.load(std::memory_order_relaxed);
 
         // Tempo is controlled by ResamplingAudioSource. Rubber Band stays at
         // 1:1 time and optionally compensates pitch when keylock is enabled.
         stretcher->setTimeRatio(1.0);
         stretcher->setPitchScale(pitchLock ? (1.0 / safeTempoRatio) : 1.0);
+    }
+
+    void applyPendingRatioChange() {
+        const double target = m_targetTempoRatio.load(std::memory_order_acquire);
+        const double delta = target - m_appliedTempoRatio;
+        if (std::abs(delta) < kTempoUpdateEpsilon)
+            return;
+
+        m_appliedTempoRatio += std::clamp(delta,
+                                          -kMaxTempoRatioStepPerBlock,
+                                          kMaxTempoRatioStepPerBlock);
+        updateStretcherRatios();
+    }
+
+    void applySwitchFade(const juce::AudioSourceChannelInfo& info) {
+        int remaining = m_switchFadeRemaining.load(std::memory_order_relaxed);
+        if (remaining <= 0 || !info.buffer || info.numSamples <= 0)
+            return;
+
+        const int fadeNow = std::min(remaining, info.numSamples);
+        const int fadeStart = kSwitchFadeSamples - remaining;
+        const int channels = info.buffer->getNumChannels();
+
+        for (int i = 0; i < fadeNow; ++i) {
+            const float gain = static_cast<float>(fadeStart + i + 1)
+                / static_cast<float>(kSwitchFadeSamples);
+            for (int ch = 0; ch < channels; ++ch)
+                info.buffer->setSample(ch,
+                                       info.startSample + i,
+                                       info.buffer->getSample(ch, info.startSample + i) * gain);
+        }
+
+        m_switchFadeRemaining.store(remaining - fadeNow, std::memory_order_relaxed);
     }
 
     juce::AudioSource* source = nullptr;
@@ -1365,12 +1410,14 @@ private:
     juce::AudioBuffer<float> prewarmZeroBuffer;
     std::unique_ptr<juce::AbstractFifo> fifo;
     double sampleRate = 44100.0;
-    double tempoRatio = 1.0;
+    std::atomic<double> m_targetTempoRatio { 1.0 };
+    double m_appliedTempoRatio = 1.0;
     std::atomic<bool> m_pitchLockEnabled { false };
     std::atomic<int> m_reportedLatencySamples { 0 };
     std::atomic<int> m_startPadRemaining { 0 };
     std::atomic<int> m_startDelayTrimRemaining { 0 };
     std::atomic<bool> m_resetPipelineRequested { false };
+    std::atomic<int> m_switchFadeRemaining { 0 };
     int m_maxProcessSize = 512;
     int m_prefillTargetSamples = 0;
     int m_prefillHardCapSamples = kMaxPrefillSamples;
@@ -5130,6 +5177,7 @@ void DjEngine::snapPhaseToMaster(DjEngine* master)
 void DjEngine::updateSpeedAndPitch()
 {
     double speedMultiplier = 1.0 + ((m_tempoPercent + m_phaseNudge + m_jogNudgePercent) / 100.0);
+    speedMultiplier = std::clamp(speedMultiplier, 0.01, 8.0);
 
     // Keep one tempo authority (resampler) so fader response is identical
     // with and without keylock.

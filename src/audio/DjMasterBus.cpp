@@ -153,16 +153,12 @@ void DjMasterBus::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
     // ── 4. Brickwall limiter on the summed signal ─────────────────────────────
     {
         const bool limitEnabled = s_antiClipEnabled.load(std::memory_order_relaxed);
-        if (limitEnabled) {
-            m_limiter.setEnabled(true);
-            float* ptrs[2] = { m_masterBuf.getWritePointer(0),
-                               m_masterBuf.getWritePointer(1) };
-            const float gr = m_limiter.processBlock(ptrs, 2, 0, n);
-            s_gainReduction.store(gr, std::memory_order_relaxed);
-        } else {
-            m_limiter.setEnabled(false);
-            s_gainReduction.store(1.0f, std::memory_order_relaxed);
-        }
+        m_limiter.setEnabled(limitEnabled);
+
+        float* ptrs[2] = { m_masterBuf.getWritePointer(0),
+                           m_masterBuf.getWritePointer(1) };
+        const float gr = m_limiter.processBlock(ptrs, 2, 0, n);
+        s_gainReduction.store(limitEnabled ? gr : 1.0f, std::memory_order_relaxed);
     }
 
     // ── 5. Output routing ──────────────────────────────────────────────────────
@@ -259,7 +255,7 @@ bool DjMasterBus::antiClipEnabled()
 
 int DjMasterBus::limiterLatencySamples()
 {
-    return antiClipEnabled() ? s_limiterLatencySamples.load(std::memory_order_relaxed) : 0;
+    return s_limiterLatencySamples.load(std::memory_order_relaxed);
 }
 
 double DjMasterBus::callbackAverageUsec()
