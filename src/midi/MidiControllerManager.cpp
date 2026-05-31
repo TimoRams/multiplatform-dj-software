@@ -141,6 +141,16 @@ float decodeRelativeCcValue(int rawValue)
     return static_cast<float>(raw < 64 ? raw : raw - 128);
 }
 
+float decodeWrappedAbsoluteDelta(int previousRaw, int currentRaw)
+{
+    int delta = clampMidi7bit(currentRaw) - clampMidi7bit(previousRaw);
+    if (delta > 64)
+        delta -= 128;
+    else if (delta < -64)
+        delta += 128;
+    return static_cast<float>(delta);
+}
+
 MidiMappingEntry makeMappingEntry(const QString& paramId)
 {
     return { paramId, defaultInteractionTypeForParam(paramId) };
@@ -854,6 +864,7 @@ void MidiControllerManager::selectMapping(const QString& mappingFileName)
     m_midiToParam.clear();
     m_paramToMidi.clear();
     m_momentaryHeldByMsgId.clear();
+    m_scratchAbsoluteLastByMsgId.clear();
 
     if (!mappingFileName.isEmpty()) {
         if (!loadMixxxXmlMapping(mappingFileName))
@@ -994,6 +1005,7 @@ void MidiControllerManager::clearLearnedMapping(const QString& paramId)
     m_paramToMidi.erase(paramIt);
     m_midiToParam.erase(msgId);
     m_momentaryHeldByMsgId.erase(msgId);
+    m_scratchAbsoluteLastByMsgId.erase(msgId);
 
     saveNativeMapping();
     emit mappingUpdated();
@@ -1164,6 +1176,7 @@ bool MidiControllerManager::loadMixxxXmlMapping(const QString& mappingFileName)
     m_midiToParam = std::move(nextMidiToParam);
     m_paramToMidi = std::move(nextParamToMidi);
     m_momentaryHeldByMsgId.clear();
+    m_scratchAbsoluteLastByMsgId.clear();
     for (const auto& [msgId, entry] : m_midiToParam) {
         if (entry.interactionType == MidiInteractionType::Momentary)
             m_momentaryHeldByMsgId[msgId] = false;
@@ -1220,6 +1233,80 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
     if (!m_parameterStore)
         return;
 
+    auto dispatchTouchedAbsoluteJogFallback = [this, msgId, value]() -> bool
+    {
+        if (msgId < 10000)
+            return false;
+
+        const int sub = (msgId - 10000) % 2000;
+        if (sub < 1000 || sub >= 1500)
+            return false;
+
+        // Some controllers send rim/nudge on CC N and touched platter motion on
+        // CC N+1. Native learn captures the rim first, so keep CC N as jog_move
+        // and route the adjacent touched CC as scratch-only absolute motion.
+        const int pairedJogMsgId = msgId - 1;
+        const auto pairedIt = m_midiToParam.find(pairedJogMsgId);
+        if (pairedIt == m_midiToParam.end()
+            || pairedIt->second.interactionType != MidiInteractionType::EncoderRelative) {
+            return false;
+        }
+
+        auto midiMomentaryHeld = [this](const QString& paramId) -> bool
+        {
+            const auto paramIt = m_paramToMidi.find(paramId);
+            if (paramIt == m_paramToMidi.end())
+                return false;
+            const auto heldIt = m_momentaryHeldByMsgId.find(paramIt->second);
+            return heldIt != m_momentaryHeldByMsgId.end() && heldIt->second;
+        };
+
+        const QString& pairedParamId = pairedIt->second.paramId;
+        const bool deckATouched = pairedParamId == QStringLiteral("deckA_jog_move")
+            && (m_jogATouched || midiMomentaryHeld(QStringLiteral("deckA_jog_touch")));
+        const bool deckBTouched = pairedParamId == QStringLiteral("deckB_jog_move")
+            && (m_jogBTouched || midiMomentaryHeld(QStringLiteral("deckB_jog_touch")));
+        if (!deckATouched && !deckBTouched)
+            return false;
+
+        const int raw = clampMidi7bit(static_cast<int>(std::round(value * 127.0f)));
+        const auto previousIt = m_scratchAbsoluteLastByMsgId.find(msgId);
+
+        if (previousIt == m_scratchAbsoluteLastByMsgId.end()) {
+            m_scratchAbsoluteLastByMsgId[msgId] = raw;
+            qDebug() << "[MIDI MAP]" << midiControlLabel(msgId)
+                     << "value:" << raw
+                     << "mappedAction:" << pairedParamId
+                     << "interactionType:touched-absolute-jog"
+                     << "dispatch=baseline";
+            return true;
+        }
+
+        const int previousRaw = previousIt->second;
+        m_scratchAbsoluteLastByMsgId[msgId] = raw;
+
+        float delta = decodeWrappedAbsoluteDelta(previousRaw, raw);
+        const auto invIt = m_paramInverted.find(pairedParamId);
+        if (invIt != m_paramInverted.end() && invIt->second)
+            delta = -delta;
+
+        qDebug() << "[MIDI MAP]" << midiControlLabel(msgId)
+                 << "value:" << raw
+                 << "previous:" << previousRaw
+                 << "deltaTicks:" << delta
+                 << "mappedAction:" << pairedParamId
+                 << "interactionType:touched-absolute-jog"
+                 << "dispatch:jogMoveFallback";
+
+        if (delta == 0.0f)
+            return true;
+
+        QMetaObject::invokeMethod(m_parameterStore, "setMidiParameter", Qt::QueuedConnection,
+                                  Q_ARG(QString, pairedParamId),
+                                  Q_ARG(float, delta));
+        return true;
+    };
+
     // 14-bit CC handling: accumulate MSB (CC 0-31) and combine with LSB (CC 32-63).
     // The DDJ-FLX10 (and most modern controllers) send every analog control as a
     // MSB+LSB pair for 14-bit resolution instead of 7-bit.
@@ -1259,6 +1346,9 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
 
     const auto it = m_midiToParam.find(msgId);
     if (it == m_midiToParam.end()) {
+        if (dispatchTouchedAbsoluteJogFallback())
+            return;
+
         qDebug() << "[MIDI MAP]" << midiControlLabel(msgId)
                  << "value:" << static_cast<int>(std::round(value * 127.0f))
                  << "mapping:not-found";
@@ -1624,6 +1714,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
             if (currentHeld) {
                 if (!previousHeld && a) {
                     m_jogATouched = true;
+                    m_scratchAbsoluteLastByMsgId.clear();
                     qDebug() << "[MIDI ACTION] action=JogTouch deck=A"
                              << "previous:" << previousHeld
                              << "current:" << currentHeld
@@ -1637,6 +1728,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                 }
             } else {
                 m_jogATouched = false;
+                m_scratchAbsoluteLastByMsgId.clear();
                 qDebug() << "[MIDI ACTION] action=JogTouch deck=A"
                          << "previous:" << previousHeld
                          << "current:" << currentHeld
@@ -1651,6 +1743,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
             if (currentHeld) {
                 if (!previousHeld && b) {
                     m_jogBTouched = true;
+                    m_scratchAbsoluteLastByMsgId.clear();
                     qDebug() << "[MIDI ACTION] action=JogTouch deck=B"
                              << "previous:" << previousHeld
                              << "current:" << currentHeld
@@ -1664,6 +1757,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                 }
             } else {
                 m_jogBTouched = false;
+                m_scratchAbsoluteLastByMsgId.clear();
                 qDebug() << "[MIDI ACTION] action=JogTouch deck=B"
                          << "previous:" << previousHeld
                          << "current:" << currentHeld

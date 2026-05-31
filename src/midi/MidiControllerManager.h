@@ -109,6 +109,7 @@ private:
     // Mapping: Midi Note/CC Number -> parameter plus interaction semantics.
     std::map<int, MidiMappingEntry> m_midiToParam;
     std::map<int, bool> m_momentaryHeldByMsgId;
+    std::map<int, int> m_scratchAbsoluteLastByMsgId;
     
     // Reverse Mapping for Output: Parameter ID -> Midi Note/CC Number
     std::map<QString, int> m_paramToMidi;
