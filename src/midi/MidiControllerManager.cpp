@@ -16,6 +16,7 @@
 #include <QUrl>
 #include <QXmlStreamReader>
 #include <algorithm>
+#include <cmath>
 
 namespace {
 const juce::String kAllMidiInputsIdentifier("__all_midi_inputs__");
@@ -35,12 +36,140 @@ bool containsIdentifier(const std::vector<juce::String>& ids, const juce::String
     return std::ranges::find(ids, needle) != ids.end();
 }
 
-bool isMomentaryMidiAction(const QString& paramId)
+MidiInteractionType defaultInteractionTypeForParam(const QString& paramId)
 {
-    return paramId.endsWith(QStringLiteral("_play"))
-        || paramId.endsWith(QStringLiteral("_cue"))
-        || paramId.endsWith(QStringLiteral("_jog_touch"))
-        || paramId == QStringLiteral("master_cue");
+    if (paramId == QStringLiteral("deckA_cue")
+        || paramId == QStringLiteral("deckB_cue")
+        || paramId == QStringLiteral("deckA_jog_touch")
+        || paramId == QStringLiteral("deckB_jog_touch")) {
+        return MidiInteractionType::Momentary;
+    }
+
+    if (paramId == QStringLiteral("deckA_play")
+        || paramId == QStringLiteral("deckB_play")
+        || paramId == QStringLiteral("deckA_headphone_cue")
+        || paramId == QStringLiteral("deckB_headphone_cue")
+        || paramId == QStringLiteral("master_cue")
+        || paramId.startsWith(QStringLiteral("library_load_"))
+        || paramId == QStringLiteral("library_back")
+        || paramId == QStringLiteral("library_expand")
+        || paramId == QStringLiteral("library_collapse")
+        || paramId == QStringLiteral("library_playlist_next")
+        || paramId == QStringLiteral("library_playlist_prev")) {
+        return MidiInteractionType::Toggle;
+    }
+
+    if (paramId.endsWith(QStringLiteral("_jog_move"))
+        || paramId == QStringLiteral("library_browse")) {
+        return MidiInteractionType::EncoderRelative;
+    }
+
+    if (paramId == QStringLiteral("deckA_vol")
+        || paramId == QStringLiteral("deckB_vol")
+        || paramId == QStringLiteral("crossfader")
+        || paramId == QStringLiteral("headphone_mix")
+        || paramId == QStringLiteral("deckA_tempo")
+        || paramId == QStringLiteral("deckB_tempo")) {
+        return MidiInteractionType::Fader;
+    }
+
+    return MidiInteractionType::EncoderAbsolute;
+}
+
+QString interactionTypeToString(MidiInteractionType type)
+{
+    switch (type) {
+    case MidiInteractionType::Momentary:
+        return QStringLiteral("momentary");
+    case MidiInteractionType::Toggle:
+        return QStringLiteral("toggle");
+    case MidiInteractionType::EncoderRelative:
+        return QStringLiteral("encoder-relative");
+    case MidiInteractionType::EncoderAbsolute:
+        return QStringLiteral("encoder-absolute");
+    case MidiInteractionType::Fader:
+        return QStringLiteral("fader");
+    }
+    return QStringLiteral("encoder-absolute");
+}
+
+MidiInteractionType interactionTypeFromString(const QString& rawValue,
+                                              const QString& paramId)
+{
+    const QString value = rawValue.trimmed().toLower();
+    if (value == QStringLiteral("momentary"))
+        return MidiInteractionType::Momentary;
+    if (value == QStringLiteral("toggle"))
+        return MidiInteractionType::Toggle;
+    if (value == QStringLiteral("encoder-relative"))
+        return MidiInteractionType::EncoderRelative;
+    if (value == QStringLiteral("encoder-absolute"))
+        return MidiInteractionType::EncoderAbsolute;
+    if (value == QStringLiteral("fader"))
+        return MidiInteractionType::Fader;
+    return defaultInteractionTypeForParam(paramId);
+}
+
+bool isButtonInteraction(MidiInteractionType type)
+{
+    return type == MidiInteractionType::Momentary
+        || type == MidiInteractionType::Toggle;
+}
+
+bool shouldAlwaysDispatch(MidiInteractionType type)
+{
+    return type == MidiInteractionType::Momentary
+        || type == MidiInteractionType::Toggle
+        || type == MidiInteractionType::EncoderRelative;
+}
+
+bool isRelativeInteraction(MidiInteractionType type)
+{
+    return type == MidiInteractionType::EncoderRelative;
+}
+
+float decodeRelativeCcValue(int rawValue)
+{
+    const int raw = clampMidi7bit(rawValue);
+    // Support the two common relative CC encodings:
+    // - binary offset: 64 = neutral, 65..96 = +1..+32, 63..32 = -1..-32
+    // - two's complement: 1..63 = +1..+63, 65..127 = -63..-1
+    // Jog wheels commonly use binary offset around 64, which must not turn
+    // a tiny +1 tick (65) into a huge -63 jump.
+    if (raw >= 32 && raw <= 96)
+        return static_cast<float>(raw - 64);
+    return static_cast<float>(raw < 64 ? raw : raw - 128);
+}
+
+MidiMappingEntry makeMappingEntry(const QString& paramId)
+{
+    return { paramId, defaultInteractionTypeForParam(paramId) };
+}
+
+MidiMappingEntry makeMappingEntry(const QString& paramId,
+                                  MidiInteractionType type)
+{
+    return { paramId, type };
+}
+
+QString midiControlLabel(int msgId)
+{
+    if (msgId >= 10000) {
+        const int remainder = msgId - 10000;
+        const int channel = remainder / 2000;
+        const int sub = remainder % 2000;
+        if (sub == 1500)
+            return QStringLiteral("Ch%1 Pitch").arg(channel + 1);
+        if (sub >= 1000)
+            return QStringLiteral("Ch%1 CC %2").arg(channel + 1).arg(sub - 1000);
+        return QStringLiteral("Ch%1 Note %2").arg(channel + 1).arg(sub);
+    }
+
+    if (msgId == 1500)
+        return QStringLiteral("Pitch");
+    if (msgId >= 1000)
+        return QStringLiteral("CC %1").arg(msgId - 1000);
+    return QStringLiteral("Note %1").arg(msgId);
 }
 
 int indexOfIdentifier(const std::vector<juce::String>& ids, const juce::String& needle)
@@ -284,9 +413,8 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                     const int msgId             = resolveMsgId(channelAwareMsgId, legacyMsgId);
                     const auto it               = m_midiToParam.find(msgId);
                     float value;
-                    if (it != m_midiToParam.end() && (it->second.endsWith("_jog_move") || it->second == "library_browse")) {
-                        // Two's-complement 7-bit relative CC: 1–63 = forward, 65–127 = backward
-                        value = static_cast<float>(b < 64 ? b : b - 128);
+                    if (it != m_midiToParam.end() && isRelativeInteraction(it->second.interactionType)) {
+                        value = decodeRelativeCcValue(b);
                     } else {
                         value = clampMidi7bit(b) / 127.0f;
                     }
@@ -296,8 +424,11 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                     const bool isOff = line.contains("Note off", Qt::CaseInsensitive);
 
                     // --- Format A: "Note on 0, note 11, velocity 127"  ← common aseqdump ---
-                    static const QRegularExpression noteCommonRx(
-                        R"((?:Note\s+on|Note\s+off)\s+(\d+),\s*note\s+(\d+),\s*velocity\s+(\d+))",
+                    // Some ALSA drivers omit the velocity on NoteOff. Extract channel/note
+                    // from the named fields first; the source port prefix also contains
+                    // numbers, so a generic "last three numbers" fallback can swap note/vel.
+                    static const QRegularExpression noteTextRx(
+                        R"((?:Note\s+on|Note\s+off)\s+(\d+)\s*,\s*note\s+(\d+)(?:\s*,\s*velocity\s+(\d+))?)",
                         QRegularExpression::CaseInsensitiveOption);
 
                     // --- Format B: "Chan N ... (statusByte note vel)"  ← newer aseqdump ---
@@ -310,24 +441,18 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
 
                     // --- Format C: "Chan N, Note on/off NOTE vel VELOCITY"  ← older aseqdump ---
                     static const QRegularExpression noteVerboseRx(
-                        R"((?:Chan|Channel)\s+(\d+).*?(?:velocity|vel)[^\d]*(\d+))",
+                        R"((?:Chan|Channel)\s+(\d+).*?Note\s+(?:on|off)[^\d]*(\d+)(?:.*?(?:velocity|vel)[^\d]*(\d+))?)",
                         QRegularExpression::CaseInsensitiveOption);
 
                     int ch0  = -1;
                     int note = -1;
                     int vel  = 0;
 
-                    const auto nmCommon = noteCommonRx.match(line);
-                    if (nmCommon.hasMatch()) {
-                        ch0  = std::max(0, std::min(15, nmCommon.captured(1).toInt()));
-                        note = clampMidi7bit(nmCommon.captured(2).toInt());
-                        vel  = clampMidi7bit(nmCommon.captured(3).toInt());
-                    } else if (decodeTriple(ch, a, b) && !line.contains("Chan", Qt::CaseInsensitive)) {
-                        // Fallback for variants with decorated note names:
-                        // the last three numbers are channel, note, velocity.
-                        ch0  = std::max(0, std::min(15, ch));
-                        note = clampMidi7bit(a);
-                        vel  = clampMidi7bit(b);
+                    const auto nmText = noteTextRx.match(line);
+                    if (nmText.hasMatch()) {
+                        ch0  = std::max(0, std::min(15, nmText.captured(1).toInt()));
+                        note = clampMidi7bit(nmText.captured(2).toInt());
+                        vel  = nmText.captured(3).isEmpty() ? 0 : clampMidi7bit(nmText.captured(3).toInt());
                     } else {
                         const auto nmA = noteParenRx.match(line);
                         if (nmA.hasMatch()) {
@@ -346,12 +471,15 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
 
                             const auto nmB = noteVerboseRx.match(line);
                             if (nmB.hasMatch()) {
-                                vel = clampMidi7bit(nmB.captured(2).toInt());
-                                // Note number: second-to-last digit group before "velocity"
-                                // Fall back to decodeTriple last 2 numbers
-                                if (ch0 >= 0 && decodeTriple(ch, a, b)) {
-                                    note = clampMidi7bit(a); // 'a' is second-from-last number
-                                }
+                                ch0 = std::max(0, std::min(15, nmB.captured(1).toInt() - 1));
+                                note = clampMidi7bit(nmB.captured(2).toInt());
+                                vel = nmB.captured(3).isEmpty() ? 0 : clampMidi7bit(nmB.captured(3).toInt());
+                            } else if (decodeTriple(ch, a, b)) {
+                                // Last resort only. It can be wrong for some aseqdump NoteOff
+                                // lines because the source port prefix contributes numbers.
+                                ch0  = std::max(0, std::min(15, ch));
+                                note = clampMidi7bit(a);
+                                vel  = clampMidi7bit(b);
                             }
                         }
                     }
@@ -362,7 +490,8 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                         const bool zeroVelocity     = isOff || (vel == 0);
                         qDebug() << "[MIDI ALSA]" << (isOff ? "NoteOff" : "NoteOn")
                                  << "ch0:" << ch0 << "note:" << note << "vel:" << vel
-                                 << "msgId:" << msgId;
+                                 << "msgId:" << msgId
+                                 << "raw:" << line;
                         processDecodedMidiEvent(msgId, zeroVelocity ? 0.0f : vel / 127.0f, zeroVelocity);
                     }
                 } else if ((line.contains("Pitchbend", Qt::CaseInsensitive) ||
@@ -724,6 +853,7 @@ void MidiControllerManager::selectMapping(const QString& mappingFileName)
 
     m_midiToParam.clear();
     m_paramToMidi.clear();
+    m_momentaryHeldByMsgId.clear();
 
     if (!mappingFileName.isEmpty()) {
         if (!loadMixxxXmlMapping(mappingFileName))
@@ -863,6 +993,7 @@ void MidiControllerManager::clearLearnedMapping(const QString& paramId)
     const int msgId = paramIt->second;
     m_paramToMidi.erase(paramIt);
     m_midiToParam.erase(msgId);
+    m_momentaryHeldByMsgId.erase(msgId);
 
     saveNativeMapping();
     emit mappingUpdated();
@@ -899,11 +1030,12 @@ void MidiControllerManager::saveNativeMapping()
     xml.writeStartElement("BrockDJ_Mapping");
     xml.writeAttribute("version", "1");
 
-    for (const auto& [msgId, paramId] : m_midiToParam) {
+    for (const auto& [msgId, entry] : m_midiToParam) {
         xml.writeStartElement("Entry");
-        xml.writeAttribute("paramId", paramId);
+        xml.writeAttribute("paramId", entry.paramId);
         xml.writeAttribute("msgId", QString::number(msgId));
-        const auto invIt = m_paramInverted.find(paramId);
+        xml.writeAttribute("interactionType", interactionTypeToString(entry.interactionType));
+        const auto invIt = m_paramInverted.find(entry.paramId);
         if (invIt != m_paramInverted.end() && invIt->second)
             xml.writeAttribute("inverted", "1");
         xml.writeEndElement();
@@ -938,9 +1070,15 @@ void MidiControllerManager::loadNativeMappingIfExists()
         const QString paramId = xml.attributes().value("paramId").toString();
         bool ok = false;
         const int msgId = xml.attributes().value("msgId").toString().toInt(&ok);
+        const MidiInteractionType interactionType =
+            interactionTypeFromString(xml.attributes().value("interactionType").toString(), paramId);
         const bool inverted = xml.attributes().value("inverted").toString() == QStringLiteral("1");
         if (ok && !paramId.isEmpty()) {
-            m_midiToParam[msgId] = paramId;
+            m_midiToParam[msgId] = makeMappingEntry(paramId, interactionType);
+            if (interactionType == MidiInteractionType::Momentary)
+                m_momentaryHeldByMsgId[msgId] = false;
+            else
+                m_momentaryHeldByMsgId.erase(msgId);
             m_paramToMidi[paramId] = msgId;
             if (inverted)
                 m_paramInverted[paramId] = true;
@@ -962,7 +1100,7 @@ bool MidiControllerManager::loadMixxxXmlMapping(const QString& mappingFileName)
 
     QXmlStreamReader xml(&file);
 
-    std::map<int, QString> nextMidiToParam;
+    std::map<int, MidiMappingEntry> nextMidiToParam;
     std::map<QString, int> nextParamToMidi;
 
     bool inControl = false;
@@ -1013,7 +1151,7 @@ bool MidiControllerManager::loadMixxxXmlMapping(const QString& mappingFileName)
 
             const int msgId = 10000 + midiCh * 2000 + subId;
 
-            nextMidiToParam[msgId] = param;
+            nextMidiToParam[msgId] = makeMappingEntry(param);
             nextParamToMidi[param] = msgId;
         }
     }
@@ -1025,6 +1163,11 @@ bool MidiControllerManager::loadMixxxXmlMapping(const QString& mappingFileName)
 
     m_midiToParam = std::move(nextMidiToParam);
     m_paramToMidi = std::move(nextParamToMidi);
+    m_momentaryHeldByMsgId.clear();
+    for (const auto& [msgId, entry] : m_midiToParam) {
+        if (entry.interactionType == MidiInteractionType::Momentary)
+            m_momentaryHeldByMsgId[msgId] = false;
+    }
 
     qDebug() << "[MIDI] Mixxx mapping loaded:" << mappingFileName
              << "entries:" << static_cast<int>(m_midiToParam.size());
@@ -1087,24 +1230,24 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
             // MSB CC (CC 0-31): accumulate the 7-bit value for later LSB pairing
             const auto msbIt = m_midiToParam.find(msgId);
             if (msbIt != m_midiToParam.end())
-                m_msbAccumulator[msbIt->second] = static_cast<int>(value * 127.0f);
+                m_msbAccumulator[msbIt->second.paramId] = static_cast<int>(value * 127.0f);
             // fall through to standard 7-bit dispatch below so the control moves
             // immediately, even before the LSB arrives
         } else if (!isNoteOff && sub >= 1032 && sub < 1064) {
             // LSB CC (CC 32-63): combine with stored MSB for 14-bit precision
+            const auto currentIt = m_midiToParam.find(msgId);
+            const bool currentIsDiscrete = currentIt != m_midiToParam.end()
+                && shouldAlwaysDispatch(currentIt->second.interactionType);
             const int msbMsgId = msgId - 32; // paired MSB is always 32 less
             const auto msbIt = m_midiToParam.find(msbMsgId);
-            if (msbIt != m_midiToParam.end()) {
-                const QString& pId = msbIt->second;
+            if (!currentIsDiscrete
+                && msbIt != m_midiToParam.end()
+                && !shouldAlwaysDispatch(msbIt->second.interactionType)) {
+                const QString& pId = msbIt->second.paramId;
                 const int lsb = static_cast<int>(value * 127.0f);
                 const int msb = m_msbAccumulator.count(pId) ? m_msbAccumulator.at(pId) : 64;
                 const float combined = static_cast<float>((msb << 7) | lsb) / 16383.0f;
-                const char* setter = (pId.endsWith(QStringLiteral("_jog_move"))
-                                      || pId == QStringLiteral("library_browse")
-                                      || isMomentaryMidiAction(pId))
-                    ? "setMidiParameter"
-                    : "setParameter";
-                QMetaObject::invokeMethod(m_parameterStore, setter,
+                QMetaObject::invokeMethod(m_parameterStore, "setParameter",
                                           Qt::QueuedConnection,
                                           Q_ARG(QString, pId),
                                           Q_ARG(float, combined));
@@ -1115,26 +1258,83 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
     }
 
     const auto it = m_midiToParam.find(msgId);
-    if (it == m_midiToParam.end())
+    if (it == m_midiToParam.end()) {
+        qDebug() << "[MIDI MAP]" << midiControlLabel(msgId)
+                 << "value:" << static_cast<int>(std::round(value * 127.0f))
+                 << "mapping:not-found";
         return;
+    }
 
-    const QString paramId = it->second;
+    const QString paramId = it->second.paramId;
+    const MidiInteractionType interactionType = it->second.interactionType;
     float dispatchValue = value;
     {
         const auto invIt = m_paramInverted.find(paramId);
         if (invIt != m_paramInverted.end() && invIt->second) {
-            if (paramId.endsWith(QStringLiteral("_jog_move")) || paramId == QStringLiteral("library_browse"))
+            if (isRelativeInteraction(interactionType))
                 dispatchValue = -dispatchValue;
-            else if (!isNoteOff)  // never invert a release — NoteOff is always 0
+            else if (!isNoteOff && !isButtonInteraction(interactionType))
                 dispatchValue = 1.0f - dispatchValue;
         }
     }
-    // jog_move sends relative delta ticks: consecutive identical values ARE distinct ticks,
-    // so always dispatch. All other params deduplicate to break MIDI feedback echo loops
-    // (common on PipeWire/ALSA: the software's own LED feedback is echoed back as input).
-    if (paramId.endsWith(QStringLiteral("_jog_move"))
-            || paramId == QStringLiteral("library_browse")
-            || isMomentaryMidiAction(paramId)) {
+    const bool pressed = dispatchValue > 0.0f;
+    if (isButtonInteraction(interactionType)) {
+        const int rawMidiValue = static_cast<int>(std::round(value * 127.0f));
+
+        if (interactionType == MidiInteractionType::Toggle && !pressed) {
+            qDebug() << "[MIDI MAP]" << midiControlLabel(msgId)
+                     << "value:" << rawMidiValue
+                     << "interpreted:released"
+                     << "mappedAction:" << paramId
+                     << "interactionType:" << interactionTypeToString(interactionType)
+                     << "previous:n/a"
+                     << "current:n/a"
+                     << "dispatch:ignored-toggle-release";
+            return;
+        }
+
+        if (interactionType == MidiInteractionType::Momentary) {
+            const bool previousHeld = m_momentaryHeldByMsgId.count(msgId)
+                ? m_momentaryHeldByMsgId.at(msgId)
+                : false;
+            const bool currentHeld = pressed;
+            m_momentaryHeldByMsgId[msgId] = currentHeld;
+
+            const bool changed = (previousHeld != currentHeld);
+            const bool forceRelease = !currentHeld;
+            const char* dispatchName = currentHeld
+                ? (changed ? "press" : "ignored-repeat-press")
+                : (changed ? "release" : "force-release");
+
+            qDebug() << "[MIDI MAP]" << midiControlLabel(msgId)
+                     << "value:" << rawMidiValue
+                     << "interpreted:" << (currentHeld ? "pressed" : "released")
+                     << "mappedAction:" << paramId
+                     << "interactionType:" << interactionTypeToString(interactionType)
+                     << "previous:" << previousHeld
+                     << "current:" << currentHeld
+                     << "dispatch:" << dispatchName;
+
+            if (!changed && !forceRelease)
+                return;
+        } else {
+            qDebug() << "[MIDI MAP]" << midiControlLabel(msgId)
+                     << "value:" << rawMidiValue
+                     << "interpreted:" << (pressed ? "pressed" : "released")
+                     << "mappedAction:" << paramId
+                     << "interactionType:" << interactionTypeToString(interactionType)
+                     << "previous:n/a"
+                     << "current:n/a"
+                     << "dispatch:press";
+        }
+
+        dispatchValue = pressed ? 1.0f : 0.0f;
+    }
+
+    // Relative encoders and buttons can produce repeated identical values that
+    // are semantically distinct events, so always emit them. Analog controls
+    // use deduplication to avoid MIDI feedback echo loops.
+    if (shouldAlwaysDispatch(interactionType)) {
         QMetaObject::invokeMethod(m_parameterStore, "setMidiParameter", Qt::QueuedConnection,
                                   Q_ARG(QString, paramId), Q_ARG(float, dispatchValue));
     } else {
@@ -1152,15 +1352,22 @@ void MidiControllerManager::learnMapping(int msgId)
     // MIDI event still driving the same parameter, and stealing a MIDI event
     // must clear the previous parameter's reverse lookup.
     const auto oldParamForMidi = m_midiToParam.find(msgId);
-    if (oldParamForMidi != m_midiToParam.end())
-        m_paramToMidi.erase(oldParamForMidi->second);
+    if (oldParamForMidi != m_midiToParam.end()) {
+        m_paramToMidi.erase(oldParamForMidi->second.paramId);
+        m_momentaryHeldByMsgId.erase(msgId);
+    }
 
     const auto oldMidiForParam = m_paramToMidi.find(m_learnParameterId);
-    if (oldMidiForParam != m_paramToMidi.end())
+    if (oldMidiForParam != m_paramToMidi.end()) {
         m_midiToParam.erase(oldMidiForParam->second);
+        m_momentaryHeldByMsgId.erase(oldMidiForParam->second);
+    }
 
     const QString learnedParamId = m_learnParameterId;
-    m_midiToParam[msgId] = learnedParamId;
+    const MidiMappingEntry learnedEntry = makeMappingEntry(learnedParamId);
+    m_midiToParam[msgId] = learnedEntry;
+    if (learnedEntry.interactionType == MidiInteractionType::Momentary)
+        m_momentaryHeldByMsgId[msgId] = false;
     m_paramToMidi[learnedParamId] = msgId;
     m_learnParameterId.clear();
     m_isLearning = false;
@@ -1235,9 +1442,9 @@ void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*
                     resolvedId = legacyId;
 
                 const auto it = m_midiToParam.find(resolvedId);
-                if (it != m_midiToParam.end() && it->second.endsWith("_jog_move")) {
+                if (it != m_midiToParam.end() && isRelativeInteraction(it->second.interactionType)) {
                     const int raw = static_cast<int>(rawEnc);
-                    resolvedValue = static_cast<float>(raw < 64 ? raw : raw - 128);
+                    resolvedValue = decodeRelativeCcValue(raw);
                 } else {
                     resolvedValue = clampMidi7bit(static_cast<int>(rawEnc)) / 127.0f;
                 }
@@ -1261,10 +1468,11 @@ void MidiControllerManager::onParameterChanged(const QString& id, float value)
     if (!m_midiOutput)
         return;
 
-    // Jog and momentary transport actions are input-only here. Echoing them as
+    // Jog and button actions are input-only here. Echoing them as
     // LED feedback can come back through ALSA/PipeWire as a fresh input event
     // and toggle Play/Cue twice.
-    if (id.endsWith("_jog_move") || isMomentaryMidiAction(id))
+    const MidiInteractionType interactionType = defaultInteractionTypeForParam(id);
+    if (isRelativeInteraction(interactionType) || isButtonInteraction(interactionType))
         return;
 
     const auto it = m_paramToMidi.find(id);
@@ -1303,6 +1511,10 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
 {
     m_deckA = deckA;
     m_deckB = deckB;
+    m_cueAHeld = false;
+    m_cueBHeld = false;
+    m_jogATouched = false;
+    m_jogBTouched = false;
 
     if (!m_parameterStore)
         return;
@@ -1325,10 +1537,58 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                 b->togglePlay();
         }
         else if (id == "deckA_cue") {
-            if (a) { if (value >= 0.5f) a->cueButtonPress(); else a->cueButtonRelease(); }
+            const bool currentHeld = value >= 0.5f;
+            const bool previousHeld = m_cueAHeld;
+            if (currentHeld) {
+                if (!previousHeld && a) {
+                    m_cueAHeld = true;
+                    qDebug() << "[MIDI ACTION] action=TransportCue deck=A"
+                             << "previous:" << previousHeld
+                             << "current:" << currentHeld
+                             << "dispatch=cueButtonPress";
+                    a->cueButtonPress();
+                } else {
+                    qDebug() << "[MIDI ACTION] action=TransportCue deck=A"
+                             << "previous:" << previousHeld
+                             << "current:" << currentHeld
+                             << "dispatch=ignored-repeat-press";
+                }
+            } else {
+                m_cueAHeld = false;
+                qDebug() << "[MIDI ACTION] action=TransportCue deck=A"
+                         << "previous:" << previousHeld
+                         << "current:" << currentHeld
+                         << "dispatch=cueButtonRelease";
+                if (a)
+                    a->cueButtonRelease();
+            }
         }
         else if (id == "deckB_cue") {
-            if (b) { if (value >= 0.5f) b->cueButtonPress(); else b->cueButtonRelease(); }
+            const bool currentHeld = value >= 0.5f;
+            const bool previousHeld = m_cueBHeld;
+            if (currentHeld) {
+                if (!previousHeld && b) {
+                    m_cueBHeld = true;
+                    qDebug() << "[MIDI ACTION] action=TransportCue deck=B"
+                             << "previous:" << previousHeld
+                             << "current:" << currentHeld
+                             << "dispatch=cueButtonPress";
+                    b->cueButtonPress();
+                } else {
+                    qDebug() << "[MIDI ACTION] action=TransportCue deck=B"
+                             << "previous:" << previousHeld
+                             << "current:" << currentHeld
+                             << "dispatch=ignored-repeat-press";
+                }
+            } else {
+                m_cueBHeld = false;
+                qDebug() << "[MIDI ACTION] action=TransportCue deck=B"
+                         << "previous:" << previousHeld
+                         << "current:" << currentHeld
+                         << "dispatch=cueButtonRelease";
+                if (b)
+                    b->cueButtonRelease();
+            }
         }
         else if (id == "deckA_headphone_cue") {
             if (value >= 0.5f && a) a->setCueEnabled(!a->cueEnabled());
@@ -1359,17 +1619,57 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
         else if (id == "deckB_tempo")  { if (b) b->setTempoPercent(static_cast<double>(value) * 16.0 - 8.0); }
         // Jog touch: 127 = finger down (enter scratch), 0 = lift (resume)
         else if (id == "deckA_jog_touch") {
-            const bool touched = (value >= 0.5f);
-            if (touched != m_jogATouched) {
-                m_jogATouched = touched;
-                if (a) { if (touched) a->pauseForScrub(); else a->resumeAfterScrub(); }
+            const bool currentHeld = value >= 0.5f;
+            const bool previousHeld = m_jogATouched;
+            if (currentHeld) {
+                if (!previousHeld && a) {
+                    m_jogATouched = true;
+                    qDebug() << "[MIDI ACTION] action=JogTouch deck=A"
+                             << "previous:" << previousHeld
+                             << "current:" << currentHeld
+                             << "dispatch=pauseForScrub";
+                    a->pauseForScrub();
+                } else {
+                    qDebug() << "[MIDI ACTION] action=JogTouch deck=A"
+                             << "previous:" << previousHeld
+                             << "current:" << currentHeld
+                             << "dispatch=ignored-repeat-press";
+                }
+            } else {
+                m_jogATouched = false;
+                qDebug() << "[MIDI ACTION] action=JogTouch deck=A"
+                         << "previous:" << previousHeld
+                         << "current:" << currentHeld
+                         << "dispatch=resumeAfterScrub";
+                if (a)
+                    a->resumeAfterScrub();
             }
         }
         else if (id == "deckB_jog_touch") {
-            const bool touched = (value >= 0.5f);
-            if (touched != m_jogBTouched) {
-                m_jogBTouched = touched;
-                if (b) { if (touched) b->pauseForScrub(); else b->resumeAfterScrub(); }
+            const bool currentHeld = value >= 0.5f;
+            const bool previousHeld = m_jogBTouched;
+            if (currentHeld) {
+                if (!previousHeld && b) {
+                    m_jogBTouched = true;
+                    qDebug() << "[MIDI ACTION] action=JogTouch deck=B"
+                             << "previous:" << previousHeld
+                             << "current:" << currentHeld
+                             << "dispatch=pauseForScrub";
+                    b->pauseForScrub();
+                } else {
+                    qDebug() << "[MIDI ACTION] action=JogTouch deck=B"
+                             << "previous:" << previousHeld
+                             << "current:" << currentHeld
+                             << "dispatch=ignored-repeat-press";
+                }
+            } else {
+                m_jogBTouched = false;
+                qDebug() << "[MIDI ACTION] action=JogTouch deck=B"
+                         << "previous:" << previousHeld
+                         << "current:" << currentHeld
+                         << "dispatch=resumeAfterScrub";
+                if (b)
+                    b->resumeAfterScrub();
             }
         }
         // Jog move: value = signed tick delta; 128 ticks/rev at 33.33 RPM vinyl.
@@ -1380,8 +1680,19 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                 if (m_jogATouched || a->isScrubbing()) {
                     if (!a->isScrubbing())
                         a->pauseForScrub();
+                    qDebug() << "[MIDI ACTION] action=JogMove deck=A"
+                             << "ticks:" << value
+                             << "deltaSec:" << delta
+                             << "touched:" << m_jogATouched
+                             << "scrubbing:" << a->isScrubbing()
+                             << "dispatch=scratchBySeconds";
                     a->scratchBySeconds(delta);
                 } else {
+                    qDebug() << "[MIDI ACTION] action=JogMove deck=A"
+                             << "ticks:" << value
+                             << "touched:" << m_jogATouched
+                             << "scrubbing:" << a->isScrubbing()
+                             << "dispatch=applyJogNudge";
                     a->applyJogNudge(static_cast<double>(value));
                 }
             }
@@ -1392,8 +1703,19 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                 if (m_jogBTouched || b->isScrubbing()) {
                     if (!b->isScrubbing())
                         b->pauseForScrub();
+                    qDebug() << "[MIDI ACTION] action=JogMove deck=B"
+                             << "ticks:" << value
+                             << "deltaSec:" << delta
+                             << "touched:" << m_jogBTouched
+                             << "scrubbing:" << b->isScrubbing()
+                             << "dispatch=scratchBySeconds";
                     b->scratchBySeconds(delta);
                 } else {
+                    qDebug() << "[MIDI ACTION] action=JogMove deck=B"
+                             << "ticks:" << value
+                             << "touched:" << m_jogBTouched
+                             << "scrubbing:" << b->isScrubbing()
+                             << "dispatch=applyJogNudge";
                     b->applyJogNudge(static_cast<double>(value));
                 }
             }

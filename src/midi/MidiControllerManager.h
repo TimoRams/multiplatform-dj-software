@@ -15,6 +15,19 @@
 class DjEngine;
 class ParameterStore;
 
+enum class MidiInteractionType {
+    Momentary,
+    Toggle,
+    EncoderRelative,
+    EncoderAbsolute,
+    Fader
+};
+
+struct MidiMappingEntry {
+    QString paramId;
+    MidiInteractionType interactionType = MidiInteractionType::EncoderAbsolute;
+};
+
 class MidiControllerManager : public QObject, public juce::MidiInputCallback
 {
     Q_OBJECT
@@ -85,14 +98,17 @@ private:
     ParameterStore* m_parameterStore = nullptr;
     DjEngine* m_deckA = nullptr;
     DjEngine* m_deckB = nullptr;
+    bool m_cueAHeld = false;
+    bool m_cueBHeld = false;
     bool m_jogATouched = false;
     bool m_jogBTouched = false;
     
     std::vector<std::unique_ptr<juce::MidiInput>> m_midiInputs;
     std::unique_ptr<juce::MidiOutput> m_midiOutput;
 
-    // Mapping: Midi Note/CC Number -> Parameter ID
-    std::map<int, QString> m_midiToParam;
+    // Mapping: Midi Note/CC Number -> parameter plus interaction semantics.
+    std::map<int, MidiMappingEntry> m_midiToParam;
+    std::map<int, bool> m_momentaryHeldByMsgId;
     
     // Reverse Mapping for Output: Parameter ID -> Midi Note/CC Number
     std::map<QString, int> m_paramToMidi;

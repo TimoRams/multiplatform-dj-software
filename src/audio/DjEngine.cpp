@@ -42,7 +42,6 @@ constexpr double kEqMax = 1.0;
 constexpr double kFilterMin = -1.0;
 constexpr double kFilterMax = 1.0;
 constexpr double kParamEpsilon = 1e-6;
-constexpr int kMainCueHoldPreviewDelayMs = 180;
 
 double playHistoryThresholdSeconds(double durationSec)
 {
@@ -4304,13 +4303,10 @@ void DjEngine::cueButtonPress()
     if (m_analyzer && m_analyzer->isThreadRunning())
         m_analyzer->setSeekHint(cuePos);
 
-    // Short press: set/update the cue point and stay paused.
-    // Hold: after a tiny intent threshold, preview from the cue until release.
+    // Start cue preview immediately so MIDI/controller cue has the same
+    // down-event immediacy as a physical transport button.
     m_mainCueHoldPreviewPending = true;
-    QTimer::singleShot(kMainCueHoldPreviewDelayMs, this, [this, pressSerial]()
-    {
-        startMainCueHoldPreview(pressSerial);
-    });
+    startMainCueHoldPreview(pressSerial);
     emit progressChanged();
 }
 
