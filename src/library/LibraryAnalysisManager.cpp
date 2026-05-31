@@ -152,7 +152,9 @@ void LibraryAnalysisManager::finishCurrent(bool completed)
                                  key,
                                  m_trackData->getFirstBeatSample(),
                                  m_trackData->getSampleRate(),
-                                 m_trackData->getBeatGrid());
+                                 m_trackData->getBeatGrid(),
+                                 m_trackData->getConfidenceInfo(),
+                                 m_trackData->getBeatGridInfo());
 
         const auto segments = m_trackData->getSegments();
         if (!segments.empty())

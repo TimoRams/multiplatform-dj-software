@@ -24,15 +24,46 @@ class TrackData : public QObject
     Q_PROPERTY(bool   isKeyAnalyzed READ isKeyAnalyzed    NOTIFY keyAnalyzed)
 
 public:
+    enum class BeatGridType {
+        Unknown = 0,
+        ConstantTempo,
+        DynamicTempo
+    };
+
+    struct ConfidenceInfo {
+        float bpmConfidence = 0.0f;
+        float beatConfidence = 0.0f;
+        float downbeatConfidence = 0.0f;
+        float gridConfidence = 0.0f;
+    };
+
+    struct TempoNode {
+        double positionSec = 0.0;
+        double bpm = 0.0;
+        float confidence = 0.0f;
+    };
+
+    struct BeatGridInfo {
+        BeatGridType type = BeatGridType::Unknown;
+        std::vector<TempoNode> tempoNodes;
+        bool userModified = false;
+        bool lockedByUser = false;
+    };
+
     // Beat marker: one entry per beat in the track.
     // isDownbeat = true for beat 1 of each bar (every 4th beat, 4/4 time).
     // barNumber  = 1-based bar counter (bar 1 = first detected downbeat).
     // beatInBar  = 1..4, beat position within the current bar.
     struct BeatMarker {
         double positionSec = 0.0;  // exact, micro-snapped timestamp (seconds)
+        bool   isBeat      = true;
         bool   isDownbeat  = false;
+        int    barIndex    = 0;    // 0-based bar counter, may be < 0 before anchor
         int    barNumber   = 0;
         int    beatInBar   = 1;    // 1=downbeat, 2, 3, 4
+        float  confidence  = 0.0f;
+        bool   userModified = false;
+        bool   lockedByUser = false;
     };
 
     // Per-block bin (≈ samplesPerBin samples): envelope per frequency band.
@@ -127,13 +158,30 @@ public:
     // elastic beat-marker array (one BeatMarker per beat, with downbeat flags).
     void setBpmData(double bpm, qint64 firstBeatSample, double sampleRate,
                     std::vector<BeatMarker> beatGrid = {}) {
+        setBpmData(bpm, firstBeatSample, sampleRate, std::move(beatGrid), ConfidenceInfo{}, BeatGridInfo{});
+    }
+
+    void setBpmData(double bpm, qint64 firstBeatSample, double sampleRate,
+                    std::vector<BeatMarker> beatGrid,
+                    ConfidenceInfo confidence,
+                    BeatGridInfo beatGridInfo) {
         {
             QMutexLocker locker(&m_mutex);
+            if (m_beatGridInfo.lockedByUser && !beatGrid.empty()) {
+                beatGrid.clear();
+                beatGridInfo = m_beatGridInfo;
+            }
             m_bpm             = bpm;
             m_firstBeatSample = firstBeatSample;
             m_sampleRate      = sampleRate;
             m_isBpmAnalyzed   = (bpm > 0.0);
-            m_beatGrid        = std::move(beatGrid);
+            m_confidence      = confidence;
+            if (!beatGrid.empty())
+                m_beatGrid = std::move(beatGrid);
+            if (beatGridInfo.type != BeatGridType::Unknown || !beatGridInfo.tempoNodes.empty()
+                || beatGridInfo.userModified || beatGridInfo.lockedByUser) {
+                m_beatGridInfo = std::move(beatGridInfo);
+            }
         }
         emit bpmAnalyzed();
     }
@@ -143,6 +191,21 @@ public:
     std::vector<BeatMarker> getBeatGrid() const {
         QMutexLocker locker(&m_mutex);
         return m_beatGrid;
+    }
+
+    ConfidenceInfo getConfidenceInfo() const {
+        QMutexLocker locker(&m_mutex);
+        return m_confidence;
+    }
+
+    BeatGridInfo getBeatGridInfo() const {
+        QMutexLocker locker(&m_mutex);
+        return m_beatGridInfo;
+    }
+
+    bool beatgridLockedByUser() const {
+        QMutexLocker locker(&m_mutex);
+        return m_beatGridInfo.lockedByUser;
     }
 
     // ── Manual beat-grid correction ──────────────────────────────────────────
@@ -170,7 +233,14 @@ public:
             double pos = newAnchorSec + i * beatDur;
             if (pos < -(preRollSec + beatDur * 0.5)) break;
             if (pos < -preRollSec) pos = -preRollSec;
-            grid.push_back(BeatMarker{ pos, false, i });
+            BeatMarker marker;
+            marker.positionSec = pos;
+            marker.barIndex = i / 4;
+            marker.barNumber = marker.barIndex + 1;
+            marker.confidence = 1.0f;
+            marker.userModified = true;
+            marker.lockedByUser = true;
+            grid.push_back(marker);
             if (pos <= -preRollSec) break;
         }
 
@@ -179,7 +249,14 @@ public:
             double pos = newAnchorSec + i * beatDur;
             if (pos > trackLengthSec + beatDur * 0.5) break;
             if (pos > trackLengthSec) pos = trackLengthSec;
-            grid.push_back(BeatMarker{ pos, false, i });
+            BeatMarker marker;
+            marker.positionSec = pos;
+            marker.barIndex = i / 4;
+            marker.barNumber = marker.barIndex + 1;
+            marker.confidence = 1.0f;
+            marker.userModified = true;
+            marker.lockedByUser = true;
+            grid.push_back(marker);
             if (pos >= trackLengthSec) break;
         }
 
@@ -207,14 +284,21 @@ public:
             // Modulo that always returns 0..3 even for negative beatIdx:
             int mod4 = ((beatIdx % 4) + 4) % 4;
             grid[k].isDownbeat = (mod4 == 0);
-            grid[k].barNumber  = beatIdx / 4 + 1;  // 1-based, may be ≤ 0 before anchor
+            grid[k].barIndex   = beatIdx / 4;
+            grid[k].barNumber  = grid[k].barIndex + 1;  // 1-based, may be ≤ 0 before anchor
             grid[k].beatInBar  = mod4 + 1;          // 1=downbeat, 2, 3, 4
+            grid[k].confidence = 1.0f;
+            grid[k].userModified = true;
+            grid[k].lockedByUser = true;
         }
 
         {
             QMutexLocker locker(&m_mutex);
             m_firstBeatSample = static_cast<qint64>(std::llround(newAnchorSec * m_sampleRate));
             m_beatGrid = std::move(grid);
+            m_beatGridInfo.type = BeatGridType::ConstantTempo;
+            m_beatGridInfo.userModified = true;
+            m_beatGridInfo.lockedByUser = true;
         }
         emit beatgridChanged();
     }
@@ -311,6 +395,8 @@ public:
             m_bpm = 0.0;
             m_firstBeatSample = 0;
             m_isBpmAnalyzed = false;
+            m_confidence = {};
+            m_beatGridInfo = {};
             m_detectedKey.clear();
             m_isKeyAnalyzed = false;
             m_beatGrid.clear();
@@ -549,6 +635,8 @@ private:
     qint64  m_firstBeatSample;
     double  m_sampleRate;
     bool    m_isBpmAnalyzed;
+    ConfidenceInfo m_confidence;
+    BeatGridInfo m_beatGridInfo;
     std::vector<BeatMarker> m_beatGrid;  // elastic beat markers (positionSec + downbeat flag)
     std::vector<TrackSegment> m_segments;
 

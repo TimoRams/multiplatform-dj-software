@@ -13,7 +13,7 @@
 namespace {
 
 constexpr quint32 kMagic = 0x52574631; // RWF1
-constexpr qint32 kVersion = 5;         // v5: peak mipmap at 8× analysis rate (9600/sec)
+constexpr qint32 kVersion = 6;         // v6: analysis pipeline version bumped; binary payload stays v5-compatible.
 constexpr int kBlockSize = 4096;
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
@@ -102,7 +102,7 @@ bool WaveformCache::loadForFile(const QString& filePath, int pointsPerSecond, Pa
     in >> magic >> version >> pps >> totalExpected >> globalMaxPeak >> wfCount >> rgbCount >> peakCount;
     if (in.status() != QDataStream::Ok)
         return false;
-    if (magic != kMagic || version != kVersion || pps != pointsPerSecond)
+    if (magic != kMagic || (version != 5 && version != kVersion) || pps != pointsPerSecond)
         return false;
     if (wfCount < 0 || rgbCount < 0 || peakCount < 0)
         return false;

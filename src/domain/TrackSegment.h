@@ -7,4 +7,5 @@ struct TrackSegment {
     float startTime = 0.0f;
     float endTime = 0.0f;
     QString colorHex;
+    float confidence = 0.0f;
 };

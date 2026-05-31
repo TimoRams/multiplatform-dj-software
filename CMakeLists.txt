@@ -269,6 +269,20 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/audio/DjMasterBus.cpp
     src/analysis/PhraseAnalyzer.h
     src/analysis/PhraseAnalyzer.cpp
+    src/analysis/AnalysisCacheVersion.h
+    src/analysis/AnalysisResult.h
+    src/analysis/AnalysisFeatureExtractor.h
+    src/analysis/AnalysisFeatureExtractor.cpp
+    src/analysis/TempoEstimator.h
+    src/analysis/TempoEstimator.cpp
+    src/analysis/BeatTracker.h
+    src/analysis/BeatTracker.cpp
+    src/analysis/DownbeatDetector.h
+    src/analysis/DownbeatDetector.cpp
+    src/analysis/BeatGridFitter.h
+    src/analysis/BeatGridFitter.cpp
+    src/analysis/AnalysisValidation.h
+    src/analysis/AnalysisValidation.cpp
     src/rendering/RgbWaveformItem.h
     src/rendering/RgbWaveformItem.cpp
     src/rendering/WaveformItem.cpp

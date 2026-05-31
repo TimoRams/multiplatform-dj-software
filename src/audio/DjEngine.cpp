@@ -3133,7 +3133,9 @@ void DjEngine::persistCurrentAnalysisToLibrary()
         key,
         m_trackData->getFirstBeatSample(),
         m_trackData->getSampleRate(),
-        beatGrid);
+        beatGrid,
+        m_trackData->getConfidenceInfo(),
+        m_trackData->getBeatGridInfo());
 }
 
 bool DjEngine::isPlaying() const
@@ -3255,7 +3257,9 @@ bool DjEngine::hydrateLibraryStateForTrack(const QString& rawPath, double durati
             m_trackData->setBpmData(cachedAnalysis.bpm,
                                     cachedAnalysis.firstBeatSample,
                                     cachedAnalysis.sampleRate,
-                                    cachedAnalysis.beatGrid);
+                                    cachedAnalysis.beatGrid,
+                                    cachedAnalysis.confidence,
+                                    cachedAnalysis.beatGridInfo);
         }
 
         const QString cachedKey = cachedAnalysis.key.trimmed();

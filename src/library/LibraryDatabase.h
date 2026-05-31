@@ -23,6 +23,9 @@ public:
         bool isAnalyzed = false;
         qint64 firstBeatSample = 0;
         double sampleRate = 44100.0;
+        int analysisVersion = 0;
+        TrackData::ConfidenceInfo confidence;
+        TrackData::BeatGridInfo beatGridInfo;
         std::vector<TrackData::BeatMarker> beatGrid;
     };
 
@@ -49,7 +52,9 @@ public:
                                         const QString& newKey,
                                         qint64 firstBeatSample = 0,
                                         double sampleRate = 44100.0,
-                                        const std::vector<TrackData::BeatMarker>& beatGrid = {});
+                                        const std::vector<TrackData::BeatMarker>& beatGrid = {},
+                                        TrackData::ConfidenceInfo confidence = {},
+                                        TrackData::BeatGridInfo beatGridInfo = {});
 
     bool tryGetAnalysisData(const QString& trackId, AnalysisSnapshot* out) const;
 
@@ -236,5 +241,5 @@ private:
     bool m_backupSyncRunning = false;
     bool m_backupSyncAgain = false;
 
-    static constexpr int kSchemaVersion = 14;
+    static constexpr int kSchemaVersion = 15;
 };

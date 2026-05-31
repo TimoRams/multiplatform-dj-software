@@ -22,17 +22,15 @@ float computeRms(const std::vector<float>& mono) {
 }
 
 QString colorForLabel(const QString& label) {
-    if (label == QStringLiteral("Drop"))
-        return QStringLiteral("#FF3B30");
-    if (label == QStringLiteral("Breakdown"))
-        return QStringLiteral("#2A7FFF");
-    if (label == QStringLiteral("Build-up"))
-        return QStringLiteral("#FFD21F");
-    if (label == QStringLiteral("Intro"))
-        return QStringLiteral("#47C2FF");
-    if (label == QStringLiteral("Outro"))
-        return QStringLiteral("#9A9A9A");
-    return QStringLiteral("#32CD32");
+    if (label == QStringLiteral("HighEnergy"))
+        return QStringLiteral("#D8563F");
+    if (label == QStringLiteral("MediumEnergy"))
+        return QStringLiteral("#7E9A58");
+    if (label == QStringLiteral("LowEnergy"))
+        return QStringLiteral("#496C96");
+    if (label == QStringLiteral("SilenceOrOutro"))
+        return QStringLiteral("#555555");
+    return QStringLiteral("#00000000");
 }
 
 } // namespace
@@ -48,6 +46,62 @@ std::vector<TrackSegment> PhraseAnalyzer::analyze(juce::AudioFormatReader& reade
     extractFeatures(reader, blocks);
     normalizeAndLabel(blocks);
     return smoothAndMergeSegments(blocks, durationSec);
+}
+
+std::vector<TrackSegment> PhraseAnalyzer::analyze(const analysis::AnalysisFeatures& features,
+                                                  const std::vector<TrackData::BeatMarker>& beats,
+                                                  double durationSec) const
+{
+    std::vector<double> downbeatAligned;
+    downbeatAligned.reserve(beats.size());
+
+    size_t start = 0;
+    for (size_t i = 0; i < beats.size(); ++i) {
+        if (beats[i].isDownbeat) {
+            start = i;
+            break;
+        }
+    }
+    for (size_t i = start; i < beats.size(); ++i)
+        downbeatAligned.push_back(beats[i].positionSec);
+
+    auto blocks = buildBlocks(downbeatAligned, durationSec);
+    if (blocks.empty())
+        return {};
+
+    for (auto& block : blocks) {
+        const size_t startFrame = features.secondsToFrame(block.startTime);
+        const size_t endFrame = std::min(features.rms.size(), features.secondsToFrame(block.endTime) + 1);
+        if (startFrame >= endFrame || endFrame > features.rms.size())
+            continue;
+
+        double rms = 0.0;
+        double low = 0.0;
+        double onset = 0.0;
+        for (size_t i = startFrame; i < endFrame; ++i) {
+            rms += features.rms[i];
+            low += features.lowEnergy[i];
+            onset += features.onsetStrength[i];
+        }
+        const double inv = 1.0 / static_cast<double>(endFrame - startFrame);
+        block.overallRms = static_cast<float>(rms * inv);
+        block.lowBandRms = static_cast<float>(low * inv);
+        block.hasSignal = (block.overallRms > 0.04f || onset * inv > 0.05);
+    }
+
+    normalizeAndLabel(blocks);
+    auto segments = smoothAndMergeSegments(blocks, durationSec);
+    for (auto& segment : segments) {
+        const size_t startFrame = features.secondsToFrame(segment.startTime);
+        const size_t endFrame = std::min(features.rms.size(), features.secondsToFrame(segment.endTime) + 1);
+        if (startFrame >= endFrame)
+            continue;
+        double energy = 0.0;
+        for (size_t i = startFrame; i < endFrame; ++i)
+            energy += features.rms[i];
+        segment.confidence = static_cast<float>(std::clamp(energy / static_cast<double>(endFrame - startFrame), 0.0, 1.0));
+    }
+    return segments;
 }
 
 std::vector<PhraseBlock> PhraseAnalyzer::buildBlocks(const std::vector<double>& beatTimestamps,
@@ -143,117 +197,29 @@ void PhraseAnalyzer::normalizeAndLabel(std::vector<PhraseBlock>& blocks) const
     }
 
     for (auto& block : blocks) {
-        block.label = QStringLiteral("Phrase");
+        const float confidence = std::abs(block.overallNorm - 0.50f) * 1.35f
+            + std::abs(block.lowBandNorm - 0.50f) * 0.65f;
+        if (!block.hasSignal || block.overallNorm < 0.055f) {
+            block.label = QStringLiteral("SilenceOrOutro");
+        } else if (confidence < 0.42f) {
+            block.label = QStringLiteral("Unknown");
+        } else if (block.overallNorm > 0.68f && block.lowBandNorm > 0.52f) {
+            block.label = QStringLiteral("HighEnergy");
+        } else if (block.overallNorm < 0.28f || block.lowBandNorm < 0.22f) {
+            block.label = QStringLiteral("LowEnergy");
+        } else if (confidence >= 0.50f) {
+            block.label = QStringLiteral("MediumEnergy");
+        } else {
+            block.label = QStringLiteral("Unknown");
+        }
         block.colorHex = colorForLabel(block.label);
-    }
-
-    for (auto& block : blocks) {
-        if (block.lowBandNorm > 0.75f && block.overallNorm > 0.65f) {
-            block.label = QStringLiteral("Drop");
-            block.colorHex = colorForLabel(block.label);
-        }
-    }
-
-    for (size_t i = 0; i < blocks.size(); ++i) {
-        auto& block = blocks[i];
-        if (block.lowBandNorm >= 0.2f)
-            continue;
-
-        const float prevOverall = (i > 0) ? blocks[i - 1].overallNorm : block.overallNorm;
-        const float nextOverall = (i + 1 < blocks.size()) ? blocks[i + 1].overallNorm : block.overallNorm;
-        const bool hasContrast = (prevOverall - block.overallNorm > 0.22f)
-            || (nextOverall - block.overallNorm > 0.22f)
-            || (std::max(prevOverall, nextOverall) > 0.6f && block.overallNorm < 0.45f);
-
-        if (hasContrast && block.label != QStringLiteral("Drop")) {
-            block.label = QStringLiteral("Breakdown");
-            block.colorHex = colorForLabel(block.label);
-        }
-    }
-
-    for (size_t i = 1; i + 1 < blocks.size(); ++i) {
-        if (blocks[i + 1].label != QStringLiteral("Drop"))
-            continue;
-
-        bool rising2 = blocks[i - 1].overallNorm < blocks[i].overallNorm;
-        bool rising3 = false;
-        if (i >= 2) {
-            rising3 = blocks[i - 2].overallNorm < blocks[i - 1].overallNorm
-                && blocks[i - 1].overallNorm < blocks[i].overallNorm;
-        }
-
-        if ((rising2 || rising3) && blocks[i].label != QStringLiteral("Drop")) {
-            blocks[i].label = QStringLiteral("Build-up");
-            blocks[i].colorHex = colorForLabel(blocks[i].label);
-
-            if (rising3 && blocks[i - 1].label != QStringLiteral("Drop")) {
-                blocks[i - 1].label = QStringLiteral("Build-up");
-                blocks[i - 1].colorHex = colorForLabel(blocks[i - 1].label);
-            }
-        }
-    }
-
-    int firstSignal = -1;
-    int lastSignal = -1;
-    for (int i = 0; i < static_cast<int>(blocks.size()); ++i) {
-        if (!blocks[static_cast<size_t>(i)].hasSignal)
-            continue;
-        if (firstSignal < 0)
-            firstSignal = i;
-        lastSignal = i;
-    }
-
-    if (firstSignal >= 0) {
-        blocks[static_cast<size_t>(firstSignal)].label = QStringLiteral("Intro");
-        blocks[static_cast<size_t>(firstSignal)].colorHex = colorForLabel(QStringLiteral("Intro"));
-    }
-    if (lastSignal >= 0 && lastSignal != firstSignal) {
-        blocks[static_cast<size_t>(lastSignal)].label = QStringLiteral("Outro");
-        blocks[static_cast<size_t>(lastSignal)].colorHex = colorForLabel(QStringLiteral("Outro"));
     }
 }
 
 std::vector<TrackSegment> PhraseAnalyzer::smoothAndMergeSegments(std::vector<PhraseBlock>& blocks,
                                                                  double durationSec) const
 {
-    // Rule 1: dynamic thresholds from track-wide average RMS values.
-    double sumOverall = 0.0;
-    double sumLow = 0.0;
-    int signalCount = 0;
-    for (const auto& block : blocks) {
-        if (!block.hasSignal)
-            continue;
-        sumOverall += block.overallRms;
-        sumLow += block.lowBandRms;
-        ++signalCount;
-    }
-
-    const float avgOverall = (signalCount > 0) ? static_cast<float>(sumOverall / signalCount) : 0.0f;
-    const float avgLow = (signalCount > 0) ? static_cast<float>(sumLow / signalCount) : 0.0f;
-    const float dropLowThreshold = avgLow * 1.20f;
-    const float dropOverallThreshold = avgOverall * 1.10f;
-
-    for (auto& block : blocks) {
-        if (!block.hasSignal)
-            continue;
-
-        const bool isDynamicDrop =
-            (block.lowBandRms > dropLowThreshold) &&
-            (block.overallRms > dropOverallThreshold);
-
-        if (isDynamicDrop) {
-            block.label = QStringLiteral("Drop");
-            block.colorHex = colorForLabel(block.label);
-            continue;
-        }
-
-        if (block.label == QStringLiteral("Drop")) {
-            block.label = QStringLiteral("Phrase");
-            block.colorHex = colorForLabel(block.label);
-        }
-    }
-
-    // Rule 2: context-aware outlier filter.
+    // Rule 1: context-aware outlier filter on neutral energy states only.
     if (blocks.size() >= 3) {
         std::vector<QString> smoothedLabels;
         smoothedLabels.reserve(blocks.size());
@@ -311,10 +277,10 @@ std::vector<TrackSegment> PhraseAnalyzer::smoothAndMergeSegments(std::vector<Phr
         merged.push_back(cur);
     }
 
-    // Rule 3: enforce minimum segment length of 32 beats (2 blocks), except Outro.
+    // Rule 2: enforce minimum segment length of 32 beats (2 blocks).
     constexpr int minBlocks = 2;
     for (size_t i = 0; i < merged.size();) {
-        if (merged[i].label == QStringLiteral("Outro") || merged[i].blockCount >= minBlocks) {
+        if (merged[i].blockCount >= minBlocks) {
             ++i;
             continue;
         }
@@ -375,11 +341,18 @@ std::vector<TrackSegment> PhraseAnalyzer::smoothAndMergeSegments(std::vector<Phr
     for (const auto& run : merged) {
         if (run.endTime <= run.startTime + 0.01f)
             continue;
+        if (run.label == QStringLiteral("Unknown"))
+            continue;
+        const float confidence =
+            (run.label == QStringLiteral("HighEnergy") || run.label == QStringLiteral("LowEnergy"))
+                ? 0.78f
+                : (run.label == QStringLiteral("MediumEnergy") ? 0.58f : 0.62f);
         segments.push_back({
             run.label,
             run.startTime,
             std::min(run.endTime, static_cast<float>(durationSec)),
-            run.colorHex
+            run.colorHex,
+            confidence
         });
     }
 

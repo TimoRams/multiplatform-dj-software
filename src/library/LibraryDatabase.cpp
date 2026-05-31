@@ -1,4 +1,5 @@
 #include "LibraryDatabase.h"
+#include "AnalysisCacheVersion.h"
 #include "LibraryTableModel.h"
 #include "app/SettingsManager.h"
 #include "rendering/WaveformCache.h"
@@ -35,6 +36,28 @@ bool tableHasColumn(QSqlDatabase& db, const QString& tableName, const QString& c
     }
 
     return false;
+}
+
+QString gridTypeToString(TrackData::BeatGridType type)
+{
+    switch (type) {
+    case TrackData::BeatGridType::DynamicTempo:
+        return QStringLiteral("dynamic");
+    case TrackData::BeatGridType::ConstantTempo:
+        return QStringLiteral("constant");
+    case TrackData::BeatGridType::Unknown:
+    default:
+        return QStringLiteral("unknown");
+    }
+}
+
+TrackData::BeatGridType gridTypeFromString(const QString& value)
+{
+    if (value.compare(QStringLiteral("dynamic"), Qt::CaseInsensitive) == 0)
+        return TrackData::BeatGridType::DynamicTempo;
+    if (value.compare(QStringLiteral("constant"), Qt::CaseInsensitive) == 0)
+        return TrackData::BeatGridType::ConstantTempo;
+    return TrackData::BeatGridType::Unknown;
 }
 
 bool syncBackupFromPath(const QString& activePath, const QString& mirrorPath)
@@ -86,6 +109,7 @@ QString LibraryDatabase::trackSegmentsToJson(const std::vector<TrackSegment>& se
         obj.insert("startTime", s.startTime);
         obj.insert("endTime", s.endTime);
         obj.insert("colorHex", s.colorHex);
+        obj.insert("confidence", s.confidence);
         arr.append(obj);
     }
 
@@ -115,6 +139,7 @@ QVariantList LibraryDatabase::trackSegmentsJsonToVariantList(const QString& json
         m.insert("startTime", o.value("startTime").toDouble());
         m.insert("endTime", o.value("endTime").toDouble());
         m.insert("colorHex", o.value("colorHex").toString());
+        m.insert("confidence", o.value("confidence").toDouble());
         result.push_back(m);
     }
 
@@ -524,6 +549,43 @@ bool LibraryDatabase::createSchema()
             ")");
     }
 
+    if (currentVersion < 15) {
+        struct ColumnAdd {
+            const char* table;
+            const char* column;
+            const char* sql;
+        };
+        const ColumnAdd adds[] = {
+            {"Tracks", "analysis_version", "ALTER TABLE Tracks ADD COLUMN analysis_version INTEGER DEFAULT 0"},
+            {"Tracks", "bpm_confidence", "ALTER TABLE Tracks ADD COLUMN bpm_confidence REAL DEFAULT 0.0"},
+            {"Tracks", "beat_confidence", "ALTER TABLE Tracks ADD COLUMN beat_confidence REAL DEFAULT 0.0"},
+            {"Tracks", "downbeat_confidence", "ALTER TABLE Tracks ADD COLUMN downbeat_confidence REAL DEFAULT 0.0"},
+            {"Tracks", "grid_confidence", "ALTER TABLE Tracks ADD COLUMN grid_confidence REAL DEFAULT 0.0"},
+            {"Tracks", "beatgrid_type", "ALTER TABLE Tracks ADD COLUMN beatgrid_type TEXT DEFAULT 'constant'"},
+            {"Tracks", "beatgrid_user_modified", "ALTER TABLE Tracks ADD COLUMN beatgrid_user_modified INTEGER DEFAULT 0"},
+            {"Tracks", "beatgrid_locked_by_user", "ALTER TABLE Tracks ADD COLUMN beatgrid_locked_by_user INTEGER DEFAULT 0"},
+            {"BeatGridMarkers", "beat_in_bar", "ALTER TABLE BeatGridMarkers ADD COLUMN beat_in_bar INTEGER DEFAULT 1"},
+            {"BeatGridMarkers", "confidence", "ALTER TABLE BeatGridMarkers ADD COLUMN confidence REAL DEFAULT 0.0"},
+            {"BeatGridMarkers", "user_modified", "ALTER TABLE BeatGridMarkers ADD COLUMN user_modified INTEGER DEFAULT 0"},
+            {"BeatGridMarkers", "locked_by_user", "ALTER TABLE BeatGridMarkers ADD COLUMN locked_by_user INTEGER DEFAULT 0"},
+        };
+        for (const auto& add : adds) {
+            if (!tableHasColumn(m_db, add.table, add.column) && !q.exec(add.sql))
+                qWarning() << "[LibraryDatabase] schema v15 column" << add.column << q.lastError().text();
+        }
+
+        q.exec(
+            "CREATE TABLE IF NOT EXISTS TempoNodes ("
+            "  track_id     TEXT NOT NULL,"
+            "  node_index   INTEGER NOT NULL,"
+            "  position_sec REAL NOT NULL,"
+            "  bpm          REAL NOT NULL,"
+            "  confidence   REAL DEFAULT 0.0,"
+            "  PRIMARY KEY(track_id, node_index),"
+            "  FOREIGN KEY(track_id) REFERENCES Tracks(id) ON DELETE CASCADE"
+            ")");
+    }
+
     // ── Stamp current version ────────────────────────────────────────────
     q.prepare("INSERT OR REPLACE INTO Meta (key, value) VALUES ('schema_version', :v)");
     q.bindValue(":v", kSchemaVersion);
@@ -630,7 +692,9 @@ void LibraryDatabase::updateAnalysisData(const QString& trackId,
                                          const QString& newKey,
                                          qint64 firstBeatSample,
                                          double sampleRate,
-                                         const std::vector<TrackData::BeatMarker>& beatGrid)
+                                         const std::vector<TrackData::BeatMarker>& beatGrid,
+                                         TrackData::ConfidenceInfo confidence,
+                                         TrackData::BeatGridInfo beatGridInfo)
 {
     if (trackId.isEmpty())
         return;
@@ -651,12 +715,28 @@ void LibraryDatabase::updateAnalysisData(const QString& trackId,
         "  key = CASE WHEN length(trim(:key)) > 0 THEN :key ELSE key END,"
         "  is_analyzed = CASE WHEN (:bpm > 0 OR length(trim(:key)) > 0) THEN 1 ELSE is_analyzed END,"
         "  first_beat_sample = CASE WHEN :firstBeatSample >= 0 THEN :firstBeatSample ELSE first_beat_sample END,"
-        "  analysis_sample_rate = CASE WHEN :sampleRate > 0 THEN :sampleRate ELSE analysis_sample_rate END"
+        "  analysis_sample_rate = CASE WHEN :sampleRate > 0 THEN :sampleRate ELSE analysis_sample_rate END,"
+        "  analysis_version = :analysisVersion,"
+        "  bpm_confidence = :bpmConfidence,"
+        "  beat_confidence = :beatConfidence,"
+        "  downbeat_confidence = :downbeatConfidence,"
+        "  grid_confidence = :gridConfidence,"
+        "  beatgrid_type = CASE WHEN length(trim(:gridType)) > 0 THEN :gridType ELSE beatgrid_type END,"
+        "  beatgrid_user_modified = :gridUserModified,"
+        "  beatgrid_locked_by_user = CASE WHEN beatgrid_locked_by_user != 0 THEN beatgrid_locked_by_user ELSE :gridLocked END"
         " WHERE id = :id");
     q.bindValue(":bpm", static_cast<double>(newBpm));
     q.bindValue(":key", newKey);
     q.bindValue(":firstBeatSample", firstBeatSample);
     q.bindValue(":sampleRate", sampleRate);
+    q.bindValue(":analysisVersion", analysis::kAnalysisVersion);
+    q.bindValue(":bpmConfidence", confidence.bpmConfidence);
+    q.bindValue(":beatConfidence", confidence.beatConfidence);
+    q.bindValue(":downbeatConfidence", confidence.downbeatConfidence);
+    q.bindValue(":gridConfidence", confidence.gridConfidence);
+    q.bindValue(":gridType", gridTypeToString(beatGridInfo.type));
+    q.bindValue(":gridUserModified", beatGridInfo.userModified ? 1 : 0);
+    q.bindValue(":gridLocked", beatGridInfo.lockedByUser ? 1 : 0);
     q.bindValue(":id",  trackId);
 
     if (!q.exec()) {
@@ -665,7 +745,16 @@ void LibraryDatabase::updateAnalysisData(const QString& trackId,
         return;
     }
 
-    if (!beatGrid.empty()) {
+    bool lockedGridInDb = false;
+    {
+        QSqlQuery lockQuery(m_db);
+        lockQuery.prepare("SELECT COALESCE(beatgrid_locked_by_user, 0) FROM Tracks WHERE id = :id LIMIT 1");
+        lockQuery.bindValue(":id", trackId);
+        if (lockQuery.exec() && lockQuery.next())
+            lockedGridInDb = lockQuery.value(0).toInt() != 0;
+    }
+
+    if (!beatGrid.empty() && !lockedGridInDb) {
         q.prepare("DELETE FROM BeatGridMarkers WHERE track_id = :id");
         q.bindValue(":id", trackId);
         if (!q.exec()) {
@@ -675,8 +764,10 @@ void LibraryDatabase::updateAnalysisData(const QString& trackId,
         }
 
         q.prepare(
-            "INSERT INTO BeatGridMarkers (track_id, beat_index, position_sec, is_downbeat, bar_number) "
-            "VALUES (:trackId, :beatIndex, :positionSec, :isDownbeat, :barNumber)");
+            "INSERT INTO BeatGridMarkers (track_id, beat_index, position_sec, is_downbeat, bar_number, "
+            "beat_in_bar, confidence, user_modified, locked_by_user) "
+            "VALUES (:trackId, :beatIndex, :positionSec, :isDownbeat, :barNumber, "
+            ":beatInBar, :confidence, :userModified, :lockedByUser)");
 
         for (int beatIndex = 0; beatIndex < static_cast<int>(beatGrid.size()); ++beatIndex) {
             const auto& marker = beatGrid[static_cast<size_t>(beatIndex)];
@@ -685,6 +776,10 @@ void LibraryDatabase::updateAnalysisData(const QString& trackId,
             q.bindValue(":positionSec", marker.positionSec);
             q.bindValue(":isDownbeat", marker.isDownbeat ? 1 : 0);
             q.bindValue(":barNumber", marker.barNumber);
+            q.bindValue(":beatInBar", marker.beatInBar);
+            q.bindValue(":confidence", marker.confidence);
+            q.bindValue(":userModified", marker.userModified ? 1 : 0);
+            q.bindValue(":lockedByUser", marker.lockedByUser ? 1 : 0);
 
             if (!q.exec()) {
                 qWarning() << "[LibraryDatabase] insert BeatGridMarkers:" << q.lastError().text();
@@ -692,6 +787,34 @@ void LibraryDatabase::updateAnalysisData(const QString& trackId,
                 return;
             }
         }
+
+        q.prepare("DELETE FROM TempoNodes WHERE track_id = :id");
+        q.bindValue(":id", trackId);
+        if (!q.exec()) {
+            qWarning() << "[LibraryDatabase] clear TempoNodes:" << q.lastError().text();
+            m_db.rollback();
+            return;
+        }
+
+        q.prepare(
+            "INSERT INTO TempoNodes (track_id, node_index, position_sec, bpm, confidence) "
+            "VALUES (:trackId, :nodeIndex, :positionSec, :bpm, :confidence)");
+        for (int nodeIndex = 0; nodeIndex < static_cast<int>(beatGridInfo.tempoNodes.size()); ++nodeIndex) {
+            const auto& node = beatGridInfo.tempoNodes[static_cast<size_t>(nodeIndex)];
+            q.bindValue(":trackId", trackId);
+            q.bindValue(":nodeIndex", nodeIndex);
+            q.bindValue(":positionSec", node.positionSec);
+            q.bindValue(":bpm", node.bpm);
+            q.bindValue(":confidence", node.confidence);
+            if (!q.exec()) {
+                qWarning() << "[LibraryDatabase] insert TempoNodes:" << q.lastError().text();
+                m_db.rollback();
+                return;
+            }
+        }
+    } else if (!beatGrid.empty() && lockedGridInDb) {
+        qDebug() << "[LibraryDatabase] Beatgrid locked by user; preserving existing markers for"
+                 << trackId.left(12);
     }
 
     if (!m_db.commit()) {
@@ -719,7 +842,15 @@ bool LibraryDatabase::tryGetAnalysisData(const QString& trackId, AnalysisSnapsho
     q.prepare(
         "SELECT bpm, key, is_analyzed, "
         "       COALESCE(first_beat_sample, 0), "
-        "       COALESCE(analysis_sample_rate, 44100.0) "
+        "       COALESCE(analysis_sample_rate, 44100.0), "
+        "       COALESCE(analysis_version, 0), "
+        "       COALESCE(bpm_confidence, 0.0), "
+        "       COALESCE(beat_confidence, 0.0), "
+        "       COALESCE(downbeat_confidence, 0.0), "
+        "       COALESCE(grid_confidence, 0.0), "
+        "       COALESCE(beatgrid_type, 'unknown'), "
+        "       COALESCE(beatgrid_user_modified, 0), "
+        "       COALESCE(beatgrid_locked_by_user, 0) "
         "FROM Tracks WHERE id = :id LIMIT 1");
     q.bindValue(":id", trackId);
 
@@ -737,10 +868,20 @@ bool LibraryDatabase::tryGetAnalysisData(const QString& trackId, AnalysisSnapsho
     snapshot.isAnalyzed = q.value(2).toBool();
     snapshot.firstBeatSample = q.value(3).toLongLong();
     snapshot.sampleRate = q.value(4).toDouble();
+    snapshot.analysisVersion = q.value(5).toInt();
+    snapshot.confidence.bpmConfidence = q.value(6).toFloat();
+    snapshot.confidence.beatConfidence = q.value(7).toFloat();
+    snapshot.confidence.downbeatConfidence = q.value(8).toFloat();
+    snapshot.confidence.gridConfidence = q.value(9).toFloat();
+    snapshot.beatGridInfo.type = gridTypeFromString(q.value(10).toString());
+    snapshot.beatGridInfo.userModified = q.value(11).toInt() != 0;
+    snapshot.beatGridInfo.lockedByUser = q.value(12).toInt() != 0;
 
     QSqlQuery beatsQuery(m_db);
     beatsQuery.prepare(
-        "SELECT position_sec, is_downbeat, bar_number "
+        "SELECT position_sec, is_downbeat, bar_number, "
+        "       COALESCE(beat_in_bar, 1), COALESCE(confidence, 0.0), "
+        "       COALESCE(user_modified, 0), COALESCE(locked_by_user, 0) "
         "FROM BeatGridMarkers WHERE track_id = :id ORDER BY beat_index ASC");
     beatsQuery.bindValue(":id", trackId);
 
@@ -754,7 +895,27 @@ bool LibraryDatabase::tryGetAnalysisData(const QString& trackId, AnalysisSnapsho
         marker.positionSec = beatsQuery.value(0).toDouble();
         marker.isDownbeat = beatsQuery.value(1).toInt() != 0;
         marker.barNumber = beatsQuery.value(2).toInt();
+        marker.barIndex = marker.barNumber - 1;
+        marker.beatInBar = beatsQuery.value(3).toInt();
+        marker.confidence = beatsQuery.value(4).toFloat();
+        marker.userModified = beatsQuery.value(5).toInt() != 0;
+        marker.lockedByUser = beatsQuery.value(6).toInt() != 0;
         snapshot.beatGrid.push_back(marker);
+    }
+
+    QSqlQuery nodeQuery(m_db);
+    nodeQuery.prepare(
+        "SELECT position_sec, bpm, COALESCE(confidence, 0.0) "
+        "FROM TempoNodes WHERE track_id = :id ORDER BY node_index ASC");
+    nodeQuery.bindValue(":id", trackId);
+    if (nodeQuery.exec()) {
+        while (nodeQuery.next()) {
+            TrackData::TempoNode node;
+            node.positionSec = nodeQuery.value(0).toDouble();
+            node.bpm = nodeQuery.value(1).toDouble();
+            node.confidence = nodeQuery.value(2).toFloat();
+            snapshot.beatGridInfo.tempoNodes.push_back(node);
+        }
     }
 
     *out = std::move(snapshot);

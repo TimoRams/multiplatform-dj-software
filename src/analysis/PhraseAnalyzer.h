@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "TrackSegment.h"
+#include "AnalysisResult.h"
 
 struct PhraseBlock {
     float startTime = 0.0f;
@@ -22,6 +23,10 @@ class PhraseAnalyzer {
 public:
     std::vector<TrackSegment> analyze(juce::AudioFormatReader& reader,
                                       const std::vector<double>& beatTimestamps,
+                                      double durationSec) const;
+
+    std::vector<TrackSegment> analyze(const analysis::AnalysisFeatures& features,
+                                      const std::vector<TrackData::BeatMarker>& beats,
                                       double durationSec) const;
 
 private:

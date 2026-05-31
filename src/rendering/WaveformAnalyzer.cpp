@@ -1,6 +1,13 @@
 #include "WaveformAnalyzer.h"
 #include "WaveformCache.h"
 #include "PhraseAnalyzer.h"
+#include "AnalysisCacheVersion.h"
+#include "AnalysisFeatureExtractor.h"
+#include "TempoEstimator.h"
+#include "BeatTracker.h"
+#include "DownbeatDetector.h"
+#include "BeatGridFitter.h"
+#include "AnalysisValidation.h"
 #include <QDebug>
 #include <juce_dsp/juce_dsp.h>
 #include <algorithm>
@@ -1154,6 +1161,7 @@ void WaveformAnalyzer::run()
     //     beat grid for pixel-perfect rendering.
     // -------------------------------------------------------------------------
     {
+#if 0
         std::map<double, int>                  bpmHistogram;
         std::map<double, std::vector<double>>  bpmRawValues;
         std::vector<uint64_t> beatPositions;
@@ -1646,6 +1654,117 @@ void WaveformAnalyzer::run()
 
             m_trackData->setSegmentsData(std::move(segments));
         }
+    }
+#endif
+    }
+
+    {
+        analysis::AnalysisFeatureExtractor featureExtractor({2048, 512});
+        analysis::TempoEstimator tempoEstimator;
+        analysis::BeatTracker beatTracker;
+        analysis::BeatGridFitter gridFitter;
+        analysis::DownbeatDetector downbeatDetector;
+
+        auto features = featureExtractor.extract(*reader, this);
+        if (threadShouldExit()) return;
+
+        const auto tempo = tempoEstimator.estimate(features);
+
+        analysis::BeatTrackingResult tracked;
+        analysis::BeatGridFitResult fitted;
+        double bestCombinedGridScore = -1.0;
+        const int candidateCount = std::max(1, std::min<int>(5, tempo.candidates.size()));
+        for (int candidateIndex = 0; candidateIndex < candidateCount; ++candidateIndex) {
+            const double candidateBpm = tempo.candidates.empty()
+                ? tempo.bpm
+                : tempo.candidates[static_cast<size_t>(candidateIndex)].bpm;
+            auto candidateTracked = beatTracker.track(features, candidateBpm);
+            auto candidateFit = gridFitter.fit(features, candidateTracked.beats, candidateBpm);
+
+            const double tempoPrior = tempo.candidates.empty()
+                ? 1.0
+                : std::clamp(tempo.candidates[static_cast<size_t>(candidateIndex)].score
+                             / std::max(0.001, tempo.candidates.front().score), 0.0, 1.0);
+            const double combined = 0.76 * candidateFit.confidence
+                                  + 0.18 * candidateFit.phaseScore
+                                  + 0.06 * tempoPrior;
+            if (combined > bestCombinedGridScore) {
+                bestCombinedGridScore = combined;
+                tracked = std::move(candidateTracked);
+                fitted = std::move(candidateFit);
+            }
+        }
+
+        auto downbeat = downbeatDetector.detectAndAnnotate(features, fitted.beats);
+        const auto validation = analysis::validateBeatGrid(fitted.beats, fitted.bpm, duration);
+        if (!validation.ok)
+            qWarning() << "[WaveformAnalyzer] Beatgrid validation:" << validation.message;
+
+        TrackData::ConfidenceInfo confidence;
+        confidence.bpmConfidence = tempo.confidence;
+        confidence.beatConfidence = tracked.confidence;
+        confidence.downbeatConfidence = downbeat.confidence;
+        confidence.gridConfidence = fitted.confidence;
+
+        if (!fitted.beats.empty()) {
+            fitted.firstBeatSample = static_cast<qint64>(
+                std::llround(fitted.beats.front().positionSec * sampleRate));
+        }
+
+        const double finalBpm = fitted.bpm > 0.0 ? fitted.bpm : tempo.bpm;
+        if (finalBpm > 0.0) {
+            if (!m_trackData->beatgridLockedByUser()) {
+                m_trackData->setBpmData(finalBpm,
+                                        fitted.firstBeatSample,
+                                        sampleRate,
+                                        std::move(fitted.beats),
+                                        confidence,
+                                        std::move(fitted.grid));
+            } else {
+                m_trackData->setBpmData(finalBpm,
+                                        m_trackData->getFirstBeatSample(),
+                                        sampleRate,
+                                        {},
+                                        confidence,
+                                        m_trackData->getBeatGridInfo());
+            }
+
+            QString candidateLog;
+            const int show = std::min<int>(5, tempo.candidates.size());
+            for (int i = 0; i < show; ++i) {
+                const double relConfidence = tempo.candidates.empty()
+                    ? 0.0
+                    : std::clamp(tempo.candidates[static_cast<size_t>(i)].score
+                                 / std::max(0.001, tempo.candidates.front().score), 0.0, 1.0);
+                candidateLog += QStringLiteral("%1(%2,%3) ")
+                    .arg(tempo.candidates[static_cast<size_t>(i)].bpm, 0, 'f', 2)
+                    .arg(relConfidence, 0, 'f', 2)
+                    .arg(tempo.candidates[static_cast<size_t>(i)].source);
+            }
+
+            const bool downbeatTrusted = downbeat.confidence >= 0.42f;
+            qDebug() << "[WaveformAnalyzer] Internal rhythm analysis"
+                     << "version=" << analysis::kAnalysisVersion
+                     << "bpm=" << finalBpm
+                     << "selectedOffsetSec=" << fitted.selectedOffsetSec
+                     << "stableRegion=" << fitted.stableRegionStartSec << "->" << fitted.stableRegionEndSec
+                     << "phaseScore=" << fitted.phaseScore
+                     << "bpmConf=" << confidence.bpmConfidence
+                     << "beatConf=" << confidence.beatConfidence
+                     << "downbeatConf=" << confidence.downbeatConfidence
+                     << "downbeatTrusted=" << downbeatTrusted
+                     << "gridConf=" << confidence.gridConfidence
+                     << "gridType=" << (fitted.grid.type == TrackData::BeatGridType::DynamicTempo ? "dynamic" : "constant")
+                     << "candidates=" << candidateLog;
+        }
+
+        std::vector<TrackSegment> segments;
+        const auto beatGrid = m_trackData->getBeatGrid();
+        if (beatGrid.size() >= 17 && duration > 12.0) {
+            PhraseAnalyzer phraseAnalyzer;
+            segments = phraseAnalyzer.analyze(features, beatGrid, duration);
+        }
+        m_trackData->setSegmentsData(std::move(segments));
     }
 
     if (threadShouldExit()) return;
