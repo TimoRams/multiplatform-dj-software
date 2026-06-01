@@ -708,6 +708,15 @@ void LibraryDatabase::updateAnalysisData(const QString& trackId,
         qWarning() << "[LibraryDatabase] updateAnalysisData begin transaction:" << m_db.lastError().text();
     }
 
+    bool lockedGridInDbBeforeUpdate = false;
+    {
+        QSqlQuery lockQuery(m_db);
+        lockQuery.prepare("SELECT COALESCE(beatgrid_locked_by_user, 0) FROM Tracks WHERE id = :id LIMIT 1");
+        lockQuery.bindValue(":id", trackId);
+        if (lockQuery.exec() && lockQuery.next())
+            lockedGridInDbBeforeUpdate = lockQuery.value(0).toInt() != 0;
+    }
+
     QSqlQuery q(m_db);
     q.prepare(
         "UPDATE Tracks SET "
@@ -745,16 +754,10 @@ void LibraryDatabase::updateAnalysisData(const QString& trackId,
         return;
     }
 
-    bool lockedGridInDb = false;
-    {
-        QSqlQuery lockQuery(m_db);
-        lockQuery.prepare("SELECT COALESCE(beatgrid_locked_by_user, 0) FROM Tracks WHERE id = :id LIMIT 1");
-        lockQuery.bindValue(":id", trackId);
-        if (lockQuery.exec() && lockQuery.next())
-            lockedGridInDb = lockQuery.value(0).toInt() != 0;
-    }
+    const bool incomingManualGrid = beatGridInfo.userModified || beatGridInfo.lockedByUser;
+    const bool preserveExistingLockedGrid = lockedGridInDbBeforeUpdate && !incomingManualGrid;
 
-    if (!beatGrid.empty() && !lockedGridInDb) {
+    if (!beatGrid.empty() && !preserveExistingLockedGrid) {
         q.prepare("DELETE FROM BeatGridMarkers WHERE track_id = :id");
         q.bindValue(":id", trackId);
         if (!q.exec()) {
@@ -812,7 +815,7 @@ void LibraryDatabase::updateAnalysisData(const QString& trackId,
                 return;
             }
         }
-    } else if (!beatGrid.empty() && lockedGridInDb) {
+    } else if (!beatGrid.empty() && preserveExistingLockedGrid) {
         qDebug() << "[LibraryDatabase] Beatgrid locked by user; preserving existing markers for"
                  << trackId.left(12);
     }

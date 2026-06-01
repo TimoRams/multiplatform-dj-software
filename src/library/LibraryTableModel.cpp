@@ -5,6 +5,44 @@
 #include <QDebug>
 #include <QElapsedTimer>
 
+namespace {
+
+bool sameIdentityOrder(const QVector<LibraryRow>& a, const QVector<LibraryRow>& b)
+{
+    if (a.size() != b.size())
+        return false;
+    for (qsizetype i = 0; i < a.size(); ++i) {
+        if (a[i].id != b[i].id)
+            return false;
+    }
+    return true;
+}
+
+bool sameRowData(const LibraryRow& a, const LibraryRow& b)
+{
+    return a.id == b.id
+        && a.title == b.title
+        && a.artist == b.artist
+        && a.durationSec == b.durationSec
+        && qFuzzyCompare(a.bpm + 1.0, b.bpm + 1.0)
+        && a.key == b.key
+        && a.bitrateKbps == b.bitrateKbps
+        && a.isAnalyzed == b.isAnalyzed
+        && a.filePath == b.filePath
+        && a.genre == b.genre
+        && a.album == b.album
+        && a.comment == b.comment
+        && a.rating == b.rating
+        && a.energy == b.energy
+        && a.color == b.color
+        && a.notes == b.notes
+        && a.playCount == b.playCount
+        && a.lastPlayed == b.lastPlayed
+        && a.dateAdded == b.dateAdded;
+}
+
+} // namespace
+
 LibraryTableModel::LibraryTableModel(const QString& connectionName,
                                      QObject* parent)
     : QAbstractTableModel(parent)
@@ -316,8 +354,7 @@ void LibraryTableModel::refresh()
         return;
     }
 
-    beginResetModel();
-    m_rows.clear();
+    QVector<LibraryRow> newRows;
     while (q.next()) {
         LibraryRow row;
         row.id          = q.value(0).toString();
@@ -339,11 +376,25 @@ void LibraryTableModel::refresh()
         row.playCount   = q.value(16).toInt();
         row.lastPlayed  = q.value(17).toLongLong();
         row.dateAdded   = q.value(18).toLongLong();
-        m_rows.append(std::move(row));
+        newRows.append(std::move(row));
     }
-    endResetModel();
 
-    emit countChanged();
+    if (sameIdentityOrder(m_rows, newRows)) {
+        for (qsizetype rowIndex = 0; rowIndex < newRows.size(); ++rowIndex) {
+            if (sameRowData(m_rows[rowIndex], newRows[rowIndex]))
+                continue;
+            m_rows[rowIndex] = std::move(newRows[rowIndex]);
+            emit dataChanged(index(static_cast<int>(rowIndex), 0),
+                             index(static_cast<int>(rowIndex), columnCount() - 1),
+                             {});
+        }
+    } else {
+        beginResetModel();
+        m_rows = std::move(newRows);
+        endResetModel();
+        emit countChanged();
+    }
+
     qDebug() << "[LibraryTableModel] refresh() loaded" << m_rows.size() << "rows in" << timer.elapsed() << "ms";
 }
 

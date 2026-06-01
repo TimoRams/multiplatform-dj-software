@@ -299,8 +299,10 @@ public:
             m_beatGridInfo.type = BeatGridType::ConstantTempo;
             m_beatGridInfo.userModified = true;
             m_beatGridInfo.lockedByUser = true;
+            alignSegmentsToBeatgridLocked();
         }
         emit beatgridChanged();
+        emit segmentsAnalyzed();
     }
 
     double getBpm() const {
@@ -353,6 +355,8 @@ public:
         {
             QMutexLocker locker(&m_mutex);
             m_segments = std::move(segments);
+            if (m_beatGridInfo.lockedByUser)
+                alignSegmentsToBeatgridLocked();
         }
         emit segmentsAnalyzed();
     }
@@ -671,5 +675,44 @@ private:
             if (f.high   > b.high)   b.high   = f.high;
         }
         m_progressiveLastFrame = end;
+    }
+
+    void alignSegmentsToBeatgridLocked() {
+        if (m_segments.empty() || m_beatGrid.size() < 2)
+            return;
+
+        std::vector<double> anchors;
+        anchors.reserve(m_beatGrid.size());
+        for (const auto& marker : m_beatGrid) {
+            if (marker.isDownbeat || marker.beatInBar == 1)
+                anchors.push_back(marker.positionSec);
+        }
+        if (anchors.size() < 2) {
+            anchors.clear();
+            anchors.reserve(m_beatGrid.size());
+            for (const auto& marker : m_beatGrid)
+                anchors.push_back(marker.positionSec);
+        }
+
+        auto nearestAnchor = [&](float sec) -> float {
+            const double value = static_cast<double>(sec);
+            const auto it = std::lower_bound(anchors.begin(), anchors.end(), value);
+            if (it == anchors.begin())
+                return static_cast<float>(*it);
+            if (it == anchors.end())
+                return static_cast<float>(anchors.back());
+            const auto prev = std::prev(it);
+            return static_cast<float>((std::abs(*prev - value) <= std::abs(*it - value)) ? *prev : *it);
+        };
+
+        for (auto& segment : m_segments) {
+            segment.startTime = nearestAnchor(segment.startTime);
+            segment.endTime = std::max(segment.startTime, nearestAnchor(segment.endTime));
+        }
+
+        m_segments.erase(std::remove_if(m_segments.begin(), m_segments.end(),
+            [](const TrackSegment& segment) {
+                return segment.endTime <= segment.startTime + 0.01f;
+            }), m_segments.end());
     }
 };

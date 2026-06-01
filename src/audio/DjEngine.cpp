@@ -2148,13 +2148,14 @@ DjEngine::DjEngine(QObject* parent)
             m.insert("startTime", s.startTime);
             m.insert("endTime", s.endTime);
             m.insert("colorHex", s.colorHex);
+            m.insert("confidence", s.confidence);
             asVariant.push_back(m);
         }
 
         m_currentSegments = asVariant;
         emit segmentsChanged();
 
-        if (m_libraryDb && !m_currentTrackId.isEmpty() && !segments.empty())
+        if (m_libraryDb && !m_currentTrackId.isEmpty())
             m_libraryDb->updateTrackSegments(m_currentTrackId, segments);
     });
 
@@ -3267,6 +3268,22 @@ bool DjEngine::hydrateLibraryStateForTrack(const QString& rawPath, double durati
             m_trackKey = cachedKey;
             m_trackData->setKeyData(cachedKey);
         }
+
+        std::vector<TrackSegment> cachedSegments;
+        cachedSegments.reserve(static_cast<size_t>(m_currentSegments.size()));
+        for (const QVariant& value : m_currentSegments) {
+            const QVariantMap map = value.toMap();
+            TrackSegment segment;
+            segment.label = map.value(QStringLiteral("label")).toString();
+            segment.startTime = static_cast<float>(map.value(QStringLiteral("startTime")).toDouble());
+            segment.endTime = static_cast<float>(map.value(QStringLiteral("endTime")).toDouble());
+            segment.colorHex = map.value(QStringLiteral("colorHex")).toString();
+            segment.confidence = static_cast<float>(map.value(QStringLiteral("confidence")).toDouble());
+            if (segment.endTime > segment.startTime + 0.01f)
+                cachedSegments.push_back(segment);
+        }
+        if (!cachedSegments.empty())
+            m_trackData->setSegmentsData(std::move(cachedSegments));
     } else {
         // Strictly hide segment UI state until fresh analysis writes data.
         m_currentSegments = QVariantList();

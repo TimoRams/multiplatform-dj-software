@@ -157,8 +157,7 @@ void LibraryAnalysisManager::finishCurrent(bool completed)
                                  m_trackData->getBeatGridInfo());
 
         const auto segments = m_trackData->getSegments();
-        if (!segments.empty())
-            m_db->updateTrackSegments(m_current.trackId, segments);
+        m_db->updateTrackSegments(m_current.trackId, segments);
     } else if (!completed) {
         qWarning() << "[LibraryAnalysisManager] Analysis did not finish:" << m_current.filePath;
     }

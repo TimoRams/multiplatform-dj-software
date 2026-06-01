@@ -520,10 +520,9 @@ int main(int argc, char *argv[])
                 window->hide();
                 window->releaseResources();
             }
-            delete root;
+            root->deleteLater();
         }
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-        app.processEvents(QEventLoop::AllEvents, 50);
         clearQmlContextProperties();
 
         linkManager.reset();
