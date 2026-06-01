@@ -46,6 +46,12 @@ if(UNIX AND NOT APPLE)
         message(STATUS "Enabling JUCE JACK backend")
         add_compile_definitions(JUCE_JACK=1)
     endif()
+
+    pkg_check_modules(LIBUSB QUIET IMPORTED_TARGET libusb-1.0)
+    if(TARGET PkgConfig::LIBUSB)
+        message(STATUS "Enabling Linux controller HID support via libusb")
+        add_compile_definitions(BROCKDJ_HAS_LIBUSB=1)
+    endif()
 endif()
 
 # ---- TagLib ---------------------------------------------------------------
@@ -312,6 +318,11 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/midi/ParameterStore.cpp
     src/midi/MidiControllerManager.h
     src/midi/MidiControllerManager.cpp
+    src/controllers/ControllerProfile.h
+    src/controllers/ControllerIntegrationManager.h
+    src/controllers/ControllerIntegrationManager.cpp
+    src/controllers/flx10/DDJFLX10Controller.h
+    src/controllers/flx10/DDJFLX10Controller.cpp
     src/app/SettingsManager.h
     src/app/SettingsManager.cpp
     src/app/AppConfig.h
@@ -336,6 +347,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     src/audio
     src/rendering
     src/midi
+    src/controllers
     src/analysis
     src/domain
     src/app
@@ -388,6 +400,12 @@ if(UNIX AND NOT APPLE)
     if(TARGET PkgConfig::JACK)
         target_link_libraries(${PROJECT_NAME} PRIVATE
             PkgConfig::JACK
+        )
+    endif()
+
+    if(TARGET PkgConfig::LIBUSB)
+        target_link_libraries(${PROJECT_NAME} PRIVATE
+            PkgConfig::LIBUSB
         )
     endif()
 endif()

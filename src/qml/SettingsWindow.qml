@@ -1046,6 +1046,46 @@ Window {
                         color: "#2a2a2a"
                     }
 
+                    RowLayout {
+                        spacing: 16
+
+                        Text {
+                            text: "Integrated Controller"
+                            color: "#aaa"
+                            font.pixelSize: 12
+                            Layout.preferredWidth: 130
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            CheckBox {
+                                id: flx10SupportCheckBox
+                                text: "Enable DDJ-FLX10 HID jog display support"
+                                checked: settingsManager ? settingsManager.flx10ControllerSupportEnabled : false
+                                onToggled: {
+                                    if (settingsManager)
+                                        settingsManager.flx10ControllerSupportEnabled = checked
+                                }
+                            }
+
+                            Text {
+                                text: controllerManager ? controllerManager.flx10Status : ""
+                                color: controllerManager && controllerManager.flx10Connected ? "#8fe388" : "#aaa"
+                                font.pixelSize: 11
+                                wrapMode: Text.WordWrap
+                                Layout.fillWidth: true
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 1
+                        color: "#2a2a2a"
+                    }
+
                     // Device Selection
                     RowLayout {
                         spacing: 16

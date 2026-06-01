@@ -3109,6 +3109,14 @@ void DjEngine::setCoverArtProvider(CoverArtProvider* provider, const QString& de
     m_deckId = deckId;
 }
 
+QImage DjEngine::currentCoverImage() const
+{
+    if (!m_coverProvider || m_deckId.isEmpty())
+        return {};
+
+    return m_coverProvider->coverImage(m_deckId);
+}
+
 void DjEngine::setLibraryDatabase(LibraryDatabase* db)
 {
     m_libraryDb = db;

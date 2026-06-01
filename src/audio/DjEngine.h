@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QImage>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
@@ -213,6 +214,7 @@ public:
     [[nodiscard]] bool    hasTrack()      const { return m_hasTrack; }
     [[nodiscard]] QString coverArtUrl()   const { return m_coverArtUrl; }
     [[nodiscard]] bool    hasCoverArt()   const { return m_hasCoverArt; }
+    [[nodiscard]] QImage  currentCoverImage() const;
     [[nodiscard]] QVariantList currentSegments() const { return m_currentSegments; }
     [[nodiscard]] double  getTempoPercent() const { return m_tempoPercent; }
     // Beat phase: 0.0 = on the beat, 0.5 = halfway between beats, approaches 1.0 just before the next beat.

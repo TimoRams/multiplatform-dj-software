@@ -22,6 +22,7 @@ class SettingsManager : public QObject
     Q_PROPERTY(int audioBoothFirstChannel READ getAudioBoothFirstChannel WRITE setAudioBoothFirstChannel NOTIFY audioSettingsChanged)
     Q_PROPERTY(int audioSampleRate READ getAudioSampleRate WRITE setAudioSampleRate NOTIFY audioSettingsChanged)
     Q_PROPERTY(int audioBufferSize READ getAudioBufferSize WRITE setAudioBufferSize NOTIFY audioSettingsChanged)
+    Q_PROPERTY(bool flx10ControllerSupportEnabled READ flx10ControllerSupportEnabled WRITE setFlx10ControllerSupportEnabled NOTIFY controllerSettingsChanged)
     Q_PROPERTY(bool previousRunUnclean READ previousRunUnclean CONSTANT)
     Q_PROPERTY(QString previousRunWarningMessage READ previousRunWarningMessage CONSTANT)
 
@@ -85,6 +86,9 @@ public:
     int getAudioBufferSize() const;
     void setAudioBufferSize(int bufferSize);
 
+    bool flx10ControllerSupportEnabled() const;
+    void setFlx10ControllerSupportEnabled(bool enabled);
+
     bool previousRunUnclean() const { return m_previousRunUnclean; }
     QString previousRunWarningMessage() const;
     void markCleanShutdown();
@@ -93,6 +97,7 @@ public:
 
 signals:
     void audioSettingsChanged();
+    void controllerSettingsChanged();
 
 private:
     ~SettingsManager() = default;

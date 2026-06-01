@@ -37,6 +37,7 @@
 #include "SystemMonitor.h"
 #include "midi/ParameterStore.h"
 #include "midi/MidiControllerManager.h"
+#include "controllers/ControllerIntegrationManager.h"
 #include "SettingsManager.h"
 #include "app/AppConfig.h"
 #include "library/LibraryDatabase.h"
@@ -254,6 +255,7 @@ int main(int argc, char *argv[])
     std::unique_ptr<DjMasterBus> masterBus;
     auto parameterStore = std::make_unique<ParameterStore>();
     std::unique_ptr<MidiControllerManager> midiManager; // constructed after app.exec() — CoreMIDI needs CFRunLoop
+    std::unique_ptr<ControllerIntegrationManager> controllerManager;
     auto libraryManager = std::make_unique<LibraryManager>();
     auto libraryDb = std::make_unique<LibraryDatabase>();
     auto libraryTableModel = std::make_unique<LibraryTableModel>("library_conn");
@@ -285,6 +287,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("sysMonitor", sysMonitor.get());
     engine.rootContext()->setContextProperty("parameterStore", parameterStore.get());
     engine.rootContext()->setContextProperty("midiManager", static_cast<QObject*>(nullptr));
+    engine.rootContext()->setContextProperty("controllerManager", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("cursorControl", cursorControl.get());
 
     const auto url = QUrl(u"qrc:/DJSoftware/src/qml/main.qml"_s);
@@ -339,6 +342,17 @@ int main(int argc, char *argv[])
             midiManager = std::make_unique<MidiControllerManager>(parameterStore.get());
             midiManager->connectDecks(deckA.get(), deckB.get());
             engine.rootContext()->setContextProperty("midiManager", midiManager.get());
+
+            controllerManager = std::make_unique<ControllerIntegrationManager>();
+            controllerManager->setDecks(deckA.get(), deckB.get());
+            engine.rootContext()->setContextProperty("controllerManager", controllerManager.get());
+            QObject::connect(&settingsManager,
+                             &SettingsManager::controllerSettingsChanged,
+                             controllerManager.get(),
+                             [&settingsManager, controller = controllerManager.get()] {
+                                 controller->setFlx10Enabled(settingsManager.flx10ControllerSupportEnabled());
+                             });
+            controllerManager->setFlx10Enabled(settingsManager.flx10ControllerSupportEnabled());
 
             for (DjEngine* deck : {deckA.get(), deckB.get(), deckC.get(), deckD.get()})
                 deck->setLibraryDatabase(libraryDb.get());
@@ -492,6 +506,7 @@ int main(int argc, char *argv[])
         engine.rootContext()->setContextProperty("sysMonitor", static_cast<QObject*>(nullptr));
         engine.rootContext()->setContextProperty("parameterStore", static_cast<QObject*>(nullptr));
         engine.rootContext()->setContextProperty("midiManager", static_cast<QObject*>(nullptr));
+        engine.rootContext()->setContextProperty("controllerManager", static_cast<QObject*>(nullptr));
         engine.rootContext()->setContextProperty("cursorControl", static_cast<QObject*>(nullptr));
     };
 
@@ -511,6 +526,7 @@ int main(int argc, char *argv[])
         }
 
         midiManager.reset();
+        controllerManager.reset();
 
         // Destroy QML objects while the backend objects they reference are still
         // alive, but after the realtime audio callback has been stopped.

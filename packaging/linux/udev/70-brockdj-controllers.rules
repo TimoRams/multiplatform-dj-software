@@ -1,0 +1,8 @@
+# DDJ-FLX10 vendor USB/HID display access for BrockDJ.
+# Install with:
+#   sudo install -Dm644 packaging/linux/udev/70-brockdj-controllers.rules /etc/udev/rules.d/70-brockdj-controllers.rules
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+# Then unplug and reconnect the controller.
+
+SUBSYSTEM=="usb", ATTR{idVendor}=="2b73", ATTR{idProduct}=="0041", TAG+="uaccess", MODE="0660"

@@ -1,0 +1,11 @@
+{
+  "id": "ddj-flx10",
+  "displayName": "DDJ-FLX10",
+  "vendorName": "",
+  "transports": ["midi", "hid", "vendor-usb"],
+  "supportsMidiMapping": true,
+  "supportsHidDisplay": true,
+  "requiresLinuxUnlock": true,
+  "midiMappings": [],
+  "hidModules": ["flx10/DDJFLX10Controller"]
+}

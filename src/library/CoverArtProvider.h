@@ -71,6 +71,12 @@ public:
                && m_covers.value(id).width() > 1;
     }
 
+    QImage coverImage(const QString& id)
+    {
+        QMutexLocker lock(&m_mutex);
+        return m_covers.value(id);
+    }
+
 private:
     QHash<QString, QImage> m_covers;
     QMutex m_mutex;

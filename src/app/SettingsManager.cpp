@@ -500,6 +500,29 @@ void SettingsManager::setAudioBufferSize(int bufferSize)
     emit audioSettingsChanged();
 }
 
+bool SettingsManager::flx10ControllerSupportEnabled() const
+{
+    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return false;
+
+    return userSettings->getBoolValue("Controllers/DDJFLX10/Enabled", false);
+}
+
+void SettingsManager::setFlx10ControllerSupportEnabled(bool enabled)
+{
+    auto* userSettings = getUserSettingsOrNull();
+    if (userSettings == nullptr)
+        return;
+
+    if (userSettings->getBoolValue("Controllers/DDJFLX10/Enabled", false) == enabled)
+        return;
+
+    userSettings->setValue("Controllers/DDJFLX10/Enabled", enabled);
+    userSettings->saveIfNeeded();
+    emit controllerSettingsChanged();
+}
+
 void SettingsManager::flushToDisk()
 {
     auto* userSettings = getUserSettingsOrNull();
