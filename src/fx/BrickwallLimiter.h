@@ -75,6 +75,7 @@ private:
     void  delayWrite(int channel, float sample);
     float delayRead(int channel) const;
     void  delayAdvance();
+    void  applySilenceDeClick(float* const* channelData, int channels, int sampleIdx);
 
     // ── State ────────────────────────────────────────────────────────────
     double m_sampleRate     = 44100.0;
@@ -105,6 +106,14 @@ private:
     std::atomic<bool>  m_enabled       { false };
     float m_bypassMix        = 0.0f;   // 0.0 = fully bypassed, 1.0 = fully active
     static constexpr int kCrossfadeSamples = 64;
+
+    // Always-on safety tail: catches hard signal -> digital silence edges even
+    // when the limiter itself is bypassed.
+    std::vector<float> m_lastOutputSample;
+    std::vector<float> m_silenceTailStart;
+    int  m_silenceTailSamples = 128;
+    int  m_silenceTailRemaining = 0;
+    bool m_lastSourceFrameSilent = true;
 
     // ── Circular delay buffer ────────────────────────────────────────────
     // Layout: m_delayBuffer[channel][sample]

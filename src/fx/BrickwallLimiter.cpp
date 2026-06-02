@@ -38,6 +38,9 @@ void BrickwallLimiter::prepare(double sampleRate, int maxBlockSize, int numChann
     for (auto& h : m_truePeakHistory)
         h.fill(0.0f);
 
+    m_lastOutputSample.assign(static_cast<size_t>(numChannels), 0.0f);
+    m_silenceTailStart.assign(static_cast<size_t>(numChannels), 0.0f);
+
     updateCoefficients();
     reset();
 }
@@ -57,6 +60,11 @@ void BrickwallLimiter::reset()
 
     for (auto& h : m_truePeakHistory)
         h.fill(0.0f);
+
+    std::fill(m_lastOutputSample.begin(), m_lastOutputSample.end(), 0.0f);
+    std::fill(m_silenceTailStart.begin(), m_silenceTailStart.end(), 0.0f);
+    m_silenceTailRemaining = 0;
+    m_lastSourceFrameSilent = true;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -137,6 +145,8 @@ float BrickwallLimiter::processBlock(float* const* channelData, int numChannels,
 
             channelData[ch][sampleIdx] = dry + m_bypassMix * (wet - dry);
         }
+
+        applySilenceDeClick(channelData, channels, sampleIdx);
 
         minGainReduction = std::min(minGainReduction, smoothedGain);
 
@@ -274,6 +284,40 @@ void BrickwallLimiter::delayAdvance()
     m_delayWritePos = (m_delayWritePos + 1) & m_delayMask;
 }
 
+void BrickwallLimiter::applySilenceDeClick(float* const* channelData, int channels, int sampleIdx)
+{
+    constexpr float silenceThreshold = 1.0e-7f;
+
+    bool sourceFrameSilent = true;
+    for (int ch = 0; ch < channels; ++ch) {
+        if (std::abs(channelData[ch][sampleIdx]) > silenceThreshold) {
+            sourceFrameSilent = false;
+            break;
+        }
+    }
+
+    if (sourceFrameSilent && !m_lastSourceFrameSilent && m_silenceTailRemaining <= 0) {
+        for (int ch = 0; ch < channels; ++ch)
+            m_silenceTailStart[static_cast<size_t>(ch)] = m_lastOutputSample[static_cast<size_t>(ch)];
+        m_silenceTailRemaining = m_silenceTailSamples;
+    } else if (!sourceFrameSilent) {
+        m_silenceTailRemaining = 0;
+    }
+
+    if (sourceFrameSilent && m_silenceTailRemaining > 0) {
+        const float t = static_cast<float>(m_silenceTailRemaining)
+                      / static_cast<float>(std::max(1, m_silenceTailSamples));
+        const float gain = t * t * (3.0f - 2.0f * t);
+        for (int ch = 0; ch < channels; ++ch)
+            channelData[ch][sampleIdx] = m_silenceTailStart[static_cast<size_t>(ch)] * gain;
+        --m_silenceTailRemaining;
+    }
+
+    for (int ch = 0; ch < channels; ++ch)
+        m_lastOutputSample[static_cast<size_t>(ch)] = channelData[ch][sampleIdx];
+    m_lastSourceFrameSilent = sourceFrameSilent;
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // Parameter setters
 // ═════════════════════════════════════════════════════════════════════════════
@@ -334,6 +378,11 @@ void BrickwallLimiter::updateCoefficients()
     m_lookaheadSamples = std::max(1, static_cast<int>(std::round(laMs * 0.001 * m_sampleRate)));
     // Clamp to buffer size
     m_lookaheadSamples = std::min(m_lookaheadSamples, m_delaySize - 1);
+
+    m_silenceTailSamples = std::clamp(
+        static_cast<int>(std::round(m_sampleRate * 0.004)),
+        64,
+        256);
 
     // Attack coefficient: envelope reaches target within the lookahead period.
     // Using 1-pole filter: coeff = exp(-1 / (tau * sampleRate))
