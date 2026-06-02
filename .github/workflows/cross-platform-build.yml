@@ -11,6 +11,7 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   APP_VERSION: 1.0.0
+  HOMEBREW_NO_AUTO_UPDATE: 1
 
 concurrency:
   group: cross-platform-build-${{ github.ref }}
@@ -172,7 +173,7 @@ jobs:
             os: macos-arm
             artifact: macos-silicon
             package: deploy/BrockDJ-macos-silicon.zip
-          - runner: macos-latest       # Same runner, Intel build via Rosetta + Intel Homebrew
+          - runner: macos-15-intel     # Intel runner, avoids Rosetta + second Homebrew bootstrap
             os: macos-intel
             artifact: macos-intel
             package: deploy/BrockDJ-macos-intel.zip
@@ -188,7 +189,7 @@ jobs:
           submodules: recursive
 
       - name: Setup ccache
-        if: matrix.os != 'windows' && matrix.os != 'macos-intel'
+        if: matrix.os != 'windows'
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: ${{ matrix.os }}
@@ -245,33 +246,12 @@ jobs:
       - name: Install Dependencies (macOS Apple Silicon)
         if: matrix.os == 'macos-arm'
         run: |
-          brew update
           brew install cmake ninja pkg-config qt@6 taglib rubberband libkeyfinder ccache
 
-      - name: Install Intel Homebrew + Dependencies (macOS Intel)
+      - name: Install Dependencies (macOS Intel)
         if: matrix.os == 'macos-intel'
         run: |
-          # Rosetta 2 is pre-installed on GitHub Apple Silicon runners.
-          # Bootstrap the Intel (x86_64) Homebrew at /usr/local if needed.
-          if [ ! -x /usr/local/bin/brew ]; then
-            NONINTERACTIVE=1 arch -x86_64 /bin/bash -c \
-              "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-          fi
-          arch -x86_64 /usr/local/bin/brew update
-          arch -x86_64 /usr/local/bin/brew install cmake ninja pkg-config qt@6 taglib rubberband fftw ccache
-
-      - name: Build libkeyfinder (macOS Intel)
-        if: matrix.os == 'macos-intel'
-        run: |
-          git clone --depth 1 https://github.com/mixxxdj/libkeyfinder.git
-          arch -x86_64 /usr/local/bin/cmake \
-            -S libkeyfinder -B libkeyfinder/build \
-            -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_TESTING=OFF \
-            -DCMAKE_OSX_ARCHITECTURES=x86_64
-          arch -x86_64 /usr/local/bin/cmake --build libkeyfinder/build --parallel
-          arch -x86_64 sudo /usr/local/bin/cmake --install libkeyfinder/build
+          brew install cmake ninja pkg-config qt@6 taglib rubberband libkeyfinder ccache
 
       - name: Install Dependencies (Windows)
         if: matrix.os == 'windows'
@@ -295,8 +275,8 @@ jobs:
       - name: Configure (macOS Intel)
         if: matrix.os == 'macos-intel'
         run: |
-          arch -x86_64 /usr/local/bin/cmake -S . -B build -G Ninja \
-            -DCMAKE_PREFIX_PATH=/usr/local/opt/qt@6 \
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6)" \
             -DCMAKE_OSX_ARCHITECTURES=x86_64
 
       - name: Configure (Linux ARM)
@@ -336,7 +316,7 @@ jobs:
 
       - name: Build (macOS Intel)
         if: matrix.os == 'macos-intel'
-        run: arch -x86_64 /usr/local/bin/cmake --build build --parallel
+        run: cmake --build build --parallel
 
       - name: Build (Linux ARM)
         if: matrix.os == 'linux-arm'
@@ -418,7 +398,7 @@ jobs:
           file "$APP/Contents/MacOS/BrockDJ"
           lipo -archs "$APP/Contents/MacOS/BrockDJ"
           test "$(lipo -archs "$APP/Contents/MacOS/BrockDJ")" = "x86_64"
-          /usr/local/opt/qt@6/bin/macdeployqt "$APP" -qmldir=src/qml
+          "$(brew --prefix qt@6)/bin/macdeployqt" "$APP" -qmldir=src/qml
           ditto -c -k --sequesterRsrc --keepParent "$APP" "deploy/BrockDJ-macos-intel.zip"
 
       - name: Deploy (Windows)

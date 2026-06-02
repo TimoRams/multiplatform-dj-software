@@ -361,6 +361,25 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     JUCE_USE_MP3AUDIOFORMAT=1
 )
 
+if(WIN32)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+        NOMINMAX
+        _WINSOCK_DEPRECATED_NO_WARNINGS=1
+    )
+
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        wininet
+        ws2_32
+        iphlpapi
+    )
+
+    if(MSVC)
+        target_compile_options(${PROJECT_NAME} PRIVATE
+            /FI${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/WindowsHeaderCompat.h
+        )
+    endif()
+endif()
+
 if(UNIX AND NOT APPLE)
     target_compile_definitions(${PROJECT_NAME} PRIVATE
         JUCE_ALSA=1
