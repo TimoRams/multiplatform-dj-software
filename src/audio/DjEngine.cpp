@@ -3218,7 +3218,16 @@ double DjEngine::getVisualPosition() const
     // larger hardware buffers make the UI visibly lead/lag the audible beat.
     const double visualLatency = static_cast<double>(
         m_visualLatencyCompensationSeconds.load(std::memory_order_relaxed));
-    interpolated += m_isReverse ? visualLatency : -visualLatency;
+    double latencyBlend = 1.0;
+    if (m_visualSeekSettleClock.isValid()) {
+        constexpr double kVisualSeekSettleSeconds = 0.090;
+        const double settleElapsed = static_cast<double>(m_visualSeekSettleClock.nsecsElapsed()) * 1e-9;
+        if (settleElapsed < kVisualSeekSettleSeconds) {
+            const double t = std::clamp(settleElapsed / kVisualSeekSettleSeconds, 0.0, 1.0);
+            latencyBlend = t * t * (3.0 - 2.0 * t);
+        }
+    }
+    interpolated += m_isReverse ? visualLatency * latencyBlend : -visualLatency * latencyBlend;
 
     double len = transportSource.getLengthInSeconds();
     interpolated = std::clamp(interpolated, -PRE_ROLL_SECONDS, len > 0.0 ? len : interpolated);
@@ -3840,6 +3849,11 @@ void DjEngine::setSnapAnchor(double positionSec, bool valid)
     m_atomicPlayheadPos.store(positionSec, std::memory_order_relaxed);
 }
 
+void DjEngine::armVisualSeekSettle()
+{
+    m_visualSeekSettleClock.restart();
+}
+
 void DjEngine::armSnapFromTransportPosition()
 {
     setSnapAnchor(transportSource.getCurrentPosition(), true);
@@ -3886,6 +3900,7 @@ void DjEngine::setPosition(float progress)
             m_scrubHoldPosition = newPos;
             ensureTransportRunningForPlayIntent();
             armSnapFromTransportPosition();
+            armVisualSeekSettle();
         }
         if (m_analyzer && m_analyzer->isThreadRunning())
             m_analyzer->setSeekHint(std::max(0.0, newPos));
@@ -4472,11 +4487,8 @@ void DjEngine::triggerHotCue(int index)
     } else {
         ensureTransportRunningForPlayIntent();
     }
-    m_snapPosition = pos;
-    m_snapTempoRatio = getTempoRatio();
-    m_snapClock.restart();
-    m_snapValid = true;
-    m_atomicPlayheadPos.store(pos, std::memory_order_relaxed);
+    setSnapAnchor(pos, true);
+    armVisualSeekSettle();
     if (m_analyzer && m_analyzer->isThreadRunning())
         m_analyzer->setSeekHint(pos);
     emit progressChanged();
@@ -4574,6 +4586,7 @@ void DjEngine::startMainCueHoldPreview(quint64 pressSerial)
         m_atomicPlayheadPos.store(cuePos, std::memory_order_relaxed);
     } else {
         setSnapAnchor(cuePos, true);
+        armVisualSeekSettle();
         transportSource.start();
     }
     emit playingChanged();
@@ -4626,6 +4639,7 @@ void DjEngine::cueButtonPress()
         transportSource.setPosition(std::max(0.0, cuePos));
         m_scrubHoldPosition = cuePos;
         setSnapAnchor(cuePos, true);
+        armVisualSeekSettle();
         if (m_analyzer && m_analyzer->isThreadRunning())
             m_analyzer->setSeekHint(cuePos);
         emit progressChanged();
@@ -4641,6 +4655,7 @@ void DjEngine::cueButtonPress()
     transportSource.setPosition(std::max(0.0, cuePos));
     m_scrubHoldPosition = cuePos;
     setSnapAnchor(cuePos, true);
+    armVisualSeekSettle();
     if (m_analyzer && m_analyzer->isThreadRunning())
         m_analyzer->setSeekHint(cuePos);
 
@@ -4689,6 +4704,7 @@ void DjEngine::cueButtonRelease()
     m_snapClock.restart();
     m_snapValid = false;
     m_atomicPlayheadPos.store(cuePos, std::memory_order_relaxed);
+    armVisualSeekSettle();
 
     emit playingChanged();
     emit progressChanged();

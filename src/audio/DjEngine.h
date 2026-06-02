@@ -546,6 +546,7 @@ private:
     void refreshHardwareLatency();
     void setSnapAnchor(double positionSec, bool valid);
     void armSnapFromTransportPosition();
+    void armVisualSeekSettle();
     void freezeTransportAt(double positionSec);
     void ensureTransportRunningForPlayIntent();
     void applyScratchNeutralRouting();
@@ -582,6 +583,7 @@ private:
     double         m_snapTempoRatio  = 1.0;
     QElapsedTimer  m_snapClock;
     bool           m_snapValid       = false;
+    QElapsedTimer  m_visualSeekSettleClock;
 
     // Atomic playhead position (seconds). Written on every onTimer() tick,
     // read lock-free by getPlayheadPositionAtomic() from the QML FrameAnimation.
