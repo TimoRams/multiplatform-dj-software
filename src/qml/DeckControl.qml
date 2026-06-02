@@ -47,10 +47,13 @@ Item {
         property color  fbActiveTxtColor:   deck.accentGrn
         property color  fbInactiveColor:    "#1e1e1e"
         property color  fbInactiveTxtColor: "#666666"
+        property real   fbPreferredHeight:  deck.btnH
+        property real   fbFontPx:           9
+        property string fbFontFamily:        "monospace"
 
-        Layout.preferredHeight: deck.btnH
-        Layout.minimumHeight:   deck.btnH
-        Layout.maximumHeight:   deck.btnH
+        Layout.preferredHeight: fbPreferredHeight
+        Layout.minimumHeight:   fbPreferredHeight
+        Layout.maximumHeight:   fbPreferredHeight
 
         radius: 0
         color: fbMouse.containsMouse ? "#252525" : (fbActive ? fbActiveColor : fbInactiveColor)
@@ -74,10 +77,10 @@ Item {
             anchors.centerIn:    parent
             text:                fb.btnText
             color:               fb.fbActive ? fb.fbActiveTxtColor : fb.fbInactiveTxtColor
-            font.pixelSize:      window.spViewport(9)
+            font.pixelSize:      window.spViewport(fb.fbFontPx)
             font.bold:           fb.fbActive
-            font.letterSpacing:  0.4
-            font.family:         "monospace"
+            font.letterSpacing:  0
+            font.family:         fb.fbFontFamily
             horizontalAlignment: Text.AlignHCenter
             elide:               Text.ElideRight
         }
@@ -651,220 +654,257 @@ Item {
             Rectangle { Layout.fillWidth: true; height: 1; color: "#1c1c1c" }
 
             // ── Transport / loop controls ─────────────────────────────────
-            ColumnLayout {
+            RowLayout {
                 id: deckControlsCol
                 Layout.fillWidth: true
+                Layout.minimumHeight: deckControlsCol.controlsHeight
+                Layout.preferredHeight: deckControlsCol.controlsHeight
+                Layout.maximumHeight: deckControlsCol.controlsHeight
                 spacing: 0
 
-                property real unit: Math.max(26, window.spViewport(28))
+                property real unit: Math.max(24, window.spViewport(26))
+                property real controlsHeight: deck.btnH * 2 + 1
 
-                // Row 1 — Transport
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: deck.btnH
-                    color: "#181818"   // intentionally slightly elevated from deck bg
-
-                    RowLayout {
-                        anchors.fill: parent
-                        spacing: 1
-
-                        // PLAY — primary action, brighter inactive state
-                        FlatBtn {
-                            btnText: "PLAY"
-                            Layout.preferredWidth: deckControlsCol.unit * 1.6
-                            fbActive: deck.engine ? deck.engine.isPlaying : false
-                            fbActiveColor: "#0d2a0d"
-                            fbActiveTxtColor: deck.accentGrn
-                            fbInactiveColor: "#202020"
-                            fbInactiveTxtColor: "#aaa"
-                            onClicked: {
-                                if (!deck.engine) return
-                                if (performancePads.consumeHotCueHoldPlayLatch()) return
-                                deck.engine.togglePlay()
-                            }
-                        }
-
-                        // Thin accent divider after PLAY
-                        Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#282828" }
-
-                        // CUE
-                        FlatBtn {
-                            btnText: "CUE"
-                            Layout.preferredWidth: deckControlsCol.unit
-                            onBtnPressed:  { if (deck.engine) deck.engine.cueButtonPress() }
-                            onBtnReleased: { if (deck.engine) deck.engine.cueButtonRelease() }
-                        }
-
-                        // REV
-                        FlatBtn {
-                            btnText: "REV"
-                            Layout.preferredWidth: deckControlsCol.unit
-                            fbActive: deck.engine ? deck.engine.isReverse : false
-                            fbActiveColor: "#2a1200"; fbActiveTxtColor: "#ff6600"
-                            onClicked: { if (deck.engine) deck.engine.setReverse(!deck.engine.isReverse) }
-                        }
-
-                        // SYNC
-                        FlatBtn {
-                            btnText: "SYNC"
-                            Layout.preferredWidth: deckControlsCol.unit * 1.2
-                            fbActive: deck.engine ? deck.engine.syncEnabled : false
-                            fbActiveColor: deck.engine && deck.engine.syncMaster ? "#2a2000" : "#0a2a0a"
-                            fbActiveTxtColor: deck.engine && deck.engine.syncMaster ? "#ffd24d" : deck.accentGrn
-                            onClicked: {
-                                if (!deck.engine) return
-                                if (deck.engine.syncEnabled) deck.engine.reSync()
-                                else deck.engine.setSyncEnabled(true)
-                            }
-                            onRightClicked: { if (deck.engine) deck.engine.setSyncEnabled(false) }
-                        }
-
-                        // LINK
-                        FlatBtn {
-                            btnText: "LINK"
-                            Layout.preferredWidth: deckControlsCol.unit * 1.1
-                            fbActive: deck.linkMode
-                            fbActiveColor: "#0a2a14"; fbActiveTxtColor: "#3de87a"
-                            fbInactiveTxtColor: deck.linkAvailable ? "#777" : "#444"
-                            onClicked: {
-                                if (!deck.linkAvailable) { deck._setLinkMode(false); return }
-                                deck._setLinkMode(!deck.linkMode)
-                                if (deck.linkMode) deck._publishDeckToAbletonLink()
-                            }
-                        }
-
-                        // Group divider
-                        Rectangle { Layout.preferredWidth: 4; Layout.preferredHeight: deck.btnH; color: "#0d0d0d" }
-
-                        // Q
-                        FlatBtn {
-                            btnText: "Q"
-                            Layout.preferredWidth: deckControlsCol.unit * 0.85
-                            fbActive: deck.engine ? deck.engine.quantizeEnabled : false
-                            fbActiveColor: deck.deckName === "A" ? "#2a1e00" : "#002233"
-                            fbActiveTxtColor: deck.accent
-                            onClicked: { if (deck.engine) deck.engine.quantizeEnabled = !deck.engine.quantizeEnabled }
-                        }
-
-                        // KL
-                        FlatBtn {
-                            btnText: "KL"
-                            Layout.preferredWidth: deckControlsCol.unit * 0.85
-                            fbActive: deck.engine ? deck.engine.keylock : false
-                            fbActiveColor: deck.deckName === "A" ? "#2a1e00" : "#002233"
-                            fbActiveTxtColor: deck.accent
-                            onClicked: { if (deck.engine) deck.engine.keylock = !deck.engine.keylock }
-                        }
-
-                        // SLIP
-                        FlatBtn {
-                            btnText: "SLIP"
-                            Layout.preferredWidth: deckControlsCol.unit
-                            fbActive: deck.engine ? deck.engine.slipActive : false
-                            fbActiveColor: deck.deckName === "A" ? "#2a1e00" : "#002233"
-                            fbActiveTxtColor: deck.accent
-                            onClicked: { if (deck.engine) deck.engine.setSlip(!deck.engine.slipActive) }
-                        }
-
-                        Item { Layout.fillWidth: true }
+                // PLAY — primary action, spans both control rows.
+                FlatBtn {
+                    btnText: deck.engine && deck.engine.isPlaying ? "Ⅱ" : "▶"
+                    fbPreferredHeight: deckControlsCol.controlsHeight
+                    fbFontPx: 18
+                    fbFontFamily: "sans-serif"
+                    Layout.preferredWidth: deckControlsCol.unit * 1.45
+                    Layout.minimumWidth: 34
+                    fbActive: deck.engine ? deck.engine.isPlaying : false
+                    fbActiveColor: "#0d2a0d"
+                    fbActiveTxtColor: deck.accentGrn
+                    fbInactiveColor: "#202020"
+                    fbInactiveTxtColor: "#ddd"
+                    onClicked: {
+                        if (!deck.engine) return
+                        if (performancePads.consumeHotCueHoldPlayLatch()) return
+                        deck.engine.togglePlay()
                     }
                 }
 
-                Rectangle { Layout.fillWidth: true; height: 1; color: "#0e0e0e" }
+                Rectangle { Layout.preferredWidth: 5; Layout.fillHeight: true; color: "#111111" }
 
-                // Row 2 — Loop
-                Rectangle {
+                // CUE — momentary transport button, spans both control rows.
+                FlatBtn {
+                    btnText: "CUE"
+                    fbPreferredHeight: deckControlsCol.controlsHeight
+                    fbFontPx: 11
+                    Layout.preferredWidth: deckControlsCol.unit * 1.0
+                    Layout.minimumWidth: 28
+                    fbInactiveTxtColor: "#d8d8d8"
+                    onBtnPressed:  { if (deck.engine) deck.engine.cueButtonPress() }
+                    onBtnReleased: { if (deck.engine) deck.engine.cueButtonRelease() }
+                }
+
+                Rectangle { Layout.preferredWidth: 2; Layout.fillHeight: true; color: "#0d0d0d" }
+
+                ColumnLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: deck.btnH
-                    color: "#111111"
+                    Layout.minimumHeight: deckControlsCol.controlsHeight
+                    Layout.preferredHeight: deckControlsCol.controlsHeight
+                    Layout.maximumHeight: deckControlsCol.controlsHeight
+                    spacing: 0
 
-                    RowLayout {
-                        anchors.fill: parent
-                        spacing: 1
+                    // Row 1 — Transport
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.minimumHeight: deck.btnH
+                        Layout.preferredHeight: deck.btnH
+                        Layout.maximumHeight: deck.btnH
+                        color: "#181818"   // intentionally slightly elevated from deck bg
 
-                        // L IN
-                        FlatBtn {
-                            btnText: "L IN"
-                            Layout.preferredWidth: deckControlsCol.unit * 1.1
-                            Layout.minimumWidth: 36
-                            fbInactiveColor: "#1a1a1a"
-                            onClicked: { if (deck.engine) deck.engine.setLoopIn() }
-                        }
+                        RowLayout {
+                            anchors.fill: parent
+                            spacing: 1
 
-                        // L OUT
-                        FlatBtn {
-                            btnText: "L OUT"
-                            Layout.preferredWidth: deckControlsCol.unit * 1.2
-                            Layout.minimumWidth: 40
-                            fbInactiveColor: "#1a1a1a"
-                            onClicked: { if (deck.engine) deck.engine.setLoopOut() }
-                        }
-
-                        // Group divider
-                        Rectangle { Layout.preferredWidth: 4; Layout.preferredHeight: deck.btnH; color: "#0d0d0d" }
-
-                        // <
-                        FlatBtn {
-                            btnText: "<"
-                            Layout.preferredWidth: deckControlsCol.unit * 0.75
-                            Layout.minimumWidth: 22
-                            onClicked: { if (deck.engine) deck.engine.halveLoopLength() }
-                        }
-
-                        // Loop toggle
-                        FlatBtn {
-                            btnText: deck.loopLabel()
-                            Layout.preferredWidth: deckControlsCol.unit * 2.0
-                            Layout.minimumWidth: 54
-                            fbActive: deck.engine ? deck.engine.loopActive : false
-                            fbActiveColor: "#0a2a0a"; fbActiveTxtColor: deck.accentGrn
-                            onClicked: { if (deck.engine) deck.engine.toggleLoop4Beats() }
-                        }
-
-                        // >
-                        FlatBtn {
-                            btnText: ">"
-                            Layout.preferredWidth: deckControlsCol.unit * 0.75
-                            Layout.minimumWidth: 22
-                            onClicked: { if (deck.engine) deck.engine.doubleLoopLength() }
-                        }
-
-                        // 3/4
-                        FlatBtn {
-                            btnText: "3/4"
-                            Layout.preferredWidth: deckControlsCol.unit * 0.95
-                            Layout.minimumWidth: 30
-                            fbActive: deck.engine ? (deck.engine.loopActive && Math.abs(deck.engine.loopLengthBeats - 0.75) < 0.06) : false
-                            fbActiveColor: "#001a2a"; fbActiveTxtColor: deck.accentBlu
-                            onClicked: { if (deck.engine) deck.engine.toggleLoopThreeQuarter() }
-                        }
-
-                        // LOOP — re-enable / deactivate last loop region
-                        FlatBtn {
-                            btnText: "LOOP"
-                            Layout.preferredWidth: deckControlsCol.unit * 1.3
-                            Layout.minimumWidth: 38
-                            readonly property bool _hasLoop: deck.engine ? deck.engine.loopInPosition < deck.engine.loopOutPosition : false
-                            opacity: _hasLoop ? 1.0 : 0.35
-                            enabled: _hasLoop
-                            fbActive: deck.engine ? deck.engine.loopActive : false
-                            fbActiveColor: "#0a2a0a"; fbActiveTxtColor: deck.accentGrn
-                            fbInactiveColor: "#0d160d"
-                            onClicked: {
-                                if (!deck.engine) return
-                                if (deck.engine.loopActive)
-                                    deck.engine.deactivateLoop()
-                                else
-                                    deck.engine.reactivateLoop()
+                            // REV
+                            FlatBtn {
+                                btnText: "REV"
+                                Layout.preferredWidth: deckControlsCol.unit
+                                fbActive: deck.engine ? deck.engine.isReverse : false
+                                fbActiveColor: "#2a1200"; fbActiveTxtColor: "#ff6600"
+                                onClicked: { if (deck.engine) deck.engine.setReverse(!deck.engine.isReverse) }
                             }
-                        }
 
-                        Item { Layout.fillWidth: true }
+                            // SYNC
+                            FlatBtn {
+                                btnText: "SYNC"
+                                Layout.preferredWidth: deckControlsCol.unit * 1.2
+                                fbActive: deck.engine ? deck.engine.syncEnabled : false
+                                fbActiveColor: deck.engine && deck.engine.syncMaster ? "#2a2000" : "#0a2a0a"
+                                fbActiveTxtColor: deck.engine && deck.engine.syncMaster ? "#ffd24d" : deck.accentGrn
+                                onClicked: {
+                                    if (!deck.engine) return
+                                    if (deck.engine.syncEnabled) deck.engine.reSync()
+                                    else deck.engine.setSyncEnabled(true)
+                                }
+                                onRightClicked: { if (deck.engine) deck.engine.setSyncEnabled(false) }
+                            }
+
+                            // LINK
+                            FlatBtn {
+                                btnText: "LINK"
+                                Layout.preferredWidth: deckControlsCol.unit * 1.1
+                                fbActive: deck.linkMode
+                                fbActiveColor: "#0a2a14"; fbActiveTxtColor: "#3de87a"
+                                fbInactiveTxtColor: deck.linkAvailable ? "#777" : "#444"
+                                onClicked: {
+                                    if (!deck.linkAvailable) { deck._setLinkMode(false); return }
+                                    deck._setLinkMode(!deck.linkMode)
+                                    if (deck.linkMode) deck._publishDeckToAbletonLink()
+                                }
+                            }
+
+                            // Group divider
+                            Rectangle { Layout.preferredWidth: 4; Layout.preferredHeight: deck.btnH; color: "#0d0d0d" }
+
+                            // Q
+                            FlatBtn {
+                                btnText: "Q"
+                                Layout.preferredWidth: deckControlsCol.unit * 0.85
+                                fbActive: deck.engine ? deck.engine.quantizeEnabled : false
+                                fbActiveColor: deck.deckName === "A" ? "#2a1e00" : "#002233"
+                                fbActiveTxtColor: deck.accent
+                                onClicked: { if (deck.engine) deck.engine.quantizeEnabled = !deck.engine.quantizeEnabled }
+                            }
+
+                            // KL
+                            FlatBtn {
+                                btnText: "KL"
+                                Layout.preferredWidth: deckControlsCol.unit * 0.85
+                                fbActive: deck.engine ? deck.engine.keylock : false
+                                fbActiveColor: deck.deckName === "A" ? "#2a1e00" : "#002233"
+                                fbActiveTxtColor: deck.accent
+                                onClicked: { if (deck.engine) deck.engine.keylock = !deck.engine.keylock }
+                            }
+
+                            // SLIP
+                            FlatBtn {
+                                btnText: "SLIP"
+                                Layout.preferredWidth: deckControlsCol.unit
+                                fbActive: deck.engine ? deck.engine.slipActive : false
+                                fbActiveColor: deck.deckName === "A" ? "#2a1e00" : "#002233"
+                                fbActiveTxtColor: deck.accent
+                                onClicked: { if (deck.engine) deck.engine.setSlip(!deck.engine.slipActive) }
+                            }
+
+                            Item { Layout.fillWidth: true }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.minimumHeight: 1
+                        Layout.preferredHeight: 1
+                        Layout.maximumHeight: 1
+                        color: "#0e0e0e"
+                    }
+
+                    // Row 2 — Loop
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.minimumHeight: deck.btnH
+                        Layout.preferredHeight: deck.btnH
+                        Layout.maximumHeight: deck.btnH
+                        color: "#111111"
+
+                        RowLayout {
+                            anchors.fill: parent
+                            spacing: 1
+
+                            // L IN
+                            FlatBtn {
+                                btnText: "L IN"
+                                Layout.preferredWidth: deckControlsCol.unit * 1.1
+                                Layout.minimumWidth: 36
+                                fbInactiveColor: "#1a1a1a"
+                                onClicked: { if (deck.engine) deck.engine.setLoopIn() }
+                            }
+
+                            // L OUT
+                            FlatBtn {
+                                btnText: "L OUT"
+                                Layout.preferredWidth: deckControlsCol.unit * 1.2
+                                Layout.minimumWidth: 40
+                                fbInactiveColor: "#1a1a1a"
+                                onClicked: { if (deck.engine) deck.engine.setLoopOut() }
+                            }
+
+                            // Group divider
+                            Rectangle { Layout.preferredWidth: 4; Layout.preferredHeight: deck.btnH; color: "#0d0d0d" }
+
+                            // <
+                            FlatBtn {
+                                btnText: "<"
+                                Layout.preferredWidth: deckControlsCol.unit * 0.75
+                                Layout.minimumWidth: 22
+                                onClicked: { if (deck.engine) deck.engine.halveLoopLength() }
+                            }
+
+                            // Loop toggle
+                            FlatBtn {
+                                btnText: deck.loopLabel()
+                                Layout.preferredWidth: deckControlsCol.unit * 2.0
+                                Layout.minimumWidth: 54
+                                fbActive: deck.engine ? deck.engine.loopActive : false
+                                fbActiveColor: "#0a2a0a"; fbActiveTxtColor: deck.accentGrn
+                                onClicked: { if (deck.engine) deck.engine.toggleLoop4Beats() }
+                            }
+
+                            // >
+                            FlatBtn {
+                                btnText: ">"
+                                Layout.preferredWidth: deckControlsCol.unit * 0.75
+                                Layout.minimumWidth: 22
+                                onClicked: { if (deck.engine) deck.engine.doubleLoopLength() }
+                            }
+
+                            // 3/4
+                            FlatBtn {
+                                btnText: "3/4"
+                                Layout.preferredWidth: deckControlsCol.unit * 0.95
+                                Layout.minimumWidth: 30
+                                fbActive: deck.engine ? (deck.engine.loopActive && Math.abs(deck.engine.loopLengthBeats - 0.75) < 0.06) : false
+                                fbActiveColor: "#001a2a"; fbActiveTxtColor: deck.accentBlu
+                                onClicked: { if (deck.engine) deck.engine.toggleLoopThreeQuarter() }
+                            }
+
+                            // LOOP — re-enable / deactivate last loop region
+                            FlatBtn {
+                                btnText: "LOOP"
+                                Layout.preferredWidth: deckControlsCol.unit * 1.3
+                                Layout.minimumWidth: 38
+                                readonly property bool _hasLoop: deck.engine ? deck.engine.loopInPosition < deck.engine.loopOutPosition : false
+                                opacity: _hasLoop ? 1.0 : 0.35
+                                enabled: _hasLoop
+                                fbActive: deck.engine ? deck.engine.loopActive : false
+                                fbActiveColor: "#0a2a0a"; fbActiveTxtColor: deck.accentGrn
+                                fbInactiveColor: "#0d160d"
+                                onClicked: {
+                                    if (!deck.engine) return
+                                    if (deck.engine.loopActive)
+                                        deck.engine.deactivateLoop()
+                                    else
+                                        deck.engine.reactivateLoop()
+                                }
+                            }
+
+                            Item { Layout.fillWidth: true }
+                        }
                     }
                 }
             }
 
-            Rectangle { Layout.fillWidth: true; height: 1; color: "#1c1c1c" }
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.minimumHeight: 1
+                Layout.preferredHeight: 1
+                Layout.maximumHeight: 1
+                color: "#1c1c1c"
+            }
 
             // ── Performance pads + tempo fader ────────────────────────────
             RowLayout {
