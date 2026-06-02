@@ -13,18 +13,18 @@ Rectangle {
 
     // ── Sizing helpers ───────────────────────────────────────────────────────
     readonly property int btnH:    Math.max(1, root.height)
-    readonly property int padH:    Math.max(14, Math.round(btnH * 0.42))  // inner horizontal pad
+    readonly property int padH:    Math.max(9, Math.round(btnH * 0.30))   // inner horizontal pad
     readonly property int sepW:    1                                        // divider width
 
     // VU meter sizing
-    readonly property int vuW:     Math.max(88, Math.round(btnH * 3.2))
+    readonly property int vuW:     Math.max(72, Math.round(btnH * 2.7))
     readonly property int vuSegH:  Math.max(4,  Math.round(btnH * 0.14))
 
     // Beat dot sizing
     readonly property int dotSz:   Math.max(5,  Math.round(btnH * 0.18))
 
     // Master dial
-    readonly property int dialSz:  Math.max(18, Math.round(btnH * 0.60))
+    readonly property int dialSz:  Math.max(16, Math.round(btnH * 0.58))
 
     // Deck colors
     readonly property color clrA:  "#ff9900"
@@ -1138,21 +1138,111 @@ Rectangle {
             }
         }
 
+        // ── Desktop / All-in-one mode ───────────────────────────────────────
+        Rectangle {
+            id: appModeBlock
+            Layout.preferredWidth: 76
+            Layout.fillHeight: true
+            color: "#121212"
+
+            readonly property bool allInOne: root.Window.window ? root.Window.window.allInOneMode : false
+
+            Row {
+                anchors.centerIn: parent
+                spacing: 2
+
+                Rectangle {
+                    width: 34
+                    height: Math.max(14, Math.round(root.btnH * 0.52))
+                    radius: 2
+                    color: !appModeBlock.allInOne ? "#1e7bd4" : "#1c1c1c"
+                    Text {
+                        anchors.centerIn: parent
+                        text: "DESK"
+                        color: !appModeBlock.allInOne ? "#ffffff" : "#555"
+                        font.pixelSize: root.sp(7)
+                        font.bold: true
+                        font.family: "monospace"
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: if (root.Window.window) root.Window.window.setAllInOneMode(false)
+                    }
+                }
+
+                Rectangle {
+                    width: 28
+                    height: Math.max(14, Math.round(root.btnH * 0.52))
+                    radius: 2
+                    color: appModeBlock.allInOne ? "#1e7bd4" : "#1c1c1c"
+                    Text {
+                        anchors.centerIn: parent
+                        text: "AIO"
+                        color: appModeBlock.allInOne ? "#ffffff" : "#555"
+                        font.pixelSize: root.sp(7)
+                        font.bold: true
+                        font.family: "monospace"
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: if (root.Window.window) root.Window.window.setAllInOneMode(true)
+                    }
+                }
+            }
+        }
+
+        // ── Library tab (all-in-one) ────────────────────────────────────────
+        Rectangle {
+            id: libraryTabButton
+            readonly property bool available: root.Window.window ? root.Window.window.allInOneMode : false
+            readonly property bool active: root.Window.window ? root.Window.window.libraryPanelActive : false
+            Layout.preferredWidth: available ? root.btnH + 16 : 0
+            Layout.fillHeight: true
+            visible: available
+            color: libMouse.pressed ? "#1e1e1e" : (active ? "#182638" : (libMouse.containsMouse ? "#181818" : "#121212"))
+
+            Text {
+                anchors.centerIn: parent
+                text: "LIB"
+                color: libraryTabButton.active ? "#ffffff" : "#5f6f7e"
+                font.pixelSize: root.sp(8)
+                font.bold: true
+                font.family: "monospace"
+            }
+
+            MouseArea {
+                id: libMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: if (root.Window.window) root.Window.window.toggleAllInOneLibrary()
+            }
+        }
+
         // ── Settings ──────────────────────────────────────────────────────────
         Rectangle {
             Layout.preferredWidth: root.btnH
             Layout.fillHeight: true
-            color: stgMouse.pressed ? "#1e1e1e" : (stgMouse.containsMouse ? "#181818" : "#121212")
+            readonly property bool active: root.Window.window ? root.Window.window.settingsPanelActive : false
+            color: stgMouse.pressed ? "#1e1e1e" : (active ? "#182638" : (stgMouse.containsMouse ? "#181818" : "#121212"))
 
             Text {
                 anchors.centerIn: parent
-                text: "⚙"; color: "#555555"
+                text: "⚙"; color: parent.active ? "#ffffff" : "#555555"
                 font.pixelSize: root.sp(14)
             }
             MouseArea {
                 id: stgMouse
                 anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                onClicked: { settingsWin.show(); settingsWin.raise(); settingsWin.requestActivate() }
+                onClicked: {
+                    if (root.Window.window && root.Window.window.toggleAllInOneSettings && root.Window.window.toggleAllInOneSettings())
+                        return
+                    settingsWin.show()
+                    settingsWin.raise()
+                    settingsWin.requestActivate()
+                }
             }
         }
 

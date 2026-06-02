@@ -33,6 +33,13 @@ ApplicationWindow {
     property bool showLibrary: true
     property bool showCrossfader: true
     property bool fourDeckMode: false
+    property bool allInOneMode: false
+    property string activeMainTab: "performance"
+
+    readonly property bool allInOnePanelActive: window.allInOneMode && window.activeMainTab !== "performance"
+    readonly property bool libraryPanelActive: window.allInOneMode && window.activeMainTab === "library"
+    readonly property bool settingsPanelActive: window.allInOneMode && window.activeMainTab === "settings"
+    readonly property bool effectiveLibraryVisible: window.allInOneMode ? window.libraryPanelActive : window.showLibrary
 
     property int resizeThrottleCounter: 0
     property int lastProcessedWidth: width
@@ -59,6 +66,29 @@ ApplicationWindow {
             return
         exitManualBackupRequested = false
         exitPromptVisible = true
+    }
+
+    function setAllInOneMode(enabled) {
+        allInOneMode = enabled
+        libraryExpanded = false
+        activeMainTab = "performance"
+    }
+
+    function toggleAllInOneLibrary() {
+        if (!allInOneMode) {
+            showLibrary = !showLibrary
+            return
+        }
+        activeMainTab = libraryPanelActive ? "performance" : "library"
+        libraryExpanded = false
+    }
+
+    function toggleAllInOneSettings() {
+        if (!allInOneMode)
+            return false
+        activeMainTab = settingsPanelActive ? "performance" : "settings"
+        libraryExpanded = false
+        return true
     }
 
     function cancelAppClosePrompt() {
@@ -528,7 +558,10 @@ ApplicationWindow {
                 return
             if (window.exitPromptVisible)
                 return
-            window.libraryExpanded = !window.libraryExpanded
+            if (window.allInOneMode)
+                window.toggleAllInOneLibrary()
+            else
+                window.libraryExpanded = !window.libraryExpanded
         }
     }
 
@@ -541,6 +574,11 @@ ApplicationWindow {
 
             if (window.exitPromptVisible) {
                 window.cancelAppClosePrompt()
+                return
+            }
+
+            if (window.allInOnePanelActive) {
+                window.activeMainTab = "performance"
                 return
             }
 
@@ -560,35 +598,36 @@ ApplicationWindow {
     readonly property real uiScale: _snapScaleToPhysicalPixels(rawUiScale)
     readonly property int scaledWaveformHeight: Math.round(window.baseWaveformHeight * window.uiScale)
     readonly property int scaledDeckMixerHeight: Math.round(window.baseDeckMixerHeight * window.uiScale)
-    readonly property int topBarHeight: 34
+    readonly property int topBarHeight: 30
     readonly property int fxBarHeight: 90
     readonly property int mixerBaseWidth: 280
 
     readonly property real baseUiHeight: 150 + (baseUiWidth / 6.5) + 4
     readonly property bool primaryDeckRowVisible: !window.libraryExpanded
+                                                   && !window.allInOnePanelActive
                                                    && (window.showDeckA || window.showDeckB || window.showMixer)
-    readonly property bool secondaryDeckRowVisible: window.fourDeckMode && !window.libraryExpanded
-    readonly property bool crossfaderVisible: window.showCrossfader && !window.libraryExpanded
-    readonly property bool fxVisible: window.showFxBar && !window.libraryExpanded
+    readonly property bool secondaryDeckRowVisible: window.fourDeckMode && !window.libraryExpanded && !window.allInOnePanelActive
+    readonly property bool crossfaderVisible: window.showCrossfader && !window.libraryExpanded && !window.allInOnePanelActive
+    readonly property bool fxVisible: window.showFxBar && !window.libraryExpanded && !window.allInOnePanelActive
     readonly property int waveformMinimumHeight: window.scaledWaveformHeight
-    readonly property int libraryReserveHeight: !window.showLibrary ? 0 : Math.round(180 * window.uiScale)
+    readonly property int libraryReserveHeight: !window.effectiveLibraryVisible ? 0 : Math.round(180 * window.uiScale)
     readonly property int fixedPerformanceHeight:
         (window.primaryDeckRowVisible ? window.scaledDeckMixerHeight : 0)
         + (window.secondaryDeckRowVisible ? window.scaledDeckMixerHeight : 0)
         + (window.crossfaderVisible ? 37 : 0)
         + (window.fxVisible ? window.fxBarHeight : 0)
     readonly property int hiddenPerformanceHeight:
-        (!window.libraryExpanded && !window.primaryDeckRowVisible ? window.scaledDeckMixerHeight : 0)
-        + (!window.libraryExpanded && window.fourDeckMode && !window.secondaryDeckRowVisible ? window.scaledDeckMixerHeight : 0)
-        + (!window.libraryExpanded && !window.crossfaderVisible ? 37 : 0)
-        + (!window.libraryExpanded && !window.fxVisible ? window.fxBarHeight : 0)
+        (!window.libraryExpanded && !window.allInOnePanelActive && !window.primaryDeckRowVisible ? window.scaledDeckMixerHeight : 0)
+        + (!window.libraryExpanded && !window.allInOnePanelActive && window.fourDeckMode && !window.secondaryDeckRowVisible ? window.scaledDeckMixerHeight : 0)
+        + (!window.libraryExpanded && !window.allInOnePanelActive && !window.crossfaderVisible ? 37 : 0)
+        + (!window.libraryExpanded && !window.allInOnePanelActive && !window.fxVisible ? window.fxBarHeight : 0)
     readonly property int waveformAvailableHeight: Math.max(
         0,
         height - window.topBarHeight - window.fixedPerformanceHeight - window.libraryReserveHeight - 6
     )
     readonly property int adaptiveWaveformHeight: !window.showWaveforms ? 0 : Math.max(
         0,
-        !window.showLibrary
+        !window.effectiveLibraryVisible
             ? window.waveformAvailableHeight
             : Math.min(
                 window.waveformAvailableHeight,
@@ -625,10 +664,10 @@ ApplicationWindow {
         Item {
             id: waveformViewport
             Layout.fillWidth: true
-            Layout.minimumHeight: window.showWaveforms ? window.waveformMinimumHeight : 0
-            Layout.preferredHeight: window.adaptiveWaveformHeight
-            Layout.maximumHeight: window.adaptiveWaveformHeight
-            visible: window.showWaveforms
+            Layout.minimumHeight: window.showWaveforms && !window.allInOnePanelActive ? window.waveformMinimumHeight : 0
+            Layout.preferredHeight: window.showWaveforms && !window.allInOnePanelActive ? window.adaptiveWaveformHeight : 0
+            Layout.maximumHeight: window.showWaveforms && !window.allInOnePanelActive ? window.adaptiveWaveformHeight : 0
+            visible: window.showWaveforms && !window.allInOnePanelActive
             clip: true
 
             Item {
@@ -678,7 +717,7 @@ ApplicationWindow {
         }
 
         Rectangle {
-            visible: window.showWaveforms && (window.primaryDeckRowVisible || window.secondaryDeckRowVisible || window.crossfaderVisible || window.fxVisible || window.showLibrary)
+            visible: window.showWaveforms && !window.allInOnePanelActive && (window.primaryDeckRowVisible || window.secondaryDeckRowVisible || window.crossfaderVisible || window.fxVisible || window.effectiveLibraryVisible)
             Layout.fillWidth: true
             Layout.minimumHeight: visible ? 1 : 0
             Layout.preferredHeight: visible ? 1 : 0
@@ -806,7 +845,7 @@ ApplicationWindow {
         }
 
         Rectangle {
-            visible: window.fourDeckMode && !window.libraryExpanded
+            visible: window.fourDeckMode && !window.libraryExpanded && !window.allInOnePanelActive
             Layout.fillWidth: true
             Layout.minimumHeight: visible ? 1 : 0
             Layout.preferredHeight: visible ? 1 : 0
@@ -848,14 +887,24 @@ ApplicationWindow {
             visible: window.fxVisible
         }
 
+        SettingsPanel {
+            id: settingsSection
+            Layout.fillWidth: true
+            Layout.fillHeight: window.settingsPanelActive
+            Layout.minimumHeight: window.settingsPanelActive ? 1 : 0
+            Layout.preferredHeight: 0
+            Layout.maximumHeight: window.settingsPanelActive ? window.height : 0
+            visible: window.settingsPanelActive
+        }
+
         Library {
             id: librarySection
             Layout.fillWidth: true
-            Layout.fillHeight: window.showLibrary
-            Layout.minimumHeight: window.showLibrary ? 0 : 0
+            Layout.fillHeight: window.effectiveLibraryVisible
+            Layout.minimumHeight: window.effectiveLibraryVisible ? 1 : 0
             Layout.preferredHeight: 0
-            Layout.maximumHeight: window.showLibrary ? window.height : 0
-            visible: window.showLibrary
+            Layout.maximumHeight: window.effectiveLibraryVisible ? window.height : 0
+            visible: window.effectiveLibraryVisible
         }
     }
 

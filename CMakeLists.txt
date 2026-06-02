@@ -260,6 +260,7 @@ qt_add_qml_module(${PROJECT_NAME}
         src/qml/PerformancePads.qml
         src/qml/TurntableIndicator.qml
         src/qml/MixerSection.qml
+        src/qml/SettingsPanel.qml
         src/qml/SettingsWindow.qml
         src/qml/MappingEditorWindow.qml
         src/qml/WelcomeScreen.qml
