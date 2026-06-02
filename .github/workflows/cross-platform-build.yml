@@ -428,7 +428,6 @@ jobs:
           test "$(lipo -archs "$APP/Contents/MacOS/BrockDJ")" = "arm64"
           DEPLOY_LOG="$(mktemp)"
           "$(brew --prefix qt@6)/bin/macdeployqt" "$APP" \
-            -qmldir=src/qml \
             -libpath="$(brew --prefix qtsvg)/lib" \
             -libpath="$(brew --prefix qtmultimedia)/lib" \
             -libpath="$(brew --prefix qtimageformats)/lib" \
@@ -478,7 +477,6 @@ jobs:
           test "$(lipo -archs "$APP/Contents/MacOS/BrockDJ")" = "x86_64"
           DEPLOY_LOG="$(mktemp)"
           "$(brew --prefix qt@6)/bin/macdeployqt" "$APP" \
-            -qmldir=src/qml \
             -libpath="$(brew --prefix qtsvg)/lib" \
             -libpath="$(brew --prefix qtmultimedia)/lib" \
             -libpath="$(brew --prefix qtimageformats)/lib" \

@@ -4,7 +4,7 @@ set(PROJECT_NAME "BrockDJ")
 project(${PROJECT_NAME} VERSION 0.0.1 LANGUAGES C CXX)
 
 set(RDBJ_ENABLE_NATIVE_SIMD_DEFAULT OFF)
-if(WIN32 OR (UNIX AND NOT APPLE))
+if(UNIX AND NOT APPLE)
     set(RDBJ_ENABLE_NATIVE_SIMD_DEFAULT ON)
 elseif(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|i[3-6]86)$")
     set(RDBJ_ENABLE_NATIVE_SIMD_DEFAULT ON)
@@ -436,11 +436,7 @@ endif()
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)
 
 if(RDBJ_ENABLE_NATIVE_SIMD)
-    if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 8)
-        target_compile_options(${PROJECT_NAME} PRIVATE
-            $<$<CONFIG:Release>:/arch:AVX2>
-        )
-    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT APPLE)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT APPLE)
         target_compile_options(${PROJECT_NAME} PRIVATE
             $<$<CONFIG:Release>:-march=native>
         )

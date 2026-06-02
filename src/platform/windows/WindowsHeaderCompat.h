@@ -18,10 +18,6 @@
 #define WIN32_LEAN_AND_MEAN 1
 #endif
 
-#ifndef _WINSOCKAPI_
-#define _WINSOCKAPI_
-#endif
-
 #ifndef WINVER
 #define WINVER 0x0A00
 #endif
@@ -40,9 +36,9 @@
 
 // JUCE and Qt both include Windows networking headers in generated/module
 // translation units. Force the stable SDK include order for MSVC first.
-#include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
 #include <wininet.h>
 #include <iphlpapi.h>
 
