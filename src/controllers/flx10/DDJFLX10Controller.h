@@ -53,6 +53,8 @@ private:
     QString findMidiPort() const;
     bool sendAmidiSysEx(const QString& hex) const;
     void sendSessionSysEx();
+    void updateJogRingWarning(int deck, double elapsedSeconds, double durationSeconds, bool playing);
+    bool sendJogRingIllumination(int deck, bool on);
 
     bool uploadDeck(int deck);
     bool sendXx30(int deck);
@@ -93,6 +95,8 @@ private:
     std::array<QMetaObject::Connection, 5> m_metadataConnections;
     std::array<QString, 5> m_lastCoverUrls;
     std::array<qint64, 5> m_lastWaveformRefreshMs = {0, 0, 0, 0, 0};
+    std::array<bool, 5> m_jogRingWarningActive = {false, false, false, false, false};
+    std::array<bool, 5> m_jogRingLit = {true, true, true, true, true};
     qint64 m_clockStartMs = 0;
     int m_nextStateDeck = 1;
     bool m_connected = false;

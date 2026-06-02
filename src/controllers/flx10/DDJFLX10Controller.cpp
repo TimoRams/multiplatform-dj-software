@@ -22,9 +22,13 @@ constexpr uint16_t kPid = 0x0041;
 constexpr int kScreenInterface = 5;
 constexpr int kHidPacketSize = 128;
 constexpr double kPreviewDurationSeconds = 30.0;
-constexpr int kMaxWaveformEntries = 65520;
+constexpr double kJogWaveformEntriesPerSecond = 150.0;
+constexpr int kMaxWaveformEntries = 0x7FF00;
 constexpr int kUploadWindowsPerTick = 10;
 constexpr int kAlbumArtMaxBytes = 119 + 122 * 254;
+constexpr double kJogRingWarningSeconds = 30.0;
+constexpr qint64 kJogRingBlinkIntervalMs = 500;
+constexpr int kJogRingOnValue = 0x7F;
 
 struct VendorUnlockCommand
 {
@@ -75,6 +79,22 @@ uint8_t displayDeckState(uint8_t db)
     case 0x40: return 0x03;
     default: return 0x02;
     }
+}
+
+double validTrackDuration(const DjEngine* engine)
+{
+    if (!engine || engine->getDuration() <= 0.0f)
+        return kPreviewDurationSeconds;
+
+    return std::max(1.0, static_cast<double>(engine->getDuration()));
+}
+
+double validTrackPosition(const DjEngine* engine, double duration)
+{
+    if (!engine)
+        return 0.0;
+
+    return std::clamp(engine->getPlayheadPositionAtomic(), 0.0, duration);
 }
 
 QByteArray packet()
@@ -199,6 +219,12 @@ void DDJFLX10Controller::stop()
     m_uploadTimer.stop();
     m_uploadActive.fill(false);
     m_uploadEntries.fill(0);
+    for (int deck = 1; deck <= 4; ++deck) {
+        if (m_jogRingWarningActive[deck] || !m_jogRingLit[deck])
+            sendJogRingIllumination(deck, true);
+    }
+    m_jogRingWarningActive.fill(false);
+    m_jogRingLit.fill(true);
 
 #if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
     if (m_handle && m_interfaceClaimed) {
@@ -290,7 +316,9 @@ void DDJFLX10Controller::connectDeckSignals()
                 m_waveformDurations[deck] = kPreviewDurationSeconds;
                 m_uploadActive[deck] = false;
                 m_uploadEntries[deck] = 0;
+                m_jogRingWarningActive[deck] = false;
                 m_lastCoverUrls[deck].clear();
+                sendJogRingIllumination(deck, true);
                 qInfo() << "[DDJ-FLX10] Deck" << deck << "has no track waveform; HID deck output stopped";
                 if (m_connected)
                     clearDeckDisplay(deck);
@@ -496,6 +524,7 @@ QString DDJFLX10Controller::findMidiPort() const
 
     const QString output = QString::fromLocal8Bit(process.readAllStandardOutput());
     const QRegularExpression portPattern(QStringLiteral("(hw:[0-9,]+)"));
+    QString fallbackPort;
     for (const QString& line : output.split('\n')) {
         const QString lower = line.toLower();
         if (!lower.contains(QStringLiteral("flx10"))
@@ -505,10 +534,18 @@ QString DDJFLX10Controller::findMidiPort() const
         }
 
         const auto match = portPattern.match(line);
-        if (match.hasMatch())
-            return match.captured(1);
+        if (!match.hasMatch())
+            continue;
+
+        const QString port = match.captured(1);
+        if (fallbackPort.isEmpty())
+            fallbackPort = port;
+
+        const QString direction = line.left(line.indexOf(port)).trimmed().toUpper();
+        if (direction.contains(QLatin1Char('O')))
+            return port;
     }
-    return {};
+    return fallbackPort;
 }
 
 bool DDJFLX10Controller::sendAmidiSysEx(const QString& hex) const
@@ -521,6 +558,42 @@ bool DDJFLX10Controller::sendAmidiSysEx(const QString& hex) const
     if (!process.waitForFinished(1500))
         return false;
     return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+}
+
+bool DDJFLX10Controller::sendJogRingIllumination(int deck, bool on)
+{
+    if (m_midiPort.isEmpty())
+        return false;
+
+    const int controller = 0x08 + std::clamp(deck, 1, 4);
+    const QString hex = QStringLiteral("BF %1 %2")
+                            .arg(controller, 2, 16, QLatin1Char('0'))
+                            .arg(on ? kJogRingOnValue : 0, 2, 16, QLatin1Char('0'))
+                            .toUpper();
+    const bool ok = sendAmidiSysEx(hex);
+    if (ok)
+        m_jogRingLit[deck] = on;
+    return ok;
+}
+
+void DDJFLX10Controller::updateJogRingWarning(int deck, double elapsedSeconds, double durationSeconds, bool playing)
+{
+    const double remaining = durationSeconds - elapsedSeconds;
+    const bool shouldBlink = playing && durationSeconds > kJogRingWarningSeconds && remaining > 0.0 && remaining <= kJogRingWarningSeconds;
+
+    if (!shouldBlink) {
+        if (m_jogRingWarningActive[deck] || !m_jogRingLit[deck])
+            sendJogRingIllumination(deck, true);
+        m_jogRingWarningActive[deck] = false;
+        return;
+    }
+
+    if (!m_jogRingWarningActive[deck])
+        qInfo() << "[DDJ-FLX10] Deck" << deck << "jog ring end warning active; remaining seconds" << remaining;
+    m_jogRingWarningActive[deck] = true;
+    const bool blinkOn = ((QDateTime::currentMSecsSinceEpoch() / kJogRingBlinkIntervalMs) % 2) == 0;
+    if (blinkOn != m_jogRingLit[deck])
+        sendJogRingIllumination(deck, blinkOn);
 }
 
 void DDJFLX10Controller::sendSessionSysEx()
@@ -549,14 +622,16 @@ void DDJFLX10Controller::sendStateTick()
     }
 
     const DjEngine* engine = deckEngine(m_nextStateDeck);
-    const double duration = std::max(1.0, m_waveformDurations[m_nextStateDeck]);
+    const double duration = deckDisplayDuration(m_nextStateDeck);
     const double elapsed = engine ? deckDisplayPosition(m_nextStateDeck)
                                   : std::fmod((QDateTime::currentMSecsSinceEpoch() - m_clockStartMs) / 1000.0, duration);
+    const bool moving = engine ? engine->isPlaying() : true;
     sendXx27(m_nextStateDeck,
              std::clamp(elapsed, 0.0, duration),
              duration,
              deckBpm(m_nextStateDeck),
-             engine ? engine->isPlaying() : true);
+             moving);
+    updateJogRingWarning(m_nextStateDeck, std::clamp(elapsed, 0.0, duration), duration, moving);
     m_nextStateDeck = (m_nextStateDeck == 1) ? 2 : 1;
 }
 
@@ -711,6 +786,8 @@ bool DDJFLX10Controller::sendXx35(int deck, int entryCount)
         put8(p, 1, 0x35);
         put8(p, 2, entryCount);
         put8(p, 3, entryCount >> 8);
+        put8(p, 4, entryCount >> 16);
+        put8(p, 5, entryCount >> 24);
         ok = writePacket(p) && ok;
     }
     return ok;
@@ -775,7 +852,9 @@ bool DDJFLX10Controller::sendXx27(int deck, double elapsedSeconds, double durati
     put8(p, 4, 0x01);
 
     elapsedSeconds = std::max(0.0, elapsedSeconds);
-    const int totalMs = static_cast<int>(elapsedSeconds * 1000.0);
+    durationSeconds = std::max(1.0, durationSeconds);
+    elapsedSeconds = std::clamp(elapsedSeconds, 0.0, durationSeconds);
+    const int totalMs = static_cast<int>(std::llround(elapsedSeconds * 1000.0));
     const int minutes = totalMs / 60000;
     const int rem = totalMs % 60000;
     const int seconds = rem / 1000;
@@ -785,10 +864,9 @@ bool DDJFLX10Controller::sendXx27(int deck, double elapsedSeconds, double durati
     put8(p, 7, ms);
     put8(p, 8, (ms >> 8) & 0x03);
 
-    const double remaining = std::max(0.0, durationSeconds - elapsedSeconds);
-    const int remainingMs = static_cast<int>(remaining * 1000.0);
-    put8(p, 9, remainingMs / 60000);
-    const int rem2 = remainingMs % 60000;
+    const int durationMs = static_cast<int>(std::llround(durationSeconds * 1000.0));
+    put8(p, 9, durationMs / 60000);
+    const int rem2 = durationMs % 60000;
     put8(p, 10, rem2 / 1000);
     const int ms2 = rem2 % 1000;
     put8(p, 11, ms2);
@@ -869,7 +947,10 @@ QByteArray DDJFLX10Controller::generatePreviewWaveform(int deck) const
     if (frames.isEmpty())
         return {};
 
-    const int targetEntries = std::clamp(static_cast<int>(std::ceil(deckDisplayDuration(deck) * 150.0)), 150, kMaxWaveformEntries);
+    const int targetEntries = std::clamp(
+        static_cast<int>(std::ceil(deckDisplayDuration(deck) * kJogWaveformEntriesPerSecond)),
+        150,
+        kMaxWaveformEntries);
     QByteArray out;
     out.reserve(targetEntries * 2);
 
@@ -927,20 +1008,12 @@ QByteArray DDJFLX10Controller::generatePreviewWaveform(int deck) const
 
 double DDJFLX10Controller::deckDisplayDuration(int deck) const
 {
-    const DjEngine* engine = deckEngine(deck);
-    if (!engine || engine->getDuration() <= 0.0f)
-        return kPreviewDurationSeconds;
-
-    return std::max(1.0, static_cast<double>(engine->getDuration()));
+    return validTrackDuration(deckEngine(deck));
 }
 
 double DDJFLX10Controller::deckDisplayPosition(int deck) const
 {
-    const DjEngine* engine = deckEngine(deck);
-    if (!engine)
-        return 0.0;
-
-    return std::clamp(engine->getPlayheadPositionAtomic(), 0.0, deckDisplayDuration(deck));
+    return validTrackPosition(deckEngine(deck), deckDisplayDuration(deck));
 }
 
 double DDJFLX10Controller::deckBpm(int deck) const
@@ -973,13 +1046,16 @@ int DDJFLX10Controller::currentWaveformEntry(int deck) const
     if (entries <= 19 || m_clockStartMs <= 0)
         return 0;
 
-    const DjEngine* engine = deck == 1 ? m_deckA : m_deckB;
+    const DjEngine* engine = deckEngine(deck);
     if (engine && engine->getDuration() > 0.0f) {
-        const double fraction = std::clamp(engine->getPlayheadPositionAtomic() / static_cast<double>(engine->getDuration()), 0.0, 1.0);
+        const double duration = validTrackDuration(engine);
+        const double position = validTrackPosition(engine, duration);
+        const double fraction = duration > 0.0 ? std::clamp(position / duration, 0.0, 1.0) : 0.0;
         return std::clamp(static_cast<int>(fraction * entries), 0, entries - 19);
     }
 
     const double elapsed = (QDateTime::currentMSecsSinceEpoch() - m_clockStartMs) / 1000.0;
-    const double fraction = std::fmod(std::max(0.0, elapsed), m_waveformDurations[deck]) / m_waveformDurations[deck];
+    const double duration = std::max(1.0, m_waveformDurations[deck]);
+    const double fraction = std::fmod(std::max(0.0, elapsed), duration) / duration;
     return std::clamp(static_cast<int>(fraction * entries), 0, entries - 19);
 }
