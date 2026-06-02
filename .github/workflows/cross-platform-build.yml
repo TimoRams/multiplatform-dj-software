@@ -33,11 +33,19 @@ jobs:
         with:
           key: ${{ runner.os }}
 
+      - name: Cache libkeyfinder (Linux)
+        uses: actions/cache@v4
+        with:
+          path: .ci/keyfinder
+          key: libkeyfinder-linux-x86_64-${{ hashFiles('.github/workflows/cross-platform-build.yml') }}
+          restore-keys: |
+            libkeyfinder-linux-x86_64-
+
       - name: Install Qt (Linux)
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.0'
-          modules: 'qtquick3d qtshadertools'
+          modules: 'qtshadertools'
           arch: 'linux_gcc_64'
           cache: true
 
@@ -55,14 +63,23 @@ jobs:
 
       - name: Install libkeyfinder (Linux)
         run: |
-          git clone --depth 1 https://github.com/mixxxdj/libkeyfinder.git
-          cmake -S libkeyfinder -B libkeyfinder/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
-          cmake --build libkeyfinder/build --parallel
-          sudo cmake --install libkeyfinder/build
+          if [ ! -f .ci/keyfinder/lib/pkgconfig/libkeyfinder.pc ] && [ ! -f .ci/keyfinder/lib/cmake/KeyFinder/KeyFinderConfig.cmake ]; then
+            git clone --depth 1 https://github.com/mixxxdj/libkeyfinder.git
+            cmake -S libkeyfinder -B libkeyfinder/build -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DBUILD_TESTING=OFF \
+              -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/.ci/keyfinder"
+            cmake --build libkeyfinder/build --parallel
+            cmake --install libkeyfinder/build
+          else
+            echo "Using cached libkeyfinder from .ci/keyfinder"
+          fi
 
       - name: Configure (Linux)
         run: |
-          cmake -S . -B build -G Ninja
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/.ci/keyfinder;${CMAKE_PREFIX_PATH:-}" \
+            -DRDBJ_ENABLE_QML_CACHEGEN=OFF
 
       - name: Build (Linux)
         run: |
@@ -169,7 +186,7 @@ jobs:
             os: linux-arm
             artifact: linux-arm64
             package: deploy/BrockDJ-linux-*.AppImage
-          - runner: macos-latest       # Apple Silicon runner
+          - runner: macos-15           # Apple Silicon arm64 runner
             os: macos-arm
             artifact: macos-silicon
             package: deploy/BrockDJ-macos-silicon.zip
@@ -194,12 +211,22 @@ jobs:
         with:
           key: ${{ matrix.os }}
 
+      - name: Cache Homebrew downloads
+        if: startsWith(matrix.os, 'macos')
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/Homebrew
+          key: homebrew-${{ matrix.os }}-${{ hashFiles('.github/workflows/cross-platform-build.yml') }}
+          restore-keys: |
+            homebrew-${{ matrix.os }}-
+
       - name: Install Qt (Linux ARM)
         if: matrix.os == 'linux-arm'
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.0'
-          modules: 'qtquick3d qtshadertools'
+          modules: 'qtshadertools'
           arch: 'linux_gcc_arm64'
           cache: true
 
@@ -213,14 +240,31 @@ jobs:
             C:\vcpkg\downloads
             C:\vcpkg\packages
             C:\vcpkg\buildtrees
-          key: vcpkg-windows-${{ hashFiles('**/CMakeLists.txt') }}
+            C:\vcpkg-binary-cache
+          key: vcpkg-windows-${{ hashFiles('**/CMakeLists.txt', '.github/workflows/cross-platform-build.yml') }}
+          restore-keys: |
+            vcpkg-windows-
+
+      - name: Cache libkeyfinder (Linux ARM)
+        if: matrix.os == 'linux-arm'
+        uses: actions/cache@v4
+        with:
+          path: .ci/keyfinder
+          key: libkeyfinder-linux-arm64-${{ hashFiles('.github/workflows/cross-platform-build.yml') }}
+          restore-keys: |
+            libkeyfinder-linux-arm64-
 
       - name: Install Qt (Windows)
         if: matrix.os == 'windows'
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.0'
-          modules: 'qtquick3d qtshadertools'
+          modules: 'qtshadertools'
+          cache: true
+
+      - name: Setup MSVC environment (Windows)
+        if: matrix.os == 'windows'
+        uses: ilammy/msvc-dev-cmd@v1
 
       - name: Install Dependencies (Linux ARM)
         if: matrix.os == 'linux-arm'
@@ -238,20 +282,31 @@ jobs:
       - name: Install libkeyfinder (Linux ARM)
         if: matrix.os == 'linux-arm'
         run: |
-          git clone --depth 1 https://github.com/mixxxdj/libkeyfinder.git
-          cmake -S libkeyfinder -B libkeyfinder/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
-          cmake --build libkeyfinder/build --parallel
-          sudo cmake --install libkeyfinder/build
+          if [ ! -f .ci/keyfinder/lib/pkgconfig/libkeyfinder.pc ] && [ ! -f .ci/keyfinder/lib/cmake/KeyFinder/KeyFinderConfig.cmake ]; then
+            git clone --depth 1 https://github.com/mixxxdj/libkeyfinder.git
+            cmake -S libkeyfinder -B libkeyfinder/build -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DBUILD_TESTING=OFF \
+              -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/.ci/keyfinder"
+            cmake --build libkeyfinder/build --parallel
+            cmake --install libkeyfinder/build
+          else
+            echo "Using cached libkeyfinder from .ci/keyfinder"
+          fi
 
       - name: Install Dependencies (macOS Apple Silicon)
         if: matrix.os == 'macos-arm'
         run: |
-          brew install cmake ninja pkg-config qt@6 taglib rubberband libkeyfinder ccache
+          brew install cmake ninja pkg-config qt@6 taglib rubberband libkeyfinder ccache \
+            qtsvg qtmultimedia qtquicktimeline qtscxml qtpdf qt3d qtimageformats \
+            brotli webp
 
       - name: Install Dependencies (macOS Intel)
         if: matrix.os == 'macos-intel'
         run: |
-          brew install cmake ninja pkg-config qt@6 taglib rubberband libkeyfinder ccache
+          brew install cmake ninja pkg-config qt@6 taglib rubberband libkeyfinder ccache \
+            qtsvg qtmultimedia qtquicktimeline qtscxml qtpdf qt3d qtimageformats \
+            brotli webp
 
       - name: Install Dependencies (Windows)
         if: matrix.os == 'windows'
@@ -263,26 +318,34 @@ jobs:
             Write-Host "Using existing vcpkg checkout at C:\vcpkg"
           }
           C:\vcpkg\bootstrap-vcpkg.bat
-          C:\vcpkg\vcpkg.exe install taglib rubberband libkeyfinder fftw3 --triplet x64-windows
+          New-Item -ItemType Directory -Force -Path C:\vcpkg-binary-cache | Out-Null
+          C:\vcpkg\vcpkg.exe install taglib rubberband libkeyfinder fftw3 `
+            --triplet x64-windows `
+            --binarysource=clear `
+            --binarysource=files,C:\vcpkg-binary-cache,readwrite
 
       - name: Configure (macOS Apple Silicon)
         if: matrix.os == 'macos-arm'
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6)" \
-            -DCMAKE_OSX_ARCHITECTURES=arm64
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DRDBJ_ENABLE_QML_CACHEGEN=OFF
 
       - name: Configure (macOS Intel)
         if: matrix.os == 'macos-intel'
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6)" \
-            -DCMAKE_OSX_ARCHITECTURES=x86_64
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DRDBJ_ENABLE_QML_CACHEGEN=OFF
 
       - name: Configure (Linux ARM)
         if: matrix.os == 'linux-arm'
         run: |
-          cmake -S . -B build -G Ninja
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/.ci/keyfinder;${CMAKE_PREFIX_PATH:-}" \
+            -DRDBJ_ENABLE_QML_CACHEGEN=OFF
 
       - name: Configure (Windows)
         if: matrix.os == 'windows'
@@ -306,9 +369,11 @@ jobs:
           }
           Write-Host "Using Qt6_DIR=$qt6Dir"
           "Qt6_DIR=$qt6Dir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          cmake -S . -B build `
+          cmake -S . -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake `
-            -DQt6_DIR="$qt6Dir"
+            -DQt6_DIR="$qt6Dir" `
+            -DRDBJ_ENABLE_QML_CACHEGEN=OFF
 
       - name: Build (macOS Apple Silicon)
         if: matrix.os == 'macos-arm'
@@ -325,7 +390,7 @@ jobs:
       - name: Build (Windows)
         if: matrix.os == 'windows'
         shell: pwsh
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --parallel
 
       - name: Deploy (macOS Apple Silicon)
         if: matrix.os == 'macos-arm'
@@ -361,7 +426,25 @@ jobs:
           file "$APP/Contents/MacOS/BrockDJ"
           lipo -archs "$APP/Contents/MacOS/BrockDJ"
           test "$(lipo -archs "$APP/Contents/MacOS/BrockDJ")" = "arm64"
-          "$(brew --prefix qt@6)/bin/macdeployqt" "$APP" -qmldir=src/qml
+          DEPLOY_LOG="$(mktemp)"
+          "$(brew --prefix qt@6)/bin/macdeployqt" "$APP" \
+            -qmldir=src/qml \
+            -no-virtualkeyboard \
+            -libpath="$(brew --prefix qtsvg)/lib" \
+            -libpath="$(brew --prefix qtmultimedia)/lib" \
+            -libpath="$(brew --prefix qtquicktimeline)/lib" \
+            -libpath="$(brew --prefix qtscxml)/lib" \
+            -libpath="$(brew --prefix qtpdf)/lib" \
+            -libpath="$(brew --prefix qt3d)/lib" \
+            -libpath="$(brew --prefix qtimageformats)/lib" \
+            -libpath="$(brew --prefix brotli)/lib" \
+            -libpath="$(brew --prefix webp)/lib" 2>&1 | tee "$DEPLOY_LOG"
+          if grep -q '^ERROR:' "$DEPLOY_LOG"; then
+            echo "macdeployqt reported errors; refusing to upload a broken bundle." >&2
+            exit 1
+          fi
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
           ditto -c -k --sequesterRsrc --keepParent "$APP" "deploy/BrockDJ-macos-silicon.zip"
 
       - name: Deploy (macOS Intel)
@@ -398,7 +481,25 @@ jobs:
           file "$APP/Contents/MacOS/BrockDJ"
           lipo -archs "$APP/Contents/MacOS/BrockDJ"
           test "$(lipo -archs "$APP/Contents/MacOS/BrockDJ")" = "x86_64"
-          "$(brew --prefix qt@6)/bin/macdeployqt" "$APP" -qmldir=src/qml
+          DEPLOY_LOG="$(mktemp)"
+          "$(brew --prefix qt@6)/bin/macdeployqt" "$APP" \
+            -qmldir=src/qml \
+            -no-virtualkeyboard \
+            -libpath="$(brew --prefix qtsvg)/lib" \
+            -libpath="$(brew --prefix qtmultimedia)/lib" \
+            -libpath="$(brew --prefix qtquicktimeline)/lib" \
+            -libpath="$(brew --prefix qtscxml)/lib" \
+            -libpath="$(brew --prefix qtpdf)/lib" \
+            -libpath="$(brew --prefix qt3d)/lib" \
+            -libpath="$(brew --prefix qtimageformats)/lib" \
+            -libpath="$(brew --prefix brotli)/lib" \
+            -libpath="$(brew --prefix webp)/lib" 2>&1 | tee "$DEPLOY_LOG"
+          if grep -q '^ERROR:' "$DEPLOY_LOG"; then
+            echo "macdeployqt reported errors; refusing to upload a broken bundle." >&2
+            exit 1
+          fi
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
           ditto -c -k --sequesterRsrc --keepParent "$APP" "deploy/BrockDJ-macos-intel.zip"
 
       - name: Deploy (Windows)
