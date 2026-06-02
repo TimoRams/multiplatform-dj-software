@@ -598,7 +598,7 @@ ApplicationWindow {
     readonly property real uiScale: _snapScaleToPhysicalPixels(rawUiScale)
     readonly property int scaledWaveformHeight: Math.round(window.baseWaveformHeight * window.uiScale)
     readonly property int scaledDeckMixerHeight: Math.round(window.baseDeckMixerHeight * window.uiScale)
-    readonly property int topBarHeight: 30
+    readonly property int topBarHeight: 28
     readonly property int fxBarHeight: 90
     readonly property int mixerBaseWidth: 280
 

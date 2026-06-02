@@ -13,18 +13,18 @@ Rectangle {
 
     // ── Sizing helpers ───────────────────────────────────────────────────────
     readonly property int btnH:    Math.max(1, root.height)
-    readonly property int padH:    Math.max(9, Math.round(btnH * 0.30))   // inner horizontal pad
+    readonly property int padH:    Math.max(7, Math.round(btnH * 0.25))   // inner horizontal pad
     readonly property int sepW:    1                                        // divider width
 
     // VU meter sizing
-    readonly property int vuW:     Math.max(72, Math.round(btnH * 2.7))
-    readonly property int vuSegH:  Math.max(4,  Math.round(btnH * 0.14))
+    readonly property int vuW:     Math.max(72, Math.round(btnH * 2.6))
+    readonly property int vuSegH:  Math.max(3,  Math.round(btnH * 0.12))
 
     // Beat dot sizing
     readonly property int dotSz:   Math.max(5,  Math.round(btnH * 0.18))
 
     // Master dial
-    readonly property int dialSz:  Math.max(16, Math.round(btnH * 0.58))
+    readonly property int dialSz:  Math.max(15, Math.round(btnH * 0.54))
 
     // Deck colors
     readonly property color clrA:  "#ff9900"
@@ -334,6 +334,68 @@ Rectangle {
             }
 
             Rectangle {
+                id: vt_deckMode
+                width: viewMenuPopup.width
+                height: 30
+                color: vt_deckModeMouse.containsMouse ? "#191919" : "#131313"
+                readonly property bool fourDeck: root.Window.window ? root.Window.window.fourDeckMode : false
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left
+                    anchors.leftMargin: 12
+                    text: "Deck Layout"
+                    color: "#c0c0c0"
+                    font.pixelSize: root.sp(9)
+                }
+
+                Row {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.right: parent.right
+                    anchors.rightMargin: 12
+                    spacing: 2
+
+                    Rectangle {
+                        width: 26
+                        height: 16
+                        radius: 2
+                        color: !vt_deckMode.fourDeck ? "#1e7bd4" : "#242424"
+                        Text {
+                            anchors.centerIn: parent
+                            text: "2"
+                            color: !vt_deckMode.fourDeck ? "#ffffff" : "#555"
+                            font.pixelSize: root.sp(8)
+                            font.bold: true
+                            font.family: "monospace"
+                        }
+                    }
+
+                    Rectangle {
+                        width: 26
+                        height: 16
+                        radius: 2
+                        color: vt_deckMode.fourDeck ? "#1e7bd4" : "#242424"
+                        Text {
+                            anchors.centerIn: parent
+                            text: "4"
+                            color: vt_deckMode.fourDeck ? "#ffffff" : "#555"
+                            font.pixelSize: root.sp(8)
+                            font.bold: true
+                            font.family: "monospace"
+                        }
+                    }
+                }
+
+                MouseArea {
+                    id: vt_deckModeMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: if (root.Window.window) root.Window.window.fourDeckMode = !root.Window.window.fourDeckMode
+                }
+            }
+
+            Rectangle {
                 id: vt_deckA
                 width: viewMenuPopup.width; height: 26
                 readonly property bool on: root.Window.window ? root.Window.window.showDeckA : true
@@ -536,11 +598,11 @@ Rectangle {
             Row {
                 id: brandRow
                 anchors.centerIn: parent
-                spacing: 8
+                spacing: 6
 
                 // Engine-DJ-style left color strip
                 Rectangle {
-                    width: 3
+                    width: 2
                     height: parent.height * 0.6
                     anchors.verticalCenter: parent.verticalCenter
                     color: root.accentBlue
@@ -552,15 +614,15 @@ Rectangle {
                     Text {
                         text: "BROCKDJ"
                         color: "#e8e8e8"
-                        font.pixelSize: root.sp(11)
+                        font.pixelSize: root.sp(10)
                         font.bold: true
-                        font.letterSpacing: 2.0
+                        font.letterSpacing: 1.4
                     }
                     Text {
                         text: "ramsbrock.net"
                         color: "#333333"
-                        font.pixelSize: root.sp(7)
-                        font.letterSpacing: 0.5
+                        font.pixelSize: root.sp(6)
+                        font.letterSpacing: 0.3
                     }
                 }
             }
@@ -569,82 +631,83 @@ Rectangle {
         // ── Separator ────────────────────────────────────────────────────────
         Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
 
-        // ── LINK block ───────────────────────────────────────────────────────
+        // ── App mode + main tabs ─────────────────────────────────────────────
         Rectangle {
-            Layout.preferredWidth: linkRow.implicitWidth + root.padH * 2
+            id: appModeBlock
+            Layout.preferredWidth: 42
             Layout.fillHeight: true
-            color: (linkManager && linkManager.enabled) ? "#0e1f15" : "transparent"
+            color: modeMouse.pressed ? "#1e1e1e" : (modeMouse.containsMouse ? "#181818" : "#121212")
+
+            readonly property bool allInOne: root.Window.window ? root.Window.window.allInOneMode : false
+
+            Text {
+                anchors.centerIn: parent
+                text: appModeBlock.allInOne ? "AIO" : "DESK"
+                color: appModeBlock.allInOne ? "#ffffff" : "#606060"
+                font.pixelSize: root.sp(8)
+                font.bold: true
+                font.family: "monospace"
+            }
 
             MouseArea {
-                anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                onClicked: if (linkManager) linkManager.enabled = !linkManager.enabled
-            }
-
-            Row {
-                id: linkRow
-                anchors.centerIn: parent
-                spacing: 10
-
-                // LINK label + status dot
-                Row {
-                    spacing: 5
-                    anchors.verticalCenter: parent.verticalCenter
-
-                    Rectangle {
-                        width: 6; height: 6; radius: 3
-                        anchors.verticalCenter: parent.verticalCenter
-                        color: (linkManager && linkManager.enabled) ? "#3de87a" : "#2a2a2a"
-                    }
-                    Text {
-                        text: "LINK"
-                        color: (linkManager && linkManager.enabled) ? "#3de87a" : "#484848"
-                        font.pixelSize: root.sp(9); font.bold: true; font.letterSpacing: 0.8
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                    Text {
-                        text: linkManager ? linkManager.numPeers.toString() : "0"
-                        color: (linkManager && linkManager.numPeers > 0) ? "#3de87a" : "#333"
-                        font.pixelSize: root.sp(9); font.family: "monospace"; font.bold: true
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                }
-
-                // BPM readout
-                Text {
-                    opacity: (linkManager && linkManager.enabled) ? 1.0 : 0.25
-                    text: linkManager ? linkManager.bpm.toFixed(1) : "120.0"
-                    color: "#cccccc"
-                    font.pixelSize: root.sp(12); font.family: "monospace"; font.bold: true
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-
-                // Beat dots
-                Row {
-                    spacing: 3
-                    anchors.verticalCenter: parent.verticalCenter
-                    opacity: (linkManager && linkManager.enabled) ? 1.0 : 0.15
-
-                    Repeater {
-                        model: 4
-                        Rectangle {
-                            required property int index
-                            width: root.dotSz; height: root.dotSz
-                            color: {
-                                if (!linkManager || !linkManager.enabled) return "#1e1e1e"
-                                var bi = ((Math.floor(linkManager.beat) % 4) + 4) % 4
-                                return index === bi ? "#3de87a" : "#1e1e1e"
-                            }
-                        }
-                    }
-                }
+                id: modeMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: if (root.Window.window) root.Window.window.setAllInOneMode(!root.Window.window.allInOneMode)
             }
         }
 
-        // ── Separator ────────────────────────────────────────────────────────
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
+        Rectangle {
+            id: libraryTabButton
+            readonly property bool available: root.Window.window ? root.Window.window.allInOneMode : false
+            readonly property bool active: root.Window.window ? root.Window.window.libraryPanelActive : false
+            Layout.preferredWidth: available ? 32 : 0
+            Layout.fillHeight: true
+            visible: available
+            color: libMouse.pressed ? "#1e1e1e" : (active ? "#182638" : (libMouse.containsMouse ? "#181818" : "#121212"))
 
-        // ── Spacer ───────────────────────────────────────────────────────────
-        Item { Layout.fillWidth: true }
+            Text {
+                anchors.centerIn: parent
+                text: "LIB"
+                color: libraryTabButton.active ? "#ffffff" : "#5f6f7e"
+                font.pixelSize: root.sp(8)
+                font.bold: true
+                font.family: "monospace"
+            }
+
+            MouseArea {
+                id: libMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: if (root.Window.window) root.Window.window.toggleAllInOneLibrary()
+            }
+        }
+
+        Rectangle {
+            Layout.preferredWidth: root.btnH
+            Layout.fillHeight: true
+            readonly property bool active: root.Window.window ? root.Window.window.settingsPanelActive : false
+            color: stgMouse.pressed ? "#1e1e1e" : (active ? "#182638" : (stgMouse.containsMouse ? "#181818" : "#121212"))
+
+            Text {
+                anchors.centerIn: parent
+                text: "⚙"; color: parent.active ? "#ffffff" : "#555555"
+                font.pixelSize: root.sp(13)
+            }
+            MouseArea {
+                id: stgMouse
+                anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    if (root.Window.window && root.Window.window.toggleAllInOneSettings && root.Window.window.toggleAllInOneSettings())
+                        return
+                    settingsWin.show()
+                    settingsWin.raise()
+                    settingsWin.requestActivate()
+                }
+            }
+        }
 
         // ── Separator ────────────────────────────────────────────────────────
         Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
@@ -652,7 +715,7 @@ Rectangle {
         // ── Anti-Clip ────────────────────────────────────────────────────────
         Rectangle {
             id: antiClipBlock
-            Layout.preferredWidth: Math.max(54, Math.round(root.btnH * 1.6))
+            Layout.preferredWidth: Math.max(44, Math.round(root.btnH * 1.45))
             Layout.fillHeight: true
             property bool on: false
             property real gr: deckA ? deckA.gainReduction : 1.0
@@ -664,19 +727,19 @@ Rectangle {
 
             Column {
                 anchors.centerIn: parent
-                spacing: 3
+                spacing: 2
 
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    text: "A-CLIP"
+                    text: "A-CLP"
                     color: !antiClipBlock.on ? "#3a3a3a"
                          : antiClipBlock.gr < 0.99 ? "#ffffff" : "#88cc88"
-                    font.pixelSize: root.sp(8); font.bold: true; font.letterSpacing: 0.5
+                    font.pixelSize: root.sp(7); font.bold: true; font.letterSpacing: 0.3
                 }
 
                 Rectangle {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    width: 20; height: 2
+                    width: 16; height: 2
                     color: !antiClipBlock.on ? "#2a2a2a"
                          : antiClipBlock.gr < 0.5  ? "#ff3333"
                          : antiClipBlock.gr < 0.7  ? "#ff7733"
@@ -699,18 +762,18 @@ Rectangle {
 
         // ── Master volume ─────────────────────────────────────────────────────
         Rectangle {
-            Layout.preferredWidth: root.dialSz + root.padH * 2 + 18
+            Layout.preferredWidth: root.dialSz + root.padH * 2 + 12
             Layout.fillHeight: true
             color: "#131313"
 
             Row {
                 anchors.centerIn: parent
-                spacing: 6
+                spacing: 4
 
                 Text {
                     text: "MST"
                     color: "#404040"
-                    font.pixelSize: root.sp(8); font.bold: true; font.letterSpacing: 0.5
+                    font.pixelSize: root.sp(7); font.bold: true; font.letterSpacing: 0.3
                     anchors.verticalCenter: parent.verticalCenter
                 }
 
@@ -797,7 +860,7 @@ Rectangle {
         // ── Headphone cue ────────────────────────────────────────────────────
         Rectangle {
             id: headphoneCueBlock
-            Layout.preferredWidth: root.dialSz + root.padH * 2 + 58
+            Layout.preferredWidth: root.dialSz + root.padH * 2 + 42
             Layout.fillHeight: true
             color: "#121212"
 
@@ -815,20 +878,20 @@ Rectangle {
 
             Row {
                 anchors.centerIn: parent
-                spacing: 7
+                spacing: 4
 
                 Rectangle {
-                    width: 42
-                    height: Math.max(20, root.btnH * 0.48)
+                    width: 32
+                    height: Math.max(16, root.btnH * 0.48)
                     radius: 3
                     color: headphoneCueBlock.masterCueOn ? "#0c1e2f" : "#171717"
                     border.color: headphoneCueBlock.masterCueOn ? "#1e7bd4" : "#2a2a2a"
 
                     Text {
                         anchors.centerIn: parent
-                        text: "M CUE"
+                        text: "MC"
                         color: headphoneCueBlock.masterCueOn ? "#7ab8f5" : "#555"
-                        font.pixelSize: root.sp(8)
+                        font.pixelSize: root.sp(7)
                         font.bold: true
                         font.letterSpacing: 0.5
                     }
@@ -845,14 +908,6 @@ Rectangle {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: if (deckA) deckA.setMasterCueEnabled(!deckA.masterCueEnabled)
                     }
-                }
-
-                Text {
-                    text: "CUE"
-                    color: "#3f3f3f"
-                    font.pixelSize: root.sp(8)
-                    font.bold: true
-                    anchors.verticalCenter: parent.verticalCenter
                 }
 
                 Dial {
@@ -939,7 +994,7 @@ Rectangle {
                 Text {
                     text: "MST"
                     color: headphoneCueBlock.masterCueOn ? "#7ab8f5" : "#3f3f3f"
-                    font.pixelSize: root.sp(8)
+                    font.pixelSize: root.sp(7)
                     font.bold: true
                     anchors.verticalCenter: parent.verticalCenter
                 }
@@ -952,7 +1007,7 @@ Rectangle {
         // ── System monitor — LAT + CPU + RAM ─────────────────────────────────
         Rectangle {
             id: monitorBlock
-            Layout.preferredWidth: 128   // fixed — prevents layout jitter as values change
+            Layout.preferredWidth: 106   // fixed — prevents layout jitter as values change
             Layout.fillHeight: true
             color: latMouse.containsMouse ? "#161616" : "#121212"
             Behavior on color { ColorAnimation { duration: 100 } }
@@ -972,12 +1027,12 @@ Rectangle {
 
             Column {
                 anchors.centerIn: parent
-                spacing: 3   // 2 rows × sp(7–9) + 3px gap fits in 34px
+                spacing: 2
 
                 // ── Row 1: Latency ────────────────────────────────────────────
                 Row {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    spacing: 4
+                    spacing: 3
 
                     Text {
                         text: "LAT"; color: "#383838"
@@ -985,10 +1040,10 @@ Rectangle {
                         anchors.verticalCenter: parent.verticalCenter
                     }
                     Text {
-                        width: 52
+                        width: 44
                         text: root.totalLatencyMs > 0 ? root.totalLatencyMs.toFixed(1) + " ms" : "—  ms"
                         color: monitorBlock.latClr
-                        font.pixelSize: root.sp(9); font.bold: true; font.family: "monospace"
+                        font.pixelSize: root.sp(8); font.bold: true; font.family: "monospace"
                         horizontalAlignment: Text.AlignRight
                         anchors.verticalCenter: parent.verticalCenter
                     }
@@ -1002,7 +1057,7 @@ Rectangle {
                 // ── Row 2: CPU | RAM side-by-side with mini bars ──────────────
                 Row {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    spacing: 3
+                    spacing: 2
 
                     Text {
                         text: "C"; color: "#2e2e2e"
@@ -1010,7 +1065,7 @@ Rectangle {
                         anchors.verticalCenter: parent.verticalCenter
                     }
                     Rectangle {
-                        width: 26; height: 3; radius: 1; color: "#1c1c1c"
+                        width: 18; height: 3; radius: 1; color: "#1c1c1c"
                         anchors.verticalCenter: parent.verticalCenter
                         Rectangle {
                             width: Math.max(0, Math.round(parent.width * monitorBlock.cpuVal))
@@ -1020,14 +1075,14 @@ Rectangle {
                         }
                     }
                     Text {
-                        width: 22; text: Math.round(monitorBlock.cpuVal * 100) + "%"
+                        width: 18; text: Math.round(monitorBlock.cpuVal * 100) + "%"
                         color: monitorBlock.metricColor(monitorBlock.cpuVal)
                         font.pixelSize: root.sp(7); font.family: "monospace"
                         horizontalAlignment: Text.AlignRight
                         anchors.verticalCenter: parent.verticalCenter
                     }
 
-                    Rectangle { width: 1; height: 8; color: "#252525"; anchors.verticalCenter: parent.verticalCenter }
+                    Rectangle { width: 1; height: 7; color: "#252525"; anchors.verticalCenter: parent.verticalCenter }
 
                     Text {
                         text: "R"; color: "#2e2e2e"
@@ -1035,7 +1090,7 @@ Rectangle {
                         anchors.verticalCenter: parent.verticalCenter
                     }
                     Rectangle {
-                        width: 26; height: 3; radius: 1; color: "#1c1c1c"
+                        width: 18; height: 3; radius: 1; color: "#1c1c1c"
                         anchors.verticalCenter: parent.verticalCenter
                         Rectangle {
                             width: Math.max(0, Math.round(parent.width * monitorBlock.ramVal))
@@ -1045,7 +1100,7 @@ Rectangle {
                         }
                     }
                     Text {
-                        width: 22; text: Math.round(monitorBlock.ramVal * 100) + "%"
+                        width: 18; text: Math.round(monitorBlock.ramVal * 100) + "%"
                         color: monitorBlock.metricColor(monitorBlock.ramVal)
                         font.pixelSize: root.sp(7); font.family: "monospace"
                         horizontalAlignment: Text.AlignRight
@@ -1068,232 +1123,72 @@ Rectangle {
             }
         }
 
-        // ── Separator ────────────────────────────────────────────────────────
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
-
-        // ── Clock ─────────────────────────────────────────────────────────────
-        Rectangle {
-            Layout.preferredWidth: 58   // fixed — HH:MM never changes character count
-            Layout.fillHeight: true
-            color: "#121212"
-
-            Text {
-                id: clockText
-                anchors.centerIn: parent
-                text: root.currentTime
-                color: "#888888"
-                font.pixelSize: root.sp(13); font.family: "monospace"; font.bold: true
-            }
-        }
+        Item { Layout.fillWidth: true }
 
         // ── Separator ────────────────────────────────────────────────────────
         Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
 
-        // ── REC button ────────────────────────────────────────────────────────
+        // ── Ableton Link ─────────────────────────────────────────────────────
         Rectangle {
-            Layout.preferredWidth: root.btnH
+            id: linkBlock
+            Layout.preferredWidth: 48
             Layout.fillHeight: true
-            color: recMouse.pressed ? "#2a0a0a" : "#131313"
+            color: linkMouse.pressed ? "#162016" : ((linkManager && linkManager.enabled) ? "#0d1a12" : "#121212")
+
+            readonly property bool on: linkManager && linkManager.enabled
+            readonly property int beatIndex: linkManager ? (((Math.floor(linkManager.beat) % 4) + 4) % 4) : 0
 
             Column {
                 anchors.centerIn: parent
-                spacing: 3
-                Rectangle {
+                spacing: 1
+
+                Row {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    width: 7; height: 7; radius: 4
-                    color: "#993333"
+                    spacing: 3
+                    Rectangle {
+                        width: 4; height: 4; radius: 2
+                        anchors.verticalCenter: parent.verticalCenter
+                        color: linkBlock.on ? "#3de87a" : "#2a2a2a"
+                    }
+                    Text {
+                        text: "LINK"
+                        color: linkBlock.on ? "#3de87a" : "#454545"
+                        font.pixelSize: root.sp(6)
+                        font.bold: true
+                        font.letterSpacing: 0.3
+                    }
                 }
+
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    text: "REC"; color: "#3a3a3a"
-                    font.pixelSize: root.sp(7); font.bold: true; font.letterSpacing: 0.4
-                }
-            }
-            MouseArea { id: recMouse; anchors.fill: parent; cursorShape: Qt.PointingHandCursor }
-        }
-
-        // ── Separator ────────────────────────────────────────────────────────
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
-
-        // ── Fullscreen ────────────────────────────────────────────────────────
-        Rectangle {
-            Layout.preferredWidth: root.btnH
-            Layout.fillHeight: true
-            color: fsMouse.pressed ? "#1e1e1e" : (fsMouse.containsMouse ? "#181818" : "#121212")
-
-            Text {
-                anchors.centerIn: parent
-                text: "⛶"; color: "#555555"
-                font.pixelSize: root.sp(14)
-            }
-            MouseArea {
-                id: fsMouse
-                anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                onClicked: {
-                    if (root.Window.window.visibility === Window.FullScreen)
-                        root.Window.window.showNormal()
-                    else
-                        root.Window.window.showFullScreen()
-                }
-            }
-        }
-
-        // ── Desktop / All-in-one mode ───────────────────────────────────────
-        Rectangle {
-            id: appModeBlock
-            Layout.preferredWidth: 76
-            Layout.fillHeight: true
-            color: "#121212"
-
-            readonly property bool allInOne: root.Window.window ? root.Window.window.allInOneMode : false
-
-            Row {
-                anchors.centerIn: parent
-                spacing: 2
-
-                Rectangle {
-                    width: 34
-                    height: Math.max(14, Math.round(root.btnH * 0.52))
-                    radius: 2
-                    color: !appModeBlock.allInOne ? "#1e7bd4" : "#1c1c1c"
-                    Text {
-                        anchors.centerIn: parent
-                        text: "DESK"
-                        color: !appModeBlock.allInOne ? "#ffffff" : "#555"
-                        font.pixelSize: root.sp(7)
-                        font.bold: true
-                        font.family: "monospace"
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: if (root.Window.window) root.Window.window.setAllInOneMode(false)
-                    }
+                    text: linkManager ? linkManager.bpm.toFixed(1) : "120.0"
+                    color: linkBlock.on ? "#e8f5e8" : "#555555"
+                    font.pixelSize: root.sp(10)
+                    font.family: "monospace"
+                    font.bold: true
                 }
 
-                Rectangle {
-                    width: 28
-                    height: Math.max(14, Math.round(root.btnH * 0.52))
-                    radius: 2
-                    color: appModeBlock.allInOne ? "#1e7bd4" : "#1c1c1c"
-                    Text {
-                        anchors.centerIn: parent
-                        text: "AIO"
-                        color: appModeBlock.allInOne ? "#ffffff" : "#555"
-                        font.pixelSize: root.sp(7)
-                        font.bold: true
-                        font.family: "monospace"
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: if (root.Window.window) root.Window.window.setAllInOneMode(true)
+                Row {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    spacing: 2
+                    Repeater {
+                        model: 4
+                        Rectangle {
+                            required property int index
+                            width: 7
+                            height: 2
+                            radius: 1
+                            color: linkBlock.on && index === linkBlock.beatIndex ? "#3de87a" : "#242424"
+                        }
                     }
                 }
-            }
-        }
-
-        // ── Library tab (all-in-one) ────────────────────────────────────────
-        Rectangle {
-            id: libraryTabButton
-            readonly property bool available: root.Window.window ? root.Window.window.allInOneMode : false
-            readonly property bool active: root.Window.window ? root.Window.window.libraryPanelActive : false
-            Layout.preferredWidth: available ? root.btnH + 16 : 0
-            Layout.fillHeight: true
-            visible: available
-            color: libMouse.pressed ? "#1e1e1e" : (active ? "#182638" : (libMouse.containsMouse ? "#181818" : "#121212"))
-
-            Text {
-                anchors.centerIn: parent
-                text: "LIB"
-                color: libraryTabButton.active ? "#ffffff" : "#5f6f7e"
-                font.pixelSize: root.sp(8)
-                font.bold: true
-                font.family: "monospace"
             }
 
             MouseArea {
-                id: libMouse
+                id: linkMouse
                 anchors.fill: parent
-                hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: if (root.Window.window) root.Window.window.toggleAllInOneLibrary()
-            }
-        }
-
-        // ── Settings ──────────────────────────────────────────────────────────
-        Rectangle {
-            Layout.preferredWidth: root.btnH
-            Layout.fillHeight: true
-            readonly property bool active: root.Window.window ? root.Window.window.settingsPanelActive : false
-            color: stgMouse.pressed ? "#1e1e1e" : (active ? "#182638" : (stgMouse.containsMouse ? "#181818" : "#121212"))
-
-            Text {
-                anchors.centerIn: parent
-                text: "⚙"; color: parent.active ? "#ffffff" : "#555555"
-                font.pixelSize: root.sp(14)
-            }
-            MouseArea {
-                id: stgMouse
-                anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                onClicked: {
-                    if (root.Window.window && root.Window.window.toggleAllInOneSettings && root.Window.window.toggleAllInOneSettings())
-                        return
-                    settingsWin.show()
-                    settingsWin.raise()
-                    settingsWin.requestActivate()
-                }
-            }
-        }
-
-        // ── Separator ────────────────────────────────────────────────────────
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
-
-        // ── Deck count selector ───────────────────────────────────────────────
-        Rectangle {
-            id: deckModeBlock
-            Layout.preferredWidth: deckModeRow.implicitWidth + root.padH * 2
-            Layout.fillHeight: true
-            color: "#121212"
-
-            readonly property bool fourDeck: root.Window.window ? root.Window.window.fourDeckMode : false
-
-            Row {
-                id: deckModeRow
-                anchors.centerIn: parent
-                spacing: 2
-
-                Rectangle {
-                    width: 24; height: Math.max(14, Math.round(root.btnH * 0.55))
-                    anchors.verticalCenter: parent.verticalCenter
-                    radius: 2
-                    color: !deckModeBlock.fourDeck ? "#1e7bd4" : "#1c1c1c"
-                    Text {
-                        anchors.centerIn: parent
-                        text: "2"; color: !deckModeBlock.fourDeck ? "#ffffff" : "#555"
-                        font.pixelSize: root.sp(9); font.bold: true; font.family: "monospace"
-                    }
-                    MouseArea {
-                        anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                        onClicked: if (root.Window.window) root.Window.window.fourDeckMode = false
-                    }
-                }
-
-                Rectangle {
-                    width: 24; height: Math.max(14, Math.round(root.btnH * 0.55))
-                    anchors.verticalCenter: parent.verticalCenter
-                    radius: 2
-                    color: deckModeBlock.fourDeck ? "#1e7bd4" : "#1c1c1c"
-                    Text {
-                        anchors.centerIn: parent
-                        text: "4"; color: deckModeBlock.fourDeck ? "#ffffff" : "#555"
-                        font.pixelSize: root.sp(9); font.bold: true; font.family: "monospace"
-                    }
-                    MouseArea {
-                        anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                        onClicked: if (root.Window.window) root.Window.window.fourDeckMode = true
-                    }
-                }
+                onClicked: if (linkManager) linkManager.enabled = !linkManager.enabled
             }
         }
 
@@ -1303,7 +1198,7 @@ Rectangle {
         // ── View toggles ──────────────────────────────────────────────────────
         Rectangle {
             id: viewMenuBtn
-            Layout.preferredWidth: root.btnH + 4
+            Layout.preferredWidth: root.btnH
             Layout.fillHeight: true
             color: viewBtnMouse.pressed ? "#1e1e1e" : (viewBtnMouse.containsMouse ? "#181818" : "#121212")
 
@@ -1312,7 +1207,7 @@ Rectangle {
                 spacing: 3
                 Repeater {
                     model: 3
-                    Rectangle { width: 11; height: 1; color: "#555555" }
+                    Rectangle { width: 10; height: 1; color: "#555555" }
                 }
             }
 
@@ -1331,190 +1226,161 @@ Rectangle {
                 }
             }
         }
+
+        // ── Separator ────────────────────────────────────────────────────────
+        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
+
+        // ── REC button ────────────────────────────────────────────────────────
+        Rectangle {
+            Layout.preferredWidth: root.btnH
+            Layout.fillHeight: true
+            color: recMouse.pressed ? "#2a0a0a" : "#131313"
+
+            Column {
+                anchors.centerIn: parent
+                spacing: 2
+                Rectangle {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: 6; height: 6; radius: 3
+                    color: "#993333"
+                }
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: "REC"; color: "#3a3a3a"
+                    font.pixelSize: root.sp(6); font.bold: true; font.letterSpacing: 0.3
+                }
+            }
+            MouseArea { id: recMouse; anchors.fill: parent; cursorShape: Qt.PointingHandCursor }
+        }
+
+        // ── Separator ────────────────────────────────────────────────────────
+        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
+
+        // ── Fullscreen ────────────────────────────────────────────────────────
+        Rectangle {
+            Layout.preferredWidth: root.btnH
+            Layout.fillHeight: true
+            color: fsMouse.pressed ? "#1e1e1e" : (fsMouse.containsMouse ? "#181818" : "#121212")
+
+            Text {
+                anchors.centerIn: parent
+                text: "⛶"; color: "#555555"
+                font.pixelSize: root.sp(13)
+            }
+            MouseArea {
+                id: fsMouse
+                anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    if (root.Window.window.visibility === Window.FullScreen)
+                        root.Window.window.showNormal()
+                    else
+                        root.Window.window.showFullScreen()
+                }
+            }
+        }
+
+        // ── Separator ────────────────────────────────────────────────────────
+        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
+
+        // ── Clock ─────────────────────────────────────────────────────────────
+        Rectangle {
+            Layout.preferredWidth: 52
+            Layout.fillHeight: true
+            color: "#121212"
+
+            Text {
+                id: clockText
+                anchors.centerIn: parent
+                text: root.currentTime
+                color: "#888888"
+                font.pixelSize: root.sp(12); font.family: "monospace"; font.bold: true
+            }
+        }
     }
 
     // ════════════════════════════════════════════════════════════════════════
     // CENTER OVERLAY — VU meter + beat indicators
     // (rendered on top of the RowLayout, horizontally centered)
     // ════════════════════════════════════════════════════════════════════════
-    Row {
+    Rectangle {
+        id: centerMeter
         anchors.centerIn: parent
-        spacing: 6
+        width: 136
+        height: 22
+        radius: 3
+        color: "#090909"
+        border.width: 1
+        border.color: clipNow ? "#a82020" : "#1d1d1d"
 
-        // ── Beat indicators (Deck A / B) ──────────────────────────────────
-        Column {
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: 4
+        property real levelL: Math.max(deckA ? deckA.vuLevelL : 0, deckB ? deckB.vuLevelL : 0)
+        property real levelR: Math.max(deckA ? deckA.vuLevelR : 0, deckB ? deckB.vuLevelR : 0)
+        property bool clipNow: (deckA && deckA.clipDetected) || (deckB && deckB.clipDetected)
+        readonly property int segs: 24
 
-            // Deck A
-            Row {
-                spacing: 5
-                Text {
-                    text: "A"; color: root.clrA
-                    font.pixelSize: root.sp(8); font.bold: true
-                    width: 8; horizontalAlignment: Text.AlignHCenter
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-                Row {
-                    spacing: 3
-                    Repeater {
-                        model: 4
-                        Rectangle {
-                            required property int index
-                            readonly property var inf: root.deckBeatInfo(deckA)
-                            width: root.dotSz; height: root.dotSz
-                            color: {
-                                if (!inf.valid) return index === 0 ? "#3a2800" : "#1a1a1a"
-                                if (index === inf.beatInBar) return "#ffb347"
-                                return index === 0 ? "#4a3400" : "#1a1a1a"
-                            }
-                        }
-                    }
-                }
-                Text {
-                    readonly property var inf: root.deckBeatInfo(deckA)
-                    text: inf.valid ? ("B" + inf.barNumber) : "B—"
-                    color: "#484848"; font.pixelSize: root.sp(7); font.family: "monospace"
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-            }
-
-            // Deck B
-            Row {
-                spacing: 5
-                Text {
-                    text: "B"; color: root.clrB
-                    font.pixelSize: root.sp(8); font.bold: true
-                    width: 8; horizontalAlignment: Text.AlignHCenter
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-                Row {
-                    spacing: 3
-                    Repeater {
-                        model: 4
-                        Rectangle {
-                            required property int index
-                            readonly property var inf: root.deckBeatInfo(deckB)
-                            width: root.dotSz; height: root.dotSz
-                            color: {
-                                if (!inf.valid) return index === 0 ? "#001a2e" : "#1a1a1a"
-                                if (index === inf.beatInBar) return "#44ccff"
-                                return index === 0 ? "#001e36" : "#1a1a1a"
-                            }
-                        }
-                    }
-                }
-                Text {
-                    readonly property var inf: root.deckBeatInfo(deckB)
-                    text: inf.valid ? ("B" + inf.barNumber) : "B—"
-                    color: "#484848"; font.pixelSize: root.sp(7); font.family: "monospace"
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-            }
+        function toDb(peak) {
+            if (peak <= 0.0001) return -36.0
+            return Math.max(-36.0, Math.min(12.0, 20.0 * Math.log10(peak)))
+        }
+        function toSeg(db) { return Math.floor((db + 36.0) * (segs / 48.0)) }
+        function segColor(i) {
+            if (i >= 22) return "#ff3b30"
+            if (i >= 19) return "#ff8c2a"
+            if (i >= 14) return "#d8a21a"
+            return "#35c46f"
         }
 
-        // ── VU meters ────────────────────────────────────────────────────────
         Column {
-            id: vuCol
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: 3
-
-            // ── Signal properties ──────────────────────────────────────────
-            property real levelL: Math.max(deckA ? deckA.vuLevelL : 0, deckB ? deckB.vuLevelL : 0)
-            property real levelR: Math.max(deckA ? deckA.vuLevelR : 0, deckB ? deckB.vuLevelR : 0)
-            property bool clipNow: (deckA && deckA.clipDetected) || (deckB && deckB.clipDetected)
-
-            readonly property int segs: 40
-            property real peakL: -36.0
-            property real peakR: -36.0
-
-            function toDb(peak) {
-                if (peak <= 0.0001) return -36.0
-                return Math.max(-36.0, Math.min(12.0, 20.0 * Math.log10(peak)))
-            }
-            function toSeg(db) { return Math.floor((db + 36.0) * (segs / 48.0)) }
-            function segColor(i) {
-                if (i >= 37) return "#ff2424"
-                if (i >= 33) return "#ff7722"
-                if (i >= 22) return "#ffaa00"
-                return "#2cb84e"
-            }
-
-            onLevelLChanged: {
-                var db = toDb(levelL)
-                if (db > peakL) { peakL = db; decL.restart() }
-            }
-            onLevelRChanged: {
-                var db = toDb(levelR)
-                if (db > peakR) { peakR = db; decR.restart() }
-            }
-
-            Timer { id: decL; interval: 280; onTriggered: animL.start() }
-            Timer { id: decR; interval: 280; onTriggered: animR.start() }
-            NumberAnimation { id: animL; target: vuCol; property: "peakL"; to: -36.0; duration: 900; easing.type: Easing.InQuad }
-            NumberAnimation { id: animR; target: vuCol; property: "peakR"; to: -36.0; duration: 900; easing.type: Easing.InQuad }
-
-            // L bar
-            Row {
-                spacing: 1
-                Repeater {
-                    model: vuCol.segs
-                    Rectangle {
-                        required property int index
-                        width: Math.floor(root.vuW / vuCol.segs)
-                        height: root.vuSegH
-                        property int litTo: vuCol.toSeg(vuCol.toDb(vuCol.levelL))
-                        property int pkSeg: vuCol.toSeg(vuCol.peakL)
-                        color: index === pkSeg     ? "#ffffff"
-                             : index <= litTo      ? vuCol.segColor(index)
-                             : "#161616"
-                    }
-                }
-            }
-
-            // R bar
-            Row {
-                spacing: 1
-                Repeater {
-                    model: vuCol.segs
-                    Rectangle {
-                        required property int index
-                        width: Math.floor(root.vuW / vuCol.segs)
-                        height: root.vuSegH
-                        property int litTo: vuCol.toSeg(vuCol.toDb(vuCol.levelR))
-                        property int pkSeg: vuCol.toSeg(vuCol.peakR)
-                        color: index === pkSeg     ? "#ffffff"
-                             : index <= litTo      ? vuCol.segColor(index)
-                             : "#161616"
-                    }
-                }
-            }
-        }
-
-        // ── CLIP indicator ───────────────────────────────────────────────────
-        Column {
-            anchors.verticalCenter: parent.verticalCenter
+            anchors.centerIn: parent
             spacing: 2
 
-            property real peakDb: Math.max(vuCol.toDb(vuCol.levelL), vuCol.toDb(vuCol.levelR))
-            property bool hardClip: vuCol.clipNow && peakDb >= 3.0
-            property bool softClip: vuCol.clipNow && peakDb < 3.0
-
-            Text {
-                text: "CLIP"
-                color: parent.hardClip ? "#ff3333"
-                     : parent.softClip ? "#ff6655"
-                     : "#252525"
-                font.pixelSize: root.sp(9); font.bold: true; font.family: "monospace"
-                horizontalAlignment: Text.AlignHCenter
-                width: 32
+            Row {
+                spacing: 2
+                Repeater {
+                    model: centerMeter.segs
+                    Rectangle {
+                        required property int index
+                        width: 4
+                        height: 3
+                        radius: 1
+                        readonly property int litTo: centerMeter.toSeg(centerMeter.toDb(centerMeter.levelL))
+                        color: index <= litTo ? centerMeter.segColor(index) : "#1b1b1b"
+                    }
+                }
             }
-            Text {
-                text: parent.peakDb.toFixed(1)
-                color: parent.hardClip ? "#ff5555" : "#303030"
-                font.pixelSize: root.sp(7); font.family: "monospace"
-                horizontalAlignment: Text.AlignHCenter
-                width: 32
+
+            Row {
+                spacing: 2
+                Repeater {
+                    model: centerMeter.segs
+                    Rectangle {
+                        required property int index
+                        width: 4
+                        height: 3
+                        radius: 1
+                        readonly property int litTo: centerMeter.toSeg(centerMeter.toDb(centerMeter.levelR))
+                        color: index <= litTo ? centerMeter.segColor(index) : "#1b1b1b"
+                    }
+                }
+            }
+
+            Row {
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: 3
+                Repeater {
+                    model: 8
+                    Rectangle {
+                        required property int index
+                        width: 7
+                        height: 2
+                        radius: 1
+                        readonly property bool deckABeat: index < 4
+                        readonly property int beatIndex: index % 4
+                        readonly property var inf: deckABeat ? root.deckBeatInfo(deckA) : root.deckBeatInfo(deckB)
+                        color: !inf.valid ? "#222222"
+                             : beatIndex === inf.beatInBar ? (deckABeat ? root.clrA : root.clrB)
+                             : (deckABeat ? "#382500" : "#002436")
+                    }
+                }
             }
         }
     }
