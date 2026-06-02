@@ -34,12 +34,9 @@
 #define UNICODE 1
 #endif
 
-// JUCE and Qt both include Windows networking headers in generated/module
-// translation units. Force the stable SDK include order for MSVC first.
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <windows.h>
-#include <wininet.h>
-#include <iphlpapi.h>
+// This file is force-included for every MSVC translation unit, including
+// Qt-generated rcc/moc sources. Keep it to preprocessor policy only; pulling
+// Windows SDK headers in here can break generated files by changing their
+// include order before the normal SDK typedefs are available.
 
 #endif

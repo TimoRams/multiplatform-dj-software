@@ -298,14 +298,14 @@ jobs:
         if: matrix.os == 'macos-arm'
         run: |
           brew install cmake ninja pkg-config qt@6 taglib rubberband libkeyfinder ccache \
-            qtsvg qtmultimedia qtimageformats \
+            qtsvg qtmultimedia qtimageformats qtvirtualkeyboard qtwebengine \
             brotli webp
 
       - name: Install Dependencies (macOS Intel)
         if: matrix.os == 'macos-intel'
         run: |
           brew install cmake ninja pkg-config qt@6 taglib rubberband libkeyfinder ccache \
-            qtsvg qtmultimedia qtimageformats \
+            qtsvg qtmultimedia qtimageformats qtvirtualkeyboard qtwebengine \
             brotli webp
 
       - name: Install Dependencies (Windows)
@@ -395,6 +395,7 @@ jobs:
       - name: Deploy (macOS Apple Silicon)
         if: matrix.os == 'macos-arm'
         run: |
+          set -o pipefail
           APP="deploy/BrockDJ-silicon.app"
           BROCK_EXE="$(find build -type f -name BrockDJ -print -quit)"
           if [ -z "$BROCK_EXE" ]; then
@@ -426,11 +427,60 @@ jobs:
           file "$APP/Contents/MacOS/BrockDJ"
           lipo -archs "$APP/Contents/MacOS/BrockDJ"
           test "$(lipo -archs "$APP/Contents/MacOS/BrockDJ")" = "arm64"
+          mkdir -p deploy/lib "$APP/Contents/lib"
+          stage_qt_framework() {
+            local name="$1"
+            local source=""
+            for formula in qt@6 qtwebengine qtsvg qtmultimedia qtimageformats qtvirtualkeyboard; do
+              local prefix
+              prefix="$(brew --prefix "$formula" 2>/dev/null || true)"
+              if [ -n "$prefix" ] && [ -d "$prefix/lib/$name.framework" ]; then
+                source="$prefix/lib/$name.framework"
+                break
+              fi
+            done
+            if [ -z "$source" ]; then
+              echo "Could not find $name.framework in Homebrew Qt prefixes." >&2
+              return 1
+            fi
+            rm -rf "deploy/lib/$name.framework"
+            ditto "$source" "deploy/lib/$name.framework"
+          }
+          stage_brew_dylib() {
+            local name="$1"
+            local source=""
+            for root in "$(brew --prefix)" /opt/homebrew/opt /usr/local/opt; do
+              if [ -d "$root" ]; then
+                source="$(find "$root" -path "*/lib/$name" -type f -print -quit 2>/dev/null || true)"
+                if [ -n "$source" ]; then
+                  break
+                fi
+              fi
+            done
+            if [ -z "$source" ]; then
+              echo "Could not find $name in Homebrew prefixes." >&2
+              return 1
+            fi
+            cp -f "$source" "$APP/Contents/lib/$name"
+          }
+          for framework in QtPdf QtSvg QtVirtualKeyboard QtVirtualKeyboardQml; do
+            stage_qt_framework "$framework"
+          done
+          for dylib in libbrotlicommon.1.dylib libwebp.7.dylib libsharpyuv.0.dylib; do
+            stage_brew_dylib "$dylib"
+          done
           DEPLOY_LOG="$(mktemp)"
           "$(brew --prefix qt@6)/bin/macdeployqt" "$APP" \
+            -verbose=2 \
+            -codesign=- \
+            -libpath="$GITHUB_WORKSPACE/deploy/lib" \
+            -libpath="$GITHUB_WORKSPACE/$APP/Contents/lib" \
+            -libpath="$(brew --prefix qt@6)/lib" \
             -libpath="$(brew --prefix qtsvg)/lib" \
             -libpath="$(brew --prefix qtmultimedia)/lib" \
             -libpath="$(brew --prefix qtimageformats)/lib" \
+            -libpath="$(brew --prefix qtvirtualkeyboard)/lib" \
+            -libpath="$(brew --prefix qtwebengine)/lib" \
             -libpath="$(brew --prefix brotli)/lib" \
             -libpath="$(brew --prefix webp)/lib" 2>&1 | tee "$DEPLOY_LOG"
           if grep -q '^ERROR:' "$DEPLOY_LOG"; then
@@ -444,6 +494,7 @@ jobs:
       - name: Deploy (macOS Intel)
         if: matrix.os == 'macos-intel'
         run: |
+          set -o pipefail
           APP="deploy/BrockDJ-intel.app"
           BROCK_EXE="$(find build -type f -name BrockDJ -print -quit)"
           if [ -z "$BROCK_EXE" ]; then
@@ -475,11 +526,60 @@ jobs:
           file "$APP/Contents/MacOS/BrockDJ"
           lipo -archs "$APP/Contents/MacOS/BrockDJ"
           test "$(lipo -archs "$APP/Contents/MacOS/BrockDJ")" = "x86_64"
+          mkdir -p deploy/lib "$APP/Contents/lib"
+          stage_qt_framework() {
+            local name="$1"
+            local source=""
+            for formula in qt@6 qtwebengine qtsvg qtmultimedia qtimageformats qtvirtualkeyboard; do
+              local prefix
+              prefix="$(brew --prefix "$formula" 2>/dev/null || true)"
+              if [ -n "$prefix" ] && [ -d "$prefix/lib/$name.framework" ]; then
+                source="$prefix/lib/$name.framework"
+                break
+              fi
+            done
+            if [ -z "$source" ]; then
+              echo "Could not find $name.framework in Homebrew Qt prefixes." >&2
+              return 1
+            fi
+            rm -rf "deploy/lib/$name.framework"
+            ditto "$source" "deploy/lib/$name.framework"
+          }
+          stage_brew_dylib() {
+            local name="$1"
+            local source=""
+            for root in "$(brew --prefix)" /opt/homebrew/opt /usr/local/opt; do
+              if [ -d "$root" ]; then
+                source="$(find "$root" -path "*/lib/$name" -type f -print -quit 2>/dev/null || true)"
+                if [ -n "$source" ]; then
+                  break
+                fi
+              fi
+            done
+            if [ -z "$source" ]; then
+              echo "Could not find $name in Homebrew prefixes." >&2
+              return 1
+            fi
+            cp -f "$source" "$APP/Contents/lib/$name"
+          }
+          for framework in QtPdf QtSvg QtVirtualKeyboard QtVirtualKeyboardQml; do
+            stage_qt_framework "$framework"
+          done
+          for dylib in libbrotlicommon.1.dylib libwebp.7.dylib libsharpyuv.0.dylib; do
+            stage_brew_dylib "$dylib"
+          done
           DEPLOY_LOG="$(mktemp)"
           "$(brew --prefix qt@6)/bin/macdeployqt" "$APP" \
+            -verbose=2 \
+            -codesign=- \
+            -libpath="$GITHUB_WORKSPACE/deploy/lib" \
+            -libpath="$GITHUB_WORKSPACE/$APP/Contents/lib" \
+            -libpath="$(brew --prefix qt@6)/lib" \
             -libpath="$(brew --prefix qtsvg)/lib" \
             -libpath="$(brew --prefix qtmultimedia)/lib" \
             -libpath="$(brew --prefix qtimageformats)/lib" \
+            -libpath="$(brew --prefix qtvirtualkeyboard)/lib" \
+            -libpath="$(brew --prefix qtwebengine)/lib" \
             -libpath="$(brew --prefix brotli)/lib" \
             -libpath="$(brew --prefix webp)/lib" 2>&1 | tee "$DEPLOY_LOG"
           if grep -q '^ERROR:' "$DEPLOY_LOG"; then
