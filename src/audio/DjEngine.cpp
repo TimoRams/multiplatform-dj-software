@@ -16,6 +16,9 @@
 #include <QRegularExpression>
 #include <QVariantMap>
 #include <QImage>
+#include <QProcess>
+#include <QStandardPaths>
+#include <QThread>
 #include <QTimer>
 #include <juce_core/juce_core.h>
 #include <juce_dsp/juce_dsp.h>
@@ -76,6 +79,61 @@ bool probeJackServer(QString& message)
     return true;
 }
 
+int readJackBufferSize(jack_client_t* client)
+{
+    return client != nullptr ? static_cast<int>(jack_get_buffer_size(client)) : 0;
+}
+
+bool waitForJackBufferSize(jack_client_t* client, int requestedFrames, int& effectiveFrames)
+{
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        effectiveFrames = readJackBufferSize(client);
+        if (effectiveFrames == requestedFrames)
+            return true;
+        QThread::msleep(25);
+    }
+
+    effectiveFrames = readJackBufferSize(client);
+    return effectiveFrames == requestedFrames;
+}
+
+bool forcePipeWireQuantum(int requestedFrames, QString& message)
+{
+    if (requestedFrames <= 0)
+        return false;
+
+    if (QStandardPaths::findExecutable(QStringLiteral("pw-metadata")).isEmpty()) {
+        message = QStringLiteral("PipeWire metadata tool not found; cannot force JACK quantum.");
+        return false;
+    }
+
+    QProcess process;
+    process.start(QStringLiteral("pw-metadata"),
+                  {QStringLiteral("-n"),
+                   QStringLiteral("settings"),
+                   QStringLiteral("0"),
+                   QStringLiteral("clock.force-quantum"),
+                   QString::number(requestedFrames)});
+    if (!process.waitForFinished(700)) {
+        process.kill();
+        process.waitForFinished(100);
+        message = QStringLiteral("Timed out while asking PipeWire for %1 frames/period.")
+            .arg(requestedFrames);
+        return false;
+    }
+
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        const QString stderrText = QString::fromUtf8(process.readAllStandardError()).trimmed();
+        message = stderrText.isEmpty()
+            ? QStringLiteral("PipeWire rejected %1 frames/period.").arg(requestedFrames)
+            : stderrText;
+        return false;
+    }
+
+    message = QStringLiteral("PipeWire quantum forced to %1 frames/period.").arg(requestedFrames);
+    return true;
+}
+
 bool requestJackBufferSize(int requestedFrames, int& effectiveFrames, int& effectiveSampleRate, QString& message)
 {
     effectiveFrames = requestedFrames;
@@ -113,16 +171,40 @@ bool requestJackBufferSize(int requestedFrames, int& effectiveFrames, int& effec
     }
 
     const int result = jack_set_buffer_size(client, requested);
-    jack_client_close(client);
 
     if (result != 0) {
+        jack_client_close(client);
         effectiveFrames = currentFrames > 0 ? currentFrames : requestedFrames;
         message = QStringLiteral("JACK rejected %1 frames/period. Change it in your JACK or PipeWire settings.")
             .arg(requestedForServer);
         return false;
     }
 
-    message = QStringLiteral("Requested %1 JACK frames/period.").arg(effectiveFrames);
+    waitForJackBufferSize(client, requestedForServer, effectiveFrames);
+    effectiveSampleRate = static_cast<int>(jack_get_sample_rate(client));
+
+    if (effectiveFrames != requestedForServer) {
+        QString pipeWireMsg;
+        if (forcePipeWireQuantum(requestedForServer, pipeWireMsg)) {
+            waitForJackBufferSize(client, requestedForServer, effectiveFrames);
+            if (effectiveFrames == requestedForServer) {
+                effectiveSampleRate = static_cast<int>(jack_get_sample_rate(client));
+                jack_client_close(client);
+                message = pipeWireMsg;
+                return true;
+            }
+        }
+    }
+
+    jack_client_close(client);
+
+    if (effectiveFrames != requestedForServer) {
+        message = QStringLiteral("Requested %1 JACK frames/period, but JACK reports %2.")
+            .arg(requestedForServer)
+            .arg(effectiveFrames);
+    } else {
+        message = QStringLiteral("JACK uses %1 frames/period.").arg(effectiveFrames);
+    }
     return true;
 }
 #endif
@@ -2530,12 +2612,6 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     bufferSize = std::clamp(bufferSize, 64, 4096);
 #endif
 
-    if (jackBackendRequested && bufferSize > 256) {
-        bufferSize = 256;
-        setAudioDeviceFallbackMessage(QStringLiteral(
-            "JACK low-latency mode capped the buffer at 256 frames/period."));
-    }
-
     if (jackBackendRequested) {
 #if JUCE_JACK && (JUCE_LINUX || JUCE_BSD)
         QString jackMsg;
@@ -2629,6 +2705,9 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
         int effectiveJackBuffer = bufferSize;
         int effectiveJackSampleRate = 0;
         if (!requestJackBufferSize(bufferSize, effectiveJackBuffer, effectiveJackSampleRate, jackBufferMsg)) {
+            qWarning() << "[DjEngine]" << jackBufferMsg;
+            setAudioDeviceFallbackMessage(jackBufferMsg);
+        } else if (effectiveJackBuffer != bufferSize) {
             qWarning() << "[DjEngine]" << jackBufferMsg;
             setAudioDeviceFallbackMessage(jackBufferMsg);
         }
@@ -2815,6 +2894,20 @@ bool DjEngine::applyAudioDeviceSettings(const QString& deviceType,
     setLastAudioDeviceError(QString());
 
     refreshHardwareLatency();
+
+    if (jackBackendRequested) {
+        if (auto* activeJackDevice = manager.getCurrentAudioDevice()) {
+            const int actualJackBuffer = activeJackDevice->getCurrentBufferSizeSamples();
+            if (actualJackBuffer > 0 && actualJackBuffer != bufferSize) {
+                setAudioDeviceFallbackMessage(QStringLiteral(
+                    "Requested %1 JACK frames/period, but the active JACK device opened at %2. "
+                    "Check PipeWire/JACK server quantum settings.")
+                    .arg(bufferSize)
+                    .arg(actualJackBuffer));
+                bufferSize = actualJackBuffer;
+            }
+        }
+    }
 
     // AudioDeviceManager is shared across all deck instances. Reconfiguring the
     // device can cause internal sources to re-prepare and some playback ratios

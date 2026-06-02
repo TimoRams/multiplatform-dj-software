@@ -100,7 +100,11 @@ Window {
     readonly property var jackBufferSizeOptions: [
         { label: "64 frames/period", value: 64 },
         { label: "128 frames/period", value: 128 },
-        { label: "256 frames/period", value: 256, minValue: 257, maxValue: 4096 }
+        { label: "256 frames/period", value: 256 },
+        { label: "512 frames/period", value: 512 },
+        { label: "1024 frames/period", value: 1024 },
+        { label: "2048 frames/period", value: 2048 },
+        { label: "4096 frames/period", value: 4096 }
     ]
 
     readonly property var bufferSizeOptions: isJackDeviceSelected
@@ -879,7 +883,7 @@ Window {
 
                         Text {
                             text: settingsWindow.isJackDeviceSelected
-                                ? "JACK controls buffer size and sample rate. These values are set by the JACK server (PipeWire or jackd) and cannot be changed here."
+                                ? "JACK sample rate follows the server. Frames/period is requested from JACK/PipeWire and the actual opened value is shown after Apply."
                                 : "Use the lowest stable buffer your device supports. On Windows, ASIO will appear here when available; on macOS and Linux this lists the active system audio backends and outputs."
                             color: settingsWindow.isJackDeviceSelected ? "#ffb86c" : "#7b7b7b"
                             font.pixelSize: 11
