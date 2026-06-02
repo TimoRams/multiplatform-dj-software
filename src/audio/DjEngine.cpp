@@ -1545,12 +1545,14 @@ public:
     void clearPadFx() {
         m_padFx.setEffectType(EffectType::None);
         m_padFx.setAmount(0.0f);
+        armClickFreeTransition();
     }
-    void setVinylBrakeActive(bool active) { m_vinylBrakeWanted.store(active,  std::memory_order_relaxed); }
-    void setEchoOutActive   (bool active) { m_echoOutWanted.store(active,     std::memory_order_relaxed); }
-    void setBackspinActive  (bool active) { m_backspinWanted.store(active,    std::memory_order_relaxed); }
-    void setRollOutActive   (bool active) { m_rollOutWanted.store(active,     std::memory_order_relaxed); }
+    void setVinylBrakeActive(bool active) { setStopEffectWanted(m_vinylBrakeWanted, active); }
+    void setEchoOutActive   (bool active) { setStopEffectWanted(m_echoOutWanted,    active); }
+    void setBackspinActive  (bool active) { setStopEffectWanted(m_backspinWanted,   active); }
+    void setRollOutActive   (bool active) { setStopEffectWanted(m_rollOutWanted,    active); }
     void setScratchTimbre(float amount)   { scratchTimbre.store(std::clamp(amount, 0.0f, 1.0f), std::memory_order_relaxed); }
+    void armClickFreeTransition() { m_pendingClickFreeBridge.store(true, std::memory_order_release); }
 
     // Returns the pre-fader PFL buffer captured during getNextAudioBlock.
     const juce::AudioBuffer<float>& getPflBuffer() const { return m_preFaderScratch; }
@@ -1573,6 +1575,10 @@ public:
 
         m_sampleRate = sampleRate;
         for (int i = 0; i < 8; ++i) m_scratchWarmLpState[i] = 0.0f;
+        m_lastOutputSample[0] = 0.0f;
+        m_lastOutputSample[1] = 0.0f;
+        m_lastOutputValid = false;
+        m_pendingClickFreeBridge.store(false, std::memory_order_release);
 
         // Initialise per-sample gain smoothers so the first block has no ramp glitch.
         const float sr = static_cast<float>(sampleRate);
@@ -1781,8 +1787,9 @@ public:
                 for (int i = 0; i < bN; ++i) {
                     m_vinylBrakeFactor = std::max(0.0f, m_vinylBrakeFactor - m_vinylBrakeRampDown);
                     const int rp = static_cast<int>(m_vinylBrakeReadPos) & kVinylBrakeMask;
-                    if (dataL) dataL[i] = m_vinylBrakeFactor > 0.0f ? m_vinylBrakeBufL[rp] : 0.0f;
-                    if (dataR) dataR[i] = m_vinylBrakeFactor > 0.0f ? m_vinylBrakeBufR[rp] : 0.0f;
+                    const float tailGain = stopTailGain(m_vinylBrakeFactor, 0.035f);
+                    if (dataL) dataL[i] = m_vinylBrakeBufL[rp] * tailGain;
+                    if (dataR) dataR[i] = m_vinylBrakeBufR[rp] * tailGain;
                     m_vinylBrakeReadPos += m_vinylBrakeFactor;
                     if (m_vinylBrakeReadPos >= static_cast<float>(kVinylBrakeBuf))
                         m_vinylBrakeReadPos -= static_cast<float>(kVinylBrakeBuf);
@@ -1799,8 +1806,15 @@ public:
                         const int   rp0  = static_cast<int>(m_backspinReadPos) & kVinylBrakeMask;
                         const int   rp1  = (rp0 + 1) & kVinylBrakeMask;
                         const float frac = m_backspinReadPos - std::floor(m_backspinReadPos);
-                        if (dataL) dataL[i] = m_vinylBrakeBufL[rp0] + frac * (m_vinylBrakeBufL[rp1] - m_vinylBrakeBufL[rp0]);
-                        if (dataR) dataR[i] = m_vinylBrakeBufR[rp0] + frac * (m_vinylBrakeBufR[rp1] - m_vinylBrakeBufR[rp0]);
+                        const float tailGain = stopTailGain(m_backspinSpeed, 0.10f);
+                        if (dataL) {
+                            const float sample = m_vinylBrakeBufL[rp0] + frac * (m_vinylBrakeBufL[rp1] - m_vinylBrakeBufL[rp0]);
+                            dataL[i] = sample * tailGain;
+                        }
+                        if (dataR) {
+                            const float sample = m_vinylBrakeBufR[rp0] + frac * (m_vinylBrakeBufR[rp1] - m_vinylBrakeBufR[rp0]);
+                            dataR[i] = sample * tailGain;
+                        }
                         m_backspinReadPos -= m_backspinSpeed;
                         if (m_backspinReadPos < 0.0f)
                             m_backspinReadPos += static_cast<float>(kVinylBrakeBuf);
@@ -1952,6 +1966,8 @@ public:
                         bufferToFill.startSample,
                         bufferToFill.numSamples);
 
+        applyClickFreeTransition(bufferToFill);
+
         // ── Post-fader per-deck VU (channels 0+1 after Beat FX) ─────────────
         {
             auto* buf = bufferToFill.buffer;
@@ -1967,6 +1983,57 @@ public:
 
     void setTrim(float val) { trimVal = val; }
     void setFader(float val) { faderVal = val; }
+
+    void setStopEffectWanted(std::atomic<bool>& flag, bool active)
+    {
+        const bool previous = flag.exchange(active, std::memory_order_relaxed);
+        if (previous != active)
+            armClickFreeTransition();
+    }
+
+    void applyClickFreeTransition(const juce::AudioSourceChannelInfo& bufferToFill)
+    {
+        auto* buf = bufferToFill.buffer;
+        const int start = bufferToFill.startSample;
+        const int n = bufferToFill.numSamples;
+        const int numCh = std::min(buf->getNumChannels(), 2);
+        if (numCh <= 0 || n <= 0)
+            return;
+
+        const bool bridge = m_pendingClickFreeBridge.exchange(false, std::memory_order_acq_rel)
+                            && m_lastOutputValid;
+        if (bridge) {
+            const int fadeLen = std::min(n, clickFreeBridgeSamples());
+            for (int ch = 0; ch < numCh; ++ch) {
+                float* w = buf->getWritePointer(ch, start);
+                const float from = m_lastOutputSample[ch];
+                for (int i = 0; i < fadeLen; ++i) {
+                    const float t = static_cast<float>(i + 1) / static_cast<float>(fadeLen);
+                    w[i] = from + (w[i] - from) * t;
+                }
+            }
+        }
+
+        for (int ch = 0; ch < numCh; ++ch)
+            m_lastOutputSample[ch] = buf->getSample(ch, start + n - 1);
+        if (numCh == 1)
+            m_lastOutputSample[1] = m_lastOutputSample[0];
+        m_lastOutputValid = true;
+    }
+
+    int clickFreeBridgeSamples() const
+    {
+        const int samples = m_sampleRate > 0.0
+            ? static_cast<int>(std::round(m_sampleRate * 0.0025))
+            : 128;
+        return std::clamp(samples, 64, 192);
+    }
+
+    static float stopTailGain(float value, float fadeStart)
+    {
+        const float t = std::clamp(value / fadeStart, 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
+    }
 
     void setEq(float l, float m, float h) {
         lowVol = l;
@@ -2102,6 +2169,9 @@ public:
     std::atomic<float> scratchTimbre { 0.0f };
     float m_scratchWarmLpState[8] {}; // 4 poles × 2 ch: [ch+0] p1, [ch+2] p2, [ch+4] p3, [ch+6] p4
     bool  m_scratchLpWasActive = false;
+    std::atomic<bool> m_pendingClickFreeBridge { false };
+    float m_lastOutputSample[2] { 0.0f, 0.0f };
+    bool  m_lastOutputValid = false;
 
 public:
     // Per-deck VU meter peak levels — written on audio thread, read from UI thread
@@ -3666,6 +3736,8 @@ void DjEngine::togglePlay()
 {
     if (m_playRequested) {
         m_playRequested = false;
+        if (mixerSource)
+            mixerSource->armClickFreeTransition();
         resetMainCueButtonState();
         m_preRollCountdownActive = false;
         // Always freeze: calling stop() on an already-stopped transport is safe.
@@ -3707,6 +3779,8 @@ void DjEngine::pause()
         return; // Already paused
 
     m_playRequested = false;
+    if (mixerSource)
+        mixerSource->armClickFreeTransition();
     resetMainCueButtonState();
     m_preRollCountdownActive = false;
     freezeTransportAt(getVisualPosition());
@@ -4604,6 +4678,8 @@ void DjEngine::cueButtonRelease()
 
     const double cuePos = std::clamp(m_mainCueSec >= -PRE_ROLL_SECONDS ? m_mainCueSec : 0.0, -PRE_ROLL_SECONDS, trackLen);
     m_preRollCountdownActive = false;
+    if (mixerSource)
+        mixerSource->armClickFreeTransition();
     if (transportSource.isPlaying())
         transportSource.stop();
     transportSource.setPosition(std::max(0.0, cuePos));
@@ -4630,6 +4706,9 @@ void DjEngine::applyScratchNeutralRouting()
 
 void DjEngine::restorePostScrubPlaybackState()
 {
+    if (mixerSource)
+        mixerSource->armClickFreeTransition();
+
     if (reverseWrapSource)
         // Restore m_isReverse, not m_scrubSavedReverseState: the user may have
         // pressed the REVERSE button while scratch was active; using the saved
@@ -4687,6 +4766,9 @@ void DjEngine::pauseForScrub()
 {
     if (m_isScrubbing)
         return;
+
+    if (mixerSource)
+        mixerSource->armClickFreeTransition();
 
     m_phaseNudge      = 0.0;
     m_jogNudgePercent = 0.0;
