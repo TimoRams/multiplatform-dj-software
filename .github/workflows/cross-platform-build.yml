@@ -429,7 +429,6 @@ jobs:
           DEPLOY_LOG="$(mktemp)"
           "$(brew --prefix qt@6)/bin/macdeployqt" "$APP" \
             -qmldir=src/qml \
-            -no-virtualkeyboard \
             -libpath="$(brew --prefix qtsvg)/lib" \
             -libpath="$(brew --prefix qtmultimedia)/lib" \
             -libpath="$(brew --prefix qtimageformats)/lib" \
@@ -480,7 +479,6 @@ jobs:
           DEPLOY_LOG="$(mktemp)"
           "$(brew --prefix qt@6)/bin/macdeployqt" "$APP" \
             -qmldir=src/qml \
-            -no-virtualkeyboard \
             -libpath="$(brew --prefix qtsvg)/lib" \
             -libpath="$(brew --prefix qtmultimedia)/lib" \
             -libpath="$(brew --prefix qtimageformats)/lib" \

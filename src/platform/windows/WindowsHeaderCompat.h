@@ -18,6 +18,10 @@
 #define WIN32_LEAN_AND_MEAN 1
 #endif
 
+#ifndef _WINSOCKAPI_
+#define _WINSOCKAPI_
+#endif
+
 #ifndef WINVER
 #define WINVER 0x0A00
 #endif
