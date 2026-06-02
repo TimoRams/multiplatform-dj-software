@@ -19,10 +19,12 @@ if(UNIX AND NOT APPLE)
 endif()
 
 find_program(CCACHE_PROGRAM ccache)
-if(CCACHE_PROGRAM)
+if(CCACHE_PROGRAM AND NOT MSVC)
     set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
     set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
     message(STATUS "Using ccache compiler launcher for faster rebuilds")
+elseif(CCACHE_PROGRAM AND MSVC)
+    message(STATUS "ccache found but disabled for MSVC builds")
 endif()
 
 # Qt setup
@@ -374,8 +376,10 @@ if(WIN32)
     )
 
     if(MSVC)
+        set(_windows_header_compat "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/WindowsHeaderCompat.h")
         target_compile_options(${PROJECT_NAME} PRIVATE
-            /FI${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/WindowsHeaderCompat.h
+            $<$<COMPILE_LANG_AND_ID:C,MSVC>:/FI${_windows_header_compat}>
+            $<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/FI${_windows_header_compat}>
         )
     endif()
 endif()

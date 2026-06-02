@@ -298,14 +298,14 @@ jobs:
         if: matrix.os == 'macos-arm'
         run: |
           brew install cmake ninja pkg-config qt@6 taglib rubberband libkeyfinder ccache \
-            qtsvg qtmultimedia qtquicktimeline qtscxml qtpdf qt3d qtimageformats \
+            qtsvg qtmultimedia qtimageformats \
             brotli webp
 
       - name: Install Dependencies (macOS Intel)
         if: matrix.os == 'macos-intel'
         run: |
           brew install cmake ninja pkg-config qt@6 taglib rubberband libkeyfinder ccache \
-            qtsvg qtmultimedia qtquicktimeline qtscxml qtpdf qt3d qtimageformats \
+            qtsvg qtmultimedia qtimageformats \
             brotli webp
 
       - name: Install Dependencies (Windows)
@@ -432,10 +432,6 @@ jobs:
             -no-virtualkeyboard \
             -libpath="$(brew --prefix qtsvg)/lib" \
             -libpath="$(brew --prefix qtmultimedia)/lib" \
-            -libpath="$(brew --prefix qtquicktimeline)/lib" \
-            -libpath="$(brew --prefix qtscxml)/lib" \
-            -libpath="$(brew --prefix qtpdf)/lib" \
-            -libpath="$(brew --prefix qt3d)/lib" \
             -libpath="$(brew --prefix qtimageformats)/lib" \
             -libpath="$(brew --prefix brotli)/lib" \
             -libpath="$(brew --prefix webp)/lib" 2>&1 | tee "$DEPLOY_LOG"
@@ -487,10 +483,6 @@ jobs:
             -no-virtualkeyboard \
             -libpath="$(brew --prefix qtsvg)/lib" \
             -libpath="$(brew --prefix qtmultimedia)/lib" \
-            -libpath="$(brew --prefix qtquicktimeline)/lib" \
-            -libpath="$(brew --prefix qtscxml)/lib" \
-            -libpath="$(brew --prefix qtpdf)/lib" \
-            -libpath="$(brew --prefix qt3d)/lib" \
             -libpath="$(brew --prefix qtimageformats)/lib" \
             -libpath="$(brew --prefix brotli)/lib" \
             -libpath="$(brew --prefix webp)/lib" 2>&1 | tee "$DEPLOY_LOG"
