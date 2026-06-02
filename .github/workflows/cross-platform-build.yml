@@ -10,6 +10,7 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  APP_VERSION: 1.0.0
 
 concurrency:
   group: cross-platform-build-${{ github.ref }}
@@ -69,16 +70,16 @@ jobs:
       - name: Deploy Linux (AppImage)
         run: |
           mkdir -p deploy/AppDir/usr/bin deploy/AppDir/usr/share/applications deploy/AppDir/usr/share/icons/hicolor/256x256/apps
-          cp build/bin/BrockDJ deploy/AppDir/usr/bin/RamsbrockDJ
-          cat <<EOF > deploy/AppDir/usr/share/applications/RamsbrockDJ.desktop
+          cp build/bin/BrockDJ deploy/AppDir/usr/bin/BrockDJ
+          cat <<EOF > deploy/AppDir/usr/share/applications/BrockDJ.desktop
           [Desktop Entry]
           Type=Application
-          Name=RamsbrockDJ
-          Exec=RamsbrockDJ
-          Icon=RamsbrockDJ
+          Name=BrockDJ
+          Exec=BrockDJ
+          Icon=BrockDJ
           Categories=AudioVideo;
           EOF
-          touch deploy/AppDir/usr/share/icons/hicolor/256x256/apps/RamsbrockDJ.png
+          touch deploy/AppDir/usr/share/icons/hicolor/256x256/apps/BrockDJ.png
           cd deploy
           ARCH=$(uname -m)
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-$ARCH.AppImage
@@ -90,7 +91,7 @@ jobs:
           export QML_SOURCES_PATHS=../src/qml
           export QML_IMPORT_PATHS=$($QMAKE -query QT_INSTALL_QML)
           export EXTRA_QT_PLUGINS=wayland,xcb
-          export VERSION=1.0.0
+          export VERSION="${APP_VERSION}"
 
           # Remove Qt SQL drivers that depend on unavailable system libraries
           # (libqsqlmimer needs libmimerapi.so from Mimer SQL, not in Ubuntu repos)
@@ -101,14 +102,14 @@ jobs:
           # Bundle Qt libs, plugins and QML modules (plugin-qt may wrap the binary with a shell script)
           ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run \
               --appdir AppDir \
-              -e AppDir/usr/bin/RamsbrockDJ \
+              -e AppDir/usr/bin/BrockDJ \
               --plugin qt
 
           # plugin-qt replaces the binary with a wrapper script; restore the real ELF
           # and remove any wrapper artifacts (.bin / .real) it left behind
-          cp -f ../build/bin/BrockDJ AppDir/usr/bin/RamsbrockDJ
-          chmod +x AppDir/usr/bin/RamsbrockDJ
-          rm -f AppDir/usr/bin/RamsbrockDJ.bin AppDir/usr/bin/RamsbrockDJ.real
+          cp -f ../build/bin/BrockDJ AppDir/usr/bin/BrockDJ
+          chmod +x AppDir/usr/bin/BrockDJ
+          rm -f AppDir/usr/bin/BrockDJ.bin AppDir/usr/bin/BrockDJ.real
 
           # Keep Vulkan/GPU libraries dynamic so the AppImage uses the host driver stack
           find AppDir -type f \( \
@@ -138,20 +139,20 @@ jobs:
           export QT_PLUGIN_PATH="$APPDIR/usr/plugins"
           export QML2_IMPORT_PATH="$APPDIR/usr/qml"
           export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
-          exec "$APPDIR/usr/bin/RamsbrockDJ" "$@"
+          exec "$APPDIR/usr/bin/BrockDJ" "$@"
           APPRUN
           chmod +x AppDir/AppRun
 
           # Pack with appimagetool directly — avoids a second linuxdeploy pass
           # that would re-wrap the binary and break the AppRun → binary chain.
           ./appimagetool-$ARCH.AppImage --appimage-extract-and-run \
-              AppDir "RamsbrockDJ-${VERSION}-${ARCH}.AppImage"
+              AppDir "BrockDJ-linux-${ARCH}.AppImage"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RamsbrockDJ-ubuntu-latest-AppImage
-          path: deploy/RamsbrockDJ*.AppImage
+          name: BrockDJ-linux-x86_64-AppImage
+          path: deploy/BrockDJ-linux-*.AppImage
 
   build-extra-platforms:
     if: ${{ github.event_name == 'workflow_dispatch' }}
@@ -165,16 +166,20 @@ jobs:
         include:
           - runner: ubuntu-24.04-arm
             os: linux-arm
-            artifact: Linux-ARM
+            artifact: linux-arm64
+            package: deploy/BrockDJ-linux-*.AppImage
           - runner: macos-latest       # Apple Silicon runner
             os: macos-arm
-            artifact: macOS-AppleSilicon
+            artifact: macos-silicon
+            package: deploy/BrockDJ-macos-silicon.zip
           - runner: macos-latest       # Same runner, Intel build via Rosetta + Intel Homebrew
             os: macos-intel
-            artifact: macOS-Intel
+            artifact: macos-intel
+            package: deploy/BrockDJ-macos-intel.zip
           - runner: windows-latest
             os: windows
-            artifact: Windows
+            artifact: windows-x64
+            package: deploy/BrockDJ-windows-x64.zip
 
     steps:
       - name: Checkout
@@ -278,12 +283,14 @@ jobs:
             Write-Host "Using existing vcpkg checkout at C:\vcpkg"
           }
           C:\vcpkg\bootstrap-vcpkg.bat
-          C:\vcpkg\vcpkg.exe install taglib rubberband libkeyfinder --triplet x64-windows
+          C:\vcpkg\vcpkg.exe install taglib rubberband libkeyfinder fftw3 --triplet x64-windows
 
       - name: Configure (macOS Apple Silicon)
         if: matrix.os == 'macos-arm'
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6)" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64
 
       - name: Configure (macOS Intel)
         if: matrix.os == 'macos-intel'
@@ -318,6 +325,7 @@ jobs:
             throw "Could not locate Qt6_DIR from install-qt-action output."
           }
           Write-Host "Using Qt6_DIR=$qt6Dir"
+          "Qt6_DIR=$qt6Dir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           cmake -S . -B build `
             -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake `
             -DQt6_DIR="$qt6Dir"
@@ -342,42 +350,108 @@ jobs:
       - name: Deploy (macOS Apple Silicon)
         if: matrix.os == 'macos-arm'
         run: |
-          mkdir -p deploy/RamsbrockDJ.app/Contents/MacOS
-          cp build/bin/BrockDJ deploy/RamsbrockDJ.app/Contents/MacOS/RamsbrockDJ
-          "$(brew --prefix qt@6)/bin/macdeployqt" deploy/RamsbrockDJ.app -qmldir=src/qml
+          APP="deploy/BrockDJ-silicon.app"
+          BROCK_EXE="$(find build -type f -name BrockDJ -print -quit)"
+          if [ -z "$BROCK_EXE" ]; then
+            echo "Could not find BrockDJ executable under build directory." >&2
+            exit 1
+          fi
+          echo "Using executable $BROCK_EXE"
+          mkdir -p "$APP/Contents/MacOS"
+          cp "$BROCK_EXE" "$APP/Contents/MacOS/BrockDJ"
+          chmod +x "$APP/Contents/MacOS/BrockDJ"
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key><string>BrockDJ</string>
+            <key>CFBundleIdentifier</key><string>net.ramsbrock.brockdj</string>
+            <key>CFBundleName</key><string>BrockDJ</string>
+            <key>CFBundleDisplayName</key><string>BrockDJ</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>${APP_VERSION}</string>
+            <key>CFBundleVersion</key><string>${APP_VERSION}</string>
+            <key>LSMinimumSystemVersion</key><string>12.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+          echo "APPL????" > "$APP/Contents/PkgInfo"
+          file "$APP/Contents/MacOS/BrockDJ"
+          lipo -archs "$APP/Contents/MacOS/BrockDJ"
+          test "$(lipo -archs "$APP/Contents/MacOS/BrockDJ")" = "arm64"
+          "$(brew --prefix qt@6)/bin/macdeployqt" "$APP" -qmldir=src/qml
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "deploy/BrockDJ-macos-silicon.zip"
 
       - name: Deploy (macOS Intel)
         if: matrix.os == 'macos-intel'
         run: |
-          mkdir -p deploy/RamsbrockDJ.app/Contents/MacOS
-          cp build/bin/BrockDJ deploy/RamsbrockDJ.app/Contents/MacOS/RamsbrockDJ
-          /usr/local/opt/qt@6/bin/macdeployqt deploy/RamsbrockDJ.app -qmldir=src/qml
+          APP="deploy/BrockDJ-intel.app"
+          BROCK_EXE="$(find build -type f -name BrockDJ -print -quit)"
+          if [ -z "$BROCK_EXE" ]; then
+            echo "Could not find BrockDJ executable under build directory." >&2
+            exit 1
+          fi
+          echo "Using executable $BROCK_EXE"
+          mkdir -p "$APP/Contents/MacOS"
+          cp "$BROCK_EXE" "$APP/Contents/MacOS/BrockDJ"
+          chmod +x "$APP/Contents/MacOS/BrockDJ"
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key><string>BrockDJ</string>
+            <key>CFBundleIdentifier</key><string>net.ramsbrock.brockdj</string>
+            <key>CFBundleName</key><string>BrockDJ</string>
+            <key>CFBundleDisplayName</key><string>BrockDJ</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>${APP_VERSION}</string>
+            <key>CFBundleVersion</key><string>${APP_VERSION}</string>
+            <key>LSMinimumSystemVersion</key><string>12.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+          echo "APPL????" > "$APP/Contents/PkgInfo"
+          file "$APP/Contents/MacOS/BrockDJ"
+          lipo -archs "$APP/Contents/MacOS/BrockDJ"
+          test "$(lipo -archs "$APP/Contents/MacOS/BrockDJ")" = "x86_64"
+          /usr/local/opt/qt@6/bin/macdeployqt "$APP" -qmldir=src/qml
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "deploy/BrockDJ-macos-intel.zip"
 
       - name: Deploy (Windows)
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path deploy\RamsbrockDJ
-          Copy-Item build\bin\BrockDJ.exe deploy\RamsbrockDJ\RamsbrockDJ.exe
+          $exe = Get-ChildItem -Path build -Filter BrockDJ.exe -Recurse | Select-Object -First 1
+          if (-not $exe) {
+            throw "Could not find BrockDJ.exe under build directory."
+          }
+          Write-Host "Using executable $($exe.FullName)"
+          New-Item -ItemType Directory -Force -Path deploy\BrockDJ-windows-x64
+          Copy-Item $exe.FullName deploy\BrockDJ-windows-x64\BrockDJ.exe
           $qtBin = Join-Path $env:Qt6_DIR 'bin'
           $windeployqt = Join-Path $qtBin 'windeployqt.exe'
-          & $windeployqt --qmldir src\qml deploy\RamsbrockDJ\RamsbrockDJ.exe
-          Copy-Item "C:\vcpkg\installed\x64-windows\bin\*.dll" -Destination deploy\RamsbrockDJ\
+          & $windeployqt --qmldir src\qml deploy\BrockDJ-windows-x64\BrockDJ.exe
+          Copy-Item "C:\vcpkg\installed\x64-windows\bin\*.dll" -Destination deploy\BrockDJ-windows-x64\
+          Compress-Archive -Path deploy\BrockDJ-windows-x64 -DestinationPath deploy\BrockDJ-windows-x64.zip -Force
 
       - name: Deploy (Linux ARM)
         if: matrix.os == 'linux-arm'
         run: |
           mkdir -p deploy/AppDir/usr/bin deploy/AppDir/usr/share/applications deploy/AppDir/usr/share/icons/hicolor/256x256/apps
-          cp build/bin/BrockDJ deploy/AppDir/usr/bin/RamsbrockDJ
-          cat <<EOF > deploy/AppDir/usr/share/applications/RamsbrockDJ.desktop
+          cp build/bin/BrockDJ deploy/AppDir/usr/bin/BrockDJ
+          cat <<EOF > deploy/AppDir/usr/share/applications/BrockDJ.desktop
           [Desktop Entry]
           Type=Application
-          Name=RamsbrockDJ
-          Exec=RamsbrockDJ
-          Icon=RamsbrockDJ
+          Name=BrockDJ
+          Exec=BrockDJ
+          Icon=BrockDJ
           Categories=AudioVideo;
           EOF
-          touch deploy/AppDir/usr/share/icons/hicolor/256x256/apps/RamsbrockDJ.png
+          touch deploy/AppDir/usr/share/icons/hicolor/256x256/apps/BrockDJ.png
           cd deploy
           ARCH=$(uname -m)
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-$ARCH.AppImage
@@ -389,7 +463,7 @@ jobs:
           export QML_SOURCES_PATHS=../src/qml
           export QML_IMPORT_PATHS=$($QMAKE -query QT_INSTALL_QML)
           export EXTRA_QT_PLUGINS=wayland,xcb
-          export VERSION=1.0.0
+          export VERSION="${APP_VERSION}"
 
           QT_PLUGINS=$($QMAKE -query QT_INSTALL_PLUGINS)
           rm -f "$QT_PLUGINS/sqldrivers/libqsqlmimer.so" \
@@ -397,12 +471,12 @@ jobs:
 
           ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run \
               --appdir AppDir \
-              -e AppDir/usr/bin/RamsbrockDJ \
+              -e AppDir/usr/bin/BrockDJ \
               --plugin qt
 
-          cp -f ../build/bin/BrockDJ AppDir/usr/bin/RamsbrockDJ
-          chmod +x AppDir/usr/bin/RamsbrockDJ
-          rm -f AppDir/usr/bin/RamsbrockDJ.bin AppDir/usr/bin/RamsbrockDJ.real
+          cp -f ../build/bin/BrockDJ AppDir/usr/bin/BrockDJ
+          chmod +x AppDir/usr/bin/BrockDJ
+          rm -f AppDir/usr/bin/BrockDJ.bin AppDir/usr/bin/BrockDJ.real
 
           find AppDir -type f \( \
             -name 'libEGL*.so*' -o -name 'libGL*.so*' -o -name 'libGLESv2*.so*' -o -name 'libglapi*.so*' \
@@ -428,18 +502,15 @@ jobs:
           export QT_PLUGIN_PATH="$APPDIR/usr/plugins"
           export QML2_IMPORT_PATH="$APPDIR/usr/qml"
           export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
-          exec "$APPDIR/usr/bin/RamsbrockDJ" "$@"
+          exec "$APPDIR/usr/bin/BrockDJ" "$@"
           APPRUN
           chmod +x AppDir/AppRun
 
           ./appimagetool-$ARCH.AppImage --appimage-extract-and-run \
-              AppDir "RamsbrockDJ-${VERSION}-${ARCH}.AppImage"
+              AppDir "BrockDJ-linux-${ARCH}.AppImage"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RamsbrockDJ-${{ matrix.artifact }}
-          path: |
-            deploy/RamsbrockDJ.app/
-            deploy/RamsbrockDJ/
-            deploy/RamsbrockDJ*.AppImage
+          name: BrockDJ-${{ matrix.artifact }}
+          path: ${{ matrix.package }}
