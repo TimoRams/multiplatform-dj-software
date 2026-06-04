@@ -249,6 +249,7 @@ qt_add_qml_module(${PROJECT_NAME}
     ${_rdbj_qml_module_options}
     URI DJSoftware
     VERSION 1.0
+    RESOURCE_PREFIX "/"
     QML_FILES
         src/qml/main.qml
         src/qml/UiTheme.qml
@@ -273,6 +274,13 @@ qt_add_qml_module(${PROJECT_NAME}
         src/qml/FxUnit.qml
         src/qml/FxBar.qml
         src/qml/CrossfaderBar.qml
+)
+
+qt_add_resources(${PROJECT_NAME} "BrockDJ_controller_mappings"
+    PREFIX "/controllers"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers"
+    FILES
+        src/controllers/mappings/midi/DDJ-FLX10.brockdj.xml
 )
 
 target_sources(${PROJECT_NAME} PRIVATE

@@ -21,6 +21,46 @@
 
 namespace {
 const juce::String kAllMidiInputsIdentifier("__all_midi_inputs__");
+const QString kBuiltInFlx10ControllerName = QStringLiteral("DDJ-FLX10");
+const QString kBuiltInFlx10MappingFile = QStringLiteral("DDJ-FLX10.brockdj.xml");
+const QString kBuiltInFlx10MappingLabel = QStringLiteral("Built-in: DDJ-FLX10");
+const QString kBuiltInFlx10MappingResource = QStringLiteral(":/controllers/mappings/midi/DDJ-FLX10.brockdj.xml");
+constexpr double kFlx10ScratchIntervalsPerRevolution = 1500.0;
+constexpr double kVinylRpm = 33.0 + 1.0 / 3.0;
+
+bool isBuiltInFlx10Mapping(const QString& mappingName)
+{
+    return mappingName == kBuiltInFlx10MappingLabel
+        || mappingName == kBuiltInFlx10MappingFile;
+}
+
+bool isHotCueParam(const QString& paramId)
+{
+    return paramId.startsWith(QStringLiteral("deckA_hotcue"))
+        || paramId.startsWith(QStringLiteral("deckB_hotcue"));
+}
+
+bool parseHotCueParam(const QString& paramId, QChar& deck, int& index, bool& clear)
+{
+    QString suffix;
+    if (paramId.startsWith(QStringLiteral("deckA_hotcue"))) {
+        deck = QLatin1Char('A');
+        suffix = paramId.mid(QStringLiteral("deckA_hotcue").size());
+    } else if (paramId.startsWith(QStringLiteral("deckB_hotcue"))) {
+        deck = QLatin1Char('B');
+        suffix = paramId.mid(QStringLiteral("deckB_hotcue").size());
+    } else {
+        return false;
+    }
+
+    clear = suffix.endsWith(QStringLiteral("_clear"));
+    if (clear)
+        suffix.chop(QStringLiteral("_clear").size());
+
+    bool ok = false;
+    index = suffix.toInt(&ok) - 1;
+    return ok && index >= 0 && index < 8;
+}
 
 QString toQString(const juce::String& value)
 {
@@ -48,6 +88,7 @@ MidiInteractionType defaultInteractionTypeForParam(const QString& paramId)
 
     if (paramId == QStringLiteral("deckA_play")
         || paramId == QStringLiteral("deckB_play")
+        || isHotCueParam(paramId)
         || paramId == QStringLiteral("deckA_headphone_cue")
         || paramId == QStringLiteral("deckB_headphone_cue")
         || paramId == QStringLiteral("master_cue")
@@ -234,7 +275,7 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, QObject* par
     m_selectedMappingFile = SettingsManager::getInstance().getSelectedMappingFile();
 
     if (!m_selectedMappingFile.isEmpty())
-        loadMixxxXmlMapping(m_selectedMappingFile);
+        loadBrockDjXmlMapping(m_selectedMappingFile);
 
     loadNativeMappingIfExists();
 }
@@ -728,11 +769,15 @@ QString MidiControllerManager::getMappingsDirectoryPath() const
 
 QStringList MidiControllerManager::getAvailableMappingFiles()
 {
+    QStringList mappings { kBuiltInFlx10MappingLabel };
+
     QDir dir(getMappingsDirectoryPath());
     if (!dir.exists())
-        return {};
+        return mappings;
 
-    return dir.entryList({"*.xml", "*.XML"}, QDir::Files, QDir::Name);
+    mappings.append(dir.entryList({"*.xml", "*.XML"}, QDir::Files, QDir::Name));
+    mappings.removeDuplicates();
+    return mappings;
 }
 
 QString MidiControllerManager::getSettingsDirectoryPath() const
@@ -766,6 +811,8 @@ QString MidiControllerManager::normalizeControllerKeyFromXmlBase(const QString& 
     QString key = baseName.trimmed();
     if (key.endsWith(".midi", Qt::CaseInsensitive))
         key.chop(5);
+    if (key.endsWith(".brockdj", Qt::CaseInsensitive))
+        key.chop(8);
     return key.toLower();
 }
 
@@ -779,11 +826,12 @@ QString MidiControllerManager::normalizeControllerKeyFromJsBase(const QString& b
 
 QStringList MidiControllerManager::getAvailableControllers()
 {
+    QMap<QString, QString> dedup;
+    dedup.insert(normalizeControllerKeyFromXmlBase(kBuiltInFlx10ControllerName), kBuiltInFlx10ControllerName);
+
     QDir dir(getMappingsDirectoryPath());
     if (!dir.exists())
-        return {};
-
-    QMap<QString, QString> dedup;
+        return dedup.values();
 
     const auto xmlFiles = dir.entryList({"*.xml", "*.XML"}, QDir::Files, QDir::Name);
     for (const auto& file : xmlFiles) {
@@ -832,12 +880,15 @@ QStringList MidiControllerManager::getAvailableXmlMappingFilesForController(cons
     if (normalizedTarget.isEmpty())
         return {};
 
+    QStringList filtered;
+    if (normalizedTarget == normalizeControllerKeyFromXmlBase(kBuiltInFlx10ControllerName))
+        filtered.push_back(kBuiltInFlx10MappingLabel);
+
     QDir dir(getMappingsDirectoryPath());
     if (!dir.exists())
-        return {};
+        return filtered;
 
     QStringList files = dir.entryList({"*.xml", "*.XML"}, QDir::Files, QDir::Name);
-    QStringList filtered;
 
     for (const auto& file : files) {
         const QString base = QFileInfo(file).completeBaseName();
@@ -868,7 +919,7 @@ void MidiControllerManager::selectMapping(const QString& mappingFileName)
     m_scratchAbsoluteLastByMsgId.clear();
 
     if (!mappingFileName.isEmpty()) {
-        if (!loadMixxxXmlMapping(mappingFileName))
+        if (!loadBrockDjXmlMapping(mappingFileName))
             qWarning() << "[MIDI] Failed to load mapping:" << mappingFileName;
     }
 
@@ -891,80 +942,37 @@ void MidiControllerManager::refreshMidiAndMappings()
     emit mappingListUpdated();
 }
 
-int MidiControllerManager::parseMixxxNumber(const QString& rawValue) const
+int MidiControllerManager::parseMappingNumber(const QString& rawValue) const
 {
     QString value = rawValue.trimmed();
     bool ok = false;
 
-    if (value.startsWith("0x", Qt::CaseInsensitive))
-        return value.mid(2).toInt(&ok, 16);
+    if (value.startsWith("0x", Qt::CaseInsensitive)) {
+        const int parsed = value.mid(2).toInt(&ok, 16);
+        return ok ? parsed : -1;
+    }
 
-    return value.toInt(&ok, 10);
+    const int parsed = value.toInt(&ok, 10);
+    return ok ? parsed : -1;
 }
 
-QString MidiControllerManager::mapMixxxControlToInternalParam(const QString& group, const QString& key) const
+int MidiControllerManager::midiMessageIdFromStatusAndControl(int statusNo, int controlNo) const
 {
-    const QString g = group.trimmed();
-    const QString k = key.trimmed().toLower();
+    if (statusNo < 0 || controlNo < 0)
+        return -1;
 
-    if (g == "[Channel1]") {
-        if (k == "play" || k == "play_indicator") return "deckA_play";
-        if (k == "cue_default" || k == "cue_cdj" || k == "cue_simple") return "deckA_cue";
-        if (k == "pfl" || k == "pfl_indicator" || k == "cue_preview") return "deckA_headphone_cue";
-        if (k == "volume") return "deckA_vol";
-        if (k == "pregain") return "deckA_gain";
-        if (k == "filterhi")  return "deckA_eqHigh";
-        if (k == "filtermid") return "deckA_eqMid";
-        if (k == "filterlow") return "deckA_eqLow";
-        if (k == "filter" || k == "superknob") return "deckA_filter";
-        if (k == "rate") return "deckA_tempo";
-        if (k == "jog") return "deckA_jog_move";
-        if (k == "scratch2_enable") return "deckA_jog_touch";
-    }
+    const int statusHi = statusNo & 0xF0;
+    const int midiCh = statusNo & 0x0F;
+    int subId = clampMidi7bit(controlNo);
 
-    if (g == "[Channel2]") {
-        if (k == "play" || k == "play_indicator") return "deckB_play";
-        if (k == "cue_default" || k == "cue_cdj" || k == "cue_simple") return "deckB_cue";
-        if (k == "pfl" || k == "pfl_indicator" || k == "cue_preview") return "deckB_headphone_cue";
-        if (k == "volume") return "deckB_vol";
-        if (k == "pregain") return "deckB_gain";
-        if (k == "filterhi")  return "deckB_eqHigh";
-        if (k == "filtermid") return "deckB_eqMid";
-        if (k == "filterlow") return "deckB_eqLow";
-        if (k == "filter" || k == "superknob") return "deckB_filter";
-        if (k == "rate") return "deckB_tempo";
-        if (k == "jog") return "deckB_jog_move";
-        if (k == "scratch2_enable") return "deckB_jog_touch";
-    }
+    if (statusHi == 0xB0)
+        subId = 1000 + clampMidi7bit(controlNo);
+    else if (statusHi == 0xE0)
+        subId = 1500;
+    else if (statusHi != 0x80 && statusHi != 0x90)
+        return -1;
 
-    // Mixxx EQ rack groups: [EqualizerRack1_[ChannelX]_Effect1]
-    if (g.contains("[Channel1]") && g.contains("EqualizerRack")) {
-        if (k == "parameter1") return "deckA_eqLow";
-        if (k == "parameter2") return "deckA_eqMid";
-        if (k == "parameter3") return "deckA_eqHigh";
-    }
-    if (g.contains("[Channel2]") && g.contains("EqualizerRack")) {
-        if (k == "parameter1") return "deckB_eqLow";
-        if (k == "parameter2") return "deckB_eqMid";
-        if (k == "parameter3") return "deckB_eqHigh";
-    }
-
-    // Mixxx QuickEffect (filter) rack
-    if (g.contains("[Channel1]") && g.contains("QuickEffectRack")) {
-        if (k == "super1") return "deckA_filter";
-    }
-    if (g.contains("[Channel2]") && g.contains("QuickEffectRack")) {
-        if (k == "super1") return "deckB_filter";
-    }
-
-    if (g == "[Master]" && k == "crossfader")
-        return "crossfader";
-    if (g == "[Master]" && (k == "headmix" || k == "head_mix" || k == "cue_mix"))
-        return "headphone_mix";
-    if (g == "[Master]" && (k == "headphones" || k == "master_cue" || k == "mastercue"))
-        return "master_cue";
-
-    return {};
+    return 10000 + midiCh * 2000 + subId;
 }
 
 QString MidiControllerManager::nativeMappingFilePath() const
@@ -1102,9 +1110,12 @@ void MidiControllerManager::loadNativeMappingIfExists()
     qDebug() << "[MIDI] Native mapping loaded:" << path << "entries:" << count;
 }
 
-bool MidiControllerManager::loadMixxxXmlMapping(const QString& mappingFileName)
+bool MidiControllerManager::loadBrockDjXmlMapping(const QString& mappingFileName)
 {
-    const QString filePath = QDir(getMappingsDirectoryPath()).filePath(mappingFileName);
+    const bool builtInMapping = isBuiltInFlx10Mapping(mappingFileName);
+    const QString filePath = builtInMapping
+        ? kBuiltInFlx10MappingResource
+        : QDir(getMappingsDirectoryPath()).filePath(mappingFileName);
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         qWarning() << "[MIDI] Could not open mapping file:" << filePath;
@@ -1115,58 +1126,44 @@ bool MidiControllerManager::loadMixxxXmlMapping(const QString& mappingFileName)
 
     std::map<int, MidiMappingEntry> nextMidiToParam;
     std::map<QString, int> nextParamToMidi;
-
-    bool inControl = false;
-    QString group;
-    QString key;
-    QString status;
-    QString midino;
+    std::map<QString, bool> nextParamInverted = m_paramInverted;
 
     while (!xml.atEnd()) {
         xml.readNext();
+        if (!xml.isStartElement() || xml.name().toString().compare(QStringLiteral("Entry"), Qt::CaseInsensitive) != 0)
+            continue;
 
-        if (xml.isStartElement()) {
-            const QString name = xml.name().toString();
-            if (name == "control") {
-                inControl = true;
-                group.clear();
-                key.clear();
-                status.clear();
-                midino.clear();
-            } else if (inControl && (name == "group" || name == "key" || name == "status" || name == "midino")) {
-                const QString text = xml.readElementText().trimmed();
-                if (name == "group") group = text;
-                if (name == "key") key = text;
-                if (name == "status") status = text;
-                if (name == "midino") midino = text;
-            }
-        } else if (xml.isEndElement() && xml.name().toString() == "control") {
-            inControl = false;
+        const auto attrs = xml.attributes();
+        const QString paramId = attrs.value("paramId").toString().trimmed();
+        if (paramId.isEmpty())
+            continue;
 
-            const QString param = mapMixxxControlToInternalParam(group, key);
-            if (param.isEmpty())
-                continue;
-
-            const int midiNo = parseMixxxNumber(midino);
-            const int statusNo = parseMixxxNumber(status);
-            if (midiNo < 0 || statusNo < 0)
-                continue;
-
-            const int statusHi = (statusNo & 0xF0);
-            const int midiCh   = statusNo & 0x0F; // 0-based channel from status byte
-            int subId = clampMidi7bit(midiNo);
-            if (statusHi == 0xB0)
-                subId = 1000 + clampMidi7bit(midiNo);
-            else if (statusHi == 0xE0)
-                subId = 1500;
-            else if (statusHi != 0x80 && statusHi != 0x90)
-                continue;
-
-            const int msgId = 10000 + midiCh * 2000 + subId;
-
-            nextMidiToParam[msgId] = makeMappingEntry(param);
-            nextParamToMidi[param] = msgId;
+        bool ok = false;
+        int msgId = attrs.value("msgId").toString().toInt(&ok);
+        if (!ok) {
+            const QString controlRaw = attrs.hasAttribute(QStringLiteral("control"))
+                ? attrs.value("control").toString()
+                : attrs.value("midino").toString();
+            const int statusNo = parseMappingNumber(attrs.value("status").toString());
+            const int controlNo = parseMappingNumber(controlRaw);
+            msgId = midiMessageIdFromStatusAndControl(statusNo, controlNo);
         }
+        if (msgId < 0)
+            continue;
+
+        const QString typeRaw = attrs.hasAttribute(QStringLiteral("type"))
+            ? attrs.value("type").toString()
+            : attrs.value("interactionType").toString();
+        const MidiInteractionType interactionType = interactionTypeFromString(typeRaw, paramId);
+        const QString invertedRaw = attrs.value("inverted").toString().trimmed().toLower();
+        const bool inverted = invertedRaw == QStringLiteral("1")
+            || invertedRaw == QStringLiteral("true")
+            || invertedRaw == QStringLiteral("yes");
+
+        nextMidiToParam[msgId] = makeMappingEntry(paramId, interactionType);
+        nextParamToMidi[paramId] = msgId;
+        if (inverted)
+            nextParamInverted[paramId] = true;
     }
 
     if (xml.hasError()) {
@@ -1176,6 +1173,7 @@ bool MidiControllerManager::loadMixxxXmlMapping(const QString& mappingFileName)
 
     m_midiToParam = std::move(nextMidiToParam);
     m_paramToMidi = std::move(nextParamToMidi);
+    m_paramInverted = std::move(nextParamInverted);
     m_momentaryHeldByMsgId.clear();
     m_scratchAbsoluteLastByMsgId.clear();
     for (const auto& [msgId, entry] : m_midiToParam) {
@@ -1183,7 +1181,8 @@ bool MidiControllerManager::loadMixxxXmlMapping(const QString& mappingFileName)
             m_momentaryHeldByMsgId[msgId] = false;
     }
 
-    qDebug() << "[MIDI] Mixxx mapping loaded:" << mappingFileName
+    qDebug() << "[MIDI] BrockDJ mapping loaded:" << mappingFileName
+             << (builtInMapping ? "(built-in)" : "(user)")
              << "entries:" << static_cast<int>(m_midiToParam.size());
     return true;
 }
@@ -1704,6 +1703,25 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                     b->cueButtonRelease();
             }
         }
+        else if (isHotCueParam(id)) {
+            if (value < 0.5f)
+                return;
+
+            QChar deck;
+            int hotCueIndex = -1;
+            bool clear = false;
+            if (!parseHotCueParam(id, deck, hotCueIndex, clear))
+                return;
+
+            DjEngine* const deckEngine = deck == QLatin1Char('A') ? a : b;
+            if (!deckEngine)
+                return;
+
+            if (clear)
+                deckEngine->clearHotCue(hotCueIndex);
+            else
+                deckEngine->triggerHotCue(hotCueIndex);
+        }
         else if (id == "deckA_headphone_cue") {
             if (value >= 0.5f && a) a->setCueEnabled(!a->cueEnabled());
         }
@@ -1790,10 +1808,11 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                     b->resumeAfterScrub();
             }
         }
-        // Jog move: value = signed tick delta; 128 ticks/rev at 33.33 RPM vinyl.
-        // With touch (scrubbing): scratch. Without touch (rim turn): speed nudge.
+        // Jog move: value = signed tick delta. The FLX10 reference mapping uses
+        // 1500 scratch intervals/rev at 33.33 RPM; without touch this remains a
+        // speed nudge from the rim/pitch-bend stream.
         else if (id == "deckA_jog_move") {
-            const double delta = static_cast<double>(value) * (60.0 / 33.333) / 128.0;
+            const double delta = static_cast<double>(value) * (60.0 / kVinylRpm) / kFlx10ScratchIntervalsPerRevolution;
             if (a) {
                 if (m_jogATouched || a->isScrubbing()) {
                     if (!a->isScrubbing())
@@ -1816,7 +1835,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
             }
         }
         else if (id == "deckB_jog_move") {
-            const double delta = static_cast<double>(value) * (60.0 / 33.333) / 128.0;
+            const double delta = static_cast<double>(value) * (60.0 / kVinylRpm) / kFlx10ScratchIntervalsPerRevolution;
             if (b) {
                 if (m_jogBTouched || b->isScrubbing()) {
                     if (!b->isScrubbing())

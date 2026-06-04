@@ -156,9 +156,9 @@ private:
     QString normalizeControllerKeyFromXmlBase(const QString& baseName) const;
     QString normalizeControllerKeyFromJsBase(const QString& baseName) const;
     QStringList getAvailableXmlMappingFilesForController(const QString& controllerName) const;
-    bool loadMixxxXmlMapping(const QString& mappingFileName);
+    bool loadBrockDjXmlMapping(const QString& mappingFileName);
     void loadNativeMappingIfExists();
     QString nativeMappingFilePath() const;
-    int parseMixxxNumber(const QString& rawValue) const;
-    QString mapMixxxControlToInternalParam(const QString& group, const QString& key) const;
+    int parseMappingNumber(const QString& rawValue) const;
+    int midiMessageIdFromStatusAndControl(int statusNo, int controlNo) const;
 };

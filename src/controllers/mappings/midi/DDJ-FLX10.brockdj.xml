@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<BrockDJControllerMapping version="1" id="ddj-flx10" name="DDJ-FLX10" vendor="Pioneer DJ">
+  <Source
+    reference="https://github.com/Veezuhz/Mixxx_FLX10_Controller_Mapping"
+    note="MIDI status/control values were referenced from the DDJ-FLX10 repository. This file is a BrockDJ-native mapping."/>
+
+  <Mappings>
+    <!-- Transport -->
+    <Entry paramId="deckA_play" status="0x90" control="0x0B" type="toggle"/>
+    <Entry paramId="deckB_play" status="0x91" control="0x0B" type="toggle"/>
+    <Entry paramId="deckA_cue" status="0x90" control="0x0C" type="momentary"/>
+    <Entry paramId="deckB_cue" status="0x91" control="0x0C" type="momentary"/>
+
+    <!-- Tempo faders, 14-bit MSB. Matching LSB messages at +0x20 are combined automatically. -->
+    <Entry paramId="deckA_tempo" status="0xB0" control="0x00" type="fader"/>
+    <Entry paramId="deckB_tempo" status="0xB1" control="0x00" type="fader"/>
+
+    <!-- Jog wheels. CC 0x21 is rim/pitch-bend; CC 0x22 is the platter scratch stream. Both are relative values centered at 64. -->
+    <Entry paramId="deckA_jog_move" status="0xB0" control="0x21" type="encoder-relative"/>
+    <Entry paramId="deckB_jog_move" status="0xB1" control="0x21" type="encoder-relative"/>
+    <Entry paramId="deckA_jog_move" status="0xB0" control="0x22" type="encoder-relative"/>
+    <Entry paramId="deckB_jog_move" status="0xB1" control="0x22" type="encoder-relative"/>
+    <Entry paramId="deckA_jog_touch" status="0x90" control="0x36" type="momentary"/>
+    <Entry paramId="deckB_jog_touch" status="0x91" control="0x36" type="momentary"/>
+
+    <!-- Performance pads: Hot Cue mode. -->
+    <Entry paramId="deckA_hotcue1" status="0x97" control="0x00" type="toggle"/>
+    <Entry paramId="deckA_hotcue2" status="0x97" control="0x01" type="toggle"/>
+    <Entry paramId="deckA_hotcue3" status="0x97" control="0x02" type="toggle"/>
+    <Entry paramId="deckA_hotcue4" status="0x97" control="0x03" type="toggle"/>
+    <Entry paramId="deckA_hotcue5" status="0x97" control="0x04" type="toggle"/>
+    <Entry paramId="deckA_hotcue6" status="0x97" control="0x05" type="toggle"/>
+    <Entry paramId="deckA_hotcue7" status="0x97" control="0x06" type="toggle"/>
+    <Entry paramId="deckA_hotcue8" status="0x97" control="0x07" type="toggle"/>
+    <Entry paramId="deckA_hotcue1_clear" status="0x98" control="0x00" type="toggle"/>
+    <Entry paramId="deckA_hotcue2_clear" status="0x98" control="0x01" type="toggle"/>
+    <Entry paramId="deckA_hotcue3_clear" status="0x98" control="0x02" type="toggle"/>
+    <Entry paramId="deckA_hotcue4_clear" status="0x98" control="0x03" type="toggle"/>
+    <Entry paramId="deckA_hotcue5_clear" status="0x98" control="0x04" type="toggle"/>
+    <Entry paramId="deckA_hotcue6_clear" status="0x98" control="0x05" type="toggle"/>
+    <Entry paramId="deckA_hotcue7_clear" status="0x98" control="0x06" type="toggle"/>
+    <Entry paramId="deckA_hotcue8_clear" status="0x98" control="0x07" type="toggle"/>
+
+    <Entry paramId="deckB_hotcue1" status="0x99" control="0x00" type="toggle"/>
+    <Entry paramId="deckB_hotcue2" status="0x99" control="0x01" type="toggle"/>
+    <Entry paramId="deckB_hotcue3" status="0x99" control="0x02" type="toggle"/>
+    <Entry paramId="deckB_hotcue4" status="0x99" control="0x03" type="toggle"/>
+    <Entry paramId="deckB_hotcue5" status="0x99" control="0x04" type="toggle"/>
+    <Entry paramId="deckB_hotcue6" status="0x99" control="0x05" type="toggle"/>
+    <Entry paramId="deckB_hotcue7" status="0x99" control="0x06" type="toggle"/>
+    <Entry paramId="deckB_hotcue8" status="0x99" control="0x07" type="toggle"/>
+    <Entry paramId="deckB_hotcue1_clear" status="0x9A" control="0x00" type="toggle"/>
+    <Entry paramId="deckB_hotcue2_clear" status="0x9A" control="0x01" type="toggle"/>
+    <Entry paramId="deckB_hotcue3_clear" status="0x9A" control="0x02" type="toggle"/>
+    <Entry paramId="deckB_hotcue4_clear" status="0x9A" control="0x03" type="toggle"/>
+    <Entry paramId="deckB_hotcue5_clear" status="0x9A" control="0x04" type="toggle"/>
+    <Entry paramId="deckB_hotcue6_clear" status="0x9A" control="0x05" type="toggle"/>
+    <Entry paramId="deckB_hotcue7_clear" status="0x9A" control="0x06" type="toggle"/>
+    <Entry paramId="deckB_hotcue8_clear" status="0x9A" control="0x07" type="toggle"/>
+
+    <!-- Mixer. 14-bit LSB messages at +0x20 are paired by MidiControllerManager where present. -->
+    <Entry paramId="deckA_gain" status="0xB0" control="0x04" type="encoder-absolute"/>
+    <Entry paramId="deckB_gain" status="0xB1" control="0x04" type="encoder-absolute"/>
+    <Entry paramId="deckA_eqHigh" status="0xB0" control="0x07" type="encoder-absolute"/>
+    <Entry paramId="deckB_eqHigh" status="0xB1" control="0x07" type="encoder-absolute"/>
+    <Entry paramId="deckA_eqMid" status="0xB0" control="0x0B" type="encoder-absolute"/>
+    <Entry paramId="deckB_eqMid" status="0xB1" control="0x0B" type="encoder-absolute"/>
+    <Entry paramId="deckA_eqLow" status="0xB0" control="0x0F" type="encoder-absolute"/>
+    <Entry paramId="deckB_eqLow" status="0xB1" control="0x0F" type="encoder-absolute"/>
+    <Entry paramId="deckA_filter" status="0xB6" control="0x17" type="encoder-absolute"/>
+    <Entry paramId="deckB_filter" status="0xB6" control="0x18" type="encoder-absolute"/>
+    <Entry paramId="deckA_vol" status="0xB0" control="0x13" type="fader"/>
+    <Entry paramId="deckB_vol" status="0xB1" control="0x13" type="fader"/>
+    <Entry paramId="crossfader" status="0xB6" control="0x1F" type="fader"/>
+
+    <!-- Monitoring and library. -->
+    <Entry paramId="headphone_mix" status="0xB6" control="0x0C" type="fader"/>
+    <Entry paramId="deckA_headphone_cue" status="0x90" control="0x54" type="toggle"/>
+    <Entry paramId="deckB_headphone_cue" status="0x91" control="0x54" type="toggle"/>
+    <Entry paramId="library_browse" status="0xB6" control="0x40" type="encoder-relative"/>
+    <Entry paramId="library_load_deck_a" status="0x96" control="0x46" type="toggle"/>
+    <Entry paramId="library_load_deck_b" status="0x96" control="0x47" type="toggle"/>
+  </Mappings>
+</BrockDJControllerMapping>

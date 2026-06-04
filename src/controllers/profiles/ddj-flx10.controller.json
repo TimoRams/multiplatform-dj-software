@@ -6,6 +6,6 @@
   "supportsMidiMapping": true,
   "supportsHidDisplay": true,
   "requiresLinuxUnlock": true,
-  "midiMappings": [],
+  "midiMappings": ["mappings/midi/DDJ-FLX10.brockdj.xml"],
   "hidModules": ["flx10/DDJFLX10Controller"]
 }
