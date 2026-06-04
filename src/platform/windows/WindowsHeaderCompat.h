@@ -34,14 +34,7 @@
 #define UNICODE 1
 #endif
 
-// This file is force-included for every MSVC translation unit, including
-// Qt-generated rcc/moc sources. Keep Windows SDK headers in a stable order:
-// windows.h provides the base SDK typedefs, and WIN32_LEAN_AND_MEAN prevents
-// it from pulling in legacy winsock.h before winsock2.h.
-#include <windows.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <wininet.h>
-#include <iphlpapi.h>
+// Keep this header macro-only. Pulling Windows SDK headers into every Qt/JUCE
+// generated translation unit can break winsock type declarations on MSVC.
 
 #endif

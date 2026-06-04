@@ -9,7 +9,6 @@ on:
   workflow_dispatch:
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   APP_VERSION: 1.0.0
   HOMEBREW_NO_AUTO_UPDATE: 1
 
@@ -24,17 +23,22 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
-      - name: Setup ccache (Linux)
-        uses: hendrikmuhs/ccache-action@v1.2
+      - name: Cache ccache (Linux)
+        uses: actions/cache@v5
         with:
-          key: ${{ runner.os }}
+          path: |
+            ~/.cache/ccache
+            ~/.ccache
+          key: ccache-linux-${{ github.run_id }}
+          restore-keys: |
+            ccache-linux-
 
       - name: Cache libkeyfinder (Linux)
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .ci/keyfinder
           key: libkeyfinder-linux-x86_64-${{ hashFiles('.github/workflows/cross-platform-build.yml') }}
@@ -167,7 +171,7 @@ jobs:
               AppDir "BrockDJ-linux-${ARCH}.AppImage"
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: BrockDJ-linux-x86_64-AppImage
           path: deploy/BrockDJ-linux-*.AppImage
@@ -201,19 +205,25 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
-      - name: Setup ccache
+      - name: Cache ccache
         if: matrix.os != 'windows'
-        uses: hendrikmuhs/ccache-action@v1.2
+        uses: actions/cache@v5
         with:
-          key: ${{ matrix.os }}
+          path: |
+            ~/.cache/ccache
+            ~/.ccache
+            ~/Library/Caches/ccache
+          key: ccache-${{ matrix.os }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ matrix.os }}-
 
       - name: Cache Homebrew downloads
         if: startsWith(matrix.os, 'macos')
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/Library/Caches/Homebrew
@@ -232,7 +242,7 @@ jobs:
 
       - name: Cache vcpkg (Windows)
         if: matrix.os == 'windows'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             C:\vcpkg\.git
@@ -247,7 +257,7 @@ jobs:
 
       - name: Cache libkeyfinder (Linux ARM)
         if: matrix.os == 'linux-arm'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .ci/keyfinder
           key: libkeyfinder-linux-arm64-${{ hashFiles('.github/workflows/cross-platform-build.yml') }}
@@ -427,7 +437,7 @@ jobs:
           file "$APP/Contents/MacOS/BrockDJ"
           lipo -archs "$APP/Contents/MacOS/BrockDJ"
           test "$(lipo -archs "$APP/Contents/MacOS/BrockDJ")" = "arm64"
-          mkdir -p deploy/lib "$APP/Contents/lib"
+          mkdir -p deploy/lib
           stage_qt_framework() {
             local name="$1"
             local source=""
@@ -446,50 +456,13 @@ jobs:
             rm -rf "deploy/lib/$name.framework"
             ditto "$source" "deploy/lib/$name.framework"
           }
-          stage_brew_dylib() {
-            local name="$1"
-            local stem="${name%%.*}"
-            local source=""
-            for root in "$(brew --prefix)" "$(brew --cellar 2>/dev/null || true)" /opt/homebrew/opt /usr/local/opt; do
-              if [ -d "$root" ]; then
-                source="$(find "$root" -path "*/lib/$name" -type f -print -quit 2>/dev/null || true)"
-                if [ -z "$source" ]; then
-                  source="$(find "$root" -path "*/lib/$stem*.dylib" -type f -print -quit 2>/dev/null || true)"
-                fi
-                if [ -n "$source" ]; then
-                  break
-                fi
-              fi
-            done
-            if [ -z "$source" ]; then
-              echo "Could not find $name in Homebrew prefixes." >&2
-              return 1
-            fi
-            cp -f "$source" "$APP/Contents/lib/$name"
-          }
-          stage_brew_formula_dylibs() {
-            local formula="$1"
-            local prefix
-            prefix="$(brew --prefix "$formula" 2>/dev/null || true)"
-            if [ -n "$prefix" ] && [ -d "$prefix/lib" ]; then
-              find "$prefix/lib" -maxdepth 1 -type f -name '*.dylib' -exec cp -f {} "$APP/Contents/lib/" \;
-            fi
-          }
           for framework in QtPdf QtSvg QtVirtualKeyboard QtVirtualKeyboardQml; do
             stage_qt_framework "$framework"
-          done
-          for formula in brotli webp; do
-            stage_brew_formula_dylibs "$formula"
-          done
-          for dylib in libbrotlicommon.1.dylib libwebp.7.dylib libsharpyuv.0.dylib; do
-            stage_brew_dylib "$dylib"
           done
           DEPLOY_LOG="$(mktemp)"
           "$(brew --prefix qt@6)/bin/macdeployqt" "$APP" \
             -verbose=2 \
-            -codesign=- \
             -libpath="$GITHUB_WORKSPACE/deploy/lib" \
-            -libpath="$GITHUB_WORKSPACE/$APP/Contents/lib" \
             -libpath="$(brew --prefix qt@6)/lib" \
             -libpath="$(brew --prefix qtsvg)/lib" \
             -libpath="$(brew --prefix qtmultimedia)/lib" \
@@ -541,7 +514,7 @@ jobs:
           file "$APP/Contents/MacOS/BrockDJ"
           lipo -archs "$APP/Contents/MacOS/BrockDJ"
           test "$(lipo -archs "$APP/Contents/MacOS/BrockDJ")" = "x86_64"
-          mkdir -p deploy/lib "$APP/Contents/lib"
+          mkdir -p deploy/lib
           stage_qt_framework() {
             local name="$1"
             local source=""
@@ -560,50 +533,13 @@ jobs:
             rm -rf "deploy/lib/$name.framework"
             ditto "$source" "deploy/lib/$name.framework"
           }
-          stage_brew_dylib() {
-            local name="$1"
-            local stem="${name%%.*}"
-            local source=""
-            for root in "$(brew --prefix)" "$(brew --cellar 2>/dev/null || true)" /opt/homebrew/opt /usr/local/opt; do
-              if [ -d "$root" ]; then
-                source="$(find "$root" -path "*/lib/$name" -type f -print -quit 2>/dev/null || true)"
-                if [ -z "$source" ]; then
-                  source="$(find "$root" -path "*/lib/$stem*.dylib" -type f -print -quit 2>/dev/null || true)"
-                fi
-                if [ -n "$source" ]; then
-                  break
-                fi
-              fi
-            done
-            if [ -z "$source" ]; then
-              echo "Could not find $name in Homebrew prefixes." >&2
-              return 1
-            fi
-            cp -f "$source" "$APP/Contents/lib/$name"
-          }
-          stage_brew_formula_dylibs() {
-            local formula="$1"
-            local prefix
-            prefix="$(brew --prefix "$formula" 2>/dev/null || true)"
-            if [ -n "$prefix" ] && [ -d "$prefix/lib" ]; then
-              find "$prefix/lib" -maxdepth 1 -type f -name '*.dylib' -exec cp -f {} "$APP/Contents/lib/" \;
-            fi
-          }
           for framework in QtPdf QtSvg QtVirtualKeyboard QtVirtualKeyboardQml; do
             stage_qt_framework "$framework"
-          done
-          for formula in brotli webp; do
-            stage_brew_formula_dylibs "$formula"
-          done
-          for dylib in libbrotlicommon.1.dylib libwebp.7.dylib libsharpyuv.0.dylib; do
-            stage_brew_dylib "$dylib"
           done
           DEPLOY_LOG="$(mktemp)"
           "$(brew --prefix qt@6)/bin/macdeployqt" "$APP" \
             -verbose=2 \
-            -codesign=- \
             -libpath="$GITHUB_WORKSPACE/deploy/lib" \
-            -libpath="$GITHUB_WORKSPACE/$APP/Contents/lib" \
             -libpath="$(brew --prefix qt@6)/lib" \
             -libpath="$(brew --prefix qtsvg)/lib" \
             -libpath="$(brew --prefix qtmultimedia)/lib" \
@@ -709,7 +645,7 @@ jobs:
               AppDir "BrockDJ-linux-${ARCH}.AppImage"
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: BrockDJ-${{ matrix.artifact }}
           path: ${{ matrix.package }}

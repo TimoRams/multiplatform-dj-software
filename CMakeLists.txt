@@ -29,6 +29,10 @@ endif()
 
 # Qt setup
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Sql)
+if(COMMAND qt_policy)
+    qt_policy(SET QTP0001 NEW)
+    qt_policy(SET QTP0004 NEW)
+endif()
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
@@ -366,6 +370,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 if(WIN32)
     target_compile_definitions(${PROJECT_NAME} PRIVATE
         NOMINMAX
+        WIN32_LEAN_AND_MEAN
         _WINSOCK_DEPRECATED_NO_WARNINGS=1
     )
 
@@ -375,13 +380,6 @@ if(WIN32)
         iphlpapi
     )
 
-    if(MSVC)
-        set(_windows_header_compat "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/WindowsHeaderCompat.h")
-        target_compile_options(${PROJECT_NAME} PRIVATE
-            $<$<COMPILE_LANG_AND_ID:C,MSVC>:/FI${_windows_header_compat}>
-            $<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/FI${_windows_header_compat}>
-        )
-    endif()
 endif()
 
 if(UNIX AND NOT APPLE)
