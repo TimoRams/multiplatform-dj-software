@@ -10,6 +10,7 @@
 #include <QPainter>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QStringList>
 #include <QThread>
 
 #include <algorithm>
@@ -102,6 +103,15 @@ QByteArray packet()
     return QByteArray(kHidPacketSize, char(0));
 }
 
+QByteArray bytesFromHexString(QString hex)
+{
+    hex.remove(QLatin1Char(' '));
+    hex.remove(QLatin1Char('\n'));
+    hex.remove(QLatin1Char('\r'));
+    hex.remove(QLatin1Char('\t'));
+    return QByteArray::fromHex(hex.toLatin1());
+}
+
 void put8(QByteArray& p, int index, int value)
 {
     p[index] = static_cast<char>(value & 0xFF);
@@ -176,11 +186,14 @@ bool DDJFLX10Controller::start()
 
     sendVendorUnlock();
 
-    m_midiPort = findMidiPort();
-    if (!m_midiPort.isEmpty())
+    const bool sequencerMidiReady = openSequencerMidiPort();
+    if (!sequencerMidiReady)
+        m_midiPort = findMidiPort();
+
+    if (sequencerMidiReady || !m_midiPort.isEmpty())
         sendSessionSysEx();
     else
-        qWarning() << "[DDJ-FLX10] amidi port not found; SysEx gate skipped";
+        qWarning() << "[DDJ-FLX10] MIDI port not found; SysEx gate skipped";
 
     if (!claimScreenInterface()) {
         stop();
@@ -195,7 +208,7 @@ bool DDJFLX10Controller::start()
     m_nextStateDeck = 1;
     m_stateTimer.start(10);
     m_waveformTimer.start(500);
-    if (!m_midiPort.isEmpty())
+    if (sequencerMidiReady || !m_midiPort.isEmpty())
         m_keepAliveTimer.start(500);
 
     setStatus(QStringLiteral("DDJ-FLX10: HID display active"));
@@ -243,6 +256,11 @@ void DDJFLX10Controller::stop()
     }
 
     m_outEndpoint = 0;
+#endif
+
+    m_midiPort.clear();
+#if defined(Q_OS_LINUX)
+    m_sequencerMidiOut.reset();
 #endif
 
     setConnected(false);
@@ -548,8 +566,84 @@ QString DDJFLX10Controller::findMidiPort() const
     return fallbackPort;
 }
 
-bool DDJFLX10Controller::sendAmidiSysEx(const QString& hex) const
+bool DDJFLX10Controller::openSequencerMidiPort()
 {
+#if defined(Q_OS_LINUX)
+    m_sequencerMidiOut.reset();
+
+    snd_seq_t* seq = nullptr;
+    const int openResult = snd_seq_open(&seq, "default", SND_SEQ_OPEN_DUPLEX, 0);
+    if (openResult < 0) {
+        qWarning() << "[DDJ-FLX10] ALSA sequencer unavailable for SysEx:"
+                   << QString::fromUtf8(snd_strerror(openResult));
+        return false;
+    }
+
+    snd_seq_client_info_t* clientInfo = nullptr;
+    snd_seq_port_info_t* portInfo = nullptr;
+    snd_seq_client_info_alloca(&clientInfo);
+    snd_seq_port_info_alloca(&portInfo);
+
+    QStringList candidates;
+    snd_seq_client_info_set_client(clientInfo, -1);
+    while (snd_seq_query_next_client(seq, clientInfo) >= 0) {
+        const int client = snd_seq_client_info_get_client(clientInfo);
+        const QString clientName = QString::fromUtf8(snd_seq_client_info_get_name(clientInfo)).trimmed();
+        const QString clientKey = clientName.toLower();
+        const bool clientLooksRelevant = clientKey.contains(QStringLiteral("flx10"))
+            || clientKey.contains(QStringLiteral("ddj"))
+            || clientKey.contains(QStringLiteral("pioneer"));
+
+        snd_seq_port_info_set_client(portInfo, client);
+        snd_seq_port_info_set_port(portInfo, -1);
+        while (snd_seq_query_next_port(seq, portInfo) >= 0) {
+            const int port = snd_seq_port_info_get_port(portInfo);
+            const QString portName = QString::fromUtf8(snd_seq_port_info_get_name(portInfo)).trimmed();
+            const QString portKey = portName.toLower();
+            const bool portLooksRelevant = portKey.contains(QStringLiteral("flx10"))
+                || portKey.contains(QStringLiteral("ddj"))
+                || portKey.contains(QStringLiteral("pioneer"));
+            const unsigned int caps = snd_seq_port_info_get_capability(portInfo);
+            const bool writable = (caps & SND_SEQ_PORT_CAP_WRITE) != 0
+                && (caps & SND_SEQ_PORT_CAP_SUBS_WRITE) != 0;
+            if (!writable || (!clientLooksRelevant && !portLooksRelevant))
+                continue;
+
+            candidates.push_back(QStringLiteral("alsa-out:%1:%2").arg(client).arg(port));
+        }
+    }
+    snd_seq_close(seq);
+
+    for (const QString& candidate : candidates) {
+        auto output = std::make_unique<AlsaMidiOutput>();
+        QString errorMessage;
+        if (output->open(candidate, &errorMessage)) {
+            m_midiPort = candidate;
+            m_sequencerMidiOut = std::move(output);
+            qInfo() << "[DDJ-FLX10] using ALSA sequencer MIDI port for HID SysEx:" << candidate;
+            return true;
+        }
+
+        qWarning() << "[DDJ-FLX10] ALSA sequencer SysEx candidate failed:"
+                   << candidate << errorMessage;
+    }
+#endif
+    return false;
+}
+
+bool DDJFLX10Controller::sendMidiHex(const QString& hex) const
+{
+#if defined(Q_OS_LINUX)
+    if (m_sequencerMidiOut && m_sequencerMidiOut->isOpen()) {
+        QString errorMessage;
+        const QByteArray bytes = bytesFromHexString(hex);
+        const bool ok = m_sequencerMidiOut->sendMessage(bytes, &errorMessage);
+        if (!ok)
+            qWarning() << "[DDJ-FLX10] ALSA sequencer MIDI send failed:" << errorMessage;
+        return ok;
+    }
+#endif
+
     if (m_midiPort.isEmpty())
         return false;
 
@@ -562,7 +656,11 @@ bool DDJFLX10Controller::sendAmidiSysEx(const QString& hex) const
 
 bool DDJFLX10Controller::sendJogRingIllumination(int deck, bool on)
 {
-    if (m_midiPort.isEmpty())
+    if (m_midiPort.isEmpty()
+#if defined(Q_OS_LINUX)
+        && !(m_sequencerMidiOut && m_sequencerMidiOut->isOpen())
+#endif
+        )
         return false;
 
     const int controller = 0x08 + std::clamp(deck, 1, 4);
@@ -570,7 +668,7 @@ bool DDJFLX10Controller::sendJogRingIllumination(int deck, bool on)
                             .arg(controller, 2, 16, QLatin1Char('0'))
                             .arg(on ? kJogRingOnValue : 0, 2, 16, QLatin1Char('0'))
                             .toUpper();
-    const bool ok = sendAmidiSysEx(hex);
+    const bool ok = sendMidiHex(hex);
     if (ok)
         m_jogRingLit[deck] = on;
     return ok;
@@ -598,17 +696,17 @@ void DDJFLX10Controller::updateJogRingWarning(int deck, double elapsedSeconds, d
 
 void DDJFLX10Controller::sendSessionSysEx()
 {
-    sendAmidiSysEx(QString::fromLatin1(kSessionStart));
-    sendAmidiSysEx(QString::fromLatin1(kEnterHid));
+    sendMidiHex(QString::fromLatin1(kSessionStart));
+    sendMidiHex(QString::fromLatin1(kEnterHid));
     for (int deck = 1; deck <= 4; ++deck)
-        sendAmidiSysEx(QString::fromLatin1(kDeckInit[deck]));
-    sendAmidiSysEx(QString::fromLatin1(kGlobalB));
-    sendAmidiSysEx(QString::fromLatin1(kGlobalC));
+        sendMidiHex(QString::fromLatin1(kDeckInit[deck]));
+    sendMidiHex(QString::fromLatin1(kGlobalB));
+    sendMidiHex(QString::fromLatin1(kGlobalC));
 }
 
 void DDJFLX10Controller::sendKeepAlive()
 {
-    sendAmidiSysEx(QString::fromLatin1(kKeepAlive));
+    sendMidiHex(QString::fromLatin1(kKeepAlive));
 }
 
 void DDJFLX10Controller::sendStateTick()

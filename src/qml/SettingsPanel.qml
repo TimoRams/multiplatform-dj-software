@@ -946,13 +946,16 @@ Item {
                     spacing: 20
 
                     property var midiDeviceList: []
+                    property var midiOutputDeviceList: []
                     property var mappingList: []
                     property bool hasMidiDevices: false
+                    property bool hasMidiOutputs: false
                     property bool hasMappings: false
                     property int availableMappingCount: 0
                     readonly property string noMappingLabel: "No Mapping (manual)"
 
                     ListModel { id: midiDeviceModel }
+                    ListModel { id: midiOutputDeviceModel }
                     ListModel { id: mappingModel }
 
                     function updateComboSelection(comboBox, indexValue) {
@@ -982,22 +985,28 @@ Item {
                     function syncFromBackend() {
                         if (midiManager) {
                             midiDeviceList = midiManager.getAvailableMidiDevices()
+                            midiOutputDeviceList = midiManager.getAvailableMidiOutputDevices()
                             mappingList = midiManager.getAvailableMappingFiles()
 
                             hasMidiDevices = midiDeviceList.length > 0
+                            hasMidiOutputs = midiOutputDeviceList.length > 0
                             hasMappings = mappingList.length > 0
                             availableMappingCount = mappingList.length
 
                             if (!hasMidiDevices)
                                 midiDeviceList = ["No MIDI device found"]
+                            if (!hasMidiOutputs)
+                                midiOutputDeviceList = ["No MIDI output found"]
 
                             // Always allow manual mapping without a mapping file.
                             mappingList = [noMappingLabel].concat(mappingList)
 
                             fillModel(midiDeviceModel, midiDeviceList)
+                            fillModel(midiOutputDeviceModel, midiOutputDeviceList)
                             fillModel(mappingModel, mappingList)
 
                             updateComboSelection(midiDeviceCombo, midiManager.getSelectedMidiDeviceIndex())
+                            updateComboSelection(midiOutputDeviceCombo, midiManager.getSelectedMidiOutputIndex())
                             const selectedMapping = midiManager.getSelectedMapping()
                             mappingCombo.currentIndex = selectedMapping === ""
                                 ? 0
@@ -1036,6 +1045,64 @@ Item {
                         color: "#f0f0f0"
                         font.pixelSize: 18
                         font.bold: true
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 1
+                        color: "#2a2a2a"
+                    }
+
+                    RowLayout {
+                        spacing: 16
+                        Text {
+                            text: "MIDI Output"
+                            color: "#aaa"
+                            font.pixelSize: 12
+                            Layout.preferredWidth: 130
+                        }
+
+                        ComboBox {
+                            id: midiOutputDeviceCombo
+                            Layout.fillWidth: true
+                            height: 32
+                            model: midiOutputDeviceModel
+                            textRole: "text"
+
+                            contentItem: Text {
+                                text: midiOutputDeviceCombo.currentIndex >= 0 ? midiOutputDeviceCombo.displayText : "No MIDI output"
+                                color: "#ccc"
+                                font.pixelSize: 12
+                                verticalAlignment: Text.AlignVCenter
+                                leftPadding: 12
+                                elide: Text.ElideRight
+                            }
+
+                            delegate: ItemDelegate {
+                                width: midiOutputDeviceCombo.width
+                                contentItem: Text {
+                                    text: model.text
+                                    color: "#ddd"
+                                    font.pixelSize: 12
+                                    elide: Text.ElideRight
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                                background: Rectangle {
+                                    color: highlighted ? "#3a3a3a" : "#252525"
+                                }
+                            }
+
+                            background: Rectangle {
+                                color: "#252525"
+                                border.color: "#3a3a3a"
+                                radius: 0
+                            }
+
+                            onActivated: {
+                                if (midiManager && midiSettingsColumn.hasMidiOutputs)
+                                    midiManager.selectMidiOutputDevice(currentIndex)
+                            }
+                        }
                     }
 
                     Rectangle {
@@ -1238,6 +1305,43 @@ Item {
                             }
                             onClicked: {
                                 midiSettingsColumn.refreshAll()
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        spacing: 16
+                        Text {
+                            text: "LED Tests"
+                            color: "#aaa"
+                            font.pixelSize: 12
+                            Layout.preferredWidth: 130
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            Button {
+                                text: "Raw LEDs"
+                                enabled: midiSettingsColumn.hasMidiOutputs
+                                Layout.preferredWidth: 96
+                                Layout.preferredHeight: 32
+                                onClicked: {
+                                    if (midiManager)
+                                        midiManager.testFlx10LedOutput()
+                                }
+                            }
+
+                            Button {
+                                text: "Hotcue Pads"
+                                enabled: midiSettingsColumn.hasMidiOutputs
+                                Layout.preferredWidth: 112
+                                Layout.preferredHeight: 32
+                                onClicked: {
+                                    if (midiManager)
+                                        midiManager.sendFlx10HotcuePaletteTest()
+                                }
                             }
                         }
                     }

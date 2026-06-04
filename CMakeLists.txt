@@ -331,6 +331,10 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/app/CursorControl.cpp
     src/midi/ParameterStore.h
     src/midi/ParameterStore.cpp
+    src/midi/AlsaMidiOutput.h
+    src/midi/AlsaMidiOutput.cpp
+    src/midi/Flx10LedController.h
+    src/midi/Flx10LedController.cpp
     src/midi/MidiControllerManager.h
     src/midi/MidiControllerManager.cpp
     src/controllers/ControllerProfile.h

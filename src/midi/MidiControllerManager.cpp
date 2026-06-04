@@ -19,6 +19,7 @@
 #include <QXmlStreamReader>
 #include <algorithm>
 #include <cmath>
+#include <exception>
 
 namespace {
 const juce::String kAllMidiInputsIdentifier("__all_midi_inputs__");
@@ -122,6 +123,13 @@ bool parseHotCueParam(const QString& paramId, QChar& deck, int& index, bool& cle
 QString toQString(const juce::String& value)
 {
     return QString::fromStdString(value.toStdString());
+}
+
+QString hexByte(int value)
+{
+    return QStringLiteral("%1")
+        .arg(value & 0xff, 2, 16, QLatin1Char('0'))
+        .toUpper();
 }
 
 int clampMidi7bit(int value)
@@ -342,27 +350,31 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, QObject* par
         }, Qt::QueuedConnection);
     });
 
-    m_flx10VuFeedbackTimer.setInterval(33);
-    connect(&m_flx10VuFeedbackTimer, &QTimer::timeout,
-            this, &MidiControllerManager::sendFlx10VuMeters);
-
-    refreshMidiAndMappings();
-    restoreSavedDeviceSelections();
-
-    QTimer::singleShot(750, this, [this]()
+    m_flx10Leds.setMidiSender([this](uint8_t status, uint8_t data1, uint8_t data2, const QString& type)
     {
-        refreshMidiAndMappings();
-        // Avoid reopening stale saved identifiers repeatedly on startup.
-        // Users can still select a device explicitly in settings.
+        return sendMidiShort(status, data1, data2, type);
     });
 
     m_selectedController = SettingsManager::getInstance().getSelectedController();
     m_selectedMappingFile = SettingsManager::getInstance().getSelectedMappingFile();
 
+    refreshMidiAndMappings();
+    restoreSavedDeviceSelections();
+
     if (!m_selectedMappingFile.isEmpty())
         loadBrockDjXmlMapping(m_selectedMappingFile);
     else
         loadNativeMappingIfExists();
+
+    autoOpenFlx10MidiOutputIfNeeded();
+
+    QTimer::singleShot(750, this, [this]()
+    {
+        refreshMidiAndMappings();
+        autoOpenFlx10MidiOutputIfNeeded();
+        // Avoid reopening stale saved identifiers repeatedly on startup.
+        // Users can still select a device explicitly in settings.
+    });
 }
 
 MidiControllerManager::~MidiControllerManager()
@@ -417,47 +429,31 @@ void MidiControllerManager::refreshMidiDeviceCache()
     // DDJ-FLX10 can be selected by the port that actually emits button events.
     populateFromAlsaFallback();
 #endif
+
+    logAvailableMidiPorts();
 }
 
 void MidiControllerManager::populateFromAlsaFallback()
 {
 #if defined(Q_OS_LINUX)
-    QProcess process;
-    process.start("aconnect", {"-l"});
-    if (!process.waitForFinished(1500)) {
-        qWarning() << "[MIDI] ALSA fallback failed: aconnect timeout";
+    snd_seq_t* seq = nullptr;
+    const int openResult = snd_seq_open(&seq, "default", SND_SEQ_OPEN_DUPLEX, 0);
+    if (openResult < 0) {
+        qWarning() << "[MIDI] ALSA fallback failed:" << QString::fromUtf8(snd_strerror(openResult));
         return;
     }
 
-    const QString output = QString::fromUtf8(process.readAllStandardOutput());
-    if (output.trimmed().isEmpty()) {
-        qWarning() << "[MIDI] ALSA fallback returned no output";
-        return;
-    }
+    snd_seq_client_info_t* clientInfo = nullptr;
+    snd_seq_port_info_t* portInfo = nullptr;
+    snd_seq_client_info_alloca(&clientInfo);
+    snd_seq_port_info_alloca(&portInfo);
 
-    const QRegularExpression clientRegex(R"(^client\s+(\d+):\s+'([^']+)')");
-    const QRegularExpression portRegex(R"(^\s*(\d+)\s+'([^']+)')");
+    snd_seq_client_info_set_client(clientInfo, -1);
+    while (snd_seq_query_next_client(seq, clientInfo) >= 0) {
+        const int client = snd_seq_client_info_get_client(clientInfo);
+        const QString clientName = QString::fromUtf8(snd_seq_client_info_get_name(clientInfo)).trimmed();
+        const QString lowerClient = clientName.toLower();
 
-    int currentClient = -1;
-    QString currentClientName;
-
-    const auto lines = output.split('\n');
-    for (const auto& line : lines) {
-        const auto c = clientRegex.match(line);
-        if (c.hasMatch()) {
-            currentClient = c.captured(1).toInt();
-            currentClientName = c.captured(2).trimmed();
-            continue;
-        }
-
-        const auto p = portRegex.match(line);
-        if (!p.hasMatch() || currentClient < 0)
-            continue;
-
-        const int port = p.captured(1).toInt();
-        const QString portName = p.captured(2).trimmed();
-
-        const QString lowerClient = currentClientName.toLower();
         if (lowerClient == "system"
             || lowerClient == "midi through"
             || lowerClient.startsWith("pipewire")
@@ -465,12 +461,38 @@ void MidiControllerManager::populateFromAlsaFallback()
             || lowerClient.contains("aseqdump"))
             continue;
 
-        const juce::String identifier("alsa:" + juce::String(currentClient) + ":" + juce::String(port));
-        const QString label = QString("%1:%2 - %3").arg(currentClientName).arg(port).arg(portName);
+        snd_seq_port_info_set_client(portInfo, client);
+        snd_seq_port_info_set_port(portInfo, -1);
+        while (snd_seq_query_next_port(seq, portInfo) >= 0) {
+            const int port = snd_seq_port_info_get_port(portInfo);
+            const QString portName = QString::fromUtf8(snd_seq_port_info_get_name(portInfo)).trimmed();
+            const unsigned int caps = snd_seq_port_info_get_capability(portInfo);
+            const QString label = QString("%1:%2 - %3 (%4)")
+                                      .arg(client)
+                                      .arg(port)
+                                      .arg(portName.isEmpty() ? clientName : portName)
+                                      .arg(clientName);
 
-        m_availableInputDeviceIdentifiers.push_back(identifier);
-        m_availableInputDeviceNames.push_back(label);
+            const bool readable = (caps & SND_SEQ_PORT_CAP_READ) != 0
+                && (caps & SND_SEQ_PORT_CAP_SUBS_READ) != 0;
+            const bool writable = (caps & SND_SEQ_PORT_CAP_WRITE) != 0
+                && (caps & SND_SEQ_PORT_CAP_SUBS_WRITE) != 0;
+
+            if (readable) {
+                const juce::String inputIdentifier("alsa:" + juce::String(client) + ":" + juce::String(port));
+                m_availableInputDeviceIdentifiers.push_back(inputIdentifier);
+                m_availableInputDeviceNames.push_back(label);
+            }
+
+            if (writable) {
+                const juce::String outputIdentifier("alsa-out:" + juce::String(client) + ":" + juce::String(port));
+                m_availableOutputDeviceIdentifiers.push_back(outputIdentifier);
+                m_availableOutputDeviceNames.push_back(label + QStringLiteral(" (ALSA)"));
+            }
+        }
     }
+
+    snd_seq_close(seq);
 #endif
 }
 
@@ -478,6 +500,16 @@ bool MidiControllerManager::isPseudoAlsaIdentifier(const juce::String& identifie
 {
 #if defined(Q_OS_LINUX)
     return identifier.startsWith("alsa:");
+#else
+    Q_UNUSED(identifier);
+    return false;
+#endif
+}
+
+bool MidiControllerManager::isPseudoAlsaOutputIdentifier(const juce::String& identifier) const
+{
+#if defined(Q_OS_LINUX)
+    return identifier.startsWith("alsa-out:");
 #else
     Q_UNUSED(identifier);
     return false;
@@ -763,17 +795,64 @@ void MidiControllerManager::openMidiOutputByIdentifier(const juce::String& ident
 
     if (m_midiOutput)
         m_midiOutput.reset();
+#if defined(Q_OS_LINUX)
+    if (m_alsaMidiOutput)
+        m_alsaMidiOutput.reset();
+#endif
+
+    m_selectedMidiOutputIdentifier = {};
+    m_selectedMidiOutputName.clear();
+    m_selectedMidiOutputIndex = -1;
+    m_flx10RawLedTestRun = false;
 
     if (identifier.isEmpty() || isPseudoAlsaIdentifier(identifier))
         return;
 
+    const int outputIndex = indexOfIdentifier(m_availableOutputDeviceIdentifiers, identifier);
+    const QString outputName = (outputIndex >= 0 && outputIndex < m_availableOutputDeviceNames.size())
+        ? m_availableOutputDeviceNames.at(outputIndex)
+        : toQString(identifier);
+
+#if defined(Q_OS_LINUX)
+    if (isPseudoAlsaOutputIdentifier(identifier)) {
+        auto output = std::make_unique<AlsaMidiOutput>();
+        QString errorMessage;
+        if (!output->open(toQString(identifier), &errorMessage)) {
+            qWarning() << "[MIDI OUT] Failed to open ALSA output:" << outputName
+                       << "id:" << toQString(identifier)
+                       << "index:" << outputIndex
+                       << "error:" << errorMessage;
+            return;
+        }
+
+        m_selectedMidiOutputIdentifier = identifier;
+        m_selectedMidiOutputName = outputName;
+        m_selectedMidiOutputIndex = outputIndex;
+        m_alsaMidiOutput = std::move(output);
+        qInfo().noquote() << QString("FLX10 MIDI OUT port: \"%1\", index=%2")
+                                 .arg(m_selectedMidiOutputName)
+                                 .arg(m_selectedMidiOutputIndex);
+        startFlx10OutputSession();
+        refreshAllDeckLeds();
+        return;
+    }
+#endif
+
     auto output = juce::MidiOutput::openDevice(identifier);
     if (!output) {
-        qWarning() << "[MIDI] Failed to open output:" << toQString(identifier);
+        qWarning() << "[MIDI OUT] Failed to open output:" << outputName
+                   << "id:" << toQString(identifier)
+                   << "index:" << outputIndex;
         return;
     }
 
+    m_selectedMidiOutputIdentifier = identifier;
+    m_selectedMidiOutputName = outputName;
+    m_selectedMidiOutputIndex = outputIndex;
     m_midiOutput = std::move(output);
+    qInfo().noquote() << QString("FLX10 MIDI OUT port: \"%1\", index=%2")
+                             .arg(m_selectedMidiOutputName)
+                             .arg(m_selectedMidiOutputIndex);
     startFlx10OutputSession();
     refreshAllDeckLeds();
 }
@@ -792,6 +871,12 @@ int MidiControllerManager::findMatchingMidiOutputIndexForInput(int inputIndex) c
     const QString inputKey = midiMatchKey(inputName);
 
     if (flx10Context || looksLikeFlx10Name(inputName)) {
+        for (int i = 0; i < m_availableOutputDeviceNames.size(); ++i) {
+            if (looksLikeFlx10Name(m_availableOutputDeviceNames.at(i))
+                    && isPseudoAlsaOutputIdentifier(m_availableOutputDeviceIdentifiers[static_cast<size_t>(i)]))
+                return i;
+        }
+
         for (int i = 0; i < m_availableOutputDeviceNames.size(); ++i) {
             if (looksLikeFlx10Name(m_availableOutputDeviceNames.at(i)))
                 return i;
@@ -815,6 +900,60 @@ int MidiControllerManager::findMatchingMidiOutputIndexForInput(int inputIndex) c
     return -1;
 }
 
+int MidiControllerManager::findMidiOutputIndexByName(const QString& nameOrIdentifier) const
+{
+    const QString needle = nameOrIdentifier.trimmed();
+    if (needle.isEmpty())
+        return -1;
+
+    for (int i = 0; i < m_availableOutputDeviceNames.size(); ++i) {
+        if (m_availableOutputDeviceNames.at(i).compare(needle, Qt::CaseInsensitive) == 0)
+            return i;
+    }
+
+    for (int i = 0; i < static_cast<int>(m_availableOutputDeviceIdentifiers.size()); ++i) {
+        if (toQString(m_availableOutputDeviceIdentifiers[static_cast<size_t>(i)]).compare(needle, Qt::CaseInsensitive) == 0)
+            return i;
+    }
+
+    const QString needleKey = midiMatchKey(needle);
+    if (needleKey.isEmpty())
+        return -1;
+
+    for (int i = 0; i < m_availableOutputDeviceNames.size(); ++i) {
+        const QString outputKey = midiMatchKey(m_availableOutputDeviceNames.at(i));
+        if (outputKey.contains(needleKey) || needleKey.contains(outputKey))
+            return i;
+    }
+
+    return -1;
+}
+
+void MidiControllerManager::logAvailableMidiPorts() const
+{
+    qInfo() << "Available MIDI INPUT ports:";
+    for (int i = 0; i < m_availableInputDeviceNames.size(); ++i) {
+        const QString id = (i >= 0 && i < static_cast<int>(m_availableInputDeviceIdentifiers.size()))
+            ? toQString(m_availableInputDeviceIdentifiers[static_cast<size_t>(i)])
+            : QString();
+        qInfo().noquote() << QString("[%1] %2  id=\"%3\"")
+                                 .arg(i)
+                                 .arg(m_availableInputDeviceNames.at(i))
+                                 .arg(id);
+    }
+
+    qInfo() << "Available MIDI OUTPUT ports:";
+    for (int i = 0; i < m_availableOutputDeviceNames.size(); ++i) {
+        const QString id = (i >= 0 && i < static_cast<int>(m_availableOutputDeviceIdentifiers.size()))
+            ? toQString(m_availableOutputDeviceIdentifiers[static_cast<size_t>(i)])
+            : QString();
+        qInfo().noquote() << QString("[%1] %2  id=\"%3\"")
+                                 .arg(i)
+                                 .arg(m_availableOutputDeviceNames.at(i))
+                                 .arg(id);
+    }
+}
+
 bool MidiControllerManager::shouldUseFlx10Feedback() const
 {
     if (normalizeControllerKeyFromXmlBase(getSelectedController())
@@ -832,49 +971,46 @@ bool MidiControllerManager::shouldUseFlx10Feedback() const
     return looksLikeFlx10Name(selectedOutput);
 }
 
-void MidiControllerManager::sendFlx10StartupMessages()
-{
-    for (int deck = 0; deck < 4; ++deck) {
-        sendMidiNoteLed(0x90 + deck, 0x58, 0x00);
-        sendMidiNoteLed(0x90 + deck, 0x65, 0x00);
-        sendMidiNoteLed(0x90 + deck, 0x41, 0x00);
-        sendMidiShort(0xB0 + deck, 0x02, 0x00);
-    }
-}
-
-void MidiControllerManager::sendFlx10VuMeters()
-{
-    if (!m_midiOutput || !shouldUseFlx10Feedback())
-        return;
-
-    auto deckVu = [](DjEngine* engine) -> int
-    {
-        if (!engine)
-            return 0;
-        const float vu = std::max(engine->vuLevelL(), engine->vuLevelR());
-        return clampMidi7bit(static_cast<int>(std::round(std::clamp(vu, 0.0f, 1.0f) * 127.0f)));
-    };
-
-    sendMidiShort(0xB0, 0x02, deckVu(m_deckA));
-    sendMidiShort(0xB1, 0x02, deckVu(m_deckB));
-    sendMidiShort(0xB2, 0x02, 0x00);
-    sendMidiShort(0xB3, 0x02, 0x00);
-}
-
 void MidiControllerManager::startFlx10OutputSession()
 {
-    if (!m_midiOutput || !shouldUseFlx10Feedback())
-        return;
+    const bool outputOpen =
+        m_midiOutput
+#if defined(Q_OS_LINUX)
+        || (m_alsaMidiOutput && m_alsaMidiOutput->isOpen())
+#endif
+        ;
 
-    sendFlx10StartupMessages();
-    if (!m_flx10VuFeedbackTimer.isActive())
-        m_flx10VuFeedbackTimer.start();
+    if (!outputOpen) {
+        m_flx10Leds.setEnabled(false);
+        return;
+    }
+
+    if (!shouldUseFlx10Feedback()) {
+        if (m_flx10Leds.isEnabled())
+            m_flx10Leds.clearAll();
+        m_flx10Leds.setEnabled(false);
+        return;
+    }
+
+    m_flx10Leds.setEnabled(true);
+    if (!m_flx10RawLedTestRun && qEnvironmentVariableIntValue("BROCKDJ_FLX10_LED_TEST") != 0) {
+        m_flx10RawLedTestRun = true;
+        m_flx10Leds.testRawLedOutput();
+    }
 }
 
 void MidiControllerManager::stopFlx10OutputSession()
 {
-    if (m_flx10VuFeedbackTimer.isActive())
-        m_flx10VuFeedbackTimer.stop();
+    const bool outputOpen =
+        m_midiOutput
+#if defined(Q_OS_LINUX)
+        || (m_alsaMidiOutput && m_alsaMidiOutput->isOpen())
+#endif
+        ;
+
+    if (outputOpen && m_flx10Leds.isEnabled())
+        m_flx10Leds.clearAll();
+    m_flx10Leds.setEnabled(false);
 }
 
 void MidiControllerManager::restoreSavedDeviceSelections()
@@ -889,11 +1025,78 @@ void MidiControllerManager::restoreSavedDeviceSelections()
         openMidiInputByIdentifier(kAllMidiInputsIdentifier);
 
     const auto outputId = SettingsManager::getInstance().getMidiOutputIdentifier();
+    const QByteArray envOutputName = qgetenv("BROCKDJ_MIDI_OUT");
+    if (!envOutputName.isEmpty()) {
+        const QString requestedOutput = QString::fromUtf8(envOutputName).trimmed();
+        const int outputIndex = findMidiOutputIndexByName(requestedOutput);
+        if (outputIndex >= 0 && outputIndex < static_cast<int>(m_availableOutputDeviceIdentifiers.size())) {
+            const juce::String identifier = m_availableOutputDeviceIdentifiers[static_cast<size_t>(outputIndex)];
+            SettingsManager::getInstance().setMidiOutputIdentifier(toQString(identifier));
+            qInfo() << "[MIDI OUT] BROCKDJ_MIDI_OUT selected output" << requestedOutput
+                    << "->" << m_availableOutputDeviceNames.at(outputIndex)
+                    << "index:" << outputIndex;
+            openMidiOutputByIdentifier(identifier);
+            return;
+        }
+
+        qWarning() << "[MIDI OUT] BROCKDJ_MIDI_OUT did not match any output port:" << requestedOutput;
+    }
+
     if (!outputId.isEmpty()) {
         const juce::String savedOutput = juce::String::fromUTF8(outputId.toUtf8().constData());
         if (containsIdentifier(m_availableOutputDeviceIdentifiers, savedOutput))
             openMidiOutputByIdentifier(savedOutput);
     }
+
+    autoOpenFlx10MidiOutputIfNeeded();
+}
+
+bool MidiControllerManager::autoOpenFlx10MidiOutputIfNeeded()
+{
+    const bool outputOpen =
+        m_midiOutput
+#if defined(Q_OS_LINUX)
+        || (m_alsaMidiOutput && m_alsaMidiOutput->isOpen())
+#endif
+        ;
+
+    if (outputOpen || m_availableOutputDeviceIdentifiers.empty())
+        return false;
+
+    const bool flx10Context = normalizeControllerKeyFromXmlBase(getSelectedController())
+            == normalizeControllerKeyFromXmlBase(kBuiltInFlx10ControllerName)
+        || isBuiltInFlx10Mapping(getSelectedMapping());
+
+    int outputIndex = -1;
+    if (flx10Context) {
+        for (int i = 0; i < m_availableOutputDeviceNames.size(); ++i) {
+            if (looksLikeFlx10Name(m_availableOutputDeviceNames.at(i))
+                    && isPseudoAlsaOutputIdentifier(m_availableOutputDeviceIdentifiers[static_cast<size_t>(i)])) {
+                outputIndex = i;
+                break;
+            }
+        }
+
+        if (outputIndex < 0) {
+            for (int i = 0; i < m_availableOutputDeviceNames.size(); ++i) {
+                if (looksLikeFlx10Name(m_availableOutputDeviceNames.at(i))) {
+                    outputIndex = i;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (outputIndex < 0)
+        return false;
+
+    const juce::String identifier = m_availableOutputDeviceIdentifiers[static_cast<size_t>(outputIndex)];
+    SettingsManager::getInstance().setMidiOutputIdentifier(toQString(identifier));
+    qInfo() << "[MIDI OUT] Auto-selected FLX10 output"
+            << m_availableOutputDeviceNames.at(outputIndex)
+            << "index:" << outputIndex;
+    openMidiOutputByIdentifier(identifier);
+    return true;
 }
 
 void MidiControllerManager::selectMidiInputDevice(int index)
@@ -1263,14 +1466,40 @@ void MidiControllerManager::saveNativeMapping()
 
 void MidiControllerManager::sendFlx10HotcuePaletteTest()
 {
-    if (!m_midiOutput)
+    bool outputOpen =
+        m_midiOutput
+#if defined(Q_OS_LINUX)
+        || (m_alsaMidiOutput && m_alsaMidiOutput->isOpen())
+#endif
+        ;
+
+    if (!outputOpen)
+        outputOpen = autoOpenFlx10MidiOutputIfNeeded();
+
+    if (!outputOpen)
         return;
 
-    for (int deck = 1; deck <= 4; ++deck) {
-        const int status = hotCueStatusForDeck(deck);
-        for (int pad = 0; pad < 8; ++pad)
-            sendMidiShort(status, pad, 3 + pad * 4);
+    m_flx10Leds.sendPaletteTest();
+}
+
+void MidiControllerManager::testFlx10LedOutput()
+{
+    bool outputOpen =
+        m_midiOutput
+#if defined(Q_OS_LINUX)
+        || (m_alsaMidiOutput && m_alsaMidiOutput->isOpen())
+#endif
+        ;
+
+    if (!outputOpen)
+        outputOpen = autoOpenFlx10MidiOutputIfNeeded();
+
+    if (!outputOpen) {
+        qWarning() << "[MIDI OUT] FLX10 raw LED test requested but no MIDI output is open";
+        return;
     }
+
+    m_flx10Leds.testRawLedOutput();
 }
 
 void MidiControllerManager::loadNativeMappingIfExists()
@@ -1312,6 +1541,19 @@ void MidiControllerManager::loadNativeMappingIfExists()
     }
 
     qDebug() << "[MIDI] Native mapping loaded:" << path << "entries:" << count;
+
+    const bool outputOpen =
+        m_midiOutput
+#if defined(Q_OS_LINUX)
+        || (m_alsaMidiOutput && m_alsaMidiOutput->isOpen())
+#endif
+        ;
+
+    if (outputOpen) {
+        startFlx10OutputSession();
+        if (shouldUseFlx10Feedback())
+            refreshAllDeckLeds();
+    }
 }
 
 bool MidiControllerManager::loadBrockDjXmlMapping(const QString& mappingFileName)
@@ -1331,13 +1573,22 @@ bool MidiControllerManager::loadBrockDjXmlMapping(const QString& mappingFileName
     std::map<int, MidiMappingEntry> nextMidiToParam;
     std::map<QString, int> nextParamToMidi;
     std::map<QString, bool> nextParamInverted = m_paramInverted;
+    Flx10LedMapping flx10FeedbackMapping;
 
     while (!xml.atEnd()) {
         xml.readNext();
-        if (!xml.isStartElement() || xml.name().toString().compare(QStringLiteral("Entry"), Qt::CaseInsensitive) != 0)
+        if (!xml.isStartElement())
             continue;
 
+        const QString elementName = xml.name().toString();
         const auto attrs = xml.attributes();
+
+        if (builtInMapping)
+            applyFlx10FeedbackMappingElement(elementName, attrs, flx10FeedbackMapping);
+
+        if (elementName.compare(QStringLiteral("Entry"), Qt::CaseInsensitive) != 0)
+            continue;
+
         const QString paramId = attrs.value("paramId").toString().trimmed();
         if (paramId.isEmpty())
             continue;
@@ -1388,7 +1639,111 @@ bool MidiControllerManager::loadBrockDjXmlMapping(const QString& mappingFileName
     qDebug() << "[MIDI] BrockDJ mapping loaded:" << mappingFileName
              << (builtInMapping ? "(built-in)" : "(user)")
              << "entries:" << static_cast<int>(m_midiToParam.size());
+    if (builtInMapping) {
+        m_flx10Leds.setMapping(flx10FeedbackMapping);
+        m_deckAPadMode = MidiPadMode::HotCue;
+        m_deckBPadMode = MidiPadMode::HotCue;
+    }
+
+    const bool outputOpen =
+        m_midiOutput
+#if defined(Q_OS_LINUX)
+        || (m_alsaMidiOutput && m_alsaMidiOutput->isOpen())
+#endif
+        ;
+
+    if (outputOpen) {
+        startFlx10OutputSession();
+        if (shouldUseFlx10Feedback())
+            refreshAllDeckLeds();
+    }
     return true;
+}
+
+void MidiControllerManager::applyFlx10FeedbackMappingElement(const QString& elementName,
+                                                             const QXmlStreamAttributes& attrs,
+                                                             Flx10LedMapping& mapping) const
+{
+    auto parseByteAttr = [this, &attrs](const QString& name, int fallback) -> uint8_t
+    {
+        if (!attrs.hasAttribute(name))
+            return static_cast<uint8_t>(std::clamp(fallback, 0, 255));
+        const int parsed = parseMappingNumber(attrs.value(name).toString());
+        return static_cast<uint8_t>(std::clamp(parsed >= 0 ? parsed : fallback, 0, 255));
+    };
+
+    if (elementName.compare(QStringLiteral("DeckLed"), Qt::CaseInsensitive) == 0) {
+        const QString name = attrs.value(QStringLiteral("name")).toString().trimmed().toLower();
+        const uint8_t control = parseByteAttr(QStringLiteral("control"), 0);
+        if (name == QStringLiteral("play"))
+            mapping.playNote = control;
+        else if (name == QStringLiteral("cue"))
+            mapping.cueNote = control;
+        else if (name == QStringLiteral("loop_in"))
+            mapping.loopInNote = control;
+        else if (name == QStringLiteral("loop_out"))
+            mapping.loopOutNote = control;
+        else if (name == QStringLiteral("loop_4beat"))
+            mapping.loop4BeatNote = control;
+        else if (name == QStringLiteral("loop_reloop"))
+            mapping.loopReloopNote = control;
+        else if (name == QStringLiteral("tempo_reset"))
+            mapping.tempoResetNote = control;
+        else if (name == QStringLiteral("beat_sync"))
+            mapping.beatSyncNote = control;
+        else if (name == QStringLiteral("key_sync"))
+            mapping.keySyncNote = control;
+        return;
+    }
+
+    if (elementName.compare(QStringLiteral("DeckStatus"), Qt::CaseInsensitive) == 0) {
+        const int deck = std::clamp(attrs.value(QStringLiteral("deck")).toInt(), 1, 4);
+        mapping.deckNoteStatus[static_cast<size_t>(deck - 1)] =
+            parseByteAttr(QStringLiteral("status"), mapping.deckNoteStatus[static_cast<size_t>(deck - 1)]);
+        return;
+    }
+
+    if (elementName.compare(QStringLiteral("HotcuePads"), Qt::CaseInsensitive) == 0) {
+        const int deck = std::clamp(attrs.value(QStringLiteral("deck")).toInt(), 1, 4);
+        mapping.hotcueStatus[static_cast<size_t>(deck - 1)] =
+            parseByteAttr(QStringLiteral("status"), mapping.hotcueStatus[static_cast<size_t>(deck - 1)]);
+        mapping.hotcueShiftStatus[static_cast<size_t>(deck - 1)] =
+            parseByteAttr(QStringLiteral("shiftStatus"), mapping.hotcueShiftStatus[static_cast<size_t>(deck - 1)]);
+        return;
+    }
+
+    if (elementName.compare(QStringLiteral("VuMeter"), Qt::CaseInsensitive) == 0) {
+        const int deck = std::clamp(attrs.value(QStringLiteral("deck")).toInt(), 1, 4);
+        mapping.vuStatus[static_cast<size_t>(deck - 1)] =
+            parseByteAttr(QStringLiteral("status"), mapping.vuStatus[static_cast<size_t>(deck - 1)]);
+        mapping.vuControl = parseByteAttr(QStringLiteral("control"), mapping.vuControl);
+        return;
+    }
+
+    if (elementName.compare(QStringLiteral("Color"), Qt::CaseInsensitive) == 0) {
+        const QString name = attrs.value(QStringLiteral("name")).toString().trimmed().toLower();
+        const uint8_t value = parseByteAttr(QStringLiteral("value"), 0);
+        if (name == QStringLiteral("blue"))
+            mapping.padBlue = value;
+        else if (name == QStringLiteral("cyan"))
+            mapping.padCyan = value;
+        else if (name == QStringLiteral("green"))
+            mapping.padGreen = value;
+        else if (name == QStringLiteral("yellow"))
+            mapping.padYellow = value;
+        else if (name == QStringLiteral("orange"))
+            mapping.padOrange = value;
+        else if (name == QStringLiteral("red"))
+            mapping.padRed = value;
+        else if (name == QStringLiteral("pink"))
+            mapping.padPink = value;
+        else if (name == QStringLiteral("magenta"))
+            mapping.padMagenta = value;
+        else if (name == QStringLiteral("purple"))
+            mapping.padPurple = value;
+        else if (name == QStringLiteral("white"))
+            mapping.padWhite = value;
+    }
 }
 
 void MidiControllerManager::startMidiLearn(const QString& parameterId)
@@ -1782,7 +2137,14 @@ void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*
 
 void MidiControllerManager::onParameterChanged(const QString& id, float value)
 {
-    if (!m_midiOutput)
+    const bool outputOpen =
+        m_midiOutput
+#if defined(Q_OS_LINUX)
+        || (m_alsaMidiOutput && m_alsaMidiOutput->isOpen())
+#endif
+        ;
+
+    if (!outputOpen)
         return;
 
     // Jog and button actions are input-only here. Echoing them as
@@ -1821,13 +2183,18 @@ void MidiControllerManager::onParameterChanged(const QString& id, float value)
             msg = juce::MidiMessage::noteOff(channel, clampMidi7bit(subId), 0.0f);
     }
 
-    m_midiOutput->sendMessageNow(msg);
+    sendMidiMessageWithDebug(msg, QStringLiteral("mapped-feedback"));
 }
 
 int MidiControllerManager::hotCueStatusForDeck(int deck) const
 {
-    const int normalPadChannel = 8 + (std::clamp(deck, 1, 4) - 1) * 2;
-    return 0x90 + (normalPadChannel - 1);
+    switch (std::clamp(deck, 1, 4)) {
+    case 1: return 0x97;
+    case 2: return 0x99;
+    case 3: return 0x9B;
+    case 4: return 0x9D;
+    default: return 0x97;
+    }
 }
 
 int MidiControllerManager::hotCueStatusForDeck(QChar deck) const
@@ -1835,27 +2202,145 @@ int MidiControllerManager::hotCueStatusForDeck(QChar deck) const
     return hotCueStatusForDeck(deck == QLatin1Char('A') ? 1 : 2);
 }
 
-void MidiControllerManager::sendMidiShort(int statusNo, int controlNo, int value)
+bool MidiControllerManager::sendMidiShort(int statusNo, int controlNo, int value, const QString& messageType)
 {
-    if (!m_midiOutput)
-        return;
-
     const unsigned char bytes[3] = {
         static_cast<unsigned char>(statusNo & 0xff),
         static_cast<unsigned char>(clampMidi7bit(controlNo)),
         static_cast<unsigned char>(clampMidi7bit(value))
     };
-    m_midiOutput->sendMessageNow(juce::MidiMessage(bytes, 3));
+    const juce::MidiMessage msg(bytes, 3);
+    return sendMidiMessageWithDebug(msg, messageType);
+}
+
+bool MidiControllerManager::sendMidiMessageWithDebug(const juce::MidiMessage& message, const QString& messageType)
+{
+    const bool outputOpen =
+        m_midiOutput
+#if defined(Q_OS_LINUX)
+        || (m_alsaMidiOutput && m_alsaMidiOutput->isOpen())
+#endif
+        ;
+
+    if (!outputOpen)
+        return false;
+
+    const auto* raw = message.getRawData();
+    const int size = message.getRawDataSize();
+    const int status = size > 0 ? static_cast<unsigned char>(raw[0]) : 0;
+    const int data1 = size > 1 ? static_cast<unsigned char>(raw[1]) : 0;
+    const int data2 = size > 2 ? static_cast<unsigned char>(raw[2]) : 0;
+    const int channel = (status & 0x0f) + 1;
+
+    QString type = messageType;
+    if (type.isEmpty()) {
+        const int high = status & 0xf0;
+        if (high == 0x80 || high == 0x90)
+            type = QStringLiteral("note");
+        else if (high == 0xB0)
+            type = QStringLiteral("cc");
+        else if (high == 0xE0)
+            type = QStringLiteral("pitch");
+        else if (status == 0xF0)
+            type = QStringLiteral("sysex");
+        else
+            type = QStringLiteral("raw");
+    }
+
+    const QString rawBytes = size == 3
+        ? QStringLiteral("%1 %2 %3").arg(hexByte(status), hexByte(data1), hexByte(data2))
+        : QString::fromLatin1(QByteArray(reinterpret_cast<const char*>(raw), size).toHex(' ')).toUpper();
+    const bool verboseMidiOut = qEnvironmentVariableIntValue("BROCKDJ_MIDI_OUT_LOG") > 0;
+    const bool noisySuccess = type == QStringLiteral("vu-meter") || type == QStringLiteral("pad-led");
+    const bool logSuccess = verboseMidiOut || !noisySuccess;
+
+    try {
+#if defined(Q_OS_LINUX)
+        if (m_alsaMidiOutput && m_alsaMidiOutput->isOpen()) {
+            if (size != 3) {
+                qWarning().noquote()
+                    << QString("[MIDI OUT] port=\"%1\" index=%2 type=%3 channel=%4 SEND RAW: %5 result=error error=\"ALSA short output only supports 3-byte MIDI messages\"")
+                           .arg(m_selectedMidiOutputName.isEmpty() ? QStringLiteral("<unknown>") : m_selectedMidiOutputName)
+                           .arg(m_selectedMidiOutputIndex)
+                           .arg(type)
+                           .arg(channel)
+                           .arg(rawBytes);
+                return false;
+            }
+
+            QString errorMessage;
+            const bool success = m_alsaMidiOutput->sendShort(
+                static_cast<uint8_t>(status),
+                static_cast<uint8_t>(data1),
+                static_cast<uint8_t>(data2),
+                &errorMessage);
+
+            const QString logLine = QString("[MIDI OUT] port=\"%1\" index=%2 type=%3 channel=%4 SEND RAW: %5 result=%6%7")
+                .arg(m_selectedMidiOutputName.isEmpty() ? QStringLiteral("<unknown>") : m_selectedMidiOutputName)
+                .arg(m_selectedMidiOutputIndex)
+                .arg(type)
+                .arg(channel)
+                .arg(rawBytes)
+                .arg(success ? QStringLiteral("success") : QStringLiteral("error"))
+                .arg(success ? QString() : QStringLiteral(" error=\"%1\"").arg(errorMessage));
+            if (success) {
+                if (logSuccess)
+                    qInfo().noquote() << logLine;
+            } else {
+                qWarning().noquote() << logLine;
+            }
+            return success;
+        }
+#endif
+
+        m_midiOutput->sendMessageNow(message);
+        if (logSuccess) {
+            qInfo().noquote()
+                << QString("[MIDI OUT] port=\"%1\" index=%2 type=%3 channel=%4 SEND RAW: %5 result=success")
+                       .arg(m_selectedMidiOutputName.isEmpty() ? QStringLiteral("<unknown>") : m_selectedMidiOutputName)
+                       .arg(m_selectedMidiOutputIndex)
+                       .arg(type)
+                       .arg(channel)
+                       .arg(rawBytes);
+        }
+        return true;
+    } catch (const std::exception& e) {
+        qWarning().noquote()
+            << QString("[MIDI OUT] port=\"%1\" index=%2 type=%3 channel=%4 SEND RAW: %5 result=error error=\"%6\"")
+                   .arg(m_selectedMidiOutputName.isEmpty() ? QStringLiteral("<unknown>") : m_selectedMidiOutputName)
+                   .arg(m_selectedMidiOutputIndex)
+                   .arg(type)
+                   .arg(channel)
+                   .arg(rawBytes)
+                   .arg(QString::fromUtf8(e.what()));
+    } catch (...) {
+        qWarning().noquote()
+            << QString("[MIDI OUT] port=\"%1\" index=%2 type=%3 channel=%4 SEND RAW: %5 result=error error=\"unknown\"")
+                   .arg(m_selectedMidiOutputName.isEmpty() ? QStringLiteral("<unknown>") : m_selectedMidiOutputName)
+                   .arg(m_selectedMidiOutputIndex)
+                   .arg(type)
+                   .arg(channel)
+                   .arg(rawBytes);
+    }
+
+    return false;
 }
 
 void MidiControllerManager::sendMidiNoteLed(int statusNo, int noteNo, int value)
 {
-    sendMidiShort(statusNo, noteNo, value);
+    sendMidiShort(statusNo, noteNo, value, QStringLiteral("note-led"));
 }
 
 void MidiControllerManager::sendMappedNoteLed(const QString& paramId, bool on, int onValue)
 {
-    if (!m_midiOutput)
+    const bool outputOpen =
+        m_midiOutput
+#if defined(Q_OS_LINUX)
+        || (m_alsaMidiOutput && m_alsaMidiOutput->isOpen())
+#endif
+        ;
+
+    if (!outputOpen)
         return;
 
     const auto it = m_paramToMidi.find(paramId);
@@ -1880,14 +2365,14 @@ int MidiControllerManager::hotCueLedValueForColor(const QString& color) const
 {
     struct NamedPaletteValue { const char* name; int value; double hue; };
     static constexpr NamedPaletteValue kFlx10PadPalette[] = {
-        { "red", 5, 0.0 },
-        { "orange", 13, 30.0 },
-        { "yellow", 21, 55.0 },
-        { "green", 45, 120.0 },
-        { "cyan", 65, 180.0 },
-        { "blue", 85, 235.0 },
-        { "purple", 105, 280.0 },
-        { "pink", 121, 325.0 },
+        { "red", 0x29, 0.0 },
+        { "orange", 0x25, 30.0 },
+        { "yellow", 0x1D, 55.0 },
+        { "green", 0x15, 120.0 },
+        { "cyan", 0x11, 180.0 },
+        { "blue", 0x01, 235.0 },
+        { "purple", 0x3D, 280.0 },
+        { "pink", 0x35, 325.0 },
     };
 
     QString hex = color.trimmed();
@@ -1916,11 +2401,11 @@ int MidiControllerManager::hotCueLedValueForColor(const QString& color) const
     const double minC = std::min({ r, g, b });
     const double delta = maxC - minC;
     if (maxC <= 0.0 || delta <= 0.0001)
-        return 127;
+        return 0x7F;
 
     const double saturation = delta / maxC;
     if (saturation < 0.18)
-        return 127;
+        return 0x7F;
 
     double hue = 0.0;
     if (maxC == r)
@@ -1950,6 +2435,11 @@ void MidiControllerManager::refreshTransportAndLoopLeds(QChar deck, DjEngine* en
     if (!engine)
         return;
 
+    if (shouldUseFlx10Feedback()) {
+        m_flx10Leds.refreshDeckLeds(deck == QLatin1Char('A') ? 1 : 2);
+        return;
+    }
+
     const QString prefix = deck == QLatin1Char('A')
         ? QStringLiteral("deckA_")
         : QStringLiteral("deckB_");
@@ -1961,12 +2451,32 @@ void MidiControllerManager::refreshTransportAndLoopLeds(QChar deck, DjEngine* en
     sendMappedNoteLed(prefix + QStringLiteral("loop_out"), engine->loopActive());
     sendMappedNoteLed(prefix + QStringLiteral("loop_4beat"), engine->loopActive());
     sendMappedNoteLed(prefix + QStringLiteral("loop_reloop"), engine->loopActive());
+    sendMappedNoteLed(prefix + QStringLiteral("sync"), engine->syncEnabled());
+    sendMappedNoteLed(prefix + QStringLiteral("keylock"), engine->keylock());
+    sendMappedNoteLed(prefix + QStringLiteral("quantize"), engine->quantizeEnabled());
+    sendMappedNoteLed(prefix + QStringLiteral("slip"), engine->slipActive());
+}
+
+void MidiControllerManager::refreshPadModeLeds(QChar deck)
+{
+    const QString prefix = deck == QLatin1Char('A')
+        ? QStringLiteral("deckA_pad_mode_")
+        : QStringLiteral("deckB_pad_mode_");
+    const MidiPadMode mode = padModeForDeck(deck);
+    sendMappedNoteLed(prefix + QStringLiteral("hotcue"), mode == MidiPadMode::HotCue);
+    sendMappedNoteLed(prefix + QStringLiteral("padfx"), mode == MidiPadMode::PadFx);
+    sendMappedNoteLed(prefix + QStringLiteral("beatjump"), mode == MidiPadMode::BeatJump);
 }
 
 void MidiControllerManager::refreshHotCueLeds(QChar deck, DjEngine* engine)
 {
     if (!engine)
         return;
+
+    if (shouldUseFlx10Feedback()) {
+        m_flx10Leds.refreshHotcuePads(deck == QLatin1Char('A') ? 1 : 2);
+        return;
+    }
 
     const QVariantList cues = engine->hotCues();
     const int status = hotCueStatusForDeck(deck);
@@ -1982,19 +2492,15 @@ void MidiControllerManager::refreshHotCueLeds(QChar deck, DjEngine* engine)
     }
 }
 
-void MidiControllerManager::refreshPadModeLeds(QChar deck)
-{
-    const QString prefix = deck == QLatin1Char('A')
-        ? QStringLiteral("deckA_pad_mode_")
-        : QStringLiteral("deckB_pad_mode_");
-    const MidiPadMode mode = padModeForDeck(deck);
-    sendMappedNoteLed(prefix + QStringLiteral("hotcue"), mode == MidiPadMode::HotCue);
-    sendMappedNoteLed(prefix + QStringLiteral("padfx"), mode == MidiPadMode::PadFx);
-    sendMappedNoteLed(prefix + QStringLiteral("beatjump"), mode == MidiPadMode::BeatJump);
-}
-
 void MidiControllerManager::refreshDeckLeds(QChar deck, DjEngine* engine)
 {
+    if (shouldUseFlx10Feedback()) {
+        Q_UNUSED(engine);
+        m_flx10Leds.refreshDeck(deck == QLatin1Char('A') ? 1 : 2);
+        refreshPadModeLeds(deck);
+        return;
+    }
+
     refreshTransportAndLoopLeds(deck, engine);
     refreshHotCueLeds(deck, engine);
     refreshPadModeLeds(deck);
@@ -2150,17 +2656,34 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
     m_deckBPadFxMomentary = -1;
     m_deckAPadFxToggle = -1;
     m_deckBPadFxToggle = -1;
+    m_flx10Leds.setDecks(m_deckA, m_deckB);
 
     auto wireDeckLeds = [this](QChar deck, DjEngine* engine)
     {
         if (!engine)
             return;
 
+        QObject::connect(engine, &DjEngine::trackLoaded,
+                         this, [this] { refreshAllDeckLeds(); });
+        QObject::connect(engine, &DjEngine::trackMetadataChanged,
+                         this, [this] { refreshAllDeckLeds(); });
         QObject::connect(engine, &DjEngine::playingChanged,
                          this, [this, deck, engine] { refreshTransportAndLoopLeds(deck, engine); });
         QObject::connect(engine, &DjEngine::loopChanged,
                          this, [this, deck, engine] { refreshTransportAndLoopLeds(deck, engine); });
         QObject::connect(engine, &DjEngine::cueEnabledChanged,
+                         this, [this, deck, engine] { refreshTransportAndLoopLeds(deck, engine); });
+        QObject::connect(engine, &DjEngine::tempoChanged,
+                         this, [this, deck, engine] { refreshTransportAndLoopLeds(deck, engine); });
+        QObject::connect(engine, &DjEngine::syncChanged,
+                         this, [this, deck, engine] { refreshTransportAndLoopLeds(deck, engine); });
+        QObject::connect(engine, &DjEngine::syncMasterChanged,
+                         this, [this, deck, engine] { refreshTransportAndLoopLeds(deck, engine); });
+        QObject::connect(engine, &DjEngine::keylockChanged,
+                         this, [this, deck, engine] { refreshTransportAndLoopLeds(deck, engine); });
+        QObject::connect(engine, &DjEngine::quantizeEnabledChanged,
+                         this, [this, deck, engine] { refreshTransportAndLoopLeds(deck, engine); });
+        QObject::connect(engine, &DjEngine::slipChanged,
                          this, [this, deck, engine] { refreshTransportAndLoopLeds(deck, engine); });
         QObject::connect(engine, &DjEngine::hotCuesChanged,
                          this, [this, deck, engine] { refreshHotCueLeds(deck, engine); });

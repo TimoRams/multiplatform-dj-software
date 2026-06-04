@@ -1,11 +1,20 @@
 #pragma once
 
+#include <QtGlobal>
+
+#if defined(Q_OS_LINUX)
+#include "AlsaMidiOutput.h"
+#endif
+
+#include "Flx10LedController.h"
+
 #include <QObject>
 #include <QStringList>
-#include <QTimer>
+#include <QVariantMap>
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <map>
 #include <memory>
+#include <cstdint>
 #include <vector>
 
 #if defined(Q_OS_LINUX)
@@ -14,6 +23,7 @@
 
 class DjEngine;
 class ParameterStore;
+class QXmlStreamAttributes;
 
 enum class MidiInteractionType {
     Momentary,
@@ -77,6 +87,7 @@ public:
     Q_INVOKABLE void clearLearnedMapping(const QString& paramId);
     Q_INVOKABLE void saveNativeMapping();
     Q_INVOKABLE void sendFlx10HotcuePaletteTest();
+    Q_INVOKABLE void testFlx10LedOutput();
 
     Q_INVOKABLE bool isMappingInverted(const QString& paramId) const;
     Q_INVOKABLE void setMappingInverted(const QString& paramId, bool inverted);
@@ -136,7 +147,11 @@ private:
     QStringList m_availableInputDeviceNames;
     std::vector<juce::String> m_availableOutputDeviceIdentifiers;
     QStringList m_availableOutputDeviceNames;
-    QTimer m_flx10VuFeedbackTimer;
+    int m_selectedMidiOutputIndex = -1;
+    juce::String m_selectedMidiOutputIdentifier;
+    QString m_selectedMidiOutputName;
+    Flx10LedController m_flx10Leds;
+    bool m_flx10RawLedTestRun = false;
 
     QString m_selectedController;
     QString m_selectedMappingFile;
@@ -155,30 +170,34 @@ private:
 
 #if defined(Q_OS_LINUX)
     std::unique_ptr<QProcess> m_alsaInputMonitor;
+    std::unique_ptr<AlsaMidiOutput> m_alsaMidiOutput;
     QString m_alsaMonitorBuffer;
 #endif
 
     void refreshMidiDeviceCache();
     void populateFromAlsaFallback();
     bool isPseudoAlsaIdentifier(const juce::String& identifier) const;
+    bool isPseudoAlsaOutputIdentifier(const juce::String& identifier) const;
     void startAlsaInputMonitor(const juce::String& pseudoIdentifier);
     void stopAlsaInputMonitor();
     void processDecodedMidiEvent(int msgId, float value, bool isNoteOff);
     void learnMapping(int msgId);
     void restoreSavedDeviceSelections();
+    bool autoOpenFlx10MidiOutputIfNeeded();
     void openMidiInputByIdentifier(const juce::String& identifier);
     void openMidiOutputByIdentifier(const juce::String& identifier);
     int findMatchingMidiOutputIndexForInput(int inputIndex) const;
+    int findMidiOutputIndexByName(const QString& nameOrIdentifier) const;
+    void logAvailableMidiPorts() const;
     bool shouldUseFlx10Feedback() const;
     void startFlx10OutputSession();
     void stopFlx10OutputSession();
-    void sendFlx10StartupMessages();
-    void sendFlx10VuMeters();
 
     QString normalizeControllerKeyFromXmlBase(const QString& baseName) const;
     QString normalizeControllerKeyFromJsBase(const QString& baseName) const;
     QStringList getAvailableXmlMappingFilesForController(const QString& controllerName) const;
     bool loadBrockDjXmlMapping(const QString& mappingFileName);
+    void applyFlx10FeedbackMappingElement(const QString& elementName, const QXmlStreamAttributes& attrs, Flx10LedMapping& mapping) const;
     void loadNativeMappingIfExists();
     QString nativeMappingFilePath() const;
     int parseMappingNumber(const QString& rawValue) const;
@@ -193,7 +212,8 @@ private:
     void refreshTransportAndLoopLeds(QChar deck, DjEngine* engine);
     void refreshHotCueLeds(QChar deck, DjEngine* engine);
     void refreshPadModeLeds(QChar deck);
-    void sendMidiShort(int statusNo, int controlNo, int value);
+    bool sendMidiShort(int statusNo, int controlNo, int value, const QString& messageType = QStringLiteral("raw"));
+    bool sendMidiMessageWithDebug(const juce::MidiMessage& message, const QString& messageType);
     void sendMidiNoteLed(int statusNo, int noteNo, int value);
     void sendMappedNoteLed(const QString& paramId, bool on, int onValue = 0x7f);
     int hotCueStatusForDeck(int deck) const;

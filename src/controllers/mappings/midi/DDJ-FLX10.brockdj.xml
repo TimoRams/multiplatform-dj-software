@@ -10,6 +10,12 @@
     <Entry paramId="deckB_play" status="0x91" control="0x0B" type="toggle"/>
     <Entry paramId="deckA_cue" status="0x90" control="0x0C" type="momentary"/>
     <Entry paramId="deckB_cue" status="0x91" control="0x0C" type="momentary"/>
+    <Entry paramId="deckA_beat_sync" status="0x90" control="0x58" type="toggle"/>
+    <Entry paramId="deckB_beat_sync" status="0x91" control="0x58" type="toggle"/>
+    <Entry paramId="deckA_key_sync" status="0x90" control="0x65" type="toggle"/>
+    <Entry paramId="deckB_key_sync" status="0x91" control="0x65" type="toggle"/>
+    <Entry paramId="deckA_tempo_reset" status="0x90" control="0x41" type="toggle"/>
+    <Entry paramId="deckB_tempo_reset" status="0x91" control="0x41" type="toggle"/>
 
     <!-- Tempo faders, 14-bit MSB. Matching LSB messages at +0x20 are combined automatically. -->
     <Entry paramId="deckA_tempo" status="0xB0" control="0x00" type="fader"/>
@@ -104,4 +110,46 @@
     <Entry paramId="library_load_deck_a" status="0x96" control="0x46" type="toggle"/>
     <Entry paramId="library_load_deck_b" status="0x96" control="0x47" type="toggle"/>
   </Mappings>
+
+  <Feedback protocol="midi">
+    <!-- Normal deck LEDs use Note feedback on channels 1-4. Values are 0x00 off, 0x7F on. -->
+    <DeckStatus deck="1" status="0x90"/>
+    <DeckStatus deck="2" status="0x91"/>
+    <DeckStatus deck="3" status="0x92"/>
+    <DeckStatus deck="4" status="0x93"/>
+    <DeckLed name="play" control="0x0B"/>
+    <DeckLed name="cue" control="0x0C"/>
+    <DeckLed name="loop_in" control="0x10"/>
+    <DeckLed name="loop_out" control="0x11"/>
+    <DeckLed name="loop_4beat" control="0x12"/>
+    <DeckLed name="loop_reloop" control="0x14"/>
+    <DeckLed name="tempo_reset" control="0x41"/>
+    <DeckLed name="beat_sync" control="0x58"/>
+    <DeckLed name="key_sync" control="0x65"/>
+
+    <!-- RGB pads are palette-index Note feedback, not raw RGB. -->
+    <HotcuePads deck="1" status="0x97" shiftStatus="0x98" firstControl="0x00"/>
+    <HotcuePads deck="2" status="0x99" shiftStatus="0x9A" firstControl="0x00"/>
+    <HotcuePads deck="3" status="0x9B" shiftStatus="0x9C" firstControl="0x00"/>
+    <HotcuePads deck="4" status="0x9D" shiftStatus="0x9E" firstControl="0x00"/>
+
+    <PadPalette>
+      <Color name="blue" value="0x01"/>
+      <Color name="cyan" value="0x11"/>
+      <Color name="green" value="0x15"/>
+      <Color name="yellow" value="0x1D"/>
+      <Color name="orange" value="0x25"/>
+      <Color name="red" value="0x29"/>
+      <Color name="pink" value="0x35"/>
+      <Color name="magenta" value="0x39"/>
+      <Color name="purple" value="0x3D"/>
+      <Color name="white" value="0x7F"/>
+    </PadPalette>
+
+    <!-- VU meters use CC 0x02 on deck channels 1-4. -->
+    <VuMeter deck="1" status="0xB0" control="0x02"/>
+    <VuMeter deck="2" status="0xB1" control="0x02"/>
+    <VuMeter deck="3" status="0xB2" control="0x02"/>
+    <VuMeter deck="4" status="0xB3" control="0x02"/>
+  </Feedback>
 </BrockDJControllerMapping>

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "midi/AlsaMidiOutput.h"
+
 #include <QObject>
 #include <QByteArray>
 #include <QMetaObject>
@@ -9,6 +11,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 
 class DjEngine;
 
@@ -51,7 +54,8 @@ private:
     bool writePacket(const QByteArray& packet);
 
     QString findMidiPort() const;
-    bool sendAmidiSysEx(const QString& hex) const;
+    bool openSequencerMidiPort();
+    bool sendMidiHex(const QString& hex) const;
     void sendSessionSysEx();
     void updateJogRingWarning(int deck, double elapsedSeconds, double durationSeconds, bool playing);
     bool sendJogRingIllumination(int deck, bool on);
@@ -80,6 +84,9 @@ private:
 
     QString m_status;
     QString m_midiPort;
+#if defined(Q_OS_LINUX)
+    std::unique_ptr<AlsaMidiOutput> m_sequencerMidiOut;
+#endif
     QTimer m_keepAliveTimer;
     QTimer m_stateTimer;
     QTimer m_waveformTimer;
