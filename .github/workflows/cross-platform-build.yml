@@ -448,10 +448,14 @@ jobs:
           }
           stage_brew_dylib() {
             local name="$1"
+            local stem="${name%%.*}"
             local source=""
-            for root in "$(brew --prefix)" /opt/homebrew/opt /usr/local/opt; do
+            for root in "$(brew --prefix)" "$(brew --cellar 2>/dev/null || true)" /opt/homebrew/opt /usr/local/opt; do
               if [ -d "$root" ]; then
                 source="$(find "$root" -path "*/lib/$name" -type f -print -quit 2>/dev/null || true)"
+                if [ -z "$source" ]; then
+                  source="$(find "$root" -path "*/lib/$stem*.dylib" -type f -print -quit 2>/dev/null || true)"
+                fi
                 if [ -n "$source" ]; then
                   break
                 fi
@@ -463,8 +467,19 @@ jobs:
             fi
             cp -f "$source" "$APP/Contents/lib/$name"
           }
+          stage_brew_formula_dylibs() {
+            local formula="$1"
+            local prefix
+            prefix="$(brew --prefix "$formula" 2>/dev/null || true)"
+            if [ -n "$prefix" ] && [ -d "$prefix/lib" ]; then
+              find "$prefix/lib" -maxdepth 1 -type f -name '*.dylib' -exec cp -f {} "$APP/Contents/lib/" \;
+            fi
+          }
           for framework in QtPdf QtSvg QtVirtualKeyboard QtVirtualKeyboardQml; do
             stage_qt_framework "$framework"
+          done
+          for formula in brotli webp; do
+            stage_brew_formula_dylibs "$formula"
           done
           for dylib in libbrotlicommon.1.dylib libwebp.7.dylib libsharpyuv.0.dylib; do
             stage_brew_dylib "$dylib"
@@ -547,10 +562,14 @@ jobs:
           }
           stage_brew_dylib() {
             local name="$1"
+            local stem="${name%%.*}"
             local source=""
-            for root in "$(brew --prefix)" /opt/homebrew/opt /usr/local/opt; do
+            for root in "$(brew --prefix)" "$(brew --cellar 2>/dev/null || true)" /opt/homebrew/opt /usr/local/opt; do
               if [ -d "$root" ]; then
                 source="$(find "$root" -path "*/lib/$name" -type f -print -quit 2>/dev/null || true)"
+                if [ -z "$source" ]; then
+                  source="$(find "$root" -path "*/lib/$stem*.dylib" -type f -print -quit 2>/dev/null || true)"
+                fi
                 if [ -n "$source" ]; then
                   break
                 fi
@@ -562,8 +581,19 @@ jobs:
             fi
             cp -f "$source" "$APP/Contents/lib/$name"
           }
+          stage_brew_formula_dylibs() {
+            local formula="$1"
+            local prefix
+            prefix="$(brew --prefix "$formula" 2>/dev/null || true)"
+            if [ -n "$prefix" ] && [ -d "$prefix/lib" ]; then
+              find "$prefix/lib" -maxdepth 1 -type f -name '*.dylib' -exec cp -f {} "$APP/Contents/lib/" \;
+            fi
+          }
           for framework in QtPdf QtSvg QtVirtualKeyboard QtVirtualKeyboardQml; do
             stage_qt_framework "$framework"
+          done
+          for formula in brotli webp; do
+            stage_brew_formula_dylibs "$formula"
           done
           for dylib in libbrotlicommon.1.dylib libwebp.7.dylib libsharpyuv.0.dylib; do
             stage_brew_dylib "$dylib"

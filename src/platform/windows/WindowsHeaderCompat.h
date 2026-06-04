@@ -35,8 +35,13 @@
 #endif
 
 // This file is force-included for every MSVC translation unit, including
-// Qt-generated rcc/moc sources. Keep it to preprocessor policy only; pulling
-// Windows SDK headers in here can break generated files by changing their
-// include order before the normal SDK typedefs are available.
+// Qt-generated rcc/moc sources. Keep Windows SDK headers in a stable order:
+// windows.h provides the base SDK typedefs, and WIN32_LEAN_AND_MEAN prevents
+// it from pulling in legacy winsock.h before winsock2.h.
+#include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <wininet.h>
+#include <iphlpapi.h>
 
 #endif
