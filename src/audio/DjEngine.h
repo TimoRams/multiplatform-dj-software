@@ -151,6 +151,7 @@ public:
     // Beatgrid-aligned loop controls
     Q_INVOKABLE void setLoopIn();
     Q_INVOKABLE void setLoopOut();
+    Q_INVOKABLE void setLoop4Beats();
     Q_INVOKABLE void toggleLoop4Beats();
     Q_INVOKABLE void toggleLoopThreeQuarter();
     Q_INVOKABLE void halveLoopLength();
@@ -158,6 +159,7 @@ public:
     Q_INVOKABLE void clearLoop();
     Q_INVOKABLE void deactivateLoop();
     Q_INVOKABLE void reactivateLoop();
+    Q_INVOKABLE void beatJump(double beats);
 
     Q_INVOKABLE void ejectTrack();
 
@@ -594,7 +596,7 @@ private:
         static constexpr double kRateReleaseTauSec = 0.055;
         static constexpr double kIdleTimeoutSec = 0.120;
         static constexpr double kMaxRate = 12.0;
-        static constexpr double kReleaseToPlayTauSec = 0.075;  // snappy spin-up to normal play
+        static constexpr double kReleaseToPlayTauSec = 0.075;  // base value; release uses a dynamic tau
         static constexpr double kReleaseToStopTauSec = 0.350;  // platter spindown on paused-deck release
         static constexpr double kReleaseSettleThreshold = 0.015; // tighter settle for slower stop tau
         static constexpr double kControlResumeThresholdRate = 0.0012;
@@ -625,10 +627,12 @@ private:
     double m_scratchSmoothedRate = 0.0;
     bool   m_scratchReleaseActive = false;
     double m_scratchReleaseTargetRate = 0.0;
+    double m_scratchReleaseTauSec = ScratchConfig::kReleaseToPlayTauSec;
     double m_scratchAccumulatedMoveSec = 0.0;
     double m_scratchLastRawInput = 0.0;
     double m_scratchBaseRate = 1.0;
     double m_scratchInputFilteredRate = 0.0;
+    double m_scratchLastInputRate = 0.0;
     double m_scratchDirectionSign = 1.0;
     bool   m_scrubLoopLockedToActiveLoop = false;
     bool   m_scratchAbsolutePositionControl = false;

@@ -23,6 +23,12 @@ enum class MidiInteractionType {
     Fader
 };
 
+enum class MidiPadMode {
+    HotCue,
+    PadFx,
+    BeatJump
+};
+
 struct MidiMappingEntry {
     QString paramId;
     MidiInteractionType interactionType = MidiInteractionType::EncoderAbsolute;
@@ -70,6 +76,7 @@ public:
     Q_INVOKABLE QString getMappingLabel(const QString& paramId) const;
     Q_INVOKABLE void clearLearnedMapping(const QString& paramId);
     Q_INVOKABLE void saveNativeMapping();
+    Q_INVOKABLE void sendFlx10HotcuePaletteTest();
 
     Q_INVOKABLE bool isMappingInverted(const QString& paramId) const;
     Q_INVOKABLE void setMappingInverted(const QString& paramId, bool inverted);
@@ -104,6 +111,14 @@ private:
     bool m_cueBHeld = false;
     bool m_jogATouched = false;
     bool m_jogBTouched = false;
+    bool m_deckAShiftHeld = false;
+    bool m_deckBShiftHeld = false;
+    MidiPadMode m_deckAPadMode = MidiPadMode::HotCue;
+    MidiPadMode m_deckBPadMode = MidiPadMode::HotCue;
+    int m_deckAPadFxMomentary = -1;
+    int m_deckBPadFxMomentary = -1;
+    int m_deckAPadFxToggle = -1;
+    int m_deckBPadFxToggle = -1;
     
     std::vector<std::unique_ptr<juce::MidiInput>> m_midiInputs;
     std::unique_ptr<juce::MidiOutput> m_midiOutput;
@@ -121,6 +136,7 @@ private:
     QStringList m_availableInputDeviceNames;
     std::vector<juce::String> m_availableOutputDeviceIdentifiers;
     QStringList m_availableOutputDeviceNames;
+    QTimer m_flx10VuFeedbackTimer;
 
     QString m_selectedController;
     QString m_selectedMappingFile;
@@ -152,6 +168,12 @@ private:
     void restoreSavedDeviceSelections();
     void openMidiInputByIdentifier(const juce::String& identifier);
     void openMidiOutputByIdentifier(const juce::String& identifier);
+    int findMatchingMidiOutputIndexForInput(int inputIndex) const;
+    bool shouldUseFlx10Feedback() const;
+    void startFlx10OutputSession();
+    void stopFlx10OutputSession();
+    void sendFlx10StartupMessages();
+    void sendFlx10VuMeters();
 
     QString normalizeControllerKeyFromXmlBase(const QString& baseName) const;
     QString normalizeControllerKeyFromJsBase(const QString& baseName) const;
@@ -161,4 +183,20 @@ private:
     QString nativeMappingFilePath() const;
     int parseMappingNumber(const QString& rawValue) const;
     int midiMessageIdFromStatusAndControl(int statusNo, int controlNo) const;
+    MidiPadMode padModeForDeck(QChar deck) const;
+    void setPadModeForDeck(QChar deck, MidiPadMode mode);
+    void clearPadFxState(QChar deck, DjEngine* engine);
+    void stopPadFxToggle(DjEngine* engine, int padIndex);
+    void handlePerformancePad(QChar deck, DjEngine* engine, int padIndex, bool pressed, bool clearRequest);
+    void refreshAllDeckLeds();
+    void refreshDeckLeds(QChar deck, DjEngine* engine);
+    void refreshTransportAndLoopLeds(QChar deck, DjEngine* engine);
+    void refreshHotCueLeds(QChar deck, DjEngine* engine);
+    void refreshPadModeLeds(QChar deck);
+    void sendMidiShort(int statusNo, int controlNo, int value);
+    void sendMidiNoteLed(int statusNo, int noteNo, int value);
+    void sendMappedNoteLed(const QString& paramId, bool on, int onValue = 0x7f);
+    int hotCueStatusForDeck(int deck) const;
+    int hotCueStatusForDeck(QChar deck) const;
+    int hotCueLedValueForColor(const QString& color) const;
 };

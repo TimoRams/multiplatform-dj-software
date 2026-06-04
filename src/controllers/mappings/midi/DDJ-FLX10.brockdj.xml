@@ -23,40 +23,63 @@
     <Entry paramId="deckA_jog_touch" status="0x90" control="0x36" type="momentary"/>
     <Entry paramId="deckB_jog_touch" status="0x91" control="0x36" type="momentary"/>
 
-    <!-- Performance pads: Hot Cue mode. -->
-    <Entry paramId="deckA_hotcue1" status="0x97" control="0x00" type="toggle"/>
-    <Entry paramId="deckA_hotcue2" status="0x97" control="0x01" type="toggle"/>
-    <Entry paramId="deckA_hotcue3" status="0x97" control="0x02" type="toggle"/>
-    <Entry paramId="deckA_hotcue4" status="0x97" control="0x03" type="toggle"/>
-    <Entry paramId="deckA_hotcue5" status="0x97" control="0x04" type="toggle"/>
-    <Entry paramId="deckA_hotcue6" status="0x97" control="0x05" type="toggle"/>
-    <Entry paramId="deckA_hotcue7" status="0x97" control="0x06" type="toggle"/>
-    <Entry paramId="deckA_hotcue8" status="0x97" control="0x07" type="toggle"/>
-    <Entry paramId="deckA_hotcue1_clear" status="0x98" control="0x00" type="toggle"/>
-    <Entry paramId="deckA_hotcue2_clear" status="0x98" control="0x01" type="toggle"/>
-    <Entry paramId="deckA_hotcue3_clear" status="0x98" control="0x02" type="toggle"/>
-    <Entry paramId="deckA_hotcue4_clear" status="0x98" control="0x03" type="toggle"/>
-    <Entry paramId="deckA_hotcue5_clear" status="0x98" control="0x04" type="toggle"/>
-    <Entry paramId="deckA_hotcue6_clear" status="0x98" control="0x05" type="toggle"/>
-    <Entry paramId="deckA_hotcue7_clear" status="0x98" control="0x06" type="toggle"/>
-    <Entry paramId="deckA_hotcue8_clear" status="0x98" control="0x07" type="toggle"/>
+    <!-- Loop controls. Loop In/Out become halve/double while a loop is active. Shift + 4 Beat clears the current loop. -->
+    <Entry paramId="deckA_shift" status="0x90" control="0x3F" type="momentary"/>
+    <Entry paramId="deckB_shift" status="0x91" control="0x3F" type="momentary"/>
+    <Entry paramId="deckA_loop_in" status="0x90" control="0x10" type="toggle"/>
+    <Entry paramId="deckB_loop_in" status="0x91" control="0x10" type="toggle"/>
+    <Entry paramId="deckA_loop_out" status="0x90" control="0x11" type="toggle"/>
+    <Entry paramId="deckB_loop_out" status="0x91" control="0x11" type="toggle"/>
+    <Entry paramId="deckA_loop_4beat" status="0x90" control="0x12" type="toggle"/>
+    <Entry paramId="deckB_loop_4beat" status="0x91" control="0x12" type="toggle"/>
+    <Entry paramId="deckA_loop_reloop" status="0x90" control="0x14" type="toggle"/>
+    <Entry paramId="deckB_loop_reloop" status="0x91" control="0x14" type="toggle"/>
+    <Entry paramId="deckA_loop_in_adjust" status="0x90" control="0x4C" type="toggle"/>
+    <Entry paramId="deckB_loop_in_adjust" status="0x91" control="0x4C" type="toggle"/>
+    <Entry paramId="deckA_loop_out_adjust" status="0x90" control="0x4D" type="toggle"/>
+    <Entry paramId="deckB_loop_out_adjust" status="0x91" control="0x4D" type="toggle"/>
 
-    <Entry paramId="deckB_hotcue1" status="0x99" control="0x00" type="toggle"/>
-    <Entry paramId="deckB_hotcue2" status="0x99" control="0x01" type="toggle"/>
-    <Entry paramId="deckB_hotcue3" status="0x99" control="0x02" type="toggle"/>
-    <Entry paramId="deckB_hotcue4" status="0x99" control="0x03" type="toggle"/>
-    <Entry paramId="deckB_hotcue5" status="0x99" control="0x04" type="toggle"/>
-    <Entry paramId="deckB_hotcue6" status="0x99" control="0x05" type="toggle"/>
-    <Entry paramId="deckB_hotcue7" status="0x99" control="0x06" type="toggle"/>
-    <Entry paramId="deckB_hotcue8" status="0x99" control="0x07" type="toggle"/>
-    <Entry paramId="deckB_hotcue1_clear" status="0x9A" control="0x00" type="toggle"/>
-    <Entry paramId="deckB_hotcue2_clear" status="0x9A" control="0x01" type="toggle"/>
-    <Entry paramId="deckB_hotcue3_clear" status="0x9A" control="0x02" type="toggle"/>
-    <Entry paramId="deckB_hotcue4_clear" status="0x9A" control="0x03" type="toggle"/>
-    <Entry paramId="deckB_hotcue5_clear" status="0x9A" control="0x04" type="toggle"/>
-    <Entry paramId="deckB_hotcue6_clear" status="0x9A" control="0x05" type="toggle"/>
-    <Entry paramId="deckB_hotcue7_clear" status="0x9A" control="0x06" type="toggle"/>
-    <Entry paramId="deckB_hotcue8_clear" status="0x9A" control="0x07" type="toggle"/>
+    <!-- Performance pads. The active pad tab decides whether these trigger Hot Cues, Pad FX, or Beatjump. -->
+    <Entry paramId="deckA_pad_mode_hotcue" status="0x90" control="0x69" type="toggle"/>
+    <Entry paramId="deckB_pad_mode_hotcue" status="0x91" control="0x69" type="toggle"/>
+    <Entry paramId="deckA_pad_mode_padfx" status="0x90" control="0x6A" type="toggle"/>
+    <Entry paramId="deckB_pad_mode_padfx" status="0x91" control="0x6A" type="toggle"/>
+    <Entry paramId="deckA_pad_mode_beatjump" status="0x90" control="0x6B" type="toggle"/>
+    <Entry paramId="deckB_pad_mode_beatjump" status="0x91" control="0x6B" type="toggle"/>
+
+    <Entry paramId="deckA_pad1" status="0x97" control="0x00" type="momentary"/>
+    <Entry paramId="deckA_pad2" status="0x97" control="0x01" type="momentary"/>
+    <Entry paramId="deckA_pad3" status="0x97" control="0x02" type="momentary"/>
+    <Entry paramId="deckA_pad4" status="0x97" control="0x03" type="momentary"/>
+    <Entry paramId="deckA_pad5" status="0x97" control="0x04" type="momentary"/>
+    <Entry paramId="deckA_pad6" status="0x97" control="0x05" type="momentary"/>
+    <Entry paramId="deckA_pad7" status="0x97" control="0x06" type="momentary"/>
+    <Entry paramId="deckA_pad8" status="0x97" control="0x07" type="momentary"/>
+    <Entry paramId="deckA_pad1_clear" status="0x98" control="0x00" type="toggle"/>
+    <Entry paramId="deckA_pad2_clear" status="0x98" control="0x01" type="toggle"/>
+    <Entry paramId="deckA_pad3_clear" status="0x98" control="0x02" type="toggle"/>
+    <Entry paramId="deckA_pad4_clear" status="0x98" control="0x03" type="toggle"/>
+    <Entry paramId="deckA_pad5_clear" status="0x98" control="0x04" type="toggle"/>
+    <Entry paramId="deckA_pad6_clear" status="0x98" control="0x05" type="toggle"/>
+    <Entry paramId="deckA_pad7_clear" status="0x98" control="0x06" type="toggle"/>
+    <Entry paramId="deckA_pad8_clear" status="0x98" control="0x07" type="toggle"/>
+
+    <Entry paramId="deckB_pad1" status="0x99" control="0x00" type="momentary"/>
+    <Entry paramId="deckB_pad2" status="0x99" control="0x01" type="momentary"/>
+    <Entry paramId="deckB_pad3" status="0x99" control="0x02" type="momentary"/>
+    <Entry paramId="deckB_pad4" status="0x99" control="0x03" type="momentary"/>
+    <Entry paramId="deckB_pad5" status="0x99" control="0x04" type="momentary"/>
+    <Entry paramId="deckB_pad6" status="0x99" control="0x05" type="momentary"/>
+    <Entry paramId="deckB_pad7" status="0x99" control="0x06" type="momentary"/>
+    <Entry paramId="deckB_pad8" status="0x99" control="0x07" type="momentary"/>
+    <Entry paramId="deckB_pad1_clear" status="0x9A" control="0x00" type="toggle"/>
+    <Entry paramId="deckB_pad2_clear" status="0x9A" control="0x01" type="toggle"/>
+    <Entry paramId="deckB_pad3_clear" status="0x9A" control="0x02" type="toggle"/>
+    <Entry paramId="deckB_pad4_clear" status="0x9A" control="0x03" type="toggle"/>
+    <Entry paramId="deckB_pad5_clear" status="0x9A" control="0x04" type="toggle"/>
+    <Entry paramId="deckB_pad6_clear" status="0x9A" control="0x05" type="toggle"/>
+    <Entry paramId="deckB_pad7_clear" status="0x9A" control="0x06" type="toggle"/>
+    <Entry paramId="deckB_pad8_clear" status="0x9A" control="0x07" type="toggle"/>
 
     <!-- Mixer. 14-bit LSB messages at +0x20 are paired by MidiControllerManager where present. -->
     <Entry paramId="deckA_gain" status="0xB0" control="0x04" type="encoder-absolute"/>
