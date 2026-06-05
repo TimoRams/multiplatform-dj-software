@@ -51,6 +51,24 @@ namespace {
 QtMessageHandler g_previousMessageHandler = nullptr;
 const QString kBreezeDialOverrideWarning = QStringLiteral("Member fillColor of the object BreezeDial overrides a member of the base object");
 
+void setEnvDefault(const char* name, const char* value)
+{
+    if (qEnvironmentVariableIsEmpty(name))
+        qputenv(name, value);
+}
+
+void configureQtRuntimeDefaults()
+{
+    setEnvDefault("QT_QUICK_CONTROLS_STYLE", "Basic");
+    setEnvDefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "RoundPreferFloor");
+
+    if (qEnvironmentVariableIsEmpty("QT_LOGGING_RULES")) {
+        qputenv("QT_LOGGING_RULES",
+                "qt.scenegraph.general=false;"
+                "qt.rhi.general=false");
+    }
+}
+
 QString pickDefaultVulkanIcd()
 {
 #if defined(Q_OS_LINUX)
@@ -95,6 +113,63 @@ void filteredMessageHandler(QtMsgType type, const QMessageLogContext& context, c
     if (g_previousMessageHandler)
         g_previousMessageHandler(type, context, message);
 }
+
+#if defined(Q_OS_LINUX)
+void configureLinuxVulkanBackend(bool& useVulkan,
+                                 QVersionNumber& requestedVkApi,
+                                 QString& requestedVkApiRaw,
+                                 QString& requestedVkIcd)
+{
+    QString rhiBackend = qEnvironmentVariable("BROCKDJ_RHI_BACKEND").trimmed().toLower();
+    if (rhiBackend.isEmpty())
+        rhiBackend = QStringLiteral("vulkan");
+
+    if (rhiBackend == "vulkan") {
+        qputenv("QSG_RHI_BACKEND", "vulkan");
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
+        useVulkan = true;
+        qDebug() << "[startup] RHI backend forced to vulkan";
+    } else if (rhiBackend == "opengl") {
+        qputenv("QSG_RHI_BACKEND", "opengl");
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+        qWarning() << "[startup] RHI backend forced to opengl (diagnostics only)";
+    } else if (rhiBackend == "auto") {
+        qDebug() << "[startup] RHI backend auto (BROCKDJ_RHI_BACKEND=auto)";
+    } else {
+        qWarning() << "[startup] Unknown BROCKDJ_RHI_BACKEND value, forcing vulkan:" << rhiBackend;
+        qputenv("QSG_RHI_BACKEND", "vulkan");
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
+        useVulkan = true;
+    }
+
+    if (!useVulkan)
+        return;
+
+    requestedVkIcd = qEnvironmentVariable("BROCKDJ_VK_ICD").trimmed();
+    if (requestedVkIcd.isEmpty() && qEnvironmentVariableIsEmpty("VK_ICD_FILENAMES")) {
+        const QString autoMode = qEnvironmentVariable("BROCKDJ_VK_ICD_AUTO").trimmed().toLower();
+        const bool allowAuto = autoMode.isEmpty() || autoMode == "1" || autoMode == "true" || autoMode == "on";
+        if (allowAuto)
+            requestedVkIcd = pickDefaultVulkanIcd();
+    }
+
+    if (!requestedVkIcd.isEmpty())
+        qputenv("VK_ICD_FILENAMES", requestedVkIcd.toUtf8());
+
+    requestedVkApiRaw = qEnvironmentVariable("BROCKDJ_VK_API").trimmed();
+    QString apiEnv = requestedVkApiRaw;
+    apiEnv.remove('"');
+    apiEnv.remove('\'');
+    apiEnv = apiEnv.trimmed().toLower();
+
+    if (!apiEnv.isEmpty()) {
+        if (apiEnv == "latest")
+            requestedVkApi = QVersionNumber(1, 4);
+        else
+            requestedVkApi = QVersionNumber::fromString(apiEnv);
+    }
+}
+#endif
 }
 
 int main(int argc, char *argv[])
@@ -121,67 +196,11 @@ int main(int argc, char *argv[])
     g_previousMessageHandler = qInstallMessageHandler(filteredMessageHandler);
     QQuickWindow::setTextRenderType(QQuickWindow::CurveTextRendering);
 
-    if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE"))
-        qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
-
-    if (qEnvironmentVariableIsEmpty("QT_SCALE_FACTOR_ROUNDING_POLICY"))
-        qputenv("QT_SCALE_FACTOR_ROUNDING_POLICY", "RoundPreferFloor");
-
-    if (qEnvironmentVariableIsEmpty("QT_LOGGING_RULES")) {
-        qputenv("QT_LOGGING_RULES",
-                "qt.scenegraph.general=false;"
-                "qt.rhi.general=false");
-    }
+    configureQtRuntimeDefaults();
 
 #if defined(Q_OS_LINUX)
     // Vulkan is required for production; allow env override for diagnostics.
-    QString rhiBackend = qEnvironmentVariable("BROCKDJ_RHI_BACKEND").trimmed().toLower();
-    if (rhiBackend.isEmpty())
-        rhiBackend = QStringLiteral("vulkan");
-
-    if (rhiBackend == "vulkan") {
-        qputenv("QSG_RHI_BACKEND", "vulkan");
-        QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
-        useVulkan = true;
-        qDebug() << "[startup] RHI backend forced to vulkan";
-    } else if (rhiBackend == "opengl") {
-        qputenv("QSG_RHI_BACKEND", "opengl");
-        QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
-        qWarning() << "[startup] RHI backend forced to opengl (diagnostics only)";
-    } else if (rhiBackend == "auto") {
-        qDebug() << "[startup] RHI backend auto (BROCKDJ_RHI_BACKEND=auto)";
-    } else {
-        qWarning() << "[startup] Unknown BROCKDJ_RHI_BACKEND value, forcing vulkan:" << rhiBackend;
-        qputenv("QSG_RHI_BACKEND", "vulkan");
-        QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
-        useVulkan = true;
-    }
-
-    if (useVulkan) {
-        requestedVkIcd = qEnvironmentVariable("BROCKDJ_VK_ICD").trimmed();
-        if (requestedVkIcd.isEmpty() && qEnvironmentVariableIsEmpty("VK_ICD_FILENAMES")) {
-            const QString autoMode = qEnvironmentVariable("BROCKDJ_VK_ICD_AUTO").trimmed().toLower();
-            const bool allowAuto = autoMode.isEmpty() || autoMode == "1" || autoMode == "true" || autoMode == "on";
-            if (allowAuto)
-                requestedVkIcd = pickDefaultVulkanIcd();
-        }
-
-        if (!requestedVkIcd.isEmpty())
-            qputenv("VK_ICD_FILENAMES", requestedVkIcd.toUtf8());
-
-        requestedVkApiRaw = qEnvironmentVariable("BROCKDJ_VK_API").trimmed();
-        QString apiEnv = requestedVkApiRaw;
-        apiEnv.remove('"');
-        apiEnv.remove('\'');
-        apiEnv = apiEnv.trimmed().toLower();
-
-        if (!apiEnv.isEmpty()) {
-            if (apiEnv == "latest")
-                requestedVkApi = QVersionNumber(1, 4);
-            else
-                requestedVkApi = QVersionNumber::fromString(apiEnv);
-        }
-    }
+    configureLinuxVulkanBackend(useVulkan, requestedVkApi, requestedVkApiRaw, requestedVkIcd);
 #endif
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::RoundPreferFloor);
 
