@@ -5086,8 +5086,12 @@ void DjEngine::resumeAfterScrub()
         keepLargerMagnitude(m_scratchInputFilteredRate);
         keepLargerMagnitude(m_scratchLastInputRate);
         keepLargerMagnitude(m_scratchAbsoluteFollowVelocity);
-        if (std::abs(m_scratchLastInputRate) >= 0.001)
+        if (std::abs(m_scratchLastInputRate) >= 0.15)
             releaseDirection = m_scratchLastInputRate < 0.0 ? -1.0 : 1.0;
+        else if (std::abs(m_scratchInputFilteredRate) >= 0.15)
+            releaseDirection = m_scratchInputFilteredRate < 0.0 ? -1.0 : 1.0;
+        else if (std::abs(m_scratchTargetRate) >= 0.15)
+            releaseDirection = m_scratchTargetRate < 0.0 ? -1.0 : 1.0;
     } else if (std::abs(releaseStartRate) < 0.001) {
         releaseDirection = m_scratchDirectionSign;
     }
@@ -5162,14 +5166,38 @@ void DjEngine::resumeAfterScrub()
     emit scrubbingChanged();
 }
 
+void DjEngine::finishScrubWithoutInertia()
+{
+    if (!m_isScrubbing && !m_scratchReleaseActive)
+        return;
+
+    m_isScrubbing = false;
+    m_scratchReleaseActive = false;
+    m_scratchReleaseTargetRate = 0.0;
+    m_scratchReleaseTauSec = ScratchConfig::kReleaseToPlayTauSec;
+    m_scratchTargetRate = 0.0;
+    m_scratchSmoothedRate = 0.0;
+    m_scratchInputFilteredRate = 0.0;
+    m_scratchLastInputRate = 0.0;
+    m_scratchAbsolutePositionControl = false;
+    m_scratchAbsoluteFollowVelocity = 0.0;
+
+    restorePostScrubPlaybackState();
+    m_scrubLoopLockedToActiveLoop = false;
+    emit scrubbingChanged();
+    emit playingChanged();
+    emit progressChanged();
+}
+
 void DjEngine::applyJogNudge(double signedTicks)
 {
     if (m_isScrubbing || m_scratchReleaseActive)
         return;
 
-    // Each tick maps to ~3% speed offset; clamp to ±8% so a fast spin doesn't overshoot.
-    constexpr double kPercentPerTick = 3.0;
-    constexpr double kMaxNudgePercent = 8.0;
+    // FLX10 rim ticks are relative jog deltas, not coarse tempo-percent steps.
+    // Keep pitch bend gentle; fast rim turns still reach the clamp naturally.
+    constexpr double kPercentPerTick = 0.75;
+    constexpr double kMaxNudgePercent = 6.0;
     m_jogNudgePercent = std::clamp(signedTicks * kPercentPerTick, -kMaxNudgePercent, kMaxNudgePercent);
     m_lastJogNudgeClock.restart();
     updateSpeedAndPitch();
@@ -5499,6 +5527,17 @@ void DjEngine::setTempoPercent(double percent)
         return;
 
     applyTempoPercent(percent);
+}
+
+void DjEngine::setTempoRangePercent(double percent)
+{
+    const double clamped = std::clamp(percent, 6.0, 100.0);
+    if (std::abs(m_tempoRangePercent - clamped) < 0.001)
+        return;
+
+    m_tempoRangePercent = clamped;
+    applyTempoPercent(std::clamp(m_tempoPercent, -m_tempoRangePercent, m_tempoRangePercent));
+    emit tempoRangeChanged();
 }
 
 void DjEngine::setManualBpm(double bpm)

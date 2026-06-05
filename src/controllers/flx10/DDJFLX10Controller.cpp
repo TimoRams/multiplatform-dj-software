@@ -30,6 +30,10 @@ constexpr int kAlbumArtMaxBytes = 119 + 122 * 254;
 constexpr double kJogRingWarningSeconds = 30.0;
 constexpr qint64 kJogRingBlinkIntervalMs = 500;
 constexpr int kJogRingOnValue = 0x7F;
+constexpr int kXx2fSampleRate = 22050;
+constexpr int kXx2fRecordsPerPacket = 30;
+constexpr std::array<uint8_t, 4> kXx2fBeatTypes = {0x03, 0x04, 0x00, 0x02};
+constexpr std::array<uint8_t, 4> kXx2fStartMarker = {0x80, 0x02, 0x01, 0x00};
 
 struct VendorUnlockCommand
 {
@@ -101,6 +105,73 @@ double validTrackPosition(const DjEngine* engine, double duration)
 QByteArray packet()
 {
     return QByteArray(kHidPacketSize, char(0));
+}
+
+uint8_t camelotKeyByte(int number, QChar side)
+{
+    static constexpr std::array<uint8_t, 13> kCamelotA = {
+        0x80, 0x98, 0x8E, 0x84, 0x92, 0x88, 0x96,
+        0x8C, 0x82, 0x90, 0x86, 0x94, 0x8A
+    };
+    static constexpr std::array<uint8_t, 13> kCamelotB = {
+        0x99, 0x97, 0x8D, 0x83, 0x91, 0x87, 0x95,
+        0x8B, 0x81, 0x8F, 0x85, 0x93, 0x89
+    };
+
+    if (number < 1 || number > 12)
+        return 0x80;
+
+    return side.toUpper() == QLatin1Char('B') ? kCamelotB[number] : kCamelotA[number];
+}
+
+uint8_t musicalKeyByte(QString key)
+{
+    const QString original = key.trimmed();
+    if (original.isEmpty())
+        return 0x80;
+
+    static const QRegularExpression camelotRe(
+        QStringLiteral("\\b(1[0-2]|[1-9])\\s*([AB])\\b"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch camelotMatch = camelotRe.match(original);
+    if (camelotMatch.hasMatch())
+        return camelotKeyByte(camelotMatch.captured(1).toInt(), camelotMatch.captured(2).at(0));
+
+    static const QRegularExpression noteRe(
+        QStringLiteral("^\\s*([A-GH])\\s*([#♯b♭]?)(.*)$"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch noteMatch = noteRe.match(original);
+    if (!noteMatch.hasMatch())
+        return 0x80;
+
+    QString note = noteMatch.captured(1).toUpper();
+    QString accidental = noteMatch.captured(2);
+    const QString rest = noteMatch.captured(3).trimmed().toLower();
+    accidental.replace(QStringLiteral("♯"), QStringLiteral("#"));
+    accidental.replace(QStringLiteral("♭"), QStringLiteral("b"));
+    accidental = accidental.toLower();
+
+    int semitone = -1;
+    if (note == QLatin1String("C")) semitone = 0;
+    else if (note == QLatin1String("D")) semitone = 2;
+    else if (note == QLatin1String("E")) semitone = 4;
+    else if (note == QLatin1String("F")) semitone = 5;
+    else if (note == QLatin1String("G")) semitone = 7;
+    else if (note == QLatin1String("A")) semitone = 9;
+    else if (note == QLatin1String("B") || note == QLatin1String("H")) semitone = 11;
+
+    if (semitone < 0)
+        return 0x80;
+    if (accidental == QLatin1String("#"))
+        semitone = (semitone + 1) % 12;
+    else if (accidental == QLatin1String("b"))
+        semitone = (semitone + 11) % 12;
+
+    const bool minor = rest.startsWith(QLatin1Char('m')) && !rest.startsWith(QLatin1String("maj"));
+    static constexpr std::array<int, 12> kMajorCamelot = {8, 3, 10, 5, 12, 7, 2, 9, 4, 11, 6, 1};
+    static constexpr std::array<int, 12> kMinorCamelot = {5, 12, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10};
+    return minor ? camelotKeyByte(kMinorCamelot[semitone], QLatin1Char('A'))
+                 : camelotKeyByte(kMajorCamelot[semitone], QLatin1Char('B'));
 }
 
 QByteArray bytesFromHexString(QString hex)
@@ -296,6 +367,16 @@ void DDJFLX10Controller::connectDeckSignals()
         QObject::disconnect(connection);
     for (auto& connection : m_metadataConnections)
         QObject::disconnect(connection);
+    for (auto& connection : m_keyAnalyzedConnections)
+        QObject::disconnect(connection);
+    for (auto& connection : m_beatgridConnections)
+        QObject::disconnect(connection);
+    for (auto& connection : m_hotCueConnections)
+        QObject::disconnect(connection);
+    for (auto& connection : m_tempoConnections)
+        QObject::disconnect(connection);
+    for (auto& connection : m_tempoRangeConnections)
+        QObject::disconnect(connection);
 
     for (int deck = 1; deck <= 2; ++deck) {
         DjEngine* engine = deckEngine(deck);
@@ -320,6 +401,24 @@ void DDJFLX10Controller::connectDeckSignals()
                 sendXx39(deck);
             }
         });
+        m_tempoConnections[deck] = connect(engine, &DjEngine::tempoChanged, this, [this, deck] {
+            if (!m_connected || m_waveforms[deck].isEmpty())
+                return;
+            sendXx27(deck,
+                     deckDisplayPosition(deck),
+                     deckDisplayDuration(deck),
+                     deckBpm(deck),
+                     deckEngine(deck) ? deckEngine(deck)->isPlaying() : false);
+        });
+        m_tempoRangeConnections[deck] = connect(engine, &DjEngine::tempoRangeChanged, this, [this, deck] {
+            if (!m_connected || m_waveforms[deck].isEmpty())
+                return;
+            sendXx27(deck,
+                     deckDisplayPosition(deck),
+                     deckDisplayDuration(deck),
+                     deckBpm(deck),
+                     deckEngine(deck) ? deckEngine(deck)->isPlaying() : false);
+        });
 
         if (TrackData* trackData = engine->getTrackData()) {
             m_rgbWaveformConnections[deck] = connect(trackData, &TrackData::rgbWaveformUpdated, this, [this, deck] {
@@ -341,7 +440,23 @@ void DDJFLX10Controller::connectDeckSignals()
                 if (m_connected)
                     clearDeckDisplay(deck);
             });
+            m_keyAnalyzedConnections[deck] = connect(trackData, &TrackData::keyAnalyzed, this, [this, deck] {
+                if (!m_connected || m_waveforms[deck].isEmpty())
+                    return;
+                sendXx39(deck);
+            });
+            m_beatgridConnections[deck] = connect(trackData, &TrackData::beatgridChanged, this, [this, deck] {
+                if (!m_connected || m_waveforms[deck].isEmpty() || m_uploadActive[deck])
+                    return;
+                sendXx2f(deck);
+            });
         }
+
+        m_hotCueConnections[deck] = connect(engine, &DjEngine::hotCuesChanged, this, [this, deck] {
+            if (!m_connected || m_waveforms[deck].isEmpty())
+                return;
+            sendXx39(deck);
+        });
     }
 }
 
@@ -817,16 +932,6 @@ bool DDJFLX10Controller::sendXx39(int deck)
         if (p.size() > kHidPacketSize)
             p.truncate(kHidPacketSize);
         put8(p, 0, deckByte(deck));
-        if (packetIndex == 0) {
-            const QString key = deckKey(deck).isEmpty() ? QStringLiteral("--") : deckKey(deck);
-            const QByteArray label = QStringLiteral("KEY %2  BPM %1")
-                .arg(deckBpm(deck), 0, 'f', 1)
-                .arg(key)
-                .left(28)
-                .toLatin1();
-            for (int i = 0; i < 28; ++i)
-                put8(p, 7 + i, i < label.size() ? label.at(i) : 0);
-        }
         ok = writePacket(p) && ok;
     }
     return ok;
@@ -916,12 +1021,59 @@ bool DDJFLX10Controller::sendXx36Window(int deck, const QByteArray& waveform, in
 
 bool DDJFLX10Controller::sendXx2f(int deck)
 {
-    QByteArray p = packet();
-    put8(p, 0, deckByte(deck));
-    put8(p, 1, 0x2F);
-    put8(p, 2, 0x01);
-    put8(p, 4, 0x01);
-    return writePacket(p);
+    struct Xx2fRecord {
+        uint8_t type = 0;
+        uint32_t samples = 0;
+    };
+
+    std::vector<Xx2fRecord> records;
+    records.reserve(1 + 512);
+    records.push_back({kXx2fStartMarker[0],
+                       static_cast<uint32_t>(kXx2fStartMarker[1]
+                                             | (kXx2fStartMarker[2] << 8)
+                                             | (kXx2fStartMarker[3] << 16))});
+
+    const std::vector<double> beatTimesMs = deckBeatTimesMs(deck);
+    for (size_t i = 0; i < beatTimesMs.size(); ++i) {
+        const double clampedMs = std::max(0.0, beatTimesMs[i]);
+        const uint32_t samples = static_cast<uint32_t>(
+            std::llround(clampedMs * static_cast<double>(kXx2fSampleRate) / 1000.0)) & 0x00FFFFFFu;
+        records.push_back({kXx2fBeatTypes[i % kXx2fBeatTypes.size()], samples});
+    }
+
+    const int totalPackets = std::max(1, static_cast<int>(
+        (records.size() + kXx2fRecordsPerPacket - 1) / kXx2fRecordsPerPacket));
+    const int packetsToSend = std::min(totalPackets, 255);
+
+    bool ok = true;
+    for (int packetIndex = 0; packetIndex < packetsToSend; ++packetIndex) {
+        QByteArray p = packet();
+        put8(p, 0, deckByte(deck));
+        put8(p, 1, 0x2F);
+        put8(p, 2, packetIndex + 1);
+        put8(p, 3, 0x00);
+        put8(p, 4, 0x15);
+        put8(p, 5, 0x00);
+
+        int offset = 6;
+        const size_t firstRecord = static_cast<size_t>(packetIndex * kXx2fRecordsPerPacket);
+        const size_t endRecord = std::min(records.size(), firstRecord + kXx2fRecordsPerPacket);
+        for (size_t recordIndex = firstRecord; recordIndex < endRecord; ++recordIndex) {
+            const Xx2fRecord& record = records[recordIndex];
+            put8(p, offset, record.type);
+            put8(p, offset + 1, record.samples & 0xFF);
+            put8(p, offset + 2, (record.samples >> 8) & 0xFF);
+            put8(p, offset + 3, (record.samples >> 16) & 0xFF);
+            offset += 4;
+        }
+
+        ok = writePacket(p) && ok;
+    }
+
+    qInfo() << "[DDJ-FLX10] Deck" << deck
+            << "sent xx2F beatgrid records" << static_cast<int>(records.size() - 1)
+            << "packets" << packetsToSend;
+    return ok;
 }
 
 bool DDJFLX10Controller::clearDeckDisplay(int deck)
@@ -949,10 +1101,12 @@ bool DDJFLX10Controller::sendXx27(int deck, double elapsedSeconds, double durati
     put8(p, 3, 0x80);
     put8(p, 4, 0x01);
 
+    const double tempoPercent = std::clamp(deckTempoPercent(deck), -100.0, 100.0);
+    const double rateRatio = std::max(0.01, 1.0 + tempoPercent / 100.0);
     elapsedSeconds = std::max(0.0, elapsedSeconds);
     durationSeconds = std::max(1.0, durationSeconds);
     elapsedSeconds = std::clamp(elapsedSeconds, 0.0, durationSeconds);
-    const int totalMs = static_cast<int>(std::llround(elapsedSeconds * 1000.0));
+    const int totalMs = static_cast<int>(std::floor(elapsedSeconds * 1000.0));
     const int minutes = totalMs / 60000;
     const int rem = totalMs % 60000;
     const int seconds = rem / 1000;
@@ -962,7 +1116,7 @@ bool DDJFLX10Controller::sendXx27(int deck, double elapsedSeconds, double durati
     put8(p, 7, ms);
     put8(p, 8, (ms >> 8) & 0x03);
 
-    const int durationMs = static_cast<int>(std::llround(durationSeconds * 1000.0));
+    const int durationMs = static_cast<int>(std::floor((durationSeconds / rateRatio) * 1000.0));
     put8(p, 9, durationMs / 60000);
     const int rem2 = durationMs % 60000;
     put8(p, 10, rem2 / 1000);
@@ -974,22 +1128,21 @@ bool DDJFLX10Controller::sendXx27(int deck, double elapsedSeconds, double durati
     put8(p, 13, bpmInt);
     put8(p, 14, (static_cast<int>(std::round((bpm - bpmInt) * 10.0)) & 0x0F) << 4);
     put8(p, 15, 0x01);
+    const int tempoEnc = std::clamp(static_cast<int>(std::llround(tempoPercent * 100.0)), -32768, 32767);
+    const uint16_t tempoWire = static_cast<uint16_t>(tempoEnc & 0xFFFF);
+    put8(p, 16, tempoWire & 0xFF);
+    put8(p, 17, (tempoWire >> 8) & 0xFF);
     put8(p, 20, 0x0E);
 
-    if (moving) {
-        const int secInt = totalMs / 1000;
-        const int subMs = totalMs % 1000;
-        const int sub1024 = std::min(1023, (subMs * 1024) / 1000);
-        const int ticks = secInt * 1024 + sub1024;
-        put8(p, 21, ticks * 2);
-        put8(p, 22, static_cast<int>(ticks / 123.2) % 15);
-    } else {
-        put8(p, 21, 0x02);
-        put8(p, 22, 0x00);
-    }
+    const int secInt = totalMs / 1000;
+    const int subMs = totalMs % 1000;
+    const int sub1024 = std::min(1023, (subMs * 1024) / 1000);
+    const int subsecTicks = secInt * 1024 + sub1024;
+    put8(p, 21, (subsecTicks * 2) & 0xFF);
+    put8(p, 22, static_cast<int>(std::floor(subsecTicks / 123.2)) % 15);
 
     put8(p, 25, 0x80);
-    put8(p, 29, 0x92);
+    put8(p, 29, deckKeyByte(deck));
     put8(p, 30, 0x0D);
     put8(p, 31, displayDeckState(db));
     put8(p, 32, 0xFF);
@@ -1122,6 +1275,18 @@ double DDJFLX10Controller::deckBpm(int deck) const
     return engine->getCurrentBpm();
 }
 
+double DDJFLX10Controller::deckTempoPercent(int deck) const
+{
+    const DjEngine* engine = deckEngine(deck);
+    return engine ? engine->getTempoPercent() : 0.0;
+}
+
+double DDJFLX10Controller::deckTempoRangePercent(int deck) const
+{
+    const DjEngine* engine = deckEngine(deck);
+    return engine ? engine->tempoRangePercent() : 8.0;
+}
+
 QString DDJFLX10Controller::deckKey(int deck) const
 {
     const DjEngine* engine = deckEngine(deck);
@@ -1135,6 +1300,53 @@ QString DDJFLX10Controller::deckKey(int deck) const
     }
 
     return engine->trackKey().trimmed();
+}
+
+uint8_t DDJFLX10Controller::deckKeyByte(int deck) const
+{
+    return musicalKeyByte(deckKey(deck));
+}
+
+std::vector<double> DDJFLX10Controller::deckBeatTimesMs(int deck) const
+{
+    const DjEngine* engine = deckEngine(deck);
+    const TrackData* trackData = engine ? engine->getTrackData() : nullptr;
+    const double duration = deckDisplayDuration(deck);
+    std::vector<double> timesMs;
+
+    if (trackData) {
+        const std::vector<TrackData::BeatMarker> grid = trackData->getBeatGrid();
+        timesMs.reserve(grid.size());
+        for (const TrackData::BeatMarker& marker : grid) {
+            if (!marker.isBeat || marker.positionSec < 0.0 || marker.positionSec > duration)
+                continue;
+            timesMs.push_back(marker.positionSec * 1000.0);
+        }
+
+        if (!timesMs.empty())
+            return timesMs;
+
+        const double bpm = trackData->getBpm();
+        if (bpm > 0.0 && duration > 0.0) {
+            const double sampleRate = trackData->getSampleRate();
+            const double firstBeatSec = sampleRate > 0.0
+                                            ? static_cast<double>(trackData->getFirstBeatSample()) / sampleRate
+                                            : 0.0;
+            const double beatLengthSec = 60.0 / bpm;
+            if (beatLengthSec > 0.001) {
+                double firstVisibleBeat = firstBeatSec;
+                while (firstVisibleBeat > 0.0)
+                    firstVisibleBeat -= beatLengthSec;
+                while (firstVisibleBeat < 0.0)
+                    firstVisibleBeat += beatLengthSec;
+
+                for (double sec = firstVisibleBeat; sec <= duration; sec += beatLengthSec)
+                    timesMs.push_back(sec * 1000.0);
+            }
+        }
+    }
+
+    return timesMs;
 }
 
 int DDJFLX10Controller::currentWaveformEntry(int deck) const

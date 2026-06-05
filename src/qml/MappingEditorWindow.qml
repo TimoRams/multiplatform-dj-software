@@ -448,16 +448,18 @@ Window {
                     // ── JOG WHEELS ──────────────────────────────────────────
                     Item {
                         width: parent.width; height: visible ? 30 : 0
-                        visible: mappingEditorWindow.catVisible([["Touch A","deckA_jog_touch"],["Move A","deckA_jog_move"],["Touch B","deckB_jog_touch"],["Move B","deckB_jog_move"]])
+                        visible: mappingEditorWindow.catVisible([["Touch A","deckA_jog_touch"],["Nudge A","deckA_jog_nudge"],["Scratch A","deckA_jog_scratch"],["Touch B","deckB_jog_touch"],["Nudge B","deckB_jog_nudge"],["Scratch B","deckB_jog_scratch"]])
                         Text { anchors.verticalCenter: parent.verticalCenter; text: "JOG WHEELS"; color: "#3d3d3d"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.5 }
                     }
                     MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Touch A","deckA_jog_touch"); labelStr: "Touch A"; paramId: "deckA_jog_touch" }
-                    MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Move A","deckA_jog_move");   labelStr: "Move A";  paramId: "deckA_jog_move" }
+                    MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Nudge A","deckA_jog_nudge");   labelStr: "Nudge A";  paramId: "deckA_jog_nudge" }
+                    MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Scratch A","deckA_jog_scratch");   labelStr: "Scratch A";  paramId: "deckA_jog_scratch" }
                     MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Touch B","deckB_jog_touch"); labelStr: "Touch B"; paramId: "deckB_jog_touch" }
-                    MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Move B","deckB_jog_move");   labelStr: "Move B";  paramId: "deckB_jog_move" }
+                    MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Nudge B","deckB_jog_nudge");   labelStr: "Nudge B";  paramId: "deckB_jog_nudge" }
+                    MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Scratch B","deckB_jog_scratch");   labelStr: "Scratch B";  paramId: "deckB_jog_scratch" }
 
                     Item { width: parent.width; height: visible ? 8 : 0
-                        visible: mappingEditorWindow.catVisible([["Touch A","deckA_jog_touch"],["Move A","deckA_jog_move"],["Touch B","deckB_jog_touch"],["Move B","deckB_jog_move"]]) }
+                        visible: mappingEditorWindow.catVisible([["Touch A","deckA_jog_touch"],["Nudge A","deckA_jog_nudge"],["Scratch A","deckA_jog_scratch"],["Touch B","deckB_jog_touch"],["Nudge B","deckB_jog_nudge"],["Scratch B","deckB_jog_scratch"]]) }
 
                     // ── BROWSER ─────────────────────────────────────────────
                     Item {

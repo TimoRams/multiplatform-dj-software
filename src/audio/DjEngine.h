@@ -34,6 +34,7 @@ class DjEngine : public QObject
     Q_PROPERTY(bool isReverse READ isReverse NOTIFY reverseChanged)
     Q_PROPERTY(bool keylock READ keylock WRITE setKeylock NOTIFY keylockChanged)
     Q_PROPERTY(double tempoPercent READ getTempoPercent WRITE setTempoPercent NOTIFY tempoChanged)
+    Q_PROPERTY(double tempoRangePercent READ tempoRangePercent WRITE setTempoRangePercent NOTIFY tempoRangeChanged)
     Q_PROPERTY(double currentBpm READ getCurrentBpm NOTIFY tempoChanged)
     Q_PROPERTY(double tempoRatio READ getTempoRatio NOTIFY tempoChanged)
     Q_PROPERTY(TrackData* trackData READ getTrackData CONSTANT)
@@ -134,6 +135,7 @@ public:
     // This decouples UI deltas from the audio scratch model (usable for MIDI/HID jog ticks).
     Q_INVOKABLE void pushScratchVelocityTick(double velocityRate);
     Q_INVOKABLE void resumeAfterScrub();
+    Q_INVOKABLE void finishScrubWithoutInertia();
     // Outer-rim jog nudge: temporarily speeds up/slows down playback without entering scratch mode.
     Q_INVOKABLE void applyJogNudge(double signedTicks);
 
@@ -219,6 +221,7 @@ public:
     [[nodiscard]] QImage  currentCoverImage() const;
     [[nodiscard]] QVariantList currentSegments() const { return m_currentSegments; }
     [[nodiscard]] double  getTempoPercent() const { return m_tempoPercent; }
+    [[nodiscard]] double  tempoRangePercent() const { return m_tempoRangePercent; }
     // Beat phase: 0.0 = on the beat, 0.5 = halfway between beats, approaches 1.0 just before the next beat.
     [[nodiscard]] Q_INVOKABLE double getBeatPhase() const;
     [[nodiscard]] double getBeatPosition() const;
@@ -281,6 +284,7 @@ public slots:
     void togglePlay();
     void setPosition(float progress);
     void setTempoPercent(double percent);
+    Q_INVOKABLE void setTempoRangePercent(double percent);
     Q_INVOKABLE void setManualBpm(double bpm);
     Q_INVOKABLE bool applyAudioDeviceSettings(int sampleRate, int bufferSize);
     Q_INVOKABLE bool applyAudioDeviceSettings(const QString& deviceType,
@@ -356,6 +360,7 @@ signals:
     void scrubbingChanged();
     void reverseChanged();
     void tempoChanged();
+    void tempoRangeChanged();
     void trackLoaded();
     void trackMetadataChanged();
     void pixelsPerSecondChanged();
@@ -487,6 +492,7 @@ private:
 
     // Tempo control: ±6/8/16/32/100% (WIDE) selectable range
     double m_tempoPercent = 0.0;
+    double m_tempoRangePercent = 8.0;
     // Phase correction nudge added to m_tempoPercent inside updateSpeedAndPitch().
     // Cleared on scratch and when sync is disabled. Normally capped at ±4%; ±8% during reSync.
     double m_phaseNudge = 0.0;

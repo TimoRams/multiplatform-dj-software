@@ -9,6 +9,7 @@
 #include "feedback/MidiFeedbackController.h"
 
 #include <QObject>
+#include <QTimer>
 #include <QStringList>
 #include <QVariantMap>
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -123,6 +124,10 @@ private:
     bool m_cueBHeld = false;
     bool m_jogATouched = false;
     bool m_jogBTouched = false;
+    QTimer m_jogAReleaseTimer;
+    QTimer m_jogBReleaseTimer;
+    bool m_jogAReleasedRecently = false;
+    bool m_jogBReleasedRecently = false;
     bool m_deckAShiftHeld = false;
     bool m_deckBShiftHeld = false;
     MidiPadMode m_deckAPadMode = MidiPadMode::HotCue;

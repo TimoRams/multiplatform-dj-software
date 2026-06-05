@@ -148,9 +148,11 @@ void MidiFeedbackController::refreshDeckLeds(int deck)
 
     sendDeckLed(deck, m_mapping.playNote, engine->isPlaying());
     sendDeckLed(deck, m_mapping.cueNote, engine->cueEnabled());
+    const bool loopOutSet = engine->loopOutPosition() > engine->loopInPosition() + 0.001;
+    const bool isFourBeatLoop = engine->loopActive() && std::abs(engine->loopLengthBeats() - 4.0) < 0.1;
     sendDeckLed(deck, m_mapping.loopInNote, engine->loopInSet());
-    sendDeckLed(deck, m_mapping.loopOutNote, engine->loopActive());
-    sendDeckLed(deck, m_mapping.loop4BeatNote, engine->loopActive());
+    sendDeckLed(deck, m_mapping.loopOutNote, loopOutSet);
+    sendDeckLed(deck, m_mapping.loop4BeatNote, isFourBeatLoop);
     sendDeckLed(deck, m_mapping.loopReloopNote, engine->loopActive());
     sendDeckLed(deck, m_mapping.tempoResetNote, qFuzzyIsNull(engine->getTempoPercent()));
     sendDeckLed(deck, m_mapping.beatSyncNote, engine->syncEnabled());

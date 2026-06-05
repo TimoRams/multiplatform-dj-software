@@ -283,6 +283,8 @@ MidiInteractionType defaultInteractionTypeForParam(const QString& paramId)
     }
 
     if (paramId.endsWith(QStringLiteral("_jog_move"))
+        || paramId.endsWith(QStringLiteral("_jog_nudge"))
+        || paramId.endsWith(QStringLiteral("_jog_scratch"))
         || paramId == QStringLiteral("library_browse")) {
         return MidiInteractionType::EncoderRelative;
     }
@@ -459,6 +461,22 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, QObject* par
     m_midiFeedback.setMidiSender([this](uint8_t status, uint8_t data1, uint8_t data2, const QString& type)
     {
         return sendMidiShort(status, data1, data2, type);
+    });
+
+    for (QTimer* timer : {&m_jogAReleaseTimer, &m_jogBReleaseTimer}) {
+        timer->setSingleShot(true);
+        timer->setTimerType(Qt::PreciseTimer);
+        timer->setInterval(70);
+    }
+    connect(&m_jogAReleaseTimer, &QTimer::timeout, this, [this] {
+        m_jogAReleasedRecently = false;
+        if (!m_jogATouched && m_deckA && m_deckA->isScrubbing())
+            m_deckA->finishScrubWithoutInertia();
+    });
+    connect(&m_jogBReleaseTimer, &QTimer::timeout, this, [this] {
+        m_jogBReleasedRecently = false;
+        if (!m_jogBTouched && m_deckB && m_deckB->isScrubbing())
+            m_deckB->finishScrubWithoutInertia();
     });
 
     m_selectedController = SettingsManager::getInstance().getSelectedController();
@@ -2034,7 +2052,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
             return false;
 
         // Some controllers send rim/nudge on CC N and touched platter motion on
-        // CC N+1. Native learn captures the rim first, so keep CC N as jog_move
+        // CC N+1. Native learn captures the rim first, so keep CC N as nudge
         // and route the adjacent touched CC as scratch-only absolute motion.
         const int pairedJogMsgId = msgId - 1;
         const auto pairedIt = m_midiToParam.find(pairedJogMsgId);
@@ -2053,12 +2071,20 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
         };
 
         const QString& pairedParamId = pairedIt->second.paramId;
-        const bool deckATouched = pairedParamId == QStringLiteral("deckA_jog_move")
+        const bool pairedDeckA = pairedParamId == QStringLiteral("deckA_jog_move")
+            || pairedParamId == QStringLiteral("deckA_jog_nudge");
+        const bool pairedDeckB = pairedParamId == QStringLiteral("deckB_jog_move")
+            || pairedParamId == QStringLiteral("deckB_jog_nudge");
+        const bool deckATouched = pairedDeckA
             && (m_jogATouched || midiMomentaryHeld(QStringLiteral("deckA_jog_touch")));
-        const bool deckBTouched = pairedParamId == QStringLiteral("deckB_jog_move")
+        const bool deckBTouched = pairedDeckB
             && (m_jogBTouched || midiMomentaryHeld(QStringLiteral("deckB_jog_touch")));
         if (!deckATouched && !deckBTouched)
             return false;
+
+        const QString scratchParamId = deckATouched
+            ? QStringLiteral("deckA_jog_scratch")
+            : QStringLiteral("deckB_jog_scratch");
 
         const int raw = clampMidi7bit(static_cast<int>(std::round(value * 127.0f)));
         const auto previousIt = m_scratchAbsoluteLastByMsgId.find(msgId);
@@ -2067,7 +2093,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
             m_scratchAbsoluteLastByMsgId[msgId] = raw;
             qDebug() << "[MIDI MAP]" << midiControlLabel(msgId)
                      << "value:" << raw
-                     << "mappedAction:" << pairedParamId
+                     << "mappedAction:" << scratchParamId
                      << "interactionType:touched-absolute-jog"
                      << "dispatch=baseline";
             return true;
@@ -2085,14 +2111,14 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
                  << "value:" << raw
                  << "previous:" << previousRaw
                  << "deltaTicks:" << delta
-                 << "mappedAction:" << pairedParamId
+                 << "mappedAction:" << scratchParamId
                  << "interactionType:touched-absolute-jog"
                  << "dispatch:jogMoveFallback";
 
         if (delta == 0.0f)
             return true;
 
-        dispatchMidiParameterToStore(pairedParamId, delta);
+        dispatchMidiParameterToStore(scratchParamId, delta);
         return true;
     };
 
@@ -2694,9 +2720,11 @@ void MidiControllerManager::refreshTransportAndLoopLeds(QChar deck, DjEngine* en
     sendMappedNoteLed(prefix + QStringLiteral("play"), engine->isPlaying());
     sendMappedNoteLed(prefix + QStringLiteral("cue"), !engine->isPlaying());
     sendMappedNoteLed(prefix + QStringLiteral("headphone_cue"), engine->cueEnabled());
+    const bool loopOutSet = engine->loopOutPosition() > engine->loopInPosition() + 0.001;
+    const bool isFourBeatLoop = engine->loopActive() && std::abs(engine->loopLengthBeats() - 4.0) < 0.1;
     sendMappedNoteLed(prefix + QStringLiteral("loop_in"), engine->loopInSet());
-    sendMappedNoteLed(prefix + QStringLiteral("loop_out"), engine->loopActive());
-    sendMappedNoteLed(prefix + QStringLiteral("loop_4beat"), engine->loopActive());
+    sendMappedNoteLed(prefix + QStringLiteral("loop_out"), loopOutSet);
+    sendMappedNoteLed(prefix + QStringLiteral("loop_4beat"), isFourBeatLoop);
     sendMappedNoteLed(prefix + QStringLiteral("loop_reloop"), engine->loopActive());
     sendMappedNoteLed(prefix + QStringLiteral("beat_sync"), engine->syncEnabled());
     sendMappedNoteLed(prefix + QStringLiteral("key_sync"), engine->keylock());
@@ -2914,6 +2942,10 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
     m_cueBHeld = false;
     m_jogATouched = false;
     m_jogBTouched = false;
+    m_jogAReleaseTimer.stop();
+    m_jogBReleaseTimer.stop();
+    m_jogAReleasedRecently = false;
+    m_jogBReleasedRecently = false;
     m_deckAShiftHeld = false;
     m_deckBShiftHeld = false;
     m_deckAPadMode = MidiPadMode::HotCue;
@@ -3320,14 +3352,26 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
         }
         else if (id == "deckA_loop_4beat") {
             if (value >= 0.5f && a) {
-                if (m_deckAShiftHeld) a->clearLoop();
-                else a->setLoop4Beats();
+                if (m_deckAShiftHeld) {
+                    if (a->loopActive())
+                        a->deactivateLoop();
+                    else
+                        a->reactivateLoop();
+                } else {
+                    a->setLoop4Beats();
+                }
             }
         }
         else if (id == "deckB_loop_4beat") {
             if (value >= 0.5f && b) {
-                if (m_deckBShiftHeld) b->clearLoop();
-                else b->setLoop4Beats();
+                if (m_deckBShiftHeld) {
+                    if (b->loopActive())
+                        b->deactivateLoop();
+                    else
+                        b->reactivateLoop();
+                } else {
+                    b->setLoop4Beats();
+                }
             }
         }
         else if (id == "deckA_headphone_cue") {
@@ -3354,9 +3398,19 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
         else if (id == "deckB_eqLow")  { if (b) b->setEqLow(static_cast<double>(value) * 2.0 - 1.0); }
         else if (id == "deckA_filter") { if (a) a->setFilter(static_cast<double>(value) * 2.0 - 1.0); }
         else if (id == "deckB_filter") { if (b) b->setFilter(static_cast<double>(value) * 2.0 - 1.0); }
-        // Tempo fader: MIDI 0-1 → engine -8% to +8%
-        else if (id == "deckA_tempo")  { if (a) a->setTempoPercent(static_cast<double>(value) * 16.0 - 8.0); }
-        else if (id == "deckB_tempo")  { if (b) b->setTempoPercent(static_cast<double>(value) * 16.0 - 8.0); }
+        // Tempo fader: MIDI 0-1 -> current deck tempo range.
+        else if (id == "deckA_tempo")  {
+            if (a) {
+                const double range = std::max(1.0, a->tempoRangePercent());
+                a->setTempoPercent(static_cast<double>(value) * 2.0 * range - range);
+            }
+        }
+        else if (id == "deckB_tempo")  {
+            if (b) {
+                const double range = std::max(1.0, b->tempoRangePercent());
+                b->setTempoPercent(static_cast<double>(value) * 2.0 * range - range);
+            }
+        }
         // Jog touch: 127 = finger down (enter scratch), 0 = lift (resume)
         else if (id == "deckA_jog_touch") {
             const bool currentHeld = value >= 0.5f;
@@ -3364,6 +3418,8 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
             if (currentHeld) {
                 if (!previousHeld && a) {
                     m_jogATouched = true;
+                    m_jogAReleasedRecently = false;
+                    m_jogAReleaseTimer.stop();
                     m_scratchAbsoluteLastByMsgId.clear();
                     qDebug() << "[MIDI ACTION] action=JogTouch deck=A"
                              << "previous:" << previousHeld
@@ -3382,9 +3438,11 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                 qDebug() << "[MIDI ACTION] action=JogTouch deck=A"
                          << "previous:" << previousHeld
                          << "current:" << currentHeld
-                         << "dispatch=resumeAfterScrub";
-                if (a)
-                    a->resumeAfterScrub();
+                         << "dispatch=finish-scrub-open-real-tick-window";
+                if (a && a->isScrubbing())
+                    a->finishScrubWithoutInertia();
+                m_jogAReleasedRecently = true;
+                m_jogAReleaseTimer.start();
             }
         }
         else if (id == "deckB_jog_touch") {
@@ -3393,6 +3451,8 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
             if (currentHeld) {
                 if (!previousHeld && b) {
                     m_jogBTouched = true;
+                    m_jogBReleasedRecently = false;
+                    m_jogBReleaseTimer.stop();
                     m_scratchAbsoluteLastByMsgId.clear();
                     qDebug() << "[MIDI ACTION] action=JogTouch deck=B"
                              << "previous:" << previousHeld
@@ -3411,14 +3471,47 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                 qDebug() << "[MIDI ACTION] action=JogTouch deck=B"
                          << "previous:" << previousHeld
                          << "current:" << currentHeld
-                         << "dispatch=resumeAfterScrub";
-                if (b)
-                    b->resumeAfterScrub();
+                         << "dispatch=finish-scrub-open-real-tick-window";
+                if (b && b->isScrubbing())
+                    b->finishScrubWithoutInertia();
+                m_jogBReleasedRecently = true;
+                m_jogBReleaseTimer.start();
             }
         }
-        // Jog move: value = signed tick delta. The FLX10 reference mapping uses
-        // 1500 scratch intervals/rev at 33.33 RPM; without touch this remains a
-        // speed nudge from the rim/pitch-bend stream.
+        // Jog wheels: the FLX10 has two separate streams. CC 0x21 is rim/nudge
+        // and CC 0x22 is platter scratch. After touch release we only keep a
+        // tiny window open for real post-release ticks; no ticks means normal
+        // transport resumes immediately.
+        else if (id == "deckA_jog_nudge") {
+            if (a && !m_jogATouched && !a->isScrubbing())
+                a->applyJogNudge(static_cast<double>(value));
+        }
+        else if (id == "deckB_jog_nudge") {
+            if (b && !m_jogBTouched && !b->isScrubbing())
+                b->applyJogNudge(static_cast<double>(value));
+        }
+        else if (id == "deckA_jog_scratch") {
+            if (a && (m_jogATouched || a->isScrubbing() || m_jogAReleasedRecently)) {
+                if (!m_jogATouched && !a->isScrubbing() && std::abs(value) <= 0.0f)
+                    return;
+                if (!a->isScrubbing())
+                    a->pauseForScrub();
+                if (!m_jogATouched && std::abs(value) > 0.0f)
+                    m_jogAReleaseTimer.start();
+                a->scratchBySeconds(static_cast<double>(value) * (60.0 / kVinylRpm) / kFlx10ScratchIntervalsPerRevolution);
+            }
+        }
+        else if (id == "deckB_jog_scratch") {
+            if (b && (m_jogBTouched || b->isScrubbing() || m_jogBReleasedRecently)) {
+                if (!m_jogBTouched && !b->isScrubbing() && std::abs(value) <= 0.0f)
+                    return;
+                if (!b->isScrubbing())
+                    b->pauseForScrub();
+                if (!m_jogBTouched && std::abs(value) > 0.0f)
+                    m_jogBReleaseTimer.start();
+                b->scratchBySeconds(static_cast<double>(value) * (60.0 / kVinylRpm) / kFlx10ScratchIntervalsPerRevolution);
+            }
+        }
         else if (id == "deckA_jog_move") {
             const double delta = static_cast<double>(value) * (60.0 / kVinylRpm) / kFlx10ScratchIntervalsPerRevolution;
             if (a) {

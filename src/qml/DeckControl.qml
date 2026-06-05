@@ -928,7 +928,7 @@ Item {
                     Layout.fillHeight: true
                     color: "#0a0a0a"
 
-                    property real tempoRange: 8
+                    property real tempoRange: deck.engine ? deck.engine.tempoRangePercent : 8
 
                     ColumnLayout {
                         anchors.fill: parent
@@ -1035,10 +1035,12 @@ Item {
                         MouseArea {
                             anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                tempoPanel.tempoRange = modelData.value
                                 var clamped = Math.max(-modelData.value, Math.min(modelData.value, tempoSlider.value))
                                 tempoSlider.enabled = false; tempoSlider.value = clamped; tempoSlider.enabled = true
-                                if (deck.engine) deck.engine.setTempoPercent(clamped)
+                                if (deck.engine) {
+                                    deck.engine.setTempoRangePercent(modelData.value)
+                                    deck.engine.setTempoPercent(clamped)
+                                }
                                 tempoRangePopup.visible = false
                             }
                         }

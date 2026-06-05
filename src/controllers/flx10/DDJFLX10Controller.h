@@ -12,6 +12,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 class DjEngine;
 
@@ -77,7 +78,11 @@ private:
     double deckDisplayDuration(int deck) const;
     double deckDisplayPosition(int deck) const;
     double deckBpm(int deck) const;
+    double deckTempoPercent(int deck) const;
+    double deckTempoRangePercent(int deck) const;
     QString deckKey(int deck) const;
+    uint8_t deckKeyByte(int deck) const;
+    std::vector<double> deckBeatTimesMs(int deck) const;
     DjEngine* deckEngine(int deck) const;
     void connectDeckSignals();
     void refreshDeckFromEngine(int deck);
@@ -100,6 +105,11 @@ private:
     std::array<QMetaObject::Connection, 5> m_overviewWaveformConnections;
     std::array<QMetaObject::Connection, 5> m_dataClearedConnections;
     std::array<QMetaObject::Connection, 5> m_metadataConnections;
+    std::array<QMetaObject::Connection, 5> m_keyAnalyzedConnections;
+    std::array<QMetaObject::Connection, 5> m_beatgridConnections;
+    std::array<QMetaObject::Connection, 5> m_hotCueConnections;
+    std::array<QMetaObject::Connection, 5> m_tempoConnections;
+    std::array<QMetaObject::Connection, 5> m_tempoRangeConnections;
     std::array<QString, 5> m_lastCoverUrls;
     std::array<qint64, 5> m_lastWaveformRefreshMs = {0, 0, 0, 0, 0};
     std::array<bool, 5> m_jogRingWarningActive = {false, false, false, false, false};

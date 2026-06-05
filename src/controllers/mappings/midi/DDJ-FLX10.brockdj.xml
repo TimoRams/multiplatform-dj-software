@@ -29,11 +29,11 @@
     <Entry paramId="deckA_tempo" status="0xB0" control="0x00" type="fader"/>
     <Entry paramId="deckB_tempo" status="0xB1" control="0x00" type="fader"/>
 
-    <!-- Jog wheels. CC 0x21 is rim/pitch-bend; CC 0x22 is the platter scratch stream. Both are relative values centered at 64. -->
-    <Entry paramId="deckA_jog_move" status="0xB0" control="0x21" type="encoder-relative"/>
-    <Entry paramId="deckB_jog_move" status="0xB1" control="0x21" type="encoder-relative"/>
-    <Entry paramId="deckA_jog_move" status="0xB0" control="0x22" type="encoder-relative"/>
-    <Entry paramId="deckB_jog_move" status="0xB1" control="0x22" type="encoder-relative"/>
+    <!-- Jog wheels. CC 0x21 is rim/pitch-bend; CC 0x22 is the touched platter scratch stream. Both are relative values centered at 64. -->
+    <Entry paramId="deckA_jog_nudge" status="0xB0" control="0x21" type="encoder-relative"/>
+    <Entry paramId="deckB_jog_nudge" status="0xB1" control="0x21" type="encoder-relative"/>
+    <Entry paramId="deckA_jog_scratch" status="0xB0" control="0x22" type="encoder-relative"/>
+    <Entry paramId="deckB_jog_scratch" status="0xB1" control="0x22" type="encoder-relative"/>
     <Entry paramId="deckA_jog_touch" status="0x90" control="0x36" type="momentary"/>
     <Entry paramId="deckB_jog_touch" status="0x91" control="0x36" type="momentary"/>
 
