@@ -6,6 +6,57 @@
 #include <QStringList>
 #include <juce_audio_devices/juce_audio_devices.h>
 
+namespace {
+juce::PropertiesFile* userSettings(SettingsManager& manager)
+{
+    return manager.getAppProperties().getUserSettings();
+}
+
+const juce::PropertiesFile* userSettings(const SettingsManager& manager)
+{
+    return const_cast<SettingsManager&>(manager).getAppProperties().getUserSettings();
+}
+
+QString readStringSetting(const SettingsManager& manager, const char* key, const char* fallback = "")
+{
+    const auto* settings = userSettings(manager);
+    if (settings == nullptr)
+        return QString();
+
+    return QString::fromUtf8(settings->getValue(key, fallback).toRawUTF8());
+}
+
+int readIntSetting(const SettingsManager& manager, const char* key, int fallback)
+{
+    const auto* settings = userSettings(manager);
+    if (settings == nullptr)
+        return fallback;
+
+    return settings->getValue(key, juce::String(std::to_string(fallback))).getIntValue();
+}
+
+bool readBoolSetting(const SettingsManager& manager, const char* key, bool fallback)
+{
+    const auto* settings = userSettings(manager);
+    if (settings == nullptr)
+        return fallback;
+
+    return settings->getBoolValue(key, fallback);
+}
+
+template <typename Value>
+bool writeSetting(SettingsManager& manager, const char* key, const Value& value)
+{
+    auto* settings = userSettings(manager);
+    if (settings == nullptr)
+        return false;
+
+    settings->setValue(key, value);
+    settings->saveIfNeeded();
+    return true;
+}
+}
+
 SettingsManager& SettingsManager::getInstance()
 {
     static SettingsManager instance;
@@ -81,13 +132,11 @@ QString SettingsManager::previousRunWarningMessage() const
 
 void SettingsManager::markCleanShutdown()
 {
-    auto* userSettings = getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return;
-
-    userSettings->setValue("App/CleanShutdown", true);
-    userSettings->setValue("App/LastCleanShutdown", juce::Time::getCurrentTime().toString(true, true));
-    userSettings->save();
+    if (auto* settings = userSettings(*this); settings != nullptr) {
+        settings->setValue("App/CleanShutdown", true);
+        settings->setValue("App/LastCleanShutdown", juce::Time::getCurrentTime().toString(true, true));
+        settings->save();
+    }
 }
 
 juce::PropertiesFile* SettingsManager::getUserSettingsOrNull()
@@ -126,291 +175,170 @@ void SettingsManager::ensureMappingsDirectoryExists() const
 
 QString SettingsManager::getMidiInputIdentifier() const
 {
-    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return QString();
-    return QString::fromUtf8(userSettings->getValue("Midi/InputIdentifier", "").toRawUTF8());
+    return readStringSetting(*this, "Midi/InputIdentifier");
 }
 
 void SettingsManager::setMidiInputIdentifier(const QString& identifier)
 {
-    auto* userSettings = getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return;
-    userSettings->setValue("Midi/InputIdentifier", juce::String::fromUTF8(identifier.toUtf8().constData()));
-    userSettings->saveIfNeeded();
+    writeSetting(*this, "Midi/InputIdentifier", juce::String::fromUTF8(identifier.toUtf8().constData()));
 }
 
 QString SettingsManager::getMidiOutputIdentifier() const
 {
-    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return QString();
-    return QString::fromUtf8(userSettings->getValue("Midi/OutputIdentifier", "").toRawUTF8());
+    return readStringSetting(*this, "Midi/OutputIdentifier");
 }
 
 void SettingsManager::setMidiOutputIdentifier(const QString& identifier)
 {
-    auto* userSettings = getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return;
-    userSettings->setValue("Midi/OutputIdentifier", juce::String::fromUTF8(identifier.toUtf8().constData()));
-    userSettings->saveIfNeeded();
+    writeSetting(*this, "Midi/OutputIdentifier", juce::String::fromUTF8(identifier.toUtf8().constData()));
 }
 
 QString SettingsManager::getSelectedController() const
 {
-    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return QString();
-    return QString::fromUtf8(userSettings->getValue("Midi/SelectedController", "").toRawUTF8());
+    return readStringSetting(*this, "Midi/SelectedController");
 }
 
 void SettingsManager::setSelectedController(const QString& controllerName)
 {
-    auto* userSettings = getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return;
-    userSettings->setValue("Midi/SelectedController", juce::String::fromUTF8(controllerName.toUtf8().constData()));
-    userSettings->saveIfNeeded();
+    writeSetting(*this, "Midi/SelectedController", juce::String::fromUTF8(controllerName.toUtf8().constData()));
 }
 
 QString SettingsManager::getSelectedMappingFile() const
 {
-    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return QString();
-    return QString::fromUtf8(userSettings->getValue("Midi/SelectedMappingFile", "").toRawUTF8());
+    return readStringSetting(*this, "Midi/SelectedMappingFile");
 }
 
 void SettingsManager::setSelectedMappingFile(const QString& mappingFileName)
 {
-    auto* userSettings = getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return;
-    userSettings->setValue("Midi/SelectedMappingFile", juce::String::fromUTF8(mappingFileName.toUtf8().constData()));
-    userSettings->saveIfNeeded();
+    writeSetting(*this, "Midi/SelectedMappingFile", juce::String::fromUTF8(mappingFileName.toUtf8().constData()));
 }
 
 QString SettingsManager::getAudioDeviceType() const
 {
-    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return QString();
-    return QString::fromUtf8(userSettings->getValue("Audio/DeviceType", "").toRawUTF8());
+    return readStringSetting(*this, "Audio/DeviceType");
 }
 
 void SettingsManager::setAudioDeviceType(const QString& deviceType)
 {
-    auto* userSettings = getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return;
-
-    userSettings->setValue("Audio/DeviceType", juce::String::fromUTF8(deviceType.toUtf8().constData()));
-    userSettings->saveIfNeeded();
+    writeSetting(*this, "Audio/DeviceType", juce::String::fromUTF8(deviceType.toUtf8().constData()));
     emit audioSettingsChanged();
 }
 
 QString SettingsManager::getAudioOutputDevice() const
 {
-    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return QString();
-    return QString::fromUtf8(userSettings->getValue("Audio/OutputDevice", "").toRawUTF8());
+    return readStringSetting(*this, "Audio/OutputDevice");
 }
 
 void SettingsManager::setAudioOutputDevice(const QString& deviceName)
 {
-    auto* userSettings = getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return;
-
-    userSettings->setValue("Audio/OutputDevice", juce::String::fromUTF8(deviceName.toUtf8().constData()));
-    userSettings->saveIfNeeded();
+    writeSetting(*this, "Audio/OutputDevice", juce::String::fromUTF8(deviceName.toUtf8().constData()));
     emit audioSettingsChanged();
 }
 
 QString SettingsManager::getAudioMasterDeviceType() const
 {
-    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return QString();
-
-    const auto value = QString::fromUtf8(userSettings->getValue("Audio/Master/DeviceType", "").toRawUTF8());
+    const auto value = readStringSetting(*this, "Audio/Master/DeviceType");
     return value.isEmpty() ? getAudioDeviceType() : value;
 }
 
 void SettingsManager::setAudioMasterDeviceType(const QString& deviceType)
 {
-    auto* userSettings = getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return;
-
-    userSettings->setValue("Audio/Master/DeviceType", juce::String::fromUTF8(deviceType.toUtf8().constData()));
-    userSettings->saveIfNeeded();
+    writeSetting(*this, "Audio/Master/DeviceType", juce::String::fromUTF8(deviceType.toUtf8().constData()));
     emit audioSettingsChanged();
 }
 
 QString SettingsManager::getAudioMasterOutputDevice() const
 {
-    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return QString();
-
-    const auto value = QString::fromUtf8(userSettings->getValue("Audio/Master/OutputDevice", "").toRawUTF8());
+    const auto value = readStringSetting(*this, "Audio/Master/OutputDevice");
     return value.isEmpty() ? getAudioOutputDevice() : value;
 }
 
 void SettingsManager::setAudioMasterOutputDevice(const QString& deviceName)
 {
-    auto* userSettings = getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return;
-
-    userSettings->setValue("Audio/Master/OutputDevice", juce::String::fromUTF8(deviceName.toUtf8().constData()));
-    userSettings->saveIfNeeded();
+    writeSetting(*this, "Audio/Master/OutputDevice", juce::String::fromUTF8(deviceName.toUtf8().constData()));
     emit audioSettingsChanged();
 }
 
 int SettingsManager::getAudioMasterFirstChannel() const
 {
-    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return 1;
-
-    const int value = userSettings->getValue("Audio/Master/FirstChannel", "1").getIntValue();
+    const int value = readIntSetting(*this, "Audio/Master/FirstChannel", 1);
     return value == -1 ? -1 : std::clamp(value, 1, 127);
 }
 
 void SettingsManager::setAudioMasterFirstChannel(int firstChannel)
 {
     const int clamped = firstChannel == -1 ? -1 : std::clamp(firstChannel, 1, 127);
-    auto* userSettings = getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return;
-
-    userSettings->setValue("Audio/Master/FirstChannel", clamped);
-    userSettings->saveIfNeeded();
+    writeSetting(*this, "Audio/Master/FirstChannel", clamped);
     emit audioSettingsChanged();
 }
 
 QString SettingsManager::getAudioHeadphonesDeviceType() const
 {
-    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return QString();
-    return QString::fromUtf8(userSettings->getValue("Audio/Headphones/DeviceType", "").toRawUTF8());
+    return readStringSetting(*this, "Audio/Headphones/DeviceType");
 }
 
 void SettingsManager::setAudioHeadphonesDeviceType(const QString& deviceType)
 {
-    auto* userSettings = getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return;
-
-    userSettings->setValue("Audio/Headphones/DeviceType", juce::String::fromUTF8(deviceType.toUtf8().constData()));
-    userSettings->saveIfNeeded();
+    writeSetting(*this, "Audio/Headphones/DeviceType", juce::String::fromUTF8(deviceType.toUtf8().constData()));
     emit audioSettingsChanged();
 }
 
 QString SettingsManager::getAudioHeadphonesOutputDevice() const
 {
-    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return QString();
-    return QString::fromUtf8(userSettings->getValue("Audio/Headphones/OutputDevice", "").toRawUTF8());
+    return readStringSetting(*this, "Audio/Headphones/OutputDevice");
 }
 
 void SettingsManager::setAudioHeadphonesOutputDevice(const QString& deviceName)
 {
-    auto* userSettings = getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return;
-
-    userSettings->setValue("Audio/Headphones/OutputDevice", juce::String::fromUTF8(deviceName.toUtf8().constData()));
-    userSettings->saveIfNeeded();
+    writeSetting(*this, "Audio/Headphones/OutputDevice", juce::String::fromUTF8(deviceName.toUtf8().constData()));
     emit audioSettingsChanged();
 }
 
 int SettingsManager::getAudioHeadphonesFirstChannel() const
 {
-    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return -1;
-
-    const int value = userSettings->getValue("Audio/Headphones/FirstChannel", "-1").getIntValue();
+    const int value = readIntSetting(*this, "Audio/Headphones/FirstChannel", -1);
     return value == -1 ? -1 : std::clamp(value, 1, 127);
 }
 
 void SettingsManager::setAudioHeadphonesFirstChannel(int firstChannel)
 {
     const int clamped = firstChannel == -1 ? -1 : std::clamp(firstChannel, 1, 127);
-    auto* userSettings = getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return;
-
-    userSettings->setValue("Audio/Headphones/FirstChannel", clamped);
-    userSettings->saveIfNeeded();
+    writeSetting(*this, "Audio/Headphones/FirstChannel", clamped);
     emit audioSettingsChanged();
 }
 
 QString SettingsManager::getAudioBoothDeviceType() const
 {
-    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return QString();
-    return QString::fromUtf8(userSettings->getValue("Audio/Booth/DeviceType", "").toRawUTF8());
+    return readStringSetting(*this, "Audio/Booth/DeviceType");
 }
 
 void SettingsManager::setAudioBoothDeviceType(const QString& deviceType)
 {
-    auto* userSettings = getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return;
-
-    userSettings->setValue("Audio/Booth/DeviceType", juce::String::fromUTF8(deviceType.toUtf8().constData()));
-    userSettings->saveIfNeeded();
+    writeSetting(*this, "Audio/Booth/DeviceType", juce::String::fromUTF8(deviceType.toUtf8().constData()));
     emit audioSettingsChanged();
 }
 
 QString SettingsManager::getAudioBoothOutputDevice() const
 {
-    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return QString();
-    return QString::fromUtf8(userSettings->getValue("Audio/Booth/OutputDevice", "").toRawUTF8());
+    return readStringSetting(*this, "Audio/Booth/OutputDevice");
 }
 
 void SettingsManager::setAudioBoothOutputDevice(const QString& deviceName)
 {
-    auto* userSettings = getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return;
-
-    userSettings->setValue("Audio/Booth/OutputDevice", juce::String::fromUTF8(deviceName.toUtf8().constData()));
-    userSettings->saveIfNeeded();
+    writeSetting(*this, "Audio/Booth/OutputDevice", juce::String::fromUTF8(deviceName.toUtf8().constData()));
     emit audioSettingsChanged();
 }
 
 int SettingsManager::getAudioBoothFirstChannel() const
 {
-    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return -1;
-
-    const int value = userSettings->getValue("Audio/Booth/FirstChannel", "-1").getIntValue();
+    const int value = readIntSetting(*this, "Audio/Booth/FirstChannel", -1);
     return value == -1 ? -1 : std::clamp(value, 1, 127);
 }
 
 void SettingsManager::setAudioBoothFirstChannel(int firstChannel)
 {
     const int clamped = firstChannel == -1 ? -1 : std::clamp(firstChannel, 1, 127);
-    auto* userSettings = getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return;
-
-    userSettings->setValue("Audio/Booth/FirstChannel", clamped);
-    userSettings->saveIfNeeded();
+    writeSetting(*this, "Audio/Booth/FirstChannel", clamped);
     emit audioSettingsChanged();
 }
 
@@ -456,11 +384,7 @@ QStringList SettingsManager::getAvailableAudioDeviceTypes() const
 
 int SettingsManager::getAudioSampleRate() const
 {
-    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return 44100;
-
-    const int value = userSettings->getValue("Audio/SampleRate", "44100").getIntValue();
+    const int value = readIntSetting(*this, "Audio/SampleRate", 44100);
     return value > 0 ? value : 44100;
 }
 
@@ -468,22 +392,13 @@ void SettingsManager::setAudioSampleRate(int sampleRate)
 {
     sampleRate = std::clamp(sampleRate, 8000, 384000);
 
-    auto* userSettings = getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return;
-
-    userSettings->setValue("Audio/SampleRate", sampleRate);
-    userSettings->saveIfNeeded();
+    writeSetting(*this, "Audio/SampleRate", sampleRate);
     emit audioSettingsChanged();
 }
 
 int SettingsManager::getAudioBufferSize() const
 {
-    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return 512;
-
-    const int value = userSettings->getValue("Audio/BufferSize", "512").getIntValue();
+    const int value = readIntSetting(*this, "Audio/BufferSize", 512);
     return std::clamp(value, 64, 4096);
 }
 
@@ -491,35 +406,21 @@ void SettingsManager::setAudioBufferSize(int bufferSize)
 {
     bufferSize = std::clamp(bufferSize, 64, 4096);
 
-    auto* userSettings = getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return;
-
-    userSettings->setValue("Audio/BufferSize", bufferSize);
-    userSettings->saveIfNeeded();
+    writeSetting(*this, "Audio/BufferSize", bufferSize);
     emit audioSettingsChanged();
 }
 
 bool SettingsManager::flx10ControllerSupportEnabled() const
 {
-    const auto* userSettings = const_cast<SettingsManager*>(this)->getUserSettingsOrNull();
-    if (userSettings == nullptr)
-        return false;
-
-    return userSettings->getBoolValue("Controllers/DDJFLX10/Enabled", false);
+    return readBoolSetting(*this, "Controllers/DDJFLX10/Enabled", false);
 }
 
 void SettingsManager::setFlx10ControllerSupportEnabled(bool enabled)
 {
-    auto* userSettings = getUserSettingsOrNull();
-    if (userSettings == nullptr)
+    if (readBoolSetting(*this, "Controllers/DDJFLX10/Enabled", false) == enabled)
         return;
 
-    if (userSettings->getBoolValue("Controllers/DDJFLX10/Enabled", false) == enabled)
-        return;
-
-    userSettings->setValue("Controllers/DDJFLX10/Enabled", enabled);
-    userSettings->saveIfNeeded();
+    writeSetting(*this, "Controllers/DDJFLX10/Enabled", enabled);
     emit controllerSettingsChanged();
 }
 
