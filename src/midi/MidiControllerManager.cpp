@@ -70,6 +70,26 @@ bool parsePerformancePadParam(const QString& paramId, QChar& deck, int& index, b
     return ok && index >= 0 && index < 8;
 }
 
+bool parseDirectPadParam(const QString& paramId, const QString& stem, QChar& deck, int& index)
+{
+    QString suffix;
+    const QString deckAStem = QStringLiteral("deckA_") + stem;
+    const QString deckBStem = QStringLiteral("deckB_") + stem;
+    if (paramId.startsWith(deckAStem)) {
+        deck = QLatin1Char('A');
+        suffix = paramId.mid(deckAStem.size());
+    } else if (paramId.startsWith(deckBStem)) {
+        deck = QLatin1Char('B');
+        suffix = paramId.mid(deckBStem.size());
+    } else {
+        return false;
+    }
+
+    bool ok = false;
+    index = suffix.toInt(&ok) - 1;
+    return ok && index >= 0 && index < 8;
+}
+
 bool parsePadModeParam(const QString& paramId, QChar& deck, MidiPadMode& mode)
 {
     QString suffix;
@@ -96,6 +116,69 @@ bool parsePadModeParam(const QString& paramId, QChar& deck, MidiPadMode& mode)
         return true;
     }
     return false;
+}
+
+bool parseDeckButtonParam(const QString& paramId, const QString& suffix, QChar& deck)
+{
+    if (paramId == QStringLiteral("deckA_") + suffix) {
+        deck = QLatin1Char('A');
+        return true;
+    }
+    if (paramId == QStringLiteral("deckB_") + suffix) {
+        deck = QLatin1Char('B');
+        return true;
+    }
+    return false;
+}
+
+bool parseDeckFxSlotParam(const QString& paramId, QChar& deck, int& slot)
+{
+    QString suffix;
+    if (paramId.startsWith(QStringLiteral("deckA_fx_slot"))) {
+        deck = QLatin1Char('A');
+        suffix = paramId.mid(QStringLiteral("deckA_fx_slot").size());
+    } else if (paramId.startsWith(QStringLiteral("deckB_fx_slot"))) {
+        deck = QLatin1Char('B');
+        suffix = paramId.mid(QStringLiteral("deckB_fx_slot").size());
+    } else {
+        return false;
+    }
+
+    bool ok = false;
+    slot = suffix.toInt(&ok);
+    return ok && slot >= 1 && slot <= 3;
+}
+
+bool parseBeatFxSelectParam(const QString& paramId, int& position)
+{
+    if (!paramId.startsWith(QStringLiteral("beat_fx_select_")))
+        return false;
+
+    bool ok = false;
+    position = paramId.mid(QStringLiteral("beat_fx_select_").size()).toInt(&ok);
+    return ok && position >= 1 && position <= 14;
+}
+
+EffectType beatFxTypeForPosition(int position)
+{
+    static constexpr EffectType kTypes[14] = {
+        EffectType::Echo,
+        EffectType::LowCutEcho,
+        EffectType::MtDelay,
+        EffectType::Spiral,
+        EffectType::Reverb,
+        EffectType::Trans,
+        EffectType::Flanger,
+        EffectType::Phaser,
+        EffectType::Bitcrusher,
+        EffectType::PitchShifter,
+        EffectType::Stretch,
+        EffectType::EnigmaJet,
+        EffectType::Roll,
+        EffectType::SlipRoll
+    };
+
+    return kTypes[static_cast<size_t>(std::clamp(position, 1, 14) - 1)];
 }
 
 bool parseHotCueParam(const QString& paramId, QChar& deck, int& index, bool& clear)
@@ -164,6 +247,29 @@ MidiInteractionType defaultInteractionTypeForParam(const QString& paramId)
         || paramId.startsWith(QStringLiteral("deckB_pad_mode_"))
         || paramId.startsWith(QStringLiteral("deckA_loop_"))
         || paramId.startsWith(QStringLiteral("deckB_loop_"))
+        || paramId.startsWith(QStringLiteral("deckA_beatjump_"))
+        || paramId.startsWith(QStringLiteral("deckB_beatjump_"))
+        || paramId.startsWith(QStringLiteral("deckA_beatjump_pad"))
+        || paramId.startsWith(QStringLiteral("deckB_beatjump_pad"))
+        || paramId.startsWith(QStringLiteral("deckA_padfx_pad"))
+        || paramId.startsWith(QStringLiteral("deckB_padfx_pad"))
+        || paramId.startsWith(QStringLiteral("deckA_fx_slot"))
+        || paramId.startsWith(QStringLiteral("deckB_fx_slot"))
+        || paramId == QStringLiteral("deckA_beat_sync")
+        || paramId == QStringLiteral("deckB_beat_sync")
+        || paramId == QStringLiteral("deckA_beatsync")
+        || paramId == QStringLiteral("deckB_beatsync")
+        || paramId == QStringLiteral("deckA_key_sync")
+        || paramId == QStringLiteral("deckB_key_sync")
+        || paramId == QStringLiteral("deckA_keylock")
+        || paramId == QStringLiteral("deckB_keylock")
+        || paramId == QStringLiteral("deckA_slip")
+        || paramId == QStringLiteral("deckB_slip")
+        || paramId == QStringLiteral("deckA_tempo_reset")
+        || paramId == QStringLiteral("deckB_tempo_reset")
+        || paramId == QStringLiteral("deckA_rate_reset")
+        || paramId == QStringLiteral("deckB_rate_reset")
+        || paramId.startsWith(QStringLiteral("beat_fx_"))
         || paramId == QStringLiteral("deckA_headphone_cue")
         || paramId == QStringLiteral("deckB_headphone_cue")
         || paramId == QStringLiteral("master_cue")
@@ -350,7 +456,7 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, QObject* par
         }, Qt::QueuedConnection);
     });
 
-    m_flx10Leds.setMidiSender([this](uint8_t status, uint8_t data1, uint8_t data2, const QString& type)
+    m_midiFeedback.setMidiSender([this](uint8_t status, uint8_t data1, uint8_t data2, const QString& type)
     {
         return sendMidiShort(status, data1, data2, type);
     });
@@ -401,7 +507,7 @@ QStringList MidiControllerManager::getAvailableMidiOutputDevices()
 
 QStringList MidiControllerManager::getAvailableMidiDevices()
 {
-    return getAvailableMidiInputDevices();
+    return m_availableControllerDeviceNames;
 }
 
 void MidiControllerManager::refreshMidiDeviceCache()
@@ -430,7 +536,48 @@ void MidiControllerManager::refreshMidiDeviceCache()
     populateFromAlsaFallback();
 #endif
 
+    rebuildControllerDeviceCache();
+
     logAvailableMidiPorts();
+}
+
+void MidiControllerManager::rebuildControllerDeviceCache()
+{
+    m_availableControllerDeviceIdentifiers.clear();
+    m_availableControllerInputIndexes.clear();
+    m_availableControllerDeviceNames.clear();
+
+    bool flx10Added = false;
+    for (int i = 0; i < static_cast<int>(m_availableInputDeviceIdentifiers.size()); ++i) {
+        const juce::String& identifier = m_availableInputDeviceIdentifiers[static_cast<size_t>(i)];
+        if (identifier == kAllMidiInputsIdentifier)
+            continue;
+
+        const QString name = m_availableInputDeviceNames.value(i);
+        if (looksLikeFlx10Name(name)) {
+            if (flx10Added)
+                continue;
+
+            int preferredInput = i;
+            for (int candidate = 0; candidate < static_cast<int>(m_availableInputDeviceIdentifiers.size()); ++candidate) {
+                if (isPseudoAlsaIdentifier(m_availableInputDeviceIdentifiers[static_cast<size_t>(candidate)])
+                        && looksLikeFlx10Name(m_availableInputDeviceNames.value(candidate))) {
+                    preferredInput = candidate;
+                    break;
+                }
+            }
+
+            m_availableControllerDeviceIdentifiers.push_back(m_availableInputDeviceIdentifiers[static_cast<size_t>(preferredInput)]);
+            m_availableControllerInputIndexes.push_back(preferredInput);
+            m_availableControllerDeviceNames.push_back(QStringLiteral("DDJ-FLX10 (auto MIDI I/O)"));
+            flx10Added = true;
+            continue;
+        }
+
+        m_availableControllerDeviceIdentifiers.push_back(identifier);
+        m_availableControllerInputIndexes.push_back(i);
+        m_availableControllerDeviceNames.push_back(name);
+    }
 }
 
 void MidiControllerManager::populateFromAlsaFallback()
@@ -519,8 +666,6 @@ bool MidiControllerManager::isPseudoAlsaOutputIdentifier(const juce::String& ide
 void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIdentifier)
 {
 #if defined(Q_OS_LINUX)
-    stopAlsaInputMonitor();
-
     if (!isPseudoAlsaIdentifier(pseudoIdentifier))
         return;
 
@@ -532,20 +677,22 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
     }
 
     const QString port = parts.at(1) + ":" + parts.at(2);
-    m_alsaInputMonitor = std::make_unique<QProcess>(this);
-    m_alsaMonitorBuffer.clear();
+    auto monitor = std::make_unique<QProcess>(this);
+    QProcess* process = monitor.get();
+    m_alsaMonitorBuffers[process].clear();
 
-    connect(m_alsaInputMonitor.get(), &QProcess::readyReadStandardOutput, this, [this]()
+    connect(process, &QProcess::readyReadStandardOutput, this, [this, process]()
     {
-        if (!m_alsaInputMonitor)
+        if (!process)
             return;
 
-        m_alsaMonitorBuffer.append(QString::fromUtf8(m_alsaInputMonitor->readAllStandardOutput()));
+        QString& buffer = m_alsaMonitorBuffers[process];
+        buffer.append(QString::fromUtf8(process->readAllStandardOutput()));
 
-        int newline = m_alsaMonitorBuffer.indexOf('\n');
+        int newline = buffer.indexOf('\n');
         while (newline >= 0) {
-            const QString line = m_alsaMonitorBuffer.left(newline).trimmed();
-            m_alsaMonitorBuffer.remove(0, newline + 1);
+            const QString line = buffer.left(newline).trimmed();
+            buffer.remove(0, newline + 1);
 
             if (!line.isEmpty()) {
                 const QRegularExpression numRegex(R"((\d+))");
@@ -567,11 +714,17 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                     return true;
                 };
 
-                // Helper: prefer channel-aware msgId if already mapped, else use it for new learns
-                auto resolveMsgId = [this](int channelAware, int legacy) -> int
+                // aseqdump formats are not consistent across ALSA/PipeWire paths:
+                // some report MIDI channels as 0-based, others as 1-based. Prefer
+                // an exact mapped ID, then the 1-based-adjusted candidate where safe.
+                auto resolveMsgId = [this](int channelAware, int oneBasedAdjusted, int legacy) -> int
                 {
-                    if (m_midiToParam.count(channelAware)) return channelAware;
-                    if (m_midiToParam.count(legacy))       return legacy;
+                    if (m_midiToParam.count(channelAware))
+                        return channelAware;
+                    if (oneBasedAdjusted >= 0 && m_midiToParam.count(oneBasedAdjusted))
+                        return oneBasedAdjusted;
+                    if (m_midiToParam.count(legacy))
+                        return legacy;
                     return channelAware; // learning: store channel-aware
                 };
 
@@ -579,9 +732,11 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
 
                 if (line.contains("Control change", Qt::CaseInsensitive) && decodeTriple(ch, a, b)) {
                     const int cc              = clampMidi7bit(a);
-                    const int channelAwareMsgId = 10000 + clampMidi7bit(ch) * 2000 + 1000 + cc;
+                    const int chClamped       = std::max(0, std::min(15, ch));
+                    const int channelAwareMsgId = 10000 + chClamped * 2000 + 1000 + cc;
+                    const int oneBasedMsgId     = ch > 0 ? 10000 + std::min(15, ch - 1) * 2000 + 1000 + cc : -1;
                     const int legacyMsgId       = cc + 1000;
-                    const int msgId             = resolveMsgId(channelAwareMsgId, legacyMsgId);
+                    const int msgId             = resolveMsgId(channelAwareMsgId, oneBasedMsgId, legacyMsgId);
                     const auto it               = m_midiToParam.find(msgId);
                     float value;
                     if (it != m_midiToParam.end() && isRelativeInteraction(it->second.interactionType)) {
@@ -657,7 +812,10 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
 
                     if (ch0 >= 0 && note >= 0) {
                         const int channelAwareMsgId = 10000 + ch0 * 2000 + note;
-                        const int msgId             = resolveMsgId(channelAwareMsgId, note);
+                        // Note channels are controller-action dense on the FLX10. A one-based
+                        // fallback can turn unmapped pad notes into Ch7 library-load buttons,
+                        // so notes must be exact or legacy only.
+                        const int msgId             = resolveMsgId(channelAwareMsgId, -1, note);
                         const bool zeroVelocity     = isOff || (vel == 0);
                         qDebug() << "[MIDI ALSA]" << (isOff ? "NoteOff" : "NoteOn")
                                  << "ch0:" << ch0 << "note:" << note << "vel:" << vel
@@ -679,45 +837,49 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                         const int pbCh  = pbMatch.captured(1).toInt();
                         const int pbRaw = pbMatch.captured(2).toInt(); // -8192..+8191
                         const int channelAwareMsgId = 10000 + std::max(0, std::min(15, pbCh)) * 2000 + 1500;
-                        const int msgId = resolveMsgId(channelAwareMsgId, 1500);
+                        const int msgId = resolveMsgId(channelAwareMsgId, -1, 1500);
                         const float value = static_cast<float>(pbRaw + 8192) / 16383.0f;
                         processDecodedMidiEvent(msgId, value, false);
                     }
                 }
             }
 
-            newline = m_alsaMonitorBuffer.indexOf('\n');
+            newline = buffer.indexOf('\n');
         }
     });
 
-    connect(m_alsaInputMonitor.get(), &QProcess::errorOccurred, this, [port](QProcess::ProcessError error)
+    connect(process, &QProcess::errorOccurred, this, [port](QProcess::ProcessError error)
     {
         qWarning() << "[MIDI] aseqdump error on" << port << "error:" << static_cast<int>(error);
     });
 
-    connect(m_alsaInputMonitor.get(), qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
-            [port](int exitCode, QProcess::ExitStatus status)
+    connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
+            [this, process, port](int exitCode, QProcess::ExitStatus status)
     {
         qWarning() << "[MIDI] aseqdump finished on" << port
                    << "exitCode:" << exitCode
                    << "status:" << static_cast<int>(status);
+        m_alsaMonitorBuffers.erase(process);
     });
 
-    connect(m_alsaInputMonitor.get(), &QProcess::readyReadStandardError, this, [this]()
+    connect(process, &QProcess::readyReadStandardError, this, [process]()
     {
-        if (!m_alsaInputMonitor)
+        if (!process)
             return;
-        const QString err = QString::fromUtf8(m_alsaInputMonitor->readAllStandardError()).trimmed();
+        const QString err = QString::fromUtf8(process->readAllStandardError()).trimmed();
         if (!err.isEmpty())
             qWarning() << "[MIDI] aseqdump stderr:" << err;
     });
 
-    m_alsaInputMonitor->start("aseqdump", {"-p", port});
-    if (!m_alsaInputMonitor->waitForStarted(1200)) {
+    process->start("aseqdump", {"-p", port});
+    if (!process->waitForStarted(1200)) {
         qWarning() << "[MIDI] Could not start aseqdump for" << port;
-        m_alsaInputMonitor.reset();
+        m_alsaMonitorBuffers.erase(process);
         return;
     }
+
+    qInfo() << "[MIDI] Started ALSA input monitor on" << port;
+    m_alsaInputMonitors.push_back(std::move(monitor));
 
 #else
     Q_UNUSED(pseudoIdentifier);
@@ -727,17 +889,21 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
 void MidiControllerManager::stopAlsaInputMonitor()
 {
 #if defined(Q_OS_LINUX)
-    if (!m_alsaInputMonitor)
+    if (m_alsaInputMonitors.empty())
         return;
 
-    if (m_alsaInputMonitor->state() != QProcess::NotRunning) {
-        m_alsaInputMonitor->terminate();
-        if (!m_alsaInputMonitor->waitForFinished(400))
-            m_alsaInputMonitor->kill();
+    for (auto& monitor : m_alsaInputMonitors) {
+        if (!monitor)
+            continue;
+        if (monitor->state() != QProcess::NotRunning) {
+            monitor->terminate();
+            if (!monitor->waitForFinished(400))
+                monitor->kill();
+        }
     }
 
-    m_alsaInputMonitor.reset();
-    m_alsaMonitorBuffer.clear();
+    m_alsaInputMonitors.clear();
+    m_alsaMonitorBuffers.clear();
 #endif
 }
 
@@ -775,6 +941,32 @@ void MidiControllerManager::openMidiInputByIdentifier(const juce::String& identi
     }
 
     if (isPseudoAlsaIdentifier(identifier)) {
+        const int selectedIndex = indexOfIdentifier(m_availableInputDeviceIdentifiers, identifier);
+        const QString selectedName = (selectedIndex >= 0 && selectedIndex < m_availableInputDeviceNames.size())
+            ? m_availableInputDeviceNames.at(selectedIndex)
+            : QString();
+        const bool flx10Context = looksLikeFlx10Name(selectedName)
+            || normalizeControllerKeyFromXmlBase(getSelectedController()) == normalizeControllerKeyFromXmlBase(kBuiltInFlx10ControllerName)
+            || isBuiltInFlx10Mapping(getSelectedMapping());
+
+        if (flx10Context) {
+            int started = 0;
+            for (int i = 0; i < static_cast<int>(m_availableInputDeviceIdentifiers.size()); ++i) {
+                if (!isPseudoAlsaIdentifier(m_availableInputDeviceIdentifiers[static_cast<size_t>(i)]))
+                    continue;
+                if (!looksLikeFlx10Name(m_availableInputDeviceNames.at(i)))
+                    continue;
+
+                startAlsaInputMonitor(m_availableInputDeviceIdentifiers[static_cast<size_t>(i)]);
+                ++started;
+            }
+
+            if (started > 0) {
+                qInfo() << "[MIDI] FLX10 ALSA input monitors active:" << started;
+                return;
+            }
+        }
+
         startAlsaInputMonitor(identifier);
         return;
     }
@@ -804,6 +996,7 @@ void MidiControllerManager::openMidiOutputByIdentifier(const juce::String& ident
     m_selectedMidiOutputName.clear();
     m_selectedMidiOutputIndex = -1;
     m_flx10RawLedTestRun = false;
+    m_lastMidiShortValues.clear();
 
     if (identifier.isEmpty() || isPseudoAlsaIdentifier(identifier))
         return;
@@ -981,21 +1174,21 @@ void MidiControllerManager::startFlx10OutputSession()
         ;
 
     if (!outputOpen) {
-        m_flx10Leds.setEnabled(false);
+        m_midiFeedback.setEnabled(false);
         return;
     }
 
     if (!shouldUseFlx10Feedback()) {
-        if (m_flx10Leds.isEnabled())
-            m_flx10Leds.clearAll();
-        m_flx10Leds.setEnabled(false);
+        if (m_midiFeedback.isEnabled())
+            m_midiFeedback.clearAll();
+        m_midiFeedback.setEnabled(false);
         return;
     }
 
-    m_flx10Leds.setEnabled(true);
+    m_midiFeedback.setEnabled(true);
     if (!m_flx10RawLedTestRun && qEnvironmentVariableIntValue("BROCKDJ_FLX10_LED_TEST") != 0) {
         m_flx10RawLedTestRun = true;
-        m_flx10Leds.testRawLedOutput();
+        m_midiFeedback.testRawLedOutput();
     }
 }
 
@@ -1008,17 +1201,35 @@ void MidiControllerManager::stopFlx10OutputSession()
 #endif
         ;
 
-    if (outputOpen && m_flx10Leds.isEnabled())
-        m_flx10Leds.clearAll();
-    m_flx10Leds.setEnabled(false);
+    if (outputOpen && m_midiFeedback.isEnabled())
+        m_midiFeedback.clearAll();
+    m_midiFeedback.setEnabled(false);
 }
 
 void MidiControllerManager::restoreSavedDeviceSelections()
 {
+    const bool flx10Context = normalizeControllerKeyFromXmlBase(getSelectedController())
+            == normalizeControllerKeyFromXmlBase(kBuiltInFlx10ControllerName)
+        || isBuiltInFlx10Mapping(getSelectedMapping());
     const auto inputId = SettingsManager::getInstance().getMidiInputIdentifier();
-    const juce::String savedInput = inputId.isEmpty()
+    juce::String savedInput = inputId.isEmpty()
         ? kAllMidiInputsIdentifier
         : juce::String::fromUTF8(inputId.toUtf8().constData());
+
+    if (flx10Context && (inputId.isEmpty() || savedInput == kAllMidiInputsIdentifier)) {
+        for (int i = 0; i < static_cast<int>(m_availableInputDeviceIdentifiers.size()); ++i) {
+            const auto& identifier = m_availableInputDeviceIdentifiers[static_cast<size_t>(i)];
+            if (isPseudoAlsaIdentifier(identifier) && looksLikeFlx10Name(m_availableInputDeviceNames.at(i))) {
+                savedInput = identifier;
+                SettingsManager::getInstance().setMidiInputIdentifier(toQString(identifier));
+                qInfo() << "[MIDI] Auto-selected FLX10 ALSA input"
+                        << m_availableInputDeviceNames.at(i)
+                        << "index:" << i;
+                break;
+            }
+        }
+    }
+
     if (containsIdentifier(m_availableInputDeviceIdentifiers, savedInput))
         openMidiInputByIdentifier(savedInput);
     else
@@ -1121,9 +1332,13 @@ void MidiControllerManager::selectMidiOutputDevice(int index)
 
 void MidiControllerManager::selectMidiDevice(int index)
 {
-    selectMidiInputDevice(index);
+    if (index < 0 || index >= static_cast<int>(m_availableControllerInputIndexes.size()))
+        return;
 
-    const int outputIndex = findMatchingMidiOutputIndexForInput(index);
+    const int inputIndex = m_availableControllerInputIndexes[static_cast<size_t>(index)];
+    selectMidiInputDevice(inputIndex);
+
+    const int outputIndex = findMatchingMidiOutputIndexForInput(inputIndex);
     if (outputIndex >= 0 && outputIndex < static_cast<int>(m_availableOutputDeviceIdentifiers.size()))
         selectMidiOutputDevice(outputIndex);
 
@@ -1152,7 +1367,24 @@ int MidiControllerManager::getSelectedMidiOutputIndex() const
 
 int MidiControllerManager::getSelectedMidiDeviceIndex() const
 {
-    return getSelectedMidiInputIndex();
+    const int selectedInputIndex = getSelectedMidiInputIndex();
+    if (selectedInputIndex < 0)
+        return -1;
+
+    for (int i = 0; i < static_cast<int>(m_availableControllerInputIndexes.size()); ++i) {
+        if (m_availableControllerInputIndexes[static_cast<size_t>(i)] == selectedInputIndex)
+            return i;
+    }
+
+    const QString selectedInputName = m_availableInputDeviceNames.value(selectedInputIndex);
+    if (looksLikeFlx10Name(selectedInputName)) {
+        for (int i = 0; i < m_availableControllerDeviceNames.size(); ++i) {
+            if (looksLikeFlx10Name(m_availableControllerDeviceNames.at(i)))
+                return i;
+        }
+    }
+
+    return -1;
 }
 
 QString MidiControllerManager::getMappingsDirectoryPath() const
@@ -1479,7 +1711,7 @@ void MidiControllerManager::sendFlx10HotcuePaletteTest()
     if (!outputOpen)
         return;
 
-    m_flx10Leds.sendPaletteTest();
+    m_midiFeedback.sendPaletteTest();
 }
 
 void MidiControllerManager::testFlx10LedOutput()
@@ -1499,7 +1731,7 @@ void MidiControllerManager::testFlx10LedOutput()
         return;
     }
 
-    m_flx10Leds.testRawLedOutput();
+    m_midiFeedback.testRawLedOutput();
 }
 
 void MidiControllerManager::loadNativeMappingIfExists()
@@ -1573,7 +1805,7 @@ bool MidiControllerManager::loadBrockDjXmlMapping(const QString& mappingFileName
     std::map<int, MidiMappingEntry> nextMidiToParam;
     std::map<QString, int> nextParamToMidi;
     std::map<QString, bool> nextParamInverted = m_paramInverted;
-    Flx10LedMapping flx10FeedbackMapping;
+    MidiFeedbackMapping feedbackMapping;
 
     while (!xml.atEnd()) {
         xml.readNext();
@@ -1584,7 +1816,7 @@ bool MidiControllerManager::loadBrockDjXmlMapping(const QString& mappingFileName
         const auto attrs = xml.attributes();
 
         if (builtInMapping)
-            applyFlx10FeedbackMappingElement(elementName, attrs, flx10FeedbackMapping);
+            applyMidiFeedbackMappingElement(elementName, attrs, feedbackMapping);
 
         if (elementName.compare(QStringLiteral("Entry"), Qt::CaseInsensitive) != 0)
             continue;
@@ -1640,7 +1872,7 @@ bool MidiControllerManager::loadBrockDjXmlMapping(const QString& mappingFileName
              << (builtInMapping ? "(built-in)" : "(user)")
              << "entries:" << static_cast<int>(m_midiToParam.size());
     if (builtInMapping) {
-        m_flx10Leds.setMapping(flx10FeedbackMapping);
+        m_midiFeedback.setMapping(feedbackMapping);
         m_deckAPadMode = MidiPadMode::HotCue;
         m_deckBPadMode = MidiPadMode::HotCue;
     }
@@ -1660,9 +1892,9 @@ bool MidiControllerManager::loadBrockDjXmlMapping(const QString& mappingFileName
     return true;
 }
 
-void MidiControllerManager::applyFlx10FeedbackMappingElement(const QString& elementName,
+void MidiControllerManager::applyMidiFeedbackMappingElement(const QString& elementName,
                                                              const QXmlStreamAttributes& attrs,
-                                                             Flx10LedMapping& mapping) const
+                                                             MidiFeedbackMapping& mapping) const
 {
     auto parseByteAttr = [this, &attrs](const QString& name, int fallback) -> uint8_t
     {
@@ -1750,7 +1982,7 @@ void MidiControllerManager::startMidiLearn(const QString& parameterId)
 {
     bool hasLinuxAlsaMonitor = false;
 #if defined(Q_OS_LINUX)
-    hasLinuxAlsaMonitor = (m_alsaInputMonitor != nullptr);
+    hasLinuxAlsaMonitor = !m_alsaInputMonitors.empty();
 #endif
 
     if (!hasLinuxAlsaMonitor)
@@ -2204,13 +2436,28 @@ int MidiControllerManager::hotCueStatusForDeck(QChar deck) const
 
 bool MidiControllerManager::sendMidiShort(int statusNo, int controlNo, int value, const QString& messageType)
 {
+    const int status = statusNo & 0xff;
+    const int control = clampMidi7bit(controlNo);
+    const int dataValue = clampMidi7bit(value);
+    const bool cacheable = messageType != QStringLiteral("raw-test")
+        && messageType != QStringLiteral("pad-palette-test");
+    const int cacheKey = (status << 8) | control;
+    if (cacheable) {
+        const auto it = m_lastMidiShortValues.find(cacheKey);
+        if (it != m_lastMidiShortValues.end() && it->second == dataValue)
+            return true;
+    }
+
     const unsigned char bytes[3] = {
-        static_cast<unsigned char>(statusNo & 0xff),
-        static_cast<unsigned char>(clampMidi7bit(controlNo)),
-        static_cast<unsigned char>(clampMidi7bit(value))
+        static_cast<unsigned char>(status),
+        static_cast<unsigned char>(control),
+        static_cast<unsigned char>(dataValue)
     };
     const juce::MidiMessage msg(bytes, 3);
-    return sendMidiMessageWithDebug(msg, messageType);
+    const bool success = sendMidiMessageWithDebug(msg, messageType);
+    if (success && cacheable)
+        m_lastMidiShortValues[cacheKey] = dataValue;
+    return success;
 }
 
 bool MidiControllerManager::sendMidiMessageWithDebug(const juce::MidiMessage& message, const QString& messageType)
@@ -2436,7 +2683,7 @@ void MidiControllerManager::refreshTransportAndLoopLeds(QChar deck, DjEngine* en
         return;
 
     if (shouldUseFlx10Feedback()) {
-        m_flx10Leds.refreshDeckLeds(deck == QLatin1Char('A') ? 1 : 2);
+        m_midiFeedback.refreshDeckLeds(deck == QLatin1Char('A') ? 1 : 2);
         return;
     }
 
@@ -2451,7 +2698,8 @@ void MidiControllerManager::refreshTransportAndLoopLeds(QChar deck, DjEngine* en
     sendMappedNoteLed(prefix + QStringLiteral("loop_out"), engine->loopActive());
     sendMappedNoteLed(prefix + QStringLiteral("loop_4beat"), engine->loopActive());
     sendMappedNoteLed(prefix + QStringLiteral("loop_reloop"), engine->loopActive());
-    sendMappedNoteLed(prefix + QStringLiteral("sync"), engine->syncEnabled());
+    sendMappedNoteLed(prefix + QStringLiteral("beat_sync"), engine->syncEnabled());
+    sendMappedNoteLed(prefix + QStringLiteral("key_sync"), engine->keylock());
     sendMappedNoteLed(prefix + QStringLiteral("keylock"), engine->keylock());
     sendMappedNoteLed(prefix + QStringLiteral("quantize"), engine->quantizeEnabled());
     sendMappedNoteLed(prefix + QStringLiteral("slip"), engine->slipActive());
@@ -2474,7 +2722,7 @@ void MidiControllerManager::refreshHotCueLeds(QChar deck, DjEngine* engine)
         return;
 
     if (shouldUseFlx10Feedback()) {
-        m_flx10Leds.refreshHotcuePads(deck == QLatin1Char('A') ? 1 : 2);
+        m_midiFeedback.refreshHotcuePads(deck == QLatin1Char('A') ? 1 : 2);
         return;
     }
 
@@ -2492,18 +2740,35 @@ void MidiControllerManager::refreshHotCueLeds(QChar deck, DjEngine* engine)
     }
 }
 
+void MidiControllerManager::refreshPerformancePadLeds(QChar deck, DjEngine* engine)
+{
+    const MidiPadMode mode = padModeForDeck(deck);
+    if (mode == MidiPadMode::HotCue) {
+        refreshHotCueLeds(deck, engine);
+        return;
+    }
+
+    const int status = hotCueStatusForDeck(deck);
+    static constexpr int kPadFxColors[8] = { 0x11, 0x11, 0x15, 0x15, 0x25, 0x25, 0x29, 0x29 };
+    static constexpr int kBeatJumpColors[8] = { 0x01, 0x01, 0x11, 0x11, 0x15, 0x15, 0x1D, 0x1D };
+    const int* colors = mode == MidiPadMode::PadFx ? kPadFxColors : kBeatJumpColors;
+
+    for (int i = 0; i < 8; ++i)
+        sendMidiNoteLed(status, i, colors[i]);
+}
+
 void MidiControllerManager::refreshDeckLeds(QChar deck, DjEngine* engine)
 {
     if (shouldUseFlx10Feedback()) {
-        Q_UNUSED(engine);
-        m_flx10Leds.refreshDeck(deck == QLatin1Char('A') ? 1 : 2);
+        m_midiFeedback.refreshDeckLeds(deck == QLatin1Char('A') ? 1 : 2);
         refreshPadModeLeds(deck);
+        refreshPerformancePadLeds(deck, engine);
         return;
     }
 
     refreshTransportAndLoopLeds(deck, engine);
-    refreshHotCueLeds(deck, engine);
     refreshPadModeLeds(deck);
+    refreshPerformancePadLeds(deck, engine);
 }
 
 void MidiControllerManager::refreshAllDeckLeds()
@@ -2524,7 +2789,7 @@ void MidiControllerManager::setPadModeForDeck(QChar deck, MidiPadMode mode)
     else
         m_deckBPadMode = mode;
     refreshPadModeLeds(deck);
-    refreshHotCueLeds(deck, deck == QLatin1Char('A') ? m_deckA : m_deckB);
+    refreshPerformancePadLeds(deck, deck == QLatin1Char('A') ? m_deckA : m_deckB);
 }
 
 void MidiControllerManager::stopPadFxToggle(DjEngine* engine, int padIndex)
@@ -2578,6 +2843,7 @@ void MidiControllerManager::handlePerformancePad(QChar deck,
             engine->clearHotCue(padIndex);
         else
             engine->triggerHotCue(padIndex);
+        refreshHotCueLeds(deck, engine);
         return;
     }
 
@@ -2656,7 +2922,12 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
     m_deckBPadFxMomentary = -1;
     m_deckAPadFxToggle = -1;
     m_deckBPadFxToggle = -1;
-    m_flx10Leds.setDecks(m_deckA, m_deckB);
+    m_deckAFxSlotsEnabled = { false, false, false };
+    m_deckBFxSlotsEnabled = { false, false, false };
+    m_beatFxActive = false;
+    m_beatFxPosition = 1;
+    m_beatFxTargetDeck = QLatin1Char('A');
+    m_midiFeedback.setDecks(m_deckA, m_deckB);
 
     auto wireDeckLeds = [this](QChar deck, DjEngine* engine)
     {
@@ -2703,6 +2974,87 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
     {
         DjEngine* const a = m_deckA;
         DjEngine* const b = m_deckB;
+
+        auto engineForDeck = [a, b](QChar deck) -> DjEngine*
+        {
+            return deck == QLatin1Char('A') ? a : b;
+        };
+
+        auto toggleFxSlot = [this, &engineForDeck](QChar deck, int slot)
+        {
+            DjEngine* const engine = engineForDeck(deck);
+            if (!engine || slot < 1 || slot > 3)
+                return;
+
+            std::array<bool, 3>& fxSlotStates = deck == QLatin1Char('A')
+                ? m_deckAFxSlotsEnabled
+                : m_deckBFxSlotsEnabled;
+            const int index = slot - 1;
+            fxSlotStates[static_cast<size_t>(index)] = !fxSlotStates[static_cast<size_t>(index)];
+
+            static constexpr EffectType kSlotTypes[3] = {
+                EffectType::Echo,
+                EffectType::Flanger,
+                EffectType::Reverb
+            };
+            const bool enabled = fxSlotStates[static_cast<size_t>(index)];
+            engine->setFxSlotEffectType(slot, enabled ? kSlotTypes[index] : EffectType::None);
+            engine->setFxSlotWetDry(slot, enabled ? 1.0f : 0.0f);
+
+            qDebug() << "[MIDI ACTION] action=FxSlot"
+                     << "deck:" << deck
+                     << "slot:" << slot
+                     << "enabled:" << enabled
+                     << "dispatch=toggleFxSlot";
+        };
+
+        auto handleBeatJumpParam = [&engineForDeck](const QString& paramId) -> bool
+        {
+            QChar deck;
+            double beats = 0.0;
+            if (parseDeckButtonParam(paramId, QStringLiteral("beatjump_backward"), deck)
+                || parseDeckButtonParam(paramId, QStringLiteral("beatjump_4_backward"), deck)) {
+                beats = -4.0;
+            } else if (parseDeckButtonParam(paramId, QStringLiteral("beatjump_forward"), deck)
+                       || parseDeckButtonParam(paramId, QStringLiteral("beatjump_4_forward"), deck)) {
+                beats = 4.0;
+            } else if (parseDeckButtonParam(paramId, QStringLiteral("beatjump_16_backward"), deck)) {
+                beats = -16.0;
+            } else if (parseDeckButtonParam(paramId, QStringLiteral("beatjump_16_forward"), deck)) {
+                beats = 16.0;
+            } else {
+                return false;
+            }
+
+            if (DjEngine* const engine = engineForDeck(deck))
+                engine->beatJump(beats);
+            qDebug() << "[MIDI ACTION] action=BeatJump"
+                     << "deck:" << deck
+                     << "beats:" << beats
+                     << "dispatch=beatJump";
+            return true;
+        };
+
+        auto applyBeatFx = [this, a, b]()
+        {
+            const EffectType type = beatFxTypeForPosition(m_beatFxPosition);
+            const float wet = m_beatFxActive ? 1.0f : 0.0f;
+
+            if (a) {
+                a->setFxSlotEffectType(1, type);
+                a->setFxSlotWetDry(1, m_beatFxTargetDeck == QLatin1Char('A') ? wet : 0.0f);
+            }
+            if (b) {
+                b->setFxSlotEffectType(1, type);
+                b->setFxSlotWetDry(1, m_beatFxTargetDeck == QLatin1Char('B') ? wet : 0.0f);
+            }
+
+            qDebug() << "[MIDI ACTION] action=BeatFx"
+                     << "position:" << m_beatFxPosition
+                     << "targetDeck:" << m_beatFxTargetDeck
+                     << "active:" << m_beatFxActive
+                     << "dispatch=applyBeatFxSlot1";
+        };
 
         if (id == "deckA_play") {
             if (value >= 0.5f && a)
@@ -2811,6 +3163,98 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                 handlePerformancePad(deck, deckEngine, padIndex, value >= 0.5f, clearPad);
                 return;
             }
+
+            if (parseDirectPadParam(id, QStringLiteral("padfx_pad"), deck, padIndex)) {
+                DjEngine* const deckEngine = deck == QLatin1Char('A') ? a : b;
+                handlePerformancePad(deck, deckEngine, padIndex, value >= 0.5f, false);
+                return;
+            }
+
+            if (parseDirectPadParam(id, QStringLiteral("beatjump_pad"), deck, padIndex)) {
+                DjEngine* const deckEngine = deck == QLatin1Char('A') ? a : b;
+                handlePerformancePad(deck, deckEngine, padIndex, value >= 0.5f, false);
+                return;
+            }
+
+            int fxSlot = -1;
+            if (parseDeckFxSlotParam(id, deck, fxSlot)) {
+                if (value >= 0.5f)
+                    toggleFxSlot(deck, fxSlot);
+                return;
+            }
+        }
+        QChar directDeck;
+        if (value >= 0.5f && handleBeatJumpParam(id))
+            return;
+        int beatFxPosition = -1;
+        if (parseBeatFxSelectParam(id, beatFxPosition)) {
+            if (value >= 0.5f) {
+                m_beatFxPosition = beatFxPosition;
+                applyBeatFx();
+            }
+            return;
+        }
+        if (id == QStringLiteral("beat_fx_channel_deck_a")) {
+            if (value >= 0.5f) {
+                m_beatFxTargetDeck = QLatin1Char('A');
+                applyBeatFx();
+            }
+            return;
+        }
+        if (id == QStringLiteral("beat_fx_channel_deck_b")) {
+            if (value >= 0.5f) {
+                m_beatFxTargetDeck = QLatin1Char('B');
+                applyBeatFx();
+            }
+            return;
+        }
+        if (id == QStringLiteral("beat_fx_on")) {
+            if (value >= 0.5f) {
+                m_beatFxActive = !m_beatFxActive;
+                applyBeatFx();
+            }
+            return;
+        }
+        if (parseDeckButtonParam(id, QStringLiteral("beat_sync"), directDeck)) {
+            if (value >= 0.5f) {
+                if (DjEngine* const engine = engineForDeck(directDeck))
+                    engine->setSyncEnabled(!engine->syncEnabled());
+            }
+            return;
+        }
+        if (parseDeckButtonParam(id, QStringLiteral("beatsync"), directDeck)) {
+            if (value >= 0.5f) {
+                if (DjEngine* const engine = engineForDeck(directDeck)) {
+                    if (engine->syncEnabled())
+                        engine->reSync();
+                    else
+                        engine->setSyncEnabled(true);
+                }
+            }
+            return;
+        }
+        if (parseDeckButtonParam(id, QStringLiteral("key_sync"), directDeck)
+            || parseDeckButtonParam(id, QStringLiteral("keylock"), directDeck)) {
+            if (value >= 0.5f) {
+                if (DjEngine* const engine = engineForDeck(directDeck))
+                    engine->setKeylock(!engine->keylock());
+            }
+            return;
+        }
+        if (parseDeckButtonParam(id, QStringLiteral("slip"), directDeck)) {
+            if (value >= 0.5f) {
+                if (DjEngine* const engine = engineForDeck(directDeck))
+                    engine->setSlip(!engine->slipActive());
+            }
+            return;
+        }
+        if (parseDeckButtonParam(id, QStringLiteral("tempo_reset"), directDeck)
+            || parseDeckButtonParam(id, QStringLiteral("rate_reset"), directDeck)) {
+            if (value >= 0.5f) {
+                if (DjEngine* const engine = engineForDeck(directDeck))
+                    engine->setTempoPercent(0.0);
+            }
+            return;
         }
         if (id == "deckA_shift") {
             m_deckAShiftHeld = value >= 0.5f;

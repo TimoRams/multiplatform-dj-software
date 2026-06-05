@@ -9,7 +9,7 @@
 
 class DjEngine;
 
-struct Flx10LedMapping
+struct MidiFeedbackMapping
 {
     std::array<uint8_t, 4> deckNoteStatus = { 0x90, 0x91, 0x92, 0x93 };
     std::array<uint8_t, 4> hotcueStatus = { 0x97, 0x99, 0x9B, 0x9D };
@@ -39,18 +39,18 @@ struct Flx10LedMapping
     uint8_t padWhite = 0x7F;
 };
 
-class Flx10LedController : public QObject
+class MidiFeedbackController : public QObject
 {
     Q_OBJECT
 
 public:
     using MidiSender = std::function<bool(uint8_t status, uint8_t data1, uint8_t data2, const QString& type)>;
 
-    explicit Flx10LedController(QObject* parent = nullptr);
+    explicit MidiFeedbackController(QObject* parent = nullptr);
 
     void setMidiSender(MidiSender sender);
     void setDecks(DjEngine* deckA, DjEngine* deckB);
-    void setMapping(const Flx10LedMapping& mapping);
+    void setMapping(const MidiFeedbackMapping& mapping);
     void setEnabled(bool enabled);
     bool isEnabled() const { return m_enabled; }
 
@@ -86,7 +86,7 @@ private:
 
     MidiSender m_sender;
     DjEngine* m_decks[4] = { nullptr, nullptr, nullptr, nullptr };
-    Flx10LedMapping m_mapping;
+    MidiFeedbackMapping m_mapping;
     QTimer m_vuTimer;
     QTimer m_blinkTimer;
     std::array<uint8_t, 4> m_lastVuValues = { 0xFF, 0xFF, 0xFF, 0xFF };

@@ -6,12 +6,13 @@
 #include "AlsaMidiOutput.h"
 #endif
 
-#include "Flx10LedController.h"
+#include "feedback/MidiFeedbackController.h"
 
 #include <QObject>
 #include <QStringList>
 #include <QVariantMap>
 #include <juce_audio_devices/juce_audio_devices.h>
+#include <array>
 #include <map>
 #include <memory>
 #include <cstdint>
@@ -130,6 +131,11 @@ private:
     int m_deckBPadFxMomentary = -1;
     int m_deckAPadFxToggle = -1;
     int m_deckBPadFxToggle = -1;
+    std::array<bool, 3> m_deckAFxSlotsEnabled = { false, false, false };
+    std::array<bool, 3> m_deckBFxSlotsEnabled = { false, false, false };
+    bool m_beatFxActive = false;
+    int m_beatFxPosition = 1;
+    QChar m_beatFxTargetDeck = QLatin1Char('A');
     
     std::vector<std::unique_ptr<juce::MidiInput>> m_midiInputs;
     std::unique_ptr<juce::MidiOutput> m_midiOutput;
@@ -141,16 +147,20 @@ private:
     
     // Reverse Mapping for Output: Parameter ID -> Midi Note/CC Number
     std::map<QString, int> m_paramToMidi;
+    std::map<int, int> m_lastMidiShortValues;
 
     // Available device identifiers and names
     std::vector<juce::String> m_availableInputDeviceIdentifiers;
     QStringList m_availableInputDeviceNames;
     std::vector<juce::String> m_availableOutputDeviceIdentifiers;
     QStringList m_availableOutputDeviceNames;
+    std::vector<juce::String> m_availableControllerDeviceIdentifiers;
+    std::vector<int> m_availableControllerInputIndexes;
+    QStringList m_availableControllerDeviceNames;
     int m_selectedMidiOutputIndex = -1;
     juce::String m_selectedMidiOutputIdentifier;
     QString m_selectedMidiOutputName;
-    Flx10LedController m_flx10Leds;
+    MidiFeedbackController m_midiFeedback;
     bool m_flx10RawLedTestRun = false;
 
     QString m_selectedController;
@@ -169,13 +179,14 @@ private:
     QString m_lastMidiEvent;
 
 #if defined(Q_OS_LINUX)
-    std::unique_ptr<QProcess> m_alsaInputMonitor;
+    std::vector<std::unique_ptr<QProcess>> m_alsaInputMonitors;
     std::unique_ptr<AlsaMidiOutput> m_alsaMidiOutput;
-    QString m_alsaMonitorBuffer;
+    std::map<QProcess*, QString> m_alsaMonitorBuffers;
 #endif
 
     void refreshMidiDeviceCache();
     void populateFromAlsaFallback();
+    void rebuildControllerDeviceCache();
     bool isPseudoAlsaIdentifier(const juce::String& identifier) const;
     bool isPseudoAlsaOutputIdentifier(const juce::String& identifier) const;
     void startAlsaInputMonitor(const juce::String& pseudoIdentifier);
@@ -197,7 +208,7 @@ private:
     QString normalizeControllerKeyFromJsBase(const QString& baseName) const;
     QStringList getAvailableXmlMappingFilesForController(const QString& controllerName) const;
     bool loadBrockDjXmlMapping(const QString& mappingFileName);
-    void applyFlx10FeedbackMappingElement(const QString& elementName, const QXmlStreamAttributes& attrs, Flx10LedMapping& mapping) const;
+    void applyMidiFeedbackMappingElement(const QString& elementName, const QXmlStreamAttributes& attrs, MidiFeedbackMapping& mapping) const;
     void loadNativeMappingIfExists();
     QString nativeMappingFilePath() const;
     int parseMappingNumber(const QString& rawValue) const;
@@ -212,6 +223,7 @@ private:
     void refreshTransportAndLoopLeds(QChar deck, DjEngine* engine);
     void refreshHotCueLeds(QChar deck, DjEngine* engine);
     void refreshPadModeLeds(QChar deck);
+    void refreshPerformancePadLeds(QChar deck, DjEngine* engine);
     bool sendMidiShort(int statusNo, int controlNo, int value, const QString& messageType = QStringLiteral("raw"));
     bool sendMidiMessageWithDebug(const juce::MidiMessage& message, const QString& messageType);
     void sendMidiNoteLed(int statusNo, int noteNo, int value);

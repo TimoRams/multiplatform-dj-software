@@ -1060,6 +1060,8 @@ Window {
                     }
 
                     RowLayout {
+                        visible: false
+                        Layout.preferredHeight: 0
                         spacing: 16
                         Text {
                             text: "MIDI Output"
@@ -1161,7 +1163,7 @@ Window {
                     RowLayout {
                         spacing: 16
                         Text {
-                            text: "MIDI Device"
+                            text: "Controller Device"
                             color: "#aaa"
                             font.pixelSize: 12
                             Layout.preferredWidth: 130
@@ -1330,7 +1332,7 @@ Window {
 
                             Button {
                                 text: "Raw LEDs"
-                                enabled: midiSettingsColumn.hasMidiOutputs
+                                enabled: midiSettingsColumn.hasMidiDevices
                                 Layout.preferredWidth: 96
                                 Layout.preferredHeight: 32
                                 onClicked: {
@@ -1341,7 +1343,7 @@ Window {
 
                             Button {
                                 text: "Hotcue Pads"
-                                enabled: midiSettingsColumn.hasMidiOutputs
+                                enabled: midiSettingsColumn.hasMidiDevices
                                 Layout.preferredWidth: 112
                                 Layout.preferredHeight: 32
                                 onClicked: {

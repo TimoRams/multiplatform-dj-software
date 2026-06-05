@@ -1,4 +1,4 @@
-#include "Flx10LedController.h"
+#include "MidiFeedbackController.h"
 
 #include "DjEngine.h"
 
@@ -23,24 +23,24 @@ double hueDistance(double a, double b)
 }
 }
 
-Flx10LedController::Flx10LedController(QObject* parent)
+MidiFeedbackController::MidiFeedbackController(QObject* parent)
     : QObject(parent)
 {
     m_vuTimer.setInterval(33);
     connect(&m_vuTimer, &QTimer::timeout,
-            this, &Flx10LedController::updateVuMeters);
+            this, &MidiFeedbackController::updateVuMeters);
 
     m_blinkTimer.setInterval(500);
     connect(&m_blinkTimer, &QTimer::timeout,
-            this, &Flx10LedController::updateBlinkPhase);
+            this, &MidiFeedbackController::updateBlinkPhase);
 }
 
-void Flx10LedController::setMidiSender(MidiSender sender)
+void MidiFeedbackController::setMidiSender(MidiSender sender)
 {
     m_sender = std::move(sender);
 }
 
-void Flx10LedController::setDecks(DjEngine* deckA, DjEngine* deckB)
+void MidiFeedbackController::setDecks(DjEngine* deckA, DjEngine* deckB)
 {
     m_decks[0] = deckA;
     m_decks[1] = deckB;
@@ -48,14 +48,14 @@ void Flx10LedController::setDecks(DjEngine* deckA, DjEngine* deckB)
     m_decks[3] = nullptr;
 }
 
-void Flx10LedController::setMapping(const Flx10LedMapping& mapping)
+void MidiFeedbackController::setMapping(const MidiFeedbackMapping& mapping)
 {
     m_mapping = mapping;
     if (m_enabled)
         refreshAll();
 }
 
-void Flx10LedController::setEnabled(bool enabled)
+void MidiFeedbackController::setEnabled(bool enabled)
 {
     if (m_enabled == enabled)
         return;
@@ -67,7 +67,7 @@ void Flx10LedController::setEnabled(bool enabled)
         stop();
 }
 
-void Flx10LedController::start()
+void MidiFeedbackController::start()
 {
     if (!m_enabled)
         return;
@@ -80,7 +80,7 @@ void Flx10LedController::start()
         m_blinkTimer.start();
 }
 
-void Flx10LedController::stop()
+void MidiFeedbackController::stop()
 {
     if (m_vuTimer.isActive())
         m_vuTimer.stop();
@@ -88,7 +88,7 @@ void Flx10LedController::stop()
         m_blinkTimer.stop();
 }
 
-void Flx10LedController::clearAll()
+void MidiFeedbackController::clearAll()
 {
     for (int deck = 1; deck <= 4; ++deck) {
         sendDeckLed(deck, m_mapping.playNote, false);
@@ -109,7 +109,7 @@ void Flx10LedController::clearAll()
     }
 }
 
-void Flx10LedController::refreshAll()
+void MidiFeedbackController::refreshAll()
 {
     if (!m_enabled)
         return;
@@ -118,7 +118,7 @@ void Flx10LedController::refreshAll()
         refreshDeck(deck);
 }
 
-void Flx10LedController::refreshDeck(int deck)
+void MidiFeedbackController::refreshDeck(int deck)
 {
     if (!m_enabled)
         return;
@@ -127,7 +127,7 @@ void Flx10LedController::refreshDeck(int deck)
     refreshHotcuePads(deck);
 }
 
-void Flx10LedController::refreshDeckLeds(int deck)
+void MidiFeedbackController::refreshDeckLeds(int deck)
 {
     if (!m_enabled)
         return;
@@ -157,7 +157,7 @@ void Flx10LedController::refreshDeckLeds(int deck)
     sendDeckLed(deck, m_mapping.keySyncNote, engine->keylock());
 }
 
-void Flx10LedController::refreshHotcuePads(int deck)
+void MidiFeedbackController::refreshHotcuePads(int deck)
 {
     if (!m_enabled)
         return;
@@ -190,12 +190,12 @@ void Flx10LedController::refreshHotcuePads(int deck)
     }
 }
 
-void Flx10LedController::sendDeckLed(int deck, uint8_t note, bool enabled)
+void MidiFeedbackController::sendDeckLed(int deck, uint8_t note, bool enabled)
 {
     sendMidiShort(deckNoteStatus(deck), note, enabled ? kLedOn : kLedOff, QStringLiteral("note-led"));
 }
 
-void Flx10LedController::sendHotcuePadLed(int deck, int pad, uint8_t color)
+void MidiFeedbackController::sendHotcuePadLed(int deck, int pad, uint8_t color)
 {
     const uint8_t note = static_cast<uint8_t>(std::clamp(pad, 1, 8) - 1);
     const uint8_t value = color & 0x7F;
@@ -203,7 +203,7 @@ void Flx10LedController::sendHotcuePadLed(int deck, int pad, uint8_t color)
     sendMidiShort(hotcueShiftStatusForDeck(deck), note, value, QStringLiteral("pad-led"));
 }
 
-void Flx10LedController::sendVuMeter(int channel, float level)
+void MidiFeedbackController::sendVuMeter(int channel, float level)
 {
     const float clamped = std::clamp(level, 0.0f, 1.0f);
     const int index = std::clamp(channel, 1, 4) - 1;
@@ -216,7 +216,7 @@ void Flx10LedController::sendVuMeter(int channel, float level)
     sendMidiShort(status, m_mapping.vuControl, value, QStringLiteral("vu-meter"));
 }
 
-void Flx10LedController::sendPaletteTest()
+void MidiFeedbackController::sendPaletteTest()
 {
     for (int deck = 1; deck <= 4; ++deck) {
         for (int pad = 0; pad < 8; ++pad)
@@ -225,7 +225,7 @@ void Flx10LedController::sendPaletteTest()
     }
 }
 
-void Flx10LedController::testRawLedOutput()
+void MidiFeedbackController::testRawLedOutput()
 {
     const bool vuWasActive = m_vuTimer.isActive();
     const bool blinkWasActive = m_blinkTimer.isActive();
@@ -262,27 +262,27 @@ void Flx10LedController::testRawLedOutput()
     });
 }
 
-uint8_t Flx10LedController::deckNoteStatus(int deck) const
+uint8_t MidiFeedbackController::deckNoteStatus(int deck) const
 {
     return m_mapping.deckNoteStatus[static_cast<size_t>(std::clamp(deck, 1, 4) - 1)];
 }
 
-uint8_t Flx10LedController::hotcueStatusForDeck(int deck) const
+uint8_t MidiFeedbackController::hotcueStatusForDeck(int deck) const
 {
     return m_mapping.hotcueStatus[static_cast<size_t>(std::clamp(deck, 1, 4) - 1)];
 }
 
-uint8_t Flx10LedController::hotcueShiftStatusForDeck(int deck) const
+uint8_t MidiFeedbackController::hotcueShiftStatusForDeck(int deck) const
 {
     return m_mapping.hotcueShiftStatus[static_cast<size_t>(std::clamp(deck, 1, 4) - 1)];
 }
 
-uint8_t Flx10LedController::vuStatusForDeck(int deck) const
+uint8_t MidiFeedbackController::vuStatusForDeck(int deck) const
 {
     return m_mapping.vuStatus[static_cast<size_t>(std::clamp(deck, 1, 4) - 1)];
 }
 
-uint8_t Flx10LedController::hotcueColorValue(const QString& color) const
+uint8_t MidiFeedbackController::hotcueColorValue(const QString& color) const
 {
     struct PaletteValue { int value; double hue; };
     const PaletteValue palette[] = {
@@ -352,20 +352,20 @@ uint8_t Flx10LedController::hotcueColorValue(const QString& color) const
     return static_cast<uint8_t>(bestValue);
 }
 
-bool Flx10LedController::sendMidiShort(uint8_t status, uint8_t data1, uint8_t data2, const QString& type)
+bool MidiFeedbackController::sendMidiShort(uint8_t status, uint8_t data1, uint8_t data2, const QString& type)
 {
     if (!m_sender)
         return false;
     return m_sender(status, static_cast<uint8_t>(clamp7(data1)), static_cast<uint8_t>(clamp7(data2)), type);
 }
 
-DjEngine* Flx10LedController::deckEngine(int deck) const
+DjEngine* MidiFeedbackController::deckEngine(int deck) const
 {
     const int index = std::clamp(deck, 1, 4) - 1;
     return m_decks[index];
 }
 
-bool Flx10LedController::deckHasBlinkingHotcue(int deck) const
+bool MidiFeedbackController::deckHasBlinkingHotcue(int deck) const
 {
     DjEngine* engine = deckEngine(deck);
     if (!engine)
@@ -391,7 +391,7 @@ bool Flx10LedController::deckHasBlinkingHotcue(int deck) const
     return false;
 }
 
-void Flx10LedController::updateVuMeters()
+void MidiFeedbackController::updateVuMeters()
 {
     if (!m_enabled)
         return;
@@ -409,7 +409,7 @@ void Flx10LedController::updateVuMeters()
     sendVuMeter(4, deckVu(m_decks[3]));
 }
 
-void Flx10LedController::updateBlinkPhase()
+void MidiFeedbackController::updateBlinkPhase()
 {
     if (!m_enabled)
         return;
@@ -421,7 +421,7 @@ void Flx10LedController::updateBlinkPhase()
     }
 }
 
-void Flx10LedController::scheduleRawTestStep(int delayMs, const std::function<void()>& step)
+void MidiFeedbackController::scheduleRawTestStep(int delayMs, const std::function<void()>& step)
 {
     QTimer::singleShot(delayMs, this, [step] { step(); });
 }

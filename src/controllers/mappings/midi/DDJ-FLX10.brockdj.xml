@@ -12,10 +12,18 @@
     <Entry paramId="deckB_cue" status="0x91" control="0x0C" type="momentary"/>
     <Entry paramId="deckA_beat_sync" status="0x90" control="0x58" type="toggle"/>
     <Entry paramId="deckB_beat_sync" status="0x91" control="0x58" type="toggle"/>
+    <Entry paramId="deckA_beatsync" status="0x90" control="0x66" type="toggle"/>
+    <Entry paramId="deckB_beatsync" status="0x91" control="0x66" type="toggle"/>
     <Entry paramId="deckA_key_sync" status="0x90" control="0x65" type="toggle"/>
     <Entry paramId="deckB_key_sync" status="0x91" control="0x65" type="toggle"/>
+    <Entry paramId="deckA_keylock" status="0x90" control="0x1C" type="toggle"/>
+    <Entry paramId="deckB_keylock" status="0x91" control="0x1C" type="toggle"/>
+    <Entry paramId="deckA_slip" status="0x90" control="0x40" type="toggle"/>
+    <Entry paramId="deckB_slip" status="0x91" control="0x40" type="toggle"/>
     <Entry paramId="deckA_tempo_reset" status="0x90" control="0x41" type="toggle"/>
     <Entry paramId="deckB_tempo_reset" status="0x91" control="0x41" type="toggle"/>
+    <Entry paramId="deckA_rate_reset" status="0x90" control="0x46" type="toggle"/>
+    <Entry paramId="deckB_rate_reset" status="0x91" control="0x46" type="toggle"/>
 
     <!-- Tempo faders, 14-bit MSB. Matching LSB messages at +0x20 are combined automatically. -->
     <Entry paramId="deckA_tempo" status="0xB0" control="0x00" type="fader"/>
@@ -45,13 +53,13 @@
     <Entry paramId="deckA_loop_out_adjust" status="0x90" control="0x4D" type="toggle"/>
     <Entry paramId="deckB_loop_out_adjust" status="0x91" control="0x4D" type="toggle"/>
 
-    <!-- Performance pads. The active pad tab decides whether these trigger Hot Cues, Pad FX, or Beatjump. -->
-    <Entry paramId="deckA_pad_mode_hotcue" status="0x90" control="0x69" type="toggle"/>
-    <Entry paramId="deckB_pad_mode_hotcue" status="0x91" control="0x69" type="toggle"/>
-    <Entry paramId="deckA_pad_mode_padfx" status="0x90" control="0x6A" type="toggle"/>
-    <Entry paramId="deckB_pad_mode_padfx" status="0x91" control="0x6A" type="toggle"/>
-    <Entry paramId="deckA_pad_mode_beatjump" status="0x90" control="0x6B" type="toggle"/>
-    <Entry paramId="deckB_pad_mode_beatjump" status="0x91" control="0x6B" type="toggle"/>
+    <!-- Performance pads. The active BrockDJ pad mode decides whether these trigger Hot Cues, Pad FX, or Beatjump. -->
+    <Entry paramId="deckA_pad_mode_hotcue" status="0x97" control="0x40" type="toggle"/>
+    <Entry paramId="deckA_pad_mode_padfx" status="0x97" control="0x41" type="toggle"/>
+    <Entry paramId="deckA_pad_mode_beatjump" status="0x97" control="0x42" type="toggle"/>
+    <Entry paramId="deckB_pad_mode_hotcue" status="0x99" control="0x40" type="toggle"/>
+    <Entry paramId="deckB_pad_mode_padfx" status="0x99" control="0x41" type="toggle"/>
+    <Entry paramId="deckB_pad_mode_beatjump" status="0x99" control="0x42" type="toggle"/>
 
     <Entry paramId="deckA_pad1" status="0x97" control="0x00" type="momentary"/>
     <Entry paramId="deckA_pad2" status="0x97" control="0x01" type="momentary"/>
@@ -86,6 +94,31 @@
     <Entry paramId="deckB_pad6_clear" status="0x9A" control="0x05" type="toggle"/>
     <Entry paramId="deckB_pad7_clear" status="0x9A" control="0x06" type="toggle"/>
     <Entry paramId="deckB_pad8_clear" status="0x9A" control="0x07" type="toggle"/>
+
+    <!-- Dedicated 4 Beat Jump buttons are CCs on the deck channels. -->
+    <Entry paramId="deckA_beatjump_4_forward" status="0xB0" control="0x29" type="toggle"/>
+    <Entry paramId="deckB_beatjump_4_forward" status="0xB1" control="0x29" type="toggle"/>
+    <Entry paramId="deckA_beatjump_4_backward" status="0xB0" control="0x1F" type="toggle"/>
+    <Entry paramId="deckB_beatjump_4_backward" status="0xB1" control="0x1F" type="toggle"/>
+
+    <!-- Beat FX section, MIDI channel 5 in FLX10 terms. -->
+    <Entry paramId="beat_fx_select_1" status="0x94" control="0x20" type="toggle"/>
+    <Entry paramId="beat_fx_select_2" status="0x94" control="0x21" type="toggle"/>
+    <Entry paramId="beat_fx_select_3" status="0x94" control="0x22" type="toggle"/>
+    <Entry paramId="beat_fx_select_4" status="0x94" control="0x23" type="toggle"/>
+    <Entry paramId="beat_fx_select_5" status="0x94" control="0x24" type="toggle"/>
+    <Entry paramId="beat_fx_select_6" status="0x94" control="0x25" type="toggle"/>
+    <Entry paramId="beat_fx_select_7" status="0x94" control="0x26" type="toggle"/>
+    <Entry paramId="beat_fx_select_8" status="0x94" control="0x27" type="toggle"/>
+    <Entry paramId="beat_fx_select_9" status="0x94" control="0x28" type="toggle"/>
+    <Entry paramId="beat_fx_select_10" status="0x94" control="0x29" type="toggle"/>
+    <Entry paramId="beat_fx_select_11" status="0x94" control="0x2A" type="toggle"/>
+    <Entry paramId="beat_fx_select_12" status="0x94" control="0x2B" type="toggle"/>
+    <Entry paramId="beat_fx_select_13" status="0x94" control="0x2C" type="toggle"/>
+    <Entry paramId="beat_fx_select_14" status="0x94" control="0x2D" type="toggle"/>
+    <Entry paramId="beat_fx_channel_deck_b" status="0x94" control="0x10" type="toggle"/>
+    <Entry paramId="beat_fx_channel_deck_a" status="0x94" control="0x11" type="toggle"/>
+    <Entry paramId="beat_fx_on" status="0x94" control="0x46" type="toggle"/>
 
     <!-- Mixer. 14-bit LSB messages at +0x20 are paired by MidiControllerManager where present. -->
     <Entry paramId="deckA_gain" status="0xB0" control="0x04" type="encoder-absolute"/>

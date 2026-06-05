@@ -333,8 +333,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/midi/ParameterStore.cpp
     src/midi/AlsaMidiOutput.h
     src/midi/AlsaMidiOutput.cpp
-    src/midi/Flx10LedController.h
-    src/midi/Flx10LedController.cpp
+    src/controllers/feedback/MidiFeedbackController.h
+    src/controllers/feedback/MidiFeedbackController.cpp
     src/midi/MidiControllerManager.h
     src/midi/MidiControllerManager.cpp
     src/controllers/ControllerProfile.h
@@ -367,6 +367,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     src/rendering
     src/midi
     src/controllers
+    src/controllers/feedback
     src/analysis
     src/domain
     src/app
