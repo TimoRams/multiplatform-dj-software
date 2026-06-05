@@ -12,18 +12,17 @@ std::atomic<uint64_t> DjMasterBus::s_callbackCount    { 0     };
 std::atomic<uint64_t> DjMasterBus::s_callbackTotalUsec { 0    };
 std::atomic<uint64_t> DjMasterBus::s_callbackWorstUsec { 0    };
 std::atomic<uint64_t> DjMasterBus::s_callbackOverruns  { 0    };
-// Instance-level clip state exposed via a static pointer to the singleton.
-static DjMasterBus* s_instance = nullptr;  // set in ctor, cleared in dtor
 std::atomic<int>   DjMasterBus::s_masterFirstChannel  { 1     };
 std::atomic<int>   DjMasterBus::s_boothFirstChannel   { -1    };
 std::atomic<int>   DjMasterBus::s_headphonesFirstChannel { -1 };
 std::atomic<bool>  DjMasterBus::s_masterCueEnabled   { false };
 std::atomic<float> DjMasterBus::s_headphoneMix       { 0.5f  };
+std::atomic<bool>  DjMasterBus::s_masterClipDetected  { false };
 
 // ── Construction ──────────────────────────────────────────────────────────────
 
-DjMasterBus::DjMasterBus()  { s_instance = this; }
-DjMasterBus::~DjMasterBus() { if (s_instance == this) s_instance = nullptr; }
+DjMasterBus::DjMasterBus() = default;
+DjMasterBus::~DjMasterBus() = default;
 
 // ── Deck management ───────────────────────────────────────────────────────────
 
@@ -146,8 +145,8 @@ void DjMasterBus::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         const float peakR = m_masterBuf.getMagnitude(1, 0, n);
         m_masterPeakL.store(peakL, std::memory_order_relaxed);
         m_masterPeakR.store(peakR, std::memory_order_relaxed);
-        m_masterClipDetected.store((peakL > kClipThreshold) || (peakR > kClipThreshold),
-                                   std::memory_order_relaxed);
+        s_masterClipDetected.store((peakL > kClipThreshold) || (peakR > kClipThreshold),
+                       std::memory_order_relaxed);
     }
 
     // ── 4. Brickwall limiter on the summed signal ─────────────────────────────
@@ -328,7 +327,7 @@ float DjMasterBus::headphoneMix()
 
 bool DjMasterBus::masterClipDetected_s()
 {
-    return s_instance ? s_instance->m_masterClipDetected.load(std::memory_order_relaxed) : false;
+    return s_masterClipDetected.load(std::memory_order_relaxed);
 }
 
 // ── Audio-thread routing helper ───────────────────────────────────────────────

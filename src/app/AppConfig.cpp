@@ -2,6 +2,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QFile>
+#include <QSaveFile>
 #include <QXmlStreamReader>
 #include <QXmlStreamWriter>
 
@@ -28,6 +29,8 @@ void AppConfig::completeFirstRun(bool persist)
 
 void AppConfig::load()
 {
+    m_firstRunCompleted = false;
+
     QFile file(m_filePath);
     if (!file.exists() || !file.open(QIODevice::ReadOnly | QIODevice::Text))
         return;
@@ -42,7 +45,7 @@ void AppConfig::load()
 
 void AppConfig::save()
 {
-    QFile file(m_filePath);
+    QSaveFile file(m_filePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         qWarning() << "[AppConfig] Could not write to" << m_filePath;
         return;
@@ -60,6 +63,11 @@ void AppConfig::save()
 
     xml.writeEndElement();
     xml.writeEndDocument();
+
+    if (!file.commit()) {
+        qWarning() << "[AppConfig] Could not commit" << m_filePath;
+        return;
+    }
 
     qDebug() << "[AppConfig] Saved to" << m_filePath;
 }

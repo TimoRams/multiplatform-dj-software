@@ -73,7 +73,7 @@ public:
     // ── Master VU (post-limiter, post-sum) ───────────────────────────────────
     float masterVuL()          const { return m_masterPeakL.load(std::memory_order_relaxed); }
     float masterVuR()          const { return m_masterPeakR.load(std::memory_order_relaxed); }
-    bool  masterClipDetected() const { return m_masterClipDetected.load(std::memory_order_relaxed); }
+    bool  masterClipDetected() const { return s_masterClipDetected.load(std::memory_order_relaxed); }
 
     // Static accessor so DjEngine can delegate clipDetected() without holding a pointer.
     static bool masterClipDetected_s();
@@ -91,8 +91,6 @@ private:
 
     std::atomic<float> m_masterPeakL       { 0.0f };
     std::atomic<float> m_masterPeakR       { 0.0f };
-    std::atomic<bool>  m_masterClipDetected{ false };
-
     // ── Shared statics ────────────────────────────────────────────────────────
     static std::atomic<float> s_masterVolume;
     static std::atomic<bool>  s_antiClipEnabled;
@@ -109,6 +107,7 @@ private:
 
     static std::atomic<bool>  s_masterCueEnabled;
     static std::atomic<float> s_headphoneMix;
+    static std::atomic<bool>  s_masterClipDetected;
 
     // ── Audio-thread helpers ──────────────────────────────────────────────────
     static void routeStereoToPair(juce::AudioBuffer<float>& buffer,
