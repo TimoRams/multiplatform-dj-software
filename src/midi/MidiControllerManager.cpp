@@ -353,14 +353,26 @@ bool isRelativeInteraction(MidiInteractionType type)
     return type == MidiInteractionType::EncoderRelative;
 }
 
-float decodeRelativeCcValue(int rawValue)
+bool isFlx10JogRelativeParam(const QString& paramId)
+{
+    return paramId.endsWith(QStringLiteral("_jog_move"))
+        || paramId.endsWith(QStringLiteral("_jog_nudge"))
+        || paramId.endsWith(QStringLiteral("_jog_scratch"));
+}
+
+float decodeRelativeCcValue(int rawValue, const QString& paramId)
 {
     const int raw = clampMidi7bit(rawValue);
-    // Support the two common relative CC encodings:
+    if (isFlx10JogRelativeParam(paramId)) {
+        // FLX10 jog CCs are relative around 0x40 for the full 7-bit range:
+        // 0x40 = neutral, 0x41..0x7F = +1..+63, 0x3F..0x01 = -1..-63.
+        // Treating 0x7F as two's-complement -1 makes fast spins reverse direction.
+        return static_cast<float>(raw - 0x40);
+    }
+
+    // Support the two common relative CC encodings for generic encoders:
     // - binary offset: 64 = neutral, 65..96 = +1..+32, 63..32 = -1..-32
     // - two's complement: 1..63 = +1..+63, 65..127 = -63..-1
-    // Jog wheels commonly use binary offset around 64, which must not turn
-    // a tiny +1 tick (65) into a huge -63 jump.
     if (raw >= 32 && raw <= 96)
         return static_cast<float>(raw - 64);
     return static_cast<float>(raw < 64 ? raw : raw - 128);
@@ -466,7 +478,7 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, QObject* par
     for (QTimer* timer : {&m_jogAReleaseTimer, &m_jogBReleaseTimer}) {
         timer->setSingleShot(true);
         timer->setTimerType(Qt::PreciseTimer);
-        timer->setInterval(70);
+        timer->setInterval(120);
     }
     connect(&m_jogAReleaseTimer, &QTimer::timeout, this, [this] {
         m_jogAReleasedRecently = false;
@@ -758,7 +770,7 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                     const auto it               = m_midiToParam.find(msgId);
                     float value;
                     if (it != m_midiToParam.end() && isRelativeInteraction(it->second.interactionType)) {
-                        value = decodeRelativeCcValue(b);
+                        value = decodeRelativeCcValue(b, it->second.paramId);
                     } else {
                         value = clampMidi7bit(b) / 127.0f;
                     }
@@ -2374,7 +2386,7 @@ void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*
                 const auto it = m_midiToParam.find(resolvedId);
                 if (it != m_midiToParam.end() && isRelativeInteraction(it->second.interactionType)) {
                     const int raw = static_cast<int>(rawEnc);
-                    resolvedValue = decodeRelativeCcValue(raw);
+                    resolvedValue = decodeRelativeCcValue(raw, it->second.paramId);
                 } else {
                     resolvedValue = clampMidi7bit(static_cast<int>(rawEnc)) / 127.0f;
                 }
@@ -3478,17 +3490,40 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                 m_jogBReleaseTimer.start();
             }
         }
-        // Jog wheels: the FLX10 has two separate streams. CC 0x21 is rim/nudge
-        // and CC 0x22 is platter scratch. After touch release we only keep a
-        // tiny window open for real post-release ticks; no ticks means normal
-        // transport resumes immediately.
+        // Jog wheels: the FLX10 switches streams on release. CC 0x22 is the
+        // touched top-platter stream; CC 0x21 is rim movement and also the
+        // free-spinning stream after touch release. During touch or the short
+        // post-release window, both are real platter deltas. Outside that
+        // window, CC 0x21 becomes normal pitch-bend/nudge again.
         else if (id == "deckA_jog_nudge") {
-            if (a && !m_jogATouched && !a->isScrubbing())
-                a->applyJogNudge(static_cast<double>(value));
+            if (a) {
+                if (m_jogATouched || a->isScrubbing() || m_jogAReleasedRecently) {
+                    if (!m_jogATouched && !a->isScrubbing() && std::abs(value) <= 0.0f)
+                        return;
+                    if (!a->isScrubbing())
+                        a->pauseForScrub();
+                    if (!m_jogATouched && std::abs(value) > 0.0f)
+                        m_jogAReleaseTimer.start();
+                    a->scratchBySeconds(static_cast<double>(value) * (60.0 / kVinylRpm) / kFlx10ScratchIntervalsPerRevolution);
+                } else {
+                    a->applyJogNudge(static_cast<double>(value));
+                }
+            }
         }
         else if (id == "deckB_jog_nudge") {
-            if (b && !m_jogBTouched && !b->isScrubbing())
-                b->applyJogNudge(static_cast<double>(value));
+            if (b) {
+                if (m_jogBTouched || b->isScrubbing() || m_jogBReleasedRecently) {
+                    if (!m_jogBTouched && !b->isScrubbing() && std::abs(value) <= 0.0f)
+                        return;
+                    if (!b->isScrubbing())
+                        b->pauseForScrub();
+                    if (!m_jogBTouched && std::abs(value) > 0.0f)
+                        m_jogBReleaseTimer.start();
+                    b->scratchBySeconds(static_cast<double>(value) * (60.0 / kVinylRpm) / kFlx10ScratchIntervalsPerRevolution);
+                } else {
+                    b->applyJogNudge(static_cast<double>(value));
+                }
+            }
         }
         else if (id == "deckA_jog_scratch") {
             if (a && (m_jogATouched || a->isScrubbing() || m_jogAReleasedRecently)) {
