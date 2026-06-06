@@ -253,6 +253,7 @@ qt_add_qml_module(${PROJECT_NAME}
         src/qml/ComboBox.qml
         src/qml/TopHeader.qml
         src/qml/EnlargedWaveform.qml
+        src/qml/BeatgridEditorPanel.qml
         src/qml/OverallWaveform.qml
         src/qml/SegmentBar.qml
         src/qml/DeckControl.qml

@@ -75,6 +75,16 @@ public:
     Q_INVOKABLE bool deleteCuePoint(const QString& trackId, int cueIndex);
     Q_INVOKABLE QVariantList cuePointsForTrack(const QString& trackId) const;
 
+    // Saved loop persistence (8 slots per track, index 0..7).
+    Q_INVOKABLE bool upsertSavedLoop(const QString& trackId,
+                                     int loopIndex,
+                                     double inSec,
+                                     double outSec,
+                                     const QString& label,
+                                     const QString& colorHex);
+    Q_INVOKABLE bool deleteSavedLoop(const QString& trackId, int loopIndex);
+    Q_INVOKABLE QVariantList savedLoopsForTrack(const QString& trackId) const;
+
     // Main CUE persistence (single point per track, seconds, <0 means unset).
     Q_INVOKABLE bool upsertMainCuePoint(const QString& trackId, double positionSec);
     Q_INVOKABLE double mainCuePointForTrack(const QString& trackId) const;
@@ -241,5 +251,5 @@ private:
     bool m_backupSyncRunning = false;
     bool m_backupSyncAgain = false;
 
-    static constexpr int kSchemaVersion = 15;
+    static constexpr int kSchemaVersion = 16;
 };

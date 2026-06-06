@@ -305,6 +305,51 @@ public:
         emit segmentsAnalyzed();
     }
 
+    // Shift every beat marker by deltaSec (positive = later in the track).
+    void nudgeBeatgrid(double deltaSec, double trackLengthSec) {
+        if (std::abs(deltaSec) < 1e-9 || trackLengthSec <= 0.0)
+            return;
+
+        {
+            QMutexLocker locker(&m_mutex);
+            if (m_beatGrid.empty())
+                return;
+
+            const double preRollSec = TransportLimits::kPreRollSeconds;
+            for (auto& marker : m_beatGrid) {
+                marker.positionSec = std::clamp(marker.positionSec + deltaSec,
+                                                -(preRollSec + 0.001),
+                                                trackLengthSec + 0.001);
+                marker.userModified = true;
+                marker.lockedByUser = true;
+            }
+
+            std::sort(m_beatGrid.begin(), m_beatGrid.end(),
+                      [](const BeatMarker& a, const BeatMarker& b) {
+                          return a.positionSec < b.positionSec;
+                      });
+
+            const qint64 anchorSample = static_cast<qint64>(
+                std::llround(std::max(0.0, m_beatGrid.front().positionSec) * m_sampleRate));
+            m_firstBeatSample = anchorSample;
+            m_beatGridInfo.userModified = true;
+            m_beatGridInfo.lockedByUser = true;
+            alignSegmentsToBeatgridLocked();
+        }
+        emit beatgridChanged();
+        emit segmentsAnalyzed();
+    }
+
+    void setBeatgridLocked(bool locked) {
+        {
+            QMutexLocker locker(&m_mutex);
+            m_beatGridInfo.lockedByUser = locked;
+            for (auto& marker : m_beatGrid)
+                marker.lockedByUser = locked;
+        }
+        emit beatgridChanged();
+    }
+
     double getBpm() const {
         QMutexLocker locker(&m_mutex);
         return m_bpm;

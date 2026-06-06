@@ -1197,7 +1197,7 @@ bool MidiControllerManager::shouldUseFlx10Feedback() const
 void MidiControllerManager::startFlx10OutputSession()
 {
     const bool outputOpen =
-        m_midiOutput
+        (m_midiOutput != nullptr)
 #if defined(Q_OS_LINUX)
         || (m_alsaMidiOutput && m_alsaMidiOutput->isOpen())
 #endif
@@ -1225,7 +1225,7 @@ void MidiControllerManager::startFlx10OutputSession()
 void MidiControllerManager::stopFlx10OutputSession()
 {
     const bool outputOpen =
-        m_midiOutput
+        (m_midiOutput != nullptr)
 #if defined(Q_OS_LINUX)
         || (m_alsaMidiOutput && m_alsaMidiOutput->isOpen())
 #endif
@@ -1295,7 +1295,7 @@ void MidiControllerManager::restoreSavedDeviceSelections()
 bool MidiControllerManager::autoOpenFlx10MidiOutputIfNeeded()
 {
     const bool outputOpen =
-        m_midiOutput
+        (m_midiOutput != nullptr)
 #if defined(Q_OS_LINUX)
         || (m_alsaMidiOutput && m_alsaMidiOutput->isOpen())
 #endif
@@ -1729,7 +1729,7 @@ void MidiControllerManager::saveNativeMapping()
 void MidiControllerManager::sendFlx10HotcuePaletteTest()
 {
     bool outputOpen =
-        m_midiOutput
+        (m_midiOutput != nullptr)
 #if defined(Q_OS_LINUX)
         || (m_alsaMidiOutput && m_alsaMidiOutput->isOpen())
 #endif
@@ -1747,7 +1747,7 @@ void MidiControllerManager::sendFlx10HotcuePaletteTest()
 void MidiControllerManager::testFlx10LedOutput()
 {
     bool outputOpen =
-        m_midiOutput
+        (m_midiOutput != nullptr)
 #if defined(Q_OS_LINUX)
         || (m_alsaMidiOutput && m_alsaMidiOutput->isOpen())
 #endif
@@ -1805,7 +1805,7 @@ void MidiControllerManager::loadNativeMappingIfExists()
     qDebug() << "[MIDI] Native mapping loaded:" << path << "entries:" << count;
 
     const bool outputOpen =
-        m_midiOutput
+        (m_midiOutput != nullptr)
 #if defined(Q_OS_LINUX)
         || (m_alsaMidiOutput && m_alsaMidiOutput->isOpen())
 #endif
@@ -1908,7 +1908,7 @@ bool MidiControllerManager::loadBrockDjXmlMapping(const QString& mappingFileName
     }
 
     const bool outputOpen =
-        m_midiOutput
+        (m_midiOutput != nullptr)
 #if defined(Q_OS_LINUX)
         || (m_alsaMidiOutput && m_alsaMidiOutput->isOpen())
 #endif
@@ -2408,7 +2408,7 @@ void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*
 void MidiControllerManager::onParameterChanged(const QString& id, float value)
 {
     const bool outputOpen =
-        m_midiOutput
+        (m_midiOutput != nullptr)
 #if defined(Q_OS_LINUX)
         || (m_alsaMidiOutput && m_alsaMidiOutput->isOpen())
 #endif
@@ -2501,7 +2501,7 @@ bool MidiControllerManager::sendMidiShort(int statusNo, int controlNo, int value
 bool MidiControllerManager::sendMidiMessageWithDebug(const juce::MidiMessage& message, const QString& messageType)
 {
     const bool outputOpen =
-        m_midiOutput
+        (m_midiOutput != nullptr)
 #if defined(Q_OS_LINUX)
         || (m_alsaMidiOutput && m_alsaMidiOutput->isOpen())
 #endif
@@ -2619,7 +2619,7 @@ void MidiControllerManager::sendMidiNoteLed(int statusNo, int noteNo, int value)
 void MidiControllerManager::sendMappedNoteLed(const QString& paramId, bool on, int onValue)
 {
     const bool outputOpen =
-        m_midiOutput
+        (m_midiOutput != nullptr)
 #if defined(Q_OS_LINUX)
         || (m_alsaMidiOutput && m_alsaMidiOutput->isOpen())
 #endif
@@ -2880,9 +2880,9 @@ void MidiControllerManager::handlePerformancePad(QChar deck,
         if (!pressed)
             return;
         if (clearRequest)
-            engine->clearHotCue(padIndex);
+            engine->clearCuePad(padIndex);
         else
-            engine->triggerHotCue(padIndex);
+            engine->triggerCuePad(padIndex);
         refreshHotCueLeds(deck, engine);
         return;
     }
@@ -3177,9 +3177,9 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                 return;
 
             if (clear)
-                deckEngine->clearHotCue(hotCueIndex);
+                deckEngine->clearCuePad(hotCueIndex);
             else
-                deckEngine->triggerHotCue(hotCueIndex);
+                deckEngine->triggerCuePad(hotCueIndex);
         }
         else {
             QChar deck;

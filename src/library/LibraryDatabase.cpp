@@ -586,6 +586,22 @@ bool LibraryDatabase::createSchema()
             ")");
     }
 
+    if (currentVersion < 16) {
+        if (!q.exec(
+                "CREATE TABLE IF NOT EXISTS SavedLoops ("
+                "  track_id   TEXT NOT NULL,"
+                "  loop_index INTEGER NOT NULL,"
+                "  in_sec     REAL NOT NULL,"
+                "  out_sec    REAL NOT NULL,"
+                "  label      TEXT DEFAULT '',"
+                "  color      TEXT DEFAULT '#30b050',"
+                "  PRIMARY KEY(track_id, loop_index),"
+                "  FOREIGN KEY(track_id) REFERENCES Tracks(id) ON DELETE CASCADE"
+                ")")) {
+            qWarning() << "[LibraryDatabase] SavedLoops:" << q.lastError().text();
+        }
+    }
+
     // ── Stamp current version ────────────────────────────────────────────
     q.prepare("INSERT OR REPLACE INTO Meta (key, value) VALUES ('schema_version', :v)");
     q.bindValue(":v", kSchemaVersion);
@@ -1061,6 +1077,85 @@ QVariantList LibraryDatabase::cuePointsForTrack(const QString& trackId) const
     }
 
     return cues;
+}
+
+bool LibraryDatabase::upsertSavedLoop(const QString& trackId,
+                                      int loopIndex,
+                                      double inSec,
+                                      double outSec,
+                                      const QString& label,
+                                      const QString& colorHex)
+{
+    if (trackId.isEmpty() || loopIndex < 0 || loopIndex >= 8 || outSec <= inSec + 0.001)
+        return false;
+
+    QSqlQuery q(m_db);
+    q.prepare(
+        "INSERT OR REPLACE INTO SavedLoops (track_id, loop_index, in_sec, out_sec, label, color) "
+        "VALUES (:trackId, :loopIndex, :inSec, :outSec, :label, :color)");
+    q.bindValue(":trackId", trackId);
+    q.bindValue(":loopIndex", loopIndex);
+    q.bindValue(":inSec", inSec);
+    q.bindValue(":outSec", outSec);
+    q.bindValue(":label", label);
+    q.bindValue(":color", colorHex);
+
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] upsertSavedLoop:" << q.lastError().text();
+        return false;
+    }
+
+    scheduleBackupSync();
+    return true;
+}
+
+bool LibraryDatabase::deleteSavedLoop(const QString& trackId, int loopIndex)
+{
+    if (trackId.isEmpty() || loopIndex < 0 || loopIndex >= 8)
+        return false;
+
+    QSqlQuery q(m_db);
+    q.prepare("DELETE FROM SavedLoops WHERE track_id = :trackId AND loop_index = :loopIndex");
+    q.bindValue(":trackId", trackId);
+    q.bindValue(":loopIndex", loopIndex);
+
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] deleteSavedLoop:" << q.lastError().text();
+        return false;
+    }
+
+    scheduleBackupSync();
+    return true;
+}
+
+QVariantList LibraryDatabase::savedLoopsForTrack(const QString& trackId) const
+{
+    if (trackId.isEmpty())
+        return {};
+
+    QSqlQuery q(m_db);
+    q.prepare(
+        "SELECT loop_index, in_sec, out_sec, COALESCE(label, ''), COALESCE(color, '#30b050') "
+        "FROM SavedLoops WHERE track_id = :trackId ORDER BY loop_index ASC");
+    q.bindValue(":trackId", trackId);
+
+    if (!q.exec()) {
+        qWarning() << "[LibraryDatabase] savedLoopsForTrack:" << q.lastError().text();
+        return {};
+    }
+
+    QVariantList loops;
+    while (q.next()) {
+        QVariantMap entry;
+        entry.insert("index", q.value(0).toInt());
+        entry.insert("inSec", q.value(1).toDouble());
+        entry.insert("outSec", q.value(2).toDouble());
+        entry.insert("label", q.value(3).toString());
+        entry.insert("color", q.value(4).toString());
+        loops.push_back(entry);
+    }
+
+    return loops;
 }
 
 bool LibraryDatabase::upsertMainCuePoint(const QString& trackId, double positionSec)

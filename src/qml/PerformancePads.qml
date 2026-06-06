@@ -15,32 +15,25 @@ Item {
     property bool hotCueHoldHadCue: false
     property bool hotCueHoldReturnOnRelease: false
 
-    readonly property var tabs: ["HOT CUE", "PAD FX", "BEATJUMP", "SAMPLER"]
+    readonly property var tabs: ["HOT CUE", "PAD FX", "BEATJUMP"]
     readonly property var beatJumpPads: [-16, -8, -4, -2, 2, 4, 8, 16]
 
     property int colorTargetIndex: -1
 
-    // ── PAD FX state ─────────────────────────────────────────────────────────
-    // Pad 0-3: momentary (held); Pad 4-7: toggle (latch on/off)
-    // Index of the currently latched toggle pad (-1 = none)
     property int padFxActiveToggle: -1
-    // Index of the momentary pad currently held (-1 = none)
     property int padFxMomentaryHeld: -1
 
     readonly property var padFxDefs: [
-        // Top row — momentary while held (0-3)
         { name: "ECHO",    effect: "Echo",    amount: 1.0, baseColor: "#0d2244", activeColor: "#1a4488" },
         { name: "FLANGE",  effect: "Flanger", amount: 1.0, baseColor: "#0d2030", activeColor: "#1a5080" },
         { name: "REVERB",  effect: "Reverb",  amount: 0.6, baseColor: "#0d3030", activeColor: "#1a6666" },
         { name: "REPEAT",  effect: "Roll",    amount: 1.0, baseColor: "#221440", activeColor: "#4428a0" },
-        // Bottom row — toggle latch (4-7)
         { name: "ECHO OUT",effect: "EchoOut",    baseColor: "#1a2820", activeColor: "#2a6640" },
         { name: "BACKSPIN",effect: "Backspin",   baseColor: "#2a1a30", activeColor: "#6a3080" },
         { name: "BRAKE",   effect: "VinylBrake", baseColor: "#2a1a08", activeColor: "#886020" },
         { name: "ROLLOUT", effect: "RollOut",    baseColor: "#1e1440", activeColor: "#4428a0" },
     ]
 
-    // Clear all active pad FX and reset visual state — call on tab switch or lost focus.
     function padFxClearAll() {
         if (padFxMomentaryHeld >= 0) {
             padFxRelease(padFxMomentaryHeld)
@@ -52,12 +45,8 @@ Item {
         }
     }
 
-    onActiveTabChanged: {
-        // Always clean up any held/toggled FX when leaving the PAD FX tab.
-        padFxClearAll()
-    }
+    onActiveTabChanged: padFxClearAll()
 
-    // ── PAD FX helpers ────────────────────────────────────────────────────────
     function padFxApply(defIndex) {
         if (!root.engine) return
         var def = root.padFxDefs[defIndex]
@@ -80,12 +69,8 @@ Item {
 
     function padFxRelease(defIndex) {
         if (!root.engine) return
-        // Momentary pad (0-3) released — all bottom-row toggles are MixerDspSource stop effects,
-        // none use FxProcessor, so just clear the pad FX slot
         root.engine.clearPadFx()
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
 
     readonly property var palette16: [
         "#e04040", "#e08030", "#e0d030", "#30b050",
@@ -100,6 +85,42 @@ Item {
         return root.engine.hotCues[index]
     }
 
+    function savedLoopAt(index) {
+        if (!root.engine || !root.engine.savedLoops || index < 0 || index >= root.engine.savedLoops.length)
+            return null
+        return root.engine.savedLoops[index]
+    }
+
+    // "loop" | "hot" | "empty"
+    function padKind(index) {
+        var loop = root.savedLoopAt(index)
+        if (loop && loop.set) return "loop"
+        var cue = root.hotCueAt(index)
+        if (cue && cue.set) return "hot"
+        return "empty"
+    }
+
+    function padLabel(index) {
+        var kind = root.padKind(index)
+        if (kind === "loop") return root.formatLoopLabel(root.savedLoopAt(index))
+        if (kind === "hot")  return root.formatCueTime(root.hotCueAt(index).positionSec)
+        return "+"
+    }
+
+    function padColor(index) {
+        var kind = root.padKind(index)
+        if (kind === "loop") return root.savedLoopAt(index).color
+        if (kind === "hot")  return root.hotCueAt(index).color
+        return "#1e1e1e"
+    }
+
+    function formatLoopLabel(loop) {
+        if (!loop || !loop.set) return "+"
+        var beats = loop.lengthBeats
+        if (beats >= 1.0) return beats.toFixed(0) + "B"
+        return root.formatCueTime(loop.inSec)
+    }
+
     function formatCueTime(seconds) {
         var sec = Math.max(0, seconds || 0)
         var mins = Math.floor(sec / 60)
@@ -110,7 +131,6 @@ Item {
     function consumeHotCueHoldPlayLatch() {
         if (root.hotCueHoldPressedIndex < 0 || !root.hotCueHoldReturnOnRelease)
             return false
-
         root.hotCueHoldReturnOnRelease = false
         return true
     }
@@ -152,7 +172,6 @@ Item {
         anchors.fill: parent
         spacing: 0
 
-        // ── Mode tabs ─────────────────────────────────────────────────────
         RowLayout {
             Layout.fillWidth: true
             Layout.preferredHeight: 26
@@ -197,7 +216,6 @@ Item {
 
         Rectangle { Layout.fillWidth: true; height: 1; color: "#0e0e0e" }
 
-        // ── Pads + Turntable ──────────────────────────────────────────────
         RowLayout {
             id: contentRow
             Layout.fillWidth: true
@@ -222,28 +240,23 @@ Item {
                         Layout.row:    Math.floor(index / 4)
                         Layout.column: index % 4
 
-                        readonly property var cue: root.hotCueAt(index)
-                        readonly property bool isHotCueTab:      root.activeTab === 0
-                        readonly property bool isPadFxTab:       root.activeTab === 1
-                        readonly property bool isBeatJumpTab:    root.activeTab === 2
-                        readonly property bool isPlaceholderTab: root.activeTab === 3
-                        readonly property bool cueSet: isHotCueTab && cue && cue.set
+                        readonly property bool isHotCueTab:   root.activeTab === 0
+                        readonly property bool isPadFxTab:    root.activeTab === 1
+                        readonly property bool isBeatJumpTab: root.activeTab === 2
+                        readonly property string kind:        root.padKind(index)
+                        readonly property bool padSet:        isHotCueTab && kind !== "empty"
 
-                        // ── PAD FX derived state ──────────────────────────
                         readonly property bool isPadFxMomentary: isPadFxTab && index < 4
                         readonly property bool isPadFxToggle:    isPadFxTab && index >= 4
                         readonly property bool padFxToggleOn:    isPadFxToggle && root.padFxActiveToggle === index
-                        // True when this pad's effect is visually "lit"
                         readonly property bool padFxLit:
                             isPadFxMomentary
                                 ? (root.padFxMomentaryHeld === index)
                                 : padFxToggleOn
 
-                        // ── Effective background color ────────────────────
                         readonly property color activeColor: {
-                            if (cueSet)          return cue.color
-                            if (isBeatJumpTab)   return "#3a2e14"
-                            if (isPlaceholderTab)return "#1a1a1a"
+                            if (padSet)        return root.padColor(index)
+                            if (isBeatJumpTab) return "#3a2e14"
                             if (isPadFxTab) {
                                 var def = root.padFxDefs[index]
                                 return padFxLit ? def.activeColor : def.baseColor
@@ -259,53 +272,56 @@ Item {
                                  : activeColor
 
                         border.color: {
-                            if (cueSet)   return Qt.lighter(cue.color, 1.7)
-                            if (padFxLit) return Qt.lighter(root.padFxDefs[index].activeColor, 1.8)
+                            if (padSet && kind === "loop") return Qt.lighter(root.padColor(index), 1.5)
+                            if (padSet)                    return Qt.lighter(root.padColor(index), 1.7)
+                            if (padFxLit)                  return Qt.lighter(root.padFxDefs[index].activeColor, 1.8)
                             return "#282828"
                         }
-                        border.width: 1
+                        border.width: padSet && kind === "loop" ? 2 : 1
 
-                        // Pad number (top-left)
                         Text {
                             anchors.top: parent.top; anchors.left: parent.left
                             anchors.margins: 4
                             text: (index + 1).toString()
-                            color: {
-                                if (cueSet)     return "#cccccc"
-                                if (padFxLit)   return "#aaaaaa"
-                                return "#3a3a3a"
-                            }
+                            color: padSet || padFxLit ? "#cccccc" : "#3a3a3a"
                             font.pixelSize: window.spViewport(7)
                             font.bold: true
                             font.family: "monospace"
                         }
 
-                        // Main label
+                        // Loop-cue badge
+                        Text {
+                            visible: isHotCueTab && kind === "loop"
+                            anchors.top: parent.top
+                            anchors.right: parent.right
+                            anchors.margins: 3
+                            text: "L"
+                            color: "#a8ffd0"
+                            font.pixelSize: window.spViewport(6)
+                            font.bold: true
+                        }
+
                         Text {
                             anchors.centerIn: parent
                             text: {
-                                if (isHotCueTab)    return cueSet ? root.formatCueTime(cue.positionSec) : "+"
-                                if (isBeatJumpTab)  return root.beatJumpLabel(index)
-                                if (isPadFxTab)     return root.padFxDefs[index].name
+                                if (isHotCueTab)   return root.padLabel(index)
+                                if (isBeatJumpTab) return root.beatJumpLabel(index)
+                                if (isPadFxTab)    return root.padFxDefs[index].name
                                 return "—"
                             }
                             color: {
-                                if (isHotCueTab)    return cueSet ? "#ffffff" : "#444"
-                                if (isBeatJumpTab)  return "#ffd38a"
-                                if (isPadFxTab) {
-                                    if (padFxLit)   return "#ffffff"
-                                    // Momentary row slightly brighter hint
-                                    return index < 4 ? "#606060" : "#505050"
-                                }
+                                if (isHotCueTab && padSet) return "#ffffff"
+                                if (isHotCueTab)           return "#444"
+                                if (isBeatJumpTab)         return "#ffd38a"
+                                if (isPadFxTab)            return padFxLit ? "#ffffff" : (index < 4 ? "#606060" : "#505050")
                                 return "#333"
                             }
-                            font.pixelSize: (isHotCueTab && !cueSet) ? window.spViewport(16) : window.spViewport(8)
-                            font.bold: isHotCueTab ? cueSet : true
+                            font.pixelSize: (isHotCueTab && !padSet) ? window.spViewport(16) : window.spViewport(8)
+                            font.bold: (isHotCueTab && padSet) || isPadFxTab
                             font.letterSpacing: isPadFxTab ? 0.4 : 0.0
                             font.family: "monospace"
                         }
 
-                        // "HOLD" hint for momentary pads
                         Text {
                             visible: isPadFxMomentary && !padFxLit && padMouse.containsMouse
                             anchors.bottom: parent.bottom
@@ -327,23 +343,25 @@ Item {
                             onPressed: (mouse) => {
                                 if (!root.engine) return
 
-                                // ── Hot cue (momentary trigger) ───────────────
                                 if (mouse.button === Qt.LeftButton && isHotCueTab) {
                                     root.hotCueHoldPressedIndex = index
-                                    root.hotCueHoldCuePosition = cueSet ? cue.positionSec : 0.0
                                     root.hotCueHoldWasPlaying = root.engine.isPlaying
-                                    root.hotCueHoldHadCue = cueSet
-                                    root.hotCueHoldReturnOnRelease = cueSet && !root.hotCueHoldWasPlaying
-                                    if (cueSet) {
-                                        root.engine.triggerHotCue(index)
+                                    root.hotCueHoldHadCue = padSet
+                                    if (padSet) {
+                                        if (kind === "loop")
+                                            root.hotCueHoldCuePosition = root.savedLoopAt(index).inSec
+                                        else
+                                            root.hotCueHoldCuePosition = root.hotCueAt(index).positionSec
+                                        root.hotCueHoldReturnOnRelease = !root.hotCueHoldWasPlaying
+                                        root.engine.triggerCuePad(index)
                                         if (!root.hotCueHoldWasPlaying) root.engine.play()
                                     } else {
-                                        root.engine.storeHotCue(index)
+                                        root.hotCueHoldReturnOnRelease = false
+                                        root.engine.storeCuePad(index)
                                     }
                                     return
                                 }
 
-                                // ── PAD FX momentary (top row, held) ──────────
                                 if (mouse.button === Qt.LeftButton && isPadFxMomentary) {
                                     root.padFxMomentaryHeld = index
                                     root.padFxApply(index)
@@ -353,7 +371,6 @@ Item {
                             onReleased: (mouse) => {
                                 if (!root.engine) return
 
-                                // ── Hot cue release ───────────────────────────
                                 if (isHotCueTab) {
                                     if (root.hotCueHoldPressedIndex !== index) return
                                     if (root.hotCueHoldReturnOnRelease) {
@@ -368,7 +385,6 @@ Item {
                                     return
                                 }
 
-                                // ── PAD FX momentary release ──────────────────
                                 if (root.padFxMomentaryHeld === index) {
                                     root.padFxMomentaryHeld = -1
                                     root.padFxRelease(index)
@@ -376,7 +392,6 @@ Item {
                             }
 
                             onCanceled: {
-                                // Pointer cancelled (window focus lost, gesture, etc.) — always clean up.
                                 if (root.hotCueHoldPressedIndex === index) {
                                     if (root.hotCueHoldReturnOnRelease && root.engine) {
                                         root.engine.pause()
@@ -397,16 +412,11 @@ Item {
                             onClicked: (mouse) => {
                                 if (!root.engine) return
 
-                                // ── Beat jump ─────────────────────────────────
                                 if (isBeatJumpTab) {
                                     if (mouse.button === Qt.LeftButton) root.doBeatJump(root.beatJumpPads[index])
                                     return
                                 }
 
-                                // ── Placeholder (STEMS etc.) ──────────────────
-                                if (isPlaceholderTab) return
-
-                                // ── PAD FX toggle (bottom row) ────────────────
                                 if (isPadFxToggle && mouse.button === Qt.LeftButton) {
                                     if (root.padFxActiveToggle === index) {
                                         root.padFxActiveToggle = -1
@@ -420,12 +430,18 @@ Item {
                                     return
                                 }
 
-                                // ── Hot cue right-click / middle-click ────────
                                 if (!isHotCueTab) return
+
                                 if (mouse.button === Qt.MiddleButton) {
-                                    root.engine.clearHotCue(index); return
+                                    root.engine.clearCuePad(index)
+                                    return
                                 }
+
                                 if (mouse.button === Qt.RightButton) {
+                                    if (kind === "loop") {
+                                        root.engine.clearCuePad(index)
+                                        return
+                                    }
                                     root.colorTargetIndex = index
                                     var p = padMouse.mapToItem(root, mouse.x, mouse.y)
                                     colorPopup.x = Math.max(0, Math.min(root.width - colorPopup.width, p.x - colorPopup.width / 2))

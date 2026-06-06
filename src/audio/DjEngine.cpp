@@ -316,6 +316,17 @@ QString defaultHotCueColor(int index)
     return QString::fromLatin1(colors[static_cast<size_t>(index)]);
 }
 
+QString defaultSavedLoopColor(int index)
+{
+    static const std::array<const char*, 8> colors = {
+        "#30b050", "#38b2ac", "#4299e1", "#48bb78",
+        "#2f855a", "#319795", "#3182ce", "#276749"
+    };
+    if (index < 0 || index >= static_cast<int>(colors.size()))
+        return QStringLiteral("#30b050");
+    return QString::fromLatin1(colors[static_cast<size_t>(index)]);
+}
+
 juce::String toJuceString(const QString& text)
 {
     return juce::String::fromUTF8(text.toUtf8().constData());
@@ -3293,7 +3304,9 @@ void DjEngine::setLibraryDatabase(LibraryDatabase* db)
 {
     m_libraryDb = db;
     loadHotCuesForCurrentTrack();
+    loadSavedLoopsForCurrentTrack();
     loadMainCueForCurrentTrack();
+    emit beatgridLockedChanged();
 }
 
 void DjEngine::persistCurrentAnalysisToLibrary()
@@ -3334,6 +3347,7 @@ void DjEngine::resetTrackLoadState()
     m_trackData->clear();
     m_currentSegments.clear();
     clearHotCueState();
+    clearSavedLoopState();
     // Sentinel clearly outside the renderable pre-roll range so no cue is drawn
     // while no track is loaded.  The load path sets a real value after analysing
     // the first audible frame, so this value is never visible during playback.
@@ -3341,6 +3355,8 @@ void DjEngine::resetTrackLoadState()
     resetMainCueButtonState();
     emit segmentsChanged();
     emit hotCuesChanged();
+    emit savedLoopsChanged();
+    emit beatgridLockedChanged();
 }
 
 void DjEngine::populateMetadataFromReader(const juce::AudioFormatReader& reader,
@@ -3471,7 +3487,9 @@ bool DjEngine::hydrateLibraryStateForTrack(const QString& rawPath, double durati
     }
 
     loadHotCuesForCurrentTrack();
+    loadSavedLoopsForCurrentTrack();
     loadMainCueForCurrentTrack();
+    emit beatgridLockedChanged();
     return hasDbAnalysis;
 }
 
@@ -4440,10 +4458,28 @@ void DjEngine::persistHotCueSlot(int index)
     }
 }
 
+bool DjEngine::isHotCuePad(int index) const
+{
+    return isValidHotCueIndex(index) && slotAt(index).set;
+}
+
+bool DjEngine::isLoopCuePad(int index) const
+{
+    return isValidSavedLoopIndex(index) && savedLoopAt(index).set;
+}
+
+bool DjEngine::hasStorableLoopRegion() const
+{
+    return m_loopInSet && m_loopOutSec > m_loopInSec + 0.001;
+}
+
 void DjEngine::storeHotCue(int index)
 {
     if (!isValidHotCueIndex(index) || !m_hasTrack)
         return;
+
+    if (isLoopCuePad(index))
+        clearSavedLoop(index);
 
     const double trackLen = transportSource.getLengthInSeconds();
     if (trackLen <= 0.0)
@@ -4461,26 +4497,37 @@ void DjEngine::storeHotCue(int index)
     emit hotCuesChanged();
 }
 
-void DjEngine::triggerHotCue(int index)
+void DjEngine::storeCuePad(int index)
 {
     if (!isValidHotCueIndex(index) || !m_hasTrack)
         return;
 
-    const auto& slot = slotAt(index);
-    if (!slot.set) {
-        storeHotCue(index);
+    if (hasStorableLoopRegion()) {
+        if (isHotCuePad(index))
+            clearHotCue(index);
+        storeSavedLoop(index);
         return;
     }
 
+    if (isLoopCuePad(index))
+        clearSavedLoop(index);
+    storeHotCue(index);
+}
+
+void DjEngine::triggerHotCueJump(int index)
+{
+    if (!isValidHotCueIndex(index) || !m_hasTrack || !isHotCuePad(index))
+        return;
+
+    const auto& slot = slotAt(index);
     const double trackLen = transportSource.getLengthInSeconds();
     if (trackLen <= 0.0)
         return;
 
     const double pos = std::clamp(slot.positionSec, -PRE_ROLL_SECONDS, trackLen);
     transportSource.setPosition(std::max(0.0, pos));
-    m_scrubHoldPosition = pos;  // sync so pre-roll cue positions survive timer ticks
+    m_scrubHoldPosition = pos;
     if (m_playRequested && pos < 0.0) {
-        // Seeking into pre-roll while play is requested: start countdown instead.
         m_preRollCountdownActive = true;
         m_preRollVisualStartPos = pos;
         m_preRollClock.restart();
@@ -4492,6 +4539,37 @@ void DjEngine::triggerHotCue(int index)
     if (m_analyzer && m_analyzer->isThreadRunning())
         m_analyzer->setSeekHint(pos);
     emit progressChanged();
+}
+
+void DjEngine::triggerCuePad(int index)
+{
+    if (!isValidHotCueIndex(index) || !m_hasTrack)
+        return;
+
+    if (isLoopCuePad(index)) {
+        triggerSavedLoop(index);
+        return;
+    }
+
+    if (isHotCuePad(index)) {
+        triggerHotCueJump(index);
+        return;
+    }
+
+    storeCuePad(index);
+}
+
+void DjEngine::triggerHotCue(int index)
+{
+    triggerCuePad(index);
+}
+
+void DjEngine::clearCuePad(int index)
+{
+    if (isLoopCuePad(index))
+        clearSavedLoop(index);
+    if (isHotCuePad(index))
+        clearHotCue(index);
 }
 
 void DjEngine::clearHotCue(int index)
@@ -4526,6 +4604,236 @@ void DjEngine::setHotCueColor(int index, const QString& colorHex)
         persistHotCueSlot(index);
 
     emit hotCuesChanged();
+}
+
+QVariantList DjEngine::savedLoops() const
+{
+    QVariantList out;
+    out.reserve(static_cast<int>(m_savedLoopSlots.size()));
+
+    for (size_t i = 0; i < m_savedLoopSlots.size(); ++i) {
+        const auto& slot = m_savedLoopSlots[i];
+        QVariantMap entry;
+        entry.insert("index",       static_cast<int>(i));
+        entry.insert("set",         slot.set);
+        entry.insert("inSec",       slot.inSec);
+        entry.insert("outSec",      slot.outSec);
+        entry.insert("lengthBeats", slot.lengthBeats);
+        entry.insert("label",       slot.label);
+        entry.insert("color",       slot.color);
+        out.push_back(entry);
+    }
+
+    return out;
+}
+
+bool DjEngine::isValidSavedLoopIndex(int index) const
+{
+    return index >= 0 && index < static_cast<int>(m_savedLoopSlots.size());
+}
+
+void DjEngine::clearSavedLoopState()
+{
+    for (size_t i = 0; i < m_savedLoopSlots.size(); ++i) {
+        auto& slot = m_savedLoopSlots[i];
+        slot.set = false;
+        slot.inSec = 0.0;
+        slot.outSec = 0.0;
+        slot.lengthBeats = 0.0;
+        slot.label.clear();
+        slot.color = defaultSavedLoopColor(static_cast<int>(i));
+    }
+}
+
+void DjEngine::loadSavedLoopsForCurrentTrack()
+{
+    clearSavedLoopState();
+
+    if (!m_libraryDb || m_currentTrackId.isEmpty()) {
+        emit savedLoopsChanged();
+        return;
+    }
+
+    const QVariantList stored = m_libraryDb->savedLoopsForTrack(m_currentTrackId);
+    for (const QVariant& v : stored) {
+        const QVariantMap m = v.toMap();
+        const int index = m.value("index").toInt();
+        if (!isValidSavedLoopIndex(index))
+            continue;
+
+        auto& slot = savedLoopAt(index);
+        slot.set = true;
+        slot.inSec = m.value("inSec").toDouble();
+        slot.outSec = m.value("outSec").toDouble();
+        slot.label = m.value("label").toString();
+        const QString color = m.value("color").toString().trimmed();
+        slot.color = color.isEmpty() ? defaultSavedLoopColor(index) : color;
+
+        const double beatDur = beatDurationAround(slot.inSec);
+        if (beatDur > 1e-4)
+            slot.lengthBeats = (slot.outSec - slot.inSec) / beatDur;
+    }
+
+    emit savedLoopsChanged();
+}
+
+void DjEngine::persistSavedLoopSlot(int index)
+{
+    if (!isValidSavedLoopIndex(index) || !m_libraryDb || m_currentTrackId.isEmpty())
+        return;
+
+    const auto& slot = savedLoopAt(index);
+    if (slot.set) {
+        const QString label = slot.label.isEmpty()
+            ? QStringLiteral("LOOP %1").arg(index + 1)
+            : slot.label;
+        m_libraryDb->upsertSavedLoop(m_currentTrackId,
+                                     index,
+                                     slot.inSec,
+                                     slot.outSec,
+                                     label,
+                                     slot.color);
+    } else {
+        m_libraryDb->deleteSavedLoop(m_currentTrackId, index);
+    }
+}
+
+void DjEngine::activateLoopRange(double inSec, double outSec, bool jumpToIn)
+{
+    const double trackLen = transportSource.getLengthInSeconds();
+    if (trackLen <= 0.0)
+        return;
+
+    double in = std::clamp(inSec, -PRE_ROLL_SECONDS, trackLen);
+    double out = std::clamp(outSec, -PRE_ROLL_SECONDS, trackLen);
+    if (out <= in + 0.001)
+        return;
+
+    m_loopInSec = in;
+    m_loopOutSec = out;
+    m_loopInSet = true;
+    m_loopActive = true;
+
+    const double beatDur = beatDurationAround(in);
+    if (beatDur > 1e-4) {
+        constexpr double kMinLoopBeats = 1.0 / 64.0;
+        constexpr double kMaxLoopBeats = 4096.0;
+        const double beats = (out - in) / beatDur;
+        m_loopLengthBeats = std::clamp(beats, kMinLoopBeats, kMaxLoopBeats);
+    }
+
+    applyLoopRangeToAudioSource();
+
+    if (jumpToIn) {
+        const double pos = std::max(0.0, in);
+        transportSource.setPosition(pos);
+        m_scrubHoldPosition = pos;
+        setSnapAnchor(pos, true);
+        armVisualSeekSettle();
+        if (m_analyzer && m_analyzer->isThreadRunning())
+            m_analyzer->setSeekHint(pos);
+        emit progressChanged();
+    }
+
+    emit loopChanged();
+}
+
+void DjEngine::storeSavedLoop(int index)
+{
+    if (!isValidSavedLoopIndex(index) || !m_hasTrack)
+        return;
+
+    if (isHotCuePad(index))
+        clearHotCue(index);
+
+    const double trackLen = transportSource.getLengthInSeconds();
+    if (trackLen <= 0.0)
+        return;
+
+    double inSec = 0.0;
+    double outSec = 0.0;
+
+    if (m_loopInSet && m_loopOutSec > m_loopInSec + 0.001) {
+        inSec = m_loopInSec;
+        outSec = m_loopOutSec;
+    } else if (m_loopActive && m_loopOutSec > m_loopInSec + 0.001) {
+        inSec = m_loopInSec;
+        outSec = m_loopOutSec;
+    } else {
+        const double pos = static_cast<double>(getVisualPosition());
+        const double beatDur = beatDurationAround(pos);
+        if (beatDur <= 1e-4)
+            return;
+        inSec = std::clamp(pos, -PRE_ROLL_SECONDS, trackLen);
+        outSec = std::min(trackLen, inSec + 4.0 * beatDur);
+    }
+
+    if (outSec <= inSec + 0.001)
+        return;
+
+    auto& slot = savedLoopAt(index);
+    slot.set = true;
+    slot.inSec = inSec;
+    slot.outSec = outSec;
+    const double beatDur = beatDurationAround(inSec);
+    slot.lengthBeats = beatDur > 1e-4 ? (outSec - inSec) / beatDur : 4.0;
+    if (slot.color.isEmpty())
+        slot.color = defaultSavedLoopColor(index);
+    if (slot.label.isEmpty())
+        slot.label = QStringLiteral("LOOP %1").arg(index + 1);
+
+    persistSavedLoopSlot(index);
+    emit savedLoopsChanged();
+}
+
+void DjEngine::triggerSavedLoop(int index)
+{
+    if (!isValidSavedLoopIndex(index) || !m_hasTrack)
+        return;
+
+    const auto& slot = savedLoopAt(index);
+    if (!slot.set) {
+        storeSavedLoop(index);
+        return;
+    }
+
+    activateLoopRange(slot.inSec, slot.outSec, true);
+    ensureTransportRunningForPlayIntent();
+}
+
+void DjEngine::clearSavedLoop(int index)
+{
+    if (!isValidSavedLoopIndex(index))
+        return;
+
+    auto& slot = savedLoopAt(index);
+    slot.set = false;
+    slot.inSec = 0.0;
+    slot.outSec = 0.0;
+    slot.lengthBeats = 0.0;
+    slot.label.clear();
+    slot.color = defaultSavedLoopColor(index);
+
+    persistSavedLoopSlot(index);
+    emit savedLoopsChanged();
+}
+
+bool DjEngine::beatgridLocked() const
+{
+    return m_trackData && m_trackData->beatgridLockedByUser();
+}
+
+void DjEngine::setBeatgridLocked(bool locked)
+{
+    if (!m_trackData)
+        return;
+
+    if (m_trackData->beatgridLockedByUser() == locked)
+        return;
+
+    m_trackData->setBeatgridLocked(locked);
+    persistCurrentAnalysisToLibrary();
+    emit beatgridLockedChanged();
 }
 
 void DjEngine::loadMainCueForCurrentTrack()
@@ -5203,19 +5511,50 @@ void DjEngine::applyJogNudge(double signedTicks)
     updateSpeedAndPitch();
 }
 
+void DjEngine::setDownbeatAtPosition(double anchorSec)
+{
+    if (!m_trackData || !m_trackData->isBpmAnalyzed())
+        return;
+
+    const double trackLengthSec = static_cast<double>(transportSource.getLengthInSeconds());
+    if (trackLengthSec <= 0.0)
+        return;
+
+    m_trackData->shiftBeatgridToDownbeat(anchorSec, trackLengthSec);
+    persistCurrentAnalysisToLibrary();
+    emit beatgridLockedChanged();
+}
+
 void DjEngine::setDownbeatAtCurrentPosition()
 {
-    if (!m_trackData || !m_trackData->isBpmAnalyzed()) return;
+    setDownbeatAtPosition(static_cast<double>(getVisualPosition()));
+}
 
-    double anchorSec     = static_cast<double>(getVisualPosition());
-    double trackLengthSec = static_cast<double>(transportSource.getLengthInSeconds());
-    if (trackLengthSec <= 0.0) return;
+void DjEngine::nudgeBeatgridMs(double milliseconds)
+{
+    if (!m_trackData || !m_trackData->isBpmAnalyzed())
+        return;
 
-    // Delegate rebuild + emit beatgridChanged() to TrackData.
-    m_trackData->shiftBeatgridToDownbeat(anchorSec, trackLengthSec);
+    const double trackLen = transportSource.getLengthInSeconds();
+    if (trackLen <= 0.0 || std::abs(milliseconds) < 1e-6)
+        return;
 
-    // Persist immediately so manual beatgrid edits survive app restarts.
+    m_trackData->nudgeBeatgrid(milliseconds / 1000.0, trackLen);
     persistCurrentAnalysisToLibrary();
+    emit beatgridLockedChanged();
+}
+
+void DjEngine::nudgeBeatgridBeats(double beats)
+{
+    if (!m_trackData || std::abs(beats) < 1e-6)
+        return;
+
+    const double pos = static_cast<double>(getVisualPosition());
+    const double beatDur = beatDurationAround(pos);
+    if (beatDur <= 1e-4)
+        return;
+
+    nudgeBeatgridMs(beats * beatDur * 1000.0);
 }
 
 // Helper: find the positionSec of the downbeat (isDownbeat == true) nearest
@@ -5247,6 +5586,7 @@ void DjEngine::doubleBpm()
     m_trackData->setBpm(newBpm);
     m_trackData->shiftBeatgridToDownbeat(anchor, trackLen);
     persistCurrentAnalysisToLibrary();
+    emit beatgridLockedChanged();
     emit tempoChanged();   // update BPM display in UI
 }
 
@@ -5263,6 +5603,7 @@ void DjEngine::halveBpm()
     m_trackData->setBpm(newBpm);
     m_trackData->shiftBeatgridToDownbeat(anchor, trackLen);
     persistCurrentAnalysisToLibrary();
+    emit beatgridLockedChanged();
     emit tempoChanged();   // update BPM display in UI
 }
 
@@ -5558,6 +5899,7 @@ void DjEngine::setManualBpm(double bpm)
         m_trackData->shiftBeatgridToDownbeat(anchor, trackLen);
 
     persistCurrentAnalysisToLibrary();
+    emit beatgridLockedChanged();
     emit tempoChanged();
 
     if (m_syncEnabled) {

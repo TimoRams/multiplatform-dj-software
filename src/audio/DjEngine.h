@@ -83,6 +83,8 @@ class DjEngine : public QObject
     
     Q_PROPERTY(float gainReduction READ gainReduction NOTIFY gainReductionChanged)
     Q_PROPERTY(QVariantList hotCues READ hotCues NOTIFY hotCuesChanged)
+    Q_PROPERTY(QVariantList savedLoops READ savedLoops NOTIFY savedLoopsChanged)
+    Q_PROPERTY(bool beatgridLocked READ beatgridLocked WRITE setBeatgridLocked NOTIFY beatgridLockedChanged)
     Q_PROPERTY(double mainCueSec READ mainCueSec NOTIFY mainCueChanged)
     Q_PROPERTY(QString lastAudioDeviceError READ lastAudioDeviceError NOTIFY audioDeviceErrorChanged)
     Q_PROPERTY(QString audioDeviceFallbackMessage READ audioDeviceFallbackMessage NOTIFY audioDeviceFallbackChanged)
@@ -143,6 +145,9 @@ public:
     // current playhead position becomes beat 1 / bar 1.  Emits beatgridChanged
     // via TrackData, which the waveform renderer picks up automatically.
     Q_INVOKABLE void setDownbeatAtCurrentPosition();
+    Q_INVOKABLE void setDownbeatAtPosition(double anchorSec);
+    Q_INVOKABLE void nudgeBeatgridMs(double milliseconds);
+    Q_INVOKABLE void nudgeBeatgridBeats(double beats);
 
     // Half-time / double-time correction.
     // Finds the nearest existing downbeat to the current playhead as a stable
@@ -178,7 +183,16 @@ public:
     Q_INVOKABLE void triggerHotCue(int index);
     Q_INVOKABLE void storeHotCue(int index);
     Q_INVOKABLE void clearHotCue(int index);
+    // Unified cue pad: hot cue or loop cue on the same 8 pads.
+    Q_INVOKABLE void triggerCuePad(int index);
+    Q_INVOKABLE void storeCuePad(int index);
+    Q_INVOKABLE void clearCuePad(int index);
+    [[nodiscard]] Q_INVOKABLE bool hasStorableLoopRegion() const;
+    [[nodiscard]] Q_INVOKABLE bool isLoopCuePad(int index) const;
     Q_INVOKABLE void setHotCueColor(int index, const QString& colorHex);
+    Q_INVOKABLE void triggerSavedLoop(int index);
+    Q_INVOKABLE void storeSavedLoop(int index);
+    Q_INVOKABLE void clearSavedLoop(int index);
     Q_INVOKABLE void cueButtonPress();
     Q_INVOKABLE void cueButtonRelease();
 
@@ -272,6 +286,9 @@ public:
     // Valid only from the audio thread (or after a getNextAudioBlock call).
     [[nodiscard]] const juce::AudioBuffer<float>& getPflBuffer() const;
     [[nodiscard]] QVariantList hotCues() const;
+    [[nodiscard]] QVariantList savedLoops() const;
+    [[nodiscard]] bool beatgridLocked() const;
+    void setBeatgridLocked(bool locked);
     [[nodiscard]] double mainCueSec() const { return m_mainCueSec; }
     [[nodiscard]] QString lastAudioDeviceError() const { return m_lastAudioDeviceError; }
     [[nodiscard]] QString audioDeviceFallbackMessage() const { return m_audioDeviceFallbackMessage; }
@@ -385,6 +402,8 @@ signals:
     void gainReductionChanged();
     void segmentsChanged();
     void hotCuesChanged();
+    void savedLoopsChanged();
+    void beatgridLockedChanged();
     void mainCueChanged();
     void audioDeviceErrorChanged();
     void audioDeviceFallbackChanged();
@@ -426,6 +445,13 @@ private:
     void loadHotCuesForCurrentTrack();
     void persistHotCueSlot(int index);
     bool isValidHotCueIndex(int index) const;
+    bool isHotCuePad(int index) const;
+    void triggerHotCueJump(int index);
+    void clearSavedLoopState();
+    void loadSavedLoopsForCurrentTrack();
+    void persistSavedLoopSlot(int index);
+    bool isValidSavedLoopIndex(int index) const;
+    void activateLoopRange(double inSec, double outSec, bool jumpToIn);
     void loadMainCueForCurrentTrack();
     void persistMainCuePoint();
     void resetMainCueButtonState();
@@ -439,8 +465,18 @@ private:
         QString label;
         QString color = "#e04040";
     };
+    struct SavedLoopSlot {
+        bool set = false;
+        double inSec = 0.0;
+        double outSec = 0.0;
+        double lengthBeats = 0.0;
+        QString label;
+        QString color = "#30b050";
+    };
     HotCueSlot&       slotAt(int i)       { return m_hotCueSlots[static_cast<size_t>(i)]; }
     const HotCueSlot& slotAt(int i) const { return m_hotCueSlots[static_cast<size_t>(i)]; }
+    SavedLoopSlot&       savedLoopAt(int i)       { return m_savedLoopSlots[static_cast<size_t>(i)]; }
+    const SavedLoopSlot& savedLoopAt(int i) const { return m_savedLoopSlots[static_cast<size_t>(i)]; }
 
     class MixerDspSource;
     class TimeStretchAudioSource;
@@ -482,6 +518,7 @@ private:
     std::atomic<quint64> m_loadGen{0};
     QVariantList m_currentSegments;
     std::array<HotCueSlot, 8> m_hotCueSlots;
+    std::array<SavedLoopSlot, 8> m_savedLoopSlots;
     double m_mainCueSec = -(PRE_ROLL_SECONDS + 1.0);
     bool m_mainCuePreviewActive = false;
     bool m_mainCueButtonDown = false;
