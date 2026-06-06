@@ -14,6 +14,7 @@
 #include <QVariantMap>
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <array>
+#include <atomic>
 #include <map>
 #include <memory>
 #include <cstdint>
@@ -83,6 +84,9 @@ public:
 
     void connectDecks(DjEngine* deckA, DjEngine* deckB);
 
+    // Stop MIDI I/O and disconnect callbacks before QML/engine teardown.
+    void shutdown();
+
     // QML Mapping Functions
     Q_INVOKABLE void startMidiLearn(const QString& parameterId);
     Q_INVOKABLE QString getMappingLabel(const QString& paramId) const;
@@ -117,6 +121,8 @@ private:
     void dispatchParameterToStore(const QString& paramId, float value);
     void dispatchMidiParameterToStore(const QString& paramId, float value);
 
+    std::atomic<bool> m_shuttingDown{false};
+
     ParameterStore* m_parameterStore = nullptr;
     DjEngine* m_deckA = nullptr;
     DjEngine* m_deckB = nullptr;
@@ -126,6 +132,7 @@ private:
     bool m_jogBTouched = false;
     QTimer m_jogAReleaseTimer;
     QTimer m_jogBReleaseTimer;
+    QTimer m_startupRefreshTimer;
     bool m_jogAReleasedRecently = false;
     bool m_jogBReleasedRecently = false;
     bool m_deckAShiftHeld = false;

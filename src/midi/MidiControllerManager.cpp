@@ -466,6 +466,8 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, QObject* par
     {
         QMetaObject::invokeMethod(this, [this]()
         {
+            if (m_shuttingDown.load(std::memory_order_acquire))
+                return;
             refreshMidiAndMappings();
         }, Qt::QueuedConnection);
     });
@@ -504,25 +506,67 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, QObject* par
 
     autoOpenFlx10MidiOutputIfNeeded();
 
-    QTimer::singleShot(750, this, [this]()
+    m_startupRefreshTimer.setSingleShot(true);
+    connect(&m_startupRefreshTimer, &QTimer::timeout, this, [this]()
     {
+        if (m_shuttingDown.load(std::memory_order_acquire))
+            return;
         refreshMidiAndMappings();
         autoOpenFlx10MidiOutputIfNeeded();
         // Avoid reopening stale saved identifiers repeatedly on startup.
         // Users can still select a device explicitly in settings.
     });
+    m_startupRefreshTimer.start(750);
 }
 
-MidiControllerManager::~MidiControllerManager()
+void MidiControllerManager::shutdown()
 {
+    if (m_shuttingDown.exchange(true, std::memory_order_acq_rel))
+        return;
+
+    m_startupRefreshTimer.stop();
+    blockSignals(true);
+
+    m_midiDeviceListConnection = juce::MidiDeviceListConnection{};
+
+    if (m_parameterStore)
+        QObject::disconnect(m_parameterStore, nullptr, this, nullptr);
+
+    if (m_deckA)
+        QObject::disconnect(m_deckA, nullptr, this, nullptr);
+    if (m_deckB && m_deckB != m_deckA)
+        QObject::disconnect(m_deckB, nullptr, this, nullptr);
+    m_deckA = nullptr;
+    m_deckB = nullptr;
+
+    m_jogAReleaseTimer.stop();
+    m_jogBReleaseTimer.stop();
+
+    m_midiFeedback.setEnabled(false);
+    m_midiFeedback.setDecks(nullptr, nullptr);
+
     stopFlx10OutputSession();
 
     for (auto& input : m_midiInputs) {
         if (input)
             input->stop();
     }
+    m_midiInputs.clear();
+
+#if defined(Q_OS_LINUX)
+    if (m_alsaMidiOutput)
+        m_alsaMidiOutput.reset();
+#endif
+
+    if (m_midiOutput)
+        m_midiOutput.reset();
 
     stopAlsaInputMonitor();
+}
+
+MidiControllerManager::~MidiControllerManager()
+{
+    shutdown();
 }
 
 QStringList MidiControllerManager::getAvailableMidiInputDevices()
@@ -1593,7 +1637,14 @@ QString MidiControllerManager::getSelectedMapping() const
 
 void MidiControllerManager::refreshMidiAndMappings()
 {
+    if (m_shuttingDown.load(std::memory_order_acquire))
+        return;
+
     refreshMidiDeviceCache();
+
+    if (m_shuttingDown.load(std::memory_order_acquire))
+        return;
+
     emit midiDevicesUpdated();
     emit controllerListUpdated();
     emit mappingListUpdated();
@@ -2321,6 +2372,9 @@ void MidiControllerManager::learnMapping(int msgId)
 
 void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*/, const juce::MidiMessage& message)
 {
+    if (m_shuttingDown.load(std::memory_order_acquire))
+        return;
+
     // Diagnostic: log every incoming MIDI message so we can see if JUCE is even
     // receiving Note On events.  The raw status byte tells us the truth.
     {
@@ -2407,6 +2461,9 @@ void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*
 
 void MidiControllerManager::onParameterChanged(const QString& id, float value)
 {
+    if (m_shuttingDown.load(std::memory_order_acquire))
+        return;
+
     const bool outputOpen =
         (m_midiOutput != nullptr)
 #if defined(Q_OS_LINUX)

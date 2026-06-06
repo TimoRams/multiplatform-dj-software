@@ -544,11 +544,23 @@ int main(int argc, char *argv[])
                 masterBus->removeDeck(deck);
         }
 
-        midiManager.reset();
-        controllerManager.reset();
+        // Stop the shared audio device before tearing down engines/controllers.
+        DjEngine::shutdownSharedAudioDeviceManager();
 
-        // Destroy QML objects while the backend objects they reference are still
-        // alive, but after the realtime audio callback has been stopped.
+        if (controllerManager) {
+            QObject::disconnect(&settingsManager, nullptr, controllerManager.get(), nullptr);
+            controllerManager->setFlx10Enabled(false);
+            controllerManager->setDecks(nullptr, nullptr);
+            controllerManager->blockSignals(true);
+        }
+
+        if (midiManager)
+            midiManager->shutdown();
+
+        // Null QML context pointers before destroying QML so bindings cannot
+        // touch backend objects during Component.onDestruction handlers.
+        clearQmlContextProperties();
+
         const auto rootObjects = engine.rootObjects();
         for (QObject* root : rootObjects) {
             if (auto* window = qobject_cast<QQuickWindow*>(root)) {
@@ -558,7 +570,10 @@ int main(int argc, char *argv[])
             root->deleteLater();
         }
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-        clearQmlContextProperties();
+        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+
+        controllerManager.reset();
+        midiManager.reset();
 
         linkManager.reset();
         masterBus.reset();
@@ -567,8 +582,6 @@ int main(int argc, char *argv[])
         deckC.reset();
         deckB.reset();
         deckA.reset();
-
-        DjEngine::shutdownSharedAudioDeviceManager();
 
         settingsManager.markCleanShutdown();
         settingsManager.shutdown();
