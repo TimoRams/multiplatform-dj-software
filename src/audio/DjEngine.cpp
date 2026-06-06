@@ -4169,6 +4169,18 @@ void DjEngine::tickScratchPhysics()
     const double alpha = 1.0 - std::exp(-dtSec / std::max(0.001, tau));
     m_scratchSmoothedRate += (targetRate - m_scratchSmoothedRate) * alpha;
 
+    // Forward release after overspeed: decay toward deck tempo but never dip below
+    // the live target — that "slow then catch up" wobble is what vinyl feels wrong.
+    if (m_scratchReleaseActive && m_scratchReleaseOverspeeding && m_scrubWasPlaying) {
+        const double tgt = m_scratchReleaseTargetRate;
+        if (tgt > 0.0)
+            m_scratchSmoothedRate = std::max(m_scratchSmoothedRate, tgt);
+        else if (tgt < 0.0)
+            m_scratchSmoothedRate = std::min(m_scratchSmoothedRate, tgt);
+        if (std::abs(m_scratchSmoothedRate - tgt) <= ScratchConfig::kReleaseSettleThreshold)
+            m_scratchReleaseOverspeeding = false;
+    }
+
     if (std::abs(m_scratchSmoothedRate) >= ScratchConfig::kDirectionFlipThresholdRate)
         m_scratchDirectionSign = (m_scratchSmoothedRate < 0.0) ? -1.0 : 1.0;
 
@@ -4268,10 +4280,10 @@ void DjEngine::tickScratchPhysics()
     if (!m_isScrubbing && m_scratchReleaseActive
         && std::abs(m_scratchSmoothedRate - m_scratchReleaseTargetRate) <= ScratchConfig::kReleaseSettleThreshold) {
         m_scratchReleaseActive = false;
+        m_scratchReleaseOverspeeding = false;
         m_scratchTargetRate    = 0.0;
-        // Pin smoothed rate to the converged target (not 0) so the resampling
-        // source is already at the right ratio when restorePostScrubPlaybackState
-        // calls setResamplingRatio(1.0) — avoids a rate-discontinuity click.
+        // Pin smoothed rate to the converged target (not 0) so restorePostScrubPlaybackState
+        // can hand off to updateSpeedAndPitch() without a rate discontinuity.
         m_scratchSmoothedRate       = m_scratchReleaseTargetRate;
         m_scratchReleaseTauSec      = ScratchConfig::kReleaseToPlayTauSec;
         m_scratchInputFilteredRate  = 0.0;
@@ -5112,14 +5124,16 @@ void DjEngine::restorePostScrubPlaybackState()
     // If we reset ratio first while still running, the audio thread may process
     // one buffer at 1.0× speed while the slow-rate tail is still audible — that
     // produces the click/pop on stop.  Stopping first ensures silence before reset.
-    if (!m_playRequested)
+    if (!m_playRequested) {
         transportSource.stop();
+        if (resamplingSource)
+            resamplingSource->setResamplingRatio(1.0);
+        if (timeStretchSource)
+            timeStretchSource->setTempoRatio(1.0);
+    }
 
-    if (resamplingSource)
-        resamplingSource->setResamplingRatio(1.0);
-    if (timeStretchSource)
-        timeStretchSource->setTempoRatio(1.0);
-
+    // Resume at the live deck tempo — never hard-reset to 1.0× first, which
+    // causes a brief slow-down when the tempo fader is above/below center.
     updateSpeedAndPitch();
 
     // Re-apply loop range to the audio source — scratch neutral routing may have
@@ -5172,6 +5186,7 @@ void DjEngine::pauseForScrub()
     }
 
     m_scratchReleaseActive = false;
+    m_scratchReleaseOverspeeding = false;
     m_scratchReleaseTargetRate = 0.0;
     m_scratchReleaseTauSec = ScratchConfig::kReleaseToPlayTauSec;
     m_scrubWasPlaying = wasPlayingBeforeGrab;
@@ -5517,6 +5532,7 @@ void DjEngine::resumeAfterScrub()
     m_scratchHardwareDeltaControl = false;
     m_scratchAbsoluteFollowVelocity = 0.0;
     m_scratchInputFilteredRate = releaseStartRate;
+    m_scratchReleaseOverspeeding = false;
 
     // Re-enable hardware loop immediately — needed for both the release
     // glide (transport plays freely) and the no-inertia stop path.
@@ -5533,6 +5549,7 @@ void DjEngine::resumeAfterScrub()
     if (m_scratchAccumulatedMoveSec < ScratchConfig::kInertiaMoveThresholdSec
             && std::abs(releaseStartRate) < 0.30) {
         m_scratchReleaseActive = false;
+        m_scratchReleaseOverspeeding = false;
         m_scratchReleaseTargetRate = 0.0;
         m_scratchReleaseTauSec = ScratchConfig::kReleaseToPlayTauSec;
         m_scratchTargetRate = 0.0;
@@ -5551,6 +5568,9 @@ void DjEngine::resumeAfterScrub()
     m_scratchReleaseTargetRate = m_scrubWasPlaying ? (transportDirection * releaseBaseRate) : 0.0;
     const bool releaseAgainstTransport = m_scrubWasPlaying
         && (releaseStartRate * transportDirection) < 0.0;
+    m_scratchReleaseOverspeeding = m_scrubWasPlaying
+        && !releaseAgainstTransport
+        && std::abs(releaseStartRate) > releaseBaseRate + ScratchConfig::kReleaseSettleThreshold;
 
     // Keep current fling velocity (including backward backspin inertia) and glide
     // back to normal transport speed. If the deck was paused, glide to a stop.
@@ -5573,6 +5593,9 @@ void DjEngine::resumeAfterScrub()
         m_scratchReleaseTauSec = std::clamp(0.45 + releaseSpeed * 0.10, 0.45, 1.10);
     } else if (releaseAgainstTransport) {
         m_scratchReleaseTauSec = std::clamp(0.42 + releaseSpeed * 0.08, 0.42, 0.95);
+    } else if (m_scratchReleaseOverspeeding) {
+        // Same-direction overspeed: blend down to deck tempo without lingering below it.
+        m_scratchReleaseTauSec = std::clamp(0.16 + releaseSpeed * 0.05, 0.16, 0.42);
     } else {
         m_scratchReleaseTauSec = std::clamp(0.30 + releaseSpeed * 0.07, 0.30, 0.85);
     }
@@ -5583,6 +5606,54 @@ void DjEngine::resumeAfterScrub()
     emit scrubbingChanged();
 }
 
+void DjEngine::applyScratchReleaseJog(double deltaSeconds)
+{
+    if (!m_scratchReleaseActive || deltaSeconds == 0.0)
+        return;
+
+    const double len = transportSource.getLengthInSeconds();
+    if (len <= 0.0)
+        return;
+
+    const double dtSec = std::max(0.010, scratchInputDtSec(m_lastScrubInputClock));
+    const double rawRate = std::clamp(deltaSeconds / dtSec,
+                                      -ScratchConfig::kMaxRate,
+                                      ScratchConfig::kMaxRate);
+    const double transportDir = m_scrubSavedReverseState ? -1.0 : 1.0;
+    const double deckRate = m_scratchReleaseTargetRate;
+
+    if (rawRate * transportDir > 0.0 && std::abs(rawRate) > std::abs(m_scratchSmoothedRate)) {
+        m_scratchSmoothedRate = rawRate;
+        if (std::abs(rawRate) > std::abs(deckRate) + ScratchConfig::kReleaseSettleThreshold)
+            m_scratchReleaseOverspeeding = true;
+    }
+
+    m_lastScrubInputClock.restart();
+    m_scrubPhysicsClock.restart();
+
+    double nextPos = std::clamp(m_scrubHoldPosition + deltaSeconds, -SCRATCH_PRE_ROLL_SECONDS, len);
+    if (m_loopActive && m_loopOutSec > m_loopInSec && m_scrubLoopLockedToActiveLoop) {
+        const double lo      = m_loopInSec;
+        const double hi      = std::min(len, m_loopOutSec);
+        const double loopLen = hi - lo;
+        if (loopLen > 0.0 && (nextPos < lo || nextPos >= hi)) {
+            const double offset = nextPos - lo;
+            nextPos = lo + std::fmod(std::fmod(offset, loopLen) + loopLen, loopLen);
+        }
+    }
+
+    if (nextPos >= 0.0) {
+        transportSource.setPosition(nextPos);
+        if (!transportSource.isPlaying())
+            transportSource.start();
+    }
+
+    m_scrubHoldPosition = nextPos;
+    m_atomicPlayheadPos.store(m_scrubHoldPosition, std::memory_order_relaxed);
+    m_snapPosition = m_scrubHoldPosition;
+    emit progressChanged();
+}
+
 void DjEngine::finishScrubWithoutInertia()
 {
     if (!m_isScrubbing && !m_scratchReleaseActive)
@@ -5590,6 +5661,7 @@ void DjEngine::finishScrubWithoutInertia()
 
     m_isScrubbing = false;
     m_scratchReleaseActive = false;
+    m_scratchReleaseOverspeeding = false;
     m_scratchReleaseTargetRate = 0.0;
     m_scratchReleaseTauSec = ScratchConfig::kReleaseToPlayTauSec;
     m_scratchTargetRate = 0.0;

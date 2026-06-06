@@ -119,6 +119,7 @@ public:
     [[nodiscard]] Q_INVOKABLE double getPlayheadPositionAtomic() const;
     [[nodiscard]] bool isPlaying() const;
     [[nodiscard]] bool isScrubbing() const { return m_isScrubbing; }
+    [[nodiscard]] bool isScratchReleaseActive() const { return m_scratchReleaseActive; }
 
     // Pixels-per-second scale mirrored from the waveform renderer so scrubBy()
     // can convert mouse pixels → audio seconds without needing QML math.
@@ -138,6 +139,7 @@ public:
     // This decouples UI deltas from the audio scratch model (usable for MIDI/HID jog ticks).
     Q_INVOKABLE void pushScratchVelocityTick(double velocityRate);
     Q_INVOKABLE void resumeAfterScrub();
+    Q_INVOKABLE void applyScratchReleaseJog(double deltaSeconds);
     Q_INVOKABLE void finishScrubWithoutInertia();
     // Outer-rim jog nudge: temporarily speeds up/slows down playback without entering scratch mode.
     Q_INVOKABLE void applyJogNudge(double signedTicks);
@@ -674,6 +676,7 @@ private:
     double m_scratchTargetRate = 0.0;
     double m_scratchSmoothedRate = 0.0;
     bool   m_scratchReleaseActive = false;
+    bool   m_scratchReleaseOverspeeding = false;
     double m_scratchReleaseTargetRate = 0.0;
     double m_scratchReleaseTauSec = ScratchConfig::kReleaseToPlayTauSec;
     double m_scratchAccumulatedMoveSec = 0.0;

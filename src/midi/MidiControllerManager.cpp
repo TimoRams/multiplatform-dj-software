@@ -3567,7 +3567,12 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
             if (a) {
                 if (m_jogATouched)
                     return;
-                if (m_jogAReleasedRecently || a->isScrubbing()) {
+                if (a->isScratchReleaseActive()) {
+                    if (std::abs(value) > 0.0f) {
+                        m_jogAReleaseTimer.start();
+                        a->applyScratchReleaseJog(flx10ScratchDeltaSec(static_cast<double>(value)));
+                    }
+                } else if (m_jogAReleasedRecently || a->isScrubbing()) {
                     if (!a->isScrubbing() && std::abs(value) <= 0.0f)
                         return;
                     if (!a->isScrubbing())
@@ -3584,7 +3589,12 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
             if (b) {
                 if (m_jogBTouched)
                     return;
-                if (m_jogBReleasedRecently || b->isScrubbing()) {
+                if (b->isScratchReleaseActive()) {
+                    if (std::abs(value) > 0.0f) {
+                        m_jogBReleaseTimer.start();
+                        b->applyScratchReleaseJog(flx10ScratchDeltaSec(static_cast<double>(value)));
+                    }
+                } else if (m_jogBReleasedRecently || b->isScrubbing()) {
                     if (!b->isScrubbing() && std::abs(value) <= 0.0f)
                         return;
                     if (!b->isScrubbing())
