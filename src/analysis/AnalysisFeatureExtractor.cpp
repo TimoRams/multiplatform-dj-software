@@ -44,7 +44,8 @@ AnalysisFeatureExtractor::AnalysisFeatureExtractor(Options options)
 }
 
 AnalysisFeatures AnalysisFeatureExtractor::extract(juce::AudioFormatReader& reader,
-                                                   juce::Thread* cancelThread) const
+                                                   juce::Thread* cancelThread,
+                                                   const std::function<void(double)>& onProgress) const
 {
     AnalysisFeatures out;
     out.sampleRate = reader.sampleRate > 0.0 ? reader.sampleRate : 44100.0;
@@ -82,10 +83,21 @@ AnalysisFeatures AnalysisFeatureExtractor::extract(juce::AudioFormatReader& read
     const int highLo = binForHz(2200.0);
     const int highHi = binForHz(std::min(12000.0, out.sampleRate * 0.45));
 
-    const juce::int64 lastStart = std::max<juce::int64>(0, reader.lengthInSamples - out.frameSize);
+    const juce::int64 analysisSamples = (m_options.maxDurationSec > 0.0 && out.sampleRate > 0.0)
+        ? std::min(reader.lengthInSamples,
+                   static_cast<juce::int64>(m_options.maxDurationSec * out.sampleRate))
+        : reader.lengthInSamples;
+    const juce::int64 lastStart = std::max<juce::int64>(0, analysisSamples - out.frameSize);
+    juce::int64 hopCount = 0;
+    const juce::int64 totalHops = std::max<juce::int64>(1, (lastStart / out.hopSize) + 1);
+
     for (juce::int64 pos = 0; pos <= lastStart; pos += out.hopSize) {
         if (cancelThread != nullptr && cancelThread->threadShouldExit())
             break;
+
+        if (onProgress && (hopCount & 0x3F) == 0)
+            onProgress(static_cast<double>(hopCount) / static_cast<double>(totalHops));
+        ++hopCount;
 
         readBuffer.clear();
         if (!reader.read(&readBuffer, 0, out.frameSize, pos, true, true))

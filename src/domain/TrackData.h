@@ -7,6 +7,7 @@
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QColor>
+#include <atomic>
 #include <vector>
 #include <algorithm>
 #include <cmath>
@@ -25,6 +26,8 @@ class TrackData : public QObject
     Q_PROPERTY(double sampleRate READ getSampleRate NOTIFY bpmAnalyzed)
     Q_PROPERTY(QString detectedKey  READ getDetectedKey   NOTIFY keyAnalyzed)
     Q_PROPERTY(bool   isKeyAnalyzed READ isKeyAnalyzed    NOTIFY keyAnalyzed)
+    Q_PROPERTY(double analysisProgress READ analysisProgress NOTIFY analysisProgressChanged)
+    Q_PROPERTY(bool   analyzing READ isAnalyzing NOTIFY analysisProgressChanged)
 
 public:
     enum class BeatGridType {
@@ -131,6 +134,37 @@ public:
     // Fixed bin count for the progressive downsampled overview (built incrementally
     // during analysis). Renderers stay O(kProgressiveBins) instead of O(track_length).
     static constexpr int kProgressiveBins = 2048;
+    // Pre-downsampled overview used by deck overview paint() — O(kOverviewBins).
+    static constexpr int kOverviewBins = 4096;
+
+    // Max-fold downsample of full-res RGB frames for the deck overview waveform.
+    static QVector<RgbWaveformFrame> downsampleOverview(
+        const QVector<RgbWaveformFrame>& src, int maxBins = kOverviewBins)
+    {
+        if (src.isEmpty())
+            return {};
+        const int total = src.size();
+        const int factor = std::max(1, (total + maxBins - 1) / maxBins);
+        QVector<RgbWaveformFrame> out;
+        out.reserve((total + factor - 1) / factor);
+        for (int i = 0; i < total; i += factor) {
+            const int end = std::min(i + factor, total);
+            float rms = 0.0f, low = 0.0f, lowMid = 0.0f, mid = 0.0f, high = 0.0f;
+            for (int j = i; j < end; ++j) {
+                const auto& f = src[j];
+                rms    = std::max(rms,    f.rms);
+                low    = std::max(low,    f.low);
+                lowMid = std::max(lowMid, f.lowMid);
+                mid    = std::max(mid,    f.mid);
+                high   = std::max(high,   f.high);
+            }
+            RgbWaveformFrame bin;
+            bin.rms = rms; bin.low = low; bin.lowMid = lowMid;
+            bin.mid = mid; bin.high = high;
+            out.push_back(bin);
+        }
+        return out;
+    }
 
     explicit TrackData(QObject* parent = nullptr)
         : QObject(parent), m_totalExpected(0), m_globalMaxPeak(0.001f),
@@ -407,6 +441,32 @@ public:
         return m_isKeyAnalyzed;
     }
 
+    double analysisProgress() const {
+        return m_analysisProgress.load(std::memory_order_relaxed);
+    }
+
+    bool isAnalyzing() const {
+        return m_analyzing.load(std::memory_order_relaxed);
+    }
+
+    // Called from the analyzer thread; throttles GUI notifications.
+    void reportAnalysisProgress(double progress, bool active)
+    {
+        m_analysisProgress.store(std::clamp(progress, 0.0, 1.0), std::memory_order_relaxed);
+        m_analyzing.store(active, std::memory_order_relaxed);
+
+        const int pct = static_cast<int>(std::round(progress * 100.0));
+        if (!active) {
+            m_lastEmittedProgressPct = -1;
+            QMetaObject::invokeMethod(this, "emitAnalysisProgress", Qt::QueuedConnection);
+            return;
+        }
+        if (pct == m_lastEmittedProgressPct)
+            return;
+        m_lastEmittedProgressPct = pct;
+        QMetaObject::invokeMethod(this, "emitAnalysisProgress", Qt::QueuedConnection);
+    }
+
     void setSegmentsData(std::vector<TrackSegment> segments) {
         {
             QMutexLocker locker(&m_mutex);
@@ -429,21 +489,29 @@ public:
 
     void clearWaveformData() {
         m_rgbEmitPending = false;
+        bool keepPreview = false;
         {
             QMutexLocker locker(&m_mutex);
+            keepPreview = !m_overviewRgb.isEmpty();
             m_data.clear();
             m_rgbData.clear();
             m_peakMip.clear();
             m_progressiveOvr.clear();
             m_progressiveLastFrame = 0;
-            m_totalExpected = 0;
+            if (!keepPreview)
+                m_totalExpected = 0;
             m_globalMaxPeak = 0.001f;
         }
-        emit dataCleared();
+        // Full-res data is gone but the deck overview preview may still be valid.
+        if (keepPreview)
+            emit overviewRgbUpdated();
+        else
+            emit dataCleared();
     }
 
     void clear() {
         m_rgbEmitPending = false;
+        reportAnalysisProgress(0.0, false);
         {
             QMutexLocker locker(&m_mutex);
             m_data.clear();
@@ -508,12 +576,12 @@ public:
         {
             QMutexLocker locker(&m_mutex);
             m_rgbData = std::move(frames);
-            // Clear progressive overview — this is an atomic full-data replacement
-            // (end of Pass 2 or cache load); setOverviewRgbData() follows shortly.
+            m_overviewRgb = downsampleOverview(m_rgbData);
             m_progressiveOvr.clear();
             m_progressiveLastFrame = 0;
         }
         emit rgbWaveformUpdated();
+        emit overviewRgbUpdated();
     }
 
     // Pre-downsampled overview (≤4096 bins) computed off the main thread.
@@ -684,8 +752,11 @@ signals:
     void keyAnalyzed();
     void beatgridChanged();  // emitted after a manual grid shift
     void segmentsAnalyzed();
+    void analysisProgressChanged();
 
 private slots:
+    void emitAnalysisProgress() { emit analysisProgressChanged(); }
+
     // Coalesce progressive waveform updates to a low, fixed rate so analysis can
     // never flood the GUI thread with repaints. Runs entirely on the GUI thread.
     void flushRgbWaveformEmit()
@@ -740,6 +811,9 @@ private:
     mutable QMutex m_mutex;
     bool m_rgbEmitPending = false;
     QElapsedTimer m_rgbEmitClock;
+    std::atomic<double> m_analysisProgress{0.0};
+    std::atomic<bool>   m_analyzing{false};
+    int m_lastEmittedProgressPct = -1;
 
     QVector<RgbWaveformFrame> m_progressiveOvr;   // kProgressiveBins bins, max-folded
     int                       m_progressiveLastFrame = 0;

@@ -18,6 +18,12 @@ public:
     void startAnalysis(const QString& filePath, double seekHintSec = 0.0);
     void stopAnalysis();
     void run() override;
+
+    // Ultra-fast full-track overview (~512 bins, no heavy filterbank). Safe to call
+    // from any thread; intended for the load thread so the deck overview appears
+    // before the full analysis pass starts.
+    static QVector<TrackData::RgbWaveformFrame> buildInstantOverview(
+        juce::AudioFormatReader* reader, int maxBins = 512);
     void setSeekHint(double positionSec);
     void setCompletionCallback(std::function<void(bool completed)> callback);
     void notifyCompletion(bool completed);

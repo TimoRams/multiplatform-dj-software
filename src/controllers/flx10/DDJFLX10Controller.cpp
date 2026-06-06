@@ -412,6 +412,18 @@ void DDJFLX10Controller::connectDeckSignals()
                 refreshDeckFromEngine(deck);
             });
             m_dataClearedConnections[deck] = connect(trackData, &TrackData::dataCleared, this, [this, deck] {
+                // Analysis clears full-res RGB but keeps the instant overview — do not
+                // wipe the controller display while a preview waveform is still available.
+                if (DjEngine* engine = deckEngine(deck)) {
+                    if (TrackData* td = engine->getTrackData()) {
+                        if (!td->getOverviewRgbData().isEmpty()
+                            || !td->getProgressiveOvrData().isEmpty()) {
+                            refreshDeckFromEngine(deck);
+                            return;
+                        }
+                    }
+                }
+
                 m_waveforms[deck].clear();
                 m_waveformDurations[deck] = kPreviewDurationSeconds;
                 m_uploadActive[deck] = false;

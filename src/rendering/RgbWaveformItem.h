@@ -2,6 +2,7 @@
 
 #include <QQuickPaintedItem>
 #include <QTimer>
+#include <QImage>
 #include <QtQml/qqml.h>
 
 #include "DjEngine.h"
@@ -35,7 +36,12 @@ private slots:
     void onOverviewRgbUpdated();  // overview ready — repaint immediately
 
 private:
-    DjEngine* m_engine       = nullptr;
-    bool      m_rectified    = true;
-    QTimer*   m_updateThrottle = nullptr;  // max 5 fps during progressive analysis
+    void paintCompactOverview(QPainter* painter,
+                              const QVector<TrackData::RgbWaveformFrame>& frames,
+                              int drawWidth, int w, int h);
+
+    DjEngine* m_engine         = nullptr;
+    bool      m_rectified      = true;
+    QTimer*   m_updateThrottle = nullptr;
+    QImage    m_frameCache;
 };

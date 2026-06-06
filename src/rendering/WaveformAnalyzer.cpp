@@ -11,6 +11,7 @@
 #include <QDebug>
 #include <juce_dsp/juce_dsp.h>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <numeric>
 #include <complex>
@@ -329,6 +330,8 @@ void WaveformAnalyzer::startAnalysis(const QString& filePath, double seekHintSec
     stopAnalysis();
     m_filePath = filePath;
     m_seekHintSec.store(seekHintSec, std::memory_order_relaxed);
+    if (m_trackData)
+        m_trackData->reportAnalysisProgress(0.0, true);
     startThread(juce::Thread::Priority::background);
 }
 
@@ -352,6 +355,9 @@ void WaveformAnalyzer::setCompletionCallback(std::function<void(bool)> callback)
 
 void WaveformAnalyzer::notifyCompletion(bool completed)
 {
+    if (m_trackData)
+        m_trackData->reportAnalysisProgress(completed ? 1.0 : m_trackData->analysisProgress(), false);
+
     std::function<void(bool)> callback;
     {
         std::lock_guard<std::mutex> lock(m_callbackMutex);
@@ -425,6 +431,76 @@ struct FiltState {
 // than the mid/high components of the same drum hit, causing temporal
 // smearing in the visual display.
 
+QVector<TrackData::RgbWaveformFrame> WaveformAnalyzer::buildInstantOverview(
+    juce::AudioFormatReader* reader, int maxBins)
+{
+    QVector<TrackData::RgbWaveformFrame> out;
+    if (!reader || reader->lengthInSamples <= 0 || maxBins <= 0)
+        return out;
+
+    const juce::int64 totalSamples = reader->lengthInSamples;
+    const int numCh = static_cast<int>(std::max<unsigned int>(reader->numChannels, 1u));
+    maxBins = std::clamp(maxBins, 64, TrackData::kProgressiveBins);
+    out.resize(maxBins);
+
+    constexpr int kMaxSamplesPerBin = 128;
+    juce::AudioBuffer<float> buf(numCh, kMaxSamplesPerBin);
+
+    for (int bin = 0; bin < maxBins; ++bin) {
+        const juce::int64 binStart = (static_cast<juce::int64>(bin) * totalSamples) / maxBins;
+        const juce::int64 binEnd   = (static_cast<juce::int64>(bin + 1) * totalSamples) / maxBins;
+        const juce::int64 span     = std::max<juce::int64>(1, binEnd - binStart);
+        const int stride = static_cast<int>(std::max<juce::int64>(1, span / kMaxSamplesPerBin));
+
+        float peak = 0.0f;
+        float rmsAcc = 0.0f;
+        float lowAcc = 0.0f;
+        float highAcc = 0.0f;
+        int sampleCount = 0;
+        float prevMono = 0.0f;
+
+        for (juce::int64 pos = binStart; pos < binEnd; pos += stride) {
+            const int toRead = static_cast<int>(std::min<juce::int64>(stride, binEnd - pos));
+            buf.clear();
+            reader->read(&buf, 0, toRead, pos, true, true);
+
+            for (int i = 0; i < toRead; ++i) {
+                float mono = 0.0f;
+                for (int ch = 0; ch < numCh; ++ch)
+                    mono += buf.getSample(ch, i);
+                mono /= static_cast<float>(numCh);
+
+                const float absS = std::abs(mono);
+                peak = std::max(peak, absS);
+                rmsAcc += absS * absS;
+                lowAcc += absS;
+                highAcc += std::abs(mono - prevMono);
+                prevMono = mono;
+                ++sampleCount;
+            }
+        }
+
+        if (sampleCount <= 0)
+            continue;
+
+        const float rms = std::sqrt(rmsAcc / static_cast<float>(sampleCount));
+        const float lowN = std::clamp(lowAcc / static_cast<float>(sampleCount) * 3.5f, 0.0f, 1.0f);
+        const float highN = std::clamp(highAcc / static_cast<float>(sampleCount) * 8.0f, 0.0f, 1.0f);
+        const float midN = std::clamp((lowN + highN) * 0.45f, 0.0f, 1.0f);
+        const float lowMidN = std::clamp(lowN * 0.75f, 0.0f, 1.0f);
+        const float rmsN = std::clamp(std::log1p(rms * 12.0f) / std::log1p(12.0f), 0.0f, 1.0f);
+
+        auto& frame = out[bin];
+        frame.rms = rmsN;
+        frame.low = lowN;
+        frame.lowMid = lowMidN;
+        frame.mid = midN;
+        frame.high = highN;
+    }
+
+    return out;
+}
+
 void WaveformAnalyzer::run()
 {
     AnalysisCompletionNotifier completion(*this);
@@ -439,8 +515,6 @@ void WaveformAnalyzer::run()
     std::unique_ptr<juce::AudioFormatReader> reader(m_formatManager->createReaderFor(file));
     if (!reader) return;
 
-    m_trackData->clearWaveformData();
-
     const juce::int64 totalSamples = reader->lengthInSamples;
     const double      sampleRate   = reader->sampleRate;
     const double      duration     = totalSamples / sampleRate;
@@ -448,8 +522,31 @@ void WaveformAnalyzer::run()
 
     if (numPoints <= 0) return;
 
-    m_trackData->setTotalExpected(numPoints);
-    m_trackData->reserve(numPoints);
+    // Cached waveform from disk — skip the expensive Pass 1+2 and only run BPM/key.
+    const int existingRgb      = m_trackData->getRgbWaveformSize();
+    const int existingExpected = m_trackData->getTotalExpected();
+    const bool haveFullWaveform = existingExpected >= static_cast<int>(numPoints * 0.95)
+                               && existingRgb      >= static_cast<int>(numPoints * 0.95);
+
+    if (!haveFullWaveform) {
+        // Instant full-track preview so the deck overview never starts blank.
+        if (m_trackData->getOverviewRgbData().isEmpty()) {
+            auto preview = buildInstantOverview(reader.get(), 512);
+            if (!preview.isEmpty())
+                m_trackData->setOverviewRgbData(std::move(preview));
+        }
+        m_trackData->clearWaveformData();
+        m_trackData->setTotalExpected(numPoints);
+        m_trackData->reserve(numPoints);
+    } else if (m_trackData->getOverviewRgbData().isEmpty()) {
+        m_trackData->setOverviewRgbData(
+            TrackData::downsampleOverview(m_trackData->getRgbWaveformData()));
+    } else {
+        m_trackData->reportAnalysisProgress(0.05, true);
+    }
+
+    if (!haveFullWaveform) {
+    m_trackData->reportAnalysisProgress(0.02, true);
 
     // Use exact integer-ratio partitioning per bin to avoid cumulative timeline
     // drift on long tracks (which otherwise degrades quality toward the end).
@@ -561,7 +658,9 @@ void WaveformAnalyzer::run()
     float runMaxMid    = 0.1f;
     float runMaxHigh   = 0.1f;
 
-    constexpr int kChunk = 80;
+    constexpr int kChunk = 128;
+    const double activeSeekHint = m_seekHintSec.load(std::memory_order_relaxed);
+    const bool enableForwardPrefetch = activeSeekHint > 3.0;
     QVector<TrackData::WaveformBin> previewBatch;
     previewBatch.reserve(kChunk);
     QVector<TrackData::RgbWaveformFrame> previewRgbBatch;
@@ -732,11 +831,14 @@ void WaveformAnalyzer::run()
     {
         if (threadShouldExit()) break;
 
-        // Analysis is the LOWEST priority task: periodically yield a slice of CPU
-        // so the audio and UI threads always get scheduled first. This makes a
-        // full analysis take a little longer but guarantees the app stays fluid.
-        if ((bin & 0xFF) == 0)
-            juce::Thread::sleep(1);
+        // Yield occasionally without sleeping — keeps UI/audio responsive without
+        // throttling analysis to "grandma speed".
+        if ((bin & 0xFFF) == 0)
+            juce::Thread::yield();
+
+        if ((bin & 0x7F) == 0)
+            m_trackData->reportAnalysisProgress(
+                (static_cast<double>(bin) / static_cast<double>(numPoints)) * 0.50, true);
 
         // When entering the priority region: flush only the appendData batch
         // (overview waveform). RGB for early bins stays in earlyRgbBuf.
@@ -758,12 +860,12 @@ void WaveformAnalyzer::run()
         // Every 200 bins, advance the forward frontier ahead of the main loop.
         // Each pass extends the pre-rendered region by kPriorityBins, so the waveform
         // continues filling forward continuously until the main loop catches up.
-        if (bin > 0 && bin % 200 == 0) {
+        if (enableForwardPrefetch && bin > 0 && bin % 400 == 0) {
             // Check for a new user seek in either direction — must happen before
             // the frontier gate so a backward seek (or cold start) still takes effect.
             {
                 const int latestHint = std::clamp(
-                    static_cast<int>(m_seekHintSec.load(std::memory_order_relaxed) * m_pointsPerSecond),
+                    static_cast<int>(activeSeekHint * m_pointsPerSecond),
                     0, numPoints - 1);
                 if (std::abs(latestHint - lastActedHint) > kPriorityBins) {
                     forwardFrontier = latestHint;
@@ -903,36 +1005,20 @@ void WaveformAnalyzer::run()
         const int toRead = static_cast<int>(std::max<juce::int64>(1, binEnd - binStart));
         reader->read(&readBuf, 0, toRead, binStart, true, false);
 
-        // Peak mipmap: subdivide this analysis bin into PEAK_RATIO sub-bins.
-        // Each sub-bin tracks signed min/max of the mono-summed samples.
-        {
-            const int peakBinBase = bin * PEAK_RATIO;
-            for (int pb = 0; pb < PEAK_RATIO; ++pb) {
-                const int sStart = (pb * toRead) / PEAK_RATIO;
-                const int sEnd   = ((pb + 1) * toRead) / PEAK_RATIO;
-                float pMin = 0.0f, pMax = 0.0f;
-                for (int s = sStart; s < sEnd; ++s) {
-                    float mono = 0.0f;
-                    for (int ch = 0; ch < numCh; ++ch)
-                        mono += readBuf.getReadPointer(ch)[s];
-                    mono /= static_cast<float>(numCh);
-                    if (mono < pMin) pMin = mono;
-                    if (mono > pMax) pMax = mono;
-                }
-                rawPeakBuf[static_cast<size_t>(peakBinBase + pb)] = { pMin, pMax };
-                if (pMax > globalMaxSample) globalMaxSample = pMax;
-                if (-pMin > globalMaxSample) globalMaxSample = -pMin;
-            }
-        }
+        struct SubPeak { float min = 0.0f; float max = 0.0f; bool init = false; };
+        std::array<SubPeak, 8> subPeaks{};
+        const int peakRatioClamped = std::clamp(PEAK_RATIO, 1, static_cast<int>(subPeaks.size()));
 
         for (int s = 0; s < toRead; ++s)
         {
             float bestLow = 0.0f, bestLowMid = 0.0f, bestMid = 0.0f, bestHigh = 0.0f;
+            float monoAcc = 0.0f;
 
             for (int ch = 0; ch < numCh; ++ch)
             {
                 const size_t ci = static_cast<size_t>(ch);
                 const float in = readBuf.getReadPointer(ch)[s];
+                monoAcc += in;
 
                 // ── Band 1: LP @ 110 Hz (1st order) ─────────────────────────
                 mainFilt.lp110[ci] = aLP110 * in + (1.0f - aLP110) * mainFilt.lp110[ci];
@@ -973,10 +1059,35 @@ void WaveformAnalyzer::run()
                 if (b4 > bestHigh)   bestHigh   = b4;
             }
 
+            const float mono = monoAcc / static_cast<float>(numCh);
+            const int pb = std::min(peakRatioClamped - 1,
+                                    (s * peakRatioClamped) / std::max(1, toRead));
+            auto& sp = subPeaks[static_cast<size_t>(pb)];
+            if (!sp.init) {
+                sp.min = mono;
+                sp.max = mono;
+                sp.init = true;
+            } else {
+                if (mono < sp.min) sp.min = mono;
+                if (mono > sp.max) sp.max = mono;
+            }
+
             mainFilt.envLow   .process(bestLow);
             mainFilt.envLowMid.process(bestLowMid);
             mainFilt.envMid   .process(bestMid);
             mainFilt.envHigh  .process(bestHigh);
+        }
+
+        {
+            const int peakBinBase = bin * PEAK_RATIO;
+            for (int pb = 0; pb < peakRatioClamped; ++pb) {
+                const auto& sp = subPeaks[static_cast<size_t>(pb)];
+                const float pMin = sp.init ? sp.min : 0.0f;
+                const float pMax = sp.init ? sp.max : 0.0f;
+                rawPeakBuf[static_cast<size_t>(peakBinBase + pb)] = { pMin, pMax };
+                if (pMax > globalMaxSample) globalMaxSample = pMax;
+                if (-pMin > globalMaxSample) globalMaxSample = -pMin;
+            }
         }
 
         // Store RAW envelope values for the final pass.
@@ -1056,6 +1167,8 @@ void WaveformAnalyzer::run()
 
     if (threadShouldExit()) return;
 
+    m_trackData->reportAnalysisProgress(0.52, true);
+
     // =========================================================================
     // PASS 2+3 — Global Normalization → Anti-Crush Shaping → Final Output
     //
@@ -1075,9 +1188,16 @@ void WaveformAnalyzer::run()
     QVector<TrackData::RgbWaveformFrame> polishedRgbData;
     polishedRgbData.reserve(static_cast<int>(rawBins.size()));
 
+    int pass2Idx = 0;
+    const int pass2Total = static_cast<int>(rawBins.size());
     for (const RawBin& rb : rawBins)
     {
         if (threadShouldExit()) break;
+
+        if ((pass2Idx & 0x3FFF) == 0 && pass2Total > 0)
+            m_trackData->reportAnalysisProgress(
+                0.52 + (static_cast<double>(pass2Idx) / static_cast<double>(pass2Total)) * 0.06, true);
+        ++pass2Idx;
 
         // ── Global normalization → shaping → gain → base floor ──────────────
         TrackData::WaveformBin wbin;
@@ -1107,29 +1227,35 @@ void WaveformAnalyzer::run()
 
     if (!threadShouldExit()) {
         m_trackData->replaceAllData(std::move(finalData), globalMaxPeak);
-        // Light post-processing pass before full Essentia spectral polish.
-        const auto currentRgb = m_trackData->getRgbWaveformData();
-        auto blended = blendRgbPreferDynamics(currentRgb, polishedRgbData);
-        m_trackData->setRgbWaveformData(std::move(blended));
+        // Pass 2 output is authoritative — skip the expensive full-vector blend copy.
+        m_trackData->setRgbWaveformData(std::move(polishedRgbData));
 
-        // Normalize and commit the peak mipmap now that globalMaxSample is known.
         if (!rawPeakBuf.empty()) {
+            m_trackData->reportAnalysisProgress(0.58, true);
             const float normScale = 127.0f / std::max(0.001f, globalMaxSample);
-            QVector<TrackData::PeakFrame> peakMip;
-            peakMip.reserve(static_cast<int>(rawPeakBuf.size()));
-            for (const auto& raw : rawPeakBuf) {
-                TrackData::PeakFrame pf;
-                pf.minSample = static_cast<qint8>(
+            QVector<TrackData::PeakFrame> peakMip(static_cast<int>(rawPeakBuf.size()));
+            const int peakTotal = static_cast<int>(rawPeakBuf.size());
+            for (int i = 0; i < peakTotal; ++i) {
+                if ((i & 0x1FFFF) == 0 && peakTotal > 0)
+                    m_trackData->reportAnalysisProgress(
+                        0.58 + (static_cast<double>(i) / static_cast<double>(peakTotal)) * 0.02, true);
+                const auto& raw = rawPeakBuf[static_cast<size_t>(i)];
+                peakMip[i].minSample = static_cast<qint8>(
                     std::clamp(static_cast<int>(raw.minRaw * normScale), -127, 127));
-                pf.maxSample = static_cast<qint8>(
+                peakMip[i].maxSample = static_cast<qint8>(
                     std::clamp(static_cast<int>(raw.maxRaw * normScale), -127, 127));
-                peakMip.append(pf);
             }
             m_trackData->setPeakMipData(std::move(peakMip));
         }
     }
 
+    m_trackData->reportAnalysisProgress(0.60, true);
+
+    } // !haveFullWaveform — waveform Pass 1+2 skipped when cache already loaded
+
     if (threadShouldExit()) return;
+
+    m_trackData->reportAnalysisProgress(haveFullWaveform ? 0.35 : 0.62, true);
 
     // -------------------------------------------------------------------------
     // Stage 4: BPM detection + elastic beat-grid alignment.
@@ -1667,22 +1793,34 @@ void WaveformAnalyzer::run()
     }
 
     {
-        analysis::AnalysisFeatureExtractor featureExtractor({2048, 512});
+        analysis::AnalysisFeatureExtractor::Options featOpts;
+        featOpts.frameSize = 2048;
+        featOpts.hopSize = 1024;
+        featOpts.maxDurationSec = 420.0;
+        analysis::AnalysisFeatureExtractor featureExtractor(featOpts);
         analysis::TempoEstimator tempoEstimator;
         analysis::BeatTracker beatTracker;
         analysis::BeatGridFitter gridFitter;
         analysis::DownbeatDetector downbeatDetector;
 
-        auto features = featureExtractor.extract(*reader, this);
+        auto features = featureExtractor.extract(*reader, this,
+            [this](double frac) {
+                m_trackData->reportAnalysisProgress(0.62 + frac * 0.16, true);
+            });
         if (threadShouldExit()) return;
+
+        m_trackData->reportAnalysisProgress(0.79, true);
 
         const auto tempo = tempoEstimator.estimate(features);
 
         analysis::BeatTrackingResult tracked;
         analysis::BeatGridFitResult fitted;
         double bestCombinedGridScore = -1.0;
-        const int candidateCount = std::max(1, std::min<int>(5, tempo.candidates.size()));
+        const int candidateCount = std::max(1, std::min<int>(2, tempo.candidates.size()));
         for (int candidateIndex = 0; candidateIndex < candidateCount; ++candidateIndex) {
+            m_trackData->reportAnalysisProgress(
+                0.79 + (static_cast<double>(candidateIndex) / static_cast<double>(candidateCount)) * 0.09,
+                true);
             const double candidateBpm = tempo.candidates.empty()
                 ? tempo.bpm
                 : tempo.candidates[static_cast<size_t>(candidateIndex)].bpm;
@@ -1777,6 +1915,8 @@ void WaveformAnalyzer::run()
 
     if (threadShouldExit()) return;
 
+    m_trackData->reportAnalysisProgress(0.91, true);
+
     // -------------------------------------------------------------------------
     // Stage 5: Key detection via libKeyFinder.
     //
@@ -1860,6 +2000,8 @@ void WaveformAnalyzer::run()
             }
         }
     }
+
+    m_trackData->reportAnalysisProgress(0.97, true);
 
     // -------------------------------------------------------------------------
     // Stage 6: Persist finished waveform vectors into file cache.

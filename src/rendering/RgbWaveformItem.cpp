@@ -70,7 +70,7 @@ RgbWaveformItem::RgbWaveformItem(QQuickItem* parent)
 
     m_updateThrottle = new QTimer(this);
     m_updateThrottle->setSingleShot(true);
-    m_updateThrottle->setInterval(200);  // ≤5 fps during progressive analysis
+    m_updateThrottle->setInterval(100);  // fallback path only — overview preview is instant
     connect(m_updateThrottle, &QTimer::timeout, this, [this]() { update(); });
 }
 
@@ -106,6 +106,8 @@ void RgbWaveformItem::setRectified(bool v)
 
 void RgbWaveformItem::onTrackLoaded()
 {
+    m_frameCache = QImage();
+
     if (!m_engine || !m_engine->getTrackData()) {
         update();
         return;
@@ -141,19 +143,109 @@ void RgbWaveformItem::onHotCuesChanged()
     update();
 }
 
+void RgbWaveformItem::paintCompactOverview(QPainter* painter,
+                                           const QVector<TrackData::RgbWaveformFrame>& frames,
+                                           int drawWidth, int w, int h)
+{
+    const float baseline = static_cast<float>(h - 1);
+    const float maxBarH  = static_cast<float>(h - 2);
+
+    painter->setRenderHint(QPainter::Antialiasing, false);
+    painter->setPen(Qt::NoPen);
+
+    std::vector<float> heights(static_cast<size_t>(drawWidth), 0.0f);
+    std::vector<QColor> colors(static_cast<size_t>(drawWidth));
+
+    for (int x = 0; x < drawWidth; ++x) {
+        const int i0 = static_cast<int>((static_cast<int64_t>(x) * frames.size()) / std::max(1, drawWidth));
+        int i1 = static_cast<int>((static_cast<int64_t>(x + 1) * frames.size()) / std::max(1, drawWidth));
+        i1 = std::max(i0 + 1, std::min(i1, static_cast<int>(frames.size())));
+
+        float rms = 0.0f, low = 0.0f, lowMid = 0.0f, mid = 0.0f, high = 0.0f;
+        for (int i = i0; i < i1; ++i) {
+            const auto& f = frames[i];
+            rms    = std::max(rms,    f.rms);
+            low    = std::max(low,    f.low);
+            lowMid = std::max(lowMid, f.lowMid);
+            mid    = std::max(mid,    f.mid);
+            high   = std::max(high,   f.high);
+        }
+
+        if (rms <= 0.001f)
+            continue;
+
+        const float logH = std::log1p(rms * 8.0f) / std::log1p(8.0f);
+        heights[static_cast<size_t>(x)] = std::clamp(logH, 0.04f, 1.0f) * maxBarH;
+        colors[static_cast<size_t>(x)]  = mixBandColor(low, lowMid, mid, high, rms);
+    }
+
+    // Single-pass light smoothing for a clean DJ-software silhouette.
+    for (int x = 1; x < drawWidth - 1; ++x) {
+        heights[static_cast<size_t>(x)] =
+            heights[static_cast<size_t>(x - 1)] * 0.20f +
+            heights[static_cast<size_t>(x)]     * 0.60f +
+            heights[static_cast<size_t>(x + 1)] * 0.20f;
+    }
+
+    // Body fill — saturated, bottom-aligned bars.
+    for (int x = 0; x < drawWidth; ++x) {
+        const float barH = heights[static_cast<size_t>(x)];
+        if (barH <= 0.5f)
+            continue;
+        const QColor c = colors[static_cast<size_t>(x)];
+        painter->setBrush(QColor(c.red(), c.green(), c.blue(), 210));
+        painter->drawRect(QRectF(static_cast<double>(x), baseline - barH, 1.0, barH + 1.0));
+    }
+
+    // Peak edge — thin bright cap for transients.
+    for (int x = 0; x < drawWidth; ++x) {
+        const float barH = heights[static_cast<size_t>(x)];
+        if (barH <= 1.5f)
+            continue;
+        const QColor c = colors[static_cast<size_t>(x)];
+        painter->setBrush(QColor(
+            std::min(255, c.red()   + 70),
+            std::min(255, c.green() + 70),
+            std::min(255, c.blue()  + 70), 230));
+        painter->drawRect(QRectF(static_cast<double>(x), baseline - barH, 1.0, 1.5));
+    }
+
+    // Cue markers
+    if (!m_engine)
+        return;
+
+    const float durationSec = std::max(0.001f, m_engine->getDuration());
+    const QVariantList cues = m_engine->hotCues();
+    for (const QVariant& v : cues) {
+        const QVariantMap m = v.toMap();
+        if (!m.value("set").toBool())
+            continue;
+
+        const double cueSec = m.value("positionSec").toDouble();
+        const float progress = std::clamp(static_cast<float>(cueSec / durationSec), 0.0f, 1.0f);
+        const float x = progress * static_cast<float>(w);
+
+        QColor c(m.value("color").toString());
+        if (!c.isValid())
+            c = QColor("#e04040");
+        painter->setPen(QPen(c, 1.5));
+        painter->drawLine(QPointF(x, 0.0), QPointF(x, static_cast<float>(h)));
+    }
+}
+
 void RgbWaveformItem::paint(QPainter* painter)
 {
-    painter->fillRect(boundingRect(), Qt::transparent);
+    const int w = std::max(1, static_cast<int>(width()));
+    const int h = std::max(1, static_cast<int>(height()));
 
-    if (!m_engine || !m_engine->getTrackData())
+    if (!m_engine || !m_engine->getTrackData()) {
+        if (!m_frameCache.isNull() && m_frameCache.size() == QSize(w, h))
+            painter->drawImage(0, 0, m_frameCache);
         return;
+    }
 
     auto* td = m_engine->getTrackData();
 
-    // Use pre-computed overview (post-analysis) or progressive overview (during analysis).
-    // Never call getRgbWaveformData() — that copies the entire track (O(track_length)),
-    // which is catastrophic for long mixes. The progressive overview is maintained
-    // incrementally in TrackData so this path stays O(kProgressiveBins) at all times.
     const QVector<TrackData::RgbWaveformFrame> overview = td->getOverviewRgbData();
     const bool hasOverview = !overview.isEmpty();
 
@@ -163,11 +255,12 @@ void RgbWaveformItem::paint(QPainter* painter)
                     : td->getProgressiveOvrData(&ovrProcessed);
 
     const QVector<TrackData::RgbWaveformFrame>& frames = hasOverview ? overview : progressiveOvr;
-    if (frames.isEmpty())
+    if (frames.isEmpty()) {
+        if (!m_frameCache.isNull() && m_frameCache.size() == QSize(w, h))
+            painter->drawImage(0, 0, m_frameCache);
         return;
+    }
 
-    // Post-analysis: draw the full overview.
-    // During analysis: draw only the analyzed fraction of the progressive overview bins.
     const int totalExpected  = hasOverview
         ? frames.size()
         : TrackData::kProgressiveBins;
@@ -178,8 +271,27 @@ void RgbWaveformItem::paint(QPainter* painter)
                              / std::max(1, td->getTotalExpected())),
             0, TrackData::kProgressiveBins);
 
-    const int w = std::max(1, static_cast<int>(width()));
-    const int h = std::max(1, static_cast<int>(height()));
+    // Deck overview: compact rectified path — fast, stable, no multi-pass glow.
+    if (m_rectified && h <= 56) {
+        const int drawWidth = hasOverview
+            ? w
+            : std::clamp(
+                static_cast<int>(std::llround(
+                    (static_cast<double>(analyzedFrames) / static_cast<double>(totalExpected))
+                    * static_cast<double>(w))),
+                0, w);
+
+        if (m_frameCache.size() != QSize(w, h))
+            m_frameCache = QImage(w, h, QImage::Format_ARGB32_Premultiplied);
+        m_frameCache.fill(Qt::transparent);
+
+        QPainter cachePainter(&m_frameCache);
+        paintCompactOverview(&cachePainter, frames, std::max(1, drawWidth), w, h);
+        painter->drawImage(0, 0, m_frameCache);
+        return;
+    }
+
+    painter->fillRect(boundingRect(), Qt::transparent);
     const float baseline = m_rectified ? static_cast<float>(h - 1) : static_cast<float>(h) * 0.5f;
     const float maxBarH = m_rectified ? static_cast<float>(h - 1) : static_cast<float>(h) * 0.5f;
 

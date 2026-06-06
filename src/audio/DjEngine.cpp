@@ -7,6 +7,7 @@
 #include "library/LibraryDatabase.h"
 #include "library/TrackIdGenerator.h"
 #include "WaveformCache.h"
+#include "WaveformAnalyzer.h"
 #include <QUrl>
 #include <QDebug>
 #include <QFile>
@@ -3612,6 +3613,33 @@ void DjEngine::loadTrack(const QString& rawPath)
             delete reader;
             return;
         }
+
+        // Waveform cache + instant overview must finish BEFORE the transport reader
+        // is handed to the main thread — sharing one reader across threads corrupts
+        // JUCE's internal read state and has caused segfaults on load.
+        WaveformCache::Payload cache;
+        bool wfLoaded = WaveformCache::loadForFile(rawPath, pps, &cache)
+                        && !cache.waveform.isEmpty()
+                        && !cache.rgb.isEmpty();
+        if (wfLoaded) {
+            const int expected = cache.totalExpected > 0 ? cache.totalExpected : cache.waveform.size();
+            wfLoaded = expected > 0
+                       && cache.waveform.size() >= static_cast<int>(expected * 0.98)
+                       && cache.rgb.size()      >= static_cast<int>(expected * 0.98);
+        }
+
+        QVector<TrackData::RgbWaveformFrame> instantOvr;
+        int instantExpected = 0;
+        if (!wfLoaded) {
+            if (auto* ovrReader = formatManager.createReaderFor(file)) {
+                instantOvr = WaveformAnalyzer::buildInstantOverview(ovrReader);
+                const double durationSec =
+                    static_cast<double>(ovrReader->lengthInSamples) / ovrReader->sampleRate;
+                instantExpected = static_cast<int>(durationSec * pps);
+                delete ovrReader;
+            }
+        }
+
         QMetaObject::invokeMethod(this,
             [this, gen, reader, directReader, file, rawPath, analysisState]() mutable
             {
@@ -3639,51 +3667,11 @@ void DjEngine::loadTrack(const QString& rawPath)
             },
             Qt::QueuedConnection);
 
-        // Waveform work has first priority after playback is attached.  Cover art
-        // and cue scanning are useful, but they must never delay the first visible
-        // waveform chunk for long files or mixtapes.
-        WaveformCache::Payload cache;
-        bool wfLoaded = WaveformCache::loadForFile(rawPath, pps, &cache)
-                        && !cache.waveform.isEmpty()
-                        && !cache.rgb.isEmpty();
-        if (wfLoaded) {
-            const int expected = cache.totalExpected > 0 ? cache.totalExpected : cache.waveform.size();
-            wfLoaded = expected > 0
-                       && cache.waveform.size() >= static_cast<int>(expected * 0.98)
-                       && cache.rgb.size()      >= static_cast<int>(expected * 0.98);
-        }
-
-        // Pre-downsample the full RGB data to at most kOverviewBins bins so the
-        // overview waveform's paint() stays O(kOverviewBins) instead of O(total_frames).
-        // Takes the max of each band per bin so transient peaks are preserved.
-        static constexpr int kOverviewBins = 4096;
-        QVector<TrackData::RgbWaveformFrame> overview;
-        if (wfLoaded && !cache.rgb.isEmpty()) {
-            const int total  = cache.rgb.size();
-            const int factor = std::max(1, (total + kOverviewBins - 1) / kOverviewBins);
-            overview.reserve((total + factor - 1) / factor);
-            for (int i = 0; i < total; i += factor) {
-                const int end = std::min(i + factor, total);
-                float rms = 0.0f, low = 0.0f, lowMid = 0.0f, mid = 0.0f, high = 0.0f;
-                for (int j = i; j < end; ++j) {
-                    const auto& f = cache.rgb[j];
-                    rms    = std::max(rms,    f.rms);
-                    low    = std::max(low,    f.low);
-                    lowMid = std::max(lowMid, f.lowMid);
-                    mid    = std::max(mid,    f.mid);
-                    high   = std::max(high,   f.high);
-                }
-                TrackData::RgbWaveformFrame bin;
-                bin.rms = rms; bin.low = low; bin.lowMid = lowMid;
-                bin.mid = mid; bin.high = high;
-                overview.push_back(bin);
-            }
-        }
-
         QMetaObject::invokeMethod(this,
             [this, gen, rawPath,
-             cache    = std::move(cache),
-             overview = std::move(overview),
+             cache           = std::move(cache),
+             instantOvr        = std::move(instantOvr),
+             instantExpected,
              analysisState,
              wfLoaded]() mutable
             {
@@ -3692,8 +3680,9 @@ void DjEngine::loadTrack(const QString& rawPath)
 
                 // Defer bulk waveform hand-off so library/deck UI can process input first.
                 QTimer::singleShot(0, this, [this, gen, rawPath,
-                                             cache    = std::move(cache),
-                                             overview = std::move(overview),
+                                             cache           = std::move(cache),
+                                             instantOvr        = std::move(instantOvr),
+                                             instantExpected,
                                              analysisState,
                                              wfLoaded]() mutable
                 {
@@ -3707,9 +3696,11 @@ void DjEngine::loadTrack(const QString& rawPath)
                         m_trackData->replaceAllData(
                             std::move(cache.waveform), std::max(0.001f, cache.globalMaxPeak));
                         m_trackData->setRgbWaveformData(std::move(cache.rgb));
-                        m_trackData->setOverviewRgbData(std::move(overview));
                         if (!cache.peakMip.isEmpty())
                             m_trackData->setPeakMipData(std::move(cache.peakMip));
+                    } else if (!instantOvr.isEmpty()) {
+                        m_trackData->setTotalExpected(std::max(1, instantExpected));
+                        m_trackData->setOverviewRgbData(std::move(instantOvr));
                     }
 
                     const bool hasDbAnalysis = analysisState->load(std::memory_order_relaxed);

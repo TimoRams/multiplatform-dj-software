@@ -256,6 +256,7 @@ qt_add_qml_module(${PROJECT_NAME}
         src/qml/BeatgridEditorPanel.qml
         src/qml/OverallWaveform.qml
         src/qml/SegmentBar.qml
+        src/qml/AnalysisProgressBar.qml
         src/qml/DeckControl.qml
         src/qml/TrackInfoDisplay.qml
         src/qml/Library.qml

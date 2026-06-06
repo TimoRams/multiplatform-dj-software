@@ -644,11 +644,10 @@ Item {
                 stripeColor: "#0d0d0d"
             }
 
-            SegmentBar {
+            AnalysisProgressBar {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 4
-                segments: deck.engine ? deck.engine.currentSegments : []
-                totalTrackDuration: deck.engine ? deck.engine.trackDurationSec : 0
+                engine: deck.engine
             }
 
             Rectangle { Layout.fillWidth: true; height: 1; color: "#1c1c1c" }

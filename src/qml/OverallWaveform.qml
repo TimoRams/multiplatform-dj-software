@@ -52,12 +52,9 @@ Item {
 
             RgbWaveformItem {
                 id: overview
-                width: parent.width
-                height: parent.height * 2
-                x: 0
-                y: 0
+                anchors.fill: parent
                 engine: root.engine
-                rectified: false
+                rectified: true
             }
         }
 
