@@ -676,7 +676,7 @@ private:
     double m_scratchTargetRate = 0.0;
     double m_scratchSmoothedRate = 0.0;
     bool   m_scratchReleaseActive = false;
-    bool   m_scratchReleaseOverspeeding = false;
+    bool   m_scratchReleaseSawAboveTarget = false;
     double m_scratchReleaseTargetRate = 0.0;
     double m_scratchReleaseTauSec = ScratchConfig::kReleaseToPlayTauSec;
     double m_scratchAccumulatedMoveSec = 0.0;
