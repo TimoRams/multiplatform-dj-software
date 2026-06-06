@@ -4137,10 +4137,32 @@ void DjEngine::tickScratchPhysics()
         if (std::abs(targetRate) < 0.35)
             tau = std::max(tau, 0.130);
     } else {
+        if (m_scrubWasPlaying) {
+            const double transportDir = m_scrubSavedReverseState ? -1.0 : 1.0;
+            m_scratchReleaseTargetRate = transportDir * std::max(0.01, std::abs(getTempoRatio()));
+        }
         targetRate = m_scratchReleaseTargetRate;
         tau = m_scratchReleaseTauSec;
-        if (std::abs(m_scratchSmoothedRate) < 0.40)
+
+        const double cur = m_scratchSmoothedRate;
+        const double tgt = targetRate;
+        if (m_scrubWasPlaying && std::abs(tgt) > 0.001) {
+            const bool opposing = (cur * tgt) < 0.0;
+            const bool belowTarget = std::abs(cur) < std::abs(tgt) - ScratchConfig::kReleaseSettleThreshold;
+            const double absCur = std::abs(cur);
+            if (opposing && absCur > 0.22) {
+                // Let a real backspin coast backward before curving toward deck tempo.
+                tau = std::max(tau, 0.40 + absCur * 0.09);
+            } else if (opposing) {
+                // Near the zero crossing: re-lock without stalling below target tempo.
+                tau = std::min(tau, 0.22 + absCur * 0.14);
+            } else if (belowTarget) {
+                // Already forward again — catch up to live deck tempo.
+                tau = std::min(tau, 0.14 + absCur * 0.09);
+            }
+        } else if (std::abs(cur) < 0.40) {
             tau = std::max(tau, 0.28);
+        }
     }
 
     const double alpha = 1.0 - std::exp(-dtSec / std::max(0.001, tau));
@@ -4194,8 +4216,12 @@ void DjEngine::tickScratchPhysics()
         && targetDistance > (ScratchConfig::kAbsoluteSnapDistanceSec * 1.5);
     const bool allowStopForIdleGrab = !m_isScrubbing
         || ((hasIdleSample && idleSec > 0.040) && !absoluteMotionPending);
+    const bool releaseGlideToPlay = m_scratchReleaseActive && m_scrubWasPlaying
+        && std::abs(m_scratchReleaseTargetRate) > ScratchConfig::kControlResumeThresholdRate;
 
-    if (absRate < ScratchConfig::kControlStopThresholdRate && allowStopForIdleGrab) {
+    if (absRate < ScratchConfig::kControlStopThresholdRate
+            && allowStopForIdleGrab
+            && !releaseGlideToPlay) {
         if (transportSource.isPlaying())
             transportSource.stop();
     } else if ((absRate > ScratchConfig::kControlResumeThresholdRate || absoluteMotionPending)
@@ -5454,6 +5480,8 @@ void DjEngine::resumeAfterScrub()
         keepLargerMagnitude(m_scratchInputFilteredRate);
         keepLargerMagnitude(m_scratchLastInputRate);
         keepLargerMagnitude(m_scratchAbsoluteFollowVelocity);
+        releaseMagnitude = std::max(releaseMagnitude, std::abs(m_scratchAbsoluteFollowVelocity) * 1.10);
+        releaseMagnitude = std::max(releaseMagnitude, std::abs(m_scratchInputFilteredRate) * 1.06);
         if (std::abs(m_scratchLastInputRate) >= 0.15)
             releaseDirection = m_scratchLastInputRate < 0.0 ? -1.0 : 1.0;
         else if (std::abs(m_scratchInputFilteredRate) >= 0.15)
@@ -5499,9 +5527,15 @@ void DjEngine::resumeAfterScrub()
         return;
     }
 
-    // Keep current fling velocity and glide back to normal transport speed.
-    // If the deck was paused before scratch, glide to a full stop instead.
-    constexpr double kMinReleaseKickRate = 0.06;
+    const double releaseBaseRate = std::max(0.01, std::abs(getTempoRatio()));
+    const double transportDirection = m_scrubSavedReverseState ? -1.0 : 1.0;
+    m_scratchReleaseTargetRate = m_scrubWasPlaying ? (transportDirection * releaseBaseRate) : 0.0;
+    const bool releaseAgainstTransport = m_scrubWasPlaying
+        && (releaseStartRate * transportDirection) < 0.0;
+
+    // Keep current fling velocity (including backward backspin inertia) and glide
+    // back to normal transport speed. If the deck was paused, glide to a stop.
+    constexpr double kMinReleaseKickRate = 0.08;
     m_scratchSmoothedRate = releaseStartRate;
     if (std::abs(m_scratchSmoothedRate) < kMinReleaseKickRate) {
         const double seedDir = (std::abs(releaseStartRate) > 0.001)
@@ -5514,18 +5548,14 @@ void DjEngine::resumeAfterScrub()
         m_scratchDirectionSign = m_scratchSmoothedRate < 0.0 ? -1.0 : 1.0;
     if (reverseWrapSource)
         reverseWrapSource->setReverse(m_scratchDirectionSign < 0.0);
-    const double releaseBaseRate = std::max(0.01, std::abs(getTempoRatio()));
-    const double transportDirection = m_scrubSavedReverseState ? -1.0 : 1.0;
-    m_scratchReleaseTargetRate = m_scrubWasPlaying ? (transportDirection * releaseBaseRate) : 0.0;
+
     const double releaseSpeed = std::abs(m_scratchSmoothedRate);
-    const bool releaseAgainstTransport = m_scrubWasPlaying
-        && (m_scratchSmoothedRate * transportDirection) < 0.0;
     if (!m_scrubWasPlaying) {
-        m_scratchReleaseTauSec = std::clamp(0.50 + releaseSpeed * 0.10, 0.50, 1.20);
+        m_scratchReleaseTauSec = std::clamp(0.45 + releaseSpeed * 0.10, 0.45, 1.10);
     } else if (releaseAgainstTransport) {
-        m_scratchReleaseTauSec = std::clamp(0.70 + releaseSpeed * 0.14, 0.70, 1.60);
+        m_scratchReleaseTauSec = std::clamp(0.42 + releaseSpeed * 0.08, 0.42, 0.95);
     } else {
-        m_scratchReleaseTauSec = std::clamp(0.45 + releaseSpeed * 0.12, 0.45, 1.40);
+        m_scratchReleaseTauSec = std::clamp(0.30 + releaseSpeed * 0.07, 0.30, 0.85);
     }
     m_scratchReleaseActive = true;
     m_lastScrubInputClock.restart();
