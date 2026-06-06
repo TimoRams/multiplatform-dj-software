@@ -68,8 +68,8 @@ private:
     bool sendXx35(int deck, int entryCount);
     bool sendXx36Window(int deck, const QByteArray& waveform, int entry);
     bool sendXx2f(int deck);
-    bool sendXx27(int deck, double wallElapsedSeconds, double durationSeconds, double bpm, bool moving);
-    double smoothWallElapsedSec(int deck, double fileElapsedSec, double rateRatio, bool playing);
+    bool sendXx27(int deck, double fileElapsedSeconds, double durationSeconds, double bpm, bool moving);
+    double smoothFileElapsedSec(int deck, double fileElapsedSec, double rateRatio, bool playing);
     void resetDisplayInterp(int deck);
     bool clearDeckDisplay(int deck);
 
@@ -121,7 +121,7 @@ private:
         double lastFilePos = -1.0;
         qint64 lastPosTimeMs = 0;
         qint64 lastNewPosTimeMs = 0;
-        double lastSmoothWallMs = 0.0;
+        double lastSmoothFileMs = 0.0;
         bool initialized = false;
     };
     std::array<DeckDisplayInterp, 5> m_displayInterp{};

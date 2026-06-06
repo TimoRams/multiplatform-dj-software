@@ -817,71 +817,71 @@ void DDJFLX10Controller::resetDisplayInterp(int deck)
     m_lastXx27Packet[deck].clear();
 }
 
-double DDJFLX10Controller::smoothWallElapsedSec(int deck, double fileElapsedSec, double rateRatio, bool playing)
+double DDJFLX10Controller::smoothFileElapsedSec(int deck, double fileElapsedSec, double rateRatio, bool playing)
 {
     constexpr qint64 kScrubHoldMs = 200;
     constexpr qint64 kRunawayClampMs = 500;
 
     if (deck < 0 || deck >= static_cast<int>(m_displayInterp.size()))
-        return fileElapsedSec / std::max(0.01, rateRatio);
+        return fileElapsedSec;
 
     auto& state = m_displayInterp[deck];
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     const double safeRate = std::max(0.01, rateRatio);
-    const double wallMs = (fileElapsedSec / safeRate) * 1000.0;
+    const double fileMs = fileElapsedSec * 1000.0;
 
     if (!state.initialized) {
         state.initialized = true;
         state.lastFilePos = fileElapsedSec;
         state.lastPosTimeMs = nowMs;
         state.lastNewPosTimeMs = nowMs;
-        state.lastSmoothWallMs = wallMs;
-        return wallMs / 1000.0;
+        state.lastSmoothFileMs = fileMs;
+        return fileElapsedSec;
     }
 
     if (!playing) {
         state.lastFilePos = fileElapsedSec;
         state.lastPosTimeMs = nowMs;
         state.lastNewPosTimeMs = nowMs;
-        state.lastSmoothWallMs = wallMs;
-        return wallMs / 1000.0;
+        state.lastSmoothFileMs = fileMs;
+        return fileElapsedSec;
     }
 
     if (std::abs(fileElapsedSec - state.lastFilePos) > 0.005) {
         state.lastFilePos = fileElapsedSec;
         state.lastPosTimeMs = nowMs;
         state.lastNewPosTimeMs = nowMs;
-        state.lastSmoothWallMs = wallMs;
+        state.lastSmoothFileMs = fileMs;
     } else if (fileElapsedSec != state.lastFilePos) {
         const double posDelta = fileElapsedSec - state.lastFilePos;
         state.lastFilePos = fileElapsedSec;
         state.lastNewPosTimeMs = nowMs;
         if (posDelta < 0.0) {
-            state.lastSmoothWallMs = wallMs;
+            state.lastSmoothFileMs = fileMs;
             state.lastPosTimeMs = nowMs;
         } else {
-            const double extrapolatedMs = state.lastSmoothWallMs
-                + static_cast<double>(nowMs - state.lastPosTimeMs);
-            if (wallMs > extrapolatedMs) {
-                state.lastSmoothWallMs = wallMs;
+            const double extrapolatedMs = state.lastSmoothFileMs
+                + static_cast<double>(nowMs - state.lastPosTimeMs) * safeRate;
+            if (fileMs > extrapolatedMs) {
+                state.lastSmoothFileMs = fileMs;
                 state.lastPosTimeMs = nowMs;
             }
         }
     }
 
     const qint64 msSince = nowMs - state.lastPosTimeMs;
-    double smoothMs = state.lastSmoothWallMs + static_cast<double>(msSince);
+    double smoothMs = state.lastSmoothFileMs + static_cast<double>(msSince) * safeRate;
 
     if (nowMs - state.lastNewPosTimeMs > kScrubHoldMs) {
-        state.lastSmoothWallMs = wallMs;
+        state.lastSmoothFileMs = fileMs;
         state.lastPosTimeMs = nowMs;
-        smoothMs = wallMs;
+        smoothMs = fileMs;
     } else {
-        const double maxMs = wallMs + static_cast<double>(kRunawayClampMs);
+        const double maxMs = fileMs + static_cast<double>(kRunawayClampMs) * safeRate;
         if (smoothMs > maxMs) {
-            state.lastSmoothWallMs = wallMs;
+            state.lastSmoothFileMs = fileMs;
             state.lastPosTimeMs = nowMs;
-            smoothMs = wallMs;
+            smoothMs = fileMs;
         }
     }
 
@@ -905,8 +905,8 @@ void DDJFLX10Controller::sendStateTick()
         const bool moving = engine ? engine->isPlaying() : true;
         const double rateRatio = engine ? engine->getTempoRatio() : 1.0;
         const double fileClamped = std::clamp(fileElapsed, 0.0, duration);
-        const double wallElapsed = smoothWallElapsedSec(deck, fileClamped, rateRatio, moving);
-        sendXx27(deck, wallElapsed, duration, deckBpm(deck), moving);
+        const double smoothFileElapsed = smoothFileElapsedSec(deck, fileClamped, rateRatio, moving);
+        sendXx27(deck, smoothFileElapsed, duration, deckBpm(deck), moving);
         updateJogRingWarning(deck, fileClamped, duration, moving);
     }
 }
@@ -1154,7 +1154,7 @@ bool DDJFLX10Controller::clearDeckDisplay(int deck)
     return ok;
 }
 
-bool DDJFLX10Controller::sendXx27(int deck, double wallElapsedSeconds, double durationSeconds, double bpm, bool moving)
+bool DDJFLX10Controller::sendXx27(int deck, double fileElapsedSeconds, double durationSeconds, double bpm, bool moving)
 {
     Q_UNUSED(moving);
 
@@ -1168,12 +1168,14 @@ bool DDJFLX10Controller::sendXx27(int deck, double wallElapsedSeconds, double du
 
     const double tempoPercent = std::clamp(deckTempoPercent(deck), -100.0, 100.0);
     const double rateRatio = std::max(0.01, 1.0 + tempoPercent / 100.0);
-    wallElapsedSeconds = std::max(0.0, wallElapsedSeconds);
+    fileElapsedSeconds = std::max(0.0, fileElapsedSeconds);
     durationSeconds = std::max(1.0, durationSeconds);
+    fileElapsedSeconds = std::clamp(fileElapsedSeconds, 0.0, durationSeconds);
 
-    // Serato xx27: bytes 5–8 are wall-elapsed time; sub-second is MILLISECONDS
-    // (0..999), not 1024ths — values >999 cause a once-per-second display snap.
-    const double totalSec = wallElapsedSeconds;
+    // Needle/handle position is FILE time (track position). Tempo stretch is
+    // communicated via bytes 16–17 and wall-time remaining in bytes 9–12 only.
+    // Sub-second field is MILLISECONDS (0..999), not 1024ths.
+    const double totalSec = fileElapsedSeconds;
     const int secInt = static_cast<int>(std::floor(totalSec));
     const double sub = totalSec - static_cast<double>(secInt);
     int subMs = static_cast<int>(std::floor(sub * 1000.0));
