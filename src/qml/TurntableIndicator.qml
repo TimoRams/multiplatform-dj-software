@@ -28,7 +28,9 @@ Item {
 
     function updateRotation() {
         if (!root.engine) { ringRotator.rotation = 0; return }
-        var playheadSec = root.engine.getPlayheadPositionAtomic()
+        var playheadSec = root.engine.isPlaying
+            ? root.engine.getVisualPosition()
+            : root.engine.getPlayheadPositionAtomic()
         var angle = (playheadSec * root.degreesPerSecond) % 360.0
         if (angle < 0) angle += 360.0
         ringRotator.rotation = angle

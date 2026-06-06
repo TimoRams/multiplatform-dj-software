@@ -99,7 +99,12 @@ double validTrackPosition(const DjEngine* engine, double duration)
     if (!engine)
         return 0.0;
 
-    return std::clamp(engine->getPlayheadPositionAtomic(), 0.0, duration);
+    // Match the on-screen turntable: interpolate between 4 ms transport snapshots
+    // while playing so the HID platter ring does not stutter on coarse updates.
+    const double pos = engine->isPlaying()
+        ? engine->getVisualPosition()
+        : engine->getPlayheadPositionAtomic();
+    return std::clamp(pos, 0.0, duration);
 }
 
 QByteArray packet()
@@ -276,7 +281,6 @@ bool DDJFLX10Controller::start()
     m_clockStartMs = QDateTime::currentMSecsSinceEpoch();
     refreshDeckFromEngine(1);
     refreshDeckFromEngine(2);
-    m_nextStateDeck = 1;
     m_stateTimer.start(10);
     m_waveformTimer.start(500);
     if (sequencerMidiReady || !m_midiPort.isEmpty())
@@ -829,23 +833,20 @@ void DDJFLX10Controller::sendStateTick()
     if (!m_connected)
         return;
 
-    if (m_waveforms[m_nextStateDeck].isEmpty()) {
-        m_nextStateDeck = (m_nextStateDeck == 1) ? 2 : 1;
-        return;
-    }
+    for (int deck = 1; deck <= 2; ++deck) {
+        if (m_waveforms[deck].isEmpty())
+            continue;
 
-    const DjEngine* engine = deckEngine(m_nextStateDeck);
-    const double duration = deckDisplayDuration(m_nextStateDeck);
-    const double elapsed = engine ? deckDisplayPosition(m_nextStateDeck)
-                                  : std::fmod((QDateTime::currentMSecsSinceEpoch() - m_clockStartMs) / 1000.0, duration);
-    const bool moving = engine ? engine->isPlaying() : true;
-    sendXx27(m_nextStateDeck,
-             std::clamp(elapsed, 0.0, duration),
-             duration,
-             deckBpm(m_nextStateDeck),
-             moving);
-    updateJogRingWarning(m_nextStateDeck, std::clamp(elapsed, 0.0, duration), duration, moving);
-    m_nextStateDeck = (m_nextStateDeck == 1) ? 2 : 1;
+        const DjEngine* engine = deckEngine(deck);
+        const double duration = deckDisplayDuration(deck);
+        const double elapsed = engine ? deckDisplayPosition(deck)
+                                      : std::fmod((QDateTime::currentMSecsSinceEpoch() - m_clockStartMs) / 1000.0,
+                                                  duration);
+        const bool moving = engine ? engine->isPlaying() : true;
+        const double clamped = std::clamp(elapsed, 0.0, duration);
+        sendXx27(deck, clamped, duration, deckBpm(deck), moving);
+        updateJogRingWarning(deck, clamped, duration, moving);
+    }
 }
 
 void DDJFLX10Controller::sendWaveformTick()
@@ -1134,12 +1135,23 @@ bool DDJFLX10Controller::sendXx27(int deck, double elapsedSeconds, double durati
     put8(p, 17, (tempoWire >> 8) & 0xFF);
     put8(p, 20, 0x0E);
 
-    const int secInt = totalMs / 1000;
-    const int subMs = totalMs % 1000;
-    const int sub1024 = std::min(1023, (subMs * 1024) / 1000);
-    const int subsecTicks = secInt * 1024 + sub1024;
-    put8(p, 21, (subsecTicks * 2) & 0xFF);
-    put8(p, 22, static_cast<int>(std::floor(subsecTicks / 123.2)) % 15);
+    // Platter ring phase at 33⅓ RPM (1.8 s/rev at 100 % pitch). Bytes 21–22 are a
+    // 15×256-step encoder; the old subsecTicks split used misaligned wrap periods
+    // (~128 vs ~123 ticks) which made the on-deck cursor hunt around ~1 o'clock.
+    constexpr double kVinylRevolutionSeconds = 60.0 / (100.0 / 3.0);
+    constexpr int kPlatterFineSteps = 256;
+    constexpr int kPlatterCoarseSectors = 15;
+    constexpr int kPlatterTotalSteps = kPlatterFineSteps * kPlatterCoarseSectors;
+
+    double revolutionPhase = std::fmod(elapsedSeconds * rateRatio / kVinylRevolutionSeconds, 1.0);
+    if (revolutionPhase < 0.0)
+        revolutionPhase += 1.0;
+
+    const int platterTicks = std::min(
+        kPlatterTotalSteps - 1,
+        static_cast<int>(std::floor(revolutionPhase * static_cast<double>(kPlatterTotalSteps))));
+    put8(p, 21, platterTicks & 0xFF);
+    put8(p, 22, std::min(kPlatterCoarseSectors - 1, platterTicks / kPlatterFineSteps));
 
     put8(p, 25, 0x80);
     put8(p, 29, deckKeyByte(deck));

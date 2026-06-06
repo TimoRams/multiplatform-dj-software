@@ -115,7 +115,6 @@ private:
     std::array<bool, 5> m_jogRingWarningActive = {false, false, false, false, false};
     std::array<bool, 5> m_jogRingLit = {true, true, true, true, true};
     qint64 m_clockStartMs = 0;
-    int m_nextStateDeck = 1;
     bool m_connected = false;
     DjEngine* m_deckA = nullptr;
     DjEngine* m_deckB = nullptr;
