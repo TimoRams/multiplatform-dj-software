@@ -358,8 +358,16 @@ public:
     // Update only the BPM value (used by manual x2 / ÷2 correction).
     // Does NOT rebuild the beat grid — the caller is responsible for that.
     void setBpm(double bpm) {
-        QMutexLocker locker(&m_mutex);
-        m_bpm = bpm;
+        bool changed = false;
+        {
+            QMutexLocker locker(&m_mutex);
+            if (m_bpm != bpm) {
+                m_bpm = bpm;
+                changed = true;
+            }
+        }
+        if (changed)
+            emit bpmAnalyzed();
     }
 
     qint64 getFirstBeatSample() const {

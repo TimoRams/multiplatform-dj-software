@@ -74,12 +74,6 @@ Rectangle {
         function onBeatgridLockedChanged() {
             if (root.engine) lockBox.checked = root.engine.beatgridLocked
         }
-        function onTempoChanged() {
-            if (root.engine && root.engine.trackData && bpmField) {
-                var bpm = root.engine.trackData.bpm
-                bpmField.text = bpm > 0 ? bpm.toFixed(1) : ""
-            }
-        }
     }
 
     Rectangle {

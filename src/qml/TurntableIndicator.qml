@@ -28,9 +28,9 @@ Item {
 
     function updateRotation() {
         if (!root.engine) { ringRotator.rotation = 0; return }
-        var playheadSec = root.engine.isPlaying
-            ? root.engine.getVisualPosition()
-            : root.engine.getPlayheadPositionAtomic()
+        // 33⅓ RPM: one revolution every 1.8 s of track time at 100 % pitch.
+        // Transport position already advances faster/slower with tempo — no extra scaling.
+        var playheadSec = root.engine.getPlayheadPositionAtomic()
         var angle = (playheadSec * root.degreesPerSecond) % 360.0
         if (angle < 0) angle += 360.0
         ringRotator.rotation = angle

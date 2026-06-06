@@ -99,12 +99,7 @@ double validTrackPosition(const DjEngine* engine, double duration)
     if (!engine)
         return 0.0;
 
-    // Match the on-screen turntable: interpolate between 4 ms transport snapshots
-    // while playing so the HID platter ring does not stutter on coarse updates.
-    const double pos = engine->isPlaying()
-        ? engine->getVisualPosition()
-        : engine->getPlayheadPositionAtomic();
-    return std::clamp(pos, 0.0, duration);
+    return std::clamp(engine->getPlayheadPositionAtomic(), 0.0, duration);
 }
 
 QByteArray packet()
@@ -405,24 +400,8 @@ void DDJFLX10Controller::connectDeckSignals()
                 sendXx39(deck);
             }
         });
-        m_tempoConnections[deck] = connect(engine, &DjEngine::tempoChanged, this, [this, deck] {
-            if (!m_connected || m_waveforms[deck].isEmpty())
-                return;
-            sendXx27(deck,
-                     deckDisplayPosition(deck),
-                     deckDisplayDuration(deck),
-                     deckBpm(deck),
-                     deckEngine(deck) ? deckEngine(deck)->isPlaying() : false);
-        });
-        m_tempoRangeConnections[deck] = connect(engine, &DjEngine::tempoRangeChanged, this, [this, deck] {
-            if (!m_connected || m_waveforms[deck].isEmpty())
-                return;
-            sendXx27(deck,
-                     deckDisplayPosition(deck),
-                     deckDisplayDuration(deck),
-                     deckBpm(deck),
-                     deckEngine(deck) ? deckEngine(deck)->isPlaying() : false);
-        });
+        // Tempo bytes in 0x27 are refreshed by sendStateTick(); avoid an extra
+        // immediate packet here — it used to make the platter cursor jump wildly.
 
         if (TrackData* trackData = engine->getTrackData()) {
             m_rgbWaveformConnections[deck] = connect(trackData, &TrackData::rgbWaveformUpdated, this, [this, deck] {
@@ -1135,23 +1114,22 @@ bool DDJFLX10Controller::sendXx27(int deck, double elapsedSeconds, double durati
     put8(p, 17, (tempoWire >> 8) & 0xFF);
     put8(p, 20, 0x0E);
 
-    // Platter ring phase at 33⅓ RPM (1.8 s/rev at 100 % pitch). Bytes 21–22 are a
-    // 15×256-step encoder; the old subsecTicks split used misaligned wrap periods
-    // (~128 vs ~123 ticks) which made the on-deck cursor hunt around ~1 o'clock.
+    // Platter ring phase at 33⅓ RPM (1.8 s/rev at 100 % pitch). Keep Pioneer's
+    // original byte layout but derive both bytes from the same in-revolution tick
+    // so they stay aligned through the 12-o'clock wrap. Tempo is in bytes 16–17;
+    // track-time advance already reflects pitch — do not scale phase by rateRatio.
     constexpr double kVinylRevolutionSeconds = 60.0 / (100.0 / 3.0);
-    constexpr int kPlatterFineSteps = 256;
-    constexpr int kPlatterCoarseSectors = 15;
-    constexpr int kPlatterTotalSteps = kPlatterFineSteps * kPlatterCoarseSectors;
+    const int ticksPerRevolution = static_cast<int>(std::lround(kVinylRevolutionSeconds * 1024.0));
 
-    double revolutionPhase = std::fmod(elapsedSeconds * rateRatio / kVinylRevolutionSeconds, 1.0);
-    if (revolutionPhase < 0.0)
-        revolutionPhase += 1.0;
-
-    const int platterTicks = std::min(
-        kPlatterTotalSteps - 1,
-        static_cast<int>(std::floor(revolutionPhase * static_cast<double>(kPlatterTotalSteps))));
-    put8(p, 21, platterTicks & 0xFF);
-    put8(p, 22, std::min(kPlatterCoarseSectors - 1, platterTicks / kPlatterFineSteps));
+    const int sub1024 = std::min(1023, (ms * 1024) / 1000);
+    const int subsecTicks = (totalMs / 1000) * 1024 + sub1024;
+    const int revolutionTick = ticksPerRevolution > 0
+        ? (subsecTicks % ticksPerRevolution + ticksPerRevolution) % ticksPerRevolution
+        : 0;
+    put8(p, 21, (revolutionTick * 2) & 0xFF);
+    put8(p, 22, ticksPerRevolution > 0
+        ? (revolutionTick * 15 / ticksPerRevolution) % 15
+        : 0);
 
     put8(p, 25, 0x80);
     put8(p, 29, deckKeyByte(deck));
