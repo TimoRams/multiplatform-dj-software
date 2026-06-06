@@ -137,7 +137,7 @@ public:
     Q_INVOKABLE void setScrubPosition(double positionSeconds);
     // Generic scratch input: signed playback-rate target where 1.0 = normal forward speed.
     // This decouples UI deltas from the audio scratch model (usable for MIDI/HID jog ticks).
-    Q_INVOKABLE void pushScratchVelocityTick(double velocityRate);
+    Q_INVOKABLE void pushScratchVelocityTick(double velocityRate, bool directResponse = false);
     Q_INVOKABLE void resumeAfterScrub();
     Q_INVOKABLE void applyScratchReleaseJog(double deltaSeconds);
     Q_INVOKABLE void finishScrubWithoutInertia();
