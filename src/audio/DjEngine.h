@@ -131,7 +131,7 @@ public:
     // resumeAfterScrub() restores pre-scratch transport state.
     Q_INVOKABLE void pauseForScrub();
     Q_INVOKABLE void scrubBy(double pixelDelta);
-    Q_INVOKABLE void scratchBySeconds(double deltaSeconds);
+    Q_INVOKABLE void scratchBySeconds(double deltaSeconds, bool vinylOneToOnePosition = false);
     // Absolute scrub positioning for 1:1 direct manipulation.
     Q_INVOKABLE void setScrubPosition(double positionSeconds);
     // Generic scratch input: signed playback-rate target where 1.0 = normal forward speed.
@@ -684,6 +684,9 @@ private:
     double m_scratchDirectionSign = 1.0;
     bool   m_scrubLoopLockedToActiveLoop = false;
     bool   m_scratchAbsolutePositionControl = false;
+    bool   m_scratchHardwareDeltaControl = false;
+    double m_scratchJogOriginSec = 0.0;
+    double m_scratchJogAccumulatedSec = 0.0;
     double m_scratchAbsoluteTargetPosition = 0.0;
     double m_scratchAbsoluteFollowVelocity = 0.0;
     bool   m_scrubSavedReverseState = false;

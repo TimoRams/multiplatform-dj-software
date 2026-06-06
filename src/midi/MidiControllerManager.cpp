@@ -30,6 +30,11 @@ const QString kBuiltInFlx10MappingResource = QStringLiteral(":/controllers/mappi
 constexpr double kFlx10ScratchIntervalsPerRevolution = 1500.0;
 constexpr double kVinylRpm = 33.0 + 1.0 / 3.0;
 
+double flx10ScratchDeltaSec(double ticks)
+{
+    return ticks * (60.0 / kVinylRpm) / kFlx10ScratchIntervalsPerRevolution;
+}
+
 bool isBuiltInFlx10Mapping(const QString& mappingName)
 {
     return mappingName == kBuiltInFlx10MappingLabel
@@ -3547,21 +3552,22 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                 m_jogBReleaseTimer.start();
             }
         }
-        // Jog wheels: the FLX10 switches streams on release. CC 0x22 is the
-        // touched top-platter stream; CC 0x21 is rim movement and also the
-        // free-spinning stream after touch release. During touch or the short
-        // post-release window, both are real platter deltas. Outside that
-        // window, CC 0x21 becomes normal pitch-bend/nudge again.
+        // Jog wheels mirror the Mixxx FLX10 mapping: CC 0x22 is the touched
+        // top-platter stream; CC 0x21 is rim / post-release free spin. While the
+        // finger is down only CC 0x22 is used for scratch — routing both would
+        // double the travel and spin the UI handle too fast.
         else if (id == "deckA_jog_nudge") {
             if (a) {
-                if (m_jogATouched || a->isScrubbing() || m_jogAReleasedRecently) {
-                    if (!m_jogATouched && !a->isScrubbing() && std::abs(value) <= 0.0f)
+                if (m_jogATouched)
+                    return;
+                if (m_jogAReleasedRecently || a->isScrubbing()) {
+                    if (!a->isScrubbing() && std::abs(value) <= 0.0f)
                         return;
                     if (!a->isScrubbing())
                         a->pauseForScrub();
-                    if (!m_jogATouched && std::abs(value) > 0.0f)
+                    if (std::abs(value) > 0.0f)
                         m_jogAReleaseTimer.start();
-                    a->scratchBySeconds(static_cast<double>(value) * (60.0 / kVinylRpm) / kFlx10ScratchIntervalsPerRevolution);
+                    a->scratchBySeconds(flx10ScratchDeltaSec(static_cast<double>(value)), true);
                 } else {
                     a->applyJogNudge(static_cast<double>(value));
                 }
@@ -3569,43 +3575,37 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
         }
         else if (id == "deckB_jog_nudge") {
             if (b) {
-                if (m_jogBTouched || b->isScrubbing() || m_jogBReleasedRecently) {
-                    if (!m_jogBTouched && !b->isScrubbing() && std::abs(value) <= 0.0f)
+                if (m_jogBTouched)
+                    return;
+                if (m_jogBReleasedRecently || b->isScrubbing()) {
+                    if (!b->isScrubbing() && std::abs(value) <= 0.0f)
                         return;
                     if (!b->isScrubbing())
                         b->pauseForScrub();
-                    if (!m_jogBTouched && std::abs(value) > 0.0f)
+                    if (std::abs(value) > 0.0f)
                         m_jogBReleaseTimer.start();
-                    b->scratchBySeconds(static_cast<double>(value) * (60.0 / kVinylRpm) / kFlx10ScratchIntervalsPerRevolution);
+                    b->scratchBySeconds(flx10ScratchDeltaSec(static_cast<double>(value)), true);
                 } else {
                     b->applyJogNudge(static_cast<double>(value));
                 }
             }
         }
         else if (id == "deckA_jog_scratch") {
-            if (a && (m_jogATouched || a->isScrubbing() || m_jogAReleasedRecently)) {
-                if (!m_jogATouched && !a->isScrubbing() && std::abs(value) <= 0.0f)
-                    return;
+            if (a && m_jogATouched) {
                 if (!a->isScrubbing())
                     a->pauseForScrub();
-                if (!m_jogATouched && std::abs(value) > 0.0f)
-                    m_jogAReleaseTimer.start();
-                a->scratchBySeconds(static_cast<double>(value) * (60.0 / kVinylRpm) / kFlx10ScratchIntervalsPerRevolution);
+                a->scratchBySeconds(flx10ScratchDeltaSec(static_cast<double>(value)), true);
             }
         }
         else if (id == "deckB_jog_scratch") {
-            if (b && (m_jogBTouched || b->isScrubbing() || m_jogBReleasedRecently)) {
-                if (!m_jogBTouched && !b->isScrubbing() && std::abs(value) <= 0.0f)
-                    return;
+            if (b && m_jogBTouched) {
                 if (!b->isScrubbing())
                     b->pauseForScrub();
-                if (!m_jogBTouched && std::abs(value) > 0.0f)
-                    m_jogBReleaseTimer.start();
-                b->scratchBySeconds(static_cast<double>(value) * (60.0 / kVinylRpm) / kFlx10ScratchIntervalsPerRevolution);
+                b->scratchBySeconds(flx10ScratchDeltaSec(static_cast<double>(value)), true);
             }
         }
         else if (id == "deckA_jog_move") {
-            const double delta = static_cast<double>(value) * (60.0 / kVinylRpm) / kFlx10ScratchIntervalsPerRevolution;
+            const double delta = flx10ScratchDeltaSec(static_cast<double>(value));
             if (a) {
                 if (m_jogATouched || a->isScrubbing()) {
                     if (!a->isScrubbing())
@@ -3616,7 +3616,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                              << "touched:" << m_jogATouched
                              << "scrubbing:" << a->isScrubbing()
                              << "dispatch=scratchBySeconds";
-                    a->scratchBySeconds(delta);
+                    a->scratchBySeconds(delta, true);
                 } else {
                     qDebug() << "[MIDI ACTION] action=JogMove deck=A"
                              << "ticks:" << value
@@ -3628,7 +3628,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
             }
         }
         else if (id == "deckB_jog_move") {
-            const double delta = static_cast<double>(value) * (60.0 / kVinylRpm) / kFlx10ScratchIntervalsPerRevolution;
+            const double delta = flx10ScratchDeltaSec(static_cast<double>(value));
             if (b) {
                 if (m_jogBTouched || b->isScrubbing()) {
                     if (!b->isScrubbing())
@@ -3639,7 +3639,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                              << "touched:" << m_jogBTouched
                              << "scrubbing:" << b->isScrubbing()
                              << "dispatch=scratchBySeconds";
-                    b->scratchBySeconds(delta);
+                    b->scratchBySeconds(delta, true);
                 } else {
                     qDebug() << "[MIDI ACTION] action=JogMove deck=B"
                              << "ticks:" << value

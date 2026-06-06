@@ -4017,9 +4017,10 @@ void DjEngine::updateScrubPlayheadAnchor()
     if (m_scrubHoldPosition < 0.0 && transportSource.isPlaying())
         transportSource.stop();
 
-    if (m_isScrubbing && m_scratchAbsolutePositionControl) {
-        // Anchor audio to the physical follower, not to the raw input target.
-        // This keeps visual movement and audible scratch position together.
+    if (m_isScrubbing
+            && (m_scratchAbsolutePositionControl || m_scratchHardwareDeltaControl)) {
+        // Anchor audio to the authoritative scratch position instead of letting
+        // a running transport drift ahead between hardware jog ticks.
         transportSource.setPosition(std::max(0.0, m_scrubHoldPosition));
         m_atomicPlayheadPos.store(m_scrubHoldPosition, std::memory_order_relaxed);
         m_snapPosition = m_scrubHoldPosition;
@@ -5177,6 +5178,9 @@ void DjEngine::pauseForScrub()
     m_isScrubbing = true;
     m_snapValid = false;
     m_scratchAbsolutePositionControl = false;
+    m_scratchHardwareDeltaControl = false;
+    m_scratchJogOriginSec = m_scrubHoldPosition;
+    m_scratchJogAccumulatedSec = 0.0;
 
     // During pre-roll countdown, m_scrubHoldPosition is negative; don't clobber it
     // with transport position (which is always 0 before beat 1).
@@ -5293,7 +5297,7 @@ static double shapedScratchRate(double rawRate, double baseRate,
     return sign * std::clamp(shaped, 0.0, 8.0);
 }
 
-void DjEngine::scratchBySeconds(double deltaSeconds)
+void DjEngine::scratchBySeconds(double deltaSeconds, bool vinylOneToOnePosition)
 {
     if (deltaSeconds == 0.0)
         return;
@@ -5302,11 +5306,13 @@ void DjEngine::scratchBySeconds(double deltaSeconds)
                                              -ScratchConfig::kEventSpikeClampSec,
                                              ScratchConfig::kEventSpikeClampSec);
     const bool fineMove = std::abs(requestedDelta) <= ScratchConfig::kFineMoveThresholdSec;
-    const double directStep = fineMove
+    const double directStep = vinylOneToOnePosition
         ? requestedDelta
-        : std::clamp(requestedDelta,
-                     -ScratchConfig::kDirectStepLimitSec,
-                     ScratchConfig::kDirectStepLimitSec);
+        : (fineMove
+            ? requestedDelta
+            : std::clamp(requestedDelta,
+                         -ScratchConfig::kDirectStepLimitSec,
+                         ScratchConfig::kDirectStepLimitSec));
 
     const double len = transportSource.getLengthInSeconds();
     if (len <= 0.0)
@@ -5321,6 +5327,8 @@ void DjEngine::scratchBySeconds(double deltaSeconds)
     m_scratchAbsolutePositionControl = false;
     m_scratchAbsoluteTargetPosition = m_scrubHoldPosition;
     m_scratchAbsoluteFollowVelocity = 0.0;
+    if (vinylOneToOnePosition)
+        m_scratchHardwareDeltaControl = true;
 
     const double dtSecRaw = scratchInputDtSec(m_lastScrubInputClock);
     const double rawRate = requestedDelta / dtSecRaw;
@@ -5340,7 +5348,14 @@ void DjEngine::scratchBySeconds(double deltaSeconds)
         transportSource.start();
 
     const double currentPos = m_scrubHoldPosition;
-    double nextPos = std::clamp(currentPos + directStep, -SCRATCH_PRE_ROLL_SECONDS, len);
+    double nextPos = 0.0;
+    if (vinylOneToOnePosition) {
+        m_scratchJogAccumulatedSec += directStep;
+        nextPos = m_scratchJogOriginSec + m_scratchJogAccumulatedSec;
+    } else {
+        nextPos = currentPos + directStep;
+    }
+    nextPos = std::clamp(nextPos, -SCRATCH_PRE_ROLL_SECONDS, len);
     if (m_loopActive && m_loopOutSec > m_loopInSec) {
         const double lo      = m_loopInSec;
         const double hi      = std::min(len, m_loopOutSec);
@@ -5387,6 +5402,7 @@ void DjEngine::setScrubPosition(double positionSeconds)
 
     m_scratchReleaseActive = false;
     m_scratchAbsolutePositionControl = true;
+    m_scratchHardwareDeltaControl = false;
 
     const double dtSecRaw = scratchInputDtSec(m_lastScrubInputClock);
     const double rawRate = virtualDelta / dtSecRaw;
@@ -5496,6 +5512,7 @@ void DjEngine::resumeAfterScrub()
 
     m_isScrubbing = false;
     m_scratchAbsolutePositionControl = false;
+    m_scratchHardwareDeltaControl = false;
     m_scratchAbsoluteFollowVelocity = 0.0;
     m_scratchInputFilteredRate = releaseStartRate;
 
@@ -5578,6 +5595,7 @@ void DjEngine::finishScrubWithoutInertia()
     m_scratchInputFilteredRate = 0.0;
     m_scratchLastInputRate = 0.0;
     m_scratchAbsolutePositionControl = false;
+    m_scratchHardwareDeltaControl = false;
     m_scratchAbsoluteFollowVelocity = 0.0;
 
     restorePostScrubPlaybackState();
