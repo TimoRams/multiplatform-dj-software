@@ -68,7 +68,9 @@ private:
     bool sendXx35(int deck, int entryCount);
     bool sendXx36Window(int deck, const QByteArray& waveform, int entry);
     bool sendXx2f(int deck);
-    bool sendXx27(int deck, double elapsedSeconds, double durationSeconds, double bpm, bool moving);
+    bool sendXx27(int deck, double wallElapsedSeconds, double durationSeconds, double bpm, bool moving);
+    double smoothWallElapsedSec(int deck, double fileElapsedSec, double rateRatio, bool playing);
+    void resetDisplayInterp(int deck);
     bool clearDeckDisplay(int deck);
 
     QByteArray generateCoverJpeg(int deck) const;
@@ -115,6 +117,15 @@ private:
     std::array<bool, 5> m_jogRingWarningActive = {false, false, false, false, false};
     std::array<bool, 5> m_jogRingLit = {true, true, true, true, true};
     qint64 m_clockStartMs = 0;
+    struct DeckDisplayInterp {
+        double lastFilePos = -1.0;
+        qint64 lastPosTimeMs = 0;
+        qint64 lastNewPosTimeMs = 0;
+        double lastSmoothWallMs = 0.0;
+        bool initialized = false;
+    };
+    std::array<DeckDisplayInterp, 5> m_displayInterp{};
+    std::array<QByteArray, 5> m_lastXx27Packet;
     bool m_connected = false;
     DjEngine* m_deckA = nullptr;
     DjEngine* m_deckB = nullptr;

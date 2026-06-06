@@ -276,7 +276,7 @@ bool DDJFLX10Controller::start()
     m_clockStartMs = QDateTime::currentMSecsSinceEpoch();
     refreshDeckFromEngine(1);
     refreshDeckFromEngine(2);
-    m_stateTimer.start(10);
+    m_stateTimer.start(5);
     m_waveformTimer.start(500);
     if (sequencerMidiReady || !m_midiPort.isEmpty())
         m_keepAliveTimer.start(500);
@@ -418,6 +418,7 @@ void DDJFLX10Controller::connectDeckSignals()
                 m_uploadEntries[deck] = 0;
                 m_jogRingWarningActive[deck] = false;
                 m_lastCoverUrls[deck].clear();
+                resetDisplayInterp(deck);
                 sendJogRingIllumination(deck, true);
                 qInfo() << "[DDJ-FLX10] Deck" << deck << "has no track waveform; HID deck output stopped";
                 if (m_connected)
@@ -449,6 +450,7 @@ void DDJFLX10Controller::refreshDeckFromEngine(int deck)
     if (m_connected && m_lastWaveformRefreshMs[deck] > 0 && now - m_lastWaveformRefreshMs[deck] < 1500)
         return;
     m_lastWaveformRefreshMs[deck] = now;
+    resetDisplayInterp(deck);
 
     m_waveforms[deck] = generatePreviewWaveform(deck);
 
@@ -807,6 +809,85 @@ void DDJFLX10Controller::sendKeepAlive()
     sendMidiHex(QString::fromLatin1(kKeepAlive));
 }
 
+void DDJFLX10Controller::resetDisplayInterp(int deck)
+{
+    if (deck < 0 || deck >= static_cast<int>(m_displayInterp.size()))
+        return;
+    m_displayInterp[deck] = {};
+    m_lastXx27Packet[deck].clear();
+}
+
+double DDJFLX10Controller::smoothWallElapsedSec(int deck, double fileElapsedSec, double rateRatio, bool playing)
+{
+    constexpr qint64 kScrubHoldMs = 200;
+    constexpr qint64 kRunawayClampMs = 500;
+
+    if (deck < 0 || deck >= static_cast<int>(m_displayInterp.size()))
+        return fileElapsedSec / std::max(0.01, rateRatio);
+
+    auto& state = m_displayInterp[deck];
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const double safeRate = std::max(0.01, rateRatio);
+    const double wallMs = (fileElapsedSec / safeRate) * 1000.0;
+
+    if (!state.initialized) {
+        state.initialized = true;
+        state.lastFilePos = fileElapsedSec;
+        state.lastPosTimeMs = nowMs;
+        state.lastNewPosTimeMs = nowMs;
+        state.lastSmoothWallMs = wallMs;
+        return wallMs / 1000.0;
+    }
+
+    if (!playing) {
+        state.lastFilePos = fileElapsedSec;
+        state.lastPosTimeMs = nowMs;
+        state.lastNewPosTimeMs = nowMs;
+        state.lastSmoothWallMs = wallMs;
+        return wallMs / 1000.0;
+    }
+
+    if (std::abs(fileElapsedSec - state.lastFilePos) > 0.005) {
+        state.lastFilePos = fileElapsedSec;
+        state.lastPosTimeMs = nowMs;
+        state.lastNewPosTimeMs = nowMs;
+        state.lastSmoothWallMs = wallMs;
+    } else if (fileElapsedSec != state.lastFilePos) {
+        const double posDelta = fileElapsedSec - state.lastFilePos;
+        state.lastFilePos = fileElapsedSec;
+        state.lastNewPosTimeMs = nowMs;
+        if (posDelta < 0.0) {
+            state.lastSmoothWallMs = wallMs;
+            state.lastPosTimeMs = nowMs;
+        } else {
+            const double extrapolatedMs = state.lastSmoothWallMs
+                + static_cast<double>(nowMs - state.lastPosTimeMs);
+            if (wallMs > extrapolatedMs) {
+                state.lastSmoothWallMs = wallMs;
+                state.lastPosTimeMs = nowMs;
+            }
+        }
+    }
+
+    const qint64 msSince = nowMs - state.lastPosTimeMs;
+    double smoothMs = state.lastSmoothWallMs + static_cast<double>(msSince);
+
+    if (nowMs - state.lastNewPosTimeMs > kScrubHoldMs) {
+        state.lastSmoothWallMs = wallMs;
+        state.lastPosTimeMs = nowMs;
+        smoothMs = wallMs;
+    } else {
+        const double maxMs = wallMs + static_cast<double>(kRunawayClampMs);
+        if (smoothMs > maxMs) {
+            state.lastSmoothWallMs = wallMs;
+            state.lastPosTimeMs = nowMs;
+            smoothMs = wallMs;
+        }
+    }
+
+    return std::max(0.0, smoothMs / 1000.0);
+}
+
 void DDJFLX10Controller::sendStateTick()
 {
     if (!m_connected)
@@ -818,13 +899,15 @@ void DDJFLX10Controller::sendStateTick()
 
         const DjEngine* engine = deckEngine(deck);
         const double duration = deckDisplayDuration(deck);
-        const double elapsed = engine ? deckDisplayPosition(deck)
-                                      : std::fmod((QDateTime::currentMSecsSinceEpoch() - m_clockStartMs) / 1000.0,
-                                                  duration);
+        const double fileElapsed = engine ? deckDisplayPosition(deck)
+                                          : std::fmod((QDateTime::currentMSecsSinceEpoch() - m_clockStartMs) / 1000.0,
+                                                      duration);
         const bool moving = engine ? engine->isPlaying() : true;
-        const double clamped = std::clamp(elapsed, 0.0, duration);
-        sendXx27(deck, clamped, duration, deckBpm(deck), moving);
-        updateJogRingWarning(deck, clamped, duration, moving);
+        const double rateRatio = engine ? engine->getTempoRatio() : 1.0;
+        const double fileClamped = std::clamp(fileElapsed, 0.0, duration);
+        const double wallElapsed = smoothWallElapsedSec(deck, fileClamped, rateRatio, moving);
+        sendXx27(deck, wallElapsed, duration, deckBpm(deck), moving);
+        updateJogRingWarning(deck, fileClamped, duration, moving);
     }
 }
 
@@ -1071,8 +1154,10 @@ bool DDJFLX10Controller::clearDeckDisplay(int deck)
     return ok;
 }
 
-bool DDJFLX10Controller::sendXx27(int deck, double elapsedSeconds, double durationSeconds, double bpm, bool moving)
+bool DDJFLX10Controller::sendXx27(int deck, double wallElapsedSeconds, double durationSeconds, double bpm, bool moving)
 {
+    Q_UNUSED(moving);
+
     const uint8_t db = deckByte(deck);
     QByteArray p = packet();
     put8(p, 0, db);
@@ -1083,18 +1168,25 @@ bool DDJFLX10Controller::sendXx27(int deck, double elapsedSeconds, double durati
 
     const double tempoPercent = std::clamp(deckTempoPercent(deck), -100.0, 100.0);
     const double rateRatio = std::max(0.01, 1.0 + tempoPercent / 100.0);
-    elapsedSeconds = std::max(0.0, elapsedSeconds);
+    wallElapsedSeconds = std::max(0.0, wallElapsedSeconds);
     durationSeconds = std::max(1.0, durationSeconds);
-    elapsedSeconds = std::clamp(elapsedSeconds, 0.0, durationSeconds);
-    const int totalMs = static_cast<int>(std::floor(elapsedSeconds * 1000.0));
-    const int minutes = totalMs / 60000;
-    const int rem = totalMs % 60000;
-    const int seconds = rem / 1000;
-    const int ms = rem % 1000;
-    put8(p, 5, minutes);
-    put8(p, 6, seconds);
-    put8(p, 7, ms);
-    put8(p, 8, (ms >> 8) & 0x03);
+
+    // Serato xx27: bytes 5–8 are wall-elapsed time; sub-second is MILLISECONDS
+    // (0..999), not 1024ths — values >999 cause a once-per-second display snap.
+    const double totalSec = wallElapsedSeconds;
+    const int secInt = static_cast<int>(std::floor(totalSec));
+    const double sub = totalSec - static_cast<double>(secInt);
+    int subMs = static_cast<int>(std::floor(sub * 1000.0));
+    if (subMs > 999)
+        subMs = 999;
+    int sub1024 = static_cast<int>(std::floor(sub * 1024.0));
+    if (sub1024 > 1023)
+        sub1024 = 1023;
+
+    put8(p, 5, (secInt / 60) & 0xFF);
+    put8(p, 6, (secInt % 60) & 0xFF);
+    put8(p, 7, subMs & 0xFF);
+    put8(p, 8, (subMs >> 8) & 0x03);
 
     const int durationMs = static_cast<int>(std::floor((durationSeconds / rateRatio) * 1000.0));
     put8(p, 9, durationMs / 60000);
@@ -1114,22 +1206,11 @@ bool DDJFLX10Controller::sendXx27(int deck, double elapsedSeconds, double durati
     put8(p, 17, (tempoWire >> 8) & 0xFF);
     put8(p, 20, 0x0E);
 
-    // Platter ring phase at 33⅓ RPM (1.8 s/rev at 100 % pitch). Keep Pioneer's
-    // original byte layout but derive both bytes from the same in-revolution tick
-    // so they stay aligned through the 12-o'clock wrap. Tempo is in bytes 16–17;
-    // track-time advance already reflects pitch — do not scale phase by rateRatio.
-    constexpr double kVinylRevolutionSeconds = 60.0 / (100.0 / 3.0);
-    const int ticksPerRevolution = static_cast<int>(std::lround(kVinylRevolutionSeconds * 1024.0));
-
-    const int sub1024 = std::min(1023, (ms * 1024) / 1000);
-    const int subsecTicks = (totalMs / 1000) * 1024 + sub1024;
-    const int revolutionTick = ticksPerRevolution > 0
-        ? (subsecTicks % ticksPerRevolution + ticksPerRevolution) % ticksPerRevolution
-        : 0;
-    put8(p, 21, (revolutionTick * 2) & 0xFF);
-    put8(p, 22, ticksPerRevolution > 0
-        ? (revolutionTick * 15 / ticksPerRevolution) % 15
-        : 0);
+    // Bytes 21–22 share the same position sub-tick field as 5–8 (Serato wire).
+    const int subsecTicks = secInt * 1024 + sub1024;
+    put8(p, 21, (subsecTicks * 2) & 0xFF);
+    if (deck <= 2)
+        put8(p, 22, static_cast<int>(std::floor(static_cast<double>(subsecTicks) / 123.2)) % 15);
 
     put8(p, 25, 0x80);
     put8(p, 29, deckKeyByte(deck));
@@ -1138,7 +1219,16 @@ bool DDJFLX10Controller::sendXx27(int deck, double elapsedSeconds, double durati
     put8(p, 32, 0xFF);
     put8(p, 33, 0xFF);
     put8(p, 34, 0xFF);
-    return writePacket(p);
+
+    if (deck >= 0 && deck < static_cast<int>(m_lastXx27Packet.size())
+        && m_lastXx27Packet[deck] == p) {
+        return true;
+    }
+
+    const bool ok = writePacket(p);
+    if (deck >= 0 && deck < static_cast<int>(m_lastXx27Packet.size()))
+        m_lastXx27Packet[deck] = p;
+    return ok;
 }
 
 QByteArray DDJFLX10Controller::generateCoverJpeg(int deck) const
