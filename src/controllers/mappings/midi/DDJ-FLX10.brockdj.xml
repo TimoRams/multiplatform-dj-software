@@ -29,7 +29,7 @@
     <Entry paramId="deckA_tempo" status="0xB0" control="0x00" type="fader"/>
     <Entry paramId="deckB_tempo" status="0xB1" control="0x00" type="fader"/>
 
-    <!-- Jog wheels. CC 0x22 = touched top-platter scratch only; CC 0x21 = rim / post-release free spin. Relative values centered at 0x40. One vinyl revolution = 1500 ticks. -->
+    <!-- Jog wheels. CC 0x22 = touched top-platter scratch only; CC 0x21 = rim / post-release free spin. Relative values centered at 0x40. One vinyl revolution = 12000 MIDI ticks for 1:1 UI handle @ 33⅓ RPM. -->
     <Entry paramId="deckA_jog_nudge" status="0xB0" control="0x21" type="encoder-relative"/>
     <Entry paramId="deckB_jog_nudge" status="0xB1" control="0x21" type="encoder-relative"/>
     <Entry paramId="deckA_jog_scratch" status="0xB0" control="0x22" type="encoder-relative"/>

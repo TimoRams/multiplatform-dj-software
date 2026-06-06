@@ -5179,14 +5179,16 @@ void DjEngine::pauseForScrub()
     m_snapValid = false;
     m_scratchAbsolutePositionControl = false;
     m_scratchHardwareDeltaControl = false;
-    m_scratchJogOriginSec = m_scrubHoldPosition;
-    m_scratchJogAccumulatedSec = 0.0;
 
     // During pre-roll countdown, m_scrubHoldPosition is negative; don't clobber it
     // with transport position (which is always 0 before beat 1).
     m_preRollCountdownActive = false;
     if (m_scrubHoldPosition >= 0.0)
         m_scrubHoldPosition = transportSource.getCurrentPosition();
+
+    // Vinyl 1:1: anchor accumulated travel to the synced touch-down position.
+    m_scratchJogOriginSec = m_scrubHoldPosition;
+    m_scratchJogAccumulatedSec = 0.0;
 
     m_scrubLoopLockedToActiveLoop = false;
     // Keep the pre-loop area playable/scratchable even when a stored future loop

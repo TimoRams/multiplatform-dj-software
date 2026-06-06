@@ -27,7 +27,11 @@ const QString kBuiltInFlx10ControllerName = QStringLiteral("DDJ-FLX10");
 const QString kBuiltInFlx10MappingFile = QStringLiteral("DDJ-FLX10.brockdj.xml");
 const QString kBuiltInFlx10MappingLabel = QStringLiteral("Built-in: DDJ-FLX10");
 const QString kBuiltInFlx10MappingResource = QStringLiteral(":/controllers/mappings/midi/DDJ-FLX10.brockdj.xml");
-constexpr double kFlx10ScratchIntervalsPerRevolution = 1500.0;
+// Mixxx scripts use 1500 for scratchEnable(), but scratchTick feeds a slip-mat
+// filter — not a direct 1/1500-rev playhead step per MIDI tick. For BrockDJ's
+// direct vinyl mapping, FLX10 CC 0x22 needs 8× finer resolution so one
+// physical platter turn matches one 33⅓-RPM UI handle revolution (~1.8 s).
+constexpr double kFlx10ScratchIntervalsPerRevolution = 12000.0;
 constexpr double kVinylRpm = 33.0 + 1.0 / 3.0;
 
 double flx10ScratchDeltaSec(double ticks)
@@ -3072,10 +3076,13 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
     if (!m_parameterStore)
         return;
 
+    if (m_deckActionsConnection)
+        QObject::disconnect(m_deckActionsConnection);
+
     // Route ParameterStore events to deck actions.
     // Volume and crossfader are handled in QML via parameterStore directly.
     // Button convention: 127/1.0 = press/on, 0 = release/off.
-    QObject::connect(m_parameterStore, &ParameterStore::parameterChanged,
+    m_deckActionsConnection = QObject::connect(m_parameterStore, &ParameterStore::parameterChanged,
         this, [this](const QString& id, float value)
     {
         DjEngine* const a = m_deckA;
@@ -3591,14 +3598,28 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
             }
         }
         else if (id == "deckA_jog_scratch") {
-            if (a && m_jogATouched) {
+            if (a && std::abs(value) > 0.0f) {
+                // CC 0x22 is the vinyl-on platter stream; engage scratch even if the
+                // touch Note arrived a tick later than the first relative CC.
+                if (!m_jogATouched) {
+                    m_jogATouched = true;
+                    m_jogAReleasedRecently = false;
+                    m_jogAReleaseTimer.stop();
+                    m_scratchAbsoluteLastByMsgId.clear();
+                }
                 if (!a->isScrubbing())
                     a->pauseForScrub();
                 a->scratchBySeconds(flx10ScratchDeltaSec(static_cast<double>(value)), true);
             }
         }
         else if (id == "deckB_jog_scratch") {
-            if (b && m_jogBTouched) {
+            if (b && std::abs(value) > 0.0f) {
+                if (!m_jogBTouched) {
+                    m_jogBTouched = true;
+                    m_jogBReleasedRecently = false;
+                    m_jogBReleaseTimer.stop();
+                    m_scratchAbsoluteLastByMsgId.clear();
+                }
                 if (!b->isScrubbing())
                     b->pauseForScrub();
                 b->scratchBySeconds(flx10ScratchDeltaSec(static_cast<double>(value)), true);

@@ -186,6 +186,7 @@ private:
     QString m_learnParameterId;
     // 14-bit CC accumulation: paramId → last 7-bit MSB value
     std::map<QString, int> m_msbAccumulator;
+    QMetaObject::Connection m_deckActionsConnection;
 
     // Live MIDI monitor
     QString m_lastMidiEvent;
