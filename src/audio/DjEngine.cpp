@@ -4135,10 +4135,12 @@ void DjEngine::tickScratchPhysics()
         // Very slow hand motion needs stronger smoothing to avoid
         // "steppy"/digital sounding micro modulation.
         if (std::abs(targetRate) < 0.35)
-            tau = std::max(tau, 0.080);
+            tau = std::max(tau, 0.130);
     } else {
         targetRate = m_scratchReleaseTargetRate;
         tau = m_scratchReleaseTauSec;
+        if (std::abs(m_scratchSmoothedRate) < 0.40)
+            tau = std::max(tau, 0.28);
     }
 
     const double alpha = 1.0 - std::exp(-dtSec / std::max(0.001, tau));
@@ -4162,7 +4164,7 @@ void DjEngine::tickScratchPhysics()
     if (resamplingSource) {
         // Lower floor while scrubbing preserves low-speed nuance and avoids
         // hard quantization to a fixed tiny speed.
-        const double minRatio = m_isScrubbing ? 0.002 : 0.004;
+        const double minRatio = (m_isScrubbing || m_scratchReleaseActive) ? 0.0008 : 0.004;
         const double ratio = std::clamp(absRate, minRatio, ScratchConfig::kMaxRate);
         resamplingSource->setResamplingRatio(ratio);
     }
@@ -5133,10 +5135,13 @@ void DjEngine::pauseForScrub()
     m_resyncBoost = false;
 
     bool wasPlayingBeforeGrab = m_playRequested || transportSource.isPlaying();
-    if (m_scratchReleaseActive) {
+    double preservedRate = 0.0;
+    const bool reengageFromRelease = m_scratchReleaseActive;
+    if (reengageFromRelease) {
         // If we re-grab while release glide is still active, preserve the
         // original pre-scratch intent instead of the temporary glide transport state.
         wasPlayingBeforeGrab = m_scrubWasPlaying;
+        preservedRate = m_scratchSmoothedRate;
     }
 
     m_scratchReleaseActive = false;
@@ -5175,10 +5180,10 @@ void DjEngine::pauseForScrub()
     m_scratchAbsoluteFollowVelocity = 0.0;
     m_scratchBaseRate = std::max(0.01, std::abs(getTempoRatio()));
     m_scratchAccumulatedMoveSec = 0.0;
-    m_scratchTargetRate = 0.0;
-    m_scratchSmoothedRate = 0.0;
-    m_scratchInputFilteredRate = 0.0;
-    m_scratchLastInputRate = 0.0;
+    m_scratchTargetRate = preservedRate;
+    m_scratchSmoothedRate = preservedRate;
+    m_scratchInputFilteredRate = preservedRate;
+    m_scratchLastInputRate = preservedRate;
     m_scrubPhysicsClock.restart();
     m_lastScrubInputClock.restart();
     emit scrubbingChanged();
@@ -5198,8 +5203,12 @@ void DjEngine::pauseForScrub()
     // scrubbing; the hardware loop is not needed.
     clearLoopRangeOnAudioSource();
 
-    // Immediate touch brake: no scratch noise on plain click/hold.
-    transportSource.stop();
+    // Immediate touch brake on a fresh grab; keep transport running when the
+    // FLX10 free-spin stream re-engages during an active release glide.
+    if (!reengageFromRelease
+            || std::abs(preservedRate) <= ScratchConfig::kControlResumeThresholdRate) {
+        transportSource.stop();
+    }
 }
 
 void DjEngine::scrubBy(double pixelDelta)
@@ -5236,6 +5245,28 @@ static double shapeScratchRate(double absRaw, double baseRate,
     return baseRate + (absRaw - baseRate) * overSpeedFactor;
 }
 
+static double scratchInputDtSec(const QElapsedTimer& clock)
+{
+    if (!clock.isValid())
+        return 0.012;
+    // Ignore sub-10 ms QML/MIDI bursts — they create unrealistic velocity spikes.
+    return std::clamp(static_cast<double>(clock.nsecsElapsed()) * 1e-9, 0.010, 0.045);
+}
+
+static double shapedScratchRate(double rawRate, double baseRate,
+                                double linearWeight, double overSpeedFactor) noexcept
+{
+    const double sign = rawRate < 0.0 ? -1.0 : 1.0;
+    const double absRaw = std::abs(rawRate);
+    const double capped = std::min(absRaw, baseRate * 3.5);
+    double shaped = shapeScratchRate(capped, baseRate, linearWeight, overSpeedFactor);
+    if (shaped < baseRate * 0.45) {
+        const double t = shaped / std::max(1e-6, baseRate * 0.45);
+        shaped *= (0.78 + 0.22 * t);
+    }
+    return sign * std::clamp(shaped, 0.0, 8.0);
+}
+
 void DjEngine::scratchBySeconds(double deltaSeconds)
 {
     if (deltaSeconds == 0.0)
@@ -5255,30 +5286,26 @@ void DjEngine::scratchBySeconds(double deltaSeconds)
     if (len <= 0.0)
         return;
 
-    if (m_scratchReleaseActive)
+    if (m_scratchReleaseActive) {
         m_scratchReleaseActive = false;
+        m_isScrubbing = true;
+        emit scrubbingChanged();
+    }
 
     m_scratchAbsolutePositionControl = false;
     m_scratchAbsoluteTargetPosition = m_scrubHoldPosition;
     m_scratchAbsoluteFollowVelocity = 0.0;
 
-    const double dtSecRaw = m_lastScrubInputClock.isValid()
-        ? std::max(0.001, static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9)
-        : 0.008;
+    const double dtSecRaw = scratchInputDtSec(m_lastScrubInputClock);
     const double rawRate = requestedDelta / dtSecRaw;
     const double baseRate = std::max(0.01, m_scratchBaseRate);
-    const double absRaw = std::abs(rawRate);
-    double shapedAbsRate = 0.0;
 
-    // 0.15 linear weight: slightly more tactile response for physical delta input.
-    shapedAbsRate = shapeScratchRate(absRaw, baseRate, 0.15, 1.35);
-
+    // More linear shaping for hardware deltas; lower overspeed cap reduces spikes.
+    double shapedAbsRate = std::abs(shapedScratchRate(rawRate, baseRate, 0.28, 1.10));
     if (fineMove)
-        shapedAbsRate *= 0.72;
+        shapedAbsRate *= 0.85;
 
-    const double instantaneousRate = std::copysign(
-        std::clamp(shapedAbsRate, 0.0, ScratchConfig::kMaxRate),
-        rawRate);
+    const double instantaneousRate = std::copysign(shapedAbsRate, rawRate);
     pushScratchVelocityTick(instantaneousRate);
 
     // Don't start transport in pre-roll: no audio data exists before t=0; silence is correct.
@@ -5335,19 +5362,13 @@ void DjEngine::setScrubPosition(double positionSeconds)
     m_scratchReleaseActive = false;
     m_scratchAbsolutePositionControl = true;
 
-    const double dtSecRaw = m_lastScrubInputClock.isValid()
-        ? std::max(0.001, static_cast<double>(m_lastScrubInputClock.nsecsElapsed()) * 1e-9)
-        : 0.008;
+    const double dtSecRaw = scratchInputDtSec(m_lastScrubInputClock);
     const double rawRate = virtualDelta / dtSecRaw;
     const double baseRate = std::max(0.01, m_scratchBaseRate);
-    const double absRaw = std::abs(rawRate);
 
-    // 0.10 linear weight: more cubic for absolute-position (touch/mouse) input.
-    const double shapedAbsRate = shapeScratchRate(absRaw, baseRate, 0.10, 1.25);
-
-    const double instantaneousRate = std::copysign(
-        std::clamp(shapedAbsRate, 0.0, ScratchConfig::kMaxRate),
-        rawRate);
+    // Softer curve for touch/mouse absolute-position input.
+    const double shapedAbsRate = std::abs(shapedScratchRate(rawRate, baseRate, 0.22, 1.08));
+    const double instantaneousRate = std::copysign(shapedAbsRate, rawRate);
     pushScratchVelocityTick(instantaneousRate);
 
     double targetPos = std::clamp(positionSeconds, -SCRATCH_PRE_ROLL_SECONDS, len);
@@ -5368,7 +5389,8 @@ void DjEngine::setScrubPosition(double positionSeconds)
     // The UI provides the raw target. The actual platter/playhead follows it
     // with a spring-damper, so fast gestures keep moving briefly like vinyl.
     m_scratchAbsoluteTargetPosition = targetPos;
-    m_scratchAbsoluteFollowVelocity += (instantaneousRate - m_scratchAbsoluteFollowVelocity) * 0.35;
+    const double followAlpha = (shapedAbsRate < baseRate * 0.35) ? 0.16 : 0.28;
+    m_scratchAbsoluteFollowVelocity += (instantaneousRate - m_scratchAbsoluteFollowVelocity) * followAlpha;
     m_scratchAbsoluteFollowVelocity = std::clamp(
         m_scratchAbsoluteFollowVelocity,
         -ScratchConfig::kAbsoluteMaxFollowRate,
@@ -5393,10 +5415,14 @@ void DjEngine::pushScratchVelocityTick(double velocityRate)
                      0.001, 0.050)
         : 0.008;
 
+    const double filterAlpha = (std::abs(rawTarget) < 0.30)
+        ? ScratchConfig::kInputRateFilterAlpha * 0.55
+        : ScratchConfig::kInputRateFilterAlpha;
     m_scratchInputFilteredRate += (rawTarget - m_scratchInputFilteredRate)
-        * std::clamp(ScratchConfig::kInputRateFilterAlpha, 0.0, 1.0);
+        * std::clamp(filterAlpha, 0.0, 1.0);
 
-    const double maxStep = std::max(0.001, ScratchConfig::kInputRateSlewPerSec) * dtSec;
+    const double slewScale = (std::abs(m_scratchInputFilteredRate) < 0.30) ? 0.42 : 0.72;
+    const double maxStep = std::max(0.001, ScratchConfig::kInputRateSlewPerSec * slewScale) * dtSec;
     const double desired = std::clamp(m_scratchInputFilteredRate, -ScratchConfig::kMaxRate, ScratchConfig::kMaxRate);
     const double delta = std::clamp(desired - m_scratchTargetRate, -maxStep, maxStep);
     m_scratchTargetRate = std::clamp(m_scratchTargetRate + delta,
@@ -5495,11 +5521,11 @@ void DjEngine::resumeAfterScrub()
     const bool releaseAgainstTransport = m_scrubWasPlaying
         && (m_scratchSmoothedRate * transportDirection) < 0.0;
     if (!m_scrubWasPlaying) {
-        m_scratchReleaseTauSec = std::clamp(0.30 + releaseSpeed * 0.06, 0.30, 0.80);
+        m_scratchReleaseTauSec = std::clamp(0.50 + releaseSpeed * 0.10, 0.50, 1.20);
     } else if (releaseAgainstTransport) {
-        m_scratchReleaseTauSec = std::clamp(0.48 + releaseSpeed * 0.09, 0.48, 1.15);
+        m_scratchReleaseTauSec = std::clamp(0.70 + releaseSpeed * 0.14, 0.70, 1.60);
     } else {
-        m_scratchReleaseTauSec = std::clamp(0.18 + releaseSpeed * 0.04, 0.18, 0.65);
+        m_scratchReleaseTauSec = std::clamp(0.45 + releaseSpeed * 0.12, 0.45, 1.40);
     }
     m_scratchReleaseActive = true;
     m_lastScrubInputClock.restart();

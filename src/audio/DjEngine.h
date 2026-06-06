@@ -640,21 +640,21 @@ private:
     std::atomic<double> m_atomicPlayheadPos{0.0};
 
     struct ScratchConfig {
-        static constexpr double kRateAttackTauSec = 0.014;
-        static constexpr double kRateReleaseTauSec = 0.055;
-        static constexpr double kIdleTimeoutSec = 0.120;
-        static constexpr double kMaxRate = 12.0;
-        static constexpr double kReleaseToPlayTauSec = 0.075;  // base value; release uses a dynamic tau
-        static constexpr double kReleaseToStopTauSec = 0.350;  // platter spindown on paused-deck release
-        static constexpr double kReleaseSettleThreshold = 0.015; // tighter settle for slower stop tau
-        static constexpr double kControlResumeThresholdRate = 0.0012;
-        static constexpr double kControlStopThresholdRate = 0.0006;
-        static constexpr double kDirectStepLimitSec = 0.02;
-        static constexpr double kFineMoveThresholdSec = 0.003;
-        static constexpr double kEventSpikeClampSec = 0.08;
+        static constexpr double kRateAttackTauSec = 0.018;
+        static constexpr double kRateReleaseTauSec = 0.090;
+        static constexpr double kIdleTimeoutSec = 0.160;
+        static constexpr double kMaxRate = 8.0;
+        static constexpr double kReleaseToPlayTauSec = 0.14;
+        static constexpr double kReleaseToStopTauSec = 0.55;
+        static constexpr double kReleaseSettleThreshold = 0.010;
+        static constexpr double kControlResumeThresholdRate = 0.0010;
+        static constexpr double kControlStopThresholdRate = 0.0005;
+        static constexpr double kDirectStepLimitSec = 0.018;
+        static constexpr double kFineMoveThresholdSec = 0.004;
+        static constexpr double kEventSpikeClampSec = 0.06;
         static constexpr double kInertiaMoveThresholdSec = 0.002;
-        static constexpr double kInputRateFilterAlpha = 0.34;
-        static constexpr double kInputRateSlewPerSec = 28.0;
+        static constexpr double kInputRateFilterAlpha = 0.20;
+        static constexpr double kInputRateSlewPerSec = 14.0;
         static constexpr double kDirectionFlipThresholdRate = 0.08;
         static constexpr double kAbsoluteFollowStiffness = 45.0;  // softer = visible platter lag
         static constexpr double kAbsoluteFollowDamping   = 11.0;  // underdamped: natural bounce at stop

@@ -485,12 +485,12 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, QObject* par
     connect(&m_jogAReleaseTimer, &QTimer::timeout, this, [this] {
         m_jogAReleasedRecently = false;
         if (!m_jogATouched && m_deckA && m_deckA->isScrubbing())
-            m_deckA->finishScrubWithoutInertia();
+            m_deckA->resumeAfterScrub();
     });
     connect(&m_jogBReleaseTimer, &QTimer::timeout, this, [this] {
         m_jogBReleasedRecently = false;
         if (!m_jogBTouched && m_deckB && m_deckB->isScrubbing())
-            m_deckB->finishScrubWithoutInertia();
+            m_deckB->resumeAfterScrub();
     });
 
     m_selectedController = SettingsManager::getInstance().getSelectedController();
@@ -3507,9 +3507,9 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                 qDebug() << "[MIDI ACTION] action=JogTouch deck=A"
                          << "previous:" << previousHeld
                          << "current:" << currentHeld
-                         << "dispatch=finish-scrub-open-real-tick-window";
+                         << "dispatch=resume-scrub-open-real-tick-window";
                 if (a && a->isScrubbing())
-                    a->finishScrubWithoutInertia();
+                    a->resumeAfterScrub();
                 m_jogAReleasedRecently = true;
                 m_jogAReleaseTimer.start();
             }
@@ -3540,9 +3540,9 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                 qDebug() << "[MIDI ACTION] action=JogTouch deck=B"
                          << "previous:" << previousHeld
                          << "current:" << currentHeld
-                         << "dispatch=finish-scrub-open-real-tick-window";
+                         << "dispatch=resume-scrub-open-real-tick-window";
                 if (b && b->isScrubbing())
-                    b->finishScrubWithoutInertia();
+                    b->resumeAfterScrub();
                 m_jogBReleasedRecently = true;
                 m_jogBReleaseTimer.start();
             }
