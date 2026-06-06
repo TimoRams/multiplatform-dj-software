@@ -129,6 +129,37 @@ Rectangle {
     readonly property int toolbarH:   36
     readonly property int sidebarW:   200
     property string viewMode: "compact"
+    readonly property bool touchMode: window.allInOneMode
+    property int openSwipeRowIndex: -1
+    property bool filterPanelOpen: false
+    readonly property bool filtersActive: libraryModel && (
+        libraryModel.filterBpmMin > 0 || libraryModel.filterBpmMax > 0
+        || (libraryModel.filterKey && libraryModel.filterKey.length > 0)
+        || (libraryModel.filterGenre && libraryModel.filterGenre.length > 0)
+        || libraryModel.filterRatingMin > 0 || libraryModel.filterEnergyMin > 0
+    )
+
+    function trackRowHeight() {
+        if (touchMode) return 72
+        return viewMode === "normal" ? rowHNormal : rowH
+    }
+
+    function loadTrackToDeck(deckLetter, filePath) {
+        if (!filePath) return
+        var deck = deckLetter === "A" ? deckA
+                 : deckLetter === "B" ? deckB
+                 : deckLetter === "C" ? deckC
+                 : deckLetter === "D" ? deckD : null
+        if (!deck) return
+        Qt.callLater(function() { deck.loadTrack(filePath) })
+    }
+
+    function openSmartCollEditor(sc) {
+        if (!sc) return
+        createSmartCollDialog.pendingSc = sc
+        createSmartCollDialog.editId = sc.id
+        createSmartCollDialog.open()
+    }
 
     // ── Fixed column widths ────────────────────────────────────────────────
     readonly property int colStatus: 26
@@ -752,15 +783,13 @@ Rectangle {
             if (id === "library_browse") {
                 if (value !== 0) libraryRoot.moveCursor(value)
             } else if (id === "library_load_deck_a") {
-                if (value > 0) {
-                    var fpA = libraryRoot.getCursorFilePath()
-                    if (fpA && deckA) deckA.loadTrack(fpA)
-                }
+                if (value > 0) libraryRoot.loadTrackToDeck("A", libraryRoot.getCursorFilePath())
             } else if (id === "library_load_deck_b") {
-                if (value > 0) {
-                    var fpB = libraryRoot.getCursorFilePath()
-                    if (fpB && deckB) deckB.loadTrack(fpB)
-                }
+                if (value > 0) libraryRoot.loadTrackToDeck("B", libraryRoot.getCursorFilePath())
+            } else if (id === "library_load_deck_c") {
+                if (value > 0) libraryRoot.loadTrackToDeck("C", libraryRoot.getCursorFilePath())
+            } else if (id === "library_load_deck_d") {
+                if (value > 0) libraryRoot.loadTrackToDeck("D", libraryRoot.getCursorFilePath())
             } else if (id === "library_playlist_next") {
                 if (value > 0) libraryRoot.selectNextPlaylist(1)
             } else if (id === "library_playlist_prev") {
@@ -796,8 +825,9 @@ Rectangle {
             } else if (event.key === Qt.Key_Down) {
                 moveCursor(1); event.accepted = true
             } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                var fp = getCursorFilePath()
-                if (fp && deckA) deckA.loadTrack(fp)
+                loadTrackToDeck(event.modifiers & Qt.ShiftModifier ? "B"
+                    : (event.modifiers & Qt.ControlModifier ? "C"
+                    : (event.modifiers & Qt.AltModifier ? "D" : "A")), getCursorFilePath())
                 event.accepted = true
             } else if (event.key === Qt.Key_Escape) {
                 browserCursorActive = false; event.accepted = true
@@ -908,7 +938,7 @@ Rectangle {
     }
 
     // ── Inline component: track row (shared between library + playlist) ────
-    component TrackRow: Rectangle {
+    component TrackRow: Item {
         id: tr
         property int    rowIndex: 0
         property string rowTrackId: ""
@@ -930,6 +960,31 @@ Rectangle {
         property bool isPlaylistTrack: false
         property string playlistId: ""
         property string rowSourceTab: "library"
+        property real swipeX: 0
+        property bool swipeActive: false
+        property bool swipeGestureDone: false
+        property int lastTapMs: 0
+
+        readonly property bool touchMode: window.allInOneMode
+        readonly property bool swipeOpen: Math.abs(tr.swipeX) > 40
+        readonly property int deckActionW: tr.touchMode ? 184 : 0
+        readonly property int miscActionW: tr.touchMode ? 148 : 0
+        readonly property real slideX: tr.touchMode ? (-tr.deckActionW + tr.swipeX) : 0
+        property string rowCoverUrl: ""
+
+        function refreshCoverUrl() {
+            if (typeof libraryCover === "undefined" || !libraryCover || !tr.rowFilePath) {
+                tr.rowCoverUrl = ""
+                return
+            }
+            tr.rowCoverUrl = libraryCover.urlForPath(tr.rowFilePath, tr.rowTrackId)
+        }
+
+        function closeSwipe() {
+            tr.swipeX = 0
+            if (libraryRoot.openSwipeRowIndex === tr.rowIndex)
+                libraryRoot.openSwipeRowIndex = -1
+        }
 
         readonly property bool isCursorRow: libraryRoot.browserCursorActive
                                            && libraryRoot.browserCursorIndex === rowIndex
@@ -945,13 +1000,116 @@ Rectangle {
             return Qt.hsla((h % 360) / 360.0, 0.42, 0.20, 1.0)
         }
 
-        height: libraryRoot.viewMode === "normal" ? libraryRoot.rowHNormal : libraryRoot.rowH
-        color: trMouse.containsMouse
-               ? libraryRoot.bgRowHover
-             : (isCursorRow
-                ? "#163328"
-                : (rowIndex % 2 === 0 ? libraryRoot.bgRowEven : libraryRoot.bgRowOdd))
-        opacity: trDragPayload.dragging ? 0.4 : 1.0
+        height: libraryRoot.trackRowHeight()
+        width: viewWidth > 0 ? viewWidth : (parent ? parent.width : 0)
+        clip: true
+
+        Rectangle {
+            anchors.fill: parent
+            color: "#0a0a0a"
+        }
+
+        Connections {
+            target: libraryRoot
+            function onOpenSwipeRowIndexChanged() {
+                if (libraryRoot.openSwipeRowIndex !== tr.rowIndex && tr.swipeX !== 0)
+                    tr.swipeX = 0
+            }
+        }
+        Connections {
+            target: typeof libraryCover !== "undefined" ? libraryCover : null
+            function onCoverReady(path, trackId, imageUrl) {
+                if (path === tr.rowFilePath || trackId === tr.rowTrackId)
+                    tr.rowCoverUrl = imageUrl
+            }
+        }
+        Component.onCompleted: {
+            if (typeof libraryCover !== "undefined" && libraryCover && tr.rowFilePath) {
+                libraryCover.preload(tr.rowFilePath, tr.rowTrackId)
+                tr.refreshCoverUrl()
+            }
+        }
+        onRowFilePathChanged: {
+            tr.rowCoverUrl = ""
+            if (typeof libraryCover !== "undefined" && libraryCover && tr.rowFilePath)
+                libraryCover.preload(tr.rowFilePath, tr.rowTrackId)
+        }
+        onRowTrackIdChanged: tr.refreshCoverUrl()
+
+        Row {
+            id: slideRow
+            height: parent.height
+            x: tr.slideX
+            Behavior on x {
+                enabled: !tr.swipeActive
+                NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+            }
+
+            // Deck load strip — fixed left, revealed when row slides right
+            Row {
+                width: tr.deckActionW
+                height: parent.height
+                spacing: 0
+                visible: tr.deckActionW > 0
+
+                Repeater {
+                    model: ["A", "B", "C", "D"]
+                    Rectangle {
+                        required property string modelData
+                        width: 46; height: parent.height
+                        color: loadDeckMa.containsMouse ? "#1a3a52" : "#132840"
+                        border.color: "#1e4070"; border.width: 1
+                        Text {
+                            anchors.centerIn: parent
+                            text: "▶ " + modelData
+                            color: "#4a99e0"; font.pixelSize: window.sp(11); font.bold: true
+                        }
+                        MouseArea {
+                            id: loadDeckMa; anchors.fill: parent
+                            hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                            onClicked: (mouse) => {
+                                var deck = modelData
+                                var path = tr.rowFilePath
+                                tr.closeSwipe()
+                                mouse.accepted = true
+                                libraryRoot.loadTrackToDeck(deck, path)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                id: trContent
+                width: tr.viewWidth > 0 ? tr.viewWidth : tr.width
+                height: parent.height
+                color: trMouse.containsMouse
+                       ? libraryRoot.bgRowHover
+                     : (isCursorRow
+                        ? "#163328"
+                        : (rowIndex % 2 === 0 ? libraryRoot.bgRowEven : libraryRoot.bgRowOdd))
+                opacity: trDragPayload.dragging ? 0.4 : 1.0
+
+                Rectangle {
+                    anchors.right: parent.left
+                    width: 10; height: parent.height
+                    visible: tr.touchMode && tr.swipeX > 6
+                    gradient: Gradient {
+                        orientation: Gradient.Horizontal
+                        GradientStop { position: 0.0; color: "transparent" }
+                        GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.45) }
+                    }
+                }
+                Rectangle {
+                    anchors.left: parent.right
+                    width: 10; height: parent.height
+                    visible: tr.touchMode && tr.swipeX < -6
+                    gradient: Gradient {
+                        orientation: Gradient.Horizontal
+                        GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.45) }
+                        GradientStop { position: 1.0; color: "transparent" }
+                    }
+                }
 
         Rectangle {
             anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
@@ -983,14 +1141,31 @@ Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             anchors.left: parent.left; anchors.leftMargin: 6
 
-            Text {
+            Item {
                 width: libraryRoot.colStatus
+                height: 20
                 anchors.verticalCenter: parent.verticalCenter
-                text: tr.rowIsHistory ? "▶" : (tr.rowIsAnalyzed ? "●" : "○")
-                color: tr.rowIsHistory ? libraryRoot.accentBlueLt
-                    : (tr.rowIsAnalyzed ? libraryRoot.accentGreen : "#2e2e2e")
-                font.pixelSize: window.sp(tr.rowIsHistory ? 9 : 8)
-                horizontalAlignment: Text.AlignHCenter
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 18; height: 18; radius: 3
+                    color: tr.artBgColor; clip: true
+                    Image {
+                        id: trCoverCompact
+                        anchors.fill: parent
+                        source: tr.rowCoverUrl
+                        fillMode: Image.PreserveAspectCrop
+                        visible: status === Image.Ready && tr.rowCoverUrl !== ""
+                        asynchronous: true
+                        cache: false
+                    }
+                    Text {
+                        anchors.centerIn: parent
+                        visible: trCoverCompact.status !== Image.Ready || tr.rowCoverUrl === ""
+                        text: (tr.rowTitle || tr.rowArtist || "?").charAt(0).toUpperCase()
+                        color: Qt.rgba(1, 1, 1, 0.55)
+                        font.pixelSize: window.sp(9); font.bold: true
+                    }
+                }
             }
             Text {
                 width: libraryRoot.colTitle(tr.viewWidth)
@@ -1069,13 +1244,26 @@ Rectangle {
             visible: libraryRoot.viewMode === "normal"
             anchors.fill: parent
 
-            // Art placeholder
+            // Cover art
             Rectangle {
                 id: trArtBox
                 anchors.left: parent.left; anchors.leftMargin: 10
                 anchors.verticalCenter: parent.verticalCenter
-                width: 44; height: 44; radius: 5
+                width: tr.touchMode ? 52 : 44
+                height: tr.touchMode ? 52 : 44
+                radius: 5
                 color: tr.artBgColor
+                clip: true
+
+                Image {
+                    id: trCoverImage
+                    anchors.fill: parent
+                    source: tr.rowCoverUrl
+                    fillMode: Image.PreserveAspectCrop
+                    visible: status === Image.Ready && tr.rowCoverUrl !== ""
+                    asynchronous: true
+                    cache: false
+                }
 
                 Rectangle {
                     anchors.top: parent.top; anchors.right: parent.right
@@ -1083,13 +1271,15 @@ Rectangle {
                     width: 8; height: 8; radius: 4
                     color: tr.rowIsAnalyzed ? libraryRoot.accentGreen : "#252525"
                     border.color: Qt.rgba(0, 0, 0, 0.4); border.width: 1
+                    z: 2
                 }
 
                 Text {
                     anchors.centerIn: parent
+                    visible: trCoverImage.status !== Image.Ready || tr.rowCoverUrl === ""
                     text: (tr.rowTitle || tr.rowArtist || "?").charAt(0).toUpperCase()
                     color: Qt.rgba(1, 1, 1, 0.60)
-                    font.pixelSize: window.sp(17); font.bold: true
+                    font.pixelSize: window.sp(tr.touchMode ? 19 : 17); font.bold: true
                 }
             }
 
@@ -1212,30 +1402,28 @@ Rectangle {
                     "text/plain": tr.rowFilePath
                 })
         }
-        
-        // Drop area for playlist track reordering
+
         DropArea {
             id: trDropArea
             anchors.fill: parent
             keys: ["playlist-track-reorder"]
-            enabled: tr.isPlaylistTrack
+            enabled: tr.isPlaylistTrack && !tr.touchMode
             property int dropPosition: 0
-            
+
             onEntered: {
                 if (tr.isPlaylistTrack) {
                     var dragIndex = parseInt(drag.getDataAsString("playlist-track-index") || "-1")
-                        if (dragIndex >= 0 && dragIndex !== tr.rowIndex) {
+                    if (dragIndex >= 0 && dragIndex !== tr.rowIndex)
                         trDropArea.dropPosition = mouse.y < height / 2 ? 0 : 1
-                    }
                 }
             }
-            
+
             onDropped: {
                 if (tr.isPlaylistTrack && libraryDb) {
                     var dragIndex = parseInt(drop.getDataAsString("playlist-track-index") || "-1")
                     var dragTrackId = drop.getDataAsString("playlist-track-id")
                     var playlistId = tr.playlistId
-                    
+
                     if (dragIndex >= 0 && dragIndex !== tr.rowIndex && dragTrackId && playlistId) {
                         var newPosition = trDropArea.dropPosition === 0 ? tr.rowIndex : tr.rowIndex + 1
                         libraryDb.setPlaylistTrackPosition(playlistId, dragTrackId, newPosition)
@@ -1250,12 +1438,18 @@ Rectangle {
             anchors.fill: parent
             hoverEnabled: true
             acceptedButtons: Qt.LeftButton | Qt.RightButton
-            cursorShape: trDragPayload.dragging ? Qt.DragMoveCursor : Qt.PointingHandCursor
+            cursorShape: tr.touchMode
+                         ? (tr.swipeActive ? Qt.ClosedHandCursor : Qt.OpenHandCursor)
+                         : (trDragPayload.dragging ? Qt.DragMoveCursor : Qt.PointingHandCursor)
             property real pressX: 0
             property real pressY: 0
             property bool rightDragging: false
 
             onPressed: (mouse) => {
+                tr.swipeGestureDone = false
+                if (tr.swipeOpen && !tr.touchMode)
+                    tr.closeSwipe()
+
                 libraryRoot.setActiveTrackFromRow(
                     tr.rowIndex,
                     tr.rowTrackId,
@@ -1280,14 +1474,39 @@ Rectangle {
             }
             onPositionChanged: (mouse) => {
                 if (!pressed) return
-                var moved = Math.abs(mouse.x - pressX) + Math.abs(mouse.y - pressY) >= 8
-                if (!trDragPayload.dragging && moved) {
+                var dx = mouse.x - pressX
+                var dy = mouse.y - pressY
+                var moved = Math.abs(dx) + Math.abs(dy) >= 8
+
+                // AIO + desktop mouse: horizontal drag = swipe (no drag-and-drop)
+                if (tr.touchMode && !trDragPayload.dragging
+                        && Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8) {
+                    tr.swipeActive = true
+                    tr.swipeX = Math.max(-tr.miscActionW, Math.min(tr.deckActionW, dx))
+                    if (Math.abs(tr.swipeX) > 16)
+                        libraryRoot.openSwipeRowIndex = tr.rowIndex
+                    return
+                }
+
+                if (!tr.touchMode && !trDragPayload.dragging && moved && !tr.swipeActive) {
                     trDragPayload.dragging = true
                     trDragPayload.Drag.active = true
                     if (mouse.buttons & Qt.RightButton) rightDragging = true
                 }
             }
             onReleased: (mouse) => {
+                if (tr.swipeActive) {
+                    if (tr.swipeX >= tr.deckActionW * 0.30) tr.swipeX = tr.deckActionW
+                    else if (tr.swipeX <= -tr.miscActionW * 0.30) tr.swipeX = -tr.miscActionW
+                    else tr.closeSwipe()
+                    tr.swipeActive = false
+                    tr.swipeGestureDone = true
+                    trDragPayload.Drag.active = false
+                    trDragPayload.dragging = false
+                    rightDragging = false
+                    mouse.accepted = true
+                    return
+                }
                 if (trDragPayload.dragging) {
                     trDragPayload.Drag.drop()
                 } else if (mouse.button === Qt.RightButton && !rightDragging) {
@@ -1301,17 +1520,86 @@ Rectangle {
                 rightDragging = false
             }
             onCanceled: {
+                tr.swipeActive = false
                 trDragPayload.Drag.active = false
                 trDragPayload.dragging = false
                 rightDragging = false
             }
             onClicked: (mouse) => {
+                if (tr.swipeGestureDone) {
+                    tr.swipeGestureDone = false
+                    mouse.accepted = true
+                    return
+                }
                 if (mouse.button === Qt.LeftButton && !(mouse.modifiers & Qt.ControlModifier)) {
+                    if (tr.touchMode && !tr.swipeOpen) {
+                        var now = Date.now()
+                        if (now - tr.lastTapMs < 380)
+                            libraryRoot.loadTrackToDeck("A", tr.rowFilePath)
+                        tr.lastTapMs = now
+                    }
                     libraryRoot.focusedPanel = "tracks"
                     libraryRoot.forceActiveFocus()
                 }
             }
         }
+
+            } // trContent
+
+            Row {
+                width: tr.miscActionW
+                height: parent.height
+                spacing: 0
+                visible: tr.miscActionW > 0
+
+                Rectangle {
+                    width: 50; height: parent.height
+                    color: favoriteMa.containsMouse ? "#2a2510" : "#1a1810"
+                    Text { anchors.centerIn: parent; text: "★"; color: "#e8b84b"; font.pixelSize: window.sp(16) }
+                    MouseArea {
+                        id: favoriteMa; anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (libraryDb && tr.rowTrackId) {
+                                if (libraryDb.isFavorite(tr.rowTrackId))
+                                    libraryDb.removeFromFavorites(tr.rowTrackId)
+                                else
+                                    libraryDb.addToFavorites(tr.rowTrackId)
+                                libraryRoot.loadFavorites()
+                            }
+                            tr.closeSwipe()
+                        }
+                    }
+                }
+                Rectangle {
+                    width: 50; height: parent.height
+                    color: crateMa.containsMouse ? "#1a2a1a" : "#121a12"
+                    Text { anchors.centerIn: parent; text: "⊞"; color: libraryRoot.accentGreen; font.pixelSize: window.sp(14) }
+                    MouseArea {
+                        id: crateMa; anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (libraryDb && tr.rowTrackId)
+                                libraryDb.addToPrepareCrate(tr.rowTrackId)
+                            libraryRoot.loadCrate()
+                            tr.closeSwipe()
+                        }
+                    }
+                }
+                Rectangle {
+                    width: 48; height: parent.height
+                    color: queueMa.containsMouse ? "#1a2a3a" : "#121820"
+                    Text { anchors.centerIn: parent; text: "►"; color: libraryRoot.accentBlueLt; font.pixelSize: window.sp(14) }
+                    MouseArea {
+                        id: queueMa; anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (libraryDb && tr.rowTrackId)
+                                libraryDb.enqueueTrack(tr.rowTrackId)
+                            libraryRoot.loadQueue()
+                            tr.closeSwipe()
+                        }
+                    }
+                }
+            }
+        } // slideRow
     }
 
     // ── Inline component: sidebar nav button ──────────────────────────────
@@ -1322,6 +1610,7 @@ Rectangle {
         required property string btnLabel
         property int badgeCount: -1
         property var customAction: null
+        property var onContextMenu: null
          property int cursorIndex: -1
 
          readonly property bool isCursor: libraryRoot.focusedPanel === "sidebar"
@@ -1398,8 +1687,16 @@ Rectangle {
 
         MouseArea {
             id: navMa; anchors.fill: parent; hoverEnabled: true
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
             cursorShape: Qt.PointingHandCursor
-            onClicked: {
+            property real pressX: 0
+            property real pressY: 0
+            onPressed: (mouse) => { pressX = mouse.x; pressY = mouse.y }
+            onClicked: (mouse) => {
+                if (mouse.button === Qt.RightButton) {
+                    if (navBtn.onContextMenu) navBtn.onContextMenu(mouse)
+                    return
+                }
                 libraryRoot.activeTab = navBtn.tabKey
                 if (navBtn.customAction) navBtn.customAction()
                 libraryRoot.sidebarCursorIndex = navBtn.cursorIndex
@@ -1610,6 +1907,12 @@ Rectangle {
                                 libraryRoot.currentSmartCollectionId   = modelData.id
                                 libraryRoot.currentSmartCollectionName = modelData.name
                                 libraryRoot.loadSmartCollectionTracks(modelData.id)
+                            }
+                            onContextMenu: function(mouse) {
+                                smartCollContextMenu.targetId = modelData.id
+                                smartCollContextMenu.targetName = modelData.name
+                                smartCollContextMenu.targetData = modelData
+                                libraryRoot._popupMenuAt(smartCollContextMenu)
                             }
                             readonly property bool isThisSelected:
                                 libraryRoot.activeTab === "smartcoll" &&
@@ -2215,6 +2518,264 @@ Rectangle {
                                 focus = false
                                 libraryRoot.cyclePanel(-1)
                                 event.accepted = true
+                            }
+                        }
+                    }
+
+                    // ── Filter button (library tab) ────────────────────────
+                    Rectangle {
+                        Layout.preferredWidth: 30
+                        Layout.preferredHeight: 26
+                        Layout.alignment: Qt.AlignVCenter
+                        radius: 4
+                        color: filterBtnMa.containsMouse || libraryRoot.filterPanelOpen ? "#1a2a3a" : "#111111"
+                        border.color: libraryRoot.filtersActive ? libraryRoot.accentBlue : "#2a2a2a"
+                        border.width: 1
+                        visible: libraryRoot.activeTab === "library"
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "⧩"
+                            color: libraryRoot.filtersActive ? libraryRoot.accentBlueLt : libraryRoot.textSecond
+                            font.pixelSize: window.sp(12)
+                        }
+                        MouseArea {
+                            id: filterBtnMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: libraryRoot.filterPanelOpen = !libraryRoot.filterPanelOpen
+                        }
+                    }
+
+                    // ── Smart collection edit (smartcoll tab) ─────────────
+                    Rectangle {
+                        Layout.preferredWidth: 30
+                        Layout.preferredHeight: 26
+                        Layout.alignment: Qt.AlignVCenter
+                        radius: 4
+                        color: scEditMa.containsMouse ? "#1a2a3a" : "#111111"
+                        border.color: "#2a2a2a"; border.width: 1
+                        visible: libraryRoot.activeTab === "smartcoll"
+                                 && libraryRoot.currentSmartCollectionId !== ""
+
+                        Text {
+                            anchors.centerIn: parent; text: "✎"
+                            color: libraryRoot.textSecond; font.pixelSize: window.sp(11)
+                        }
+                        MouseArea {
+                            id: scEditMa; anchors.fill: parent; hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                var sc = libraryRoot.smartCollections.find(function(s) {
+                                    return s.id === libraryRoot.currentSmartCollectionId
+                                })
+                                if (sc) libraryRoot.openSmartCollEditor(sc)
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.preferredWidth: 30
+                        Layout.preferredHeight: 26
+                        Layout.alignment: Qt.AlignVCenter
+                        radius: 4
+                        color: scRefreshMa.containsMouse ? "#1a2a3a" : "#111111"
+                        border.color: "#2a2a2a"; border.width: 1
+                        visible: libraryRoot.activeTab === "smartcoll"
+                                 && libraryRoot.currentSmartCollectionId !== ""
+
+                        Text {
+                            anchors.centerIn: parent; text: "↻"
+                            color: libraryRoot.textSecond; font.pixelSize: window.sp(13)
+                        }
+                        MouseArea {
+                            id: scRefreshMa; anchors.fill: parent; hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: libraryRoot.loadSmartCollectionTracks(libraryRoot.currentSmartCollectionId)
+                        }
+                    }
+                }
+            }
+
+            // ── Filter panel (library) ─────────────────────────────────────
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: libraryRoot.filterPanelOpen && libraryRoot.activeTab === "library" ? 34 : 0
+                visible: libraryRoot.filterPanelOpen && libraryRoot.activeTab === "library"
+                color: "#161616"
+                clip: true
+
+                Rectangle {
+                    anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
+                    height: 1; color: libraryRoot.borderMain
+                }
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 14; anchors.rightMargin: 12
+                    spacing: 8
+
+                    Text {
+                        text: "BPM"
+                        color: libraryRoot.textSecond
+                        font.pixelSize: window.sp(10)
+                    }
+
+                    Rectangle {
+                        Layout.preferredWidth: 52; Layout.preferredHeight: 24
+                        radius: 3; color: "#0e0e0e"
+                        border.color: filterBpmMinField.activeFocus ? libraryRoot.accentBlue : "#2a2a2a"
+                        border.width: 1
+                        TextField {
+                            id: filterBpmMinField
+                            anchors.fill: parent
+                            color: libraryRoot.textPrimary
+                            font.pixelSize: window.sp(10)
+                            placeholderText: "min"
+                            horizontalAlignment: Text.AlignHCenter
+                            background: Item {}
+                            text: libraryModel && libraryModel.filterBpmMin > 0
+                                  ? String(libraryModel.filterBpmMin) : ""
+                            onEditingFinished: {
+                                if (libraryModel)
+                                    libraryModel.setFilterBpmMin(parseFloat(text) || 0)
+                            }
+                        }
+                    }
+
+                    Text { text: "–"; color: libraryRoot.textDim; font.pixelSize: window.sp(10) }
+
+                    Rectangle {
+                        Layout.preferredWidth: 52; Layout.preferredHeight: 24
+                        radius: 3; color: "#0e0e0e"
+                        border.color: filterBpmMaxField.activeFocus ? libraryRoot.accentBlue : "#2a2a2a"
+                        border.width: 1
+                        TextField {
+                            id: filterBpmMaxField
+                            anchors.fill: parent
+                            color: libraryRoot.textPrimary
+                            font.pixelSize: window.sp(10)
+                            placeholderText: "max"
+                            horizontalAlignment: Text.AlignHCenter
+                            background: Item {}
+                            text: libraryModel && libraryModel.filterBpmMax > 0
+                                  ? String(libraryModel.filterBpmMax) : ""
+                            onEditingFinished: {
+                                if (libraryModel)
+                                    libraryModel.setFilterBpmMax(parseFloat(text) || 0)
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: "Key"
+                        color: libraryRoot.textSecond
+                        font.pixelSize: window.sp(10)
+                        Layout.leftMargin: 6
+                    }
+
+                    Rectangle {
+                        Layout.preferredWidth: 56; Layout.preferredHeight: 24
+                        radius: 3; color: "#0e0e0e"
+                        border.color: filterKeyField.activeFocus ? libraryRoot.accentBlue : "#2a2a2a"
+                        border.width: 1
+                        TextField {
+                            id: filterKeyField
+                            anchors.fill: parent
+                            color: libraryRoot.accentKey
+                            font.pixelSize: window.sp(10)
+                            placeholderText: "e.g. Am"
+                            leftPadding: 6
+                            background: Item {}
+                            text: libraryModel ? libraryModel.filterKey : ""
+                            onEditingFinished: {
+                                if (libraryModel) libraryModel.setFilterKey(text.trim())
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: "Genre"
+                        color: libraryRoot.textSecond
+                        font.pixelSize: window.sp(10)
+                    }
+
+                    Rectangle {
+                        Layout.preferredWidth: 90; Layout.preferredHeight: 24
+                        radius: 3; color: "#0e0e0e"
+                        border.color: filterGenreField.activeFocus ? libraryRoot.accentBlue : "#2a2a2a"
+                        border.width: 1
+                        TextField {
+                            id: filterGenreField
+                            anchors.fill: parent
+                            color: libraryRoot.textPrimary
+                            font.pixelSize: window.sp(10)
+                            placeholderText: "genre"
+                            leftPadding: 6
+                            background: Item {}
+                            text: libraryModel ? libraryModel.filterGenre : ""
+                            onEditingFinished: {
+                                if (libraryModel) libraryModel.setFilterGenre(text.trim())
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: "★ min"
+                        color: libraryRoot.textSecond
+                        font.pixelSize: window.sp(10)
+                    }
+
+                    Rectangle {
+                        Layout.preferredWidth: 36; Layout.preferredHeight: 24
+                        radius: 3; color: "#0e0e0e"
+                        border.color: filterRatingField.activeFocus ? libraryRoot.accentBlue : "#2a2a2a"
+                        border.width: 1
+                        TextField {
+                            id: filterRatingField
+                            anchors.fill: parent
+                            color: "#e8b84b"
+                            font.pixelSize: window.sp(10)
+                            placeholderText: "0"
+                            horizontalAlignment: Text.AlignHCenter
+                            background: Item {}
+                            text: libraryModel && libraryModel.filterRatingMin > 0
+                                  ? String(libraryModel.filterRatingMin) : ""
+                            onEditingFinished: {
+                                if (libraryModel)
+                                    libraryModel.setFilterRatingMin(parseInt(text) || 0)
+                            }
+                        }
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    Rectangle {
+                        Layout.preferredWidth: 64; Layout.preferredHeight: 24
+                        radius: 3
+                        color: clearFiltersMa.containsMouse ? "#2a2a2a" : "#1c1c1c"
+                        border.color: "#333"; border.width: 1
+                        visible: libraryRoot.filtersActive
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "Reset"
+                            color: libraryRoot.textMeta
+                            font.pixelSize: window.sp(10)
+                        }
+                        MouseArea {
+                            id: clearFiltersMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (libraryModel) libraryModel.clearFilters()
+                                filterBpmMinField.text = ""
+                                filterBpmMaxField.text = ""
+                                filterKeyField.text = ""
+                                filterGenreField.text = ""
+                                filterRatingField.text = ""
                             }
                         }
                     }
@@ -2997,13 +3558,25 @@ Rectangle {
             text: "Load to Deck A"
             contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
             background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
-            onTriggered: { if (deckA) deckA.loadTrack(libraryRoot.ctxFilePath) }
+            onTriggered: { libraryRoot.loadTrackToDeck("A", libraryRoot.ctxFilePath) }
         }
         MenuItem {
             text: "Load to Deck B"
             contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
             background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
-            onTriggered: { if (deckB) deckB.loadTrack(libraryRoot.ctxFilePath) }
+            onTriggered: { libraryRoot.loadTrackToDeck("B", libraryRoot.ctxFilePath) }
+        }
+        MenuItem {
+            text: "Load to Deck C"
+            contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+            onTriggered: { libraryRoot.loadTrackToDeck("C", libraryRoot.ctxFilePath) }
+        }
+        MenuItem {
+            text: "Load to Deck D"
+            contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+            onTriggered: { libraryRoot.loadTrackToDeck("D", libraryRoot.ctxFilePath) }
         }
         MenuSeparator {
             contentItem: Rectangle { height: 1; color: "#2a2a2a" }
@@ -3191,6 +3764,51 @@ Rectangle {
                 removeFromLibraryPopup.trackId    = libraryRoot.ctxTrackId
                 removeFromLibraryPopup.trackTitle = libraryRoot.ctxTitle
                 removeFromLibraryPopup.open()
+            }
+        }
+    }
+
+    // Smart collection context menu
+    Menu {
+        id: smartCollContextMenu
+        property string targetId: ""
+        property string targetName: ""
+        property var targetData: null
+
+        background: Rectangle { implicitWidth: 220; color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
+
+        MenuItem {
+            text: "Bearbeiten…"
+            contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+            onTriggered: libraryRoot.openSmartCollEditor(smartCollContextMenu.targetData)
+        }
+        MenuItem {
+            text: "Aktualisieren"
+            contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+            onTriggered: {
+                if (libraryRoot.activeTab === "smartcoll"
+                        && libraryRoot.currentSmartCollectionId === smartCollContextMenu.targetId)
+                    libraryRoot.loadSmartCollectionTracks(smartCollContextMenu.targetId)
+            }
+        }
+        MenuSeparator { contentItem: Rectangle { height: 1; color: "#2a2a2a" } }
+        MenuItem {
+            text: "Löschen"
+            contentItem: Text { text: parent.text; color: "#e06060"; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? "#3a1a1a" : "transparent" }
+            onTriggered: {
+                if (libraryDb && smartCollContextMenu.targetId) {
+                    libraryDb.deleteSmartCollection(smartCollContextMenu.targetId)
+                    if (libraryRoot.currentSmartCollectionId === smartCollContextMenu.targetId) {
+                        libraryRoot.currentSmartCollectionId = ""
+                        libraryRoot.currentSmartCollectionName = ""
+                        libraryRoot.smartCollectionTracks = []
+                        libraryRoot.activeTab = "library"
+                    }
+                    libraryRoot.loadSmartCollections()
+                }
             }
         }
     }
@@ -3451,6 +4069,7 @@ Rectangle {
     Popup {
         id: createSmartCollDialog
         property string editId: ""  // empty = create, set = edit existing
+        property var pendingSc: null
 
         modal: true; focus: true
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -3494,11 +4113,22 @@ Rectangle {
         }
 
         onOpened: {
-            scNameField.text = ""
-            ruleModels = [{ field: "bpm", op: "gte", value: "" }]
+            if (pendingSc) {
+                scNameField.text = pendingSc.name || ""
+                try {
+                    var parsed = JSON.parse(pendingSc.rulesJson || "[]")
+                    ruleModels = parsed.length > 0 ? parsed : [{ field: "bpm", op: "gte", value: "" }]
+                } catch (e) {
+                    ruleModels = [{ field: "bpm", op: "gte", value: "" }]
+                }
+                pendingSc = null
+            } else {
+                scNameField.text = ""
+                ruleModels = [{ field: "bpm", op: "gte", value: "" }]
+            }
             scNameField.forceActiveFocus()
         }
-        onClosed: { editId = ""; ruleModels = [] }
+        onClosed: { editId = ""; ruleModels = []; pendingSc = null }
 
         Column {
             id: scDialogContent

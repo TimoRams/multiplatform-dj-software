@@ -91,6 +91,17 @@ ScrollingWaveformItem::ScrollingWaveformItem(QQuickItem* parent) : QQuickItem(pa
                     this, &ScrollingWaveformItem::cleanupSgResources,
                     Qt::DirectConnection);
     });
+
+    // ≤15 fps coalescing of progressive-analysis data updates. Live playback
+    // scrolling still repaints every frame via the normal update() path; this
+    // only caps the rebuild rate driven by background analysis signals.
+    m_dataUpdateThrottle = new QTimer(this);
+    m_dataUpdateThrottle->setSingleShot(true);
+    m_dataUpdateThrottle->setInterval(66);
+    connect(m_dataUpdateThrottle, &QTimer::timeout, this, [this]() {
+        m_forceUpdate = true;
+        update();
+    });
 }
 
 ScrollingWaveformItem::~ScrollingWaveformItem()
@@ -175,8 +186,10 @@ void ScrollingWaveformItem::onTrackLoaded()
 
 void ScrollingWaveformItem::onDataUpdated()
 {
-    m_forceUpdate = true;
-    update();
+    // Coalesce bursts of analysis data signals into at most one repaint per
+    // throttle interval so a fast analyzer can't stall the render thread.
+    if (m_dataUpdateThrottle && !m_dataUpdateThrottle->isActive())
+        m_dataUpdateThrottle->start();
 }
 
 // ── Scene-graph resource helpers ──────────────────────────────────────────────

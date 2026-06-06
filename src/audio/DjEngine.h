@@ -23,6 +23,7 @@
 #include "fx/FxProcessor.h"
 
 class CoverArtProvider;
+class LibraryCoverService;
 class LibraryDatabase;
 
 class DjEngine : public QObject
@@ -294,6 +295,7 @@ public:
     [[nodiscard]] QString audioDeviceFallbackMessage() const { return m_audioDeviceFallbackMessage; }
 
     void setCoverArtProvider(CoverArtProvider* provider, const QString& deckId);
+    void setLibraryCoverService(LibraryCoverService* service);
     void setLibraryDatabase(LibraryDatabase* db);
 
 public slots:
@@ -495,6 +497,7 @@ private:
     juce::AudioSourcePlayer sourcePlayer;
 
     QTimer timer;
+    QTimer* m_analysisPersistTimer = nullptr;
 
     TrackData* m_trackData;
     WaveformAnalyzer* m_analyzer;
@@ -509,13 +512,15 @@ private:
     double  m_trackDurationSec = 0.0;
     bool    m_hasTrack = false;
 
-    CoverArtProvider* m_coverProvider = nullptr;
-    LibraryDatabase*   m_libraryDb     = nullptr;
+    CoverArtProvider*     m_coverProvider       = nullptr;
+    LibraryCoverService*  m_libraryCoverService = nullptr;
+    LibraryDatabase*      m_libraryDb         = nullptr;
     QString m_deckId;
     QString m_currentTrackId;
     QString m_coverArtUrl;
     bool    m_hasCoverArt = false;
     std::atomic<quint64> m_loadGen{0};
+    std::mutex m_loadMutex;
     QVariantList m_currentSegments;
     std::array<HotCueSlot, 8> m_hotCueSlots;
     std::array<SavedLoopSlot, 8> m_savedLoopSlots;

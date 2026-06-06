@@ -7,6 +7,7 @@
 #include <QVariantList>
 #include <QHash>
 #include <QImage>
+#include <QTimer>
 #include <atomic>
 #include <array>
 #include <vector>
@@ -53,6 +54,10 @@ private:
 
     DjEngine* m_engine = nullptr;
     bool m_forceUpdate = false;
+
+    // Coalesces frequent data-update signals during progressive analysis so the
+    // render thread is not asked to rebuild geometry/textures faster than ~15 fps.
+    QTimer* m_dataUpdateThrottle = nullptr;
 
     float m_pixelsPerPoint = 1.5f;
 

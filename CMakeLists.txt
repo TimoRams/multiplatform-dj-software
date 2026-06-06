@@ -33,7 +33,7 @@ elseif(CCACHE_PROGRAM AND MSVC)
 endif()
 
 # Qt setup
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Sql)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Sql Concurrent)
 if(COMMAND qt_policy)
     qt_policy(SET QTP0001 NEW)
     qt_policy(SET QTP0004 NEW)
@@ -313,6 +313,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/library/CoverArtExtractor.h
     src/library/CoverArtExtractor.cpp
     src/library/CoverArtProvider.h
+    src/library/LibraryCoverService.h
+    src/library/LibraryCoverService.cpp
     src/fx/FxManager.h
     src/fx/FxManager.cpp
     src/fx/FxProcessor.h
@@ -415,6 +417,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Qml
     Qt6::Quick
     Qt6::Sql
+    Qt6::Concurrent
     ThirdParty::TagLib
     ThirdParty::KeyFinder
     ThirdParty::RubberBand

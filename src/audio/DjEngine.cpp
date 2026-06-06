@@ -2,6 +2,7 @@
 #include "DjMasterBus.h"
 #include "library/CoverArtExtractor.h"
 #include "library/CoverArtProvider.h"
+#include "library/LibraryCoverService.h"
 #include "fx/FxProcessor.h"
 #include "library/LibraryDatabase.h"
 #include "library/TrackIdGenerator.h"
@@ -16,6 +17,7 @@
 #include <QRegularExpression>
 #include <QVariantMap>
 #include <QImage>
+#include <QBuffer>
 #include <QProcess>
 #include <QStandardPaths>
 #include <QThread>
@@ -2265,6 +2267,13 @@ DjEngine::DjEngine(QObject* parent)
     clearHotCueState();
 
     // When the analyzer detects a key, override the (often absent) ID3 key field.
+    m_analysisPersistTimer = new QTimer(this);
+    m_analysisPersistTimer->setSingleShot(true);
+    m_analysisPersistTimer->setInterval(400);
+    connect(m_analysisPersistTimer, &QTimer::timeout, this, [this]() {
+        persistCurrentAnalysisToLibrary();
+    });
+
     connect(m_trackData, &TrackData::keyAnalyzed, this, [this]() {
         QString analysedKey = m_trackData->getDetectedKey();
         if (!analysedKey.isEmpty()) {
@@ -2272,14 +2281,14 @@ DjEngine::DjEngine(QObject* parent)
             emit trackMetadataChanged();
         }
 
-        persistCurrentAnalysisToLibrary();
+        m_analysisPersistTimer->start();
     });
 
     // When BPM analysis finishes, re-emit tempoChanged so that currentBpm
     // and tempoRatio Q_PROPERTYs update in QML.
     connect(m_trackData, &TrackData::bpmAnalyzed, this, [this]() {
         emit tempoChanged();
-        persistCurrentAnalysisToLibrary();
+        m_analysisPersistTimer->start();
         bool propagateFromSelf = false;
         DjEngine* masterToFollow = nullptr;
         if (m_syncEnabled) {
@@ -2297,7 +2306,7 @@ DjEngine::DjEngine(QObject* parent)
     });
 
     connect(m_trackData, &TrackData::beatgridChanged, this, [this]() {
-        persistCurrentAnalysisToLibrary();
+        m_analysisPersistTimer->start();
     });
 
     connect(m_trackData, &TrackData::segmentsAnalyzed, this, [this]() {
@@ -3292,6 +3301,11 @@ void DjEngine::setCoverArtProvider(CoverArtProvider* provider, const QString& de
     m_deckId = deckId;
 }
 
+void DjEngine::setLibraryCoverService(LibraryCoverService* service)
+{
+    m_libraryCoverService = service;
+}
+
 QImage DjEngine::currentCoverImage() const
 {
     if (!m_coverProvider || m_deckId.isEmpty())
@@ -3563,6 +3577,11 @@ void DjEngine::loadTrack(const QString& rawPath)
 
     const quint64 gen = ++m_loadGen;
 
+    // Stop any in-flight analysis before clearing TrackData — otherwise the
+    // analyzer thread keeps writing into cleared/replaced buffers (UI freeze).
+    if (m_analyzer)
+        m_analyzer->stopAnalysis();
+
     // Immediately clear previous track state so the UI shows a clean slate.
     resetTrackLoadState();
     m_trackTitle.clear();   m_trackArtist.clear();  m_trackAlbum.clear();
@@ -3578,6 +3597,10 @@ void DjEngine::loadTrack(const QString& rawPath)
     const int pps = static_cast<int>(WAVEFORM_POINTS_PER_SECOND);
     auto analysisState = std::make_shared<std::atomic<bool>>(false);
     std::thread([this, rawPath, file, gen, pps, analysisState]() {
+        std::lock_guard<std::mutex> loadGuard(m_loadMutex);
+        if (m_loadGen != gen)
+            return;
+
         auto* reader = formatManager.createReaderFor(file);
         if (!reader) {
             qWarning() << "[DjEngine] loadTrack: unsupported or unreadable format:" << rawPath;
@@ -3667,21 +3690,32 @@ void DjEngine::loadTrack(const QString& rawPath)
                 if (m_loadGen != gen)
                     return;
 
-                if (wfLoaded) {
-                    const int expected =
-                        cache.totalExpected > 0 ? cache.totalExpected : cache.waveform.size();
-                    m_trackData->setTotalExpected(expected);
-                    m_trackData->replaceAllData(
-                        std::move(cache.waveform), std::max(0.001f, cache.globalMaxPeak));
-                    m_trackData->setRgbWaveformData(std::move(cache.rgb));
-                    m_trackData->setOverviewRgbData(std::move(overview));
-                    if (!cache.peakMip.isEmpty())
-                        m_trackData->setPeakMipData(std::move(cache.peakMip));
-                }
+                // Defer bulk waveform hand-off so library/deck UI can process input first.
+                QTimer::singleShot(0, this, [this, gen, rawPath,
+                                             cache    = std::move(cache),
+                                             overview = std::move(overview),
+                                             analysisState,
+                                             wfLoaded]() mutable
+                {
+                    if (m_loadGen != gen)
+                        return;
 
-                const bool hasDbAnalysis = analysisState->load(std::memory_order_relaxed);
-                if (!(wfLoaded && hasDbAnalysis))
-                    m_analyzer->startAnalysis(rawPath, transportSource.getCurrentPosition());
+                    if (wfLoaded) {
+                        const int expected =
+                            cache.totalExpected > 0 ? cache.totalExpected : cache.waveform.size();
+                        m_trackData->setTotalExpected(expected);
+                        m_trackData->replaceAllData(
+                            std::move(cache.waveform), std::max(0.001f, cache.globalMaxPeak));
+                        m_trackData->setRgbWaveformData(std::move(cache.rgb));
+                        m_trackData->setOverviewRgbData(std::move(overview));
+                        if (!cache.peakMip.isEmpty())
+                            m_trackData->setPeakMipData(std::move(cache.peakMip));
+                    }
+
+                    const bool hasDbAnalysis = analysisState->load(std::memory_order_relaxed);
+                    if (!(wfLoaded && hasDbAnalysis))
+                        m_analyzer->startAnalysis(rawPath, transportSource.getCurrentPosition());
+                });
             },
             Qt::QueuedConnection);
 
@@ -3743,6 +3777,15 @@ void DjEngine::loadTrack(const QString& rawPath)
                                         .arg(m_deckId)
                                         .arg(QDateTime::currentMSecsSinceEpoch());
                     m_hasCoverArt = true;
+
+                    if (m_libraryCoverService && !m_currentTrackId.isEmpty()) {
+                        QByteArray coverBytes;
+                        QBuffer coverBuffer(&coverBytes);
+                        coverBuffer.open(QIODevice::WriteOnly);
+                        if (coverImage.save(&coverBuffer, "JPG"))
+                            m_libraryCoverService->publishCover(m_currentTrackId, coverBytes);
+                    }
+
                     emit trackMetadataChanged();
                 }
 

@@ -20,7 +20,8 @@
 #include <chrono>
 namespace {
 
-constexpr int kMaxConcurrentAnalyses = 1;
+// Allow two decks to analyze in parallel (typical A/B load); avoids queue starvation.
+constexpr int kMaxConcurrentAnalyses = 2;
 
 std::mutex g_analysisSlotsMutex;
 std::condition_variable g_analysisSlotsCv;
@@ -339,7 +340,8 @@ void WaveformAnalyzer::setSeekHint(double positionSec)
 void WaveformAnalyzer::stopAnalysis()
 {
     signalThreadShouldExit();
-    stopThread(2000);
+    // Keep the wait short — blocking the GUI thread here freezes the whole app.
+    stopThread(150);
 }
 
 void WaveformAnalyzer::setCompletionCallback(std::function<void(bool)> callback)
@@ -559,7 +561,7 @@ void WaveformAnalyzer::run()
     float runMaxMid    = 0.1f;
     float runMaxHigh   = 0.1f;
 
-    constexpr int kChunk = 20;
+    constexpr int kChunk = 80;
     QVector<TrackData::WaveformBin> previewBatch;
     previewBatch.reserve(kChunk);
     QVector<TrackData::RgbWaveformFrame> previewRgbBatch;
@@ -729,6 +731,12 @@ void WaveformAnalyzer::run()
     for (int bin = 0; bin < numPoints; ++bin)
     {
         if (threadShouldExit()) break;
+
+        // Analysis is the LOWEST priority task: periodically yield a slice of CPU
+        // so the audio and UI threads always get scheduled first. This makes a
+        // full analysis take a little longer but guarantees the app stays fluid.
+        if ((bin & 0xFF) == 0)
+            juce::Thread::sleep(1);
 
         // When entering the priority region: flush only the appendData batch
         // (overview waveform). RGB for early bins stays in earlyRgbBuf.

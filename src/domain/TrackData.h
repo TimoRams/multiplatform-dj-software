@@ -3,6 +3,9 @@
 #include <QObject>
 #include <QVector>
 #include <QMutex>
+#include <QMetaObject>
+#include <QTimer>
+#include <QElapsedTimer>
 #include <QColor>
 #include <vector>
 #include <algorithm>
@@ -425,6 +428,7 @@ public:
     }
 
     void clearWaveformData() {
+        m_rgbEmitPending = false;
         {
             QMutexLocker locker(&m_mutex);
             m_data.clear();
@@ -439,6 +443,7 @@ public:
     }
 
     void clear() {
+        m_rgbEmitPending = false;
         {
             QMutexLocker locker(&m_mutex);
             m_data.clear();
@@ -550,7 +555,7 @@ public:
                 m_rgbData[fromBin + i] = data[i];
             _updateProgressiveOvr(fromBin, fromBin + n);
         }
-        emit rgbWaveformUpdated();
+        scheduleRgbWaveformEmit();
     }
 
     void appendRgbWaveformData(const QVector<RgbWaveformFrame>& frames) {
@@ -562,7 +567,7 @@ public:
             m_rgbData.append(frames);
             _updateProgressiveOvr(oldSize, m_rgbData.size());
         }
-        emit rgbWaveformUpdated();
+        scheduleRgbWaveformEmit();
     }
 
     QVector<RgbWaveformFrame> getRgbWaveformData() const {
@@ -680,6 +685,38 @@ signals:
     void beatgridChanged();  // emitted after a manual grid shift
     void segmentsAnalyzed();
 
+private slots:
+    // Coalesce progressive waveform updates to a low, fixed rate so analysis can
+    // never flood the GUI thread with repaints. Runs entirely on the GUI thread.
+    void flushRgbWaveformEmit()
+    {
+        // ~11 fps cap for progressive analysis repaints — keeps the UI fluid no
+        // matter how fast the analyzer produces chunks.
+        constexpr qint64 kMinIntervalMs = 90;
+        const qint64 since = m_rgbEmitClock.isValid()
+            ? m_rgbEmitClock.elapsed() : kMinIntervalMs;
+
+        if (since < kMinIntervalMs) {
+            // Too soon — schedule a single trailing emit; m_rgbEmitPending stays
+            // true so no additional schedules pile up in the meantime.
+            QTimer::singleShot(static_cast<int>(kMinIntervalMs - since), this,
+                               [this]() { flushRgbWaveformEmit(); });
+            return;
+        }
+
+        m_rgbEmitPending = false;
+        m_rgbEmitClock.restart();
+        emit rgbWaveformUpdated();
+    }
+
+    void scheduleRgbWaveformEmit()
+    {
+        if (m_rgbEmitPending)
+            return;
+        m_rgbEmitPending = true;
+        QMetaObject::invokeMethod(this, "flushRgbWaveformEmit", Qt::QueuedConnection);
+    }
+
 private:
     QVector<FrequencyData> m_data;
     QVector<RgbWaveformFrame> m_rgbData;
@@ -701,6 +738,8 @@ private:
     bool    m_isKeyAnalyzed;
 
     mutable QMutex m_mutex;
+    bool m_rgbEmitPending = false;
+    QElapsedTimer m_rgbEmitClock;
 
     QVector<RgbWaveformFrame> m_progressiveOvr;   // kProgressiveBins bins, max-folded
     int                       m_progressiveLastFrame = 0;

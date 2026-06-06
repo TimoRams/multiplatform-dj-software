@@ -32,6 +32,7 @@
 #include "WaveformItem.h"
 #include "library/LibraryManager.h"
 #include "library/CoverArtProvider.h"
+#include "library/LibraryCoverService.h"
 #include "fx/FxManager.h"
 #include "link/LinkManager.h"
 #include "SystemMonitor.h"
@@ -285,6 +286,7 @@ int main(int argc, char *argv[])
     auto cursorControl = std::make_unique<CursorControl>();
     auto coverProvider = std::make_unique<CoverArtProvider>();
     CoverArtProvider* coverProviderPtr = coverProvider.get();
+    auto libraryCoverService = std::make_unique<LibraryCoverService>(coverProviderPtr);
     QPointer<QObject> rootObjectForStartup;
     bool runtimeInitStarted = false;
 
@@ -308,6 +310,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("midiManager", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("controllerManager", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("cursorControl", cursorControl.get());
+    engine.rootContext()->setContextProperty("libraryCover", libraryCoverService.get());
 
     const auto url = QUrl(u"qrc:/DJSoftware/src/qml/main.qml"_s);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
@@ -373,8 +376,10 @@ int main(int argc, char *argv[])
                              });
             controllerManager->setFlx10Enabled(settingsManager.flx10ControllerSupportEnabled());
 
-            for (DjEngine* deck : {deckA.get(), deckB.get(), deckC.get(), deckD.get()})
+            for (DjEngine* deck : {deckA.get(), deckB.get(), deckC.get(), deckD.get()}) {
                 deck->setLibraryDatabase(libraryDb.get());
+                deck->setLibraryCoverService(libraryCoverService.get());
+            }
 
             fxManager->registerEngines(deckA.get(), deckB.get());
 
