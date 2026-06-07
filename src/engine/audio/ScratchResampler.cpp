@@ -111,7 +111,9 @@ void ScratchResampler::ensurePrefetch(juce::AudioSource& input, int minAhead, do
     }
 
     const int relativeRead = static_cast<int>(std::floor(m_readPos - m_bufferOriginSample));
-    const int consume = std::clamp(relativeRead - 2, 0, std::max(0, m_sourceSize - 7));
+    const int consume = rate >= 0.0
+        ? std::clamp(relativeRead - 2, 0, std::max(0, m_sourceSize - 7))
+        : 0;
     const int keep = m_sourceSize - consume;
     if (consume > 0 && keep > 6) {
         for (int ch = 0; ch < m_channels; ++ch) {

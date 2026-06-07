@@ -14,6 +14,8 @@ struct ScratchControllerConfig {
     double alpha = 0.125;
     double beta = 0.006;
     double rawVelocityMix = 0.20;
+    double positionFollowGain = 18.0;
+    double maxPositionCorrectionSpeed = 0.90;
     double noMoveDecayMs = 30.0;
     double noMoveDecayTauSec = 0.035;
     double releaseReturnTauSec = 0.220;

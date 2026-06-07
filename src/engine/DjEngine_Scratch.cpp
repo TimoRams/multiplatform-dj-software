@@ -262,9 +262,6 @@ void DjEngine::restorePostScrubPlaybackState()
 
 void DjEngine::pauseForScrub(double anchorPositionSec)
 {
-    if (m_scratch.scrubbing())
-        return;
-
     if (mixerSource)
         mixerSource->armClickFreeTransition();
 
@@ -272,7 +269,10 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
     m_jogNudgePercent = 0.0;
     m_resyncBoost = false;
 
-    const bool wasPlayingBeforeGrab = m_playRequested || transportSource.isPlaying();
+    const bool regrabActiveScratch = m_scratch.scrubbing() || m_scratch.releaseGlide();
+    const bool wasPlayingBeforeGrab = regrabActiveScratch
+        ? m_scratch.wasPlaying()
+        : (m_playRequested || transportSource.isPlaying());
     m_scratch.setReleaseGlide(false);
     m_scratch.setWasPlaying(wasPlayingBeforeGrab);
     m_scratch.setScrubbing(true);
@@ -288,7 +288,11 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
     if (transportSource.isPlaying())
         transportSource.stop();
 
-    if (wasPlayingBeforeGrab) {
+    if (regrabActiveScratch && anchorPositionSec >= 0.0) {
+        m_scrubHoldPosition = anchorPositionSec;
+    } else if (regrabActiveScratch) {
+        m_scrubHoldPosition = m_atomicPlayheadPos.load(std::memory_order_relaxed);
+    } else if (wasPlayingBeforeGrab) {
         m_scrubHoldPosition = transportSource.getCurrentPosition();
     } else if (anchorPositionSec >= 0.0) {
         m_scrubHoldPosition = anchorPositionSec;
@@ -425,4 +429,3 @@ void DjEngine::applyJogNudge(double signedTicks)
     m_lastJogNudgeClock.restart();
     updateSpeedAndPitch();
 }
-

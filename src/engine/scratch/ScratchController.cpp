@@ -144,6 +144,17 @@ double ScratchController::processAudioBlock(int bufferSize,
                 finalNormalized = 0.0;
             m_smoothedSpeed.store(finalNormalized, std::memory_order_relaxed);
         }
+
+        const double currentSamples = m_readPosition.load(std::memory_order_relaxed);
+        const double currentSec = currentSamples / std::max(1.0, trackSampleRate);
+        const double targetSec = m_handPositionSec.load(std::memory_order_relaxed);
+        const double positionError = targetSec - currentSec;
+        const double correction = std::clamp(positionError * m_config.positionFollowGain,
+                                             -m_config.maxPositionCorrectionSpeed,
+                                             m_config.maxPositionCorrectionSpeed);
+        finalNormalized = std::clamp(finalNormalized + correction,
+                                     -m_config.maxScratchSpeed,
+                                     m_config.maxScratchSpeed);
     } else if (m_inertiaActive.load(std::memory_order_relaxed)) {
         double inertia = m_inertiaSpeed.load(std::memory_order_relaxed);
         const double target = m_releaseTargetSpeed.load(std::memory_order_relaxed);
