@@ -17,6 +17,7 @@ void ScratchResampler::prepare(int numChannels, int maxBlockSize, double outputS
     m_sourceBuffer.clear();
     m_sourceSize = 0;
     m_readPos = 0.0;
+    m_bufferOriginSample = 0.0;
     m_lastRate = 0.0;
     m_smoothedRate = 0.0;
     m_directionFadeRemaining = 0;
@@ -25,6 +26,7 @@ void ScratchResampler::prepare(int numChannels, int maxBlockSize, double outputS
 void ScratchResampler::reset(double readPositionSamples) noexcept
 {
     m_readPos = readPositionSamples;
+    m_bufferOriginSample = readPositionSamples;
     m_sourceSize = 0;
     m_lastRate = 0.0;
     m_smoothedRate = 0.0;
@@ -54,18 +56,45 @@ double ScratchResampler::wrapPosition(double pos) const noexcept
     return std::clamp(pos, 0.0, m_trackLengthSamples - 1.0);
 }
 
-void ScratchResampler::ensurePrefetch(juce::AudioSource& input, int minAhead) noexcept
+void ScratchResampler::reanchorPrefetch(juce::AudioSource& input, double rate) noexcept
+{
+    if (!std::isfinite(m_readPos))
+        m_readPos = 0.0;
+
+    m_readPos = wrapPosition(m_readPos);
+
+    const int lookBehind = 2;
+    const int anchorSample = std::max(0,
+        static_cast<int>(std::floor(m_readPos)) - lookBehind);
+
+    if (auto* positionable = dynamic_cast<juce::PositionableAudioSource*>(&input)) {
+        positionable->setNextReadPosition(static_cast<juce::int64>(anchorSample));
+    }
+
+    m_bufferOriginSample = static_cast<double>(anchorSample);
+    m_sourceSize = 0;
+    juce::ignoreUnused(rate);
+}
+
+void ScratchResampler::ensurePrefetch(juce::AudioSource& input, int minAhead, double rate) noexcept
 {
     const int capacity = m_sourceBuffer.getNumSamples();
     if (capacity < 8)
         return;
 
-    if (!std::isfinite(m_readPos))
-        m_readPos = 0.0;
-    m_readPos = std::clamp(m_readPos, 0.0, static_cast<double>(capacity - 1));
+    if (m_sourceSize == 0) {
+        reanchorPrefetch(input, rate);
+    }
+
+    const double bufferEnd = m_bufferOriginSample + static_cast<double>(m_sourceSize);
+    const int margin = 6;
+    if (m_readPos < m_bufferOriginSample + 2.0
+            || m_readPos > bufferEnd - static_cast<double>(margin)) {
+        reanchorPrefetch(input, rate);
+    }
 
     const int needed = std::min(capacity - 1,
-                                static_cast<int>(std::ceil(m_readPos)) + minAhead + 4);
+                                static_cast<int>(std::ceil(m_readPos - m_bufferOriginSample)) + minAhead + 4);
 
     while (m_sourceSize < needed && m_sourceSize < capacity - m_blockSize) {
         const int pullStart = m_sourceSize;
@@ -78,9 +107,8 @@ void ScratchResampler::ensurePrefetch(juce::AudioSource& input, int minAhead) no
         m_sourceSize += pullCount;
     }
 
-    const int consume = std::clamp(static_cast<int>(std::floor(m_readPos)) - 2,
-                                   0,
-                                   std::max(0, m_sourceSize - 7));
+    const int relativeRead = static_cast<int>(std::floor(m_readPos - m_bufferOriginSample));
+    const int consume = std::clamp(relativeRead - 2, 0, std::max(0, m_sourceSize - 7));
     const int keep = m_sourceSize - consume;
     if (consume > 0 && keep > 6) {
         for (int ch = 0; ch < m_channels; ++ch) {
@@ -89,14 +117,16 @@ void ScratchResampler::ensurePrefetch(juce::AudioSource& input, int minAhead) no
             std::memmove(dst, src + consume, static_cast<size_t>(keep) * sizeof(float));
         }
         m_sourceSize = keep;
+        m_bufferOriginSample += static_cast<double>(consume);
         m_readPos -= static_cast<double>(consume);
     }
 }
 
 float ScratchResampler::readHermite(int channel, double position) const noexcept
 {
-    const int i = static_cast<int>(std::floor(position));
-    const float frac = static_cast<float>(position - static_cast<double>(i));
+    const double relativePos = position - m_bufferOriginSample;
+    const int i = static_cast<int>(std::floor(relativePos));
+    const float frac = static_cast<float>(relativePos - static_cast<double>(i));
     const int ch = std::min(channel, m_sourceBuffer.getNumChannels() - 1);
 
     const auto at = [&](int idx) -> float {
@@ -138,16 +168,6 @@ void ScratchResampler::processBlock(juce::AudioSource& input,
         return;
     }
 
-    if (auto* positionable = dynamic_cast<juce::PositionableAudioSource*>(&input)) {
-        const auto targetPos = static_cast<juce::int64>(std::llround(std::max(0.0, m_readPos)));
-        const auto sourcePos = positionable->getNextReadPosition();
-        if (std::abs(static_cast<double>(sourcePos - targetPos)) > 4.0) {
-            positionable->setNextReadPosition(targetPos);
-            m_sourceSize = 0;
-            m_readPos = static_cast<double>(targetPos);
-        }
-    }
-
     if (std::abs(rate) < 1e-7) {
         m_smoothedRate = 0.0;
         m_lastRate = 0.0;
@@ -163,7 +183,7 @@ void ScratchResampler::processBlock(juce::AudioSource& input,
     float* out1 = outChannels > 1 ? output.buffer->getWritePointer(1, start) : nullptr;
 
     const int blockAhead = static_cast<int>(std::ceil(std::abs(rate) * static_cast<double>(numSamples))) + 12;
-    ensurePrefetch(input, blockAhead);
+    ensurePrefetch(input, blockAhead, rate);
 
     for (int i = 0; i < numSamples; ++i) {
         const double delta = rate - m_smoothedRate;
@@ -171,8 +191,8 @@ void ScratchResampler::processBlock(juce::AudioSource& input,
             std::max(24.0, std::abs(delta) * 0.90 * m_outputSampleRate) / m_outputSampleRate);
         m_smoothedRate += std::clamp(delta, -slew, slew);
 
-        if (m_sourceSize < static_cast<int>(std::ceil(m_readPos)) + 8)
-            ensurePrefetch(input, 8);
+        if (m_sourceSize < static_cast<int>(std::ceil(m_readPos - m_bufferOriginSample)) + 8)
+            ensurePrefetch(input, 8, m_smoothedRate);
 
         if (m_sourceSize < 6) {
             if (out0) out0[i] = 0.0f;

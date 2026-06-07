@@ -61,12 +61,14 @@ Item {
 
             property real pressMouseX: 0
             property real pressPlayheadSec: 0
+            property real lastDragPx: 0
             property bool scrubEngaged: false
             property real scrubDeadzonePx: 0.0
 
             onPressed: (mouse) => {
                 if (root.engine === null) return
                 scrubEngaged = false
+                lastDragPx = 0
                 pressMouseX = mouse.x + beatgridPanel.occupiedWidth
                 if (root.beatgridEditMode && mouse.button === Qt.LeftButton) {
                     pressPlayheadSec = root.engine.getVisualPositionQml()
@@ -80,18 +82,27 @@ Item {
                 if (root.engine === null || root.beatgridEditMode) return
                 const dragPx = (mouse.x + beatgridPanel.occupiedWidth) - pressMouseX
 
-                if (!scrubEngaged && Math.abs(dragPx) < scrubDeadzonePx)
+                if (!scrubEngaged) {
+                    if (Math.abs(dragPx) < scrubDeadzonePx)
+                        return
+                    scrubEngaged = true
+                    lastDragPx = dragPx
                     return
-
-                scrubEngaged = true
+                }
 
                 var tempoRatio = Math.max(0.05, Math.abs(root.engine.tempoRatio))
                 var effectivePixelsPerSecond = (root.waveformZoom * root.engine.waveformPointsPerSecond) / tempoRatio
                 if (effectivePixelsPerSecond <= 0.0)
                     return
 
-                const targetSec = pressPlayheadSec - (dragPx / effectivePixelsPerSecond)
-                root.engine.setScrubPosition(targetSec)
+                const deltaPx = dragPx - lastDragPx
+                lastDragPx = dragPx
+                if (Math.abs(deltaPx) < 0.01)
+                    return
+
+                // Vinyl pull: drag right = earlier in track (negative delta seconds).
+                const deltaSec = -deltaPx / effectivePixelsPerSecond
+                root.engine.scratchBySeconds(deltaSec)
                 waveItem.requestUpdate()
             }
 

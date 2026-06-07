@@ -112,10 +112,8 @@ void DjEngine::updateScrubPlayheadAnchor()
         transportSource.stop();
 
     if ((m_scratch.scrubbing() || m_scratch.releaseGlide()) && m_scrubHoldPosition >= 0.0) {
-        // Release glide: hold position is authoritative (vinyl deltas + coast).
-        // Reading transport back while resampling lags behind causes a brief
-        // slow-down / catch-up wobble when the wheel is still spinning out.
-        transportSource.setPosition(std::max(0.0, m_scrubHoldPosition));
+        // Scratch audio is driven by the scratch resampler — do not hard-seek transport
+        // every UI tick; that desyncs the reader and causes zipper/beep artifacts.
         m_atomicPlayheadPos.store(m_scrubHoldPosition, std::memory_order_relaxed);
         m_snapPosition = m_scrubHoldPosition;
         return;
@@ -151,9 +149,8 @@ void DjEngine::tickScratchPhysics()
     }
 
     if (m_scratch.scrubbing() || m_scratch.releaseGlide()) {
-        m_scrubHoldPosition = m_scratch.scrubbing()
-            ? m_scratch.lastRawSec()
-            : scratchBridge->targetPositionSeconds(m_loadedTrackSampleRate);
+        // Waveform follows actual audio read head, not the UI target platter position.
+        m_scrubHoldPosition = scratchBridge->readPositionSeconds(m_loadedTrackSampleRate);
         updateScrubPlayheadAnchor();
     }
 
@@ -284,7 +281,7 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
     m_scratch.setWasPlaying(wasPlayingBeforeGrab);
     m_scratch.setScrubbing(true);
     m_snapValid = false;
-    m_scratchSnapReadPending = wasPlayingBeforeGrab;
+    m_scratchSnapReadPending = false;
 
     // During pre-roll countdown, m_scrubHoldPosition is negative; don't clobber it
     // with transport position (which is always 0 before beat 1).
@@ -310,11 +307,13 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
     m_scrubHoldPosition = m_scratch.armGrab(m_scrubHoldPosition, len, loopCtx);
 
     if (scratchBridge) {
-        scratchBridge->beginScratch(m_scrubHoldPosition, m_loadedTrackSampleRate, std::max(0.0, len));
+        scratchBridge->beginScratch(m_scrubHoldPosition,
+                                    m_loadedTrackSampleRate,
+                                    std::max(0.0, len),
+                                    wasPlayingBeforeGrab,
+                                    getTempoRatio());
         scratchBridge->setReverse(m_isReverse);
         scratchBridge->setKeylockPassthrough(false);
-        if (wasPlayingBeforeGrab)
-            scratchBridge->syncReadToTarget(m_loadedTrackSampleRate);
     }
 
     emit scrubbingChanged();
@@ -333,17 +332,9 @@ void DjEngine::scratchBySeconds(double deltaSeconds, bool vinylOneToOnePosition)
     if (!m_scratch.scrubbing() || !scratchBridge)
         return;
 
-    if (m_scratchSnapReadPending) {
-        m_scratchSnapReadPending = false;
-        scratchBridge->syncReadToTarget(m_loadedTrackSampleRate);
-    }
-
     if (!m_scratch.submitRelative(scratchBridge.get(), deltaSeconds, m_loadedTrackSampleRate))
         return;
 
-    scratchBridge->tickControlThread(0.004);
-    m_scrubHoldPosition = m_scratch.lastRawSec();
-    updateScrubPlayheadAnchor();
     emit progressChanged();
 }
 
@@ -357,11 +348,6 @@ void DjEngine::setScrubPosition(double positionSeconds)
     if (len <= 0.0)
         return;
 
-    if (m_scratchSnapReadPending) {
-        m_scratchSnapReadPending = false;
-        scratchBridge->syncReadToTarget(m_loadedTrackSampleRate);
-    }
-
     if (!m_scratch.submitAbsolute(scratchBridge.get(),
                                   positionSeconds,
                                   m_loadedTrackSampleRate,
@@ -371,9 +357,6 @@ void DjEngine::setScrubPosition(double positionSeconds)
         return;
     }
 
-    scratchBridge->tickControlThread(0.004);
-    m_scrubHoldPosition = m_scratch.lastRawSec();
-    updateScrubPlayheadAnchor();
     emit progressChanged();
 }
 
@@ -391,10 +374,18 @@ void DjEngine::resumeAfterScrub()
     if (!m_scratch.scrubbing() || !scratchBridge)
         return;
 
-    const double resumePos = std::max(0.0, m_scrubHoldPosition);
+    m_scrubHoldPosition = std::max(0.0, scratchBridge->readPositionSeconds(m_loadedTrackSampleRate));
     m_scratch.setScrubbing(false);
-    m_scratch.setReleaseGlide(false);
-    scratchBridge->exitScratchMode(resumePos, m_loadedTrackSampleRate);
+
+    constexpr double kInertiaThreshold = 0.20;
+    if (std::abs(scratchBridge->scratchRate()) > kInertiaThreshold) {
+        scratchBridge->endScratch(true);
+        m_scratch.setReleaseGlide(true);
+        emit scrubbingChanged();
+        return;
+    }
+
+    scratchBridge->exitScratchMode(m_scrubHoldPosition, m_loadedTrackSampleRate);
     restorePostScrubPlaybackState();
 
     emit scrubbingChanged();

@@ -2,6 +2,8 @@
 
 #include "audio/ScratchDeckBridge.hpp"
 
+#include <algorithm>
+
 namespace engine::scratch {
 
 void ScratchSession::clear() noexcept
@@ -43,6 +45,7 @@ double ScratchSession::armGrab(double grabSec, double trackLenSec, const Scratch
     m_loopLocked = false;
     m_lastRawSec = wrapLoopPosition(grabSec, trackLenSec, loop, m_loopLocked);
     m_physicsClock.restart();
+    m_lastMoveClock.restart();
     return m_lastRawSec;
 }
 
@@ -54,7 +57,13 @@ bool ScratchSession::submitRelative(engine::audio::ScratchDeckBridge* bridge,
         return false;
 
     const double clamped = std::clamp(deltaSec, -kEventSpikeClampSec, kEventSpikeClampSec);
-    bridge->addTargetDeltaSeconds(clamped, sampleRate);
+
+    const double dtSec = m_lastMoveClock.isValid()
+        ? std::clamp(static_cast<double>(m_lastMoveClock.nsecsElapsed()) * 1e-9, 0.001, 0.100)
+        : 0.016;
+    m_lastMoveClock.restart();
+
+    bridge->submitHandDeltaSeconds(clamped, dtSec);
     m_lastRawSec += clamped;
     return true;
 }
@@ -77,8 +86,7 @@ bool ScratchSession::submitAbsolute(engine::audio::ScratchDeckBridge* bridge,
     target = wrapLoopPosition(target, trackLenSec, loop, m_loopLocked);
 
     m_lastRawSec = target;
-    bridge->addTargetDeltaSeconds(virtualDelta, sampleRate);
-    return true;
+    return submitRelative(bridge, virtualDelta, sampleRate);
 }
 
 double ScratchSession::tick(engine::audio::ScratchDeckBridge* bridge, double dtSec) noexcept

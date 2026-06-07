@@ -66,6 +66,7 @@ private:
     bool m_savedReverse = false;
     double m_lastRawSec = 0.0;
     QElapsedTimer m_physicsClock;
+    QElapsedTimer m_lastMoveClock;
 };
 
 } // namespace engine::scratch

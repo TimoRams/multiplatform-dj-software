@@ -34,7 +34,8 @@ public:
     [[nodiscard]] double readPosition() const noexcept { return m_readPos; }
 
 private:
-    void ensurePrefetch(juce::AudioSource& input, int minAhead) noexcept;
+    void ensurePrefetch(juce::AudioSource& input, int minAhead, double rate) noexcept;
+    void reanchorPrefetch(juce::AudioSource& input, double rate) noexcept;
     float readHermite(int channel, double position) const noexcept;
     double wrapPosition(double pos) const noexcept;
     void applyDirectionFade(float* ch0, float* ch1, int numSamples) noexcept;
@@ -47,6 +48,7 @@ private:
 
     int m_sourceSize = 0;
     double m_readPos = 0.0;
+    double m_bufferOriginSample = 0.0;
     double m_lastRate = 0.0;
     double m_smoothedRate = 0.0;
 

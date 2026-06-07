@@ -120,9 +120,9 @@ Item {
             }
 
             root._totalScratchedAngle += delta
-            var targetSec = root._pressPlayheadSec
-                          + root._totalScratchedAngle / root.degreesPerSecond
-            root.engine.setScrubPosition(targetSec)
+            // Relative platter delta only — never map absolute mouse position to playhead.
+            var deltaSec = delta / root.degreesPerSecond
+            root.engine.scratchBySeconds(deltaSec)
         }
 
         onReleased: {

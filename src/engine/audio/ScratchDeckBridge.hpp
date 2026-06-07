@@ -13,7 +13,7 @@
 namespace engine::audio {
 
 // Normal playback: proven Hermite varispeed (keylock off) or transport pass-through (keylock on).
-// Scratch playback: Mixxx-style PD controller + dedicated scratch resampler.
+// Scratch playback: velocity-based virtual turntable + dedicated scratch resampler.
 class ScratchDeckBridge : public juce::AudioSource {
 public:
     explicit ScratchDeckBridge(juce::AudioSource* inputSource, bool deleteInputWhenDeleted = false);
@@ -22,11 +22,16 @@ public:
     void releaseResources() override;
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill) override;
 
-    void beginScratch(double anchorSeconds, double trackSampleRate, double trackLengthSeconds);
+    void beginScratch(double anchorSeconds,
+                      double trackSampleRate,
+                      double trackLengthSeconds,
+                      bool wasPlayingBeforeScratch,
+                      double normalPlaybackSpeed);
     void endScratch(bool allowInertia);
     void engageScratchDuringInertia() noexcept;
     void syncTargetFromPlatter(const engine::scratch::VirtualTurntable& platter) noexcept;
     void addTargetDeltaSeconds(double deltaSeconds, double trackSampleRate) noexcept;
+    void submitHandDeltaSeconds(double deltaSeconds, double dtSeconds) noexcept;
     void setAbsoluteTargetSeconds(double seconds, double trackSampleRate) noexcept;
 
     void configureTrack(double trackSampleRate, double trackLengthSeconds) noexcept;

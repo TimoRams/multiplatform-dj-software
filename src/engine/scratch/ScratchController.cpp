@@ -1,32 +1,20 @@
 #include "ScratchController.hpp"
 
+#include <QDebug>
 #include <algorithm>
 
 namespace engine::scratch {
 
-void ScratchController::resetControllerState(double audioSamplePos, double targetSamplePos) noexcept
-{
-    m_previousAudioSamplePos = audioSamplePos;
-    m_scratchStartTargetPos = targetSamplePos;
-    m_audioDeltaSum = 0.0;
-    m_targetDeltaLast = 0.0;
-    m_previousError = 0.0;
-    m_filteredError = 0.0;
-    m_moveDelay = 0.0;
-    m_scratchPosSampleTime = 0.0;
-    m_callsSinceInterval = 0;
-    m_timeSinceTargetMove = 0.0;
-    m_rate.store(0.0, std::memory_order_relaxed);
-    m_readPosition.store(audioSamplePos, std::memory_order_relaxed);
-}
+namespace {
+constexpr bool kScratchDebugLog = false;
+constexpr int kScratchDebugIntervalBlocks = 50;
+} // namespace
 
-void ScratchController::startScratch(double audioSamplePos, double targetSamplePos) noexcept
+uint64_t ScratchController::nowNs() noexcept
 {
-    m_isScratching.store(true, std::memory_order_relaxed);
-    m_inertiaActive.store(false, std::memory_order_relaxed);
-    m_targetSamplePos.store(targetSamplePos, std::memory_order_relaxed);
-    resetControllerState(audioSamplePos, targetSamplePos);
-    ++m_targetMoveGeneration;
+    using clock = std::chrono::steady_clock;
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now().time_since_epoch()).count());
 }
 
 void ScratchController::setTrackSampleRate(double sampleRate) noexcept
@@ -34,183 +22,136 @@ void ScratchController::setTrackSampleRate(double sampleRate) noexcept
     m_trackSampleRate.store(std::max(1.0, sampleRate), std::memory_order_relaxed);
 }
 
+double ScratchController::timeSinceLastMoveMs() const noexcept
+{
+    const uint64_t last = m_lastMoveNs.load(std::memory_order_relaxed);
+    if (last == 0)
+        return 0.0;
+    const uint64_t now = nowNs();
+    return static_cast<double>(now - last) * 1e-6;
+}
+
+double ScratchController::oneXResamplerRate(double outputSampleRate, double trackSampleRate) const noexcept
+{
+    const double outSr = std::max(1.0, outputSampleRate);
+    const double trackSr = std::max(1.0, trackSampleRate);
+    return trackSr / outSr;
+}
+
+void ScratchController::startScratch(double audioSamplePos,
+                                     bool wasPlayingBeforeScratch,
+                                     double normalPlaybackSpeed) noexcept
+{
+    m_active.store(true, std::memory_order_relaxed);
+    m_touching.store(true, std::memory_order_relaxed);
+    m_inertiaActive.store(false, std::memory_order_relaxed);
+    m_wasPlayingBeforeScratch.store(wasPlayingBeforeScratch, std::memory_order_relaxed);
+    m_normalPlaybackSpeed.store(std::max(0.01, normalPlaybackSpeed), std::memory_order_relaxed);
+    m_rawSpeed.store(0.0, std::memory_order_relaxed);
+    m_smoothedSpeed.store(0.0, std::memory_order_relaxed);
+    m_inertiaSpeed.store(0.0, std::memory_order_relaxed);
+    m_readPosition.store(audioSamplePos, std::memory_order_relaxed);
+    m_lastMoveNs.store(nowNs(), std::memory_order_relaxed);
+}
+
 void ScratchController::stopScratch() noexcept
 {
-    m_isScratching.store(false, std::memory_order_relaxed);
+    m_active.store(false, std::memory_order_relaxed);
+    m_touching.store(false, std::memory_order_relaxed);
     m_inertiaActive.store(false, std::memory_order_relaxed);
-    m_rate.store(0.0, std::memory_order_relaxed);
+    m_rawSpeed.store(0.0, std::memory_order_relaxed);
+    m_smoothedSpeed.store(0.0, std::memory_order_relaxed);
+    m_inertiaSpeed.store(0.0, std::memory_order_relaxed);
 }
 
 void ScratchController::releaseScratch() noexcept
 {
-    const double currentRate = m_rate.load(std::memory_order_relaxed);
+    m_touching.store(false, std::memory_order_relaxed);
+
+    const double speed = m_smoothedSpeed.load(std::memory_order_relaxed);
     if (m_inertiaEnabled.load(std::memory_order_relaxed)
-            && std::abs(currentRate) > m_config.throwThreshold) {
+            && std::abs(speed) > m_config.throwThreshold) {
+        m_inertiaSpeed.store(speed, std::memory_order_relaxed);
         m_inertiaActive.store(true, std::memory_order_relaxed);
-        m_isScratching.store(false, std::memory_order_relaxed);
         return;
     }
 
-    stopScratch();
+    m_inertiaActive.store(false, std::memory_order_relaxed);
+    m_active.store(false, std::memory_order_relaxed);
 }
 
-void ScratchController::setTargetSamplePosition(double targetSamples) noexcept
+void ScratchController::submitHandDelta(double deltaTrackSec, double dtSec) noexcept
 {
-    m_targetSamplePos.store(targetSamples, std::memory_order_relaxed);
-    notifyTargetMoved();
-}
-
-void ScratchController::addTargetSampleDelta(double deltaSamples) noexcept
-{
-    if (deltaSamples == 0.0)
+    if (dtSec < 1e-6 || !m_active.load(std::memory_order_relaxed))
         return;
 
-    const double next = m_targetSamplePos.load(std::memory_order_relaxed) + deltaSamples;
-    m_targetSamplePos.store(next, std::memory_order_relaxed);
-    notifyTargetMoved();
+    double raw = deltaTrackSec / dtSec;
+    raw = std::clamp(raw, -m_config.maxScratchSpeed, m_config.maxScratchSpeed);
+
+    const double oldSmoothed = m_smoothedSpeed.load(std::memory_order_relaxed);
+    const double smoothed = oldSmoothed * m_config.velocitySmoothingOld
+                          + raw * m_config.velocitySmoothingNew;
+
+    m_rawSpeed.store(raw, std::memory_order_relaxed);
+    m_smoothedSpeed.store(smoothed, std::memory_order_relaxed);
+    m_lastMoveNs.store(nowNs(), std::memory_order_relaxed);
 }
 
-void ScratchController::notifyTargetMoved() noexcept
-{
-    m_moveDelay = 0.0;
-    m_timeSinceTargetMove = 0.0;
-    ++m_targetMoveGeneration;
-}
-
-double ScratchController::correctSampleDeltaForLoop(double sampleDelta,
-                                                    bool loopActive,
-                                                    double loopInSample,
-                                                    double loopOutSample) const noexcept
-{
-    if (!loopActive || loopOutSample <= loopInSample + 1.0)
-        return sampleDelta;
-
-    const double loopLen = loopOutSample - loopInSample;
-    if (loopLen <= 0.0)
-        return sampleDelta;
-
-    const double wraps = std::trunc(sampleDelta / loopLen);
-    return sampleDelta - wraps * loopLen;
-}
-
-void ScratchController::runPdTick(double targetDeltaNormalized) noexcept
-{
-    const double error = targetDeltaNormalized - m_audioDeltaSum;
-    m_filteredError += m_config.filterFactor * (error - m_filteredError);
-    const double dTerm = m_filteredError - m_previousError;
-    double nextRate = m_config.p * m_filteredError + m_config.d * dTerm;
-    nextRate /= static_cast<double>(std::max(1, m_callsPerDt));
-    m_rate.store(nextRate, std::memory_order_relaxed);
-    clampRate(false);
-    m_previousError = m_filteredError;
-    m_targetDeltaLast = targetDeltaNormalized;
-}
-
-void ScratchController::clampRate(bool snapSmallToZero) noexcept
-{
-    double r = m_rate.load(std::memory_order_relaxed);
-    r = std::clamp(r, -m_config.maxScratchRate, m_config.maxScratchRate);
-    if (snapSmallToZero && std::abs(r) < m_config.minScratchRate)
-        r = 0.0;
-    m_rate.store(r, std::memory_order_relaxed);
-}
-
-double ScratchController::processAudioBlock(double currentAudioSamplePos,
-                                            int bufferSize,
+double ScratchController::processAudioBlock(int bufferSize,
                                             double outputSampleRate,
-                                            double baseSampleRateRatio,
-                                            bool loopActive,
-                                            double loopInSample,
-                                            double loopOutSample) noexcept
+                                            double trackSampleRate) noexcept
 {
     if (!m_enabled.load(std::memory_order_relaxed))
         return 0.0;
 
-    if (m_inertiaActive.load(std::memory_order_relaxed)) {
-        m_readPosition.store(currentAudioSamplePos, std::memory_order_relaxed);
-        return m_rate.load(std::memory_order_relaxed);
-    }
+    const double oneX = oneXResamplerRate(outputSampleRate, trackSampleRate);
+    double finalNormalized = 0.0;
 
-    if (!m_isScratching.load(std::memory_order_relaxed))
-        return 0.0;
+    if (m_touching.load(std::memory_order_relaxed)) {
+        finalNormalized = m_smoothedSpeed.load(std::memory_order_relaxed);
 
-    m_bufferSize = std::max(1, bufferSize);
-    m_dt = static_cast<double>(m_bufferSize)
-         / std::max(1.0, outputSampleRate);
-
-    double sampleDelta = currentAudioSamplePos - m_previousAudioSamplePos;
-    sampleDelta = correctSampleDeltaForLoop(sampleDelta, loopActive, loopInSample, loopOutSample);
-
-    const double norm = static_cast<double>(m_bufferSize) * std::max(1e-9, baseSampleRateRatio);
-    m_audioDeltaSum += sampleDelta / norm;
-    m_previousAudioSamplePos = currentAudioSamplePos;
-    m_readPosition.store(currentAudioSamplePos, std::memory_order_relaxed);
-
-    m_timeSinceTargetMove += m_dt;
-
-    const bool targetJustMoved = (m_targetMoveGeneration != m_lastSeenTargetGeneration);
-    if (targetJustMoved) {
-        m_lastSeenTargetGeneration = m_targetMoveGeneration;
-        m_moveDelay = 0.0;
-        m_timeSinceTargetMove = 0.0;
-        // Run PD on the next sample of this block — don't wait a full interval.
-        m_scratchPosSampleTime = m_config.sampleIntervalSeconds;
-    }
-
-    m_scratchPosSampleTime += m_dt;
-    ++m_callsSinceInterval;
-
-    const double interval = m_config.sampleIntervalSeconds;
-    if (m_scratchPosSampleTime >= interval) {
-        const double targetNow = m_targetSamplePos.load(std::memory_order_relaxed);
-        const double targetDeltaNorm = (targetNow - m_scratchStartTargetPos) / norm;
-        m_callsPerDt = std::max(1, m_callsSinceInterval);
-        m_callsSinceInterval = 0;
-        m_scratchPosSampleTime = 0.0;
-
-        if (m_timeSinceTargetMove < m_config.moveDelayMaxSeconds) {
-            runPdTick(targetDeltaNorm);
-        } else {
-            // Platter stopped — pull rate toward zero via zero target delta growth
-            const double decayedTarget = m_targetDeltaLast
-                + (targetDeltaNorm - m_targetDeltaLast) * 0.35;
-            runPdTick(decayedTarget);
-            double r = m_rate.load(std::memory_order_relaxed);
-            r *= 0.82;
-            m_rate.store(r, std::memory_order_relaxed);
-            clampRate(true);
+        if (timeSinceLastMoveMs() > m_config.noMoveDecayMs) {
+            finalNormalized *= m_config.noMoveDecayFactor;
+            m_smoothedSpeed.store(finalNormalized, std::memory_order_relaxed);
         }
-    } else if (m_timeSinceTargetMove < m_config.moveDelayMaxSeconds) {
-        // Assume delayed UI event — hold previous rate
-    } else {
-        double r = m_rate.load(std::memory_order_relaxed);
-        r *= 0.90;
-        m_rate.store(r, std::memory_order_relaxed);
-        clampRate(true);
+    } else if (m_inertiaActive.load(std::memory_order_relaxed)) {
+        double inertia = m_inertiaSpeed.load(std::memory_order_relaxed);
+        inertia *= m_config.inertiaFrictionPerBlock;
+        if (std::abs(inertia) < m_config.inertiaStopThreshold) {
+            inertia = 0.0;
+            m_inertiaActive.store(false, std::memory_order_relaxed);
+            m_active.store(false, std::memory_order_relaxed);
+        }
+        m_inertiaSpeed.store(inertia, std::memory_order_relaxed);
+        finalNormalized = inertia;
+    } else if (m_active.load(std::memory_order_relaxed)) {
+        finalNormalized = 0.0;
+        m_active.store(false, std::memory_order_relaxed);
     }
 
-    return m_rate.load(std::memory_order_relaxed);
-}
+    const double finalRate = finalNormalized * oneX;
 
-void ScratchController::tickInertia(double dtSeconds) noexcept
-{
-    if (!m_inertiaActive.load(std::memory_order_relaxed))
-        return;
-
-    double r = m_rate.load(std::memory_order_relaxed);
-    const double tau = std::max(0.05, m_config.timeToStopSeconds);
-    const double alpha = 1.0 - std::exp(-dtSeconds / tau);
-    r += (0.0 - r) * alpha;
-    m_rate.store(r, std::memory_order_relaxed);
-
-    const double trackSr = m_trackSampleRate.load(std::memory_order_relaxed);
     const double readPos = m_readPosition.load(std::memory_order_relaxed);
-    m_readPosition.store(readPos + r * dtSeconds * trackSr, std::memory_order_relaxed);
+    m_readPosition.store(readPos + finalRate * static_cast<double>(std::max(1, bufferSize)),
+                         std::memory_order_relaxed);
 
-    if (std::abs(r) < m_config.minScratchRate * 4.0) {
-        m_rate.store(0.0, std::memory_order_relaxed);
-        m_inertiaActive.store(false, std::memory_order_relaxed);
+    if constexpr (kScratchDebugLog) {
+        if (++m_debugBlockCounter >= kScratchDebugIntervalBlocks) {
+            m_debugBlockCounter = 0;
+            qDebug() << "scratch"
+                     << "touching" << m_touching.load(std::memory_order_relaxed)
+                     << "active" << m_active.load(std::memory_order_relaxed)
+                     << "inertia" << m_inertiaActive.load(std::memory_order_relaxed)
+                     << "raw" << m_rawSpeed.load(std::memory_order_relaxed)
+                     << "smoothed" << m_smoothedSpeed.load(std::memory_order_relaxed)
+                     << "finalNorm" << finalNormalized
+                     << "finalRate" << finalRate
+                     << "wasPlaying" << m_wasPlayingBeforeScratch.load(std::memory_order_relaxed)
+                     << "idleMs" << timeSinceLastMoveMs();
+        }
     }
+
+    return finalRate;
 }
 
 } // namespace engine::scratch
