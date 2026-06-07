@@ -99,8 +99,12 @@ void ScratchController::submitHandDelta(double deltaTrackSec, double dtSec) noex
     const double oldWeight = std::abs(raw) < m_config.slowSpeedThreshold
         ? m_config.slowVelocitySmoothingOld
         : m_config.fastVelocitySmoothingOld;
-    double velocity = oldVelocity * std::clamp(oldWeight, 0.0, 0.95)
-                    + raw * (1.0 - std::clamp(oldWeight, 0.0, 0.95));
+    const double blend = 1.0 - std::clamp(oldWeight, 0.0, 0.95);
+    double velocity = oldVelocity + (raw - oldVelocity) * blend;
+
+    // Limit per-event acceleration — keeps slow precise drags from jumping.
+    const double maxStep = std::max(0.04, std::abs(raw) * 0.55);
+    velocity = oldVelocity + std::clamp(velocity - oldVelocity, -maxStep, maxStep);
     velocity = std::clamp(velocity, -m_config.maxScratchSpeed, m_config.maxScratchSpeed);
 
     m_handPositionSec.store(target, std::memory_order_relaxed);

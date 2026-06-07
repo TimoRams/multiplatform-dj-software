@@ -2,6 +2,8 @@
 
 #include "HermiteResamplingAudioSource.h"
 
+#include <juce_audio_formats/juce_audio_formats.h>
+
 namespace engine::audio {
 
 ScratchDeckBridge::ScratchDeckBridge(juce::AudioSource* inputSource, bool deleteInputWhenDeleted)
@@ -190,6 +192,11 @@ void ScratchDeckBridge::setScratchInputSource(juce::AudioSource* source) noexcep
 {
     m_scratchInput = source;
     m_positionableScratchInput = dynamic_cast<juce::PositionableAudioSource*>(source);
+
+    juce::AudioFormatReader* reader = nullptr;
+    if (auto* readerSource = dynamic_cast<juce::AudioFormatReaderSource*>(source))
+        reader = readerSource->getAudioFormatReader();
+    m_scratchResampler.setFormatReader(reader);
 }
 
 bool ScratchDeckBridge::isScratching() const noexcept

@@ -58,8 +58,9 @@ bool ScratchSession::submitRelative(engine::audio::ScratchDeckBridge* bridge,
 
     const double clamped = std::clamp(deltaSec, -kEventSpikeClampSec, kEventSpikeClampSec);
 
+    // Floor dt at ~one UI frame to avoid velocity spikes from sub-millisecond events.
     const double dtSec = m_lastMoveClock.isValid()
-        ? std::clamp(static_cast<double>(m_lastMoveClock.nsecsElapsed()) * 1e-9, 0.001, 0.100)
+        ? std::clamp(static_cast<double>(m_lastMoveClock.nsecsElapsed()) * 1e-9, 0.008, 0.120)
         : 0.016;
     m_lastMoveClock.restart();
 
