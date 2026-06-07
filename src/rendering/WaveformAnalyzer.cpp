@@ -460,7 +460,8 @@ QVector<TrackData::RgbWaveformFrame> WaveformAnalyzer::buildInstantOverview(
         float prevMono = 0.0f;
 
         for (juce::int64 pos = binStart; pos < binEnd; pos += stride) {
-            const int toRead = static_cast<int>(std::min<juce::int64>(stride, binEnd - pos));
+            const int requested = static_cast<int>(std::min<juce::int64>(stride, binEnd - pos));
+            const int toRead = std::min(requested, kMaxSamplesPerBin);
             buf.clear();
             reader->read(&buf, 0, toRead, pos, true, true);
 
