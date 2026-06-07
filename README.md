@@ -5,7 +5,7 @@
 > **by [Ramsbrock.net](https://ramsbrock.net)**
 
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)
-![C++](https://img.shields.io/badge/C%2B%2B-26-informational?style=flat-square)
+![C++](https://img.shields.io/badge/C%2B%2B-23-informational?style=flat-square)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey?style=flat-square)
 

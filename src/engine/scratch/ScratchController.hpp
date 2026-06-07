@@ -105,8 +105,6 @@ private:
     std::atomic<double> m_readPosition { 0.0 };
     std::atomic<double> m_trackSampleRate { 44100.0 };
     std::atomic<uint64_t> m_lastMoveNs { 0 };
-
-    int m_debugBlockCounter = 0;
 };
 
 } // namespace engine::scratch

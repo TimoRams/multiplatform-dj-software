@@ -90,8 +90,7 @@ bool ScratchSession::submitAbsolute(engine::audio::ScratchDeckBridge* bridge,
 
 double ScratchSession::tick(engine::audio::ScratchDeckBridge* bridge, double dtSec) noexcept
 {
-    if (bridge)
-        bridge->tickControlThread(dtSec);
+    (void) dtSec;
     return bridge ? bridge->scratchRate() : 0.0;
 }
 

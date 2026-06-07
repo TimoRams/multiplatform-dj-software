@@ -1,15 +1,9 @@
 #include "ScratchController.hpp"
 
-#include <QDebug>
 #include <algorithm>
 #include <cmath>
 
 namespace engine::scratch {
-
-namespace {
-constexpr bool kScratchDebugLog = false;
-constexpr int kScratchDebugIntervalBlocks = 50;
-} // namespace
 
 uint64_t ScratchController::nowNs() noexcept
 {
@@ -163,23 +157,6 @@ double ScratchController::processAudioBlock(int bufferSize,
     const double readPos = m_readPosition.load(std::memory_order_relaxed);
     m_readPosition.store(readPos + finalRate * static_cast<double>(std::max(1, bufferSize)),
                          std::memory_order_relaxed);
-
-    if constexpr (kScratchDebugLog) {
-        if (++m_debugBlockCounter >= kScratchDebugIntervalBlocks) {
-            m_debugBlockCounter = 0;
-            qDebug() << "scratch"
-                     << "touching" << m_touching.load(std::memory_order_relaxed)
-                     << "active" << m_active.load(std::memory_order_relaxed)
-                     << "inertia" << m_inertiaActive.load(std::memory_order_relaxed)
-                     << "raw" << m_rawSpeed.load(std::memory_order_relaxed)
-                     << "smoothed" << m_smoothedSpeed.load(std::memory_order_relaxed)
-                     << "finalNorm" << finalNormalized
-                     << "finalRate" << finalRate
-                     << "releaseTarget" << m_releaseTargetSpeed.load(std::memory_order_relaxed)
-                     << "wasPlaying" << m_wasPlayingBeforeScratch.load(std::memory_order_relaxed)
-                     << "idleMs" << timeSinceLastMoveMs();
-        }
-    }
 
     return finalRate;
 }

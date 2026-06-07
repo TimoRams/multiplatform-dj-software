@@ -4,11 +4,11 @@
 #include "../scratch/ScratchController.hpp"
 #include "../scratch/VirtualTurntable.hpp"
 
-#include "HermiteResamplingAudioSource.h"
-
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <atomic>
 #include <memory>
+
+class HermiteResamplingAudioSource;
 
 namespace engine::audio {
 
@@ -17,6 +17,7 @@ namespace engine::audio {
 class ScratchDeckBridge : public juce::AudioSource {
 public:
     explicit ScratchDeckBridge(juce::AudioSource* inputSource, bool deleteInputWhenDeleted = false);
+    ~ScratchDeckBridge() override;
 
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override;
     void releaseResources() override;
@@ -29,10 +30,8 @@ public:
                       double normalPlaybackSpeed);
     void endScratch(bool allowInertia);
     void engageScratchDuringInertia() noexcept;
-    void syncTargetFromPlatter(const engine::scratch::VirtualTurntable& platter) noexcept;
     void addTargetDeltaSeconds(double deltaSeconds, double trackSampleRate) noexcept;
     void submitHandDeltaSeconds(double deltaSeconds, double dtSeconds) noexcept;
-    void setAbsoluteTargetSeconds(double seconds, double trackSampleRate) noexcept;
 
     void configureTrack(double trackSampleRate, double trackLengthSeconds) noexcept;
     void syncReadPositionSeconds(double positionSeconds, double trackSampleRate) noexcept;
@@ -46,15 +45,11 @@ public:
                              double trackSampleRate) noexcept;
     void setReverse(bool reverse) noexcept;
 
-    void tickControlThread(double dtSeconds) noexcept;
-
     [[nodiscard]] bool isScratching() const noexcept;
     [[nodiscard]] bool isInertiaActive() const noexcept;
     [[nodiscard]] double scratchRate() const noexcept;
     [[nodiscard]] double readPositionSeconds(double trackSampleRate) const noexcept;
-    [[nodiscard]] double targetPositionSeconds(double trackSampleRate) const noexcept;
 
-    void syncReadToTarget(double trackSampleRate) noexcept;
     void snapHermiteToDeckTempo() noexcept;
 
     [[nodiscard]] engine::scratch::VirtualTurntable& platter() noexcept { return m_platter; }
@@ -63,7 +58,7 @@ public:
     void armScalerCrossfade() noexcept { m_crossfadeRemaining.store(kCrossfadeSamples, std::memory_order_relaxed); }
 
     // Positionable deck reader used for scratch pulls (bypasses transport clock).
-    void setScratchInputSource(juce::AudioSource* source) noexcept { m_scratchInput = source; }
+    void setScratchInputSource(juce::AudioSource* source) noexcept;
 
     // Audio thread publishes scratch playhead here (seconds) for lock-free UI reads.
     void setAudioPlayheadSink(std::atomic<double>* sink) noexcept { m_audioPlayheadSink = sink; }
@@ -75,12 +70,15 @@ public:
 private:
     void applyDeckTempoToHermite() noexcept;
     [[nodiscard]] double effectiveDeckTempoRatio() const noexcept;
+    [[nodiscard]] juce::PositionableAudioSource* positionableScratchSource() const noexcept;
     double activePlaybackRate(double trackSampleRate, int bufferSize) noexcept;
     void applyNormalPathCrossfade(const juce::AudioSourceChannelInfo& info) noexcept;
     [[nodiscard]] bool isScratchPathActive() const noexcept;
 
     juce::OptionalScopedPointer<juce::AudioSource> m_transport;
     juce::AudioSource* m_scratchInput = nullptr;
+    juce::PositionableAudioSource* m_positionableTransportSource = nullptr;
+    juce::PositionableAudioSource* m_positionableScratchInput = nullptr;
     std::unique_ptr<HermiteResamplingAudioSource> m_hermite;
 
     engine::scratch::ScratchController m_controller;
