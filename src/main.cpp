@@ -28,7 +28,7 @@
 #endif
 
 #include "DjEngine.h"
-#include "audio/DjMasterBus.h"
+#include "DjMasterBus.h"
 #include "WaveformItem.h"
 #include "library/LibraryManager.h"
 #include "library/CoverArtProvider.h"
@@ -540,6 +540,46 @@ int main(int argc, char *argv[])
             return;
         shutdownDone = true;
 
+        // Persist clean-shutdown flag before any teardown that can abort (ASAN).
+        settingsManager.markCleanShutdown();
+
+        if (libraryAnalysisManager)
+            libraryAnalysisManager->cancel();
+
+        for (DjEngine* deck : {deckA.get(), deckB.get(), deckC.get(), deckD.get()}) {
+            if (deck)
+                deck->prepareForShutdown();
+        }
+
+        if (controllerManager) {
+            QObject::disconnect(&settingsManager, nullptr, controllerManager.get(), nullptr);
+            controllerManager->setFlx10Enabled(false);
+            controllerManager->setDecks(nullptr, nullptr);
+        }
+
+        // Break QML bindings so FrameAnimation / waveform timers stop driving updates.
+        clearQmlContextProperties();
+
+        QQuickWindow* quickWindow = nullptr;
+        for (QObject* root : engine.rootObjects()) {
+            if (auto* window = qobject_cast<QQuickWindow*>(root))
+                quickWindow = window;
+        }
+
+        if (quickWindow) {
+            quickWindow->hide();
+            // Blocks until the render thread has released GPU resources; window
+            // object must stay alive — do not delete it synchronously here.
+            quickWindow->releaseResources();
+        }
+
+        if (midiManager) {
+            midiManager->shutdown();
+            midiManager.reset();
+        }
+
+        controllerManager.reset();
+
         if (linkManager)
             linkManager->shutdown();
 
@@ -549,52 +589,28 @@ int main(int argc, char *argv[])
                 masterBus->removeDeck(deck);
         }
 
-        // Stop the shared audio device before tearing down engines/controllers.
         DjEngine::shutdownSharedAudioDeviceManager();
 
-        if (controllerManager) {
-            QObject::disconnect(&settingsManager, nullptr, controllerManager.get(), nullptr);
-            controllerManager->setFlx10Enabled(false);
-            controllerManager->setDecks(nullptr, nullptr);
-            controllerManager->blockSignals(true);
-        }
-
-        if (midiManager)
-            midiManager->shutdown();
-
-        // Null QML context pointers before destroying QML so bindings cannot
-        // touch backend objects during Component.onDestruction handlers.
-        clearQmlContextProperties();
-
-        const auto rootObjects = engine.rootObjects();
-        for (QObject* root : rootObjects) {
-            if (auto* window = qobject_cast<QQuickWindow*>(root)) {
-                window->hide();
-                window->releaseResources();
-            }
+        engine.clearComponentCache();
+        const auto qmlRoots = engine.rootObjects();
+        for (QObject* root : qmlRoots)
             root->deleteLater();
-        }
-        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
-        controllerManager.reset();
-        midiManager.reset();
-
-        linkManager.reset();
-        masterBus.reset();
+        for (int i = 0; i < 100 && !engine.rootObjects().isEmpty(); ++i)
+            QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 50);
 
         deckD.reset();
         deckC.reset();
         deckB.reset();
         deckA.reset();
 
-        settingsManager.markCleanShutdown();
-        settingsManager.shutdown();
+        linkManager.reset();
+        masterBus.reset();
 
-        if (libraryAnalysisManager)
-            libraryAnalysisManager->cancel();
         if (libraryDb)
             libraryDb->shutdown(true);
+
+        settingsManager.shutdown();
     };
 
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, shutdownRuntime, Qt::DirectConnection);

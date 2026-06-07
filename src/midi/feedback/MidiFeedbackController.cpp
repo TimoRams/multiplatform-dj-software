@@ -88,6 +88,16 @@ void MidiFeedbackController::stop()
         m_blinkTimer.stop();
 }
 
+void MidiFeedbackController::prepareForShutdown() noexcept
+{
+    QObject::disconnect(&m_vuTimer, nullptr, this, nullptr);
+    QObject::disconnect(&m_blinkTimer, nullptr, this, nullptr);
+    m_enabled = false;
+    m_sender = {};
+    for (auto*& deck : m_decks)
+        deck = nullptr;
+}
+
 void MidiFeedbackController::clearAll()
 {
     for (int deck = 1; deck <= 4; ++deck) {
@@ -165,7 +175,8 @@ void MidiFeedbackController::refreshHotcuePads(int deck)
         return;
 
     DjEngine* engine = deckEngine(deck);
-    const QVariantList cues = engine ? engine->hotCues() : QVariantList();
+    const QVariantList hotCues = engine ? engine->hotCues() : QVariantList();
+    const QVariantList savedLoops = engine ? engine->savedLoops() : QVariantList();
 
     for (int pad = 1; pad <= 8; ++pad) {
         bool exists = false;
@@ -173,17 +184,18 @@ void MidiFeedbackController::refreshHotcuePads(int deck)
         uint8_t color = kLedOff;
 
         const int index = pad - 1;
-        if (index < cues.size()) {
-            const QVariantMap cue = cues.at(index).toMap();
-            exists = cue.value(QStringLiteral("set")).toBool();
-            isLoop = cue.value(QStringLiteral("isLoop")).toBool()
-                || cue.value(QStringLiteral("type")).toString().compare(QStringLiteral("loop"), Qt::CaseInsensitive) == 0;
-
-            if (!isLoop) {
-                const QString label = cue.value(QStringLiteral("label")).toString().trimmed().toLower();
-                isLoop = label.contains(QStringLiteral("loop")) || label.contains(QStringLiteral("reloop"));
+        if (index < savedLoops.size()) {
+            const QVariantMap loopCue = savedLoops.at(index).toMap();
+            if (loopCue.value(QStringLiteral("set")).toBool()) {
+                exists = true;
+                isLoop = true;
+                color = hotcueColorValue(loopCue.value(QStringLiteral("color")).toString());
             }
+        }
 
+        if (!exists && index < hotCues.size()) {
+            const QVariantMap cue = hotCues.at(index).toMap();
+            exists = cue.value(QStringLiteral("set")).toBool();
             color = hotcueColorValue(cue.value(QStringLiteral("color")).toString());
         }
 
@@ -373,20 +385,9 @@ bool MidiFeedbackController::deckHasBlinkingHotcue(int deck) const
     if (!engine)
         return false;
 
-    const QVariantList cues = engine->hotCues();
-    for (const QVariant& item : cues) {
-        const QVariantMap cue = item.toMap();
-        if (!cue.value(QStringLiteral("set")).toBool())
-            continue;
-
-        if (cue.value(QStringLiteral("isLoop")).toBool())
-            return true;
-
-        if (cue.value(QStringLiteral("type")).toString().compare(QStringLiteral("loop"), Qt::CaseInsensitive) == 0)
-            return true;
-
-        const QString label = cue.value(QStringLiteral("label")).toString().trimmed().toLower();
-        if (label.contains(QStringLiteral("loop")) || label.contains(QStringLiteral("reloop")))
+    const QVariantList savedLoops = engine->savedLoops();
+    for (const QVariant& item : savedLoops) {
+        if (item.toMap().value(QStringLiteral("set")).toBool())
             return true;
     }
 

@@ -4,6 +4,7 @@
 #include "ParameterStore.h"
 #include "SettingsManager.h"
 
+#include <QCoreApplication>
 #include <QDebug>
 #include <QDesktopServices>
 #include <QDir>
@@ -464,7 +465,9 @@ void appendMidiDeviceNames(const DeviceList& devices,
 }
 
 MidiControllerManager::MidiControllerManager(ParameterStore* store, QObject* parent)
-    : QObject(parent), m_parameterStore(store)
+    : QObject(parent),
+      m_parameterStore(store),
+      m_midiFeedback(this)
 {
     if (m_parameterStore) {
         connect(m_parameterStore, &ParameterStore::parameterChanged,
@@ -475,7 +478,7 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, QObject* par
     {
         QMetaObject::invokeMethod(this, [this]()
         {
-            if (m_shuttingDown.load(std::memory_order_acquire))
+            if (m_shutdownComplete.load(std::memory_order_acquire))
                 return;
             refreshMidiAndMappings();
         }, Qt::QueuedConnection);
@@ -518,7 +521,7 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, QObject* par
     m_startupRefreshTimer.setSingleShot(true);
     connect(&m_startupRefreshTimer, &QTimer::timeout, this, [this]()
     {
-        if (m_shuttingDown.load(std::memory_order_acquire))
+        if (m_shutdownComplete.load(std::memory_order_acquire))
             return;
         refreshMidiAndMappings();
         autoOpenFlx10MidiOutputIfNeeded();
@@ -530,13 +533,21 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, QObject* par
 
 void MidiControllerManager::shutdown()
 {
-    if (m_shuttingDown.exchange(true, std::memory_order_acq_rel))
+    if (m_shutdownComplete.exchange(true, std::memory_order_acq_rel))
         return;
 
-    m_startupRefreshTimer.stop();
-    blockSignals(true);
-
+    // Drop JUCE device-list callbacks before touching Qt timers — queued refresh
+    // lambdas must not run while I/O is being torn down.
     m_midiDeviceListConnection = juce::MidiDeviceListConnection{};
+
+    // Stop LED feedback timers/sender first — avoid QTimer::stop() during aboutToQuit.
+    m_midiFeedback.prepareForShutdown();
+
+    // Disconnect timers instead of stop() — QTimer::stop() has crashed during
+    // aboutToQuit when a timeout handler is still unwinding on macOS.
+    QObject::disconnect(&m_startupRefreshTimer, nullptr, this, nullptr);
+    QObject::disconnect(&m_jogAReleaseTimer, nullptr, this, nullptr);
+    QObject::disconnect(&m_jogBReleaseTimer, nullptr, this, nullptr);
 
     if (m_parameterStore)
         QObject::disconnect(m_parameterStore, nullptr, this, nullptr);
@@ -548,13 +559,8 @@ void MidiControllerManager::shutdown()
     m_deckA = nullptr;
     m_deckB = nullptr;
 
-    m_jogAReleaseTimer.stop();
-    m_jogBReleaseTimer.stop();
-
-    m_midiFeedback.setEnabled(false);
-    m_midiFeedback.setDecks(nullptr, nullptr);
-
-    stopFlx10OutputSession();
+    // Feedback already torn down in prepareForShutdown(); skip stopFlx10OutputSession
+    // here — it would touch Qt state while the scene graph may still be winding down.
 
     for (auto& input : m_midiInputs) {
         if (input)
@@ -575,7 +581,8 @@ void MidiControllerManager::shutdown()
 
 MidiControllerManager::~MidiControllerManager()
 {
-    shutdown();
+    if (!m_shutdownComplete.load(std::memory_order_acquire))
+        shutdown();
 }
 
 QStringList MidiControllerManager::getAvailableMidiInputDevices()
@@ -1646,12 +1653,12 @@ QString MidiControllerManager::getSelectedMapping() const
 
 void MidiControllerManager::refreshMidiAndMappings()
 {
-    if (m_shuttingDown.load(std::memory_order_acquire))
+    if (m_shutdownComplete.load(std::memory_order_acquire))
         return;
 
     refreshMidiDeviceCache();
 
-    if (m_shuttingDown.load(std::memory_order_acquire))
+    if (m_shutdownComplete.load(std::memory_order_acquire))
         return;
 
     emit midiDevicesUpdated();
@@ -2381,7 +2388,7 @@ void MidiControllerManager::learnMapping(int msgId)
 
 void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*/, const juce::MidiMessage& message)
 {
-    if (m_shuttingDown.load(std::memory_order_acquire))
+    if (m_shutdownComplete.load(std::memory_order_acquire))
         return;
 
     // Diagnostic: log every incoming MIDI message so we can see if JUCE is even
@@ -2470,7 +2477,7 @@ void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*
 
 void MidiControllerManager::onParameterChanged(const QString& id, float value)
 {
-    if (m_shuttingDown.load(std::memory_order_acquire))
+    if (m_shutdownComplete.load(std::memory_order_acquire))
         return;
 
     const bool outputOpen =
@@ -2832,13 +2839,21 @@ void MidiControllerManager::refreshHotCueLeds(QChar deck, DjEngine* engine)
         return;
     }
 
-    const QVariantList cues = engine->hotCues();
+    const QVariantList hotCues = engine->hotCues();
+    const QVariantList savedLoops = engine->savedLoops();
     const int status = hotCueStatusForDeck(deck);
     for (int i = 0; i < 8; ++i) {
         bool isSet = false;
         QString color;
-        if (i < cues.size()) {
-            const QVariantMap cue = cues.at(i).toMap();
+        if (i < savedLoops.size()) {
+            const QVariantMap loopCue = savedLoops.at(i).toMap();
+            if (loopCue.value(QStringLiteral("set")).toBool()) {
+                isSet = true;
+                color = loopCue.value(QStringLiteral("color")).toString();
+            }
+        }
+        if (!isSet && i < hotCues.size()) {
+            const QVariantMap cue = hotCues.at(i).toMap();
             isSet = cue.value(QStringLiteral("set")).toBool();
             color = cue.value(QStringLiteral("color")).toString();
         }
@@ -3067,6 +3082,8 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
         QObject::connect(engine, &DjEngine::slipChanged,
                          this, [this, deck, engine] { refreshTransportAndLoopLeds(deck, engine); });
         QObject::connect(engine, &DjEngine::hotCuesChanged,
+                         this, [this, deck, engine] { refreshHotCueLeds(deck, engine); });
+        QObject::connect(engine, &DjEngine::savedLoopsChanged,
                          this, [this, deck, engine] { refreshHotCueLeds(deck, engine); });
     };
     wireDeckLeds(QLatin1Char('A'), m_deckA);

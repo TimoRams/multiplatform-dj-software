@@ -281,9 +281,12 @@ qt_add_resources(${PROJECT_NAME} "BrockDJ_controller_mappings"
 
 target_sources(${PROJECT_NAME} PRIVATE
     src/main.cpp
-    src/audio/DjEngine.cpp
-    src/audio/DjMasterBus.h
-    src/audio/DjMasterBus.cpp
+    src/engine/DjEngine.cpp
+    src/engine/DjMasterBus.h
+    src/engine/DjMasterBus.cpp
+    src/engine/audio/TimeStretchAudioSource.cpp
+    src/engine/audio/MixerDspSource.cpp
+    src/engine/audio/ReverseStreamAudioSource.cpp
     src/analysis/PhraseAnalyzer.h
     src/analysis/PhraseAnalyzer.cpp
     src/analysis/AnalysisCacheVersion.h
@@ -331,8 +334,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/midi/ParameterStore.cpp
     src/midi/AlsaMidiOutput.h
     src/midi/AlsaMidiOutput.cpp
-    src/controllers/feedback/MidiFeedbackController.h
-    src/controllers/feedback/MidiFeedbackController.cpp
+    src/midi/feedback/MidiFeedbackController.h
+    src/midi/feedback/MidiFeedbackController.cpp
     src/midi/MidiControllerManager.h
     src/midi/MidiControllerManager.cpp
     src/controllers/ControllerProfile.h
@@ -353,19 +356,30 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/library/LibraryTableModel.cpp
     src/fx/BrickwallLimiter.h
     src/fx/BrickwallLimiter.cpp
-    src/audio/ScratchEngine.h
-    src/audio/ScratchEngine.cpp
-    src/audio/TurntableSimulation.h
-    src/audio/TurntableSimulation.cpp
+    src/engine/audio/HermiteResamplingAudioSource.h
+    src/engine/audio/HermiteResamplingAudioSource.cpp
+    src/engine/scratch/ScratchSession.hpp
+    src/engine/scratch/ScratchSession.cpp
+    src/engine/scratch/ScratchController.hpp
+    src/engine/scratch/ScratchController.cpp
+    src/engine/scratch/VirtualTurntable.hpp
+    src/engine/scratch/VirtualTurntable.cpp
+    src/engine/audio/ScratchResampler.hpp
+    src/engine/audio/ScratchResampler.cpp
+    src/engine/audio/ScratchDeckBridge.hpp
+    src/engine/audio/ScratchDeckBridge.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     src
-    src/audio
+    src/engine
+    src/engine/scratch
+    src/engine/audio
     src/rendering
     src/midi
     src/controllers
-    src/controllers/feedback
+    src/midi/feedback
+    src/fx/dsp
     src/analysis
     src/domain
     src/app

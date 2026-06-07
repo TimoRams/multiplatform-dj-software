@@ -56,6 +56,7 @@ public:
 
     void start();
     void stop();
+    void prepareForShutdown() noexcept;
 
     void clearAll();
     void refreshAll();

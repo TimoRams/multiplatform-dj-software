@@ -1,5 +1,11 @@
 #pragma once
 
+#include "audio/ReverseStreamAudioSource.h"
+#include "audio/MixerDspSource.h"
+#include "audio/ScratchDeckBridge.hpp"
+#include "audio/TimeStretchAudioSource.h"
+#include "scratch/ScratchSession.hpp"
+
 #include <QObject>
 #include <QImage>
 #include <QString>
@@ -103,6 +109,9 @@ public:
     static void shutdownSharedAudioDeviceManager();
     static juce::AudioDeviceManager& getSharedAudioDeviceManager();
 
+    /** Stop Qt timers and waveform analysis before QML / MIDI teardown. */
+    void prepareForShutdown();
+
     explicit DjEngine(QObject* parent = nullptr);
     ~DjEngine() override;
 
@@ -118,26 +127,17 @@ public:
     // Called from QML FrameAnimation every VSync frame — must be wait-free.
     [[nodiscard]] Q_INVOKABLE double getPlayheadPositionAtomic() const;
     [[nodiscard]] bool isPlaying() const;
-    [[nodiscard]] bool isScrubbing() const { return m_isScrubbing; }
-    [[nodiscard]] bool isScratchReleaseActive() const { return m_scratchReleaseActive; }
+    [[nodiscard]] bool isScrubbing() const { return m_scratch.scrubbing(); }
+    [[nodiscard]] bool isScratchReleaseActive() const { return m_scratch.releaseGlide(); }
 
-    // Pixels-per-second scale mirrored from the waveform renderer so scrubBy()
-    // can convert mouse pixels → audio seconds without needing QML math.
     [[nodiscard]] double pixelsPerSecond() const { return m_pixelsPerSecond; }
     [[nodiscard]] double waveformPointsPerSecond() const { return WAVEFORM_POINTS_PER_SECOND; }
 
-    // Universal scratch API used by jogwheel and scrolling waveform.
-    // pauseForScrub() captures current play state and enters scratch mode.
-    // scrubBy() and scratchBySeconds() move the playhead with audible output.
-    // resumeAfterScrub() restores pre-scratch transport state.
-    Q_INVOKABLE void pauseForScrub();
-    Q_INVOKABLE void scrubBy(double pixelDelta);
+    // Scratch: bridge PD physics + Hermite pull. Waveform/turntable → setScrubPosition; MIDI → scratchBySeconds.
+    Q_INVOKABLE void pauseForScrub(double anchorPositionSec = -1.0);
     Q_INVOKABLE void scratchBySeconds(double deltaSeconds, bool vinylOneToOnePosition = false);
-    // Absolute scrub positioning for 1:1 direct manipulation.
     Q_INVOKABLE void setScrubPosition(double positionSeconds);
-    // Generic scratch input: signed playback-rate target where 1.0 = normal forward speed.
-    // This decouples UI deltas from the audio scratch model (usable for MIDI/HID jog ticks).
-    Q_INVOKABLE void pushScratchVelocityTick(double velocityRate, bool directResponse = false);
+    [[nodiscard]] Q_INVOKABLE double platterAngleDegrees() const;
     Q_INVOKABLE void resumeAfterScrub();
     Q_INVOKABLE void applyScratchReleaseJog(double deltaSeconds);
     Q_INVOKABLE void finishScrubWithoutInertia();
@@ -482,18 +482,15 @@ private:
     SavedLoopSlot&       savedLoopAt(int i)       { return m_savedLoopSlots[static_cast<size_t>(i)]; }
     const SavedLoopSlot& savedLoopAt(int i) const { return m_savedLoopSlots[static_cast<size_t>(i)]; }
 
-    class MixerDspSource;
-    class TimeStretchAudioSource;
-
     juce::AudioDeviceManager& deviceManager;
     juce::AudioFormatManager formatManager;
     std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
     std::unique_ptr<juce::BufferingAudioSource> bufferedReaderSource;
     std::unique_ptr<juce::AudioFormatReaderSource> directReaderSource;
-    std::unique_ptr<class ReverseStreamAudioSource> reverseWrapSource;
+    std::unique_ptr<ReverseStreamAudioSource> reverseWrapSource;
     juce::TimeSliceThread readAheadThread { "Deck Read-Ahead" };
     juce::AudioTransportSource transportSource;
-    std::unique_ptr<juce::ResamplingAudioSource> resamplingSource;
+    std::unique_ptr<engine::audio::ScratchDeckBridge> scratchBridge;
     std::unique_ptr<TimeStretchAudioSource> timeStretchSource;
     std::unique_ptr<MixerDspSource> mixerSource;
     juce::AudioSourcePlayer sourcePlayer;
@@ -600,10 +597,13 @@ private:
     void armSnapFromTransportPosition();
     void armVisualSeekSettle();
     void freezeTransportAt(double positionSec);
+    void terminateScratchSession(double positionSec);
+    void syncScratchBridgeToTransport();
     void ensureTransportRunningForPlayIntent();
     void applyScratchNeutralRouting();
     void restorePostScrubPlaybackState();
-    void advanceAbsoluteScrubFollower(double dtSec);
+    void syncReverseReaderToHold() noexcept;
+    [[nodiscard]] engine::scratch::ScratchLoopCtx scratchLoopCtx() const noexcept;
     void updateScrubPlayheadAnchor();
     void tickScratchPhysics();
     void decayJogNudge();
@@ -641,58 +641,11 @@ private:
     // read lock-free by getPlayheadPositionAtomic() from the QML FrameAnimation.
     std::atomic<double> m_atomicPlayheadPos{0.0};
 
-    struct ScratchConfig {
-        static constexpr double kRateAttackTauSec = 0.018;
-        static constexpr double kRateReleaseTauSec = 0.090;
-        static constexpr double kIdleTimeoutSec = 0.160;
-        static constexpr double kMaxRate = 8.0;
-        static constexpr double kReleaseToPlayTauSec = 0.14;
-        static constexpr double kReleaseToStopTauSec = 0.55;
-        static constexpr double kReleaseSettleThreshold = 0.010;
-        static constexpr double kControlResumeThresholdRate = 0.0010;
-        static constexpr double kControlStopThresholdRate = 0.0005;
-        static constexpr double kDirectStepLimitSec = 0.018;
-        static constexpr double kFineMoveThresholdSec = 0.004;
-        static constexpr double kEventSpikeClampSec = 0.06;
-        static constexpr double kInertiaMoveThresholdSec = 0.002;
-        static constexpr double kInputRateFilterAlpha = 0.20;
-        static constexpr double kInputRateSlewPerSec = 14.0;
-        static constexpr double kDirectionFlipThresholdRate = 0.08;
-        static constexpr double kAbsoluteFollowStiffness = 45.0;  // softer = visible platter lag
-        static constexpr double kAbsoluteFollowDamping   = 11.0;  // underdamped: natural bounce at stop
-        static constexpr double kAbsoluteMaxFollowRate = 16.0;
-        static constexpr double kAbsoluteSnapDistanceSec = 0.00035;
-        static constexpr double kAbsoluteSnapVelocitySecPerSec = 0.015;
-    };
-
-    // Scrub state.
-    // m_pixelsPerSecond is mirrored from the waveform renderer (WAVEFORM_POINTS_PER_SECOND × ppp).
-    double m_pixelsPerSecond = WAVEFORM_POINTS_PER_SECOND * 1.5;  // default with 1.5 ppp
-    bool   m_isScrubbing     = false;
-    bool   m_scrubWasPlaying = false;
+    double m_pixelsPerSecond = WAVEFORM_POINTS_PER_SECOND * 1.5;
+    engine::scratch::ScratchSession m_scratch;
+    QElapsedTimer m_scrubProgressEmitClock;
+    bool m_scratchSnapReadPending = false;
     double m_scrubHoldPosition = 0.0;
-    QElapsedTimer m_lastScrubInputClock;
-    QElapsedTimer m_scrubPhysicsClock;
-    double m_scratchTargetRate = 0.0;
-    double m_scratchSmoothedRate = 0.0;
-    bool   m_scratchReleaseActive = false;
-    bool   m_scratchReleaseSawAboveTarget = false;
-    double m_scratchReleaseTargetRate = 0.0;
-    double m_scratchReleaseTauSec = ScratchConfig::kReleaseToPlayTauSec;
-    double m_scratchAccumulatedMoveSec = 0.0;
-    double m_scratchLastRawInput = 0.0;
-    double m_scratchBaseRate = 1.0;
-    double m_scratchInputFilteredRate = 0.0;
-    double m_scratchLastInputRate = 0.0;
-    double m_scratchDirectionSign = 1.0;
-    bool   m_scrubLoopLockedToActiveLoop = false;
-    bool   m_scratchAbsolutePositionControl = false;
-    bool   m_scratchHardwareDeltaControl = false;
-    double m_scratchJogOriginSec = 0.0;
-    double m_scratchJogAccumulatedSec = 0.0;
-    double m_scratchAbsoluteTargetPosition = 0.0;
-    double m_scratchAbsoluteFollowVelocity = 0.0;
-    bool   m_scrubSavedReverseState = false;
     double m_loadedTrackSampleRate = 44100.0;
 
     // Pre-roll countdown: when play is pressed while visual position is negative,

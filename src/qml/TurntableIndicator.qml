@@ -8,35 +8,24 @@ Item {
     property real  ringThickness: 7
     property real  cutoutAngleDeg: 16
     property real  baseRpm: 33.0 + 1.0/3.0   // 33⅓ RPM = 200 °/s
-    property real  scratchDeadzoneDeg: 1.4
+    property real  scratchDeadzoneDeg: 0.05
 
-    // 33⅓ RPM → (100/3 × 360) / 60 = exactly 200 °/s
     readonly property real degreesPerSecond: 200.0
 
-    // Internal drag state
     property bool dragActive: false
     property bool _scratchEngaged: false
-    property real _accumDragAngle: 0.0      // absolute sum for deadzone
-    property real _totalScratchedAngle: 0.0 // signed total this drag — drives setScrubPosition
-    property real _pressPlayheadSec: 0.0    // playhead captured at press time
+    property real _accumDragAngle: 0.0
+    property real _totalScratchedAngle: 0.0
+    property real _pressPlayheadSec: 0.0
     property real _lastCursorAngle: 0.0
-
-    // ── Rotation ─────────────────────────────────────────────────────────────
-    // Always derived from getPlayheadPositionAtomic() — both during play and
-    // during drag.  setScrubPosition() updates the atomic immediately, so the
-    // ring always reflects the actual audio position with no jump on release.
 
     function updateRotation() {
         if (!root.engine) { ringRotator.rotation = 0; return }
-        // 33⅓ RPM: one revolution every 1.8 s of track time at 100 % pitch.
-        // Transport position already advances faster/slower with tempo — no extra scaling.
-        var playheadSec = root.engine.getPlayheadPositionAtomic()
+        var playheadSec = root.engine.getVisualPositionQml()
         var angle = (playheadSec * root.degreesPerSecond) % 360.0
         if (angle < 0) angle += 360.0
         ringRotator.rotation = angle
     }
-
-    // ── Geometry helpers ─────────────────────────────────────────────────────
 
     function angleForPoint(xPos, yPos) {
         var dx = xPos - root.width  * 0.5
@@ -53,13 +42,9 @@ Item {
         return d
     }
 
-    // ── Visual ───────────────────────────────────────────────────────────────
-
     implicitWidth: 120
     implicitHeight: 120
 
-    // Single rotation item — no intermediate wrapper so the pivot and the
-    // drawn arc centre share the exact same coordinate.
     Item {
         id: ringRotator
         x: 0; y: 0
@@ -96,8 +81,6 @@ Item {
     onWidthChanged:  ringCanvas.requestPaint()
     onHeightChanged: ringCanvas.requestPaint()
 
-    // ── Mouse / scratch ──────────────────────────────────────────────────────
-
     MouseArea {
         anchors.fill: parent
         hoverEnabled: true
@@ -118,11 +101,9 @@ Item {
             root._scratchEngaged      = false
             root._accumDragAngle      = 0.0
             root._totalScratchedAngle = 0.0
-            // Capture press-time playhead so we can feed absolute target positions
-            // to setScrubPosition() — same model used by the scrolling waveform.
-            root._pressPlayheadSec    = root.engine.getPlayheadPositionAtomic()
+            root._pressPlayheadSec    = root.engine.getVisualPositionQml()
             root._lastCursorAngle     = root.angleForPoint(mouse.x, mouse.y)
-            root.engine.pauseForScrub()
+            root.engine.pauseForScrub(root._pressPlayheadSec)
         }
 
         onPositionChanged: (mouse) => {
@@ -139,10 +120,6 @@ Item {
             }
 
             root._totalScratchedAngle += delta
-
-            // Send the raw (unbounded) virtual position to C++ — loop wrapping
-            // is handled exclusively in setScrubPosition() so velocity remains
-            // correct at any rotation speed, including multiple loop crossings per frame.
             var targetSec = root._pressPlayheadSec
                           + root._totalScratchedAngle / root.degreesPerSecond
             root.engine.setScrubPosition(targetSec)
@@ -165,8 +142,6 @@ Item {
             root._totalScratchedAngle = 0.0
         }
     }
-
-    // ── Playback tracking ────────────────────────────────────────────────────
 
     FrameAnimation {
         running: root.engine !== null

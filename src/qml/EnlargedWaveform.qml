@@ -72,8 +72,8 @@ Item {
                     pressPlayheadSec = root.engine.getVisualPositionQml()
                     return
                 }
-                root.engine.pauseForScrub()
                 pressPlayheadSec = root.engine.getVisualPositionQml()
+                root.engine.pauseForScrub(pressPlayheadSec)
             }
 
             onPositionChanged: (mouse) => {

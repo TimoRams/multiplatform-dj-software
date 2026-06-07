@@ -15,6 +15,7 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <array>
 #include <atomic>
+#include <atomic>
 #include <map>
 #include <memory>
 #include <cstdint>
@@ -121,7 +122,7 @@ private:
     void dispatchParameterToStore(const QString& paramId, float value);
     void dispatchMidiParameterToStore(const QString& paramId, float value);
 
-    std::atomic<bool> m_shuttingDown{false};
+    std::atomic<bool> m_shutdownComplete { false };
 
     ParameterStore* m_parameterStore = nullptr;
     DjEngine* m_deckA = nullptr;

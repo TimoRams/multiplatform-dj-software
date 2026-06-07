@@ -7,9 +7,9 @@
 #include <cstdint>
 #include <vector>
 
-#include "../dsp/SsDelay.h"
-#include "../dsp/SsLfo.h"
-#include "../dsp/SvfSmoothed.h"
+#include "dsp/SsDelay.h"
+#include "dsp/SsLfo.h"
+#include "dsp/SvfSmoothed.h"
 #include "filters.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
