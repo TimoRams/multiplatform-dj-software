@@ -41,46 +41,6 @@
 #include <jack/jack.h>
 #endif
 
-namespace {
-
-constexpr double kVolumeMin = 0.0;
-constexpr double kVolumeMax = 1.0;
-constexpr double kTrimMin = 0.0;
-constexpr double kTrimMax = 2.0;
-constexpr double kEqMin = -1.0;
-constexpr double kEqMax = 1.0;
-constexpr double kFilterMin = -1.0;
-constexpr double kFilterMax = 1.0;
-
-double playHistoryThresholdSeconds(double durationSec)
-{
-    if (durationSec <= 0.0)
-        return 12.0;
-    if (durationSec <= 45.0)
-        return std::clamp(durationSec * 0.35, 5.0, 12.0);
-    return std::clamp(durationSec * 0.12, 10.0, 20.0);
-}
-
-QString defaultHotCueColor(int index)
-{
-    static const char* kColors[] = {
-        "#e04040", "#e08030", "#e0c030", "#40c040",
-        "#3080e0", "#8040e0", "#e040a0", "#40c0c0",
-    };
-    return QString::fromUtf8(kColors[static_cast<size_t>(index) % 8]);
-}
-
-QString defaultSavedLoopColor(int index)
-{
-    static const char* kColors[] = {
-        "#30b050", "#3080e0", "#e08030", "#8040e0",
-        "#e04040", "#40c0c0", "#e0c030", "#e040a0",
-    };
-    return QString::fromUtf8(kColors[static_cast<size_t>(index) % 8]);
-}
-
-} // namespace
-
 void DjEngine::setDownbeatAtPosition(double anchorSec)
 {
     if (!m_trackData || !m_trackData->isBpmAnalyzed())

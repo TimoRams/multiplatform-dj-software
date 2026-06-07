@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 set(PROJECT_NAME "BrockDJ")
 project(${PROJECT_NAME} VERSION 0.0.1 LANGUAGES C CXX)
 
-set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -476,7 +476,18 @@ if(UNIX AND NOT APPLE)
     endif()
 endif()
 
-target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)
+target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_26)
+
+if(APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    # Apple SDK headers included through JUCE's Objective-C++ amalgamation still
+    # contain cross-enum arithmetic that Clang treats as a hard error in C++26.
+    # Keep the app target on C++26, but compile these vendor bridge units as C++23
+    # until the SDK/JUCE combination is C++26-clean.
+    file(GLOB_RECURSE _rdbj_juce_objcxx_sources CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/libs/JUCE/modules/*.mm")
+    set_source_files_properties(${_rdbj_juce_objcxx_sources}
+        PROPERTIES COMPILE_OPTIONS "-std=c++23")
+endif()
 
 if(RDBJ_ENABLE_NATIVE_SIMD)
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT APPLE)
