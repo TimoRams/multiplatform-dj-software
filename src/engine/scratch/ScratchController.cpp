@@ -2,6 +2,7 @@
 
 #include <QDebug>
 #include <algorithm>
+#include <cmath>
 
 namespace engine::scratch {
 
@@ -42,14 +43,20 @@ void ScratchController::startScratch(double audioSamplePos,
                                      bool wasPlayingBeforeScratch,
                                      double normalPlaybackSpeed) noexcept
 {
+    const double trackSr = m_trackSampleRate.load(std::memory_order_relaxed);
+    const double startSec = audioSamplePos / std::max(1.0, trackSr);
+
     m_active.store(true, std::memory_order_relaxed);
     m_touching.store(true, std::memory_order_relaxed);
     m_inertiaActive.store(false, std::memory_order_relaxed);
     m_wasPlayingBeforeScratch.store(wasPlayingBeforeScratch, std::memory_order_relaxed);
-    m_normalPlaybackSpeed.store(std::max(0.01, normalPlaybackSpeed), std::memory_order_relaxed);
+    setNormalPlaybackSpeed(normalPlaybackSpeed);
+    m_handPositionSec.store(startSec, std::memory_order_relaxed);
+    m_filteredPositionSec.store(startSec, std::memory_order_relaxed);
     m_rawSpeed.store(0.0, std::memory_order_relaxed);
     m_smoothedSpeed.store(0.0, std::memory_order_relaxed);
     m_inertiaSpeed.store(0.0, std::memory_order_relaxed);
+    m_releaseTargetSpeed.store(0.0, std::memory_order_relaxed);
     m_readPosition.store(audioSamplePos, std::memory_order_relaxed);
     m_lastMoveNs.store(nowNs(), std::memory_order_relaxed);
 }
@@ -62,6 +69,7 @@ void ScratchController::stopScratch() noexcept
     m_rawSpeed.store(0.0, std::memory_order_relaxed);
     m_smoothedSpeed.store(0.0, std::memory_order_relaxed);
     m_inertiaSpeed.store(0.0, std::memory_order_relaxed);
+    m_releaseTargetSpeed.store(0.0, std::memory_order_relaxed);
 }
 
 void ScratchController::releaseScratch() noexcept
@@ -69,8 +77,13 @@ void ScratchController::releaseScratch() noexcept
     m_touching.store(false, std::memory_order_relaxed);
 
     const double speed = m_smoothedSpeed.load(std::memory_order_relaxed);
+    const double target = m_wasPlayingBeforeScratch.load(std::memory_order_relaxed)
+        ? m_normalPlaybackSpeed.load(std::memory_order_relaxed)
+        : 0.0;
+    m_releaseTargetSpeed.store(target, std::memory_order_relaxed);
+
     if (m_inertiaEnabled.load(std::memory_order_relaxed)
-            && std::abs(speed) > m_config.throwThreshold) {
+            && std::abs(speed - target) > m_config.throwThreshold) {
         m_inertiaSpeed.store(speed, std::memory_order_relaxed);
         m_inertiaActive.store(true, std::memory_order_relaxed);
         return;
@@ -88,12 +101,23 @@ void ScratchController::submitHandDelta(double deltaTrackSec, double dtSec) noex
     double raw = deltaTrackSec / dtSec;
     raw = std::clamp(raw, -m_config.maxScratchSpeed, m_config.maxScratchSpeed);
 
-    const double oldSmoothed = m_smoothedSpeed.load(std::memory_order_relaxed);
-    const double smoothed = oldSmoothed * m_config.velocitySmoothingOld
-                          + raw * m_config.velocitySmoothingNew;
+    const double safeDt = std::clamp(dtSec, 0.001, 0.100);
+    const double target = m_handPositionSec.load(std::memory_order_relaxed) + deltaTrackSec;
+    const double oldPosition = m_filteredPositionSec.load(std::memory_order_relaxed);
+    const double oldVelocity = m_smoothedSpeed.load(std::memory_order_relaxed);
+    const double predicted = oldPosition + oldVelocity * safeDt;
+    const double residual = target - predicted;
 
+    const double filteredPosition = predicted + m_config.alpha * residual;
+    double filteredVelocity = oldVelocity + m_config.beta * residual / safeDt;
+    filteredVelocity = filteredVelocity * (1.0 - m_config.rawVelocityMix)
+                     + raw * m_config.rawVelocityMix;
+    filteredVelocity = std::clamp(filteredVelocity, -m_config.maxScratchSpeed, m_config.maxScratchSpeed);
+
+    m_handPositionSec.store(target, std::memory_order_relaxed);
+    m_filteredPositionSec.store(filteredPosition, std::memory_order_relaxed);
     m_rawSpeed.store(raw, std::memory_order_relaxed);
-    m_smoothedSpeed.store(smoothed, std::memory_order_relaxed);
+    m_smoothedSpeed.store(filteredVelocity, std::memory_order_relaxed);
     m_lastMoveNs.store(nowNs(), std::memory_order_relaxed);
 }
 
@@ -110,15 +134,26 @@ double ScratchController::processAudioBlock(int bufferSize,
     if (m_touching.load(std::memory_order_relaxed)) {
         finalNormalized = m_smoothedSpeed.load(std::memory_order_relaxed);
 
-        if (timeSinceLastMoveMs() > m_config.noMoveDecayMs) {
-            finalNormalized *= m_config.noMoveDecayFactor;
+        const double idleMs = timeSinceLastMoveMs();
+        if (idleMs > m_config.noMoveDecayMs) {
+            const double blockSec = static_cast<double>(std::max(1, bufferSize))
+                                  / std::max(1.0, outputSampleRate);
+            const double decay = std::exp(-blockSec / std::max(0.001, m_config.noMoveDecayTauSec));
+            finalNormalized *= decay;
+            if (std::abs(finalNormalized) < m_config.minScratchSpeed)
+                finalNormalized = 0.0;
             m_smoothedSpeed.store(finalNormalized, std::memory_order_relaxed);
         }
     } else if (m_inertiaActive.load(std::memory_order_relaxed)) {
         double inertia = m_inertiaSpeed.load(std::memory_order_relaxed);
-        inertia *= m_config.inertiaFrictionPerBlock;
-        if (std::abs(inertia) < m_config.inertiaStopThreshold) {
-            inertia = 0.0;
+        const double target = m_releaseTargetSpeed.load(std::memory_order_relaxed);
+        const double blockSec = static_cast<double>(std::max(1, bufferSize))
+                              / std::max(1.0, outputSampleRate);
+        const double alpha = 1.0 - std::exp(-blockSec / std::max(0.001, m_config.releaseReturnTauSec));
+        inertia += (target - inertia) * std::clamp(alpha, 0.0, 1.0);
+
+        if (std::abs(inertia - target) < m_config.inertiaStopThreshold) {
+            inertia = target;
             m_inertiaActive.store(false, std::memory_order_relaxed);
             m_active.store(false, std::memory_order_relaxed);
         }
@@ -146,6 +181,7 @@ double ScratchController::processAudioBlock(int bufferSize,
                      << "smoothed" << m_smoothedSpeed.load(std::memory_order_relaxed)
                      << "finalNorm" << finalNormalized
                      << "finalRate" << finalRate
+                     << "releaseTarget" << m_releaseTargetSpeed.load(std::memory_order_relaxed)
                      << "wasPlaying" << m_wasPlayingBeforeScratch.load(std::memory_order_relaxed)
                      << "idleMs" << timeSinceLastMoveMs();
         }

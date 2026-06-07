@@ -8,19 +8,21 @@
 namespace engine::scratch {
 
 struct ScratchControllerConfig {
-    double throwThreshold = 0.50;
-    double maxScratchSpeed = 8.0;
+    double throwThreshold = 0.35;
+    double maxScratchSpeed = 6.0;
     double minScratchSpeed = 0.00005;
-    double velocitySmoothingOld = 0.20;
-    double velocitySmoothingNew = 0.80;
+    double alpha = 0.125;
+    double beta = 0.006;
+    double rawVelocityMix = 0.20;
     double noMoveDecayMs = 30.0;
-    double noMoveDecayFactor = 0.70;
-    double inertiaFrictionPerBlock = 0.985;
+    double noMoveDecayTauSec = 0.035;
+    double releaseReturnTauSec = 0.220;
     double inertiaStopThreshold = 0.02;
 };
 
-// Velocity-based virtual turntable: hand speed drives playback rate directly while
-// touching. No PD follower and no friction while the platter is held.
+// Virtual turntable controller. Hand movement is tracked with an alpha-beta
+// position/velocity estimator, then the release path ramps toward the current
+// deck speed instead of decaying blindly to silence.
 class ScratchController {
 public:
     ScratchController() = default;
@@ -33,6 +35,10 @@ public:
     [[nodiscard]] bool enabled() const noexcept { return m_enabled.load(std::memory_order_relaxed); }
 
     void setInertiaEnabled(bool enabled) noexcept { m_inertiaEnabled.store(enabled, std::memory_order_relaxed); }
+    void setNormalPlaybackSpeed(double speed) noexcept {
+        m_normalPlaybackSpeed.store(std::clamp(speed, 0.01, m_config.maxScratchSpeed),
+                                    std::memory_order_relaxed);
+    }
 
     void startScratch(double audioSamplePos, bool wasPlayingBeforeScratch, double normalPlaybackSpeed) noexcept;
     void stopScratch() noexcept;
@@ -90,9 +96,12 @@ private:
     std::atomic<bool> m_wasPlayingBeforeScratch { false };
 
     std::atomic<double> m_normalPlaybackSpeed { 1.0 };
+    std::atomic<double> m_handPositionSec { 0.0 };
+    std::atomic<double> m_filteredPositionSec { 0.0 };
     std::atomic<double> m_rawSpeed { 0.0 };
     std::atomic<double> m_smoothedSpeed { 0.0 };
     std::atomic<double> m_inertiaSpeed { 0.0 };
+    std::atomic<double> m_releaseTargetSpeed { 0.0 };
     std::atomic<double> m_readPosition { 0.0 };
     std::atomic<double> m_trackSampleRate { 44100.0 };
     std::atomic<uint64_t> m_lastMoveNs { 0 };
