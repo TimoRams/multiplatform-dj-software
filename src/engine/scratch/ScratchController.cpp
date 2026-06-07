@@ -52,7 +52,6 @@ void ScratchController::startScratch(double audioSamplePos,
     m_wasPlayingBeforeScratch.store(wasPlayingBeforeScratch, std::memory_order_relaxed);
     setNormalPlaybackSpeed(normalPlaybackSpeed);
     m_handPositionSec.store(startSec, std::memory_order_relaxed);
-    m_filteredPositionSec.store(startSec, std::memory_order_relaxed);
     m_rawSpeed.store(0.0, std::memory_order_relaxed);
     m_smoothedSpeed.store(0.0, std::memory_order_relaxed);
     m_inertiaSpeed.store(0.0, std::memory_order_relaxed);
@@ -101,23 +100,18 @@ void ScratchController::submitHandDelta(double deltaTrackSec, double dtSec) noex
     double raw = deltaTrackSec / dtSec;
     raw = std::clamp(raw, -m_config.maxScratchSpeed, m_config.maxScratchSpeed);
 
-    const double safeDt = std::clamp(dtSec, 0.001, 0.100);
     const double target = m_handPositionSec.load(std::memory_order_relaxed) + deltaTrackSec;
-    const double oldPosition = m_filteredPositionSec.load(std::memory_order_relaxed);
     const double oldVelocity = m_smoothedSpeed.load(std::memory_order_relaxed);
-    const double predicted = oldPosition + oldVelocity * safeDt;
-    const double residual = target - predicted;
-
-    const double filteredPosition = predicted + m_config.alpha * residual;
-    double filteredVelocity = oldVelocity + m_config.beta * residual / safeDt;
-    filteredVelocity = filteredVelocity * (1.0 - m_config.rawVelocityMix)
-                     + raw * m_config.rawVelocityMix;
-    filteredVelocity = std::clamp(filteredVelocity, -m_config.maxScratchSpeed, m_config.maxScratchSpeed);
+    const double oldWeight = std::abs(raw) < m_config.slowSpeedThreshold
+        ? m_config.slowVelocitySmoothingOld
+        : m_config.fastVelocitySmoothingOld;
+    double velocity = oldVelocity * std::clamp(oldWeight, 0.0, 0.95)
+                    + raw * (1.0 - std::clamp(oldWeight, 0.0, 0.95));
+    velocity = std::clamp(velocity, -m_config.maxScratchSpeed, m_config.maxScratchSpeed);
 
     m_handPositionSec.store(target, std::memory_order_relaxed);
-    m_filteredPositionSec.store(filteredPosition, std::memory_order_relaxed);
     m_rawSpeed.store(raw, std::memory_order_relaxed);
-    m_smoothedSpeed.store(filteredVelocity, std::memory_order_relaxed);
+    m_smoothedSpeed.store(velocity, std::memory_order_relaxed);
     m_lastMoveNs.store(nowNs(), std::memory_order_relaxed);
 }
 
@@ -144,17 +138,6 @@ double ScratchController::processAudioBlock(int bufferSize,
                 finalNormalized = 0.0;
             m_smoothedSpeed.store(finalNormalized, std::memory_order_relaxed);
         }
-
-        const double currentSamples = m_readPosition.load(std::memory_order_relaxed);
-        const double currentSec = currentSamples / std::max(1.0, trackSampleRate);
-        const double targetSec = m_handPositionSec.load(std::memory_order_relaxed);
-        const double positionError = targetSec - currentSec;
-        const double correction = std::clamp(positionError * m_config.positionFollowGain,
-                                             -m_config.maxPositionCorrectionSpeed,
-                                             m_config.maxPositionCorrectionSpeed);
-        finalNormalized = std::clamp(finalNormalized + correction,
-                                     -m_config.maxScratchSpeed,
-                                     m_config.maxScratchSpeed);
     } else if (m_inertiaActive.load(std::memory_order_relaxed)) {
         double inertia = m_inertiaSpeed.load(std::memory_order_relaxed);
         const double target = m_releaseTargetSpeed.load(std::memory_order_relaxed);

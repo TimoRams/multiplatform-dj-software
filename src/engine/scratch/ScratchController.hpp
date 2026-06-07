@@ -11,20 +11,19 @@ struct ScratchControllerConfig {
     double throwThreshold = 0.35;
     double maxScratchSpeed = 6.0;
     double minScratchSpeed = 0.00005;
-    double alpha = 0.125;
-    double beta = 0.006;
-    double rawVelocityMix = 0.20;
-    double positionFollowGain = 18.0;
-    double maxPositionCorrectionSpeed = 0.90;
-    double noMoveDecayMs = 30.0;
-    double noMoveDecayTauSec = 0.035;
+    double slowSpeedThreshold = 0.35;
+    double slowVelocitySmoothingOld = 0.10;
+    double fastVelocitySmoothingOld = 0.35;
+    double noMoveDecayMs = 55.0;
+    double noMoveDecayTauSec = 0.030;
     double releaseReturnTauSec = 0.220;
     double inertiaStopThreshold = 0.02;
 };
 
-// Virtual turntable controller. Hand movement is tracked with an alpha-beta
-// position/velocity estimator, then the release path ramps toward the current
-// deck speed instead of decaying blindly to silence.
+// Virtual turntable controller. Hand movement drives playback velocity
+// directly, with light adaptive smoothing for fast throws and clean slow drags.
+// The release path ramps toward the current deck speed instead of decaying
+// blindly to silence.
 class ScratchController {
 public:
     ScratchController() = default;
@@ -99,7 +98,6 @@ private:
 
     std::atomic<double> m_normalPlaybackSpeed { 1.0 };
     std::atomic<double> m_handPositionSec { 0.0 };
-    std::atomic<double> m_filteredPositionSec { 0.0 };
     std::atomic<double> m_rawSpeed { 0.0 };
     std::atomic<double> m_smoothedSpeed { 0.0 };
     std::atomic<double> m_inertiaSpeed { 0.0 };
