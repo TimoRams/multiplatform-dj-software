@@ -8,32 +8,22 @@ namespace {
 struct StereoBlock {
     float* L;
     float* R;
+    const float* rL;
+    const float* rR;
     int n;
     explicit StereoBlock(const juce::AudioSourceChannelInfo& info) noexcept
         : L(nullptr)
         , R(nullptr)
+        , rL(nullptr)
+        , rR(nullptr)
         , n(info.numSamples)
     {
         const int numCh = std::min(info.buffer->getNumChannels(), 2);
         const int bStart = info.startSample;
         L = numCh > 0 ? info.buffer->getWritePointer(0, bStart) : nullptr;
         R = numCh > 1 ? info.buffer->getWritePointer(1, bStart) : nullptr;
-    }
-};
-
-struct StereoReadBlock {
-    const float* L;
-    const float* R;
-    int n;
-    explicit StereoReadBlock(const juce::AudioSourceChannelInfo& info) noexcept
-        : L(nullptr)
-        , R(nullptr)
-        , n(info.numSamples)
-    {
-        const int numCh = std::min(info.buffer->getNumChannels(), 2);
-        const int bStart = info.startSample;
-        L = numCh > 0 ? info.buffer->getReadPointer(0, bStart) : nullptr;
-        R = numCh > 1 ? info.buffer->getReadPointer(1, bStart) : nullptr;
+        rL = numCh > 0 ? info.buffer->getReadPointer(0, bStart) : nullptr;
+        rR = numCh > 1 ? info.buffer->getReadPointer(1, bStart) : nullptr;
     }
 };
 
@@ -48,37 +38,26 @@ void MixerDspSource::setFxSCParam(float param) { m_colorFx.setSCParamValue(param
 void MixerDspSource::setFxExternalDelayTime(float seconds) { m_colorFx.setExternalDelayTime(seconds); }
 void MixerDspSource::setFxPrimaryParam(float v) { m_colorFx.setPrimaryParam(v); }
 
-void MixerDspSource::setFxSlotEffectType(int slot, EffectType type) {
-        if (auto* fx = fxChainSlot(slot)) fx->setEffectType(type);
-    }
-
-void MixerDspSource::setFxSlotAmount(int slot, float amount) {
-        if (auto* fx = fxChainSlot(slot)) fx->setAmount(amount);
-    }
-
-void MixerDspSource::setFxSlotExternalDelayTime(int slot, float seconds) {
-        if (auto* fx = fxChainSlot(slot)) fx->setExternalDelayTime(seconds);
-    }
-
-void MixerDspSource::setFxSlotPrimaryParam(int slot, float v) {
-        if (auto* fx = fxChainSlot(slot)) fx->setPrimaryParam(v);
-    }
+void MixerDspSource::setFxSlotEffectType(int slot, EffectType type) { if (auto* fx = fxChainSlot(slot)) fx->setEffectType(type); }
+void MixerDspSource::setFxSlotAmount(int slot, float amount) { if (auto* fx = fxChainSlot(slot)) fx->setAmount(amount); }
+void MixerDspSource::setFxSlotExternalDelayTime(int slot, float seconds) { if (auto* fx = fxChainSlot(slot)) fx->setExternalDelayTime(seconds); }
+void MixerDspSource::setFxSlotPrimaryParam(int slot, float v) { if (auto* fx = fxChainSlot(slot)) fx->setPrimaryParam(v); }
 
 void MixerDspSource::setBeatSyncPosition(double beatPosition, double beatDurationSec) {
-        m_colorFx.setBeatSyncPosition(beatPosition, beatDurationSec);
-        for (auto& fx : m_fxChain)
-            fx.setBeatSyncPosition(beatPosition, beatDurationSec);
-        m_padFx.setBeatSyncPosition(beatPosition, beatDurationSec);
-    }
+    m_colorFx.setBeatSyncPosition(beatPosition, beatDurationSec);
+    for (auto& fx : m_fxChain)
+        fx.setBeatSyncPosition(beatPosition, beatDurationSec);
+    m_padFx.setBeatSyncPosition(beatPosition, beatDurationSec);
+}
 
 void MixerDspSource::setPadFxEffectType(EffectType type) { m_padFx.setEffectType(type); }
 void MixerDspSource::setPadFxAmount(float amount) { m_padFx.setAmount(amount); }
 
 void MixerDspSource::clearPadFx() {
-        m_padFx.setEffectType(EffectType::None);
-        m_padFx.setAmount(0.0f);
-        armClickFreeTransition();
-    }
+    m_padFx.setEffectType(EffectType::None);
+    m_padFx.setAmount(0.0f);
+    armClickFreeTransition();
+}
 
 void MixerDspSource::setVinylBrakeActive(bool active) { setStopEffectWanted(m_vinylBrakeWanted, active); }
 void MixerDspSource::setEchoOutActive(bool active) { setStopEffectWanted(m_echoOutWanted, active); }
@@ -87,9 +66,7 @@ void MixerDspSource::setRollOutActive(bool active) { setStopEffectWanted(m_rollO
 void MixerDspSource::setScratchTimbre(float amount) {
     scratchTimbre.store(std::clamp(amount, 0.0f, 1.0f), std::memory_order_relaxed);
 }
-void MixerDspSource::armClickFreeTransition() {
-    m_pendingClickFreeBridge.store(true, std::memory_order_release);
-}
+void MixerDspSource::armClickFreeTransition() { m_pendingClickFreeBridge.store(true, std::memory_order_release); }
 
 const juce::AudioBuffer<float>& MixerDspSource::getPflBuffer() const { return m_preFaderScratch; }
 
@@ -378,11 +355,10 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
             }
 
             if (!m_echoOutAudioActive) {
-                // Idle: continuously record live audio into the delay buffer (no feedback)
-                const StereoReadBlock src(bufferToFill);
-                for (int i = 0; i < src.n; ++i) {
-                    m_echoOutBufL[m_echoOutWritePos & kEchoOutMask] = src.L ? src.L[i] : 0.f;
-                    m_echoOutBufR[m_echoOutWritePos & kEchoOutMask] = src.R ? src.R[i] : 0.f;
+                const StereoBlock block(bufferToFill);
+                for (int i = 0; i < block.n; ++i) {
+                    m_echoOutBufL[m_echoOutWritePos & kEchoOutMask] = block.rL ? block.rL[i] : 0.f;
+                    m_echoOutBufR[m_echoOutWritePos & kEchoOutMask] = block.rR ? block.rR[i] : 0.f;
                     ++m_echoOutWritePos;
                 }
             } else {

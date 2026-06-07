@@ -1,4 +1,5 @@
 #include "DjEngine.h"
+#include "audio/TimeStretchAudioSource.h"
 #include "DjMasterBus.h"
 #include "audio/ReverseStreamAudioSource.h"
 #include "audio/AudioDeviceUtils.h"

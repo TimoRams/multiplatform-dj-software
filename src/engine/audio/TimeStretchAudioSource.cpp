@@ -91,7 +91,7 @@ void TimeStretchAudioSource::releaseResources() {
     }
 
 void TimeStretchAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& info) {
-        if (!source) {
+        if (!source) [[unlikely]] {
             info.clearActiveBufferRegion();
             return;
         }
@@ -108,7 +108,7 @@ void TimeStretchAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInf
             return;
         }
 
-        if (!stretcher || !fifo) {
+        if (!stretcher || !fifo) [[unlikely]] {
             info.clearActiveBufferRegion();
             return;
         }
@@ -130,7 +130,7 @@ void TimeStretchAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInf
             if (pullSize <= 0)
                 pullSize = std::max(kMinPullSize, shortfall);
             const int scratchCapacity = scratchBuffer.getNumSamples();
-            if (scratchCapacity < kMinPullSize) {
+            if (scratchCapacity < kMinPullSize) [[unlikely]] {
                 info.clearActiveBufferRegion();
                 return;
             }

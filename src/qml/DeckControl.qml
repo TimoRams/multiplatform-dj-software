@@ -906,10 +906,17 @@ Item {
             }
 
             // ── Performance pads + tempo fader ────────────────────────────
-            RowLayout {
+            Item {
+                id: padsArea
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                spacing: 0
+
+                RowLayout {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    height: Math.max(72, Math.round(padsArea.height * 2 / 3))
+                    spacing: 0
 
                     PerformancePads {
                         id: performancePads
@@ -919,59 +926,60 @@ Item {
                         accentColor: deck.accent
                     }
 
-                Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: "#1c1c1c" }
+                    Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: "#1c1c1c" }
 
-                Rectangle {
-                    id: tempoPanel
-                    Layout.preferredWidth: 56
-                    Layout.fillHeight: true
-                    color: "#0a0a0a"
+                    Rectangle {
+                        id: tempoPanel
+                        Layout.preferredWidth: 56
+                        Layout.fillHeight: true
+                        color: "#0a0a0a"
 
-                    property real tempoRange: deck.engine ? deck.engine.tempoRangePercent : 8
+                        property real tempoRange: deck.engine ? deck.engine.tempoRangePercent : 8
 
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 3
-                        spacing: 2
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 3
+                            spacing: 2
 
-                        Rectangle {
-                            id: tempoHeader
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 20
-                            color: "transparent"
+                            Rectangle {
+                                id: tempoHeader
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 20
+                                color: "transparent"
 
-                            Row {
-                                anchors.centerIn: parent; spacing: 3
-                                Text { text: "TEMPO"; color: "#bbb"; font.pixelSize: window.spViewport(7); font.bold: true; font.letterSpacing: 0.6; anchors.verticalCenter: parent.verticalCenter }
-                                Text { text: "▾"; color: deck.accent; font.pixelSize: window.spViewport(9); anchors.verticalCenter: parent.verticalCenter }
+                                Row {
+                                    anchors.centerIn: parent; spacing: 3
+                                    Text { text: "TEMPO"; color: "#bbb"; font.pixelSize: window.spViewport(7); font.bold: true; font.letterSpacing: 0.6; anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "▾"; color: deck.accent; font.pixelSize: window.spViewport(9); anchors.verticalCenter: parent.verticalCenter }
+                                }
+                                MouseArea {
+                                    anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                    onClicked: tempoRangePopup.visible = !tempoRangePopup.visible
+                                }
+                                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#1c1c1c" }
                             }
-                            MouseArea {
-                                anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                                onClicked: tempoRangePopup.visible = !tempoRangePopup.visible
+
+                            DeckSlider {
+                                id: tempoSlider
+                                Layout.fillWidth: true; Layout.fillHeight: true; Layout.alignment: Qt.AlignHCenter
+                                orientation: Qt.Vertical
+                                from: tempoPanel.tempoRange; to: -tempoPanel.tempoRange; value: 0
+                                centerFill: true
+                                stepSize: tempoPanel.tempoRange <= 8  ? 0.1
+                                        : tempoPanel.tempoRange <= 16 ? 0.25
+                                        : tempoPanel.tempoRange <= 32 ? 0.5
+                                        : 1.0
+                                onValueChanged: { if (deck.engine) deck.engine.setTempoPercent(value) }
                             }
-                            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#1c1c1c" }
-                        }
 
-                        DeckSlider {
-                            id: tempoSlider
-                            Layout.fillWidth: true; Layout.fillHeight: true; Layout.alignment: Qt.AlignHCenter
-                            orientation: Qt.Vertical
-                            from: tempoPanel.tempoRange; to: -tempoPanel.tempoRange; value: 0
-                            centerFill: true
-                            stepSize: tempoPanel.tempoRange <= 8  ? 0.1
-                                    : tempoPanel.tempoRange <= 16 ? 0.25
-                                    : tempoPanel.tempoRange <= 32 ? 0.5
-                                    : 1.0
-                            onValueChanged: { if (deck.engine) deck.engine.setTempoPercent(value) }
-                        }
-
-                        Text {
-                            Layout.alignment: Qt.AlignHCenter
-                            text: (tempoSlider.value >= 0 ? "+" : "") + tempoSlider.value.toFixed(1) + "%"
-                            color: tempoSlider.value > 0 ? "#ffaa00"
-                                 : tempoSlider.value < 0 ? deck.accentBlu
-                                 : "#555"
-                            font.pixelSize: window.spViewport(10); font.bold: true; font.family: "monospace"
+                            Text {
+                                Layout.alignment: Qt.AlignHCenter
+                                text: (tempoSlider.value >= 0 ? "+" : "") + tempoSlider.value.toFixed(1) + "%"
+                                color: tempoSlider.value > 0 ? "#ffaa00"
+                                     : tempoSlider.value < 0 ? deck.accentBlu
+                                     : "#555"
+                                font.pixelSize: window.spViewport(10); font.bold: true; font.family: "monospace"
+                            }
                         }
                     }
                 }
