@@ -910,9 +910,10 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             beatEnd   = std::min(beatEnd,   100000);
             for (int b = beatStart; b <= beatEnd; ++b) {
                 const int mod4 = ((b % 4) + 4) % 4;
+                const int barIdx = static_cast<int>(std::floor(static_cast<double>(b) / 4.0));
                 const float xl = beatPixelLeft((firstBeatSec + b * beatPeriod) * pps);
                 if (xl >= -invDpr && xl <= w)
-                    visible.push_back({xl, mod4 == 0, b / 4 + 1, mod4 + 1});
+                    visible.push_back({xl, mod4 == 0, barIdx + 1, mod4 + 1});
             }
         }
 
@@ -1457,7 +1458,8 @@ QVariantList ScrollingWaveformItem::beatLabels() const
         const int beatEnd   = std::min(static_cast<int>(std::ceil ((rightSec - firstBeatSec) / beatPeriod)), 100000);
         for (int b = beatStart; b <= beatEnd; ++b) {
             const int mod4 = ((b % 4) + 4) % 4;
-            addMarker(firstBeatSec + b * beatPeriod, mod4 == 0, b / 4 + 1, mod4 + 1);
+            const int barIdx = static_cast<int>(std::floor(static_cast<double>(b) / 4.0));
+            addMarker(firstBeatSec + b * beatPeriod, mod4 == 0, barIdx + 1, mod4 + 1);
         }
     }
 

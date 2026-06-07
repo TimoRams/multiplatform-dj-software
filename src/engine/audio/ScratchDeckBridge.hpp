@@ -35,6 +35,7 @@ public:
 
     void configureTrack(double trackSampleRate, double trackLengthSeconds) noexcept;
     void syncReadPositionSeconds(double positionSeconds, double trackSampleRate) noexcept;
+    void prepareNormalPlaybackHandoff(double positionSeconds, double trackSampleRate) noexcept;
     void exitScratchMode(double positionSeconds, double trackSampleRate) noexcept;
 
     void setDeckTempoRatio(double ratio) noexcept;
@@ -97,7 +98,7 @@ private:
     bool m_prevScratchPath = false;
 
     std::atomic<int> m_crossfadeRemaining { 0 };
-    static constexpr int kCrossfadeSamples = 256;
+    static constexpr int kCrossfadeSamples = 384;
 
     bool m_loopActive = false;
     double m_loopInSample = 0.0;

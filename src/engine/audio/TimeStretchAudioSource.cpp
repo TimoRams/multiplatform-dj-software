@@ -35,11 +35,16 @@ void TimeStretchAudioSource::enterScratchBypass() noexcept {
         fifo->reset();
 }
 
-void TimeStretchAudioSource::endScratchBypass() noexcept {
+void TimeStretchAudioSource::endScratchBypass() noexcept
+{
     m_scratchBypass.store(false, std::memory_order_relaxed);
-    m_switchFadeRemaining.store(0, std::memory_order_relaxed);
     m_appliedTempoRatio = m_targetTempoRatio.load(std::memory_order_relaxed);
     updateStretcherRatios();
+
+    // Re-entering the keylock/RubberBand path after varispeed scratch needs a
+    // gentle fade — an instant switch causes post-scratch clicks.
+    if (m_pitchLockEnabled.load(std::memory_order_relaxed))
+        m_resetPipelineRequested.store(true, std::memory_order_release);
 }
 
 void TimeStretchAudioSource::prepareToPlay(int samplesPerBlockExpected, double sr) {

@@ -168,10 +168,15 @@ void DjEngine::applyScratchNeutralRouting()
 void DjEngine::restorePostScrubPlaybackState()
 {
     const double resumeSec = std::max(0.0, m_scrubHoldPosition);
+
     transportSource.setPosition(resumeSec);
     m_scrubHoldPosition = resumeSec;
     m_atomicPlayheadPos.store(resumeSec, std::memory_order_relaxed);
     m_snapPosition = resumeSec;
+    syncReverseReaderToHold();
+
+    if (scratchBridge)
+        scratchBridge->prepareNormalPlaybackHandoff(resumeSec, m_loadedTrackSampleRate);
 
     if (mixerSource)
         mixerSource->armClickFreeTransition();
@@ -348,7 +353,6 @@ void DjEngine::resumeAfterScrub()
         return;
     }
 
-    scratchBridge->exitScratchMode(m_scrubHoldPosition, m_loadedTrackSampleRate);
     restorePostScrubPlaybackState();
 
     emit scrubbingChanged();

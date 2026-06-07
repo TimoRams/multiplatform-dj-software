@@ -141,11 +141,16 @@ void ScratchDeckBridge::configureTrack(double trackSampleRate, double trackLengt
 void ScratchDeckBridge::syncReadPositionSeconds(double positionSeconds, double trackSampleRate) noexcept
 {
     const double sr = std::max(1.0, trackSampleRate);
+    const juce::int64 samplePos = static_cast<juce::int64>(
+        std::llround(std::max(0.0, positionSeconds * sr)));
     m_scratchResampler.reset(positionSeconds * sr);
 
     if (auto* positionable = positionableScratchSource()) {
-        positionable->setNextReadPosition(
-            static_cast<juce::int64>(std::llround(std::max(0.0, positionSeconds * sr))));
+        positionable->setNextReadPosition(samplePos);
+    }
+
+    if (m_positionableTransportSource) {
+        m_positionableTransportSource->setNextReadPosition(samplePos);
     }
 
     if (m_hermite) {
@@ -155,13 +160,25 @@ void ScratchDeckBridge::syncReadPositionSeconds(double positionSeconds, double t
     }
 }
 
-void ScratchDeckBridge::exitScratchMode(double positionSeconds, double trackSampleRate) noexcept
+void ScratchDeckBridge::prepareNormalPlaybackHandoff(double positionSeconds, double trackSampleRate) noexcept
 {
+    const double sr = std::max(1.0, trackSampleRate);
+    const double audioTruthSec = m_scratchResampler.readPosition() / sr;
+    const double syncSec = (m_useScratchScaler
+                            || m_controller.isActive()
+                            || m_controller.isInertiaActive())
+        ? audioTruthSec
+        : positionSeconds;
+
+    syncReadPositionSeconds(syncSec, trackSampleRate);
     m_controller.stopScratch();
     m_useScratchScaler = false;
     m_prevScratchPath = false;
-    m_crossfadeRemaining.store(0, std::memory_order_relaxed);
-    syncReadPositionSeconds(positionSeconds, trackSampleRate);
+}
+
+void ScratchDeckBridge::exitScratchMode(double positionSeconds, double trackSampleRate) noexcept
+{
+    prepareNormalPlaybackHandoff(positionSeconds, trackSampleRate);
 }
 
 void ScratchDeckBridge::setDeckTempoRatio(double ratio) noexcept

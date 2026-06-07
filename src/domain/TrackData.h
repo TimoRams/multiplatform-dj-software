@@ -58,7 +58,8 @@ public:
 
     // Beat marker: one entry per beat in the track.
     // isDownbeat = true for beat 1 of each bar (every 4th beat, 4/4 time).
-    // barNumber  = 1-based bar counter (bar 1 = first detected downbeat).
+    // barNumber  = floor(beatIdx / 4) + 1; anchor downbeat (beatIdx 0) is bar 1,
+    //              pre-roll continues with bar 0, -1, -2, …
     // beatInBar  = 1..4, beat position within the current bar.
     struct BeatMarker {
         double positionSec = 0.0;  // exact, micro-snapped timestamp (seconds)
@@ -307,23 +308,16 @@ public:
                 return std::abs(a.positionSec - b.positionSec) < 0.001;
             }), grid.end());
 
-        // ── Renumber: find the anchor beat (closest to newAnchorSec), assign
-        //    sequential beat index from there, set isDownbeat every 4 beats ──
-        // First, find the index of the anchor entry.
-        int anchorIdx = 0;
-        double minDist = std::numeric_limits<double>::max();
+        // ── Renumber from time relative to anchor (beatIdx 0 = bar-1 downbeat) ──
         for (int k = 0; k < static_cast<int>(grid.size()); ++k) {
-            double d = std::abs(grid[k].positionSec - newAnchorSec);
-            if (d < minDist) { minDist = d; anchorIdx = k; }
-        }
-        for (int k = 0; k < static_cast<int>(grid.size()); ++k) {
-            int beatIdx  = k - anchorIdx;          // 0 at anchor, negative before it
-            // Modulo that always returns 0..3 even for negative beatIdx:
-            int mod4 = ((beatIdx % 4) + 4) % 4;
+            const int beatIdx = static_cast<int>(
+                std::llround((grid[k].positionSec - newAnchorSec) / beatDur));
+            const int mod4 = ((beatIdx % 4) + 4) % 4;
             grid[k].isDownbeat = (mod4 == 0);
-            grid[k].barIndex   = beatIdx / 4;
-            grid[k].barNumber  = grid[k].barIndex + 1;  // 1-based, may be ≤ 0 before anchor
-            grid[k].beatInBar  = mod4 + 1;          // 1=downbeat, 2, 3, 4
+            grid[k].barIndex = static_cast<int>(
+                std::floor(static_cast<double>(beatIdx) / 4.0));
+            grid[k].barNumber = grid[k].barIndex + 1;
+            grid[k].beatInBar = mod4 + 1;
             grid[k].confidence = 1.0f;
             grid[k].userModified = true;
             grid[k].lockedByUser = true;

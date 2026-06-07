@@ -148,14 +148,17 @@ void DjEngine::updateSpeedAndPitch()
     double speedMultiplier = 1.0 + ((m_tempoPercent + m_phaseNudge + m_jogNudgePercent) / 100.0);
     speedMultiplier = std::clamp(speedMultiplier, 0.01, 8.0);
 
+    const bool scratchVarispeed = m_scratch.scrubbing() || m_scratch.releaseGlide();
+
     if (scratchBridge) {
         scratchBridge->setDeckTempoRatio(speedMultiplier);
-        scratchBridge->setKeylockPassthrough(m_keylock);
+        scratchBridge->setKeylockPassthrough(scratchVarispeed ? false : m_keylock);
     }
 
     if (timeStretchSource) {
         timeStretchSource->setTempoRatio(speedMultiplier);
-        timeStretchSource->setPitchLockEnabled(m_keylock);
+        if (!scratchVarispeed)
+            timeStretchSource->setPitchLockEnabled(m_keylock);
     }
 }
 

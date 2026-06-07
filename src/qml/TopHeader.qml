@@ -102,8 +102,8 @@ Rectangle {
         var beatFloor = Math.floor(beats)
         return {
             valid: true,
-            beatInBar: ((beatFloor % 4) + 4) % 4,
-            barNumber: Math.max(1, Math.floor(beatFloor / 4) + 1)
+            beatInBar: (((beatFloor % 4) + 4) % 4) + 1,
+            barNumber: Math.floor(beatFloor / 4) + 1
         }
     }
 
@@ -1377,7 +1377,7 @@ Rectangle {
                         readonly property int beatIndex: index % 4
                         readonly property var inf: deckABeat ? root.deckBeatInfo(deckA) : root.deckBeatInfo(deckB)
                         color: !inf.valid ? "#222222"
-                             : beatIndex === inf.beatInBar ? (deckABeat ? root.clrA : root.clrB)
+                             : (beatIndex + 1) === inf.beatInBar ? (deckABeat ? root.clrA : root.clrB)
                              : (deckABeat ? "#382500" : "#002436")
                     }
                 }

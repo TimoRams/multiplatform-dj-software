@@ -1699,8 +1699,11 @@ void WaveformAnalyzer::run()
 
                     finalBeatGrid.push_back(TrackData::BeatMarker{
                         snappedSec,
-                        (n % 4 == 0),   // isDownbeat: beat 1 of every bar
-                        (n / 4) + 1     // barNumber:  1-based bar counter
+                        true,
+                        (n % 4 == 0),
+                        n / 4,
+                        (n / 4) + 1,
+                        (n % 4) + 1,
                     });
                 }
 
@@ -1737,9 +1740,12 @@ void WaveformAnalyzer::run()
 
                         for (size_t i = 0; i < finalBeatGrid.size(); ++i) {
                             const int rel = static_cast<int>(i) - bestPhase;
-                            const bool isDb = (rel >= 0) && (rel % 4 == 0);
-                            finalBeatGrid[i].isDownbeat = isDb;
-                            finalBeatGrid[i].barNumber = (rel >= 0) ? (rel / 4) + 1 : 0;
+                            const int mod4 = ((rel % 4) + 4) % 4;
+                            finalBeatGrid[i].isDownbeat = (mod4 == 0);
+                            finalBeatGrid[i].beatInBar = mod4 + 1;
+                            finalBeatGrid[i].barIndex = static_cast<int>(
+                                std::floor(static_cast<double>(rel) / 4.0));
+                            finalBeatGrid[i].barNumber = finalBeatGrid[i].barIndex + 1;
                         }
 
                         qDebug() << "[WaveformAnalyzer] Downbeat phase corrected:"
