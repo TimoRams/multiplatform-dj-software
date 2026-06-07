@@ -134,6 +134,7 @@ void ScrollingWaveformItem::setEngine(DjEngine* engine)
         // nothing to stop — FrameAnimation in QML will have stopped already
     }
     emit engineChanged();
+    m_hasLastCenterIndexRender = false;
     m_forceUpdate = true;
     update();
 }
@@ -144,6 +145,7 @@ void ScrollingWaveformItem::setPixelsPerPoint(float ppp)
     if (qFuzzyCompare(m_pixelsPerPoint, ppp)) return;
     m_pixelsPerPoint = ppp;
     emit pixelsPerPointChanged();
+    m_hasLastCenterIndexRender = false;
     m_forceUpdate = true;
     update();
 }
@@ -180,6 +182,7 @@ void ScrollingWaveformItem::onTrackLoaded()
         connect(m_engine->getTrackData(), &TrackData::peakMipUpdated, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
         connect(m_engine->getTrackData(), &TrackData::overviewRgbUpdated, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
     }
+    m_hasLastCenterIndexRender = false;
     m_forceUpdate = true;
     update();
 }
@@ -511,10 +514,24 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     const double pointsPerSec = m_engine->waveformPointsPerSecond();
     const double tempoRatio   = m_engine->getTempoRatio();
     const double pixelsPerPoint = static_cast<double>(m_pixelsPerPoint) / std::max(0.0001, tempoRatio);
-    const double playheadSec = m_engine->isScratchVisualActive()
+    const double rawPlayheadSec = m_engine->isScratchVisualActive()
         ? m_engine->getPlayheadPositionAtomic()
         : static_cast<double>(m_engine->getVisualPosition());
-    const double centerIndexRender = playheadSec * pointsPerSec;
+    const double rawCenterIndexRender = rawPlayheadSec * pointsPerSec;
+    double centerIndexRender = rawCenterIndexRender;
+    const bool continuousPlayback = m_engine->isPlaying() && !m_engine->isScratchVisualActive();
+    if (continuousPlayback && m_hasLastCenterIndexRender && pointsPerSec > 0.0) {
+        const double pointsPerDevicePixel = 1.0 / std::max(0.0001, pixelsPerPoint * snapScale);
+        const double jitterTolerancePoints = pointsPerDevicePixel * 2.0;
+        const double delta = rawCenterIndexRender - m_lastCenterIndexRender;
+        const bool oppositeMicroStep = m_engine->isReverse()
+            ? (delta > 0.0 && delta <= jitterTolerancePoints)
+            : (delta < 0.0 && -delta <= jitterTolerancePoints);
+        if (oppositeMicroStep)
+            centerIndexRender = m_lastCenterIndexRender;
+    }
+    m_lastCenterIndexRender = centerIndexRender;
+    m_hasLastCenterIndexRender = true;
 
     const auto snapDevicePixelX = [snapScale](double x) -> float {
         return static_cast<float>(std::round(x * snapScale) / snapScale);

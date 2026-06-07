@@ -11,6 +11,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QMetaObject>
+#include <QProcess>
 #include <QRegularExpression>
 #include <QSet>
 #include <QThread>
@@ -44,6 +45,31 @@ bool isBuiltInFlx10Mapping(const QString& mappingName)
 {
     return mappingName == kBuiltInFlx10MappingLabel
         || mappingName == kBuiltInFlx10MappingFile;
+}
+
+bool openDirectoryInFileManager(const QString& path)
+{
+    if (path.isEmpty())
+        return false;
+
+    QDir dir(path);
+    if (!dir.exists() && !dir.mkpath("."))
+        return false;
+
+    const QString nativePath = QDir::toNativeSeparators(dir.absolutePath());
+
+#if defined(Q_OS_MACOS)
+    if (QProcess::startDetached(QStringLiteral("open"), { nativePath }))
+        return true;
+#elif defined(Q_OS_WIN)
+    if (QProcess::startDetached(QStringLiteral("explorer.exe"), { nativePath }))
+        return true;
+#elif defined(Q_OS_UNIX)
+    if (QProcess::startDetached(QStringLiteral("xdg-open"), { nativePath }))
+        return true;
+#endif
+
+    return QDesktopServices::openUrl(QUrl::fromLocalFile(dir.absolutePath()));
 }
 
 bool isHotCueParam(const QString& paramId)
@@ -1502,23 +1528,12 @@ QString MidiControllerManager::getSettingsDirectoryPath() const
 
 bool MidiControllerManager::openSettingsDirectory() const
 {
-    const QString path = getSettingsDirectoryPath();
-    if (path.isEmpty())
-        return false;
-    return QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    return openDirectoryInFileManager(getSettingsDirectoryPath());
 }
 
 bool MidiControllerManager::openMappingsDirectory() const
 {
-    const QString path = getMappingsDirectoryPath();
-    if (path.isEmpty())
-        return false;
-
-    QDir dir(path);
-    if (!dir.exists() && !dir.mkpath("."))
-        return false;
-
-    return QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    return openDirectoryInFileManager(getMappingsDirectoryPath());
 }
 
 QString MidiControllerManager::normalizeControllerKeyFromXmlBase(const QString& baseName) const

@@ -64,6 +64,11 @@ private:
     mutable QVector<TrackData::RgbWaveformFrame> m_rgbSliceBuf;
     mutable QVector<TrackData::PeakFrame>        m_peakSliceBuf;
 
+    // Render-thread visual stabilizer. Audio/transport remain authoritative;
+    // this only absorbs sub-pixel backward timer jitter during continuous playback.
+    double m_lastCenterIndexRender = 0.0;
+    bool m_hasLastCenterIndexRender = false;
+
     // Coordinate cache for beatLabels() — render thread writes, main thread reads.
     mutable std::atomic<double> m_lastCenterForBeats{0.0};
     mutable std::atomic<double> m_lastBeatPpp{1.5};
