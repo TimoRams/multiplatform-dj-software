@@ -3,6 +3,42 @@
 #include <algorithm>
 #include <cmath>
 
+namespace {
+
+struct StereoBlock {
+    float* L;
+    float* R;
+    int n;
+    explicit StereoBlock(const juce::AudioSourceChannelInfo& info) noexcept
+        : L(nullptr)
+        , R(nullptr)
+        , n(info.numSamples)
+    {
+        const int numCh = std::min(info.buffer->getNumChannels(), 2);
+        const int bStart = info.startSample;
+        L = numCh > 0 ? info.buffer->getWritePointer(0, bStart) : nullptr;
+        R = numCh > 1 ? info.buffer->getWritePointer(1, bStart) : nullptr;
+    }
+};
+
+struct StereoReadBlock {
+    const float* L;
+    const float* R;
+    int n;
+    explicit StereoReadBlock(const juce::AudioSourceChannelInfo& info) noexcept
+        : L(nullptr)
+        , R(nullptr)
+        , n(info.numSamples)
+    {
+        const int numCh = std::min(info.buffer->getNumChannels(), 2);
+        const int bStart = info.startSample;
+        L = numCh > 0 ? info.buffer->getReadPointer(0, bStart) : nullptr;
+        R = numCh > 1 ? info.buffer->getReadPointer(1, bStart) : nullptr;
+    }
+};
+
+} // namespace
+
 MixerDspSource::MixerDspSource(juce::AudioSource* inSource) : source(inSource) {}
 
 void MixerDspSource::setFxEffectType(EffectType type) { m_colorFx.setEffectType(type); }
@@ -135,7 +171,8 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
             }
         }
 
-        if (m_sampleRate <= 0.0 || bufferToFill.buffer->getNumChannels() == 0 || bufferToFill.numSamples == 0) return;
+        if (m_sampleRate <= 0.0 || bufferToFill.buffer->getNumChannels() == 0 || bufferToFill.numSamples == 0) [[unlikely]]
+            return;
 
         // Apply deferred EQ / filter coefficient updates on the audio thread.
         // This prevents the data race of writing IIR coefficients from the UI
@@ -246,11 +283,7 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
             const bool wantBrake    = m_vinylBrakeWanted.load(std::memory_order_relaxed);
             const bool wantBackspin = m_backspinWanted.load(std::memory_order_relaxed);
 
-            const int numCh = std::min(bufferToFill.buffer->getNumChannels(), 2);
-            const int bStart = bufferToFill.startSample;
-            const int bN     = bufferToFill.numSamples;
-            float* dataL = numCh > 0 ? bufferToFill.buffer->getWritePointer(0, bStart) : nullptr;
-            float* dataR = numCh > 1 ? bufferToFill.buffer->getWritePointer(1, bStart) : nullptr;
+            const StereoBlock block(bufferToFill);
 
             // Sync read positions on first block of activation.
             if (wantBrake && m_vinylBrakeNeedSync) {
@@ -274,10 +307,10 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
             // Pass 1: always record live audio into the circular buffer.
             {
                 uint32_t wp = m_vinylBrakeWritePos;
-                for (int i = 0; i < bN; ++i, ++wp) {
+                for (int i = 0; i < block.n; ++i, ++wp) {
                     const int idx = wp & kVinylBrakeMask;
-                    m_vinylBrakeBufL[idx] = dataL ? dataL[i] : 0.0f;
-                    m_vinylBrakeBufR[idx] = dataR ? dataR[i] : 0.0f;
+                    m_vinylBrakeBufL[idx] = block.L ? block.L[i] : 0.0f;
+                    m_vinylBrakeBufR[idx] = block.R ? block.R[i] : 0.0f;
                 }
                 m_vinylBrakeWritePos = wp;
             }
@@ -287,12 +320,12 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
             // Live audio passes through unchanged when neither effect is active.
             if (wantBrake) {
                 // Pitch ramps toward zero; read position advances slower than write.
-                for (int i = 0; i < bN; ++i) {
+                for (int i = 0; i < block.n; ++i) {
                     m_vinylBrakeFactor = std::max(0.0f, m_vinylBrakeFactor - m_vinylBrakeRampDown);
                     const int rp = static_cast<int>(m_vinylBrakeReadPos) & kVinylBrakeMask;
                     const float tailGain = stopTailGain(m_vinylBrakeFactor, 0.035f);
-                    if (dataL) dataL[i] = m_vinylBrakeBufL[rp] * tailGain;
-                    if (dataR) dataR[i] = m_vinylBrakeBufR[rp] * tailGain;
+                    if (block.L) block.L[i] = m_vinylBrakeBufL[rp] * tailGain;
+                    if (block.R) block.R[i] = m_vinylBrakeBufR[rp] * tailGain;
                     m_vinylBrakeReadPos += m_vinylBrakeFactor;
                     if (m_vinylBrakeReadPos >= static_cast<float>(kVinylBrakeBuf))
                         m_vinylBrakeReadPos -= static_cast<float>(kVinylBrakeBuf);
@@ -304,27 +337,27 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
                 m_vinylBrakeReadPos = static_cast<float>((m_vinylBrakeWritePos - 1) & kVinylBrakeMask);
             } else if (wantBackspin) {
                 // Linear-interpolated backward read: high pitch → low pitch → silence.
-                for (int i = 0; i < bN; ++i) {
+                for (int i = 0; i < block.n; ++i) {
                     if (m_backspinSpeed > 0.0f) {
                         const int   rp0  = static_cast<int>(m_backspinReadPos) & kVinylBrakeMask;
                         const int   rp1  = (rp0 + 1) & kVinylBrakeMask;
                         const float frac = m_backspinReadPos - std::floor(m_backspinReadPos);
                         const float tailGain = stopTailGain(m_backspinSpeed, 0.10f);
-                        if (dataL) {
+                        if (block.L) {
                             const float sample = m_vinylBrakeBufL[rp0] + frac * (m_vinylBrakeBufL[rp1] - m_vinylBrakeBufL[rp0]);
-                            dataL[i] = sample * tailGain;
+                            block.L[i] = sample * tailGain;
                         }
-                        if (dataR) {
+                        if (block.R) {
                             const float sample = m_vinylBrakeBufR[rp0] + frac * (m_vinylBrakeBufR[rp1] - m_vinylBrakeBufR[rp0]);
-                            dataR[i] = sample * tailGain;
+                            block.R[i] = sample * tailGain;
                         }
                         m_backspinReadPos -= m_backspinSpeed;
                         if (m_backspinReadPos < 0.0f)
                             m_backspinReadPos += static_cast<float>(kVinylBrakeBuf);
                         m_backspinSpeed = std::max(0.0f, m_backspinSpeed - m_backspinSpeedRampDown);
                     } else {
-                        if (dataL) dataL[i] = 0.0f;
-                        if (dataR) dataR[i] = 0.0f;
+                        if (block.L) block.L[i] = 0.0f;
+                        if (block.R) block.R[i] = 0.0f;
                     }
                 }
             }
@@ -344,24 +377,18 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
                 m_echoOutAudioActive = true;
             }
 
-            const int numCh = std::min(bufferToFill.buffer->getNumChannels(), 2);
-            const int bStart = bufferToFill.startSample;
-            const int bN     = bufferToFill.numSamples;
-
             if (!m_echoOutAudioActive) {
                 // Idle: continuously record live audio into the delay buffer (no feedback)
-                const float* srcL = numCh > 0 ? bufferToFill.buffer->getReadPointer(0, bStart) : nullptr;
-                const float* srcR = numCh > 1 ? bufferToFill.buffer->getReadPointer(1, bStart) : nullptr;
-                for (int i = 0; i < bN; ++i) {
-                    m_echoOutBufL[m_echoOutWritePos & kEchoOutMask] = srcL ? srcL[i] : 0.f;
-                    m_echoOutBufR[m_echoOutWritePos & kEchoOutMask] = srcR ? srcR[i] : 0.f;
+                const StereoReadBlock src(bufferToFill);
+                for (int i = 0; i < src.n; ++i) {
+                    m_echoOutBufL[m_echoOutWritePos & kEchoOutMask] = src.L ? src.L[i] : 0.f;
+                    m_echoOutBufR[m_echoOutWritePos & kEchoOutMask] = src.R ? src.R[i] : 0.f;
                     ++m_echoOutWritePos;
                 }
             } else {
                 // Active: cut live audio, play echo tail from pre-recorded buffer → silence
-                float* dataL = numCh > 0 ? bufferToFill.buffer->getWritePointer(0, bStart) : nullptr;
-                float* dataR = numCh > 1 ? bufferToFill.buffer->getWritePointer(1, bStart) : nullptr;
-                for (int i = 0; i < bN; ++i) {
+                const StereoBlock block(bufferToFill);
+                for (int i = 0; i < block.n; ++i) {
                     const int rp = (m_echoOutWritePos - m_echoOutDelaySamples + kEchoOutBuf) & kEchoOutMask;
                     const float delL = m_echoOutBufL[rp];
                     const float delR = m_echoOutBufR[rp];
@@ -372,8 +399,8 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
                     m_echoOutBufR[m_echoOutWritePos & kEchoOutMask] = m_echoOutLpStateR * kEchoOutFeedback;
                     ++m_echoOutWritePos;
                     // Output is ONLY the echo tail (live audio is cut → stop effect)
-                    if (dataL) dataL[i] = m_echoOutLpStateL;
-                    if (dataR) dataR[i] = m_echoOutLpStateR;
+                    if (block.L) block.L[i] = m_echoOutLpStateL;
+                    if (block.R) block.R[i] = m_echoOutLpStateR;
                 }
             }
         }
@@ -395,22 +422,18 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
                 m_rollOutNeedSync = true;
 
             if (wantRollOut && !m_rollOutNeedSync) {
-                const int numCh = std::min(bufferToFill.buffer->getNumChannels(), 2);
-                const int bStart = bufferToFill.startSample;
-                const int bN     = bufferToFill.numSamples;
-                float* dataL = numCh > 0 ? bufferToFill.buffer->getWritePointer(0, bStart) : nullptr;
-                float* dataR = numCh > 1 ? bufferToFill.buffer->getWritePointer(1, bStart) : nullptr;
+                const StereoBlock block(bufferToFill);
 
-                for (int i = 0; i < bN; ++i) {
+                for (int i = 0; i < block.n; ++i) {
                     const int rp = (m_rollOutLoopStart + static_cast<int>(m_rollOutOffset))
                                     & kVinylBrakeMask;
                     if (m_rollOutGain > 0.0f) {
-                        if (dataL) dataL[i] = m_vinylBrakeBufL[rp] * m_rollOutGain;
-                        if (dataR) dataR[i] = m_vinylBrakeBufR[rp] * m_rollOutGain;
+                        if (block.L) block.L[i] = m_vinylBrakeBufL[rp] * m_rollOutGain;
+                        if (block.R) block.R[i] = m_vinylBrakeBufR[rp] * m_rollOutGain;
                         m_rollOutGain = std::max(0.0f, m_rollOutGain - m_rollOutRampDown);
                     } else {
-                        if (dataL) dataL[i] = 0.0f;
-                        if (dataR) dataR[i] = 0.0f;
+                        if (block.L) block.L[i] = 0.0f;
+                        if (block.R) block.R[i] = 0.0f;
                     }
                     m_rollOutOffset += 1.0f;
                     if (static_cast<int>(m_rollOutOffset) >= m_rollOutLoopLen)

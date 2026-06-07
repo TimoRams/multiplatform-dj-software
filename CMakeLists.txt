@@ -281,7 +281,26 @@ qt_add_resources(${PROJECT_NAME} "BrockDJ_controller_mappings"
 
 target_sources(${PROJECT_NAME} PRIVATE
     src/main.cpp
-    src/engine/DjEngine.cpp
+    src/engine/DjEngine.h
+    src/engine/DjEngine_Core.cpp
+    src/engine/DjEngine_CoreMeta.cpp
+    src/engine/DjEngine_CoreTempo.cpp
+    src/engine/DjEngine_Output.cpp
+    src/engine/DjEngine_Fx.cpp
+    src/engine/DjEngine_HotCue.cpp
+    src/engine/DjEngine_MainCue.cpp
+    src/engine/DjEngine_SavedLoops.cpp
+    src/engine/DjEngine_Loop.cpp
+    src/engine/DjEngine_Scratch.cpp
+    src/engine/DjEngine_Settings.cpp
+    src/engine/DjEngine_SettingsQuery.cpp
+    src/engine/DjEngine_Sync.cpp
+    src/engine/DjEngine_Transport.cpp
+    src/engine/DjEngine_TransportLatency.cpp
+    src/engine/DjEngine_TransportLoad.cpp
+    src/engine/DjEngine_TransportModes.cpp
+    src/engine/audio/AudioDeviceUtils.cpp
+    src/engine/audio/MetadataUtils.cpp
     src/engine/DjMasterBus.h
     src/engine/DjMasterBus.cpp
     src/engine/audio/TimeStretchAudioSource.cpp

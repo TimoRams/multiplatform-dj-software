@@ -1,9 +1,10 @@
 #pragma once
 
 #include "audio/ReverseStreamAudioSource.h"
-#include "audio/MixerDspSource.h"
 #include "audio/ScratchDeckBridge.hpp"
-#include "audio/TimeStretchAudioSource.h"
+
+class TimeStretchAudioSource;
+class MixerDspSource;
 #include "scratch/ScratchSession.hpp"
 
 #include <QObject>
@@ -18,6 +19,7 @@
 #include <atomic>
 #include <array>
 #include <cstdint>
+#include <expected>
 #include <mutex>
 #include <vector>
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -462,6 +464,17 @@ private:
     void startMainCueHoldPreview(quint64 pressSerial);
     void setLastAudioDeviceError(const QString& error);
     void setAudioDeviceFallbackMessage(const QString& message);
+    std::expected<void, QString> applyAudioDeviceSettingsExpected(const QString& deviceType,
+                                                                  const QString& outputDevice,
+                                                                  int sampleRate,
+                                                                  int bufferSize,
+                                                                  int masterFirstChannel,
+                                                                  int headphonesFirstChannel,
+                                                                  int boothFirstChannel);
+
+    enum class StopEffect { VinylBrake, Backspin, EchoOut, RollOut };
+    void activateStopEffect(StopEffect effect);
+    void deactivateStopEffect(StopEffect effect);
 
     struct HotCueSlot {
         bool set = false;
