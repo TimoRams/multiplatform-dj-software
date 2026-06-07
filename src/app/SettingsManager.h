@@ -26,6 +26,14 @@ class SettingsManager : public QObject
     Q_PROPERTY(bool previousRunUnclean READ previousRunUnclean CONSTANT)
     Q_PROPERTY(QString previousRunWarningMessage READ previousRunWarningMessage CONSTANT)
 
+    Q_PROPERTY(double crossfaderPosition READ getCrossfaderPosition WRITE setCrossfaderPosition NOTIFY crossfaderSettingsChanged)
+    Q_PROPERTY(double crossfaderSharpness READ getCrossfaderSharpness WRITE setCrossfaderSharpness NOTIFY crossfaderSettingsChanged)
+    Q_PROPERTY(QString crossfaderCurveMode READ getCrossfaderCurveMode WRITE setCrossfaderCurveMode NOTIFY crossfaderSettingsChanged)
+    Q_PROPERTY(QString crossfaderAssignA READ getCrossfaderAssignA WRITE setCrossfaderAssignA NOTIFY crossfaderSettingsChanged)
+    Q_PROPERTY(QString crossfaderAssignB READ getCrossfaderAssignB WRITE setCrossfaderAssignB NOTIFY crossfaderSettingsChanged)
+    Q_PROPERTY(QString crossfaderAssignC READ getCrossfaderAssignC WRITE setCrossfaderAssignC NOTIFY crossfaderSettingsChanged)
+    Q_PROPERTY(QString crossfaderAssignD READ getCrossfaderAssignD WRITE setCrossfaderAssignD NOTIFY crossfaderSettingsChanged)
+
 public:
     static SettingsManager& getInstance();
 
@@ -95,9 +103,28 @@ public:
 
     Q_INVOKABLE void flushToDisk();
 
+    double getCrossfaderPosition() const;
+    void setCrossfaderPosition(double position);
+
+    double getCrossfaderSharpness() const;
+    void setCrossfaderSharpness(double sharpness);
+
+    QString getCrossfaderCurveMode() const;
+    void setCrossfaderCurveMode(const QString& mode);
+
+    QString getCrossfaderAssignA() const;
+    void setCrossfaderAssignA(const QString& assign);
+    QString getCrossfaderAssignB() const;
+    void setCrossfaderAssignB(const QString& assign);
+    QString getCrossfaderAssignC() const;
+    void setCrossfaderAssignC(const QString& assign);
+    QString getCrossfaderAssignD() const;
+    void setCrossfaderAssignD(const QString& assign);
+
 signals:
     void audioSettingsChanged();
     void controllerSettingsChanged();
+    void crossfaderSettingsChanged();
 
 private:
     ~SettingsManager() = default;

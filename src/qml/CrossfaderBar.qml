@@ -19,38 +19,42 @@ Rectangle {
 
     property real cfPos: 0.0
 
-    // 0 = smooth/linear (wide fade), 1 = sharp/cut (narrow fade near edges)
+    // 0 = smooth/wide fade, 1 = sharp/cut (exponential mode only)
     property real cfSharpness: 0.0
 
-    property real volA: 1.0
-    property real volB: 1.0
-    property real volC: 1.0
-    property real volD: 1.0
+    // "exponential" (Serato-style power curve) or "linear"
+    property string cfCurveMode: "exponential"
+
+    property bool _restoringSettings: false
 
     readonly property color clrA: "#ff9900"
     readonly property color clrB: "#00ccff"
     readonly property color clrC: "#cc44ff"
     readonly property color clrD: "#44ddaa"
 
-    // Serato-style curve:
-    //   e = 1   → linear crossfade (both channels at 50% at center)
-    //   e → 0   → sharp/cut (outgoing stays near full, incoming rises immediately,
-    //              transition compressed toward outer edges)
-    //
-    // t ∈ [0,1]  (t = (cfPos + 1) / 2)
-    //   vol_B = t^e        rises 0→1 fast when e is small, slow when e=1
-    //   vol_A = (1-t)^e    stays near 1 for long when e is small, linear when e=1
-    function curveExp() {
-        // knob right (sharp=1) → e≈0.01,  knob left (smooth=0) → e=1
+    readonly property bool cfCurveIsLinear: cfCurveMode === "linear"
+
+    // Exponential mode: e = 1 → equal linear slopes; e → 0 → sharp cut
+    function curveExponent() {
         return Math.pow(10.0, -cfSharpness * 2.0)
     }
 
+    function channelGain(t, isA) {
+        if (cfCurveIsLinear)
+            return isA ? Math.max(0.0, 1.0 - t) : Math.max(0.0, t)
+
+        var e = curveExponent()
+        if (isA)
+            return Math.pow(Math.max(0.0, 1.0 - t), e)
+        return Math.pow(Math.max(0.0, t), e)
+    }
+
     function cfMult(assign) {
-        if (assign === "T") return 1.0
-        var t = (cfPos + 1.0) * 0.5          // 0 at full-A, 1 at full-B
-        var e = curveExp()
-        if (assign === "A") return Math.pow(Math.max(0.0, 1.0 - t), e)
-        if (assign === "B") return Math.pow(Math.max(0.0, t),       e)
+        if (assign === "T")
+            return 1.0
+        var t = (cfPos + 1.0) * 0.5
+        if (assign === "A") return channelGain(t, true)
+        if (assign === "B") return channelGain(t, false)
         return 1.0
     }
 
@@ -61,18 +65,79 @@ Rectangle {
         if (engineD) engineD.volume = volD * cfMult(assignD)
     }
 
-    onCfPosChanged:       applyVolumes()
-    onCfSharpnessChanged: applyVolumes()
-    onAssignAChanged:     applyVolumes()
-    onAssignBChanged:     applyVolumes()
-    onAssignCChanged:     applyVolumes()
-    onAssignDChanged:     applyVolumes()
-    onEngineAChanged:     applyVolumes()
-    onEngineBChanged:     applyVolumes()
-    onEngineCChanged:     applyVolumes()
-    onEngineDChanged:     applyVolumes()
+    function scheduleSettingsSave() {
+        if (_restoringSettings)
+            return
+        settingsSaveTimer.restart()
+    }
 
-    Component.onCompleted: applyVolumes()
+    function persistSettings() {
+        if (typeof settingsManager === "undefined" || !settingsManager)
+            return
+        settingsManager.crossfaderPosition = cfPos
+        settingsManager.crossfaderSharpness = cfSharpness
+        settingsManager.crossfaderCurveMode = cfCurveMode
+        settingsManager.crossfaderAssignA = assignA
+        settingsManager.crossfaderAssignB = assignB
+        settingsManager.crossfaderAssignC = assignC
+        settingsManager.crossfaderAssignD = assignD
+    }
+
+    function restoreSettings() {
+        if (typeof settingsManager === "undefined" || !settingsManager)
+            return
+
+        _restoringSettings = true
+        cfPos = settingsManager.crossfaderPosition
+        cfSharpness = settingsManager.crossfaderSharpness
+        cfCurveMode = settingsManager.crossfaderCurveMode
+        assignA = settingsManager.crossfaderAssignA
+        assignB = settingsManager.crossfaderAssignB
+        assignC = settingsManager.crossfaderAssignC
+        assignD = settingsManager.crossfaderAssignD
+        cfSlider.value = cfPos
+        curveDial.value = cfSharpness
+        _restoringSettings = false
+        applyVolumes()
+    }
+
+    property real volA: 1.0
+    property real volB: 1.0
+    property real volC: 1.0
+    property real volD: 1.0
+
+    onCfPosChanged: {
+        applyVolumes()
+        scheduleSettingsSave()
+    }
+    onCfSharpnessChanged: {
+        applyVolumes()
+        scheduleSettingsSave()
+    }
+    onCfCurveModeChanged: {
+        applyVolumes()
+        scheduleSettingsSave()
+    }
+    onAssignAChanged: { applyVolumes(); scheduleSettingsSave() }
+    onAssignBChanged: { applyVolumes(); scheduleSettingsSave() }
+    onAssignCChanged: { applyVolumes(); scheduleSettingsSave() }
+    onAssignDChanged: { applyVolumes(); scheduleSettingsSave() }
+    onEngineAChanged: applyVolumes()
+    onEngineBChanged: applyVolumes()
+    onEngineCChanged: applyVolumes()
+    onEngineDChanged: applyVolumes()
+
+    Timer {
+        id: settingsSaveTimer
+        interval: 250
+        repeat: false
+        onTriggered: cfBar.persistSettings()
+    }
+
+    Component.onCompleted: {
+        restoreSettings()
+        applyVolumes()
+    }
 
     Connections {
         target: parameterStore
@@ -81,7 +146,6 @@ Rectangle {
             else if (id === "deckB_vol")   { cfBar.volB = value; cfBar.applyVolumes() }
             else if (id === "deckC_vol")   { cfBar.volC = value; cfBar.applyVolumes() }
             else if (id === "deckD_vol")   { cfBar.volD = value; cfBar.applyVolumes() }
-            // Crossfader: MIDI 0-1 → slider -1..+1
             else if (id === "crossfader")  cfSlider.value = value * 2.0 - 1.0
         }
     }
@@ -139,10 +203,45 @@ Rectangle {
             Layout.rightMargin: 5
         }
 
-        // Preset buttons
+        // Curve type: linear vs exponential
         Repeater {
             model: [
-                { label: "LIN", s: 0.0 },
+                { label: "EXP", mode: "exponential" },
+                { label: "LIN", mode: "linear" }
+            ]
+            delegate: Rectangle {
+                required property var modelData
+                required property int index
+                Layout.preferredWidth: 28; Layout.preferredHeight: 20
+                radius: 2
+                readonly property bool isActive: cfBar.cfCurveMode === modelData.mode
+                color:        isActive ? "#171717" : "#0d0d0d"
+                border.width: 1; border.color: isActive ? "#3a7ad4" : "#1c1c1c"
+                Text {
+                    anchors.centerIn: parent; text: parent.modelData.label
+                    color: parent.isActive ? "#7ab8f5" : "#444"
+                    font.pixelSize: window.spViewport(7); font.bold: true; font.family: "monospace"
+                }
+                HoverHandler { id: modeHov }
+                Rectangle { anchors.fill: parent; radius: 2; color: "#fff"
+                    opacity: modeHov.hovered && !parent.isActive ? 0.04 : 0.0 }
+                MouseArea {
+                    anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        cfBar.cfCurveMode = modelData.mode
+                        if (modelData.mode === "linear")
+                            cfBar.cfSharpness = 0.0
+                    }
+                }
+            }
+        }
+
+        Item { Layout.preferredWidth: 4 }
+
+        // Sharpness presets (exponential mode)
+        Repeater {
+            model: [
+                { label: "SFT", s: 0.0 },
                 { label: "SHP", s: 0.5 },
                 { label: "CUT", s: 1.0 }
             ]
@@ -151,7 +250,9 @@ Rectangle {
                 required property int index
                 Layout.preferredWidth: 28; Layout.preferredHeight: 20
                 radius: 2
-                readonly property bool isActive: Math.abs(cfBar.cfSharpness - modelData.s) < 0.02
+                readonly property bool isActive: !cfBar.cfCurveIsLinear
+                                                 && Math.abs(cfBar.cfSharpness - modelData.s) < 0.02
+                opacity: cfBar.cfCurveIsLinear ? 0.45 : 1.0
                 color:        isActive ? "#171717" : "#0d0d0d"
                 border.width: 1; border.color: isActive ? "#3a7ad4" : "#1c1c1c"
                 Text {
@@ -161,26 +262,36 @@ Rectangle {
                 }
                 HoverHandler { id: ph }
                 Rectangle { anchors.fill: parent; radius: 2; color: "#fff"
-                    opacity: ph.hovered && !parent.isActive ? 0.04 : 0 }
+                    opacity: ph.hovered && !parent.isActive ? 0.04 : 0.0 }
                 MouseArea {
                     anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                    onClicked: { cfBar.cfSharpness = modelData.s; curveDial.value = modelData.s }
+                    enabled: !cfBar.cfCurveIsLinear
+                    onClicked: {
+                        cfBar.cfCurveMode = "exponential"
+                        cfBar.cfSharpness = modelData.s
+                        curveDial.value = modelData.s
+                    }
                 }
             }
         }
 
         Item { Layout.preferredWidth: 4 }
 
-        // Manual sharpness knob
+        // Manual sharpness knob (exponential mode)
         Item {
             Layout.preferredWidth: 22; Layout.preferredHeight: 22
             Layout.alignment: Qt.AlignVCenter
+            opacity: cfBar.cfCurveIsLinear ? 0.45 : 1.0
 
             Dial {
                 id: curveDial
                 anchors.fill: parent
                 from: 0.0; to: 1.0; value: 0.0; stepSize: 0.01
-                onValueChanged: cfBar.cfSharpness = value
+                enabled: !cfBar.cfCurveIsLinear
+                onValueChanged: {
+                    if (!cfBar.cfCurveIsLinear)
+                        cfBar.cfSharpness = value
+                }
 
                 MouseArea {
                     id: curveDragLock
@@ -188,6 +299,7 @@ Rectangle {
                     z: 100
                     acceptedButtons: Qt.LeftButton
                     preventStealing: true
+                    enabled: !cfBar.cfCurveIsLinear
 
                     property real _pressGX:  0
                     property real _pressGY:  0
@@ -211,6 +323,7 @@ Rectangle {
                             _active = true
                             cursorControl.hideCursor()
                         }
+                        cfBar.cfCurveMode = "exponential"
                         var newVal = _pressVal + dy * (curveDial.to - curveDial.from) / 150.0
                         curveDial.value = Math.min(curveDial.to, Math.max(curveDial.from, newVal))
                     }
@@ -223,7 +336,10 @@ Rectangle {
                         }
                     }
 
-                    onDoubleClicked: { curveDial.value = 0.0 }
+                    onDoubleClicked: {
+                        cfBar.cfCurveMode = "exponential"
+                        curveDial.value = 0.0
+                    }
                 }
 
                 background: Rectangle {
@@ -240,8 +356,13 @@ Rectangle {
                             ctx.lineWidth = 2; ctx.lineCap = "round"
                             ctx.strokeStyle = "#222"
                             ctx.beginPath(); ctx.arc(cx,cy,r, s0, s0+span, false); ctx.stroke()
-                            ctx.strokeStyle = "#3a7ad4"
+                            ctx.strokeStyle = cfBar.cfCurveIsLinear ? "#333" : "#3a7ad4"
                             ctx.beginPath(); ctx.arc(cx,cy,r, s0, s0 + curveDial.value*span, false); ctx.stroke()
+                        }
+                        Connections {
+                            target: cfBar
+                            function onCfSharpnessChanged() { dialArc.requestPaint() }
+                            function onCfCurveModeChanged() { dialArc.requestPaint() }
                         }
                         Connections { target: curveDial; function onValueChanged() { dialArc.requestPaint() } }
                     }
@@ -278,13 +399,11 @@ Rectangle {
             onPaint: {
                 var ctx = getContext("2d"); ctx.reset()
                 var w = width; var h = height
-                var e = Math.pow(10.0, -cfBar.cfSharpness * 2.0)
                 var pad = 2
 
                 ctx.fillStyle = "#0a0a0a"; ctx.fillRect(0,0,w,h)
                 ctx.strokeStyle = "#1c1c1c"; ctx.lineWidth = 1
                 ctx.strokeRect(0.5, 0.5, w-1, h-1)
-                // center divider
                 ctx.strokeStyle = "#252525"; ctx.lineWidth = 0.5
                 ctx.beginPath(); ctx.moveTo(w/2, pad); ctx.lineTo(w/2, h-pad); ctx.stroke()
 
@@ -292,21 +411,22 @@ Rectangle {
                     ctx.strokeStyle = color; ctx.lineWidth = 1.3
                     ctx.beginPath()
                     for (var i = 0; i <= w; i++) {
-                        var xn  = (i / w) * 2.0 - 1.0   // -1..+1
-                        var t   = (xn + 1.0) * 0.5        // 0..1
-                        var vol = isA ? Math.pow(Math.max(0,1-t), e) : Math.pow(Math.max(0,t), e)
+                        var xn = (i / w) * 2.0 - 1.0
+                        var t  = (xn + 1.0) * 0.5
+                        var vol = cfBar.channelGain(t, isA)
                         var py  = (h - pad) - vol * (h - pad*2)
                         if (i === 0) ctx.moveTo(i, py); else ctx.lineTo(i, py)
                     }
                     ctx.stroke()
                 }
-                drawCurve("#ff9900", true)   // A curve (orange)
-                drawCurve("#00ccff", false)  // B curve (cyan)
+                drawCurve("#ff9900", true)
+                drawCurve("#00ccff", false)
             }
 
             Connections {
                 target: cfBar
                 function onCfSharpnessChanged() { curveViz.requestPaint() }
+                function onCfCurveModeChanged() { curveViz.requestPaint() }
             }
         }
     }
@@ -319,7 +439,6 @@ Rectangle {
         height: parent.height
         spacing: 0
 
-        // A-side assigns
         AssignGroup {
             deckLabel: "A"; deckAccent: cfBar.clrA; currentAssign: cfBar.assignA
             Layout.alignment: Qt.AlignVCenter
@@ -334,7 +453,6 @@ Rectangle {
 
         Item { Layout.preferredWidth: 10 }
 
-        // Crossfader
         Item {
             Layout.preferredWidth: 220; Layout.fillHeight: true
 
@@ -438,7 +556,6 @@ Rectangle {
 
         Item { Layout.preferredWidth: 10 }
 
-        // B-side assigns
         AssignGroup {
             visible: cfBar.fourDeckMode; Layout.preferredWidth: visible ? implicitWidth : 0
             deckLabel: "D"; deckAccent: cfBar.clrD; currentAssign: cfBar.assignD

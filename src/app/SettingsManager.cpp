@@ -1,5 +1,6 @@
 #include "SettingsManager.h"
 #include <algorithm>
+#include <cmath>
 #include <QDebug>
 #include <QDir>
 #include <QString>
@@ -42,6 +43,29 @@ bool readBoolSetting(const SettingsManager& manager, const char* key, bool fallb
         return fallback;
 
     return settings->getBoolValue(key, fallback);
+}
+
+double readDoubleSetting(const SettingsManager& manager, const char* key, double fallback)
+{
+    const auto* settings = userSettings(manager);
+    if (settings == nullptr)
+        return fallback;
+
+    return settings->getValue(key, juce::String(fallback)).getDoubleValue();
+}
+
+QString normalizeCrossfaderAssign(const QString& assign)
+{
+    if (assign == QLatin1String("A") || assign == QLatin1String("B") || assign == QLatin1String("T"))
+        return assign;
+    return QStringLiteral("A");
+}
+
+QString normalizeCrossfaderCurveMode(const QString& mode)
+{
+    if (mode == QLatin1String("linear"))
+        return QStringLiteral("linear");
+    return QStringLiteral("exponential");
 }
 
 template <typename Value>
@@ -431,4 +455,109 @@ void SettingsManager::flushToDisk()
         return;
 
     userSettings->save();
+}
+
+double SettingsManager::getCrossfaderPosition() const
+{
+    return std::clamp(readDoubleSetting(*this, "Crossfader/Position", 0.0), -1.0, 1.0);
+}
+
+void SettingsManager::setCrossfaderPosition(double position)
+{
+    const double clamped = std::clamp(position, -1.0, 1.0);
+    if (std::abs(getCrossfaderPosition() - clamped) < 0.0001)
+        return;
+
+    writeSetting(*this, "Crossfader/Position", clamped);
+    emit crossfaderSettingsChanged();
+}
+
+double SettingsManager::getCrossfaderSharpness() const
+{
+    return std::clamp(readDoubleSetting(*this, "Crossfader/Sharpness", 0.0), 0.0, 1.0);
+}
+
+void SettingsManager::setCrossfaderSharpness(double sharpness)
+{
+    const double clamped = std::clamp(sharpness, 0.0, 1.0);
+    if (std::abs(getCrossfaderSharpness() - clamped) < 0.0001)
+        return;
+
+    writeSetting(*this, "Crossfader/Sharpness", clamped);
+    emit crossfaderSettingsChanged();
+}
+
+QString SettingsManager::getCrossfaderCurveMode() const
+{
+    return normalizeCrossfaderCurveMode(readStringSetting(*this, "Crossfader/CurveMode", "exponential"));
+}
+
+void SettingsManager::setCrossfaderCurveMode(const QString& mode)
+{
+    const QString normalized = normalizeCrossfaderCurveMode(mode);
+    if (getCrossfaderCurveMode() == normalized)
+        return;
+
+    writeSetting(*this, "Crossfader/CurveMode", normalized.toUtf8().constData());
+    emit crossfaderSettingsChanged();
+}
+
+QString SettingsManager::getCrossfaderAssignA() const
+{
+    return normalizeCrossfaderAssign(readStringSetting(*this, "Crossfader/AssignA", "A"));
+}
+
+void SettingsManager::setCrossfaderAssignA(const QString& assign)
+{
+    const QString normalized = normalizeCrossfaderAssign(assign);
+    if (getCrossfaderAssignA() == normalized)
+        return;
+
+    writeSetting(*this, "Crossfader/AssignA", normalized.toUtf8().constData());
+    emit crossfaderSettingsChanged();
+}
+
+QString SettingsManager::getCrossfaderAssignB() const
+{
+    return normalizeCrossfaderAssign(readStringSetting(*this, "Crossfader/AssignB", "B"));
+}
+
+void SettingsManager::setCrossfaderAssignB(const QString& assign)
+{
+    const QString normalized = normalizeCrossfaderAssign(assign);
+    if (getCrossfaderAssignB() == normalized)
+        return;
+
+    writeSetting(*this, "Crossfader/AssignB", normalized.toUtf8().constData());
+    emit crossfaderSettingsChanged();
+}
+
+QString SettingsManager::getCrossfaderAssignC() const
+{
+    return normalizeCrossfaderAssign(readStringSetting(*this, "Crossfader/AssignC", "A"));
+}
+
+void SettingsManager::setCrossfaderAssignC(const QString& assign)
+{
+    const QString normalized = normalizeCrossfaderAssign(assign);
+    if (getCrossfaderAssignC() == normalized)
+        return;
+
+    writeSetting(*this, "Crossfader/AssignC", normalized.toUtf8().constData());
+    emit crossfaderSettingsChanged();
+}
+
+QString SettingsManager::getCrossfaderAssignD() const
+{
+    return normalizeCrossfaderAssign(readStringSetting(*this, "Crossfader/AssignD", "B"));
+}
+
+void SettingsManager::setCrossfaderAssignD(const QString& assign)
+{
+    const QString normalized = normalizeCrossfaderAssign(assign);
+    if (getCrossfaderAssignD() == normalized)
+        return;
+
+    writeSetting(*this, "Crossfader/AssignD", normalized.toUtf8().constData());
+    emit crossfaderSettingsChanged();
 }
