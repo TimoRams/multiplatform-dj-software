@@ -313,6 +313,14 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
                                     std::max(0.0, len),
                                     wasPlayingBeforeGrab,
                                     getTempoRatio());
+        const bool scratchLoopActive = m_loopActive
+            && m_loopOutSec > m_loopInSec
+            && m_loopInSec >= 0.0
+            && m_loopOutSec > 0.0;
+        scratchBridge->setLoopRangeSeconds(m_loopInSec,
+                                           m_loopOutSec,
+                                           scratchLoopActive,
+                                           m_loadedTrackSampleRate);
         scratchBridge->setReverse(m_isReverse);
         scratchBridge->setKeylockPassthrough(false);
     }
