@@ -74,6 +74,7 @@ public:
 
 private:
     void applyDeckTempoToHermite() noexcept;
+    [[nodiscard]] double effectiveDeckTempoRatio() const noexcept;
     double activePlaybackRate(double trackSampleRate, int bufferSize) noexcept;
     void applyNormalPathCrossfade(const juce::AudioSourceChannelInfo& info) noexcept;
     [[nodiscard]] bool isScratchPathActive() const noexcept;

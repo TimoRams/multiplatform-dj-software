@@ -37,7 +37,7 @@ public:
 
     void setInertiaEnabled(bool enabled) noexcept { m_inertiaEnabled.store(enabled, std::memory_order_relaxed); }
     void setNormalPlaybackSpeed(double speed) noexcept {
-        m_normalPlaybackSpeed.store(std::clamp(speed, 0.01, m_config.maxScratchSpeed),
+        m_normalPlaybackSpeed.store(std::clamp(speed, -m_config.maxScratchSpeed, m_config.maxScratchSpeed),
                                     std::memory_order_relaxed);
     }
 

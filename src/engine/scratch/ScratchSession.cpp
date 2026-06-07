@@ -78,14 +78,13 @@ bool ScratchSession::submitAbsolute(engine::audio::ScratchDeckBridge* bridge,
     if (!bridge || !m_scrubbing || trackLenSec <= 0.0)
         return false;
 
-    const double virtualDelta = posSec - m_lastRawSec;
-    if (std::abs(virtualDelta) <= 1e-9)
-        return false;
-
     double target = std::clamp(posSec, -scratchPreRollSec, trackLenSec);
     target = wrapLoopPosition(target, trackLenSec, loop, m_loopLocked);
 
-    m_lastRawSec = target;
+    const double virtualDelta = target - m_lastRawSec;
+    if (std::abs(virtualDelta) <= 1e-9)
+        return false;
+
     return submitRelative(bridge, virtualDelta, sampleRate);
 }
 

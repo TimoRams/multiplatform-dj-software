@@ -36,10 +36,13 @@ void ScratchDeckBridge::applyDeckTempoToHermite() noexcept
     if (!m_hermite)
         return;
 
-    double rate = m_deckTempoRatio.load(std::memory_order_relaxed);
-    if (m_reverse.load(std::memory_order_relaxed))
-        rate = -rate;
-    m_hermite->setResamplingRatio(rate);
+    m_hermite->setResamplingRatio(effectiveDeckTempoRatio());
+}
+
+double ScratchDeckBridge::effectiveDeckTempoRatio() const noexcept
+{
+    const double rate = m_deckTempoRatio.load(std::memory_order_relaxed);
+    return m_reverse.load(std::memory_order_relaxed) ? -rate : rate;
 }
 
 bool ScratchDeckBridge::isScratchPathActive() const noexcept
@@ -61,10 +64,13 @@ void ScratchDeckBridge::beginScratch(double anchorSeconds,
     const double audioAnchorSec = std::max(0.0, anchorSeconds);
     const double audioAnchorSamples = audioAnchorSec * trackSampleRate;
     const double targetSamples = anchorSeconds * trackSampleRate;
+    const double playbackSpeed = m_reverse.load(std::memory_order_relaxed)
+        ? -std::abs(normalPlaybackSpeed)
+        : std::abs(normalPlaybackSpeed);
     m_controller.setTrackSampleRate(trackSampleRate);
     m_platter.reset(targetSamples, trackSampleRate);
     m_platter.setSamplesPerTick((60.0 / (33.0 + 1.0 / 3.0) / 12000.0) * trackSampleRate);
-    m_controller.startScratch(audioAnchorSamples, wasPlayingBeforeScratch, normalPlaybackSpeed);
+    m_controller.startScratch(audioAnchorSamples, wasPlayingBeforeScratch, playbackSpeed);
     m_scratchResampler.setTrackLengthSamples(trackLengthSeconds * trackSampleRate);
     m_scratchResampler.reset(audioAnchorSamples);
     m_scratchResampler.snapSmoothedRate(0.0);
@@ -96,7 +102,7 @@ void ScratchDeckBridge::engageScratchDuringInertia() noexcept
 
     const double audioPos = m_scratchResampler.readPosition();
     const bool wasPlaying = m_controller.wasPlayingBeforeScratch();
-    const double normalSpeed = m_deckTempoRatio.load(std::memory_order_relaxed);
+    const double normalSpeed = effectiveDeckTempoRatio();
     m_controller.startScratch(audioPos, wasPlaying, normalSpeed);
     m_useScratchScaler = true;
 }
@@ -169,13 +175,14 @@ void ScratchDeckBridge::setDeckTempoRatio(double ratio) noexcept
 {
     const double clamped = std::clamp(ratio, 0.01, 8.0);
     m_deckTempoRatio.store(clamped, std::memory_order_relaxed);
-    m_controller.setNormalPlaybackSpeed(clamped);
+    m_controller.setNormalPlaybackSpeed(effectiveDeckTempoRatio());
     applyDeckTempoToHermite();
 }
 
 void ScratchDeckBridge::setReverse(bool reverse) noexcept
 {
     m_reverse.store(reverse, std::memory_order_relaxed);
+    m_controller.setNormalPlaybackSpeed(effectiveDeckTempoRatio());
     applyDeckTempoToHermite();
 }
 
@@ -251,11 +258,7 @@ void ScratchDeckBridge::snapHermiteToDeckTempo() noexcept
 double ScratchDeckBridge::activePlaybackRate(double trackSampleRate, int bufferSize) noexcept
 {
     const double sr = std::max(1.0, trackSampleRate);
-    const double rate = m_controller.processAudioBlock(std::max(1, bufferSize), m_outputSampleRate, sr);
-
-    if (m_reverse.load(std::memory_order_relaxed))
-        return -rate;
-    return rate;
+    return m_controller.processAudioBlock(std::max(1, bufferSize), m_outputSampleRate, sr);
 }
 
 void ScratchDeckBridge::applyNormalPathCrossfade(const juce::AudioSourceChannelInfo& info) noexcept
