@@ -326,6 +326,11 @@ void ScratchDeckBridge::getNextAudioBlock(const juce::AudioSourceChannelInfo& bu
         m_scratchResampler.snapSmoothedRate(rate);
 
     m_scratchResampler.processBlock(*scratchInput, rate, bufferToFill);
+
+    if (m_audioPlayheadSink != nullptr) {
+        m_audioPlayheadSink->store(m_scratchResampler.readPosition() / sr,
+                                   std::memory_order_relaxed);
+    }
 }
 
 } // namespace engine::audio

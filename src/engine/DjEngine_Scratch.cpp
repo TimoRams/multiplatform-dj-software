@@ -112,10 +112,7 @@ void DjEngine::updateScrubPlayheadAnchor()
         transportSource.stop();
 
     if ((m_scratch.scrubbing() || m_scratch.releaseGlide()) && m_scrubHoldPosition >= 0.0) {
-        // Scratch audio is driven by the scratch resampler — do not hard-seek transport
-        // every UI tick; that desyncs the reader and causes zipper/beep artifacts.
-        m_atomicPlayheadPos.store(m_scrubHoldPosition, std::memory_order_relaxed);
-        m_snapPosition = m_scrubHoldPosition;
+        // During scratch the audio callback owns m_atomicPlayheadPos — do not overwrite here.
         return;
     }
 
@@ -149,9 +146,8 @@ void DjEngine::tickScratchPhysics()
     }
 
     if (m_scratch.scrubbing() || m_scratch.releaseGlide()) {
-        // Waveform follows actual audio read head, not the UI target platter position.
-        m_scrubHoldPosition = scratchBridge->readPositionSeconds(m_loadedTrackSampleRate);
-        updateScrubPlayheadAnchor();
+        // Keep resume anchor in sync with audio-owned playhead (not UI target).
+        m_scrubHoldPosition = m_atomicPlayheadPos.load(std::memory_order_relaxed);
     }
 
     if (!m_scratch.scrubbing() && m_scratch.releaseGlide() && !scratchBridge->isInertiaActive()) {
@@ -305,6 +301,7 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
     const double len = transportSource.getLengthInSeconds();
     const auto loopCtx = scratchLoopCtx();
     m_scrubHoldPosition = m_scratch.armGrab(m_scrubHoldPosition, len, loopCtx);
+    m_atomicPlayheadPos.store(m_scrubHoldPosition, std::memory_order_relaxed);
 
     if (scratchBridge) {
         scratchBridge->beginScratch(m_scrubHoldPosition,
@@ -334,8 +331,6 @@ void DjEngine::scratchBySeconds(double deltaSeconds, bool vinylOneToOnePosition)
 
     if (!m_scratch.submitRelative(scratchBridge.get(), deltaSeconds, m_loadedTrackSampleRate))
         return;
-
-    emit progressChanged();
 }
 
 
@@ -356,8 +351,6 @@ void DjEngine::setScrubPosition(double positionSeconds)
                                   scratchLoopCtx())) {
         return;
     }
-
-    emit progressChanged();
 }
 
 
@@ -374,7 +367,7 @@ void DjEngine::resumeAfterScrub()
     if (!m_scratch.scrubbing() || !scratchBridge)
         return;
 
-    m_scrubHoldPosition = std::max(0.0, scratchBridge->readPositionSeconds(m_loadedTrackSampleRate));
+    m_scrubHoldPosition = std::max(0.0, m_atomicPlayheadPos.load(std::memory_order_relaxed));
     m_scratch.setScrubbing(false);
 
     constexpr double kInertiaThreshold = 0.20;
@@ -398,8 +391,7 @@ void DjEngine::applyScratchReleaseJog(double deltaSeconds)
         return;
 
     scratchBridge->addTargetDeltaSeconds(deltaSeconds, m_loadedTrackSampleRate);
-    m_scrubHoldPosition = scratchBridge->targetPositionSeconds(m_loadedTrackSampleRate);
-    updateScrubPlayheadAnchor();
+    m_scrubHoldPosition = scratchBridge->readPositionSeconds(m_loadedTrackSampleRate);
     m_atomicPlayheadPos.store(m_scrubHoldPosition, std::memory_order_relaxed);
     m_snapPosition = m_scrubHoldPosition;
     emit progressChanged();

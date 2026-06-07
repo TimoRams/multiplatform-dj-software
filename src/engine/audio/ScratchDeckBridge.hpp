@@ -65,6 +65,9 @@ public:
     // Positionable deck reader used for scratch pulls (bypasses transport clock).
     void setScratchInputSource(juce::AudioSource* source) noexcept { m_scratchInput = source; }
 
+    // Audio thread publishes scratch playhead here (seconds) for lock-free UI reads.
+    void setAudioPlayheadSink(std::atomic<double>* sink) noexcept { m_audioPlayheadSink = sink; }
+
     // Blocks audio output while DjEngine swaps transport reader sources.
     void beginTransportSwap() noexcept { m_transportSwapInProgress.store(true, std::memory_order_release); }
     void endTransportSwap() noexcept { m_transportSwapInProgress.store(false, std::memory_order_release); }
@@ -102,6 +105,7 @@ private:
     double m_loopOutSample = 0.0;
 
     std::atomic<bool> m_transportSwapInProgress { false };
+    std::atomic<double>* m_audioPlayheadSink = nullptr;
 };
 
 } // namespace engine::audio

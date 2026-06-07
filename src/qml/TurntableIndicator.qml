@@ -21,7 +21,9 @@ Item {
 
     function updateRotation() {
         if (!root.engine) { ringRotator.rotation = 0; return }
-        var playheadSec = root.engine.getVisualPositionQml()
+        var playheadSec = root.engine.isScratchVisualActive()
+                        ? root.engine.getPlayheadPositionAtomic()
+                        : root.engine.getVisualPositionQml()
         var angle = (playheadSec * root.degreesPerSecond) % 360.0
         if (angle < 0) angle += 360.0
         ringRotator.rotation = angle
@@ -128,18 +130,18 @@ Item {
         onReleased: {
             if (!root.dragActive || !root.engine) return
             root.dragActive = false
-            root.engine.resumeAfterScrub()
             root._scratchEngaged      = false
             root._accumDragAngle      = 0.0
             root._totalScratchedAngle = 0.0
+            root.engine.resumeAfterScrub()
         }
 
         onCanceled: {
             root.dragActive = false
-            if (root.engine) root.engine.resumeAfterScrub()
             root._scratchEngaged      = false
             root._accumDragAngle      = 0.0
             root._totalScratchedAngle = 0.0
+            if (root.engine) root.engine.resumeAfterScrub()
         }
     }
 

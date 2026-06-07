@@ -131,6 +131,9 @@ public:
     [[nodiscard]] bool isPlaying() const;
     [[nodiscard]] bool isScrubbing() const { return m_scratch.scrubbing(); }
     [[nodiscard]] bool isScratchReleaseActive() const { return m_scratch.releaseGlide(); }
+    [[nodiscard]] Q_INVOKABLE bool isScratchVisualActive() const {
+        return m_scratch.scrubbing() || m_scratch.releaseGlide();
+    }
 
     [[nodiscard]] double pixelsPerSecond() const { return m_pixelsPerSecond; }
     [[nodiscard]] double waveformPointsPerSecond() const { return WAVEFORM_POINTS_PER_SECOND; }

@@ -101,7 +101,7 @@ float DjEngine::getDuration() const
 double DjEngine::getPosition() const
 {
     if (m_scratch.scrubbing() || m_scratch.releaseGlide() || m_preRollCountdownActive)
-        return m_scrubHoldPosition;
+        return m_atomicPlayheadPos.load(std::memory_order_relaxed);
     // In pre-roll, transport is clamped at 0 while the visual position is
     // negative. m_scrubHoldPosition is the authoritative visual position here —
     // it is kept in sync by freezeTransportAt(), cue operations, and hot cues.
@@ -113,11 +113,9 @@ double DjEngine::getPosition() const
 
 double DjEngine::getVisualPosition() const
 {
-    // During scratch the waveform follows the actual platter position, not the
-    // raw mouse/turntable target. The target can lead slightly; the follower
-    // below provides the velocity/inertia that makes scratching sound natural.
+    // Scratch/release glide: audio callback owns playhead — no UI smoothing or target mixing.
     if (m_scratch.scrubbing() || m_scratch.releaseGlide())
-        return m_scrubHoldPosition;
+        return m_atomicPlayheadPos.load(std::memory_order_relaxed);
 
     // Pre-roll countdown: interpolate using the pre-roll wall clock so the waveform
     // scrolls smoothly at sub-frame granularity, just like the normal snap-clock path.
@@ -203,8 +201,6 @@ double DjEngine::loopPreviewOutPosition() const
 
 double DjEngine::getPlayheadPositionAtomic() const
 {
-    // Lock-free load — always returns the last value written by onTimer().
-    // QML FrameAnimation calls this every VSync frame; must never block.
     return m_atomicPlayheadPos.load(std::memory_order_relaxed);
 }
 

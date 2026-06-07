@@ -192,6 +192,7 @@ DjEngine::DjEngine(QObject* parent)
     // Audio callback is registered by DjMasterBus, not per-deck.
 
     scratchBridge = std::make_unique<engine::audio::ScratchDeckBridge>(&transportSource, false);
+    scratchBridge->setAudioPlayheadSink(&m_atomicPlayheadPos);
     timeStretchSource = std::make_unique<TimeStretchAudioSource>(scratchBridge.get());
     
     // Create the mixer DSP source to apply EQ, Filter, and Gain based on Pioneer DJM A9.

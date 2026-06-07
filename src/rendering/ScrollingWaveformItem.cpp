@@ -511,10 +511,10 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     const double pointsPerSec = m_engine->waveformPointsPerSecond();
     const double tempoRatio   = m_engine->getTempoRatio();
     const double pixelsPerPoint = static_cast<double>(m_pixelsPerPoint) / std::max(0.0001, tempoRatio);
-    // Use exact sub-pixel position so the waveform body scrolls smoothly.
-    // Individual sharp elements (beat lines, cues) are independently snapped
-    // to device-pixel boundaries via snapDevicePixelX.
-    const double centerIndexRender = static_cast<double>(m_engine->getVisualPosition()) * pointsPerSec;
+    const double playheadSec = m_engine->isScratchVisualActive()
+        ? m_engine->getPlayheadPositionAtomic()
+        : static_cast<double>(m_engine->getVisualPosition());
+    const double centerIndexRender = playheadSec * pointsPerSec;
 
     const auto snapDevicePixelX = [snapScale](double x) -> float {
         return static_cast<float>(std::round(x * snapScale) / snapScale);

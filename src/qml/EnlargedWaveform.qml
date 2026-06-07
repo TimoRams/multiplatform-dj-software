@@ -103,13 +103,11 @@ Item {
                 // Vinyl pull: drag right = earlier in track (negative delta seconds).
                 const deltaSec = -deltaPx / effectivePixelsPerSecond
                 root.engine.scratchBySeconds(deltaSec)
-                waveItem.requestUpdate()
             }
 
             onReleased: (mouse) => {
                 if (root.engine === null) return
                 if (root.beatgridEditMode && mouse.button === Qt.LeftButton && !scrubEngaged) {
-                    // Map click into waveform item coords (same space as ScrollingWaveformItem w/2).
                     // Renderer: x = w/2 + (t - playhead) * pxPerSec  →  t = playhead + (x - w/2) / pxPerSec
                     // (Minus was wrong — felt mirrored; scrub drag uses minus because it's vinyl-pull.)
                     var tempoRatio = Math.max(0.05, Math.abs(root.engine.tempoRatio))
@@ -123,18 +121,21 @@ Item {
                 }
                 root.engine.resumeAfterScrub()
                 scrubEngaged = false
+                lastDragPx = 0
             }
 
             onCanceled: {
                 if (root.engine)
                     root.engine.resumeAfterScrub()
                 scrubEngaged = false
+                lastDragPx = 0
             }
         }
 
         FrameAnimation {
             id: waveFrameAnim
-            running: root.engine !== null && root.engine.isPlaying
+            running: root.engine !== null
+                     && (root.engine.isPlaying || root.engine.isScratchVisualActive())
             onTriggered: waveItem.requestUpdate()
         }
 
@@ -142,7 +143,9 @@ Item {
             id: pausedWaveRefresh
             interval: 33
             repeat: true
-            running: root.engine !== null && (!root.engine.isPlaying || root.engine.scrubbing)
+            running: root.engine !== null
+                     && !root.engine.isPlaying
+                     && !root.engine.isScratchVisualActive()
             onTriggered: waveItem.requestUpdate()
         }
 
