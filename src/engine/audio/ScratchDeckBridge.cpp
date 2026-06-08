@@ -82,7 +82,7 @@ void ScratchDeckBridge::beginScratch(double anchorSeconds,
         : std::abs(normalPlaybackSpeed);
     m_controller.setTrackSampleRate(trackSampleRate);
     m_platter.reset(targetSamples, trackSampleRate);
-    m_platter.setSamplesPerTick((60.0 / (33.0 + 1.0 / 3.0) / 12000.0) * trackSampleRate);
+    m_platter.setSamplesPerTick((60.0 / (33.0 + 1.0 / 3.0) / 1500.0) * trackSampleRate);
     m_controller.startScratch(audioAnchorSamples, wasPlayingBeforeScratch, playbackSpeed);
     m_scratchResampler.setTrackLengthSamples(trackLengthSeconds * trackSampleRate);
     m_scratchResampler.reset(audioAnchorSamples);

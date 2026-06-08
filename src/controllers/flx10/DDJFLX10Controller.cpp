@@ -32,6 +32,7 @@ constexpr qint64 kJogRingBlinkIntervalMs = 500;
 constexpr int kJogRingOnValue = 0x7F;
 constexpr int kXx2fSampleRate = 22050;
 constexpr int kXx2fRecordsPerPacket = 30;
+constexpr int kXx36TrickleIntervalMs = 50;
 constexpr std::array<uint8_t, 4> kXx2fBeatTypes = {0x03, 0x04, 0x00, 0x02};
 constexpr std::array<uint8_t, 4> kXx2fStartMarker = {0x80, 0x02, 0x01, 0x00};
 
@@ -277,7 +278,7 @@ bool DDJFLX10Controller::start()
     refreshDeckFromEngine(1);
     refreshDeckFromEngine(2);
     m_stateTimer.start(5);
-    m_waveformTimer.start(500);
+    m_waveformTimer.start(kXx36TrickleIntervalMs);
     if (sequencerMidiReady || !m_midiPort.isEmpty())
         m_keepAliveTimer.start(500);
 
@@ -376,6 +377,8 @@ void DDJFLX10Controller::connectDeckSignals()
         QObject::disconnect(connection);
     for (auto& connection : m_tempoRangeConnections)
         QObject::disconnect(connection);
+    for (auto& connection : m_scrubbingConnections)
+        QObject::disconnect(connection);
 
     for (int deck = 1; deck <= 2; ++deck) {
         DjEngine* engine = deckEngine(deck);
@@ -452,6 +455,11 @@ void DDJFLX10Controller::connectDeckSignals()
             if (!m_connected || m_waveforms[deck].isEmpty())
                 return;
             sendXx39(deck);
+        });
+        m_scrubbingConnections[deck] = connect(engine, &DjEngine::scrubbingChanged, this, [this, deck] {
+            resetDisplayInterp(deck);
+            if (deck >= 0 && deck < static_cast<int>(m_lastXx27Packet.size()))
+                m_lastXx27Packet[deck].clear();
         });
     }
 }
@@ -911,13 +919,16 @@ void DDJFLX10Controller::sendStateTick()
 
         const DjEngine* engine = deckEngine(deck);
         const double duration = deckDisplayDuration(deck);
-        const double fileElapsed = engine ? deckDisplayPosition(deck)
-                                          : std::fmod((QDateTime::currentMSecsSinceEpoch() - m_clockStartMs) / 1000.0,
-                                                      duration);
         const bool moving = engine ? engine->isPlaying() : true;
         const double rateRatio = engine ? engine->getTempoRatio() : 1.0;
-        const double fileClamped = std::clamp(fileElapsed, 0.0, duration);
-        const double smoothFileElapsed = smoothFileElapsedSec(deck, fileClamped, rateRatio, moving);
+        const double rawFileElapsed = engine ? deckDisplayPosition(deck)
+                                             : std::fmod((QDateTime::currentMSecsSinceEpoch() - m_clockStartMs) / 1000.0,
+                                                         duration);
+        const double fileClamped = std::clamp(rawFileElapsed, 0.0, duration);
+        const bool scratchVisual = engine && engine->isScratchVisualActive();
+        const double smoothFileElapsed = scratchVisual
+            ? fileClamped
+            : smoothFileElapsedSec(deck, fileClamped, rateRatio, moving);
         sendXx27(deck, smoothFileElapsed, duration, deckBpm(deck), moving);
         updateJogRingWarning(deck, fileClamped, duration, moving);
     }
@@ -1193,9 +1204,6 @@ bool DDJFLX10Controller::sendXx27(int deck, double fileElapsedSeconds, double du
     int subMs = static_cast<int>(std::floor(sub * 1000.0));
     if (subMs > 999)
         subMs = 999;
-    int sub1024 = static_cast<int>(std::floor(sub * 1024.0));
-    if (sub1024 > 1023)
-        sub1024 = 1023;
 
     put8(p, 5, (secInt / 60) & 0xFF);
     put8(p, 6, (secInt % 60) & 0xFF);
@@ -1220,11 +1228,11 @@ bool DDJFLX10Controller::sendXx27(int deck, double fileElapsedSeconds, double du
     put8(p, 17, (tempoWire >> 8) & 0xFF);
     put8(p, 20, 0x0E);
 
-    // Bytes 21–22 share the same position sub-tick field as 5–8 (Serato wire).
-    const int subsecTicks = secInt * 1024 + sub1024;
-    put8(p, 21, (subsecTicks * 2) & 0xFF);
+    // Bytes 21–22 mirror the same file-time subfield as 5–8 (milliseconds, not 1024ths).
+    const int fileMs = secInt * 1000 + subMs;
+    put8(p, 21, (fileMs * 2) & 0xFF);
     if (deck <= 2)
-        put8(p, 22, static_cast<int>(std::floor(static_cast<double>(subsecTicks) / 123.2)) % 15);
+        put8(p, 22, static_cast<int>(std::floor(static_cast<double>(fileMs) / 123.2)) % 15);
 
     put8(p, 25, 0x80);
     put8(p, 29, deckKeyByte(deck));

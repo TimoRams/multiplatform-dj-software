@@ -112,6 +112,7 @@ private:
     std::array<QMetaObject::Connection, 5> m_hotCueConnections;
     std::array<QMetaObject::Connection, 5> m_tempoConnections;
     std::array<QMetaObject::Connection, 5> m_tempoRangeConnections;
+    std::array<QMetaObject::Connection, 5> m_scrubbingConnections;
     std::array<QString, 5> m_lastCoverUrls;
     std::array<qint64, 5> m_lastWaveformRefreshMs = {0, 0, 0, 0, 0};
     std::array<bool, 5> m_jogRingWarningActive = {false, false, false, false, false};

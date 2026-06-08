@@ -31,6 +31,7 @@ void VirtualTurntable::addTimeDeltaSeconds(double deltaSeconds) noexcept
     if (deltaSeconds == 0.0)
         return;
     addTargetSampleDelta(deltaSeconds * m_trackSampleRate);
+    m_displayAngleRad += (deltaSeconds * kNominalRpm / 60.0) * 2.0 * kPi;
 }
 
 void VirtualTurntable::addJogTicks(double ticks) noexcept

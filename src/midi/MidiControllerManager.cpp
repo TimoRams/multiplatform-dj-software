@@ -29,11 +29,9 @@ const QString kBuiltInFlx10ControllerName = QStringLiteral("DDJ-FLX10");
 const QString kBuiltInFlx10MappingFile = QStringLiteral("DDJ-FLX10.brockdj.xml");
 const QString kBuiltInFlx10MappingLabel = QStringLiteral("Built-in: DDJ-FLX10");
 const QString kBuiltInFlx10MappingResource = QStringLiteral(":/controllers/mappings/midi/DDJ-FLX10.brockdj.xml");
-// Mixxx scripts use 1500 for scratchEnable(), but scratchTick feeds a slip-mat
-// filter — not a direct 1/1500-rev playhead step per MIDI tick. For BrockDJ's
-// direct vinyl mapping, FLX10 CC 0x22 needs 8× finer resolution so one
-// physical platter turn matches one 33⅓-RPM UI handle revolution (~1.8 s).
-constexpr double kFlx10ScratchIntervalsPerRevolution = 12000.0;
+// FLX10 hardware jog wheels report ~1500 relative ticks per vinyl revolution
+// (Mixxx scratchEnable uses the same constant). One revolution ≈ 1.8 s @ 33⅓ RPM.
+constexpr double kFlx10ScratchIntervalsPerRevolution = 1500.0;
 constexpr double kVinylRpm = 33.0 + 1.0 / 3.0;
 
 double flx10ScratchDeltaSec(double ticks)
