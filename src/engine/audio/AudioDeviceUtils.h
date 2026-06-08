@@ -56,7 +56,7 @@ QString describeDeviceState(juce::AudioDeviceManager& manager);
 
 bool probeJackServer(QString& message);
 int readJackBufferSize(jack_client_t* client);
-bool waitForJackBufferSize(jack_client_t* client, int requestedFrames, int effectiveFrames);
+bool waitForJackBufferSize(jack_client_t* client, int requestedFrames, int& effectiveFrames);
 bool forcePipeWireQuantum(int requestedFrames, QString& message);
 bool requestJackBufferSize(int requestedFrames, int& effectiveFrames, int& effectiveSampleRate, QString& message);
 #endif
