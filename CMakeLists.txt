@@ -366,6 +366,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/app/SettingsManager.cpp
     src/app/AppConfig.h
     src/app/AppConfig.cpp
+    src/app/AppExitGate.h
     src/library/TrackIdGenerator.h
     src/library/LibraryDatabase.h
     src/library/LibraryDatabase.cpp

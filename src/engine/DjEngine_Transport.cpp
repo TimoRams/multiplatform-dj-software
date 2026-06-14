@@ -252,31 +252,61 @@ void DjEngine::attachReaderToTransport(juce::AudioFormatReader* bufferedReader,
 }
 
 
-void DjEngine::ejectTrack()
+void DjEngine::releaseTransportReaders()
 {
-    ++m_loadGen;
-    if (m_analyzer)
-        m_analyzer->stopAnalysis();
-
-    m_playRequested = false;
     transportSource.stop();
     transportSource.setSource(nullptr);
+
+    if (scratchBridge)
+        scratchBridge->beginTransportSwap();
+    // Exit scratch while reader sources are still alive — scratchBridge holds a raw
+    // pointer to directReaderSource via setScratchInputSource().
+    terminateScratchSession(0.0);
+    if (scratchBridge)
+        scratchBridge->setScratchInputSource(nullptr);
+
     reverseWrapSource.reset();
     bufferedReaderSource.reset();
     directReaderSource.reset();
     readerSource.reset();
-    terminateScratchSession(0.0);
+
+    if (scratchBridge)
+        scratchBridge->endTransportSwap();
+}
+
+
+void DjEngine::ejectTrack()
+{
+    ++m_loadGen;
+
+    if (m_analyzer) {
+        m_analyzer->setCompletionCallback({});
+        m_analyzer->stopAnalysis();
+    }
+
+    m_playRequested = false;
+    releaseTransportReaders();
+
+    // Mark empty before clear()/dataCleared — waveform/FLX10 handlers must not
+    // treat a mid-eject clear as a live track update.
+    m_hasTrack = false;
+    m_scrubHoldPosition = 0.0;
+    m_atomicPlayheadPos.store(0.0, std::memory_order_relaxed);
+    m_snapValid = false;
 
     resetTrackLoadState();
+
     m_trackTitle.clear();   m_trackArtist.clear();  m_trackAlbum.clear();
     m_trackGenre.clear();   m_trackComment.clear();
     m_trackKey.clear();     m_trackDuration.clear(); m_trackDurationSec = 0.0;
     m_hasCoverArt = false; m_coverArtUrl.clear();
     if (m_coverProvider)
         m_coverProvider->clearCover(m_deckId);
-    m_hasTrack = false;
+
+    emit trackEjected();
     emit trackMetadataChanged();
     emit progressChanged();
+    emit playingChanged();
 }
 
 

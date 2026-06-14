@@ -31,6 +31,7 @@ signals:
 
 private slots:
     void onTrackLoaded();
+    void onTrackEjected();
     void onRgbDataChanged();      // throttled — analysis progress & waveform updates
     void onHotCuesChanged();      // immediate — cue pin positions must update at once
     void onOverviewRgbUpdated();  // overview ready — repaint immediately

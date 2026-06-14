@@ -86,6 +86,7 @@ void RgbWaveformItem::setEngine(DjEngine* engine)
 
     if (m_engine) {
         connect(m_engine, &DjEngine::trackLoaded,    this, &RgbWaveformItem::onTrackLoaded,    Qt::UniqueConnection);
+        connect(m_engine, &DjEngine::trackEjected,   this, &RgbWaveformItem::onTrackEjected,   Qt::UniqueConnection);
         connect(m_engine, &DjEngine::progressChanged, this, &RgbWaveformItem::onRgbDataChanged, Qt::UniqueConnection);
         connect(m_engine, &DjEngine::hotCuesChanged,  this, &RgbWaveformItem::onHotCuesChanged,  Qt::UniqueConnection);
     }
@@ -104,11 +105,19 @@ void RgbWaveformItem::setRectified(bool v)
     update();
 }
 
+void RgbWaveformItem::onTrackEjected()
+{
+    if (m_engine && m_engine->getTrackData())
+        disconnect(m_engine->getTrackData(), nullptr, this, nullptr);
+    m_frameCache = QImage();
+    update();
+}
+
 void RgbWaveformItem::onTrackLoaded()
 {
     m_frameCache = QImage();
 
-    if (!m_engine || !m_engine->getTrackData()) {
+    if (!m_engine || !m_engine->hasTrack() || !m_engine->getTrackData()) {
         update();
         return;
     }
@@ -238,7 +247,7 @@ void RgbWaveformItem::paint(QPainter* painter)
     const int w = std::max(1, static_cast<int>(width()));
     const int h = std::max(1, static_cast<int>(height()));
 
-    if (!m_engine || !m_engine->getTrackData()) {
+    if (!m_engine || !m_engine->hasTrack() || !m_engine->getTrackData()) {
         if (!m_frameCache.isNull() && m_frameCache.size() == QSize(w, h))
             painter->drawImage(0, 0, m_frameCache);
         return;

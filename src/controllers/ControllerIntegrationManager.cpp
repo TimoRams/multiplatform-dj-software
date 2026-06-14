@@ -23,6 +23,13 @@ void ControllerIntegrationManager::setDecks(DjEngine* deckA, DjEngine* deckB)
     m_flx10.setDecks(m_deckA, m_deckB);
 }
 
+void ControllerIntegrationManager::prepareForShutdown() noexcept
+{
+    m_flx10.prepareForShutdown();
+    m_deckA = nullptr;
+    m_deckB = nullptr;
+}
+
 void ControllerIntegrationManager::setFlx10Enabled(bool enabled)
 {
     if (m_flx10Enabled == enabled)

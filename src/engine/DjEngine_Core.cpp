@@ -228,11 +228,7 @@ DjEngine::~DjEngine()
         m_analyzer->stopAnalysis();
         delete m_analyzer;
     }
-    transportSource.setSource(nullptr);
-    reverseWrapSource.reset();
-    bufferedReaderSource.reset();
-    directReaderSource.reset();
-    readerSource.reset();
+    releaseTransportReaders();
     readAheadThread.stopThread(1000);
 }
 
@@ -246,19 +242,19 @@ void DjEngine::shutdownSharedAudioDeviceManager()
 
 void DjEngine::prepareForShutdown()
 {
+    // Disconnect only — QTimer::stop() during aboutToQuit has crashed on macOS when
+    // a timeout handler is still unwinding on the stack.
     QObject::disconnect(&timer, nullptr, this, nullptr);
-    timer.stop();
 
-    if (m_analysisPersistTimer) {
+    if (m_analysisPersistTimer)
         QObject::disconnect(m_analysisPersistTimer, nullptr, this, nullptr);
-        m_analysisPersistTimer->stop();
-    }
 
     if (m_analyzer) {
         m_analyzer->setCompletionCallback({});
         m_analyzer->stopAnalysis();
     }
 
+    m_playRequested = false;
     transportSource.stop();
 }
 

@@ -10,6 +10,7 @@
 #include <QtGlobal>
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -30,6 +31,7 @@ public:
 
     bool start();
     void stop();
+    void prepareForShutdown() noexcept;
     void setDecks(DjEngine* deckA, DjEngine* deckB);
 
     bool isConnected() const { return m_connected; }
@@ -87,7 +89,9 @@ private:
     std::vector<double> deckBeatTimesMs(int deck) const;
     DjEngine* deckEngine(int deck) const;
     void connectDeckSignals();
+    void disconnectDeckSignals();
     void refreshDeckFromEngine(int deck);
+    void resetDeckWaveformOutput(int deck);
 
     QString m_status;
     QString m_midiPort;
@@ -103,6 +107,7 @@ private:
     std::array<int, 5> m_uploadEntries = {0, 0, 0, 0, 0};
     std::array<bool, 5> m_uploadActive = {false, false, false, false, false};
     std::array<QMetaObject::Connection, 5> m_trackLoadedConnections;
+    std::array<QMetaObject::Connection, 5> m_trackEjectedConnections;
     std::array<QMetaObject::Connection, 5> m_rgbWaveformConnections;
     std::array<QMetaObject::Connection, 5> m_overviewWaveformConnections;
     std::array<QMetaObject::Connection, 5> m_dataClearedConnections;
@@ -127,6 +132,7 @@ private:
     };
     std::array<DeckDisplayInterp, 5> m_displayInterp{};
     std::array<QByteArray, 5> m_lastXx27Packet;
+    std::atomic<bool> m_shuttingDown { false };
     bool m_connected = false;
     DjEngine* m_deckA = nullptr;
     DjEngine* m_deckB = nullptr;

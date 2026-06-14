@@ -31,6 +31,7 @@ signals:
 
 private slots:
     void onTrackLoaded();
+    void onTrackEjected();
     void onDataUpdated();
     void onProgressChanged();
 

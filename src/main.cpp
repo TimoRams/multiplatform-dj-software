@@ -8,6 +8,7 @@
 #include <QQmlApplicationEngine>
 #include <QQuickWindow>
 #include <QQmlContext>
+#include <QQmlEngine>
 #include <QFont>
 #include <QIcon>
 #include <QSize>
@@ -39,8 +40,26 @@
 #include "midi/ParameterStore.h"
 #include "midi/MidiControllerManager.h"
 #include "controllers/ControllerIntegrationManager.h"
+
+namespace {
+
+void stopQuickWindowRendering(QQuickWindow* window)
+{
+    if (!window)
+        return;
+
+    window->hide();
+    // Blocks until the QRhiMetal render thread finishes; do not processEvents() here —
+    // during Qt.quit() that re-enters applicationShouldTerminate and frees objects
+    // (e.g. MidiControllerManager) while shutdown is still running.
+    if (window->isSceneGraphInitialized())
+        window->releaseResources();
+}
+
+} // namespace
 #include "SettingsManager.h"
 #include "app/AppConfig.h"
+#include "app/AppExitGate.h"
 #include "library/LibraryDatabase.h"
 #include "library/LibraryTableModel.h"
 #include "library/LibraryAnalysisManager.h"
@@ -274,7 +293,7 @@ int main(int argc, char *argv[])
     std::unique_ptr<DjEngine> deckD;
     std::unique_ptr<DjMasterBus> masterBus;
     auto parameterStore = std::make_unique<ParameterStore>();
-    std::unique_ptr<MidiControllerManager> midiManager; // constructed after app.exec() — CoreMIDI needs CFRunLoop
+    QPointer<MidiControllerManager> midiManager;
     std::unique_ptr<ControllerIntegrationManager> controllerManager;
     auto libraryManager = std::make_unique<LibraryManager>();
     auto libraryDb = std::make_unique<LibraryDatabase>();
@@ -361,9 +380,11 @@ int main(int argc, char *argv[])
             engine.rootContext()->setContextProperty("deckD", deckD.get());
 
             // Defer MIDI init: CoreMIDI on macOS needs the CFRunLoop (app.exec) running first.
-            midiManager = std::make_unique<MidiControllerManager>(parameterStore.get());
+            auto* midi = new MidiControllerManager(parameterStore.get(), &app);
+            QQmlEngine::setObjectOwnership(midi, QQmlEngine::CppOwnership);
+            midiManager = midi;
             midiManager->connectDecks(deckA.get(), deckB.get());
-            engine.rootContext()->setContextProperty("midiManager", midiManager.get());
+            engine.rootContext()->setContextProperty("midiManager", midiManager.data());
 
             controllerManager = std::make_unique<ControllerIntegrationManager>();
             controllerManager->setDecks(deckA.get(), deckB.get());
@@ -517,6 +538,7 @@ int main(int argc, char *argv[])
     auto clearQmlContextProperties = [&]() {
         engine.rootContext()->setContextProperty("settingsManager", static_cast<QObject*>(nullptr));
         engine.rootContext()->setContextProperty("appConfig", QVariant());
+        engine.rootContext()->setContextProperty("appExit", static_cast<QObject*>(nullptr));
         engine.rootContext()->setContextProperty("deckA", static_cast<QObject*>(nullptr));
         engine.rootContext()->setContextProperty("deckB", static_cast<QObject*>(nullptr));
         engine.rootContext()->setContextProperty("deckC", static_cast<QObject*>(nullptr));
@@ -535,50 +557,69 @@ int main(int argc, char *argv[])
     };
 
     bool shutdownDone = false;
-    auto shutdownRuntime = [&]() {
-        if (shutdownDone)
+    bool exitTeardownDone = false;
+
+    auto performExitTeardown = [&](bool manualBackup) {
+        if (exitTeardownDone)
             return;
-        shutdownDone = true;
+        exitTeardownDone = true;
 
-        // Persist clean-shutdown flag before any teardown that can abort (ASAN).
-        settingsManager.markCleanShutdown();
+        settingsManager.setRequestManualBackupOnExit(manualBackup);
+        settingsManager.flushToDisk();
 
-        if (libraryAnalysisManager)
+        if (libraryAnalysisManager) {
             libraryAnalysisManager->cancel();
+            QObject::disconnect(libraryAnalysisManager.get(), nullptr, libraryDb.get(), nullptr);
+            QObject::disconnect(libraryDb.get(), nullptr, libraryAnalysisManager.get(), nullptr);
+        }
 
         for (DjEngine* deck : {deckA.get(), deckB.get(), deckC.get(), deckD.get()}) {
             if (deck)
                 deck->prepareForShutdown();
         }
 
-        if (controllerManager) {
-            QObject::disconnect(&settingsManager, nullptr, controllerManager.get(), nullptr);
-            controllerManager->setFlx10Enabled(false);
-            controllerManager->setDecks(nullptr, nullptr);
-        }
-
-        // Break QML bindings so FrameAnimation / waveform timers stop driving updates.
-        clearQmlContextProperties();
-
         QQuickWindow* quickWindow = nullptr;
         for (QObject* root : engine.rootObjects()) {
             if (auto* window = qobject_cast<QQuickWindow*>(root))
                 quickWindow = window;
         }
+        stopQuickWindowRendering(quickWindow);
 
-        if (quickWindow) {
-            quickWindow->hide();
-            // Blocks until the render thread has released GPU resources; window
-            // object must stay alive — do not delete it synchronously here.
-            quickWindow->releaseResources();
+        if (libraryDb)
+            libraryDb->shutdown(manualBackup);
+
+        engine.rootContext()->setContextProperty("midiManager", static_cast<QObject*>(nullptr));
+        engine.rootContext()->setContextProperty("controllerManager", static_cast<QObject*>(nullptr));
+
+        if (controllerManager) {
+            QObject::disconnect(&settingsManager, nullptr, controllerManager.get(), nullptr);
+            controllerManager->setFlx10Enabled(false);
+            controllerManager->prepareForShutdown();
+            controllerManager.reset();
         }
 
         if (midiManager) {
+            QCoreApplication::removePostedEvents(midiManager);
             midiManager->shutdown();
-            midiManager.reset();
         }
 
-        controllerManager.reset();
+        settingsManager.markCleanShutdown();
+    };
+
+    auto* exitGate = new AppExitGate(&app);
+    exitGate->setHandler([&](bool manualBackup) {
+        performExitTeardown(manualBackup);
+        QCoreApplication::quit();
+    });
+    engine.rootContext()->setContextProperty("appExit", exitGate);
+
+    auto shutdownRuntime = [&]() {
+        if (shutdownDone)
+            return;
+        shutdownDone = true;
+
+        if (!exitTeardownDone)
+            performExitTeardown(settingsManager.requestManualBackupOnExit());
 
         if (linkManager)
             linkManager->shutdown();
@@ -590,6 +631,13 @@ int main(int argc, char *argv[])
         }
 
         DjEngine::shutdownSharedAudioDeviceManager();
+
+        for (DjEngine* deck : {deckA.get(), deckB.get(), deckC.get(), deckD.get()}) {
+            if (deck)
+                deck->releaseTransportReaders();
+        }
+
+        clearQmlContextProperties();
 
         engine.clearComponentCache();
         const auto qmlRoots = engine.rootObjects();
@@ -606,15 +654,13 @@ int main(int argc, char *argv[])
 
         linkManager.reset();
         masterBus.reset();
-
-        if (libraryDb)
-            libraryDb->shutdown(true);
+        libraryDb.reset();
 
         settingsManager.shutdown();
     };
 
-    QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, shutdownRuntime, Qt::DirectConnection);
-
+    // Run shutdown after the event loop returns — not from aboutToQuit, which fires
+    // re-entrantly inside applicationShouldTerminate and races teardown on macOS.
     const int ret = app.exec();
     shutdownRuntime();
 

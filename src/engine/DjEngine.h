@@ -113,6 +113,8 @@ public:
 
     /** Stop Qt timers and waveform analysis before QML / MIDI teardown. */
     void prepareForShutdown();
+    /** Detach file readers from scratch/transport; call after audio device is closed. */
+    void releaseTransportReaders();
 
     explicit DjEngine(QObject* parent = nullptr);
     ~DjEngine() override;
@@ -388,6 +390,7 @@ signals:
     void tempoChanged();
     void tempoRangeChanged();
     void trackLoaded();
+    void trackEjected();
     void trackMetadataChanged();
     void pixelsPerSecondChanged();
     

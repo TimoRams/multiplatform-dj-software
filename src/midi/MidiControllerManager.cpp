@@ -491,7 +491,9 @@ void appendMidiDeviceNames(const DeviceList& devices,
 MidiControllerManager::MidiControllerManager(ParameterStore* store, QObject* parent)
     : QObject(parent),
       m_parameterStore(store),
-      m_midiFeedback(this)
+      // Not a QObject child — m_midiFeedback is a C++ member; parenting would make
+      // ~QObject delete it again after the member destructor (UAF on macOS quit).
+      m_midiFeedback(nullptr)
 {
     if (m_parameterStore) {
         connect(m_parameterStore, &ParameterStore::parameterChanged,
@@ -557,21 +559,28 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, QObject* par
 
 void MidiControllerManager::shutdown()
 {
+    // Guard with a process-wide flag first — during macOS quit, DeferredDelete can
+    // destroy this object while a stale unique_ptr still holds the same address.
+    static std::atomic<bool> s_processShutdownDone { false };
+    if (s_processShutdownDone.exchange(true, std::memory_order_acq_rel))
+        return;
+
     if (m_shutdownComplete.exchange(true, std::memory_order_acq_rel))
         return;
 
-    // Drop JUCE device-list callbacks before touching Qt timers — queued refresh
-    // lambdas must not run while I/O is being torn down.
-    m_midiDeviceListConnection = juce::MidiDeviceListConnection{};
-
-    // Stop LED feedback timers/sender first — avoid QTimer::stop() during aboutToQuit.
+    // Stop feedback + Qt signal delivery before JUCE/CoreMIDI teardown — device
+    // close can pump the Cocoa run loop and re-enter timer/MIDI handlers.
     m_midiFeedback.prepareForShutdown();
+    QCoreApplication::removePostedEvents(this);
+    QCoreApplication::removePostedEvents(&m_midiFeedback);
 
-    // Disconnect timers instead of stop() — QTimer::stop() has crashed during
-    // aboutToQuit when a timeout handler is still unwinding on macOS.
     QObject::disconnect(&m_startupRefreshTimer, nullptr, this, nullptr);
     QObject::disconnect(&m_jogAReleaseTimer, nullptr, this, nullptr);
     QObject::disconnect(&m_jogBReleaseTimer, nullptr, this, nullptr);
+
+    if (m_deckActionsConnection)
+        QObject::disconnect(m_deckActionsConnection);
+    m_deckActionsConnection = {};
 
     if (m_parameterStore)
         QObject::disconnect(m_parameterStore, nullptr, this, nullptr);
@@ -583,8 +592,7 @@ void MidiControllerManager::shutdown()
     m_deckA = nullptr;
     m_deckB = nullptr;
 
-    // Feedback already torn down in prepareForShutdown(); skip stopFlx10OutputSession
-    // here — it would touch Qt state while the scene graph may still be winding down.
+    m_midiDeviceListConnection = juce::MidiDeviceListConnection{};
 
     for (auto& input : m_midiInputs) {
         if (input)
@@ -593,14 +601,13 @@ void MidiControllerManager::shutdown()
     m_midiInputs.clear();
 
 #if defined(Q_OS_LINUX)
+    stopAlsaInputMonitor();
     if (m_alsaMidiOutput)
         m_alsaMidiOutput.reset();
 #endif
 
     if (m_midiOutput)
         m_midiOutput.reset();
-
-    stopAlsaInputMonitor();
 }
 
 MidiControllerManager::~MidiControllerManager()

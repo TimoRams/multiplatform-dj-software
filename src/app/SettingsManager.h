@@ -103,6 +103,9 @@ public:
 
     Q_INVOKABLE void flushToDisk();
 
+    Q_INVOKABLE void setRequestManualBackupOnExit(bool requested) { m_requestManualBackupOnExit = requested; }
+    bool requestManualBackupOnExit() const { return m_requestManualBackupOnExit; }
+
     double getCrossfaderPosition() const;
     void setCrossfaderPosition(double position);
 
@@ -133,6 +136,7 @@ private:
 
     juce::ApplicationProperties appProperties;
     bool m_previousRunUnclean = false;
+    bool m_requestManualBackupOnExit = false;
 
     juce::PropertiesFile* getUserSettingsOrNull();
     void ensureMappingsDirectoryExists() const;

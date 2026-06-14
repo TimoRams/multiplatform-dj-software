@@ -4,6 +4,7 @@
 #include "app/SettingsManager.h"
 #include "rendering/WaveformCache.h"
 
+#include <QCoreApplication>
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QDir>
@@ -161,8 +162,8 @@ LibraryDatabase::LibraryDatabase(QObject* parent)
 
 LibraryDatabase::~LibraryDatabase()
 {
-    if (m_db.isOpen())
-        m_db.close();
+    if (!m_shutdownComplete)
+        shutdown(false);
 }
 
 bool LibraryDatabase::open()
@@ -1246,12 +1247,24 @@ QString LibraryDatabase::mirroredDatabaseStatus() const
 
 void LibraryDatabase::shutdown(bool syncBackup)
 {
-    if (!m_db.isValid() || !m_db.isOpen())
+    if (m_shutdownComplete)
         return;
 
+    if (!m_db.isValid() || !m_db.isOpen()) {
+        m_shutdownComplete = true;
+        return;
+    }
+
+    m_shutdownComplete = true;
+
+    QCoreApplication::removePostedEvents(this);
+
+    if (m_tableModel)
+        QObject::disconnect(this, nullptr, m_tableModel, nullptr);
+
     const bool pendingBackupSync = m_backupSyncTimer.isActive() || m_backupSyncAgain;
-    m_mirrorSelfCheckTimer.stop();
-    m_backupSyncTimer.stop();
+    QObject::disconnect(&m_mirrorSelfCheckTimer, nullptr, this, nullptr);
+    QObject::disconnect(&m_backupSyncTimer, nullptr, this, nullptr);
 
     {
         QSqlQuery q(m_db);
@@ -1279,7 +1292,7 @@ void LibraryDatabase::setTableModel(LibraryTableModel* model)
 
 void LibraryDatabase::scheduleTableModelRefresh()
 {
-    if (m_tableModel == nullptr || m_tableModelRefreshPending)
+    if (m_shutdownComplete || m_tableModel == nullptr || m_tableModelRefreshPending)
         return;
 
     m_tableModelRefreshPending = true;

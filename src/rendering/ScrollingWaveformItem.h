@@ -46,6 +46,7 @@ protected:
 
 private slots:
     void onTrackLoaded();
+    void onTrackEjected();
     void onDataUpdated();
     void cleanupSgResources(); // called from render thread via sceneGraphInvalidated
 

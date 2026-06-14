@@ -250,6 +250,7 @@ private:
     bool m_tableModelRefreshPending = false;
     bool m_backupSyncRunning = false;
     bool m_backupSyncAgain = false;
+    bool m_shutdownComplete = false;
 
     static constexpr int kSchemaVersion = 16;
 };

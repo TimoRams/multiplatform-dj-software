@@ -111,8 +111,11 @@ ApplicationWindow {
     function finalizeAppClose() {
         allowDirectClose = true
         exitPromptVisible = false
-        window.close()
-        Qt.callLater(Qt.quit)
+        window.visible = false
+        if (typeof appExit !== "undefined" && appExit)
+            appExit.finalizeExit(window.exitManualBackupRequested)
+        else
+            Qt.quit()
     }
 
     onClosing: function(close) {
@@ -142,8 +145,6 @@ ApplicationWindow {
                 window.exitCleanupTriggered = true
                 if (typeof settingsManager !== "undefined" && settingsManager && settingsManager.flushToDisk)
                     settingsManager.flushToDisk()
-                if (typeof libraryDb !== "undefined" && libraryDb && libraryDb.shutdown)
-                    libraryDb.shutdown(window.exitManualBackupRequested)
             }
 
             if (window.exitProgress >= 1.0) {
@@ -237,6 +238,8 @@ ApplicationWindow {
 
         function finishLoading() {
             loadingIndicator.running = false
+            loadingIndicator.activeStage = loadingIndicator.startupStages.length - 1
+            loadingIndicator.stageProgress = 1.0
             loadingIndicator.visible = false
             mainLayout.visible = true
             if (typeof appConfig !== "undefined" && appConfig && !appConfig.firstRunCompleted)
@@ -319,8 +322,10 @@ ApplicationWindow {
             var visualStage = Math.min(readyStage, Math.floor(elapsed / loadingTimer.minStageMs))
             visualStage = Math.max(0, Math.min(startupStages.length - 1, visualStage))
 
-            activeStage = visualStage
-            stageProgress = Math.max(0.04, (visualStage + 1) / startupStages.length)
+            // Never regress — avoids the progress bar snapping back when parent width
+            // collapses as the overlay hides (NumberAnimation on width).
+            activeStage = Math.max(activeStage, visualStage)
+            stageProgress = Math.max(stageProgress, Math.max(0.04, (activeStage + 1) / startupStages.length))
             statusTitle = startupStages[visualStage].title
             statusDetail = startupStages[visualStage].detail
         }
@@ -402,6 +407,7 @@ ApplicationWindow {
                         color: "#f2f2f2"
 
                         Behavior on width {
+                            enabled: loadingIndicator.running && loadingIndicator.visible
                             NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
                         }
                     }

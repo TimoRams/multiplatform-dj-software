@@ -126,6 +126,7 @@ void ScrollingWaveformItem::setEngine(DjEngine* engine)
     m_engine = engine;
     if (m_engine) {
         connect(m_engine, &DjEngine::trackLoaded, this, &ScrollingWaveformItem::onTrackLoaded);
+        connect(m_engine, &DjEngine::trackEjected, this, &ScrollingWaveformItem::onTrackEjected);
         connect(m_engine, &DjEngine::loopChanged, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
         connect(m_engine, &DjEngine::segmentsChanged, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
         connect(m_engine, &DjEngine::hotCuesChanged, this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
@@ -170,6 +171,17 @@ void ScrollingWaveformItem::zoomOut()
         }
     }
     setPixelsPerPoint(ZOOM_LEVELS.front());
+}
+
+void ScrollingWaveformItem::onTrackEjected()
+{
+    if (m_engine && m_engine->getTrackData())
+        disconnect(m_engine->getTrackData(), nullptr, this, nullptr);
+    m_rgbSliceBuf.clear();
+    m_peakSliceBuf.clear();
+    m_hasLastCenterIndexRender = false;
+    m_forceUpdate = true;
+    update();
 }
 
 void ScrollingWaveformItem::onTrackLoaded()
@@ -306,7 +318,7 @@ QSGSimpleTextureNode* ScrollingWaveformItem::getFromPool()
 
 QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
 {
-    if (!m_engine || !m_engine->getTrackData()) {
+    if (!m_engine || !m_engine->hasTrack() || !m_engine->getTrackData()) {
         if (oldNode) delete oldNode;
         return nullptr;
     }

@@ -25,11 +25,20 @@ void WaveformItem::setEngine(DjEngine* engine)
 
     if (m_engine) {
         connect(m_engine, &DjEngine::trackLoaded, this, &WaveformItem::onTrackLoaded);
+        connect(m_engine, &DjEngine::trackEjected, this, &WaveformItem::onTrackEjected);
         connect(m_engine, &DjEngine::progressChanged, this, &WaveformItem::onProgressChanged);
     }
 
     emit engineChanged();
     
+    m_geometryChanged = true;
+    update();
+}
+
+void WaveformItem::onTrackEjected()
+{
+    if (m_engine && m_engine->getTrackData())
+        disconnect(m_engine->getTrackData(), nullptr, this, nullptr);
     m_geometryChanged = true;
     update();
 }
@@ -57,7 +66,7 @@ void WaveformItem::onProgressChanged()
 
 QSGNode* WaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
 {
-    if (!m_engine || !m_engine->getTrackData() || m_engine->getTrackData()->getWaveformData().isEmpty()) {
+    if (!m_engine || !m_engine->hasTrack() || !m_engine->getTrackData() || m_engine->getTrackData()->getWaveformData().isEmpty()) {
         if (oldNode) delete oldNode;
         return nullptr;
     }

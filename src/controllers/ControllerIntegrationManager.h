@@ -19,6 +19,7 @@ public:
     ~ControllerIntegrationManager() override;
 
     void setDecks(DjEngine* deckA, DjEngine* deckB);
+    void prepareForShutdown() noexcept;
 
     bool flx10Enabled() const { return m_flx10Enabled; }
     bool flx10Connected() const { return m_flx10.isConnected(); }
