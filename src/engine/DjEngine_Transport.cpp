@@ -71,9 +71,9 @@ double DjEngine::getPosition() const
 
 double DjEngine::getVisualPosition() const
 {
-    // Scratch/release glide: audio callback owns playhead — no UI smoothing or target mixing.
+    // Active drag / release glide: playhead published via syncScratchReadPosition().
     if (m_scratch.scrubbing() || m_scratch.releaseGlide())
-        return m_atomicPlayheadPos.load(std::memory_order_relaxed);
+        return m_atomicPlayheadPos.load(std::memory_order_acquire);
 
     // Pre-roll countdown: interpolate using the pre-roll wall clock so the waveform
     // scrolls smoothly at sub-frame granularity, just like the normal snap-clock path.
@@ -159,7 +159,7 @@ double DjEngine::loopPreviewOutPosition() const
 
 double DjEngine::getPlayheadPositionAtomic() const
 {
-    return m_atomicPlayheadPos.load(std::memory_order_relaxed);
+    return m_atomicPlayheadPos.load(std::memory_order_acquire);
 }
 
 

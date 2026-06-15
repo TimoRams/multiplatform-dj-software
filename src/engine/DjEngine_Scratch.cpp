@@ -104,12 +104,17 @@ void DjEngine::tickScratchPhysics()
     }
 
     if (m_scratch.scrubbing() || m_scratch.releaseGlide()) {
-        // Keep resume anchor in sync with audio-owned playhead (not UI target).
-        m_scrubHoldPosition = m_atomicPlayheadPos.load(std::memory_order_relaxed);
+        // During active drag the session delta sum is authoritative for display.
+        if (m_scratch.scrubbing())
+            m_scrubHoldPosition = m_scratch.lastRawSec();
+        else
+            m_scrubHoldPosition = m_atomicPlayheadPos.load(std::memory_order_acquire);
     }
 
     if (!m_scratch.scrubbing() && m_scratch.releaseGlide() && !scratchBridge->isInertiaActive()) {
         m_scratch.setReleaseGlide(false);
+        m_scrubHoldPosition = std::max(0.0, m_atomicPlayheadPos.load(std::memory_order_acquire));
+        scratchBridge->endScratch(false);
         restorePostScrubPlaybackState();
         if (mixerSource)
             mixerSource->setScratchTimbre(0.0f);
@@ -169,14 +174,15 @@ void DjEngine::restorePostScrubPlaybackState()
 {
     const double resumeSec = std::max(0.0, m_scrubHoldPosition);
 
-    transportSource.setPosition(resumeSec);
-    m_scrubHoldPosition = resumeSec;
-    m_atomicPlayheadPos.store(resumeSec, std::memory_order_relaxed);
-    m_snapPosition = resumeSec;
-    syncReverseReaderToHold();
-
     if (scratchBridge)
         scratchBridge->prepareNormalPlaybackHandoff(resumeSec, m_loadedTrackSampleRate);
+
+    transportSource.setPosition(resumeSec);
+    m_scrubHoldPosition = resumeSec;
+    m_atomicPlayheadPos.store(resumeSec, std::memory_order_release);
+    m_snapPosition = resumeSec;
+    syncReverseReaderToHold();
+    armVisualSeekSettle();
 
     if (mixerSource)
         mixerSource->armClickFreeTransition();
@@ -256,7 +262,7 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
     } else if (regrabActiveScratch) {
         m_scrubHoldPosition = m_atomicPlayheadPos.load(std::memory_order_relaxed);
     } else if (wasPlayingBeforeGrab) {
-        m_scrubHoldPosition = transportSource.getCurrentPosition();
+        m_scrubHoldPosition = getVisualPosition();
     } else if (anchorPositionSec >= 0.0) {
         m_scrubHoldPosition = anchorPositionSec;
     } else if (m_scrubHoldPosition >= 0.0) {
@@ -286,6 +292,7 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
                                            m_loadedTrackSampleRate);
         scratchBridge->setReverse(m_isReverse);
         scratchBridge->setKeylockPassthrough(false);
+        scratchBridge->syncScratchReadPosition(m_scrubHoldPosition, m_loadedTrackSampleRate);
     }
 
     emit scrubbingChanged();
@@ -306,6 +313,8 @@ void DjEngine::scratchBySeconds(double deltaSeconds, bool vinylOneToOnePosition)
 
     if (!m_scratch.submitRelative(scratchBridge.get(), deltaSeconds, m_loadedTrackSampleRate))
         return;
+
+    emit progressChanged();
 }
 
 
@@ -342,7 +351,8 @@ void DjEngine::resumeAfterScrub()
     if (!m_scratch.scrubbing() || !scratchBridge)
         return;
 
-    m_scrubHoldPosition = std::max(0.0, m_atomicPlayheadPos.load(std::memory_order_relaxed));
+    m_scrubHoldPosition = std::max(0.0, m_scratch.lastRawSec());
+    m_atomicPlayheadPos.store(m_scrubHoldPosition, std::memory_order_release);
     m_scratch.setScrubbing(false);
 
     constexpr double kInertiaThreshold = 0.20;
@@ -353,6 +363,7 @@ void DjEngine::resumeAfterScrub()
         return;
     }
 
+    scratchBridge->endScratch(false);
     restorePostScrubPlaybackState();
 
     emit scrubbingChanged();

@@ -96,15 +96,15 @@ void ScratchController::submitHandDelta(double deltaTrackSec, double dtSec) noex
 
     const double target = m_handPositionSec.load(std::memory_order_relaxed) + deltaTrackSec;
     const double oldVelocity = m_smoothedSpeed.load(std::memory_order_relaxed);
-    const double oldWeight = std::abs(raw) < m_config.slowSpeedThreshold
-        ? m_config.slowVelocitySmoothingOld
-        : m_config.fastVelocitySmoothingOld;
-    const double blend = 1.0 - std::clamp(oldWeight, 0.0, 0.95);
-    double velocity = oldVelocity + (raw - oldVelocity) * blend;
 
-    // Limit per-event acceleration — keeps slow precise drags from jumping.
-    const double maxStep = std::max(0.04, std::abs(raw) * 0.55);
-    velocity = oldVelocity + std::clamp(velocity - oldVelocity, -maxStep, maxStep);
+    // UI/MIDI deltas are already integrated into position — keep rate close to
+    // the instantaneous delta/dt so audio integration does not drift far ahead
+    // of the hand and snap back on the next drag event.
+    double velocity = raw;
+    if ((oldVelocity * raw) < 0.0 && std::abs(raw) > 0.04)
+        velocity = oldVelocity + (raw - oldVelocity) * 0.45;
+    else if (std::abs(raw) < m_config.slowSpeedThreshold)
+        velocity = oldVelocity + (raw - oldVelocity) * 0.72;
     velocity = std::clamp(velocity, -m_config.maxScratchSpeed, m_config.maxScratchSpeed);
 
     m_handPositionSec.store(target, std::memory_order_relaxed);

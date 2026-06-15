@@ -13,6 +13,8 @@ class ScratchResampler {
 public:
     void prepare(int numChannels, int deviceBufferSize, double outputSampleRate);
     void reset(double readPositionSamples) noexcept;
+    void setReadPositionSamples(double readPositionSamples) noexcept;
+    void nudgeReadPositionSamples(double deltaSamples) noexcept;
     void snapSmoothedRate(double rate) noexcept;
     void invalidatePrefetch() noexcept { m_sourceSize = 0; }
 

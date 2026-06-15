@@ -66,6 +66,7 @@ bool ScratchSession::submitRelative(engine::audio::ScratchDeckBridge* bridge,
 
     bridge->submitHandDeltaSeconds(clamped, dtSec);
     m_lastRawSec += clamped;
+    bridge->syncScratchReadPosition(m_lastRawSec, sampleRate);
     return true;
 }
 

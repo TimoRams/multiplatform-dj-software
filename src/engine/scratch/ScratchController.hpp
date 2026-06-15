@@ -40,6 +40,9 @@ public:
         m_normalPlaybackSpeed.store(std::clamp(speed, -m_config.maxScratchSpeed, m_config.maxScratchSpeed),
                                     std::memory_order_relaxed);
     }
+    void setHandPositionSec(double seconds) noexcept {
+        m_handPositionSec.store(seconds, std::memory_order_relaxed);
+    }
 
     void startScratch(double audioSamplePos, bool wasPlayingBeforeScratch, double normalPlaybackSpeed) noexcept;
     void stopScratch() noexcept;
@@ -49,6 +52,11 @@ public:
 
     // Control thread: deltaTrackSec / dtSec → normalized speed (1.0 = 1× track speed).
     void submitHandDelta(double deltaTrackSec, double dtSec) noexcept;
+
+    // Control thread: keep integrated read sample counter aligned with hand position.
+    void syncReadPositionSamples(double audioSamplePos) noexcept {
+        m_readPosition.store(audioSamplePos, std::memory_order_relaxed);
+    }
 
     // Audio thread — once per output block. Returns resampler rate (track samples / output sample).
     double processAudioBlock(int bufferSize, double outputSampleRate, double trackSampleRate) noexcept;
@@ -80,6 +88,9 @@ public:
     }
     [[nodiscard]] double readPositionSamples() const noexcept {
         return m_readPosition.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] double handPositionSec() const noexcept {
+        return m_handPositionSec.load(std::memory_order_relaxed);
     }
 
 private:

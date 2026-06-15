@@ -39,6 +39,20 @@ void ScratchResampler::reset(double readPositionSamples) noexcept
     m_smoothedRate = 0.0;
 }
 
+void ScratchResampler::setReadPositionSamples(double readPositionSamples) noexcept
+{
+    if (!std::isfinite(readPositionSamples))
+        readPositionSamples = 0.0;
+    m_readPos = wrapPosition(readPositionSamples);
+}
+
+void ScratchResampler::nudgeReadPositionSamples(double deltaSamples) noexcept
+{
+    if (std::abs(deltaSamples) < 1e-12)
+        return;
+    setReadPositionSamples(m_readPos + deltaSamples);
+}
+
 void ScratchResampler::snapSmoothedRate(double rate) noexcept
 {
     m_smoothedRate = rate;

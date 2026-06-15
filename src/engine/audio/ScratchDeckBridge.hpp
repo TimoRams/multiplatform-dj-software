@@ -32,6 +32,7 @@ public:
     void engageScratchDuringInertia() noexcept;
     void addTargetDeltaSeconds(double deltaSeconds, double trackSampleRate) noexcept;
     void submitHandDeltaSeconds(double deltaSeconds, double dtSeconds) noexcept;
+    void syncScratchReadPosition(double displaySec, double trackSampleRate) noexcept;
 
     void configureTrack(double trackSampleRate, double trackLengthSeconds) noexcept;
     void syncReadPositionSeconds(double positionSeconds, double trackSampleRate) noexcept;
@@ -91,6 +92,7 @@ private:
     std::atomic<bool> m_reverse { false };
     std::atomic<double> m_trackSampleRate { 44100.0 };
     std::atomic<double> m_trackLengthSeconds { 0.0 };
+    std::atomic<double> m_scratchDisplaySec { 0.0 };
 
     double m_outputSampleRate = 44100.0;
     int m_blockSize = 512;

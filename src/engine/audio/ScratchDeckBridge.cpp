@@ -84,6 +84,7 @@ void ScratchDeckBridge::beginScratch(double anchorSeconds,
     m_platter.reset(targetSamples, trackSampleRate);
     m_platter.setSamplesPerTick((60.0 / (33.0 + 1.0 / 3.0) / 1500.0) * trackSampleRate);
     m_controller.startScratch(audioAnchorSamples, wasPlayingBeforeScratch, playbackSpeed);
+    m_controller.setHandPositionSec(anchorSeconds);
     m_scratchResampler.setTrackLengthSamples(trackLengthSeconds * trackSampleRate);
     m_scratchResampler.reset(audioAnchorSamples);
     m_scratchResampler.snapSmoothedRate(0.0);
@@ -129,6 +130,29 @@ void ScratchDeckBridge::submitHandDeltaSeconds(double deltaSeconds, double dtSec
     m_controller.submitHandDelta(deltaSeconds, dtSeconds);
 }
 
+void ScratchDeckBridge::syncScratchReadPosition(double displaySec, double trackSampleRate) noexcept
+{
+    const double sr = std::max(1.0, trackSampleRate);
+    const double audioSec = std::max(0.0, displaySec);
+    const double audioSamples = audioSec * sr;
+
+    m_scratchResampler.setReadPositionSamples(audioSamples);
+    m_controller.syncReadPositionSamples(audioSamples);
+    m_controller.setHandPositionSec(displaySec);
+
+    const double resamplerRate = m_controller.smoothedSpeed()
+        * (sr / std::max(1.0, m_outputSampleRate));
+    m_scratchResampler.snapSmoothedRate(resamplerRate);
+
+    const juce::int64 samplePos = static_cast<juce::int64>(std::llround(audioSamples));
+    if (auto* positionable = positionableScratchSource())
+        positionable->setNextReadPosition(samplePos);
+
+    if (m_audioPlayheadSink != nullptr)
+        m_audioPlayheadSink->store(displaySec, std::memory_order_release);
+    m_scratchDisplaySec.store(displaySec, std::memory_order_relaxed);
+}
+
 void ScratchDeckBridge::configureTrack(double trackSampleRate, double trackLengthSeconds) noexcept
 {
     const double sr = std::max(1.0, trackSampleRate);
@@ -141,9 +165,9 @@ void ScratchDeckBridge::configureTrack(double trackSampleRate, double trackLengt
 void ScratchDeckBridge::syncReadPositionSeconds(double positionSeconds, double trackSampleRate) noexcept
 {
     const double sr = std::max(1.0, trackSampleRate);
-    const juce::int64 samplePos = static_cast<juce::int64>(
-        std::llround(std::max(0.0, positionSeconds * sr)));
-    m_scratchResampler.reset(positionSeconds * sr);
+    const double audioSec = std::max(0.0, positionSeconds);
+    const juce::int64 samplePos = static_cast<juce::int64>(std::llround(audioSec * sr));
+    m_scratchResampler.reset(audioSec * sr);
 
     if (auto* positionable = positionableScratchSource()) {
         positionable->setNextReadPosition(samplePos);
@@ -162,14 +186,9 @@ void ScratchDeckBridge::syncReadPositionSeconds(double positionSeconds, double t
 
 void ScratchDeckBridge::prepareNormalPlaybackHandoff(double positionSeconds, double trackSampleRate) noexcept
 {
-    const double sr = std::max(1.0, trackSampleRate);
-    const double audioTruthSec = m_scratchResampler.readPosition() / sr;
-    const double syncSec = (m_useScratchScaler
-                            || m_controller.isActive()
-                            || m_controller.isInertiaActive())
-        ? audioTruthSec
-        : positionSeconds;
-
+    // Hand/scratch session position is authoritative at release — the resampler
+    // read head can drift from rate integration between UI drag events.
+    const double syncSec = std::max(0.0, positionSeconds);
     syncReadPositionSeconds(syncSec, trackSampleRate);
     m_controller.stopScratch();
     m_useScratchScaler = false;
@@ -320,9 +339,13 @@ void ScratchDeckBridge::getNextAudioBlock(const juce::AudioSourceChannelInfo& bu
 
     m_scratchResampler.processBlock(*scratchInput, rate, bufferToFill);
 
-    if (m_audioPlayheadSink != nullptr) {
-        m_audioPlayheadSink->store(m_scratchResampler.readPosition() / sr,
-                                   std::memory_order_relaxed);
+    // While the finger is down, only syncScratchReadPosition() (UI thread) may
+    // publish the visible playhead — republishing a cached value here races with
+    // fresh drag deltas and snaps the waveform/turntable backward.
+    if (m_audioPlayheadSink != nullptr && !m_controller.touching()) {
+        const double displaySec = m_scratchResampler.readPosition() / sr;
+        m_scratchDisplaySec.store(displaySec, std::memory_order_relaxed);
+        m_audioPlayheadSink->store(displaySec, std::memory_order_relaxed);
     }
 }
 
