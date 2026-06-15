@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
+import DJSoftware
 
 Item {
     id: root
@@ -185,13 +186,15 @@ Item {
                     required property var modelData
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    radius: 2
-                    color: root.activeTab === index ? "#252525" : "#161616"
+                    radius: 1
+                    color: root.activeTab === index ? UiTheme.bg4 : UiTheme.bg2
+                    border.width: 1
+                    border.color: root.activeTab === index ? Qt.darker(root.accentColor, 1.4) : UiTheme.padBorder
 
                     Rectangle {
                         anchors.bottom: parent.bottom
                         anchors.left: parent.left; anchors.right: parent.right
-                        height: 2; radius: 1
+                        height: 2
                         color: root.accentColor
                         visible: root.activeTab === index
                     }
@@ -199,10 +202,10 @@ Item {
                     Text {
                         anchors.centerIn: parent
                         text: modelData
-                        color: root.activeTab === index ? "#f0f0f0" : "#666"
+                        color: root.activeTab === index ? UiTheme.textPrimary : UiTheme.textLabel
                         font.pixelSize: window.spViewport(8)
                         font.bold: root.activeTab === index
-                        font.letterSpacing: 0.4
+                        font.letterSpacing: 0.6
                     }
 
                     MouseArea {
@@ -214,7 +217,7 @@ Item {
             }
         }
 
-        Rectangle { Layout.fillWidth: true; height: 1; color: "#0e0e0e" }
+        Rectangle { Layout.fillWidth: true; height: 1; color: UiTheme.divider }
 
         RowLayout {
             id: contentRow
@@ -256,28 +259,38 @@ Item {
 
                         readonly property color activeColor: {
                             if (padSet)        return root.padColor(index)
-                            if (isBeatJumpTab) return "#3a2e14"
+                            if (isBeatJumpTab) return "#2a2208"
                             if (isPadFxTab) {
                                 var def = root.padFxDefs[index]
                                 return padFxLit ? def.activeColor : def.baseColor
                             }
-                            return "#1e1e1e"
+                            return UiTheme.padEmpty
                         }
 
-                        radius: 3
+                        radius: 1
                         color: padMouse.pressed
-                               ? Qt.lighter(activeColor, 1.5)
+                               ? Qt.lighter(activeColor, 1.4)
                                : padMouse.containsMouse
-                                 ? Qt.lighter(activeColor, 1.2)
+                                 ? Qt.lighter(activeColor, 1.15)
                                  : activeColor
 
                         border.color: {
-                            if (padSet && kind === "loop") return Qt.lighter(root.padColor(index), 1.5)
-                            if (padSet)                    return Qt.lighter(root.padColor(index), 1.7)
-                            if (padFxLit)                  return Qt.lighter(root.padFxDefs[index].activeColor, 1.8)
-                            return "#282828"
+                            if (padSet && kind === "loop") return Qt.lighter(root.padColor(index), 1.4)
+                            if (padSet)                    return Qt.lighter(root.padColor(index), 1.6)
+                            if (padFxLit)                  return Qt.lighter(root.padFxDefs[index].activeColor, 1.6)
+                            return padMouse.containsMouse ? UiTheme.padBorderHi : UiTheme.padBorder
                         }
-                        border.width: padSet && kind === "loop" ? 2 : 1
+                        border.width: padSet ? 2 : 1
+
+                        Rectangle {
+                            anchors.fill: parent
+                            anchors.margins: 1
+                            radius: parent.radius
+                            visible: padSet || padFxLit
+                            color: "transparent"
+                            border.width: 1
+                            border.color: Qt.rgba(1, 1, 1, 0.12)
+                        }
 
                         Text {
                             anchors.top: parent.top; anchors.left: parent.left

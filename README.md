@@ -91,20 +91,23 @@ Install dependencies (Debian/Ubuntu):
 ```bash
 sudo apt update
 sudo apt install -y \
-  build-essential cmake pkg-config \
+  build-essential cmake pkg-config ninja-build \
   qt6-base-dev qt6-declarative-dev qt6-quick3d-dev \
   libtag1-dev libkeyfinder-dev librubberband-dev libasound2-dev
 ```
 
-Build:
+On Arch/CachyOS, install the equivalent packages (`ninja` is recommended for fast incremental builds).
+
+Build and run:
 
 ```bash
 git clone --recurse-submodules https://github.com/TimoRams/multiplatform-dj-software.git
 cd multiplatform-dj-software
-cmake -S . -B build
-cmake --build build -j$(nproc)
-./build/bin/BrockDJ
+./build-fast
+./build-dev/bin/BrockDJ
 ```
+
+`./build-fast` configures `build-dev/` (RelWithDebInfo, QML cachegen off) and rebuilds incrementally. Use this for all local Linux development builds.
 
 </details>
 
@@ -156,11 +159,12 @@ cmake --build build --config Release
 
 ### SIMD
 
-Target-native SIMD is enabled automatically on Linux, Windows x64, and Intel macOS. Override if needed:
+Target-native SIMD is enabled automatically on Linux, Windows x64, and Intel macOS. To override on Linux, reconfigure `build-dev/` then run `./build-fast`:
 
 ```bash
-cmake -S . -B build -DRDBJ_ENABLE_NATIVE_SIMD=ON   # force on
-cmake -S . -B build -DRDBJ_ENABLE_NATIVE_SIMD=OFF  # force off
+rm -rf build-dev
+cmake -S . -B build-dev -DRDBJ_ENABLE_NATIVE_SIMD=OFF
+./build-fast
 ```
 
 ---

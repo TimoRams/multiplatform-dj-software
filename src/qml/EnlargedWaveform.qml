@@ -7,7 +7,7 @@ Item {
     id: root
 
     property var engine: null
-    property color backgroundColor: "#1e1e1e"
+    property color backgroundColor: UiTheme.bgDisplay
     property real waveformZoom: 1.5
     property bool dropHovered: false
     property bool beatgridEditMode: false
@@ -33,7 +33,10 @@ Item {
     Rectangle {
         id: deckRect
         anchors.fill: parent
+        anchors.margins: 1
         color: root.backgroundColor
+        border.width: 1
+        border.color: UiTheme.bezelInner
 
         // Full-width waveform — playhead stays at geometric deck center (w/2).
         ScrollingWaveformItem {
@@ -175,7 +178,7 @@ Item {
             id: playhead
             width: 2
             height: parent.height
-            color: "#f4f4f4"
+            color: UiTheme.playhead
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.verticalCenter: parent.verticalCenter
             z: 10
@@ -183,14 +186,14 @@ Item {
             Rectangle {
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.top: parent.top
-                width: 10; height: 5
-                color: "#f4f4f4"
+                width: 12; height: 6
+                color: UiTheme.playhead
             }
             Rectangle {
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom
-                width: 10; height: 5
-                color: "#f4f4f4"
+                width: 12; height: 6
+                color: UiTheme.playhead
             }
         }
 
@@ -208,7 +211,8 @@ Item {
             anchors.right: parent.right
             anchors.top: parent.top
             height: 1
-            color: "#303030"
+            color: UiTheme.bezelHighlight
+            opacity: 0.25
             z: 22
         }
 
@@ -217,7 +221,7 @@ Item {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             height: 1
-            color: "#030303"
+            color: UiTheme.bezelShadow
             z: 22
         }
 

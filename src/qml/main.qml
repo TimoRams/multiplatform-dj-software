@@ -11,7 +11,7 @@ ApplicationWindow {
     minimumHeight: 600
     visible: true
     title: "BrockDJ"
-    color: "#070707"
+    color: UiTheme.bgDeep
     font.hintingPreference: Font.PreferFullHinting
     property bool libraryExpanded: false
     property string linkedDeckName: ""
@@ -23,7 +23,7 @@ ApplicationWindow {
     property bool uncleanShutdownWarningVisible: false
     property bool startupLibraryReady: false
     property real exitProgress: 0.0
-    readonly property color unifiedGray: "#101010"
+    readonly property color unifiedGray: UiTheme.bg1
 
     property bool showWaveforms: true
     property bool showDeckA: true
@@ -461,7 +461,7 @@ ApplicationWindow {
             Rectangle {
                 width: parent.width
                 height: 1
-                color: "#151515"
+                color: UiTheme.divider
             }
 
             Text {
@@ -664,7 +664,7 @@ ApplicationWindow {
             Layout.minimumHeight: 1
             Layout.preferredHeight: 1
             Layout.maximumHeight: 1
-            color: "#151515"
+            color: UiTheme.divider
         }
 
         Item {
@@ -690,7 +690,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         engine: deckC
-                        backgroundColor: "#070707"
+                        backgroundColor: UiTheme.bgDisplay
                         waveformZoom: window.waveformZoom
                     }
 
@@ -698,7 +698,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         engine: deckA
-                        backgroundColor: "#070707"
+                        backgroundColor: UiTheme.bgDisplay
                         waveformZoom: window.waveformZoom
                     }
 
@@ -706,7 +706,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         engine: deckB
-                        backgroundColor: "#070707"
+                        backgroundColor: UiTheme.bgDisplay
                         waveformZoom: window.waveformZoom
                     }
 
@@ -715,7 +715,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         engine: deckD
-                        backgroundColor: "#070707"
+                        backgroundColor: UiTheme.bgDisplay
                         waveformZoom: window.waveformZoom
                     }
                 }
@@ -728,7 +728,7 @@ ApplicationWindow {
             Layout.minimumHeight: visible ? 1 : 0
             Layout.preferredHeight: visible ? 1 : 0
             Layout.maximumHeight: visible ? 1 : 0
-            color: "#151515"
+            color: UiTheme.divider
         }
 
         Item {
@@ -856,7 +856,7 @@ ApplicationWindow {
             Layout.minimumHeight: visible ? 1 : 0
             Layout.preferredHeight: visible ? 1 : 0
             Layout.maximumHeight: visible ? 1 : 0
-            color: "#151515"
+            color: UiTheme.divider
         }
 
         CrossfaderBar {
@@ -881,7 +881,7 @@ ApplicationWindow {
             Layout.minimumHeight:  _vis ? 1 : 0
             Layout.preferredHeight: _vis ? 1 : 0
             Layout.maximumHeight:  _vis ? 1 : 0
-            color: "#151515"
+            color: UiTheme.divider
         }
 
         FxBar {

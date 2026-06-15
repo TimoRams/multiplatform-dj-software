@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls as Controls
+import DJSoftware
 
 // Traktor-style mirrored mixer layout:
 //
@@ -12,7 +13,9 @@ import QtQuick.Controls as Controls
 
 Rectangle {
     id: mixer
-    color: "#0a0a0a"
+    color: UiTheme.bgDeep
+    border.width: 1
+    border.color: UiTheme.bezelOuter
 
     property var  engineA: null
     property var  engineB: null
@@ -26,16 +29,10 @@ Rectangle {
     readonly property real vuACombined: engineA ? Math.max(engineA.preFaderVuLevelL, engineA.preFaderVuLevelR) : 0.0
     readonly property real vuBCombined: engineB ? Math.max(engineB.preFaderVuLevelL, engineB.preFaderVuLevelR) : 0.0
 
-    readonly property color clrA:     deckNameA === "A" ? "#ff9900"
-                                     : deckNameA === "B" ? "#00ccff"
-                                     : deckNameA === "C" ? "#cc44ff"
-                                     : "#44ddaa"
-    readonly property color clrB:     deckNameB === "A" ? "#ff9900"
-                                     : deckNameB === "B" ? "#00ccff"
-                                     : deckNameB === "C" ? "#cc44ff"
-                                     : "#44ddaa"
-    readonly property color clrAKnob: Qt.darker(clrA, 1.4)
-    readonly property color clrBKnob: Qt.darker(clrB, 1.4)
+    readonly property color clrA:     UiTheme.deckColor(deckNameA)
+    readonly property color clrB:     UiTheme.deckColor(deckNameB)
+    readonly property color clrAKnob: "#aaaaaa"
+    readonly property color clrBKnob: "#aaaaaa"
 
     readonly property int   labelH:   24   // channel header height
     readonly property int   outerW:   52   // outer strip width (GAIN/SC/CUE column)
@@ -319,7 +316,7 @@ Rectangle {
                         label: "SC"; size: mixer.outerKnob
                         Layout.alignment: Qt.AlignHCenter
                         knob.from: -1; knob.to: 1; knob.value: 0.0; knob.defaultValue: 0.0
-                        knob.accentColor: Qt.darker(mixer.clrA, 1.6)
+                        knob.accentColor: mixer.clrAKnob
                         knob.onValueChanged: {
                             if (typeof fxManager !== "undefined") {
                                 fxManager.setSoundColorDeck(1, knob.value)
@@ -578,7 +575,7 @@ Rectangle {
                         label: "SC"; size: mixer.outerKnob
                         Layout.alignment: Qt.AlignHCenter
                         knob.from: -1; knob.to: 1; knob.value: 0.0; knob.defaultValue: 0.0
-                        knob.accentColor: Qt.darker(mixer.clrB, 1.6)
+                        knob.accentColor: mixer.clrBKnob
                         knob.onValueChanged: {
                             if (typeof fxManager !== "undefined") {
                                 fxManager.setSoundColorDeck(2, knob.value)

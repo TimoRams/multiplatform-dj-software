@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls as Controls
+import DJSoftware
 
 Controls.Slider {
     id: control
@@ -17,30 +18,29 @@ Controls.Slider {
         width:  control.orientation === Qt.Horizontal ? control.availableWidth  : 4
         height: control.orientation === Qt.Horizontal ? 4 : control.availableHeight
         radius: 1
-        color:  "#1e1e1e"
+        color:  UiTheme.faderTrack
+        border.width: 1
+        border.color: UiTheme.bezelShadow
 
-        // Horizontal – left-fill
         Rectangle {
             visible: control.orientation === Qt.Horizontal && !control.centerFill
             x: 1; y: 1
             width:  Math.max(0, control.visualPosition * (parent.width - 2))
             height: parent.height - 2
             radius: 1
-            color:  control.pressed ? "#555555" : "#3a3a3a"
+            color:  control.pressed ? UiTheme.borderHover : UiTheme.faderFill
         }
 
-        // Horizontal – center-fill (bipolar)
         Rectangle {
             visible: control.orientation === Qt.Horizontal && control.centerFill
             y: 1; height: parent.height - 2; radius: 1
-            color:  control.pressed ? "#555555" : "#3a3a3a"
+            color:  control.pressed ? UiTheme.borderHover : UiTheme.faderFill
             readonly property real midPx: parent.width / 2
             readonly property real posPx: 1 + control.visualPosition * (parent.width - 2)
             x:     Math.min(midPx, posPx)
             width: Math.max(0, Math.abs(posPx - midPx))
         }
 
-        // Vertical – bottom-fill
         Rectangle {
             visible: control.orientation === Qt.Vertical && !control.centerFill
             x: 1
@@ -48,14 +48,13 @@ Controls.Slider {
             width:  parent.width  - 2
             height: Math.max(0, (1.0 - control.visualPosition) * (parent.height - 2))
             radius: 1
-            color:  control.pressed ? "#555555" : "#3a3a3a"
+            color:  control.pressed ? UiTheme.borderHover : UiTheme.faderFill
         }
 
-        // Vertical – center-fill (bipolar)
         Rectangle {
             visible: control.orientation === Qt.Vertical && control.centerFill
             x: 1; width: parent.width - 2; radius: 1
-            color:  control.pressed ? "#555555" : "#3a3a3a"
+            color:  control.pressed ? UiTheme.borderHover : UiTheme.faderFill
             readonly property real midPy: parent.height / 2
             readonly property real posPy: 1 + control.visualPosition * (parent.height - 2)
             y:      Math.min(midPy, posPy)
@@ -73,18 +72,18 @@ Controls.Slider {
            ? control.height / 2 - height / 2
            : control.topPadding + control.visualPosition * (control.availableHeight - height)
         radius: 1
-        color:  control.pressed || control.dragActive ? "#e0e0e0" : "#c8c8c8"
+        color:  control.pressed || control.dragActive ? "#e8e8e8" : UiTheme.faderCap
+        border.width: 1
+        border.color: UiTheme.borderHover
 
-        // Center tick
         Rectangle {
             anchors.centerIn: parent
             width:  control.orientation === Qt.Vertical ? parent.width * 0.48 : 2
             height: control.orientation === Qt.Vertical ? 1 : parent.height * 0.48
-            color:  "#888888"
+            color:  UiTheme.textLabel
         }
     }
 
-    // ── Drag-lock: cursor vanishes on drag, reappears at click origin ─────
     MouseArea {
         id: sliderDrag
         anchors.fill: parent
@@ -109,8 +108,6 @@ Controls.Slider {
         onPositionChanged: (mouse) => {
             var g     = sliderDrag.mapToGlobal(mouse.x, mouse.y)
             var isV   = control.orientation === Qt.Vertical
-            // Vertical: up = increase (dy positive when mouse moved up)
-            // Horizontal: right = increase (dx positive when mouse moved right)
             var delta = isV ? (_pressGY - g.y) : (g.x - _pressGX)
             if (!_active) {
                 if (Math.abs(delta) < 4) return

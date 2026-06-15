@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls as Controls
+import DJSoftware
 
 Item {
     id: deck
@@ -30,12 +31,9 @@ Item {
     property double _lastLinkPublishBpm: 0
 
     // ── Theme ────────────────────────────────────────────────────────────
-    readonly property color accent:    deckName === "A" ? "#ff9900"
-                                     : deckName === "B" ? "#00ccff"
-                                     : deckName === "C" ? "#cc44ff"
-                                     : "#44ddaa"
-    readonly property color accentGrn: "#4dd98a"
-    readonly property color accentBlu: "#5bb6ff"
+    readonly property color accent:    UiTheme.deckColor(deck.deckName)
+    readonly property color accentGrn: UiTheme.green
+    readonly property color accentBlu: UiTheme.blue
     readonly property int   btnH:      22
 
     // ── Reusable flat button component ───────────────────────────────────
@@ -56,16 +54,26 @@ Item {
         Layout.maximumHeight:   fbPreferredHeight
 
         radius: 0
-        color: fbMouse.containsMouse ? "#252525" : (fbActive ? fbActiveColor : fbInactiveColor)
+        color: fbMouse.pressed ? UiTheme.bg5
+               : fbMouse.containsMouse ? UiTheme.bg4
+               : (fbActive ? fbActiveColor : fbInactiveColor)
 
-        // Bottom accent line
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 1
+            color: UiTheme.bezelHighlight
+            opacity: fbMouse.pressed ? 0.0 : 0.28
+        }
+
         Rectangle {
             anchors.bottom: parent.bottom
             anchors.left:   parent.left
             anchors.right:  parent.right
-            height: 1
-            color:  fb.fbActive ? fb.fbActiveTxtColor : "#333333"
-            opacity: fb.fbActive ? 1.0 : (fbMouse.containsMouse ? 0.5 : 0.0)
+            height: fb.fbActive ? 2 : 1
+            color:  fb.fbActive ? fb.fbActiveTxtColor : UiTheme.border
+            opacity: fb.fbActive ? 1.0 : (fbMouse.containsMouse ? 0.55 : 0.25)
         }
 
         signal clicked()
@@ -425,27 +433,52 @@ Item {
     // ── Visual ────────────────────────────────────────────────────────────
     Rectangle {
         anchors.fill: parent
-        color: "#111111"
+        color: UiTheme.bezelOuter
+
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: 1
+            color: UiTheme.bg1
+            border.width: 1
+            border.color: UiTheme.bezelInner
 
         ColumnLayout {
             anchors.fill: parent
+            anchors.margins: 1
             spacing: 0
 
             // ── Track-info header ──────────────────────────────────────────
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: deck.headerCellHeight * 2
-                color: "#0a0a0a"
+                color: UiTheme.bg0
 
                 RowLayout {
                     anchors.fill: parent
                     spacing: 0
 
-                    // Deck accent strip
+                    // Deck label strip
                     Rectangle {
-                        Layout.preferredWidth: 4; Layout.fillHeight: true
+                        Layout.preferredWidth: 22
+                        Layout.fillHeight: true
+                        color: UiTheme.bgDeep
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: deck.deckName
+                            color: deck.accent
+                            opacity: deck._hasTrack ? 1.0 : 0.35
+                            font.pixelSize: window.spViewport(14)
+                            font.bold: true
+                            font.family: "monospace"
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.preferredWidth: 3
+                        Layout.fillHeight: true
                         color: deck.accent
-                        opacity: deck._hasTrack ? 1.0 : 0.3
+                        opacity: deck._hasTrack ? 1.0 : 0.25
                     }
 
                     // Cover art
@@ -1095,6 +1128,7 @@ Item {
             anchors.fill: parent; z: 998
             visible: tempoRangePopup.visible || manualBpmPopup.visible
             onClicked: { tempoRangePopup.visible = false; manualBpmPopup.visible = false }
+        }
         }
     }
 }

@@ -9,9 +9,8 @@ Controls.Dial {
     id: knob
 
     property real  defaultValue: (from + to) / 2
-    property color accentColor:  "#ff9900"
+    property color accentColor:  "#aaaaaa"
 
-    // ── Background: arc canvas + inner circle ─────────────────────────────
     background: Rectangle {
         x: knob.width  / 2 - width  / 2
         y: knob.height / 2 - height / 2
@@ -41,13 +40,11 @@ Controls.Dial {
                 ctx.lineWidth = lw
                 ctx.lineCap   = "round"
 
-                // Dim track
                 ctx.strokeStyle = "#252525"
                 ctx.beginPath()
                 ctx.arc(cx, cy, r, sDeg * Math.PI / 180, (sDeg + span) * Math.PI / 180, false)
                 ctx.stroke()
 
-                // Filled arc (accent)
                 ctx.strokeStyle = knob.accentColor
                 if (knob.from < 0 && knob.to > 0) {
                     var mid = c01((0 - knob.from) / (knob.to - knob.from))
@@ -68,10 +65,10 @@ Controls.Dial {
                 function onValueChanged() { arc.requestPaint() }
                 function onFromChanged()  { arc.requestPaint() }
                 function onToChanged()    { arc.requestPaint() }
+                function onAccentColorChanged() { arc.requestPaint() }
             }
         }
 
-        // Inner circle – gives the raised-button look
         Rectangle {
             anchors.centerIn: parent
             width:  parent.width  * 0.78
@@ -81,7 +78,6 @@ Controls.Dial {
         }
     }
 
-    // ── Handle: thin pointer line ─────────────────────────────────────────
     handle: Rectangle {
         id: h
         x: knob.background.x + knob.background.width  / 2 - width  / 2
@@ -106,7 +102,6 @@ Controls.Dial {
         }
     }
 
-    // ── Drag-lock: cursor vanishes on drag, reappears at click origin ─────
     MouseArea {
         id: knobDrag
         anchors.fill: parent
@@ -117,7 +112,7 @@ Controls.Dial {
         property real _pressGX:  0
         property real _pressGY:  0
         property real _pressVal: 0
-        property bool _active:   false   // true once movement threshold exceeded
+        property bool _active:   false
 
         onPressed: (mouse) => {
             var g    = knobDrag.mapToGlobal(mouse.x, mouse.y)
@@ -130,7 +125,7 @@ Controls.Dial {
 
         onPositionChanged: (mouse) => {
             var g  = knobDrag.mapToGlobal(mouse.x, mouse.y)
-            var dy = _pressGY - g.y   // positive = mouse moved up = increase value
+            var dy = _pressGY - g.y
             if (!_active) {
                 if (Math.abs(dy) < 4) return
                 _active = true

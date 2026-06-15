@@ -1,14 +1,14 @@
 import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Window
+import DJSoftware
 
 Controls.Button {
     id: control
 
     readonly property var hostWindow: control.Window.window
-
-    // Set true inside a `scale: window.uiScale` context (Deck, Mixer, Waveform)
     property bool useViewportScaling: false
+    property color accentColor: UiTheme.deckA
 
     function sp(px) {
         if (!hostWindow) return px
@@ -27,27 +27,41 @@ Controls.Button {
 
     background: Rectangle {
         radius: 0
-        color:  control.down ? "#2d2d2d" : (control.hovered ? "#252525" : "#1e1e1e")
+        color:  UiTheme.buttonBg(control.checked || control.down, control.hovered, control.down)
 
-        // Bottom accent line – replaces a full border for a cleaner look
+        // Top highlight — recessed hardware button
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 1
+            color: control.down ? UiTheme.bezelShadow : UiTheme.bezelHighlight
+            opacity: control.enabled ? 0.35 : 0.12
+        }
+
+        // Bottom LED accent
         Rectangle {
             anchors.left:   parent.left
             anchors.right:  parent.right
             anchors.bottom: parent.bottom
-            height: 1
+            height: control.checked || control.down ? 2 : 1
             color: !control.enabled
-                   ? "#2a2a2a"
-                   : (control.down || control.checked)
-                     ? "#ff9900"
-                     : (control.hovered ? "#555555" : "#333333")
+                   ? UiTheme.divider
+                   : (control.checked || control.down)
+                     ? accentColor
+                     : (control.hovered ? UiTheme.borderHover : UiTheme.border)
+            opacity: control.checked || control.down ? 1.0 : (control.hovered ? 0.6 : 0.35)
         }
     }
 
     contentItem: Text {
         text:               control.text
-        color:              control.enabled ? "#e8e8e8" : "#444444"
+        color:              control.enabled
+                            ? (control.checked || control.down ? UiTheme.textPrimary : UiTheme.textSecondary)
+                            : UiTheme.textMuted
         font.pixelSize:     control.sp(12)
         font.bold:          control.checked || control.down
+        font.letterSpacing: 0.4
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment:   Text.AlignVCenter
         elide:               Text.ElideRight

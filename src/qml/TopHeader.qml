@@ -6,7 +6,7 @@ import DJSoftware
 
 Rectangle {
     id: root
-    color: "#0e0e0e"
+    color: UiTheme.bg0
     clip: true
 
     // Height is fully controlled by parent layout — no implicitHeight here.
@@ -27,11 +27,11 @@ Rectangle {
     readonly property int dialSz:  Math.max(15, Math.round(btnH * 0.54))
 
     // Deck colors
-    readonly property color clrA:  "#ff9900"
-    readonly property color clrB:  "#00bfff"
+    readonly property color clrA:  UiTheme.deckA
+    readonly property color clrB:  UiTheme.deckB
 
     // Accent
-    readonly property color accentBlue: "#1e7bd4"
+    readonly property color accentBlue: UiTheme.masterBlue
 
     // Typography — fixed (no window-height scaling; bar has fixed px height)
     function sp(px) { return px }

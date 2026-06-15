@@ -128,10 +128,7 @@ fi
 # Cleanup iconset folder — it was only needed for iconutil
 rm -rf "$ICONSET"
 
-echo ""
-echo "Done! Now re-run CMake so the new icons are picked up:"
-echo "  cmake --build build --target BrockDJ"
-echo ""
+echo "Done! Now re-run ./build-fast so the new icons are picked up."
 echo "macOS 26 Liquid Glass tip:"
 echo "  Your SVG should have a TRANSPARENT background (no background rect)."
 echo "  macOS 26 automatically applies the Liquid Glass material to transparent icons."

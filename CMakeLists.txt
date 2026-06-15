@@ -239,6 +239,11 @@ if(NOT RDBJ_ENABLE_QML_CACHEGEN)
     list(APPEND _rdbj_qml_module_options NO_CACHEGEN)
 endif()
 
+set_source_files_properties(
+    src/qml/UiTheme.qml
+    PROPERTIES QT_QML_SINGLETON_TYPE TRUE
+)
+
 qt_add_qml_module(${PROJECT_NAME}
     ${_rdbj_qml_module_options}
     URI DJSoftware
