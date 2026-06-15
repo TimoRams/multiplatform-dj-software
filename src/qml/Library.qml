@@ -4515,14 +4515,13 @@ Rectangle {
                 color: "#0e0e0e"; radius: 2
                 border.color: notesEdit.activeFocus ? libraryRoot.accentBlue : "#222"; border.width: 1
 
-                TextArea {
+                TextEdit {
                     id: notesEdit
                     anchors.fill: parent
                     anchors.margins: 4
                     color: libraryRoot.textPrimary
                     font.pixelSize: window.sp(11)
-                    wrapMode: TextArea.Wrap
-                    background: Item {}
+                    wrapMode: TextEdit.Wrap
                     selectByMouse: true
                     Keys.onEscapePressed: libraryRoot.notesPanelOpen = false
                 }

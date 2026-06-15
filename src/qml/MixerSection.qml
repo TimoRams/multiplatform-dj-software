@@ -3,19 +3,13 @@ import QtQuick.Layouts
 import QtQuick.Controls as Controls
 import DJSoftware
 
-// Traktor-style mirrored mixer layout:
-//
-//  [A outer: GAIN / SC / CUE]  |  [VU A | EQ A | VOL A]  ║  [EQ B | VU B | VOL B]  |  [B outer: GAIN / SC / CUE]
-//
-// VU meters span exactly the height of the three EQ knobs.
-// GAIN and SC knobs sit alongside the EQ area; CUE button below them.
-// Volume faders fill the remaining height beneath the EQ area.
+// Mirrored centre mixer — each side:
+//   A (left):  [VOL fader | VU | knobs↓ + CUE bottom] ── spine
+//   B (right):  spine ── [knobs↓ + CUE bottom | VU | VOL fader]
 
 Rectangle {
     id: mixer
     color: UiTheme.bgDeep
-    border.width: 1
-    border.color: UiTheme.bezelOuter
 
     property var  engineA: null
     property var  engineB: null
@@ -29,36 +23,34 @@ Rectangle {
     readonly property real vuACombined: engineA ? Math.max(engineA.preFaderVuLevelL, engineA.preFaderVuLevelR) : 0.0
     readonly property real vuBCombined: engineB ? Math.max(engineB.preFaderVuLevelL, engineB.preFaderVuLevelR) : 0.0
 
-    readonly property color clrA:     UiTheme.deckColor(deckNameA)
-    readonly property color clrB:     UiTheme.deckColor(deckNameB)
-    readonly property color clrAKnob: "#aaaaaa"
-    readonly property color clrBKnob: "#aaaaaa"
+    readonly property color clrA: UiTheme.deckColor(deckNameA)
+    readonly property color clrB: UiTheme.deckColor(deckNameB)
+    readonly property color clrKnob: "#aaaaaa"
 
-    readonly property int   labelH:   24   // channel header height
-    readonly property int   outerW:   52   // outer strip width (GAIN/SC/CUE column)
-    readonly property int   vuW:       9   // VU meter width
-    readonly property int   btnH:     22   // CUE button height
-    readonly property int   outerKnob: 20  // knob size in outer strip
-    readonly property int   eqRowH:   3 * (22 + 13)  // locked EQ+VU row height (3 KnobCells)
+    readonly property int labelH:   22
+    readonly property int knobColW: 44
+    readonly property int vuW:      11
+    readonly property int faderW:   40
+    readonly property int cueH:     20
+    readonly property int knobSz:   21
+    readonly property int spineW:   3
+    readonly property int stripW:   faderW + 1 + vuW + 1 + knobColW
 
     Connections {
         target: parameterStore
         function onParameterChanged(id, value) {
-            if      (id === mixer.channelAId + "_vol")     volFaderA.value          = value
-            else if (id === mixer.channelBId + "_vol")     volFaderB.value          = value
-            // EQ: MIDI 0-1 → knob -1..+1
-            else if (id === mixer.channelAId + "_eqHigh")  eqHighCellA.knob.value  = value * 2.0 - 1.0
-            else if (id === mixer.channelAId + "_eqMid")   eqMidCellA.knob.value   = value * 2.0 - 1.0
-            else if (id === mixer.channelAId + "_eqLow")   eqLowCellA.knob.value   = value * 2.0 - 1.0
-            else if (id === mixer.channelBId + "_eqHigh")  eqHighCellB.knob.value  = value * 2.0 - 1.0
-            else if (id === mixer.channelBId + "_eqMid")   eqMidCellB.knob.value   = value * 2.0 - 1.0
-            else if (id === mixer.channelBId + "_eqLow")   eqLowCellB.knob.value   = value * 2.0 - 1.0
-            // Gain/trim: MIDI 0-1 → knob 0..2
-            else if (id === mixer.channelAId + "_gain")    gainCellA.knob.value    = value * 2.0
-            else if (id === mixer.channelBId + "_gain")    gainCellB.knob.value    = value * 2.0
-            // Filter/SC: MIDI 0-1 → knob -1..+1
-            else if (id === mixer.channelAId + "_filter")  scCellA.knob.value      = value * 2.0 - 1.0
-            else if (id === mixer.channelBId + "_filter")  scCellB.knob.value      = value * 2.0 - 1.0
+            if      (id === mixer.channelAId + "_vol")    sideA.volFader.value      = value
+            else if (id === mixer.channelBId + "_vol")    sideB.volFader.value      = value
+            else if (id === mixer.channelAId + "_eqHigh") sideA.eqHighCell.knob.value = value * 2.0 - 1.0
+            else if (id === mixer.channelAId + "_eqMid")  sideA.eqMidCell.knob.value  = value * 2.0 - 1.0
+            else if (id === mixer.channelAId + "_eqLow")  sideA.eqLowCell.knob.value  = value * 2.0 - 1.0
+            else if (id === mixer.channelBId + "_eqHigh") sideB.eqHighCell.knob.value = value * 2.0 - 1.0
+            else if (id === mixer.channelBId + "_eqMid")  sideB.eqMidCell.knob.value  = value * 2.0 - 1.0
+            else if (id === mixer.channelBId + "_eqLow")  sideB.eqLowCell.knob.value  = value * 2.0 - 1.0
+            else if (id === mixer.channelAId + "_gain")   sideA.gainCell.knob.value   = value * 2.0
+            else if (id === mixer.channelBId + "_gain")   sideB.gainCell.knob.value   = value * 2.0
+            else if (id === mixer.channelAId + "_filter") sideA.scCell.knob.value     = value * 2.0 - 1.0
+            else if (id === mixer.channelBId + "_filter") sideB.scCell.knob.value     = value * 2.0 - 1.0
         }
     }
     Connections {
@@ -70,58 +62,59 @@ Rectangle {
         function onCueEnabledChanged() { mixer.cueBActive = engineB ? engineB.cueEnabled : false }
     }
 
-    // ── KnobCell: Knob + label text ───────────────────────────────────────
+    // ── Shared components ───────────────────────────────────────────────────
+
+    component SilkLabel: Text {
+        color: UiTheme.textLabel
+        font.pixelSize: 6
+        font.bold: true
+        font.family: "monospace"
+        font.letterSpacing: 0.4
+        horizontalAlignment: Text.AlignHCenter
+    }
+
     component KnobCell: Item {
         id: kc
-        property alias knob:    innerKnob
-        property string label:  ""
-        property real   size:   22
+        property alias knob: innerKnob
+        property string label: ""
+        property real size: mixer.knobSz
 
-        implicitWidth:  size + 16
-        implicitHeight: size + 13
-        Layout.preferredWidth:  implicitWidth
-        Layout.minimumWidth:    implicitWidth
-        Layout.maximumWidth:    implicitWidth
+        implicitWidth: size + 14
+        implicitHeight: size + 10
+        Layout.preferredWidth: implicitWidth
         Layout.preferredHeight: implicitHeight
-        Layout.minimumHeight:   implicitHeight
-        Layout.maximumHeight:   implicitHeight
         Layout.alignment: Qt.AlignHCenter
 
         Knob {
             id: innerKnob
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.top: parent.top
-            width:  kc.size
+            width: kc.size
             height: kc.size
+            accentColor: mixer.clrKnob
         }
-        Text {
+        SilkLabel {
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.top: innerKnob.bottom
-            anchors.topMargin: 2
-            text:           kc.label
-            color:          "#555555"
-            font.pixelSize: 7
-            font.bold:      true
-            font.family:    "monospace"
-            font.letterSpacing: 0.3
+            text: kc.label
         }
     }
 
-    // ── VU meter ──────────────────────────────────────────────────────────
     component VuMeterVertical: Rectangle {
         id: vu
-        required property real   levelLinear
-        required property string deckName
+        required property real levelLinear
 
-        color:  "#060606"
+        color: UiTheme.bgDeep
         radius: 1
+        border.width: 1
+        border.color: UiTheme.bezelShadow
 
         property real peakHoldLevel: 0.0
-        readonly property int  segs: 24
+        readonly property int segs: 28
         readonly property real segH: Math.max(1, (height - (segs - 1)) / segs)
 
         function segColor(i) {
-            if (i >= Math.floor(segs * 0.88)) return "#e03535"
+            if (i >= Math.floor(segs * 0.88)) return UiTheme.red
             if (i >= Math.floor(segs * 0.72)) return "#d48000"
             if (i >= Math.floor(segs * 0.50)) return "#5aba52"
             return "#2a9640"
@@ -137,487 +130,415 @@ Rectangle {
         }
 
         Column {
-            anchors.fill: parent; spacing: 1
+            anchors.fill: parent
+            anchors.margins: 1
+            spacing: 1
             Repeater {
                 model: vu.segs
                 delegate: Rectangle {
                     required property int index
-                    width: vu.width; height: vu.segH; radius: 0
+                    width: vu.width - 2
+                    height: vu.segH
                     color: {
-                        const ri   = vu.segs - 1 - index
-                        const lit  = Math.floor(vu.levelLinear  * vu.segs)
+                        const ri = vu.segs - 1 - index
+                        const lit = Math.floor(vu.levelLinear * vu.segs)
                         const peak = Math.floor(vu.peakHoldLevel * vu.segs) - 1
                         if (ri === peak && peak >= 0) return "#ffffff"
-                        if (ri < lit)                 return vu.segColor(ri)
-                        return "#141414"
+                        if (ri < lit) return vu.segColor(ri)
+                        return "#101010"
                     }
                 }
             }
         }
     }
 
-    // ── Volume fader ──────────────────────────────────────────────────────
     component MixerSlider: Controls.Slider {
         id: ms
-        property bool centerFill:   false
-        property bool dragActive:   false
+        property color capAccent: UiTheme.textSecondary
+        property bool dragActive: false
         property real defaultValue: 1.0
 
-        background: Rectangle {
-            x: ms.orientation === Qt.Horizontal ? ms.leftPadding  : ms.width  / 2 - 2
-            y: ms.orientation === Qt.Horizontal ? ms.height / 2 - 2 : ms.topPadding
-            width:  ms.orientation === Qt.Horizontal ? ms.availableWidth  : 4
-            height: ms.orientation === Qt.Horizontal ? 4 : ms.availableHeight
-            radius: 1; color: "#111111"
-            border.width: 1; border.color: "#080808"
+        background: Item {
+            x: ms.width / 2 - 4
+            y: ms.topPadding
+            width: 8
+            height: ms.availableHeight
 
             Rectangle {
-                visible: ms.orientation === Qt.Vertical
-                x: 1
-                y: parent.height - 1 - Math.max(0, (1.0 - ms.visualPosition) * (parent.height - 2))
-                width:  parent.width  - 2
+                anchors.fill: parent
+                radius: 1
+                color: UiTheme.bgDeep
+                border.width: 1
+                border.color: UiTheme.bezelShadow
+            }
+            Rectangle {
+                anchors.left: parent.left; anchors.right: parent.right
+                anchors.bottom: parent.bottom; anchors.margins: 1
                 height: Math.max(0, (1.0 - ms.visualPosition) * (parent.height - 2))
-                radius: 1; color: ms.pressed ? "#555555" : "#333333"
+                radius: 1
+                color: ms.pressed ? UiTheme.borderHover : UiTheme.faderFill
+                opacity: 0.85
             }
         }
 
         handle: Rectangle {
-            implicitWidth:  ms.orientation === Qt.Vertical ? 26 : 18
-            implicitHeight: ms.orientation === Qt.Vertical ? 12 : 22
-            x: ms.orientation === Qt.Horizontal
-               ? ms.leftPadding + ms.visualPosition * (ms.availableWidth - width)
-               : ms.width / 2 - width / 2
-            y: ms.orientation === Qt.Horizontal
-               ? ms.height / 2 - height / 2
-               : ms.topPadding + ms.visualPosition * (ms.availableHeight - height)
-            radius: 1; color: ms.pressed || ms.dragActive ? "#e0e0e0" : "#c8c8c8"
-            border.width: 1; border.color: "#555555"
+            implicitWidth: 26
+            implicitHeight: 13
+            x: ms.width / 2 - width / 2
+            y: ms.topPadding + ms.visualPosition * (ms.availableHeight - height)
+            radius: 1
+            color: ms.pressed || ms.dragActive ? "#eeeeee" : UiTheme.faderCap
+            border.width: 1
+            border.color: UiTheme.borderHover
 
             Rectangle {
-                anchors.centerIn: parent
-                width:  ms.orientation === Qt.Vertical ? parent.width * 0.48 : 2
-                height: ms.orientation === Qt.Vertical ? 1 : parent.height * 0.48
-                color:  "#888888"
+                anchors.left: parent.left; anchors.right: parent.right
+                anchors.top: parent.top; height: 2
+                color: ms.capAccent
             }
         }
 
         MouseArea {
             id: msDragLock
-            anchors.fill: parent
-            z: 100
+            anchors.fill: parent; z: 100
             acceptedButtons: Qt.LeftButton
             preventStealing: true
-
-            property real _pressGX:  0
-            property real _pressGY:  0
-            property real _pressVal: 0
+            property real _pressGX: 0; property real _pressGY: 0; property real _pressVal: 0
 
             onPressed: (mouse) => {
-                var g    = msDragLock.mapToGlobal(mouse.x, mouse.y)
-                _pressGX  = g.x
-                _pressGY  = g.y
-                _pressVal = ms.value
-                ms.dragActive = false
-                mouse.accepted = true
+                var g = msDragLock.mapToGlobal(mouse.x, mouse.y)
+                _pressGX = g.x; _pressGY = g.y; _pressVal = ms.value
+                ms.dragActive = false; mouse.accepted = true
             }
-
             onPositionChanged: (mouse) => {
-                var g     = msDragLock.mapToGlobal(mouse.x, mouse.y)
-                var isV   = ms.orientation === Qt.Vertical
-                var delta = isV ? (_pressGY - g.y) : (g.x - _pressGX)
-                if (!ms.dragActive) {
-                    if (Math.abs(delta) < 4) return
-                    ms.dragActive = true
-                    cursorControl.hideCursor()
-                }
-                var newVal = _pressVal + delta * (ms.to - ms.from) / 150.0
-                var lo = Math.min(ms.from, ms.to)
-                var hi = Math.max(ms.from, ms.to)
-                ms.value = Math.max(lo, Math.min(hi, newVal))
+                var g = msDragLock.mapToGlobal(mouse.x, mouse.y)
+                var delta = _pressGY - g.y
+                if (!ms.dragActive) { if (Math.abs(delta) < 4) return; ms.dragActive = true; cursorControl.hideCursor() }
+                ms.value = Math.max(ms.from, Math.min(ms.to, _pressVal + delta * (ms.to - ms.from) / 150.0))
             }
-
             onReleased: {
-                if (ms.dragActive) {
-                    ms.dragActive = false
-                    cursorControl.restoreCursor()
-                    cursorControl.moveCursor(_pressGX, _pressGY)
-                }
+                if (ms.dragActive) { ms.dragActive = false; cursorControl.restoreCursor(); cursorControl.moveCursor(_pressGX, _pressGY) }
+            }
+            onDoubleClicked: { ms.enabled = false; ms.value = ms.defaultValue; ms.enabled = true }
+        }
+    }
+
+    component ChannelHeader: Rectangle {
+        required property string deckName
+        required property color accent
+        required property bool mirrored
+
+        Layout.fillWidth: true
+        Layout.preferredHeight: mixer.labelH
+        color: UiTheme.bg0
+
+        Rectangle {
+            width: 3
+            height: parent.height
+            anchors.left: mirrored ? parent.left : undefined
+            anchors.right: mirrored ? undefined : parent.right
+            color: accent
+            opacity: 0.9
+        }
+        Text {
+            anchors.centerIn: parent
+            anchors.horizontalCenterOffset: mirrored ? -10 : 10
+            text: deckName
+            color: accent
+            font.pixelSize: window.spViewport(9)
+            font.bold: true
+            font.family: "monospace"
+            font.letterSpacing: 2.0
+        }
+        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: UiTheme.divider }
+    }
+
+    component KnobStackColumn: ColumnLayout {
+        required property var engine
+        required property bool cueActive
+        required property int soundColorDeck
+        required property bool mirrored
+        required property color accent
+
+        property alias gainCell: gainKnob
+        property alias scCell: scKnob
+        property alias eqHighCell: eqHi
+        property alias eqMidCell: eqMid
+        property alias eqLowCell: eqLo
+
+        Layout.preferredWidth: mixer.knobColW
+        Layout.minimumWidth: mixer.knobColW
+        Layout.maximumWidth: mixer.knobColW
+        Layout.fillHeight: true
+        spacing: 1
+
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.preferredWidth: mixer.knobColW
+            color: UiTheme.panelInset
+            border.width: 1
+            border.color: UiTheme.bezelInner
+
+            Rectangle {
+                width: 1
+                height: parent.height
+                anchors.left: mirrored ? parent.left : undefined
+                anchors.right: mirrored ? undefined : parent.right
+                color: accent
+                opacity: 0.35
             }
 
-            onDoubleClicked: {
-                ms.enabled = false
-                ms.value   = ms.defaultValue
-                ms.enabled = true
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 2
+                spacing: 1
+
+                KnobCell {
+                    id: gainKnob
+                    label: "GAIN"
+                    knob.from: 0; knob.to: 2; knob.value: 1.0; knob.defaultValue: 1.0
+                    knob.onValueChanged: { if (engine) engine.trim = knob.value }
+                }
+                KnobCell {
+                    id: eqHi
+                    label: "HI"
+                    knob.from: -1; knob.to: 1; knob.value: 0
+                    knob.onValueChanged: { if (engine) engine.eqHigh = knob.value }
+                }
+                KnobCell {
+                    id: eqMid
+                    label: "MID"
+                    knob.from: -1; knob.to: 1; knob.value: 0
+                    knob.onValueChanged: { if (engine) engine.eqMid = knob.value }
+                }
+                KnobCell {
+                    id: eqLo
+                    label: "LOW"
+                    knob.from: -1; knob.to: 1; knob.value: 0
+                    knob.onValueChanged: { if (engine) engine.eqLow = knob.value }
+                }
+                KnobCell {
+                    id: scKnob
+                    label: "SC"
+                    knob.from: -1; knob.to: 1; knob.value: 0; knob.defaultValue: 0
+                    knob.onValueChanged: {
+                        if (typeof fxManager !== "undefined") {
+                            fxManager.setSoundColorDeck(soundColorDeck, knob.value)
+                            if (engine) engine.filter = fxManager.soundColorMode === "Filter" ? knob.value : 0.0
+                        } else if (engine) {
+                            engine.filter = knob.value
+                        }
+                    }
+                }
+
+                Item { Layout.fillHeight: true; Layout.minimumHeight: 2 }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: mixer.cueH
+                    color: cueActive ? UiTheme.greenDim : UiTheme.bg3
+                    border.width: 1
+                    border.color: cueActive ? Qt.darker(UiTheme.green, 1.6) : UiTheme.border
+
+                    SilkLabel {
+                        anchors.centerIn: parent
+                        text: "CUE"
+                        color: cueActive ? UiTheme.green : UiTheme.textDim
+                        font.pixelSize: 7
+                    }
+                    Rectangle {
+                        anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
+                        height: cueActive ? 2 : 0; color: UiTheme.green
+                    }
+                    HoverHandler { id: cueHov; cursorShape: Qt.PointingHandCursor }
+                    Rectangle { anchors.fill: parent; color: "#ffffff"; opacity: cueHov.hovered && !cueActive ? 0.05 : 0 }
+                    MouseArea {
+                        anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                        onClicked: { if (engine) engine.cueEnabled = !engine.cueEnabled }
+                    }
+                }
             }
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // Main layout
-    // ─────────────────────────────────────────────────────────────────────
-    RowLayout {
-        anchors.fill: parent
+    component FaderColumn: Item {
+        required property color faderAccent
+        required property string channelId
+        property alias volFader: fader
+
+        Layout.preferredWidth: mixer.faderW
+        Layout.minimumWidth: mixer.faderW
+        Layout.maximumWidth: mixer.faderW
+        Layout.fillHeight: true
+
+        Rectangle {
+            anchors.fill: parent
+            color: UiTheme.bgDeep
+            border.width: 1
+            border.color: UiTheme.bezelShadow
+
+            Rectangle {
+                anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                height: 1; color: UiTheme.bezelHighlight; opacity: 0.15
+            }
+
+            MixerSlider {
+                id: fader
+                anchors.fill: parent
+                anchors.margins: 6
+                orientation: Qt.Vertical
+                from: 0.0; to: 1.0; value: 1.0
+                capAccent: faderAccent
+                onValueChanged: {
+                    if (parameterStore && parameterStore.getParameter(channelId + "_vol") !== value)
+                        parameterStore.setParameter(channelId + "_vol", value)
+                }
+            }
+        }
+
+        SilkLabel {
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 2
+            text: "VOL"
+        }
+    }
+
+    component ChannelSide: ColumnLayout {
+        required property string deckName
+        required property color deckAccent
+        required property bool mirrored
+        required property var engine
+        required property bool cueActive
+        required property real vuLevel
+        required property string channelId
+        required property int soundColorDeck
+
+        property alias gainCell: knobs.gainCell
+        property alias scCell: knobs.scCell
+        property alias eqHighCell: knobs.eqHighCell
+        property alias eqMidCell: knobs.eqMidCell
+        property alias eqLowCell: knobs.eqLowCell
+        property alias volFader: faderCol.volFader
+
+        Layout.fillWidth: true
+        Layout.fillHeight: true
         spacing: 0
 
-        // ════════════════════════════════════════════════════════════════
-        // DECK A (left side)
-        // ════════════════════════════════════════════════════════════════
-        ColumnLayout {
-            Layout.fillWidth:  true
+        ChannelHeader { deckName: deckName; accent: deckAccent; mirrored: mirrored }
+
+        RowLayout {
+            Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 0
+            LayoutMirroring.enabled: mirrored
+            LayoutMirroring.childrenInherit: false
 
-            // Header
-            Rectangle {
-                Layout.fillWidth:      true
-                Layout.preferredHeight: mixer.labelH
-                color: "#080808"
+            Item { Layout.fillWidth: true; Layout.fillHeight: true }
 
-                Rectangle { width: 3; height: parent.height; color: mixer.clrA; opacity: 0.85 }
-                Text {
-                    anchors.centerIn:   parent
-                    text:               mixer.deckNameA
-                    color:              mixer.clrA
-                    font.pixelSize:     window.spViewport(10)
-                    font.bold:          true
-                    font.family:        "monospace"
-                    font.letterSpacing: 2.0
-                }
-                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#1c1c1c" }
+            FaderColumn {
+                id: faderCol
+                faderAccent: deckAccent
+                channelId: channelId
             }
 
-            // Content row: [outer controls] | [EQ area + vol fader]
-            RowLayout {
-                Layout.fillWidth:  true
+            Rectangle { width: 1; Layout.fillHeight: true; color: UiTheme.divider }
+
+            VuMeterVertical {
                 Layout.fillHeight: true
-                spacing: 0
-
-                // ── Outer A (GAIN / SC / CUE) ─────────────────────────
-                ColumnLayout {
-                    Layout.preferredWidth: mixer.outerW
-                    Layout.minimumWidth:   mixer.outerW
-                    Layout.maximumWidth:   mixer.outerW
-                    Layout.fillHeight:     true
-                    Layout.alignment:      Qt.AlignTop
-                    spacing: 0
-
-                    KnobCell {
-                        id: gainCellA
-                        label: "GAIN"; size: mixer.outerKnob
-                        Layout.alignment: Qt.AlignHCenter
-                        knob.from: 0; knob.to: 2; knob.value: 1.0
-                        knob.defaultValue: 1.0
-                        knob.accentColor: mixer.clrAKnob
-                        knob.onValueChanged: { if (engineA) engineA.trim = knob.value }
-                    }
-
-                    KnobCell {
-                        id: scCellA
-                        label: "SC"; size: mixer.outerKnob
-                        Layout.alignment: Qt.AlignHCenter
-                        knob.from: -1; knob.to: 1; knob.value: 0.0; knob.defaultValue: 0.0
-                        knob.accentColor: mixer.clrAKnob
-                        knob.onValueChanged: {
-                            if (typeof fxManager !== "undefined") {
-                                fxManager.setSoundColorDeck(1, knob.value)
-                                if (fxManager.soundColorMode === "Filter") { if (engineA) engineA.filter = knob.value }
-                                else { if (engineA) engineA.filter = 0.0 }
-                            } else { if (engineA) engineA.filter = knob.value }
-                        }
-                    }
-
-                    // CUE button
-                    Rectangle {
-                        Layout.fillWidth:      true
-                        Layout.preferredHeight: mixer.btnH
-                        color:        mixer.cueAActive ? "#0c2016" : "#141414"
-                        border.width: 1
-                        border.color: mixer.cueAActive ? "#1e5030" : "#1c1c1c"
-
-                        HoverHandler { id: cueAHov }
-                        Rectangle { anchors.fill: parent; color: "#ffffff"; opacity: cueAHov.hovered && !mixer.cueAActive ? 0.04 : 0 }
-
-                        Text {
-                            anchors.centerIn: parent; text: "CUE"
-                            color:          mixer.cueAActive ? "#4dd98a" : "#555555"
-                            font.pixelSize: window.spViewport(8)
-                            font.bold:      true; font.family: "monospace"; font.letterSpacing: 0.6
-                        }
-                        Rectangle {
-                            anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
-                            height: 2; color: "#4dd98a"; visible: mixer.cueAActive
-                        }
-                        MouseArea {
-                            anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                mixer.cueAActive = !mixer.cueAActive
-                                if (engineA) engineA.cueEnabled = mixer.cueAActive
-                            }
-                        }
-                    }
-
-                    Item { Layout.fillHeight: true }  // spacer aligned with vol fader area
-                }
-
-                Rectangle { width: 1; Layout.fillHeight: true; color: "#1c1c1c" }
-
-                // ── Center A (VU | EQ H/M/L | Vol fader) ─────────────────
-                ColumnLayout {
-                    Layout.fillWidth:  true
-                    Layout.fillHeight: true
-                    spacing: 0
-
-                    // EQ + VU row – locked height, EQ pushed flush to centre divider
-                    RowLayout {
-                        Layout.fillWidth:       true
-                        Layout.preferredHeight: mixer.eqRowH
-                        Layout.minimumHeight:   mixer.eqRowH
-                        Layout.maximumHeight:   mixer.eqRowH
-                        spacing: 0
-
-                        Item { Layout.fillWidth: true }  // spacer → EQ sits at right edge
-
-                        // VU A – left of EQ knobs
-                        VuMeterVertical {
-                            Layout.fillHeight:    true
-                            Layout.preferredWidth: mixer.vuW
-                            levelLinear: mixer.vuACombined
-                            deckName: "A"
-                        }
-
-                        Rectangle { width: 1; Layout.fillHeight: true; color: "#1c1c1c" }
-
-                        // EQ knobs A
-                        ColumnLayout {
-                            spacing: 0
-                            Layout.preferredHeight: mixer.eqRowH
-                            Layout.minimumHeight:   mixer.eqRowH
-                            Layout.maximumHeight:   mixer.eqRowH
-
-                            KnobCell {
-                                id: eqHighCellA
-                                label: "H"; size: 22
-                                Layout.alignment: Qt.AlignHCenter
-                                knob.from: -1; knob.to: 1; knob.value: 0
-                                knob.accentColor: mixer.clrAKnob
-                                knob.onValueChanged: { if (engineA) engineA.eqHigh = knob.value }
-                            }
-                            KnobCell {
-                                id: eqMidCellA
-                                label: "M"; size: 22
-                                Layout.alignment: Qt.AlignHCenter
-                                knob.from: -1; knob.to: 1; knob.value: 0
-                                knob.accentColor: mixer.clrAKnob
-                                knob.onValueChanged: { if (engineA) engineA.eqMid = knob.value }
-                            }
-                            KnobCell {
-                                id: eqLowCellA
-                                label: "L"; size: 22
-                                Layout.alignment: Qt.AlignHCenter
-                                knob.from: -1; knob.to: 1; knob.value: 0
-                                knob.accentColor: mixer.clrAKnob
-                                knob.onValueChanged: { if (engineA) engineA.eqLow = knob.value }
-                            }
-                        }
-                    }
-
-                    Rectangle { Layout.fillWidth: true; height: 1; color: "#1c1c1c" }
-
-                    MixerSlider {
-                        id: volFaderA
-                        Layout.fillHeight: true
-                        Layout.fillWidth:  true
-                        orientation: Qt.Vertical
-                        from: 0.0; to: 1.0; value: 1.0
-                        onValueChanged: {
-                            if (parameterStore && parameterStore.getParameter(mixer.channelAId + "_vol") !== value)
-                                parameterStore.setParameter(mixer.channelAId + "_vol", value)
-                        }
-                    }
-                }
-            }
-        }
-
-        // Center divider
-        Rectangle { width: 1; Layout.fillHeight: true; color: "#333333" }
-
-        // ════════════════════════════════════════════════════════════════
-        // DECK B (right side – mirrored)
-        // ════════════════════════════════════════════════════════════════
-        ColumnLayout {
-            Layout.fillWidth:  true
-            Layout.fillHeight: true
-            spacing: 0
-
-            // Header
-            Rectangle {
-                Layout.fillWidth:      true
-                Layout.preferredHeight: mixer.labelH
-                color: "#080808"
-
-                Rectangle { anchors.right: parent.right; width: 3; height: parent.height; color: mixer.clrB; opacity: 0.85 }
-                Text {
-                    anchors.centerIn:   parent
-                    text:               mixer.deckNameB
-                    color:              mixer.clrB
-                    font.pixelSize:     window.spViewport(10)
-                    font.bold:          true
-                    font.family:        "monospace"
-                    font.letterSpacing: 2.0
-                }
-                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#1c1c1c" }
+                Layout.preferredWidth: mixer.vuW
+                levelLinear: vuLevel
             }
 
-            // Content row: [EQ area + vol fader] | [outer controls]
-            RowLayout {
-                Layout.fillWidth:  true
-                Layout.fillHeight: true
-                spacing: 0
+            Rectangle { width: 1; Layout.fillHeight: true; color: UiTheme.divider }
 
-                // ── Center B (EQ H/M/L | VU | Vol fader) ─────────────────
-                ColumnLayout {
-                    Layout.fillWidth:  true
-                    Layout.fillHeight: true
-                    spacing: 0
-
-                    // EQ + VU row – locked height, EQ flush to centre divider
-                    RowLayout {
-                        Layout.fillWidth:       true
-                        Layout.preferredHeight: mixer.eqRowH
-                        Layout.minimumHeight:   mixer.eqRowH
-                        Layout.maximumHeight:   mixer.eqRowH
-                        spacing: 0
-
-                        // EQ knobs B
-                        ColumnLayout {
-                            spacing: 0
-                            Layout.preferredHeight: mixer.eqRowH
-                            Layout.minimumHeight:   mixer.eqRowH
-                            Layout.maximumHeight:   mixer.eqRowH
-
-                            KnobCell {
-                                id: eqHighCellB
-                                label: "H"; size: 22
-                                Layout.alignment: Qt.AlignHCenter
-                                knob.from: -1; knob.to: 1; knob.value: 0
-                                knob.accentColor: mixer.clrBKnob
-                                knob.onValueChanged: { if (engineB) engineB.eqHigh = knob.value }
-                            }
-                            KnobCell {
-                                id: eqMidCellB
-                                label: "M"; size: 22
-                                Layout.alignment: Qt.AlignHCenter
-                                knob.from: -1; knob.to: 1; knob.value: 0
-                                knob.accentColor: mixer.clrBKnob
-                                knob.onValueChanged: { if (engineB) engineB.eqMid = knob.value }
-                            }
-                            KnobCell {
-                                id: eqLowCellB
-                                label: "L"; size: 22
-                                Layout.alignment: Qt.AlignHCenter
-                                knob.from: -1; knob.to: 1; knob.value: 0
-                                knob.accentColor: mixer.clrBKnob
-                                knob.onValueChanged: { if (engineB) engineB.eqLow = knob.value }
-                            }
-                        }
-
-                        Rectangle { width: 1; Layout.fillHeight: true; color: "#1c1c1c" }
-
-                        // VU B – right of EQ knobs
-                        VuMeterVertical {
-                            Layout.fillHeight:    true
-                            Layout.preferredWidth: mixer.vuW
-                            levelLinear: mixer.vuBCombined
-                            deckName: "B"
-                        }
-
-                        Item { Layout.fillWidth: true }  // spacer → EQ sits at left edge
-                    }
-
-                    Rectangle { Layout.fillWidth: true; height: 1; color: "#1c1c1c" }
-
-                    MixerSlider {
-                        id: volFaderB
-                        Layout.fillHeight: true
-                        Layout.fillWidth:  true
-                        orientation: Qt.Vertical
-                        from: 0.0; to: 1.0; value: 1.0
-                        onValueChanged: {
-                            if (parameterStore && parameterStore.getParameter(mixer.channelBId + "_vol") !== value)
-                                parameterStore.setParameter(mixer.channelBId + "_vol", value)
-                        }
-                    }
-                }
-
-                Rectangle { width: 1; Layout.fillHeight: true; color: "#1c1c1c" }
-
-                // ── Outer B (GAIN / SC / CUE) ─────────────────────────
-                ColumnLayout {
-                    Layout.preferredWidth: mixer.outerW
-                    Layout.minimumWidth:   mixer.outerW
-                    Layout.maximumWidth:   mixer.outerW
-                    Layout.fillHeight:     true
-                    Layout.alignment:      Qt.AlignTop
-                    spacing: 0
-
-                    KnobCell {
-                        id: gainCellB
-                        label: "GAIN"; size: mixer.outerKnob
-                        Layout.alignment: Qt.AlignHCenter
-                        knob.from: 0; knob.to: 2; knob.value: 1.0
-                        knob.defaultValue: 1.0
-                        knob.accentColor: mixer.clrBKnob
-                        knob.onValueChanged: { if (engineB) engineB.trim = knob.value }
-                    }
-
-                    KnobCell {
-                        id: scCellB
-                        label: "SC"; size: mixer.outerKnob
-                        Layout.alignment: Qt.AlignHCenter
-                        knob.from: -1; knob.to: 1; knob.value: 0.0; knob.defaultValue: 0.0
-                        knob.accentColor: mixer.clrBKnob
-                        knob.onValueChanged: {
-                            if (typeof fxManager !== "undefined") {
-                                fxManager.setSoundColorDeck(2, knob.value)
-                                if (fxManager.soundColorMode === "Filter") { if (engineB) engineB.filter = knob.value }
-                                else { if (engineB) engineB.filter = 0.0 }
-                            } else { if (engineB) engineB.filter = knob.value }
-                        }
-                    }
-
-                    // CUE button
-                    Rectangle {
-                        Layout.fillWidth:      true
-                        Layout.preferredHeight: mixer.btnH
-                        color:        mixer.cueBActive ? "#0c2016" : "#141414"
-                        border.width: 1
-                        border.color: mixer.cueBActive ? "#1e5030" : "#1c1c1c"
-
-                        HoverHandler { id: cueBHov }
-                        Rectangle { anchors.fill: parent; color: "#ffffff"; opacity: cueBHov.hovered && !mixer.cueBActive ? 0.04 : 0 }
-
-                        Text {
-                            anchors.centerIn: parent; text: "CUE"
-                            color:          mixer.cueBActive ? "#4dd98a" : "#555555"
-                            font.pixelSize: window.spViewport(8)
-                            font.bold:      true; font.family: "monospace"; font.letterSpacing: 0.6
-                        }
-                        Rectangle {
-                            anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
-                            height: 2; color: "#4dd98a"; visible: mixer.cueBActive
-                        }
-                        MouseArea {
-                            anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                mixer.cueBActive = !mixer.cueBActive
-                                if (engineB) engineB.cueEnabled = mixer.cueBActive
-                            }
-                        }
-                    }
-
-                    Item { Layout.fillHeight: true }
-                }
+            KnobStackColumn {
+                id: knobs
+                engine: engine
+                cueActive: cueActive
+                soundColorDeck: soundColorDeck
+                mirrored: mirrored
+                accent: deckAccent
             }
         }
     }
+
+    // ── Main layout ─────────────────────────────────────────────────────────
+    Rectangle {
+        anchors.fill: parent
+        anchors.margins: 1
+        color: UiTheme.bg1
+        border.width: 1
+        border.color: UiTheme.bezelOuter
+
+        RowLayout {
+            anchors.fill: parent
+            spacing: 0
+
+            ChannelSide {
+                id: sideA
+                deckName: mixer.deckNameA
+                deckAccent: mixer.clrA
+                mirrored: false
+                engine: mixer.engineA
+                cueActive: mixer.cueAActive
+                vuLevel: mixer.vuACombined
+                channelId: mixer.channelAId
+                soundColorDeck: 1
+            }
+
+            Rectangle {
+                Layout.preferredWidth: mixer.spineW
+                Layout.fillHeight: true
+                color: UiTheme.bgDeep
+
+                Rectangle {
+                    anchors.left: parent.left
+                    width: 1
+                    height: parent.height
+                    color: UiTheme.bezelShadow
+                }
+                Rectangle {
+                    anchors.right: parent.right
+                    width: 1
+                    height: parent.height
+                    color: UiTheme.bezelHighlight
+                    opacity: 0.35
+                }
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 1
+                    height: parent.height
+                    color: UiTheme.dividerStrong
+                }
+            }
+
+            ChannelSide {
+                id: sideB
+                deckName: mixer.deckNameB
+                deckAccent: mixer.clrB
+                mirrored: true
+                engine: mixer.engineB
+                cueActive: mixer.cueBActive
+                vuLevel: mixer.vuBCombined
+                channelId: mixer.channelBId
+                soundColorDeck: 2
+            }
+        }
+    }
+
+    // Aliases for parameterStore / external bindings
+    property alias volFaderA: sideA.volFader
+    property alias volFaderB: sideB.volFader
+    property alias gainCellA: sideA.gainCell
+    property alias gainCellB: sideB.gainCell
+    property alias scCellA: sideA.scCell
+    property alias scCellB: sideB.scCell
+    property alias eqHighCellA: sideA.eqHighCell
+    property alias eqMidCellA: sideA.eqMidCell
+    property alias eqLowCellA: sideA.eqLowCell
+    property alias eqHighCellB: sideB.eqHighCell
+    property alias eqMidCellB: sideB.eqMidCell
+    property alias eqLowCellB: sideB.eqLowCell
 }

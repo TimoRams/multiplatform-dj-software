@@ -6,6 +6,7 @@
 // Qt Includes
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
+#include <QQuickStyle>
 #include <QQuickWindow>
 #include <QQmlContext>
 #include <QQmlEngine>
@@ -79,7 +80,8 @@ void setEnvDefault(const char* name, const char* value)
 
 void configureQtRuntimeDefaults()
 {
-    setEnvDefault("QT_QUICK_CONTROLS_STYLE", "Basic");
+    // Cross-platform UI: never inherit the host OS Quick Controls theme (e.g. KDE Breeze).
+    qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
     setEnvDefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "RoundPreferFloor");
 
     if (qEnvironmentVariableIsEmpty("QT_LOGGING_RULES")) {
@@ -223,6 +225,9 @@ int main(int argc, char *argv[])
     configureLinuxVulkanBackend(useVulkan, requestedVkApi, requestedVkApiRaw, requestedVkIcd);
 #endif
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::RoundPreferFloor);
+
+    // Must run before QGuiApplication; pairs with QT_QUICK_CONTROLS_STYLE above.
+    QQuickStyle::setStyle(QStringLiteral("Basic"));
 
     QGuiApplication app(argc, argv);
     logStartupStep("QGuiApplication created");

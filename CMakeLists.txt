@@ -33,7 +33,7 @@ elseif(CCACHE_PROGRAM AND MSVC)
 endif()
 
 # Qt setup
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Sql Concurrent)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Sql Concurrent)
 if(COMMAND qt_policy)
     qt_policy(SET QTP0001 NEW)
     qt_policy(SET QTP0004 NEW)
@@ -456,6 +456,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Gui
     Qt6::Qml
     Qt6::Quick
+    Qt6::QuickControls2
     Qt6::Sql
     Qt6::Concurrent
     ThirdParty::TagLib

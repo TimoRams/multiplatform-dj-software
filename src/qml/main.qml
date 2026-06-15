@@ -35,6 +35,7 @@ ApplicationWindow {
     property bool fourDeckMode: false
     property bool allInOneMode: false
     property string activeMainTab: "performance"
+    property bool _desktopShowMixer: true
 
     readonly property bool allInOnePanelActive: window.allInOneMode && window.activeMainTab !== "performance"
     readonly property bool libraryPanelActive: window.allInOneMode && window.activeMainTab === "library"
@@ -69,6 +70,12 @@ ApplicationWindow {
     }
 
     function setAllInOneMode(enabled) {
+        if (enabled) {
+            window._desktopShowMixer = window.showMixer
+            window.showMixer = false
+        } else {
+            window.showMixer = window._desktopShowMixer
+        }
         allInOneMode = enabled
         libraryExpanded = false
         activeMainTab = "performance"
@@ -606,7 +613,7 @@ ApplicationWindow {
     readonly property int scaledDeckMixerHeight: Math.round(window.baseDeckMixerHeight * window.uiScale)
     readonly property int topBarHeight: 28
     readonly property int fxBarHeight: 90
-    readonly property int mixerBaseWidth: 280
+    readonly property int mixerBaseWidth: 308
 
     readonly property real baseUiHeight: 150 + (baseUiWidth / 6.5) + 4
     readonly property bool primaryDeckRowVisible: !window.libraryExpanded
