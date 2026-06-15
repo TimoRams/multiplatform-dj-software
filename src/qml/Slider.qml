@@ -17,10 +17,8 @@ Controls.Slider {
         y: control.orientation === Qt.Horizontal ? control.height / 2 - 2 : control.topPadding
         width:  control.orientation === Qt.Horizontal ? control.availableWidth  : 4
         height: control.orientation === Qt.Horizontal ? 4 : control.availableHeight
-        radius: 1
+        radius: 0
         color:  UiTheme.faderTrack
-        border.width: 1
-        border.color: UiTheme.bezelShadow
 
         Rectangle {
             visible: control.orientation === Qt.Horizontal && !control.centerFill
@@ -71,10 +69,8 @@ Controls.Slider {
         y: control.orientation === Qt.Horizontal
            ? control.height / 2 - height / 2
            : control.topPadding + control.visualPosition * (control.availableHeight - height)
-        radius: 1
+        radius: 0
         color:  control.pressed || control.dragActive ? "#e8e8e8" : UiTheme.faderCap
-        border.width: 1
-        border.color: UiTheme.borderHover
 
         Rectangle {
             anchors.centerIn: parent

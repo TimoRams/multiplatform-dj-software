@@ -31,21 +31,117 @@ Item {
     property double _lastLinkPublishBpm: 0
 
     // ── Theme ────────────────────────────────────────────────────────────
-    readonly property color accent:    UiTheme.deckColor(deck.deckName)
-    readonly property color accentGrn: UiTheme.green
-    readonly property color accentBlu: UiTheme.blue
-    readonly property int   btnH:      20
+    readonly property color accent:       UiTheme.deckColor(deck.deckName)
+    readonly property color accentGrn:      UiTheme.green
+    readonly property color accentBlu:      UiTheme.blue
+    // Design-space layout (parent deckMixerCanvas applies uniformScale — no spViewport here)
+    readonly property int headerH:        44
+    readonly property int coverSize:      44
+    readonly property int deckLabelW:     24
+    readonly property int stripLabelW:    48
+    readonly property int metaStripW:     208
+    readonly property int tempoPanelW:    52
+    readonly property int btnH:           24
+    readonly property int wPlay:          38
+    readonly property int wCue:           34
+    readonly property int wBtn:           32
+    readonly property int wBtnSm:         28
+    readonly property int wBtnLg:         36
+    readonly property int wLoopLen:       56
+    readonly property int wReloop:        46
+    readonly property color btnBg:          "#212121"
+    readonly property color btnBgActive:    "#2c2c2c"
+    readonly property color btnBgPressed:   UiTheme.bg5
+    readonly property color btnLine:        UiTheme.separatorSubtle
+    readonly property color btnLineActive:  "#aaaaaa"
+    readonly property color btnText:        "#808080"
+    readonly property color btnTextActive:  "#f0f0f0"
+    readonly property color btnTextBright:  "#b8b8b8"
+    readonly property color sectionLabel:   "#606060"
+    readonly property color metaLabel:      "#666666"
+    readonly property color metaValue:      "#a8a8a8"
+    readonly property color metaEmpty:      "#484848"
 
-    // ── Flat button — matches FxBar / FxUnit chrome ───────────────────────
+    component SectionLabel: Text {
+        required property string label
+        Layout.preferredWidth: deck.stripLabelW
+        Layout.minimumWidth: deck.stripLabelW
+        Layout.maximumWidth: deck.stripLabelW
+        Layout.alignment: Qt.AlignVCenter
+        text: label
+        color: deck.sectionLabel
+        font.pixelSize: 8
+        font.family: "monospace"
+        font.letterSpacing: 0.5
+        verticalAlignment: Text.AlignVCenter
+        elide: Text.ElideRight
+    }
+
+    component MetaCell: Item {
+        required property string metaLabel
+        required property string metaValue
+        property bool metaHighlight: metaValue !== "" && metaValue !== "--" && metaValue !== "--:--"
+
+        Layout.fillWidth: true
+        Layout.fillHeight: true
+        Layout.minimumWidth: 48
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 4
+            anchors.rightMargin: 3
+            anchors.topMargin: 4
+            anchors.bottomMargin: 3
+            spacing: 1
+
+            Text {
+                text: metaLabel
+                color: deck.metaLabel
+                font.pixelSize: 7
+                font.bold: true
+                font.family: "monospace"
+            }
+            Text {
+                Layout.fillWidth: true
+                text: metaValue
+                color: metaHighlight ? deck.metaValue : deck.metaEmpty
+                font.pixelSize: 10
+                font.bold: true
+                font.family: "monospace"
+                elide: Text.ElideRight
+            }
+        }
+
+        Rectangle {
+            anchors.bottom: parent.bottom
+            anchors.left: parent.left
+            anchors.right: parent.right
+            height: 1
+            color: metaHighlight ? deck.btnLineActive : deck.btnLine
+        }
+    }
+
+    component GroupSpacer: Item {
+        Layout.preferredWidth: 6
+        Layout.minimumWidth: 6
+        Layout.maximumWidth: 6
+    }
+
+    component BtnGroup: RowLayout {
+        spacing: 2
+        Layout.alignment: Qt.AlignVCenter
+    }
+
+    // ── Flat button — FxBar-style neutral chrome ─────────────────────────
     component FlatBtn: Rectangle {
         id: fb
         required property string btnText
         property bool   fbActive:           false
-        property color  fbAccent:           deck.accent
-        property color  fbActiveText:       fbAccent
-        property color  fbInactiveText:     "#666666"
+        property color  fbAccent:           deck.btnLineActive
+        property color  fbActiveText:       deck.btnTextActive
+        property color  fbInactiveText:     deck.btnTextBright
         property real   fbPreferredHeight:  deck.btnH
-        property real   fbFontPx:           8
+        property real   fbFontPx:           9
         property string fbFontFamily:       "monospace"
 
         Layout.preferredHeight: fbPreferredHeight
@@ -53,21 +149,22 @@ Item {
         Layout.maximumHeight:   fbPreferredHeight
 
         radius: 0
-        color: fbMouse.pressed ? "#2d2d2d" : (fbActive ? "#1a1a2a" : "#181818")
+        color: fbMouse.pressed ? deck.btnBgPressed : (fbActive ? deck.btnBgActive : deck.btnBg)
 
         Rectangle {
             anchors.left:   parent.left
             anchors.right:  parent.right
             anchors.bottom: parent.bottom
             height: fb.fbActive ? 2 : 1
-            color: fb.fbActive ? fb.fbAccent : "#222222"
+            color: fb.fbActive ? fb.fbAccent
+                 : (fbHov.hovered ? "#454545" : "#333333")
         }
 
         HoverHandler { id: fbHov }
         Rectangle {
             anchors.fill: parent
             color: "#ffffff"
-            opacity: fbHov.hovered && !fbMouse.pressed ? 0.04 : 0
+            opacity: fbHov.hovered && !fbMouse.pressed ? 0.06 : 0
         }
 
         signal clicked()
@@ -79,7 +176,7 @@ Item {
             anchors.centerIn:    parent
             text:                fb.btnText
             color:               fb.fbActive ? fb.fbActiveText : fb.fbInactiveText
-            font.pixelSize:      window.spViewport(fb.fbFontPx)
+            font.pixelSize:      fb.fbFontPx
             font.bold:           fb.fbActive
             font.letterSpacing:  0
             font.family:         fb.fbFontFamily
@@ -117,8 +214,8 @@ Item {
             y: ds.orientation === Qt.Horizontal ? ds.height / 2 - 2 : ds.topPadding
             width:  ds.orientation === Qt.Horizontal ? ds.availableWidth  : 4
             height: ds.orientation === Qt.Horizontal ? 4 : ds.availableHeight
-            radius: 1
-            color:  "#111111"
+            radius: 0
+            color:  UiTheme.faderTrack
 
             Rectangle {
                 visible: ds.orientation === Qt.Vertical && !ds.centerFill
@@ -427,15 +524,7 @@ Item {
     // ── Visual ────────────────────────────────────────────────────────────
     Rectangle {
         anchors.fill: parent
-        color: "#181818"
-
-        Rectangle {
-            anchors.top: parent.top
-            anchors.left: parent.left
-            anchors.right: parent.right
-            height: 1
-            color: "#0a0a0a"
-        }
+        color: UiTheme.panel
 
         ColumnLayout {
             anchors.fill: parent
@@ -444,51 +533,52 @@ Item {
             // ── Track-info header ──────────────────────────────────────────
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: deck.headerCellHeight * 2
-                color: "#181818"
+                Layout.preferredHeight: deck.headerH
+                Layout.minimumHeight: deck.headerH
+                Layout.maximumHeight: deck.headerH
+                color: UiTheme.panel
 
                 RowLayout {
                     anchors.fill: parent
                     spacing: 0
 
-                    // Deck label strip
                     Rectangle {
-                        Layout.preferredWidth: 22
+                        Layout.preferredWidth: deck.deckLabelW
+                        Layout.minimumWidth: deck.deckLabelW
                         Layout.fillHeight: true
-                        color: "#111111"
+                        color: UiTheme.panelDeep
 
                         Text {
                             anchors.centerIn: parent
                             text: deck.deckName
                             color: deck.accent
-                            opacity: deck._hasTrack ? 1.0 : 0.35
-                            font.pixelSize: window.spViewport(14)
+                            opacity: deck._hasTrack ? 1.0 : 0.4
+                            font.pixelSize: 13
                             font.bold: true
                             font.family: "monospace"
                         }
                     }
 
                     Rectangle {
-                        Layout.preferredWidth: 3
+                        Layout.preferredWidth: 1
                         Layout.fillHeight: true
                         color: deck.accent
-                        opacity: deck._hasTrack ? 1.0 : 0.25
+                        opacity: deck._hasTrack ? 0.75 : 0.18
                     }
 
-                    // Cover art
                     Rectangle {
                         id: coverArtBox
-                        Layout.preferredWidth: deck.headerCellHeight * 2
-                        Layout.minimumWidth:   deck.headerCellHeight * 2
-                        Layout.maximumWidth:   deck.headerCellHeight * 2
+                        Layout.preferredWidth: deck.coverSize
+                        Layout.minimumWidth: deck.coverSize
+                        Layout.maximumWidth: deck.coverSize
                         Layout.fillHeight: true
-                        color: "#0a0a0a"
+                        color: UiTheme.panelDeep
 
                         Text {
                             anchors.centerIn: parent
                             text: deck._hasTrack ? "♪" : deck.deckName
                             color: deck.accent
-                            font.pixelSize: deck._hasTrack ? window.spViewport(16) : window.spViewport(24)
+                            font.pixelSize: deck._hasTrack ? 14 : 16
                             font.bold: !deck._hasTrack
                             opacity: deck._hasTrack ? 0.45 : 0.22
                             visible: coverImage.status !== Image.Ready
@@ -519,14 +609,14 @@ Item {
                                     anchors.horizontalCenter: parent.horizontalCenter
                                     text: "▲"
                                     color: "#ffffff"
-                                    font.pixelSize: window.spViewport(13)
+                                    font.pixelSize: 11
                                     font.bold: true
                                 }
                                 Text {
                                     anchors.horizontalCenter: parent.horizontalCenter
                                     text: "EJECT"
                                     color: "#aaaaaa"
-                                    font.pixelSize: window.spViewport(7)
+                                    font.pixelSize: 7
                                     font.bold: true
                                     font.letterSpacing: 0.5
                                 }
@@ -539,8 +629,6 @@ Item {
                             onClicked: { if (deck._hasTrack && deck.engine) deck.engine.ejectTrack() }
                         }
                     }
-
-                    Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: "#0a0a0a" }
 
                     // Title + Artist
                     ColumnLayout {
@@ -557,14 +645,12 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                                 anchors.verticalCenterOffset: -1
                                 text: deck._hasTrack ? deck._trackTitle : "No Track Loaded"
-                                color: deck._hasTrack ? "#e8e8e8" : "#666666"
-                                font.pixelSize: window.spViewport(10)
+                                color: deck._hasTrack ? "#ececec" : "#707070"
+                                font.pixelSize: 11
                                 font.bold: true
                                 elide: Text.ElideRight
                             }
                         }
-
-                        Rectangle { Layout.fillWidth: true; height: 1; color: "#222222" }
 
                         Item {
                             Layout.fillWidth: true
@@ -578,40 +664,39 @@ Item {
                                 text: deck._hasTrack
                                       ? (deck._trackArtist !== "" ? deck._trackArtist : "Unknown Artist")
                                       : ""
-                                color: deck._hasTrack ? "#888888" : "#484848"
-                                font.pixelSize: window.spViewport(9)
+                                color: deck._hasTrack ? "#999999" : "#505050"
+                                font.pixelSize: 9
                                 elide: Text.ElideRight
                             }
                         }
                     }
 
-                    Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: "#0a0a0a" }
+                    GroupSpacer {}
 
-                    // Meta badges 2×2
-                    GridLayout {
+                    // Track meta
+                    RowLayout {
                         id: metaBadges
-                        columns: 2; rowSpacing: 0; columnSpacing: 0
-                        Layout.preferredWidth: 164; Layout.fillHeight: true
+                        Layout.preferredWidth: deck.metaStripW
+                        Layout.minimumWidth: deck.metaStripW
+                        Layout.maximumWidth: deck.metaStripW
+                        Layout.fillHeight: true
+                        spacing: 0
 
-                        Rectangle {
+                        Item {
                             id: bpmBadge
-                            Layout.preferredWidth: 82; Layout.preferredHeight: deck.headerCellHeight
-                            color: "#181818"
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
 
-                            Rectangle {
-                                anchors.bottom: parent.bottom
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                height: 1
-                                color: deck._trackBpm !== "" ? "#3acc3a" : "#222222"
+                            MetaCell {
+                                anchors.fill: parent
+                                metaLabel: "BPM"
+                                metaValue: deck._trackBpm !== "" ? deck._trackBpm : "--"
                             }
 
-                            Row { anchors.fill: parent; anchors.leftMargin: 5; spacing: 4
-                                Text { anchors.verticalCenter: parent.verticalCenter; text: "BPM"; color: "#555555"; font.pixelSize: window.spViewport(7); font.bold: true; font.family: "monospace" }
-                                Text { anchors.verticalCenter: parent.verticalCenter; text: deck._trackBpm !== "" ? deck._trackBpm : "--"; color: deck._trackBpm !== "" ? "#888888" : "#333333"; font.pixelSize: window.spViewport(10); font.bold: true; font.family: "monospace" }
-                            }
                             MouseArea {
-                                anchors.fill: parent; acceptedButtons: Qt.RightButton; cursorShape: Qt.PointingHandCursor
+                                anchors.fill: parent
+                                acceptedButtons: Qt.RightButton
+                                cursorShape: Qt.PointingHandCursor
                                 onClicked: (mouse) => {
                                     if (mouse.button !== Qt.RightButton || !deck.engine) return
                                     deck._manualBpmInput = deck._trackBpm !== "" ? deck._trackBpm : (deck._currentBpm !== "" ? deck._currentBpm : "120.00")
@@ -621,85 +706,38 @@ Item {
                                     manualBpmField.selectAll()
                                 }
                             }
-                            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#222222" }
                         }
 
-                        Rectangle {
-                            Layout.preferredWidth: 82; Layout.preferredHeight: deck.headerCellHeight
-                            color: "#181818"
-
-                            Rectangle {
-                                anchors.bottom: parent.bottom
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                height: 1
-                                color: deck._showLiveBpmIndicator() ? deck.accentBlu : "#222222"
-                            }
-
-                            Row { anchors.fill: parent; anchors.leftMargin: 5; spacing: 4
-                                Text { anchors.verticalCenter: parent.verticalCenter; text: "LIVE"; color: "#555555"; font.pixelSize: window.spViewport(7); font.bold: true; font.family: "monospace" }
-                                Text {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: deck._currentBpm !== "" ? deck._currentBpm : "--"
-                                    color: {
-                                        if (!deck._showLiveBpmIndicator()) return "#333333"
-                                        if (!deck.engine) return "#888888"
-                                        return deck.engine.tempoPercent > 0 ? "#ffaa00" : "#888888"
-                                    }
-                                    font.pixelSize: window.spViewport(10); font.bold: true; font.family: "monospace"
-                                }
-                            }
-                            Rectangle { anchors.left: parent.left; height: parent.height; width: 1; color: "#0a0a0a" }
+                        MetaCell {
+                            Layout.fillWidth: true
+                            metaLabel: "LIVE"
+                            metaValue: deck._currentBpm !== "" ? deck._currentBpm : "--"
+                            metaHighlight: deck._showLiveBpmIndicator()
                         }
 
-                        Rectangle {
-                            Layout.preferredWidth: 82; Layout.preferredHeight: deck.headerCellHeight
-                            color: "#181818"
-
-                            Rectangle {
-                                anchors.bottom: parent.bottom
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                height: 1
-                                color: deck._trackKey !== "" ? deck.accentBlu : "#222222"
-                            }
-
-                            Row { anchors.fill: parent; anchors.leftMargin: 5; spacing: 4
-                                Text { anchors.verticalCenter: parent.verticalCenter; text: "KEY"; color: "#555555"; font.pixelSize: window.spViewport(7); font.bold: true; font.family: "monospace" }
-                                Text { anchors.verticalCenter: parent.verticalCenter; text: deck._trackKey !== "" ? deck._trackKey : "--"; color: deck._trackKey !== "" ? "#888888" : "#333333"; font.pixelSize: window.spViewport(10); font.bold: true; font.family: "monospace" }
-                            }
+                        MetaCell {
+                            Layout.fillWidth: true
+                            metaLabel: "KEY"
+                            metaValue: deck._trackKey !== "" ? deck._trackKey : "--"
                         }
 
-                        Rectangle {
-                            Layout.preferredWidth: 82; Layout.preferredHeight: deck.headerCellHeight
-                            color: "#181818"
-
-                            Rectangle {
-                                anchors.bottom: parent.bottom
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                height: 1
-                                color: deck._trackDuration !== "" ? "#3a3a3a" : "#222222"
-                            }
-
-                            Row { anchors.fill: parent; anchors.leftMargin: 5; spacing: 4
-                                Text { anchors.verticalCenter: parent.verticalCenter; text: "LEN"; color: "#555555"; font.pixelSize: window.spViewport(7); font.bold: true; font.family: "monospace" }
-                                Text { anchors.verticalCenter: parent.verticalCenter; text: deck._trackDuration !== "" ? deck._trackDuration : "--:--"; color: deck._trackDuration !== "" ? "#888888" : "#333333"; font.pixelSize: window.spViewport(10); font.bold: true; font.family: "monospace" }
-                            }
-                            Rectangle { anchors.left: parent.left; height: parent.height; width: 1; color: "#0a0a0a" }
+                        MetaCell {
+                            Layout.fillWidth: true
+                            metaLabel: "LEN"
+                            metaValue: deck._trackDuration !== "" ? deck._trackDuration : "--:--"
                         }
                     }
                 }
             }
 
-            Rectangle { Layout.fillWidth: true; height: 1; color: "#0a0a0a" }
+            Rectangle { Layout.fillWidth: true; height: 1; color: UiTheme.separatorSubtle }
 
             // ── Overview waveform ─────────────────────────────────────────
             OverallWaveform {
                 engine: deck.engine
                 Layout.fillWidth: true
                 Layout.preferredHeight: 28
-                stripeColor: "#0d0d0d"
+                stripeColor: UiTheme.separatorSubtle
             }
 
             AnalysisProgressBar {
@@ -708,231 +746,234 @@ Item {
                 engine: deck.engine
             }
 
-            Rectangle { Layout.fillWidth: true; height: 1; color: "#0a0a0a" }
+            Rectangle { Layout.fillWidth: true; height: 1; color: UiTheme.separatorSubtle }
 
             // ── Transport / loop controls ─────────────────────────────────
-            RowLayout {
-                id: deckControlsCol
+            Item {
                 Layout.fillWidth: true
-                Layout.minimumHeight: deckControlsCol.controlsHeight
-                Layout.preferredHeight: deckControlsCol.controlsHeight
-                Layout.maximumHeight: deckControlsCol.controlsHeight
-                spacing: 0
+                readonly property int controlsHeight: deck.btnH * 2 + 1
+                Layout.minimumHeight: controlsHeight
+                Layout.preferredHeight: controlsHeight
+                Layout.maximumHeight: controlsHeight
 
-                property real unit: Math.max(24, window.spViewport(26))
-                property real controlsHeight: deck.btnH * 2 + 1
-
-                // PLAY — primary action, spans both control rows.
-                FlatBtn {
-                    btnText: deck.engine && deck.engine.isPlaying ? "Ⅱ" : "▶"
-                    fbPreferredHeight: deckControlsCol.controlsHeight
-                    fbFontPx: 18
-                    fbFontFamily: "sans-serif"
-                    Layout.preferredWidth: deckControlsCol.unit * 1.45
-                    Layout.minimumWidth: 34
-                    fbActive: deck.engine ? deck.engine.isPlaying : false
-                    fbAccent: deck.accentGrn
-                    fbActiveText: deck.accentGrn
-                    fbInactiveText: "#e8e8e8"
-                    onClicked: {
-                        if (!deck.engine) return
-                        if (performancePads.consumeHotCueHoldPlayLatch()) return
-                        deck.engine.togglePlay()
-                    }
+                Rectangle {
+                    anchors.fill: parent
+                    color: UiTheme.panelInset
                 }
 
-                Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: "#0a0a0a" }
+            ColumnLayout {
+                id: deckControlsCol
+                anchors.fill: parent
+                spacing: 1
 
-                // CUE — momentary transport button, spans both control rows.
-                FlatBtn {
-                    btnText: "CUE"
-                    fbPreferredHeight: deckControlsCol.controlsHeight
-                    fbFontPx: 10
-                    Layout.preferredWidth: deckControlsCol.unit * 1.0
-                    Layout.minimumWidth: 28
-                    fbInactiveText: "#888888"
-                    onBtnPressed:  { if (deck.engine) deck.engine.cueButtonPress() }
-                    onBtnReleased: { if (deck.engine) deck.engine.cueButtonRelease() }
-                }
-
-                Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: "#0a0a0a" }
-
-                ColumnLayout {
+                // Row 1 — transport
+                RowLayout {
                     Layout.fillWidth: true
-                    Layout.minimumHeight: deckControlsCol.controlsHeight
-                    Layout.preferredHeight: deckControlsCol.controlsHeight
-                    Layout.maximumHeight: deckControlsCol.controlsHeight
+                    Layout.preferredHeight: deck.btnH
                     spacing: 0
 
-                    // Row 1 — Transport
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.minimumHeight: deck.btnH
-                        Layout.preferredHeight: deck.btnH
-                        Layout.maximumHeight: deck.btnH
-                        color: "#181818"
+                    SectionLabel { label: "TRNS" }
 
-                        RowLayout {
-                            anchors.fill: parent
-                            spacing: 1
-
-                            FlatBtn {
-                                btnText: "REV"
-                                Layout.preferredWidth: deckControlsCol.unit
-                                fbActive: deck.engine ? deck.engine.isReverse : false
-                                fbAccent: "#ff6600"
-                                fbActiveText: "#ff6600"
-                                onClicked: { if (deck.engine) deck.engine.setReverse(!deck.engine.isReverse) }
+                    BtnGroup {
+                        FlatBtn {
+                            btnText: deck.engine && deck.engine.isPlaying ? "Ⅱ" : "▶"
+                            Layout.preferredWidth: deck.wPlay
+                            Layout.minimumWidth: deck.wPlay
+                            Layout.maximumWidth: deck.wPlay
+                            fbFontPx: 14
+                            fbFontFamily: "sans-serif"
+                            fbActive: deck.engine ? deck.engine.isPlaying : false
+                            fbAccent: "#3acc3a"
+                            fbActiveText: "#3acc3a"
+                            fbInactiveText: deck.btnTextBright
+                            onClicked: {
+                                if (!deck.engine) return
+                                if (performancePads.consumeHotCueHoldPlayLatch()) return
+                                deck.engine.togglePlay()
                             }
-
-                            FlatBtn {
-                                btnText: "SYNC"
-                                Layout.preferredWidth: deckControlsCol.unit * 1.2
-                                fbActive: deck.engine ? deck.engine.syncEnabled : false
-                                fbAccent: deck.engine && deck.engine.syncMaster ? "#ffd24d" : deck.accentGrn
-                                fbActiveText: fbAccent
-                                onClicked: {
-                                    if (!deck.engine) return
-                                    if (deck.engine.syncEnabled) deck.engine.reSync()
-                                    else deck.engine.setSyncEnabled(true)
-                                }
-                                onRightClicked: { if (deck.engine) deck.engine.setSyncEnabled(false) }
-                            }
-
-                            FlatBtn {
-                                btnText: "LINK"
-                                Layout.preferredWidth: deckControlsCol.unit * 1.1
-                                fbActive: deck.linkMode
-                                fbAccent: "#3de87a"
-                                fbActiveText: "#3de87a"
-                                fbInactiveText: deck.linkAvailable ? "#666666" : "#444444"
-                                onClicked: {
-                                    if (!deck.linkAvailable) { deck._setLinkMode(false); return }
-                                    deck._setLinkMode(!deck.linkMode)
-                                    if (deck.linkMode) deck._publishDeckToAbletonLink()
-                                }
-                            }
-
-                            Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#0a0a0a" }
-
-                            FlatBtn {
-                                btnText: "Q"
-                                Layout.preferredWidth: deckControlsCol.unit * 0.85
-                                fbActive: deck.engine ? deck.engine.quantizeEnabled : false
-                                onClicked: { if (deck.engine) deck.engine.quantizeEnabled = !deck.engine.quantizeEnabled }
-                            }
-
-                            FlatBtn {
-                                btnText: "KL"
-                                Layout.preferredWidth: deckControlsCol.unit * 0.85
-                                fbActive: deck.engine ? deck.engine.keylock : false
-                                onClicked: { if (deck.engine) deck.engine.keylock = !deck.engine.keylock }
-                            }
-
-                            FlatBtn {
-                                btnText: "SLIP"
-                                Layout.preferredWidth: deckControlsCol.unit
-                                fbActive: deck.engine ? deck.engine.slipActive : false
-                                onClicked: { if (deck.engine) deck.engine.setSlip(!deck.engine.slipActive) }
-                            }
-
-                            Item { Layout.fillWidth: true }
+                        }
+                        FlatBtn {
+                            btnText: "CUE"
+                            Layout.preferredWidth: deck.wCue
+                            Layout.minimumWidth: deck.wCue
+                            Layout.maximumWidth: deck.wCue
+                            fbFontPx: 9
+                            fbInactiveText: deck.btnTextBright
+                            onBtnPressed:  { if (deck.engine) deck.engine.cueButtonPress() }
+                            onBtnReleased: { if (deck.engine) deck.engine.cueButtonRelease() }
                         }
                     }
 
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.minimumHeight: 1
-                        Layout.preferredHeight: 1
-                        Layout.maximumHeight: 1
-                        color: "#0a0a0a"
-                    }
+                    GroupSpacer {}
 
-                    // Row 2 — Loop
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.minimumHeight: deck.btnH
-                        Layout.preferredHeight: deck.btnH
-                        Layout.maximumHeight: deck.btnH
-                        color: "#181818"
-
-                        RowLayout {
-                            anchors.fill: parent
-                            spacing: 1
-
-                            FlatBtn {
-                                btnText: "L IN"
-                                Layout.preferredWidth: deckControlsCol.unit * 1.1
-                                Layout.minimumWidth: 36
-                                onClicked: { if (deck.engine) deck.engine.setLoopIn() }
+                    BtnGroup {
+                        FlatBtn {
+                            btnText: "REV"
+                            Layout.preferredWidth: deck.wBtn
+                            Layout.minimumWidth: deck.wBtn
+                            Layout.maximumWidth: deck.wBtn
+                            fbActive: deck.engine ? deck.engine.isReverse : false
+                            onClicked: { if (deck.engine) deck.engine.setReverse(!deck.engine.isReverse) }
+                        }
+                        FlatBtn {
+                            btnText: "SYNC"
+                            Layout.preferredWidth: deck.wBtnLg
+                            Layout.minimumWidth: deck.wBtnLg
+                            Layout.maximumWidth: deck.wBtnLg
+                            fbActive: deck.engine ? deck.engine.syncEnabled : false
+                            fbAccent: "#3acc3a"
+                            fbActiveText: "#3acc3a"
+                            onClicked: {
+                                if (!deck.engine) return
+                                if (deck.engine.syncEnabled) deck.engine.reSync()
+                                else deck.engine.setSyncEnabled(true)
                             }
-
-                            FlatBtn {
-                                btnText: "L OUT"
-                                Layout.preferredWidth: deckControlsCol.unit * 1.2
-                                Layout.minimumWidth: 40
-                                onClicked: { if (deck.engine) deck.engine.setLoopOut() }
+                            onRightClicked: { if (deck.engine) deck.engine.setSyncEnabled(false) }
+                        }
+                        FlatBtn {
+                            btnText: "LINK"
+                            Layout.preferredWidth: deck.wBtn
+                            Layout.minimumWidth: deck.wBtn
+                            Layout.maximumWidth: deck.wBtn
+                            fbActive: deck.linkMode
+                            fbAccent: "#3acc3a"
+                            fbActiveText: "#3acc3a"
+                            fbInactiveText: deck.linkAvailable ? deck.btnText : "#444444"
+                            onClicked: {
+                                if (!deck.linkAvailable) { deck._setLinkMode(false); return }
+                                deck._setLinkMode(!deck.linkMode)
+                                if (deck.linkMode) deck._publishDeckToAbletonLink()
                             }
-
-                            Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: deck.btnH; color: "#0a0a0a" }
-
-                            FlatBtn {
-                                btnText: "<"
-                                Layout.preferredWidth: deckControlsCol.unit * 0.75
-                                Layout.minimumWidth: 22
-                                onClicked: { if (deck.engine) deck.engine.halveLoopLength() }
-                            }
-
-                            FlatBtn {
-                                btnText: deck.loopLabel()
-                                Layout.preferredWidth: deckControlsCol.unit * 2.0
-                                Layout.minimumWidth: 54
-                                fbActive: deck.engine ? deck.engine.loopActive : false
-                                fbAccent: deck.accentGrn
-                                fbActiveText: deck.accentGrn
-                                onClicked: { if (deck.engine) deck.engine.toggleLoop4Beats() }
-                            }
-
-                            FlatBtn {
-                                btnText: ">"
-                                Layout.preferredWidth: deckControlsCol.unit * 0.75
-                                Layout.minimumWidth: 22
-                                onClicked: { if (deck.engine) deck.engine.doubleLoopLength() }
-                            }
-
-                            FlatBtn {
-                                btnText: "3/4"
-                                Layout.preferredWidth: deckControlsCol.unit * 0.95
-                                Layout.minimumWidth: 30
-                                fbActive: deck.engine ? (deck.engine.loopActive && Math.abs(deck.engine.loopLengthBeats - 0.75) < 0.06) : false
-                                fbAccent: deck.accentBlu
-                                fbActiveText: deck.accentBlu
-                                onClicked: { if (deck.engine) deck.engine.toggleLoopThreeQuarter() }
-                            }
-
-                            FlatBtn {
-                                btnText: "LOOP"
-                                Layout.preferredWidth: deckControlsCol.unit * 1.3
-                                Layout.minimumWidth: 38
-                                readonly property bool _hasLoop: deck.engine ? deck.engine.loopInPosition < deck.engine.loopOutPosition : false
-                                opacity: _hasLoop ? 1.0 : 0.35
-                                enabled: _hasLoop
-                                fbActive: deck.engine ? deck.engine.loopActive : false
-                                fbAccent: deck.accentGrn
-                                fbActiveText: deck.accentGrn
-                                onClicked: {
-                                    if (!deck.engine) return
-                                    if (deck.engine.loopActive)
-                                        deck.engine.deactivateLoop()
-                                    else
-                                        deck.engine.reactivateLoop()
-                                }
-                            }
-
-                            Item { Layout.fillWidth: true }
                         }
                     }
+
+                    GroupSpacer {}
+
+                    BtnGroup {
+                        FlatBtn {
+                            btnText: "Q"
+                            Layout.preferredWidth: deck.wBtnSm
+                            Layout.minimumWidth: deck.wBtnSm
+                            Layout.maximumWidth: deck.wBtnSm
+                            fbActive: deck.engine ? deck.engine.quantizeEnabled : false
+                            fbAccent: deck.accent
+                            fbActiveText: deck.accent
+                            onClicked: { if (deck.engine) deck.engine.quantizeEnabled = !deck.engine.quantizeEnabled }
+                        }
+                        FlatBtn {
+                            btnText: "KL"
+                            Layout.preferredWidth: deck.wBtnSm
+                            Layout.minimumWidth: deck.wBtnSm
+                            Layout.maximumWidth: deck.wBtnSm
+                            fbActive: deck.engine ? deck.engine.keylock : false
+                            fbAccent: deck.accent
+                            fbActiveText: deck.accent
+                            onClicked: { if (deck.engine) deck.engine.keylock = !deck.engine.keylock }
+                        }
+                        FlatBtn {
+                            btnText: "SLIP"
+                            Layout.preferredWidth: deck.wBtnLg
+                            Layout.minimumWidth: deck.wBtnLg
+                            Layout.maximumWidth: deck.wBtnLg
+                            fbActive: deck.engine ? deck.engine.slipActive : false
+                            fbAccent: deck.accent
+                            fbActiveText: deck.accent
+                            onClicked: { if (deck.engine) deck.engine.setSlip(!deck.engine.slipActive) }
+                        }
+                    }
+
+                    Item { Layout.fillWidth: true }
                 }
+
+                // Row 2 — loop
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: deck.btnH
+                    spacing: 0
+
+                    SectionLabel { label: "LOOP" }
+
+                    BtnGroup {
+                        FlatBtn {
+                            btnText: "IN"
+                            Layout.preferredWidth: deck.wBtnSm
+                            Layout.minimumWidth: deck.wBtnSm
+                            Layout.maximumWidth: deck.wBtnSm
+                            onClicked: { if (deck.engine) deck.engine.setLoopIn() }
+                        }
+                        FlatBtn {
+                            btnText: "OUT"
+                            Layout.preferredWidth: deck.wBtnSm
+                            Layout.minimumWidth: deck.wBtnSm
+                            Layout.maximumWidth: deck.wBtnSm
+                            onClicked: { if (deck.engine) deck.engine.setLoopOut() }
+                        }
+                    }
+
+                    GroupSpacer {}
+
+                    BtnGroup {
+                        FlatBtn {
+                            btnText: "◀"
+                            Layout.preferredWidth: deck.wBtnSm
+                            Layout.minimumWidth: deck.wBtnSm
+                            Layout.maximumWidth: deck.wBtnSm
+                            onClicked: { if (deck.engine) deck.engine.halveLoopLength() }
+                        }
+                        FlatBtn {
+                            btnText: deck.loopLabel()
+                            Layout.preferredWidth: deck.wLoopLen
+                            Layout.minimumWidth: deck.wLoopLen
+                            Layout.maximumWidth: deck.wLoopLen
+                            fbActive: deck.engine ? deck.engine.loopActive : false
+                            fbAccent: "#3acc3a"
+                            fbActiveText: "#3acc3a"
+                            onClicked: { if (deck.engine) deck.engine.toggleLoop4Beats() }
+                        }
+                        FlatBtn {
+                            btnText: "▶"
+                            Layout.preferredWidth: deck.wBtnSm
+                            Layout.minimumWidth: deck.wBtnSm
+                            Layout.maximumWidth: deck.wBtnSm
+                            onClicked: { if (deck.engine) deck.engine.doubleLoopLength() }
+                        }
+                        FlatBtn {
+                            btnText: "3/4"
+                            Layout.preferredWidth: deck.wBtnSm
+                            Layout.minimumWidth: deck.wBtnSm
+                            Layout.maximumWidth: deck.wBtnSm
+                            fbActive: deck.engine ? (deck.engine.loopActive && Math.abs(deck.engine.loopLengthBeats - 0.75) < 0.06) : false
+                            onClicked: { if (deck.engine) deck.engine.toggleLoopThreeQuarter() }
+                        }
+                    }
+
+                    GroupSpacer {}
+
+                    BtnGroup {
+                        FlatBtn {
+                            btnText: "RELOOP"
+                            Layout.preferredWidth: deck.wReloop
+                            Layout.minimumWidth: deck.wReloop
+                            Layout.maximumWidth: deck.wReloop
+                            readonly property bool _hasLoop: deck.engine ? deck.engine.loopInPosition < deck.engine.loopOutPosition : false
+                            opacity: _hasLoop ? 1.0 : 0.35
+                            enabled: _hasLoop
+                            fbActive: deck.engine ? deck.engine.loopActive : false
+                            fbAccent: "#3acc3a"
+                            fbActiveText: "#3acc3a"
+                            onClicked: {
+                                if (!deck.engine) return
+                                if (deck.engine.loopActive)
+                                    deck.engine.deactivateLoop()
+                                else
+                                    deck.engine.reactivateLoop()
+                            }
+                        }
+                    }
+
+                    Item { Layout.fillWidth: true }
+                }
+            }
             }
 
             Rectangle {
@@ -940,68 +981,56 @@ Item {
                 Layout.minimumHeight: 1
                 Layout.preferredHeight: 1
                 Layout.maximumHeight: 1
-                color: "#0a0a0a"
+                color: UiTheme.separatorSubtle
             }
 
             // ── Performance pads + tempo fader ────────────────────────────
-            Item {
-                id: padsArea
+            RowLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                spacing: 0
 
-                RowLayout {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    height: Math.max(72, Math.round(padsArea.height * 2 / 3))
-                    spacing: 0
+                PerformancePads {
+                    id: performancePads
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    engine: deck.engine
+                    accentColor: deck.accent
+                }
 
-                    PerformancePads {
-                        id: performancePads
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        engine: deck.engine
-                        accentColor: deck.accent
-                    }
+                Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
 
-                    Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: "#0a0a0a" }
-
-                    Rectangle {
+                Rectangle {
                         id: tempoPanel
-                        Layout.preferredWidth: 56
+                        Layout.preferredWidth: deck.tempoPanelW
+                        Layout.minimumWidth: deck.tempoPanelW
+                        Layout.maximumWidth: deck.tempoPanelW
                         Layout.fillHeight: true
-                        color: "#181818"
+                        color: UiTheme.panel
 
                         property real tempoRange: deck.engine ? deck.engine.tempoRangePercent : 8
 
-                        Rectangle {
-                            anchors.left: parent.left
-                            height: parent.height
-                            width: 1
-                            color: "#0a0a0a"
-                        }
-
                         ColumnLayout {
                             anchors.fill: parent
-                            anchors.margins: 3
-                            spacing: 2
+                            anchors.margins: 2
+                            spacing: 1
 
                             Rectangle {
                                 id: tempoHeader
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 18
+                                Layout.preferredHeight: 16
                                 color: "transparent"
 
                                 Row {
                                     anchors.centerIn: parent; spacing: 3
-                                    Text { text: "TEMPO"; color: "#555555"; font.pixelSize: window.spViewport(7); font.bold: true; font.letterSpacing: 0.6; font.family: "monospace"; anchors.verticalCenter: parent.verticalCenter }
-                                    Text { text: "▾"; color: "#666666"; font.pixelSize: window.spViewport(8); anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "TEMPO"; color: "#666666"; font.pixelSize: 7; font.bold: true; font.letterSpacing: 0.6; font.family: "monospace"; anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "▾"; color: "#777777"; font.pixelSize: 8; anchors.verticalCenter: parent.verticalCenter }
                                 }
                                 MouseArea {
                                     anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                                     onClicked: tempoRangePopup.visible = !tempoRangePopup.visible
                                 }
-                                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#222222" }
+                                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: UiTheme.separatorSubtle }
                             }
 
                             DeckSlider {
@@ -1020,15 +1049,12 @@ Item {
                             Text {
                                 Layout.alignment: Qt.AlignHCenter
                                 text: (tempoSlider.value >= 0 ? "+" : "") + tempoSlider.value.toFixed(1) + "%"
-                                color: tempoSlider.value > 0 ? "#ffaa00"
-                                     : tempoSlider.value < 0 ? "#888888"
-                                     : "#333333"
-                                font.pixelSize: window.spViewport(9); font.bold: true; font.family: "monospace"
+                                color: Math.abs(tempoSlider.value) > 0.05 ? deck.metaValue : deck.metaEmpty
+                                font.pixelSize: 9; font.bold: true; font.family: "monospace"
                             }
                         }
                     }
                 }
-            }
         }
 
         // ── Drop-hover overlay (must be above all content) ────────────────
@@ -1055,8 +1081,8 @@ Item {
             visible: false; z: 999
             x: tempoPanel.x; y: tempoPanel.y + tempoHeader.height + 2
             width: tempoPanel.width; height: rangeCol.implicitHeight + 10
-            color: "#181818"
-            border.color: "#333333"
+            color: UiTheme.panel
+            border.color: UiTheme.separator
             border.width: 1
             radius: 0
 
@@ -1081,21 +1107,21 @@ Item {
                         width: rangeCol.width
                         height: 18
                         radius: 0
-                        color: isActive ? "#1a1a2a" : "#181818"
+                        color: isActive ? UiTheme.panelRaised : UiTheme.panel
 
                         Rectangle {
                             anchors.bottom: parent.bottom
                             anchors.left: parent.left
                             anchors.right: parent.right
                             height: 1
-                            color: isActive ? deck.accent : "#222222"
+                            color: isActive ? deck.btnLineActive : deck.btnLine
                         }
 
                         Text {
                             anchors.centerIn: parent
                             text: modelData.label
-                            color: isActive ? deck.accent : "#484848"
-                            font.pixelSize: window.spViewport(8)
+                            color: isActive ? deck.btnTextActive : "#484848"
+                            font.pixelSize: 8
                             font.bold: isActive
                             font.family: "monospace"
                         }
@@ -1135,16 +1161,16 @@ Item {
 
             Column {
                 anchors.fill: parent; anchors.margins: 6; spacing: 6
-                Text { text: "MANUAL BPM"; color: "#555555"; font.pixelSize: window.spViewport(8); font.bold: true; font.family: "monospace" }
+                Text { text: "MANUAL BPM"; color: "#555555"; font.pixelSize: 8; font.bold: true; font.family: "monospace" }
                 Controls.TextField {
                     id: manualBpmField
                     width: parent.width; height: 28
                     placeholderText: "e.g. 124.50"
                     color: "#e8e8e8"
                     placeholderTextColor: "#484848"
-                    selectionColor: deck.accentGrn
-                    selectedTextColor: "#181818"
-                    font.pixelSize: window.spViewport(10); font.bold: true; font.family: "monospace"
+                    selectionColor: deck.btnLineActive
+                    selectedTextColor: deck.btnBg
+                    font.pixelSize: 10; font.bold: true; font.family: "monospace"
                     background: Rectangle {
                         color: "#1e1e1e"
                         radius: 0
@@ -1153,7 +1179,7 @@ Item {
                             anchors.left: parent.left
                             anchors.right: parent.right
                             height: 1
-                            color: manualBpmField.activeFocus ? deck.accentGrn : "#333333"
+                            color: manualBpmField.activeFocus ? deck.btnLineActive : "#333333"
                         }
                     }
                     onAccepted: applyManualBpm()
@@ -1164,7 +1190,7 @@ Item {
                         manualBpmPopup.visible = false
                     }
                 }
-                Text { text: "Enter to apply"; color: "#484848"; font.pixelSize: window.spViewport(7); font.family: "monospace" }
+                Text { text: "Enter to apply"; color: "#484848"; font.pixelSize: 7; font.family: "monospace" }
             }
         }
 

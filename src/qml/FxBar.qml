@@ -1,19 +1,20 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
+import DJSoftware
 
 Rectangle {
     id: root
 
-    color: "#181818"
+    color: UiTheme.panel
     height: window.fxBarHeight
 
     Rectangle {
-        anchors.top:   parent.top
-        anchors.left:  parent.left
+        anchors.top: parent.top
+        anchors.left: parent.left
         anchors.right: parent.right
         height: 1
-        color:  "#0a0a0a"
+        color: UiTheme.separatorSubtle
     }
 
     RowLayout {
@@ -28,12 +29,12 @@ Rectangle {
             Layout.fillHeight: true
         }
 
-        Rectangle { width: 1; Layout.fillHeight: true; color: "#0a0a0a" }
+        Rectangle { width: 1; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
 
         // ── Sound Color panel ─────────────────────────────────────────────
         Rectangle {
             id: scPanel
-            color: "#181818"
+            color: UiTheme.panel
             Layout.preferredWidth: 248
             Layout.fillHeight:     true
 
@@ -144,7 +145,7 @@ Rectangle {
                                 width:  Math.floor((scPanel.width - 44 - 5 * 3) / 4)
                                 height: 20
                                 radius: 1
-                                color:  isActive ? "#2a2a2a" : "#1c1c1c"
+                                color: isActive ? UiTheme.panelRaised : UiTheme.panelDeep
 
                                 // Active accent bar at top
                                 Rectangle {
@@ -184,7 +185,7 @@ Rectangle {
             }
         }
 
-        Rectangle { width: 1; Layout.fillHeight: true; color: "#0a0a0a" }
+        Rectangle { width: 1; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
 
         FxUnit {
             id: fxUnit2

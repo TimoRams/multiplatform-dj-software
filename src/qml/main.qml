@@ -36,6 +36,7 @@ ApplicationWindow {
     property bool allInOneMode: false
     property string activeMainTab: "performance"
     property bool _desktopShowMixer: true
+    property bool _desktopShowFxBar: true
 
     readonly property bool allInOnePanelActive: window.allInOneMode && window.activeMainTab !== "performance"
     readonly property bool libraryPanelActive: window.allInOneMode && window.activeMainTab === "library"
@@ -72,9 +73,12 @@ ApplicationWindow {
     function setAllInOneMode(enabled) {
         if (enabled) {
             window._desktopShowMixer = window.showMixer
+            window._desktopShowFxBar = window.showFxBar
             window.showMixer = false
+            window.showFxBar = false
         } else {
             window.showMixer = window._desktopShowMixer
+            window.showFxBar = window._desktopShowFxBar
         }
         allInOneMode = enabled
         libraryExpanded = false
@@ -780,8 +784,9 @@ ApplicationWindow {
 
                     MixerSection {
                         visible: window.showMixer
-                        Layout.preferredWidth: window.mixerBaseWidth
-                        Layout.minimumWidth: window.mixerBaseWidth
+                        Layout.preferredWidth: window.showMixer ? window.mixerBaseWidth : 0
+                        Layout.minimumWidth: window.showMixer ? window.mixerBaseWidth : 0
+                        Layout.maximumWidth: window.showMixer ? window.mixerBaseWidth : 0
                         Layout.fillHeight: true
                         engineA: deckA
                         engineB: deckB
@@ -836,8 +841,10 @@ ApplicationWindow {
                     }
 
                     MixerSection {
-                        Layout.preferredWidth: window.mixerBaseWidth
-                        Layout.minimumWidth: window.mixerBaseWidth
+                        visible: window.showMixer
+                        Layout.preferredWidth: window.showMixer ? window.mixerBaseWidth : 0
+                        Layout.minimumWidth: window.showMixer ? window.mixerBaseWidth : 0
+                        Layout.maximumWidth: window.showMixer ? window.mixerBaseWidth : 0
                         Layout.fillHeight: true
                         engineA: deckC
                         engineB: deckD
@@ -1121,7 +1128,7 @@ ApplicationWindow {
                     radius: 0
                     color: yesArea.pressed ? "#3b3b3b" : "#353535"
                     border.width: 1
-                    border.color: "#000000"
+                    border.color: UiTheme.separator
 
                     Text {
                         anchors.centerIn: parent
@@ -1145,7 +1152,7 @@ ApplicationWindow {
                     radius: 0
                     color: noArea.pressed ? "#3b3b3b" : "#353535"
                     border.width: 1
-                    border.color: "#000000"
+                    border.color: UiTheme.separator
 
                     Text {
                         anchors.centerIn: parent
@@ -1169,7 +1176,7 @@ ApplicationWindow {
                 height: 6
                 color: "#1f1f1f"
                 border.width: 1
-                border.color: "#000000"
+                border.color: UiTheme.separator
                 visible: window.exitShutdownInProgress
 
                 Rectangle {

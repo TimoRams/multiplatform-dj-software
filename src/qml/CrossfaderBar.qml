@@ -1,10 +1,11 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
+import DJSoftware
 
 Rectangle {
     id: cfBar
-    color: "#080808"
+    color: UiTheme.panel
 
     property var  engineA: null
     property var  engineB: null
@@ -171,10 +172,15 @@ Rectangle {
                 required property string modelData
                 required property int    index
                 Layout.preferredWidth: 18; Layout.preferredHeight: 20
-                radius: 2
-                color:        ag.currentAssign === modelData ? "#1e1e1e" : "#0d0d0d"
-                border.width: 1
-                border.color: ag.currentAssign === modelData ? ag.deckAccent : "#1c1c1c"
+                radius: 0
+                color: ag.currentAssign === modelData ? UiTheme.panelRaised : UiTheme.panelDeep
+
+                Rectangle {
+                    anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
+                    height: ag.currentAssign === modelData ? 2 : 0
+                    visible: ag.currentAssign === modelData
+                    color: ag.deckAccent
+                }
                 Text {
                     anchors.centerIn: parent; text: parent.modelData
                     color: ag.currentAssign === parent.modelData ? ag.deckAccent : "#3a3a3a"
@@ -199,7 +205,7 @@ Rectangle {
         spacing: 3
 
         Rectangle {
-            width: 1; height: cfBar.height - 12; color: "#1c1c1c"
+            width: 1; height: cfBar.height - 12; color: UiTheme.separatorSubtle
             Layout.rightMargin: 5
         }
 
@@ -213,10 +219,16 @@ Rectangle {
                 required property var modelData
                 required property int index
                 Layout.preferredWidth: 28; Layout.preferredHeight: 20
-                radius: 2
+                radius: 0
                 readonly property bool isActive: cfBar.cfCurveMode === modelData.mode
-                color:        isActive ? "#171717" : "#0d0d0d"
-                border.width: 1; border.color: isActive ? "#3a7ad4" : "#1c1c1c"
+                color: isActive ? UiTheme.panelRaised : UiTheme.panelDeep
+
+                Rectangle {
+                    anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
+                    height: isActive ? 2 : 0
+                    visible: isActive
+                    color: "#3a7ad4"
+                }
                 Text {
                     anchors.centerIn: parent; text: parent.modelData.label
                     color: parent.isActive ? "#7ab8f5" : "#444"
@@ -249,12 +261,18 @@ Rectangle {
                 required property var modelData
                 required property int index
                 Layout.preferredWidth: 28; Layout.preferredHeight: 20
-                radius: 2
+                radius: 0
                 readonly property bool isActive: !cfBar.cfCurveIsLinear
                                                  && Math.abs(cfBar.cfSharpness - modelData.s) < 0.02
                 opacity: cfBar.cfCurveIsLinear ? 0.45 : 1.0
-                color:        isActive ? "#171717" : "#0d0d0d"
-                border.width: 1; border.color: isActive ? "#3a7ad4" : "#1c1c1c"
+                color: isActive ? UiTheme.panelRaised : UiTheme.panelDeep
+
+                Rectangle {
+                    anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
+                    height: isActive ? 2 : 0
+                    visible: isActive
+                    color: "#3a7ad4"
+                }
                 Text {
                     anchors.centerIn: parent; text: parent.modelData.label
                     color: parent.isActive ? "#7ab8f5" : "#444"
@@ -401,10 +419,10 @@ Rectangle {
                 var w = width; var h = height
                 var pad = 2
 
-                ctx.fillStyle = "#0a0a0a"; ctx.fillRect(0,0,w,h)
-                ctx.strokeStyle = "#1c1c1c"; ctx.lineWidth = 1
+                ctx.fillStyle = "#161616"; ctx.fillRect(0,0,w,h)
+                ctx.strokeStyle = "#2a2a2a"; ctx.lineWidth = 1
                 ctx.strokeRect(0.5, 0.5, w-1, h-1)
-                ctx.strokeStyle = "#252525"; ctx.lineWidth = 0.5
+                ctx.strokeStyle = "#333333"; ctx.lineWidth = 0.5
                 ctx.beginPath(); ctx.moveTo(w/2, pad); ctx.lineTo(w/2, h-pad); ctx.stroke()
 
                 function drawCurve(color, isA) {
@@ -483,10 +501,10 @@ Rectangle {
                 background: Rectangle {
                     x: cfSlider.leftPadding; y: cfSlider.height/2 - height/2
                     width: cfSlider.availableWidth; height: 4
-                    radius: 1; color: "#161616"; border.width: 1; border.color: "#0a0a0a"
+                    radius: 0; color: UiTheme.faderTrack
                     Rectangle {
-                        y: 1; height: parent.height - 2; radius: 1
-                        color: cfSlider.pressed ? "#4a4a4a" : "#303030"
+                        y: 1; height: parent.height - 2; radius: 0
+                        color: cfSlider.pressed ? UiTheme.borderHover : UiTheme.faderFill
                         readonly property real mid: parent.width / 2
                         readonly property real pos: 1 + cfSlider.visualPosition * (parent.width - 2)
                         x: Math.min(mid, pos); width: Math.max(0, Math.abs(pos - mid))
@@ -496,10 +514,10 @@ Rectangle {
                 handle: Rectangle {
                     x: cfSlider.leftPadding + cfSlider.visualPosition * (cfSlider.availableWidth - width)
                     y: cfSlider.height / 2 - height / 2
-                    implicitWidth: 18; implicitHeight: 22; radius: 2
-                    color: cfSlider.pressed || cfSlider.cfDragActive ? "#f0f0f0" : "#d0d0d0"
-                    border.width: 1; border.color: "#888"
-                    Rectangle { anchors.centerIn: parent; width: 2; height: parent.height * 0.48; color: "#888" }
+                    implicitWidth: 18; implicitHeight: 22; radius: 0
+                    color: cfSlider.pressed || cfSlider.cfDragActive ? "#f0f0f0" : UiTheme.faderCap
+
+                    Rectangle { anchors.centerIn: parent; width: 2; height: parent.height * 0.48; color: "#666666" }
                 }
 
                 MouseArea {

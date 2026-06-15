@@ -2,69 +2,78 @@ pragma Singleton
 import QtQuick
 
 QtObject {
-    // ── Surfaces (Pioneer CDJ matte chassis) ───────────────────────────────
-    readonly property color bgDeep:     "#040404"
-    readonly property color bg0:        "#060606"
-    readonly property color bg1:        "#0a0a0a"
-    readonly property color bg2:        "#101010"
-    readonly property color bg3:        "#161616"
-    readonly property color bg4:        "#1c1c1c"
-    readonly property color bg5:        "#242424"
-    readonly property color bgDisplay:  "#050508"
+    // ── Flat panel surfaces (no faux-3D) ───────────────────────────────────
+    readonly property color panel:         "#181818"
+    readonly property color panelDeep:     "#141414"
+    readonly property color panelInset:    "#161616"
+    readonly property color panelRaised:   "#1c1c1c"
 
-    // ── Bezels & hardware edges ────────────────────────────────────────────
-    readonly property color bezelOuter:   "#2e2e2e"
-    readonly property color bezelInner:   "#080808"
-    readonly property color bezelHighlight: "#3a3a3a"
-    readonly property color bezelShadow:  "#020202"
-    readonly property color panelInset:   "#0d0d0d"
+    // Legacy aliases — keep call sites working with the flat palette
+    readonly property color bgDeep:        panelDeep
+    readonly property color bg0:           panelDeep
+    readonly property color bg1:           panel
+    readonly property color bg2:           panelRaised
+    readonly property color bg3:           panelRaised
+    readonly property color bg4:           "#222222"
+    readonly property color bg5:           "#282828"
+    readonly property color bgDisplay:     "#121214"
 
-    // ── Dividers & borders ─────────────────────────────────────────────────
-    readonly property color divider:       "#181818"
-    readonly property color dividerStrong: "#222222"
-    readonly property color border:        "#2a2a2a"
-    readonly property color borderHover:   "#444444"
+    // ── Separators (soft grey, never pitch-black) ─────────────────────────
+    readonly property color separator:       "#2a2a2a"
+    readonly property color separatorSubtle: "#222222"
+    readonly property color divider:         separatorSubtle
+    readonly property color dividerStrong:   separator
+
+    // Legacy bezel tokens → flat separators (highlights/shadows disabled)
+    readonly property color bezelOuter:      separatorSubtle
+    readonly property color bezelInner:      separatorSubtle
+    readonly property color bezelHighlight:  separatorSubtle
+    readonly property color bezelShadow:     separatorSubtle
+
+    // ── Controls ──────────────────────────────────────────────────────────
+    readonly property color border:        "#303030"
+    readonly property color borderHover:   "#454545"
     readonly property color borderActive:  "#555555"
 
-    // ── Text (silk-screen + LCD readouts) ──────────────────────────────────
+    // ── Text ──────────────────────────────────────────────────────────────
     readonly property color textPrimary:   "#ececec"
     readonly property color textSecondary: "#9a9a9a"
     readonly property color textLabel:     "#5c5c5c"
     readonly property color textDim:       "#484848"
-    readonly property color textMuted:     "#333333"
+    readonly property color textMuted:     "#383838"
 
-    // ── Functional accents ─────────────────────────────────────────────────
-    readonly property color green:       "#3de87a"
+    // ── Functional accents ────────────────────────────────────────────────
+    readonly property color green:       "#3acc3a"
     readonly property color greenBright:  "#5dffa0"
-    readonly property color greenDim:    "#0a1a10"
-    readonly property color greenGlow:   "#1a4028"
+    readonly property color greenDim:    "#1a241a"
+    readonly property color greenGlow:   "#243828"
     readonly property color blue:        "#5bb6ff"
-    readonly property color blueDim:     "#0a1420"
+    readonly property color blueDim:     "#141820"
     readonly property color masterBlue:  "#0080c8"
     readonly property color orange:      "#ffaa00"
-    readonly property color orangeDim:   "#2a1800"
+    readonly property color orangeDim:   "#241808"
     readonly property color red:         "#e03535"
     readonly property color playhead:    "#f0f0f0"
 
-    // ── Deck identity ──────────────────────────────────────────────────────
+    // ── Deck identity ─────────────────────────────────────────────────────
     readonly property color deckA:  "#ff8c00"
     readonly property color deckB:  "#00b8e6"
     readonly property color deckC:  "#b855ff"
     readonly property color deckD:  "#3de8a8"
 
-    // ── Knob / fader hardware ──────────────────────────────────────────────
-    readonly property color knobTrack:   "#1a1a1a"
-    readonly property color knobFace:    "#141414"
-    readonly property color knobHandle:  "#d0d0d0"
-    readonly property color faderTrack:  "#0a0a0a"
-    readonly property color faderFill:   "#3a3a3a"
+    // ── Knob / fader ──────────────────────────────────────────────────────
+    readonly property color knobTrack:   "#1e1e1e"
+    readonly property color knobFace:    "#181818"
+    readonly property color knobHandle:  "#c8c8c8"
+    readonly property color faderTrack:  "#161616"
+    readonly property color faderFill:   "#404040"
     readonly property color faderCap:    "#c8c8c8"
     readonly property real  knobArcW:    0.08
 
-    // ── Performance pads ───────────────────────────────────────────────────
-    readonly property color padEmpty:    "#121212"
-    readonly property color padBorder:   "#1e1e1e"
-    readonly property color padBorderHi: "#333333"
+    // ── Performance pads ──────────────────────────────────────────────────
+    readonly property color padEmpty:    "#161616"
+    readonly property color padBorder:   separatorSubtle
+    readonly property color padBorderHi: separator
 
     function deckColor(name) {
         switch (name) {
@@ -89,7 +98,7 @@ QtObject {
     function buttonBg(active, hovered, pressed) {
         if (pressed)  return bg5
         if (active)   return bg4
-        if (hovered)  return bg4
-        return bg3
+        if (hovered)  return bg3
+        return panelRaised
     }
 }

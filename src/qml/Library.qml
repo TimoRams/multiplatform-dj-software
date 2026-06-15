@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
-import QtQuick.Controls
+import QtQuick.Controls.Basic
 
 Rectangle {
     id: libraryRoot
@@ -1006,7 +1006,7 @@ Rectangle {
 
         Rectangle {
             anchors.fill: parent
-            color: "#0a0a0a"
+            color: "#141414"
         }
 
         Connections {
@@ -1089,27 +1089,6 @@ Rectangle {
                         ? "#163328"
                         : (rowIndex % 2 === 0 ? libraryRoot.bgRowEven : libraryRoot.bgRowOdd))
                 opacity: trDragPayload.dragging ? 0.4 : 1.0
-
-                Rectangle {
-                    anchors.right: parent.left
-                    width: 10; height: parent.height
-                    visible: tr.touchMode && tr.swipeX > 6
-                    gradient: Gradient {
-                        orientation: Gradient.Horizontal
-                        GradientStop { position: 0.0; color: "transparent" }
-                        GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.45) }
-                    }
-                }
-                Rectangle {
-                    anchors.left: parent.right
-                    width: 10; height: parent.height
-                    visible: tr.touchMode && tr.swipeX < -6
-                    gradient: Gradient {
-                        orientation: Gradient.Horizontal
-                        GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.45) }
-                        GradientStop { position: 1.0; color: "transparent" }
-                    }
-                }
 
         Rectangle {
             anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom

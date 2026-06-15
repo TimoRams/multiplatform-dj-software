@@ -29,28 +29,17 @@ Controls.Button {
         radius: 0
         color:  UiTheme.buttonBg(control.checked || control.down, control.hovered, control.down)
 
-        // Top highlight — recessed hardware button
-        Rectangle {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            height: 1
-            color: control.down ? UiTheme.bezelShadow : UiTheme.bezelHighlight
-            opacity: control.enabled ? 0.35 : 0.12
-        }
-
-        // Bottom LED accent
         Rectangle {
             anchors.left:   parent.left
             anchors.right:  parent.right
             anchors.bottom: parent.bottom
             height: control.checked || control.down ? 2 : 1
             color: !control.enabled
-                   ? UiTheme.divider
+                   ? UiTheme.separatorSubtle
                    : (control.checked || control.down)
                      ? accentColor
                      : (control.hovered ? UiTheme.borderHover : UiTheme.border)
-            opacity: control.checked || control.down ? 1.0 : (control.hovered ? 0.6 : 0.35)
+            opacity: control.checked || control.down ? 1.0 : (control.hovered ? 0.55 : 0.35)
         }
     }
 

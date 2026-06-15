@@ -175,8 +175,8 @@ Item {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: 26
-            spacing: 1
+            Layout.preferredHeight: 24
+            spacing: 2
 
             Repeater {
                 model: root.tabs
@@ -186,24 +186,22 @@ Item {
                     required property var modelData
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    radius: 1
-                    color: root.activeTab === index ? UiTheme.bg4 : UiTheme.bg2
-                    border.width: 1
-                    border.color: root.activeTab === index ? Qt.darker(root.accentColor, 1.4) : UiTheme.padBorder
+                    radius: 0
+                    color: root.activeTab === index ? UiTheme.panelRaised : UiTheme.panel
 
                     Rectangle {
                         anchors.bottom: parent.bottom
                         anchors.left: parent.left; anchors.right: parent.right
-                        height: 2
-                        color: root.accentColor
+                        height: root.activeTab === index ? 2 : 0
                         visible: root.activeTab === index
+                        color: root.accentColor
                     }
 
                     Text {
                         anchors.centerIn: parent
                         text: modelData
                         color: root.activeTab === index ? UiTheme.textPrimary : UiTheme.textLabel
-                        font.pixelSize: window.spViewport(8)
+                        font.pixelSize: 8
                         font.bold: root.activeTab === index
                         font.letterSpacing: 0.6
                     }
@@ -230,8 +228,8 @@ Item {
                 Layout.fillHeight: true
                 columns: 4
                 rows: 2
-                columnSpacing: 3
-                rowSpacing: 3
+                columnSpacing: 4
+                rowSpacing: 4
 
                 Repeater {
                     model: 8
@@ -267,37 +265,19 @@ Item {
                             return UiTheme.padEmpty
                         }
 
-                        radius: 1
+                        radius: 0
                         color: padMouse.pressed
-                               ? Qt.lighter(activeColor, 1.4)
+                               ? Qt.lighter(activeColor, 1.12)
                                : padMouse.containsMouse
-                                 ? Qt.lighter(activeColor, 1.15)
+                                 ? Qt.lighter(activeColor, 1.06)
                                  : activeColor
-
-                        border.color: {
-                            if (padSet && kind === "loop") return Qt.lighter(root.padColor(index), 1.4)
-                            if (padSet)                    return Qt.lighter(root.padColor(index), 1.6)
-                            if (padFxLit)                  return Qt.lighter(root.padFxDefs[index].activeColor, 1.6)
-                            return padMouse.containsMouse ? UiTheme.padBorderHi : UiTheme.padBorder
-                        }
-                        border.width: padSet ? 2 : 1
-
-                        Rectangle {
-                            anchors.fill: parent
-                            anchors.margins: 1
-                            radius: parent.radius
-                            visible: padSet || padFxLit
-                            color: "transparent"
-                            border.width: 1
-                            border.color: Qt.rgba(1, 1, 1, 0.12)
-                        }
 
                         Text {
                             anchors.top: parent.top; anchors.left: parent.left
                             anchors.margins: 4
                             text: (index + 1).toString()
                             color: padSet || padFxLit ? "#cccccc" : "#3a3a3a"
-                            font.pixelSize: window.spViewport(7)
+                            font.pixelSize: 7
                             font.bold: true
                             font.family: "monospace"
                         }
@@ -310,7 +290,7 @@ Item {
                             anchors.margins: 3
                             text: "L"
                             color: "#a8ffd0"
-                            font.pixelSize: window.spViewport(6)
+                            font.pixelSize: 6
                             font.bold: true
                         }
 
@@ -329,7 +309,7 @@ Item {
                                 if (isPadFxTab)            return padFxLit ? "#ffffff" : (index < 4 ? "#606060" : "#505050")
                                 return "#333"
                             }
-                            font.pixelSize: (isHotCueTab && !padSet) ? window.spViewport(16) : window.spViewport(8)
+                            font.pixelSize: (isHotCueTab && !padSet) ? 16 : 8
                             font.bold: (isHotCueTab && padSet) || isPadFxTab
                             font.letterSpacing: isPadFxTab ? 0.4 : 0.0
                             font.family: "monospace"
@@ -342,7 +322,7 @@ Item {
                             anchors.bottomMargin: 3
                             text: "HOLD"
                             color: "#555"
-                            font.pixelSize: window.spViewport(5)
+                            font.pixelSize: 5
                             font.family: "monospace"
                         }
 
@@ -488,7 +468,7 @@ Item {
         padding: 6
 
         background: Rectangle {
-            color: "#242424"; border.color: "#111"; border.width: 1; radius: 2
+            color: UiTheme.panelRaised; border.color: UiTheme.separator; border.width: 1; radius: 0
         }
 
         GridLayout {
@@ -500,8 +480,7 @@ Item {
                 Rectangle {
                     required property var modelData
                     Layout.preferredWidth: 26; Layout.preferredHeight: 26
-                    radius: 2; color: modelData
-                    border.color: Qt.lighter(modelData, 1.3); border.width: 1
+                    radius: 0; color: modelData
 
                     MouseArea {
                         anchors.fill: parent; cursorShape: Qt.PointingHandCursor

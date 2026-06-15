@@ -6,31 +6,15 @@ Item {
     id: root
 
     property var engine: null
-    property color stripeColor: "#2a2a2a"
+    property color stripeColor: UiTheme.separatorSubtle
 
     Layout.fillWidth: true
     Layout.preferredHeight: 44
 
     Rectangle {
         anchors.fill: parent
-        color: "#151719"
+        color: UiTheme.bgDisplay
         clip: true
-
-        gradient: Gradient {
-            orientation: Gradient.Vertical
-            GradientStop { position: 0.00; color: "#202326" }
-            GradientStop { position: 0.45; color: "#151719" }
-            GradientStop { position: 1.00; color: "#0a0b0c" }
-        }
-
-        Rectangle {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            height: 1
-            color: "#ffffff"
-            opacity: 0.08
-        }
 
         Rectangle {
             anchors.left: parent.left
@@ -38,16 +22,12 @@ Item {
             anchors.bottom: parent.bottom
             height: 1
             color: root.stripeColor
-            opacity: 0.28
         }
 
         Item {
             id: overviewViewport
             anchors.fill: parent
-            anchors.leftMargin: 2
-            anchors.rightMargin: 2
-            anchors.topMargin: 2
-            anchors.bottomMargin: 2
+            anchors.margins: 1
             clip: true
 
             RgbWaveformItem {
@@ -58,7 +38,7 @@ Item {
             }
         }
 
-        // ── Loop region — active, pending LOOP IN preview, or saved ghost ──
+        // ── Loop region ───────────────────────────────────────────────────
         Item {
             visible: root.engine !== null &&
                      root.engine.loopInSet &&
@@ -89,30 +69,16 @@ Item {
 
             Rectangle {
                 anchors.fill: parent
-                color: parent._active ? "#2b7cff1c"
-                    : (parent._pending ? "#2b9fff14" : "#7fd7ff10")
+                color: parent._active ? "#2b7cff18"
+                    : (parent._pending ? "#2b9fff12" : "#7fd7ff0c")
             }
             Rectangle {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 height: 1
-                color: parent._active || parent._pending ? "#a9e8ff" : "#6a8d98"
-                opacity: parent._active ? 0.62 : (parent._pending ? 0.52 : 0.38)
-            }
-            Rectangle {
-                anchors.left: parent.left
-                anchors.top: parent.top
-                anchors.bottom: parent.bottom
-                width: 1
-                color: parent._active || parent._pending ? "#bfffe9" : "#547b73"
-            }
-            Rectangle {
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.bottom: parent.bottom
-                width: 1
-                color: parent._active || parent._pending ? "#bfffe9" : "#547b73"
+                color: parent._active || parent._pending ? "#7ab8d8" : "#4a6068"
+                opacity: parent._active ? 0.55 : (parent._pending ? 0.45 : 0.3)
             }
         }
 
@@ -132,41 +98,17 @@ Item {
 
             Rectangle {
                 anchors.centerIn: parent
-                width: 7
-                height: parent.height
-                color: "#ff2018"
-                opacity: 0.18
-            }
-            Rectangle {
-                anchors.centerIn: parent
                 width: 2
                 height: parent.height
-                color: "#f4f4f4"
-                opacity: 0.95
-            }
-            Rectangle {
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.top: parent.top
-                width: 10
-                height: 3
-                color: "#f4f4f4"
-            }
-            Rectangle {
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.bottom: parent.bottom
-                width: 10
-                height: 2
-                color: "#ff2018"
+                color: UiTheme.playhead
             }
         }
 
-        // Scrubbing / seeking
         MouseArea {
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
-            
+
             onPressed: (mouse) => seekTo(mouse.x)
-            
             onPositionChanged: (mouse) => seekTo(mouse.x)
 
             function seekTo(xPos) {
@@ -181,13 +123,8 @@ Item {
                         var loopInProgress  = root.engine.loopInPosition  / trackLength
                         var loopOutProgress = root.engine.loopOutPosition / trackLength
 
-                        if (progress > loopOutProgress) {
-                            // Past loop end → wrap to loop start, loop stays active.
+                        if (progress > loopOutProgress)
                             progress = loopInProgress
-                        }
-                        // Before loop start → jump there, audio plays through to loop.
-                        // Inside loop → normal jump.
-                        // Loop stays active in all cases.
                     }
                 }
 

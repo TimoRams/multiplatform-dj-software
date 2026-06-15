@@ -9,7 +9,7 @@ import DJSoftware
 
 Rectangle {
     id: mixer
-    color: UiTheme.bgDeep
+    color: UiTheme.panel
 
     property var  engineA: null
     property var  engineB: null
@@ -104,10 +104,8 @@ Rectangle {
         id: vu
         required property real levelLinear
 
-        color: UiTheme.bgDeep
-        radius: 1
-        border.width: 1
-        border.color: UiTheme.bezelShadow
+        color: UiTheme.panelDeep
+        radius: 0
 
         property real peakHoldLevel: 0.0
         readonly property int segs: 28
@@ -145,7 +143,7 @@ Rectangle {
                         const peak = Math.floor(vu.peakHoldLevel * vu.segs) - 1
                         if (ri === peak && peak >= 0) return "#ffffff"
                         if (ri < lit) return vu.segColor(ri)
-                        return "#101010"
+                        return UiTheme.knobTrack
                     }
                 }
             }
@@ -166,10 +164,8 @@ Rectangle {
 
             Rectangle {
                 anchors.fill: parent
-                radius: 1
-                color: UiTheme.bgDeep
-                border.width: 1
-                border.color: UiTheme.bezelShadow
+                radius: 0
+                color: UiTheme.faderTrack
             }
             Rectangle {
                 anchors.left: parent.left; anchors.right: parent.right
@@ -186,10 +182,8 @@ Rectangle {
             implicitHeight: 13
             x: ms.width / 2 - width / 2
             y: ms.topPadding + ms.visualPosition * (ms.availableHeight - height)
-            radius: 1
-            color: ms.pressed || ms.dragActive ? "#eeeeee" : UiTheme.faderCap
-            border.width: 1
-            border.color: UiTheme.borderHover
+            radius: 0
+            color: ms.pressed || ms.dragActive ? "#e8e8e8" : UiTheme.faderCap
 
             Rectangle {
                 anchors.left: parent.left; anchors.right: parent.right
@@ -230,15 +224,15 @@ Rectangle {
 
         Layout.fillWidth: true
         Layout.preferredHeight: mixer.labelH
-        color: UiTheme.bg0
+        color: UiTheme.panelDeep
 
         Rectangle {
-            width: 3
+            width: 1
             height: parent.height
             anchors.left: mirrored ? parent.left : undefined
             anchors.right: mirrored ? undefined : parent.right
             color: accent
-            opacity: 0.9
+            opacity: 0.65
         }
         Text {
             anchors.centerIn: parent
@@ -250,7 +244,7 @@ Rectangle {
             font.family: "monospace"
             font.letterSpacing: 2.0
         }
-        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: UiTheme.divider }
+        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: UiTheme.separatorSubtle }
     }
 
     component KnobStackColumn: ColumnLayout {
@@ -276,18 +270,7 @@ Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.preferredWidth: mixer.knobColW
-            color: UiTheme.panelInset
-            border.width: 1
-            border.color: UiTheme.bezelInner
-
-            Rectangle {
-                width: 1
-                height: parent.height
-                anchors.left: mirrored ? parent.left : undefined
-                anchors.right: mirrored ? undefined : parent.right
-                color: accent
-                opacity: 0.35
-            }
+            color: UiTheme.panel
 
             ColumnLayout {
                 anchors.fill: parent
@@ -337,9 +320,7 @@ Rectangle {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: mixer.cueH
-                    color: cueActive ? UiTheme.greenDim : UiTheme.bg3
-                    border.width: 1
-                    border.color: cueActive ? Qt.darker(UiTheme.green, 1.6) : UiTheme.border
+                    color: cueActive ? UiTheme.greenDim : UiTheme.panelRaised
 
                     SilkLabel {
                         anchors.centerIn: parent
@@ -374,14 +355,7 @@ Rectangle {
 
         Rectangle {
             anchors.fill: parent
-            color: UiTheme.bgDeep
-            border.width: 1
-            border.color: UiTheme.bezelShadow
-
-            Rectangle {
-                anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
-                height: 1; color: UiTheme.bezelHighlight; opacity: 0.15
-            }
+            color: UiTheme.panelDeep
 
             MixerSlider {
                 id: fader
@@ -443,15 +417,11 @@ Rectangle {
                 channelId: channelId
             }
 
-            Rectangle { width: 1; Layout.fillHeight: true; color: UiTheme.divider }
-
             VuMeterVertical {
                 Layout.fillHeight: true
                 Layout.preferredWidth: mixer.vuW
                 levelLinear: vuLevel
             }
-
-            Rectangle { width: 1; Layout.fillHeight: true; color: UiTheme.divider }
 
             KnobStackColumn {
                 id: knobs
@@ -465,18 +435,11 @@ Rectangle {
     }
 
     // ── Main layout ─────────────────────────────────────────────────────────
-    Rectangle {
+    RowLayout {
         anchors.fill: parent
-        anchors.margins: 1
-        color: UiTheme.bg1
-        border.width: 1
-        border.color: UiTheme.bezelOuter
+        spacing: 0
 
-        RowLayout {
-            anchors.fill: parent
-            spacing: 0
-
-            ChannelSide {
+        ChannelSide {
                 id: sideA
                 deckName: mixer.deckNameA
                 deckAccent: mixer.clrA
@@ -489,29 +452,9 @@ Rectangle {
             }
 
             Rectangle {
-                Layout.preferredWidth: mixer.spineW
+                Layout.preferredWidth: 1
                 Layout.fillHeight: true
-                color: UiTheme.bgDeep
-
-                Rectangle {
-                    anchors.left: parent.left
-                    width: 1
-                    height: parent.height
-                    color: UiTheme.bezelShadow
-                }
-                Rectangle {
-                    anchors.right: parent.right
-                    width: 1
-                    height: parent.height
-                    color: UiTheme.bezelHighlight
-                    opacity: 0.35
-                }
-                Rectangle {
-                    anchors.centerIn: parent
-                    width: 1
-                    height: parent.height
-                    color: UiTheme.dividerStrong
-                }
+                color: UiTheme.separator
             }
 
             ChannelSide {
@@ -525,7 +468,6 @@ Rectangle {
                 channelId: mixer.channelBId
                 soundColorDeck: 2
             }
-        }
     }
 
     // Aliases for parameterStore / external bindings
