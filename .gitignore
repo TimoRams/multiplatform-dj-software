@@ -20,6 +20,7 @@ CPackSourceConfig.cmake
 
 # --- IDE-spezifische Dateien ---
 .vscode/
+.cursor/
 .vs/
 *.user
 *.suo
