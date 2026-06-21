@@ -89,6 +89,9 @@ jobs:
         run: |
           cmake --build build --parallel
 
+      - name: Smoke tests (Linux)
+        run: ctest --test-dir build --output-on-failure
+
       - name: Deploy Linux (AppImage)
         run: |
           mkdir -p deploy/AppDir/usr/bin deploy/AppDir/usr/share/applications deploy/AppDir/usr/share/icons/hicolor/256x256/apps
@@ -177,7 +180,7 @@ jobs:
           path: deploy/BrockDJ-linux-*.AppImage
 
   build-extra-platforms:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event_name == 'pull_request' }}
     name: Build (${{ matrix.artifact }})
     runs-on: ${{ matrix.runner }}
     continue-on-error: true
@@ -232,7 +235,7 @@ jobs:
             homebrew-${{ matrix.os }}-
 
       - name: Install Qt (Linux ARM)
-        if: matrix.os == 'linux-arm'
+        if: matrix.os == 'linux-arm' && github.event_name == 'workflow_dispatch'
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.0'
@@ -265,7 +268,7 @@ jobs:
             libkeyfinder-linux-arm64-
 
       - name: Install Qt (Windows)
-        if: matrix.os == 'windows'
+        if: matrix.os == 'windows' && github.event_name == 'workflow_dispatch'
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.0'
@@ -273,11 +276,11 @@ jobs:
           cache: true
 
       - name: Setup MSVC environment (Windows)
-        if: matrix.os == 'windows'
+        if: matrix.os == 'windows' && github.event_name == 'workflow_dispatch'
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Install Dependencies (Linux ARM)
-        if: matrix.os == 'linux-arm'
+        if: matrix.os == 'linux-arm' && github.event_name == 'workflow_dispatch'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -290,7 +293,7 @@ jobs:
             libwayland-dev libwayland-egl1 libwayland-cursor0 libxcb1-dev libxcb-icccm4-dev
 
       - name: Install libkeyfinder (Linux ARM)
-        if: matrix.os == 'linux-arm'
+        if: matrix.os == 'linux-arm' && github.event_name == 'workflow_dispatch'
         run: |
           if [ ! -f .ci/keyfinder/lib/pkgconfig/libkeyfinder.pc ] && [ ! -f .ci/keyfinder/lib/cmake/KeyFinder/KeyFinderConfig.cmake ]; then
             git clone --depth 1 https://github.com/mixxxdj/libkeyfinder.git
@@ -319,7 +322,7 @@ jobs:
             brotli webp
 
       - name: Install Dependencies (Windows)
-        if: matrix.os == 'windows'
+        if: matrix.os == 'windows' && github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: |
           if (-not (Test-Path 'C:\vcpkg\.git')) {
@@ -351,14 +354,14 @@ jobs:
             -DRDBJ_ENABLE_QML_CACHEGEN=OFF
 
       - name: Configure (Linux ARM)
-        if: matrix.os == 'linux-arm'
+        if: matrix.os == 'linux-arm' && github.event_name == 'workflow_dispatch'
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/.ci/keyfinder;${CMAKE_PREFIX_PATH:-}" \
             -DRDBJ_ENABLE_QML_CACHEGEN=OFF
 
       - name: Configure (Windows)
-        if: matrix.os == 'windows'
+        if: matrix.os == 'windows' && github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: |
           $qt6Dir = $env:Qt6_DIR
@@ -394,11 +397,11 @@ jobs:
         run: cmake --build build --parallel
 
       - name: Build (Linux ARM)
-        if: matrix.os == 'linux-arm'
+        if: matrix.os == 'linux-arm' && github.event_name == 'workflow_dispatch'
         run: cmake --build build --parallel
 
       - name: Build (Windows)
-        if: matrix.os == 'windows'
+        if: matrix.os == 'windows' && github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: cmake --build build --parallel
 

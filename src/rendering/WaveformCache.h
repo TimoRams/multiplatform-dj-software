@@ -12,7 +12,7 @@ public:
         int pointsPerSecond = 0;
         int totalExpected = 0;
         float globalMaxPeak = 0.001f;
-        QVector<TrackData::FrequencyData> waveform;
+        QVector<TrackData::WaveformBin> waveform;
         QVector<TrackData::RgbWaveformFrame> rgb;
         QVector<TrackData::PeakFrame> peakMip;  // high-res signed min/max peaks
     };

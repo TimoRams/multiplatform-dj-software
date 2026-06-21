@@ -4,8 +4,9 @@
 #include <QString>
 #include <QDebug>
 #include "FxProcessor.h"
+#include "DjEngine.h"
 
-class DjEngine;
+#include <QPointer>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FxManager  –  bridges the QML FX-UI to the JUCE audio engines.
@@ -131,8 +132,8 @@ signals:
     void soundColorParamChanged();
 
 private:
-    DjEngine* m_engineA = nullptr;
-    DjEngine* m_engineB = nullptr;
+    QPointer<DjEngine> m_engineA;
+    QPointer<DjEngine> m_engineB;
 
     // ── SoundColor state ─────────────────────────────────────────────────────
     QString m_soundColorMode { "Filter" };

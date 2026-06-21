@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QPointer>
 #include <QQuickItem>
 #include <QSGGeometryNode>
 #include <QSGSimpleTextureNode>
@@ -53,7 +54,7 @@ private slots:
 private:
     static float clampToZoomLevel(float ppp);
 
-    DjEngine* m_engine = nullptr;
+    QPointer<DjEngine> m_engine;
     bool m_forceUpdate = false;
 
     // Coalesces frequent data-update signals during progressive analysis so the

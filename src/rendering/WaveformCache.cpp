@@ -49,26 +49,6 @@ QString cacheKeyFor(const QString& filePath, int pointsPerSecond)
     return QString::fromLatin1(hash.left(24));
 }
 
-void fillLegacyFields(TrackData::FrequencyData* d)
-{
-    if (!d)
-        return;
-
-    d->lowEnv = d->low;
-    d->lowPeak = d->low;
-    d->lowRms = d->low;
-
-    d->midEnv = d->mid;
-    d->midPeak = d->mid;
-    d->midRms = d->mid;
-
-    d->highEnv = d->high;
-    d->highPeak = d->high;
-    d->highRms = d->high;
-
-    d->transientDelta = 0.0f;
-}
-
 } // namespace
 
 QString WaveformCache::cachePathFor(const QString& filePath, int pointsPerSecond)
@@ -125,12 +105,11 @@ bool WaveformCache::loadForFile(const QString& filePath, int pointsPerSecond, Pa
             float high = 0.0f;
             in >> low >> lowMid >> mid >> high;
 
-            TrackData::FrequencyData d;
+            TrackData::WaveformBin d;
             d.low = low;
             d.lowMid = lowMid;
             d.mid = mid;
             d.high = high;
-            fillLegacyFields(&d);
             payload.waveform.push_back(d);
         }
         wfRead += n;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QPointer>
 #include <QQuickPaintedItem>
 #include <QTimer>
 #include <QImage>
@@ -41,7 +42,7 @@ private:
                               const QVector<TrackData::RgbWaveformFrame>& frames,
                               int drawWidth, int w, int h);
 
-    DjEngine* m_engine         = nullptr;
+    QPointer<DjEngine> m_engine;
     bool      m_rectified      = true;
     QTimer*   m_updateThrottle = nullptr;
     QImage    m_frameCache;

@@ -15,7 +15,8 @@
 #include <memory>
 #include <vector>
 
-class DjEngine;
+#include <QPointer>
+#include "DjEngine.h"
 
 #if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
 #include <libusb-1.0/libusb.h>
@@ -136,8 +137,8 @@ private:
     std::array<QByteArray, 5> m_lastXx27Packet;
     std::atomic<bool> m_shuttingDown { false };
     bool m_connected = false;
-    DjEngine* m_deckA = nullptr;
-    DjEngine* m_deckB = nullptr;
+    QPointer<DjEngine> m_deckA;
+    QPointer<DjEngine> m_deckB;
 
 #if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
     libusb_context* m_usbContext = nullptr;

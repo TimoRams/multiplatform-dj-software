@@ -157,6 +157,19 @@ cmake --build build --config Release
 
 ---
 
+### Platform priority
+
+| Priority | Platform |
+|----------|----------|
+| Primary | Linux (festival/live target — use `./build-fast`) |
+| Secondary | macOS Apple Silicon (M1+) |
+| Supported | Intel Mac |
+| Secondary | Windows (manual CI via workflow dispatch) |
+
+CMake presets: `linux-dev-fast`, `macos-dev-arm64`, `macos-dev-x86_64`.
+
+---
+
 ### SIMD
 
 Target-native SIMD is enabled automatically on Linux, Windows x64, and Intel macOS. To override on Linux, reconfigure `build-dev/` then run `./build-fast`:

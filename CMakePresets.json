@@ -37,6 +37,40 @@
         "lhs": "${hostSystemName}",
         "rhs": "Linux"
       }
+    },
+    {
+      "name": "macos-dev-arm64",
+      "displayName": "macOS dev (Apple Silicon)",
+      "description": "Local macOS ARM64 dev build.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-macos-arm64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "RDBJ_ENABLE_QML_CACHEGEN": "OFF"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      }
+    },
+    {
+      "name": "macos-dev-x86_64",
+      "displayName": "macOS dev (Intel)",
+      "description": "Local Intel Mac dev build.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-macos-x86_64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_OSX_ARCHITECTURES": "x86_64",
+        "RDBJ_ENABLE_QML_CACHEGEN": "OFF"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      }
     }
   ],
   "buildPresets": [
@@ -47,6 +81,23 @@
     {
       "name": "linux-release",
       "configurePreset": "linux-release"
+    },
+    {
+      "name": "macos-dev-arm64",
+      "configurePreset": "macos-dev-arm64"
+    },
+    {
+      "name": "macos-dev-x86_64",
+      "configurePreset": "macos-dev-x86_64"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "linux-dev-fast",
+      "configurePreset": "linux-dev-fast",
+      "output": {
+        "outputOnFailure": true
+      }
     }
   ]
 }

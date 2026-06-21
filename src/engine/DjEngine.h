@@ -20,6 +20,7 @@ class MixerDspSource;
 #include <array>
 #include <cstdint>
 #include <expected>
+#include <memory>
 #include <mutex>
 #include <vector>
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -518,7 +519,7 @@ private:
     QTimer* m_analysisPersistTimer = nullptr;
 
     TrackData* m_trackData;
-    WaveformAnalyzer* m_analyzer;
+    std::unique_ptr<WaveformAnalyzer> m_analyzer;
 
     QString m_trackTitle;
     QString m_trackArtist;

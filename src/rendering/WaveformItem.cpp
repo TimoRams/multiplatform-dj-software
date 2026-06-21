@@ -3,57 +3,43 @@
 #include <QSGVertexColorMaterial>
 #include <QDebug>
 
-WaveformItem::WaveformItem(QQuickItem* parent) : QQuickItem(parent)
+WaveformItem::WaveformItem(QQuickItem* parent)
+    : DeckBoundQuickItem(parent)
 {
     setFlag(ItemHasContents, true);
 }
 
-DjEngine* WaveformItem::engine() const
+void WaveformItem::setRectified(bool r)
 {
-    return m_engine;
+    if (m_rectified == r)
+        return;
+    m_rectified = r;
+    m_geometryChanged = true;
+    update();
+    emit rectifiedChanged();
 }
 
-void WaveformItem::setEngine(DjEngine* engine)
+void WaveformItem::onEngineChanged()
 {
-    if (m_engine == engine) return;
-
-    if (m_engine) {
-        disconnect(m_engine, nullptr, this, nullptr);
-    }
-
-    m_engine = engine;
-
-    if (m_engine) {
-        connect(m_engine, &DjEngine::trackLoaded, this, &WaveformItem::onTrackLoaded);
-        connect(m_engine, &DjEngine::trackEjected, this, &WaveformItem::onTrackEjected);
-        connect(m_engine, &DjEngine::progressChanged, this, &WaveformItem::onProgressChanged);
-    }
-
-    emit engineChanged();
-    
+    if (deckEngine())
+        connect(deckEngine(), &DjEngine::progressChanged, this, &WaveformItem::onProgressChanged);
     m_geometryChanged = true;
     update();
 }
 
 void WaveformItem::onTrackEjected()
 {
-    if (m_engine && m_engine->getTrackData())
-        disconnect(m_engine->getTrackData(), nullptr, this, nullptr);
     m_geometryChanged = true;
     update();
 }
 
 void WaveformItem::onTrackLoaded()
 {
-    if (m_engine && m_engine->getTrackData()) {
-        connect(m_engine->getTrackData(), &TrackData::dataUpdated, this, &WaveformItem::onDataUpdated, Qt::UniqueConnection);
-        connect(m_engine->getTrackData(), &TrackData::dataCleared, this, &WaveformItem::onDataUpdated, Qt::UniqueConnection);
-    }
     m_geometryChanged = true;
     update();
 }
 
-void WaveformItem::onDataUpdated()
+void WaveformItem::onTrackDataUpdated()
 {
     m_geometryChanged = true;
     update();
@@ -66,8 +52,10 @@ void WaveformItem::onProgressChanged()
 
 QSGNode* WaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
 {
-    if (!m_engine || !m_engine->hasTrack() || !m_engine->getTrackData() || m_engine->getTrackData()->getWaveformData().isEmpty()) {
-        if (oldNode) delete oldNode;
+    DjEngine* eng = deckEngine();
+    if (!eng || !eng->hasTrack() || !eng->getTrackData() || eng->getTrackData()->getWaveformData().isEmpty()) {
+        if (oldNode)
+            delete oldNode;
         return nullptr;
     }
 
@@ -118,7 +106,7 @@ QSGNode* WaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
 
     if (m_geometryChanged || true)
     {
-        QVector<TrackData::FrequencyData> data = m_engine->getTrackData()->getWaveformData();
+        QVector<TrackData::WaveformBin> data = deckEngine()->getTrackData()->getWaveformData();
         int currentDataPoints = data.size();
 
         const float w = static_cast<float>(width());
@@ -126,10 +114,10 @@ QSGNode* WaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         const float baseline = m_rectified ? h : h / 2.0f;
         const float maxBarH  = m_rectified ? h : h / 2.0f;
 
-        float durationSeconds = m_engine->getDuration();
+        float durationSeconds = deckEngine()->getDuration();
         if (durationSeconds <= 0.0f) durationSeconds = 1.0f;
 
-        const float pointsPerSec    = static_cast<float>(m_engine->waveformPointsPerSecond());
+        const float pointsPerSec    = static_cast<float>(deckEngine()->waveformPointsPerSecond());
         int totalExpectedPoints     = static_cast<int>(durationSeconds * pointsPerSec);
         if (totalExpectedPoints < currentDataPoints) totalExpectedPoints = currentDataPoints;
 
@@ -232,7 +220,7 @@ QSGNode* WaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         }
 
         // Cursor / playhead
-        float progX = m_engine->getProgress() * w;
+        float progX = deckEngine()->getProgress() * w;
         auto* cVerts = cursorNode->geometry()->vertexDataAsColoredPoint2D();
         cVerts[0].set(progX, 0.0f, 255, 255, 255, 220);
         cVerts[1].set(progX, h,    255, 255, 255, 220);

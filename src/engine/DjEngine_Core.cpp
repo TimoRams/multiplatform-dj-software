@@ -1,46 +1,5 @@
-#include "DjEngine.h"
-#include "audio/TimeStretchAudioSource.h"
-#include "audio/MixerDspSource.h"
-#include "DjMasterBus.h"
-#include "audio/ReverseStreamAudioSource.h"
-#include "audio/AudioDeviceUtils.h"
-#include "audio/MetadataUtils.h"
-#include "library/CoverArtExtractor.h"
-#include "library/CoverArtProvider.h"
-#include "library/LibraryCoverService.h"
-#include "fx/FxProcessor.h"
-#include "library/LibraryDatabase.h"
-#include "library/TrackIdGenerator.h"
-#include "WaveformCache.h"
-#include "WaveformAnalyzer.h"
-#include <QUrl>
-#include <QDebug>
-#include <QFile>
-#include <QFileInfo>
-#include <QHash>
-#include <QSet>
-#include <QDateTime>
-#include <QRegularExpression>
-#include <QVariantMap>
-#include <QImage>
-#include <QBuffer>
-#include <QProcess>
-#include <QStandardPaths>
-#include <QThread>
-#include <QTimer>
-#include <juce_core/juce_core.h>
-#include <juce_dsp/juce_dsp.h>
-#include <taglib/fileref.h>
-#include <taglib/tag.h>
-#include <algorithm>
-#include <cmath>
-#include <cstring>
-#include <expected>
-#include <ranges>
-#include <vector>
-#if JUCE_JACK && (JUCE_LINUX || JUCE_BSD)
-#include <jack/jack.h>
-#endif
+#include "DjEngineCommonIncludes.h"
+
 
 namespace {
 
@@ -94,7 +53,7 @@ DjEngine::DjEngine(QObject* parent)
     }
 
     m_trackData = new TrackData(this);
-    m_analyzer  = new WaveformAnalyzer(
+    m_analyzer = std::make_unique<WaveformAnalyzer>(
         m_trackData,
         &formatManager,
         static_cast<int>(WAVEFORM_POINTS_PER_SECOND));
@@ -226,7 +185,7 @@ DjEngine::~DjEngine()
 
     if (m_analyzer) {
         m_analyzer->stopAnalysis();
-        delete m_analyzer;
+        m_analyzer.reset();
     }
     releaseTransportReaders();
     readAheadThread.stopThread(1000);

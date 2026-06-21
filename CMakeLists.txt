@@ -286,11 +286,13 @@ qt_add_resources(${PROJECT_NAME} "BrockDJ_controller_mappings"
 
 target_sources(${PROJECT_NAME} PRIVATE
     src/main.cpp
+    src/app/ApplicationBootstrap.cpp
+    src/app/ApplicationLifecycle.cpp
     src/engine/DjEngine.h
     src/engine/DjEngine_Core.cpp
     src/engine/DjEngine_CoreMeta.cpp
     src/engine/DjEngine_CoreTempo.cpp
-    src/engine/DjEngine_Output.cpp
+    src/engine/DjEngine_TransportExtras.cpp
     src/engine/DjEngine_Fx.cpp
     src/engine/DjEngine_HotCue.cpp
     src/engine/DjEngine_MainCue.cpp
@@ -303,7 +305,6 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/engine/DjEngine_Transport.cpp
     src/engine/DjEngine_TransportLatency.cpp
     src/engine/DjEngine_TransportLoad.cpp
-    src/engine/DjEngine_TransportModes.cpp
     src/engine/audio/AudioDeviceUtils.cpp
     src/engine/audio/MetadataUtils.cpp
     src/engine/DjMasterBus.h
@@ -327,14 +328,20 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/analysis/BeatGridFitter.cpp
     src/analysis/AnalysisValidation.h
     src/analysis/AnalysisValidation.cpp
+    src/rendering/DeckBoundQuickItem.h
+    src/rendering/DeckBoundQuickItem.cpp
     src/rendering/RgbWaveformItem.h
     src/rendering/RgbWaveformItem.cpp
     src/rendering/WaveformItem.cpp
     src/rendering/ScrollingWaveformItem.cpp
     src/rendering/WaveformAnalyzer.cpp
+    src/rendering/WaveformEnvelopePass.cpp
+    src/rendering/WaveformAnalysisOrchestrator.cpp
     src/rendering/WaveformCache.h
     src/rendering/WaveformCache.cpp
     src/domain/TrackData.h
+    src/domain/TrackData.cpp
+    src/domain/TrackData.cpp
     src/domain/TrackSegment.h
     src/library/LibraryManager.h
     src/library/LibraryManager.cpp
@@ -362,11 +369,17 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/midi/feedback/MidiFeedbackController.cpp
     src/midi/MidiControllerManager.h
     src/midi/MidiControllerManager.cpp
+    src/midi/MidiDeviceEnumeration.cpp
+    src/midi/MidiMappingLoader.cpp
+    src/midi/MidiParameterDispatch.cpp
+    src/midi/MidiFlx10Bridge.cpp
     src/controllers/ControllerProfile.h
     src/controllers/ControllerIntegrationManager.h
     src/controllers/ControllerIntegrationManager.cpp
     src/controllers/flx10/DDJFLX10Controller.h
     src/controllers/flx10/DDJFLX10Controller.cpp
+    src/controllers/flx10/Flx10HidTransport.cpp
+    src/controllers/flx10/Flx10DisplayProtocol.cpp
     src/app/SettingsManager.h
     src/app/SettingsManager.cpp
     src/app/AppConfig.h
@@ -375,6 +388,10 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/library/TrackIdGenerator.h
     src/library/LibraryDatabase.h
     src/library/LibraryDatabase.cpp
+    src/library/LibrarySchema.cpp
+    src/library/LibraryTrackStore.cpp
+    src/library/LibraryCueStore.cpp
+    src/library/LibraryPlaylistStore.cpp
     src/library/LibraryAnalysisManager.h
     src/library/LibraryAnalysisManager.cpp
     src/library/LibraryTableModel.h
@@ -535,3 +552,25 @@ if(_icons_ready)
 else()
     message(STATUS "Icon resources not found — run scripts/generate_icons.sh then re-run CMake.")
 endif()
+
+# ── Smoke tests (no Qt/JUCE link — fast stability checks) ───────────────────
+enable_testing()
+
+add_executable(BrockDJ_smoke_tests
+    tests/smoke/smoke_tests.cpp
+    src/analysis/AnalysisValidation.cpp
+)
+
+target_include_directories(BrockDJ_smoke_tests PRIVATE
+    src
+    src/analysis
+    src/controllers
+    src/domain
+    src/engine
+    src/engine/audio
+)
+
+target_link_libraries(BrockDJ_smoke_tests PRIVATE Qt6::Core Qt6::Gui)
+target_compile_features(BrockDJ_smoke_tests PRIVATE cxx_std_26)
+
+add_test(NAME smoke COMMAND BrockDJ_smoke_tests)

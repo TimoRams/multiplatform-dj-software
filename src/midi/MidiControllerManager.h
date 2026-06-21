@@ -119,8 +119,11 @@ public slots:
 private:
     // juce::MidiInputCallback overrides
     void handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& message) override;
-    void dispatchParameterToStore(const QString& paramId, float value);
-    void dispatchMidiParameterToStore(const QString& paramId, float value);
+    enum class ParameterStoreDispatch {
+        Standard,
+        Midi
+    };
+    void dispatchToStore(const QString& paramId, float value, ParameterStoreDispatch method);
 
     std::atomic<bool> m_shutdownComplete { false };
 

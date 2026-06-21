@@ -1,11 +1,11 @@
 #pragma once
 
 #include <QObject>
+#include <QPointer>
 #include <QString>
 
 #include "flx10/DDJFLX10Controller.h"
-
-class DjEngine;
+#include "DjEngine.h"
 
 class ControllerIntegrationManager : public QObject
 {
@@ -35,8 +35,8 @@ signals:
 
 private:
     bool m_flx10Enabled = false;
-    DjEngine* m_deckA = nullptr;
-    DjEngine* m_deckB = nullptr;
+    QPointer<DjEngine> m_deckA;
+    QPointer<DjEngine> m_deckB;
     DDJFLX10Controller m_flx10;
 };
 
