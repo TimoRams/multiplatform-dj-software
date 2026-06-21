@@ -72,7 +72,8 @@ private:
     bool sendXx2f(int deck);
     bool sendXx27(int deck, double fileElapsedSeconds, double durationSeconds, double bpm, bool moving);
     double smoothFileElapsedSec(int deck, double fileElapsedSec, double rateRatio, bool playing);
-    void resetDisplayInterp(int deck);
+    void resetDisplayInterp(int deck, double seedFileSec = -1.0);
+    void pushDeckJogDisplay(int deck);
     bool clearDeckDisplay(int deck);
 
     QByteArray generateCoverJpeg(int deck) const;
@@ -118,6 +119,7 @@ private:
     std::array<QMetaObject::Connection, 5> m_tempoConnections;
     std::array<QMetaObject::Connection, 5> m_tempoRangeConnections;
     std::array<QMetaObject::Connection, 5> m_scrubbingConnections;
+    std::array<QMetaObject::Connection, 5> m_progressConnections;
     std::array<QString, 5> m_lastCoverUrls;
     std::array<qint64, 5> m_lastWaveformRefreshMs = {0, 0, 0, 0, 0};
     std::array<bool, 5> m_jogRingWarningActive = {false, false, false, false, false};

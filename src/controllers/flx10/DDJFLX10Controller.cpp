@@ -102,7 +102,13 @@ double validTrackPosition(const DjEngine* engine, double duration)
     if (!engine)
         return 0.0;
 
-    return std::clamp(engine->getPlayheadPositionAtomic(), 0.0, duration);
+    // Match TurntableIndicator / Waveform: atomic during scratch & release glide,
+    // interpolated visual position while playing, frozen atomic when paused.
+    const double pos = engine->isScratchVisualActive()
+        ? engine->getPlayheadPositionAtomic()
+        : (engine->isPlaying() ? engine->getVisualPosition()
+                               : engine->getPlayheadPositionAtomic());
+    return std::clamp(pos, 0.0, duration);
 }
 
 QByteArray packet()
@@ -388,6 +394,8 @@ void DDJFLX10Controller::disconnectDeckSignals()
         QObject::disconnect(connection);
     for (auto& connection : m_scrubbingConnections)
         QObject::disconnect(connection);
+    for (auto& connection : m_progressConnections)
+        QObject::disconnect(connection);
 
     m_trackLoadedConnections.fill({});
     m_trackEjectedConnections.fill({});
@@ -401,6 +409,7 @@ void DDJFLX10Controller::disconnectDeckSignals()
     m_tempoConnections.fill({});
     m_tempoRangeConnections.fill({});
     m_scrubbingConnections.fill({});
+    m_progressConnections.fill({});
 }
 
 DjEngine* DDJFLX10Controller::deckEngine(int deck) const
@@ -517,9 +526,17 @@ void DDJFLX10Controller::connectDeckSignals()
         m_scrubbingConnections[deck] = connect(engine, &DjEngine::scrubbingChanged, this, [this, deck] {
             if (m_shuttingDown.load(std::memory_order_acquire))
                 return;
-            resetDisplayInterp(deck);
-            if (deck >= 0 && deck < static_cast<int>(m_lastXx27Packet.size()))
-                m_lastXx27Packet[deck].clear();
+            const double seedPos = deckDisplayPosition(deck);
+            resetDisplayInterp(deck, seedPos);
+            pushDeckJogDisplay(deck);
+        });
+        m_progressConnections[deck] = connect(engine, &DjEngine::progressChanged, this, [this, deck] {
+            if (m_shuttingDown.load(std::memory_order_acquire) || !m_connected)
+                return;
+            const DjEngine* eng = deckEngine(deck);
+            if (!eng || !eng->isScratchVisualActive() || m_waveforms[deck].isEmpty())
+                return;
+            pushDeckJogDisplay(deck);
         });
     }
 }
@@ -921,12 +938,22 @@ void DDJFLX10Controller::sendKeepAlive()
     sendMidiHex(QString::fromLatin1(kKeepAlive));
 }
 
-void DDJFLX10Controller::resetDisplayInterp(int deck)
+void DDJFLX10Controller::resetDisplayInterp(int deck, double seedFileSec)
 {
     if (deck < 0 || deck >= static_cast<int>(m_displayInterp.size()))
         return;
     m_displayInterp[deck] = {};
     m_lastXx27Packet[deck].clear();
+
+    if (seedFileSec >= 0.0) {
+        auto& state = m_displayInterp[deck];
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        state.initialized = true;
+        state.lastFilePos = seedFileSec;
+        state.lastPosTimeMs = nowMs;
+        state.lastNewPosTimeMs = nowMs;
+        state.lastSmoothFileMs = seedFileSec * 1000.0;
+    }
 }
 
 double DDJFLX10Controller::smoothFileElapsedSec(int deck, double fileElapsedSec, double rateRatio, bool playing)
@@ -1000,30 +1027,40 @@ double DDJFLX10Controller::smoothFileElapsedSec(int deck, double fileElapsedSec,
     return std::max(0.0, smoothMs / 1000.0);
 }
 
+void DDJFLX10Controller::pushDeckJogDisplay(int deck)
+{
+    if (deck < 1 || deck > 2)
+        return;
+    if (m_shuttingDown.load(std::memory_order_acquire) || !m_connected)
+        return;
+    if (m_waveforms[deck].isEmpty())
+        return;
+
+    const DjEngine* engine = deckEngine(deck);
+    const double duration = deckDisplayDuration(deck);
+    const bool playIntent = engine ? engine->isPlaying() : true;
+    const bool scratchVisual = engine && engine->isScratchVisualActive();
+    const bool moving = playIntent || scratchVisual;
+    const double rateRatio = engine ? engine->getTempoRatio() : 1.0;
+    const double rawFileElapsed = engine
+        ? deckDisplayPosition(deck)
+        : std::fmod((QDateTime::currentMSecsSinceEpoch() - m_clockStartMs) / 1000.0,
+                    duration);
+    const double fileClamped = std::clamp(rawFileElapsed, 0.0, duration);
+    const double displayElapsed = scratchVisual
+        ? fileClamped
+        : smoothFileElapsedSec(deck, fileClamped, rateRatio, moving);
+    sendXx27(deck, displayElapsed, duration, deckBpm(deck), moving);
+    updateJogRingWarning(deck, fileClamped, duration, playIntent);
+}
+
 void DDJFLX10Controller::sendStateTick()
 {
     if (m_shuttingDown.load(std::memory_order_acquire) || !m_connected)
         return;
 
-    for (int deck = 1; deck <= 2; ++deck) {
-        if (m_waveforms[deck].isEmpty())
-            continue;
-
-        const DjEngine* engine = deckEngine(deck);
-        const double duration = deckDisplayDuration(deck);
-        const bool moving = engine ? engine->isPlaying() : true;
-        const double rateRatio = engine ? engine->getTempoRatio() : 1.0;
-        const double rawFileElapsed = engine ? deckDisplayPosition(deck)
-                                             : std::fmod((QDateTime::currentMSecsSinceEpoch() - m_clockStartMs) / 1000.0,
-                                                         duration);
-        const double fileClamped = std::clamp(rawFileElapsed, 0.0, duration);
-        const bool scratchVisual = engine && engine->isScratchVisualActive();
-        const double smoothFileElapsed = scratchVisual
-            ? fileClamped
-            : smoothFileElapsedSec(deck, fileClamped, rateRatio, moving);
-        sendXx27(deck, smoothFileElapsed, duration, deckBpm(deck), moving);
-        updateJogRingWarning(deck, fileClamped, duration, moving);
-    }
+    for (int deck = 1; deck <= 2; ++deck)
+        pushDeckJogDisplay(deck);
 }
 
 void DDJFLX10Controller::sendWaveformTick()
@@ -1321,11 +1358,21 @@ bool DDJFLX10Controller::sendXx27(int deck, double fileElapsedSeconds, double du
     put8(p, 17, (tempoWire >> 8) & 0xFF);
     put8(p, 20, 0x0E);
 
-    // Bytes 21–22 mirror the same file-time subfield as 5–8 (milliseconds, not 1024ths).
-    const int fileMs = secInt * 1000 + subMs;
-    put8(p, 21, (fileMs * 2) & 0xFF);
-    if (deck <= 2)
-        put8(p, 22, static_cast<int>(std::floor(static_cast<double>(fileMs) / 123.2)) % 15);
+    // Platter ring phase at 33⅓ RPM. Bytes 21–22 must share one revolution tick
+    // derived from the same subsecTicks as 5–8 — mismatched wraps cause jitter
+    // and snap-backs around 12 o'clock on the jog display.
+    const int totalMs = secInt * 1000 + subMs;
+    constexpr double kVinylRevolutionSeconds = 60.0 / (100.0 / 3.0);
+    const int ticksPerRevolution = static_cast<int>(std::lround(kVinylRevolutionSeconds * 1024.0));
+    const int sub1024 = std::min(1023, (subMs * 1024) / 1000);
+    const int subsecTicks = (totalMs / 1000) * 1024 + sub1024;
+    const int revolutionTick = ticksPerRevolution > 0
+        ? (subsecTicks % ticksPerRevolution + ticksPerRevolution) % ticksPerRevolution
+        : 0;
+    put8(p, 21, (revolutionTick * 2) & 0xFF);
+    put8(p, 22, ticksPerRevolution > 0
+        ? (revolutionTick * 15 / ticksPerRevolution) % 15
+        : 0);
 
     put8(p, 25, 0x80);
     put8(p, 29, deckKeyByte(deck));
