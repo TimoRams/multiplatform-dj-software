@@ -97,6 +97,40 @@ double DjEngine::getBeatPhase() const
 }
 
 
+double DjEngine::getBarPhase() const
+{
+    if (!m_trackData) return 0.0;
+    const double bpm = m_trackData->getBpm();
+    if (bpm <= 0.0) return 0.0;
+
+    constexpr int kBeatsPerBar = 4;
+    const auto& grid = m_trackData->getBeatGrid();
+    if (grid.size() >= 2) {
+        // Fractional beat index from grid[0], then fold into a bar anchored to the
+        // first downbeat marker so two decks line up on the musical "1".
+        const double beatPos = getBeatPosition();
+        int downbeatOffset = 0;
+        for (std::size_t i = 0; i < grid.size(); ++i) {
+            if (grid[i].isDownbeat) {
+                downbeatOffset = static_cast<int>(i % kBeatsPerBar);
+                break;
+            }
+        }
+        const double rel = beatPos - static_cast<double>(downbeatOffset);
+        const double barPos = std::fmod(std::fmod(rel, kBeatsPerBar) + kBeatsPerBar, kBeatsPerBar);
+        return barPos / static_cast<double>(kBeatsPerBar);
+    }
+
+    // No usable grid — measure bars from the first beat using BPM alone.
+    const double sr        = m_trackData->getSampleRate();
+    const double firstBeat = sr > 0.0
+        ? static_cast<double>(m_trackData->getFirstBeatSample()) / sr : 0.0;
+    const double barLen = static_cast<double>(kBeatsPerBar) * 60.0 / bpm;
+    const double rel    = getPosition() - firstBeat;
+    return std::fmod(std::fmod(rel, barLen) + barLen, barLen) / barLen;
+}
+
+
 double DjEngine::getBeatPosition() const
 {
     if (!m_trackData) return 0.0;
@@ -133,6 +167,8 @@ void DjEngine::updatePhaseCorrection()
 {
     // Only sync followers with a valid, playing track should phase-correct.
     if (!m_syncEnabled || m_isSyncMaster || !isPlaying() || !m_trackData) {
+        m_phaseIntegral = 0.0;
+        m_phaseClock.invalidate();
         if (m_phaseNudge != 0.0) {
             m_phaseNudge = 0.0;
             updateSpeedAndPitch();
@@ -148,6 +184,8 @@ void DjEngine::updatePhaseCorrection()
 
     if (!master || !master->isPlaying() || !master->m_trackData
             || master->m_trackData->getBpm() <= 0.0) {
+        m_phaseIntegral = 0.0;
+        m_phaseClock.invalidate();
         if (m_phaseNudge != 0.0) {
             m_phaseNudge = 0.0;
             updateSpeedAndPitch();
@@ -163,24 +201,85 @@ void DjEngine::updatePhaseCorrection()
     if (diff >  0.5) diff -= 1.0;
     if (diff < -0.5) diff += 1.0;
 
-    constexpr double kTolerance = 0.02;
-    // Normal: ±4% nudge. Boosted (reSync()): ±15% — after the 85% seek the remaining
-    // 15% of error converges in ~2 s (τ = 50 * beatLen / kMaxNudge ≈ 1.6 s at 128 BPM).
-    const double kMaxNudge = m_resyncBoost ? 15.0 : 4.0;
-    const double kGain     = kMaxNudge / 0.5;
+    // Elapsed time since the last correction (for the integral term).
+    const double dt = m_phaseClock.isValid()
+        ? std::clamp(static_cast<double>(m_phaseClock.nsecsElapsed()) * 1e-9, 0.001, 0.05)
+        : 0.004;
+    m_phaseClock.restart();
 
-    const double newNudge = (std::abs(diff) < kTolerance)
-        ? 0.0
-        : std::clamp(diff * kGain, -kMaxNudge, kMaxNudge);
+    // PI controller on beat-phase error. The proportional term snaps the phase;
+    // the integral term accumulates residual error and trims the baseline tempo so
+    // any systematic mismatch (analysed BPM vs true grid spacing) is cancelled and
+    // the decks stop drifting apart. Without the integral a pure-P loop leaves a
+    // steady tempo bias that slowly walks the phase out (the reported drift).
+    const double kMaxNudge = m_resyncBoost ? 15.0 : 6.0;
+    const double kP        = m_resyncBoost ? 30.0 : 14.0;  // % per beat of error
+    constexpr double kI    = 9.0;                            // % per (beat·second)
 
-    // Clear boost once we're within tolerance.
-    if (m_resyncBoost && std::abs(diff) < kTolerance)
+    m_phaseIntegral += diff * dt;
+    // Anti-windup: never let the integral alone exceed the nudge ceiling.
+    const double integralClamp = kMaxNudge / kI;
+    m_phaseIntegral = std::clamp(m_phaseIntegral, -integralClamp, integralClamp);
+
+    const double newNudge = std::clamp(kP * diff + kI * m_phaseIntegral,
+                                       -kMaxNudge, kMaxNudge);
+
+    // Clear the reSync boost once the phase is essentially locked.
+    if (m_resyncBoost && std::abs(diff) < 0.01)
         m_resyncBoost = false;
 
-    if (newNudge != m_phaseNudge) {
+    // Apply only on a meaningful change to avoid redundant time-stretch updates.
+    if (std::abs(newNudge - m_phaseNudge) > 1e-3) {
         m_phaseNudge = newNudge;
         updateSpeedAndPitch();
     }
+}
+
+
+DjEngine* DjEngine::currentSyncMaster()
+{
+    std::lock_guard<std::mutex> g(s_syncMutex);
+    return s_syncMasterDeck;
+}
+
+
+void DjEngine::applySyncSeekOffset(double seekOffset)
+{
+    const double len    = transportSource.getLengthInSeconds();
+    const double newPos = std::clamp(getPosition() + seekOffset, -PRE_ROLL_SECONDS,
+                                     len > 0.0 ? len : PRE_ROLL_SECONDS);
+    if (newPos < 0.0) {
+        if (m_preRollCountdownActive) {
+            m_preRollVisualStartPos = newPos;
+            m_preRollClock.restart();
+        }
+        m_scrubHoldPosition = newPos;
+        m_atomicPlayheadPos.store(newPos, std::memory_order_relaxed);
+    } else {
+        transportSource.setPosition(newPos);
+        armSnapFromTransportPosition();
+    }
+}
+
+
+void DjEngine::alignToSyncMasterOnPlay()
+{
+    if (!m_syncEnabled || m_isSyncMaster)
+        return;
+
+    DjEngine* master = currentSyncMaster();
+    if (!master || master == this || !master->isPlaying() || !master->m_trackData
+            || !m_trackData)
+        return;
+
+    // The master may have changed (or its tempo moved) while we were paused —
+    // re-derive our tempo, then arrange bars so we drop in phase-locked.
+    const double masterBpm = master->getCurrentBpm();
+    const double baseBpm   = m_trackData->getBpm();
+    if (masterBpm > 0.0 && baseBpm > 0.0)
+        applyTempoPercent(((masterBpm / baseBpm) - 1.0) * 100.0);
+
+    snapPhaseToMaster(master);
 }
 
 
@@ -193,35 +292,21 @@ void DjEngine::snapPhaseToMaster(DjEngine* master)
     if (bpm <= 0.0)
         return;
 
-    const double masterPhase = master->getBeatPhase();
-    const double myPhase     = getBeatPhase();
-
-    // Signed phase error wrapped to [-0.5, +0.5].
-    double diff = masterPhase - myPhase;
+    // Align on the BAR (downbeat), not just the sub-beat phase: Serato-style sync
+    // arranges the beatgrids so the musical "1"s line up. Error is measured in bars
+    // and wrapped to ±0.5 bar (±2 beats), so the largest arrange jump is 2 beats.
+    double diff = master->getBarPhase() - getBarPhase();
     if (diff >  0.5) diff -= 1.0;
     if (diff < -0.5) diff += 1.0;
 
-    // Nothing to do if already aligned.
-    if (std::abs(diff) < 0.005)
+    if (std::abs(diff) < 0.002)
         return;
 
-    const double beatLen    = beatIntervalAt(getPosition()).lengthSec;
-    const double seekOffset = diff * beatLen;
-    const double len        = transportSource.getLengthInSeconds();
-    const double newPos     = std::clamp(getPosition() + seekOffset, -PRE_ROLL_SECONDS,
-                                         len > 0.0 ? len : PRE_ROLL_SECONDS);
-    if (newPos < 0.0) {
-        if (m_preRollCountdownActive) {
-            m_preRollVisualStartPos = newPos;
-            m_preRollClock.restart();
-        }
-        m_scrubHoldPosition = newPos;
-        m_atomicPlayheadPos.store(newPos, std::memory_order_relaxed);
-    } else {
-        transportSource.setPosition(newPos);
-        armSnapFromTransportPosition();
-    }
-    m_phaseNudge = 0.0;
+    const double barLen = 4.0 * beatIntervalAt(getPosition()).lengthSec;
+    applySyncSeekOffset(diff * barLen);
+    m_phaseNudge    = 0.0;
+    m_phaseIntegral = 0.0;
+    m_phaseClock.invalidate();
 }
 
 
@@ -233,7 +318,9 @@ void DjEngine::setSyncEnabled(bool enabled)
     m_syncEnabled = enabled;
 
     if (!enabled) {
-        m_resyncBoost = false;
+        m_resyncBoost   = false;
+        m_phaseIntegral = 0.0;
+        m_phaseClock.invalidate();
         if (m_phaseNudge != 0.0) {
             m_phaseNudge = 0.0;
             updateSpeedAndPitch();
@@ -284,35 +371,21 @@ void DjEngine::reSync()
     if (bpm <= 0.0)
         return;
 
-    const double masterPhase = master->getBeatPhase();
-    const double myPhase     = getBeatPhase();
-    double diff = masterPhase - myPhase;
+    // Full bar (downbeat) realignment: the user pressed re-sync to lock the grids,
+    // so seek the whole error to land the "1"s together, then let the boosted
+    // beat-phase controller clean up any residual from grid imperfections.
+    double diff = master->getBarPhase() - getBarPhase();
     if (diff >  0.5) diff -= 1.0;
     if (diff < -0.5) diff += 1.0;
 
-    if (std::abs(diff) < 0.005)
-        return;
-
-    // Seek 85% of the phase error immediately (barely audible for errors up to half a beat),
-    // then let the boosted P-controller handle the remaining 15% in ~2 seconds.
-    const double beatLen    = beatIntervalAt(getPosition()).lengthSec;
-    const double seekOffset = diff * beatLen * 0.85;
-    const double len        = transportSource.getLengthInSeconds();
-    const double newPos     = std::clamp(getPosition() + seekOffset, -PRE_ROLL_SECONDS,
-                                         len > 0.0 ? len : PRE_ROLL_SECONDS);
-    if (newPos < 0.0) {
-        if (m_preRollCountdownActive) {
-            m_preRollVisualStartPos = newPos;
-            m_preRollClock.restart();
-        }
-        m_scrubHoldPosition = newPos;
-        m_atomicPlayheadPos.store(newPos, std::memory_order_relaxed);
-    } else {
-        transportSource.setPosition(newPos);
-        armSnapFromTransportPosition();
+    if (std::abs(diff) >= 0.002) {
+        const double barLen = 4.0 * beatIntervalAt(getPosition()).lengthSec;
+        applySyncSeekOffset(diff * barLen);
     }
-    m_phaseNudge  = 0.0;
-    m_resyncBoost = true;
+    m_phaseNudge    = 0.0;
+    m_phaseIntegral = 0.0;
+    m_phaseClock.invalidate();
+    m_resyncBoost   = true;
     updatePhaseCorrection();
 }
 

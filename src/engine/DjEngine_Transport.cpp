@@ -292,6 +292,7 @@ void DjEngine::togglePlay()
         } else {
             ensureTransportRunningForPlayIntent();
         }
+        alignToSyncMasterOnPlay();
     }
 
     emit playingChanged();
@@ -310,6 +311,7 @@ void DjEngine::play()
     } else {
         ensureTransportRunningForPlayIntent();
     }
+    alignToSyncMasterOnPlay();
     emit playingChanged();
 }
 

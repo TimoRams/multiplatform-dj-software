@@ -3,6 +3,16 @@
 ## Done (recent)
 - [x] **Quantize for hot cues + main cue** — snap stored point to beat grid when quantize is on
   (CDJ-3000 style), in `DjEngine_HotCue.cpp` / `DjEngine_MainCue.cpp`. Loops were already quantized.
+- [x] **Serato-style multi-deck sync** — align beatgrids on the **bar/downbeat**, not just BPM +
+  sub-beat phase. New `getBarPhase()`; `snapPhaseToMaster`/`reSync`/`alignToSyncMasterOnPlay`
+  bar-align via seek (`applySyncSeekOffset`).
+- [x] **Sync drift fixed (PI phase-lock)** — continuous `updatePhaseCorrection` is now a PI
+  controller; the integral term cancels systematic tempo bias so synced decks stop drifting
+  apart over time (was pure-P + deadband). Gains retuned (kP 14 / kI 9, ±6%) to kill the
+  ~15 s settling creep ("aligns then slowly drifts"); verified locked ±0.01 beats over 50–90 s
+  including the extreme 100→200 BPM case, no growth, no oscillation.
+- [x] **Sync master highlighted** — `DeckControl.qml` SYNC button shows gold "MASTER" when the
+  deck is the sync master, plain green "SYNC" otherwise.
 - [x] **Quantize cue *trigger timing*** — while playing with quantize on, hot cue / main cue
   presses are deferred to the next beat boundary (`scheduleQuantizedCueJump` →
   `serviceQuantizedCueJump` in `onTimer`, `nextBeatBoundaryAfter` in `DjEngine_Loop.cpp`) so the

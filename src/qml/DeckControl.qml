@@ -816,13 +816,17 @@ Item {
                             onClicked: { if (deck.engine) deck.engine.setReverse(!deck.engine.isReverse) }
                         }
                         FlatBtn {
-                            btnText: "SYNC"
+                            id: syncBtn
+                            property bool isMaster: deck.engine ? deck.engine.syncMaster : false
+                            btnText: isMaster ? "MASTER" : "SYNC"
                             Layout.preferredWidth: deck.wBtnLg
                             Layout.minimumWidth: deck.wBtnLg
                             Layout.maximumWidth: deck.wBtnLg
                             fbActive: deck.engine ? deck.engine.syncEnabled : false
-                            fbAccent: "#3acc3a"
-                            fbActiveText: "#3acc3a"
+                            // Master deck is highlighted gold so it's obvious which deck
+                            // is the tempo/beat reference; plain followers stay green.
+                            fbAccent: isMaster ? "#ffb000" : "#3acc3a"
+                            fbActiveText: isMaster ? "#ffb000" : "#3acc3a"
                             onClicked: {
                                 if (!deck.engine) return
                                 if (deck.engine.syncEnabled) deck.engine.reSync()

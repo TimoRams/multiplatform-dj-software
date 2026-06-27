@@ -2,7 +2,42 @@
 
 *Last updated: 2026-06-27*
 
-## Current task (stability / quantize / threading)
+## Current task (Serato-style multi-deck sync)
+Sync previously matched BPM + only **sub-beat** phase (`getBeatPhase`), so beats
+could lock while bars/downbeats did not — and a synced follower could drop a beat
+off. Now sync arranges the **beatgrids on the bar** like Serato.
+- **`getBarPhase()`** (`DjEngine_Sync.cpp`, Q_INVOKABLE): 0=downbeat … 0.25/0.5/0.75
+  = beats 2/3/4, anchored to the first `isDownbeat` marker (offset `% 4`), built on
+  `getBeatPosition()`; BPM/first-beat fallback when no grid.
+- **Bar (downbeat) alignment via seek** on the events that "arrange":
+  - `snapPhaseToMaster` (sync enable) → full bar align, wrap ±0.5 bar (max 2-beat jump).
+  - `reSync` (manual) → full bar align + boosted residual cleanup.
+  - `alignToSyncMasterOnPlay` (new) → when a synced **follower starts playing**
+    (`play()` / `togglePlay()` play branch) it re-derives tempo from the current
+    master then bar-snaps, so it drops in phase-locked.
+  - Shared clamped seek helper `applySyncSeekOffset` (handles pre-roll).
+- **Continuous lock is a PI controller** (`updatePhaseCorrection`) on beat-phase
+  error, output = tempo nudge (no seeks, no jumps). Proportional snaps phase;
+  **integral cancels systematic tempo bias** (analysed BPM ≠ true grid spacing,
+  or a clamped sync tempo %) so decks don't drift apart. Gains: kP 14 (%/beat),
+  kI 9 (%/(beat·s)), clamp ±6% (±15%+kP 30 during reSync boost); anti-windup clamps
+  the integral to the nudge ceiling; `m_phaseIntegral` + `m_phaseClock` reset on
+  pause / master-loss / seek-align / sync-off. (The old pure-P + 0.02-beat deadband
+  left a steady bias → sawtooth drift; a too-low kI=2 left a ~15 s settling creep
+  that read as "aligns then slowly drifts". Higher gains converge in <10 s even in
+  the extreme 100→200 BPM clamp case, then hold ±0.01 beats with no drift.)
+  `currentSyncMaster()` helper wraps the `s_syncMutex` lookup.
+- **UI: sync master highlighted.** `DeckControl.qml` SYNC button shows "MASTER" in
+  gold (`#ffb000`) when `engine.syncMaster`, plain green "SYNC" otherwise, so the
+  tempo/beat reference deck is obvious.
+- Tempo match is exact: follower pct = `(masterBpm/baseBpm - 1)*100` →
+  `getCurrentBpm()==masterBpm`. Master tempo-fader moves already propagate.
+- **Verified live (2 decks, 100 vs 189 BPM, 1.89× stretch stress case):** on follower
+  sync, bpmB→189.474 (=master); bar-diff collapses from −1.7 beats to ~0; over **38 s
+  of locked playback it stays within ±0.005 beats (~1.5 ms) with NO growing trend** —
+  the PI integral eliminates the drift.
+
+## Previous task (stability / quantize / threading)
 1. **Quantize for cues (CDJ-3000 style).** Two parts, both needed:
    a. **Store-time snap** — with `m_quantizeEnabled`, the stored point snaps to
       `quantizedBeatAt()` at SET time (`storeHotCue`, `cueButtonPress` both branches).

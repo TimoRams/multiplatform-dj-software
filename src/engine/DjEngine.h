@@ -249,6 +249,9 @@ public:
     [[nodiscard]] double  tempoRangePercent() const { return m_tempoRangePercent; }
     // Beat phase: 0.0 = on the beat, 0.5 = halfway between beats, approaches 1.0 just before the next beat.
     [[nodiscard]] Q_INVOKABLE double getBeatPhase() const;
+    // Bar phase: 0.0 = on the downbeat ("the 1"), 0.25/0.5/0.75 = beats 2/3/4 of
+    // the bar. Anchored to downbeat markers so sync can arrange grids bar-aligned.
+    [[nodiscard]] Q_INVOKABLE double getBarPhase() const;
     [[nodiscard]] double getBeatPosition() const;
     // Returns the analysed BPM multiplied by the current tempo ratio.
     // Shows 0.0 until BPM analysis is complete.
@@ -558,6 +561,10 @@ private:
     // Cleared on scratch and when sync is disabled. Normally capped at ±4%; ±8% during reSync.
     double m_phaseNudge = 0.0;
     bool   m_resyncBoost = false;
+    // PI phase-lock state. The integral term cancels any systematic tempo bias
+    // (e.g. analysed BPM ≠ true grid spacing) so synced decks don't slowly drift.
+    double m_phaseIntegral = 0.0;
+    QElapsedTimer m_phaseClock;
 
     // Jog outer-rim nudge: temporary speed offset from rim turning (no touch press).
     double m_jogNudgePercent = 0.0;
@@ -623,8 +630,16 @@ private:
     void updatePhaseCorrection();
     // Bypass for internal/sync use — no follower-lock guard, no master propagation.
     void applyTempoPercent(double percent);
-    // Seek this deck so its beat phase matches master's. Called when sync is first enabled.
+    // Seek this deck so its bar phase (downbeat) matches master's. Called when sync
+    // is first enabled and when a synced follower starts playing.
     void snapPhaseToMaster(DjEngine* master);
+    // Clamped transport seek used by sync to arrange phase (handles pre-roll).
+    void applySyncSeekOffset(double seekOffset);
+    // Current sync master deck (locks s_syncMutex). Null when none.
+    [[nodiscard]] DjEngine* currentSyncMaster();
+    // When a synced follower starts playing, re-match tempo and arrange bars to
+    // the master so it drops in phase-locked (Serato-style).
+    void alignToSyncMasterOnPlay();
     void refreshHardwareLatency();
     void setSnapAnchor(double positionSec, bool valid);
     void armSnapFromTransportPosition();
