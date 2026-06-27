@@ -6,6 +6,19 @@ std::mutex DjEngine::s_syncMutex;
 std::vector<DjEngine*> DjEngine::s_syncDecks;
 DjEngine* DjEngine::s_syncMasterDeck = nullptr;
 
+namespace {
+
+constexpr int kBeatsPerBar = 4;
+
+[[nodiscard]] double wrapUnitPhase(double diff) noexcept
+{
+    if (diff > 0.5)  diff -= 1.0;
+    if (diff < -0.5) diff += 1.0;
+    return diff;
+}
+
+} // namespace
+
 static double nearestDownbeatAnchor(const std::vector<TrackData::BeatMarker>& grid,
                                     double currentSec)
 {
@@ -110,11 +123,9 @@ double DjEngine::getBarPhase() const
         // first downbeat marker so two decks line up on the musical "1".
         const double beatPos = getBeatPosition();
         int downbeatOffset = 0;
-        for (std::size_t i = 0; i < grid.size(); ++i) {
-            if (grid[i].isDownbeat) {
-                downbeatOffset = static_cast<int>(i % kBeatsPerBar);
-                break;
-            }
+        if (const auto it = std::ranges::find_if(grid, &TrackData::BeatMarker::isDownbeat);
+            it != grid.end()) {
+            downbeatOffset = static_cast<int>(std::distance(grid.begin(), it) % kBeatsPerBar);
         }
         const double rel = beatPos - static_cast<double>(downbeatOffset);
         const double barPos = std::fmod(std::fmod(rel, kBeatsPerBar) + kBeatsPerBar, kBeatsPerBar);
@@ -176,11 +187,7 @@ void DjEngine::updatePhaseCorrection()
         return;
     }
 
-    DjEngine* master = nullptr;
-    {
-        std::lock_guard<std::mutex> g(s_syncMutex);
-        master = s_syncMasterDeck;
-    }
+    DjEngine* master = currentSyncMaster();
 
     if (!master || !master->isPlaying() || !master->m_trackData
             || master->m_trackData->getBpm() <= 0.0) {
@@ -195,11 +202,7 @@ void DjEngine::updatePhaseCorrection()
 
     const double masterPhase = master->getBeatPhase();
     const double myPhase     = getBeatPhase();
-
-    // Signed phase error wrapped to [-0.5, +0.5] of a beat.
-    double diff = masterPhase - myPhase;
-    if (diff >  0.5) diff -= 1.0;
-    if (diff < -0.5) diff += 1.0;
+    const double diff        = wrapUnitPhase(masterPhase - myPhase);
 
     // Elapsed time since the last correction (for the integral term).
     const double dt = m_phaseClock.isValid()
@@ -295,15 +298,12 @@ void DjEngine::snapPhaseToMaster(DjEngine* master)
     // Align on the BAR (downbeat), not just the sub-beat phase: Serato-style sync
     // arranges the beatgrids so the musical "1"s line up. Error is measured in bars
     // and wrapped to ±0.5 bar (±2 beats), so the largest arrange jump is 2 beats.
-    double diff = master->getBarPhase() - getBarPhase();
-    if (diff >  0.5) diff -= 1.0;
-    if (diff < -0.5) diff += 1.0;
+    const double diff = wrapUnitPhase(master->getBarPhase() - getBarPhase());
 
     if (std::abs(diff) < 0.002)
         return;
 
-    const double barLen = 4.0 * beatIntervalAt(getPosition()).lengthSec;
-    applySyncSeekOffset(diff * barLen);
+    applySyncSeekOffset(diff * 4.0 * beatIntervalAt(getPosition()).lengthSec);
     m_phaseNudge    = 0.0;
     m_phaseIntegral = 0.0;
     m_phaseClock.invalidate();
@@ -362,8 +362,7 @@ void DjEngine::reSync()
     if (!m_syncEnabled || m_isSyncMaster || !m_trackData)
         return;
 
-    DjEngine* master = nullptr;
-    { std::lock_guard<std::mutex> g(s_syncMutex); master = s_syncMasterDeck; }
+    DjEngine* master = currentSyncMaster();
     if (!master || !master->m_trackData)
         return;
 
@@ -371,17 +370,10 @@ void DjEngine::reSync()
     if (bpm <= 0.0)
         return;
 
-    // Full bar (downbeat) realignment: the user pressed re-sync to lock the grids,
-    // so seek the whole error to land the "1"s together, then let the boosted
-    // beat-phase controller clean up any residual from grid imperfections.
-    double diff = master->getBarPhase() - getBarPhase();
-    if (diff >  0.5) diff -= 1.0;
-    if (diff < -0.5) diff += 1.0;
+    const double diff = wrapUnitPhase(master->getBarPhase() - getBarPhase());
 
-    if (std::abs(diff) >= 0.002) {
-        const double barLen = 4.0 * beatIntervalAt(getPosition()).lengthSec;
-        applySyncSeekOffset(diff * barLen);
-    }
+    if (std::abs(diff) >= 0.002)
+        applySyncSeekOffset(diff * 4.0 * beatIntervalAt(getPosition()).lengthSec);
     m_phaseNudge    = 0.0;
     m_phaseIntegral = 0.0;
     m_phaseClock.invalidate();

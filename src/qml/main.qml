@@ -255,8 +255,8 @@ ApplicationWindow {
             mainLayout.visible = true
             if (typeof appConfig !== "undefined" && appConfig && !appConfig.firstRunCompleted)
                 welcomeOverlay.active = true
-            if (typeof settingsManager !== "undefined" && settingsManager && settingsManager.previousRunUnclean) {
-                uncleanShutdownWarning.visibleMessage = settingsManager.previousRunWarningMessage
+            if (typeof libraryDb !== "undefined" && libraryDb && libraryDb.recoveryWarningNeeded) {
+                uncleanShutdownWarning.visibleMessage = libraryDb.recoveryWarningMessage
                 window.uncleanShutdownWarningVisible = true
             }
         }

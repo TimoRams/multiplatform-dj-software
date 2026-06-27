@@ -1,5 +1,6 @@
 #include "MixerParameterBridge.h"
 
+#include "DeckChannels.h"
 #include "ParameterStore.h"
 #include "DjEngine.h"
 
@@ -19,11 +20,7 @@ void MixerParameterBridge::setDecks(DjEngine* deckA, DjEngine* deckB, DjEngine* 
 
 DjEngine* MixerParameterBridge::deckForChannelId(const QString& channelId) const
 {
-    if (channelId == QLatin1String("deckA")) return m_decks[0];
-    if (channelId == QLatin1String("deckB")) return m_decks[1];
-    if (channelId == QLatin1String("deckC")) return m_decks[2];
-    if (channelId == QLatin1String("deckD")) return m_decks[3];
-    return nullptr;
+    return ::deckForChannelId(channelId, m_decks[0], m_decks[1], m_decks[2], m_decks[3]);
 }
 
 void MixerParameterBridge::onParameterChanged(const QString& id, float value)
@@ -42,16 +39,17 @@ void MixerParameterBridge::onParameterChanged(const QString& id, float value)
     if (!deck)
         return;
 
+    // Silent apply* path: UI/MIDI knobs sync via parameterStore, not engine NOTIFY.
     if (suffix == QLatin1String("gain")) {
-        deck->setTrim(static_cast<double>(value) * 2.0);
+        deck->applyTrim(mixerTrimFromNormalized(value));
     } else if (suffix == QLatin1String("eqHigh")) {
-        deck->setEqHigh(static_cast<double>(value) * 2.0 - 1.0);
+        deck->applyEqHigh(mixerBipolarFromNormalized(value));
     } else if (suffix == QLatin1String("eqMid")) {
-        deck->setEqMid(static_cast<double>(value) * 2.0 - 1.0);
+        deck->applyEqMid(mixerBipolarFromNormalized(value));
     } else if (suffix == QLatin1String("eqLow")) {
-        deck->setEqLow(static_cast<double>(value) * 2.0 - 1.0);
+        deck->applyEqLow(mixerBipolarFromNormalized(value));
     } else if (suffix == QLatin1String("filter")) {
-        deck->setFilter(static_cast<double>(value) * 2.0 - 1.0);
+        deck->applyFilter(mixerBipolarFromNormalized(value));
     } else if (suffix == QLatin1String("headphone_cue")) {
         if (value >= 0.5f)
             deck->setCueEnabled(!deck->cueEnabled());

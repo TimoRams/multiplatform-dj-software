@@ -59,6 +59,8 @@ private:
     [[nodiscard]] static float stopTailGain(float value, float fadeStart);
     [[nodiscard]] float getDecibelsFromKnob(float kb) const;
     void updateFilters();
+    void updateFiltersFromValues(float low, float mid, float high, float filter);
+    void maybeRefreshFilterCoefficients(int numSamples);
     FxProcessor* fxChainSlot(int slot);
 
     juce::AudioSource* source = nullptr;
@@ -74,6 +76,16 @@ private:
     std::atomic<float> highVol{0.0f};
     std::atomic<float> filterVal{0.0f};
     std::atomic<bool> m_filtersDirty { false };
+
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_eqLowSmooth;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_eqMidSmooth;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_eqHighSmooth;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_filterSmooth;
+    float m_appliedEqLow    = 0.0f;
+    float m_appliedEqMid    = 0.0f;
+    float m_appliedEqHigh   = 0.0f;
+    float m_appliedFilter   = 0.0f;
+    int   m_filterHoldSamples = 0;
 
     using FilterType = juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>, juce::dsp::IIR::Coefficients<float>>;
     FilterType lowEq;

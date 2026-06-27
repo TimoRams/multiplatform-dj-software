@@ -100,6 +100,20 @@ void MixerDspSource::prepareToPlay(int samplesPerBlockExpected, double sampleRat
         m_faderSmooth.reset(sr, 0.020f);   // 20 ms — crossfader can move very fast
         m_faderSmooth.setCurrentAndTargetValue(faderVal.load(std::memory_order_relaxed));
 
+        m_eqLowSmooth  .reset(sr, 0.012f);
+        m_eqMidSmooth  .reset(sr, 0.012f);
+        m_eqHighSmooth .reset(sr, 0.012f);
+        m_filterSmooth .reset(sr, 0.012f);
+        m_eqLowSmooth  .setCurrentAndTargetValue(lowVol .load(std::memory_order_relaxed));
+        m_eqMidSmooth  .setCurrentAndTargetValue(midVol .load(std::memory_order_relaxed));
+        m_eqHighSmooth .setCurrentAndTargetValue(highVol.load(std::memory_order_relaxed));
+        m_filterSmooth .setCurrentAndTargetValue(filterVal.load(std::memory_order_relaxed));
+        m_appliedEqLow  = m_eqLowSmooth.getCurrentValue();
+        m_appliedEqMid  = m_eqMidSmooth.getCurrentValue();
+        m_appliedEqHigh = m_eqHighSmooth.getCurrentValue();
+        m_appliedFilter = m_filterSmooth.getCurrentValue();
+        m_filterHoldSamples = 0;
+
         // 1.15 s ramp from full speed to a complete stop
         m_vinylBrakeRampDown  = 1.0f / (1.15f * static_cast<float>(sampleRate));
         m_vinylBrakeFactor    = 1.0f;
@@ -151,11 +165,7 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
         if (m_sampleRate <= 0.0 || bufferToFill.buffer->getNumChannels() == 0 || bufferToFill.numSamples == 0) [[unlikely]]
             return;
 
-        // Apply deferred EQ / filter coefficient updates on the audio thread.
-        // This prevents the data race of writing IIR coefficients from the UI
-        // thread while the audio thread reads them inside lowEq.process().
-        if (m_filtersDirty.exchange(false, std::memory_order_acquire))
-            updateFilters();
+        maybeRefreshFilterCoefficients(bufferToFill.numSamples);
 
         // Rate-proportional 4-pole anti-alias LP + gentle soft-clip during scratch.
         // scratchTimbre carries absRate (0–1); cutoff at rate × sr × 0.25 places
@@ -560,31 +570,75 @@ float MixerDspSource::getDecibelsFromKnob(float kb) const {
         }
     }
 
-void MixerDspSource::updateFilters() {
+void MixerDspSource::updateFiltersFromValues(float low, float mid, float high, float filter)
+{
         if (m_sampleRate <= 0) return;
-        
+
         // Update EQs using standard DJ shelving/peak frequencies
-        *lowEq.state = *juce::dsp::IIR::Coefficients<float>::makeLowShelf(m_sampleRate, 250.0f, 0.707f, juce::Decibels::decibelsToGain(getDecibelsFromKnob(lowVol)));
-        *midEq.state = *juce::dsp::IIR::Coefficients<float>::makePeakFilter(m_sampleRate, 1000.0f, 0.707f, juce::Decibels::decibelsToGain(getDecibelsFromKnob(midVol)));
-        *highEq.state = *juce::dsp::IIR::Coefficients<float>::makeHighShelf(m_sampleRate, 2500.0f, 0.707f, juce::Decibels::decibelsToGain(getDecibelsFromKnob(highVol)));
+        *lowEq.state = *juce::dsp::IIR::Coefficients<float>::makeLowShelf(m_sampleRate, 250.0f, 0.707f, juce::Decibels::decibelsToGain(getDecibelsFromKnob(low)));
+        *midEq.state = *juce::dsp::IIR::Coefficients<float>::makePeakFilter(m_sampleRate, 1000.0f, 0.707f, juce::Decibels::decibelsToGain(getDecibelsFromKnob(mid)));
+        *highEq.state = *juce::dsp::IIR::Coefficients<float>::makeHighShelf(m_sampleRate, 2500.0f, 0.707f, juce::Decibels::decibelsToGain(getDecibelsFromKnob(high)));
 
         // Color Filter (LPF/HPF combo)
-        if (std::abs(filterVal) < 0.05f) {
-            // Flat response / completely bypassed
-            // Since we can't 'bypass' perfectly, we just set a flat peak filter
+        if (std::abs(filter) < 0.05f) {
             *colorFilter.state = *juce::dsp::IIR::Coefficients<float>::makePeakFilter(m_sampleRate, 1000.0f, 0.707f, 1.0f);
-        } else if (filterVal < 0.0f) {
-            // Low Pass: sweep down from 20000 to ~80 Hz
-            // t goes from 1.0 down to 0
-            float t = 1.0f + filterVal;
-            float freq = 80.0f * std::pow(20000.0f / 80.0f, t);
+        } else if (filter < 0.0f) {
+            const float t = 1.0f + filter;
+            const float freq = 80.0f * std::pow(20000.0f / 80.0f, t);
             *colorFilter.state = *juce::dsp::IIR::Coefficients<float>::makeLowPass(m_sampleRate, std::max(20.0f, freq), 1.2f);
         } else {
-            // High Pass: sweep up from 20 to ~10000 Hz
-            float freq = 20.0f * std::pow(10000.0f / 20.0f, filterVal);
+            const float freq = 20.0f * std::pow(10000.0f / 20.0f, filter);
             *colorFilter.state = *juce::dsp::IIR::Coefficients<float>::makeHighPass(m_sampleRate, std::max(20.0f, freq), 1.2f);
         }
-    }
+
+        m_appliedEqLow  = low;
+        m_appliedEqMid  = mid;
+        m_appliedEqHigh = high;
+        m_appliedFilter = filter;
+}
+
+void MixerDspSource::maybeRefreshFilterCoefficients(int numSamples)
+{
+        m_eqLowSmooth  .setTargetValue(lowVol .load(std::memory_order_relaxed));
+        m_eqMidSmooth  .setTargetValue(midVol .load(std::memory_order_relaxed));
+        m_eqHighSmooth .setTargetValue(highVol.load(std::memory_order_relaxed));
+        m_filterSmooth .setTargetValue(filterVal.load(std::memory_order_relaxed));
+
+        m_eqLowSmooth  .skip(numSamples);
+        m_eqMidSmooth  .skip(numSamples);
+        m_eqHighSmooth .skip(numSamples);
+        m_filterSmooth .skip(numSamples);
+
+        m_filterHoldSamples = std::max(0, m_filterHoldSamples - numSamples);
+
+        const float curLow    = m_eqLowSmooth.getCurrentValue();
+        const float curMid    = m_eqMidSmooth.getCurrentValue();
+        const float curHigh   = m_eqHighSmooth.getCurrentValue();
+        const float curFilter = m_filterSmooth.getCurrentValue();
+
+        constexpr float kCoeffEps = 0.0025f;
+        const bool forced = m_filtersDirty.exchange(false, std::memory_order_acquire);
+        const bool moved = std::abs(curLow    - m_appliedEqLow)  > kCoeffEps
+                        || std::abs(curMid    - m_appliedEqMid)  > kCoeffEps
+                        || std::abs(curHigh   - m_appliedEqHigh) > kCoeffEps
+                        || std::abs(curFilter - m_appliedFilter) > kCoeffEps;
+        const bool smoothing = m_eqLowSmooth.isSmoothing() || m_eqMidSmooth.isSmoothing()
+                            || m_eqHighSmooth.isSmoothing() || m_filterSmooth.isSmoothing();
+
+        if (!forced && !moved && !smoothing && m_filterHoldSamples > 0)
+            return;
+
+        m_filterHoldSamples = static_cast<int>(m_sampleRate / 60.0);
+        updateFiltersFromValues(curLow, curMid, curHigh, curFilter);
+}
+
+void MixerDspSource::updateFilters()
+{
+        updateFiltersFromValues(lowVol.load(std::memory_order_relaxed),
+                                midVol.load(std::memory_order_relaxed),
+                                highVol.load(std::memory_order_relaxed),
+                                filterVal.load(std::memory_order_relaxed));
+}
 
 FxProcessor* MixerDspSource::fxChainSlot(int slot) {
         if (slot < 1 || slot > kFxChainSlots) return nullptr;

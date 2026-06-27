@@ -1,8 +1,16 @@
 # Progress
 
 ## Done (recent)
-- [x] **Quantize for hot cues + main cue** — snap stored point to beat grid when quantize is on
-  (CDJ-3000 style), in `DjEngine_HotCue.cpp` / `DjEngine_MainCue.cpp`. Loops were already quantized.
+- [x] **Mixer command-path cleanup** — `DeckChannels.h` shared lookup/scaling; MIDI gain/EQ/filter
+  only via `MixerParameterBridge` (`apply*`); duplicate block removed from `MidiFlx10Bridge`;
+  `FxManager` filter dedup + `applyFilter` on mode switch; dead `updateGain()` removed.
+- [x] **Real-time mixer performance** — silent `apply*()` path for knob/fader drag (no Qt
+  NOTIFY storm); VU NOTIFY throttled ~20 Hz; EQ/filter IIR coeffs smoothed + capped ~60 Hz
+  on audio thread.
+- [x] **DB recovery warning only on real risk** — `session_dirty` + `session_closed_cleanly`
+  Meta keys; warning only when abrupt exit AND pending library writes; Ctrl+C with no
+  writes silent. SIGINT/SIGTERM → graceful quit + WAL checkpoint.
+- [x] **Sync code cleanup** — `wrapUnitPhase`, `std::ranges::find_if` for downbeats.
 - [x] **Serato-style multi-deck sync** — align beatgrids on the **bar/downbeat**, not just BPM +
   sub-beat phase. New `getBarPhase()`; `snapPhaseToMaster`/`reSync`/`alignToSyncMasterOnPlay`
   bar-align via seek (`applySyncSeekOffset`).
@@ -43,10 +51,14 @@
 - [ ] Cursor hide on knob/fader drag (guards added; verify on macOS)
 
 ## Known issues
+- `MixerControl` internal mix state (`m_mixA` trim/EQ) can lag MIDI-only moves until a UI knob
+  drag updates it; harmless unless `applyAllMixState()` is re-triggered — consider syncing from
+  `parameterStore` on bridge apply.
 - Watch for the same QML pitfalls elsewhere (DeckControl/FxBar/PerformancePads): grouped-alias
   signal handlers (`alias.onXxx:`) silently don't fire, and `prop: prop` bindings self-reference
   when the child owns a property of the same name — qualify with the parent's `id`.
 
 ## Not started / backlog
 - Commit/push mixer fix (only when user asks)
-- Optional: deduplicate `MixerParameterBridge` vs `MidiFlx10Bridge` gain/EQ handlers
+- Route deck C/D FLX10 mixer params when controller mapping expands (bridge already handles 4 decks)
+- Optional: throttle `progressChanged` in `tickTransportPlaying` if waveform CPU still high

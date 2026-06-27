@@ -3,6 +3,7 @@
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
 #include <array>
+#include <csignal>
 #include <memory>
 
 // Qt Includes
@@ -77,6 +78,22 @@ void configureQtRuntimeDefaults()
                 "qt.scenegraph.general=false;"
                 "qt.rhi.general=false");
     }
+}
+
+// Ctrl+C / SIGTERM should run the normal quit path (library DB checkpoint +
+// clean-shutdown marker) instead of killing the process mid-flight.
+void requestGracefulTermination(int)
+{
+    if (QCoreApplication* app = QCoreApplication::instance())
+        QMetaObject::invokeMethod(app, "quit", Qt::QueuedConnection);
+}
+
+void installGracefulTerminationHandlers()
+{
+#if !defined(_WIN32)
+    std::signal(SIGINT, requestGracefulTermination);
+    std::signal(SIGTERM, requestGracefulTermination);
+#endif
 }
 
 QString pickDefaultVulkanIcd()
@@ -218,6 +235,7 @@ int runApplication(int argc, char *argv[])
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
     QGuiApplication app(argc, argv);
+    installGracefulTerminationHandlers();
     logStartupStep("QGuiApplication created");
 
 #if defined(Q_OS_LINUX)

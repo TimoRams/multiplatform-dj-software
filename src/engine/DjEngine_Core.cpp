@@ -165,6 +165,7 @@ DjEngine::DjEngine(QObject* parent)
     clearOutputChannelCountCache();
     m_snapClock.start();
     m_playHistoryClock.start();
+    m_vuNotifyClock.start();
 
     connect(&timer, &QTimer::timeout, this, &DjEngine::onTimer);
     timer.setTimerType(Qt::PreciseTimer);
@@ -287,8 +288,7 @@ void DjEngine::onTimer()
     // Catches any leftover transport state that togglePlay/pause missed.
     if (transportSource.isPlaying() && !m_playRequested && !m_mainCuePreviewActive) {
         freezeTransportAt(transportSource.getCurrentPosition());
-        emit vuLevelChanged();
-        emit gainReductionChanged();
+        notifyVuMetersIfNeeded();
         return;
     }
 
@@ -331,8 +331,7 @@ void DjEngine::onTimer()
         updatePhaseCorrection();
 
     updateFxBeatSyncPosition();
-    emit vuLevelChanged();
-    emit gainReductionChanged();
+    notifyVuMetersIfNeeded();
 }
 
 
@@ -438,15 +437,6 @@ double DjEngine::getPreRollSeconds() const
 }
 
 
-void DjEngine::updateGain()
-{
-    if (mixerSource) {
-        mixerSource->setFader(static_cast<float>(m_volume));
-        mixerSource->setTrim(static_cast<float>(m_trim));
-    }
-}
-
-
 void DjEngine::applyMixerEq()
 {
     if (!mixerSource)
@@ -465,7 +455,41 @@ void DjEngine::applyMixerFilter()
 }
 
 
-void DjEngine::setVolume(double value)
+void DjEngine::notifyVuMetersIfNeeded()
+{
+    const float vuL    = vuLevelL();
+    const float vuR    = vuLevelR();
+    const float preL   = preFaderVuLevelL();
+    const float preR   = preFaderVuLevelR();
+    const float gr     = gainReduction();
+
+    constexpr float kVuEps = 0.015f;
+    constexpr float kGrEps = 0.012f;
+    const bool vuMoved = std::abs(vuL - m_lastNotifiedVuL) > kVuEps
+                      || std::abs(vuR - m_lastNotifiedVuR) > kVuEps
+                      || std::abs(preL - m_lastNotifiedPreVuL) > kVuEps
+                      || std::abs(preR - m_lastNotifiedPreVuR) > kVuEps;
+    const bool grMoved = std::abs(gr - m_lastNotifiedGr) > kGrEps;
+    const qint64 msSince = m_vuNotifyClock.isValid() ? m_vuNotifyClock.elapsed() : 1000;
+
+    if (!vuMoved && !grMoved && msSince < 50)
+        return;
+
+    m_lastNotifiedVuL   = vuL;
+    m_lastNotifiedVuR   = vuR;
+    m_lastNotifiedPreVuL = preL;
+    m_lastNotifiedPreVuR = preR;
+    m_lastNotifiedGr    = gr;
+    m_vuNotifyClock.restart();
+
+    if (vuMoved || msSince >= 50)
+        emit vuLevelChanged();
+    if (grMoved || msSince >= 50)
+        emit gainReductionChanged();
+}
+
+
+void DjEngine::applyVolume(double value)
 {
     const double clamped = std::clamp(value, kVolumeMin, kVolumeMax);
     if (metadata::nearlyEqual(m_volume, clamped))
@@ -474,11 +498,17 @@ void DjEngine::setVolume(double value)
     m_volume = clamped;
     if (mixerSource)
         mixerSource->setFader(static_cast<float>(m_volume));
+}
+
+
+void DjEngine::setVolume(double value)
+{
+    applyVolume(value);
     emit volumeChanged();
 }
 
 
-void DjEngine::setTrim(double value)
+void DjEngine::applyTrim(double value)
 {
     const double clamped = std::clamp(value, kTrimMin, kTrimMax);
     if (metadata::nearlyEqual(m_trim, clamped))
@@ -487,11 +517,17 @@ void DjEngine::setTrim(double value)
     m_trim = clamped;
     if (mixerSource)
         mixerSource->setTrim(static_cast<float>(m_trim));
+}
+
+
+void DjEngine::setTrim(double value)
+{
+    applyTrim(value);
     emit trimChanged();
 }
 
 
-void DjEngine::setEqHigh(double value)
+void DjEngine::applyEqHigh(double value)
 {
     const double clamped = std::clamp(value, kEqMin, kEqMax);
     if (metadata::nearlyEqual(m_eqHigh, clamped))
@@ -499,11 +535,17 @@ void DjEngine::setEqHigh(double value)
 
     m_eqHigh = clamped;
     applyMixerEq();
+}
+
+
+void DjEngine::setEqHigh(double value)
+{
+    applyEqHigh(value);
     emit eqHighChanged();
 }
 
 
-void DjEngine::setEqMid(double value)
+void DjEngine::applyEqMid(double value)
 {
     const double clamped = std::clamp(value, kEqMin, kEqMax);
     if (metadata::nearlyEqual(m_eqMid, clamped))
@@ -511,11 +553,17 @@ void DjEngine::setEqMid(double value)
 
     m_eqMid = clamped;
     applyMixerEq();
+}
+
+
+void DjEngine::setEqMid(double value)
+{
+    applyEqMid(value);
     emit eqMidChanged();
 }
 
 
-void DjEngine::setEqLow(double value)
+void DjEngine::applyEqLow(double value)
 {
     const double clamped = std::clamp(value, kEqMin, kEqMax);
     if (metadata::nearlyEqual(m_eqLow, clamped))
@@ -523,11 +571,17 @@ void DjEngine::setEqLow(double value)
 
     m_eqLow = clamped;
     applyMixerEq();
+}
+
+
+void DjEngine::setEqLow(double value)
+{
+    applyEqLow(value);
     emit eqLowChanged();
 }
 
 
-void DjEngine::setFilter(double value)
+void DjEngine::applyFilter(double value)
 {
     const double clamped = std::clamp(value, kFilterMin, kFilterMax);
     if (metadata::nearlyEqual(m_filter, clamped))
@@ -535,6 +589,12 @@ void DjEngine::setFilter(double value)
 
     m_filter = clamped;
     applyMixerFilter();
+}
+
+
+void DjEngine::setFilter(double value)
+{
+    applyFilter(value);
     emit filterChanged();
 }
 

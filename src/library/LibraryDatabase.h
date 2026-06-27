@@ -198,6 +198,12 @@ public:
     Q_PROPERTY(QString mirroredDatabaseStatus READ mirroredDatabaseStatus NOTIFY mirroredDatabaseStatusChanged)
     Q_INVOKABLE QString mirroredDatabaseStatus() const;
 
+    // True only when the previous session ended uncleanly *and* had pending library
+    // writes — not on a normal Ctrl+C exit with no DB mutations.
+    Q_PROPERTY(bool recoveryWarningNeeded READ recoveryWarningNeeded NOTIFY recoveryWarningNeededChanged)
+    [[nodiscard]] bool recoveryWarningNeeded() const { return m_recoveryWarningNeeded; }
+    Q_INVOKABLE QString recoveryWarningMessage() const;
+
     // Flush pending DB work and close the connection for clean shutdown.
     Q_INVOKABLE void shutdown(bool syncBackup = false);
 
@@ -208,6 +214,7 @@ signals:
     void trackAdded(const QString& trackId);
     void analysisUpdated(const QString& trackId);
     void mirroredDatabaseStatusChanged();
+    void recoveryWarningNeededChanged();
     void playlistsChanged();
     void trackRemovedFromLibrary(const QString& trackId);
     void trackMetaChanged(const QString& trackId);
@@ -222,6 +229,8 @@ private:
     bool createSchema();
     void scheduleTableModelRefresh();
     void scheduleBackupSync();
+    void markSessionDirty();
+    void assessPreviousSessionRecovery();
     void startDeferredBackupSync();
     bool isHealthyDatabaseFile(const QString& path) const;
     bool recreateDatabaseFileFromLiveConnection(const QString& targetPath);
@@ -251,6 +260,8 @@ private:
     bool m_backupSyncRunning = false;
     bool m_backupSyncAgain = false;
     bool m_shutdownComplete = false;
+    bool m_sessionDirty = false;
+    bool m_recoveryWarningNeeded = false;
 
     static constexpr int kSchemaVersion = 16;
 };

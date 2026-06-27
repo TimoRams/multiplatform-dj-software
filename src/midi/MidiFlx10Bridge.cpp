@@ -1119,18 +1119,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
         else if (id == "headphone_mix") {
             if (a) a->setHeadphoneMix(static_cast<double>(value));
         }
-        // Trim: MIDI 0-1 → engine 0-2 (center = 1.0 = unity)
-        else if (id == "deckA_gain")   { if (a) a->setTrim(static_cast<double>(value) * 2.0); }
-        else if (id == "deckB_gain")   { if (b) b->setTrim(static_cast<double>(value) * 2.0); }
-        // EQ/filter: MIDI 0-1 → engine -1 to +1 (center = 0.0)
-        else if (id == "deckA_eqHigh") { if (a) a->setEqHigh(static_cast<double>(value) * 2.0 - 1.0); }
-        else if (id == "deckB_eqHigh") { if (b) b->setEqHigh(static_cast<double>(value) * 2.0 - 1.0); }
-        else if (id == "deckA_eqMid")  { if (a) a->setEqMid(static_cast<double>(value) * 2.0 - 1.0); }
-        else if (id == "deckB_eqMid")  { if (b) b->setEqMid(static_cast<double>(value) * 2.0 - 1.0); }
-        else if (id == "deckA_eqLow")  { if (a) a->setEqLow(static_cast<double>(value) * 2.0 - 1.0); }
-        else if (id == "deckB_eqLow")  { if (b) b->setEqLow(static_cast<double>(value) * 2.0 - 1.0); }
-        else if (id == "deckA_filter") { if (a) a->setFilter(static_cast<double>(value) * 2.0 - 1.0); }
-        else if (id == "deckB_filter") { if (b) b->setFilter(static_cast<double>(value) * 2.0 - 1.0); }
+        // Trim/EQ/filter: MixerParameterBridge applies these for all four decks.
         // Tempo fader: MIDI 0-1 -> current deck tempo range.
         else if (id == "deckA_tempo")  {
             if (a) {

@@ -2,7 +2,50 @@
 
 *Last updated: 2026-06-27*
 
-## Current task (Serato-style multi-deck sync)
+## Current task (command-path cleanup / Phase 1)
+Architecture scan + focused refactors to unify mixer command entry and remove duplicate
+hot-path work (no parallel systems):
+- **`DeckChannels.h`** — shared `deckForChannelId()` + `mixerTrimFromNormalized` /
+  `mixerBipolarFromNormalized`; used by `MixerControl`, `MixerParameterBridge`, `FxManager`.
+- **Single MIDI mixer path** — `MixerParameterBridge` is the sole applier for gain/EQ/filter
+  (all 4 decks); duplicate handlers removed from `MidiFlx10Bridge` (was double-applying with
+  bridge on every `parameterStore` event).
+- **MIDI uses silent `apply*()`** — `MixerParameterBridge` now calls `applyTrim/applyEq*/applyFilter`
+  (UI syncs via `parameterStore` → QML `Connections`, not engine NOTIFY).
+- **FxManager dedup** — redundant post-`applySoundColorToEngine` `applyFilter` calls removed;
+  mode-switch filter resets use `applyFilter`.
+- **Dead code** — removed unused `DjEngine::updateGain()`.
+
+Prior session (still in tree): `apply*()` on UI drag, VU NOTIFY ~20 Hz, EQ/filter coeff cap
+on audio thread, DB recovery precision, sync PI/bar-align.
+
+## Previous task (real-time mixer / audio engine performance)
+Knob/fader lag was caused by UI-thread NOTIFY churn + unthrottled VU repaints, not
+missing audio routing. Fixes:
+- **`apply*()` vs `set*()` on DjEngine** — `MixerControl` / `FxManager` hot path calls
+  `applyTrim/applyEq*/applyFilter/applyVolume` (audio only, no Qt NOTIFY). `set*()` kept
+  for MIDI/Q_PROPERTY and emits signals.
+- **VU meter NOTIFY throttled** — `notifyVuMetersIfNeeded()` in `onTimer` (was 250 Hz
+  `vuLevelChanged` per deck → full VU Repeater repaints). Now ~20 Hz max or on
+  meaningful level change (±0.015).
+- **EQ/filter coeff updates on audio thread** — `MixerDspSource`: 12 ms SmoothedValue on
+  EQ bands + filter, rate-capped ~60 Hz `updateFiltersFromValues()` (no per-knob IIR
+  recompute storm while dragging).
+
+## Previous task (stability / DB recovery / cleanup)
+- **DB recovery warning is now precise.** Previously `SettingsManager.previousRunUnclean`
+  (App/CleanShutdown flag) fired on every abrupt exit including Ctrl+C with no library
+  writes. Now `LibraryDatabase::recoveryWarningNeeded` is true only when the previous
+  session ended uncleanly **and** `Meta.session_dirty == 1` (any library write this
+  session via `scheduleBackupSync` → `markSessionDirty`). Ctrl+C with no mutations →
+  no dialog. `main.qml` reads `libraryDb.recoveryWarningNeeded` / `recoveryWarningMessage`.
+  Session markers: `session_closed_cleanly` (0 while open, 1 on `shutdown()`), `session_dirty`.
+- **SIGINT/SIGTERM → graceful quit** (`ApplicationBootstrap.cpp`): handler calls
+  `QCoreApplication::quit()` so `shutdownApplication` runs DB checkpoint + clean markers.
+- **Sync cleanup** (`DjEngine_Sync.cpp`): shared `wrapUnitPhase()`, `std::ranges::find_if`
+  for downbeat lookup, `currentSyncMaster()` reuse in phase correction.
+
+## Previous task (Serato-style multi-deck sync)
 Sync previously matched BPM + only **sub-beat** phase (`getBeatPhase`), so beats
 could lock while bars/downbeats did not — and a synced follower could drop a beat
 off. Now sync arranges the **beatgrids on the bar** like Serato.

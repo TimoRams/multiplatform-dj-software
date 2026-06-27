@@ -1,5 +1,6 @@
 #include "MixerControl.h"
 
+#include "DeckChannels.h"
 #include "DjEngine.h"
 
 #include <algorithm>
@@ -58,11 +59,7 @@ void MixerControl::setDecks(DjEngine* deckA, DjEngine* deckB, DjEngine* deckC, D
 
 DjEngine* MixerControl::deckForChannelId(const QString& channelId) const
 {
-    if (channelId == QLatin1String("deckA")) return m_deckA;
-    if (channelId == QLatin1String("deckB")) return m_deckB;
-    if (channelId == QLatin1String("deckC")) return m_deckC;
-    if (channelId == QLatin1String("deckD")) return m_deckD;
-    return nullptr;
+    return ::deckForChannelId(channelId, m_deckA, m_deckB, m_deckC, m_deckD);
 }
 
 MixerControl::ChannelMixState* MixerControl::mixStateForChannel(const QString& channelId)
@@ -111,7 +108,7 @@ void MixerControl::applyChannelVolume(const QString& channelId)
     else if (channelId == QLatin1String("deckC")) fader = m_faderC;
     else if (channelId == QLatin1String("deckD")) fader = m_faderD;
 
-    deck->setVolume(static_cast<double>(fader * crossfaderMultiplierForChannel(channelId)));
+    deck->applyVolume(static_cast<double>(fader * crossfaderMultiplierForChannel(channelId)));
 }
 
 void MixerControl::applyChannelMixState(const QString& channelId)
@@ -121,11 +118,11 @@ void MixerControl::applyChannelMixState(const QString& channelId)
     if (!deck || !state)
         return;
 
-    deck->setTrim(state->trim);
-    deck->setEqHigh(state->eqHigh);
-    deck->setEqMid(state->eqMid);
-    deck->setEqLow(state->eqLow);
-    deck->setFilter(state->filter);
+    deck->applyTrim(state->trim);
+    deck->applyEqHigh(state->eqHigh);
+    deck->applyEqMid(state->eqMid);
+    deck->applyEqLow(state->eqLow);
+    deck->applyFilter(state->filter);
 }
 
 void MixerControl::setTrim(const QString& channelId, double value)
@@ -133,7 +130,7 @@ void MixerControl::setTrim(const QString& channelId, double value)
     if (ChannelMixState* const state = mixStateForChannel(channelId))
         state->trim = value;
     if (DjEngine* const deck = deckForChannelId(channelId))
-        deck->setTrim(value);
+        deck->applyTrim(value);
 }
 
 void MixerControl::setEqHigh(const QString& channelId, double value)
@@ -141,7 +138,7 @@ void MixerControl::setEqHigh(const QString& channelId, double value)
     if (ChannelMixState* const state = mixStateForChannel(channelId))
         state->eqHigh = value;
     if (DjEngine* const deck = deckForChannelId(channelId))
-        deck->setEqHigh(value);
+        deck->applyEqHigh(value);
 }
 
 void MixerControl::setEqMid(const QString& channelId, double value)
@@ -149,7 +146,7 @@ void MixerControl::setEqMid(const QString& channelId, double value)
     if (ChannelMixState* const state = mixStateForChannel(channelId))
         state->eqMid = value;
     if (DjEngine* const deck = deckForChannelId(channelId))
-        deck->setEqMid(value);
+        deck->applyEqMid(value);
 }
 
 void MixerControl::setEqLow(const QString& channelId, double value)
@@ -157,7 +154,7 @@ void MixerControl::setEqLow(const QString& channelId, double value)
     if (ChannelMixState* const state = mixStateForChannel(channelId))
         state->eqLow = value;
     if (DjEngine* const deck = deckForChannelId(channelId))
-        deck->setEqLow(value);
+        deck->applyEqLow(value);
 }
 
 void MixerControl::setFilter(const QString& channelId, double value)
@@ -165,7 +162,7 @@ void MixerControl::setFilter(const QString& channelId, double value)
     if (ChannelMixState* const state = mixStateForChannel(channelId))
         state->filter = value;
     if (DjEngine* const deck = deckForChannelId(channelId))
-        deck->setFilter(value);
+        deck->applyFilter(value);
 }
 
 void MixerControl::toggleCue(const QString& channelId)

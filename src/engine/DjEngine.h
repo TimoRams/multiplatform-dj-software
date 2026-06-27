@@ -348,6 +348,13 @@ public slots:
     void setEqMid(double value);
     void setEqLow(double value);
     void setFilter(double value);
+    // Real-time audio path: update DSP without NOTIFY signals (knob drag / fader).
+    void applyVolume(double value);
+    void applyTrim(double value);
+    void applyEqHigh(double value);
+    void applyEqMid(double value);
+    void applyEqLow(double value);
+    void applyFilter(double value);
     void setCueEnabled(bool value);
     Q_INVOKABLE void setMasterCueEnabled(bool value);
     Q_INVOKABLE void setHeadphoneMix(double value);
@@ -575,6 +582,15 @@ private:
     bool m_backspinActive   = false;
     bool m_rollOutActive    = false;
 
+    // Throttle vuLevelChanged / gainReductionChanged so the UI is not repainted
+    // at 250 Hz from the 4 ms control timer while dragging mixer controls.
+    float m_lastNotifiedVuL     = 0.0f;
+    float m_lastNotifiedVuR     = 0.0f;
+    float m_lastNotifiedPreVuL   = 0.0f;
+    float m_lastNotifiedPreVuR   = 0.0f;
+    float m_lastNotifiedGr       = 1.0f;
+    QElapsedTimer m_vuNotifyClock;
+
     // Mixer state
     double m_volume = 0.8;
     double m_trim = 1.0;
@@ -661,9 +677,9 @@ private:
         emit progressChanged(); emit vuLevelChanged(); emit gainReductionChanged();
     }
 
-    void updateGain();
     void applyMixerEq();
     void applyMixerFilter();
+    void notifyVuMetersIfNeeded();
 
     // m_latencySeconds tracks effective output latency reported by the audio device.
     // getOutputLatencyInSamples() is JUCE's callback->speaker delay and already

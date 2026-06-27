@@ -1,4 +1,5 @@
 #include "FxManager.h"
+#include "DeckChannels.h"
 #include "DjEngine.h"
 #include <cmath>
 #include <algorithm>
@@ -157,8 +158,8 @@ void FxManager::setSoundColorMode(const QString& mode)
     // When switching AWAY from Filter mode, reset engine filters to neutral
     if (m_soundColorMode == "Filter" && mode != "Filter")
     {
-        if (m_engineA) m_engineA->setFilter(0.0);
-        if (m_engineB) m_engineB->setFilter(0.0);
+        if (m_engineA) m_engineA->applyFilter(0.0);
+        if (m_engineB) m_engineB->applyFilter(0.0);
     }
 
     m_soundColorMode = mode;
@@ -170,8 +171,8 @@ void FxManager::setSoundColorMode(const QString& mode)
     // When switching TO Filter mode, apply current knob values as filter
     if (mode == "Filter")
     {
-        if (m_engineA) m_engineA->setFilter(static_cast<double>(m_soundColorValueA));
-        if (m_engineB) m_engineB->setFilter(static_cast<double>(m_soundColorValueB));
+        if (m_engineA) m_engineA->applyFilter(static_cast<double>(m_soundColorValueA));
+        if (m_engineB) m_engineB->applyFilter(static_cast<double>(m_soundColorValueB));
     }
 
     qDebug() << "[FxManager] SoundColor mode ->" << mode;
@@ -219,15 +220,11 @@ void FxManager::setSoundColorDeck(int deck, float value)
     {
         m_soundColorValueA = value;
         applySoundColorToEngine(m_engineA, m_soundColorMode, value);
-        if (m_soundColorMode == "Filter" && m_engineA)
-            m_engineA->setFilter(static_cast<double>(value));
     }
     else if (deck == 2)
     {
         m_soundColorValueB = value;
         applySoundColorToEngine(m_engineB, m_soundColorMode, value);
-        if (m_soundColorMode == "Filter" && m_engineB)
-            m_engineB->setFilter(static_cast<double>(value));
     }
 }
 
@@ -239,18 +236,12 @@ void FxManager::setSoundColorChannel(const QString& channelId, float value)
     if (m_soundColorMode == QLatin1String("Filter")) {
         if (channelId == QLatin1String("deckA")) m_soundColorValueA = value;
         else if (channelId == QLatin1String("deckB")) m_soundColorValueB = value;
-        if (DjEngine* const engine = engineForChannelId(channelId))
-            engine->setFilter(static_cast<double>(value));
     }
 }
 
 DjEngine* FxManager::engineForChannelId(const QString& channelId) const
 {
-    if (channelId == QLatin1String("deckA")) return m_engineA;
-    if (channelId == QLatin1String("deckB")) return m_engineB;
-    if (channelId == QLatin1String("deckC")) return m_engineC;
-    if (channelId == QLatin1String("deckD")) return m_engineD;
-    return nullptr;
+    return ::deckForChannelId(channelId, m_engineA, m_engineB, m_engineC, m_engineD);
 }
 
 void FxManager::applySoundColorToEngine(DjEngine* engine, const QString& mode, float value)
@@ -266,7 +257,7 @@ void FxManager::applySoundColorToEngine(DjEngine* engine, const QString& mode, f
         engine->setFxEffectType(EffectType::None);
         engine->setFxWetDry(0.0f);
         engine->setFxSCKnob(0.0f);
-        engine->setFilter(static_cast<double>(value));
+        engine->applyFilter(static_cast<double>(value));
         return;
     }
 

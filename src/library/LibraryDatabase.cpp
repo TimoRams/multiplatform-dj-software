@@ -165,6 +165,8 @@ bool LibraryDatabase::open()
         return false;
     qDebug() << "[LibraryDatabase] open(): schema ready in" << timer.elapsed() << "ms";
 
+    assessPreviousSessionRecovery();
+
     if (!syncBackupFromPrimary())
         qWarning() << "[LibraryDatabase] Failed to sync backup DB after open";
 
@@ -216,6 +218,51 @@ QString LibraryDatabase::mirroredDatabaseStatus() const
              m_lastRecoveryEvent);
 }
 
+QString LibraryDatabase::recoveryWarningMessage() const
+{
+    if (!m_recoveryWarningNeeded)
+        return {};
+
+    return QStringLiteral(
+        "BrockDJ was interrupted while the library database was being updated. "
+        "Your library was reopened from the mirrored copy — please check recent "
+        "changes if anything looks off.");
+}
+
+void LibraryDatabase::assessPreviousSessionRecovery()
+{
+    // Persisted across runs: was the last session closed cleanly and were there
+    // any library writes while it was open?
+    const QString prevClosedCleanly = getSetting(QStringLiteral("session_closed_cleanly"),
+                                                 QStringLiteral("1"));
+    const QString prevDirty         = getSetting(QStringLiteral("session_dirty"),
+                                                 QStringLiteral("0"));
+
+    const bool uncleanExit      = (prevClosedCleanly != QStringLiteral("1"));
+    const bool hadPendingWrites = (prevDirty == QStringLiteral("1"));
+
+    // Only warn when an abrupt exit could have left an in-flight write unfinished.
+    // A Ctrl+C exit with no library mutations is not a recovery event.
+    m_recoveryWarningNeeded = uncleanExit && hadPendingWrites;
+
+    // Mark this session as open; cleared again in shutdown().
+    setSetting(QStringLiteral("session_closed_cleanly"), QStringLiteral("0"));
+    setSetting(QStringLiteral("session_dirty"), QStringLiteral("0"));
+    m_sessionDirty = false;
+
+    if (m_recoveryWarningNeeded)
+        emit recoveryWarningNeededChanged();
+}
+
+void LibraryDatabase::markSessionDirty()
+{
+    if (m_sessionDirty || !m_db.isOpen())
+        return;
+
+    m_sessionDirty = true;
+    setSetting(QStringLiteral("session_dirty"), QStringLiteral("1"));
+}
+
 void LibraryDatabase::shutdown(bool syncBackup)
 {
     if (m_shutdownComplete)
@@ -241,6 +288,10 @@ void LibraryDatabase::shutdown(bool syncBackup)
         QSqlQuery q(m_db);
         q.exec("PRAGMA wal_checkpoint(FULL)");
     }
+
+    setSetting(QStringLiteral("session_dirty"), QStringLiteral("0"));
+    setSetting(QStringLiteral("session_closed_cleanly"), QStringLiteral("1"));
+    m_sessionDirty = false;
 
     if ((syncBackup || pendingBackupSync) && !m_backupSyncRunning) {
         if (!syncBackupFromPrimary())
@@ -283,6 +334,7 @@ void LibraryDatabase::scheduleBackupSync()
     if (!m_db.isValid() || !m_db.isOpen())
         return;
 
+    markSessionDirty();
     m_backupSyncTimer.start();
 }
 
