@@ -546,18 +546,20 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             const double onePixelPoints = 1.0 / pixelSnapDenom;
             const double delta = anchoredCenter - m_lastCenterIndexRender;
             const bool reverse = m_engine->isReverse();
-            const bool microOpposite = reverse
-                ? (delta > 0.0 && delta <= onePixelPoints * 2.0)
-                : (delta < 0.0 && -delta <= onePixelPoints * 2.0);
-            const bool largeSeek = reverse
-                ? (delta < -onePixelPoints * 2.0)
-                : (delta > onePixelPoints * 2.0);
-            if (microOpposite)
-                centerIndexRender = m_lastCenterIndexRender;
-            else if (largeSeek || (reverse ? delta <= 0.0 : delta >= 0.0))
+            // A jump larger than 2 px in EITHER direction is a real seek
+            // (loop wrap back to loop-in, hotcue/cue jump, scratch release) and
+            // must be followed immediately — otherwise the waveform freezes at
+            // the loop-out point until playback catches back up ("hang").
+            const bool largeSeek = std::abs(delta) > onePixelPoints * 2.0;
+            // Within 2 px, suppress only sub-pixel motion opposing the playback
+            // direction (timer jitter) so the scroll never flickers backward.
+            const bool microOpposite = reverse ? (delta > 0.0) : (delta < 0.0);
+            if (largeSeek)
                 centerIndexRender = anchoredCenter;
-            else
+            else if (microOpposite)
                 centerIndexRender = m_lastCenterIndexRender;
+            else
+                centerIndexRender = anchoredCenter;
         } else {
             centerIndexRender = anchoredCenter;
         }

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-build_dir="${repo_root}/build-dev"
+build_dir="${repo_root}/build"
 jobs="${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc)}"
 use_ninja=false
 

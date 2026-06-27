@@ -11,7 +11,7 @@
       "displayName": "Linux dev fast",
       "description": "Fast local Linux build: Ninja, RelWithDebInfo, QML cachegen disabled.",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build-dev",
+      "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "RDBJ_ENABLE_QML_CACHEGEN": "OFF"

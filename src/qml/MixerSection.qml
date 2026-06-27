@@ -183,6 +183,10 @@ Rectangle {
         property alias knob: innerKnob
         property string label: ""
         property real size: mixer.knobSz
+        // Emitted on every knob value change. A direct handler on the inner Knob
+        // is used because a grouped-alias handler (knob.onValueChanged: at the use
+        // site) silently never fires, so EQ/GAIN/SC never reached the audio engine.
+        signal moved(real value)
 
         implicitWidth: size + 14
         implicitHeight: size + 10
@@ -197,6 +201,7 @@ Rectangle {
             width: kc.size
             height: kc.size
             accentColor: mixer.clrKnob
+            onValueChanged: kc.moved(value)
         }
         SilkLabel {
             anchors.horizontalCenter: parent.horizontalCenter
@@ -393,41 +398,31 @@ Rectangle {
                     id: gainKnob
                     label: "GAIN"
                     knob.from: 0; knob.to: 2; knob.value: 1.0; knob.defaultValue: 1.0
-                    knob.onValueChanged: {
-                        mixer.setTrimValue(channelId, gainKnob.knob.value)
-                    }
+                    onMoved: (v) => mixer.setTrimValue(channelId, v)
                 }
                 KnobCell {
                     id: eqHi
                     label: "HI"
                     knob.from: -1; knob.to: 1; knob.value: 0
-                    knob.onValueChanged: {
-                        mixer.setEqHighValue(channelId, eqHi.knob.value)
-                    }
+                    onMoved: (v) => mixer.setEqHighValue(channelId, v)
                 }
                 KnobCell {
                     id: eqMid
                     label: "MID"
                     knob.from: -1; knob.to: 1; knob.value: 0
-                    knob.onValueChanged: {
-                        mixer.setEqMidValue(channelId, eqMid.knob.value)
-                    }
+                    onMoved: (v) => mixer.setEqMidValue(channelId, v)
                 }
                 KnobCell {
                     id: eqLo
                     label: "LOW"
                     knob.from: -1; knob.to: 1; knob.value: 0
-                    knob.onValueChanged: {
-                        mixer.setEqLowValue(channelId, eqLo.knob.value)
-                    }
+                    onMoved: (v) => mixer.setEqLowValue(channelId, v)
                 }
                 KnobCell {
                     id: scKnob
                     label: "SC"
                     knob.from: -1; knob.to: 1; knob.value: 0; knob.defaultValue: 0
-                    knob.onValueChanged: {
-                        mixer.setSoundColorValue(channelId, scKnob.knob.value)
-                    }
+                    onMoved: (v) => mixer.setSoundColorValue(channelId, v)
                 }
 
                 Item { Layout.fillHeight: true; Layout.minimumHeight: 2 }
@@ -504,6 +499,7 @@ Rectangle {
     }
 
     component ChannelSide: ColumnLayout {
+        id: side
         required property string deckName
         required property color deckAccent
         required property bool mirrored
@@ -523,35 +519,35 @@ Rectangle {
         Layout.fillHeight: true
         spacing: 0
 
-        ChannelHeader { deckName: deckName; accent: deckAccent; mirrored: mirrored }
+        ChannelHeader { deckName: side.deckName; accent: side.deckAccent; mirrored: side.mirrored }
 
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 0
-            LayoutMirroring.enabled: mirrored
+            LayoutMirroring.enabled: side.mirrored
             LayoutMirroring.childrenInherit: false
 
             Item { Layout.fillWidth: true; Layout.fillHeight: true }
 
             FaderColumn {
                 id: faderCol
-                faderAccent: deckAccent
-                channelId: channelId
+                faderAccent: side.deckAccent
+                channelId: side.channelId
             }
 
             VuMeterVertical {
                 Layout.fillHeight: true
                 Layout.preferredWidth: mixer.vuW
-                levelLinear: vuLevel
+                levelLinear: side.vuLevel
             }
 
             KnobStackColumn {
                 id: knobs
-                channelId: channelId
-                cueActive: cueActive
-                mirrored: mirrored
-                accent: deckAccent
+                channelId: side.channelId
+                cueActive: side.cueActive
+                mirrored: side.mirrored
+                accent: side.deckAccent
             }
         }
     }

@@ -24,9 +24,10 @@
 - `parameterStore` still used for MIDI ↔ UI sync; `MixerParameterBridge` applies MIDI-normalized params.
 
 ## Build
+Single build dir `build/` via the fast build script (preset `linux-dev-fast`).
 ```bash
-cmake --preset default && cmake --build build
-ctest --test-dir build
+./build-fast                      # configure (first run) + incremental -> build/bin/BrockDJ
+ctest --test-dir build --output-on-failure
 ```
 
 ## Key paths

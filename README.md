@@ -104,10 +104,10 @@ Build and run:
 git clone --recurse-submodules https://github.com/TimoRams/multiplatform-dj-software.git
 cd multiplatform-dj-software
 ./build-fast
-./build-dev/bin/BrockDJ
+./build/bin/BrockDJ
 ```
 
-`./build-fast` configures `build-dev/` (RelWithDebInfo, QML cachegen off) and rebuilds incrementally. Use this for all local Linux development builds.
+`./build-fast` configures `build/` (RelWithDebInfo, QML cachegen off) and rebuilds incrementally. Use this for all local Linux development builds.
 
 </details>
 
@@ -172,11 +172,11 @@ CMake presets: `linux-dev-fast`, `macos-dev-arm64`, `macos-dev-x86_64`.
 
 ### SIMD
 
-Target-native SIMD is enabled automatically on Linux, Windows x64, and Intel macOS. To override on Linux, reconfigure `build-dev/` then run `./build-fast`:
+Target-native SIMD is enabled automatically on Linux, Windows x64, and Intel macOS. To override on Linux, reconfigure `build/` then run `./build-fast`:
 
 ```bash
-rm -rf build-dev
-cmake -S . -B build-dev -DRDBJ_ENABLE_NATIVE_SIMD=OFF
+rm -rf build
+cmake --preset linux-dev-fast -DRDBJ_ENABLE_NATIVE_SIMD=OFF
 ./build-fast
 ```
 

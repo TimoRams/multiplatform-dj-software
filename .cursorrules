@@ -28,9 +28,16 @@ Keep updates concise and factual. Do not duplicate full code in memory files.
 
 ## Build & test
 
+Always build with the fast build script. It configures + incrementally builds the
+**single** `build/` dir (Ninja, RelWithDebInfo, QML cachegen off). There is no
+`build-dev/` — do not recreate it.
+
 ```bash
-cmake --build build && ctest --test-dir build
+./build-fast                      # configure (first run) + incremental build -> build/bin/BrockDJ
+ctest --test-dir build --output-on-failure
 ```
+
+Run the app: `./build/bin/BrockDJ`
 
 ## Key files
 

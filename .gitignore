@@ -1,6 +1,5 @@
 # --- Build-Ordner ---
 build/
-build-dev/
 build-release/
 bin/
 out/

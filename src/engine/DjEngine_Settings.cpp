@@ -316,7 +316,33 @@ std::expected<void, QString> DjEngine::applyAudioDeviceSettingsExpected(const QS
     }
 
     auto* activeDevice = manager.getCurrentAudioDevice();
-    const bool deviceReady = activeDevice != nullptr && activeDevice->isOpen();
+    bool deviceReady = activeDevice != nullptr && activeDevice->isOpen();
+
+    // Last-ditch recovery: the targeted fallbacks above can return no error yet
+    // still leave no open output device — e.g. when the saved device is an
+    // unplugged controller (DDJ-FLX10) whose name lingers in the saved config.
+    // Force JUCE's own default devices with safe stereo routing so audio keeps
+    // working instead of restoring the unusable saved device (which leaves
+    // everything silent and makes the whole mixer appear dead).
+    if (error.isNotEmpty() || !deviceReady) {
+        qWarning() << "[DjEngine] No usable output after fallbacks; forcing system default device";
+        const juce::String defErr = manager.initialiseWithDefaultDevices(0, 2);
+        activeDevice = manager.getCurrentAudioDevice();
+        deviceReady = activeDevice != nullptr && activeDevice->isOpen();
+        if (deviceReady) {
+            error = juce::String();
+            s_outputRoutingPacked.store(packRouting(OutputRoutingConfig{}), std::memory_order_relaxed);
+            m_masterFirstChannelAtomic.store(1, std::memory_order_relaxed);
+            DjMasterBus::setOutputRouting(1, -1, -1);
+            setAudioDeviceFallbackMessage(
+                QStringLiteral("Saved audio device was unavailable. Using the system default "
+                               "output — open Settings → Audio Setup to reconfigure."));
+        } else if (defErr.isNotEmpty()) {
+            qWarning() << "[DjEngine] Default-device recovery failed:"
+                       << QString::fromStdString(defErr.toStdString());
+        }
+    }
+
     if (error.isNotEmpty() || !deviceReady) {
         if (!deviceReady)
             qWarning() << "[DjEngine] Audio device not available after apply; restoring previous device";
