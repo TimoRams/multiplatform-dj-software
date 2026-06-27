@@ -530,17 +530,37 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         ? m_engine->getPlayheadPositionAtomic()
         : static_cast<double>(m_engine->getVisualPosition());
     const double rawCenterIndexRender = rawPlayheadSec * pointsPerSec;
+    const bool scratchVisual = m_engine->isScratchVisualActive();
+    const bool continuousPlayback = m_engine->isPlaying() && !scratchVisual;
+
+    // Scroll anchor: CDJ-style stable playback scroll vs 1:1 scrub tracking.
+    // Playback/pause uses a device-pixel grid with monotonic filtering so timer
+    // jitter never nudges the waveform backward a fraction of a pixel (flicker).
+    // Active scratch uses the raw playhead so finger motion matches the display.
     double centerIndexRender = rawCenterIndexRender;
-    const bool continuousPlayback = m_engine->isPlaying() && !m_engine->isScratchVisualActive();
-    if (continuousPlayback && m_hasLastCenterIndexRender && pointsPerSec > 0.0) {
-        const double pointsPerDevicePixel = 1.0 / std::max(0.0001, pixelsPerPoint * snapScale);
-        const double jitterTolerancePoints = pointsPerDevicePixel * 2.0;
-        const double delta = rawCenterIndexRender - m_lastCenterIndexRender;
-        const bool oppositeMicroStep = m_engine->isReverse()
-            ? (delta > 0.0 && delta <= jitterTolerancePoints)
-            : (delta < 0.0 && -delta <= jitterTolerancePoints);
-        if (oppositeMicroStep)
-            centerIndexRender = m_lastCenterIndexRender;
+    if (!scratchVisual && pixelsPerPoint > 0.0) {
+        const double pixelSnapDenom = pixelsPerPoint * snapScale;
+        const double anchoredCenter = std::floor(rawCenterIndexRender * pixelSnapDenom)
+                                      / pixelSnapDenom;
+        if (continuousPlayback && m_hasLastCenterIndexRender) {
+            const double onePixelPoints = 1.0 / pixelSnapDenom;
+            const double delta = anchoredCenter - m_lastCenterIndexRender;
+            const bool reverse = m_engine->isReverse();
+            const bool microOpposite = reverse
+                ? (delta > 0.0 && delta <= onePixelPoints * 2.0)
+                : (delta < 0.0 && -delta <= onePixelPoints * 2.0);
+            const bool largeSeek = reverse
+                ? (delta < -onePixelPoints * 2.0)
+                : (delta > onePixelPoints * 2.0);
+            if (microOpposite)
+                centerIndexRender = m_lastCenterIndexRender;
+            else if (largeSeek || (reverse ? delta <= 0.0 : delta >= 0.0))
+                centerIndexRender = anchoredCenter;
+            else
+                centerIndexRender = m_lastCenterIndexRender;
+        } else {
+            centerIndexRender = anchoredCenter;
+        }
     }
     m_lastCenterIndexRender = centerIndexRender;
     m_hasLastCenterIndexRender = true;
@@ -666,9 +686,9 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         return peakData[local].maxSample / 127.0f;
     };
 
-    // No-wiggle lock: keep sample lookup on a deterministic visual sample grid
-    // when zoomed out, so transient spikes do not morph per frame.
-    const bool lockVisualSampleGrid = pixelsPerPoint <= 1.25;
+    // No-wiggle lock: deterministic sample lookup while scrolling (not scrubbing)
+    // so peak/band columns do not morph frame-to-frame at zoomed-out levels.
+    const bool lockVisualSampleGrid = !scratchVisual;
     const double visualSamplesPerPixel =
         std::max(1.0, 1.0 / std::max(0.0001, pixelsPerPoint));
     const int subSamples = lockVisualSampleGrid ? 1 : 2;
@@ -773,7 +793,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     const bool hasPeakData = !peakData.isEmpty();
 
     for (int x = 0; x < wInt; ++x) {
-        const float fx = snapDevicePixelX(static_cast<double>(x) + 0.5);
+        const float fx = static_cast<float>(x) + 0.5f;
         const int vIdx = x * 2;
 
         const float rms    = std::clamp(pixels[x].rms,    0.0f, 1.0f);
@@ -869,16 +889,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         const double leftSec       = (centerIndexRender - visiblePoints / 2.0) / pps;
         const double rightSec      = (centerIndexRender + visiblePoints / 2.0) / pps;
 
-        // Anchor beat lines to a device-pixel-aligned center that is monotonically
-        // non-decreasing.  floor() — not round() — is critical here: round() oscillates
-        // at snap boundaries when the interpolated position has sub-frame backward jitter
-        // (e.g. the audio timer fires slightly early and resets m_snapPosition a fraction
-        // of a device pixel behind where linear interpolation placed it).  That 1-device-
-        // pixel back-and-forth makes MSAA sample coverage alternate frame-to-frame, which
-        // appears as bright/dark flickering.  floor() absorbs any backward jitter smaller
-        // than one snap step and only ever steps forward.
-        const double centerForBeats = std::floor(centerIndexRender * ppp * snapScale)
-                                      / (ppp * snapScale);
+        // Beat grid shares the same scroll origin as the waveform (centerIndexRender).
+        const double centerForBeats = centerIndexRender;
         // Publish render-thread values for beatLabels() on the main thread.
         // Atomics guarantee beatLabels() uses the same coordinate origin as these lines.
         m_lastCenterForBeats.store(centerForBeats, std::memory_order_relaxed);

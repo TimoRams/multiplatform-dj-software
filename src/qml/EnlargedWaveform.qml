@@ -103,6 +103,7 @@ Item {
                 // Vinyl pull: drag right = earlier in track (negative delta seconds).
                 const deltaSec = -deltaPx / effectivePixelsPerSecond
                 root.engine.scratchBySeconds(deltaSec)
+                waveItem.requestUpdate()
             }
 
             onReleased: (mouse) => {
