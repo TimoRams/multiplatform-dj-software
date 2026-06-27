@@ -140,7 +140,10 @@ bool DjEngine::isLoopCuePad(int index) const
 
 bool DjEngine::hasStorableLoopRegion() const
 {
-    return m_loopInSet && m_loopOutSec > m_loopInSec + 0.001;
+    // Only an *active* loop is stored as a loop cue. After a loop is switched off
+    // the region is kept (so it can be reactivated), but a pad press must then
+    // store a normal hot cue — not silently re-save the stale loop region.
+    return m_loopActive && m_loopInSet && m_loopOutSec > m_loopInSec + 0.001;
 }
 
 
@@ -156,9 +159,16 @@ void DjEngine::storeHotCue(int index)
     if (trackLen <= 0.0)
         return;
 
+    // CDJ-3000 behaviour: with quantize on, a stored hot cue snaps onto the beat
+    // grid so the cue always lands exactly on the grid (also while the track
+    // plays). The stored point is what trigger jumps to, so we quantize here.
+    double cuePos = std::clamp(static_cast<double>(getVisualPosition()), -PRE_ROLL_SECONDS, trackLen);
+    if (m_quantizeEnabled)
+        cuePos = std::clamp(quantizedBeatAt(cuePos), -PRE_ROLL_SECONDS, trackLen);
+
     auto& slot = slotAt(index);
     slot.set = true;
-    slot.positionSec = std::clamp(static_cast<double>(getVisualPosition()), -PRE_ROLL_SECONDS, trackLen);
+    slot.positionSec = cuePos;
     if (slot.color.isEmpty())
         slot.color = defaultHotCueColor(index);
     if (slot.label.isEmpty())
@@ -187,17 +197,13 @@ void DjEngine::storeCuePad(int index)
 }
 
 
-void DjEngine::triggerHotCueJump(int index)
+void DjEngine::performCueJump(double targetSec)
 {
-    if (!isValidHotCueIndex(index) || !m_hasTrack || !isHotCuePad(index))
-        return;
-
-    const auto& slot = slotAt(index);
     const double trackLen = transportSource.getLengthInSeconds();
     if (trackLen <= 0.0)
         return;
 
-    const double pos = std::clamp(slot.positionSec, -PRE_ROLL_SECONDS, trackLen);
+    const double pos = std::clamp(targetSec, -PRE_ROLL_SECONDS, trackLen);
     transportSource.setPosition(std::max(0.0, pos));
     m_scrubHoldPosition = pos;
     if (m_playRequested && pos < 0.0) {
@@ -210,8 +216,68 @@ void DjEngine::triggerHotCueJump(int index)
     setSnapAnchor(pos, true);
     armVisualSeekSettle();
     if (m_analyzer && m_analyzer->isThreadRunning())
-        m_analyzer->setSeekHint(pos);
+        m_analyzer->setSeekHint(std::max(0.0, pos));
     emit progressChanged();
+}
+
+
+void DjEngine::scheduleQuantizedCueJump(double targetSec)
+{
+    const double cur = transportSource.getCurrentPosition();
+    m_pendingCueJumpTargetSec = targetSec;
+    m_pendingCueJumpFireSec   = nextBeatBoundaryAfter(cur);
+    m_pendingCueJumpLastPos   = cur;
+    m_pendingCueJumpActive    = true;
+}
+
+
+void DjEngine::cancelQuantizedCueJump()
+{
+    m_pendingCueJumpActive = false;
+}
+
+
+bool DjEngine::serviceQuantizedCueJump()
+{
+    if (!m_pendingCueJumpActive)
+        return false;
+
+    const double cur = transportSource.getCurrentPosition();
+    const bool reached     = cur + 1e-4 >= m_pendingCueJumpFireSec;
+    const bool wrappedBack = cur < m_pendingCueJumpLastPos - 0.02; // loop wrapped first
+    m_pendingCueJumpLastPos = cur;
+
+    if (!reached && !wrappedBack)
+        return false;
+
+    const double target = m_pendingCueJumpTargetSec;
+    m_pendingCueJumpActive = false;
+    performCueJump(target);
+    return true;
+}
+
+
+void DjEngine::triggerHotCueJump(int index)
+{
+    if (!isValidHotCueIndex(index) || !m_hasTrack || !isHotCuePad(index))
+        return;
+
+    const auto& slot = slotAt(index);
+    const double trackLen = transportSource.getLengthInSeconds();
+    if (trackLen <= 0.0)
+        return;
+
+    const double pos = std::clamp(slot.positionSec, -PRE_ROLL_SECONDS, trackLen);
+
+    // CDJ-3000 quantize: while playing, defer the jump to the next beat so it
+    // lands phase-locked on the grid instead of wherever the finger landed.
+    if (m_quantizeEnabled && transportSource.isPlaying()
+        && !m_preRollCountdownActive && pos >= 0.0) {
+        scheduleQuantizedCueJump(pos);
+        return;
+    }
+
+    performCueJump(pos);
 }
 
 

@@ -597,6 +597,19 @@ private:
     double m_loopLengthBeats = 0.0;
     bool m_loopInSet = false;
 
+    // Quantized cue trigger: when quantize is on and the deck is playing, a hot
+    // cue / cue press is deferred to the next beat so the jump lands exactly on
+    // the grid (CDJ-style). The deferred jump is serviced from onTimer().
+    bool   m_pendingCueJumpActive    = false;
+    double m_pendingCueJumpFireSec   = 0.0;  // track-time grid line to jump on
+    double m_pendingCueJumpTargetSec = 0.0;  // position to jump to
+    double m_pendingCueJumpLastPos   = 0.0;  // last transport pos (loop-wrap guard)
+    void   scheduleQuantizedCueJump(double targetSec);
+    void   cancelQuantizedCueJump();
+    bool   serviceQuantizedCueJump();
+    void   performCueJump(double targetSec);
+    double nextBeatBoundaryAfter(double sec) const;
+
     struct BeatInterval { double prevSec; double lengthSec; };
     BeatInterval beatIntervalAt(double positionSec) const;
     double quantizedBeatAt(double sec) const;

@@ -1,6 +1,18 @@
 # Progress
 
 ## Done (recent)
+- [x] **Quantize for hot cues + main cue** — snap stored point to beat grid when quantize is on
+  (CDJ-3000 style), in `DjEngine_HotCue.cpp` / `DjEngine_MainCue.cpp`. Loops were already quantized.
+- [x] **Quantize cue *trigger timing*** — while playing with quantize on, hot cue / main cue
+  presses are deferred to the next beat boundary (`scheduleQuantizedCueJump` →
+  `serviceQuantizedCueJump` in `onTimer`, `nextBeatBoundaryAfter` in `DjEngine_Loop.cpp`) so the
+  jump lands phase-locked on the grid. Cancelled on scrub/pause/seek/reset. Verified live.
+- [x] **Hardware-adaptive thread management** — `QSemaphore` gate caps concurrent track loads at
+  `clamp(cores/2,1,6)` + Linux `nice 10` on loader threads; analysis cap now `clamp(cores/3,1,4)`
+  (was fixed 2). Scales from low-core ARM64 to many-core x86; keeps audio/UI responsive under load.
+- [x] **Smoke-test crash fixed (pre-existing)** — `MixerDspSource` heap-allocated in
+  `tests/smoke/mixer_dsp_smoke.cpp` (stack alloc overflowed the stack via large delay buffers).
+  `ctest` passes again.
 - [x] **Mixer channel strip fix (real root cause)** — `MixerSection.qml`: (1) replaced silent
   grouped-alias `knob.onValueChanged:` with a `KnobCell.moved` signal + `onMoved:`; (2) fixed
   self-referential `channelId/cueActive/mirrored/deckName: <same>` bindings via `id: side` +

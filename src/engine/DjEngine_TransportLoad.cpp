@@ -1,5 +1,52 @@
 #include "DjEngineCommonIncludes.h"
 
+#include <QSemaphore>
+#include <algorithm>
+#include <thread>
+
+#ifdef __linux__
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
+
+
+namespace {
+
+// Yield CPU to the audio callback and Qt UI/render threads while a background
+// load decodes. Lowering priority needs no privileges; on Linux the nice value
+// is per-task so this affects only this loader thread. No-op elsewhere.
+void lowerCurrentThreadPriority()
+{
+#ifdef __linux__
+    const pid_t tid = static_cast<pid_t>(syscall(SYS_gettid));
+    setpriority(PRIO_PROCESS, static_cast<id_t>(tid), 10);
+#endif
+}
+
+// Bound concurrent background track loads across all decks. Each load opens
+// several decoders and scans/decodes audio (overview, silence/auto-cue, cover
+// art); four decks loading at once can otherwise saturate the CPU and stall the
+// UI and audio callback. The gate is sized to the host core count so it scales
+// from low-core ARM64 boards up to many-core x86 desktops without hard-coding.
+int maxConcurrentTrackLoads()
+{
+    const unsigned hw = std::thread::hardware_concurrency();
+    if (hw == 0)
+        return 2;
+    // Leave headroom for the audio device thread, the Qt UI/render thread and
+    // the per-deck analyzer threads; clamp to avoid disk I/O thrashing too.
+    return std::clamp(static_cast<int>(hw) / 2, 1, 6);
+}
+
+QSemaphore& trackLoadGate()
+{
+    static QSemaphore gate(maxConcurrentTrackLoads());
+    return gate;
+}
+
+} // namespace
+
 
 void DjEngine::loadTrack(const QString& rawPath)
 {
@@ -30,6 +77,15 @@ void DjEngine::loadTrack(const QString& rawPath)
         std::lock_guard<std::mutex> loadGuard(m_loadMutex);
         if (m_loadGen != gen)
             return;
+
+        // Throttle total concurrent heavy loads across all decks (see gate above).
+        // Held for the whole decode/scan span and auto-released on every exit path.
+        trackLoadGate().acquire();
+        const QSemaphoreReleaser loadReleaser(trackLoadGate());
+        if (m_loadGen != gen)
+            return;
+
+        lowerCurrentThreadPriority();
 
         auto* reader = formatManager.createReaderFor(file);
         if (!reader) {

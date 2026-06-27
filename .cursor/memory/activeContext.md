@@ -2,7 +2,46 @@
 
 *Last updated: 2026-06-27*
 
-## Current task
+## Current task (stability / quantize / threading)
+1. **Quantize for cues (CDJ-3000 style).** Two parts, both needed:
+   a. **Store-time snap** — with `m_quantizeEnabled`, the stored point snaps to
+      `quantizedBeatAt()` at SET time (`storeHotCue`, `cueButtonPress` both branches).
+   b. **Trigger-time deferral (the part that was missing).** While *playing* with
+      quantize on, a cue press does NOT jump immediately — it is deferred to the
+      **next beat boundary** so the jump lands phase-locked on the grid, exactly
+      like a CDJ. Source beat → target beat are an integer number of beats apart.
+      - State + helpers in `DjEngine.h`: `m_pendingCueJump{Active,FireSec,TargetSec,LastPos}`,
+        `scheduleQuantizedCueJump` / `serviceQuantizedCueJump` / `cancelQuantizedCueJump` /
+        `performCueJump` (shared immediate-jump logic) / `nextBeatBoundaryAfter`.
+      - `nextBeatBoundaryAfter` (`DjEngine_Loop.cpp`): first grid line > sec
+        (upper_bound), else extrapolate via local beat length / bpm fallback.
+      - `triggerHotCueJump` (`DjEngine_HotCue.cpp`) + `cueButtonPress` playing branch
+        (`DjEngine_MainCue.cpp`): if quantize+playing+pos≥0 → `scheduleQuantizedCueJump`,
+        else `performCueJump` immediately (paused = instant, as before).
+      - Serviced every 4 ms control tick: `onTimer` calls `serviceQuantizedCueJump`
+        in the playing branch; fires when transport pos reaches `fireSec` (or a loop
+        wrapped first). Cancelled on scrub (`onTimer` top), pause/stop
+        (`freezeTransportAt`), seek (`setPosition`), track reset.
+      - Timing is control-tick accurate (~one audio block ≈ 10–15 ms late at trigger
+        instant); landing position is exact (hard-set to the on-grid target). Verified
+        live: stored cue 2.17→snap 2.2167s; trigger at 5.17s deferred to 5.383s (=+6
+        beats) → phase-locked. Sample-accurate audio-thread firing is a future option.
+2. **Hardware-adaptive thread management** (scales x86 ↔ ARM64, no hard-coding):
+   - `DjEngine_TransportLoad.cpp`: global `QSemaphore trackLoadGate` sized
+     `clamp(hw/2, 1, 6)` bounds concurrent background loads across all 4 decks
+     (each opens several decoders + scans audio); loader threads also drop to
+     `nice 10` on Linux (`lowerCurrentThreadPriority`) so audio/UI keep priority.
+   - `WaveformAnalyzer.cpp`: the existing analysis cap is now
+     `maxConcurrentAnalyses()` = `clamp(hw/3, 1, 4)` instead of the fixed `2`
+     (analyzer threads already run at `juce::Thread::Priority::background`).
+3. **Loops** already engage immediately (`applyLoopRangeToAudioSource`); the
+   perceived loop "hang" was the waveform scroll freeze fixed earlier.
+4. **Pre-existing smoke-test crash fixed** (`tests/smoke/mixer_dsp_smoke.cpp`):
+   `MixerDspSource` carries large fixed delay/echo/brake buffers; stack-allocating
+   it in the test overflowed the stack → SIGSEGV. Now `make_unique` like the real
+   engine. `ctest` green again. (App was always safe — `DjEngine` heap-allocates.)
+
+## Previous task
 Mixer channel strip (EQ/GAIN/SC/channel fader) still dead + scrolling waveform
 "hangs" at loops/hotcues — **both fixed**.
 

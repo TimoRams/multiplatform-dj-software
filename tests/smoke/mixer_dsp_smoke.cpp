@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 
 namespace {
 
@@ -102,7 +103,11 @@ void settleMixer(MixerDspSource& mixer, int blockSize, int blocks = 8)
 void testTrimAttenuatesPeak()
 {
     ConstantSource source;
-    MixerDspSource mixer(&source);
+    // Heap-allocate like the real engine (DjEngine uses make_unique). The source
+    // carries large fixed delay/echo/brake buffers, so stack allocation here
+    // overflows the test thread stack and crashes before any assertion runs.
+    auto mixerPtr = std::make_unique<MixerDspSource>(&source);
+    MixerDspSource& mixer = *mixerPtr;
 
     constexpr int blockSize = 512;
     constexpr double sampleRate = 48000.0;
@@ -123,7 +128,8 @@ void testTrimAttenuatesPeak()
 void testHighEqBoostIncreasesHighFrequencyPeak()
 {
     SineSource source(8000.0f);
-    MixerDspSource mixer(&source);
+    auto mixerPtr = std::make_unique<MixerDspSource>(&source);
+    MixerDspSource& mixer = *mixerPtr;
 
     constexpr int blockSize = 512;
     constexpr double sampleRate = 48000.0;

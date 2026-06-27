@@ -273,6 +273,7 @@ void DjEngine::persistCurrentAnalysisToLibrary()
 void DjEngine::onTimer()
 {
     if (m_scratch.scrubbing() || m_scratch.releaseGlide()) {
+        cancelQuantizedCueJump();
         tickScratchPhysics();
         return;
     }
@@ -297,6 +298,7 @@ void DjEngine::onTimer()
         transportSource.stop();
 
     if (transportSource.isPlaying()) {
+        serviceQuantizedCueJump();
         if (!tickTransportPlaying())
             return;
         // Accumulate real audible playback time for play-count logging. Use wall

@@ -3,14 +3,26 @@
 #include "WaveformAnalysisOrchestrator.h"
 #include "WaveformCache.h"
 #include <QDebug>
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <functional>
 #include <mutex>
+#include <thread>
 
 namespace {
 
-constexpr int kMaxConcurrentAnalyses = 2;
+// Cap concurrent full-track analyses (BPM/key/beatgrid over the whole file are
+// CPU-heavy). Derived from the host core count so it scales with hardware: a
+// 4-core ARM64 board runs one at a time (leaving cores for audio + UI), while a
+// many-core x86 desktop allows several. Cached on first use.
+int maxConcurrentAnalyses()
+{
+    const unsigned hw = std::thread::hardware_concurrency();
+    if (hw == 0)
+        return 1;
+    return std::clamp(static_cast<int>(hw) / 3, 1, 4);
+}
 
 std::mutex g_analysisSlotsMutex;
 std::condition_variable g_analysisSlotsCv;
@@ -21,6 +33,7 @@ class AnalysisSlot
 public:
     explicit AnalysisSlot(juce::Thread& owner)
     {
+        static const int kMaxConcurrentAnalyses = maxConcurrentAnalyses();
         while (!owner.threadShouldExit()) {
             std::unique_lock<std::mutex> lock(g_analysisSlotsMutex);
             if (g_activeAnalyses < kMaxConcurrentAnalyses) {

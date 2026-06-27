@@ -116,6 +116,41 @@ double DjEngine::quantizedBeatAt(double sec) const
 }
 
 
+double DjEngine::nextBeatBoundaryAfter(double sec) const
+{
+    if (!m_trackData)
+        return sec;
+
+    constexpr double kEps = 1e-4;
+    const auto& grid = m_trackData->getBeatGrid();
+    if (!grid.empty()) {
+        const auto it = std::upper_bound(grid.begin(), grid.end(), sec + kEps,
+            [](double v, const TrackData::BeatMarker& m) { return v < m.positionSec; });
+        if (it != grid.end())
+            return it->positionSec;
+
+        // Past the last grid line: extrapolate using the local beat length.
+        const double beatDur = beatDurationAround(sec);
+        const double last = grid.back().positionSec;
+        if (beatDur > 1e-4) {
+            const double n = std::floor((sec - last) / beatDur) + 1.0;
+            return last + n * beatDur;
+        }
+        return sec;
+    }
+
+    const double bpm = m_trackData->getBpm();
+    const double sr  = m_trackData->getSampleRate();
+    if (bpm <= 0.0 || sr <= 0.0)
+        return sec;
+
+    const double beatDur   = 60.0 / bpm;
+    const double firstBeat = static_cast<double>(m_trackData->getFirstBeatSample()) / sr;
+    const double idx       = std::floor((sec - firstBeat) / beatDur + kEps) + 1.0;
+    return firstBeat + idx * beatDur;
+}
+
+
 double DjEngine::beatDurationAround(double sec) const
 {
     if (!m_trackData)

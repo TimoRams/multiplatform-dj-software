@@ -155,6 +155,7 @@ void DjEngine::resetTrackLoadState()
     // the first audible frame, so this value is never visible during playback.
     m_mainCueSec = -(PRE_ROLL_SECONDS + 1.0);
     resetMainCueButtonState();
+    cancelQuantizedCueJump();
     emit segmentsChanged();
     emit hotCuesChanged();
     emit savedLoopsChanged();
@@ -397,6 +398,7 @@ void DjEngine::armSnapFromTransportPosition()
 
 void DjEngine::freezeTransportAt(double positionSec)
 {
+    cancelQuantizedCueJump();
     transportSource.stop();
     transportSource.setPosition(std::max(0.0, positionSec));
     m_snapValid = false;
@@ -431,6 +433,7 @@ void DjEngine::syncScratchBridgeToTransport()
 
 void DjEngine::setPosition(float progress)
 {
+    cancelQuantizedCueJump();
     double len = transportSource.getLengthInSeconds();
     if (len > 0.0) {
         const double newPos = std::clamp(static_cast<double>(progress) * len,

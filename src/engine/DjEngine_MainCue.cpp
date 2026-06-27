@@ -111,24 +111,32 @@ void DjEngine::cueButtonPress()
     if (wasPlaying) {
         // While playing, CUE jumps to the stored cue and continues playback.
         if (m_mainCueSec < -PRE_ROLL_SECONDS) {
-            m_mainCueSec = std::clamp(static_cast<double>(getVisualPosition()), -PRE_ROLL_SECONDS, trackLen);
+            double newCue = std::clamp(static_cast<double>(getVisualPosition()), -PRE_ROLL_SECONDS, trackLen);
+            if (m_quantizeEnabled)
+                newCue = std::clamp(quantizedBeatAt(newCue), -PRE_ROLL_SECONDS, trackLen);
+            m_mainCueSec = newCue;
             persistMainCuePoint();
             emit mainCueChanged();
         }
 
         const double cuePos = std::clamp(m_mainCueSec, -PRE_ROLL_SECONDS, trackLen);
-        transportSource.setPosition(std::max(0.0, cuePos));
-        m_scrubHoldPosition = cuePos;
-        setSnapAnchor(cuePos, true);
-        armVisualSeekSettle();
-        if (m_analyzer && m_analyzer->isThreadRunning())
-            m_analyzer->setSeekHint(cuePos);
-        emit progressChanged();
+
+        // CDJ-3000 quantize: defer the return-to-cue to the next beat so it lands
+        // phase-locked on the grid while playing.
+        if (m_quantizeEnabled && transportSource.isPlaying()
+            && !m_preRollCountdownActive && cuePos >= 0.0) {
+            scheduleQuantizedCueJump(cuePos);
+            return;
+        }
+
+        performCueJump(cuePos);
         return;
     }
 
     // While paused, pressing CUE sets the cue point at current position and previews while held.
-    const double cuePos = std::clamp(static_cast<double>(getVisualPosition()), -PRE_ROLL_SECONDS, trackLen);
+    double cuePos = std::clamp(static_cast<double>(getVisualPosition()), -PRE_ROLL_SECONDS, trackLen);
+    if (m_quantizeEnabled)
+        cuePos = std::clamp(quantizedBeatAt(cuePos), -PRE_ROLL_SECONDS, trackLen);
     m_mainCueSec = cuePos;
     persistMainCuePoint();
     emit mainCueChanged();
