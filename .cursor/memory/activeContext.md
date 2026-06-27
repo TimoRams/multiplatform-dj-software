@@ -2,22 +2,54 @@
 
 *Last updated: 2026-06-27*
 
-## Current task (command-path cleanup / Phase 1)
-Architecture scan + focused refactors to unify mixer command entry and remove duplicate
-hot-path work (no parallel systems):
-- **`DeckChannels.h`** — shared `deckForChannelId()` + `mixerTrimFromNormalized` /
-  `mixerBipolarFromNormalized`; used by `MixerControl`, `MixerParameterBridge`, `FxManager`.
-- **Single MIDI mixer path** — `MixerParameterBridge` is the sole applier for gain/EQ/filter
-  (all 4 decks); duplicate handlers removed from `MidiFlx10Bridge` (was double-applying with
-  bridge on every `parameterStore` event).
-- **MIDI uses silent `apply*()`** — `MixerParameterBridge` now calls `applyTrim/applyEq*/applyFilter`
-  (UI syncs via `parameterStore` → QML `Connections`, not engine NOTIFY).
-- **FxManager dedup** — redundant post-`applySoundColorToEngine` `applyFilter` calls removed;
-  mode-switch filter resets use `applyFilter`.
-- **Dead code** — removed unused `DjEngine::updateGain()`.
+## Current task
+**Scratch quality + performance rewrite (slow/precise focus)**
+Root causes of the bad slow-scratch sound:
+1. **Dual position authority** — UI thread slammed `m_readPos` to the hand position each
+   event while the audio thread integrated a *smoothed/slewed rate*. Between events audio
+   overshot, then snapped back on the next event → audible warble/zipper.
+2. **Rate (not position) was authoritative** — hand motion → rate → smooth → slew → re-integrate
+   lost precision; slow moves felt rubbery and lagged.
+3. **Tiny scratch read window at low rate** — window margin scaled with rate, so slow scratch
+   reloaded/decoded on the audio thread almost every move → crackle.
 
-Prior session (still in tree): `apply*()` on UI drag, VU NOTIFY ~20 Hz, EQ/filter coeff cap
-on audio thread, DB recovery precision, sync PI/bar-align.
+Fix:
+- **Critically-damped (zeta=1) position tracker** on the audio thread
+  (`ScratchResampler::processScratchTracking`, ~52 Hz bandwidth). Glides the read head to the
+  absolute hand target (platter `m_targetSamplePos`): exact slow tracking, momentum across
+  sparse UI events, no overshoot/snap. Used during **touch & no active loop**; inertia/release
+  glide and loop-scratch keep the rate-integration path.
+- **Single authority** — UI thread no longer writes `m_readPos` during drag; new
+  `ScratchDeckBridge::publishScratchDisplay()` only publishes the visible playhead (+ hand pos).
+  Audio measures the tracker rate back into the controller (`setMeasuredNormalizedSpeed`) for
+  accurate release throws / inertia / timbre.
+- **Time-based scratch window** — `ScratchResampler` holds ~0.5s capacity with a ~100ms/side
+  margin floor, so slow scratching reads from RAM instead of decoding on the audio thread.
+
+## Previous task
+**Preroll scratch snap fix** — scratching in negative pre-roll no longer jumps to t=0:
+- `pauseForScrub`: capture `visualAtGrab` before flag changes; accept negative anchors
+  from UI; never fall back to `transportSource.getCurrentPosition()` in pre-roll.
+- `restorePostScrubPlaybackState` / `resumeAfterScrub`: preserve virtual negative position;
+  audio handoff still uses `max(0, pos)`.
+- `ScratchDeckBridge`: inertia playhead uses `m_scratchDisplaySec` (integrated), not
+  resampler read head (clamped at 0).
+
+Prior: command-path cleanup / Phase 1 (mixer MIDI sync, progress throttle, dead WaveformItem removed).
+  via `MixerControl::setChannelFader()` (C++ path, includes CF multiplier). CrossfaderBar
+  QML only mirrors `volA`–`volD` for UI; no duplicate audio apply. Keeps `m_faderA`–`m_faderD`
+  aligned when MIDI/parameterStore moves bypass UI faders (same pattern as mix sync).
+- **`MixerControl` MIDI mix state sync** — `syncMixFromNormalized()` after silent `apply*`
+  for gain/EQ/filter.
+- **`progressChanged` NOTIFY throttle** — `notifyProgressIfNeeded()` (~20 Hz); atomic playhead
+  250 Hz; `OverallWaveform` FrameAnimation + atomic; `EnlargedWaveform` paused refresh 66 ms.
+- **QML binding audit** — DeckControl, FxBar, FxUnit, PerformancePads, CrossfaderBar: clean.
+  ScrollingWaveform already uses atomic/visual playhead + FrameAnimation (no change needed).
+- **Dead code removed** — legacy `WaveformItem` + `DeckBoundQuickItem` (unused in QML;
+  superseded by `RgbWaveformItem` / `ScrollingWaveformItem`).
+
+Prior session: `DeckChannels.h`, unified MIDI mixer via `MixerParameterBridge`,
+silent `apply*()`, FxManager dedup, VU NOTIFY ~20 Hz, EQ/filter coeff cap.
 
 ## Previous task (real-time mixer / audio engine performance)
 Knob/fader lag was caused by UI-thread NOTIFY churn + unthrottled VU repaints, not

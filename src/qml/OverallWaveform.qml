@@ -7,6 +7,40 @@ Item {
 
     property var engine: null
     property color stripeColor: UiTheme.separatorSubtle
+    property real playheadNorm: 0
+
+    function updatePlayheadNorm() {
+        if (!root.engine) {
+            root.playheadNorm = 0
+            return
+        }
+        var dur = root.engine.trackDurationSec
+        if (dur > 0) {
+            var pos = root.engine.getPlayheadPositionAtomic()
+            if (pos < 0) pos = 0
+            root.playheadNorm = Math.min(1, pos / dur)
+        } else {
+            var p = root.engine.progress
+            root.playheadNorm = p < 0 ? 0 : (p > 1 ? 1 : p)
+        }
+    }
+
+    onEngineChanged: updatePlayheadNorm()
+
+    FrameAnimation {
+        running: root.engine !== null
+                 && (root.engine.isPlaying || root.engine.isScratchVisualActive())
+        onTriggered: root.updatePlayheadNorm()
+    }
+
+    Connections {
+        target: root.engine
+        function onProgressChanged() {
+            if (!root.engine || !root.engine.isPlaying)
+                root.updatePlayheadNorm()
+        }
+        function onPlayingChanged() { root.updatePlayheadNorm() }
+    }
 
     Layout.fillWidth: true
     Layout.preferredHeight: 44
@@ -87,13 +121,7 @@ Item {
             width: 9
             anchors.top: overviewViewport.top
             anchors.bottom: overviewViewport.bottom
-            x: {
-                if (!root.engine) return overviewViewport.x
-                var p = root.engine.progress
-                if (p < 0.0) p = 0.0
-                if (p > 1.0) p = 1.0
-                return overviewViewport.x + p * overviewViewport.width - width / 2
-            }
+            x: overviewViewport.x + root.playheadNorm * overviewViewport.width - width / 2
             z: 5
 
             Rectangle {

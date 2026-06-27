@@ -16,6 +16,7 @@ public:
     void setReadPositionSamples(double readPositionSamples) noexcept;
     void nudgeReadPositionSamples(double deltaSamples) noexcept;
     void snapSmoothedRate(double rate) noexcept;
+    void primeTrackerVelocity(double ratePerOutputSample) noexcept;
     void invalidatePrefetch() noexcept { m_sourceSize = 0; }
 
     void setFormatReader(juce::AudioFormatReader* reader) noexcept { m_reader = reader; }
@@ -35,6 +36,15 @@ public:
     void processBlock(juce::AudioSource& input,
                       double rate,
                       const juce::AudioSourceChannelInfo& output) noexcept;
+
+    // Position-authoritative scratch step. A critically-damped tracker glides the
+    // read head toward the absolute hand target (track samples). Slow/precise moves
+    // track exactly with no overshoot; momentum carries playback smoothly across
+    // sparse UI events. Returns the rate used (track samples per output sample).
+    double processScratchTracking(juce::AudioSource& input,
+                                  double targetPosSamples,
+                                  double maxAbsRate,
+                                  const juce::AudioSourceChannelInfo& output) noexcept;
 
     [[nodiscard]] double readPosition() const noexcept { return m_readPos; }
     [[nodiscard]] int deviceBufferSize() const noexcept { return m_deviceBufferSize; }
@@ -61,6 +71,7 @@ private:
     double m_bufferOriginSample = 0.0;
     double m_lastRate = 0.0;
     double m_smoothedRate = 0.0;
+    double m_trackVel = 0.0;   // tracker velocity, track samples / second
 
     bool m_loopActive = false;
     double m_loopInSample = 0.0;

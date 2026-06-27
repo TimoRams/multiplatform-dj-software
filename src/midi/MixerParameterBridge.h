@@ -5,6 +5,7 @@
 
 class ParameterStore;
 class DjEngine;
+class MixerControl;
 
 // Applies mixer channel parameters from ParameterStore to all four decks.
 // UI knobs/faders write normalized values here; MIDI uses the same store.
@@ -14,6 +15,7 @@ public:
     explicit MixerParameterBridge(ParameterStore* store, QObject* parent = nullptr);
 
     void setDecks(DjEngine* deckA, DjEngine* deckB, DjEngine* deckC, DjEngine* deckD);
+    void setMixerControl(MixerControl* mixerControl);
 
 private:
     void onParameterChanged(const QString& id, float value);
@@ -21,5 +23,6 @@ private:
     [[nodiscard]] DjEngine* deckForChannelId(const QString& channelId) const;
 
     ParameterStore* m_store = nullptr;
+    MixerControl* m_mixerControl = nullptr;
     std::array<DjEngine*, 4> m_decks {};
 };

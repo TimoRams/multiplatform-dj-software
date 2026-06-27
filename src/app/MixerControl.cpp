@@ -183,6 +183,12 @@ void MixerControl::setChannelFader(const QString& channelId, double level)
     applyChannelVolume(channelId);
 }
 
+void MixerControl::setCrossfaderPosition(float cfPos)
+{
+    m_cfPos = std::clamp(cfPos, -1.0f, 1.0f);
+    applyAllVolumes();
+}
+
 void MixerControl::syncCrossfaderState(float cfPos,
                                        const QString& assignA,
                                        const QString& assignB,
@@ -223,4 +229,24 @@ double MixerControl::faderLevel(const QString& channelId) const
     if (channelId == QLatin1String("deckC")) return m_faderC;
     if (channelId == QLatin1String("deckD")) return m_faderD;
     return 1.0;
+}
+
+void MixerControl::syncMixFromNormalized(const QString& channelId,
+                                         const QString& suffix,
+                                         float normalized)
+{
+    ChannelMixState* const state = mixStateForChannel(channelId);
+    if (!state)
+        return;
+
+    if (suffix == QLatin1String("gain"))
+        state->trim = mixerTrimFromNormalized(normalized);
+    else if (suffix == QLatin1String("eqHigh"))
+        state->eqHigh = mixerBipolarFromNormalized(normalized);
+    else if (suffix == QLatin1String("eqMid"))
+        state->eqMid = mixerBipolarFromNormalized(normalized);
+    else if (suffix == QLatin1String("eqLow"))
+        state->eqLow = mixerBipolarFromNormalized(normalized);
+    else if (suffix == QLatin1String("filter"))
+        state->filter = mixerBipolarFromNormalized(normalized);
 }

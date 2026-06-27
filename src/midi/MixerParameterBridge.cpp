@@ -1,6 +1,7 @@
 #include "MixerParameterBridge.h"
 
 #include "DeckChannels.h"
+#include "MixerControl.h"
 #include "ParameterStore.h"
 #include "DjEngine.h"
 
@@ -18,6 +19,11 @@ void MixerParameterBridge::setDecks(DjEngine* deckA, DjEngine* deckB, DjEngine* 
     m_decks = { deckA, deckB, deckC, deckD };
 }
 
+void MixerParameterBridge::setMixerControl(MixerControl* mixerControl)
+{
+    m_mixerControl = mixerControl;
+}
+
 DjEngine* MixerParameterBridge::deckForChannelId(const QString& channelId) const
 {
     return ::deckForChannelId(channelId, m_decks[0], m_decks[1], m_decks[2], m_decks[3]);
@@ -25,6 +31,12 @@ DjEngine* MixerParameterBridge::deckForChannelId(const QString& channelId) const
 
 void MixerParameterBridge::onParameterChanged(const QString& id, float value)
 {
+    if (id == QLatin1String("crossfader")) {
+        if (m_mixerControl)
+            m_mixerControl->setCrossfaderPosition(value * 2.0f - 1.0f);
+        return;
+    }
+
     if (!id.startsWith(QLatin1String("deck")))
         return;
 
@@ -50,9 +62,19 @@ void MixerParameterBridge::onParameterChanged(const QString& id, float value)
         deck->applyEqLow(mixerBipolarFromNormalized(value));
     } else if (suffix == QLatin1String("filter")) {
         deck->applyFilter(mixerBipolarFromNormalized(value));
+    } else if (suffix == QLatin1String("vol")) {
+        // Channel fader + MixerControl state (crossfader still via CrossfaderBar QML).
+        if (m_mixerControl)
+            m_mixerControl->setChannelFader(channelId, static_cast<double>(value));
+        return;
     } else if (suffix == QLatin1String("headphone_cue")) {
         if (value >= 0.5f)
             deck->setCueEnabled(!deck->cueEnabled());
+        return;
+    } else {
+        return;
     }
-    // deckX_vol and crossfader are applied in QML (CrossfaderBar).
+
+    if (m_mixerControl)
+        m_mixerControl->syncMixFromNormalized(channelId, suffix, value);
 }

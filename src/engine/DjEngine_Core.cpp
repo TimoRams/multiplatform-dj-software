@@ -166,6 +166,7 @@ DjEngine::DjEngine(QObject* parent)
     m_snapClock.start();
     m_playHistoryClock.start();
     m_vuNotifyClock.start();
+    m_progressNotifyClock.start();
 
     connect(&timer, &QTimer::timeout, this, &DjEngine::onTimer);
     timer.setTimerType(Qt::PreciseTimer);
@@ -379,7 +380,7 @@ bool DjEngine::tickTransportPlaying()
     m_snapClock.restart();
     m_snapValid = true;
     m_atomicPlayheadPos.store(m_snapPosition, std::memory_order_relaxed);
-    emit progressChanged();
+    notifyProgressIfNeeded();
     return true;
 }
 
@@ -486,6 +487,22 @@ void DjEngine::notifyVuMetersIfNeeded()
         emit vuLevelChanged();
     if (grMoved || msSince >= 50)
         emit gainReductionChanged();
+}
+
+
+void DjEngine::notifyProgressIfNeeded()
+{
+    const double posSec = getVisualPosition();
+    constexpr double kProgressSecEps = 0.025;
+    const bool posMoved = std::abs(posSec - m_lastNotifiedProgressSec) > kProgressSecEps;
+    const qint64 msSince = m_progressNotifyClock.isValid() ? m_progressNotifyClock.elapsed() : 1000;
+
+    if (!posMoved && msSince < 50)
+        return;
+
+    m_lastNotifiedProgressSec = posSec;
+    m_progressNotifyClock.restart();
+    emit progressChanged();
 }
 
 

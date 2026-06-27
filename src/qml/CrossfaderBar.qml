@@ -125,6 +125,8 @@ Rectangle {
     property real volD: 1.0
 
     onCfPosChanged: {
+        if (_restoringSettings)
+            return
         applyVolumes()
         scheduleSettingsSave()
     }
@@ -160,11 +162,17 @@ Rectangle {
     Connections {
         target: parameterStore
         function onParameterChanged(id, value) {
-            if      (id === "deckA_vol")   { cfBar.volA = value; if (cfBar.mc) cfBar.mc.setChannelFader("deckA", value) }
-            else if (id === "deckB_vol")   { cfBar.volB = value; if (cfBar.mc) cfBar.mc.setChannelFader("deckB", value) }
-            else if (id === "deckC_vol")   { cfBar.volC = value; if (cfBar.mc) cfBar.mc.setChannelFader("deckC", value) }
-            else if (id === "deckD_vol")   { cfBar.volD = value; if (cfBar.mc) cfBar.mc.setChannelFader("deckD", value) }
-            else if (id === "crossfader")  cfSlider.value = value * 2.0 - 1.0
+            // Audio + MixerControl fader state: MixerParameterBridge (C++).
+            if      (id === "deckA_vol") cfBar.volA = value
+            else if (id === "deckB_vol") cfBar.volB = value
+            else if (id === "deckC_vol") cfBar.volC = value
+            else if (id === "deckD_vol") cfBar.volD = value
+            else if (id === "crossfader") {
+                // Audio: MixerParameterBridge → MixerControl; mirror slider only.
+                _restoringSettings = true
+                cfSlider.value = value * 2.0 - 1.0
+                _restoringSettings = false
+            }
         }
     }
 

@@ -732,7 +732,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
         QObject::disconnect(m_deckActionsConnection);
 
     // Route ParameterStore events to deck actions.
-    // Volume and crossfader are handled in QML via parameterStore directly.
+    // Volume/crossfader/mixer EQ: MixerParameterBridge + MixerControl (C++).
     // Button convention: 127/1.0 = press/on, 0 = release/off.
     m_deckActionsConnection = QObject::connect(m_parameterStore, &ParameterStore::parameterChanged,
         this, [this](const QString& id, float value)

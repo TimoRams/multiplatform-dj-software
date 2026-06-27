@@ -330,11 +330,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/analysis/BeatGridFitter.cpp
     src/analysis/AnalysisValidation.h
     src/analysis/AnalysisValidation.cpp
-    src/rendering/DeckBoundQuickItem.h
-    src/rendering/DeckBoundQuickItem.cpp
     src/rendering/RgbWaveformItem.h
     src/rendering/RgbWaveformItem.cpp
-    src/rendering/WaveformItem.cpp
     src/rendering/ScrollingWaveformItem.cpp
     src/rendering/WaveformAnalyzer.cpp
     src/rendering/WaveformEnvelopePass.cpp

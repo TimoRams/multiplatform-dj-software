@@ -20,6 +20,7 @@ public:
     Q_INVOKABLE void setFilter(const QString& channelId, double value);
     Q_INVOKABLE void toggleCue(const QString& channelId);
     Q_INVOKABLE void setChannelFader(const QString& channelId, double level);
+    Q_INVOKABLE void setCrossfaderPosition(float cfPos);
 
     Q_INVOKABLE void syncCrossfaderState(float cfPos,
                                          const QString& assignA,
@@ -32,6 +33,9 @@ public:
     Q_INVOKABLE void applyAllVolumes();
     Q_INVOKABLE void applyAllMixState();
     Q_INVOKABLE double faderLevel(const QString& channelId) const;
+
+    // State-only sync when MixerParameterBridge applies MIDI/store moves (no deck apply).
+    void syncMixFromNormalized(const QString& channelId, const QString& suffix, float normalized);
 
 private:
     struct ChannelMixState {

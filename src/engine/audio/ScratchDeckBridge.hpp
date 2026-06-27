@@ -33,6 +33,7 @@ public:
     void addTargetDeltaSeconds(double deltaSeconds, double trackSampleRate) noexcept;
     void submitHandDeltaSeconds(double deltaSeconds, double dtSeconds) noexcept;
     void syncScratchReadPosition(double displaySec, double trackSampleRate) noexcept;
+    void publishScratchDisplay(double displaySec) noexcept;
 
     void configureTrack(double trackSampleRate, double trackLengthSeconds) noexcept;
     void syncReadPositionSeconds(double positionSeconds, double trackSampleRate) noexcept;
@@ -51,6 +52,7 @@ public:
     [[nodiscard]] bool isInertiaActive() const noexcept;
     [[nodiscard]] double scratchRate() const noexcept;
     [[nodiscard]] double readPositionSeconds(double trackSampleRate) const noexcept;
+    [[nodiscard]] double displayPositionSeconds() const noexcept;
 
     void snapHermiteToDeckTempo() noexcept;
 

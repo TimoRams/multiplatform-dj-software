@@ -58,6 +58,15 @@ public:
         m_readPosition.store(audioSamplePos, std::memory_order_relaxed);
     }
 
+    // Audio thread: report the velocity the position tracker is actually producing,
+    // so release/inertia throws and scratch timbre use the true playback speed.
+    void setMeasuredNormalizedSpeed(double normalized) noexcept {
+        const double s = std::clamp(normalized, -m_config.maxScratchSpeed, m_config.maxScratchSpeed);
+        m_smoothedSpeed.store(s, std::memory_order_relaxed);
+        m_rawSpeed.store(s, std::memory_order_relaxed);
+        m_lastMoveNs.store(nowNs(), std::memory_order_relaxed);
+    }
+
     // Audio thread — once per output block. Returns resampler rate (track samples / output sample).
     double processAudioBlock(int bufferSize, double outputSampleRate, double trackSampleRate) noexcept;
 

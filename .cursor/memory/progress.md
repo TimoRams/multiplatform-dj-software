@@ -1,6 +1,26 @@
 # Progress
 
 ## Done (recent)
+- [x] **Scratch quality + perf rewrite** — critically-damped position tracker
+  (`ScratchResampler::processScratchTracking`) makes slow/precise scratching track the hand
+  exactly with no warble/snap-back; single position authority (UI publishes display only,
+  audio owns read head); time-based ~0.5s scratch window so slow scratch reads from RAM
+  instead of decoding on the audio thread. Loop-scratch + inertia keep the rate path.
+- [x] **Preroll scratch snap fix** — negative pre-roll scratch keeps virtual playhead;
+  no snap to file start on grab, drag, inertia, or release.
+- [x] **Crossfader MIDI via MixerControl** — `crossfader` param → `MixerParameterBridge`
+  → `setCrossfaderPosition()`; CrossfaderBar UI mirror only (no duplicate audio apply).
+- [x] **Dead waveform types removed** — `WaveformItem` + `DeckBoundQuickItem` deleted
+  (unused; QML uses `RgbWaveformItem` / `ScrollingWaveformItem`).
+- [x] **MixerControl MIDI fader sync** — `deckX_vol` routed through `MixerParameterBridge`
+  → `setChannelFader()`; CrossfaderBar QML UI-only for vol props.
+- [x] **EnlargedWaveform paused refresh** — 33 ms → 66 ms (~15 fps) when deck paused.
+- [x] **MixerControl MIDI mix state sync** — `syncMixFromNormalized()` + bridge calls after
+  `apply*` so internal mix state matches parameterStore/MIDI moves.
+- [x] **`progressChanged` throttle** — `notifyProgressIfNeeded()` in transport tick (~20 Hz);
+  atomic playhead still 250 Hz; `OverallWaveform` uses FrameAnimation + atomic.
+- [x] **QML binding audit** — DeckControl/FxBar/FxUnit/PerformancePads/CrossfaderBar: no
+  grouped-alias or self-ref binding bugs; OverallWaveform playhead fixed for throttle.
 - [x] **Mixer command-path cleanup** — `DeckChannels.h` shared lookup/scaling; MIDI gain/EQ/filter
   only via `MixerParameterBridge` (`apply*`); duplicate block removed from `MidiFlx10Bridge`;
   `FxManager` filter dedup + `applyFilter` on mode switch; dead `updateGain()` removed.
@@ -51,14 +71,5 @@
 - [ ] Cursor hide on knob/fader drag (guards added; verify on macOS)
 
 ## Known issues
-- `MixerControl` internal mix state (`m_mixA` trim/EQ) can lag MIDI-only moves until a UI knob
-  drag updates it; harmless unless `applyAllMixState()` is re-triggered — consider syncing from
-  `parameterStore` on bridge apply.
-- Watch for the same QML pitfalls elsewhere (DeckControl/FxBar/PerformancePads): grouped-alias
-  signal handlers (`alias.onXxx:`) silently don't fire, and `prop: prop` bindings self-reference
-  when the child owns a property of the same name — qualify with the parent's `id`.
-
-## Not started / backlog
-- Commit/push mixer fix (only when user asks)
-- Route deck C/D FLX10 mixer params when controller mapping expands (bridge already handles 4 decks)
-- Optional: throttle `progressChanged` in `tickTransportPlaying` if waveform CPU still high
+- Watch for grouped-alias signal handlers (`alias.onXxx:`) and self-referential `prop: prop`
+  bindings in new QML — qualify with parent `id` (MixerSection pattern).

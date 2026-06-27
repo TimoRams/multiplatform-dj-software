@@ -142,7 +142,7 @@ Item {
 
         Timer {
             id: pausedWaveRefresh
-            interval: 33
+            interval: 66
             repeat: true
             running: root.engine !== null
                      && !root.engine.isPlaying

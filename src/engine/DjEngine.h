@@ -590,6 +590,8 @@ private:
     float m_lastNotifiedPreVuR   = 0.0f;
     float m_lastNotifiedGr       = 1.0f;
     QElapsedTimer m_vuNotifyClock;
+    double m_lastNotifiedProgressSec = 0.0;
+    QElapsedTimer m_progressNotifyClock;
 
     // Mixer state
     double m_volume = 0.8;
@@ -680,6 +682,7 @@ private:
     void applyMixerEq();
     void applyMixerFilter();
     void notifyVuMetersIfNeeded();
+    void notifyProgressIfNeeded();
 
     // m_latencySeconds tracks effective output latency reported by the audio device.
     // getOutputLatencyInSamples() is JUCE's callback->speaker delay and already
@@ -707,7 +710,6 @@ private:
 
     double m_pixelsPerSecond = WAVEFORM_POINTS_PER_SECOND * 1.5;
     engine::scratch::ScratchSession m_scratch;
-    QElapsedTimer m_scrubProgressEmitClock;
     bool m_scratchSnapReadPending = false;
     double m_scrubHoldPosition = 0.0;
     double m_loadedTrackSampleRate = 44100.0;

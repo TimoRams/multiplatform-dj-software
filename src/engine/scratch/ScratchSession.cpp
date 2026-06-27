@@ -66,7 +66,10 @@ bool ScratchSession::submitRelative(engine::audio::ScratchDeckBridge* bridge,
 
     bridge->submitHandDeltaSeconds(clamped, dtSec);
     m_lastRawSec += clamped;
-    bridge->syncScratchReadPosition(m_lastRawSec, sampleRate);
+    // Audio position is owned by the tracker on the audio thread (driven by the
+    // platter target updated in submitHandDeltaSeconds). Only publish the display.
+    bridge->publishScratchDisplay(m_lastRawSec);
+    (void) sampleRate;
     return true;
 }
 

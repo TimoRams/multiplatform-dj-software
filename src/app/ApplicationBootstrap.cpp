@@ -35,7 +35,6 @@
 
 #include "DjEngine.h"
 #include "DjMasterBus.h"
-#include "WaveformItem.h"
 #include "library/LibraryManager.h"
 #include "library/CoverArtProvider.h"
 #include "library/LibraryCoverService.h"
@@ -422,6 +421,7 @@ int runApplication(int argc, char *argv[])
                 runtime.parameterStore.get());
             runtime.mixerParameterBridge->setDecks(runtime.deckA.get(), runtime.deckB.get(),
                                                    runtime.deckC.get(), runtime.deckD.get());
+            runtime.mixerParameterBridge->setMixerControl(runtime.mixerControl.get());
 
             runtime.mixerControl->setDecks(runtime.deckA.get(), runtime.deckB.get(),
                                            runtime.deckC.get(), runtime.deckD.get());

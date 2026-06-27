@@ -20,7 +20,12 @@ void ScratchResampler::prepare(int numChannels, int maxBlockSize, double outputS
     m_blockSize = m_deviceBufferSize;
     m_outputSampleRate = std::max(1.0, outputSampleRate);
 
-    const int capacity = std::clamp(m_deviceBufferSize * kCapacityBuffers, 768, 65536);
+    // Hold ~0.5s of audio so slow scratching stays inside the RAM window and does
+    // not decode/read on the audio thread on every small move (the main cause of
+    // crackle during slow, precise scratching).
+    const int timeCapacity = static_cast<int>(std::lround(m_outputSampleRate * 0.5));
+    const int capacity = std::clamp(std::max(m_deviceBufferSize * kCapacityBuffers, timeCapacity),
+                                    768, 262144);
     m_sourceBuffer.setSize(m_channels, capacity, false, true, true);
     m_sourceBuffer.clear();
     m_sourceSize = 0;
@@ -37,6 +42,7 @@ void ScratchResampler::reset(double readPositionSamples) noexcept
     m_sourceSize = 0;
     m_lastRate = 0.0;
     m_smoothedRate = 0.0;
+    m_trackVel = 0.0;
 }
 
 void ScratchResampler::setReadPositionSamples(double readPositionSamples) noexcept
@@ -57,6 +63,11 @@ void ScratchResampler::snapSmoothedRate(double rate) noexcept
 {
     m_smoothedRate = rate;
     m_lastRate = rate;
+}
+
+void ScratchResampler::primeTrackerVelocity(double ratePerOutputSample) noexcept
+{
+    m_trackVel = ratePerOutputSample * m_outputSampleRate;
 }
 
 double ScratchResampler::wrapPosition(double pos) const noexcept
@@ -82,7 +93,11 @@ void ScratchResampler::windowMargins(double rate,
                                      int& lookAhead) const noexcept
 {
     const int blockSamples = std::max(m_deviceBufferSize, outputBlockSize);
-    const int baseMargin = blockSamples * kWindowBuffersPerSide + kHermiteRadius + kWindowPadSamples;
+    // Time-based floor (~100ms each side) so even at near-zero scratch rate the
+    // window spans enough audio to avoid constant edge reloads on the audio thread.
+    const int minMargin = static_cast<int>(std::lround(m_outputSampleRate * 0.10));
+    const int baseMargin = std::max(blockSamples * kWindowBuffersPerSide, minMargin)
+        + kHermiteRadius + kWindowPadSamples;
     const int speedMargin = static_cast<int>(
         std::ceil(std::abs(rate) * static_cast<double>(blockSamples)))
         + kHermiteRadius + kWindowPadSamples;
@@ -282,6 +297,75 @@ void ScratchResampler::processBlock(juce::AudioSource& input,
 
         m_readPos += m_smoothedRate;
     }
+}
+
+double ScratchResampler::processScratchTracking(juce::AudioSource& input,
+                                                double targetPosSamples,
+                                                double maxAbsRate,
+                                                const juce::AudioSourceChannelInfo& output) noexcept
+{
+    if (!output.buffer || output.numSamples <= 0) {
+        if (output.buffer)
+            output.clearActiveBufferRegion();
+        return 0.0;
+    }
+
+    const int start = output.startSample;
+    const int numSamples = output.numSamples;
+    if (start < 0 || start + numSamples > output.buffer->getNumSamples()) {
+        output.clearActiveBufferRegion();
+        return 0.0;
+    }
+
+    // No audio before t=0 — keep the read head at the start during pre-roll while
+    // the visible (negative) playhead is published separately by the UI thread.
+    const double target = std::max(0.0, targetPosSamples);
+
+    const double outSr = std::max(1.0, m_outputSampleRate);
+    const double dt = 1.0 / outSr;
+    const double absMaxRate = std::abs(maxAbsRate);
+
+    // Critically-damped (zeta = 1) second-order position tracker. The bandwidth
+    // sets responsiveness: high enough to feel precise, low enough to reject the
+    // step-jitter of discrete UI events. Explicit Euler is stable since w*dt << 1.
+    constexpr double kTrackHz = 52.0;
+    constexpr double kTwoPi = 6.28318530717958647692;
+    const double omega = kTwoPi * kTrackHz;
+    const double maxVel = absMaxRate * outSr;
+
+    // Window must span the path the read head will travel this block.
+    const double estRate = std::clamp(
+        std::max(std::abs((target - m_readPos) / static_cast<double>(std::max(1, numSamples))),
+                 std::abs(m_trackVel) * dt) * 1.5,
+        0.0, absMaxRate);
+    ensureWindow(input, estRate, numSamples);
+
+    const int outChannels = std::min(output.buffer->getNumChannels(), m_channels);
+    float* out0 = outChannels > 0 ? output.buffer->getWritePointer(0, start) : nullptr;
+    float* out1 = outChannels > 1 ? output.buffer->getWritePointer(1, start) : nullptr;
+
+    const bool haveWindow = m_sourceSize >= kMinWindowSamples;
+    if (!haveWindow)
+        output.clearActiveBufferRegion();
+
+    for (int i = 0; i < numSamples; ++i) {
+        const double err = target - m_readPos;
+        const double accel = omega * omega * err - 2.0 * omega * m_trackVel;
+        m_trackVel = std::clamp(m_trackVel + accel * dt, -maxVel, maxVel);
+
+        const double rate = std::clamp(m_trackVel * dt, -absMaxRate, absMaxRate);
+
+        m_readPos = wrapPosition(m_readPos);
+        if (haveWindow) {
+            if (out0) out0[i] = readHermite(0, m_readPos);
+            if (out1) out1[i] = readHermite(1, m_readPos);
+        }
+        m_readPos += rate;
+    }
+
+    m_smoothedRate = m_trackVel * dt;
+    m_lastRate = m_smoothedRate;
+    return m_smoothedRate;
 }
 
 } // namespace engine::audio
