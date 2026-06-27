@@ -59,11 +59,28 @@ Rectangle {
         return 1.0
     }
 
+    function assignForChannelId(channelId) {
+        switch (channelId) {
+        case "deckA": return assignA
+        case "deckB": return assignB
+        case "deckC": return assignC
+        case "deckD": return assignD
+        default: return "A"
+        }
+    }
+
+    function multiplierForChannelId(channelId) {
+        return cfMult(assignForChannelId(channelId))
+    }
+
+    property var mc: null
+
     function applyVolumes() {
-        if (engineA) engineA.volume = volA * cfMult(assignA)
-        if (engineB) engineB.volume = volB * cfMult(assignB)
-        if (engineC) engineC.volume = volC * cfMult(assignC)
-        if (engineD) engineD.volume = volD * cfMult(assignD)
+        if (!mc)
+            return
+        mc.syncCrossfaderState(cfPos, assignA, assignB, assignC, assignD,
+                               cfSharpness, cfCurveMode)
+        mc.applyAllVolumes()
     }
 
     function scheduleSettingsSave() {
@@ -143,10 +160,10 @@ Rectangle {
     Connections {
         target: parameterStore
         function onParameterChanged(id, value) {
-            if      (id === "deckA_vol")   { cfBar.volA = value; cfBar.applyVolumes() }
-            else if (id === "deckB_vol")   { cfBar.volB = value; cfBar.applyVolumes() }
-            else if (id === "deckC_vol")   { cfBar.volC = value; cfBar.applyVolumes() }
-            else if (id === "deckD_vol")   { cfBar.volD = value; cfBar.applyVolumes() }
+            if      (id === "deckA_vol")   { cfBar.volA = value; if (cfBar.mc) cfBar.mc.setChannelFader("deckA", value) }
+            else if (id === "deckB_vol")   { cfBar.volB = value; if (cfBar.mc) cfBar.mc.setChannelFader("deckB", value) }
+            else if (id === "deckC_vol")   { cfBar.volC = value; if (cfBar.mc) cfBar.mc.setChannelFader("deckC", value) }
+            else if (id === "deckD_vol")   { cfBar.volD = value; if (cfBar.mc) cfBar.mc.setChannelFader("deckD", value) }
             else if (id === "crossfader")  cfSlider.value = value * 2.0 - 1.0
         }
     }

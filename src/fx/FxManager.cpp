@@ -13,10 +13,13 @@ FxManager::FxManager(QObject* parent)
     qDebug() << "[FxManager] initialised";
 }
 
-void FxManager::registerEngines(DjEngine* deckA, DjEngine* deckB)
+void FxManager::registerEngines(DjEngine* deckA, DjEngine* deckB,
+                              DjEngine* deckC, DjEngine* deckD)
 {
     m_engineA = deckA;
     m_engineB = deckB;
+    m_engineC = deckC;
+    m_engineD = deckD;
 
     if (m_engineA) {
         connect(m_engineA, &DjEngine::tempoChanged, this, [this]() {
@@ -216,17 +219,38 @@ void FxManager::setSoundColorDeck(int deck, float value)
     {
         m_soundColorValueA = value;
         applySoundColorToEngine(m_engineA, m_soundColorMode, value);
-        // For Filter mode: also drive the engine's built-in filter
         if (m_soundColorMode == "Filter" && m_engineA)
             m_engineA->setFilter(static_cast<double>(value));
     }
-    else
+    else if (deck == 2)
     {
         m_soundColorValueB = value;
         applySoundColorToEngine(m_engineB, m_soundColorMode, value);
         if (m_soundColorMode == "Filter" && m_engineB)
             m_engineB->setFilter(static_cast<double>(value));
     }
+}
+
+void FxManager::setSoundColorChannel(const QString& channelId, float value)
+{
+    if (DjEngine* const engine = engineForChannelId(channelId))
+        applySoundColorToEngine(engine, m_soundColorMode, value);
+
+    if (m_soundColorMode == QLatin1String("Filter")) {
+        if (channelId == QLatin1String("deckA")) m_soundColorValueA = value;
+        else if (channelId == QLatin1String("deckB")) m_soundColorValueB = value;
+        if (DjEngine* const engine = engineForChannelId(channelId))
+            engine->setFilter(static_cast<double>(value));
+    }
+}
+
+DjEngine* FxManager::engineForChannelId(const QString& channelId) const
+{
+    if (channelId == QLatin1String("deckA")) return m_engineA;
+    if (channelId == QLatin1String("deckB")) return m_engineB;
+    if (channelId == QLatin1String("deckC")) return m_engineC;
+    if (channelId == QLatin1String("deckD")) return m_engineD;
+    return nullptr;
 }
 
 void FxManager::applySoundColorToEngine(DjEngine* engine, const QString& mode, float value)

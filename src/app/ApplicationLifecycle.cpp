@@ -63,6 +63,7 @@ void clearQmlContextProperties(QQmlApplicationEngine& engine)
     engine.rootContext()->setContextProperty("midiManager", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("controllerManager", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("cursorControl", static_cast<QObject*>(nullptr));
+    engine.rootContext()->setContextProperty("mixerControl", static_cast<QObject*>(nullptr));
 }
 
 void performExitTeardown(ApplicationRuntime& runtime, bool manualBackup)

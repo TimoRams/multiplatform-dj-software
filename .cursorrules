@@ -1,0 +1,40 @@
+# BrockDJ — Cursor Agent Rules
+
+## Memory Bank (required every task)
+
+Before starting any task, read these files in order:
+
+1. `.cursor/memory/projectbrief.md` — goals and scope
+2. `.cursor/memory/techContext.md` — stack, architecture, conventions
+3. `.cursor/memory/activeContext.md` — current work and decisions
+4. `.cursor/memory/progress.md` — done / in progress / known issues
+
+After completing meaningful work, update:
+
+- **`activeContext.md`** — current task, root cause, approach, next steps
+- **`progress.md`** — check off completed items, add new known issues
+
+Keep updates concise and factual. Do not duplicate full code in memory files.
+
+## Project conventions
+
+- **Platform priority:** Linux > Apple Silicon Mac > Intel Mac > Windows
+- **C++26**, minimal diffs, match existing naming and file layout
+- **Mixer QML → audio:** use context property `mixerControl` (created before QML load), not nested `engine.*` from inline components
+- **Crossfader / volume:** `mixerControl.syncCrossfaderState` + `mixerControl.applyAllVolumes`; fader changes via `mixerControl.setChannelFader`
+- **MIDI sync:** `parameterStore` + `MixerParameterBridge` / `MidiFlx10Bridge`
+- Do not commit unless the user explicitly asks
+- Do not create markdown docs the user did not request (except memory bank files above)
+
+## Build & test
+
+```bash
+cmake --build build && ctest --test-dir build
+```
+
+## Key files
+
+- Bootstrap: `src/app/ApplicationBootstrap.cpp`
+- Mixer UI: `src/qml/MixerSection.qml`, `src/qml/CrossfaderBar.qml`
+- Mixer C++: `src/app/MixerControl.cpp`
+- Engine DSP: `src/engine/audio/MixerDspSource.cpp`

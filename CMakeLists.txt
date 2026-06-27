@@ -288,6 +288,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/main.cpp
     src/app/ApplicationBootstrap.cpp
     src/app/ApplicationLifecycle.cpp
+    src/app/MixerControl.h
+    src/app/MixerControl.cpp
     src/engine/DjEngine.h
     src/engine/DjEngine_Core.cpp
     src/engine/DjEngine_CoreMeta.cpp
@@ -363,6 +365,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/app/CursorControl.cpp
     src/midi/ParameterStore.h
     src/midi/ParameterStore.cpp
+    src/midi/MixerParameterBridge.h
+    src/midi/MixerParameterBridge.cpp
     src/midi/AlsaMidiOutput.h
     src/midi/AlsaMidiOutput.cpp
     src/midi/feedback/MidiFeedbackController.h
@@ -553,12 +557,16 @@ else()
     message(STATUS "Icon resources not found — run scripts/generate_icons.sh then re-run CMake.")
 endif()
 
-# ── Smoke tests (no Qt/JUCE link — fast stability checks) ───────────────────
+# ── Smoke tests ───────────────────────────────────────────────────────────────
 enable_testing()
 
 add_executable(BrockDJ_smoke_tests
     tests/smoke/smoke_tests.cpp
+    tests/smoke/mixer_dsp_smoke.cpp
     src/analysis/AnalysisValidation.cpp
+    src/engine/audio/MixerDspSource.cpp
+    src/fx/FxProcessor.cpp
+    src/fx/BrickwallLimiter.cpp
 )
 
 target_include_directories(BrockDJ_smoke_tests PRIVATE
@@ -568,9 +576,23 @@ target_include_directories(BrockDJ_smoke_tests PRIVATE
     src/domain
     src/engine
     src/engine/audio
+    src/fx/dsp
+    ${SIGNALSMITH_DSP_DIR}
 )
 
-target_link_libraries(BrockDJ_smoke_tests PRIVATE Qt6::Core Qt6::Gui)
+target_link_libraries(BrockDJ_smoke_tests PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    juce::juce_core
+    juce::juce_data_structures
+    juce::juce_audio_basics
+    juce::juce_dsp
+    juce::juce_events
+)
+target_compile_definitions(BrockDJ_smoke_tests PRIVATE
+    JUCE_USE_CURL=0
+    JUCE_WEB_BROWSER=0
+)
 target_compile_features(BrockDJ_smoke_tests PRIVATE cxx_std_26)
 
 add_test(NAME smoke COMMAND BrockDJ_smoke_tests)

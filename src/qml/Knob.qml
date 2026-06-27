@@ -127,9 +127,10 @@ Controls.Dial {
             var g  = knobDrag.mapToGlobal(mouse.x, mouse.y)
             var dy = _pressGY - g.y
             if (!_active) {
-                if (Math.abs(dy) < 4) return
+                if (Math.abs(dy) < 2) return
                 _active = true
-                cursorControl.hideCursor()
+                if (typeof cursorControl !== "undefined" && cursorControl)
+                    cursorControl.hideCursor()
             }
             var newVal = _pressVal + dy * (knob.to - knob.from) / 150.0
             knob.value = Math.min(knob.to, Math.max(knob.from, newVal))
@@ -138,8 +139,10 @@ Controls.Dial {
         onReleased: {
             if (_active) {
                 _active = false
-                cursorControl.restoreCursor()
-                cursorControl.moveCursor(_pressGX, _pressGY)
+                if (typeof cursorControl !== "undefined" && cursorControl) {
+                    cursorControl.restoreCursor()
+                    cursorControl.moveCursor(_pressGX, _pressGY)
+                }
             }
         }
 

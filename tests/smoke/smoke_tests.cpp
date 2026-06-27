@@ -9,6 +9,8 @@
 #include <span>
 #include <vector>
 
+int runMixerDspSmokeTests();
+
 namespace {
 
 int g_failures = 0;
@@ -68,6 +70,7 @@ int main()
     testDeckIndex();
     testHermiteSampleAt();
     testAnalysisValidation();
+    g_failures += runMixerDspSmokeTests();
 
     if (g_failures == 0) {
         std::cout << "All smoke tests passed.\n";

@@ -790,6 +790,8 @@ ApplicationWindow {
                         Layout.fillHeight: true
                         engineA: deckA
                         engineB: deckB
+                        mc: mixerControl
+                        fx: fxManager
                     }
 
                     DeckControl {
@@ -852,6 +854,8 @@ ApplicationWindow {
                         channelBId: "deckD"
                         deckNameA: "C"
                         deckNameB: "D"
+                        mc: mixerControl
+                        fx: fxManager
                     }
 
                     DeckControl {
@@ -881,6 +885,7 @@ ApplicationWindow {
             Layout.preferredHeight: _vis ? 36 : 0
             Layout.maximumHeight:  _vis ? 36 : 0
             visible: _vis
+            mc: mixerControl
             engineA: deckA
             engineB: deckB
             engineC: deckC

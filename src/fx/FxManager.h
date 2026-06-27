@@ -46,8 +46,9 @@ class FxManager : public QObject
 public:
     explicit FxManager(QObject* parent = nullptr);
 
-    /// Register both deck engines — must be called before the QML engine loads.
-    void registerEngines(DjEngine* deckA, DjEngine* deckB);
+    /// Register all deck engines — call after DjEngines are constructed.
+    void registerEngines(DjEngine* deckA, DjEngine* deckB,
+                         DjEngine* deckC = nullptr, DjEngine* deckD = nullptr);
 
     // ── SoundColor ───────────────────────────────────────────────────────────
     QString soundColorMode() const { return m_soundColorMode; }
@@ -64,6 +65,9 @@ public:
     /// @param deck   1 = Deck A, 2 = Deck B
     /// @param value  -1.0 (max left) … 0.0 (centre/bypass) … +1.0 (max right)
     Q_INVOKABLE void setSoundColorDeck(int deck, float value);
+
+    /// Per-deck SC by channel id (deckA–deckD).
+    Q_INVOKABLE void setSoundColorChannel(const QString& channelId, float value);
 
     // ── Accessors – unit 1 ───────────────────────────────────────────────────
     QString effectType1() const { return m_effectType1; }
@@ -134,6 +138,8 @@ signals:
 private:
     QPointer<DjEngine> m_engineA;
     QPointer<DjEngine> m_engineB;
+    QPointer<DjEngine> m_engineC;
+    QPointer<DjEngine> m_engineD;
 
     // ── SoundColor state ─────────────────────────────────────────────────────
     QString m_soundColorMode { "Filter" };
@@ -142,6 +148,7 @@ private:
     float   m_soundColorValueB { 0.0f };
 
     void applySoundColorToEngine(DjEngine* engine, const QString& mode, float value);
+    [[nodiscard]] DjEngine* engineForChannelId(const QString& channelId) const;
 
     // ── Unit 1 state ─────────────────────────────────────────────────────────
     QString m_effectType1 { "---" };

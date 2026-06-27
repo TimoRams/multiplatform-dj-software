@@ -24,6 +24,8 @@ class LibraryCoverService;
 class SettingsManager;
 class AppConfig;
 class AppExitGate;
+class MixerParameterBridge;
+class MixerControl;
 
 struct ApplicationRuntime {
     QQmlApplicationEngine* engine = nullptr;
@@ -38,6 +40,8 @@ struct ApplicationRuntime {
     std::unique_ptr<DjMasterBus> masterBus;
 
     std::unique_ptr<ParameterStore> parameterStore;
+    std::unique_ptr<MixerParameterBridge> mixerParameterBridge;
+    std::unique_ptr<MixerControl> mixerControl;
     QPointer<MidiControllerManager> midiManager;
     std::unique_ptr<ControllerIntegrationManager> controllerManager;
 

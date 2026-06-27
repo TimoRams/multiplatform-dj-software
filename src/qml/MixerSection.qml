@@ -13,6 +13,8 @@ Rectangle {
 
     property var  engineA: null
     property var  engineB: null
+    property var  mc: null
+    property var  fx: null
     property bool cueAActive: false
     property bool cueBActive: false
     property string channelAId: "deckA"
@@ -36,11 +38,114 @@ Rectangle {
     readonly property int spineW:   3
     readonly property int stripW:   faderW + 1 + vuW + 1 + knobColW
 
+    function hideDragCursor() {
+        if (typeof cursorControl !== "undefined" && cursorControl)
+            cursorControl.hideCursor()
+    }
+
+    function restoreDragCursor(gx, gy) {
+        if (typeof cursorControl !== "undefined" && cursorControl) {
+            cursorControl.restoreCursor()
+            cursorControl.moveCursor(gx, gy)
+        }
+    }
+
+    function deckForChannel(channelId) {
+        if (channelId === channelAId)
+            return engineA
+        if (channelId === channelBId)
+            return engineB
+        return null
+    }
+
+    function setTrimValue(channelId, value) {
+        if (mc)
+            mc.setTrim(channelId, value)
+        else {
+            const deck = deckForChannel(channelId)
+            if (deck) deck.trim = value
+        }
+    }
+
+    function setEqHighValue(channelId, value) {
+        if (mc)
+            mc.setEqHigh(channelId, value)
+        else {
+            const deck = deckForChannel(channelId)
+            if (deck) deck.eqHigh = value
+        }
+    }
+
+    function setEqMidValue(channelId, value) {
+        if (mc)
+            mc.setEqMid(channelId, value)
+        else {
+            const deck = deckForChannel(channelId)
+            if (deck) deck.eqMid = value
+        }
+    }
+
+    function setEqLowValue(channelId, value) {
+        if (mc)
+            mc.setEqLow(channelId, value)
+        else {
+            const deck = deckForChannel(channelId)
+            if (deck) deck.eqLow = value
+        }
+    }
+
+    function setFilterValue(channelId, value) {
+        if (mc)
+            mc.setFilter(channelId, value)
+        else {
+            const deck = deckForChannel(channelId)
+            if (deck) deck.filter = value
+        }
+    }
+
+    function setFaderValue(channelId, value) {
+        if (mc)
+            mc.setChannelFader(channelId, value)
+        else {
+            const deck = deckForChannel(channelId)
+            if (deck) deck.volume = value
+        }
+    }
+
+    function setSoundColorValue(channelId, value) {
+        if (fx)
+            fx.setSoundColorChannel(channelId, value)
+        const filterVal = (fx && fx.soundColorMode === "Filter") ? value : 0.0
+        setFilterValue(channelId, filterVal)
+    }
+
+    function applyChannelControls(side, channelId) {
+        if (!side)
+            return
+
+        setFaderValue(channelId, side.volFader.value)
+        setTrimValue(channelId, side.gainCell.knob.value)
+        setEqHighValue(channelId, side.eqHighCell.knob.value)
+        setEqMidValue(channelId, side.eqMidCell.knob.value)
+        setEqLowValue(channelId, side.eqLowCell.knob.value)
+        setSoundColorValue(channelId, side.scCell.knob.value)
+    }
+
+    function applyAllControls() {
+        applyChannelControls(sideA, channelAId)
+        applyChannelControls(sideB, channelBId)
+    }
+
+    onEngineAChanged: Qt.callLater(applyAllControls)
+    onEngineBChanged: Qt.callLater(applyAllControls)
+    onMcChanged: Qt.callLater(applyAllControls)
+    Component.onCompleted: Qt.callLater(applyAllControls)
+
     Connections {
         target: parameterStore
         function onParameterChanged(id, value) {
-            if      (id === mixer.channelAId + "_vol")    sideA.volFader.value      = value
-            else if (id === mixer.channelBId + "_vol")    sideB.volFader.value      = value
+            if      (id === mixer.channelAId + "_vol")    sideA.volFader.value = value
+            else if (id === mixer.channelBId + "_vol")    sideB.volFader.value = value
             else if (id === mixer.channelAId + "_eqHigh") sideA.eqHighCell.knob.value = value * 2.0 - 1.0
             else if (id === mixer.channelAId + "_eqMid")  sideA.eqMidCell.knob.value  = value * 2.0 - 1.0
             else if (id === mixer.channelAId + "_eqLow")  sideA.eqLowCell.knob.value  = value * 2.0 - 1.0
@@ -207,11 +312,18 @@ Rectangle {
             onPositionChanged: (mouse) => {
                 var g = msDragLock.mapToGlobal(mouse.x, mouse.y)
                 var delta = _pressGY - g.y
-                if (!ms.dragActive) { if (Math.abs(delta) < 4) return; ms.dragActive = true; cursorControl.hideCursor() }
+                if (!ms.dragActive) {
+                    if (Math.abs(delta) < 2) return
+                    ms.dragActive = true
+                    mixer.hideDragCursor()
+                }
                 ms.value = Math.max(ms.from, Math.min(ms.to, _pressVal + delta * (ms.to - ms.from) / 150.0))
             }
             onReleased: {
-                if (ms.dragActive) { ms.dragActive = false; cursorControl.restoreCursor(); cursorControl.moveCursor(_pressGX, _pressGY) }
+                if (ms.dragActive) {
+                    ms.dragActive = false
+                    mixer.restoreDragCursor(_pressGX, _pressGY)
+                }
             }
             onDoubleClicked: { ms.enabled = false; ms.value = ms.defaultValue; ms.enabled = true }
         }
@@ -248,9 +360,9 @@ Rectangle {
     }
 
     component KnobStackColumn: ColumnLayout {
-        required property var engine
+        id: knobStack
+        required property string channelId
         required property bool cueActive
-        required property int soundColorDeck
         required property bool mirrored
         required property color accent
 
@@ -281,37 +393,40 @@ Rectangle {
                     id: gainKnob
                     label: "GAIN"
                     knob.from: 0; knob.to: 2; knob.value: 1.0; knob.defaultValue: 1.0
-                    knob.onValueChanged: { if (engine) engine.trim = knob.value }
+                    knob.onValueChanged: {
+                        mixer.setTrimValue(channelId, gainKnob.knob.value)
+                    }
                 }
                 KnobCell {
                     id: eqHi
                     label: "HI"
                     knob.from: -1; knob.to: 1; knob.value: 0
-                    knob.onValueChanged: { if (engine) engine.eqHigh = knob.value }
+                    knob.onValueChanged: {
+                        mixer.setEqHighValue(channelId, eqHi.knob.value)
+                    }
                 }
                 KnobCell {
                     id: eqMid
                     label: "MID"
                     knob.from: -1; knob.to: 1; knob.value: 0
-                    knob.onValueChanged: { if (engine) engine.eqMid = knob.value }
+                    knob.onValueChanged: {
+                        mixer.setEqMidValue(channelId, eqMid.knob.value)
+                    }
                 }
                 KnobCell {
                     id: eqLo
                     label: "LOW"
                     knob.from: -1; knob.to: 1; knob.value: 0
-                    knob.onValueChanged: { if (engine) engine.eqLow = knob.value }
+                    knob.onValueChanged: {
+                        mixer.setEqLowValue(channelId, eqLo.knob.value)
+                    }
                 }
                 KnobCell {
                     id: scKnob
                     label: "SC"
                     knob.from: -1; knob.to: 1; knob.value: 0; knob.defaultValue: 0
                     knob.onValueChanged: {
-                        if (typeof fxManager !== "undefined") {
-                            fxManager.setSoundColorDeck(soundColorDeck, knob.value)
-                            if (engine) engine.filter = fxManager.soundColorMode === "Filter" ? knob.value : 0.0
-                        } else if (engine) {
-                            engine.filter = knob.value
-                        }
+                        mixer.setSoundColorValue(channelId, scKnob.knob.value)
                     }
                 }
 
@@ -336,7 +451,15 @@ Rectangle {
                     Rectangle { anchors.fill: parent; color: "#ffffff"; opacity: cueHov.hovered && !cueActive ? 0.05 : 0 }
                     MouseArea {
                         anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                        onClicked: { if (engine) engine.cueEnabled = !engine.cueEnabled }
+                        onClicked: {
+                            if (mixer.mc)
+                                mixer.mc.toggleCue(channelId)
+                            else {
+                                const deck = mixer.deckForChannel(channelId)
+                                if (deck)
+                                    deck.cueEnabled = !deck.cueEnabled
+                            }
+                        }
                     }
                 }
             }
@@ -365,8 +488,7 @@ Rectangle {
                 from: 0.0; to: 1.0; value: 1.0
                 capAccent: faderAccent
                 onValueChanged: {
-                    if (parameterStore && parameterStore.getParameter(channelId + "_vol") !== value)
-                        parameterStore.setParameter(channelId + "_vol", value)
+                    mixer.setFaderValue(channelId, fader.value)
                 }
             }
         }
@@ -377,6 +499,8 @@ Rectangle {
             anchors.bottomMargin: 2
             text: "VOL"
         }
+
+        id: faderColumn
     }
 
     component ChannelSide: ColumnLayout {
@@ -387,7 +511,6 @@ Rectangle {
         required property bool cueActive
         required property real vuLevel
         required property string channelId
-        required property int soundColorDeck
 
         property alias gainCell: knobs.gainCell
         property alias scCell: knobs.scCell
@@ -425,9 +548,8 @@ Rectangle {
 
             KnobStackColumn {
                 id: knobs
-                engine: engine
+                channelId: channelId
                 cueActive: cueActive
-                soundColorDeck: soundColorDeck
                 mirrored: mirrored
                 accent: deckAccent
             }
@@ -448,7 +570,6 @@ Rectangle {
                 cueActive: mixer.cueAActive
                 vuLevel: mixer.vuACombined
                 channelId: mixer.channelAId
-                soundColorDeck: 1
             }
 
             Rectangle {
@@ -466,7 +587,6 @@ Rectangle {
                 cueActive: mixer.cueBActive
                 vuLevel: mixer.vuBCombined
                 channelId: mixer.channelBId
-                soundColorDeck: 2
             }
     }
 

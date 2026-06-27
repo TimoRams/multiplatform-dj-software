@@ -12,6 +12,7 @@
 #include <QQuickWindow>
 #include <QQmlContext>
 #include <QQmlEngine>
+#include <QtQml/qqml.h>
 #include <QFont>
 #include <QIcon>
 #include <QSize>
@@ -41,6 +42,8 @@
 #include "link/LinkManager.h"
 #include "SystemMonitor.h"
 #include "midi/ParameterStore.h"
+#include "midi/MixerParameterBridge.h"
+#include "MixerControl.h"
 #include "midi/MidiControllerManager.h"
 #include "controllers/ControllerIntegrationManager.h"
 #include "SettingsManager.h"
@@ -293,6 +296,7 @@ int runApplication(int argc, char *argv[])
     runtime.coverProvider = std::make_unique<CoverArtProvider>();
     runtime.coverProviderPtr = runtime.coverProvider.get();
     runtime.libraryCoverService = std::make_unique<LibraryCoverService>(runtime.coverProviderPtr);
+    runtime.mixerControl = std::make_unique<MixerControl>();
 
     engine.addImageProvider("coverart", runtime.coverProvider.release());
     logStartupStep("Cover art provider installed");
@@ -314,6 +318,8 @@ int runApplication(int argc, char *argv[])
     engine.rootContext()->setContextProperty("midiManager", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("controllerManager", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("cursorControl", runtime.cursorControl.get());
+    qmlRegisterSingletonInstance("BrockDJ.Mixer", 1, 0, "Control", runtime.mixerControl.get());
+    engine.rootContext()->setContextProperty("mixerControl", runtime.mixerControl.get());
     engine.rootContext()->setContextProperty("libraryCover", runtime.libraryCoverService.get());
 
     const auto url = QUrl(u"qrc:/DJSoftware/src/qml/main.qml"_s);
@@ -386,12 +392,21 @@ int runApplication(int argc, char *argv[])
                 deck->setLibraryCoverService(runtime.libraryCoverService.get());
             }
 
-            runtime.fxManager->registerEngines(runtime.deckA.get(), runtime.deckB.get());
+            runtime.fxManager->registerEngines(runtime.deckA.get(), runtime.deckB.get(),
+                                               runtime.deckC.get(), runtime.deckD.get());
 
             runtime.masterBus = std::make_unique<DjMasterBus>();
             for (DjEngine* deck : {runtime.deckA.get(), runtime.deckB.get(),
                                    runtime.deckC.get(), runtime.deckD.get()})
                 runtime.masterBus->addDeck(deck);
+
+            runtime.mixerParameterBridge = std::make_unique<MixerParameterBridge>(
+                runtime.parameterStore.get());
+            runtime.mixerParameterBridge->setDecks(runtime.deckA.get(), runtime.deckB.get(),
+                                                   runtime.deckC.get(), runtime.deckD.get());
+
+            runtime.mixerControl->setDecks(runtime.deckA.get(), runtime.deckB.get(),
+                                           runtime.deckC.get(), runtime.deckD.get());
 
             runtime.deckA->applyAudioDeviceSettings(settingsManager.getAudioMasterDeviceType(),
                                             settingsManager.getAudioMasterOutputDevice(),
