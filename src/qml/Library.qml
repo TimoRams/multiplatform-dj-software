@@ -119,6 +119,8 @@ Rectangle {
     readonly property color accentOrange:"#ff9d2d"
     readonly property color accentRed:   "#ef5350"
     readonly property color accentKey:   "#5bb6ff"
+    readonly property color accentKeyMatch: "#3acc3a"
+    readonly property color accentKeyCompat: "#7ad4ff"
     readonly property color sidebarSel:  "#0d2e52"
     readonly property color textMeta:    "#888888"
     readonly property color textNav:     "#aaaaaa"
@@ -130,6 +132,10 @@ Rectangle {
     readonly property int sidebarW:   200
     property string viewMode: "compact"
     readonly property bool touchMode: window.allInOneMode
+    readonly property bool previewActive: typeof libraryPreview !== "undefined"
+                                            && libraryPreview && libraryPreview.playing
+    readonly property int previewBarHeight: previewActive ? (touchMode ? 58 : 50) : 0
+    readonly property int previewBarReserve: previewBarHeight
     property int openSwipeRowIndex: -1
     property bool filterPanelOpen: false
     readonly property bool filtersActive: libraryModel && (
@@ -146,12 +152,114 @@ Rectangle {
 
     function loadTrackToDeck(deckLetter, filePath) {
         if (!filePath) return
+        if (typeof libraryPreview !== "undefined" && libraryPreview)
+            libraryPreview.stop()
         var deck = deckLetter === "A" ? deckA
                  : deckLetter === "B" ? deckB
                  : deckLetter === "C" ? deckC
                  : deckLetter === "D" ? deckD : null
         if (!deck) return
+        closeAllSwipes()
+        if (touchMode && window)
+            window.activeMainTab = "performance"
         Qt.callLater(function() { deck.loadTrack(filePath) })
+    }
+
+    function closeAllSwipes() {
+        openSwipeRowIndex = -1
+    }
+
+    function togglePreview(filePath) {
+        if (!filePath || typeof libraryPreview === "undefined" || !libraryPreview)
+            return
+        libraryPreview.togglePreview(filePath)
+    }
+
+    function formatPreviewTime(sec) {
+        if (!isFinite(sec) || sec < 0)
+            return "0:00"
+        var m = Math.floor(sec / 60)
+        var s = Math.floor(sec % 60)
+        return m + ":" + (s < 10 ? "0" : "") + s
+    }
+
+    property var referenceKeys: []
+    property int referenceKeysTick: 0
+
+    function refreshReferenceKeys() {
+        referenceKeysTick++
+        var keys = []
+        var decks = [deckA, deckB, deckC, deckD]
+        for (var i = 0; i < decks.length; ++i) {
+            var d = decks[i]
+            if (d && d.hasTrack) {
+                var k = (d.trackKey || "").trim()
+                if (k.length > 0 && keys.indexOf(k) < 0)
+                    keys.push(k)
+            }
+        }
+        referenceKeys = keys
+    }
+
+    function parseCamelotKey(key) {
+        if (!key || key.length === 0)
+            return null
+        var m = String(key).trim().match(/^(1[0-2]|[1-9])\s*([ABab])$/)
+        if (!m)
+            m = String(key).trim().match(/\b(1[0-2]|[1-9])\s*([ABab])\b/)
+        if (!m)
+            return null
+        var n = parseInt(m[1], 10)
+        if (n < 1 || n > 12)
+            return null
+        return { n: n, l: m[2].toUpperCase() }
+    }
+
+    function camelotWrap(n) {
+        if (n < 1) return 12
+        if (n > 12) return 1
+        return n
+    }
+
+    // 0 = none, 1 = compatible (±1 / relative), 2 = exact match
+    function camelotCompatibility(a, b) {
+        if (!a || !b)
+            return 0
+        if (a.n === b.n && a.l === b.l)
+            return 2
+        if (a.n === b.n)
+            return 1
+        if (a.l === b.l && (a.n === camelotWrap(b.n + 1) || a.n === camelotWrap(b.n - 1)))
+            return 1
+        return 0
+    }
+
+    function keyMatchLevel(rowKey) {
+        var _tick = referenceKeysTick
+        if (!rowKey || referenceKeys.length === 0)
+            return 0
+        var parts = parseCamelotKey(rowKey)
+        if (!parts)
+            return 0
+        var best = 0
+        for (var i = 0; i < referenceKeys.length; ++i) {
+            var ref = parseCamelotKey(referenceKeys[i])
+            if (!ref)
+                continue
+            var lvl = camelotCompatibility(parts, ref)
+            if (lvl > best)
+                best = lvl
+            if (best === 2)
+                return 2
+        }
+        return best
+    }
+
+    function keyMatchColor(rowKey) {
+        var lvl = keyMatchLevel(rowKey)
+        if (lvl === 2) return accentKeyMatch
+        if (lvl === 1) return accentKeyCompat
+        return rowKey ? accentKey : textDim
     }
 
     function openSmartCollEditor(sc) {
@@ -712,7 +820,13 @@ Rectangle {
         }
         syncSidebarCursorToSelection()
         ensureActiveTrackForCurrentTab()
+        refreshReferenceKeys()
     }
+
+    Connections { target: deckA; function onTrackMetadataChanged() { libraryRoot.refreshReferenceKeys() } }
+    Connections { target: deckB; function onTrackMetadataChanged() { libraryRoot.refreshReferenceKeys() } }
+    Connections { target: deckC; function onTrackMetadataChanged() { libraryRoot.refreshReferenceKeys() } }
+    Connections { target: deckD; function onTrackMetadataChanged() { libraryRoot.refreshReferenceKeys() } }
 
     onViewModeChanged: {
         if (libraryDb && (viewMode === "compact" || viewMode === "normal"))
@@ -829,6 +943,8 @@ Rectangle {
                     : (event.modifiers & Qt.ControlModifier ? "C"
                     : (event.modifiers & Qt.AltModifier ? "D" : "A")), getCursorFilePath())
                 event.accepted = true
+            } else if (event.key === Qt.Key_P) {
+                togglePreview(getCursorFilePath()); event.accepted = true
             } else if (event.key === Qt.Key_Escape) {
                 browserCursorActive = false; event.accepted = true
             }
@@ -937,6 +1053,218 @@ Rectangle {
         }
     }
 
+    // ── AIO quick-load bar (tap deck without swipe) ─────────────────────────
+    component AioLoadBar: Rectangle {
+        id: aioBar
+        visible: libraryRoot.touchMode && libraryRoot.activeTrackFilePath.length > 0
+        height: visible ? 44 : 0
+        color: "#121820"
+        clip: true
+
+        Rectangle {
+            anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
+            height: 1; color: libraryRoot.borderMain
+        }
+
+        Row {
+            anchors.fill: parent
+            anchors.leftMargin: 10
+            anchors.rightMargin: 10
+            spacing: 8
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "LOAD"
+                color: libraryRoot.textDim
+                font.pixelSize: window.sp(9)
+                font.bold: true
+                font.letterSpacing: 1.0
+            }
+
+            Rectangle {
+                width: 44
+                height: 32
+                anchors.verticalCenter: parent.verticalCenter
+                radius: 4
+                color: previewBtnMa.containsMouse ? "#253018" : "#1a2510"
+                border.color: libraryRoot.activeTrackFilePath.length > 0
+                              && typeof libraryPreview !== "undefined" && libraryPreview
+                              && libraryPreview.playing
+                              && libraryPreview.currentPath === libraryRoot.activeTrackFilePath
+                              ? libraryRoot.accentKeyMatch : "#2a4020"
+                border.width: 1
+                Text {
+                    anchors.centerIn: parent
+                    text: "♪"
+                    color: "#9bdc6a"
+                    font.pixelSize: window.sp(14)
+                    font.bold: true
+                }
+                MouseArea {
+                    id: previewBtnMa
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: libraryRoot.togglePreview(libraryRoot.activeTrackFilePath)
+                }
+            }
+
+            Repeater {
+                model: ["A", "B", "C", "D"]
+                Rectangle {
+                    required property string modelData
+                    width: 52
+                    height: 32
+                    anchors.verticalCenter: parent.verticalCenter
+                    radius: 4
+                    color: deckLoadMa.containsMouse ? "#1a3a52" : "#132840"
+                    border.color: "#1e4070"
+                    border.width: 1
+                    Text {
+                        anchors.centerIn: parent
+                        text: "▶ " + modelData
+                        color: "#4a99e0"
+                        font.pixelSize: window.sp(11)
+                        font.bold: true
+                    }
+                    MouseArea {
+                        id: deckLoadMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: libraryRoot.loadTrackToDeck(modelData, libraryRoot.activeTrackFilePath)
+                    }
+                }
+            }
+
+            Item { width: Math.max(4, parent.width - 280); height: 1 }
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.max(80, parent.width - 300)
+                text: {
+                    var p = libraryRoot.activeTrackFilePath
+                    if (!p) return ""
+                    var parts = p.split("/")
+                    return parts.length ? parts[parts.length - 1] : p
+                }
+                color: libraryRoot.textSecond
+                font.pixelSize: window.sp(10)
+                elide: Text.ElideMiddle
+                horizontalAlignment: Text.AlignRight
+            }
+        }
+    }
+
+    // ── Preview transport (AIO + desktop) ─────────────────────────────────────
+    component PreviewControlBar: Rectangle {
+        id: previewBar
+        visible: typeof libraryPreview !== "undefined" && libraryPreview && libraryPreview.playing
+        height: visible ? (libraryRoot.touchMode ? 58 : 50) : 0
+        color: "#0e1418"
+        clip: true
+
+        Rectangle {
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            height: 1
+            color: libraryRoot.borderMain
+        }
+
+        function basename(path) {
+            if (!path)
+                return ""
+            var parts = path.split("/")
+            return parts.length ? parts[parts.length - 1] : path
+        }
+
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: libraryRoot.touchMode ? 10 : 8
+            anchors.rightMargin: libraryRoot.touchMode ? 10 : 8
+            spacing: libraryRoot.touchMode ? 10 : 8
+
+            Rectangle {
+                Layout.preferredWidth: libraryRoot.touchMode ? 44 : 36
+                Layout.preferredHeight: libraryRoot.touchMode ? 40 : 32
+                radius: 4
+                color: stopMa.containsMouse ? "#3a1818" : "#251010"
+                border.color: libraryRoot.accentRed
+                border.width: 1
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "■"
+                    color: libraryRoot.accentRed
+                    font.pixelSize: window.sp(libraryRoot.touchMode ? 14 : 11)
+                }
+                MouseArea {
+                    id: stopMa
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: libraryPreview.stop()
+                }
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 2
+
+                Text {
+                    Layout.fillWidth: true
+                    text: previewBar.basename(libraryPreview.currentPath)
+                    color: libraryRoot.textSecond
+                    font.pixelSize: window.sp(9)
+                    elide: Text.ElideMiddle
+                    maximumLineCount: 1
+                }
+
+                Slider {
+                    id: previewSeek
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: libraryRoot.touchMode ? 28 : 22
+                    from: 0
+                    to: 1
+                    live: true
+                    value: libraryPreview.progress
+
+                    onPressedChanged: {
+                        if (!pressed)
+                            libraryPreview.seekProgress(value)
+                    }
+                    onMoved: {
+                        if (pressed)
+                            libraryPreview.seekProgress(value)
+                    }
+
+                    Connections {
+                        target: libraryPreview
+                        function onPositionChanged() {
+                            if (!previewSeek.pressed)
+                                previewSeek.value = libraryPreview.progress
+                        }
+                        function onPlayingChanged() {
+                            if (!libraryPreview.playing)
+                                previewSeek.value = 0
+                        }
+                    }
+                }
+            }
+
+            Text {
+                text: libraryRoot.formatPreviewTime(libraryPreview.positionSec)
+                      + " / " + libraryRoot.formatPreviewTime(libraryPreview.durationSec)
+                color: libraryRoot.textPrimary
+                font.pixelSize: window.sp(libraryRoot.touchMode ? 11 : 10)
+                font.family: "monospace"
+                Layout.preferredWidth: libraryRoot.touchMode ? 96 : 84
+                horizontalAlignment: Text.AlignRight
+            }
+        }
+    }
+
     // ── Inline component: track row (shared between library + playlist) ────
     component TrackRow: Item {
         id: tr
@@ -963,10 +1291,20 @@ Rectangle {
         property real swipeX: 0
         property bool swipeActive: false
         property bool swipeGestureDone: false
+        property bool swipeLocked: false
         property int lastTapMs: 0
+
+        Behavior on swipeX {
+            enabled: !tr.swipeActive
+            NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+        }
 
         readonly property bool touchMode: window.allInOneMode
         readonly property bool swipeOpen: Math.abs(tr.swipeX) > 40
+        readonly property int keyMatch: libraryRoot.keyMatchLevel(tr.rowKey)
+        readonly property bool previewActive: typeof libraryPreview !== "undefined" && libraryPreview
+                                              && libraryPreview.playing
+                                              && libraryPreview.currentPath === tr.rowFilePath
         readonly property int deckActionW: tr.touchMode ? 184 : 0
         readonly property int miscActionW: tr.touchMode ? 148 : 0
         readonly property real slideX: tr.touchMode ? (-tr.deckActionW + tr.swipeX) : 0
@@ -1085,9 +1423,11 @@ Rectangle {
                 height: parent.height
                 color: trMouse.containsMouse
                        ? libraryRoot.bgRowHover
+                     : (tr.keyMatch === 2 ? "#142218"
+                     : (tr.keyMatch === 1 ? "#121820"
                      : (isCursorRow
                         ? "#163328"
-                        : (rowIndex % 2 === 0 ? libraryRoot.bgRowEven : libraryRoot.bgRowOdd))
+                        : (rowIndex % 2 === 0 ? libraryRoot.bgRowEven : libraryRoot.bgRowOdd))))
                 opacity: trDragPayload.dragging ? 0.4 : 1.0
 
         Rectangle {
@@ -1189,8 +1529,9 @@ Rectangle {
                 width: libraryRoot.colKey
                 anchors.verticalCenter: parent.verticalCenter
                 text: tr.rowKey || "—"
-                color: tr.rowKey ? libraryRoot.accentKey : libraryRoot.textDim
+                color: libraryRoot.keyMatchColor(tr.rowKey)
                 font.pixelSize: window.sp(11); font.family: "monospace"
+                font.bold: tr.keyMatch === 2
                 horizontalAlignment: Text.AlignHCenter
             }
             Text {
@@ -1332,7 +1673,8 @@ Rectangle {
                     }
                     Text {
                         text: tr.rowKey || "—"
-                        color: tr.rowKey ? libraryRoot.accentKey : libraryRoot.textDim
+                        color: libraryRoot.keyMatchColor(tr.rowKey)
+                        font.bold: tr.keyMatch === 2
                         font.pixelSize: window.sp(10); font.family: "monospace"
                     }
                 }
@@ -1426,6 +1768,7 @@ Rectangle {
 
             onPressed: (mouse) => {
                 tr.swipeGestureDone = false
+                tr.swipeLocked = false
                 if (tr.swipeOpen && !tr.touchMode)
                     tr.closeSwipe()
 
@@ -1457,14 +1800,22 @@ Rectangle {
                 var dy = mouse.y - pressY
                 var moved = Math.abs(dx) + Math.abs(dy) >= 8
 
-                // AIO + desktop mouse: horizontal drag = swipe (no drag-and-drop)
-                if (tr.touchMode && !trDragPayload.dragging
-                        && Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8) {
-                    tr.swipeActive = true
-                    tr.swipeX = Math.max(-tr.miscActionW, Math.min(tr.deckActionW, dx))
-                    if (Math.abs(tr.swipeX) > 16)
-                        libraryRoot.openSwipeRowIndex = tr.rowIndex
-                    return
+                // AIO: horizontal swipe reveals deck/misc actions; yield to vertical scroll.
+                if (tr.touchMode && !trDragPayload.dragging) {
+                    if (!tr.swipeLocked && moved) {
+                        if (Math.abs(dy) > Math.abs(dx) * 1.25)
+                            return
+                        if (Math.abs(dx) > Math.abs(dy) * 1.25 && Math.abs(dx) > 12)
+                            tr.swipeLocked = true
+                    }
+                    if (tr.swipeLocked || tr.swipeActive) {
+                        tr.swipeActive = true
+                        tr.swipeX = Math.max(-tr.miscActionW, Math.min(tr.deckActionW, dx))
+                        if (Math.abs(tr.swipeX) > 16)
+                            libraryRoot.openSwipeRowIndex = tr.rowIndex
+                        mouse.accepted = true
+                        return
+                    }
                 }
 
                 if (!tr.touchMode && !trDragPayload.dragging && moved && !tr.swipeActive) {
@@ -1500,6 +1851,8 @@ Rectangle {
             }
             onCanceled: {
                 tr.swipeActive = false
+                tr.swipeLocked = false
+                tr.closeSwipe()
                 trDragPayload.Drag.active = false
                 trDragPayload.dragging = false
                 rightDragging = false
@@ -2921,14 +3274,24 @@ Rectangle {
                         }
                     }
 
+                    AioLoadBar {
+                        id: libAioLoadBar
+                        anchors.top: libSortBar.bottom
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                    }
+
                     // ── Track list ─────────────────────────────────────────
                     ListView {
                         id: libTrackList
-                        anchors.top: libSortBar.bottom; anchors.left: parent.left
+                        anchors.top: libAioLoadBar.bottom; anchors.left: parent.left
                         anchors.right: parent.right; anchors.bottom: parent.bottom
+                        anchors.bottomMargin: libraryRoot.previewBarReserve
                         clip: true
                         model: libraryModel ? libraryModel : null
                         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                        onMovementStarted: libraryRoot.closeAllSwipes()
+                        onFlickStarted: libraryRoot.closeAllSwipes()
 
                         delegate: TrackRow {
                             required property int    index
@@ -3096,13 +3459,23 @@ Rectangle {
                         }
                     }
 
+                    AioLoadBar {
+                        id: plAioLoadBar
+                        anchors.top: plSortBar.bottom
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                    }
+
                     ListView {
                         id: plTrackList
-                        anchors.top: plSortBar.bottom; anchors.left: parent.left
+                        anchors.top: plAioLoadBar.bottom; anchors.left: parent.left
                         anchors.right: parent.right; anchors.bottom: parent.bottom
+                        anchors.bottomMargin: libraryRoot.previewBarReserve
                         clip: true
                         model: libraryRoot.sortedPlaylistTracks
                         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                        onMovementStarted: libraryRoot.closeAllSwipes()
+                        onFlickStarted: libraryRoot.closeAllSwipes()
 
                         delegate: TrackRow {
                             required property var    modelData
@@ -3308,14 +3681,24 @@ Rectangle {
                         }
                     }
 
-                    ListView {
-                        id: varlistTrackList
+                    AioLoadBar {
+                        id: varAioLoadBar
                         anchors.top: varlistActionBar.visible ? varlistActionBar.bottom
                                    : varlistHeader.visible ? varlistHeader.bottom : parent.top
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                    }
+
+                    ListView {
+                        id: varlistTrackList
+                        anchors.top: varAioLoadBar.bottom
                         anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+                        anchors.bottomMargin: libraryRoot.previewBarReserve
                         clip: true
                         model: libraryRoot.currentListTracks
                         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                        onMovementStarted: libraryRoot.closeAllSwipes()
+                        onFlickStarted: libraryRoot.closeAllSwipes()
 
                         delegate: TrackRow {
                             required property var  modelData
@@ -3533,6 +3916,15 @@ Rectangle {
         id: trackContextMenu
         background: Rectangle { implicitWidth: 260; color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
 
+        MenuItem {
+            text: "Preview track"
+            contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+            onTriggered: { libraryRoot.togglePreview(libraryRoot.ctxFilePath) }
+        }
+        MenuSeparator {
+            contentItem: Rectangle { height: 1; color: "#2a2a2a" }
+        }
         MenuItem {
             text: "Load to Deck A"
             contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
@@ -4400,12 +4792,21 @@ Rectangle {
         }
     }
 
+    PreviewControlBar {
+        id: globalPreviewBar
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        z: 280
+    }
+
     // Track notes panel — slides up from the bottom of the content area
     Rectangle {
         id: notesPanel
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
+        anchors.bottomMargin: libraryRoot.previewBarReserve
         height: libraryRoot.notesPanelOpen ? 160 : 0
         clip: true
         color: "#161616"

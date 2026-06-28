@@ -17,6 +17,8 @@ Item {
     property bool hotCueHoldReturnOnRelease: false
 
     readonly property var tabs: ["HOT CUE", "PAD FX", "BEATJUMP"]
+    readonly property real tabBarHeight: 25
+    readonly property real padsContentHeight: Math.max(0, (root.height - tabBarHeight) * (2 / 3))
     readonly property var beatJumpPads: [-16, -8, -4, -2, 2, 4, 8, 16]
 
     property int colorTargetIndex: -1
@@ -220,7 +222,8 @@ Item {
         RowLayout {
             id: contentRow
             Layout.fillWidth: true
-            Layout.fillHeight: true
+            Layout.preferredHeight: root.padsContentHeight
+            Layout.maximumHeight: root.padsContentHeight
             spacing: 4
 
             GridLayout {
@@ -309,7 +312,7 @@ Item {
                                 if (isPadFxTab)            return padFxLit ? "#ffffff" : (index < 4 ? "#606060" : "#505050")
                                 return "#333"
                             }
-                            font.pixelSize: (isHotCueTab && !padSet) ? 16 : 8
+                            font.pixelSize: (isHotCueTab && !padSet) ? 11 : 8
                             font.bold: (isHotCueTab && padSet) || isPadFxTab
                             font.letterSpacing: isPadFxTab ? 0.4 : 0.0
                             font.family: "monospace"
@@ -458,6 +461,8 @@ Item {
                 Layout.maximumHeight:   Layout.preferredHeight
             }
         }
+
+        Item { Layout.fillWidth: true; Layout.fillHeight: true }
     }
 
     Popup {

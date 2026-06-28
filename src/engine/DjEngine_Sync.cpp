@@ -4,6 +4,7 @@
 
 std::mutex DjEngine::s_syncMutex;
 std::vector<DjEngine*> DjEngine::s_syncDecks;
+std::vector<DjEngine*> DjEngine::s_syncEnableOrder;
 DjEngine* DjEngine::s_syncMasterDeck = nullptr;
 
 namespace {
@@ -42,7 +43,8 @@ static double nearestDownbeatAnchor(const std::vector<TrackData::BeatMarker>& gr
 void DjEngine::updateSyncMasterLocked()
 {
     DjEngine* newMaster = nullptr;
-    for (auto* d : s_syncDecks) {
+    // Master = first deck in sync-enable order that still has sync on.
+    for (auto* d : s_syncEnableOrder) {
         if (d && d->m_syncEnabled) {
             newMaster = d;
             break;
@@ -330,9 +332,18 @@ void DjEngine::setSyncEnabled(bool enabled)
     emit syncChanged();
 
     bool amMaster = false;
+    bool wasMaster = false;
     DjEngine* masterDeck = nullptr;
     {
         std::lock_guard<std::mutex> g(s_syncMutex);
+        wasMaster = m_isSyncMaster;
+        if (enabled) {
+            if (std::find(s_syncEnableOrder.begin(), s_syncEnableOrder.end(), this) == s_syncEnableOrder.end())
+                s_syncEnableOrder.push_back(this);
+        } else {
+            s_syncEnableOrder.erase(std::remove(s_syncEnableOrder.begin(), s_syncEnableOrder.end(), this),
+                                    s_syncEnableOrder.end());
+        }
         updateSyncMasterLocked();
         amMaster = m_isSyncMaster;
         masterDeck = s_syncMasterDeck;
@@ -353,6 +364,9 @@ void DjEngine::setSyncEnabled(bool enabled)
             snapPhaseToMaster(masterDeck);
             return;
         }
+    } else if (wasMaster && masterDeck) {
+        // Former master disabled sync — next deck in enable order becomes master.
+        propagateMasterTempoLocked(masterDeck);
     }
 }
 

@@ -349,6 +349,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/library/CoverArtProvider.h
     src/library/LibraryCoverService.h
     src/library/LibraryCoverService.cpp
+    src/library/LibraryPreviewPlayer.h
+    src/library/LibraryPreviewPlayer.cpp
     src/fx/FxManager.h
     src/fx/FxManager.cpp
     src/fx/FxProcessor.h

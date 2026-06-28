@@ -21,6 +21,7 @@ class SystemMonitor;
 class CursorControl;
 class CoverArtProvider;
 class LibraryCoverService;
+class LibraryPreviewPlayer;
 class SettingsManager;
 class AppConfig;
 class AppExitGate;
@@ -49,6 +50,7 @@ struct ApplicationRuntime {
     std::unique_ptr<LibraryDatabase> libraryDb;
     std::unique_ptr<LibraryTableModel> libraryTableModel;
     std::unique_ptr<LibraryAnalysisManager> libraryAnalysisManager;
+    std::unique_ptr<LibraryPreviewPlayer> libraryPreviewPlayer;
 
     std::unique_ptr<FxManager> fxManager;
     std::unique_ptr<LinkManager> linkManager;

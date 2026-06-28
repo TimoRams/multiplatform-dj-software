@@ -1,6 +1,15 @@
 # Progress
 
 ## Done (recent)
+- [x] **Preview control bar** — scrub slider + stop + time display in library (AIO + desktop);
+  `LibraryPreviewPlayer` seek/position API; full-track playback to end.
+- [x] **Key match highlighting** — Camelot exact/compatible keys vs loaded decks; row tint + key color.
+- [x] **Library track preview** — `LibraryPreviewPlayer` via master bus; ♪ bar, P key, context menu.
+- [x] **Sync master by enable order** — first deck to press SYNC stays master; disabling master
+  hands off to the next synced deck and retunes followers.
+- [x] **AIO library swipe stability** — gesture discrimination vs vertical scroll, snap animation,
+  auto-close on list movement.
+- [x] **AIO quick-load bar** — tap ▶ A/B/C/D without swipe; auto-return to performance tab.
 - [x] **UI mode persistence** — `SettingsManager::getUiState/setUiState` (`UI/` keys);
   `main.qml` restores `allInOneMode`/`fourDeckMode`/`show*`/`activeMainTab` on launch and
   persists on change (200 ms debounce). App remembers desktop vs AIO between sessions.

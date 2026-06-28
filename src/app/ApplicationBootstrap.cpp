@@ -38,6 +38,7 @@
 #include "library/LibraryManager.h"
 #include "library/CoverArtProvider.h"
 #include "library/LibraryCoverService.h"
+#include "library/LibraryPreviewPlayer.h"
 #include "fx/FxManager.h"
 #include "link/LinkManager.h"
 #include "SystemMonitor.h"
@@ -413,6 +414,10 @@ int runApplication(int argc, char *argv[])
                                                runtime.deckC.get(), runtime.deckD.get());
 
             runtime.masterBus = std::make_unique<DjMasterBus>();
+            runtime.libraryPreviewPlayer = std::make_unique<LibraryPreviewPlayer>(&app);
+            runtime.masterBus->setPreviewPlayer(runtime.libraryPreviewPlayer.get());
+            engine.rootContext()->setContextProperty("libraryPreview",
+                                                     runtime.libraryPreviewPlayer.get());
             for (DjEngine* deck : {runtime.deckA.get(), runtime.deckB.get(),
                                    runtime.deckC.get(), runtime.deckD.get()})
                 runtime.masterBus->addDeck(deck);

@@ -1,8 +1,36 @@
 # Active Context
 
-*Last updated: 2026-06-27*
+*Last updated: 2026-06-28*
 
 ## Current task
+**Preview transport UI (AIO + desktop)**
+- **`LibraryPreviewPlayer`** — position/duration/progress Q_PROPERTYs; 80 ms poll timer;
+  `seekSeconds` / `seekProgress`; plays to track end (no 40 s cap).
+- **`PreviewControlBar`** in `Library.qml` — visible whenever preview is playing (both modes):
+  stop (■), scrub slider, time labels, filename. Lists reserve bottom margin so rows aren't
+  covered; notes panel stacks above preview bar.
+
+## Previous task
+**Library key match highlighting + track preview**
+- **Camelot key match** — library rows compare each track key against loaded deck keys. Exact
+  match = green (`accentKeyMatch`), compatible (±1 / relative) = blue (`accentKeyCompat`), subtle
+  row tint. Updates when deck metadata changes.
+- **Track preview** — new `LibraryPreviewPlayer` mixed into master bus (~72% gain, starts ~25%
+  or 30s in). QML: `libraryPreview` context property; ♪ in AIO load bar, context menu,
+  **P** hotkey. **`PreviewControlBar`** at library bottom: stop + scrub + time (desktop + AIO).
+  Stops when loading to deck.
+
+## Previous task
+**Library AIO stability + sync master handoff**
+- **Sync master = first SYNC press** — `s_syncEnableOrder` tracks enable order; master is the
+  first entry still synced (not deck A in vector order). Disabling master removes it from order
+  and propagates tempo from the next synced deck automatically.
+- **AIO library swipe fixes** — horizontal swipe only wins when `|dx| > 1.25×|dy|`; vertical
+  scroll no longer fights swipe. Animated snap on `swipeX`; swipes close on list scroll/flick.
+- **AIO load UX** — `AioLoadBar` (▶ A/B/C/D) when a track is selected; load closes swipes and
+  returns to performance tab in AIO mode.
+
+## Previous task
 **UI polish + AIO/10" optimization + remember last mode**
 - **Layout mode persisted across launches** — new generic `SettingsManager::getUiState/setUiState`
   (`UI/` key prefix in the JUCE props file). `main.qml` `_restoreUiState()` (in

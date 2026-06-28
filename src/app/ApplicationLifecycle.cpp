@@ -10,6 +10,7 @@
 #include "library/LibraryAnalysisManager.h"
 #include "library/LibraryCoverService.h"
 #include "library/LibraryDatabase.h"
+#include "library/LibraryPreviewPlayer.h"
 #include "library/LibraryTableModel.h"
 #include "link/LinkManager.h"
 #include "midi/MidiControllerManager.h"
@@ -143,7 +144,11 @@ void shutdownApplication(ApplicationRuntime& runtime)
             for (DjEngine* deck : {runtime.deckA.get(), runtime.deckB.get(),
                                    runtime.deckC.get(), runtime.deckD.get()})
                 runtime.masterBus->removeDeck(deck);
+            runtime.masterBus->setPreviewPlayer(nullptr);
         }
+
+        if (runtime.libraryPreviewPlayer)
+            runtime.libraryPreviewPlayer->stop();
 
         DjEngine::shutdownSharedAudioDeviceManager();
 
@@ -170,6 +175,7 @@ void shutdownApplication(ApplicationRuntime& runtime)
         runtime.deckA.reset();
 
         runtime.linkManager.reset();
+        runtime.libraryPreviewPlayer.reset();
         runtime.masterBus.reset();
         runtime.libraryDb.reset();
 

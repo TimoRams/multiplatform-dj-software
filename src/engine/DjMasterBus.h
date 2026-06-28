@@ -7,6 +7,7 @@
 #include "../fx/BrickwallLimiter.h"
 
 class DjEngine;
+class LibraryPreviewPlayer;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DjMasterBus  —  single pull-model AudioSource that sums all deck outputs,
@@ -35,6 +36,7 @@ public:
 
     void addDeck(DjEngine* deck);
     void removeDeck(DjEngine* deck);
+    void setPreviewPlayer(LibraryPreviewPlayer* player) { m_previewPlayer = player; }
 
     // juce::AudioSource
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override;
@@ -82,6 +84,8 @@ private:
     std::vector<DjEngine*>         m_decks;
     juce::AudioBuffer<float>       m_deckScratch;   // per-deck pull buffer (reused each call)
     juce::AudioBuffer<float>       m_masterBuf;     // summed 2-ch master signal
+    juce::AudioBuffer<float>       m_previewScratch;
+    LibraryPreviewPlayer*          m_previewPlayer = nullptr;
     BrickwallLimiter               m_limiter;
     juce::AudioSourcePlayer        m_sourcePlayer;
     double                         m_sampleRate    = 44100.0;

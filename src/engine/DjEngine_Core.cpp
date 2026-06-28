@@ -180,6 +180,8 @@ DjEngine::~DjEngine()
     {
         std::lock_guard<std::mutex> g(s_syncMutex);
         s_syncDecks.erase(std::remove(s_syncDecks.begin(), s_syncDecks.end(), this), s_syncDecks.end());
+        s_syncEnableOrder.erase(std::remove(s_syncEnableOrder.begin(), s_syncEnableOrder.end(), this),
+                                s_syncEnableOrder.end());
         if (s_syncMasterDeck == this)
             s_syncMasterDeck = nullptr;
         updateSyncMasterLocked();

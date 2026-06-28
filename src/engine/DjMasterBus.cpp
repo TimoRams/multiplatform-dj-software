@@ -1,5 +1,6 @@
 #include "DjMasterBus.h"
 #include "DjEngine.h"
+#include "../library/LibraryPreviewPlayer.h"
 #include <algorithm>
 #include <cmath>
 
@@ -71,6 +72,7 @@ void DjMasterBus::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
     // Prepare summing buffers
     m_deckScratch.setSize(2, m_bufferCapacity, false, true, true);
     m_masterBuf  .setSize(2, m_bufferCapacity, false, true, true);
+    m_previewScratch.setSize(2, m_bufferCapacity, false, true, true);
 
     // Prepare limiter
     m_limiter.prepare(sampleRate, m_bufferCapacity, 2);
@@ -80,6 +82,9 @@ void DjMasterBus::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
     for (auto* deck : m_decks)
         if (auto* src = deck->getAudioSource())
             src->prepareToPlay(samplesPerBlockExpected, sampleRate);
+
+    if (m_previewPlayer)
+        m_previewPlayer->prepareToPlay(samplesPerBlockExpected, sampleRate);
 }
 
 void DjMasterBus::releaseResources()
@@ -88,6 +93,8 @@ void DjMasterBus::releaseResources()
     for (auto* deck : m_decks)
         if (auto* src = deck->getAudioSource())
             src->releaseResources();
+    if (m_previewPlayer)
+        m_previewPlayer->releaseResources();
 }
 
 void DjMasterBus::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill)
@@ -129,6 +136,9 @@ void DjMasterBus::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         m_masterBuf.addFrom(0, 0, m_deckScratch, 0, 0, n);
         m_masterBuf.addFrom(1, 0, m_deckScratch, 1, 0, n);
     }
+
+    if (m_previewPlayer)
+        m_previewPlayer->mixIntoOutputs(m_masterBuf, m_previewScratch, 0, n);
 
     // ── 2. Apply master volume ────────────────────────────────────────────────
     const float masterGain = s_masterVolume.load(std::memory_order_relaxed);

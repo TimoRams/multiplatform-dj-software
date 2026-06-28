@@ -722,6 +722,8 @@ private:
 
     static std::mutex s_syncMutex;
     static std::vector<DjEngine*> s_syncDecks;
+    // Decks in the order they enabled sync (first = master until they disable it).
+    static std::vector<DjEngine*> s_syncEnableOrder;
     static DjEngine* s_syncMasterDeck;
     static void updateSyncMasterLocked();
     static void propagateMasterTempoLocked(DjEngine* master);
