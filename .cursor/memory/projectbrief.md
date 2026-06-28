@@ -16,6 +16,9 @@ Cross-platform DJ application (Qt 6 / QML + JUCE audio). Target name in repo: **
 4. Windows
 
 ## Current focus areas
+- **AIO-first UI** — touch/tab flows for ~10" panels (1280×800, 1024×600); see `.cursor/memory/activeContext.md` § AIO sprint backlog.
+- **Shared engine** — sync, library, preview, MIDI: one C++ path for both DESK and AIO.
+- **Desktop maintenance** — after each AIO feature run `scripts/desktop-regression-checklist.sh`.
 - **Mixer UI → audio routing** must use direct C++ `MixerControl` facade (context property `mixerControl`), not nested QML `engine.*` or fragile `parameterStore`-only paths for UI knobs.
 - Stability after large restructure (`ApplicationBootstrap`, `ApplicationLifecycle`, split engine/MIDI/library units).
 

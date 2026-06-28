@@ -3,12 +3,30 @@
 *Last updated: 2026-06-28*
 
 ## Current task
-**Preview transport UI (AIO + desktop)**
-- **`LibraryPreviewPlayer`** — position/duration/progress Q_PROPERTYs; 80 ms poll timer;
-  `seekSeconds` / `seekProgress`; plays to track end (no 40 s cap).
-- **`PreviewControlBar`** in `Library.qml` — visible whenever preview is playing (both modes):
-  stop (■), scrub slider, time labels, filename. Lists reserve bottom margin so rows aren't
-  covered; notes panel stacks above preview bar.
+**AIO library touch UI (CDJ/XDJ-style)**
+- **Category hub** — permanent **left nav panel** (~112px) with **1-column** square `AioNavTile` grid
+  (`radius: 0`, width = height); track list always on the right. Playlists/Smart switch left panel
+  to sub-grid + square BACK tile.
+- **Track rows** — touch quick actions (`AioQuickBtn`: PRE + LD A/B/C/D); BPM/key inline; row height 80px.
+- **Toolbar** — taller search/analyse; BACK tile; titles via `aioScreenTitle()`.
+
+### AIO sprint backlog (priority order)
+
+| P | Item | Scope | Status |
+|---|------|-------|--------|
+| P0 | Library tab flows | Tile hub + playlist/smart pickers + quick load buttons | **mostly done** — polish filters/history tabs |
+| P0 | Performance tab @ 10" | Deck controls touch-sized; `compactLayout` fits 1280×800 / 1024×600 | partial — compact FX/CF done; transport buttons TBD |
+| P1 | Settings tab (AIO) | [`SettingsPanel`](src/qml/SettingsPanel.qml) scrollable, touch targets in embedded tab (`main.qml` `settingsPanelActive`) | open |
+| P1 | Gesture stability | Swipe vs vertical scroll; close swipes on flick; no fight with preview bar | mostly done |
+| P2 | AIO performance polish | Optional simplified mixer/FX overlay for touch (without forking engine) | open |
+| defer | Desktop library power-user | Column resize, DnD reorder, keyboard browser — own sprint later | deferred |
+
+### Definition of done (every AIO feature)
+
+- Works @ **1280×800** and smoke @ **1024×600**
+- Core path still OK in **DESK** (preview, load, SYNC)
+- No new `allInOneMode` outside `main.qml` / `TopHeader.qml` / `Library.qml` without note in PR
+- `./build-fast` + `./scripts/desktop-regression-checklist.sh`
 
 ## Previous task
 **Library key match highlighting + track preview**

@@ -566,6 +566,9 @@ ApplicationWindow {
     }
     // True on small panels — used to tighten fixed-height bars for 10" screens.
     readonly property bool compactLayout: height < 720 || width < 1100
+    // AIO reference sizes for layout DoD (see .cursor/memory/activeContext.md)
+    readonly property bool aioPrimaryProfile: width <= 1280 && height <= 800
+    readonly property bool aioCompactProfile: width <= 1024 && height <= 600
 
     function _dpr() {
         var dpr = Screen.devicePixelRatio

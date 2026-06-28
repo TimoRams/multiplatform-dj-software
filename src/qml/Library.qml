@@ -128,10 +128,13 @@ Rectangle {
     readonly property int rowH:       24
     readonly property int rowHNormal: 56
     readonly property int hdrH:       26
-    readonly property int toolbarH:   36
-    readonly property int sidebarW:   200
+    readonly property int toolbarH:   touchMode ? 52 : 36
+    readonly property int sidebarW:   touchMode ? 0 : 200
     property string viewMode: "compact"
     readonly property bool touchMode: window.allInOneMode
+    property string aioBrowseScreen: "home" // home | playlists | smart
+    readonly property int aioNavTileSize: 96
+    readonly property int aioNavPanelW: touchMode ? aioNavTileSize + 16 : 0
     readonly property bool previewActive: typeof libraryPreview !== "undefined"
                                             && libraryPreview && libraryPreview.playing
     readonly property int previewBarHeight: previewActive ? (touchMode ? 58 : 50) : 0
@@ -146,7 +149,7 @@ Rectangle {
     )
 
     function trackRowHeight() {
-        if (touchMode) return 72
+        if (touchMode) return 80
         return viewMode === "normal" ? rowHNormal : rowH
     }
 
@@ -182,6 +185,79 @@ Rectangle {
         var s = Math.floor(sec % 60)
         return m + ":" + (s < 10 ? "0" : "") + s
     }
+
+    function aioResetToHome() {
+        aioBrowseScreen = "home"
+    }
+
+    function aioOpenTracks(tab, extraAction) {
+        activeTab = tab
+        if (extraAction)
+            extraAction()
+        focusedPanel = "tracks"
+        closeAllSwipes()
+    }
+
+    function aioOpenPlaylist(id, name) {
+        currentPlaylistId = id
+        currentPlaylistName = name
+        activeTab = "playlist"
+        loadPlaylistTracks()
+        focusedPanel = "tracks"
+        closeAllSwipes()
+    }
+
+    function aioOpenSmartCollection(id, name) {
+        currentSmartCollectionId = id
+        currentSmartCollectionName = name
+        loadSmartCollectionTracks(id)
+        activeTab = "smartcoll"
+        focusedPanel = "tracks"
+        closeAllSwipes()
+    }
+
+    function aioToolbarBack() {
+        aioBrowseScreen = "home"
+    }
+
+    function aioScreenTitle() {
+        if (activeTab === "library")
+            return "All Tracks"
+        if (activeTab === "playlist")
+            return currentPlaylistName || "Playlist"
+        if (activeTab === "favorites")
+            return "Favorites"
+        if (activeTab === "history")
+            return "History"
+        if (activeTab === "crate")
+            return "Prepare Crate"
+        if (activeTab === "queue")
+            return "Queue"
+        if (activeTab === "smartcoll")
+            return currentSmartCollectionName || "Smart Collection"
+        if (activeTab === "files")
+            return "Files"
+        if (activeTab === "streaming")
+            return "Streaming"
+        return "USB"
+    }
+
+    Connections {
+        target: typeof window !== "undefined" ? window : null
+        function onAllInOneModeChanged() {
+            if (window && window.allInOneMode) {
+                libraryRoot.viewMode = "normal"
+                libraryRoot.aioBrowseScreen = "home"
+            }
+        }
+    }
+
+    onVisibleChanged: {
+        if (visible && touchMode && !_aioWasVisible)
+            aioBrowseScreen = "home"
+        _aioWasVisible = visible
+    }
+    property bool _aioWasVisible: false
 
     property var referenceKeys: []
     property int referenceKeysTick: 0
@@ -1265,6 +1341,118 @@ Rectangle {
         }
     }
 
+    // ── AIO touch tile (CDJ/XDJ-style icon + label) ───────────────────────────
+    component AioNavTile: Rectangle {
+        id: aioTile
+        required property string tileIcon
+        required property string tileLabel
+        property int tileBadge: -1
+        property bool tileActive: false
+        property color tileAccent: libraryRoot.accentBlueLt
+        signal tapped()
+
+        radius: 0
+        color: tileMa.pressed ? "#1a2838"
+              : tileMa.containsMouse ? "#141e2a"
+              : "#0e141c"
+        border.color: tileActive ? aioTile.tileAccent : "#2a3848"
+        border.width: tileActive ? 2 : 1
+
+        Column {
+            anchors.centerIn: parent
+            width: parent.width - 6
+            spacing: 4
+
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: aioTile.tileIcon
+                color: tileActive ? aioTile.tileAccent : "#7a9ab8"
+                font.pixelSize: window.sp(22)
+            }
+            Text {
+                width: parent.width
+                text: aioTile.tileLabel
+                color: tileActive ? libraryRoot.textPrimary : libraryRoot.textSecond
+                font.pixelSize: window.sp(8)
+                font.bold: tileActive
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideRight
+                maximumLineCount: 2
+                wrapMode: Text.Wrap
+                lineHeight: 0.95
+            }
+        }
+
+        Rectangle {
+            visible: aioTile.tileBadge > 0
+            anchors.top: parent.top
+            anchors.right: parent.right
+            anchors.margins: 3
+            width: Math.max(18, badgeLbl.implicitWidth + 6)
+            height: 14
+            radius: 0
+            color: "#1a3050"
+            border.color: aioTile.tileAccent
+            border.width: 1
+            Text {
+                id: badgeLbl
+                anchors.centerIn: parent
+                text: aioTile.tileBadge > 99 ? "99+" : String(aioTile.tileBadge)
+                color: aioTile.tileAccent
+                font.pixelSize: window.sp(8)
+                font.bold: true
+                font.family: "monospace"
+            }
+        }
+
+        MouseArea {
+            id: tileMa
+            anchors.fill: parent
+            hoverEnabled: true
+            onClicked: aioTile.tapped()
+        }
+    }
+
+    component AioQuickBtn: Rectangle {
+        id: qbtn
+        required property string btnIcon
+        required property string btnLabel
+        property color btnColor: libraryRoot.accentBlueLt
+        signal tapped()
+
+        width: 46
+        height: parent ? parent.height - 8 : 52
+        radius: 4
+        color: qMa.pressed ? "#1a3048" : "#121820"
+        border.color: qbtn.btnColor
+        border.width: 1
+
+        Column {
+            anchors.centerIn: parent
+            spacing: 2
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: qbtn.btnIcon
+                color: qbtn.btnColor
+                font.pixelSize: window.sp(14)
+                font.bold: true
+            }
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: qbtn.btnLabel
+                color: libraryRoot.textSecond
+                font.pixelSize: window.sp(7)
+                font.bold: true
+                font.letterSpacing: 0.4
+            }
+        }
+        MouseArea {
+            id: qMa
+            anchors.fill: parent
+            onClicked: qbtn.tapped()
+        }
+    }
+
     // ── Inline component: track row (shared between library + playlist) ────
     component TrackRow: Item {
         id: tr
@@ -1383,7 +1571,7 @@ Rectangle {
                 NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
             }
 
-            // Deck load strip — fixed left, revealed when row slides right
+            // Deck load strip — revealed by swipe right
             Row {
                 width: tr.deckActionW
                 height: parent.height
@@ -1606,7 +1794,8 @@ Rectangle {
             // Title + Artist column
             Column {
                 anchors.left: trArtBox.right; anchors.leftMargin: 12
-                anchors.right: trInfoCol.left; anchors.rightMargin: 8
+                anchors.right: tr.touchMode ? trTouchMeta.right : trInfoCol.left
+                anchors.rightMargin: 8
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: tr.rowIsHistory ? 3 : 5
 
@@ -1632,11 +1821,45 @@ Rectangle {
                     font.pixelSize: window.sp(10)
                     elide: Text.ElideRight
                 }
+                Row {
+                    visible: tr.touchMode
+                    spacing: 10
+                    Text {
+                        text: tr.rowBpm > 0 ? tr.rowBpm.toFixed(1) + " BPM" : "— BPM"
+                        color: tr.rowBpm > 0 ? libraryRoot.accentGreen : libraryRoot.textDim
+                        font.pixelSize: window.sp(9); font.family: "monospace"
+                    }
+                    Text {
+                        text: tr.rowKey || "—"
+                        color: libraryRoot.keyMatchColor(tr.rowKey)
+                        font.bold: tr.keyMatch === 2
+                        font.pixelSize: window.sp(9); font.family: "monospace"
+                    }
+                }
             }
 
-            // Right info column
+            // Right meta (touch: duration only; desktop: full info column)
+            Column {
+                id: trTouchMeta
+                visible: tr.touchMode
+                anchors.right: parent.right; anchors.rightMargin: 10
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 4
+
+                Text {
+                    anchors.right: parent.right
+                    text: tr.rowDurationSec > 0
+                          ? (Math.floor(tr.rowDurationSec / 60) + ":" + ("0" + (tr.rowDurationSec % 60)).slice(-2))
+                          : "—"
+                    color: tr.rowDurationSec > 0 ? libraryRoot.textMeta : libraryRoot.textDim
+                    font.pixelSize: window.sp(10); font.family: "monospace"
+                }
+            }
+
+            // Right info column (desktop)
             Column {
                 id: trInfoCol
+                visible: !tr.touchMode
                 anchors.right: parent.right; anchors.rightMargin: 14
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 6
@@ -1826,9 +2049,12 @@ Rectangle {
             }
             onReleased: (mouse) => {
                 if (tr.swipeActive) {
-                    if (tr.swipeX >= tr.deckActionW * 0.30) tr.swipeX = tr.deckActionW
-                    else if (tr.swipeX <= -tr.miscActionW * 0.30) tr.swipeX = -tr.miscActionW
-                    else tr.closeSwipe()
+                    if (tr.swipeX >= tr.deckActionW * 0.30)
+                        tr.swipeX = tr.deckActionW
+                    else if (tr.swipeX <= -tr.miscActionW * 0.30)
+                        tr.swipeX = -tr.miscActionW
+                    else
+                        tr.closeSwipe()
                     tr.swipeActive = false
                     tr.swipeGestureDone = true
                     trDragPayload.Drag.active = false
@@ -1932,7 +2158,12 @@ Rectangle {
                 }
             }
         } // slideRow
-    }
+
+        Rectangle {
+            anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
+            height: 1; color: libraryRoot.borderSub
+        }
+    } // TrackRow
 
     // ── Inline component: sidebar nav button ──────────────────────────────
     component NavButton: Rectangle {
@@ -2085,7 +2316,10 @@ Rectangle {
         // ════════════════════════════════════════════════════════════════════
         Rectangle {
             Layout.preferredWidth: libraryRoot.sidebarW
+            Layout.minimumWidth: libraryRoot.touchMode ? 0 : libraryRoot.sidebarW
+            Layout.maximumWidth: libraryRoot.touchMode ? 0 : libraryRoot.sidebarW
             Layout.fillHeight: true
+            visible: !libraryRoot.touchMode
             color: libraryRoot.bgSidebar
             clip: true
 
@@ -2570,6 +2804,202 @@ Rectangle {
         }
 
         // ════════════════════════════════════════════════════════════════════
+        // AIO NAV PANEL (permanent left tile column)
+        // ════════════════════════════════════════════════════════════════════
+        Rectangle {
+            id: aioNavPanel
+            Layout.preferredWidth: libraryRoot.aioNavPanelW
+            Layout.minimumWidth: libraryRoot.touchMode ? libraryRoot.aioNavPanelW : 0
+            Layout.maximumWidth: libraryRoot.touchMode ? libraryRoot.aioNavPanelW : 0
+            Layout.fillHeight: true
+            visible: libraryRoot.touchMode
+            color: libraryRoot.bgSidebar
+            clip: true
+
+            Rectangle {
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: 1
+                color: libraryRoot.borderMain
+                z: 2
+            }
+
+            Flickable {
+                id: aioNavFlick
+                anchors.fill: parent
+                anchors.margins: 8
+                contentHeight: aioNavColumn.implicitHeight
+                clip: true
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                Column {
+                    id: aioNavColumn
+                    width: aioNavFlick.width
+                    spacing: 8
+
+                    readonly property real aioCell: parent.width
+
+                    AioNavTile {
+                        width: aioNavColumn.aioCell
+                        height: aioNavColumn.aioCell
+                        visible: libraryRoot.aioBrowseScreen !== "home"
+                        tileIcon: "◀"
+                        tileLabel: "BACK"
+                        tileAccent: libraryRoot.accentBlueLt
+                        onTapped: libraryRoot.aioToolbarBack()
+                    }
+
+                    Grid {
+                        id: aioMainGrid
+                        width: parent.width
+                        columns: 1
+                        rowSpacing: 8
+                        columnSpacing: 0
+                        visible: libraryRoot.aioBrowseScreen === "home"
+
+                        readonly property real cellSize: width
+
+                        AioNavTile {
+                            width: aioMainGrid.cellSize; height: aioMainGrid.cellSize
+                            tileIcon: "♫"
+                            tileLabel: "ALL TRACKS"
+                            tileBadge: libraryModel ? libraryModel.count : -1
+                            tileActive: libraryRoot.activeTab === "library"
+                            onTapped: libraryRoot.aioOpenTracks("library", function() {
+                                libraryRoot.librarySubTab = "allSongs"
+                            })
+                        }
+                        AioNavTile {
+                            width: aioMainGrid.cellSize; height: aioMainGrid.cellSize
+                            tileIcon: "★"
+                            tileLabel: "FAVORITES"
+                            tileBadge: libraryRoot.favoriteTracks.length
+                            tileAccent: "#ffb84d"
+                            tileActive: libraryRoot.activeTab === "favorites"
+                            onTapped: libraryRoot.aioOpenTracks("favorites")
+                        }
+                        AioNavTile {
+                            width: aioMainGrid.cellSize; height: aioMainGrid.cellSize
+                            tileIcon: "⏱"
+                            tileLabel: "HISTORY"
+                            tileAccent: libraryRoot.accentBlueLt
+                            tileActive: libraryRoot.activeTab === "history"
+                            onTapped: libraryRoot.aioOpenTracks("history")
+                        }
+                        AioNavTile {
+                            width: aioMainGrid.cellSize; height: aioMainGrid.cellSize
+                            tileIcon: "⊞"
+                            tileLabel: "CRATE"
+                            tileBadge: libraryRoot.prepareCrateTracks.length
+                            tileAccent: libraryRoot.accentGreen
+                            tileActive: libraryRoot.activeTab === "crate"
+                            onTapped: libraryRoot.aioOpenTracks("crate")
+                        }
+                        AioNavTile {
+                            width: aioMainGrid.cellSize; height: aioMainGrid.cellSize
+                            tileIcon: "►"
+                            tileLabel: "QUEUE"
+                            tileBadge: libraryRoot.queueTracks.length
+                            tileActive: libraryRoot.activeTab === "queue"
+                            onTapped: libraryRoot.aioOpenTracks("queue")
+                        }
+                        AioNavTile {
+                            width: aioMainGrid.cellSize; height: aioMainGrid.cellSize
+                            tileIcon: "☰"
+                            tileLabel: "PLAYLISTS"
+                            tileBadge: libraryRoot.allPlaylists.length
+                            tileActive: libraryRoot.aioBrowseScreen === "playlists"
+                                      || libraryRoot.activeTab === "playlist"
+                            onTapped: libraryRoot.aioBrowseScreen = "playlists"
+                        }
+                        AioNavTile {
+                            width: aioMainGrid.cellSize; height: aioMainGrid.cellSize
+                            tileIcon: "◈"
+                            tileLabel: "SMART"
+                            tileBadge: libraryRoot.smartCollections.length
+                            tileActive: libraryRoot.aioBrowseScreen === "smart"
+                                      || libraryRoot.activeTab === "smartcoll"
+                            onTapped: libraryRoot.aioBrowseScreen = "smart"
+                        }
+                        AioNavTile {
+                            width: aioMainGrid.cellSize; height: aioMainGrid.cellSize
+                            tileIcon: "≡"
+                            tileLabel: "FILES"
+                            tileActive: libraryRoot.activeTab === "files"
+                            onTapped: libraryRoot.aioOpenTracks("files")
+                        }
+                        AioNavTile {
+                            width: aioMainGrid.cellSize; height: aioMainGrid.cellSize
+                            tileIcon: "◎"
+                            tileLabel: "STREAM"
+                            tileActive: libraryRoot.activeTab === "streaming"
+                            onTapped: libraryRoot.aioOpenTracks("streaming")
+                        }
+                        AioNavTile {
+                            width: aioMainGrid.cellSize; height: aioMainGrid.cellSize
+                            tileIcon: "⊕"
+                            tileLabel: "USB"
+                            tileActive: libraryRoot.activeTab === "usb"
+                            onTapped: libraryRoot.aioOpenTracks("usb")
+                        }
+                    }
+
+                    Grid {
+                        id: aioPlaylistGrid
+                        width: parent.width
+                        columns: 1
+                        rowSpacing: 8
+                        columnSpacing: 0
+                        visible: libraryRoot.aioBrowseScreen === "playlists"
+
+                        readonly property real cellSize: width
+
+                        Repeater {
+                            model: libraryRoot.allPlaylists
+                            AioNavTile {
+                                required property var modelData
+                                width: aioPlaylistGrid.cellSize
+                                height: aioPlaylistGrid.cellSize
+                                tileIcon: "☰"
+                                tileLabel: modelData.name || "Playlist"
+                                tileBadge: modelData.trackCount > 0 ? modelData.trackCount : -1
+                                tileActive: libraryRoot.activeTab === "playlist"
+                                          && libraryRoot.currentPlaylistId === modelData.id
+                                onTapped: libraryRoot.aioOpenPlaylist(modelData.id, modelData.name)
+                            }
+                        }
+                    }
+
+                    Grid {
+                        id: aioSmartGrid
+                        width: parent.width
+                        columns: 1
+                        rowSpacing: 8
+                        columnSpacing: 0
+                        visible: libraryRoot.aioBrowseScreen === "smart"
+
+                        readonly property real cellSize: width
+
+                        Repeater {
+                            model: libraryRoot.smartCollections
+                            AioNavTile {
+                                required property var modelData
+                                width: aioSmartGrid.cellSize
+                                height: aioSmartGrid.cellSize
+                                tileIcon: "◈"
+                                tileLabel: modelData.name || "Smart"
+                                tileActive: libraryRoot.activeTab === "smartcoll"
+                                          && libraryRoot.currentSmartCollectionId === modelData.id
+                                onTapped: libraryRoot.aioOpenSmartCollection(modelData.id, modelData.name)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ════════════════════════════════════════════════════════════════════
         // MAIN CONTENT
         // ════════════════════════════════════════════════════════════════════
         ColumnLayout {
@@ -2589,8 +3019,10 @@ Rectangle {
                 }
 
                 RowLayout {
-                    anchors.fill: parent; anchors.leftMargin: 14; anchors.rightMargin: 12
-                    spacing: 8
+                    anchors.fill: parent
+                    anchors.leftMargin: libraryRoot.touchMode ? 10 : 14
+                    anchors.rightMargin: libraryRoot.touchMode ? 10 : 12
+                    spacing: libraryRoot.touchMode ? 10 : 8
 
                     // ── Tab icon + title ───────────────────────────────────
                     Row {
@@ -2598,7 +3030,9 @@ Rectangle {
                         spacing: 7
 
                         Rectangle {
-                            width: 22; height: 22; radius: 4
+                            width: libraryRoot.touchMode ? 28 : 22
+                            height: libraryRoot.touchMode ? 28 : 22
+                            radius: 4
                             color: "#132840"
                             border.color: "#1e4070"; border.width: 1
                             anchors.verticalCenter: parent.verticalCenter
@@ -2616,23 +3050,26 @@ Rectangle {
                                     : libraryRoot.activeTab === "streaming"  ? "◎"
                                     : "⊕"
                                 color: libraryRoot.accentBlueLt
-                                font.pixelSize: window.sp(10)
+                                font.pixelSize: window.sp(libraryRoot.touchMode ? 12 : 10)
                             }
                         }
 
                         Text {
-                            text: libraryRoot.activeTab === "library"    ? "Library"
-                                : libraryRoot.activeTab === "playlist"   ? libraryRoot.currentPlaylistName
-                                : libraryRoot.activeTab === "favorites"  ? "Favorites"
-                                : libraryRoot.activeTab === "history"    ? "History"
-                                : libraryRoot.activeTab === "crate"      ? "Prepare Crate"
-                                : libraryRoot.activeTab === "queue"      ? "Queue"
-                                : libraryRoot.activeTab === "smartcoll"  ? libraryRoot.currentSmartCollectionName
-                                : libraryRoot.activeTab === "files"      ? "File Browser"
-                                : libraryRoot.activeTab === "streaming"  ? "Streaming"
-                                : "USB"
+                            text: libraryRoot.touchMode
+                                  ? libraryRoot.aioScreenTitle()
+                                  : (libraryRoot.activeTab === "library"    ? "Library"
+                                    : libraryRoot.activeTab === "playlist"   ? libraryRoot.currentPlaylistName
+                                    : libraryRoot.activeTab === "favorites"  ? "Favorites"
+                                    : libraryRoot.activeTab === "history"    ? "History"
+                                    : libraryRoot.activeTab === "crate"      ? "Prepare Crate"
+                                    : libraryRoot.activeTab === "queue"      ? "Queue"
+                                    : libraryRoot.activeTab === "smartcoll"  ? libraryRoot.currentSmartCollectionName
+                                    : libraryRoot.activeTab === "files"      ? "File Browser"
+                                    : libraryRoot.activeTab === "streaming"  ? "Streaming"
+                                    : "USB")
                             color: libraryRoot.textPrimary
-                            font.pixelSize: window.sp(12); font.weight: Font.Medium
+                            font.pixelSize: window.sp(libraryRoot.touchMode ? 13 : 12)
+                            font.weight: Font.Medium
                             anchors.verticalCenter: parent.verticalCenter
                         }
                     }
@@ -2647,8 +3084,8 @@ Rectangle {
                     // ── Analyse button (combined with progress fill) ────────
                     Rectangle {
                         id: analyzeBtn
-                        Layout.preferredWidth: 148
-                        Layout.preferredHeight: 26
+                        Layout.preferredWidth: libraryRoot.touchMode ? 120 : 148
+                        Layout.preferredHeight: libraryRoot.touchMode ? 40 : 26
                         Layout.alignment: Qt.AlignVCenter
                         radius: 4; clip: true
                         color: analyzeHover.containsMouse ? "#1a1a1a" : "#111111"
@@ -2712,13 +3149,14 @@ Rectangle {
 
                     // ── View mode toggle ───────────────────────────────────
                     Rectangle {
-                        Layout.preferredWidth: 54
-                        Layout.preferredHeight: 26
+                        Layout.preferredWidth: libraryRoot.touchMode ? 72 : 54
+                        Layout.preferredHeight: libraryRoot.touchMode ? 40 : 26
                         Layout.alignment: Qt.AlignVCenter
                         radius: 4
                         color: "#111111"
                         border.color: "#2a2a2a"; border.width: 1
                         clip: true
+                        visible: !libraryRoot.touchMode
 
                         Row {
                             anchors.fill: parent
@@ -2759,8 +3197,10 @@ Rectangle {
 
                     // ── Search field ───────────────────────────────────────
                     Rectangle {
-                        Layout.preferredWidth: Math.min(260, Math.max(150, parent.width * 0.28))
-                        Layout.preferredHeight: 26
+                        Layout.preferredWidth: libraryRoot.touchMode
+                                                   ? Math.min(360, Math.max(200, parent.width * 0.45))
+                                                   : Math.min(260, Math.max(150, parent.width * 0.28))
+                        Layout.preferredHeight: libraryRoot.touchMode ? 40 : 26
                         Layout.alignment: Qt.AlignVCenter
                         color: "#0e0e0e"; radius: 4
                         border.color: searchField.activeFocus ? libraryRoot.accentBlue : "#2a2a2a"
@@ -3117,6 +3557,8 @@ Rectangle {
             // ── View area ──────────────────────────────────────────────────
             Item {
                 Layout.fillWidth: true
+                Layout.fillHeight: true
+
                 // Focus indicator — top accent line when track list is focused
                 Rectangle {
                     anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
@@ -3124,7 +3566,6 @@ Rectangle {
                     visible: libraryRoot.focusedPanel === "tracks"
                     z: 200
                 }
-                Layout.fillHeight: true
 
                 // ════════════════════════════════════════════════
                 // A) DB LIBRARY VIEW

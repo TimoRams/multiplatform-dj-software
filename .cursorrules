@@ -23,6 +23,9 @@ Keep updates concise and factual. Do not duplicate full code in memory files.
 - **Mixer QML → audio:** use context property `mixerControl` (created before QML load), not nested `engine.*` from inline components
 - **Crossfader / volume:** `mixerControl.syncCrossfaderState` + `mixerControl.applyAllVolumes`; fader changes via `mixerControl.setChannelFader`
 - **MIDI sync:** `parameterStore` + `MixerParameterBridge` / `MidiFlx10Bridge`
+- **AIO-first UI:** touch/tab work targets ~10" (1280×800, 1024×600). Backlog in `.cursor/memory/activeContext.md`.
+- **Shared-first features:** (1) C++ / data mode-agnostic, (2) one QML component, (3) `touchMode` only for size/input; AIO extras optional. Mode branches only in `main.qml`, `TopHeader.qml`, `Library.qml`.
+- **After AIO UI changes:** run `./scripts/desktop-regression-checklist.sh` (build + ctest + manual DESK checks).
 - Do not commit unless the user explicitly asks
 - Do not create markdown docs the user did not request (except memory bank files above)
 

@@ -1,6 +1,9 @@
 # Progress
 
 ## Done (recent)
+- [x] **AIO library CDJ-style hub** — tile grid navigation, playlist/smart pickers, touch quick buttons on rows.
+- [x] **AIO-first strategy** — sprint backlog in `activeContext.md`; shared-first rule in `.cursorrules` /
+  `techContext.md`; `scripts/desktop-regression-checklist.sh`; AIO profile flags in `main.qml`.
 - [x] **Preview control bar** — scrub slider + stop + time display in library (AIO + desktop);
   `LibraryPreviewPlayer` seek/position API; full-track playback to end.
 - [x] **Key match highlighting** — Camelot exact/compatible keys vs loaded decks; row tint + key color.
@@ -84,9 +87,28 @@
 - [x] **Mixer routing fix** — `MixerApi` singleton, `applyAllVolumes()`, QML wired to C++ facade
 - [x] **Mixer DSP smoke test** — trim + high EQ verified in `tests/smoke/mixer_dsp_smoke.cpp`
 
-## In progress
+## In progress (AIO sprint)
+- [ ] **P0 Library tab flows** — polish history period tabs + filter panel touch sizing
+- [ ] **P0 Performance touch** — larger transport/pad targets when `compactLayout` / AIO
+- [ ] **P1 Settings tab AIO** — embedded `SettingsPanel` touch-friendly (scroll, tap targets)
 - [ ] User confirmation: mixer EQ / SC / volume faders + waveform loop scroll feel right in live app
 - [ ] Cursor hide on knob/fader drag (guards added; verify on macOS)
+
+## Desktop regression checklist
+
+Run after each AIO UI change:
+
+```bash
+chmod +x scripts/desktop-regression-checklist.sh   # once
+./scripts/desktop-regression-checklist.sh
+```
+
+Manual (~15 min):
+- [ ] Library side-by-side: scroll, preview P + scrub/stop, load to deck
+- [ ] Hotkeys: P preview; deck transport unchanged
+- [ ] AIO → DESK: mixer + FX bar restore (`setAllInOneMode` stashes `_desktopShowMixer/FxBar`)
+- [ ] AIO @ 1280×800 and 1024×600: LIB → load → Performance tab return
+- [ ] SYNC + master handoff still works
 
 ## Known issues
 - Watch for grouped-alias signal handlers (`alias.onXxx:`) and self-referential `prop: prop`
