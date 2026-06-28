@@ -37,6 +37,7 @@ ApplicationWindow {
     property string activeMainTab: "performance"
     property bool _desktopShowMixer: true
     property bool _desktopShowFxBar: true
+    property bool _uiStateRestoring: false
 
     readonly property bool allInOnePanelActive: window.allInOneMode && window.activeMainTab !== "performance"
     readonly property bool libraryPanelActive: window.allInOneMode && window.activeMainTab === "library"
@@ -101,6 +102,73 @@ ApplicationWindow {
         libraryExpanded = false
         return true
     }
+
+    // ── Persist / restore layout mode across launches ────────────────────────
+    function _persistUiState() {
+        if (_uiStateRestoring)
+            return
+        if (typeof settingsManager === "undefined" || !settingsManager)
+            return
+        var s = function(key, val) { settingsManager.setUiState(key, val ? "1" : "0") }
+        s("allInOneMode", window.allInOneMode)
+        s("fourDeckMode", window.fourDeckMode)
+        s("showWaveforms", window.showWaveforms)
+        s("showDeckA", window.showDeckA)
+        s("showDeckB", window.showDeckB)
+        // Persist the desktop intent for mixer/FX (stashed while AIO is active).
+        s("showMixer", window.allInOneMode ? window._desktopShowMixer : window.showMixer)
+        s("showFxBar", window.allInOneMode ? window._desktopShowFxBar : window.showFxBar)
+        s("showLibrary", window.showLibrary)
+        s("showCrossfader", window.showCrossfader)
+        settingsManager.setUiState("activeMainTab", window.activeMainTab)
+    }
+
+    function _restoreUiState() {
+        if (typeof settingsManager === "undefined" || !settingsManager)
+            return
+        _uiStateRestoring = true
+        var b = function(key, def) { return settingsManager.getUiState(key, def ? "1" : "0") === "1" }
+        window.showWaveforms  = b("showWaveforms", true)
+        window.showDeckA      = b("showDeckA", true)
+        window.showDeckB      = b("showDeckB", true)
+        window.showLibrary    = b("showLibrary", true)
+        window.showCrossfader = b("showCrossfader", true)
+        window.fourDeckMode   = b("fourDeckMode", false)
+        window.showMixer      = b("showMixer", true)
+        window.showFxBar      = b("showFxBar", true)
+
+        if (b("allInOneMode", false)) {
+            // Stashes the desktop mixer/FX prefs set above, then enters AIO.
+            window.setAllInOneMode(true)
+            var tab = settingsManager.getUiState("activeMainTab", "performance")
+            if (tab === "library" || tab === "settings" || tab === "performance")
+                window.activeMainTab = tab
+        }
+        _uiStateRestoring = false
+    }
+
+    function _scheduleUiPersist() {
+        if (!_uiStateRestoring)
+            uiStatePersistTimer.restart()
+    }
+
+    Timer {
+        id: uiStatePersistTimer
+        interval: 200
+        repeat: false
+        onTriggered: window._persistUiState()
+    }
+
+    onAllInOneModeChanged:  _scheduleUiPersist()
+    onFourDeckModeChanged:  _scheduleUiPersist()
+    onShowWaveformsChanged: _scheduleUiPersist()
+    onShowDeckAChanged:     _scheduleUiPersist()
+    onShowDeckBChanged:     _scheduleUiPersist()
+    onShowMixerChanged:     _scheduleUiPersist()
+    onShowFxBarChanged:     _scheduleUiPersist()
+    onShowLibraryChanged:   _scheduleUiPersist()
+    onShowCrossfaderChanged:_scheduleUiPersist()
+    onActiveMainTabChanged: _scheduleUiPersist()
 
     function cancelAppClosePrompt() {
         if (exitShutdownInProgress)
@@ -215,6 +283,7 @@ ApplicationWindow {
     onStartupLibraryReadyChanged: _refreshLibraryAfterStartup()
 
     Component.onCompleted: {
+        window._restoreUiState()
         if (typeof linkManager !== "undefined" && linkManager !== null)
             linkManager.enabledChanged.connect(window._handleLinkEnabledChanged)
     }
@@ -488,7 +557,15 @@ ApplicationWindow {
 
     // ── Global font sizing ───────────────────────────────────────────────────
     readonly property real _refHeight: 800
-    readonly property real responsiveFontScale: 1.0
+    // Gently scale text with window height so the UI stays legible on big screens
+    // and fits on small ~10" panels (e.g. 1280x800, 1024x600). 1.0 at the 800px
+    // reference height; clamped so layouts never break at the extremes.
+    readonly property real responsiveFontScale: {
+        var hs = Math.max(360, height) / _refHeight
+        return Math.max(0.84, Math.min(1.18, hs))
+    }
+    // True on small panels — used to tighten fixed-height bars for 10" screens.
+    readonly property bool compactLayout: height < 720 || width < 1100
 
     function _dpr() {
         var dpr = Screen.devicePixelRatio
@@ -616,7 +693,8 @@ ApplicationWindow {
     readonly property int scaledWaveformHeight: Math.round(window.baseWaveformHeight * window.uiScale)
     readonly property int scaledDeckMixerHeight: Math.round(window.baseDeckMixerHeight * window.uiScale)
     readonly property int topBarHeight: 28
-    readonly property int fxBarHeight: 90
+    readonly property int fxBarHeight: window.compactLayout ? 74 : 90
+    readonly property int crossfaderBarHeight: window.compactLayout ? 30 : 36
     readonly property int mixerBaseWidth: 308
 
     readonly property real baseUiHeight: 150 + (baseUiWidth / 6.5) + 4
@@ -631,12 +709,12 @@ ApplicationWindow {
     readonly property int fixedPerformanceHeight:
         (window.primaryDeckRowVisible ? window.scaledDeckMixerHeight : 0)
         + (window.secondaryDeckRowVisible ? window.scaledDeckMixerHeight : 0)
-        + (window.crossfaderVisible ? 37 : 0)
+        + (window.crossfaderVisible ? window.crossfaderBarHeight + 1 : 0)
         + (window.fxVisible ? window.fxBarHeight : 0)
     readonly property int hiddenPerformanceHeight:
         (!window.libraryExpanded && !window.allInOnePanelActive && !window.primaryDeckRowVisible ? window.scaledDeckMixerHeight : 0)
         + (!window.libraryExpanded && !window.allInOnePanelActive && window.fourDeckMode && !window.secondaryDeckRowVisible ? window.scaledDeckMixerHeight : 0)
-        + (!window.libraryExpanded && !window.allInOnePanelActive && !window.crossfaderVisible ? 37 : 0)
+        + (!window.libraryExpanded && !window.allInOnePanelActive && !window.crossfaderVisible ? window.crossfaderBarHeight + 1 : 0)
         + (!window.libraryExpanded && !window.allInOnePanelActive && !window.fxVisible ? window.fxBarHeight : 0)
     readonly property int waveformAvailableHeight: Math.max(
         0,
@@ -881,9 +959,9 @@ ApplicationWindow {
             id: crossfaderBar
             property bool _vis: window.crossfaderVisible
             Layout.fillWidth: true
-            Layout.minimumHeight:  _vis ? 36 : 0
-            Layout.preferredHeight: _vis ? 36 : 0
-            Layout.maximumHeight:  _vis ? 36 : 0
+            Layout.minimumHeight:  _vis ? window.crossfaderBarHeight : 0
+            Layout.preferredHeight: _vis ? window.crossfaderBarHeight : 0
+            Layout.maximumHeight:  _vis ? window.crossfaderBarHeight : 0
             visible: _vis
             mc: mixerControl
             engineA: deckA

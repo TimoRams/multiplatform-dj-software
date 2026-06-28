@@ -97,6 +97,11 @@ public:
     bool flx10ControllerSupportEnabled() const;
     void setFlx10ControllerSupportEnabled(bool enabled);
 
+    // Generic persisted UI/layout state (mode, deck count, panel visibility, ...).
+    // Stored under a "UI/" key prefix in the user properties file.
+    Q_INVOKABLE QString getUiState(const QString& key, const QString& fallback = QString()) const;
+    Q_INVOKABLE void setUiState(const QString& key, const QString& value);
+
     bool previousRunUnclean() const { return m_previousRunUnclean; }
     QString previousRunWarningMessage() const;
     void markCleanShutdown();

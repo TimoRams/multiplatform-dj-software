@@ -70,6 +70,14 @@ QtObject {
     readonly property color faderCap:    "#c8c8c8"
     readonly property real  knobArcW:    0.08
 
+    // ── VU meters (shared across mixer + header for a consistent look) ──────
+    readonly property color vuLow:   "#2f9e44"   // quiet — deep green
+    readonly property color vuMid:   "#52c463"   // nominal — bright green
+    readonly property color vuHigh:  "#e6a019"   // hot — amber
+    readonly property color vuClip:  red          // clipping — red
+    readonly property color vuPeak:  "#ffffff"   // peak-hold marker
+    readonly property color vuOff:   knobTrack    // unlit segment
+
     // ── Performance pads ──────────────────────────────────────────────────
     readonly property color padEmpty:    "#161616"
     readonly property color padBorder:   separatorSubtle

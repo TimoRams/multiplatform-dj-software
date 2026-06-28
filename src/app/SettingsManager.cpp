@@ -448,6 +448,33 @@ void SettingsManager::setFlx10ControllerSupportEnabled(bool enabled)
     emit controllerSettingsChanged();
 }
 
+QString SettingsManager::getUiState(const QString& key, const QString& fallback) const
+{
+    const auto* settings = userSettings(*this);
+    if (settings == nullptr)
+        return fallback;
+
+    const juce::String storageKey = juce::String("UI/") + juce::String(key.toUtf8().constData());
+    if (!settings->containsKey(storageKey))
+        return fallback;
+
+    return QString::fromUtf8(settings->getValue(storageKey).toRawUTF8());
+}
+
+void SettingsManager::setUiState(const QString& key, const QString& value)
+{
+    auto* settings = userSettings(*this);
+    if (settings == nullptr)
+        return;
+
+    const juce::String storageKey = juce::String("UI/") + juce::String(key.toUtf8().constData());
+    if (settings->getValue(storageKey) == juce::String(value.toUtf8().constData()))
+        return;
+
+    settings->setValue(storageKey, juce::String(value.toUtf8().constData()));
+    settings->saveIfNeeded();
+}
+
 void SettingsManager::flushToDisk()
 {
     auto* userSettings = getUserSettingsOrNull();

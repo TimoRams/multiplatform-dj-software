@@ -634,19 +634,28 @@ Rectangle {
         // ── App mode + main tabs ─────────────────────────────────────────────
         Rectangle {
             id: appModeBlock
-            Layout.preferredWidth: 42
+            Layout.preferredWidth: 46
             Layout.fillHeight: true
-            color: modeMouse.pressed ? "#1e1e1e" : (modeMouse.containsMouse ? "#181818" : "#121212")
+            color: modeMouse.pressed ? "#202020" : (modeMouse.containsMouse ? "#1a1a1a" : "#121212")
 
             readonly property bool allInOne: root.Window.window ? root.Window.window.allInOneMode : false
 
             Text {
                 anchors.centerIn: parent
                 text: appModeBlock.allInOne ? "AIO" : "DESK"
-                color: appModeBlock.allInOne ? "#ffffff" : "#606060"
+                color: appModeBlock.allInOne ? root.accentBlue : "#707070"
                 font.pixelSize: root.sp(8)
                 font.bold: true
                 font.family: "monospace"
+                font.letterSpacing: 0.6
+            }
+
+            // Accent underline signals the active layout mode.
+            Rectangle {
+                anchors.left: parent.left; anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 2
+                color: appModeBlock.allInOne ? root.accentBlue : "#3a3a3a"
             }
 
             MouseArea {
@@ -662,18 +671,27 @@ Rectangle {
             id: libraryTabButton
             readonly property bool available: root.Window.window ? root.Window.window.allInOneMode : false
             readonly property bool active: root.Window.window ? root.Window.window.libraryPanelActive : false
-            Layout.preferredWidth: available ? 32 : 0
+            Layout.preferredWidth: available ? 36 : 0
             Layout.fillHeight: true
             visible: available
-            color: libMouse.pressed ? "#1e1e1e" : (active ? "#182638" : (libMouse.containsMouse ? "#181818" : "#121212"))
+            color: libMouse.pressed ? "#202020" : (active ? "#16222f" : (libMouse.containsMouse ? "#1a1a1a" : "#121212"))
 
             Text {
                 anchors.centerIn: parent
                 text: "LIB"
-                color: libraryTabButton.active ? "#ffffff" : "#5f6f7e"
+                color: libraryTabButton.active ? "#ffffff" : "#6a7a88"
                 font.pixelSize: root.sp(8)
                 font.bold: true
                 font.family: "monospace"
+                font.letterSpacing: 0.6
+            }
+
+            Rectangle {
+                anchors.left: parent.left; anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 2
+                visible: libraryTabButton.active
+                color: root.accentBlue
             }
 
             MouseArea {
@@ -686,16 +704,26 @@ Rectangle {
         }
 
         Rectangle {
+            id: settingsTabButton
             Layout.preferredWidth: root.btnH
             Layout.fillHeight: true
             readonly property bool active: root.Window.window ? root.Window.window.settingsPanelActive : false
-            color: stgMouse.pressed ? "#1e1e1e" : (active ? "#182638" : (stgMouse.containsMouse ? "#181818" : "#121212"))
+            color: stgMouse.pressed ? "#202020" : (active ? "#16222f" : (stgMouse.containsMouse ? "#1a1a1a" : "#121212"))
 
             Text {
                 anchors.centerIn: parent
-                text: "⚙"; color: parent.active ? "#ffffff" : "#555555"
+                text: "⚙"; color: parent.active ? "#ffffff" : "#5f5f5f"
                 font.pixelSize: root.sp(13)
             }
+
+            Rectangle {
+                anchors.left: parent.left; anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 2
+                visible: settingsTabButton.active
+                color: root.accentBlue
+            }
+
             MouseArea {
                 id: stgMouse
                 anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor

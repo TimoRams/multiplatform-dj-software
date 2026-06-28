@@ -1,6 +1,15 @@
 # Progress
 
 ## Done (recent)
+- [x] **UI mode persistence** — `SettingsManager::getUiState/setUiState` (`UI/` keys);
+  `main.qml` restores `allInOneMode`/`fourDeckMode`/`show*`/`activeMainTab` on launch and
+  persists on change (200 ms debounce). App remembers desktop vs AIO between sessions.
+- [x] **Responsive font scale** — `responsiveFontScale` (was stub 1.0) now `clamp(height/800,
+  0.84,1.18)`; UI legible on big screens, fits ~10" panels. No change at the 800px default.
+- [x] **Compact layout for small screens** — `compactLayout` shrinks FX bar (90→74) and
+  crossfader (36→30) so AIO performance fits 1280x800 / 1024x600.
+- [x] **TopHeader tab polish** — DESK/AIO + LIB/⚙ get accent underlines on active, brighter hover.
+- [x] **VU color tokens** — `UiTheme.vu*`; mixer meters unified (header master meter unchanged).
 - [x] **Scratch quality + perf rewrite** — critically-damped position tracker
   (`ScratchResampler::processScratchTracking`) makes slow/precise scratching track the hand
   exactly with no warble/snap-back; single position authority (UI publishes display only,

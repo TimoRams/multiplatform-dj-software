@@ -222,10 +222,10 @@ Rectangle {
         readonly property real segH: Math.max(1, (height - (segs - 1)) / segs)
 
         function segColor(i) {
-            if (i >= Math.floor(segs * 0.88)) return UiTheme.red
-            if (i >= Math.floor(segs * 0.72)) return "#d48000"
-            if (i >= Math.floor(segs * 0.50)) return "#5aba52"
-            return "#2a9640"
+            if (i >= Math.floor(segs * 0.88)) return UiTheme.vuClip
+            if (i >= Math.floor(segs * 0.72)) return UiTheme.vuHigh
+            if (i >= Math.floor(segs * 0.50)) return UiTheme.vuMid
+            return UiTheme.vuLow
         }
 
         onLevelLinearChanged: {
@@ -251,9 +251,9 @@ Rectangle {
                         const ri = vu.segs - 1 - index
                         const lit = Math.floor(vu.levelLinear * vu.segs)
                         const peak = Math.floor(vu.peakHoldLevel * vu.segs) - 1
-                        if (ri === peak && peak >= 0) return "#ffffff"
+                        if (ri === peak && peak >= 0) return UiTheme.vuPeak
                         if (ri < lit) return vu.segColor(ri)
-                        return UiTheme.knobTrack
+                        return UiTheme.vuOff
                     }
                 }
             }

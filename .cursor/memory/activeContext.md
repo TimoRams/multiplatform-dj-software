@@ -3,6 +3,27 @@
 *Last updated: 2026-06-27*
 
 ## Current task
+**UI polish + AIO/10" optimization + remember last mode**
+- **Layout mode persisted across launches** — new generic `SettingsManager::getUiState/setUiState`
+  (`UI/` key prefix in the JUCE props file). `main.qml` `_restoreUiState()` (in
+  `Component.onCompleted`) restores `allInOneMode` (via `setAllInOneMode` so mixer/FX stash runs),
+  `fourDeckMode`, all `show*` toggles, and `activeMainTab`. `_persistUiState()` (200 ms debounce
+  timer) writes on any `on*Changed`. Desktop mixer/FX intent is saved from `_desktopShow*` while AIO.
+- **Responsive font scale enabled** — `responsiveFontScale` was hardcoded 1.0; now gently scales
+  with window height (`clamp(height/800, 0.84, 1.18)`), 1.0 at the 800px reference (no regression
+  at default size). Affects every `window.sp()/spViewport()` consumer; TopHeader keeps its own
+  fixed `sp`.
+- **Compact small-screen layout** — `compactLayout = height<720 || width<1100`. `fxBarHeight`
+  90→74 and new `crossfaderBarHeight` 36→30 when compact, so AIO fits ~10" panels (1280x800/1024x600).
+  Height accounting in `fixedPerformanceHeight`/`hiddenPerformanceHeight` uses these props.
+- **TopHeader tab polish** — DESK/AIO button + LIB/⚙ tabs get accent (masterBlue) underlines on the
+  active state, brighter hover, slightly wider; clearer at a glance.
+- **VU color tokens** — new `UiTheme.vuLow/vuMid/vuHigh/vuClip/vuPeak/vuOff`; `MixerSection`
+  channel meters now use them (were hardcoded). Header master meter keeps its own 4-tier gradient.
+- Verified live via XWayland screenshot (xcb + xdotool + import): desktop renders correctly,
+  compact 1024x600 layout works, header underline shows. App stable (no crash from changes).
+
+## Previous task
 **Scratch quality + performance rewrite (slow/precise focus)**
 Root causes of the bad slow-scratch sound:
 1. **Dual position authority** — UI thread slammed `m_readPos` to the hand position each
@@ -26,7 +47,7 @@ Fix:
 - **Time-based scratch window** — `ScratchResampler` holds ~0.5s capacity with a ~100ms/side
   margin floor, so slow scratching reads from RAM instead of decoding on the audio thread.
 
-## Previous task
+## Earlier task
 **Preroll scratch snap fix** — scratching in negative pre-roll no longer jumps to t=0:
 - `pauseForScrub`: capture `visualAtGrab` before flag changes; accept negative anchors
   from UI; never fall back to `transportSource.getCurrentPosition()` in pre-roll.
