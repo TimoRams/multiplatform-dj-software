@@ -533,26 +533,36 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     const bool scratchVisual = m_engine->isScratchVisualActive();
     const bool continuousPlayback = m_engine->isPlaying() && !scratchVisual;
 
+    // Waveform columns and beat/loop/cue overlays must share the same point-space
+    // snap grid when scrolling — otherwise markers drift from peaks at coarse zoom.
+    const bool lockVisualSampleGrid = !scratchVisual;
+    const double visualSamplesPerPixel =
+        std::max(1.0, 1.0 / std::max(0.0001, pixelsPerPoint));
+    const auto snapPointPos = [&](double pointPos) -> double {
+        if (!lockVisualSampleGrid)
+            return pointPos;
+        return std::round(pointPos / visualSamplesPerPixel) * visualSamplesPerPixel;
+    };
+    m_lastVisualSnapStep.store(lockVisualSampleGrid ? visualSamplesPerPixel : 0.0,
+                               std::memory_order_relaxed);
+
     // Scroll anchor: CDJ-style stable playback scroll vs 1:1 scrub tracking.
-    // Playback/pause uses a device-pixel grid with monotonic filtering so timer
-    // jitter never nudges the waveform backward a fraction of a pixel (flicker).
+    // Playback uses a device-pixel floor grid with monotonic filtering so timer
+    // jitter and sync phase nudges never nudge the view backward (flicker/jiggle).
+    // Beat/loop/cue overlays share snapPointPos with waveform columns for alignment
+    // at coarse zoom — scroll itself stays pixel-stable, not beat-quantized.
     // Active scratch uses the raw playhead so finger motion matches the display.
     double centerIndexRender = rawCenterIndexRender;
     if (!scratchVisual && pixelsPerPoint > 0.0) {
         const double pixelSnapDenom = pixelsPerPoint * snapScale;
         const double anchoredCenter = std::floor(rawCenterIndexRender * pixelSnapDenom)
                                       / pixelSnapDenom;
+
         if (continuousPlayback && m_hasLastCenterIndexRender) {
             const double onePixelPoints = 1.0 / pixelSnapDenom;
             const double delta = anchoredCenter - m_lastCenterIndexRender;
             const bool reverse = m_engine->isReverse();
-            // A jump larger than 2 px in EITHER direction is a real seek
-            // (loop wrap back to loop-in, hotcue/cue jump, scratch release) and
-            // must be followed immediately — otherwise the waveform freezes at
-            // the loop-out point until playback catches back up ("hang").
             const bool largeSeek = std::abs(delta) > onePixelPoints * 2.0;
-            // Within 2 px, suppress only sub-pixel motion opposing the playback
-            // direction (timer jitter) so the scroll never flickers backward.
             const bool microOpposite = reverse ? (delta > 0.0) : (delta < 0.0);
             if (largeSeek)
                 centerIndexRender = anchoredCenter;
@@ -690,16 +700,11 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
 
     // No-wiggle lock: deterministic sample lookup while scrolling (not scrubbing)
     // so peak/band columns do not morph frame-to-frame at zoomed-out levels.
-    const bool lockVisualSampleGrid = !scratchVisual;
-    const double visualSamplesPerPixel =
-        std::max(1.0, 1.0 / std::max(0.0001, pixelsPerPoint));
     const int subSamples = lockVisualSampleGrid ? 1 : 2;
     for (int x = 0; x < wInt; ++x) {
         const double dataPosRaw = centerIndexRender
             + (static_cast<double>(x) - wD * 0.5) / pixelsPerPoint;
-        const double dataPos = lockVisualSampleGrid
-            ? std::round(dataPosRaw / visualSamplesPerPixel) * visualSamplesPerPixel
-            : dataPosRaw;
+        const double dataPos = snapPointPos(dataPosRaw);
         float maxRms    = 0.0f;
         float sumLow    = 0.0f;
         float sumLowMid = 0.0f;
@@ -905,8 +910,9 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         // falls on.  Using floor (not round) guarantees the resulting quad spans exactly
         // [N, N+1] device coordinates — never straddling two columns, which is what
         // caused the "±halfPx from center" approach to flicker on pixel boundaries.
-        const auto beatPixelLeft = [ppp, snapScale, &centerForBeats, w](double beatPoint) -> float {
-            const double bx = w / 2.0 + (beatPoint - centerForBeats) * ppp;
+        const auto beatPixelLeft = [ppp, snapScale, &centerForBeats, w, &snapPointPos](double beatPoint) -> float {
+            const double snapped = snapPointPos(beatPoint);
+            const double bx = w / 2.0 + (snapped - centerForBeats) * ppp;
             return static_cast<float>(std::floor(bx * snapScale) / snapScale);
         };
 
@@ -1105,8 +1111,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             ? m_engine->loopOutPosition()
             : m_engine->loopPreviewOutPosition();
 
-        const double loopInPoint  = loopInSec  * pointsPerSec;
-        const double loopOutPoint = loopOutSec * pointsPerSec;
+        const double loopInPoint  = snapPointPos(loopInSec  * pointsPerSec);
+        const double loopOutPoint = snapPointPos(loopOutSec * pointsPerSec);
 
         // Actual screen positions (may be outside [0,w] when off-screen).
         const float xLoopIn  = snapDevicePixelX(w / 2.0 + (loopInPoint  - centerIndexRender) * pixelsPerPoint);
@@ -1228,7 +1234,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             const QVariantMap m = cues[i].toMap();
             if (!m.value("set").toBool()) continue;
             const double cueSec = m.value("positionSec").toDouble();
-            const float cx = snapDevicePixelX(w / 2.0 + (cueSec * pointsPerSec - centerIndexRender) * pixelsPerPoint);
+            const float cx = snapDevicePixelX(w / 2.0 + (snapPointPos(cueSec * pointsPerSec) - centerIndexRender) * pixelsPerPoint);
             if (cx < 0.0f || cx > w) continue;
             QColor c(m.value("color").toString());
             if (!c.isValid()) c = QColor("#e04040");
@@ -1298,7 +1304,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
 
         // Allow pre-roll cue positions (negative seconds)
         if (mainCueSec >= -DjEngine::PRE_ROLL_SECONDS) {
-            const float mx = snapDevicePixelX(w / 2.0 + (mainCueSec * pointsPerSec - centerIndexRender) * pixelsPerPoint);
+            const float mx = snapDevicePixelX(w / 2.0 + (snapPointPos(mainCueSec * pointsPerSec) - centerIndexRender) * pixelsPerPoint);
             if (mx >= 0.0f && mx <= w) {
                 mainCueLineGeo->allocate(2);
                 auto* lv = mainCueLineGeo->vertexDataAsColoredPoint2D();
@@ -1365,8 +1371,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             if (endSec <= startSec)
                 continue;
 
-            const double startPoint = startSec * pointsPerSec;
-            const double endPoint = endSec * pointsPerSec;
+            const double startPoint = snapPointPos(startSec * pointsPerSec);
+            const double endPoint = snapPointPos(endSec * pointsPerSec);
 
             float x1 = snapDevicePixelX(w / 2.0 + (startPoint - centerIndexRender) * pixelsPerPoint);
             float x2 = snapDevicePixelX(w / 2.0 + (endPoint - centerIndexRender) * pixelsPerPoint);
@@ -1443,10 +1449,20 @@ QVariantList ScrollingWaveformItem::beatLabels() const
     const double leftSec      = (centerForBeats - visiblePts * 0.5) / pointsPerSec;
     const double rightSec     = (centerForBeats + visiblePts * 0.5) / pointsPerSec;
 
+    const double visualSnapStep = m_lastVisualSnapStep.load(std::memory_order_relaxed);
+
+    const auto snapBeatPoint = [&](double beatSec) -> double {
+        double beatPoint = beatSec * pointsPerSec;
+        if (visualSnapStep > 0.0)
+            beatPoint = std::round(beatPoint / visualSnapStep) * visualSnapStep;
+        return beatPoint;
+    };
+
     // Same formula as beatPixelLeft() in updatePaintNode — no floor-snap here because
     // Canvas text is centered; sub-pixel accuracy is sufficient for centering.
     const auto beatX = [&](double beatSec) -> double {
-        return w * 0.5 + (beatSec * pointsPerSec - centerForBeats) * ppp;
+        const double beatPoint = snapBeatPoint(beatSec);
+        return w * 0.5 + (beatPoint - centerForBeats) * ppp;
     };
 
     const std::vector<TrackData::BeatMarker> beatGrid = td->getBeatGrid();

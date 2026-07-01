@@ -132,9 +132,33 @@ Rectangle {
     readonly property int sidebarW:   touchMode ? 0 : 200
     property string viewMode: "compact"
     readonly property bool touchMode: window.allInOneMode
-    property string aioBrowseScreen: "home" // home | playlists | smart
-    readonly property int aioNavTileSize: 96
-    readonly property int aioNavPanelW: touchMode ? aioNavTileSize + 16 : 0
+    property string aioBrowseScreen: "home" // home | source | artist | album | key | playlist | history | matching | folder
+    readonly property int aioNavPad: 4
+    readonly property int aioNavGap: 2
+    readonly property int aioNavTileW: 104
+    readonly property int aioNavTileH: 48
+    readonly property int aioNavPanelW: touchMode ? aioNavTileW + aioNavPad * 2 : 0
+    property string aioBrowseSelection: ""
+    property string aioBrowseFocusKey: ""
+    property int aioBrowseFocusIndex: -1
+    property bool aioBrowseDrilled: false
+    // AIO cursor zones: nav (category tiles) → picker → tracks (→ drilled)
+    property string aioFocusZone: "tracks"
+    property int aioNavCursorIndex: 3
+    readonly property bool aioCursorTracksActive: !touchMode || aioFocusZone === "tracks"
+    readonly property bool aioCursorPickerActive: touchMode && aioFocusZone === "picker"
+    readonly property bool aioCursorNavActive: touchMode && aioFocusZone === "nav"
+    property var aioArtistList: []
+    property var aioAlbumList: []
+    property var aioKeyList: []
+    property var aioSourceList: []
+    readonly property bool aioLibSplitBrowse: touchMode && (
+           aioBrowseScreen === "artist" || aioBrowseScreen === "album"
+        || aioBrowseScreen === "key" || aioBrowseScreen === "source"
+        || aioBrowseScreen === "matching")
+    readonly property bool aioPlaylistSplitBrowse: touchMode && aioBrowseScreen === "playlist"
+    readonly property bool aioHistorySplitBrowse: touchMode && aioBrowseScreen === "history"
+    readonly property bool aioFolderSplitBrowse: touchMode && aioBrowseScreen === "folder"
     readonly property bool previewActive: typeof libraryPreview !== "undefined"
                                             && libraryPreview && libraryPreview.playing
     readonly property int previewBarHeight: previewActive ? (touchMode ? 58 : 50) : 0
@@ -144,12 +168,21 @@ Rectangle {
     readonly property bool filtersActive: libraryModel && (
         libraryModel.filterBpmMin > 0 || libraryModel.filterBpmMax > 0
         || (libraryModel.filterKey && libraryModel.filterKey.length > 0)
+        || (libraryModel.filterArtist && libraryModel.filterArtist.length > 0)
+        || (libraryModel.filterAlbum && libraryModel.filterAlbum.length > 0)
+        || (libraryModel.filterSourcePath && libraryModel.filterSourcePath.length > 0)
         || (libraryModel.filterGenre && libraryModel.filterGenre.length > 0)
         || libraryModel.filterRatingMin > 0 || libraryModel.filterEnergyMin > 0
     )
 
     function trackRowHeight() {
-        if (touchMode) return 80
+        if (touchMode) {
+            if (aioBrowseDrilled)
+                return 96
+            if ((aioLibSplitBrowse || aioPlaylistSplitBrowse) && aioBrowseFocusKey.length > 0)
+                return 56
+            return 80
+        }
         return viewMode === "normal" ? rowHNormal : rowH
     }
 
@@ -186,8 +219,581 @@ Rectangle {
         return m + ":" + (s < 10 ? "0" : "") + s
     }
 
+    function aioNavScreens() {
+        return ["source", "artist", "album", "home", "key", "playlist", "history", "matching", "folder"]
+    }
+
+    function aioHasSplitBrowse() {
+        return aioLibSplitBrowse || aioPlaylistSplitBrowse
+            || aioHistorySplitBrowse || aioFolderSplitBrowse
+    }
+
+    function aioHasPicker() {
+        return aioHasSplitBrowse() && !aioBrowseDrilled
+    }
+
+    function aioSyncNavCursorToScreen() {
+        var screens = aioNavScreens()
+        var screen = aioBrowseScreen
+        if (screen === "home" || (screen === "home" && activeTab === "library"))
+            screen = "home"
+        var idx = screens.indexOf(screen)
+        if (idx >= 0)
+            aioNavCursorIndex = idx
+    }
+
+    function aioNavScreenAt(index) {
+        var screens = aioNavScreens()
+        if (index < 0 || index >= screens.length)
+            return ""
+        return screens[index]
+    }
+
+    function aioMoveNavCursor(delta) {
+        var count = aioNavScreens().length
+        aioNavCursorIndex = Math.max(0, Math.min(count - 1, aioNavCursorIndex + delta))
+    }
+
+    function aioMovePickerCursor(delta) {
+        var items = aioBrowsePickerItems()
+        if (items.length === 0)
+            return
+        var idx = aioBrowseFocusIndex < 0 ? 0 : aioBrowseFocusIndex + delta
+        idx = Math.max(0, Math.min(items.length - 1, idx))
+        aioPreviewBrowseEntryByIndex(idx)
+    }
+
+    function aioBrowseCursorRight() {
+        forceActiveFocus()
+        if (aioFocusZone === "nav") {
+            var screen = aioNavScreenAt(aioNavCursorIndex)
+            if (screen === "home")
+                aioOpenAllTracks()
+            else
+                aioEnterBrowse(screen)
+            aioFocusZone = aioHasPicker() ? "picker" : "tracks"
+            if (aioFocusZone === "tracks")
+                ensureActiveTrackForCurrentTab()
+            return
+        }
+        if (aioFocusZone === "picker") {
+            aioFocusZone = "tracks"
+            ensureActiveTrackForCurrentTab()
+            return
+        }
+        if (aioFocusZone === "tracks" && aioHasPicker() && !aioBrowseDrilled
+                && aioBrowseFocusIndex >= 0) {
+            aioDrillBrowseEntryByIndex(aioBrowseFocusIndex)
+        }
+    }
+
+    function aioBrowseCursorLeft() {
+        forceActiveFocus()
+        if (aioBrowseDrilled) {
+            aioBrowseUnDrill()
+            aioFocusZone = "tracks"
+            return
+        }
+        if (aioFocusZone === "tracks" && aioHasPicker()) {
+            aioFocusZone = "picker"
+            return
+        }
+        if (aioFocusZone === "picker" || aioFocusZone === "tracks") {
+            aioFocusZone = "nav"
+            aioSyncNavCursorToScreen()
+        }
+    }
+
+    function aioBrowseCursorActivate() {
+        if (aioFocusZone === "nav") {
+            aioBrowseCursorRight()
+            return
+        }
+        if (aioFocusZone === "picker") {
+            aioFocusZone = "tracks"
+            ensureActiveTrackForCurrentTab()
+            return
+        }
+        if (aioFocusZone === "tracks")
+            loadTrackToDeck("A", getCursorFilePath())
+    }
+
+    function aioMoveBrowseVertical(rawDelta) {
+        if (!touchMode)
+            return
+        forceActiveFocus()
+        var absD = Math.abs(rawDelta)
+        var steps = absD <= 1 ? 1 : (absD <= 3 ? absD * 2 : absD * 3)
+        steps = Math.min(steps, 24)
+        var delta = rawDelta >= 0 ? steps : -steps
+
+        if (aioFocusZone === "nav") {
+            aioMoveNavCursor(delta)
+            return
+        }
+        if (aioFocusZone === "picker") {
+            aioMovePickerCursor(delta)
+            return
+        }
+        moveCursor(rawDelta)
+    }
+
     function aioResetToHome() {
         aioBrowseScreen = "home"
+        aioBrowseSelection = ""
+    }
+
+    function aioWarmBrowseCaches() {
+        if (!touchMode || !libraryDb)
+            return
+        aioArtistList = libraryDb.getDistinctArtists()
+        aioAlbumList = libraryDb.getDistinctAlbums()
+        aioKeyList = libraryDb.getDistinctKeys()
+    }
+
+    function aioRefreshBrowseData(screen) {
+        if (!libraryDb)
+            return
+        if (screen === "artist")
+            aioArtistList = libraryDb.getDistinctArtists()
+        else if (screen === "album")
+            aioAlbumList = libraryDb.getDistinctAlbums()
+        else if (screen === "key" || screen === "matching")
+            aioKeyList = libraryDb.getDistinctKeys()
+        else if (screen === "source")
+            aioSourceList = libraryDb.getLibrarySourceRoots()
+    }
+
+    function aioEnterBrowse(screen) {
+        aioBrowseScreen = screen
+        aioBrowseSelection = ""
+        aioBrowseFocusKey = ""
+        aioBrowseFocusIndex = -1
+        aioBrowseDrilled = false
+        aioRefreshBrowseData(screen)
+        closeAllSwipes()
+        aioSyncNavCursorToScreen()
+
+        if (screen === "folder") {
+            activeTab = "files"
+            aioFocusZone = "picker"
+            return
+        }
+
+        switch (screen) {
+        case "artist":
+        case "album":
+        case "key":
+        case "source":
+        case "matching":
+            activeTab = "library"
+            break
+        case "playlist":
+            activeTab = "playlist"
+            currentPlaylistId = ""
+            currentPlaylistName = ""
+            playlistTracks = []
+            break
+        case "history":
+            activeTab = "history"
+            break
+        default:
+            break
+        }
+
+        aioFocusZone = aioHasPicker() ? "picker" : "tracks"
+
+        Qt.callLater(function() {
+            var items = libraryRoot.aioBrowsePickerItems()
+            if (items.length > 0
+                    && (libraryRoot.aioLibSplitBrowse
+                        || libraryRoot.aioPlaylistSplitBrowse
+                        || libraryRoot.aioHistorySplitBrowse))
+                libraryRoot.aioPreviewBrowseEntryByIndex(0)
+            else if (libraryRoot.aioLibSplitBrowse)
+                libraryRoot.aioHoldBrowseFilter()
+            else if (libraryRoot.aioFocusZone === "tracks")
+                libraryRoot.ensureActiveTrackForCurrentTab()
+        })
+    }
+
+    function aioBrowseUnDrill() {
+        aioBrowseDrilled = false
+        aioBrowseSelection = ""
+        if (aioBrowseScreen === "playlist") {
+            currentPlaylistId = ""
+            currentPlaylistName = ""
+            playlistTracks = []
+        }
+        var items = aioBrowsePickerItems()
+        if (items.length > 0) {
+            var idx = aioBrowseFocusIndex >= 0 ? aioBrowseFocusIndex : 0
+            idx = Math.min(idx, items.length - 1)
+            aioPreviewBrowseEntryByIndex(idx)
+        } else {
+            aioHoldBrowseFilter()
+        }
+        aioFocusZone = aioHasPicker() ? "tracks" : "tracks"
+        ensureActiveTrackForCurrentTab()
+    }
+
+    function aioBrowseEntryAt(index) {
+        var items = aioBrowsePickerItems()
+        if (index >= 0 && index < items.length)
+            return items[index]
+        return null
+    }
+
+    function aioBrowseEntryLabel(entry) {
+        if (!entry)
+            return ""
+        var name = entry.name
+        if (name === undefined || name === null || name === "")
+            name = entry.label
+        if (name === undefined || name === null || name === "")
+            name = entry["name"] || entry["label"] || ""
+        return String(name)
+    }
+
+    function aioPreviewBrowseEntryByIndex(index) {
+        if (index < 0 || aioBrowseDrilled)
+            return
+        if (index === aioBrowseFocusIndex && aioBrowseFocusKey.length > 0)
+            return
+        var entry = aioBrowseEntryAt(index)
+        if (!entry)
+            return
+        aioBrowseFocusIndex = index
+        aioBrowseFocusKey = aioBrowseEntryKey(entry)
+        aioApplyBrowseFilter(entry, false)
+    }
+
+    function aioDrillBrowseEntryByIndex(index) {
+        var entry = aioBrowseEntryAt(index)
+        if (!entry)
+            return
+        closeAllSwipes()
+        aioBrowseDrilled = true
+        aioBrowseFocusIndex = index
+        aioBrowseSelection = aioBrowseEntryKey(entry)
+        aioBrowseFocusKey = aioBrowseSelection
+        aioApplyBrowseFilter(entry, true)
+        if (touchMode && (aioBrowseScreen === "artist" || aioBrowseScreen === "album"
+                          || aioBrowseScreen === "key"))
+            viewMode = "normal"
+        aioFocusZone = "tracks"
+        ensureActiveTrackForCurrentTab()
+    }
+
+    function aioPreviewBrowseEntry(entry, index) {
+        if (index !== undefined && index >= 0) {
+            aioPreviewBrowseEntryByIndex(index)
+            return
+        }
+        if (!entry || aioBrowseDrilled)
+            return
+        aioBrowseFocusKey = aioBrowseEntryKey(entry)
+        aioApplyBrowseFilter(entry, false)
+    }
+
+    function aioDrillBrowseEntry(entry) {
+        if (!entry)
+            return
+        var items = aioBrowsePickerItems()
+        for (var i = 0; i < items.length; ++i) {
+            if (aioBrowseEntryKey(items[i]) === aioBrowseEntryKey(entry)) {
+                aioDrillBrowseEntryByIndex(i)
+                return
+            }
+        }
+        closeAllSwipes()
+        aioBrowseDrilled = true
+        aioBrowseSelection = aioBrowseEntryKey(entry)
+        aioBrowseFocusKey = aioBrowseSelection
+        aioApplyBrowseFilter(entry, true)
+        if (touchMode && (aioBrowseScreen === "artist" || aioBrowseScreen === "album"
+                          || aioBrowseScreen === "key"))
+            viewMode = "normal"
+        aioFocusZone = "tracks"
+        ensureActiveTrackForCurrentTab()
+    }
+
+    function aioApplyBrowseFilter(entry, drilled) {
+        var key = aioBrowseEntryKey(entry)
+        var label = aioBrowseEntryLabel(entry)
+
+        if (aioBrowseScreen === "artist") {
+            activeTab = "library"
+            if (libraryModel)
+                libraryModel.applyAioBrowseFilter("artist", label)
+            return
+        }
+        if (aioBrowseScreen === "album") {
+            activeTab = "library"
+            if (libraryModel)
+                libraryModel.applyAioBrowseFilter("album", label)
+            return
+        }
+        if (aioBrowseScreen === "key") {
+            activeTab = "library"
+            if (libraryModel)
+                libraryModel.applyAioBrowseFilter("key", label)
+            return
+        }
+        if (aioBrowseScreen === "source") {
+            if (key === "collection") {
+                if (drilled)
+                    aioOpenAllTracks()
+                return
+            }
+            if (key === "files")  { if (drilled) activeTab = "files"; return }
+            if (key === "stream") { if (drilled) activeTab = "streaming"; return }
+            if (key === "usb")    { if (drilled) activeTab = "usb"; return }
+            activeTab = "library"
+            if (libraryModel)
+                libraryModel.applyAioBrowseFilter("source", entry.path || "")
+            return
+        }
+        if (aioBrowseScreen === "playlist") {
+            activeTab = "playlist"
+            currentPlaylistId = entry.id || ""
+            currentPlaylistName = entry.name || ""
+            if (currentPlaylistId)
+                loadPlaylistTracks()
+            if (drilled)
+                aioBrowseSelection = entry.id || ""
+            return
+        }
+        if (aioBrowseScreen === "history") {
+            activeTab = "history"
+            loadHistory(key)
+            if (drilled)
+                aioBrowseSelection = key
+            return
+        }
+        if (aioBrowseScreen === "matching") {
+            if (key === "harmonic") {
+                if (drilled) {
+                    aioOpenHarmonicMatch()
+                } else {
+                    refreshReferenceKeys()
+                    var hkeys = []
+                    var hentries = aioCompatibleKeyEntries()
+                    for (var hi = 0; hi < hentries.length; ++hi)
+                        hkeys.push(aioBrowseEntryLabel(hentries[hi]))
+                    activeTab = "library"
+                    if (libraryModel)
+                        libraryModel.applyAioBrowseFilter("keys", "", hkeys)
+                }
+                return
+            }
+            if (entry.smart) {
+                if (drilled) {
+                    aioOpenSmartCollection(entry.id, entry.name)
+                    aioBrowseSelection = entry.id
+                }
+                return
+            }
+            activeTab = "library"
+            if (libraryModel)
+                libraryModel.applyAioBrowseFilter("key", label)
+            return
+        }
+        if (aioBrowseScreen === "folder") {
+            activeTab = "files"
+            if (drilled) {
+                if (key === "__up__") {
+                    if (libraryManager)
+                        libraryManager.navigateUp()
+                } else if (libraryManager) {
+                    libraryManager.enterFolder(entry.name)
+                }
+            }
+        }
+    }
+
+    function aioBrowsePickerTitle() {
+        switch (aioBrowseScreen) {
+        case "artist":   return "ARTISTS"
+        case "album":    return "ALBUMS"
+        case "key":      return "KEYS"
+        case "source":   return "SOURCE"
+        case "playlist": return "PLAYLISTS"
+        case "history":  return "HISTORY"
+        case "matching": return "MATCHING"
+        case "folder":   return "FOLDERS"
+        default:         return ""
+        }
+    }
+
+    function aioBrowsePickerItems() {
+        switch (aioBrowseScreen) {
+        case "artist":
+            return aioArtistList
+        case "album":
+            return aioAlbumList
+        case "key":
+            return aioKeyList
+        case "source": {
+            var src = [
+                { key: "collection", name: "COLLECTION",
+                  trackCount: libraryModel ? libraryModel.count : 0 },
+                { key: "files",  name: "FILES",  trackCount: -1 },
+                { key: "stream", name: "STREAM", trackCount: -1 },
+                { key: "usb",    name: "USB",    trackCount: -1 }
+            ]
+            for (var i = 0; i < aioSourceList.length; ++i) {
+                var s = aioSourceList[i]
+                src.push({ key: s.path, name: s.label || s.path,
+                           path: s.path, trackCount: s.trackCount })
+            }
+            return src
+        }
+        case "playlist":
+            return allPlaylists
+        case "history":
+            return [
+                { key: "today", name: "TODAY",  trackCount: -1 },
+                { key: "week",  name: "WEEK",   trackCount: -1 },
+                { key: "month", name: "MONTH",  trackCount: -1 },
+                { key: "all",   name: "ALL",    trackCount: -1 }
+            ]
+        case "matching": {
+            var m = [{ key: "harmonic", name: "HARMONIC", trackCount: -1 }]
+            var keys = aioCompatibleKeyEntries()
+            for (var k = 0; k < keys.length; ++k)
+                m.push({ key: keys[k].name, name: keys[k].name, trackCount: keys[k].trackCount })
+            for (var j = 0; j < smartCollections.length; ++j) {
+                var sc = smartCollections[j]
+                m.push({ key: sc.id, name: sc.name || "Rule", id: sc.id, trackCount: -1, smart: true })
+            }
+            return m
+        }
+        case "folder": {
+            var folders = libraryManager ? libraryManager.folders : []
+            var out = []
+            if (libraryManager && libraryManager.canNavigateUp)
+                out.push({ key: "__up__", name: "UP", trackCount: -1 })
+            for (var f = 0; f < folders.length; ++f)
+                out.push({ key: folders[f], name: folders[f], trackCount: -1 })
+            return out
+        }
+        default:
+            return []
+        }
+    }
+
+    function aioBrowseEntryKey(entry) {
+        if (!entry)
+            return ""
+        if (entry.key !== undefined)
+            return String(entry.key)
+        if (entry.id !== undefined)
+            return String(entry.id)
+        return entry.name || ""
+    }
+
+    function aioReapplySearchFilter() {
+        if (libraryModel && searchText.length > 0)
+            libraryModel.setFilterText(searchText)
+    }
+
+    function aioHoldBrowseFilter() {
+        if (!libraryModel)
+            return
+        var none = "\u0000"
+        if (aioBrowseScreen === "artist")
+            libraryModel.applyAioBrowseFilter("artist", none)
+        else if (aioBrowseScreen === "album")
+            libraryModel.applyAioBrowseFilter("album", none)
+        else if (aioBrowseScreen === "key")
+            libraryModel.applyAioBrowseFilter("key", none)
+        else if (aioBrowseScreen === "source")
+            libraryModel.applyAioBrowseFilter("source", none)
+    }
+
+    function aioOpenLibraryFiltered(applyFilter) {
+        activeTab = "library"
+        if (libraryModel) {
+            libraryModel.clearFilters()
+            if (applyFilter)
+                applyFilter()
+        }
+        focusedPanel = "tracks"
+        closeAllSwipes()
+    }
+
+    function aioOpenAllTracks() {
+        aioBrowseScreen = "home"
+        aioBrowseSelection = ""
+        aioBrowseFocusKey = ""
+        aioBrowseFocusIndex = -1
+        aioBrowseDrilled = false
+        aioOpenLibraryFiltered(null)
+        librarySubTab = "allSongs"
+        aioSyncNavCursorToScreen()
+        aioFocusZone = "tracks"
+        ensureActiveTrackForCurrentTab()
+    }
+
+    function aioOpenArtist(name) {
+        aioBrowseSelection = name
+        aioOpenLibraryFiltered(function() { libraryModel.setFilterArtist(name) })
+    }
+
+    function aioOpenAlbum(name) {
+        aioBrowseSelection = name
+        aioOpenLibraryFiltered(function() { libraryModel.setFilterAlbum(name) })
+    }
+
+    function aioOpenKeyFilter(key) {
+        aioBrowseSelection = key
+        aioOpenLibraryFiltered(function() { libraryModel.setFilterKey(key) })
+    }
+
+    function aioOpenSourcePath(path, label) {
+        aioBrowseSelection = label || path
+        aioOpenLibraryFiltered(function() { libraryModel.setFilterSourcePath(path) })
+    }
+
+    function aioCompatibleKeyEntries() {
+        refreshReferenceKeys()
+        var out = []
+        var seen = {}
+        for (var i = 0; i < referenceKeys.length; ++i) {
+            var ref = parseCamelotKey(referenceKeys[i])
+            if (!ref)
+                continue
+            for (var j = 0; j < aioKeyList.length; ++j) {
+                var entry = aioKeyList[j]
+                var kn = entry.name
+                if (seen[kn])
+                    continue
+                var pk = parseCamelotKey(kn)
+                if (pk && camelotCompatibility(ref, pk) > 0) {
+                    seen[kn] = true
+                    out.push(entry)
+                }
+            }
+        }
+        return out
+    }
+
+    function aioOpenHarmonicMatch() {
+        refreshReferenceKeys()
+        var keys = []
+        var entries = aioCompatibleKeyEntries()
+        for (var i = 0; i < entries.length; ++i)
+            keys.push(entries[i].name)
+        activeTab = "library"
+        if (libraryModel) {
+            libraryModel.clearFilters()
+            libraryModel.setFilterKeys(keys)
+        }
+        aioBrowseSelection = "harmonic"
+        aioBrowseDrilled = true
+        focusedPanel = "tracks"
+        closeAllSwipes()
     }
 
     function aioOpenTracks(tab, extraAction) {
@@ -218,25 +824,46 @@ Rectangle {
 
     function aioToolbarBack() {
         aioBrowseScreen = "home"
+        aioBrowseSelection = ""
+    }
+
+    function aioBrowseFocusLabel() {
+        var items = aioBrowsePickerItems()
+        for (var i = 0; i < items.length; ++i) {
+            if (aioBrowseEntryKey(items[i]) === aioBrowseFocusKey)
+                return aioBrowseEntryLabel(items[i])
+        }
+        return ""
     }
 
     function aioScreenTitle() {
+        if (aioBrowseDrilled) {
+            if (aioBrowseScreen === "playlist")
+                return currentPlaylistName || "Playlist"
+            if (aioBrowseScreen === "matching" && activeTab === "smartcoll")
+                return currentSmartCollectionName || "Matching"
+            var drilled = aioBrowseFocusLabel()
+            if (drilled.length > 0)
+                return drilled
+            return aioBrowsePickerTitle()
+        }
+        if (aioBrowseFocusKey.length > 0 && aioBrowseScreen !== "home") {
+            var preview = aioBrowseFocusLabel()
+            if (preview.length > 0)
+                return preview
+        }
+        if (aioBrowseScreen !== "home")
+            return aioBrowsePickerTitle()
         if (activeTab === "library")
             return "All Tracks"
         if (activeTab === "playlist")
             return currentPlaylistName || "Playlist"
-        if (activeTab === "favorites")
-            return "Favorites"
         if (activeTab === "history")
             return "History"
-        if (activeTab === "crate")
-            return "Prepare Crate"
-        if (activeTab === "queue")
-            return "Queue"
         if (activeTab === "smartcoll")
-            return currentSmartCollectionName || "Smart Collection"
+            return currentSmartCollectionName || "Matching"
         if (activeTab === "files")
-            return "Files"
+            return "Folder"
         if (activeTab === "streaming")
             return "Streaming"
         return "USB"
@@ -248,13 +875,22 @@ Rectangle {
             if (window && window.allInOneMode) {
                 libraryRoot.viewMode = "normal"
                 libraryRoot.aioBrowseScreen = "home"
+                libraryRoot.aioWarmBrowseCaches()
             }
         }
     }
 
+    onAioFocusZoneChanged: {
+        if (touchMode && aioFocusZone === "tracks")
+            focusedPanel = "tracks"
+    }
+
     onVisibleChanged: {
-        if (visible && touchMode && !_aioWasVisible)
-            aioBrowseScreen = "home"
+        if (visible && touchMode) {
+            if (!_aioWasVisible)
+                aioBrowseScreen = "home"
+            aioWarmBrowseCaches()
+        }
         _aioWasVisible = visible
     }
     property bool _aioWasVisible: false
@@ -971,7 +1607,12 @@ Rectangle {
         target: parameterStore
         function onParameterChanged(id, value) {
             if (id === "library_browse") {
-                if (value !== 0) libraryRoot.moveCursor(value)
+                if (value !== 0) {
+                    if (libraryRoot.touchMode)
+                        libraryRoot.aioMoveBrowseVertical(value)
+                    else
+                        libraryRoot.moveCursor(value)
+                }
             } else if (id === "library_load_deck_a") {
                 if (value > 0) libraryRoot.loadTrackToDeck("A", libraryRoot.getCursorFilePath())
             } else if (id === "library_load_deck_b") {
@@ -985,15 +1626,28 @@ Rectangle {
             } else if (id === "library_playlist_prev") {
                 if (value > 0) libraryRoot.selectNextPlaylist(-1)
             } else if (id === "library_back") {
-                if (value > 0) libraryRoot.activeTab = "library"
+                if (value > 0) {
+                    if (libraryRoot.touchMode)
+                        libraryRoot.aioBrowseCursorLeft()
+                    else
+                        libraryRoot.activeTab = "library"
+                }
             } else if (id === "library_expand") {
-                if (value > 0 && libraryRoot.currentPlaylistId)
-                    libraryRoot.toggleExpanded(libraryRoot.currentPlaylistId)
+                if (value > 0) {
+                    if (libraryRoot.touchMode)
+                        libraryRoot.aioBrowseCursorRight()
+                    else if (libraryRoot.currentPlaylistId)
+                        libraryRoot.toggleExpanded(libraryRoot.currentPlaylistId)
+                }
             } else if (id === "library_collapse") {
-                if (value > 0 && libraryRoot.currentPlaylistId) {
-                    var ex = Object.assign({}, libraryRoot.expandedPlaylists)
-                    delete ex[libraryRoot.currentPlaylistId]
-                    libraryRoot.expandedPlaylists = ex
+                if (value > 0) {
+                    if (libraryRoot.touchMode)
+                        libraryRoot.aioBrowseCursorLeft()
+                    else if (libraryRoot.currentPlaylistId) {
+                        var ex = Object.assign({}, libraryRoot.expandedPlaylists)
+                        delete ex[libraryRoot.currentPlaylistId]
+                        libraryRoot.expandedPlaylists = ex
+                    }
                 }
             }
         }
@@ -1007,6 +1661,42 @@ Rectangle {
         }
         if (event.key === Qt.Key_Backtab) {
             cyclePanel(-1); event.accepted = true; return
+        }
+
+        if (touchMode) {
+            if (event.key === Qt.Key_Up) {
+                aioMoveBrowseVertical(-1); event.accepted = true; return
+            }
+            if (event.key === Qt.Key_Down) {
+                aioMoveBrowseVertical(1); event.accepted = true; return
+            }
+            if (event.key === Qt.Key_Right) {
+                aioBrowseCursorRight(); event.accepted = true; return
+            }
+            if (event.key === Qt.Key_Left) {
+                aioBrowseCursorLeft(); event.accepted = true; return
+            }
+            if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                if (aioFocusZone === "tracks" && (event.modifiers & (Qt.ShiftModifier | Qt.ControlModifier | Qt.AltModifier))) {
+                    loadTrackToDeck(event.modifiers & Qt.ShiftModifier ? "B"
+                        : (event.modifiers & Qt.ControlModifier ? "C"
+                        : (event.modifiers & Qt.AltModifier ? "D" : "A")), getCursorFilePath())
+                } else {
+                    aioBrowseCursorActivate()
+                }
+                event.accepted = true; return
+            }
+            if (event.key === Qt.Key_P && aioFocusZone === "tracks") {
+                togglePreview(getCursorFilePath()); event.accepted = true; return
+            }
+            if (event.key === Qt.Key_Escape) {
+                if (aioBrowseDrilled || aioFocusZone !== "nav")
+                    aioBrowseCursorLeft()
+                else
+                    browserCursorActive = false
+                event.accepted = true; return
+            }
+            return
         }
 
         if (focusedPanel === "tracks") {
@@ -1235,7 +1925,9 @@ Rectangle {
     // ── Preview transport (AIO + desktop) ─────────────────────────────────────
     component PreviewControlBar: Rectangle {
         id: previewBar
-        visible: typeof libraryPreview !== "undefined" && libraryPreview && libraryPreview.playing
+        readonly property var previewPlayer:
+            typeof libraryPreview !== "undefined" ? libraryPreview : null
+        visible: previewPlayer && previewPlayer.playing
         height: visible ? (libraryRoot.touchMode ? 58 : 50) : 0
         color: "#0e1418"
         clip: true
@@ -1280,7 +1972,10 @@ Rectangle {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: libraryPreview.stop()
+                    onClicked: {
+                        if (previewBar.previewPlayer)
+                            previewBar.previewPlayer.stop()
+                    }
                 }
             }
 
@@ -1290,7 +1985,8 @@ Rectangle {
 
                 Text {
                     Layout.fillWidth: true
-                    text: previewBar.basename(libraryPreview.currentPath)
+                    text: previewBar.basename(previewBar.previewPlayer
+                                               ? previewBar.previewPlayer.currentPath : "")
                     color: libraryRoot.textSecond
                     font.pixelSize: window.sp(9)
                     elide: Text.ElideMiddle
@@ -1304,25 +2000,26 @@ Rectangle {
                     from: 0
                     to: 1
                     live: true
-                    value: libraryPreview.progress
+                    value: previewBar.previewPlayer ? previewBar.previewPlayer.progress : 0
 
                     onPressedChanged: {
-                        if (!pressed)
-                            libraryPreview.seekProgress(value)
+                        if (!pressed && previewBar.previewPlayer)
+                            previewBar.previewPlayer.seekProgress(value)
                     }
                     onMoved: {
-                        if (pressed)
-                            libraryPreview.seekProgress(value)
+                        if (pressed && previewBar.previewPlayer)
+                            previewBar.previewPlayer.seekProgress(value)
                     }
 
                     Connections {
-                        target: libraryPreview
+                        target: previewBar.previewPlayer
+                        enabled: previewBar.previewPlayer !== null
                         function onPositionChanged() {
-                            if (!previewSeek.pressed)
-                                previewSeek.value = libraryPreview.progress
+                            if (!previewSeek.pressed && previewBar.previewPlayer)
+                                previewSeek.value = previewBar.previewPlayer.progress
                         }
                         function onPlayingChanged() {
-                            if (!libraryPreview.playing)
+                            if (previewBar.previewPlayer && !previewBar.previewPlayer.playing)
                                 previewSeek.value = 0
                         }
                     }
@@ -1330,8 +2027,10 @@ Rectangle {
             }
 
             Text {
-                text: libraryRoot.formatPreviewTime(libraryPreview.positionSec)
-                      + " / " + libraryRoot.formatPreviewTime(libraryPreview.durationSec)
+                text: libraryRoot.formatPreviewTime(previewBar.previewPlayer
+                                                      ? previewBar.previewPlayer.positionSec : 0)
+                      + " / " + libraryRoot.formatPreviewTime(previewBar.previewPlayer
+                                                               ? previewBar.previewPlayer.durationSec : 0)
                 color: libraryRoot.textPrimary
                 font.pixelSize: window.sp(libraryRoot.touchMode ? 11 : 10)
                 font.family: "monospace"
@@ -1346,40 +2045,46 @@ Rectangle {
         id: aioTile
         required property string tileIcon
         required property string tileLabel
+        property int navIndex: -1
         property int tileBadge: -1
         property bool tileActive: false
+        property bool tileCursor: false
+        property bool compact: true
         property color tileAccent: libraryRoot.accentBlueLt
         signal tapped()
 
+        width: parent ? parent.width : libraryRoot.aioNavTileW
+        height: libraryRoot.aioNavTileH
+        clip: true
         radius: 0
         color: tileMa.pressed ? "#1a2838"
-              : tileMa.containsMouse ? "#141e2a"
+              : tileCursor ? "#1a3048"
               : "#0e141c"
-        border.color: tileActive ? aioTile.tileAccent : "#2a3848"
-        border.width: tileActive ? 2 : 1
+        border.color: tileCursor ? libraryRoot.accentGreen
+                    : tileActive ? aioTile.tileAccent : "#2a3848"
+        border.width: tileCursor ? 2 : 1
 
         Column {
             anchors.centerIn: parent
-            width: parent.width - 6
-            spacing: 4
+            width: parent.width - 4
+            spacing: compact ? 0 : 4
 
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: aioTile.tileIcon
                 color: tileActive ? aioTile.tileAccent : "#7a9ab8"
-                font.pixelSize: window.sp(22)
+                font.pixelSize: window.sp(compact ? 14 : 20)
             }
             Text {
                 width: parent.width
                 text: aioTile.tileLabel
                 color: tileActive ? libraryRoot.textPrimary : libraryRoot.textSecond
-                font.pixelSize: window.sp(8)
+                font.pixelSize: window.sp(compact ? 6 : 7)
                 font.bold: tileActive
                 horizontalAlignment: Text.AlignHCenter
                 elide: Text.ElideRight
-                maximumLineCount: 2
-                wrapMode: Text.Wrap
-                lineHeight: 0.95
+                maximumLineCount: compact ? 1 : 2
+                wrapMode: Text.NoWrap
             }
         }
 
@@ -1387,9 +2092,9 @@ Rectangle {
             visible: aioTile.tileBadge > 0
             anchors.top: parent.top
             anchors.right: parent.right
-            anchors.margins: 3
-            width: Math.max(18, badgeLbl.implicitWidth + 6)
-            height: 14
+            anchors.margins: 2
+            width: Math.max(16, badgeLbl.implicitWidth + 4)
+            height: 12
             radius: 0
             color: "#1a3050"
             border.color: aioTile.tileAccent
@@ -1408,8 +2113,128 @@ Rectangle {
         MouseArea {
             id: tileMa
             anchors.fill: parent
-            hoverEnabled: true
             onClicked: aioTile.tapped()
+        }
+    }
+
+    // ── AIO split-browse picker (artists/albums/keys in library pane) ─────────
+    component AioBrowsePicker: Rectangle {
+        id: browsePicker
+        property string categoryLabel: ""
+        property var entries: []
+        property string focusKey: ""
+
+        color: libraryRoot.bgSidebar
+        clip: true
+
+        Rectangle {
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            height: 2
+            color: libraryRoot.accentGreen
+            visible: libraryRoot.aioCursorPickerActive
+            z: 2
+        }
+
+        Rectangle {
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            width: 1
+            color: libraryRoot.borderMain
+        }
+
+        Text {
+            id: browsePickerHdr
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.margins: 8
+            height: 22
+            text: browsePicker.categoryLabel
+            color: libraryRoot.textSecond
+            font.pixelSize: window.sp(9)
+            font.bold: true
+            font.letterSpacing: 0.8
+            verticalAlignment: Text.AlignVCenter
+        }
+
+        ListView {
+            id: browsePickerList
+            anchors.top: browsePickerHdr.bottom
+            anchors.topMargin: 4
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            clip: true
+            model: browsePicker.entries
+            currentIndex: libraryRoot.aioBrowseFocusIndex
+            highlightRangeMode: ListView.ApplyRange
+            preferredHighlightBegin: 40
+            preferredHighlightEnd: 120
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+            delegate: Rectangle {
+                id: browseRow
+                required property var modelData
+                required property int index
+                readonly property string rowName: modelData.name || modelData.label || ""
+                width: browsePickerList.width
+                height: rowFocused ? 52 : 40
+                color: rowMa.pressed ? libraryRoot.bgRowHover
+                     : rowFocused ? libraryRoot.bgRowActive
+                     : (index % 2 === 0 ? libraryRoot.bgRowEven : libraryRoot.bgRowOdd)
+
+                readonly property bool rowFocused:
+                    (libraryRoot.aioFocusZone === "picker" && index === libraryRoot.aioBrowseFocusIndex)
+                    || (libraryRoot.aioFocusZone !== "picker"
+                        && libraryRoot.aioBrowseEntryKey(modelData) === browsePicker.focusKey)
+
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    width: rowFocused ? 3 : 0
+                    color: libraryRoot.accentBlueLt
+                }
+
+                Column {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: 10
+                    anchors.rightMargin: 6
+                    spacing: rowFocused ? 2 : 0
+
+                    Text {
+                        width: parent.width
+                        text: browseRow.rowName || "?"
+                        color: rowFocused ? libraryRoot.textPrimary : libraryRoot.textSecond
+                        font.pixelSize: window.sp(rowFocused ? 11 : 10)
+                        font.bold: rowFocused
+                        elide: Text.ElideRight
+                        maximumLineCount: rowFocused ? 2 : 1
+                    }
+                    Text {
+                        width: parent.width
+                        visible: modelData.trackCount > 0
+                        text: modelData.trackCount + (modelData.trackCount === 1 ? " track" : " tracks")
+                        color: rowFocused ? libraryRoot.accentBlueLt : libraryRoot.textDim
+                        font.pixelSize: window.sp(8)
+                        elide: Text.ElideRight
+                    }
+                }
+
+                MouseArea {
+                    id: rowMa
+                    anchors.fill: parent
+                    onClicked: {
+                        libraryRoot.aioPreviewBrowseEntryByIndex(index)
+                        libraryRoot.aioFocusZone = "picker"
+                    }
+                }
+            }
         }
     }
 
@@ -1514,6 +2339,7 @@ Rectangle {
 
         readonly property bool isCursorRow: libraryRoot.browserCursorActive
                                            && libraryRoot.browserCursorIndex === rowIndex
+                                           && libraryRoot.aioCursorTracksActive
                                            && (isPlaylistTrack
                                                ? libraryRoot.activeTab === "playlist"
                                                : libraryRoot.activeTab === rowSourceTab)
@@ -2825,176 +3651,105 @@ Rectangle {
                 z: 2
             }
 
-            Flickable {
-                id: aioNavFlick
+            Rectangle {
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.right: parent.right
+                height: 2
+                color: libraryRoot.accentGreen
+                visible: libraryRoot.aioCursorNavActive
+                z: 3
+            }
+
+            // ── Main category menu (always visible) ────────────────────────
+            Column {
                 anchors.fill: parent
-                anchors.margins: 8
-                contentHeight: aioNavColumn.implicitHeight
-                clip: true
-                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                anchors.margins: libraryRoot.aioNavPad
+                spacing: libraryRoot.aioNavGap
 
-                Column {
-                    id: aioNavColumn
-                    width: aioNavFlick.width
-                    spacing: 8
+                readonly property real cellW: width
 
-                    readonly property real aioCell: parent.width
-
-                    AioNavTile {
-                        width: aioNavColumn.aioCell
-                        height: aioNavColumn.aioCell
-                        visible: libraryRoot.aioBrowseScreen !== "home"
-                        tileIcon: "◀"
-                        tileLabel: "BACK"
-                        tileAccent: libraryRoot.accentBlueLt
-                        onTapped: libraryRoot.aioToolbarBack()
-                    }
-
-                    Grid {
-                        id: aioMainGrid
-                        width: parent.width
-                        columns: 1
-                        rowSpacing: 8
-                        columnSpacing: 0
-                        visible: libraryRoot.aioBrowseScreen === "home"
-
-                        readonly property real cellSize: width
-
-                        AioNavTile {
-                            width: aioMainGrid.cellSize; height: aioMainGrid.cellSize
-                            tileIcon: "♫"
-                            tileLabel: "ALL TRACKS"
-                            tileBadge: libraryModel ? libraryModel.count : -1
-                            tileActive: libraryRoot.activeTab === "library"
-                            onTapped: libraryRoot.aioOpenTracks("library", function() {
-                                libraryRoot.librarySubTab = "allSongs"
-                            })
-                        }
-                        AioNavTile {
-                            width: aioMainGrid.cellSize; height: aioMainGrid.cellSize
-                            tileIcon: "★"
-                            tileLabel: "FAVORITES"
-                            tileBadge: libraryRoot.favoriteTracks.length
-                            tileAccent: "#ffb84d"
-                            tileActive: libraryRoot.activeTab === "favorites"
-                            onTapped: libraryRoot.aioOpenTracks("favorites")
-                        }
-                        AioNavTile {
-                            width: aioMainGrid.cellSize; height: aioMainGrid.cellSize
-                            tileIcon: "⏱"
-                            tileLabel: "HISTORY"
-                            tileAccent: libraryRoot.accentBlueLt
-                            tileActive: libraryRoot.activeTab === "history"
-                            onTapped: libraryRoot.aioOpenTracks("history")
-                        }
-                        AioNavTile {
-                            width: aioMainGrid.cellSize; height: aioMainGrid.cellSize
-                            tileIcon: "⊞"
-                            tileLabel: "CRATE"
-                            tileBadge: libraryRoot.prepareCrateTracks.length
-                            tileAccent: libraryRoot.accentGreen
-                            tileActive: libraryRoot.activeTab === "crate"
-                            onTapped: libraryRoot.aioOpenTracks("crate")
-                        }
-                        AioNavTile {
-                            width: aioMainGrid.cellSize; height: aioMainGrid.cellSize
-                            tileIcon: "►"
-                            tileLabel: "QUEUE"
-                            tileBadge: libraryRoot.queueTracks.length
-                            tileActive: libraryRoot.activeTab === "queue"
-                            onTapped: libraryRoot.aioOpenTracks("queue")
-                        }
-                        AioNavTile {
-                            width: aioMainGrid.cellSize; height: aioMainGrid.cellSize
-                            tileIcon: "☰"
-                            tileLabel: "PLAYLISTS"
-                            tileBadge: libraryRoot.allPlaylists.length
-                            tileActive: libraryRoot.aioBrowseScreen === "playlists"
-                                      || libraryRoot.activeTab === "playlist"
-                            onTapped: libraryRoot.aioBrowseScreen = "playlists"
-                        }
-                        AioNavTile {
-                            width: aioMainGrid.cellSize; height: aioMainGrid.cellSize
-                            tileIcon: "◈"
-                            tileLabel: "SMART"
-                            tileBadge: libraryRoot.smartCollections.length
-                            tileActive: libraryRoot.aioBrowseScreen === "smart"
-                                      || libraryRoot.activeTab === "smartcoll"
-                            onTapped: libraryRoot.aioBrowseScreen = "smart"
-                        }
-                        AioNavTile {
-                            width: aioMainGrid.cellSize; height: aioMainGrid.cellSize
-                            tileIcon: "≡"
-                            tileLabel: "FILES"
-                            tileActive: libraryRoot.activeTab === "files"
-                            onTapped: libraryRoot.aioOpenTracks("files")
-                        }
-                        AioNavTile {
-                            width: aioMainGrid.cellSize; height: aioMainGrid.cellSize
-                            tileIcon: "◎"
-                            tileLabel: "STREAM"
-                            tileActive: libraryRoot.activeTab === "streaming"
-                            onTapped: libraryRoot.aioOpenTracks("streaming")
-                        }
-                        AioNavTile {
-                            width: aioMainGrid.cellSize; height: aioMainGrid.cellSize
-                            tileIcon: "⊕"
-                            tileLabel: "USB"
-                            tileActive: libraryRoot.activeTab === "usb"
-                            onTapped: libraryRoot.aioOpenTracks("usb")
-                        }
-                    }
-
-                    Grid {
-                        id: aioPlaylistGrid
-                        width: parent.width
-                        columns: 1
-                        rowSpacing: 8
-                        columnSpacing: 0
-                        visible: libraryRoot.aioBrowseScreen === "playlists"
-
-                        readonly property real cellSize: width
-
-                        Repeater {
-                            model: libraryRoot.allPlaylists
-                            AioNavTile {
-                                required property var modelData
-                                width: aioPlaylistGrid.cellSize
-                                height: aioPlaylistGrid.cellSize
-                                tileIcon: "☰"
-                                tileLabel: modelData.name || "Playlist"
-                                tileBadge: modelData.trackCount > 0 ? modelData.trackCount : -1
-                                tileActive: libraryRoot.activeTab === "playlist"
-                                          && libraryRoot.currentPlaylistId === modelData.id
-                                onTapped: libraryRoot.aioOpenPlaylist(modelData.id, modelData.name)
-                            }
-                        }
-                    }
-
-                    Grid {
-                        id: aioSmartGrid
-                        width: parent.width
-                        columns: 1
-                        rowSpacing: 8
-                        columnSpacing: 0
-                        visible: libraryRoot.aioBrowseScreen === "smart"
-
-                        readonly property real cellSize: width
-
-                        Repeater {
-                            model: libraryRoot.smartCollections
-                            AioNavTile {
-                                required property var modelData
-                                width: aioSmartGrid.cellSize
-                                height: aioSmartGrid.cellSize
-                                tileIcon: "◈"
-                                tileLabel: modelData.name || "Smart"
-                                tileActive: libraryRoot.activeTab === "smartcoll"
-                                          && libraryRoot.currentSmartCollectionId === modelData.id
-                                onTapped: libraryRoot.aioOpenSmartCollection(modelData.id, modelData.name)
-                            }
-                        }
-                    }
+                AioNavTile {
+                    width: parent.cellW
+                    navIndex: 0
+                    tileIcon: "⊙"; tileLabel: "SOURCE"
+                    tileActive: libraryRoot.aioBrowseScreen === "source"
+                    tileCursor: libraryRoot.aioCursorNavActive && libraryRoot.aioNavCursorIndex === 0
+                    onTapped: { libraryRoot.aioNavCursorIndex = 0; libraryRoot.aioEnterBrowse("source") }
+                }
+                AioNavTile {
+                    width: parent.cellW
+                    navIndex: 1
+                    tileIcon: "♪"; tileLabel: "ARTIST"
+                    tileBadge: libraryRoot.aioArtistList.length > 0
+                               ? libraryRoot.aioArtistList.length : -1
+                    tileActive: libraryRoot.aioBrowseScreen === "artist"
+                    tileCursor: libraryRoot.aioCursorNavActive && libraryRoot.aioNavCursorIndex === 1
+                    onTapped: { libraryRoot.aioNavCursorIndex = 1; libraryRoot.aioEnterBrowse("artist") }
+                }
+                AioNavTile {
+                    width: parent.cellW
+                    navIndex: 2
+                    tileIcon: "◻"; tileLabel: "ALBUM"
+                    tileBadge: libraryRoot.aioAlbumList.length > 0
+                               ? libraryRoot.aioAlbumList.length : -1
+                    tileActive: libraryRoot.aioBrowseScreen === "album"
+                    tileCursor: libraryRoot.aioCursorNavActive && libraryRoot.aioNavCursorIndex === 2
+                    onTapped: { libraryRoot.aioNavCursorIndex = 2; libraryRoot.aioEnterBrowse("album") }
+                }
+                AioNavTile {
+                    width: parent.cellW
+                    navIndex: 3
+                    tileIcon: "≡"; tileLabel: "ALL TRACKS"
+                    tileBadge: libraryModel ? libraryModel.count : -1
+                    tileActive: libraryRoot.aioBrowseScreen === "home"
+                              && libraryRoot.activeTab === "library"
+                    tileCursor: libraryRoot.aioCursorNavActive && libraryRoot.aioNavCursorIndex === 3
+                    onTapped: { libraryRoot.aioNavCursorIndex = 3; libraryRoot.aioOpenAllTracks() }
+                }
+                AioNavTile {
+                    width: parent.cellW
+                    navIndex: 4
+                    tileIcon: "♯"; tileLabel: "KEY"
+                    tileBadge: libraryRoot.aioKeyList.length > 0
+                               ? libraryRoot.aioKeyList.length : -1
+                    tileActive: libraryRoot.aioBrowseScreen === "key"
+                    tileCursor: libraryRoot.aioCursorNavActive && libraryRoot.aioNavCursorIndex === 4
+                    onTapped: { libraryRoot.aioNavCursorIndex = 4; libraryRoot.aioEnterBrowse("key") }
+                }
+                AioNavTile {
+                    width: parent.cellW
+                    navIndex: 5
+                    tileIcon: "☰"; tileLabel: "PLAYLIST"
+                    tileBadge: libraryRoot.allPlaylists.length
+                    tileActive: libraryRoot.aioBrowseScreen === "playlist"
+                    tileCursor: libraryRoot.aioCursorNavActive && libraryRoot.aioNavCursorIndex === 5
+                    onTapped: { libraryRoot.aioNavCursorIndex = 5; libraryRoot.aioEnterBrowse("playlist") }
+                }
+                AioNavTile {
+                    width: parent.cellW
+                    navIndex: 6
+                    tileIcon: "⏱"; tileLabel: "HISTORY"
+                    tileActive: libraryRoot.aioBrowseScreen === "history"
+                    tileCursor: libraryRoot.aioCursorNavActive && libraryRoot.aioNavCursorIndex === 6
+                    onTapped: { libraryRoot.aioNavCursorIndex = 6; libraryRoot.aioEnterBrowse("history") }
+                }
+                AioNavTile {
+                    width: parent.cellW
+                    navIndex: 7
+                    tileIcon: "◈"; tileLabel: "MATCHING"
+                    tileAccent: libraryRoot.accentGreen
+                    tileActive: libraryRoot.aioBrowseScreen === "matching"
+                    tileCursor: libraryRoot.aioCursorNavActive && libraryRoot.aioNavCursorIndex === 7
+                    onTapped: { libraryRoot.aioNavCursorIndex = 7; libraryRoot.aioEnterBrowse("matching") }
+                }
+                AioNavTile {
+                    width: parent.cellW
+                    navIndex: 8
+                    tileIcon: "▤"; tileLabel: "FOLDER"
+                    tileActive: libraryRoot.aioBrowseScreen === "folder"
+                    tileCursor: libraryRoot.aioCursorNavActive && libraryRoot.aioNavCursorIndex === 8
+                    onTapped: { libraryRoot.aioNavCursorIndex = 8; libraryRoot.aioEnterBrowse("folder") }
                 }
             }
         }
@@ -3023,6 +3778,34 @@ Rectangle {
                     anchors.leftMargin: libraryRoot.touchMode ? 10 : 14
                     anchors.rightMargin: libraryRoot.touchMode ? 10 : 12
                     spacing: libraryRoot.touchMode ? 10 : 8
+
+                    // ── Browse back (drill-down) ───────────────────────────
+                    Rectangle {
+                        Layout.preferredWidth: libraryRoot.touchMode
+                                               && (libraryRoot.aioBrowseDrilled
+                                                   || libraryRoot.aioFocusZone !== "nav") ? 40 : 0
+                        Layout.preferredHeight: libraryRoot.touchMode ? 40 : 0
+                        Layout.alignment: Qt.AlignVCenter
+                        visible: libraryRoot.touchMode
+                                 && (libraryRoot.aioBrowseDrilled
+                                     || libraryRoot.aioFocusZone !== "nav")
+                        radius: 4
+                        color: aioBackMa.pressed ? "#1a3048" : "#132840"
+                        border.color: "#1e4070"
+                        border.width: 1
+                        Text {
+                            anchors.centerIn: parent
+                            text: "◀"
+                            color: libraryRoot.accentBlueLt
+                            font.pixelSize: window.sp(14)
+                            font.bold: true
+                        }
+                        MouseArea {
+                            id: aioBackMa
+                            anchors.fill: parent
+                            onClicked: libraryRoot.aioBrowseCursorLeft()
+                        }
+                    }
 
                     // ── Tab icon + title ───────────────────────────────────
                     Row {
@@ -3563,7 +4346,8 @@ Rectangle {
                 Rectangle {
                     anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
                     height: 2; color: libraryRoot.accentGreen
-                    visible: libraryRoot.focusedPanel === "tracks"
+                    visible: libraryRoot.aioCursorTracksActive
+                             && libraryRoot.focusedPanel === "tracks"
                     z: 200
                 }
 
@@ -3588,12 +4372,35 @@ Rectangle {
                         }
                     }
 
+                    Row {
+                        anchors.fill: parent
+                        spacing: 0
+
+                        AioBrowsePicker {
+                            id: libBrowsePicker
+                            width: libraryRoot.aioLibSplitBrowse && !libraryRoot.aioBrowseDrilled
+                                   ? Math.round(libraryDbView.width * 0.34) : 0
+                            height: parent.height
+                            visible: width > 0
+                            categoryLabel: libraryRoot.aioBrowsePickerTitle()
+                            entries: libraryRoot.aioBrowsePickerItems()
+                            focusKey: libraryRoot.aioBrowseFocusKey
+                        }
+
+                        Item {
+                            id: libTrackPane
+                            width: parent.width - libBrowsePicker.width
+                            height: parent.height
+
                     // ── Column headers ─────────────────────────────────────
                     Rectangle {
                         id: libHeader
-                        anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
+                        anchors.top: libTrackPane.top
+                        anchors.left: libTrackPane.left
+                        anchors.right: libTrackPane.right
                         height: libraryRoot.viewMode === "normal" ? 0 : libraryRoot.hdrH
                         visible: libraryRoot.viewMode === "compact"
+                                && (!libraryRoot.aioLibSplitBrowse || libraryRoot.aioBrowseDrilled)
                         color: libraryRoot.bgHeader
 
                         Rectangle {
@@ -3612,7 +4419,7 @@ Rectangle {
                             // TITEL — resizable
                             Item {
                                 id: titleHeaderCell
-                                width: libraryRoot.colTitle(libraryDbView.width)
+                                width: libraryRoot.colTitle(libTrackPane.width)
                                 height: parent.height
 
                                 SortHeader { width: parent.width; height: parent.height; field: "title"; label: "TITEL" }
@@ -3641,7 +4448,7 @@ Rectangle {
                                         onPositionChanged: (mouse) => {
                                             if (!pressed) return
                                             var dx = mapToItem(libraryDbView, mouse.x, 0).x - startX
-                                            var fw = libraryRoot.flexWidth(libraryDbView.width)
+                                            var fw = libraryRoot.flexWidth(libTrackPane.width)
                                             if (fw <= 0) return
                                             var newFrac = startFrac + dx / fw
                                             libraryRoot.titleFraction = Math.max(0.2, Math.min(0.8, newFrac))
@@ -3650,7 +4457,7 @@ Rectangle {
                                 }
                             }
 
-                            SortHeader { width: libraryRoot.colArtist(libraryDbView.width); height: parent.height; field: "artist"; label: "KÜNSTLER" }
+                            SortHeader { width: libraryRoot.colArtist(libTrackPane.width); height: parent.height; field: "artist"; label: "KÜNSTLER" }
                             SortHeader { width: libraryRoot.colTime;  height: parent.height; field: "time";    label: "ZEIT";    centerAlign: true }
                             SortHeader { width: libraryRoot.colBpm;   height: parent.height; field: "bpm";     label: "BPM";     centerAlign: true }
                             SortHeader { width: libraryRoot.colKey;   height: parent.height; field: "key";     label: "KEY";     centerAlign: true }
@@ -3661,9 +4468,13 @@ Rectangle {
                     // ── Normal-view sort bar ───────────────────────────────
                     Rectangle {
                         id: libSortBar
-                        anchors.top: libHeader.bottom; anchors.left: parent.left; anchors.right: parent.right
+                        anchors.top: libHeader.bottom
+                        anchors.left: libTrackPane.left
+                        anchors.right: libTrackPane.right
                         height: libraryRoot.viewMode === "normal" ? 30 : 0
                         visible: libraryRoot.viewMode === "normal"
+                                || (libraryRoot.aioLibSplitBrowse && !libraryRoot.aioBrowseDrilled
+                                    && libraryRoot.aioBrowseFocusKey.length > 0)
                         color: libraryRoot.bgHeader
                         clip: true
 
@@ -3718,15 +4529,17 @@ Rectangle {
                     AioLoadBar {
                         id: libAioLoadBar
                         anchors.top: libSortBar.bottom
-                        anchors.left: parent.left
-                        anchors.right: parent.right
+                        anchors.left: libTrackPane.left
+                        anchors.right: libTrackPane.right
                     }
 
                     // ── Track list ─────────────────────────────────────────
                     ListView {
                         id: libTrackList
-                        anchors.top: libAioLoadBar.bottom; anchors.left: parent.left
-                        anchors.right: parent.right; anchors.bottom: parent.bottom
+                        anchors.top: libAioLoadBar.bottom
+                        anchors.left: libTrackPane.left
+                        anchors.right: libTrackPane.right
+                        anchors.bottom: libTrackPane.bottom
                         anchors.bottomMargin: libraryRoot.previewBarReserve
                         clip: true
                         model: libraryModel ? libraryModel : null
@@ -3769,14 +4582,27 @@ Rectangle {
                             visible: libTrackList.count === 0
                             spacing: 10
                             Text { anchors.horizontalCenter: parent.horizontalCenter; text: "♫"; color: "#252525"; font.pixelSize: window.sp(42) }
-                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "Library is empty"; color: "#333333"; font.pixelSize: window.sp(12) }
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
+                                text: libraryRoot.aioLibSplitBrowse && !libraryRoot.aioBrowseDrilled
+                                      && libraryRoot.aioBrowseFocusKey.length === 0
+                                      ? "Artist wählen"
+                                      : (libraryRoot.aioLibSplitBrowse && !libraryRoot.aioBrowseDrilled
+                                         ? "Keine Treffer"
+                                         : "Library is empty")
+                                color: "#333333"; font.pixelSize: window.sp(12)
+                            }
+                            Text {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                visible: !(libraryRoot.aioLibSplitBrowse && !libraryRoot.aioBrowseDrilled
+                                           && libraryRoot.aioBrowseFocusKey.length === 0)
                                 text: "Lade einen Track auf ein Deck, um ihn hinzuzufügen"
                                 color: "#282828"; font.pixelSize: window.sp(10)
                             }
                         }
                     }
+                        } // libTrackPane
+                    } // Row
                 }
 
                 // ════════════════════════════════════════════════
@@ -3788,12 +4614,35 @@ Rectangle {
                     color: libraryRoot.bgBase
                     visible: libraryRoot.activeTab === "playlist"
 
+                    Row {
+                        anchors.fill: parent
+                        spacing: 0
+
+                        AioBrowsePicker {
+                            id: plBrowsePicker
+                            width: libraryRoot.aioPlaylistSplitBrowse && !libraryRoot.aioBrowseDrilled
+                                   ? Math.round(playlistView.width * 0.34) : 0
+                            height: parent.height
+                            visible: width > 0
+                            categoryLabel: libraryRoot.aioBrowsePickerTitle()
+                            entries: libraryRoot.aioBrowsePickerItems()
+                            focusKey: libraryRoot.aioBrowseFocusKey
+                        }
+
+                        Item {
+                            id: plTrackPane
+                            width: parent.width - plBrowsePicker.width
+                            height: parent.height
+
                     // ── Column headers ────────────────────────────────────
                     Rectangle {
                         id: plHeader
-                        anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
+                        anchors.top: plTrackPane.top
+                        anchors.left: plTrackPane.left
+                        anchors.right: plTrackPane.right
                         height: libraryRoot.viewMode === "normal" ? 0 : libraryRoot.hdrH
                         visible: libraryRoot.viewMode === "compact"
+                                && (!libraryRoot.aioPlaylistSplitBrowse || libraryRoot.aioBrowseDrilled)
                         color: libraryRoot.bgHeader
 
                         Rectangle {
@@ -3846,9 +4695,13 @@ Rectangle {
                     // ── Normal-view sort bar ───────────────────────────────
                     Rectangle {
                         id: plSortBar
-                        anchors.top: plHeader.bottom; anchors.left: parent.left; anchors.right: parent.right
+                        anchors.top: plHeader.bottom
+                        anchors.left: plTrackPane.left
+                        anchors.right: plTrackPane.right
                         height: libraryRoot.viewMode === "normal" ? 30 : 0
                         visible: libraryRoot.viewMode === "normal"
+                                || (libraryRoot.aioPlaylistSplitBrowse && !libraryRoot.aioBrowseDrilled
+                                    && libraryRoot.aioBrowseFocusKey.length > 0)
                         color: libraryRoot.bgHeader
                         clip: true
 
@@ -3903,14 +4756,16 @@ Rectangle {
                     AioLoadBar {
                         id: plAioLoadBar
                         anchors.top: plSortBar.bottom
-                        anchors.left: parent.left
-                        anchors.right: parent.right
+                        anchors.left: plTrackPane.left
+                        anchors.right: plTrackPane.right
                     }
 
                     ListView {
                         id: plTrackList
-                        anchors.top: plAioLoadBar.bottom; anchors.left: parent.left
-                        anchors.right: parent.right; anchors.bottom: parent.bottom
+                        anchors.top: plAioLoadBar.bottom
+                        anchors.left: plTrackPane.left
+                        anchors.right: plTrackPane.right
+                        anchors.bottom: plTrackPane.bottom
                         anchors.bottomMargin: libraryRoot.previewBarReserve
                         clip: true
                         model: libraryRoot.sortedPlaylistTracks
@@ -3956,7 +4811,11 @@ Rectangle {
                             visible: plTrackList.count === 0
                             spacing: 10
                             Text { anchors.horizontalCenter: parent.horizontalCenter; text: "☰"; color: "#252525"; font.pixelSize: window.sp(42) }
-                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "Playlist ist leer"; color: "#333333"; font.pixelSize: window.sp(12) }
+                            Text { anchors.horizontalCenter: parent.horizontalCenter
+                                text: libraryRoot.aioPlaylistSplitBrowse && libraryRoot.currentPlaylistId === ""
+                                      ? "Links Playlist wählen"
+                                      : "Playlist ist leer"
+                                color: "#333333"; font.pixelSize: window.sp(12) }
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 text: 'Rechtsklick auf einen Track → "Zu Playlist hinzufügen"'
@@ -3964,6 +4823,8 @@ Rectangle {
                             }
                         }
                     }
+                        } // plTrackPane
+                    } // Row
                 }
 
                 // ════════════════════════════════════════════════

@@ -75,6 +75,7 @@ private:
     mutable std::atomic<double> m_lastCenterForBeats{0.0};
     mutable std::atomic<double> m_lastBeatPpp{1.5};
     mutable std::atomic<double> m_lastRenderedWidth{100.0};
+    mutable std::atomic<double> m_lastVisualSnapStep{0.0};
 
     // ── Texture-based overlay (beat labels + cue badges) ──────────────────────
     // All created and destroyed on the render thread.

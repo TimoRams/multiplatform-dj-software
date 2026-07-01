@@ -187,6 +187,12 @@ public:
     // Move a playlist to a new parent (empty string = top level).
     Q_INVOKABLE bool setPlaylistParent(const QString& playlistId, const QString& newParentId);
 
+    // Browse helpers for AIO library navigation ({name, trackCount} or {path, label, trackCount}).
+    Q_INVOKABLE QVariantList getDistinctArtists() const;
+    Q_INVOKABLE QVariantList getDistinctAlbums() const;
+    Q_INVOKABLE QVariantList getDistinctKeys() const;
+    Q_INVOKABLE QVariantList getLibrarySourceRoots() const;
+
     // ── Generic settings (stored in Meta table) ────────────────────────────
     Q_INVOKABLE QString getSetting(const QString& key, const QString& defaultValue = {}) const;
     Q_INVOKABLE bool    setSetting(const QString& key, const QString& value);

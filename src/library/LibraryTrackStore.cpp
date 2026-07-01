@@ -6,6 +6,7 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -681,5 +682,120 @@ QVariantList LibraryDatabase::getPlaylistAnalysisItems(const QString& playlistId
         result.push_back(m);
     }
 
+    return result;
+}
+
+QVariantList LibraryDatabase::getDistinctArtists() const
+{
+    QVariantList result;
+    if (!m_db.isOpen())
+        return result;
+
+    QSqlQuery q(m_db);
+    if (!q.exec(
+            "SELECT COALESCE(NULLIF(TRIM(t.artist), ''), '(Unknown)') AS name, COUNT(*) AS cnt"
+            " FROM Tracks t JOIN Locations l ON t.id = l.track_id"
+            " GROUP BY LOWER(name)"
+            " ORDER BY LOWER(name) COLLATE NOCASE ASC")) {
+        qWarning() << "[LibraryDatabase] getDistinctArtists:" << q.lastError().text();
+        return result;
+    }
+
+    while (q.next()) {
+        QVariantMap m;
+        m.insert("name", q.value(0).toString());
+        m.insert("trackCount", q.value(1).toInt());
+        result.push_back(m);
+    }
+    return result;
+}
+
+QVariantList LibraryDatabase::getDistinctAlbums() const
+{
+    QVariantList result;
+    if (!m_db.isOpen())
+        return result;
+
+    QSqlQuery q(m_db);
+    if (!q.exec(
+            "SELECT COALESCE(NULLIF(TRIM(t.album), ''), '(Unknown)') AS name,"
+            "       COALESCE(NULLIF(TRIM(t.artist), ''), '') AS artist,"
+            "       COUNT(*) AS cnt"
+            " FROM Tracks t JOIN Locations l ON t.id = l.track_id"
+            " GROUP BY LOWER(name), LOWER(artist)"
+            " ORDER BY LOWER(name) COLLATE NOCASE ASC")) {
+        qWarning() << "[LibraryDatabase] getDistinctAlbums:" << q.lastError().text();
+        return result;
+    }
+
+    while (q.next()) {
+        QVariantMap m;
+        m.insert("name", q.value(0).toString());
+        m.insert("artist", q.value(1).toString());
+        m.insert("trackCount", q.value(2).toInt());
+        result.push_back(m);
+    }
+    return result;
+}
+
+QVariantList LibraryDatabase::getDistinctKeys() const
+{
+    QVariantList result;
+    if (!m_db.isOpen())
+        return result;
+
+    QSqlQuery q(m_db);
+    if (!q.exec(
+            "SELECT COALESCE(NULLIF(TRIM(t.key), ''), '?') AS name, COUNT(*) AS cnt"
+            " FROM Tracks t JOIN Locations l ON t.id = l.track_id"
+            " WHERE t.key IS NOT NULL AND TRIM(t.key) != ''"
+            " GROUP BY LOWER(name)"
+            " ORDER BY name COLLATE NOCASE ASC")) {
+        qWarning() << "[LibraryDatabase] getDistinctKeys:" << q.lastError().text();
+        return result;
+    }
+
+    while (q.next()) {
+        QVariantMap m;
+        m.insert("name", q.value(0).toString());
+        m.insert("trackCount", q.value(1).toInt());
+        result.push_back(m);
+    }
+    return result;
+}
+
+QVariantList LibraryDatabase::getLibrarySourceRoots() const
+{
+    QVariantList result;
+    if (!m_db.isOpen())
+        return result;
+
+    QSqlQuery q(m_db);
+    if (!q.exec("SELECT l.file_path FROM Locations l")) {
+        qWarning() << "[LibraryDatabase] getLibrarySourceRoots:" << q.lastError().text();
+        return result;
+    }
+
+    QHash<QString, int> counts;
+    while (q.next()) {
+        const QFileInfo fi(q.value(0).toString());
+        const QString dir = fi.absolutePath();
+        if (!dir.isEmpty())
+            counts[dir]++;
+    }
+
+    QStringList dirs = counts.keys();
+    std::ranges::sort(dirs, [](const QString& a, const QString& b) {
+        return a.compare(b, Qt::CaseInsensitive) < 0;
+    });
+
+    for (const QString& dir : dirs) {
+        const QFileInfo fi(dir);
+        QVariantMap m;
+        m.insert("path", dir);
+        m.insert("label", fi.fileName().isEmpty() ? dir : fi.fileName());
+        m.insert("trackCount", counts.value(dir));
+        result.push_back(m);
+    }
     return result;
 }

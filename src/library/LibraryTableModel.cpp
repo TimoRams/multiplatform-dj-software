@@ -3,9 +3,10 @@
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QDebug>
-#include <QElapsedTimer>
 
 namespace {
+
+constexpr QChar kBrowseNoMatchSentinel{0};
 
 bool sameIdentityOrder(const QVector<LibraryRow>& a, const QVector<LibraryRow>& b)
 {
@@ -222,6 +223,46 @@ void LibraryTableModel::setFilterKey(const QString& v)
 {
     if (m_filterKey == v) return;
     m_filterKey = v;
+    m_filterKeys.clear();
+    emit filtersChanged();
+    refresh();
+}
+
+void LibraryTableModel::setFilterArtist(const QString& v)
+{
+    if (m_filterArtist == v) return;
+    m_filterArtist = v;
+    emit filtersChanged();
+    refresh();
+}
+
+void LibraryTableModel::setFilterAlbum(const QString& v)
+{
+    if (m_filterAlbum == v) return;
+    m_filterAlbum = v;
+    emit filtersChanged();
+    refresh();
+}
+
+void LibraryTableModel::setFilterSourcePath(const QString& v)
+{
+    if (m_filterSourcePath == v) return;
+    m_filterSourcePath = v;
+    emit filtersChanged();
+    refresh();
+}
+
+void LibraryTableModel::setFilterKeys(const QStringList& keys)
+{
+    QStringList normalized;
+    for (const QString& k : keys) {
+        const QString t = k.trimmed();
+        if (!t.isEmpty())
+            normalized.append(t);
+    }
+    if (m_filterKeys == normalized) return;
+    m_filterKeys = normalized;
+    m_filterKey.clear();
     emit filtersChanged();
     refresh();
 }
@@ -254,13 +295,18 @@ void LibraryTableModel::clearFilters()
 {
     bool changed = !m_filterText.isEmpty()
         || m_filterBpmMin != 0.0 || m_filterBpmMax != 0.0
-        || !m_filterKey.isEmpty() || !m_filterGenre.isEmpty()
+        || !m_filterKey.isEmpty() || !m_filterArtist.isEmpty() || !m_filterAlbum.isEmpty()
+        || !m_filterSourcePath.isEmpty() || !m_filterKeys.isEmpty() || !m_filterGenre.isEmpty()
         || m_filterRatingMin != 0 || m_filterEnergyMin != 0;
 
     m_filterText      = {};
     m_filterBpmMin    = 0.0;
     m_filterBpmMax    = 0.0;
     m_filterKey       = {};
+    m_filterArtist    = {};
+    m_filterAlbum     = {};
+    m_filterSourcePath = {};
+    m_filterKeys      = {};
     m_filterGenre     = {};
     m_filterRatingMin = 0;
     m_filterEnergyMin = 0;
@@ -272,11 +318,93 @@ void LibraryTableModel::clearFilters()
     }
 }
 
+void LibraryTableModel::clearAioBrowseFilterFields()
+{
+    m_filterBpmMin    = 0.0;
+    m_filterBpmMax    = 0.0;
+    m_filterKey       = {};
+    m_filterArtist    = {};
+    m_filterAlbum     = {};
+    m_filterSourcePath = {};
+    m_filterKeys      = {};
+    m_filterGenre     = {};
+    m_filterRatingMin = 0;
+    m_filterEnergyMin = 0;
+}
+
+bool LibraryTableModel::aioBrowseFiltersEqual(const QString& field, const QString& value,
+                                              const QStringList& keys) const
+{
+    if (field == QStringLiteral("artist"))
+        return m_filterArtist == value
+            && m_filterAlbum.isEmpty() && m_filterKey.isEmpty()
+            && m_filterSourcePath.isEmpty() && m_filterKeys.isEmpty()
+            && m_filterBpmMin == 0.0 && m_filterBpmMax == 0.0
+            && m_filterGenre.isEmpty() && m_filterRatingMin == 0 && m_filterEnergyMin == 0;
+    if (field == QStringLiteral("album"))
+        return m_filterAlbum == value
+            && m_filterArtist.isEmpty() && m_filterKey.isEmpty()
+            && m_filterSourcePath.isEmpty() && m_filterKeys.isEmpty()
+            && m_filterBpmMin == 0.0 && m_filterBpmMax == 0.0
+            && m_filterGenre.isEmpty() && m_filterRatingMin == 0 && m_filterEnergyMin == 0;
+    if (field == QStringLiteral("key"))
+        return m_filterKey == value
+            && m_filterArtist.isEmpty() && m_filterAlbum.isEmpty()
+            && m_filterSourcePath.isEmpty() && m_filterKeys.isEmpty()
+            && m_filterBpmMin == 0.0 && m_filterBpmMax == 0.0
+            && m_filterGenre.isEmpty() && m_filterRatingMin == 0 && m_filterEnergyMin == 0;
+    if (field == QStringLiteral("source"))
+        return m_filterSourcePath == value
+            && m_filterArtist.isEmpty() && m_filterAlbum.isEmpty()
+            && m_filterKey.isEmpty() && m_filterKeys.isEmpty()
+            && m_filterBpmMin == 0.0 && m_filterBpmMax == 0.0
+            && m_filterGenre.isEmpty() && m_filterRatingMin == 0 && m_filterEnergyMin == 0;
+    if (field == QStringLiteral("keys")) {
+        QStringList normalized;
+        for (const QString& k : keys) {
+            const QString t = k.trimmed();
+            if (!t.isEmpty())
+                normalized.append(t);
+        }
+        return m_filterKeys == normalized
+            && m_filterArtist.isEmpty() && m_filterAlbum.isEmpty()
+            && m_filterKey.isEmpty() && m_filterSourcePath.isEmpty()
+            && m_filterBpmMin == 0.0 && m_filterBpmMax == 0.0
+            && m_filterGenre.isEmpty() && m_filterRatingMin == 0 && m_filterEnergyMin == 0;
+    }
+    return false;
+}
+
+void LibraryTableModel::applyAioBrowseFilter(const QString& field, const QString& value,
+                                             const QStringList& keys)
+{
+    if (aioBrowseFiltersEqual(field, value, keys))
+        return;
+
+    clearAioBrowseFilterFields();
+
+    if (field == QStringLiteral("artist"))
+        m_filterArtist = value;
+    else if (field == QStringLiteral("album"))
+        m_filterAlbum = value;
+    else if (field == QStringLiteral("key"))
+        m_filterKey = value;
+    else if (field == QStringLiteral("source"))
+        m_filterSourcePath = value;
+    else if (field == QStringLiteral("keys")) {
+        for (const QString& k : keys) {
+            const QString t = k.trimmed();
+            if (!t.isEmpty())
+                m_filterKeys.append(t);
+        }
+    }
+
+    emit filtersChanged();
+    refresh();
+}
+
 void LibraryTableModel::refresh()
 {
-    QElapsedTimer timer;
-    timer.start();
-
     auto db = QSqlDatabase::database(m_connectionName, false);
     if (!db.isOpen()) {
         qWarning() << "[LibraryTableModel] DB not open for refresh";
@@ -311,8 +439,46 @@ void LibraryTableModel::refresh()
         bindings[":bpmMax"] = m_filterBpmMax;
     }
     if (!m_filterKey.isEmpty()) {
-        conditions << "LOWER(COALESCE(t.key,'')) = LOWER(:fkey)";
-        bindings[":fkey"] = m_filterKey;
+        if (m_filterKey == QStringLiteral("(Unknown)") || m_filterKey == QStringLiteral("?")) {
+            conditions << "(t.key IS NULL OR TRIM(t.key) = '')";
+        } else {
+            conditions << "LOWER(TRIM(COALESCE(t.key,''))) = LOWER(TRIM(:fkey))";
+            bindings[":fkey"] = m_filterKey;
+        }
+    }
+    if (!m_filterArtist.isEmpty()) {
+        if (m_filterArtist == QString(kBrowseNoMatchSentinel)) {
+            conditions << "1=0";
+        } else if (m_filterArtist == QStringLiteral("(Unknown)")) {
+            conditions << "(t.artist IS NULL OR TRIM(t.artist) = '')";
+        } else {
+            conditions << "LOWER(TRIM(COALESCE(t.artist,''))) = LOWER(TRIM(:fartist))";
+            bindings[":fartist"] = m_filterArtist;
+        }
+    }
+    if (!m_filterAlbum.isEmpty()) {
+        if (m_filterAlbum == QString(kBrowseNoMatchSentinel)) {
+            conditions << "1=0";
+        } else if (m_filterAlbum == QStringLiteral("(Unknown)")) {
+            conditions << "(t.album IS NULL OR TRIM(t.album) = '')";
+        } else {
+            conditions << "LOWER(TRIM(COALESCE(t.album,''))) = LOWER(TRIM(:falbum))";
+            bindings[":falbum"] = m_filterAlbum;
+        }
+    }
+    if (!m_filterSourcePath.isEmpty()) {
+        conditions << "LOWER(l.file_path) LIKE LOWER(:fsource)";
+        bindings[":fsource"] = m_filterSourcePath + "%";
+    }
+    if (!m_filterKeys.isEmpty()) {
+        QStringList placeholders;
+        for (int i = 0; i < m_filterKeys.size(); ++i) {
+            const QString ph = QStringLiteral(":fkeys%1").arg(i);
+            placeholders << ph;
+            bindings[ph] = m_filterKeys.at(i);
+        }
+        conditions << QStringLiteral("LOWER(COALESCE(t.key,'')) IN (%1)")
+                            .arg(placeholders.join(", "));
     }
     if (!m_filterGenre.isEmpty()) {
         conditions << "LOWER(COALESCE(t.genre,'')) LIKE LOWER(:fgenre)";
@@ -394,8 +560,6 @@ void LibraryTableModel::refresh()
         endResetModel();
         emit countChanged();
     }
-
-    qDebug() << "[LibraryTableModel] refresh() loaded" << m_rows.size() << "rows in" << timer.elapsed() << "ms";
 }
 
 QString LibraryTableModel::filePathAtRow(int row) const
