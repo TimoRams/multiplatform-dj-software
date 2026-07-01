@@ -3,12 +3,14 @@
 *Last updated: 2026-06-28*
 
 ## Current task
-**AIO library touch UI (CDJ/XDJ-style)**
-- **Category hub** — permanent **left nav panel** (~112px) with **1-column** square `AioNavTile` grid
-  (`radius: 0`, width = height); track list always on the right. Playlists/Smart switch left panel
-  to sub-grid + square BACK tile.
-- **Track rows** — touch quick actions (`AioQuickBtn`: PRE + LD A/B/C/D); BPM/key inline; row height 80px.
-- **Toolbar** — taller search/analyse; BACK tile; titles via `aioScreenTitle()`.
+**Waveform / beat-grid alignment (sync)**
+- Root cause: waveform columns snap to a coarse visual grid when zoomed out, but beat/loop/cue
+  markers used continuous point positions → markers drift from peaks; worse across long tracks
+  and when comparing synced decks.
+- Fix (phase 1): shared `snapPointPos` for waveform + all overlays (beat grid, loops, cues).
+- **Jiggle fix:** scroll anchor reverted to pixel-floor only — 1/16-beat scroll snap fought
+  sync PI phase nudges (`round` ↔ `microOpposite` oscillation). Overlays still aligned.
+- Still open: elastic grid analysis drift on very long tracks; master-relative multi-deck ruler.
 
 ### AIO sprint backlog (priority order)
 

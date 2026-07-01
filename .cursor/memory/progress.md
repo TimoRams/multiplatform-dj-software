@@ -1,6 +1,8 @@
 # Progress
 
 ## Done (recent)
+- [x] **AIO CDJ drill-down browse** — split picker + hover preview + tap full-width track list;
+  `aioPreviewBrowseEntry` / `aioDrillBrowseEntry` / `aioBrowseUnDrill`; back button in toolbar.
 - [x] **AIO library CDJ-style hub** — tile grid navigation, playlist/smart pickers, touch quick buttons on rows.
 - [x] **AIO-first strategy** — sprint backlog in `activeContext.md`; shared-first rule in `.cursorrules` /
   `techContext.md`; `scripts/desktop-regression-checklist.sh`; AIO profile flags in `main.qml`.
