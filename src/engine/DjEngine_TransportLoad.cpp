@@ -63,6 +63,7 @@ void DjEngine::loadTrack(const QString& rawPath)
         m_analyzer->stopAnalysis();
 
     resetTrackLoadState();
+    m_trackFilePath.clear();
     m_trackTitle.clear();   m_trackArtist.clear();  m_trackAlbum.clear();
     m_trackGenre.clear();   m_trackComment.clear();
     m_trackKey.clear();     m_trackDuration.clear(); m_trackDurationSec = 0.0;

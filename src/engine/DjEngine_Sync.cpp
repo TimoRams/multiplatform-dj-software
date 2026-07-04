@@ -6,10 +6,20 @@ std::mutex DjEngine::s_syncMutex;
 std::vector<DjEngine*> DjEngine::s_syncDecks;
 std::vector<DjEngine*> DjEngine::s_syncEnableOrder;
 DjEngine* DjEngine::s_syncMasterDeck = nullptr;
+std::atomic<bool> DjEngine::s_tightDoubleSyncEnabled { false };
 
 namespace {
 
 constexpr int kBeatsPerBar = 4;
+
+[[nodiscard]] QString normalizeTrackPath(const QString& path)
+{
+    if (path.isEmpty())
+        return {};
+    const QFileInfo fi(path);
+    const QString canonical = fi.canonicalFilePath();
+    return canonical.isEmpty() ? fi.absoluteFilePath() : canonical;
+}
 
 [[nodiscard]] double wrapUnitPhase(double diff) noexcept
 {
@@ -19,6 +29,63 @@ constexpr int kBeatsPerBar = 4;
 }
 
 } // namespace
+
+void DjEngine::setTightDoubleSyncEnabled(bool enabled)
+{
+    s_tightDoubleSyncEnabled.store(enabled, std::memory_order_relaxed);
+}
+
+bool DjEngine::tightDoubleSyncEnabled()
+{
+    return s_tightDoubleSyncEnabled.load(std::memory_order_relaxed);
+}
+
+bool DjEngine::sameTrackFileAs(const DjEngine* other) const
+{
+    if (!other || m_trackFilePath.isEmpty() || other->m_trackFilePath.isEmpty())
+        return false;
+    return normalizeTrackPath(m_trackFilePath) == normalizeTrackPath(other->m_trackFilePath);
+}
+
+double DjEngine::keylockLatencySeconds() const
+{
+    if (!m_keylock || !timeStretchSource)
+        return 0.0;
+    const double sr = m_loadedTrackSampleRate > 0.0 ? m_loadedTrackSampleRate : 44100.0;
+    return static_cast<double>(timeStretchSource->getLatencySamples()) / sr;
+}
+
+void DjEngine::updateTightDoubleAlignment()
+{
+    if (!s_tightDoubleSyncEnabled.load(std::memory_order_relaxed))
+        return;
+    if (!m_syncEnabled || m_isSyncMaster || !isPlaying() || !m_trackData)
+        return;
+    if (m_scratch.scrubbing() || m_scratch.releaseGlide())
+        return;
+
+    DjEngine* master = currentSyncMaster();
+    if (!master || master == this || !master->isPlaying() || !master->m_trackData)
+        return;
+    if (!sameTrackFileAs(master))
+        return;
+
+    double delta = master->getPosition() - getPosition();
+    delta -= keylockLatencySeconds() - master->keylockLatencySeconds();
+
+    constexpr double kAlignThresholdSec = 0.0005;
+    constexpr double kMaxSeekSec        = 0.020;
+    if (std::abs(delta) < kAlignThresholdSec)
+        return;
+
+    if (m_tightDoubleAlignClock.isValid() && m_tightDoubleAlignClock.elapsed() < 100)
+        return;
+    m_tightDoubleAlignClock.restart();
+
+    applySyncSeekOffset(std::clamp(delta, -kMaxSeekSec, kMaxSeekSec));
+    m_phaseIntegral = 0.0;
+    m_phaseClock.invalidate();
+}
 
 static double nearestDownbeatAnchor(const std::vector<TrackData::BeatMarker>& grid,
                                     double currentSec)
@@ -302,10 +369,23 @@ void DjEngine::snapPhaseToMaster(DjEngine* master)
     // and wrapped to ±0.5 bar (±2 beats), so the largest arrange jump is 2 beats.
     const double diff = wrapUnitPhase(master->getBarPhase() - getBarPhase());
 
-    if (std::abs(diff) < 0.002)
+    if (std::abs(diff) < 0.002) {
+        if (s_tightDoubleSyncEnabled.load(std::memory_order_relaxed) && sameTrackFileAs(master)) {
+            double sampleDelta = master->getPosition() - getPosition();
+            sampleDelta -= keylockLatencySeconds() - master->keylockLatencySeconds();
+            if (std::abs(sampleDelta) >= 0.0005)
+                applySyncSeekOffset(std::clamp(sampleDelta, -0.020, 0.020));
+        }
         return;
+    }
 
     applySyncSeekOffset(diff * 4.0 * beatIntervalAt(getPosition()).lengthSec);
+    if (s_tightDoubleSyncEnabled.load(std::memory_order_relaxed) && sameTrackFileAs(master)) {
+        double sampleDelta = master->getPosition() - getPosition();
+        sampleDelta -= keylockLatencySeconds() - master->keylockLatencySeconds();
+        if (std::abs(sampleDelta) >= 0.0005)
+            applySyncSeekOffset(std::clamp(sampleDelta, -0.020, 0.020));
+    }
     m_phaseNudge    = 0.0;
     m_phaseIntegral = 0.0;
     m_phaseClock.invalidate();

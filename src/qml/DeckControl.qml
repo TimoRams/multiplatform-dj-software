@@ -24,6 +24,23 @@ Item {
     property string _currentBpm:    ""
     readonly property bool linkAvailable: (typeof linkManager !== "undefined" && linkManager !== null && linkManager.enabled)
     readonly property bool linkMode: (typeof window !== "undefined" && window !== null && window.linkedDeckName === deck.deckName)
+    readonly property bool sameTrackDoubleWarning: {
+        if (!deck.engine || !deck.engine.hasTrack || !deck.engine.isPlaying || !deck.engine.trackFilePath)
+            return false
+        const path = deck.engine.trackFilePath
+        const decks = []
+        if (typeof deckA !== "undefined" && deckA) decks.push(deckA)
+        if (typeof deckB !== "undefined" && deckB) decks.push(deckB)
+        if (typeof deckC !== "undefined" && deckC) decks.push(deckC)
+        if (typeof deckD !== "undefined" && deckD) decks.push(deckD)
+        let count = 0
+        for (let i = 0; i < decks.length; ++i) {
+            const d = decks[i]
+            if (d.hasTrack && d.isPlaying && d.trackFilePath === path)
+                count++
+        }
+        return count >= 2
+    }
     readonly property int headerCellHeight: 20
     property double _linkSuppressPublishUntilMs: 0
     property double _linkFollowBlockedUntilMs: 0
@@ -823,8 +840,6 @@ Item {
                             Layout.minimumWidth: deck.wBtnLg
                             Layout.maximumWidth: deck.wBtnLg
                             fbActive: deck.engine ? deck.engine.syncEnabled : false
-                            // Master deck is highlighted gold so it's obvious which deck
-                            // is the tempo/beat reference; plain followers stay green.
                             fbAccent: isMaster ? "#ffb000" : "#3acc3a"
                             fbActiveText: isMaster ? "#ffb000" : "#3acc3a"
                             onClicked: {
@@ -833,6 +848,13 @@ Item {
                                 else deck.engine.setSyncEnabled(true)
                             }
                             onRightClicked: { if (deck.engine) deck.engine.setSyncEnabled(false) }
+
+                            HoverHandler { id: syncTipHover }
+                            Controls.ToolTip {
+                                visible: deck.sameTrackDoubleWarning && syncTipHover.hovered
+                                delay: 400
+                                text: "Same file on multiple decks can sound thin (comb filtering). Nudge phase, use EQ, or polarity (−) on one channel."
+                            }
                         }
                         FlatBtn {
                             btnText: "LINK"

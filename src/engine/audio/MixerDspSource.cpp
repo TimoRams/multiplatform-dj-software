@@ -241,8 +241,6 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
         juce::dsp::ProcessContextReplacing<float> context(slicedBlock);
 
         // Apply trim pre-EQ/pre-fader with per-sample smoothing.
-        // Reading the atomic each block and setting a target lets the SmoothedValue
-        // ramp across the block — no step changes, no clicks.
         m_trimSmooth.setTargetValue(trimVal.load(std::memory_order_relaxed));
         if (m_trimSmooth.isSmoothing() || std::abs(m_trimSmooth.getTargetValue() - 1.0f) > 0.001f) {
             const size_t nc = slicedBlock.getNumChannels();
@@ -251,6 +249,16 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
                 const float g = m_trimSmooth.getNextValue();
                 for (size_t ch = 0; ch < nc; ++ch)
                     slicedBlock.getChannelPointer(ch)[i] *= g;
+            }
+        }
+
+        if (m_polarityInverted.load(std::memory_order_relaxed)) {
+            const size_t nc = slicedBlock.getNumChannels();
+            const int    ns = static_cast<int>(slicedBlock.getNumSamples());
+            for (size_t ch = 0; ch < nc; ++ch) {
+                float* w = slicedBlock.getChannelPointer(ch);
+                for (int i = 0; i < ns; ++i)
+                    w[i] = -w[i];
             }
         }
 
@@ -495,6 +503,7 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
 
 void MixerDspSource::setTrim(float val) { trimVal = val; }
 void MixerDspSource::setFader(float val) { faderVal = val; }
+void MixerDspSource::setPolarityInverted(bool inverted) { m_polarityInverted.store(inverted, std::memory_order_relaxed); }
 
 void MixerDspSource::setStopEffectWanted(std::atomic<bool>& flag, bool active)
 {

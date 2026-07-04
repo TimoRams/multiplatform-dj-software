@@ -69,6 +69,7 @@ Item {
         { label: "Audio Setup",     icon: "♪" },
         { label: "MIDI Controller", icon: "⎘" },
         { label: "Library",         icon: "☰" },
+        { label: "DJ / Sync",       icon: "⟳" },
         { label: "Legal",           icon: "§" },
     ]
 
@@ -1549,7 +1550,75 @@ Item {
                 }
             }
 
-            // ── Page 3: Legal ─────────────────────────────────────────────
+            // ── Page 3: DJ / Sync ─────────────────────────────────────────
+            Item {
+                ScrollView {
+                    anchors.fill: parent
+                    anchors.margins: 30
+                    clip: true
+
+                    ColumnLayout {
+                        width: parent.width
+                        spacing: 16
+
+                        Text {
+                            text: "DJ / Sync"
+                            color: "#f0f0f0"
+                            font.pixelSize: 18
+                            font.bold: true
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 1
+                            color: "#2a2a2a"
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            color: "#cfcfcf"
+                            font.pixelSize: 12
+                            text: "When the same file plays on two synced decks, waveforms may align on the beat grid but not sample-for-sample. Summing them in the mixer can cause comb filtering (thin/hollow bass). Nudge one deck, use EQ, or polarity invert (−) on one channel."
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            Text {
+                                text: "Tight Double (same-file sample align)"
+                                color: "#ddd"
+                                font.pixelSize: 12
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Switch {
+                                id: tightDoubleSwitch
+                                checked: typeof settingsManager !== "undefined"
+                                         && settingsManager
+                                         ? settingsManager.tightDoubleSync
+                                         : false
+                                onToggled: {
+                                    if (typeof settingsManager !== "undefined" && settingsManager)
+                                        settingsManager.tightDoubleSync = checked
+                                }
+                            }
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            color: "#888"
+                            font.pixelSize: 11
+                            text: "Optional: when SYNC is on and two decks share the same file, the follower trims transport position toward the master (including keylock latency). Off by default — normal beat/bar sync is unchanged."
+                        }
+                    }
+                }
+            }
+
+            // ── Page 4: Legal ─────────────────────────────────────────────
             Item {
                 ColumnLayout {
                     anchors.top: parent.top

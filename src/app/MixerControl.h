@@ -18,6 +18,7 @@ public:
     Q_INVOKABLE void setEqMid(const QString& channelId, double value);
     Q_INVOKABLE void setEqLow(const QString& channelId, double value);
     Q_INVOKABLE void setFilter(const QString& channelId, double value);
+    Q_INVOKABLE void setPolarityInverted(const QString& channelId, bool inverted);
     Q_INVOKABLE void toggleCue(const QString& channelId);
     Q_INVOKABLE void setChannelFader(const QString& channelId, double level);
     Q_INVOKABLE void setCrossfaderPosition(float cfPos);
@@ -44,6 +45,7 @@ private:
         double eqMid = 0.0;
         double eqLow = 0.0;
         double filter = 0.0;
+        bool polarityInverted = false;
     };
 
     [[nodiscard]] DjEngine* deckForChannelId(const QString& channelId) const;

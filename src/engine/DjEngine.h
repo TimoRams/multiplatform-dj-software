@@ -66,6 +66,7 @@ class DjEngine : public QObject
     Q_PROPERTY(QString trackDuration READ trackDuration NOTIFY trackMetadataChanged)
     Q_PROPERTY(double trackDurationSec READ trackDurationSec NOTIFY trackMetadataChanged)
     Q_PROPERTY(bool    hasTrack     READ hasTrack     NOTIFY trackMetadataChanged)
+    Q_PROPERTY(QString trackFilePath READ trackFilePath NOTIFY trackMetadataChanged)
     Q_PROPERTY(QString coverArtUrl  READ coverArtUrl  NOTIFY trackMetadataChanged)
     Q_PROPERTY(bool    hasCoverArt  READ hasCoverArt  NOTIFY trackMetadataChanged)
     Q_PROPERTY(QVariantList currentSegments READ currentSegments NOTIFY segmentsChanged)
@@ -81,6 +82,7 @@ class DjEngine : public QObject
     Q_PROPERTY(double eqMid READ eqMid WRITE setEqMid NOTIFY eqMidChanged)
     Q_PROPERTY(double eqLow READ eqLow WRITE setEqLow NOTIFY eqLowChanged)
     Q_PROPERTY(double filter READ filter WRITE setFilter NOTIFY filterChanged)
+    Q_PROPERTY(bool polarityInverted READ polarityInverted WRITE setPolarityInverted NOTIFY polarityInvertedChanged)
     Q_PROPERTY(bool cueEnabled READ cueEnabled WRITE setCueEnabled NOTIFY cueEnabledChanged)
     Q_PROPERTY(bool masterCueEnabled READ masterCueEnabled WRITE setMasterCueEnabled NOTIFY masterCueEnabledChanged)
     Q_PROPERTY(double headphoneMix READ headphoneMix WRITE setHeadphoneMix NOTIFY headphoneMixChanged)
@@ -111,6 +113,8 @@ public:
     static constexpr double SCRATCH_PRE_ROLL_SECONDS = PRE_ROLL_SECONDS * 4.0;
     static void shutdownSharedAudioDeviceManager();
     static juce::AudioDeviceManager& getSharedAudioDeviceManager();
+    static void setTightDoubleSyncEnabled(bool enabled);
+    [[nodiscard]] static bool tightDoubleSyncEnabled();
 
     /** Stop Qt timers and waveform analysis before QML / MIDI teardown. */
     void prepareForShutdown();
@@ -241,6 +245,9 @@ public:
     [[nodiscard]] QString trackDuration() const { return m_trackDuration; }
     [[nodiscard]] double  trackDurationSec() const { return m_trackDurationSec; }
     [[nodiscard]] bool    hasTrack()      const { return m_hasTrack; }
+    [[nodiscard]] QString trackFilePath() const { return m_trackFilePath; }
+    [[nodiscard]] bool sameTrackFileAs(const DjEngine* other) const;
+    [[nodiscard]] bool polarityInverted() const { return m_polarityInverted; }
     [[nodiscard]] QString coverArtUrl()   const { return m_coverArtUrl; }
     [[nodiscard]] bool    hasCoverArt()   const { return m_hasCoverArt; }
     [[nodiscard]] QImage  currentCoverImage() const;
@@ -355,6 +362,8 @@ public slots:
     void applyEqMid(double value);
     void applyEqLow(double value);
     void applyFilter(double value);
+    void applyPolarityInverted(bool inverted);
+    void setPolarityInverted(bool inverted);
     void setCueEnabled(bool value);
     Q_INVOKABLE void setMasterCueEnabled(bool value);
     Q_INVOKABLE void setHeadphoneMix(double value);
@@ -412,6 +421,7 @@ signals:
     void eqMidChanged();
     void eqLowChanged();
     void filterChanged();
+    void polarityInvertedChanged();
     void cueEnabledChanged();
     void masterCueEnabledChanged();
     void headphoneMixChanged();
@@ -546,6 +556,7 @@ private:
     LibraryDatabase*      m_libraryDb         = nullptr;
     QString m_deckId;
     QString m_currentTrackId;
+    QString m_trackFilePath;
     QString m_coverArtUrl;
     bool    m_hasCoverArt = false;
     std::atomic<quint64> m_loadGen{0};
@@ -600,6 +611,7 @@ private:
     double m_eqMid = 0.0;
     double m_eqLow = 0.0;
     double m_filter = 0.0;
+    bool   m_polarityInverted = false;
     bool   m_isReverse = false;
     bool   m_slipActive   = false;
     double m_slipPosition = 0.0;
@@ -611,6 +623,7 @@ private:
     bool m_playLogged    = false;   // true once logPlay() has been called for the current track load
     double m_playedAccumSec = 0.0;  // accumulated real playback seconds since last track load
     QElapsedTimer m_playHistoryClock;
+    QElapsedTimer m_tightDoubleAlignClock;
     bool m_keylock = false;
     bool m_quantizeEnabled = false;
     bool m_syncEnabled = false;
@@ -646,6 +659,8 @@ private:
 
     void updateSpeedAndPitch();
     void updatePhaseCorrection();
+    void updateTightDoubleAlignment();
+    [[nodiscard]] double keylockLatencySeconds() const;
     // Bypass for internal/sync use — no follower-lock guard, no master propagation.
     void applyTempoPercent(double percent);
     // Seek this deck so its bar phase (downbeat) matches master's. Called when sync
@@ -725,6 +740,7 @@ private:
     // Decks in the order they enabled sync (first = master until they disable it).
     static std::vector<DjEngine*> s_syncEnableOrder;
     static DjEngine* s_syncMasterDeck;
+    static std::atomic<bool> s_tightDoubleSyncEnabled;
     static void updateSyncMasterLocked();
     static void propagateMasterTempoLocked(DjEngine* master);
 };

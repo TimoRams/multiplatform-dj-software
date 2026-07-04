@@ -123,6 +123,7 @@ void MixerControl::applyChannelMixState(const QString& channelId)
     deck->applyEqMid(state->eqMid);
     deck->applyEqLow(state->eqLow);
     deck->applyFilter(state->filter);
+    deck->applyPolarityInverted(state->polarityInverted);
 }
 
 void MixerControl::setTrim(const QString& channelId, double value)
@@ -163,6 +164,14 @@ void MixerControl::setFilter(const QString& channelId, double value)
         state->filter = value;
     if (DjEngine* const deck = deckForChannelId(channelId))
         deck->applyFilter(value);
+}
+
+void MixerControl::setPolarityInverted(const QString& channelId, bool inverted)
+{
+    if (ChannelMixState* const state = mixStateForChannel(channelId))
+        state->polarityInverted = inverted;
+    if (DjEngine* const deck = deckForChannelId(channelId))
+        deck->applyPolarityInverted(inverted);
 }
 
 void MixerControl::toggleCue(const QString& channelId)

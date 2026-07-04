@@ -43,6 +43,26 @@ ApplicationWindow {
     readonly property bool libraryPanelActive: window.allInOneMode && window.activeMainTab === "library"
     readonly property bool settingsPanelActive: window.allInOneMode && window.activeMainTab === "settings"
     readonly property bool effectiveLibraryVisible: window.allInOneMode ? window.libraryPanelActive : window.showLibrary
+    readonly property bool aioTwoDeckWaveformSlots:
+        window.allInOneMode && !window.fourDeckMode && !window.allInOnePanelActive
+
+    function isDuplicatePlayingTrack(engine) {
+        if (!engine || !engine.hasTrack || !engine.isPlaying || !engine.trackFilePath)
+            return false
+        const path = engine.trackFilePath
+        const decks = []
+        if (typeof deckA !== "undefined" && deckA) decks.push(deckA)
+        if (typeof deckB !== "undefined" && deckB) decks.push(deckB)
+        if (typeof deckC !== "undefined" && deckC) decks.push(deckC)
+        if (typeof deckD !== "undefined" && deckD) decks.push(deckD)
+        let count = 0
+        for (let i = 0; i < decks.length; ++i) {
+            const d = decks[i]
+            if (d.hasTrack && d.isPlaying && d.trackFilePath === path)
+                count++
+        }
+        return count >= 2
+    }
 
     property int resizeThrottleCounter: 0
     property int lastProcessedWidth: width
@@ -782,14 +802,23 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         engine: deckC
+                        sameTrackDoubleHint: window.isDuplicatePlayingTrack(deckC)
                         backgroundColor: UiTheme.bgDisplay
                         waveformZoom: window.waveformZoom
+                    }
+
+                    AioWaveformInfoSlot {
+                        visible: window.aioTwoDeckWaveformSlots
+                        slotPosition: "upper"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
                     }
 
                     EnlargedWaveform {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         engine: deckA
+                        sameTrackDoubleHint: window.isDuplicatePlayingTrack(deckA)
                         backgroundColor: UiTheme.bgDisplay
                         waveformZoom: window.waveformZoom
                     }
@@ -798,6 +827,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         engine: deckB
+                        sameTrackDoubleHint: window.isDuplicatePlayingTrack(deckB)
                         backgroundColor: UiTheme.bgDisplay
                         waveformZoom: window.waveformZoom
                     }
@@ -807,8 +837,16 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         engine: deckD
+                        sameTrackDoubleHint: window.isDuplicatePlayingTrack(deckD)
                         backgroundColor: UiTheme.bgDisplay
                         waveformZoom: window.waveformZoom
+                    }
+
+                    AioWaveformInfoSlot {
+                        visible: window.aioTwoDeckWaveformSlots
+                        slotPosition: "lower"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
                     }
                 }
             }

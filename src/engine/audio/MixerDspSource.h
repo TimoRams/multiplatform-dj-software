@@ -46,6 +46,7 @@ public:
     void setFader(float val);
     void setEq(float l, float m, float h);
     void setFilterVal(float f);
+    void setPolarityInverted(bool inverted);
 
     std::atomic<float> m_peakL { 0.0f };
     std::atomic<float> m_peakR { 0.0f };
@@ -68,6 +69,7 @@ private:
 
     std::atomic<float> trimVal{1.0f};
     std::atomic<float> faderVal{1.0f};
+    std::atomic<bool>  m_polarityInverted{false};
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_trimSmooth;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_faderSmooth;
 

@@ -332,6 +332,7 @@ void DjEngine::onTimer()
 
     if (m_syncEnabled && !m_isSyncMaster && !m_scratch.scrubbing() && !m_scratch.releaseGlide())
         updatePhaseCorrection();
+        updateTightDoubleAlignment();
 
     updateFxBeatSyncPosition();
     notifyVuMetersIfNeeded();
@@ -615,5 +616,21 @@ void DjEngine::setFilter(double value)
 {
     applyFilter(value);
     emit filterChanged();
+}
+
+void DjEngine::applyPolarityInverted(bool inverted)
+{
+    if (m_polarityInverted == inverted)
+        return;
+
+    m_polarityInverted = inverted;
+    if (mixerSource)
+        mixerSource->setPolarityInverted(inverted);
+}
+
+void DjEngine::setPolarityInverted(bool inverted)
+{
+    applyPolarityInverted(inverted);
+    emit polarityInvertedChanged();
 }
 

@@ -70,6 +70,7 @@ bool DjEngine::hydrateLibraryStateForTrack(const QString& rawPath, double durati
     m_currentTrackId    = existingId.isEmpty()
         ? TrackIdGenerator::generate(m_trackArtist, m_trackTitle, durSec, rawPath)
         : existingId;
+    m_trackFilePath     = rawPath;
     m_playLogged       = false;
     m_playedAccumSec   = 0.0;
     m_playHistoryClock.restart();

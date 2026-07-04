@@ -11,6 +11,7 @@ Item {
     property real waveformZoom: 1.5
     property bool dropHovered: false
     property bool beatgridEditMode: false
+    property bool sameTrackDoubleHint: false
 
     Layout.fillWidth: true
     Layout.fillHeight: true
@@ -226,6 +227,30 @@ Item {
             target: root
             property: "beatgridEditMode"
             value: beatgridPanel.editMode
+        }
+
+        // Same file doubled on multiple playing decks — comb-filtering hint.
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 22
+            z: 30
+            visible: root.sameTrackDoubleHint
+            color: "#cc1a1408"
+            border.color: "#66ffb000"
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.left: parent.left
+                anchors.leftMargin: 8
+                anchors.right: parent.right
+                anchors.rightMargin: 8
+                text: "Same track on multiple decks — may sound thin (comb filtering). Nudge, EQ, or polarity (−)."
+                color: "#dfc08a"
+                font.pixelSize: 9
+                elide: Text.ElideRight
+            }
         }
     }
 

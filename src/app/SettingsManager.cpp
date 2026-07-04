@@ -1,4 +1,5 @@
 #include "SettingsManager.h"
+#include "DjEngine.h"
 #include <algorithm>
 #include <cmath>
 #include <QDebug>
@@ -136,6 +137,8 @@ void SettingsManager::init()
     userSettings->save();
 
     ensureMappingsDirectoryExists();
+
+    DjEngine::setTightDoubleSyncEnabled(tightDoubleSync());
 
     qDebug() << "Settings-Datei erfolgreich erstellt/geladen unter:"
              << QString::fromUtf8(userSettings->getFile().getFullPathName().toRawUTF8());
@@ -446,6 +449,22 @@ void SettingsManager::setFlx10ControllerSupportEnabled(bool enabled)
 
     writeSetting(*this, "Controllers/DDJFLX10/Enabled", enabled);
     emit controllerSettingsChanged();
+}
+
+bool SettingsManager::tightDoubleSync() const
+{
+    return getUiState(QStringLiteral("tightDoubleSync"), QStringLiteral("0")) == QLatin1String("1");
+}
+
+void SettingsManager::setTightDoubleSync(bool enabled)
+{
+    const QString value = enabled ? QStringLiteral("1") : QStringLiteral("0");
+    if (getUiState(QStringLiteral("tightDoubleSync"), QStringLiteral("0")) == value)
+        return;
+
+    setUiState(QStringLiteral("tightDoubleSync"), value);
+    DjEngine::setTightDoubleSyncEnabled(enabled);
+    emit tightDoubleSyncChanged();
 }
 
 QString SettingsManager::getUiState(const QString& key, const QString& fallback) const
