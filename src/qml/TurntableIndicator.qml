@@ -152,7 +152,10 @@ Item {
     Connections {
         target: root.engine
         function onPlayingChanged()  { root.updateRotation() }
-        function onProgressChanged() { root.updateRotation() }
+        function onProgressChanged() {
+            if (!root.engine || (!root.engine.isPlaying && !root.engine.isScratchVisualActive()))
+                root.updateRotation()
+        }
         function onTempoChanged()    { root.updateRotation() }
         function onReverseChanged()  { root.updateRotation() }
         function onTrackLoaded()     { root.updateRotation() }

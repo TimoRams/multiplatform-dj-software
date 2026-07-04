@@ -104,7 +104,6 @@ Item {
                 // Vinyl pull: drag right = earlier in track (negative delta seconds).
                 const deltaSec = -deltaPx / effectivePixelsPerSecond
                 root.engine.scratchBySeconds(deltaSec)
-                waveItem.requestUpdate()
             }
 
             onReleased: (mouse) => {
@@ -157,7 +156,8 @@ Item {
                 if (!root.engine.isPlaying) waveItem.requestUpdate()
             }
             function onProgressChanged() {
-                if (root.engine && (!root.engine.isPlaying || root.engine.scrubbing))
+                // FrameAnimation repaints during play/scratch; only refresh when paused idle.
+                if (root.engine && !root.engine.isPlaying && !root.engine.isScratchVisualActive())
                     waveItem.requestUpdate()
             }
             function onLoopChanged() { waveItem.requestUpdate() }

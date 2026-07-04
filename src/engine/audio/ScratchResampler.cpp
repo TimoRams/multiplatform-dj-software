@@ -70,6 +70,13 @@ void ScratchResampler::primeTrackerVelocity(double ratePerOutputSample) noexcept
     m_trackVel = ratePerOutputSample * m_outputSampleRate;
 }
 
+bool ScratchResampler::tryPrimeWindowFromDisk(int outputBlockSize) noexcept
+{
+    if (!m_reader || m_sourceSize >= kMinWindowSamples)
+        return m_sourceSize >= kMinWindowSamples;
+    return reloadWindowFromDisk(0.0, outputBlockSize);
+}
+
 double ScratchResampler::wrapPosition(double pos) const noexcept
 {
     if (m_loopActive && m_loopOutSample > m_loopInSample + 1.0) {

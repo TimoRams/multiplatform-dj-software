@@ -698,9 +698,9 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         return peakData[local].maxSample / 127.0f;
     };
 
-    // No-wiggle lock: deterministic sample lookup while scrolling (not scrubbing)
-    // so peak/band columns do not morph frame-to-frame at zoomed-out levels.
-    const int subSamples = lockVisualSampleGrid ? 1 : 2;
+    // One Catmull sample per column — enough for playback snap-grid and scratch.
+    // (Dual subsampling during scratch doubled updatePaintNode cost with no gain.)
+    const int subSamples = 1;
     for (int x = 0; x < wInt; ++x) {
         const double dataPosRaw = centerIndexRender
             + (static_cast<double>(x) - wD * 0.5) / pixelsPerPoint;

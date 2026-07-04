@@ -83,7 +83,10 @@ void DjEngine::tickScratchPhysics()
     }
 
     m_snapTempoRatio = getTempoRatio();
-    emitPlaybackStateChanged();
+    // Atomic playhead + QML FrameAnimation drive the waveform during scratch.
+    // Avoid emitPlaybackStateChanged() here — it fires progress/VU/gr NOTIFYs
+    // at 250 Hz and stalls the UI thread at scratch start.
+    notifyProgressIfNeeded();
 }
 
 
@@ -278,8 +281,6 @@ void DjEngine::scratchBySeconds(double deltaSeconds, bool vinylOneToOnePosition)
 
     if (!m_scratch.submitRelative(scratchBridge.get(), deltaSeconds, m_loadedTrackSampleRate))
         return;
-
-    emit progressChanged();
 }
 
 
@@ -347,7 +348,7 @@ void DjEngine::applyScratchReleaseJog(double deltaSeconds)
     m_scrubHoldPosition = scratchBridge->displayPositionSeconds();
     m_atomicPlayheadPos.store(m_scrubHoldPosition, std::memory_order_relaxed);
     m_snapPosition = m_scrubHoldPosition;
-    emit progressChanged();
+    notifyProgressIfNeeded();
 }
 
 

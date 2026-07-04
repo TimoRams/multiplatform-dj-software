@@ -88,6 +88,9 @@ void ScratchDeckBridge::beginScratch(double anchorSeconds,
     m_scratchResampler.setTrackLengthSamples(trackLengthSeconds * trackSampleRate);
     m_scratchResampler.reset(audioAnchorSamples);
     m_scratchResampler.snapSmoothedRate(0.0);
+    // Prime before enabling the scratch path so the first audio callback does not
+    // block on a synchronous stream reload (audible glitch + CPU spike).
+    (void) m_scratchResampler.tryPrimeWindowFromDisk(m_blockSize);
     m_useScratchScaler = true;
 
     if (auto* positionable = positionableScratchSource()) {

@@ -18,6 +18,8 @@ public:
     void snapSmoothedRate(double rate) noexcept;
     void primeTrackerVelocity(double ratePerOutputSample) noexcept;
     void invalidatePrefetch() noexcept { m_sourceSize = 0; }
+    // Load the RAM window from disk on the UI thread before scratch audio starts.
+    [[nodiscard]] bool tryPrimeWindowFromDisk(int outputBlockSize) noexcept;
 
     void setFormatReader(juce::AudioFormatReader* reader) noexcept { m_reader = reader; }
 

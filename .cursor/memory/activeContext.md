@@ -1,16 +1,27 @@
 # Active Context
 
-*Last updated: 2026-06-28*
+*Last updated: 2026-07-04*
 
 ## Current task
-**Waveform / beat-grid alignment (sync)**
-- Root cause: waveform columns snap to a coarse visual grid when zoomed out, but beat/loop/cue
-  markers used continuous point positions → markers drift from peaks; worse across long tracks
-  and when comparing synced decks.
-- Fix (phase 1): shared `snapPointPos` for waveform + all overlays (beat grid, loops, cues).
-- **Jiggle fix:** scroll anchor reverted to pixel-floor only — 1/16-beat scroll snap fought
-  sync PI phase nudges (`round` ↔ `microOpposite` oscillation). Overlays still aligned.
-- Still open: elastic grid analysis drift on very long tracks; master-relative multi-deck ruler.
+**Scratch start lag fix**
+Root causes at scratch begin:
+1. **`emitPlaybackStateChanged()` in `tickScratchPhysics`** — fired progress/VU/gr NOTIFYs at 250 Hz (every 4 ms control tick), flooding QML repaints at scratch start.
+2. **Triple waveform repaint path** — `scratchBySeconds` emitted `progressChanged` per drag event + `EnlargedWaveform` `onProgressChanged` + `FrameAnimation` + explicit `requestUpdate()` in `onPositionChanged`.
+3. **`ScrollingWaveformItem` dual subsampling during scratch** — `subSamples=2` when not on playback snap-grid doubled per-column Catmull work every frame.
+4. **Empty scratch RAM window on first audio block** — `ScratchResampler::reset()` cleared the window; first callback did synchronous stream reload on the audio thread (glitch + CPU spike).
+
+Fixes:
+- `tickScratchPhysics`: atomic playhead + throttled `notifyProgressIfNeeded()` only (~20 Hz).
+- `scratchBySeconds` / release jog: no per-event `progressChanged`.
+- `EnlargedWaveform` / `TurntableIndicator`: rely on `FrameAnimation` during play/scratch; `onProgressChanged` only when paused idle.
+- `ScrollingWaveformItem`: `subSamples=1` always.
+- `ScratchResampler::tryPrimeWindowFromDisk()` called from `beginScratch` before enabling scratch path (disk-backed tracks).
+
+## Previous task
+**AIO 2-Deck waveform placeholder slots**
+- `AioWaveformInfoSlot.qml` — upper/lower placeholder panels ("Controls / Info") in 4-row layout.
+- `main.qml`: `aioTwoDeckWaveformSlots` when AIO + 2-deck + performance tab; replaces C/D waveform slots.
+- Desktop 2-deck unchanged (A/B only, 50% each); 4-deck unchanged (C/A/B/D waveforms).
 
 ### AIO sprint backlog (priority order)
 
