@@ -3,6 +3,11 @@
 *Last updated: 2026-07-04*
 
 ## Current task
+**MixerSection `polActive` QML scope fix**
+- Polarity invert button: child bindings (`SilkLabel`, indicator `Rectangle`, hover overlay) referenced `polActive` unqualified; unlike `cueActive` (on `KnobStackColumn`), `polActive` is a custom property on the parent `Rectangle` and is not in child JS scope.
+- Fix: `id: polBtn` on that `Rectangle`; children use `polBtn.polActive`.
+
+## Previous task
 **Scratch start lag fix**
 Root causes at scratch begin:
 1. **`emitPlaybackStateChanged()` in `tickScratchPhysics`** — fired progress/VU/gr NOTIFYs at 250 Hz (every 4 ms control tick), flooding QML repaints at scratch start.

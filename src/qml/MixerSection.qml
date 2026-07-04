@@ -468,6 +468,7 @@ Rectangle {
                 }
 
                 Rectangle {
+                    id: polBtn
                     Layout.fillWidth: true
                     Layout.preferredHeight: mixer.cueH
                     readonly property var polDeck: mixer.deckForChannel(knobStack.channelId)
@@ -477,17 +478,17 @@ Rectangle {
                     SilkLabel {
                         anchors.centerIn: parent
                         text: "−"
-                        color: polActive ? "#ffb000" : UiTheme.textDim
+                        color: polBtn.polActive ? "#ffb000" : UiTheme.textDim
                         font.pixelSize: 11
                         font.bold: true
                         font.family: "monospace"
                     }
                     Rectangle {
                         anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
-                        height: polActive ? 2 : 0; color: "#ffb000"
+                        height: polBtn.polActive ? 2 : 0; color: "#ffb000"
                     }
                     HoverHandler { id: polHov; cursorShape: Qt.PointingHandCursor }
-                    Rectangle { anchors.fill: parent; color: "#ffffff"; opacity: polHov.hovered && !polActive ? 0.05 : 0 }
+                    Rectangle { anchors.fill: parent; color: "#ffffff"; opacity: polHov.hovered && !polBtn.polActive ? 0.05 : 0 }
                     Controls.ToolTip {
                         visible: polHov.hovered
                         delay: 350
