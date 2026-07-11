@@ -2,6 +2,7 @@
 #include "analysis/AnalysisValidation.h"
 #include "analysis/AnalysisResult.h"
 #include "engine/audio/HermiteKernel.hpp"
+#include "engine/SyncMaintenancePolicy.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -63,6 +64,22 @@ void testAnalysisValidation()
     expect(result.ok, "beatgrid validation ok for synthetic grid");
 }
 
+void testSyncMaintenancePolicy()
+{
+    using engine::shouldRunFollowerSyncMaintenance;
+
+    expect(!shouldRunFollowerSyncMaintenance(false, false, false, false),
+           "sync maintenance disabled when sync is off");
+    expect(!shouldRunFollowerSyncMaintenance(true, true, false, false),
+           "sync master does not run follower maintenance");
+    expect(!shouldRunFollowerSyncMaintenance(true, false, true, false),
+           "sync maintenance disabled while scrubbing");
+    expect(!shouldRunFollowerSyncMaintenance(true, false, false, true),
+           "sync maintenance disabled during release glide");
+    expect(shouldRunFollowerSyncMaintenance(true, false, false, false),
+           "sync follower runs maintenance when active");
+}
+
 } // namespace
 
 int main()
@@ -70,6 +87,7 @@ int main()
     testDeckIndex();
     testHermiteSampleAt();
     testAnalysisValidation();
+    testSyncMaintenancePolicy();
     g_failures += runMixerDspSmokeTests();
 
     if (g_failures == 0) {

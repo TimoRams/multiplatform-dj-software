@@ -1,4 +1,5 @@
 #include "DjEngineCommonIncludes.h"
+#include "SyncMaintenancePolicy.h"
 
 
 namespace {
@@ -330,9 +331,13 @@ void DjEngine::onTimer()
         tickTransportStopped();
     }
 
-    if (m_syncEnabled && !m_isSyncMaster && !m_scratch.scrubbing() && !m_scratch.releaseGlide())
+    if (engine::shouldRunFollowerSyncMaintenance(m_syncEnabled,
+                                                 m_isSyncMaster,
+                                                 m_scratch.scrubbing(),
+                                                 m_scratch.releaseGlide())) {
         updatePhaseCorrection();
         updateTightDoubleAlignment();
+    }
 
     updateFxBeatSyncPosition();
     notifyVuMetersIfNeeded();
@@ -633,4 +638,3 @@ void DjEngine::setPolarityInverted(bool inverted)
     applyPolarityInverted(inverted);
     emit polarityInvertedChanged();
 }
-

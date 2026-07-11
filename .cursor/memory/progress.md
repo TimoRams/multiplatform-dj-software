@@ -1,6 +1,16 @@
 # Progress
 
 ## Done (recent)
+- [x] **Stability/realtime preparation docs** — added `.cursor/memory/riskRegister.md`,
+  `.cursor/memory/regressionChecklist.md`, and `.cursor/memory/realtimeRules.md`.
+- [x] **`DjEngine::onTimer` sync braces/policy** — both `updatePhaseCorrection()` and
+  `updateTightDoubleAlignment()` now run only under the shared follower-sync predicate;
+  smoke test covers sync-off/master/scratch/release-glide cases.
+- [x] **Build hygiene** — removed duplicate `src/domain/TrackData.cpp` from CMake sources.
+- [x] **Version source of truth** — CI packaging reads `APP_VERSION` from CMake
+  `PROJECT_VERSION` instead of hardcoding a conflicting value.
+- [x] **Portable release default** — `-march=native` is no longer enabled by default;
+  local native builds require `BROCKDJ_ENABLE_NATIVE_ARCH=ON` on Linux/Intel macOS.
 - [x] **AIO CDJ drill-down browse** — split picker + hover preview + tap full-width track list;
   `aioPreviewBrowseEntry` / `aioDrillBrowseEntry` / `aioBrowseUnDrill`; back button in toolbar.
 - [x] **AIO library CDJ-style hub** — tile grid navigation, playlist/smart pickers, touch quick buttons on rows.
@@ -113,5 +123,12 @@ Manual (~15 min):
 - [ ] SYNC + master handoff still works
 
 ## Known issues
+- P0 realtime/threading risks remain open: FX effect-type handoff, scratch cache misses,
+  RubberBand reset/prewarm in callback, mixer filter coefficient work, analyzer/TrackData
+  lifetime, and async-signal-safe shutdown.
+- Audio cache redesign, FX threading fix, analyzer lifetime ownership, and `DjEngine`
+  component split were intentionally not implemented in this preparation pass.
+- Recommended next step: address the FX data race first with a narrow command/snapshot
+  handoff; avoid starting the large `DjEngine` architecture split before that.
 - Watch for grouped-alias signal handlers (`alias.onXxx:`) and self-referential `prop: prop`
   bindings in new QML — qualify with parent `id` (MixerSection pattern).

@@ -1,8 +1,20 @@
 # Active Context
 
-*Last updated: 2026-07-04*
+*Last updated: 2026-07-11*
 
 ## Current task
+**Stability/realtime preparation pass**
+- Created `.cursor/memory/riskRegister.md`, `.cursor/memory/regressionChecklist.md`, and `.cursor/memory/realtimeRules.md`.
+- `DjEngine::onTimer()` sync maintenance now uses explicit braces through `engine::shouldRunFollowerSyncMaintenance()`.
+  Decision: both `updatePhaseCorrection()` and `updateTightDoubleAlignment()` belong under the same follower-sync condition (`syncEnabled && !syncMaster && !scrubbing && !releaseGlide`). Tight-double alignment also has internal guards, but running it when sync is disabled is unnecessary and contradicted the surrounding sync logic.
+- Added a focused smoke-test policy check so `updateTightDoubleAlignment()` cannot become an unconditional timer action again without the shared predicate test failing.
+- Removed the duplicate `src/domain/TrackData.cpp` CMake source entry.
+- CI/package `APP_VERSION` now derives from the configured CMake `PROJECT_VERSION`; CMake remains the single source of truth.
+- Release builds are portable by default. Native `-march=native` is opt-in via `BROCKDJ_ENABLE_NATIVE_ARCH=ON` on Linux and Intel macOS only.
+- Still open: audio cache redesign, FX thread-safety, analyzer lifetime ownership, joined DB/track-load workers, and `DjEngine` component split.
+- Recommended next step: fix the FX data race with a small command/snapshot handoff before attempting the larger architecture split.
+
+## Previous task
 **MixerSection `polActive` QML scope fix**
 - Polarity invert button: child bindings (`SilkLabel`, indicator `Rectangle`, hover overlay) referenced `polActive` unqualified; unlike `cueActive` (on `KnobStackColumn`), `polActive` is a custom property on the parent `Rectangle` and is not in child JS scope.
 - Fix: `id: polBtn` on that `Rectangle`; children use `polBtn.polActive`.

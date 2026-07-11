@@ -172,11 +172,11 @@ CMake presets: `linux-dev-fast`, `macos-dev-arm64`, `macos-dev-x86_64`.
 
 ### SIMD
 
-Target-native SIMD is enabled automatically on Linux, Windows x64, and Intel macOS. To override on Linux, reconfigure `build/` then run `./build-fast`:
+Release builds are portable by default. To opt into local target-native code generation on Linux or Intel macOS, reconfigure `build/` then run `./build-fast`:
 
 ```bash
 rm -rf build
-cmake --preset linux-dev-fast -DRDBJ_ENABLE_NATIVE_SIMD=OFF
+cmake --preset linux-dev-fast -DBROCKDJ_ENABLE_NATIVE_ARCH=ON
 ./build-fast
 ```
 

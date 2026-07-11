@@ -9,7 +9,6 @@ on:
   workflow_dispatch:
 
 env:
-  APP_VERSION: 1.0.0
   HOMEBREW_NO_AUTO_UPDATE: 1
 
 concurrency:
@@ -84,6 +83,12 @@ jobs:
           cmake -S . -B build -G Ninja \
             -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/.ci/keyfinder;${CMAKE_PREFIX_PATH:-}" \
             -DRDBJ_ENABLE_QML_CACHEGEN=OFF
+
+      - name: Read project version (Linux)
+        run: |
+          PROJECT_VERSION="$(cmake -LA -N build | sed -n 's/^BROCKDJ_PROJECT_VERSION:STRING=//p')"
+          test -n "$PROJECT_VERSION"
+          echo "APP_VERSION=$PROJECT_VERSION" >> "$GITHUB_ENV"
 
       - name: Build (Linux)
         run: |
@@ -387,6 +392,13 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake `
             -DQt6_DIR="$qt6Dir" `
             -DRDBJ_ENABLE_QML_CACHEGEN=OFF
+
+      - name: Read project version
+        if: matrix.os == 'macos-arm' || matrix.os == 'macos-intel' || (matrix.os == 'linux-arm' && github.event_name == 'workflow_dispatch')
+        run: |
+          PROJECT_VERSION="$(cmake -LA -N build | sed -n 's/^BROCKDJ_PROJECT_VERSION:STRING=//p')"
+          test -n "$PROJECT_VERSION"
+          echo "APP_VERSION=$PROJECT_VERSION" >> "$GITHUB_ENV"
 
       - name: Build (macOS Apple Silicon)
         if: matrix.os == 'macos-arm'

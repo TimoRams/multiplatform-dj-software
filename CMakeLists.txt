@@ -2,20 +2,15 @@ cmake_minimum_required(VERSION 3.22)
 
 set(PROJECT_NAME "BrockDJ")
 project(${PROJECT_NAME} VERSION 0.0.1 LANGUAGES C CXX)
+set(BROCKDJ_PROJECT_VERSION "${PROJECT_VERSION}" CACHE STRING "BrockDJ project version" FORCE)
 
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-set(RDBJ_ENABLE_NATIVE_SIMD_DEFAULT OFF)
-if(UNIX AND NOT APPLE)
-    set(RDBJ_ENABLE_NATIVE_SIMD_DEFAULT ON)
-elseif(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|i[3-6]86)$")
-    set(RDBJ_ENABLE_NATIVE_SIMD_DEFAULT ON)
-endif()
-
-option(RDBJ_ENABLE_NATIVE_SIMD "Enable target-specific SIMD code generation for release builds" ${RDBJ_ENABLE_NATIVE_SIMD_DEFAULT})
+option(BROCKDJ_ENABLE_NATIVE_ARCH "Enable target-specific -march=native code generation for local release builds" OFF)
+unset(RDBJ_ENABLE_NATIVE_SIMD CACHE)
 option(RDBJ_ENABLE_QML_CACHEGEN "Compile QML to C++ cache files. Disable for faster local dev builds." ON)
 
 # Ensure Qt can be found when installed via pacman (Linux only)
@@ -341,7 +336,6 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/rendering/WaveformCache.cpp
     src/domain/TrackData.h
     src/domain/TrackData.cpp
-    src/domain/TrackData.cpp
     src/domain/TrackSegment.h
     src/library/LibraryManager.h
     src/library/LibraryManager.cpp
@@ -517,8 +511,13 @@ if(APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         PROPERTIES COMPILE_OPTIONS "-std=c++23")
 endif()
 
-if(RDBJ_ENABLE_NATIVE_SIMD)
+if(BROCKDJ_ENABLE_NATIVE_ARCH)
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT APPLE)
+        target_compile_options(${PROJECT_NAME} PRIVATE
+            $<$<CONFIG:Release>:-march=native>
+        )
+    elseif(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|i[3-6]86)$"
+           AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         target_compile_options(${PROJECT_NAME} PRIVATE
             $<$<CONFIG:Release>:-march=native>
         )
