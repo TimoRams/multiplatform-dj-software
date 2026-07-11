@@ -8,6 +8,9 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <array>
+#include <atomic>
+#include <thread>
 
 namespace {
 
@@ -147,6 +150,94 @@ void testHighEqBoostIncreasesHighFrequencyPeak()
     expect(boostedPeak > flatPeak * 1.15f, "high EQ boost increases HF peak");
 }
 
+bool bufferIsFinite(const juce::AudioBuffer<float>& buffer, int numSamples)
+{
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+        for (int i = 0; i < numSamples; ++i)
+            if (!std::isfinite(buffer.getSample(ch, i)))
+                return false;
+    return true;
+}
+
+void fillFxInput(juce::AudioBuffer<float>& buffer, int numSamples, int blockIndex)
+{
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch) {
+        float* data = buffer.getWritePointer(ch);
+        for (int i = 0; i < numSamples; ++i)
+            data[i] = 0.2f * std::sin(static_cast<float>((blockIndex * numSamples + i) * 0.031));
+    }
+}
+
+void testFxSwitchingAtBlockBoundaries()
+{
+    auto fx = std::make_unique<FxProcessor>();
+    fx->prepare(48000.0, 1024, 2);
+    juce::AudioBuffer<float> buffer(2, 1024);
+    constexpr std::array<int, 5> blockSizes { 64, 127, 256, 511, 1024 };
+
+    int block = 0;
+    for (int pass = 0; pass < 3; ++pass) {
+        for (int rawType = static_cast<int>(EffectType::None);
+             rawType <= static_cast<int>(EffectType::RollOut); ++rawType) {
+            const auto type = static_cast<EffectType>(rawType);
+            fx->setEffectType(type);
+            fx->setEffectType(type); // repeated requests still produce a new generation
+            fx->setAmount(static_cast<float>((rawType + pass) % 11) / 10.0f);
+            fx->setPrimaryParam(static_cast<float>((rawType + 3) % 10) / 10.0f);
+            fx->setSCKnobValue(static_cast<float>((rawType % 9) - 4) / 4.0f);
+            const int n = blockSizes[static_cast<size_t>(block++) % blockSizes.size()];
+            fillFxInput(buffer, n, block);
+            fx->process(buffer, 0, n);
+            expect(fx->getEffectType() == type, "FX command applied at block boundary");
+            expect(bufferIsFinite(buffer, n), "FX switching produces finite samples");
+        }
+    }
+
+    fx->setEffectType(EffectType::None);
+    fx->setAmount(0.0f);
+    fillFxInput(buffer, 256, block);
+    fx->process(buffer, 0, 256);
+    expect(fx->getEffectType() == EffectType::None, "FX returns to bypass");
+    expect(bufferIsFinite(buffer, 256), "bypass after FX switching remains finite");
+}
+
+void testConcurrentFxAndParameterChanges()
+{
+    auto fx = std::make_unique<FxProcessor>();
+    fx->prepare(48000.0, 512, 2);
+    std::atomic<bool> start { false };
+    std::atomic<bool> finite { true };
+
+    std::thread audio([&] {
+        juce::AudioBuffer<float> buffer(2, 512);
+        while (!start.load(std::memory_order_acquire)) {}
+        for (int block = 0; block < 500; ++block) {
+            const int n = 64 << (block % 4);
+            fillFxInput(buffer, n, block);
+            fx->process(buffer, 0, n);
+            if (!bufferIsFinite(buffer, n))
+                finite.store(false, std::memory_order_relaxed);
+        }
+    });
+
+    std::thread control([&] {
+        start.store(true, std::memory_order_release);
+        for (int i = 0; i < 4000; ++i) {
+            fx->setEffectType(static_cast<EffectType>(i % (static_cast<int>(EffectType::RollOut) + 1)));
+            fx->setAmount(static_cast<float>(i % 101) / 100.0f);
+            fx->setPrimaryParam(static_cast<float>((i * 3) % 101) / 100.0f);
+            fx->setSCKnobValue(static_cast<float>((i % 201) - 100) / 100.0f);
+            fx->setExternalDelayTime((i % 7 == 0) ? -1.0f : 0.0625f * static_cast<float>((i % 8) + 1));
+            fx->setBeatSyncPosition(i * 0.125, 0.5);
+        }
+    });
+
+    audio.join();
+    control.join();
+    expect(finite.load(std::memory_order_relaxed),
+           "concurrent FX and parameter switching keeps samples finite");
+}
+
 } // namespace
 
 int runMixerDspSmokeTests()
@@ -155,6 +246,8 @@ int runMixerDspSmokeTests()
 
     testTrimAttenuatesPeak();
     testHighEqBoostIncreasesHighFrequencyPeak();
+    testFxSwitchingAtBlockBoundaries();
+    testConcurrentFxAndParameterChanges();
 
     return g_failures;
 }

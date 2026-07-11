@@ -3,6 +3,14 @@
 *Last updated: 2026-07-11*
 
 ## Current task
+**FX effect-switch realtime/threading fix**
+- `FxProcessor::setEffectType()` no longer mutates DSP state. It validates the enum and publishes a packed atomic `{generation,type}` command, including repeated same-type requests.
+- `MixerDspSource::getNextAudioBlock()` consumes all FX commands once before pre/post-EQ routing. `FxProcessor::process()` has the same idempotent boundary apply as a direct-use fallback; the active type stays fixed for the block.
+- Pitch resources and all vectors/buffers are prepared only in `prepare()`. Pitch and roll switches now reset only small preallocated metadata on the audio thread (`noexcept`), without clearing/allocating large buffers.
+- Removed the defensive SC-crush `vector::assign` from processing; an invalid unprepared state now asserts and fails soft.
+- Added deterministic all-type/block-size tests and a two-thread FX/parameter stress test with finite-sample checks.
+
+## Previous task
 **Stability/realtime preparation pass**
 - Created `.cursor/memory/riskRegister.md`, `.cursor/memory/regressionChecklist.md`, and `.cursor/memory/realtimeRules.md`.
 - `DjEngine::onTimer()` sync maintenance now uses explicit braces through `engine::shouldRunFollowerSyncMaintenance()`.

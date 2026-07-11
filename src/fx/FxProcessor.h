@@ -24,9 +24,8 @@
 //                 isolated to PitchShifterImpl so it can be swapped later.
 //
 // THREAD SAFETY
-//   setEffectType() and setAmount() write to std::atomics → safe to call from
-//   the Qt main thread while the audio thread calls process().
-//   prepareToPlay() must be called from the audio thread before process().
+//   Control-thread setters publish atomics only. Effect changes are consumed at
+//   an audio-block boundary; all DSP resources are allocated by prepare().
 // ─────────────────────────────────────────────────────────────────────────────
 
 enum class EffectType : int {
@@ -61,6 +60,8 @@ enum class EffectType : int {
 class FxProcessor
 {
 public:
+    static_assert(std::atomic<std::uint64_t>::is_always_lock_free,
+                  "FX command handoff must be lock-free on supported targets");
     FxProcessor();
     // Must be defined in .cpp where PitchShifterImpl is a complete type
     ~FxProcessor();
@@ -71,6 +72,7 @@ public:
     // Called every audio block (audio thread only).
     // Processes buffer in-place with a smoothed wet/dry crossfade.
     void process(juce::AudioBuffer<float>& buffer, int startSample, int numSamples);
+    void applyPendingCommandAtBlockBoundary() noexcept;
 
     // ── Thread-safe parameter setters (main thread) ──────────────────────────
     void setEffectType(EffectType type);
@@ -90,7 +92,8 @@ public:
     /// Effect-specific primary parameter (0..1). Reverb: room size.
     void setPrimaryParam(float v);
 
-    EffectType getEffectType() const { return static_cast<EffectType>(m_typeAtomic.load()); }
+    EffectType getEffectType() const noexcept { return m_activeType; }
+    EffectType getRequestedEffectType() const noexcept;
     float      getAmount()     const { return m_amountAtomic.load(); }
     float      getSCKnob()     const { return m_scKnobAtomic.load(); }
     float      getSCParam()    const { return m_scParamAtomic.load(); }
@@ -111,7 +114,9 @@ public:
 
 private:
     // ── Shared state ─────────────────────────────────────────────────────────
-    std::atomic<int>   m_typeAtomic   { static_cast<int>(EffectType::None) };
+    std::atomic<std::uint64_t> m_pendingTypeCommand { 0 };
+    std::uint64_t m_appliedTypeCommand = 0;
+    EffectType m_activeType = EffectType::None;
     std::atomic<float> m_amountAtomic { 0.0f };
     std::atomic<float> m_scKnobAtomic { 0.0f };  // bipolar -1..+1 for Sound Color
     std::atomic<float> m_scParamAtomic{ 0.5f };  // generic 0..1 parameter for SC modes
@@ -163,6 +168,7 @@ private:
     std::unique_ptr<PitchShifterImpl> m_pitchShifter;
 
     void preparePitchShifter();
+    void resetPitchShifterRealtime() noexcept;
     void processPitchShifter(juce::AudioBuffer<float>& wet, int start, int n, float amount);
 
     // ── Echo / Low-Cut Echo / MT Delay ────────────────────────────────────────
@@ -259,6 +265,7 @@ private:
         int    quantizedStartCountdown = -1;
     };
     RollState m_rollState;
+    void resetRollRealtime() noexcept;
     void processRoll(juce::AudioBuffer<float>& wet, int start, int n,
                      float amount, bool slip);
     void processRollOut(juce::AudioBuffer<float>& wet, int start, int n, float amount);

@@ -1,6 +1,10 @@
 # Progress
 
 ## Done (recent)
+- [x] **FX type handoff made realtime-safe** — packed atomic generation/type command from
+  UI/MIDI/control producers; audio thread consumes once before per-block FX routing. Pitch and
+  roll resets are allocation-free metadata resets; all resources remain prepared in `prepare()`.
+  Added all-effect/multi-block-size and deterministic two-thread parameter/switch stress tests.
 - [x] **Stability/realtime preparation docs** — added `.cursor/memory/riskRegister.md`,
   `.cursor/memory/regressionChecklist.md`, and `.cursor/memory/realtimeRules.md`.
 - [x] **`DjEngine::onTimer` sync braces/policy** — both `updatePhaseCorrection()` and
@@ -123,10 +127,10 @@ Manual (~15 min):
 - [ ] SYNC + master handoff still works
 
 ## Known issues
-- P0 realtime/threading risks remain open: FX effect-type handoff, scratch cache misses,
+- P0 realtime/threading risks remain open: scratch cache misses,
   RubberBand reset/prewarm in callback, mixer filter coefficient work, analyzer/TrackData
   lifetime, and async-signal-safe shutdown.
-- Audio cache redesign, FX threading fix, analyzer lifetime ownership, and `DjEngine`
+- Audio cache redesign, analyzer lifetime ownership, and `DjEngine`
   component split were intentionally not implemented in this preparation pass.
 - Recommended next step: address the FX data race first with a narrow command/snapshot
   handoff; avoid starting the large `DjEngine` architecture split before that.

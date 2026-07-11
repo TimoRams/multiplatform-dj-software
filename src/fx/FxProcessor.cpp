@@ -74,6 +74,15 @@ struct FxProcessor::PitchShifterImpl
 
     void setPitchRatio(double ratio) { pitchRatio = ratio; }
 
+    void resetRealtime() noexcept {
+        pitchRatio = 1.0;
+        for (auto& channel : chans) {
+            channel.readPos0 = 0.0;
+            channel.readPos1 = kBufLen / 2.0;
+            channel.writePos = 0;
+        }
+    }
+
     // Hann window value at normalised position t ∈ [0,1)
     static float hann(double t) {
         return 0.5f * (1.0f - static_cast<float>(
@@ -197,9 +206,10 @@ void FxProcessor::prepare(double sampleRate, int maxBlockSize, int numChannels)
 
 void FxProcessor::process(juce::AudioBuffer<float>& buffer, int startSample, int numSamples)
 {
+    applyPendingCommandAtBlockBoundary();
     beginBeatSyncBlock();
 
-    const auto type = static_cast<EffectType>(m_typeAtomic.load(std::memory_order_relaxed));
+    const auto type = m_activeType;
     const float amount = m_amountAtomic.load(std::memory_order_relaxed);
 
     m_wetSmooth.setTargetValue(amount);
@@ -436,16 +446,39 @@ void FxProcessor::mixWetDrySmoothed(juce::AudioBuffer<float>& buffer,
 
 void FxProcessor::setEffectType(EffectType type)
 {
-    // When switching effect, ramp wet to 0 first would require a state machine;
-    // instead we simply reset the smoother so the crossfade handles any transient.
-    m_typeAtomic.store(static_cast<int>(type), std::memory_order_relaxed);
+    const int rawType = static_cast<int>(type);
+    if (rawType < static_cast<int>(EffectType::None)
+        || rawType > static_cast<int>(EffectType::RollOut))
+        type = EffectType::None;
 
-    // Reset pitch shifter read positions to avoid stale delayed burst
-    if (type == EffectType::PitchShifter && m_pitchShifter)
-        m_pitchShifter->prepare(m_numChannels);
-    // Reset roll state on any roll type switch so the loop captures fresh audio
-    if (type == EffectType::Roll || type == EffectType::RollOut || type == EffectType::SlipRoll)
-        m_rollState = RollState{};
+    auto observed = m_pendingTypeCommand.load(std::memory_order_relaxed);
+    std::uint64_t desired = 0;
+    do {
+        const auto generation = (observed >> 8U) + 1U;
+        desired = (generation << 8U) | static_cast<std::uint8_t>(type);
+    } while (!m_pendingTypeCommand.compare_exchange_weak(
+        observed, desired, std::memory_order_release, std::memory_order_relaxed));
+}
+
+EffectType FxProcessor::getRequestedEffectType() const noexcept
+{
+    return static_cast<EffectType>(m_pendingTypeCommand.load(std::memory_order_acquire) & 0xffU);
+}
+
+void FxProcessor::applyPendingCommandAtBlockBoundary() noexcept
+{
+    const auto command = m_pendingTypeCommand.load(std::memory_order_acquire);
+    if (command == m_appliedTypeCommand)
+        return;
+
+    m_appliedTypeCommand = command;
+    m_activeType = static_cast<EffectType>(command & 0xffU);
+    if (m_activeType == EffectType::PitchShifter)
+        resetPitchShifterRealtime();
+    if (m_activeType == EffectType::Roll
+        || m_activeType == EffectType::RollOut
+        || m_activeType == EffectType::SlipRoll)
+        resetRollRealtime();
 }
 
 void FxProcessor::setAmount(float amount)
@@ -609,6 +642,24 @@ void FxProcessor::processBitcrusher(juce::AudioBuffer<float>& wet,
 void FxProcessor::preparePitchShifter()
 {
     m_pitchShifter->prepare(m_numChannels);
+}
+
+void FxProcessor::resetPitchShifterRealtime() noexcept
+{
+    if (m_pitchShifter)
+        m_pitchShifter->resetRealtime();
+}
+
+void FxProcessor::resetRollRealtime() noexcept
+{
+    m_rollState.writePos = 0;
+    m_rollState.loopStart = 0;
+    m_rollState.loopLen = 0;
+    m_rollState.readPos = 0;
+    m_rollState.loopActive = false;
+    m_rollState.stepCounter = 0;
+    m_rollState.doubleCount = 0;
+    m_rollState.quantizedStartCountdown = -1;
 }
 
 void FxProcessor::processPitchShifter(juce::AudioBuffer<float>& wet,
@@ -1528,8 +1579,9 @@ void FxProcessor::processSC_Crush(juce::AudioBuffer<float>& buffer,
     const float invSteps = 1.f / steps;
     const int   holdLen  = 1 + static_cast<int>(intensity * 95.f);
 
+    jassert(m_scCrushState.bc.size() >= static_cast<size_t>(m_numChannels));
     if (m_scCrushState.bc.size() < static_cast<size_t>(m_numChannels))
-        m_scCrushState.bc.assign(static_cast<size_t>(m_numChannels), BitcrusherState{});
+        return;
 
     const int numCh = std::min(wetBuf.getNumChannels(), m_numChannels);
     for (int ch = 0; ch < numCh; ++ch)

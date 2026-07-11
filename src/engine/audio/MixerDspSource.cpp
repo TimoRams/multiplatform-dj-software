@@ -153,6 +153,11 @@ void MixerDspSource::releaseResources() {
     }
 
 void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill) {
+        m_colorFx.applyPendingCommandAtBlockBoundary();
+        for (auto& fx : m_fxChain)
+            fx.applyPendingCommandAtBlockBoundary();
+        m_padFx.applyPendingCommandAtBlockBoundary();
+
         if (source) {
             if (bufferToFill.numSamples > 0) {
                 source->getNextAudioBlock(bufferToFill);
