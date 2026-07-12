@@ -1,6 +1,7 @@
 #include "TrackData.h"
 
 #include <QMetaObject>
+#include <QThread>
 #include <algorithm>
 #include <cmath>
 
@@ -233,13 +234,12 @@ void TrackData::reportAnalysisProgress(double progress, bool active)
 
     const int pct = static_cast<int>(std::round(progress * 100.0));
     if (!active) {
-        m_lastEmittedProgressPct = -1;
+        m_lastEmittedProgressPct.store(-1, std::memory_order_relaxed);
         QMetaObject::invokeMethod(this, "emitAnalysisProgress", Qt::QueuedConnection);
         return;
     }
-    if (pct == m_lastEmittedProgressPct)
+    if (pct == m_lastEmittedProgressPct.exchange(pct, std::memory_order_relaxed))
         return;
-    m_lastEmittedProgressPct = pct;
     QMetaObject::invokeMethod(this, "emitAnalysisProgress", Qt::QueuedConnection);
 }
 
@@ -256,7 +256,6 @@ void TrackData::setSegmentsData(std::vector<TrackSegment> segments)
 
 void TrackData::clearWaveformData()
 {
-    m_rgbEmitPending = false;
     bool keepPreview = false;
     {
         QMutexLocker locker(&m_mutex);
@@ -278,7 +277,6 @@ void TrackData::clearWaveformData()
 
 void TrackData::clear()
 {
-    m_rgbEmitPending = false;
     reportAnalysisProgress(0.0, false);
     {
         QMutexLocker locker(&m_mutex);
@@ -498,6 +496,10 @@ void TrackData::flushRgbWaveformEmit()
 
 void TrackData::scheduleRgbWaveformEmit()
 {
+    if (QThread::currentThread() != thread()) {
+        QMetaObject::invokeMethod(this, "scheduleRgbWaveformEmit", Qt::QueuedConnection);
+        return;
+    }
     if (m_rgbEmitPending)
         return;
     m_rgbEmitPending = true;

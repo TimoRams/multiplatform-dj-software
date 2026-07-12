@@ -5,6 +5,7 @@
 #include <QVariantList>
 #include <memory>
 #include <vector>
+#include <deque>
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
@@ -60,7 +61,7 @@ private:
     LibraryDatabase* m_db = nullptr;
     juce::AudioFormatManager m_formatManager;
 
-    std::vector<QueueItem> m_queue;
+    std::deque<QueueItem> m_queue;
     QueueItem m_current;
     int m_total = 0;
     int m_completed = 0;
@@ -70,4 +71,6 @@ private:
 
     std::unique_ptr<TrackData> m_trackData;
     std::unique_ptr<WaveformAnalyzer> m_analyzer;
+    WaveformAnalyzer::AnalysisGeneration m_currentGeneration = 0;
+    std::uint64_t m_jobGeneration = 0;
 };

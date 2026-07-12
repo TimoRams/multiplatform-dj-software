@@ -1,6 +1,10 @@
 # Progress
 
 ## Done (recent)
+- [x] **Analyzer lifetime and stale completion safety** — explicit job states/generations,
+  separate cancel and deterministic join, safe manager `QPointer` callback plus manager/analyzer
+  generation and path checks, owner-thread RGB coalescing, and focused lifetime tests. ASan/UBSan
+  and TSan test builds pass.
 - [x] **FX type handoff made realtime-safe** — packed atomic generation/type command from
   UI/MIDI/control producers; audio thread consumes once before per-block FX routing. Pitch and
   roll resets are allocation-free metadata resets; all resources remain prepared in `prepare()`.
@@ -128,11 +132,12 @@ Manual (~15 min):
 
 ## Known issues
 - P0 realtime/threading risks remain open: scratch cache misses,
-  RubberBand reset/prewarm in callback, mixer filter coefficient work, analyzer/TrackData
-  lifetime, and async-signal-safe shutdown.
+  RubberBand reset/prewarm in callback, mixer filter coefficient work, and async-signal-safe shutdown.
+- Analyzer lifetime is fixed; a later improvement may publish final analysis metadata as one
+  immutable snapshot. Detached general track-load workers remain a separate P1 issue.
 - Audio cache redesign, analyzer lifetime ownership, and `DjEngine`
   component split were intentionally not implemented in this preparation pass.
-- Recommended next step: address the FX data race first with a narrow command/snapshot
-  handoff; avoid starting the large `DjEngine` architecture split before that.
+- Recommended next step: replace the unsafe POSIX Qt signal-handler call with a self-pipe or
+  Linux `signalfd` handoff.
 - Watch for grouped-alias signal handlers (`alias.onXxx:`) and self-referential `prop: prop`
   bindings in new QML — qualify with parent `id` (MixerSection pattern).

@@ -5,6 +5,7 @@
 #include <QDebug>
 #include <QFileInfo>
 #include <QMetaObject>
+#include <QPointer>
 
 LibraryAnalysisManager::LibraryAnalysisManager(QObject* parent)
     : QObject(parent)
@@ -59,12 +60,14 @@ void LibraryAnalysisManager::analyzeTrack(const QString& trackId,
 
 void LibraryAnalysisManager::cancel()
 {
+    ++m_jobGeneration;
     m_cancelRequested = true;
     m_queue.clear();
 
     if (m_analyzer) {
         m_analyzer->setCompletionCallback({});
-        m_analyzer->stopAnalysis();
+        m_analyzer->requestCancel();
+        m_analyzer->shutdownAndJoin();
     }
 
     m_analyzer.reset();
@@ -84,8 +87,6 @@ void LibraryAnalysisManager::enqueue(const QVariantList& items)
 
     m_cancelRequested = false;
     m_queue.clear();
-    m_queue.reserve(static_cast<size_t>(items.size()));
-
     for (const QVariant& item : items) {
         const QueueItem q = queueItemFromMap(item.toMap());
         if (!q.trackId.isEmpty() && !q.filePath.isEmpty())
@@ -119,7 +120,7 @@ void LibraryAnalysisManager::startNext()
     }
 
     m_current = m_queue.front();
-    m_queue.erase(m_queue.begin());
+    m_queue.pop_front();
     m_currentTitle = !m_current.title.isEmpty()
         ? m_current.title
         : QFileInfo(m_current.filePath).completeBaseName();
@@ -131,12 +132,24 @@ void LibraryAnalysisManager::startNext()
         &m_formatManager,
         600);
 
-    m_analyzer->setCompletionCallback([this](bool completed) {
-        QMetaObject::invokeMethod(this, [this, completed]() {
-            finishCurrent(completed);
+    const QPointer<LibraryAnalysisManager> safeThis(this);
+    const std::uint64_t managerGeneration = ++m_jobGeneration;
+    m_analyzer->setCompletionCallback([safeThis, managerGeneration](bool completed,
+                                                  WaveformAnalyzer::AnalysisGeneration generation,
+                                                  const QString& filePath) {
+        if (!safeThis)
+            return;
+        QMetaObject::invokeMethod(safeThis, [safeThis, completed, generation, filePath,
+                                             managerGeneration]() {
+            if (!safeThis || managerGeneration != safeThis->m_jobGeneration
+                || generation != safeThis->m_currentGeneration
+                || filePath != safeThis->m_current.filePath) {
+                return;
+            }
+            safeThis->finishCurrent(completed);
         }, Qt::QueuedConnection);
     });
-    m_analyzer->startAnalysis(m_current.filePath);
+    m_currentGeneration = m_analyzer->startAnalysis(m_current.filePath);
 }
 
 void LibraryAnalysisManager::finishCurrent(bool completed)
@@ -167,6 +180,8 @@ void LibraryAnalysisManager::finishCurrent(bool completed)
 
     if (m_analyzer)
         m_analyzer->setCompletionCallback({});
+    if (m_analyzer)
+        m_analyzer->shutdownAndJoin();
     m_analyzer.reset();
     m_trackData.reset();
 

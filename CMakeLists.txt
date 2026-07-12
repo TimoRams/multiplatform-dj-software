@@ -595,3 +595,33 @@ target_compile_definitions(BrockDJ_smoke_tests PRIVATE
 target_compile_features(BrockDJ_smoke_tests PRIVATE cxx_std_26)
 
 add_test(NAME smoke COMMAND BrockDJ_smoke_tests)
+
+add_executable(BrockDJ_analysis_lifetime_tests
+    tests/analysis/analysis_lifetime_tests.cpp
+    src/rendering/WaveformAnalyzer.cpp
+    src/rendering/WaveformEnvelopePass.cpp
+    src/rendering/WaveformAnalysisOrchestrator.cpp
+    src/rendering/WaveformCache.cpp
+    src/domain/TrackData.cpp
+    src/analysis/AnalysisFeatureExtractor.cpp
+    src/analysis/TempoEstimator.cpp
+    src/analysis/BeatTracker.cpp
+    src/analysis/DownbeatDetector.cpp
+    src/analysis/BeatGridFitter.cpp
+    src/analysis/AnalysisValidation.cpp
+    src/analysis/PhraseAnalyzer.cpp
+)
+target_include_directories(BrockDJ_analysis_lifetime_tests PRIVATE
+    src src/analysis src/domain src/rendering
+)
+target_link_libraries(BrockDJ_analysis_lifetime_tests PRIVATE
+    Qt6::Core Qt6::Gui
+    juce::juce_core juce::juce_data_structures juce::juce_audio_basics
+    juce::juce_audio_formats juce::juce_dsp juce::juce_events
+    ThirdParty::KeyFinder
+)
+target_compile_definitions(BrockDJ_analysis_lifetime_tests PRIVATE
+    JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1
+)
+target_compile_features(BrockDJ_analysis_lifetime_tests PRIVATE cxx_std_26)
+add_test(NAME analysis_lifetime COMMAND BrockDJ_analysis_lifetime_tests)

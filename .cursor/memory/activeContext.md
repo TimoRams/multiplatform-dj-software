@@ -1,8 +1,17 @@
 # Active Context
 
-*Last updated: 2026-07-11*
+*Last updated: 2026-07-12*
 
 ## Current task
+**Analyzer lifetime, cancellation and stale-completion fix**
+- `WaveformAnalyzer` now has explicit job states, monotonically increasing analyzer generations, non-blocking `requestCancel()`, and deterministic `shutdownAndJoin()`; the former 150 ms destruction timeout is gone.
+- Deck track replacement/eject and application shutdown keep using the compatibility `stopAnalysis()` entry point, which now performs the safe join before persistent `TrackData` is cleared/reused or destroyed.
+- `LibraryAnalysisManager` uses a deque and validates completion with `QPointer`, a manager-global job generation, analyzer generation and file path. Same-track reanalysis cannot accept an old queued callback.
+- `TrackData` progress coalescing is atomic; RGB coalescing/timer state is confined to its QObject owner thread through queued scheduling.
+- Added `analysis_lifetime` tests for invalid/error termination, unique/repeated generations, cancellation just after start, destructor join and rejection of cancelled completion. RelWithDebInfo, ASan+UBSan and TSan passes are green.
+- Remaining scoped limitation: analysis still progressively writes mutex-protected fields rather than one final immutable snapshot; the key-finder library call itself is not interruptible, so a join can wait for that bounded phase.
+
+## Previous task
 **FX effect-switch realtime/threading fix**
 - `FxProcessor::setEffectType()` no longer mutates DSP state. It validates the enum and publishes a packed atomic `{generation,type}` command, including repeated same-type requests.
 - `MixerDspSource::getNextAudioBlock()` consumes all FX commands once before pre/post-EQ routing. `FxProcessor::process()` has the same idempotent boundary apply as a direct-use fallback; the active type stays fixed for the block.

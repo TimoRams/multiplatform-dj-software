@@ -1,6 +1,6 @@
 # BrockDJ Regression Checklist
 
-Last updated: 2026-07-11
+Last updated: 2026-07-12
 
 Use this checklist for manual stability passes after realtime, threading, cache, audio-device or deck-engine changes. Fill the result field with pass/fail, date, platform, audio device, block size and any relevant commit/branch.
 
@@ -11,6 +11,10 @@ Use this checklist for manual stability passes after realtime, threading, cache,
 - Erwartetes Verhalten: UI bleibt bedienbar, nur aktuelle Generation je Deck wird übernommen, keine falschen Metadaten/Wellenformen.
 - Relevante Logs oder Metriken: Track-load Logs, Analysefortschritt, Warnungen zu stale generation, CPU-Spitzen.
 - Ergebnis: offen
+
+Automatisierte Abdeckung (2026-07-12): `analysis_lifetime` prüft Generation/Fehlerzustand,
+Abbruch unmittelbar nach Start, Destruktor-Join und verworfene Completion. Manuelle Tests mit
+echten A→B→C→D-Deckwechseln und vollständigem GUI-Shutdown bleiben offen.
 
 ## 2. Alle vier Decks gleichzeitig abspielen
 

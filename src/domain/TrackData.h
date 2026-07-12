@@ -351,7 +351,7 @@ private:
     QElapsedTimer m_rgbEmitClock;
     std::atomic<double> m_analysisProgress{0.0};
     std::atomic<bool>   m_analyzing{false};
-    int m_lastEmittedProgressPct = -1;
+    std::atomic<int> m_lastEmittedProgressPct{-1};
 
     QVector<RgbWaveformFrame> m_progressiveOvr;
     int                       m_progressiveLastFrame = 0;

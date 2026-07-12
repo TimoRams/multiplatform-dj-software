@@ -67,18 +67,22 @@ private:
 class AnalysisCompletionNotifier
 {
 public:
-    explicit AnalysisCompletionNotifier(WaveformAnalyzer& analyzer)
-        : m_analyzer(analyzer) {}
+    AnalysisCompletionNotifier(WaveformAnalyzer& analyzer,
+                               WaveformAnalyzer::AnalysisGeneration generation,
+                               QString filePath)
+        : m_analyzer(analyzer), m_generation(generation), m_filePath(std::move(filePath)) {}
 
     ~AnalysisCompletionNotifier()
     {
-        m_analyzer.notifyCompletion(m_completed);
+        m_analyzer.notifyCompletion(m_completed, m_generation, m_filePath);
     }
 
     void markCompleted() { m_completed = true; }
 
 private:
     WaveformAnalyzer& m_analyzer;
+    WaveformAnalyzer::AnalysisGeneration m_generation;
+    QString m_filePath;
     bool m_completed = false;
 };
 
@@ -91,17 +95,22 @@ WaveformAnalyzer::WaveformAnalyzer(TrackData* trackData, juce::AudioFormatManage
 
 WaveformAnalyzer::~WaveformAnalyzer()
 {
-    stopAnalysis();
+    shutdownAndJoin();
 }
 
-void WaveformAnalyzer::startAnalysis(const QString& filePath, double seekHintSec)
+WaveformAnalyzer::AnalysisGeneration WaveformAnalyzer::startAnalysis(const QString& filePath,
+                                                                     double seekHintSec)
 {
-    stopAnalysis();
+    shutdownAndJoin();
+    const auto newGeneration = m_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
+    m_runGeneration = newGeneration;
     m_filePath = filePath;
     m_seekHintSec.store(seekHintSec, std::memory_order_relaxed);
+    m_jobState.store(AnalysisJobState::Queued, std::memory_order_release);
     if (m_trackData)
         m_trackData->reportAnalysisProgress(0.0, true);
     startThread(juce::Thread::Priority::background);
+    return newGeneration;
 }
 
 void WaveformAnalyzer::setSeekHint(double positionSec)
@@ -109,38 +118,61 @@ void WaveformAnalyzer::setSeekHint(double positionSec)
     m_seekHintSec.store(positionSec, std::memory_order_relaxed);
 }
 
-void WaveformAnalyzer::stopAnalysis()
+void WaveformAnalyzer::requestCancel() noexcept
 {
+    m_generation.fetch_add(1, std::memory_order_acq_rel);
+    m_jobState.store(AnalysisJobState::CancelRequested, std::memory_order_release);
     signalThreadShouldExit();
-    // Keep the wait short — blocking the GUI thread here freezes the whole app.
-    stopThread(150);
 }
 
-void WaveformAnalyzer::setCompletionCallback(std::function<void(bool)> callback)
+void WaveformAnalyzer::shutdownAndJoin()
+{
+    if (!isThreadRunning())
+        return;
+
+    requestCancel();
+    // TrackData and the format manager are raw, owner-held dependencies. Their
+    // owner must never destroy or reuse them while run() can still access them.
+    stopThread(-1);
+}
+
+void WaveformAnalyzer::setCompletionCallback(CompletionCallback callback)
 {
     std::lock_guard<std::mutex> lock(m_callbackMutex);
     m_completionCallback = std::move(callback);
 }
 
-void WaveformAnalyzer::notifyCompletion(bool completed)
+void WaveformAnalyzer::notifyCompletion(bool completed,
+                                        AnalysisGeneration completedGeneration,
+                                        const QString& completedFilePath)
 {
-    if (m_trackData)
-        m_trackData->reportAnalysisProgress(completed ? 1.0 : m_trackData->analysisProgress(), false);
+    const bool current = completedGeneration == generation();
+    const bool accepted = completed && current && !threadShouldExit();
+    m_jobState.store(accepted ? AnalysisJobState::Finished
+                              : (threadShouldExit() ? AnalysisJobState::CancelRequested
+                                                    : AnalysisJobState::Failed),
+                     std::memory_order_release);
 
-    std::function<void(bool)> callback;
+    if (m_trackData)
+        m_trackData->reportAnalysisProgress(accepted ? 1.0 : m_trackData->analysisProgress(), false);
+
+    CompletionCallback callback;
     {
         std::lock_guard<std::mutex> lock(m_callbackMutex);
         callback = m_completionCallback;
     }
 
     if (callback)
-        callback(completed);
+        callback(accepted, completedGeneration, completedFilePath);
 }
 
 
 void WaveformAnalyzer::run()
 {
-    AnalysisCompletionNotifier completion(*this);
+    const auto runGeneration = m_runGeneration;
+    const QString runFilePath = m_filePath;
+    m_jobState.store(AnalysisJobState::Running, std::memory_order_release);
+    AnalysisCompletionNotifier completion(*this, runGeneration, runFilePath);
 
     AnalysisSlot slot(*this);
     if (!slot.acquired())
