@@ -9,6 +9,8 @@ Last updated: 2026-07-11
 - Hold `AudioPageReadGuard` for the full read span; worker eviction unpublishes first and frees only after guards leave.
 - ScratchResampler has no reader/stream fields or fallback. Its only sources are the preallocated local window and `AudioPageReadGuard`; misses enqueue bounded requests and use the 128-sample starvation fade.
 - `ScratchCacheStats::diskReadsFromAudioThread` must remain zero in all automated and manual scratch tests.
+- `CachedPlaybackAudioSource` may only read immutable guarded pages and enqueue bounded requests. It has no reader, decoder, buffering source, worker wait, or fallback I/O; its miss/recovery fade is fixed at 128 samples.
+- `PlaybackCacheStats::{diskReadsFromAudioThread,decoderCallsFromAudioThread}` must remain zero. The cached-playback test verifies both after hit, miss and recovery paths.
 
 These rules apply to all code that can execute from the JUCE audio callback, including `DjMasterBus::getNextAudioBlock()`, deck audio sources, scratch/keylock sources, mixer DSP and FX processors.
 

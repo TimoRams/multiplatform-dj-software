@@ -130,7 +130,6 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
 
     juce::MessageManager::getInstance();
     formatManager.registerBasicFormats();
-    readAheadThread.startThread();
 
     // Audio callback is registered by DjMasterBus, not per-deck.
 
@@ -186,7 +185,6 @@ DjEngine::~DjEngine()
         m_analyzer.reset();
     }
     releaseTransportReaders();
-    readAheadThread.stopThread(1000);
 }
 
 

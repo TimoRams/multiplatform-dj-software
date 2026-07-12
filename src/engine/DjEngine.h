@@ -1,6 +1,6 @@
 #pragma once
 
-#include "audio/ReverseStreamAudioSource.h"
+#include "audio/cache/CachedPlaybackAudioSource.h"
 #include "audio/ScratchDeckBridge.hpp"
 #include "deck/DeckCueLoopController.h"
 #include "deck/DeckTrackLoader.h"
@@ -472,8 +472,7 @@ private:
     void applyPreparedTrack(TrackLoadResult result);
     void updateTrackDuration(double durationSec);
     bool hydrateLibraryStateForTrack(const QString& rawPath, double durationSec);
-    void attachReaderToTransport(juce::AudioFormatReader* bufferedReader,
-                                 juce::AudioFormatReader* directReader);
+    void attachCacheToTransport(double trackSampleRate);
     void returnToSlipPosition();
     bool isSlipDiverted() const { return m_slipActive && (loopActive() || m_isReverse); }
 
@@ -511,11 +510,7 @@ private:
     DeckCueLoopController m_cueLoopController;
     DeckTrackLoader m_trackLoader;
     juce::AudioFormatManager formatManager;
-    std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
-    std::unique_ptr<juce::BufferingAudioSource> bufferedReaderSource;
-    std::unique_ptr<juce::AudioFormatReaderSource> directReaderSource;
-    std::unique_ptr<ReverseStreamAudioSource> reverseWrapSource;
-    juce::TimeSliceThread readAheadThread { "Deck Read-Ahead" };
+    std::unique_ptr<CachedPlaybackAudioSource> reverseWrapSource;
     juce::AudioTransportSource transportSource;
     std::unique_ptr<engine::audio::ScratchDeckBridge> scratchBridge;
     std::unique_ptr<TimeStretchAudioSource> timeStretchSource;

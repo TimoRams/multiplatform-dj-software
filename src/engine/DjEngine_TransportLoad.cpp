@@ -61,7 +61,7 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
     }
 
     m_hasTrack = true;
-    attachReaderToTransport(result.bufferedReader.release(), result.directReader.release());
+    attachCacheToTransport(result.metadata.sampleRate);
     updateTrackDuration(result.metadata.durationSec);
     clearLoop();
 

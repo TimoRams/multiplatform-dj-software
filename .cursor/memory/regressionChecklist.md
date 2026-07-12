@@ -139,3 +139,10 @@ injizierte Decks und beendete sauber; echte Hardwarelisten, Wiedergabe und Hot-U
 - Automatisch: Mono/Stereo, Page-Grenze, partielle Page, 64–8192 Samples, langsam/schnell vor/rückwärts, Positions-Tracker, Loop-Wrap, Pre-Roll, Miss/Fade/Recovery, Handlewechsel und 2.000 deterministische Sprünge.
 - Musswert: `ScratchCacheStats::diskReadsFromAudioThread == 0` vor und nach Stress.
 - Manuell offen: Jogwheel-Gefühl, Backspin, Loop/Slip/Keylock/FX, vier Decks, kleiner Cache, Shutdown während Scratch.
+
+## 17. Cache-basiertes normales Playback
+
+- Automatisch (2026-07-12): `cached_playback` prüft Mono/Stereo, 44,1/48/96/192 kHz, Blockgrößen 64–8192, Page-Grenzen, partielle Endpage/EOF, vorwärts/rückwärts, Loop-Wrap, Pre-Roll-Clamp, Miss/Fade/Recovery, Sharing und finite Samples.
+- Musswerte bestanden: `diskReadsFromAudioThread == 0` und `decoderCallsFromAudioThread == 0`; der Source-Code besitzt keinen Reader-/Decoder-Einstiegspunkt oder Fallback.
+- Messung: synthetischer Cache-Hit, 512 Samples, 1000 Blöcke: 5,34 µs Mittelwert in diesem Headless-Build. Kein belastbarer Vergleich zur entfernten Buffering-Pipeline erhoben.
+- Manuell offen: echte Audiohardware, hörbare Loop/Reverse/Slip-Übergänge, Tempo/Keylock, vier Decks unter Last, Hot-Unplug und Shutdown während Wiedergabe.

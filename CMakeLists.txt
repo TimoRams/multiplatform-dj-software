@@ -293,6 +293,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/audio/cache/AudioPageCache.cpp
     src/audio/cache/AudioCacheWorker.h
     src/audio/cache/AudioCacheWorker.cpp
+    src/audio/cache/CachedPlaybackAudioSource.h
+    src/audio/cache/CachedPlaybackAudioSource.cpp
     src/platform/PosixSignalHandler.h
     src/platform/PosixSignalHandler.cpp
     src/app/MixerControl.h
@@ -321,7 +323,6 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/engine/DjMasterBus.cpp
     src/engine/audio/TimeStretchAudioSource.cpp
     src/engine/audio/MixerDspSource.cpp
-    src/engine/audio/ReverseStreamAudioSource.cpp
     src/analysis/PhraseAnalyzer.h
     src/analysis/PhraseAnalyzer.cpp
     src/analysis/AnalysisCacheVersion.h
@@ -752,3 +753,19 @@ target_compile_definitions(BrockDJ_scratch_cache_tests PRIVATE
 )
 target_compile_features(BrockDJ_scratch_cache_tests PRIVATE cxx_std_26)
 add_test(NAME scratch_cache COMMAND BrockDJ_scratch_cache_tests)
+
+add_executable(BrockDJ_cached_playback_tests
+    tests/cached_playback/cached_playback_tests.cpp
+    src/audio/cache/AudioPageCache.cpp
+    src/audio/cache/AudioCacheWorker.cpp
+    src/audio/cache/CachedPlaybackAudioSource.cpp
+)
+target_include_directories(BrockDJ_cached_playback_tests PRIVATE src)
+target_link_libraries(BrockDJ_cached_playback_tests PRIVATE
+    Qt6::Core juce::juce_core juce::juce_audio_basics juce::juce_audio_formats
+)
+target_compile_definitions(BrockDJ_cached_playback_tests PRIVATE
+    JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1
+)
+target_compile_features(BrockDJ_cached_playback_tests PRIVATE cxx_std_26)
+add_test(NAME cached_playback COMMAND BrockDJ_cached_playback_tests)

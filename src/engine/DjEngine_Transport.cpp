@@ -168,12 +168,8 @@ void DjEngine::updateTrackDuration(double durationSec)
 }
 
 
-void DjEngine::attachReaderToTransport(juce::AudioFormatReader* bufferedReader,
-                                       juce::AudioFormatReader* directReader)
+void DjEngine::attachCacheToTransport(double trackSampleRate)
 {
-    static constexpr int kReaderReadAheadSamples = 1 << 18;
-    static constexpr int kReaderReadAheadChannels = 2;
-
     const double scratchResumePos = m_scrubHoldPosition >= 0.0 ? m_scrubHoldPosition : 0.0;
     transportSource.stop();
     if (scratchBridge)
@@ -181,25 +177,10 @@ void DjEngine::attachReaderToTransport(juce::AudioFormatReader* bufferedReader,
     transportSource.setSource(nullptr);
 
     reverseWrapSource.reset();
-    bufferedReaderSource.reset();
-    directReaderSource.reset();
-    readerSource.reset();
-
-    readerSource = std::make_unique<juce::AudioFormatReaderSource>(bufferedReader, true);
-    directReaderSource = std::make_unique<juce::AudioFormatReaderSource>(directReader, true);
-    bufferedReaderSource = std::make_unique<juce::BufferingAudioSource>(
-        readerSource.get(),
-        readAheadThread,
-        false,
-        kReaderReadAheadSamples,
-        kReaderReadAheadChannels,
-        true);
-    reverseWrapSource = std::make_unique<ReverseStreamAudioSource>(
-        bufferedReaderSource.get(),
-        directReaderSource.get());
+    reverseWrapSource = std::make_unique<CachedPlaybackAudioSource>(m_audioPageCache, m_audioCacheHandle);
     reverseWrapSource->setReverse(m_isReverse);
-    transportSource.setSource(reverseWrapSource.get(), 0, nullptr, bufferedReader->sampleRate);
-    m_loadedTrackSampleRate = bufferedReader->sampleRate;
+    transportSource.setSource(reverseWrapSource.get(), 0, nullptr, trackSampleRate);
+    m_loadedTrackSampleRate = trackSampleRate;
     if (scratchBridge)
         scratchBridge->setTrackCacheSource(&m_audioPageCache, m_audioCacheHandle);
     transportSource.setPosition(0.0);
@@ -223,9 +204,6 @@ void DjEngine::releaseTransportReaders()
         scratchBridge->setTrackCacheSource(nullptr, {});
 
     reverseWrapSource.reset();
-    bufferedReaderSource.reset();
-    directReaderSource.reset();
-    readerSource.reset();
 
     if (scratchBridge)
         scratchBridge->endTransportSwap();

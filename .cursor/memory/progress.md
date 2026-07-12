@@ -165,3 +165,10 @@ Manual (~15 min):
   automated stress proves `diskReadsFromAudioThread == 0`.
 - Next: migrate only normal playback read-ahead to the shared AudioPageCache; no DeckAudioGraph
   or RubberBand redesign in that task.
+- TimeStretch/RubberBand cleanup audited but not started: its prompt requires cached normal
+  playback first, while the current graph still uses AudioFormatReaderSource/BufferingAudioSource.
+- Normal deck playback cache migration completed: `CachedPlaybackAudioSource` reads guarded shared
+  pages, supplies reverse/loop and bounded directional read-ahead, and fades deterministic misses.
+  The deck reader/buffering/reverse wrapper/read-ahead-thread chain was removed. Nine CTest targets
+  pass and playback counters prove zero callback disk/decoder entry. Next: the prepared
+  RubberBand/TimeStretch double-pipeline realtime migration.

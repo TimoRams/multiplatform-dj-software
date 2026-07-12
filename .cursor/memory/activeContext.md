@@ -3,6 +3,13 @@
 *Last updated: 2026-07-12*
 
 ## Current task
+**Normal playback migrated to AudioPageCache**
+- `CachedPlaybackAudioSource` replaced the deck `AudioFormatReaderSource -> BufferingAudioSource -> ReverseStreamAudioSource` chain and its private read-ahead thread.
+- Playback and scratch share the global immutable PCM pages and generation-scoped handle. Misses never fall back to a reader/decoder and fade to silence while the timeline advances.
+- `AudioTransportSource` remains transport/resampling owner; RubberBand is intentionally unchanged.
+- The dedicated cached-playback test and all 9 CTest targets pass. Automated counters prove zero audio-thread disk reads and decoder calls. Hardware/listening verification remains open.
+
+## Earlier task
 **DjEngine ownership map + AudioDeviceService extraction**
 - Added the exhaustive method/state mapping in `djEngineOwnershipMap.md` and thread rules in `threadOwnership.md`.
 - `ApplicationRuntime` uniquely owns one `AudioDeviceService`, which owns the application `AudioDeviceManager`, global routing, error/fallback state and sample-rate/buffer snapshot.
@@ -377,3 +384,7 @@ ApplicationRuntime owns one shared cache: 16,384-sample planar immutable pages, 
 ## Current task: cache-only ScratchResampler
 
 Each deck now receives the application cache and opens/releases one versioned handle per prepared track. ScratchResampler no longer contains an AudioFormatReader/AudioSource or disk/stream reload functions. Its preallocated ~0.5 s window is filled only from guarded immutable pages, including cross-page Hermite neighborhoods and mono duplication. Direction-aware current/near-page requests use bounded priorities. Misses retain the old window where valid and apply a deterministic 128-sample hold/fade-out; recovery fades in. Automated stress keeps `diskReadsFromAudioThread == 0`. Normal playback remains on BufferingAudioSource/Hermite transport.
+
+## Blocked next task: TimeStretch/RubberBand realtime cleanup
+
+The requested prerequisite is not present: normal playback still uses `AudioFormatReaderSource` → `BufferingAudioSource` → `ReverseStreamAudioSource`, there is no cached-playback test, and no `decoderCallsFromAudioThread` proof. The RubberBand audit confirms callback-unsafe work (`getNextAudioBlock` → `resetRealtimePipeline(true)` → `RubberBand::reset` + `prewarmStretcher`, plus ratio setters), but the prompt explicitly forbids starting this refactor until cached playback is complete. Next task must first migrate only normal playback read-ahead to AudioPageCache.
