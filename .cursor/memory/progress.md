@@ -156,3 +156,12 @@ Manual (~15 min):
   generation and joined shutdown; do not integrate scratch or normal playback yet.
 - Watch for grouped-alias signal handlers (`alias.onXxx:`) and self-referential `prop: prop`
   bindings in new QML — qualify with parent `id` (MixerSection pattern).
+- AudioPageCache foundation completed: one application service, shared versioned handles,
+  immutable fixed pages, guarded RT lookup, bounded priority requests, decoder worker,
+  budget/eviction/stats and joined shutdown.
+- Next: migrate only ScratchResampler to cache pages and prove `diskReadsFromAudioThread == 0`.
+- ScratchResampler cache migration completed: direct reader/stream reload paths removed,
+  preallocated window refills from guarded pages, miss/recovery fade and scratch statistics added;
+  automated stress proves `diskReadsFromAudioThread == 0`.
+- Next: migrate only normal playback read-ahead to the shared AudioPageCache; no DeckAudioGraph
+  or RubberBand redesign in that task.

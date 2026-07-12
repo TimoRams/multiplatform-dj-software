@@ -70,11 +70,20 @@ void ScratchResampler::primeTrackerVelocity(double ratePerOutputSample) noexcept
     m_trackVel = ratePerOutputSample * m_outputSampleRate;
 }
 
-bool ScratchResampler::tryPrimeWindowFromDisk(int outputBlockSize) noexcept
+void ScratchResampler::setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle) noexcept
 {
-    if (!m_reader || m_sourceSize >= kMinWindowSamples)
-        return m_sourceSize >= kMinWindowSamples;
-    return reloadWindowFromDisk(0.0, outputBlockSize);
+    m_cache = cache;
+    m_cacheHandle = handle;
+    m_sourceSize = 0;
+    m_bufferOriginSample = m_readPos;
+    m_starvationGain = 0.0f;
+}
+
+ScratchCacheStats ScratchResampler::cacheStats() const noexcept
+{
+    return {m_pageHits.load(), m_pageMisses.load(), m_starvationBlocks.load(),
+            m_recoveryEvents.load(), m_droppedRequests.load(), m_generationMismatches.load(),
+            m_diskReadsFromAudioThread.load()};
 }
 
 double ScratchResampler::wrapPosition(double pos) const noexcept
@@ -130,80 +139,72 @@ bool ScratchResampler::needsWindowReload(double minAbsPos, double maxAbsPos) con
         || relMax > static_cast<double>(m_sourceSize - edgeGuard - 1);
 }
 
-bool ScratchResampler::reloadWindowFromDisk(double rate, int outputBlockSize) noexcept
+bool ScratchResampler::positionInWindow(double position) const noexcept
 {
-    if (!m_reader)
-        return false;
+    return m_sourceSize >= kMinWindowSamples
+        && position >= m_bufferOriginSample + kHermiteRadius
+        && position < m_bufferOriginSample + m_sourceSize - kHermiteRadius - 1;
+}
+
+bool ScratchResampler::refillWindowFromCache(double rate, int outputBlockSize) noexcept
+{
+    if (!m_cache || !m_cacheHandle.isValid()) return false;
 
     int lookBehind = 0;
     int lookAhead = 0;
     windowMargins(rate, outputBlockSize, lookBehind, lookAhead);
-
-    const double blockSpan = std::max(std::abs(rate), std::abs(m_smoothedRate))
-                           * static_cast<double>(std::max(m_deviceBufferSize, outputBlockSize));
-    const int marginBehind = lookBehind + static_cast<int>(std::ceil(blockSpan));
-    const int marginAhead = lookAhead + static_cast<int>(std::ceil(blockSpan));
-
-    const juce::int64 trackEnd = std::max<juce::int64>(
-        0, static_cast<juce::int64>(std::llround(m_trackLengthSamples)) - 1);
-
-    const juce::int64 startSample = std::max<juce::int64>(
-        0, static_cast<juce::int64>(std::floor(m_readPos)) - marginBehind);
-    const juce::int64 endSample = std::min(
-        trackEnd,
-        static_cast<juce::int64>(std::ceil(m_readPos)) + marginAhead);
-
-    const int numSamples = static_cast<int>(endSample - startSample + 1);
-    const int capacity = m_sourceBuffer.getNumSamples();
-    if (numSamples < kMinWindowSamples || numSamples > capacity)
-        return false;
-
-    if (!m_reader->read(&m_sourceBuffer, 0, numSamples, startSample, true, true)) {
-        m_sourceSize = 0;
-        return false;
+    if (rate > 0.05) {
+        lookBehind = std::max(kMinWindowSamples, lookBehind / 2);
+        lookAhead = std::min(m_sourceBuffer.getNumSamples() - lookBehind, lookAhead * 2);
+    } else if (rate < -0.05) {
+        lookAhead = std::max(kMinWindowSamples, lookAhead / 2);
+        lookBehind = std::min(m_sourceBuffer.getNumSamples() - lookAhead, lookBehind * 2);
     }
-
-    m_bufferOriginSample = static_cast<double>(startSample);
-    m_sourceSize = numSamples;
+    const auto trackLength = m_cacheHandle.lengthInSamples();
+    const auto start = std::max<std::int64_t>(0, static_cast<std::int64_t>(std::floor(m_readPos)) - lookBehind);
+    const auto wanted = std::min<std::int64_t>(m_sourceBuffer.getNumSamples(), lookBehind + lookAhead + outputBlockSize);
+    const auto count = std::min<std::int64_t>(wanted, std::max<std::int64_t>(0, trackLength - start));
+    if (count < kMinWindowSamples) return false;
+    const auto firstPage = AudioPage::pageIndexForSample(start);
+    const auto lastPage = AudioPage::pageIndexForSample(start + count - 1);
+    bool complete = true;
+    for (auto pageIndex = firstPage; pageIndex <= lastPage; ++pageIndex) {
+        auto page = m_cache->tryGetPage(m_cacheHandle, pageIndex);
+        if (!page) {
+            complete = false;
+            m_pageMisses.fetch_add(1, std::memory_order_relaxed);
+            if (!m_cache->requestPage(m_cacheHandle, pageIndex,
+                    pageIndex == AudioPage::pageIndexForSample(static_cast<std::int64_t>(m_readPos))
+                        ? AudioCachePriority::RealtimeCritical : AudioCachePriority::ScratchNearPlayhead))
+                m_droppedRequests.fetch_add(1, std::memory_order_relaxed);
+            continue;
+        }
+        if (page->trackId != m_cacheHandle.id() || page->generation != m_cacheHandle.generation()) {
+            complete = false;
+            m_generationMismatches.fetch_add(1, std::memory_order_relaxed);
+            continue;
+        }
+        m_pageHits.fetch_add(1, std::memory_order_relaxed);
+        const auto copyStart = std::max<std::int64_t>(start, page->firstSample);
+        const auto copyEnd = std::min<std::int64_t>(start + count,
+            page->firstSample + page->validSampleCount);
+        const int copyCount = static_cast<int>(std::max<std::int64_t>(0, copyEnd - copyStart));
+        const int sourceOffset = static_cast<int>(copyStart - page->firstSample);
+        const int targetOffset = static_cast<int>(copyStart - start);
+        for (int channel = 0; channel < m_channels; ++channel) {
+            const int sourceChannel = std::min(channel, static_cast<int>(page->channelCount) - 1);
+            if (const float* source = page->channelData(static_cast<unsigned>(sourceChannel)))
+                std::copy_n(source + sourceOffset, copyCount,
+                            m_sourceBuffer.getWritePointer(channel) + targetOffset);
+        }
+    }
+    if (!complete) return false;
+    m_bufferOriginSample = static_cast<double>(start);
+    m_sourceSize = static_cast<int>(count);
     return true;
 }
 
-void ScratchResampler::reloadWindowFromStream(juce::AudioSource& input,
-                                              double rate,
-                                              int outputBlockSize) noexcept
-{
-    if (!std::isfinite(m_readPos))
-        m_readPos = 0.0;
-
-    m_readPos = wrapPosition(m_readPos);
-
-    int lookBehind = 0;
-    int lookAhead = 0;
-    windowMargins(rate, outputBlockSize, lookBehind, lookAhead);
-
-    const int anchorSample = std::max(0, static_cast<int>(std::floor(m_readPos)) - lookBehind);
-
-    if (auto* positionable = dynamic_cast<juce::PositionableAudioSource*>(&input)) {
-        positionable->setNextReadPosition(static_cast<juce::int64>(anchorSample));
-    }
-
-    m_bufferOriginSample = static_cast<double>(anchorSample);
-    m_sourceSize = 0;
-
-    const int capacity = m_sourceBuffer.getNumSamples();
-    const int targetFill = std::min(capacity - 1, lookBehind + lookAhead + m_deviceBufferSize);
-    while (m_sourceSize < targetFill && m_sourceSize < capacity - m_deviceBufferSize) {
-        const int pullCount = std::min(m_deviceBufferSize, capacity - m_sourceSize);
-        if (pullCount <= 0)
-            break;
-
-        juce::AudioSourceChannelInfo pullInfo(&m_sourceBuffer, m_sourceSize, pullCount);
-        input.getNextAudioBlock(pullInfo);
-        m_sourceSize += pullCount;
-    }
-}
-
-void ScratchResampler::ensureWindow(juce::AudioSource& input, double rate, int outputBlockSize) noexcept
+bool ScratchResampler::ensureWindow(double rate, int outputBlockSize) noexcept
 {
     const int blockSamples = std::max(m_deviceBufferSize, outputBlockSize);
     const double blockSpan = std::max(std::abs(rate), std::abs(m_smoothedRate))
@@ -216,16 +217,8 @@ void ScratchResampler::ensureWindow(juce::AudioSource& input, double rate, int o
         ? std::min(m_trackLengthSamples - 1.0, maxPos)
         : maxPos;
 
-    if (!needsWindowReload(clampedMin, clampedMax))
-        return;
-
-    if (m_reader != nullptr) {
-        if (!reloadWindowFromDisk(rate, outputBlockSize))
-            reloadWindowFromStream(input, rate, outputBlockSize);
-        return;
-    }
-
-    reloadWindowFromStream(input, rate, outputBlockSize);
+    if (!needsWindowReload(clampedMin, clampedMax)) return true;
+    return refillWindowFromCache(rate, outputBlockSize);
 }
 
 float ScratchResampler::readHermite(int channel, double position) const noexcept
@@ -251,8 +244,22 @@ float ScratchResampler::readHermite(int channel, double position) const noexcept
     return engine::audio::cubicHermite(at(i - 1), at(i), at(i + 1), at(i + 2), frac);
 }
 
-void ScratchResampler::processBlock(juce::AudioSource& input,
-                                    double rate,
+void ScratchResampler::writeScratchOutput(float* out0, float* out1, int index, bool ready) noexcept
+{
+    const float step = 1.0f / static_cast<float>(kStarvationFadeSamples);
+    if (ready) {
+        if (m_starvationGain <= 0.0f) m_recoveryEvents.fetch_add(1, std::memory_order_relaxed);
+        m_starvationGain = std::min(1.0f, m_starvationGain + step);
+        m_lastOutputL = readHermite(0, m_readPos);
+        m_lastOutputR = readHermite(1, m_readPos);
+    } else {
+        m_starvationGain = std::max(0.0f, m_starvationGain - step);
+    }
+    if (out0) out0[index] = m_lastOutputL * m_starvationGain;
+    if (out1) out1[index] = m_lastOutputR * m_starvationGain;
+}
+
+void ScratchResampler::processBlock(double rate,
                                     const juce::AudioSourceChannelInfo& output) noexcept
 {
     if (!output.buffer || output.numSamples <= 0) {
@@ -280,7 +287,8 @@ void ScratchResampler::processBlock(juce::AudioSource& input,
     float* out0 = outChannels > 0 ? output.buffer->getWritePointer(0, start) : nullptr;
     float* out1 = outChannels > 1 ? output.buffer->getWritePointer(1, start) : nullptr;
 
-    ensureWindow(input, rate, numSamples);
+    const bool windowReady = ensureWindow(rate, numSamples);
+    if (!windowReady) m_starvationBlocks.fetch_add(1, std::memory_order_relaxed);
 
     for (int i = 0; i < numSamples; ++i) {
         const double delta = rate - m_smoothedRate;
@@ -290,24 +298,21 @@ void ScratchResampler::processBlock(juce::AudioSource& input,
             : std::clamp(0.004 + absRate * 0.008, 0.004, 0.030);
         m_smoothedRate += std::clamp(delta, -slew, slew);
 
-        if (m_sourceSize < kMinWindowSamples || std::abs(m_smoothedRate) < 1e-7) {
-            if (out0) out0[i] = 0.0f;
-            if (out1) out1[i] = 0.0f;
+        if (std::abs(m_smoothedRate) < 1e-7) {
+            writeScratchOutput(out0, out1, i, false);
             if (std::abs(m_smoothedRate) < 1e-7)
                 continue;
         }
 
         m_readPos = wrapPosition(m_readPos);
-
-        if (out0) out0[i] = readHermite(0, m_readPos);
-        if (out1) out1[i] = readHermite(1, m_readPos);
+        writeScratchOutput(out0, out1, i, windowReady && positionInWindow(m_readPos));
 
         m_readPos += m_smoothedRate;
     }
+    m_readPos = wrapPosition(m_readPos);
 }
 
-double ScratchResampler::processScratchTracking(juce::AudioSource& input,
-                                                double targetPosSamples,
+double ScratchResampler::processScratchTracking(double targetPosSamples,
                                                 double maxAbsRate,
                                                 const juce::AudioSourceChannelInfo& output) noexcept
 {
@@ -345,15 +350,12 @@ double ScratchResampler::processScratchTracking(juce::AudioSource& input,
         std::max(std::abs((target - m_readPos) / static_cast<double>(std::max(1, numSamples))),
                  std::abs(m_trackVel) * dt) * 1.5,
         0.0, absMaxRate);
-    ensureWindow(input, estRate, numSamples);
+    const bool windowReady = ensureWindow(estRate, numSamples);
+    if (!windowReady) m_starvationBlocks.fetch_add(1, std::memory_order_relaxed);
 
     const int outChannels = std::min(output.buffer->getNumChannels(), m_channels);
     float* out0 = outChannels > 0 ? output.buffer->getWritePointer(0, start) : nullptr;
     float* out1 = outChannels > 1 ? output.buffer->getWritePointer(1, start) : nullptr;
-
-    const bool haveWindow = m_sourceSize >= kMinWindowSamples;
-    if (!haveWindow)
-        output.clearActiveBufferRegion();
 
     for (int i = 0; i < numSamples; ++i) {
         const double err = target - m_readPos;
@@ -363,15 +365,13 @@ double ScratchResampler::processScratchTracking(juce::AudioSource& input,
         const double rate = std::clamp(m_trackVel * dt, -absMaxRate, absMaxRate);
 
         m_readPos = wrapPosition(m_readPos);
-        if (haveWindow) {
-            if (out0) out0[i] = readHermite(0, m_readPos);
-            if (out1) out1[i] = readHermite(1, m_readPos);
-        }
+        writeScratchOutput(out0, out1, i, windowReady && positionInWindow(m_readPos));
         m_readPos += rate;
     }
 
     m_smoothedRate = m_trackVel * dt;
     m_lastRate = m_smoothedRate;
+    m_readPos = wrapPosition(m_readPos);
     return m_smoothedRate;
 }
 

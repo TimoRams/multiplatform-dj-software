@@ -61,8 +61,8 @@ public:
 
     void armScalerCrossfade() noexcept { m_crossfadeRemaining.store(kCrossfadeSamples, std::memory_order_relaxed); }
 
-    // Positionable deck reader used for scratch pulls (bypasses transport clock).
-    void setScratchInputSource(juce::AudioSource* source) noexcept;
+    void setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle) noexcept;
+    [[nodiscard]] ScratchCacheStats scratchCacheStats() const noexcept { return m_scratchResampler.cacheStats(); }
 
     // Audio thread publishes scratch playhead here (seconds) for lock-free UI reads.
     void setAudioPlayheadSink(std::atomic<double>* sink) noexcept { m_audioPlayheadSink = sink; }
@@ -74,15 +74,12 @@ public:
 private:
     void applyDeckTempoToHermite() noexcept;
     [[nodiscard]] double effectiveDeckTempoRatio() const noexcept;
-    [[nodiscard]] juce::PositionableAudioSource* positionableScratchSource() const noexcept;
     double activePlaybackRate(double trackSampleRate, int bufferSize) noexcept;
     void applyNormalPathCrossfade(const juce::AudioSourceChannelInfo& info) noexcept;
     [[nodiscard]] bool isScratchPathActive() const noexcept;
 
     juce::OptionalScopedPointer<juce::AudioSource> m_transport;
-    juce::AudioSource* m_scratchInput = nullptr;
     juce::PositionableAudioSource* m_positionableTransportSource = nullptr;
-    juce::PositionableAudioSource* m_positionableScratchInput = nullptr;
     std::unique_ptr<HermiteResamplingAudioSource> m_hermite;
 
     engine::scratch::ScratchController m_controller;

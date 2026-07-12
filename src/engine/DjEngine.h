@@ -4,6 +4,7 @@
 #include "audio/ScratchDeckBridge.hpp"
 #include "deck/DeckCueLoopController.h"
 #include "deck/DeckTrackLoader.h"
+#include "audio/cache/AudioPageCache.h"
 
 class TimeStretchAudioSource;
 class MixerDspSource;
@@ -123,7 +124,8 @@ public:
     /** Detach file readers from scratch/transport; call after audio device is closed. */
     void releaseTransportReaders();
 
-    explicit DjEngine(AudioDeviceService& audioDeviceService, QObject* parent = nullptr);
+    explicit DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audioPageCache,
+                      QObject* parent = nullptr);
     ~DjEngine() override;
 
     [[nodiscard]] float getProgress() const;
@@ -504,6 +506,8 @@ private:
     const SavedLoopSlot& savedLoopAt(int i) const { return m_cueLoopController.savedLoops()[static_cast<size_t>(i)]; }
 
     AudioDeviceService& m_audioDeviceService;
+    AudioPageCache& m_audioPageCache;
+    AudioCacheHandle m_audioCacheHandle;
     DeckCueLoopController m_cueLoopController;
     DeckTrackLoader m_trackLoader;
     juce::AudioFormatManager formatManager;

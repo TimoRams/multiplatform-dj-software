@@ -287,6 +287,12 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/audio/device/AudioDeviceService.h
     src/audio/device/AudioDeviceService.cpp
     src/audio/device/AudioDeviceServiceQueries.cpp
+    src/audio/cache/AudioPage.h
+    src/audio/cache/AudioCacheHandle.h
+    src/audio/cache/AudioPageCache.h
+    src/audio/cache/AudioPageCache.cpp
+    src/audio/cache/AudioCacheWorker.h
+    src/audio/cache/AudioCacheWorker.cpp
     src/platform/PosixSignalHandler.h
     src/platform/PosixSignalHandler.cpp
     src/app/MixerControl.h
@@ -711,3 +717,38 @@ target_compile_definitions(BrockDJ_track_loader_tests PRIVATE
 )
 target_compile_features(BrockDJ_track_loader_tests PRIVATE cxx_std_26)
 add_test(NAME track_loader COMMAND BrockDJ_track_loader_tests)
+
+add_executable(BrockDJ_audio_page_cache_tests
+    tests/audio_cache/audio_page_cache_tests.cpp
+    src/audio/cache/AudioPage.h
+    src/audio/cache/AudioCacheHandle.h
+    src/audio/cache/AudioPageCache.h
+    src/audio/cache/AudioPageCache.cpp
+    src/audio/cache/AudioCacheWorker.h
+    src/audio/cache/AudioCacheWorker.cpp
+)
+target_include_directories(BrockDJ_audio_page_cache_tests PRIVATE src)
+target_link_libraries(BrockDJ_audio_page_cache_tests PRIVATE
+    Qt6::Core juce::juce_core juce::juce_audio_basics juce::juce_audio_formats
+)
+target_compile_definitions(BrockDJ_audio_page_cache_tests PRIVATE
+    JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1
+)
+target_compile_features(BrockDJ_audio_page_cache_tests PRIVATE cxx_std_26)
+add_test(NAME audio_page_cache COMMAND BrockDJ_audio_page_cache_tests)
+
+add_executable(BrockDJ_scratch_cache_tests
+    tests/scratch_cache/scratch_cache_tests.cpp
+    src/audio/cache/AudioPageCache.cpp
+    src/audio/cache/AudioCacheWorker.cpp
+    src/engine/audio/ScratchResampler.cpp
+)
+target_include_directories(BrockDJ_scratch_cache_tests PRIVATE src src/engine)
+target_link_libraries(BrockDJ_scratch_cache_tests PRIVATE
+    Qt6::Core juce::juce_core juce::juce_audio_basics juce::juce_audio_formats
+)
+target_compile_definitions(BrockDJ_scratch_cache_tests PRIVATE
+    JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1
+)
+target_compile_features(BrockDJ_scratch_cache_tests PRIVATE cxx_std_26)
+add_test(NAME scratch_cache COMMAND BrockDJ_scratch_cache_tests)

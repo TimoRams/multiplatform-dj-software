@@ -18,3 +18,17 @@ Last updated: 2026-07-12
 | cue/loop persistence | `LibraryDatabase`, invoked by `DjEngine_CueLoopFacade` | Qt owner/control thread | SQLite may block | forbidden |
 
 Shutdown order: stop new UI changes → each deck rejects and joins `DeckTrackLoader` → unregister master callback → close service device → join analyzer → release deck readers → destroy decks → destroy master bus → destroy service. Queued loader results carry a `QPointer` and mismatching generation, so they cannot apply after loader shutdown. Qt service connections disconnect automatically when each deck is destroyed.
+
+## Audio page cache foundation
+
+| Component | Owner/access | RT rule |
+|---|---|---|
+| `AudioPageCache` | one `ApplicationRuntime`; control open/release, RT read/request | only lookup/request/stats are RT-safe |
+| `AudioCacheWorker` | cache-owned joined worker | decoder/allocation/eviction/delete allowed |
+| immutable `AudioPage` | worker publish, guarded RT read | never mutate after publication |
+| bounded priority queues | multi-producer, single consumer | fixed capacity, no allocation or wait |
+| `AudioPageReadGuard` | reader stack | atomic counter only; prevents worker free |
+
+Stop audio readers and destroy guards before joining/destroying the cache.
+
+Scratch lifetime: `ApplicationRuntime::audioPageCache` outlives all decks and their `ScratchDeckBridge`/`ScratchResampler`. Track apply swaps the handle under the existing transport-swap gate; eject invalidates the resampler before releasing the handle. The audio callback only copies from guarded pages into the already allocated half-second scratch window. No control mutex, reader or worker API is reachable from scratch processing.

@@ -45,9 +45,10 @@ QString defaultSavedLoopColor(int index)
 
 } // namespace
 
-DjEngine::DjEngine(AudioDeviceService& audioDeviceService, QObject* parent)
+DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audioPageCache, QObject* parent)
     : QObject(parent)
     , m_audioDeviceService(audioDeviceService)
+    , m_audioPageCache(audioPageCache)
     , m_trackLoader(static_cast<int>(WAVEFORM_POINTS_PER_SECOND))
 {
     {
@@ -169,6 +170,7 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, QObject* parent)
 DjEngine::~DjEngine()
 {
     m_trackLoader.shutdownAndJoin();
+    m_audioPageCache.releaseTrack(m_audioCacheHandle);
     {
         std::lock_guard<std::mutex> g(s_syncMutex);
         s_syncDecks.erase(std::remove(s_syncDecks.begin(), s_syncDecks.end(), this), s_syncDecks.end());

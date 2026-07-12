@@ -38,6 +38,9 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
     if (m_analyzer)
         m_analyzer->stopAnalysis();
 
+    m_audioPageCache.releaseTrack(m_audioCacheHandle);
+    m_audioCacheHandle = m_audioPageCache.openTrack({result.canonicalPath});
+
     resetTrackLoadState();
     m_trackTitle = result.metadata.title;
     m_trackArtist = result.metadata.artist;

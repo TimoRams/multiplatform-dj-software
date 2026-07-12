@@ -127,3 +127,15 @@ injizierte Decks und beendete sauber; echte Hardwarelisten, Wiedergabe und Hot-U
 - Manuell: Während Track A lädt Track B wählen; vier Decks schnell laden; denselben Track auf zwei Decks; Wechsel während Wiedergabe/Analyse; beschädigte und danach gültige Datei; Beenden während Load; Cover/Metadaten/Waveform/Cues prüfen; MIDI-Load pro Deck.
 - Erwartung: Nur die aktuelle Generation wird sichtbar; kein altes Cover/Metadata/Analyseergebnis; keine detached Threads; vorhandenes Trackwechsel- und Wiedergabeverhalten ohne Crash oder dauerhafte Stille.
 - Ergebnis: automatische Loader- und Gesamttests bestanden; echte QML-, Audiohardware- und MIDI-Prüfung offen.
+
+## 15. Globaler AudioPageCache-Grundbau
+
+- Automatisch: Page-Arithmetik, Mono/Stereo, kurze/exakte/partielle Pages, Miss→Request→Hit, Sharing/Release, Generation, beschädigte Datei, Budget/Eviction, fester Zufallsstress und Shutdown.
+- Erwartung: `residentBytes <= budget`, finite immutable PCM-Pages, kein stale Publish, RT-Miss ohne Decode.
+- Manuell: keine Audioauswirkung, da Scratch und Playback noch nicht integriert sind.
+
+## 16. Cache-basierter Scratch-Pfad
+
+- Automatisch: Mono/Stereo, Page-Grenze, partielle Page, 64–8192 Samples, langsam/schnell vor/rückwärts, Positions-Tracker, Loop-Wrap, Pre-Roll, Miss/Fade/Recovery, Handlewechsel und 2.000 deterministische Sprünge.
+- Musswert: `ScratchCacheStats::diskReadsFromAudioThread == 0` vor und nach Stress.
+- Manuell offen: Jogwheel-Gefühl, Backspin, Loop/Slip/Keylock/FX, vier Decks, kleiner Cache, Shutdown während Scratch.

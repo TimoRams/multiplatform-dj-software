@@ -200,6 +200,8 @@ void DjEngine::attachReaderToTransport(juce::AudioFormatReader* bufferedReader,
     reverseWrapSource->setReverse(m_isReverse);
     transportSource.setSource(reverseWrapSource.get(), 0, nullptr, bufferedReader->sampleRate);
     m_loadedTrackSampleRate = bufferedReader->sampleRate;
+    if (scratchBridge)
+        scratchBridge->setTrackCacheSource(&m_audioPageCache, m_audioCacheHandle);
     transportSource.setPosition(0.0);
     syncScratchBridgeToTransport();
     terminateScratchSession(scratchResumePos);
@@ -216,11 +218,9 @@ void DjEngine::releaseTransportReaders()
 
     if (scratchBridge)
         scratchBridge->beginTransportSwap();
-    // Exit scratch while reader sources are still alive — scratchBridge holds a raw
-    // pointer to directReaderSource via setScratchInputSource().
     terminateScratchSession(0.0);
     if (scratchBridge)
-        scratchBridge->setScratchInputSource(nullptr);
+        scratchBridge->setTrackCacheSource(nullptr, {});
 
     reverseWrapSource.reset();
     bufferedReaderSource.reset();
@@ -235,6 +235,8 @@ void DjEngine::releaseTransportReaders()
 void DjEngine::ejectTrack()
 {
     m_trackLoader.requestCancel();
+    m_audioPageCache.releaseTrack(m_audioCacheHandle);
+    m_audioCacheHandle = {};
     if (!m_trackLoadError.isEmpty()) {
         m_trackLoadError.clear();
         emit trackLoadErrorChanged();
@@ -418,11 +420,6 @@ void DjEngine::syncScratchBridgeToTransport()
 
     const double len = std::max(0.0, transportSource.getLengthInSeconds());
     scratchBridge->configureTrack(m_loadedTrackSampleRate, len);
-    // Scratch pulls must seek the file directly — the buffered transport reader
-    // causes dropouts/aliasing when the scratch resampler jumps read positions.
-    scratchBridge->setScratchInputSource(directReaderSource
-                                            ? static_cast<juce::AudioSource*>(directReaderSource.get())
-                                            : reverseWrapSource.get());
     scratchBridge->setReverse(m_isReverse);
     scratchBridge->setLoopRangeSeconds(m_cueLoopController.activeLoop().inSec, m_cueLoopController.activeLoop().outSec, m_cueLoopController.activeLoop().active, m_loadedTrackSampleRate);
     scratchBridge->setDeckTempoRatio(getTempoRatio());

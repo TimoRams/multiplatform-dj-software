@@ -369,3 +369,11 @@ Mixer EQ / SC / volume faders fix — **completed**.
 ## Current task: DeckTrackLoader extraction
 
 `DeckTrackLoader` now owns one joinable low-priority worker, a latest-request slot, generation/state/cancel/shutdown and a private decoder manager. It prepares canonical identity, two playback readers, structured metadata, waveform cache/overview, cover bytes/image and auto-cue without touching QML, SQLite or the audio callback. `DjEngine_TransportLoad.cpp` queues one `QPointer`-guarded result to the Qt owner, revalidates generation, hydrates existing DB analysis/cues, applies TrackData, starts missing analysis and hands readers to the unchanged playback pipeline. The old detached `[this]` loader and `DjEngine` load mutex/generation fields are removed. Next architecture task: foundations for `AudioPage`, `AudioCacheHandle`, `AudioPageCache` and `AudioCacheWorker`; no scratch/playback integration in that task.
+
+## Current task: global AudioPageCache foundation
+
+ApplicationRuntime owns one shared cache: 16,384-sample planar immutable pages, canonical path/size/mtime keys, shared versioned handles, five bounded priority queues, one joined decoder worker, 256 MiB default budget, worker-only LRU eviction, guarded atomic lookup and atomic stats. Normal playback is not connected; scratch integration is described below.
+
+## Current task: cache-only ScratchResampler
+
+Each deck now receives the application cache and opens/releases one versioned handle per prepared track. ScratchResampler no longer contains an AudioFormatReader/AudioSource or disk/stream reload functions. Its preallocated ~0.5 s window is filled only from guarded immutable pages, including cross-page Hermite neighborhoods and mono duplication. Direction-aware current/near-page requests use bounded priorities. Misses retain the old window where valid and apply a deterministic 128-sample hold/fade-out; recovery fades in. Automated stress keeps `diskReadsFromAudioThread == 0`. Normal playback remains on BufferingAudioSource/Hermite transport.

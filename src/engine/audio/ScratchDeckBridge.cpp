@@ -2,8 +2,6 @@
 
 #include "HermiteResamplingAudioSource.h"
 
-#include <juce_audio_formats/juce_audio_formats.h>
-
 namespace engine::audio {
 
 ScratchDeckBridge::ScratchDeckBridge(juce::AudioSource* inputSource, bool deleteInputWhenDeleted)
@@ -51,13 +49,6 @@ double ScratchDeckBridge::effectiveDeckTempoRatio() const noexcept
     return m_reverse.load(std::memory_order_relaxed) ? -rate : rate;
 }
 
-juce::PositionableAudioSource* ScratchDeckBridge::positionableScratchSource() const noexcept
-{
-    if (m_scratchInput != nullptr)
-        return m_positionableScratchInput;
-    return m_positionableTransportSource;
-}
-
 bool ScratchDeckBridge::isScratchPathActive() const noexcept
 {
     return m_useScratchScaler
@@ -88,14 +79,7 @@ void ScratchDeckBridge::beginScratch(double anchorSeconds,
     m_scratchResampler.setTrackLengthSamples(trackLengthSeconds * trackSampleRate);
     m_scratchResampler.reset(audioAnchorSamples);
     m_scratchResampler.snapSmoothedRate(0.0);
-    // Prime before enabling the scratch path so the first audio callback does not
-    // block on a synchronous stream reload (audible glitch + CPU spike).
-    (void) m_scratchResampler.tryPrimeWindowFromDisk(m_blockSize);
     m_useScratchScaler = true;
-
-    if (auto* positionable = positionableScratchSource()) {
-        positionable->setNextReadPosition(static_cast<juce::int64>(std::llround(audioAnchorSamples)));
-    }
 }
 
 void ScratchDeckBridge::endScratch(bool allowInertia)
@@ -154,10 +138,6 @@ void ScratchDeckBridge::syncScratchReadPosition(double displaySec, double trackS
         * (sr / std::max(1.0, m_outputSampleRate));
     m_scratchResampler.snapSmoothedRate(resamplerRate);
 
-    const juce::int64 samplePos = static_cast<juce::int64>(std::llround(audioSamples));
-    if (auto* positionable = positionableScratchSource())
-        positionable->setNextReadPosition(samplePos);
-
     if (m_audioPlayheadSink != nullptr)
         m_audioPlayheadSink->store(displaySec, std::memory_order_release);
     m_scratchDisplaySec.store(displaySec, std::memory_order_relaxed);
@@ -185,8 +165,6 @@ void ScratchDeckBridge::publishScratchDisplay(double displaySec) noexcept
     const double resamplerRate = m_controller.smoothedSpeed()
         * (sr / std::max(1.0, m_outputSampleRate));
     m_scratchResampler.snapSmoothedRate(resamplerRate);
-    if (auto* positionable = positionableScratchSource())
-        positionable->setNextReadPosition(static_cast<juce::int64>(std::llround(audioSamples)));
 }
 
 void ScratchDeckBridge::configureTrack(double trackSampleRate, double trackLengthSeconds) noexcept
@@ -204,10 +182,6 @@ void ScratchDeckBridge::syncReadPositionSeconds(double positionSeconds, double t
     const double audioSec = std::max(0.0, positionSeconds);
     const juce::int64 samplePos = static_cast<juce::int64>(std::llround(audioSec * sr));
     m_scratchResampler.reset(audioSec * sr);
-
-    if (auto* positionable = positionableScratchSource()) {
-        positionable->setNextReadPosition(samplePos);
-    }
 
     if (m_positionableTransportSource) {
         m_positionableTransportSource->setNextReadPosition(samplePos);
@@ -260,15 +234,9 @@ void ScratchDeckBridge::setLoopRangeSeconds(double loopInSec, double loopOutSec,
     m_scratchResampler.setLoopRange(m_loopInSample, m_loopOutSample, active);
 }
 
-void ScratchDeckBridge::setScratchInputSource(juce::AudioSource* source) noexcept
+void ScratchDeckBridge::setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle) noexcept
 {
-    m_scratchInput = source;
-    m_positionableScratchInput = dynamic_cast<juce::PositionableAudioSource*>(source);
-
-    juce::AudioFormatReader* reader = nullptr;
-    if (auto* readerSource = dynamic_cast<juce::AudioFormatReaderSource*>(source))
-        reader = readerSource->getAudioFormatReader();
-    m_scratchResampler.setFormatReader(reader);
+    m_scratchResampler.setTrackCacheSource(cache, handle);
 }
 
 bool ScratchDeckBridge::isScratching() const noexcept
@@ -369,12 +337,6 @@ void ScratchDeckBridge::getNextAudioBlock(const juce::AudioSourceChannelInfo& bu
         return;
     }
 
-    juce::AudioSource* scratchInput = m_scratchInput != nullptr ? m_scratchInput : m_transport.get();
-    if (!scratchInput) {
-        bufferToFill.clearActiveBufferRegion();
-        return;
-    }
-
     const double sr = m_trackSampleRate.load(std::memory_order_relaxed);
     const double oneX = sr / std::max(1.0, m_outputSampleRate);
 
@@ -385,14 +347,14 @@ void ScratchDeckBridge::getNextAudioBlock(const juce::AudioSourceChannelInfo& bu
         const double target = m_platter.targetSamplePosition();
         const double maxAbsRate = 8.0 * oneX;
         const double usedRate = m_scratchResampler.processScratchTracking(
-            *scratchInput, target, maxAbsRate, bufferToFill);
+            target, maxAbsRate, bufferToFill);
         m_controller.setMeasuredNormalizedSpeed(usedRate / std::max(1e-9, oneX));
         // Display is published by the UI thread via publishScratchDisplay().
         return;
     }
 
     const double rate = activePlaybackRate(sr, bufferToFill.numSamples);
-    m_scratchResampler.processBlock(*scratchInput, rate, bufferToFill);
+    m_scratchResampler.processBlock(rate, bufferToFill);
 
     // While the finger is down, only the UI thread may publish the visible
     // playhead — republishing a cached value here races with fresh drag deltas.

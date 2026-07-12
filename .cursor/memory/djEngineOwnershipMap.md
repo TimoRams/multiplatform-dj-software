@@ -108,3 +108,9 @@ Current path:
 6. Eject/cancel invalidates the generation. Shutdown rejects new work, clears pending work, joins the loader, then joins analysis and releases playback readers.
 
 `DeckTrackLoader` owns the loading process, request queue, generation, cancellation state, worker and its private decoder manager. It does not own the active transport/read-ahead graph, `TrackData`, SQLite connection, analyzer implementation or QML properties. `DjEngine_TransportLoad.cpp` is now the result-application facade; `DjEngine_CoreMeta.cpp` contains only owner-thread library hydration.
+
+## Audio cache integration boundary
+
+`ApplicationRuntime` owns exactly one `AudioPageCache`; it has no QML or DB dependency. `DjEngine` borrows it solely to manage a per-track scratch handle. Existing BufferingAudioSource, read-ahead and normal transport remain unchanged.
+
+Scratch integration now opens the cache handle during `applyPreparedTrack`, installs it inside the existing transport-swap gate, invalidates it before reader teardown, and releases it on eject/destruction. Scratch uses the shared cache; normal `BufferingAudioSource`/Hermite playback remains unchanged. Loop wrapping stays in ScratchResampler, negative pre-roll clamps to sample zero, and stale track generations fail cache lookup.

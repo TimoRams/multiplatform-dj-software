@@ -16,6 +16,7 @@
 #include "midi/MidiControllerManager.h"
 #include "midi/ParameterStore.h"
 #include "audio/device/AudioDeviceService.h"
+#include "audio/cache/AudioPageCache.h"
 
 #include <QCoreApplication>
 #include <QEventLoop>
@@ -175,6 +176,7 @@ void shutdownApplication(ApplicationRuntime& runtime)
         runtime.deckC.reset();
         runtime.deckB.reset();
         runtime.deckA.reset();
+        runtime.audioPageCache.reset();
 
         runtime.linkManager.reset();
         runtime.libraryPreviewPlayer.reset();

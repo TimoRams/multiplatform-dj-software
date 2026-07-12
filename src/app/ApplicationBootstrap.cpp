@@ -55,6 +55,7 @@
 #include "library/LibraryAnalysisManager.h"
 #include "app/CursorControl.h"
 #include "audio/device/AudioDeviceService.h"
+#include "audio/cache/AudioPageCache.h"
 
 using namespace Qt::StringLiterals;
 
@@ -310,6 +311,7 @@ int runApplication(int argc, char *argv[])
     runtime.libraryCoverService = std::make_unique<LibraryCoverService>(runtime.coverProviderPtr);
     runtime.mixerControl = std::make_unique<MixerControl>();
     runtime.audioDeviceService = std::make_unique<AudioDeviceService>();
+    runtime.audioPageCache = std::make_unique<AudioPageCache>();
     settingsManager.setAudioDeviceService(runtime.audioDeviceService.get());
     runtime.masterBus = std::make_unique<DjMasterBus>();
     QObject::connect(runtime.audioDeviceService.get(), &AudioDeviceService::routingChanged,
@@ -372,10 +374,10 @@ int runApplication(int argc, char *argv[])
             runtime.rootObjectForStartup->setProperty("startupLibraryReady", true);
 
         QTimer::singleShot(0, &app, [&]() {
-            runtime.deckA = std::make_unique<DjEngine>(*runtime.audioDeviceService);
-            runtime.deckB = std::make_unique<DjEngine>(*runtime.audioDeviceService);
-            runtime.deckC = std::make_unique<DjEngine>(*runtime.audioDeviceService);
-            runtime.deckD = std::make_unique<DjEngine>(*runtime.audioDeviceService);
+            runtime.deckA = std::make_unique<DjEngine>(*runtime.audioDeviceService, *runtime.audioPageCache);
+            runtime.deckB = std::make_unique<DjEngine>(*runtime.audioDeviceService, *runtime.audioPageCache);
+            runtime.deckC = std::make_unique<DjEngine>(*runtime.audioDeviceService, *runtime.audioPageCache);
+            runtime.deckD = std::make_unique<DjEngine>(*runtime.audioDeviceService, *runtime.audioPageCache);
             logStartupStep("DjEngines constructed");
 
             for (const auto [deck, name] : std::array<std::pair<DjEngine*, const char*>, 4>{{
