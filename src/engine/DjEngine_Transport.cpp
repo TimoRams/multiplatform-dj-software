@@ -151,7 +151,7 @@ void DjEngine::resetTrackLoadState()
     m_currentSegments.clear();
     // Reset every cue/loop state under the new track generation, including
     // deferred quantized commands and any active loop.
-    m_cueLoopController.beginTrack(m_loadGen.load(std::memory_order_relaxed));
+    m_cueLoopController.beginTrack(m_trackLoader.currentGeneration());
     emit segmentsChanged();
     emit hotCuesChanged();
     emit savedLoopsChanged();
@@ -234,7 +234,11 @@ void DjEngine::releaseTransportReaders()
 
 void DjEngine::ejectTrack()
 {
-    ++m_loadGen;
+    m_trackLoader.requestCancel();
+    if (!m_trackLoadError.isEmpty()) {
+        m_trackLoadError.clear();
+        emit trackLoadErrorChanged();
+    }
 
     if (m_analyzer) {
         m_analyzer->setCompletionCallback({});

@@ -3,6 +3,7 @@
 #include "audio/ReverseStreamAudioSource.h"
 #include "audio/ScratchDeckBridge.hpp"
 #include "deck/DeckCueLoopController.h"
+#include "deck/DeckTrackLoader.h"
 
 class TimeStretchAudioSource;
 class MixerDspSource;
@@ -71,6 +72,7 @@ class DjEngine : public QObject
     Q_PROPERTY(QString trackFilePath READ trackFilePath NOTIFY trackMetadataChanged)
     Q_PROPERTY(QString coverArtUrl  READ coverArtUrl  NOTIFY trackMetadataChanged)
     Q_PROPERTY(bool    hasCoverArt  READ hasCoverArt  NOTIFY trackMetadataChanged)
+    Q_PROPERTY(QString trackLoadError READ trackLoadError NOTIFY trackLoadErrorChanged)
     Q_PROPERTY(QVariantList currentSegments READ currentSegments NOTIFY segmentsChanged)
 
     Q_PROPERTY(double waveformPointsPerSecond READ waveformPointsPerSecond CONSTANT)
@@ -313,6 +315,7 @@ public:
     [[nodiscard]] double mainCueSec() const { return m_cueLoopController.mainCue().positionSec; }
     [[nodiscard]] QString lastAudioDeviceError() const;
     [[nodiscard]] QString audioDeviceFallbackMessage() const;
+    [[nodiscard]] QString trackLoadError() const { return m_trackLoadError; }
 
     void setCoverArtProvider(CoverArtProvider* provider, const QString& deckId);
     void setLibraryCoverService(LibraryCoverService* service);
@@ -412,6 +415,7 @@ signals:
     void trackLoaded();
     void trackEjected();
     void trackMetadataChanged();
+    void trackLoadErrorChanged();
     void pixelsPerSecondChanged();
     
     // Mixer Signals
@@ -463,9 +467,7 @@ private:
     LatencySnapshot buildLatencySnapshot() const;
 
     void resetTrackLoadState();
-    void populateMetadataFromReader(const juce::AudioFormatReader& reader,
-                                    const QString& rawPath,
-                                    const juce::File& file);
+    void applyPreparedTrack(TrackLoadResult result);
     void updateTrackDuration(double durationSec);
     bool hydrateLibraryStateForTrack(const QString& rawPath, double durationSec);
     void attachReaderToTransport(juce::AudioFormatReader* bufferedReader,
@@ -503,6 +505,7 @@ private:
 
     AudioDeviceService& m_audioDeviceService;
     DeckCueLoopController m_cueLoopController;
+    DeckTrackLoader m_trackLoader;
     juce::AudioFormatManager formatManager;
     std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
     std::unique_ptr<juce::BufferingAudioSource> bufferedReaderSource;
@@ -536,9 +539,8 @@ private:
     QString m_currentTrackId;
     QString m_trackFilePath;
     QString m_coverArtUrl;
+    QString m_trackLoadError;
     bool    m_hasCoverArt = false;
-    std::atomic<quint64> m_loadGen{0};
-    std::mutex m_loadMutex;
     QVariantList m_currentSegments;
 
     // Tempo control: ±6/8/16/32/100% (WIDE) selectable range

@@ -300,6 +300,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/engine/DjEngine_CueLoopFacade.cpp
     src/engine/deck/DeckCueLoopController.cpp
     src/engine/deck/DeckCueLoopController.h
+    src/engine/deck/DeckTrackLoader.cpp
+    src/engine/deck/DeckTrackLoader.h
     src/engine/DjEngine_Scratch.cpp
     src/engine/DjEngine_Settings.cpp
     src/engine/DjEngine_SettingsQuery.cpp
@@ -675,3 +677,37 @@ target_include_directories(BrockDJ_cue_loop_controller_tests PRIVATE src)
 target_link_libraries(BrockDJ_cue_loop_controller_tests PRIVATE Qt6::Core)
 target_compile_features(BrockDJ_cue_loop_controller_tests PRIVATE cxx_std_26)
 add_test(NAME cue_loop_controller COMMAND BrockDJ_cue_loop_controller_tests)
+
+add_executable(BrockDJ_track_loader_tests
+    tests/track_loader/deck_track_loader_tests.cpp
+    src/engine/deck/DeckTrackLoader.h
+    src/engine/deck/DeckTrackLoader.cpp
+    src/engine/audio/MetadataUtils.cpp
+    src/library/CoverArtExtractor.cpp
+    src/rendering/WaveformAnalyzer.cpp
+    src/rendering/WaveformEnvelopePass.cpp
+    src/rendering/WaveformAnalysisOrchestrator.cpp
+    src/rendering/WaveformCache.cpp
+    src/domain/TrackData.cpp
+    src/analysis/AnalysisFeatureExtractor.cpp
+    src/analysis/TempoEstimator.cpp
+    src/analysis/BeatTracker.cpp
+    src/analysis/DownbeatDetector.cpp
+    src/analysis/BeatGridFitter.cpp
+    src/analysis/AnalysisValidation.cpp
+    src/analysis/PhraseAnalyzer.cpp
+)
+target_include_directories(BrockDJ_track_loader_tests PRIVATE
+    src src/analysis src/domain src/engine src/library src/rendering
+)
+target_link_libraries(BrockDJ_track_loader_tests PRIVATE
+    Qt6::Core Qt6::Gui
+    juce::juce_core juce::juce_data_structures juce::juce_audio_basics
+    juce::juce_audio_formats juce::juce_dsp juce::juce_events
+    ThirdParty::TagLib ThirdParty::KeyFinder
+)
+target_compile_definitions(BrockDJ_track_loader_tests PRIVATE
+    JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1
+)
+target_compile_features(BrockDJ_track_loader_tests PRIVATE cxx_std_26)
+add_test(NAME track_loader COMMAND BrockDJ_track_loader_tests)

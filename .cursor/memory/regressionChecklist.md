@@ -120,3 +120,10 @@ injizierte Decks und beendete sauber; echte Hardwarelisten, Wiedergabe und Hot-U
 - Automatisch: `ctest --test-dir build --output-on-failure`; `cue_loop_controller` prüft acht Slots, ungültige/NaN-Grenzen, Pre-Roll, dynamisches Beatgrid und BPM-Fallback, Loop-Aktivierung, gespeicherte Loops, schnelle Befehlsfolgen und Trackgeneration.
 - Manuell offen: Main-Cue Hold/Release und Cue+Play; Hot-Cue QML/MIDI-Feedback; Loop halbieren/verdoppeln/Reverse/Scratch/Slip; gespeicherte Loop-Persistenz; Trackwechsel während eines wartenden quantisierten Sprungs; Neustart mit SQLite-Daten.
 - Erwartung: unveränderte öffentliche `DjEngine`-API und Signale; keine Cue-/Loop-Zustände des alten Tracks; keine Datenbank- oder Controllerarbeit im Audiocallback.
+
+## 14. DeckTrackLoader nach Extraktion
+
+- Automatisch: `track_loader` erzeugt Mono-/Stereo-WAVs mit 44,1/48 kHz und prüft erfolgreiches Laden, Reader/Metadaten, leere/fehlende/beschädigte Dateien, A→B→C→D-Generationen, Cancel, expliziten Shutdown und Destruktor-Join.
+- Manuell: Während Track A lädt Track B wählen; vier Decks schnell laden; denselben Track auf zwei Decks; Wechsel während Wiedergabe/Analyse; beschädigte und danach gültige Datei; Beenden während Load; Cover/Metadaten/Waveform/Cues prüfen; MIDI-Load pro Deck.
+- Erwartung: Nur die aktuelle Generation wird sichtbar; kein altes Cover/Metadata/Analyseergebnis; keine detached Threads; vorhandenes Trackwechsel- und Wiedergabeverhalten ohne Crash oder dauerhafte Stille.
+- Ergebnis: automatische Loader- und Gesamttests bestanden; echte QML-, Audiohardware- und MIDI-Prüfung offen.

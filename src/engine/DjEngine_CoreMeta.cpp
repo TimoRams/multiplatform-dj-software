@@ -1,56 +1,6 @@
 #include "DjEngineCommonIncludes.h"
 
 
-void DjEngine::populateMetadataFromReader(const juce::AudioFormatReader& reader,
-                                          const QString& rawPath,
-                                          const juce::File& file)
-{
-    const auto metaMap = metadata::buildMetadataLookup(reader.metadataValues);
-
-    m_trackTitle = metadata::metaValue(metaMap, {"title", "id3title", "tit2", "tt2", "name", "tracktitle", "song"});
-    m_trackArtist = metadata::metaValue(metaMap, {"artist", "id3artist", "tpe1", "albumartist", "tpe2", "band", "performer", "leadartist"});
-    m_trackAlbum = metadata::metaValue(metaMap, {"album", "id3album", "talb", "record", "albumtitle"});
-    m_trackGenre = metadata::metaValue(metaMap, {"genre", "tcon", "contenttype"});
-    m_trackComment = metadata::metaValue(metaMap, {"comment", "comm", "description"});
-    m_trackKey = metadata::metaValue(metaMap, {"key", "tkey", "initialkey", "musickey", "keysig"});
-
-    // Tag BPM is used immediately; the background analyzer will overwrite it later.
-    const QString tagBpm = metadata::metaValue(metaMap, {"bpm", "tbpm", "tmpo", "tempo", "beatsperminute"});
-    const double bpmVal = metadata::parseBpmString(tagBpm);
-    if (bpmVal > 0.0)
-        m_trackData->setBpmData(bpmVal, 0, reader.sampleRate);
-
-    // TagLib fills gaps left by JUCE readers — JUCE's FLAC reader skips Vorbis comments entirely.
-    {
-        TagLib::FileRef tlFile(rawPath.toLocal8Bit().constData());
-        if (!tlFile.isNull() && tlFile.tag()) {
-            const TagLib::Tag* tag = tlFile.tag();
-            const QString tlTitle   = metadata::cleanup(QString::fromStdString(tag->title().to8Bit(true)));
-            const QString tlArtist  = metadata::cleanup(QString::fromStdString(tag->artist().to8Bit(true)));
-            const QString tlGenre   = metadata::cleanup(QString::fromStdString(tag->genre().to8Bit(true)));
-            const QString tlComment = metadata::cleanup(QString::fromStdString(tag->comment().to8Bit(true)));
-            if (m_trackTitle.isEmpty()   && !tlTitle.isEmpty())   m_trackTitle   = tlTitle;
-            if (m_trackArtist.isEmpty()  && !tlArtist.isEmpty())  m_trackArtist  = tlArtist;
-            if (m_trackGenre.isEmpty()   && !tlGenre.isEmpty())   m_trackGenre   = tlGenre;
-            if (m_trackComment.isEmpty() && !tlComment.isEmpty()) m_trackComment = tlComment;
-        }
-    }
-
-    const auto v1 = metadata::readId3v1(rawPath);
-    if (v1) {
-        if (m_trackTitle.isEmpty() && !v1->title.isEmpty())
-            m_trackTitle = v1->title;
-        if (m_trackArtist.isEmpty() && !v1->artist.isEmpty())
-            m_trackArtist = v1->artist;
-        if (m_trackAlbum.isEmpty() && !v1->album.isEmpty())
-            m_trackAlbum = v1->album;
-    }
-
-    const QString baseName = metadata::cleanup(QString::fromStdString(file.getFileNameWithoutExtension().toStdString()));
-    metadata::filenameHeuristic(baseName, m_trackTitle, m_trackArtist);
-}
-
-
 bool DjEngine::hydrateLibraryStateForTrack(const QString& rawPath, double durationSec)
 {
     if (!m_libraryDb)
@@ -128,5 +78,4 @@ bool DjEngine::hydrateLibraryStateForTrack(const QString& rawPath, double durati
     emit beatgridLockedChanged();
     return hasDbAnalysis;
 }
-
 

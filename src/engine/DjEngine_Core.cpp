@@ -48,6 +48,7 @@ QString defaultSavedLoopColor(int index)
 DjEngine::DjEngine(AudioDeviceService& audioDeviceService, QObject* parent)
     : QObject(parent)
     , m_audioDeviceService(audioDeviceService)
+    , m_trackLoader(static_cast<int>(WAVEFORM_POINTS_PER_SECOND))
 {
     {
         std::lock_guard<std::mutex> g(s_syncMutex);
@@ -167,6 +168,7 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, QObject* parent)
 
 DjEngine::~DjEngine()
 {
+    m_trackLoader.shutdownAndJoin();
     {
         std::lock_guard<std::mutex> g(s_syncMutex);
         s_syncDecks.erase(std::remove(s_syncDecks.begin(), s_syncDecks.end(), this), s_syncDecks.end());
@@ -191,6 +193,7 @@ void DjEngine::prepareForShutdown()
     // Disconnect only — QTimer::stop() during aboutToQuit has crashed on macOS when
     // a timeout handler is still unwinding on the stack.
     QObject::disconnect(&timer, nullptr, this, nullptr);
+    m_trackLoader.shutdownAndJoin();
 
     if (m_analysisPersistTimer)
         QObject::disconnect(m_analysisPersistTimer, nullptr, this, nullptr);

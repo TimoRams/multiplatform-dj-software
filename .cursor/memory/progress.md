@@ -148,5 +148,11 @@ Manual (~15 min):
 - Recommended next step: extract `DeckTrackLoader` (track replacement, decoder creation,
   metadata/cover, analysis job and generation); do not move `DeckAudioGraph`, audio cache or
   general transport code in that step.
+- `DeckTrackLoader` extraction completed: detached raw-`this` loading was replaced by one
+  joined worker; generation, latest-request cancellation, decoder/metadata/cover/waveform
+  preparation and a move-only result are covered by generated-WAV tests.
+- Recommended next step: create the foundations for `AudioPage`, `AudioCacheHandle`,
+  `AudioPageCache` and `AudioCacheWorker` with fixed pages, budget, prioritised requests,
+  generation and joined shutdown; do not integrate scratch or normal playback yet.
 - Watch for grouped-alias signal handlers (`alias.onXxx:`) and self-referential `prop: prop`
   bindings in new QML — qualify with parent `id` (MixerSection pattern).
