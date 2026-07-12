@@ -284,6 +284,9 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/main.cpp
     src/app/ApplicationBootstrap.cpp
     src/app/ApplicationLifecycle.cpp
+    src/audio/device/AudioDeviceService.h
+    src/audio/device/AudioDeviceService.cpp
+    src/audio/device/AudioDeviceServiceQueries.cpp
     src/platform/PosixSignalHandler.h
     src/platform/PosixSignalHandler.cpp
     src/app/MixerControl.h
@@ -639,3 +642,27 @@ if(UNIX)
     target_compile_features(BrockDJ_posix_signal_tests PRIVATE cxx_std_26)
     add_test(NAME posix_signal_handler COMMAND BrockDJ_posix_signal_tests)
 endif()
+
+add_executable(BrockDJ_audio_device_service_tests
+    tests/audio/audio_device_service_tests.cpp
+    src/audio/device/AudioDeviceService.h
+    src/audio/device/AudioDeviceService.cpp
+    src/audio/device/AudioDeviceServiceQueries.cpp
+    src/engine/audio/AudioDeviceUtils.cpp
+)
+target_include_directories(BrockDJ_audio_device_service_tests PRIVATE src src/engine)
+target_link_libraries(BrockDJ_audio_device_service_tests PRIVATE
+    Qt6::Core
+    juce::juce_core juce::juce_audio_basics juce::juce_audio_devices
+)
+target_compile_definitions(BrockDJ_audio_device_service_tests PRIVATE
+    JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0
+)
+target_compile_features(BrockDJ_audio_device_service_tests PRIVATE cxx_std_26)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(BrockDJ_audio_device_service_tests PRIVATE ThirdParty::ALSA)
+    if(TARGET PkgConfig::JACK)
+        target_link_libraries(BrockDJ_audio_device_service_tests PRIVATE PkgConfig::JACK)
+    endif()
+endif()
+add_test(NAME audio_device_service COMMAND BrockDJ_audio_device_service_tests)

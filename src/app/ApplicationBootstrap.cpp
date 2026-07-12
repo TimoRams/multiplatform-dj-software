@@ -54,6 +54,7 @@
 #include "library/LibraryTableModel.h"
 #include "library/LibraryAnalysisManager.h"
 #include "app/CursorControl.h"
+#include "audio/device/AudioDeviceService.h"
 
 using namespace Qt::StringLiterals;
 
@@ -308,6 +309,13 @@ int runApplication(int argc, char *argv[])
     runtime.coverProviderPtr = runtime.coverProvider.get();
     runtime.libraryCoverService = std::make_unique<LibraryCoverService>(runtime.coverProviderPtr);
     runtime.mixerControl = std::make_unique<MixerControl>();
+    runtime.audioDeviceService = std::make_unique<AudioDeviceService>();
+    settingsManager.setAudioDeviceService(runtime.audioDeviceService.get());
+    runtime.masterBus = std::make_unique<DjMasterBus>();
+    QObject::connect(runtime.audioDeviceService.get(), &AudioDeviceService::routingChanged,
+                     [](int master, int booth, int headphones) {
+                         DjMasterBus::setOutputRouting(master, booth, headphones);
+                     });
 
     engine.addImageProvider("coverart", runtime.coverProvider.release());
     logStartupStep("Cover art provider installed");
@@ -364,10 +372,10 @@ int runApplication(int argc, char *argv[])
             runtime.rootObjectForStartup->setProperty("startupLibraryReady", true);
 
         QTimer::singleShot(0, &app, [&]() {
-            runtime.deckA = std::make_unique<DjEngine>();
-            runtime.deckB = std::make_unique<DjEngine>();
-            runtime.deckC = std::make_unique<DjEngine>();
-            runtime.deckD = std::make_unique<DjEngine>();
+            runtime.deckA = std::make_unique<DjEngine>(*runtime.audioDeviceService);
+            runtime.deckB = std::make_unique<DjEngine>(*runtime.audioDeviceService);
+            runtime.deckC = std::make_unique<DjEngine>(*runtime.audioDeviceService);
+            runtime.deckD = std::make_unique<DjEngine>(*runtime.audioDeviceService);
             logStartupStep("DjEngines constructed");
 
             for (const auto [deck, name] : std::array<std::pair<DjEngine*, const char*>, 4>{{
@@ -406,7 +414,6 @@ int runApplication(int argc, char *argv[])
             runtime.fxManager->registerEngines(runtime.deckA.get(), runtime.deckB.get(),
                                                runtime.deckC.get(), runtime.deckD.get());
 
-            runtime.masterBus = std::make_unique<DjMasterBus>();
             runtime.libraryPreviewPlayer = std::make_unique<LibraryPreviewPlayer>(&app);
             runtime.masterBus->setPreviewPlayer(runtime.libraryPreviewPlayer.get());
             engine.rootContext()->setContextProperty("libraryPreview",
@@ -436,7 +443,7 @@ int runApplication(int argc, char *argv[])
             if (actualSR  > 0) settingsManager.setAudioSampleRate(actualSR);
             if (actualBuf > 0) settingsManager.setAudioBufferSize(actualBuf);
 
-            runtime.masterBus->registerCallback(DjEngine::getSharedAudioDeviceManager());
+            runtime.masterBus->registerCallback(runtime.audioDeviceService->manager());
             qDebug() << "[startup] Audio device settings applied" << startupTimer.elapsed() << "ms";
         });
     };

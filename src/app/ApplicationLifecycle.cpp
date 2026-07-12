@@ -15,6 +15,7 @@
 #include "link/LinkManager.h"
 #include "midi/MidiControllerManager.h"
 #include "midi/ParameterStore.h"
+#include "audio/device/AudioDeviceService.h"
 
 #include <QCoreApplication>
 #include <QEventLoop>
@@ -140,7 +141,7 @@ void shutdownApplication(ApplicationRuntime& runtime)
             runtime.linkManager->shutdown();
 
         if (runtime.masterBus) {
-            runtime.masterBus->unregisterCallback(DjEngine::getSharedAudioDeviceManager());
+            runtime.masterBus->unregisterCallback(runtime.audioDeviceService->manager());
             for (DjEngine* deck : {runtime.deckA.get(), runtime.deckB.get(),
                                    runtime.deckC.get(), runtime.deckD.get()})
                 runtime.masterBus->removeDeck(deck);
@@ -150,7 +151,8 @@ void shutdownApplication(ApplicationRuntime& runtime)
         if (runtime.libraryPreviewPlayer)
             runtime.libraryPreviewPlayer->stop();
 
-        DjEngine::shutdownSharedAudioDeviceManager();
+        if (runtime.audioDeviceService)
+            runtime.audioDeviceService->closeAudioDevice();
 
         for (DjEngine* deck : {runtime.deckA.get(), runtime.deckB.get(),
                                runtime.deckC.get(), runtime.deckD.get()}) {
@@ -177,6 +179,7 @@ void shutdownApplication(ApplicationRuntime& runtime)
         runtime.linkManager.reset();
         runtime.libraryPreviewPlayer.reset();
         runtime.masterBus.reset();
+        runtime.audioDeviceService.reset();
         runtime.libraryDb.reset();
 
         runtime.settingsManager->shutdown();

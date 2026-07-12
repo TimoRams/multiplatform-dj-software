@@ -86,6 +86,11 @@ in der Sandbox nicht verfügbar und eine laufende echte Analyse wurde dabei nich
 - Relevante Logs oder Metriken: AudioDeviceManager Fehler, fallback logs, device/routing status.
 - Ergebnis: offen
 
+Automatisierte Service-Abdeckung (2026-07-12): `audio_device_service` prüft eine einzige
+Manager-/Konfigurationsinstanz für mehrere Deck-Views, globale Sample-Rate-/Buffer-Sichtbarkeit,
+Normalisierung, idempotente Signale, Routing und borrowed Lifetime. Headless Linux startete vier
+injizierte Decks und beendete sauber; echte Hardwarelisten, Wiedergabe und Hot-Unplug bleiben offen.
+
 ## 10. Loops, Hot Cues, Slip und Sync kombiniert verwenden
 
 - Vorbereitung: Zwei analysierte Tracks mit Beatgrid laden, Sync aktivieren, Hot Cues und Loop setzen.

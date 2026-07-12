@@ -1,9 +1,10 @@
 #include "DjEngineCommonIncludes.h"
+#include "audio/device/AudioDeviceService.h"
 
 
 void DjEngine::refreshHardwareLatency()
 {
-    if (auto* device = deviceManager.getCurrentAudioDevice()) {
+    if (auto* device = m_audioDeviceService.manager().getCurrentAudioDevice()) {
         const auto latency = readOutputLatencySnapshot(device);
         if (latency.sampleRate > 0.0) {
             m_latencySeconds.store(
@@ -49,7 +50,7 @@ DjEngine::LatencySnapshot DjEngine::buildLatencySnapshot() const
     if (m_lastLatencySnapshot.sampleRate > 0.0)
         snapshot.sampleRate = m_lastLatencySnapshot.sampleRate;
 
-    if (auto* device = deviceManager.getCurrentAudioDevice()) {
+    if (auto* device = m_audioDeviceService.manager().getCurrentAudioDevice()) {
         const auto latency = readOutputLatencySnapshot(device);
         snapshot.outputRawSamples = latency.outputRawSamples;
         snapshot.bufferSamples = latency.callbackBufferSamples;
@@ -209,4 +210,3 @@ QVariantMap DjEngine::audioPerformanceStats() const
     stats.insert(QStringLiteral("fxProfiles"), fxProfiles);
     return stats;
 }
-

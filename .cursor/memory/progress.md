@@ -1,6 +1,9 @@
 # Progress
 
 ## Done (recent)
+- [x] **First controlled `DjEngine` split** — complete method/state ownership map plus
+  runtime-owned, constructor-injected `AudioDeviceService`; one manager/configuration for all four
+  decks, unchanged QML forwarding API, explicit callback/shutdown order and focused service tests.
 - [x] **Async-signal-safe POSIX shutdown handoff** — portable self-pipe with `sigaction`,
   nonblocking/CLOEXEC descriptors, Qt-thread notifier delivery, duplicate suppression, prior-handler
   restoration and focused real-signal tests. Linux full-app Ctrl+C/SIGTERM headless checks passed.
@@ -138,10 +141,9 @@ Manual (~15 min):
   RubberBand reset/prewarm in callback, and mixer filter coefficient work.
 - Analyzer lifetime is fixed; a later improvement may publish final analysis metadata as one
   immutable snapshot. Detached general track-load workers remain a separate P1 issue.
-- Audio cache redesign, analyzer lifetime ownership, and `DjEngine`
-  component split were intentionally not implemented in this preparation pass.
-- Recommended next step: perform the first controlled `DjEngine` cleanup inventory: map methods
-  and fields, identify global audio-device settings, prepare `AudioDeviceService`, and assign
-  cue/hot-cue/loop code to a future `DeckCueLoopController` without moving callback-critical code.
+- Audio cache redesign and remaining `DjEngine` components are intentionally still open.
+- Recommended next step: extract `DeckCueLoopController` from `DjEngine_Loop.cpp`,
+  `DjEngine_HotCue.cpp`, `DjEngine_MainCue.cpp`, and `DjEngine_SavedLoops.cpp`; do not move
+  `DeckAudioGraph`, cache, scratch or transport code in that step.
 - Watch for grouped-alias signal handlers (`alias.onXxx:`) and self-referential `prop: prop`
   bindings in new QML — qualify with parent `id` (MixerSection pattern).

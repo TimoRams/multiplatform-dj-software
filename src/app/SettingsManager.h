@@ -5,6 +5,9 @@
 #include <juce_data_structures/juce_data_structures.h>
 #include <QString>
 #include <QStringList>
+#include <QPointer>
+
+class AudioDeviceService;
 
 class SettingsManager : public QObject
 {
@@ -88,6 +91,7 @@ public:
     void setAudioBoothFirstChannel(int firstChannel);
 
     Q_INVOKABLE QStringList getAvailableAudioDeviceTypes() const;
+    void setAudioDeviceService(AudioDeviceService* service);
 
     int getAudioSampleRate() const;
     void setAudioSampleRate(int sampleRate);
@@ -147,6 +151,7 @@ private:
     juce::ApplicationProperties appProperties;
     bool m_previousRunUnclean = false;
     bool m_requestManualBackupOnExit = false;
+    QPointer<AudioDeviceService> m_audioDeviceService;
 
     juce::PropertiesFile* getUserSettingsOrNull();
     void ensureMappingsDirectoryExists() const;

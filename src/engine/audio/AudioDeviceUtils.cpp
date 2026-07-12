@@ -75,12 +75,6 @@ juce::AudioIODeviceType* findDeviceType(juce::AudioDeviceManager& deviceManager,
     return nullptr;
 }
 
-juce::AudioDeviceManager& sharedAudioDeviceManager()
-{
-    static juce::AudioDeviceManager manager;
-    return manager;
-}
-
 int clampFirstChannelForPack(int firstChannel)
 {
     if (firstChannel < 1)
@@ -115,8 +109,6 @@ OutputRoutingConfig unpackRouting(uint64_t packed)
         .boothFirstChannel = decode(packed >> 10)
     };
 }
-
-std::atomic<uint64_t> s_outputRoutingPacked { packRouting(OutputRoutingConfig{}) };
 
 namespace {
 

@@ -27,6 +27,7 @@ class AppConfig;
 class AppExitGate;
 class MixerParameterBridge;
 class MixerControl;
+class AudioDeviceService;
 
 struct ApplicationRuntime {
     QQmlApplicationEngine* engine = nullptr;
@@ -34,11 +35,12 @@ struct ApplicationRuntime {
     AppConfig* appConfig = nullptr;
     AppExitGate* exitGate = nullptr;
 
+    std::unique_ptr<AudioDeviceService> audioDeviceService;
+    std::unique_ptr<DjMasterBus> masterBus;
     std::unique_ptr<DjEngine> deckA;
     std::unique_ptr<DjEngine> deckB;
     std::unique_ptr<DjEngine> deckC;
     std::unique_ptr<DjEngine> deckD;
-    std::unique_ptr<DjMasterBus> masterBus;
 
     std::unique_ptr<ParameterStore> parameterStore;
     std::unique_ptr<MixerParameterBridge> mixerParameterBridge;

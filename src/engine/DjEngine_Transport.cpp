@@ -1,4 +1,5 @@
 #include "DjEngineCommonIncludes.h"
+#include "audio/device/AudioDeviceService.h"
 
 
 float DjEngine::getProgress() const
@@ -345,10 +346,9 @@ void DjEngine::ensureTransportRunningForPlayIntent()
         return;
     }
 
-    if (deviceManager.getCurrentAudioDevice() == nullptr) {
+    if (m_audioDeviceService.manager().getCurrentAudioDevice() == nullptr) {
         qWarning() << "[DjEngine] Play requested without active audio device; trying to recover";
-        const juce::String initErr = deviceManager.initialiseWithDefaultDevices(0, 2);
-        if (initErr.isNotEmpty() || deviceManager.getCurrentAudioDevice() == nullptr) {
+        if (!m_audioDeviceService.ensureDeviceAvailable()) {
             qWarning() << "[DjEngine] Could not recover audio device on play";
             return;
         }
@@ -521,4 +521,3 @@ const juce::AudioBuffer<float>& DjEngine::getPflBuffer() const
 {
     return mixerSource->getPflBuffer();
 }
-

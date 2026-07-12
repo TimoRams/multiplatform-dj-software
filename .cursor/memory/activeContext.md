@@ -3,6 +3,16 @@
 *Last updated: 2026-07-12*
 
 ## Current task
+**DjEngine ownership map + AudioDeviceService extraction**
+- Added the exhaustive method/state mapping in `djEngineOwnershipMap.md` and thread rules in `threadOwnership.md`.
+- `ApplicationRuntime` uniquely owns one `AudioDeviceService`, which owns the application `AudioDeviceManager`, global routing, error/fallback state and sample-rate/buffer snapshot.
+- Four `DjEngine` instances receive a constructor-injected reference. Public QML device APIs remain forwarding facades.
+- `DjMasterBus` remains the only audio callback and registers through the service. Shutdown unregisters/closes audio before decks, master bus and service are destroyed in dependency order.
+- Service signals refresh deck latency/tempo outside the audio callback and re-emit existing QML NOTIFY signals.
+- Hardware-independent service tests and full Linux build/ctest pass; headless startup constructed four decks and shut down cleanly.
+- `DjEngine.h` is 729 lines; `DjEngine_Settings.cpp` shrank 445→25 lines and `DjEngine_SettingsQuery.cpp` 207→27. `TransportLatency` remains mixed global/per-deck by design.
+
+## Previous task
 **Async-signal-safe POSIX SIGINT/SIGTERM handoff**
 - Added a small Unix-only `PosixSignalHandler`: `sigaction` writes one byte to a nonblocking/CLOEXEC self-pipe; a `QSocketNotifier` drains it in the Qt eventloop and requests quit exactly once.
 - The actual handler performs no Qt calls, allocation, logging, locking, object access or teardown. It only preserves `errno`, reads a `sig_atomic_t` fd and calls `write()`.

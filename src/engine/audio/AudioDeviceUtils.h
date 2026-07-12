@@ -13,7 +13,6 @@ int choosePreferredBufferSize(juce::AudioIODevice* device, int requestedSize);
 int minimumStableBufferSizeForBackend(const QString& deviceType);
 int clampToStableBufferSize(const QString& deviceType, int requestedSize);
 juce::AudioIODeviceType* findDeviceType(juce::AudioDeviceManager& deviceManager, const QString& typeName);
-juce::AudioDeviceManager& sharedAudioDeviceManager();
 
 struct OutputLatencySnapshot {
     int outputRawSamples = 0;
@@ -39,8 +38,6 @@ constexpr int kMaxSupportedOutputChannel = 30;
 int clampFirstChannelForPack(int firstChannel);
 uint64_t packRouting(const OutputRoutingConfig& cfg);
 OutputRoutingConfig unpackRouting(uint64_t packed);
-
-extern std::atomic<uint64_t> s_outputRoutingPacked;
 
 void clearOutputChannelCountCache();
 int readDeviceOutputChannelCount(const QString& deviceType, const QString& outputDevice);

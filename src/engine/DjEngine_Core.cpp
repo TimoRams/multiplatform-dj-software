@@ -1,5 +1,6 @@
 #include "DjEngineCommonIncludes.h"
 #include "SyncMaintenancePolicy.h"
+#include "audio/device/AudioDeviceService.h"
 
 
 namespace {
@@ -44,9 +45,9 @@ QString defaultSavedLoopColor(int index)
 
 } // namespace
 
-DjEngine::DjEngine(QObject* parent)
+DjEngine::DjEngine(AudioDeviceService& audioDeviceService, QObject* parent)
     : QObject(parent)
-    , deviceManager(sharedAudioDeviceManager())
+    , m_audioDeviceService(audioDeviceService)
 {
     {
         std::lock_guard<std::mutex> g(s_syncMutex);
@@ -129,26 +130,6 @@ DjEngine::DjEngine(QObject* parent)
     formatManager.registerBasicFormats();
     readAheadThread.startThread();
 
-    // Keep Linux/ALSA stable by default. Tiny startup buffers are great for
-    // latency, but they are too fragile while analysis and DB writes are active.
-    if (auto* device = deviceManager.getCurrentAudioDevice()) {
-        const int currentSize = device->getCurrentBufferSizeSamples();
-        const int stableTarget = minimumStableBufferSizeForBackend(getCurrentAudioDeviceType());
-        const int targetSize = choosePreferredBufferSize(device, stableTarget);
-
-        if (targetSize > 0 && targetSize != currentSize && currentSize < stableTarget) {
-            juce::AudioDeviceManager::AudioDeviceSetup setup;
-            deviceManager.getAudioDeviceSetup(setup);
-            setup.bufferSize = targetSize;
-            const juce::String setupErr = deviceManager.setAudioDeviceSetup(setup, true);
-            if (setupErr.isEmpty()) {
-                qDebug() << "[DjEngine] Raised audio buffer size for stability:" << currentSize << "->" << targetSize;
-            } else {
-                qWarning() << "[DjEngine] Could not adjust audio buffer size:" << QString::fromStdString(setupErr.toStdString());
-            }
-        }
-    }
-
     // Audio callback is registered by DjMasterBus, not per-deck.
 
     scratchBridge = std::make_unique<engine::audio::ScratchDeckBridge>(&transportSource, false);
@@ -163,7 +144,15 @@ DjEngine::DjEngine(QObject* parent)
     // DjMasterBus calls prepareToPlay on this source via addDeck().
 
     refreshHardwareLatency();
-    clearOutputChannelCountCache();
+    connect(&m_audioDeviceService, &AudioDeviceService::configurationChanged, this, [this]() {
+        refreshHardwareLatency();
+        if (!m_scratch.scrubbing() && !m_scratch.releaseGlide())
+            updateSpeedAndPitch();
+    });
+    connect(&m_audioDeviceService, &AudioDeviceService::errorChanged,
+            this, &DjEngine::audioDeviceErrorChanged);
+    connect(&m_audioDeviceService, &AudioDeviceService::fallbackChanged,
+            this, &DjEngine::audioDeviceFallbackChanged);
     m_snapClock.start();
     m_playHistoryClock.start();
     m_vuNotifyClock.start();
@@ -197,13 +186,6 @@ DjEngine::~DjEngine()
 }
 
 
-void DjEngine::shutdownSharedAudioDeviceManager()
-{
-    auto& manager = sharedAudioDeviceManager();
-    manager.closeAudioDevice();
-}
-
-
 void DjEngine::prepareForShutdown()
 {
     // Disconnect only — QTimer::stop() during aboutToQuit has crashed on macOS when
@@ -221,12 +203,6 @@ void DjEngine::prepareForShutdown()
     m_playRequested = false;
     transportSource.stop();
 }
-
-juce::AudioDeviceManager& DjEngine::getSharedAudioDeviceManager()
-{
-    return sharedAudioDeviceManager();
-}
-
 
 void DjEngine::setCoverArtProvider(CoverArtProvider* provider, const QString& deckId)
 {

@@ -5,6 +5,7 @@
 
 class TimeStretchAudioSource;
 class MixerDspSource;
+class AudioDeviceService;
 #include "scratch/ScratchSession.hpp"
 
 #include <QObject>
@@ -111,8 +112,6 @@ public:
     // audio output is silence (JUCE transport stays at 0 during pre-roll).
     static constexpr double PRE_ROLL_SECONDS = TransportLimits::kPreRollSeconds;
     static constexpr double SCRATCH_PRE_ROLL_SECONDS = PRE_ROLL_SECONDS * 4.0;
-    static void shutdownSharedAudioDeviceManager();
-    static juce::AudioDeviceManager& getSharedAudioDeviceManager();
     static void setTightDoubleSyncEnabled(bool enabled);
     [[nodiscard]] static bool tightDoubleSyncEnabled();
 
@@ -121,7 +120,7 @@ public:
     /** Detach file readers from scratch/transport; call after audio device is closed. */
     void releaseTransportReaders();
 
-    explicit DjEngine(QObject* parent = nullptr);
+    explicit DjEngine(AudioDeviceService& audioDeviceService, QObject* parent = nullptr);
     ~DjEngine() override;
 
     [[nodiscard]] float getProgress() const;
@@ -311,8 +310,8 @@ public:
     [[nodiscard]] bool beatgridLocked() const;
     void setBeatgridLocked(bool locked);
     [[nodiscard]] double mainCueSec() const { return m_mainCueSec; }
-    [[nodiscard]] QString lastAudioDeviceError() const { return m_lastAudioDeviceError; }
-    [[nodiscard]] QString audioDeviceFallbackMessage() const { return m_audioDeviceFallbackMessage; }
+    [[nodiscard]] QString lastAudioDeviceError() const;
+    [[nodiscard]] QString audioDeviceFallbackMessage() const;
 
     void setCoverArtProvider(CoverArtProvider* provider, const QString& deckId);
     void setLibraryCoverService(LibraryCoverService* service);
@@ -489,15 +488,6 @@ private:
     void persistMainCuePoint();
     void resetMainCueButtonState();
     void startMainCueHoldPreview(quint64 pressSerial);
-    void setLastAudioDeviceError(const QString& error);
-    void setAudioDeviceFallbackMessage(const QString& message);
-    std::expected<void, QString> applyAudioDeviceSettingsExpected(const QString& deviceType,
-                                                                  const QString& outputDevice,
-                                                                  int sampleRate,
-                                                                  int bufferSize,
-                                                                  int masterFirstChannel,
-                                                                  int headphonesFirstChannel,
-                                                                  int boothFirstChannel);
 
     enum class StopEffect { VinylBrake, Backspin, EchoOut, RollOut };
     void activateStopEffect(StopEffect effect);
@@ -522,7 +512,7 @@ private:
     SavedLoopSlot&       savedLoopAt(int i)       { return m_savedLoopSlots[static_cast<size_t>(i)]; }
     const SavedLoopSlot& savedLoopAt(int i) const { return m_savedLoopSlots[static_cast<size_t>(i)]; }
 
-    juce::AudioDeviceManager& deviceManager;
+    AudioDeviceService& m_audioDeviceService;
     juce::AudioFormatManager formatManager;
     std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
     std::unique_ptr<juce::BufferingAudioSource> bufferedReaderSource;
@@ -533,8 +523,6 @@ private:
     std::unique_ptr<engine::audio::ScratchDeckBridge> scratchBridge;
     std::unique_ptr<TimeStretchAudioSource> timeStretchSource;
     std::unique_ptr<MixerDspSource> mixerSource;
-    juce::AudioSourcePlayer sourcePlayer;
-
     QTimer timer;
     QTimer* m_analysisPersistTimer = nullptr;
 
@@ -569,8 +557,6 @@ private:
     bool m_mainCueButtonDown = false;
     bool m_mainCueHoldPreviewPending = false;
     quint64 m_mainCuePressSerial = 0;
-    QString m_lastAudioDeviceError;
-    QString m_audioDeviceFallbackMessage;
 
     // Tempo control: ±6/8/16/32/100% (WIDE) selectable range
     double m_tempoPercent = 0.0;
@@ -616,9 +602,6 @@ private:
     bool   m_slipActive   = false;
     double m_slipPosition = 0.0;
     std::atomic<bool> m_cueEnabled { false };
-    // Per-instance output channel pair (1-indexed). DeckA defaults to 1 (ch1+2),
-    // DeckB is auto-assigned to masterFirstChannel+2 (ch3+4) at startup.
-    std::atomic<int>  m_masterFirstChannelAtomic { 1 };
     bool m_playRequested = false;
     bool m_playLogged    = false;   // true once logPlay() has been called for the current track load
     double m_playedAccumSec = 0.0;  // accumulated real playback seconds since last track load
