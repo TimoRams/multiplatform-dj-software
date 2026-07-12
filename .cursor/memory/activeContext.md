@@ -361,3 +361,7 @@ Mixer EQ / SC / volume faders fix — **completed**.
 ## Architecture note
 - Volume path: `mixerControl.setChannelFader` → `MixerControl::applyChannelVolume` → `DjEngine::setVolume` × CF multiplier
 - EQ/trim/filter: `mixerControl.setTrim/setEq*/setFilter` → `DjEngine` → `MixerDspSource`
+
+## Current task: cue/loop extraction
+
+`DeckCueLoopController` is now the single owner of main-cue interaction state, eight hot cues, active loop/in/out/beat length, eight saved loops, pending quantized cue jumps and cue/loop track generation. `DjEngine_CueLoopFacade.cpp` preserves the existing QML/MIDI API, Qt signals, SQLite persistence and actual transport/audio application. Load/eject resets the controller with the new `m_loadGen`, invalidating deferred jumps. The former Loop/HotCue/MainCue/SavedLoops implementation files are consolidated. Next extraction: `DeckTrackLoader`, not audio graph/cache/general transport.

@@ -12,5 +12,7 @@ Last updated: 2026-07-12
 | Device enumeration/query helpers | service/control path | Qt owner thread only | may scan hardware, spawn probe manager, lock caches | forbidden |
 | Track loader/analyzer | deck-owned jobs/workers | loader/analyzer workers plus guarded Qt callbacks | file/decoder work allowed | forbidden |
 | Sync global registry | currently static `DjEngine`; future `SyncCoordinator` | Qt 4 ms control/UI with `s_syncMutex` | short mutex only outside callback | forbidden from callback |
+| `DeckCueLoopController` | one value member per `DjEngine` | Qt owner/control thread: QML, MIDI and hardware dispatch | QString/beat-grid snapshot work may allocate; persistence remains in facade | never call controller mutation/QString/containers from callback; audio reads only already-applied loop state in dedicated sources |
+| cue/loop persistence | `LibraryDatabase`, invoked by `DjEngine_CueLoopFacade` | Qt owner/control thread | SQLite may block | forbidden |
 
 Shutdown order: stop new UI changes → prepare decks → unregister master callback → close service device → release deck readers → destroy decks → destroy master bus → destroy service. Qt connections from the service to decks disconnect automatically when each deck is destroyed.

@@ -266,7 +266,7 @@ void DjEngine::onTimer()
 
     // Safety: transport must not run when there's no play intent and no cue preview.
     // Catches any leftover transport state that togglePlay/pause missed.
-    if (transportSource.isPlaying() && !m_playRequested && !m_mainCuePreviewActive) {
+    if (transportSource.isPlaying() && !m_playRequested && !m_cueLoopController.mainCue().previewActive) {
         freezeTransportAt(transportSource.getCurrentPosition());
         notifyVuMetersIfNeeded();
         return;
@@ -340,22 +340,22 @@ bool DjEngine::tickTransportPlaying()
         m_slipPosition = measuredPos;
     }
 
-    if (m_loopActive && m_loopOutSec > m_loopInSec) {
-        if (m_isReverse && m_snapPosition <= m_loopInSec) {
-            transportSource.setPosition(m_loopOutSec);
-            m_snapPosition = m_loopOutSec;
-        } else if (!m_isReverse && m_loopInSec < 0.0
-                   && m_snapPosition >= m_loopOutSec) {
+    if (m_cueLoopController.activeLoop().active && m_cueLoopController.activeLoop().outSec > m_cueLoopController.activeLoop().inSec) {
+        if (m_isReverse && m_snapPosition <= m_cueLoopController.activeLoop().inSec) {
+            transportSource.setPosition(m_cueLoopController.activeLoop().outSec);
+            m_snapPosition = m_cueLoopController.activeLoop().outSec;
+        } else if (!m_isReverse && m_cueLoopController.activeLoop().inSec < 0.0
+                   && m_snapPosition >= m_cueLoopController.activeLoop().outSec) {
             // Loop with pre-roll IN point: the audio source cannot enforce this
             // (no negative samples).  Software-wrap: stop transport and start a
             // pre-roll countdown from the true (negative) loop-in position.
             transportSource.stop();
             m_snapValid = false;
-            m_scrubHoldPosition = m_loopInSec;
+            m_scrubHoldPosition = m_cueLoopController.activeLoop().inSec;
             m_preRollCountdownActive = true;
-            m_preRollVisualStartPos  = m_loopInSec;
+            m_preRollVisualStartPos  = m_cueLoopController.activeLoop().inSec;
             m_preRollClock.restart();
-            m_atomicPlayheadPos.store(m_loopInSec, std::memory_order_relaxed);
+            m_atomicPlayheadPos.store(m_cueLoopController.activeLoop().inSec, std::memory_order_relaxed);
             emitPlaybackStateChanged();
             return false;
         }
@@ -380,12 +380,12 @@ void DjEngine::tickTransportStopped()
         m_atomicPlayheadPos.store(visualPos, std::memory_order_relaxed);
 
         // Loop entirely in pre-roll: both endpoints negative, wrap back to loop IN.
-        if (m_loopActive && m_loopOutSec <= 0.0 && m_loopOutSec > m_loopInSec
-                && visualPos >= m_loopOutSec) {
-            m_preRollVisualStartPos = m_loopInSec;
-            m_scrubHoldPosition     = m_loopInSec;
+        if (m_cueLoopController.activeLoop().active && m_cueLoopController.activeLoop().outSec <= 0.0 && m_cueLoopController.activeLoop().outSec > m_cueLoopController.activeLoop().inSec
+                && visualPos >= m_cueLoopController.activeLoop().outSec) {
+            m_preRollVisualStartPos = m_cueLoopController.activeLoop().inSec;
+            m_scrubHoldPosition     = m_cueLoopController.activeLoop().inSec;
             m_preRollClock.restart();
-            m_atomicPlayheadPos.store(m_loopInSec, std::memory_order_relaxed);
+            m_atomicPlayheadPos.store(m_cueLoopController.activeLoop().inSec, std::memory_order_relaxed);
             emit progressChanged();
             return;
         }

@@ -114,3 +114,9 @@ injizierte Decks und beendete sauber; echte Hardwarelisten, Wiedergabe und Hot-U
 - Erwartetes Verhalten: Keine Stille bei großen Blöcken, keine Dropouts bei kleinen Blöcken außer erwartbarer CPU-Grenze des Systems.
 - Relevante Logs oder Metriken: Audio callback worst usec/overruns, MasterBus block-size warnings, CPU load.
 - Ergebnis: offen
+
+## 13. Cue/Loop-Controller nach Extraktion
+
+- Automatisch: `ctest --test-dir build --output-on-failure`; `cue_loop_controller` prüft acht Slots, ungültige/NaN-Grenzen, Pre-Roll, dynamisches Beatgrid und BPM-Fallback, Loop-Aktivierung, gespeicherte Loops, schnelle Befehlsfolgen und Trackgeneration.
+- Manuell offen: Main-Cue Hold/Release und Cue+Play; Hot-Cue QML/MIDI-Feedback; Loop halbieren/verdoppeln/Reverse/Scratch/Slip; gespeicherte Loop-Persistenz; Trackwechsel während eines wartenden quantisierten Sprungs; Neustart mit SQLite-Daten.
+- Erwartung: unveränderte öffentliche `DjEngine`-API und Signale; keine Cue-/Loop-Zustände des alten Tracks; keine Datenbank- oder Controllerarbeit im Audiocallback.

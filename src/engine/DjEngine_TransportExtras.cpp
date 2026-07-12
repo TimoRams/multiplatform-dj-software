@@ -55,7 +55,7 @@ void DjEngine::setReverse(bool on)
     m_isReverse = on;
     if (reverseWrapSource) {
         reverseWrapSource->setReverse(on);
-        if (m_loopActive)
+        if (m_cueLoopController.activeLoop().active)
             applyLoopRangeToAudioSource();
     }
     updateSpeedAndPitch();

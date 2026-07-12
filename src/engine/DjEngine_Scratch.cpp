@@ -4,9 +4,9 @@
 engine::scratch::ScratchLoopCtx DjEngine::scratchLoopCtx() const noexcept
 {
     engine::scratch::ScratchLoopCtx ctx;
-    ctx.active = m_loopActive && (m_loopOutSec > m_loopInSec);
-    ctx.inSec = m_loopInSec;
-    ctx.outSec = m_loopOutSec;
+    ctx.active = m_cueLoopController.activeLoop().active && (m_cueLoopController.activeLoop().outSec > m_cueLoopController.activeLoop().inSec);
+    ctx.inSec = m_cueLoopController.activeLoop().inSec;
+    ctx.outSec = m_cueLoopController.activeLoop().outSec;
     return ctx;
 }
 
@@ -170,7 +170,7 @@ void DjEngine::restorePostScrubPlaybackState()
 
     // Re-apply loop range to the audio source — scratch neutral routing may have
     // changed the reverse state, which gates loop enforcement in applyLoopRangeToAudioSource.
-    if (m_loopActive)
+    if (m_cueLoopController.activeLoop().active)
         applyLoopRangeToAudioSource();
 
     if (m_playRequested) {
@@ -250,12 +250,12 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
                                     std::max(0.0, len),
                                     wasPlayingBeforeGrab,
                                     getTempoRatio());
-        const bool scratchLoopActive = m_loopActive
-            && m_loopOutSec > m_loopInSec
-            && m_loopInSec >= 0.0
-            && m_loopOutSec > 0.0;
-        scratchBridge->setLoopRangeSeconds(m_loopInSec,
-                                           m_loopOutSec,
+        const bool scratchLoopActive = m_cueLoopController.activeLoop().active
+            && m_cueLoopController.activeLoop().outSec > m_cueLoopController.activeLoop().inSec
+            && m_cueLoopController.activeLoop().inSec >= 0.0
+            && m_cueLoopController.activeLoop().outSec > 0.0;
+        scratchBridge->setLoopRangeSeconds(m_cueLoopController.activeLoop().inSec,
+                                           m_cueLoopController.activeLoop().outSec,
                                            scratchLoopActive,
                                            m_loadedTrackSampleRate);
         scratchBridge->setReverse(m_isReverse);

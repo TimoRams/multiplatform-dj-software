@@ -297,10 +297,9 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/engine/DjEngine_CoreTempo.cpp
     src/engine/DjEngine_TransportExtras.cpp
     src/engine/DjEngine_Fx.cpp
-    src/engine/DjEngine_HotCue.cpp
-    src/engine/DjEngine_MainCue.cpp
-    src/engine/DjEngine_SavedLoops.cpp
-    src/engine/DjEngine_Loop.cpp
+    src/engine/DjEngine_CueLoopFacade.cpp
+    src/engine/deck/DeckCueLoopController.cpp
+    src/engine/deck/DeckCueLoopController.h
     src/engine/DjEngine_Scratch.cpp
     src/engine/DjEngine_Settings.cpp
     src/engine/DjEngine_SettingsQuery.cpp
@@ -666,3 +665,13 @@ if(UNIX AND NOT APPLE)
     endif()
 endif()
 add_test(NAME audio_device_service COMMAND BrockDJ_audio_device_service_tests)
+
+add_executable(BrockDJ_cue_loop_controller_tests
+    tests/cue_loop/deck_cue_loop_controller_tests.cpp
+    src/engine/deck/DeckCueLoopController.h
+    src/engine/deck/DeckCueLoopController.cpp
+)
+target_include_directories(BrockDJ_cue_loop_controller_tests PRIVATE src)
+target_link_libraries(BrockDJ_cue_loop_controller_tests PRIVATE Qt6::Core)
+target_compile_features(BrockDJ_cue_loop_controller_tests PRIVATE cxx_std_26)
+add_test(NAME cue_loop_controller COMMAND BrockDJ_cue_loop_controller_tests)

@@ -91,15 +91,15 @@ double DjEngine::getVisualPositionQml() const
 
 double DjEngine::loopPreviewOutPosition() const
 {
-    if (m_loopActive && m_loopOutSec > m_loopInSec)
-        return m_loopOutSec;
+    if (m_cueLoopController.activeLoop().active && m_cueLoopController.activeLoop().outSec > m_cueLoopController.activeLoop().inSec)
+        return m_cueLoopController.activeLoop().outSec;
 
-    if (!m_loopInSet)
-        return m_loopOutSec;
+    if (!m_cueLoopController.activeLoop().inSet)
+        return m_cueLoopController.activeLoop().outSec;
 
     const double trackLen = m_trackDurationSec;
     if (trackLen <= 0.0)
-        return m_loopInSec;
+        return m_cueLoopController.activeLoop().inSec;
 
     double outPos = static_cast<double>(getVisualPosition());
     if (m_quantizeEnabled)
@@ -108,10 +108,10 @@ double DjEngine::loopPreviewOutPosition() const
     outPos = std::clamp(outPos, -PRE_ROLL_SECONDS, trackLen);
 
     constexpr double minLenSec = 0.001;
-    if (outPos <= m_loopInSec + minLenSec) {
-        const double beatDur = beatDurationAround(m_loopInSec);
+    if (outPos <= m_cueLoopController.activeLoop().inSec + minLenSec) {
+        const double beatDur = beatDurationAround(m_cueLoopController.activeLoop().inSec);
         if (beatDur > 1e-4)
-            outPos = std::min(trackLen, m_loopInSec + beatDur);
+            outPos = std::min(trackLen, m_cueLoopController.activeLoop().inSec + beatDur);
     }
 
     return outPos;
@@ -149,14 +149,9 @@ void DjEngine::resetTrackLoadState()
 {
     m_trackData->clear();
     m_currentSegments.clear();
-    clearHotCueState();
-    clearSavedLoopState();
-    // Sentinel clearly outside the renderable pre-roll range so no cue is drawn
-    // while no track is loaded.  The load path sets a real value after analysing
-    // the first audible frame, so this value is never visible during playback.
-    m_mainCueSec = -(PRE_ROLL_SECONDS + 1.0);
-    resetMainCueButtonState();
-    cancelQuantizedCueJump();
+    // Reset every cue/loop state under the new track generation, including
+    // deferred quantized commands and any active loop.
+    m_cueLoopController.beginTrack(m_loadGen.load(std::memory_order_relaxed));
     emit segmentsChanged();
     emit hotCuesChanged();
     emit savedLoopsChanged();
@@ -425,7 +420,7 @@ void DjEngine::syncScratchBridgeToTransport()
                                             ? static_cast<juce::AudioSource*>(directReaderSource.get())
                                             : reverseWrapSource.get());
     scratchBridge->setReverse(m_isReverse);
-    scratchBridge->setLoopRangeSeconds(m_loopInSec, m_loopOutSec, m_loopActive, m_loadedTrackSampleRate);
+    scratchBridge->setLoopRangeSeconds(m_cueLoopController.activeLoop().inSec, m_cueLoopController.activeLoop().outSec, m_cueLoopController.activeLoop().active, m_loadedTrackSampleRate);
     scratchBridge->setDeckTempoRatio(getTempoRatio());
     scratchBridge->setKeylockPassthrough(m_keylock);
 

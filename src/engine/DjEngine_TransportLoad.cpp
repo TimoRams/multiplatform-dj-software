@@ -261,10 +261,10 @@ void DjEngine::loadTrack(const QString& rawPath)
                 }
 
                 if (autoCueSec > 0.0
-                    && m_mainCueSec < 0.0
+                    && m_cueLoopController.mainCue().positionSec < 0.0
                     && !m_playRequested
                     && !transportSource.isPlaying()) {
-                    m_mainCueSec = autoCueSec;
+                    m_cueLoopController.mainCue().positionSec = autoCueSec;
                     emit mainCueChanged();
                     transportSource.setPosition(autoCueSec);
                 }

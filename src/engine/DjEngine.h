@@ -2,6 +2,7 @@
 
 #include "audio/ReverseStreamAudioSource.h"
 #include "audio/ScratchDeckBridge.hpp"
+#include "deck/DeckCueLoopController.h"
 
 class TimeStretchAudioSource;
 class MixerDspSource;
@@ -283,11 +284,11 @@ public:
     [[nodiscard]] bool quantizeEnabled() const { return m_quantizeEnabled; }
     [[nodiscard]] bool syncEnabled() const { return m_syncEnabled; }
     [[nodiscard]] bool isSyncMaster() const { return m_isSyncMaster; }
-    [[nodiscard]] bool loopActive() const { return m_loopActive; }
-    [[nodiscard]] bool loopInSet() const { return m_loopInSet; }
-    [[nodiscard]] double loopLengthBeats() const { return m_loopLengthBeats; }
-    [[nodiscard]] double loopInPosition() const { return m_loopInSec; }
-    [[nodiscard]] double loopOutPosition() const { return m_loopOutSec; }
+    [[nodiscard]] bool loopActive() const { return m_cueLoopController.activeLoop().active; }
+    [[nodiscard]] bool loopInSet() const { return m_cueLoopController.activeLoop().inSet; }
+    [[nodiscard]] double loopLengthBeats() const { return m_cueLoopController.activeLoop().lengthBeats; }
+    [[nodiscard]] double loopInPosition() const { return m_cueLoopController.activeLoop().inSec; }
+    [[nodiscard]] double loopOutPosition() const { return m_cueLoopController.activeLoop().outSec; }
     [[nodiscard]] double loopPreviewOutPosition() const;
 
     // VU meter getters — read atomic peaks from the audio thread
@@ -309,7 +310,7 @@ public:
     [[nodiscard]] QVariantList savedLoops() const;
     [[nodiscard]] bool beatgridLocked() const;
     void setBeatgridLocked(bool locked);
-    [[nodiscard]] double mainCueSec() const { return m_mainCueSec; }
+    [[nodiscard]] double mainCueSec() const { return m_cueLoopController.mainCue().positionSec; }
     [[nodiscard]] QString lastAudioDeviceError() const;
     [[nodiscard]] QString audioDeviceFallbackMessage() const;
 
@@ -470,7 +471,7 @@ private:
     void attachReaderToTransport(juce::AudioFormatReader* bufferedReader,
                                  juce::AudioFormatReader* directReader);
     void returnToSlipPosition();
-    bool isSlipDiverted() const { return m_slipActive && (m_loopActive || m_isReverse); }
+    bool isSlipDiverted() const { return m_slipActive && (loopActive() || m_isReverse); }
 
     void persistCurrentAnalysisToLibrary();
     void clearHotCueState();
@@ -493,26 +494,15 @@ private:
     void activateStopEffect(StopEffect effect);
     void deactivateStopEffect(StopEffect effect);
 
-    struct HotCueSlot {
-        bool set = false;
-        double positionSec = 0.0;
-        QString label;
-        QString color = "#e04040";
-    };
-    struct SavedLoopSlot {
-        bool set = false;
-        double inSec = 0.0;
-        double outSec = 0.0;
-        double lengthBeats = 0.0;
-        QString label;
-        QString color = "#30b050";
-    };
-    HotCueSlot&       slotAt(int i)       { return m_hotCueSlots[static_cast<size_t>(i)]; }
-    const HotCueSlot& slotAt(int i) const { return m_hotCueSlots[static_cast<size_t>(i)]; }
-    SavedLoopSlot&       savedLoopAt(int i)       { return m_savedLoopSlots[static_cast<size_t>(i)]; }
-    const SavedLoopSlot& savedLoopAt(int i) const { return m_savedLoopSlots[static_cast<size_t>(i)]; }
+    using HotCueSlot = DeckCueLoopController::HotCue;
+    using SavedLoopSlot = DeckCueLoopController::SavedLoop;
+    HotCueSlot& slotAt(int i) { return m_cueLoopController.hotCues()[static_cast<size_t>(i)]; }
+    const HotCueSlot& slotAt(int i) const { return m_cueLoopController.hotCues()[static_cast<size_t>(i)]; }
+    SavedLoopSlot& savedLoopAt(int i) { return m_cueLoopController.savedLoops()[static_cast<size_t>(i)]; }
+    const SavedLoopSlot& savedLoopAt(int i) const { return m_cueLoopController.savedLoops()[static_cast<size_t>(i)]; }
 
     AudioDeviceService& m_audioDeviceService;
+    DeckCueLoopController m_cueLoopController;
     juce::AudioFormatManager formatManager;
     std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
     std::unique_ptr<juce::BufferingAudioSource> bufferedReaderSource;
@@ -550,13 +540,6 @@ private:
     std::atomic<quint64> m_loadGen{0};
     std::mutex m_loadMutex;
     QVariantList m_currentSegments;
-    std::array<HotCueSlot, 8> m_hotCueSlots;
-    std::array<SavedLoopSlot, 8> m_savedLoopSlots;
-    double m_mainCueSec = -(PRE_ROLL_SECONDS + 1.0);
-    bool m_mainCuePreviewActive = false;
-    bool m_mainCueButtonDown = false;
-    bool m_mainCueHoldPreviewPending = false;
-    quint64 m_mainCuePressSerial = 0;
 
     // Tempo control: ±6/8/16/32/100% (WIDE) selectable range
     double m_tempoPercent = 0.0;
@@ -612,19 +595,9 @@ private:
     bool m_syncEnabled = false;
     bool m_isSyncMaster = false;
 
-    bool m_loopActive = false;
-    double m_loopInSec = 0.0;
-    double m_loopOutSec = 0.0;
-    double m_loopLengthBeats = 0.0;
-    bool m_loopInSet = false;
-
     // Quantized cue trigger: when quantize is on and the deck is playing, a hot
     // cue / cue press is deferred to the next beat so the jump lands exactly on
     // the grid (CDJ-style). The deferred jump is serviced from onTimer().
-    bool   m_pendingCueJumpActive    = false;
-    double m_pendingCueJumpFireSec   = 0.0;  // track-time grid line to jump on
-    double m_pendingCueJumpTargetSec = 0.0;  // position to jump to
-    double m_pendingCueJumpLastPos   = 0.0;  // last transport pos (loop-wrap guard)
     void   scheduleQuantizedCueJump(double targetSec);
     void   cancelQuantizedCueJump();
     bool   serviceQuantizedCueJump();

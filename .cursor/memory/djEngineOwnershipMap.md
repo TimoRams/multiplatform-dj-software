@@ -80,3 +80,15 @@ This map covers every out-of-line `DjEngine` method and every mutable state bund
 - Service `configurationChanged` refreshes all deck latency/speed handoffs on the Qt thread. Error/fallback signals are re-emitted by each facade for unchanged QML compatibility. Routing is forwarded once to the master bus.
 - Device enumeration, opening, closing, recovery and JACK probing are forbidden in the audio callback. They run from startup/settings/play-recovery control paths and may allocate/block.
 - Remaining intentional facade files: `DjEngine_Settings.cpp` is 25 lines and `DjEngine_SettingsQuery.cpp` is 32 lines. `DjEngine_TransportLatency.cpp` remains because it combines global hardware latency with per-deck keylock and global limiter latency.
+
+## Cue/loop ownership after extraction (2026-07-12)
+
+| Function group | Previous implementation | Runtime state owner now | Facade dependencies / behavior retained |
+|---|---|---|---|
+| Main cue set/press/hold/release/preview/play | `DjEngine_MainCue.cpp` plus transport timer | `DeckCueLoopController::MainCueState` | `DjEngine_CueLoopFacade.cpp` applies seek/play intent, persists SQLite values and emits existing Qt signals; Qt owner/control thread |
+| Eight hot cues, labels and colors | `DjEngine_HotCue.cpp` | controller fixed-size array | facade loads/saves through `LibraryDatabase`, applies immediate/deferred transport jumps, preserves QML/MIDI pad API and feedback |
+| Active loop, loop-in/out, beat length and activation | `DjEngine_Loop.cpp` plus transport/scratch consumers | `DeckCueLoopController::ActiveLoopState` | facade computes from transport snapshot, publishes prepared bounds to reverse/scratch audio sources; Core performs wrap-around without DB or allocation |
+| Eight saved loops, labels and colors | `DjEngine_SavedLoops.cpp` | controller fixed-size array | facade keeps persistence and transport application; performance pads continue to multiplex hot cues/saved loops |
+| Quantized pending cue jump | hot-cue fields in `DjEngine` | controller generation-tagged command | controller decides boundary completion/wrap; facade performs the actual seek |
+
+Quantize input is a read-only beat-grid/BPM snapshot concept. Existing dynamic markers, BPM fallback, negative pre-roll and local beat duration semantics are preserved. A track load/eject increments `m_loadGen` then calls `beginTrack()`, atomically at control-flow level clearing cues, saved/active loops and stale delayed commands. The old four implementation files were consolidated into `DjEngine_CueLoopFacade.cpp`; the controller has no `DjEngine*`, QObject base, database, transport, or audio callback ownership.

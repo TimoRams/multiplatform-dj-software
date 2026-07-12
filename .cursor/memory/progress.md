@@ -142,8 +142,11 @@ Manual (~15 min):
 - Analyzer lifetime is fixed; a later improvement may publish final analysis metadata as one
   immutable snapshot. Detached general track-load workers remain a separate P1 issue.
 - Audio cache redesign and remaining `DjEngine` components are intentionally still open.
-- Recommended next step: extract `DeckCueLoopController` from `DjEngine_Loop.cpp`,
-  `DjEngine_HotCue.cpp`, `DjEngine_MainCue.cpp`, and `DjEngine_SavedLoops.cpp`; do not move
-  `DeckAudioGraph`, cache, scratch or transport code in that step.
+- `DeckCueLoopController` extraction completed: domain state has one owner, delayed jumps are
+  generation-scoped, the four old implementation files are one facade, and the dedicated
+  controller test plus all existing CTest targets pass.
+- Recommended next step: extract `DeckTrackLoader` (track replacement, decoder creation,
+  metadata/cover, analysis job and generation); do not move `DeckAudioGraph`, audio cache or
+  general transport code in that step.
 - Watch for grouped-alias signal handlers (`alias.onXxx:`) and self-referential `prop: prop`
   bindings in new QML — qualify with parent `id` (MixerSection pattern).
