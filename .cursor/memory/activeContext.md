@@ -3,6 +3,12 @@
 *Last updated: 2026-07-12*
 
 ## Current task
+**RubberBand/TimeStretch realtime lifecycle fixed**
+- `TimeStretchAudioSource` owns two fully allocated pipeline slots. RubberBand construction, setters, prewarm, FIFO/buffer setup and latency discovery run in a joined preparation worker or `prepareToPlay`, never in `getNextAudioBlock`.
+- Control changes publish a latest-only configuration generation. The callback atomically activates only a ready slot with matching track/configuration generation and performs a preallocated 256-sample output-tail crossfade.
+- Scratch bypass, keylock and tempo changes no longer reset/mutate RubberBand in the callback. Ten CTest targets pass and all five realtime-violation counters remain zero.
+
+## Previous task
 **Normal playback migrated to AudioPageCache**
 - `CachedPlaybackAudioSource` replaced the deck `AudioFormatReaderSource -> BufferingAudioSource -> ReverseStreamAudioSource` chain and its private read-ahead thread.
 - Playback and scratch share the global immutable PCM pages and generation-scoped handle. Misses never fall back to a reader/decoder and fade to silence while the timeline advances.

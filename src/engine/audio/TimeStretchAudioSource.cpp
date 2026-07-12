@@ -3,425 +3,325 @@
 #include <algorithm>
 #include <cmath>
 
+namespace { thread_local bool g_inTimeStretchAudioCallback = false; }
+
 TimeStretchAudioSource::TimeStretchAudioSource(juce::AudioSource* inSource) : source(inSource) {}
+TimeStretchAudioSource::~TimeStretchAudioSource() { releaseResources(); }
 
-void TimeStretchAudioSource::setTempoRatio(double ratio) {
-        const double clamped = std::clamp(ratio, 0.01, 8.0);
-        const double current = m_targetTempoRatio.load(std::memory_order_relaxed);
-        if (std::abs(current - clamped) < kTempoUpdateEpsilon)
-            return;
-
-        m_targetTempoRatio.store(clamped, std::memory_order_release);
-    }
-
-void TimeStretchAudioSource::setPitchLockEnabled(bool enabled) {
-        if (m_pitchLockEnabled.load(std::memory_order_relaxed) == enabled)
-            return;
-
-        m_pitchLockEnabled.store(enabled, std::memory_order_relaxed);
-        m_resetPipelineRequested.store(true, std::memory_order_release);
-    }
-
-void TimeStretchAudioSource::setScratchBypass(bool enabled) {
-    m_scratchBypass.store(enabled, std::memory_order_relaxed);
+bool TimeStretchAudioSource::validConfiguration(const TimeStretchConfiguration& c) noexcept
+{
+    return std::isfinite(c.sampleRate) && c.sampleRate >= 8000.0 && c.sampleRate <= 384000.0
+        && std::isfinite(c.tempoRatio) && c.tempoRatio >= 0.01 && c.tempoRatio <= 8.0
+        && c.maximumBlockSize >= 64 && c.maximumBlockSize <= 8192
+        && c.channelCount >= 1 && c.channelCount <= 2 && c.trackGeneration != 0;
 }
 
-void TimeStretchAudioSource::enterScratchBypass() noexcept {
-    m_scratchBypass.store(true, std::memory_order_relaxed);
+void TimeStretchAudioSource::setTempoRatio(double ratio) noexcept
+{
+    const auto clamped = std::clamp(std::isfinite(ratio) ? ratio : 1.0, 0.01, 8.0);
+    if (std::abs(m_targetTempoRatio.exchange(clamped) - clamped) >= 0.0005)
+        publishDesiredConfiguration();
+}
+
+void TimeStretchAudioSource::setPitchLockEnabled(bool enabled) noexcept
+{
+    if (m_pitchLockEnabled.exchange(enabled) != enabled) publishDesiredConfiguration();
+}
+
+void TimeStretchAudioSource::setScratchBypass(bool enabled) noexcept
+{
+    if (m_scratchBypass.exchange(enabled) != enabled && !enabled) publishDesiredConfiguration();
+}
+
+void TimeStretchAudioSource::setTrackGeneration(std::uint64_t generation) noexcept
+{
+    generation = std::max<std::uint64_t>(1, generation);
+    if (m_trackGeneration.exchange(generation, std::memory_order_acq_rel) != generation)
+        publishDesiredConfiguration();
+}
+
+void TimeStretchAudioSource::enterScratchBypass() noexcept
+{
+    m_scratchBypass.store(true, std::memory_order_release);
     m_switchFadeRemaining.store(0, std::memory_order_relaxed);
     m_reportedLatencySamples.store(0, std::memory_order_relaxed);
-    m_prefillTargetSamples = 0;
-    if (fifo)
-        fifo->reset();
 }
 
 void TimeStretchAudioSource::endScratchBypass() noexcept
 {
-    m_scratchBypass.store(false, std::memory_order_relaxed);
-    m_appliedTempoRatio = m_targetTempoRatio.load(std::memory_order_relaxed);
-    updateStretcherRatios();
-
-    // Re-entering the keylock/RubberBand path after varispeed scratch needs a
-    // gentle fade — an instant switch causes post-scratch clicks.
-    if (m_pitchLockEnabled.load(std::memory_order_relaxed))
-        m_resetPipelineRequested.store(true, std::memory_order_release);
+    m_scratchBypass.store(false, std::memory_order_release);
+    publishDesiredConfiguration();
 }
 
-void TimeStretchAudioSource::prepareToPlay(int samplesPerBlockExpected, double sr) {
-        sampleRate = sr;
-        if (source) source->prepareToPlay(samplesPerBlockExpected, sr);
-        stretcher = std::make_unique<RubberBand::RubberBandStretcher>(
-            sr, 2,
-            RubberBand::RubberBandStretcher::OptionProcessRealTime |
-            RubberBand::RubberBandStretcher::OptionWindowShort |
-            RubberBand::RubberBandStretcher::OptionPitchHighSpeed);
+TimeStretchConfiguration TimeStretchAudioSource::desiredConfiguration() const noexcept
+{
+    TimeStretchConfiguration c;
+    c.sampleRate = m_sampleRate.load(std::memory_order_acquire);
+    c.tempoRatio = m_targetTempoRatio.load(std::memory_order_acquire);
+    c.maximumBlockSize = m_maximumBlockSize.load(std::memory_order_acquire);
+    c.keylockEnabled = m_pitchLockEnabled.load(std::memory_order_acquire);
+    c.trackGeneration = m_trackGeneration.load(std::memory_order_acquire);
+    c.configurationGeneration = m_desiredGeneration.load(std::memory_order_acquire);
+    return c;
+}
 
-        m_maxProcessSize = std::clamp(samplesPerBlockExpected > 0 ? samplesPerBlockExpected * 2 : 512,
-                                      kMinPullSize,
-                                      4096);
-        stretcher->setMaxProcessSize(static_cast<size_t>(m_maxProcessSize));
+void TimeStretchAudioSource::publishDesiredConfiguration() noexcept
+{
+    if (!m_accepting.load(std::memory_order_acquire)) return;
+    m_desiredGeneration.fetch_add(1, std::memory_order_acq_rel);
+    m_workerWake.notify_one();
+}
 
-        const int baseBlockSize = samplesPerBlockExpected > 0
-            ? samplesPerBlockExpected
-            : kDefaultPrefillCapSamples;
-        m_prefillHardCapSamples = std::clamp(baseBlockSize * kPrefillMaxBlocks,
-                                             kMinPullSize,
-                                             kMaxPrefillSamples);
+void TimeStretchAudioSource::prepareToPlay(int blockSize, double sr)
+{
+    stopWorker();
+    if (source) source->prepareToPlay(blockSize, sr);
+    m_sampleRate.store(sr, std::memory_order_release);
+    m_maximumBlockSize.store(std::clamp(blockSize, 64, 8192), std::memory_order_release);
+    m_trackGeneration.fetch_add(1, std::memory_order_acq_rel);
+    m_desiredGeneration.store(1, std::memory_order_release);
+    m_activeGeneration.store(0, std::memory_order_release);
+    m_activeSlot.store(-1, std::memory_order_release);
+    m_accepting.store(true, std::memory_order_release);
+    m_prepared.store(true, std::memory_order_release);
+    m_stopRequested.store(false, std::memory_order_release);
+    resizeBuffer(m_previousTail, 2, kSwitchFadeSamples);
+    m_previousTail.clear();
 
-        m_appliedTempoRatio = m_targetTempoRatio.load(std::memory_order_relaxed);
-        updateStretcherRatios();
-
-        const int scratchCapacity = std::max(kMaxPullSize, m_maxProcessSize);
-        scratchBuffer.setSize(2, scratchCapacity);
-        outputBuffer.setSize(2, kFifoCapacity);
-        trimBuffer.setSize(2, kMaxPullSize);
-        prewarmZeroBuffer.setSize(2, std::max(kMaxPullSize, m_maxProcessSize));
-        prewarmZeroBuffer.clear();
-        fifo = std::make_unique<juce::AbstractFifo>(kFifoCapacity);
-
-        // Pre-warm upfront: startup delay is absorbed here, never trimmed
-        // on-the-fly during audio callbacks.
-        prewarmStretcher();
+    auto initial = desiredConfiguration();
+    initial.configurationGeneration = 1;
+    if (!preparePipeline(m_pipelines[0], initial)) {
+        m_failures.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        m_pipelines[0].state.store(SlotState::Active, std::memory_order_release);
+        m_activeSlot.store(0, std::memory_order_release);
+        m_activeGeneration.store(1, std::memory_order_release);
     }
+    m_pipelines[1].state.store(SlotState::Empty, std::memory_order_release);
+    m_worker = std::thread([this] { workerLoop(); });
+}
 
-void TimeStretchAudioSource::releaseResources() {
-        if (source) source->releaseResources();
-        stretcher.reset();
-        fifo.reset();
-        m_prefillTargetSamples = 0;
-        m_reportedLatencySamples.store(0, std::memory_order_relaxed);
-        m_startPadRemaining.store(0, std::memory_order_relaxed);
-        m_startDelayTrimRemaining.store(0, std::memory_order_relaxed);
-        m_switchFadeRemaining.store(0, std::memory_order_relaxed);
+void TimeStretchAudioSource::stopWorker() noexcept
+{
+    m_accepting.store(false, std::memory_order_release);
+    m_stopRequested.store(true, std::memory_order_release);
+    m_workerWake.notify_all();
+    if (m_worker.joinable()) m_worker.join();
+}
+
+void TimeStretchAudioSource::releaseResources()
+{
+    if (!m_prepared.exchange(false, std::memory_order_acq_rel)) return;
+    stopWorker();
+    if (source) source->releaseResources();
+    m_activeSlot.store(-1, std::memory_order_release);
+    for (auto& p : m_pipelines) {
+        p.state.store(SlotState::Empty, std::memory_order_release);
+        p.stretcher.reset();
+        p.fifo.reset();
+        resizeBuffer(p.input, 0, 0);
+        resizeBuffer(p.output, 0, 0);
+        resizeBuffer(p.trim, 0, 0);
+        resizeBuffer(p.zeros, 0, 0);
     }
+    resizeBuffer(m_previousTail, 0, 0);
+}
 
-void TimeStretchAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& info) {
-        if (!source) [[unlikely]] {
-            info.clearActiveBufferRegion();
-            return;
+bool TimeStretchAudioSource::preparePipeline(Pipeline& p, const TimeStretchConfiguration& c)
+{
+    if (g_inTimeStretchAudioCallback) m_prepareFromAudio.fetch_add(1, std::memory_order_relaxed);
+    if (!validConfiguration(c)) return false;
+    p.stretcher = std::make_unique<RubberBand::RubberBandStretcher>(c.sampleRate, c.channelCount,
+        RubberBand::RubberBandStretcher::OptionProcessRealTime |
+        RubberBand::RubberBandStretcher::OptionWindowShort |
+        RubberBand::RubberBandStretcher::OptionPitchHighSpeed);
+    p.stretcher->setMaxProcessSize(static_cast<size_t>(std::min(4096, std::max(512, c.maximumBlockSize))));
+    p.stretcher->setTimeRatio(1.0);
+    p.stretcher->setPitchScale(c.keylockEnabled ? 1.0 / c.tempoRatio : 1.0);
+    resizeBuffer(p.input, 2, std::max(4096, c.maximumBlockSize));
+    resizeBuffer(p.output, 2, kFifoCapacity);
+    resizeBuffer(p.trim, 2, 4096);
+    resizeBuffer(p.zeros, 2, 4096);
+    p.zeros.clear();
+    p.fifo = std::make_unique<juce::AbstractFifo>(kFifoCapacity);
+    p.config = c;
+    p.prefill = 0;
+    prewarmPipeline(p);
+    p.latency = static_cast<int>(p.stretcher->getLatency());
+    return true;
+}
+
+void TimeStretchAudioSource::resizeBuffer(juce::AudioBuffer<float>& buffer, int channels, int samples)
+{
+    if (g_inTimeStretchAudioCallback) m_growthFromAudio.fetch_add(1, std::memory_order_relaxed);
+    buffer.setSize(channels, samples);
+}
+
+void TimeStretchAudioSource::prewarmPipeline(Pipeline& p)
+{
+    if (g_inTimeStretchAudioCallback) m_prewarmFromAudio.fetch_add(1, std::memory_order_relaxed);
+    if (!p.stretcher) return;
+    int remaining = static_cast<int>(p.stretcher->getPreferredStartPad() + p.stretcher->getStartDelay());
+    for (int guard = 256; remaining > 0 && guard-- > 0;) {
+        const int chunk = std::min(remaining, p.zeros.getNumSamples());
+        const float* in[2] { p.zeros.getReadPointer(0), p.zeros.getReadPointer(1) };
+        p.stretcher->process(in, chunk, false);
+        int available = p.stretcher->available();
+        if (available > 0) {
+            const int take = std::min({remaining, available, p.trim.getNumSamples()});
+            float* out[2] { p.trim.getWritePointer(0), p.trim.getWritePointer(1) };
+            p.stretcher->retrieve(out, take);
+            remaining -= take;
         }
+    }
+}
 
-        applyPendingRatioChange();
-
-        if (m_scratchBypass.load(std::memory_order_relaxed)
-                || !m_pitchLockEnabled.load(std::memory_order_relaxed)) {
-            if (m_resetPipelineRequested.exchange(false, std::memory_order_acquire))
-                resetRealtimePipeline(false);
-            m_reportedLatencySamples.store(0, std::memory_order_relaxed);
-            source->getNextAudioBlock(info);
-            applySwitchFade(info);
-            return;
+void TimeStretchAudioSource::workerLoop()
+{
+    std::uint64_t observed = m_activeGeneration.load(std::memory_order_acquire);
+    while (!m_stopRequested.load(std::memory_order_acquire)) {
+        {
+            std::unique_lock lock(m_workerMutex);
+            m_workerWake.wait(lock, [&] {
+                return m_stopRequested.load(std::memory_order_acquire)
+                    || m_desiredGeneration.load(std::memory_order_acquire) != observed;
+            });
         }
-
-        if (!stretcher || !fifo) [[unlikely]] {
-            info.clearActiveBufferRegion();
-            return;
-        }
-
-        if (m_resetPipelineRequested.exchange(false, std::memory_order_acquire))
-            resetRealtimePipeline(true);
-
-        const int numCh = std::min(info.buffer->getNumChannels(), 2);
-        const int framesNeeded = info.numSamples;
-        const int destStart = info.startSample;
-        int maxPullLoops = kPullLoopLimit;
-
-        const int desiredPrefill = computeDesiredPrefillSamples();
-        updatePrefillTarget(desiredPrefill);
-
-        while (fifo->getNumReady() < framesNeeded + m_prefillTargetSamples && maxPullLoops > 0) {
-            const int shortfall = std::max(0, (framesNeeded + m_prefillTargetSamples) - fifo->getNumReady());
-            int pullSize = stretcher->getSamplesRequired();
-            if (pullSize <= 0)
-                pullSize = std::max(kMinPullSize, shortfall);
-            const int scratchCapacity = scratchBuffer.getNumSamples();
-            if (scratchCapacity < kMinPullSize) [[unlikely]] {
-                info.clearActiveBufferRegion();
-                return;
+        if (m_stopRequested.load(std::memory_order_acquire)) break;
+        auto config = desiredConfiguration();
+        observed = config.configurationGeneration;
+        const int active = m_activeSlot.load(std::memory_order_acquire);
+        const int candidate = active == 0 ? 1 : 0;
+        auto& p = m_pipelines[candidate];
+        SlotState expected = SlotState::Empty;
+        if (!p.state.compare_exchange_strong(expected, SlotState::Preparing, std::memory_order_acq_rel)) {
+            if (expected == SlotState::Ready && p.config.configurationGeneration != config.configurationGeneration) {
+                p.state.store(SlotState::Empty, std::memory_order_release);
+                m_stale.fetch_add(1, std::memory_order_relaxed);
+                observed = m_activeGeneration.load(std::memory_order_acquire);
+                m_workerWake.notify_one();
             }
-            const int maxPull = std::min({kMaxPullSize, m_maxProcessSize, scratchCapacity});
-            pullSize = std::clamp(pullSize, kMinPullSize, maxPull);
-
-            juce::AudioSourceChannelInfo pullInfo;
-            pullInfo.buffer = &scratchBuffer;
-            pullInfo.startSample = 0;
-            pullInfo.numSamples = pullSize;
-            scratchBuffer.clear(0, pullSize);
-
-            const int startPadRemaining = m_startPadRemaining.load(std::memory_order_relaxed);
-            if (startPadRemaining > 0) {
-                const int padNow = std::min(startPadRemaining, pullSize);
-                m_startPadRemaining.store(startPadRemaining - padNow, std::memory_order_relaxed);
-
-                if (padNow < pullSize) {
-                    juce::AudioSourceChannelInfo tailInfo;
-                    tailInfo.buffer = &scratchBuffer;
-                    tailInfo.startSample = padNow;
-                    tailInfo.numSamples = pullSize - padNow;
-                    source->getNextAudioBlock(tailInfo);
-                }
-            } else {
-                source->getNextAudioBlock(pullInfo);
-            }
-
-            const float* inputs[2] = { scratchBuffer.getReadPointer(0), scratchBuffer.getReadPointer(1) };
-            if (scratchBuffer.getNumChannels() == 1)
-                inputs[1] = inputs[0];
-
-            stretcher->process(inputs, pullSize, false);
-
-            int avail = stretcher->available();
-            int toTrim = m_startDelayTrimRemaining.load(std::memory_order_relaxed);
-            if (avail > 0 && toTrim > 0) {
-                const int trimNow = std::min(avail, toTrim);
-                trimStretcherOutput(trimNow);
-                m_startDelayTrimRemaining.store(toTrim - trimNow, std::memory_order_relaxed);
-                avail = stretcher->available();
-            }
-
-            if (avail > 0) {
-                const int fifoCapacity = fifo->getTotalSize();
-                const int outputCapacity = outputBuffer.getNumSamples();
-                const int writeCapacity = std::min(fifoCapacity, outputCapacity);
-                avail = std::min(avail, writeCapacity);
-                if (avail <= 0) {
-                    --maxPullLoops;
-                    continue;
-                }
-
-                int start1, size1, start2, size2;
-                fifo->prepareToWrite(avail, start1, size1, start2, size2);
-
-                if (size1 > 0) {
-                    float* outputs1[2] = { outputBuffer.getWritePointer(0, start1), outputBuffer.getWritePointer(1, start1) };
-                    stretcher->retrieve(outputs1, size1);
-                }
-                if (size2 > 0) {
-                    float* outputs2[2] = { outputBuffer.getWritePointer(0, start2), outputBuffer.getWritePointer(1, start2) };
-                    stretcher->retrieve(outputs2, size2);
-                }
-
-                fifo->finishedWrite(size1 + size2);
-            }
-
-            --maxPullLoops;
+            continue;
         }
-
-        updateReportedLatency(m_prefillTargetSamples);
-
-        const int ready = fifo->getNumReady();
-        const int toRead = std::min(ready, framesNeeded);
-        if (toRead <= 0) {
-            info.clearActiveBufferRegion();
-            return;
+        if (!preparePipeline(p, config)) {
+            p.state.store(SlotState::Empty, std::memory_order_release);
+            m_failures.fetch_add(1, std::memory_order_relaxed);
+            continue;
         }
-
-        int start1, size1, start2, size2;
-        fifo->prepareToRead(toRead, start1, size1, start2, size2);
-
-        if (size1 > 0) {
-            for (int ch = 0; ch < numCh; ++ch)
-                info.buffer->copyFrom(ch, destStart, outputBuffer, ch, start1, size1);
+        const auto latest = m_desiredGeneration.load(std::memory_order_acquire);
+        const auto track = m_trackGeneration.load(std::memory_order_acquire);
+        if (latest != config.configurationGeneration || track != config.trackGeneration) {
+            p.state.store(SlotState::Empty, std::memory_order_release);
+            m_stale.fetch_add(1, std::memory_order_relaxed);
+            observed = m_activeGeneration.load(std::memory_order_acquire);
+            m_workerWake.notify_one();
+            continue;
         }
-        if (size2 > 0) {
-            for (int ch = 0; ch < numCh; ++ch)
-                info.buffer->copyFrom(ch, destStart + size1, outputBuffer, ch, start2, size2);
-        }
-
-        fifo->finishedRead(size1 + size2);
-
-        if (toRead < framesNeeded) {
-            const int remainderStart = destStart + toRead;
-            const int remainderLen = framesNeeded - toRead;
-            for (int ch = 0; ch < numCh; ++ch)
-                info.buffer->clear(ch, remainderStart, remainderLen);
-        }
-
-        applySwitchFade(info);
+        p.state.store(SlotState::Ready, std::memory_order_release);
     }
+}
 
-int TimeStretchAudioSource::getLatencySamples() const {
-        int delay = m_reportedLatencySamples.load(std::memory_order_relaxed);
-        delay += std::max(0, m_startDelayTrimRemaining.load(std::memory_order_relaxed));
-        return delay;
-    }
-
-void TimeStretchAudioSource::updateReportedLatency(int targetSamples) {
-        targetSamples = std::max(0, targetSamples);
-        const int current = m_reportedLatencySamples.load(std::memory_order_relaxed);
-        if (current == targetSamples)
-            return;
-
-        const int step = current < targetSamples
-            ? std::max(8, (targetSamples - current) / 4)
-            : std::max(16, (current - targetSamples) / 6);
-
-        const int next = current < targetSamples
-            ? std::min(targetSamples, current + step)
-            : std::max(targetSamples, current - step);
-
-        m_reportedLatencySamples.store(next, std::memory_order_relaxed);
-    }
-
-int TimeStretchAudioSource::computeDesiredPrefillSamples() const {
-        if (!m_pitchLockEnabled.load(std::memory_order_relaxed))
-            return 0;
-
-        const double tempoDelta = std::abs(m_appliedTempoRatio - 1.0);
-        if (tempoDelta < kPrefillDeadbandTempoDelta)
-            return 0;
-
-        const int dynamic = static_cast<int>(std::lround(tempoDelta * sampleRate * kPrefillDynamicFactor));
-        const int extremeBoost = tempoDelta > kPrefillExtremeThreshold
-            ? static_cast<int>(std::lround((tempoDelta - kPrefillExtremeThreshold) * sampleRate * kPrefillExtremeFactor))
-            : 0;
-        const int hardCap = std::max(kMinPullSize, m_prefillHardCapSamples);
-        return std::clamp(dynamic + extremeBoost, 0, hardCap);
-    }
-
-void TimeStretchAudioSource::updatePrefillTarget(int desiredPrefill) {
-        if (m_prefillTargetSamples == desiredPrefill)
-            return;
-
-        if (desiredPrefill > m_prefillTargetSamples) {
-            const int step = std::max(16, (desiredPrefill - m_prefillTargetSamples) / 6);
-            m_prefillTargetSamples = std::min(desiredPrefill, m_prefillTargetSamples + step);
-        } else {
-            const int step = std::max(32, (m_prefillTargetSamples - desiredPrefill) / 3);
-            m_prefillTargetSamples = std::max(desiredPrefill, m_prefillTargetSamples - step);
-        }
-    }
-
-void TimeStretchAudioSource::trimStretcherOutput(int samplesToTrim) {
-        if (!stretcher || samplesToTrim <= 0)
-            return;
-
-        while (samplesToTrim > 0) {
-            const int avail = stretcher->available();
-            if (avail <= 0)
-                break;
-
-            const int trimCapacity = trimBuffer.getNumSamples();
-            if (trimCapacity <= 0)
-                break;
-
-            const int chunk = std::min({samplesToTrim, avail, trimCapacity});
-
-            float* trimOut[2] = {
-                trimBuffer.getWritePointer(0),
-                trimBuffer.getWritePointer(1)
-            };
-            stretcher->retrieve(trimOut, chunk);
-            samplesToTrim -= chunk;
-        }
-    }
-
-void TimeStretchAudioSource::resetRealtimePipeline(bool prewarm) {
-        if (fifo)
-            fifo->reset();
-        m_prefillTargetSamples = 0;
-        m_reportedLatencySamples.store(0, std::memory_order_relaxed);
-        m_startPadRemaining.store(0, std::memory_order_relaxed);
-        m_startDelayTrimRemaining.store(0, std::memory_order_relaxed);
+void TimeStretchAudioSource::activatePreparedPipelineAtBlockBoundary() noexcept
+{
+    const auto wanted = m_desiredGeneration.load(std::memory_order_acquire);
+    for (int i = 0; i < 2; ++i) {
+        auto& next = m_pipelines[i];
+        if (next.state.load(std::memory_order_acquire) != SlotState::Ready
+            || next.config.configurationGeneration != wanted
+            || next.config.trackGeneration != m_trackGeneration.load(std::memory_order_acquire)) continue;
+        SlotState ready = SlotState::Ready;
+        if (!next.state.compare_exchange_strong(ready, SlotState::Active, std::memory_order_acq_rel)) continue;
+        const int old = m_activeSlot.exchange(i, std::memory_order_acq_rel);
+        m_activeGeneration.store(next.config.configurationGeneration, std::memory_order_release);
+        m_reportedLatencySamples.store(next.config.keylockEnabled ? next.latency : 0, std::memory_order_relaxed);
         m_switchFadeRemaining.store(kSwitchFadeSamples, std::memory_order_relaxed);
-        if (stretcher) {
-            stretcher->reset();
-            updateStretcherRatios();
-            if (prewarm)
-                prewarmStretcher();
+        m_switches.fetch_add(1, std::memory_order_relaxed);
+        if (old >= 0 && old != i) m_pipelines[old].state.store(SlotState::Empty, std::memory_order_release);
+        m_workerWake.notify_one();
+        break;
+    }
+}
+
+void TimeStretchAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& info) noexcept
+{
+    struct Scope { Scope(){g_inTimeStretchAudioCallback=true;} ~Scope(){g_inTimeStretchAudioCallback=false;} } scope;
+    if (!source || !info.buffer || info.numSamples <= 0) { info.clearActiveBufferRegion(); return; }
+    activatePreparedPipelineAtBlockBoundary();
+    const int active = m_activeSlot.load(std::memory_order_acquire);
+    if (m_scratchBypass.load(std::memory_order_acquire) || active < 0
+        || m_pipelines[active].config.trackGeneration != m_trackGeneration.load(std::memory_order_acquire)
+        || !m_pipelines[active].config.keylockEnabled) {
+        m_reportedLatencySamples.store(0, std::memory_order_relaxed);
+        source->getNextAudioBlock(info);
+        applySwitchFade(info);
+        captureOutputTail(info);
+        return;
+    }
+    processPipeline(m_pipelines[active], info);
+    applySwitchFade(info);
+    captureOutputTail(info);
+}
+
+void TimeStretchAudioSource::processPipeline(Pipeline& p, const juce::AudioSourceChannelInfo& info) noexcept
+{
+    const int needed = info.numSamples;
+    int loops = kPullLoopLimit;
+    while (p.fifo->getNumReady() < needed && loops-- > 0) {
+        int pull = p.stretcher->getSamplesRequired();
+        pull = std::clamp(pull > 0 ? pull : kMinPullSize, kMinPullSize,
+                          std::min(kMaxPullSize, p.input.getNumSamples()));
+        p.input.clear(0, pull);
+        source->getNextAudioBlock({&p.input, 0, pull});
+        const float* in[2] { p.input.getReadPointer(0), p.input.getReadPointer(1) };
+        p.stretcher->process(in, pull, false);
+        int available = std::min(p.stretcher->available(), p.fifo->getFreeSpace());
+        int s1, n1, s2, n2;
+        p.fifo->prepareToWrite(std::max(0, available), s1, n1, s2, n2);
+        if (n1 > 0) { float* out[2] {p.output.getWritePointer(0,s1),p.output.getWritePointer(1,s1)}; p.stretcher->retrieve(out,n1); }
+        if (n2 > 0) { float* out[2] {p.output.getWritePointer(0,s2),p.output.getWritePointer(1,s2)}; p.stretcher->retrieve(out,n2); }
+        p.fifo->finishedWrite(n1+n2);
+    }
+    const int count = std::min(needed, p.fifo->getNumReady());
+    int s1,n1,s2,n2; p.fifo->prepareToRead(count,s1,n1,s2,n2);
+    const int channels = std::min(2, info.buffer->getNumChannels());
+    for(int ch=0;ch<channels;++ch){
+        if(n1>0) info.buffer->copyFrom(ch,info.startSample,p.output,ch,s1,n1);
+        if(n2>0) info.buffer->copyFrom(ch,info.startSample+n1,p.output,ch,s2,n2);
+        if(count<needed) info.buffer->clear(ch,info.startSample+count,needed-count);
+    }
+    p.fifo->finishedRead(count);
+}
+
+void TimeStretchAudioSource::applySwitchFade(const juce::AudioSourceChannelInfo& info) noexcept
+{
+    int remaining = m_switchFadeRemaining.load(std::memory_order_relaxed);
+    const int count = std::min(remaining, info.numSamples);
+    for (int i=0;i<count;++i) {
+        const int fadeIndex = kSwitchFadeSamples-remaining+i;
+        const float gain = static_cast<float>(fadeIndex+1)/kSwitchFadeSamples;
+        for(int ch=0;ch<info.buffer->getNumChannels();++ch) {
+            const float oldSample = ch < m_previousTail.getNumChannels() ? m_previousTail.getSample(ch,fadeIndex) : 0.0f;
+            const float newSample = info.buffer->getSample(ch,info.startSample+i);
+            info.buffer->setSample(ch,info.startSample+i,oldSample*(1.0f-gain)+newSample*gain);
         }
     }
+    m_switchFadeRemaining.store(remaining-count,std::memory_order_relaxed);
+}
 
-void TimeStretchAudioSource::prewarmStretcher() {
-        if (!stretcher) return;
-
-        const int pad = static_cast<int>(stretcher->getPreferredStartPad());
-        if (pad > 0) {
-            int remainingPad = pad;
-            while (remainingPad > 0) {
-                const int chunk = std::min(remainingPad, prewarmZeroBuffer.getNumSamples());
-                if (chunk <= 0)
-                    break;
-                const float* ptrs[2] = {
-                    prewarmZeroBuffer.getReadPointer(0),
-                    prewarmZeroBuffer.getReadPointer(1)
-                };
-                stretcher->process(ptrs, chunk, false);
-                remainingPad -= chunk;
-            }
-        }
-
-        // Keep feeding zeros and draining until the full start delay is consumed.
-        int remaining = static_cast<int>(stretcher->getStartDelay());
-        for (int guard = 128; guard > 0 && remaining > 0; --guard) {
-            int avail = stretcher->available();
-            if (avail <= 0) {
-                const float* ptrs[2] = {
-                    prewarmZeroBuffer.getReadPointer(0),
-                    prewarmZeroBuffer.getReadPointer(1)
-                };
-                stretcher->process(ptrs, kMinPullSize, false);
-                avail = stretcher->available();
-            }
-            if (avail > 0) {
-                const int chunk = std::min({remaining, avail, trimBuffer.getNumSamples()});
-                if (chunk <= 0)
-                    break;
-                float* ptrs[2] = {
-                    trimBuffer.getWritePointer(0),
-                    trimBuffer.getWritePointer(1)
-                };
-                stretcher->retrieve(ptrs, chunk);
-                remaining -= chunk;
-            }
-        }
-
-        m_startPadRemaining.store(0, std::memory_order_relaxed);
-        m_startDelayTrimRemaining.store(0, std::memory_order_relaxed);
+void TimeStretchAudioSource::captureOutputTail(const juce::AudioSourceChannelInfo& info) noexcept
+{
+    if (m_previousTail.getNumSamples() != kSwitchFadeSamples) return;
+    const int count = std::min(kSwitchFadeSamples, info.numSamples);
+    const int sourceStart = info.startSample + info.numSamples - count;
+    for (int ch=0; ch<std::min(2,info.buffer->getNumChannels()); ++ch) {
+        if (count < kSwitchFadeSamples) m_previousTail.clear(ch,0,kSwitchFadeSamples-count);
+        m_previousTail.copyFrom(ch,kSwitchFadeSamples-count,*info.buffer,ch,sourceStart,count);
     }
+}
 
-void TimeStretchAudioSource::updateStretcherRatios() {
-        if (!stretcher)
-            return;
-
-        const double safeTempoRatio = std::clamp(std::abs(m_appliedTempoRatio), 0.01, 8.0);
-        const bool pitchLock = m_pitchLockEnabled.load(std::memory_order_relaxed);
-
-        // Tempo is controlled by ResamplingAudioSource. Rubber Band stays at
-        // 1:1 time and optionally compensates pitch when keylock is enabled.
-        stretcher->setTimeRatio(1.0);
-        stretcher->setPitchScale(pitchLock ? (1.0 / safeTempoRatio) : 1.0);
-    }
-
-void TimeStretchAudioSource::applyPendingRatioChange() {
-        const double target = m_targetTempoRatio.load(std::memory_order_acquire);
-        const double delta = target - m_appliedTempoRatio;
-        if (std::abs(delta) < kTempoUpdateEpsilon)
-            return;
-
-        m_appliedTempoRatio += std::clamp(delta,
-                                          -kMaxTempoRatioStepPerBlock,
-                                          kMaxTempoRatioStepPerBlock);
-        updateStretcherRatios();
-    }
-
-void TimeStretchAudioSource::applySwitchFade(const juce::AudioSourceChannelInfo& info) {
-        int remaining = m_switchFadeRemaining.load(std::memory_order_relaxed);
-        if (remaining <= 0 || !info.buffer || info.numSamples <= 0)
-            return;
-
-        const int fadeNow = std::min(remaining, info.numSamples);
-        const int fadeStart = kSwitchFadeSamples - remaining;
-        const int channels = info.buffer->getNumChannels();
-
-        for (int i = 0; i < fadeNow; ++i) {
-            const float gain = static_cast<float>(fadeStart + i + 1)
-                / static_cast<float>(kSwitchFadeSamples);
-            for (int ch = 0; ch < channels; ++ch)
-                info.buffer->setSample(ch,
-                                       info.startSample + i,
-                                       info.buffer->getSample(ch, info.startSample + i) * gain);
-        }
-
-        m_switchFadeRemaining.store(remaining - fadeNow, std::memory_order_relaxed);
-    }
+int TimeStretchAudioSource::getLatencySamples() const noexcept { return m_reportedLatencySamples.load(std::memory_order_relaxed); }
+std::uint64_t TimeStretchAudioSource::activeConfigurationGeneration() const noexcept { return m_activeGeneration.load(std::memory_order_acquire); }
+TimeStretchRealtimeStats TimeStretchAudioSource::realtimeStats() const noexcept
+{
+    return {m_prepareFromAudio.load(),m_resetFromAudio.load(),m_prewarmFromAudio.load(),m_growthFromAudio.load(),m_lockFromAudio.load(),m_switches.load(),m_stale.load(),m_failures.load()};
+}

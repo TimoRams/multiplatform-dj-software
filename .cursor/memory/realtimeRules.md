@@ -11,6 +11,8 @@ Last updated: 2026-07-11
 - `ScratchCacheStats::diskReadsFromAudioThread` must remain zero in all automated and manual scratch tests.
 - `CachedPlaybackAudioSource` may only read immutable guarded pages and enqueue bounded requests. It has no reader, decoder, buffering source, worker wait, or fallback I/O; its miss/recovery fade is fixed at 128 samples.
 - `PlaybackCacheStats::{diskReadsFromAudioThread,decoderCallsFromAudioThread}` must remain zero. The cached-playback test verifies both after hit, miss and recovery paths.
+- RubberBand objects, ratios, FIFOs and buffers may be created/mutated only by `prepareToPlay` or the joined TimeStretch preparation worker. The callback may process an active slot and atomically adopt a matching `Ready` slot, but may not call RubberBand reset/setters/prewarm or resize buffers.
+- `TimeStretchRealtimeStats` prepare/reset/prewarm/growth/lock counters must all remain zero in automated transition and stress tests.
 
 These rules apply to all code that can execute from the JUCE audio callback, including `DjMasterBus::getNextAudioBlock()`, deck audio sources, scratch/keylock sources, mixer DSP and FX processors.
 

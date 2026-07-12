@@ -769,3 +769,15 @@ target_compile_definitions(BrockDJ_cached_playback_tests PRIVATE
 )
 target_compile_features(BrockDJ_cached_playback_tests PRIVATE cxx_std_26)
 add_test(NAME cached_playback COMMAND BrockDJ_cached_playback_tests)
+
+add_executable(BrockDJ_time_stretch_tests
+    tests/time_stretch/time_stretch_tests.cpp
+    src/engine/audio/TimeStretchAudioSource.cpp
+)
+target_include_directories(BrockDJ_time_stretch_tests PRIVATE src)
+target_link_libraries(BrockDJ_time_stretch_tests PRIVATE
+    juce::juce_core juce::juce_audio_basics ThirdParty::RubberBand
+)
+target_compile_definitions(BrockDJ_time_stretch_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
+target_compile_features(BrockDJ_time_stretch_tests PRIVATE cxx_std_26)
+add_test(NAME time_stretch COMMAND BrockDJ_time_stretch_tests)

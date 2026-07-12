@@ -1,0 +1,69 @@
+#include "engine/audio/TimeStretchAudioSource.h"
+
+#include <chrono>
+#include <cmath>
+#include <iostream>
+#include <random>
+#include <thread>
+#include <cstdlib>
+
+namespace {
+class ToneSource final : public juce::AudioSource {
+public:
+    void prepareToPlay(int, double rate) override { sampleRate = rate; }
+    void releaseResources() override {}
+    void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override {
+        for (int i=0;i<info.numSamples;++i) {
+            const float value=static_cast<float>(0.2*std::sin(phase));
+            phase += 2.0*juce::MathConstants<double>::pi*220.0/sampleRate;
+            for(int ch=0;ch<info.buffer->getNumChannels();++ch) info.buffer->setSample(ch,info.startSample+i,value);
+        }
+    }
+private: double sampleRate=48000.0, phase=0.0;
+};
+bool require(bool value,const char* message){if(!value)std::cerr<<"FAIL: "<<message<<'\n';return value;}
+bool finite(const juce::AudioBuffer<float>& b){for(int ch=0;ch<b.getNumChannels();++ch)for(int i=0;i<b.getNumSamples();++i)if(!std::isfinite(b.getSample(ch,i)))return false;return true;}
+bool waitForGeneration(TimeStretchAudioSource& source,std::uint64_t oldGeneration){
+    const auto until=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    juce::AudioBuffer<float> b(2,256);
+    while(std::chrono::steady_clock::now()<until){source.getNextAudioBlock({&b,0,256});if(source.activeConfigurationGeneration()>oldGeneration)return true;std::this_thread::sleep_for(std::chrono::milliseconds(1));}
+    return false;
+}
+}
+
+static_assert(noexcept(std::declval<TimeStretchAudioSource&>().getNextAudioBlock(
+    std::declval<const juce::AudioSourceChannelInfo&>())));
+
+int main(){
+    bool ok=true;
+    for(double rate:{44100.0,48000.0,96000.0,192000.0}){
+        ToneSource tone; TimeStretchAudioSource source(&tone); source.prepareToPlay(8192,rate);
+        for(int size:{64,128,256,512,1024,2048,4096,8192}){juce::AudioBuffer<float>b(2,size);source.getNextAudioBlock({&b,0,size});ok&=require(finite(b),"bypass finite");}
+        { juce::AudioBuffer<float> mono(1,512); source.getNextAudioBlock({&mono,0,512}); ok&=require(finite(mono),"mono output finite"); }
+        auto generation=source.activeConfigurationGeneration();
+        source.setPitchLockEnabled(true); source.setTempoRatio(0.7);
+        ok&=require(waitForGeneration(source,generation),"prepared keylock pipeline activates");
+        juce::AudioBuffer<float>b(2,8192);source.getNextAudioBlock({&b,0,8192});ok&=require(finite(b),"stretched finite");
+        generation=source.activeConfigurationGeneration();
+        for(int i=0;i<100;++i)source.setTempoRatio(0.5+0.01*i);
+        ok&=require(waitForGeneration(source,generation),"rapid changes coalesce");
+        source.enterScratchBypass();source.getNextAudioBlock({&b,0,8192});source.endScratchBypass();
+        ok&=require(finite(b),"scratch transition finite");
+        auto stats=source.realtimeStats();
+        ok&=require(stats.prepareCallsFromAudioThread==0,"no prepare in callback");
+        ok&=require(stats.resetCallsFromAudioThread==0,"no reset in callback");
+        ok&=require(stats.prewarmCallsFromAudioThread==0,"no prewarm in callback");
+        ok&=require(stats.bufferGrowthsFromAudioThread==0,"no buffer growth in callback");
+        ok&=require(stats.blockingLockAttempts==0,"no callback locks");
+        source.releaseResources();
+    }
+    std::mt19937 rng(0xB40CD5u); ToneSource tone; TimeStretchAudioSource stress(&tone);stress.prepareToPlay(8192,48000);
+    for(int i=0;i<1000;++i){if(i%7==0)stress.setPitchLockEnabled((i/7)%2);stress.setTempoRatio(0.25+(rng()%700)/100.0);if(i%31==0)stress.enterScratchBypass();if(i%31==2)stress.endScratchBypass();const int sizes[]={64,128,256,512,1024,2048,4096,8192};juce::AudioBuffer<float>b(2,sizes[rng()%8]);stress.getNextAudioBlock({&b,0,b.getNumSamples()});ok&=require(finite(b),"stress finite");}
+    const auto stats=stress.realtimeStats();ok&=require(stats.prepareCallsFromAudioThread+stats.resetCallsFromAudioThread+stats.prewarmCallsFromAudioThread+stats.bufferGrowthsFromAudioThread+stats.blockingLockAttempts==0,"all realtime counters zero");
+    if(std::getenv("BROCKDJ_TIME_STRETCH_BENCHMARK")){
+        juce::AudioBuffer<float>b(2,512);double total=0.0,worst=0.0;
+        for(int i=0;i<1000;++i){const auto start=std::chrono::steady_clock::now();stress.getNextAudioBlock({&b,0,512});const auto us=std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-start).count();total+=us;worst=std::max(worst,us);}
+        std::cout<<"time-stretch 512-block mean-us="<<total/1000.0<<" worst-us="<<worst<<'\n';
+    }
+    return ok?0:1;
+}

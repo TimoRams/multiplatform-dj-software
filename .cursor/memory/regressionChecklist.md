@@ -146,3 +146,10 @@ injizierte Decks und beendete sauber; echte Hardwarelisten, Wiedergabe und Hot-U
 - Musswerte bestanden: `diskReadsFromAudioThread == 0` und `decoderCallsFromAudioThread == 0`; der Source-Code besitzt keinen Reader-/Decoder-Einstiegspunkt oder Fallback.
 - Messung: synthetischer Cache-Hit, 512 Samples, 1000 Blöcke: 5,34 µs Mittelwert in diesem Headless-Build. Kein belastbarer Vergleich zur entfernten Buffering-Pipeline erhoben.
 - Manuell offen: echte Audiohardware, hörbare Loop/Reverse/Slip-Übergänge, Tempo/Keylock, vier Decks unter Last, Hot-Unplug und Shutdown während Wiedergabe.
+
+## 18. RubberBand-Doppelpipeline
+
+- Automatisch (2026-07-12): `time_stretch` prüft 44,1/48/96/192 kHz, Mono/Stereo-Ausgabe, 64–8192 Samples, Bypass, Keylock, Tempoänderungen, Koaleszierung, Pipeline-Aktivierung, Scratch-Rückkehr, finite Ausgabe und deterministischen Wechselstress.
+- Musswerte: Callback-Zähler für Prepare, Reset, Prewarm, Bufferwachstum und Lockversuche jeweils null; alle zehn CTest-Targets bestanden.
+- Headless-Messung: 512-Sample-Block über 1000 Aufrufe, 3,29 µs Mittelwert und 10,72 µs Maximum auf diesem Build; kein Hardware-Callback-Vergleich.
+- Manuell offen: hörbarer 256-Sample-Crossfade, extreme Tempo-/Pitchqualität, kurze Loops, Seek/Trackwechsel während laufender Hardwareausgabe und vier Decks mit Controller-Scratch.

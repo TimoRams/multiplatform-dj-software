@@ -172,3 +172,7 @@ Manual (~15 min):
   The deck reader/buffering/reverse wrapper/read-ahead-thread chain was removed. Nine CTest targets
   pass and playback counters prove zero callback disk/decoder entry. Next: the prepared
   RubberBand/TimeStretch double-pipeline realtime migration.
+- RubberBand realtime migration completed: two generation-scoped prepared slots, joined latest-only
+  preparation worker, block-boundary activation, preallocated crossfade and callback entry-point
+  counters. No callback prepare/reset/prewarm/buffer growth/lock attempt remains. Next: move only
+  MixerDspSource filter-coefficient and DSP configuration changes out of the callback.

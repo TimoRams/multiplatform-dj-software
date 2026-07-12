@@ -181,6 +181,8 @@ void DjEngine::attachCacheToTransport(double trackSampleRate)
     reverseWrapSource->setReverse(m_isReverse);
     transportSource.setSource(reverseWrapSource.get(), 0, nullptr, trackSampleRate);
     m_loadedTrackSampleRate = trackSampleRate;
+    if (timeStretchSource)
+        timeStretchSource->setTrackGeneration(m_trackLoader.currentGeneration());
     if (scratchBridge)
         scratchBridge->setTrackCacheSource(&m_audioPageCache, m_audioCacheHandle);
     transportSource.setPosition(0.0);
@@ -196,6 +198,8 @@ void DjEngine::releaseTransportReaders()
 {
     transportSource.stop();
     transportSource.setSource(nullptr);
+    if (timeStretchSource)
+        timeStretchSource->setTrackGeneration(m_trackLoader.currentGeneration());
 
     if (scratchBridge)
         scratchBridge->beginTransportSwap();
