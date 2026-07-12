@@ -72,6 +72,12 @@ echten A→B→C→D-Deckwechseln und vollständigem GUI-Shutdown bleiben offen.
 - Relevante Logs oder Metriken: Analyzer stop logs, shutdown logs, DB clean-shutdown marker.
 - Ergebnis: offen
 
+Automatisierte Signalabdeckung (2026-07-12): `posix_signal_handler` sendet echte SIGINT/SIGTERM
+einschließlich Burst und prüft genau einen Qt-Shutdownwunsch, vollständig geleerte Pipe,
+nonblocking/CLOEXEC-Flags, geschlossene Deskriptoren und sichere Neuinitialisierung. Headless
+Linux-App-Läufe mit Ctrl+C und SIGTERM beendeten sich ohne Crash oder Deadlock; Audio/MIDI waren
+in der Sandbox nicht verfügbar und eine laufende echte Analyse wurde dabei nicht simuliert.
+
 ## 9. Audiointerface während des Betriebs trennen oder wechseln
 
 - Vorbereitung: Externes Audiointerface oder Controller-Ausgang verbinden, Track läuft.

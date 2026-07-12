@@ -284,6 +284,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/main.cpp
     src/app/ApplicationBootstrap.cpp
     src/app/ApplicationLifecycle.cpp
+    src/platform/PosixSignalHandler.h
+    src/platform/PosixSignalHandler.cpp
     src/app/MixerControl.h
     src/app/MixerControl.cpp
     src/engine/DjEngine.h
@@ -625,3 +627,15 @@ target_compile_definitions(BrockDJ_analysis_lifetime_tests PRIVATE
 )
 target_compile_features(BrockDJ_analysis_lifetime_tests PRIVATE cxx_std_26)
 add_test(NAME analysis_lifetime COMMAND BrockDJ_analysis_lifetime_tests)
+
+if(UNIX)
+    add_executable(BrockDJ_posix_signal_tests
+        tests/platform/posix_signal_handler_tests.cpp
+        src/platform/PosixSignalHandler.h
+        src/platform/PosixSignalHandler.cpp
+    )
+    target_include_directories(BrockDJ_posix_signal_tests PRIVATE src)
+    target_link_libraries(BrockDJ_posix_signal_tests PRIVATE Qt6::Core)
+    target_compile_features(BrockDJ_posix_signal_tests PRIVATE cxx_std_26)
+    add_test(NAME posix_signal_handler COMMAND BrockDJ_posix_signal_tests)
+endif()

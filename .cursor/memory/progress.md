@@ -1,6 +1,9 @@
 # Progress
 
 ## Done (recent)
+- [x] **Async-signal-safe POSIX shutdown handoff** — portable self-pipe with `sigaction`,
+  nonblocking/CLOEXEC descriptors, Qt-thread notifier delivery, duplicate suppression, prior-handler
+  restoration and focused real-signal tests. Linux full-app Ctrl+C/SIGTERM headless checks passed.
 - [x] **Analyzer lifetime and stale completion safety** — explicit job states/generations,
   separate cancel and deterministic join, safe manager `QPointer` callback plus manager/analyzer
   generation and path checks, owner-thread RGB coalescing, and focused lifetime tests. ASan/UBSan
@@ -132,12 +135,13 @@ Manual (~15 min):
 
 ## Known issues
 - P0 realtime/threading risks remain open: scratch cache misses,
-  RubberBand reset/prewarm in callback, mixer filter coefficient work, and async-signal-safe shutdown.
+  RubberBand reset/prewarm in callback, and mixer filter coefficient work.
 - Analyzer lifetime is fixed; a later improvement may publish final analysis metadata as one
   immutable snapshot. Detached general track-load workers remain a separate P1 issue.
 - Audio cache redesign, analyzer lifetime ownership, and `DjEngine`
   component split were intentionally not implemented in this preparation pass.
-- Recommended next step: replace the unsafe POSIX Qt signal-handler call with a self-pipe or
-  Linux `signalfd` handoff.
+- Recommended next step: perform the first controlled `DjEngine` cleanup inventory: map methods
+  and fields, identify global audio-device settings, prepare `AudioDeviceService`, and assign
+  cue/hot-cue/loop code to a future `DeckCueLoopController` without moving callback-critical code.
 - Watch for grouped-alias signal handlers (`alias.onXxx:`) and self-referential `prop: prop`
   bindings in new QML — qualify with parent `id` (MixerSection pattern).

@@ -3,6 +3,14 @@
 *Last updated: 2026-07-12*
 
 ## Current task
+**Async-signal-safe POSIX SIGINT/SIGTERM handoff**
+- Added a small Unix-only `PosixSignalHandler`: `sigaction` writes one byte to a nonblocking/CLOEXEC self-pipe; a `QSocketNotifier` drains it in the Qt eventloop and requests quit exactly once.
+- The actual handler performs no Qt calls, allocation, logging, locking, object access or teardown. It only preserves `errno`, reads a `sig_atomic_t` fd and calls `write()`.
+- RAII teardown restores previous handlers while signals are blocked, disables the notifier, clears the global fd and closes both pipe ends. Initialization failure is logged in normal startup context and does not abort audio startup.
+- Linux tests send real SIGINT/SIGTERM, including a burst, and verify one notification, drained pipe, descriptor flags/closure and safe reinitialization. Full headless app Ctrl+C and SIGTERM runs exited through the normal shutdown path.
+- macOS uses the same `Q_OS_UNIX` implementation but was not locally run; Windows does not instantiate the component and its existing path is unchanged.
+
+## Previous task
 **Analyzer lifetime, cancellation and stale-completion fix**
 - `WaveformAnalyzer` now has explicit job states, monotonically increasing analyzer generations, non-blocking `requestCancel()`, and deterministic `shutdownAndJoin()`; the former 150 ms destruction timeout is gone.
 - Deck track replacement/eject and application shutdown keep using the compatibility `stopAnalysis()` entry point, which now performs the safe join before persistent `TrackData` is cleared/reused or destroyed.

@@ -1,9 +1,9 @@
 #include "ApplicationBootstrap.h"
 #include "ApplicationLifecycle.h"
+#include "platform/PosixSignalHandler.h"
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
 #include <array>
-#include <csignal>
 #include <memory>
 
 // Qt Includes
@@ -78,22 +78,6 @@ void configureQtRuntimeDefaults()
                 "qt.scenegraph.general=false;"
                 "qt.rhi.general=false");
     }
-}
-
-// Ctrl+C / SIGTERM should run the normal quit path (library DB checkpoint +
-// clean-shutdown marker) instead of killing the process mid-flight.
-void requestGracefulTermination(int)
-{
-    if (QCoreApplication* app = QCoreApplication::instance())
-        QMetaObject::invokeMethod(app, "quit", Qt::QueuedConnection);
-}
-
-void installGracefulTerminationHandlers()
-{
-#if !defined(_WIN32)
-    std::signal(SIGINT, requestGracefulTermination);
-    std::signal(SIGTERM, requestGracefulTermination);
-#endif
 }
 
 QString pickDefaultVulkanIcd()
@@ -235,7 +219,16 @@ int runApplication(int argc, char *argv[])
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
     QGuiApplication app(argc, argv);
-    installGracefulTerminationHandlers();
+#if defined(Q_OS_UNIX)
+    PosixSignalHandler posixSignals;
+    if (posixSignals.initialize()) {
+        QObject::connect(&posixSignals, &PosixSignalHandler::shutdownRequested,
+                         &app, &QCoreApplication::quit, Qt::QueuedConnection);
+    } else {
+        qWarning() << "[startup] POSIX signal integration unavailable:"
+                   << posixSignals.errorString();
+    }
+#endif
     logStartupStep("QGuiApplication created");
 
 #if defined(Q_OS_LINUX)
