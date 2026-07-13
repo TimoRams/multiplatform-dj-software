@@ -83,8 +83,9 @@ This map covers every out-of-line `DjEngine` method and every mutable state bund
 | `m_trackData`, `m_analyzer`, analysis timer | `DjEngine` | per deck | DeckTrackLoader | analyzer worker + Qt owner | DB, waveform renderers | high |
 | track metadata, IDs, cover URL/image flags, segments, raw provider/DB pointers | `DjEngine` | per deck | DeckTrackLoader; facade exposes snapshots | loader + Qt owner | LibraryDatabase/services | high |
 | hot-cue slots, saved-loop slots, main-cue state, active-loop state, pending cue jump, quantize flag | `DjEngine` | per deck | DeckCueLoopController | Qt owner/4 ms control | transport, DB, beatgrid | high |
-| tempo/range/keylock, phase nudge/integral/clock, sync flags | `DjEngine` | per deck | DeckSyncController | Qt/control; audio ratio handoff | time stretch, sync coordinator | very high |
-| `s_syncMutex`, `s_syncDecks`, `s_syncEnableOrder`, `s_syncMasterDeck`, `s_tightDoubleSyncEnabled` | static `DjEngine` | global | SyncCoordinator | cross-deck Qt/control with mutex/atomic | raw deck pointers | very high |
+| tempo/range/keylock | `DjEngine` facade/product state | per deck | retained facade + DeckTransport/DeckAudioGraph | Qt/control; audio ratio handoff | time stretch, controller output | high |
+| enabled/master role, target BPM, generation, phase error/nudge/integral/clocks/error/actions | `DeckSyncController` | per deck | implemented target ownership | Qt/control only | pointer-free snapshot, own facade boundary | medium |
+| registration slots, enable order, master/generation, tight-double policy, Link snapshot | application-owned `SyncCoordinator` | global | implemented target ownership | Qt/control only | controllers; no engine pointers | medium |
 | mixer values, polarity, cue-enabled and FX active flags | `DjEngine` | per deck | DeckAudioGraph + facade snapshot | Qt/MIDI producer; audio callback consumer | MixerDspSource | high |
 | latency atomics/snapshot/log fields | `DjEngine` | per deck, although hardware part is global and duplicated four times | UI-/Visual-State; global snapshot in AudioDeviceService later | Qt owner + atomic reads | service, keylock, limiter | medium |
 
@@ -151,4 +152,18 @@ Before extraction, `DjEngine` fields and methods jointly owned play request, rev
 
 Now `DeckTransport` owns play intent, audible/held/background position, playback rate, reverse, slip, pre-roll, EOF, length, track generation and snapshot generation. It has no `DjEngine*`, QObject, QML, metadata, cue database, cache page or concrete DSP/source dependency. Its only audio collaborator is the narrow `DeckAudioGraph` command/snapshot surface. Install keeps rate/reverse/product intent, resets positions/pre-roll/end, and adopts only a newer generation; clear resets play and position data and invalidates through the supplied generation. Reverse and slip-enabled product settings are intentionally retained across a successful install; active cue/loop state is separately reset by `DeckCueLoopController::beginTrack()`.
 
-`DjEngine` still owns Qt signals/API validation, play-history bookkeeping, audio-device recovery, sync policy/static cross-deck coordination, scratch physics, cue/loop decisions/persistence and latency composition. Cue/loop and scratch send position/loop commands through `DeckTransport`; sync no longer uses `AudioTransportSource`, playback source or concrete keylock source. The timer still runs at 4 ms but calls one transport update method. UI/waveform/FLX10/MIDI continue through unchanged `DjEngine` properties, now backed by the transport snapshot/visual anchor.
+At the DeckTransport milestone, `DjEngine` still owned Qt signals/API validation, play-history bookkeeping, audio-device recovery, sync policy/static cross-deck coordination, scratch physics, cue/loop decisions/persistence and latency composition. Cue/loop and scratch sent position/loop commands through `DeckTransport`; sync no longer used `AudioTransportSource`, playback source or concrete keylock source. The timer still ran at 4 ms but called one transport update method. The following sync milestone supersedes the static-coordination part of this historical snapshot.
+
+## Sync ownership after DeckSyncController/SyncCoordinator (2026-07-13)
+
+Before extraction, `DjEngine_Sync.cpp` owned a mutex-protected static raw-engine registry,
+enable-order vector, master pointer and tight-double atomic. Followers directly read master
+TrackData, position, tempo, phases and keylock latency.
+
+Now each engine owns one `DeckSyncController`, while `ApplicationRuntime` owns one
+`SyncCoordinator` before the four decks. The facade supplies finite values from its own TrackData
+and DeckTransport. Coordinator selects the first still-enabled deck and advances master generation
+on handoff or master-track replacement. Controller validates master/track generations and owns PI,
+tight-double, error and pending-action state. The facade applies only its own controller actions to
+its own transport. QML/MIDI/FLX10 APIs remain unchanged. `DjEngine_Sync.cpp` is now a beat-query and
+snapshot/action facade: zero static mutable sync state and zero direct engine-to-engine sync access.

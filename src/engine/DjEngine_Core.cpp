@@ -1,6 +1,6 @@
 #include "DjEngineCommonIncludes.h"
-#include "SyncMaintenancePolicy.h"
 #include "audio/device/AudioDeviceService.h"
+#include "sync/SyncCoordinator.h"
 
 
 namespace {
@@ -45,18 +45,20 @@ QString defaultSavedLoopColor(int index)
 
 } // namespace
 
-DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audioPageCache, QObject* parent)
+DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audioPageCache,
+                   engine::sync::SyncCoordinator& syncCoordinator, int deckIndex, QObject* parent)
     : QObject(parent)
     , m_audioDeviceService(audioDeviceService)
     , m_audioPageCache(audioPageCache)
     , m_audioGraph(std::make_unique<DeckAudioGraph>(audioPageCache))
     , m_transport(std::make_unique<DeckTransport>(*m_audioGraph))
     , m_trackLoader(static_cast<int>(WAVEFORM_POINTS_PER_SECOND))
+    , m_syncCoordinator(syncCoordinator)
+    , m_deckIndex(deckIndex)
+    , m_syncController(std::make_unique<engine::sync::DeckSyncController>(
+          engine::sync::DeckSyncController::Configuration {deckIndex}))
 {
-    {
-        std::lock_guard<std::mutex> g(s_syncMutex);
-        s_syncDecks.push_back(this);
-    }
+    m_syncCoordinator.registerDeck(m_deckIndex, *m_syncController);
 
     m_trackData = new TrackData(this);
     m_analyzer = std::make_unique<WaveformAnalyzer>(
@@ -88,20 +90,7 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
     connect(m_trackData, &TrackData::bpmAnalyzed, this, [this]() {
         emit tempoChanged();
         m_analysisPersistTimer->start();
-        bool propagateFromSelf = false;
-        DjEngine* masterToFollow = nullptr;
-        if (m_syncEnabled) {
-            {
-                std::lock_guard<std::mutex> g(s_syncMutex);
-                updateSyncMasterLocked();
-                propagateFromSelf = m_isSyncMaster;
-                masterToFollow = s_syncMasterDeck;
-            }
-            if (propagateFromSelf)
-                propagateMasterTempoLocked(this);
-            else if (masterToFollow)
-                propagateMasterTempoLocked(masterToFollow);
-        }
+        publishSyncInputAndApplyActions();
     });
 
     connect(m_trackData, &TrackData::beatgridChanged, this, [this]() {
@@ -164,15 +153,7 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
 DjEngine::~DjEngine()
 {
     m_trackLoader.shutdownAndJoin();
-    {
-        std::lock_guard<std::mutex> g(s_syncMutex);
-        s_syncDecks.erase(std::remove(s_syncDecks.begin(), s_syncDecks.end(), this), s_syncDecks.end());
-        s_syncEnableOrder.erase(std::remove(s_syncEnableOrder.begin(), s_syncEnableOrder.end(), this),
-                                s_syncEnableOrder.end());
-        if (s_syncMasterDeck == this)
-            s_syncMasterDeck = nullptr;
-        updateSyncMasterLocked();
-    }
+    m_syncCoordinator.unregisterDeck(m_deckIndex);
 
     if (m_analyzer) {
         m_analyzer->stopAnalysis();
@@ -298,13 +279,7 @@ void DjEngine::onTimer()
         m_playHistoryClock.restart();
     }
 
-    if (engine::shouldRunFollowerSyncMaintenance(m_syncEnabled,
-                                                 m_isSyncMaster,
-                                                 m_scratch.scrubbing(),
-                                                 m_scratch.releaseGlide())) {
-        updatePhaseCorrection();
-        updateTightDoubleAlignment();
-    }
+    publishSyncInputAndApplyActions();
 
     updateFxBeatSyncPosition();
     notifyVuMetersIfNeeded();

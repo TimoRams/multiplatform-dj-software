@@ -105,7 +105,8 @@ void DjEngine::halveBpm()
 
 void DjEngine::updateSpeedAndPitch()
 {
-    double speedMultiplier = 1.0 + ((m_tempoPercent + m_phaseNudge + m_jogNudgePercent) / 100.0);
+    const double phaseNudge = m_syncController ? m_syncController->snapshot().phaseNudgePercent : 0.0;
+    double speedMultiplier = 1.0 + ((m_tempoPercent + phaseNudge + m_jogNudgePercent) / 100.0);
     speedMultiplier = std::clamp(speedMultiplier, 0.01, 8.0);
 
     const bool scratchVarispeed = m_scratch.scrubbing() || m_scratch.releaseGlide();
@@ -133,23 +134,15 @@ void DjEngine::applyTempoPercent(double percent)
     updateSpeedAndPitch();
     emit tempoChanged();
 
-    if (m_syncEnabled) {
-        bool amMaster = false;
-        {
-            std::lock_guard<std::mutex> g(s_syncMutex);
-            updateSyncMasterLocked();
-            amMaster = m_isSyncMaster;
-        }
-        if (amMaster)
-            propagateMasterTempoLocked(this);
-    }
+    if (syncEnabled())
+        publishSyncInputAndApplyActions();
 }
 
 
 void DjEngine::setTempoPercent(double percent)
 {
     // Sync followers ignore tempo-fader moves — only the master drives tempo.
-    if (m_syncEnabled && !m_isSyncMaster)
+    if (syncEnabled() && !isSyncMaster())
         return;
 
     applyTempoPercent(percent);
@@ -189,14 +182,6 @@ void DjEngine::setManualBpm(double bpm)
     emit beatgridLockedChanged();
     emit tempoChanged();
 
-    if (m_syncEnabled) {
-        bool amMaster = false;
-        {
-            std::lock_guard<std::mutex> g(s_syncMutex);
-            updateSyncMasterLocked();
-            amMaster = m_isSyncMaster;
-        }
-        if (amMaster)
-            propagateMasterTempoLocked(this);
-    }
+    if (syncEnabled())
+        publishSyncInputAndApplyActions();
 }

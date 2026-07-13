@@ -425,3 +425,14 @@ The requested prerequisite is not present: normal playback still uses `AudioForm
 ## Current task: DeckTransport extraction (2026-07-13)
 
 `DeckTransport` is now the domain owner for play intent, audible/held/slip-background position, seek/rate/reverse/slip, negative pre-roll, EOF, length and track/state generations. It sends commands only through narrow `DeckAudioGraph` methods and publishes a pointer-free consistent atomic snapshot. `DjEngine` retains its public QML/MIDI/controller surface, signals, validation, history, sync decisions and cue/loop persistence; its timer delegates transport transitions to `updateControlState()`. Direct `transport()`/`playback()` source access from all `DjEngine_*.cpp` files is removed. Next: extract `DeckSyncController`/`SyncCoordinator`; do not combine it with a general control-clock rewrite.
+
+## Current task: sync ownership extraction (2026-07-13)
+
+`DeckSyncController` now owns each deck's enabled/master role, accepted master generation,
+target BPM, PI phase state, nudge, tight-double throttle, validation error and pending own-deck
+tempo/seek actions. `SyncCoordinator`, owned by `ApplicationRuntime`, owns four fixed registration
+slots, enable order, deterministic first-enabled master selection, master/track generation changes,
+command distribution, Link snapshot and shutdown. `DjEngine` remains the QML/MIDI facade and
+builds pointer-free TrackData/DeckTransport input snapshots; no sync path reads another engine.
+The existing four 4-ms timers remain intentionally unchanged. Next: introduce the shared
+`ControlClock` with separate UI/transport/sync/MIDI/waveform rates.

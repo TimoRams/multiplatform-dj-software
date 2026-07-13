@@ -56,6 +56,7 @@
 #include "app/CursorControl.h"
 #include "audio/device/AudioDeviceService.h"
 #include "audio/cache/AudioPageCache.h"
+#include "engine/sync/SyncCoordinator.h"
 
 using namespace Qt::StringLiterals;
 
@@ -314,6 +315,34 @@ int runApplication(int argc, char *argv[])
     runtime.audioPageCache = std::make_unique<AudioPageCache>();
     settingsManager.setAudioDeviceService(runtime.audioDeviceService.get());
     runtime.masterBus = std::make_unique<DjMasterBus>();
+    runtime.syncCoordinator = std::make_unique<engine::sync::SyncCoordinator>();
+    runtime.syncCoordinator->setTightDoubleSyncEnabled(settingsManager.tightDoubleSync());
+    QObject::connect(&settingsManager, &SettingsManager::tightDoubleSyncChanged,
+                     runtime.linkManager.get(),
+                     [&runtime, &settingsManager]() {
+                         if (runtime.syncCoordinator)
+                             runtime.syncCoordinator->setTightDoubleSyncEnabled(
+                                 settingsManager.tightDoubleSync());
+                     });
+    const auto publishLinkSnapshot = [&runtime]() {
+        if (!runtime.syncCoordinator || !runtime.linkManager)
+            return;
+        const auto previous = runtime.syncCoordinator->snapshot();
+        engine::sync::LinkSyncSnapshot link;
+        link.enabled = runtime.linkManager->enabled();
+        link.numPeers = runtime.linkManager->numPeers();
+        link.bpm = runtime.linkManager->bpm();
+        link.beat = runtime.linkManager->beat();
+        link.phase = runtime.linkManager->phase();
+        link.generation = previous.stateGeneration + 1;
+        runtime.syncCoordinator->setLinkSnapshot(link);
+    };
+    QObject::connect(runtime.linkManager.get(), &LinkManager::enabledChanged, publishLinkSnapshot);
+    QObject::connect(runtime.linkManager.get(), &LinkManager::bpmChanged, publishLinkSnapshot);
+    QObject::connect(runtime.linkManager.get(), &LinkManager::beatChanged, publishLinkSnapshot);
+    QObject::connect(runtime.linkManager.get(), &LinkManager::phaseChanged, publishLinkSnapshot);
+    QObject::connect(runtime.linkManager.get(), &LinkManager::numPeersChanged, publishLinkSnapshot);
+    publishLinkSnapshot();
     QObject::connect(runtime.audioDeviceService.get(), &AudioDeviceService::routingChanged,
                      [](int master, int booth, int headphones) {
                          DjMasterBus::setOutputRouting(master, booth, headphones);
@@ -374,10 +403,14 @@ int runApplication(int argc, char *argv[])
             runtime.rootObjectForStartup->setProperty("startupLibraryReady", true);
 
         QTimer::singleShot(0, &app, [&]() {
-            runtime.deckA = std::make_unique<DjEngine>(*runtime.audioDeviceService, *runtime.audioPageCache);
-            runtime.deckB = std::make_unique<DjEngine>(*runtime.audioDeviceService, *runtime.audioPageCache);
-            runtime.deckC = std::make_unique<DjEngine>(*runtime.audioDeviceService, *runtime.audioPageCache);
-            runtime.deckD = std::make_unique<DjEngine>(*runtime.audioDeviceService, *runtime.audioPageCache);
+            runtime.deckA = std::make_unique<DjEngine>(*runtime.audioDeviceService, *runtime.audioPageCache,
+                                                       *runtime.syncCoordinator, 0);
+            runtime.deckB = std::make_unique<DjEngine>(*runtime.audioDeviceService, *runtime.audioPageCache,
+                                                       *runtime.syncCoordinator, 1);
+            runtime.deckC = std::make_unique<DjEngine>(*runtime.audioDeviceService, *runtime.audioPageCache,
+                                                       *runtime.syncCoordinator, 2);
+            runtime.deckD = std::make_unique<DjEngine>(*runtime.audioDeviceService, *runtime.audioPageCache,
+                                                       *runtime.syncCoordinator, 3);
             logStartupStep("DjEngines constructed");
 
             for (const auto [deck, name] : std::array<std::pair<DjEngine*, const char*>, 4>{{

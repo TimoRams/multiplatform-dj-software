@@ -194,3 +194,10 @@ Manual (~15 min):
 - Sanitizer validation: combined ASAN/UBSAN passed (LeakSanitizer unavailable under the runner's
   ptrace); TSAN first exposed a real prepared TimeStretch slot claim race. The narrow claim-before-read
   handover fix was applied and the complete DeckTransport stress target then passed TSAN.
+- Deck sync extraction completed (2026-07-13): app-owned `SyncCoordinator`, four per-deck
+  `DeckSyncController` instances, fixed slots, explicit unregister, master/track generation guards,
+  pointer-free snapshots/commands and the preserved QML/MIDI facade replace all static `DjEngine`
+  registry/master state and cross-engine private reads. Dedicated deterministic unit/four-deck
+  stress passed release, ASAN+UBSAN and TSAN. Next: shared `ControlClock`, without reopening sync DSP.
+  Release measurements: one-deck update 0.097 us, four-deck cycle 0.470 us, per-deck command/BPM/phase
+  path 0.117 us, master selection 0.248 us and master-track generation switch 0.074 us.

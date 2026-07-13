@@ -311,6 +311,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/engine/deck/DeckTrackLoader.cpp
     src/engine/deck/DeckAudioGraph.cpp
     src/engine/deck/DeckTransport.cpp
+    src/engine/sync/DeckSyncController.cpp
+    src/engine/sync/SyncCoordinator.cpp
     src/engine/deck/DeckTrackLoader.h
     src/engine/DjEngine_Scratch.cpp
     src/engine/DjEngine_Settings.cpp
@@ -644,6 +646,7 @@ add_test(NAME deck_audio_graph COMMAND BrockDJ_deck_audio_graph_tests)
 add_executable(BrockDJ_deck_transport_tests
     tests/deck_transport/deck_transport_tests.cpp
     src/engine/deck/DeckTransport.cpp src/engine/deck/DeckAudioGraph.cpp
+    src/engine/sync/DeckSyncController.cpp src/engine/sync/SyncCoordinator.cpp
     src/audio/cache/AudioPageCache.cpp src/audio/cache/AudioCacheWorker.cpp src/audio/cache/CachedPlaybackAudioSource.cpp
     src/engine/audio/ScratchDeckBridge.cpp src/engine/audio/ScratchResampler.cpp src/engine/audio/HermiteResamplingAudioSource.cpp
     src/engine/scratch/ScratchController.cpp src/engine/scratch/VirtualTurntable.cpp
@@ -655,6 +658,15 @@ target_link_libraries(BrockDJ_deck_transport_tests PRIVATE Qt6::Core Qt6::Gui ju
 target_compile_definitions(BrockDJ_deck_transport_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1)
 target_compile_features(BrockDJ_deck_transport_tests PRIVATE cxx_std_26)
 add_test(NAME deck_transport COMMAND BrockDJ_deck_transport_tests)
+
+add_executable(BrockDJ_sync_coordinator_tests
+    tests/sync/sync_coordinator_tests.cpp
+    src/engine/sync/DeckSyncController.cpp
+    src/engine/sync/SyncCoordinator.cpp)
+target_include_directories(BrockDJ_sync_coordinator_tests PRIVATE src src/engine)
+target_link_libraries(BrockDJ_sync_coordinator_tests PRIVATE Qt6::Core)
+target_compile_features(BrockDJ_sync_coordinator_tests PRIVATE cxx_std_26)
+add_test(NAME sync_coordinator COMMAND BrockDJ_sync_coordinator_tests)
 
 add_executable(BrockDJ_analysis_lifetime_tests
     tests/analysis/analysis_lifetime_tests.cpp

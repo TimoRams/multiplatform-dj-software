@@ -29,6 +29,7 @@ class MixerParameterBridge;
 class MixerControl;
 class AudioDeviceService;
 class AudioPageCache;
+namespace engine::sync { class SyncCoordinator; }
 
 struct ApplicationRuntime {
     QQmlApplicationEngine* engine = nullptr;
@@ -39,6 +40,7 @@ struct ApplicationRuntime {
     std::unique_ptr<AudioDeviceService> audioDeviceService;
     std::unique_ptr<AudioPageCache> audioPageCache;
     std::unique_ptr<DjMasterBus> masterBus;
+    std::unique_ptr<engine::sync::SyncCoordinator> syncCoordinator;
     std::unique_ptr<DjEngine> deckA;
     std::unique_ptr<DjEngine> deckB;
     std::unique_ptr<DjEngine> deckC;

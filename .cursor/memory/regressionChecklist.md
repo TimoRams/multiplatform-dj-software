@@ -177,3 +177,16 @@ injizierte Decks und beendete sauber; echte Hardwarelisten, Wiedergabe und Hot-U
 - Musswerte: finite pointerfreie Snapshots, monotone State-Generation, korrekte Trackgeneration, keine stale Anwendung und alle aggregierten RT-Verstoßzähler null.
 - Manuell offen: echte QML-Waveform/Remaining-Time, FLX10/MIDI-Feedback, hörbare Cue/Loop/Slip/Reverse/Scratch-Übergänge, vier Decks auf Audiohardware, Hot-Unplug und Shutdown unter Controllerlast.
 - Sanitizer: ASAN/UBSAN ohne Befund; LeakSanitizer im ptrace-Runner technisch nicht verfügbar; TSAN nach Korrektur des gefundenen TimeStretch-Ready-Slot-Races ohne Befund.
+
+## Sync controller/coordinator regression (2026-07-13)
+
+- [x] First enabled master, follower enable, explicit deterministic request, promotion on disable/remove.
+- [x] Master pause/EOF/no-track retains the existing product role.
+- [x] Master-track and target-track generation invalidation; rapid A→B→C→D replacement.
+- [x] Equal/different/half/double/invalid BPM yield only finite bounded actions.
+- [x] Beat/bar phase, arrange deadzone/bound, PI nudge, reSync, Scratch/Reverse/Slip/Loop.
+- [x] Fixed-seed four-deck stress; release, ASAN+UBSAN and TSAN pass.
+- [x] Integrated four `DeckAudioGraph` + four `DeckTransport` + four controllers + one coordinator;
+  Play/Pause/Seek/Scratch/Reverse/Slip/Loop/master/Link changes keep every RT counter at zero.
+- [ ] Hardware/QML: SYNC LEDs, FLX10 feedback, audible handoff, same-file tight double.
+- [ ] Hardware/manual: Link leader/follower enable/disable and peer phase.

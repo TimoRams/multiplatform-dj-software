@@ -55,3 +55,17 @@ Mixer filters: QML/MIDI/control setters own clamped targets and serialize the fo
 ## DeckTransport contract (2026-07-13)
 
 `DjEngine` owns one ordinary `DeckTransport`, which borrows the deck-owned `DeckAudioGraph`. QML, MIDI, controller, cue/loop and sync calls remain on the Qt/control path and issue domain commands to `DeckTransport`. It owns play intent, audible/held/background positions, rate, reverse, slip, pre-roll/end state and track/state generations. The 4-ms owner-thread timer calls `updateControlState()`; it no longer implements transport transitions itself. The audio callback writes only the injected atomic playhead sink. Readers use the pointer-free atomic sequence snapshot and never dereference graph/source objects. Install/clear and JUCE transport commands remain control-boundary operations and may not run in the callback.
+
+## Sync ownership after extraction (2026-07-13)
+
+| Operation | Owner | Thread / boundary |
+|---|---|---|
+| Track/transport/beat snapshot collection | `DjEngine` facade | Qt/control, current 4-ms timer |
+| Enabled/role, PI phase state and own-deck pending action | `DeckSyncController` | Qt/control only |
+| Registration, enable order, master/generations and Link snapshot | `SyncCoordinator` | Qt/control only |
+| Tempo/seek application | owning facade through its own `DeckTransport` | Qt/control to RT-safe graph boundary |
+| Audio blocks | `DeckAudioGraph` and sources | audio callback; no sync coordination |
+
+Coordinator construction precedes deck construction. Each controller explicitly registers in a
+fixed slot, unregisters during deck destruction, and is gone before coordinator shutdown. The
+Coordinator stores no `DjEngine*`; controllers store no engine/TrackData/QML/DB/audio-source pointer.

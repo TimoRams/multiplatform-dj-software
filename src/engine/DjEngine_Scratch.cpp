@@ -191,9 +191,8 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
     const double visualAtGrab = getVisualPosition();
     const double len          = m_transport->trackLengthSeconds();
 
-    m_phaseNudge      = 0.0;
     m_jogNudgePercent = 0.0;
-    m_resyncBoost = false;
+    m_syncController->resetPhaseCorrection();
 
     const bool regrabActiveScratch = m_scratch.scrubbing() || m_scratch.releaseGlide();
     const bool wasPlayingBeforeGrab = regrabActiveScratch

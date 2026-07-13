@@ -3,10 +3,12 @@
 #include "deck/DeckCueLoopController.h"
 #include "deck/DeckTrackLoader.h"
 #include "audio/cache/AudioPageCache.h"
+#include "sync/DeckSyncController.h"
 
 class DeckAudioGraph;
 class DeckTransport;
 class AudioDeviceService;
+namespace engine::sync { class SyncCoordinator; }
 #include "scratch/ScratchSession.hpp"
 
 #include <QObject>
@@ -23,8 +25,6 @@ class AudioDeviceService;
 #include <cstdint>
 #include <expected>
 #include <memory>
-#include <mutex>
-#include <vector>
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 
@@ -114,15 +114,13 @@ public:
     // audio output is silence (JUCE transport stays at 0 during pre-roll).
     static constexpr double PRE_ROLL_SECONDS = TransportLimits::kPreRollSeconds;
     static constexpr double SCRATCH_PRE_ROLL_SECONDS = PRE_ROLL_SECONDS * 4.0;
-    static void setTightDoubleSyncEnabled(bool enabled);
-    [[nodiscard]] static bool tightDoubleSyncEnabled();
-
     /** Stop Qt timers and waveform analysis before QML / MIDI teardown. */
     void prepareForShutdown();
     /** Detach file readers from scratch/transport; call after audio device is closed. */
     void releaseTransportReaders();
 
     explicit DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audioPageCache,
+                      engine::sync::SyncCoordinator& syncCoordinator, int deckIndex,
                       QObject* parent = nullptr);
     ~DjEngine() override;
 
@@ -248,7 +246,6 @@ public:
     [[nodiscard]] double  trackDurationSec() const;
     [[nodiscard]] bool    hasTrack()      const { return m_hasTrack; }
     [[nodiscard]] QString trackFilePath() const { return m_trackFilePath; }
-    [[nodiscard]] bool sameTrackFileAs(const DjEngine* other) const;
     [[nodiscard]] bool polarityInverted() const { return m_polarityInverted; }
     [[nodiscard]] QString coverArtUrl()   const { return m_coverArtUrl; }
     [[nodiscard]] bool    hasCoverArt()   const { return m_hasCoverArt; }
@@ -284,8 +281,8 @@ public:
     [[nodiscard]] bool masterCueEnabled() const;
     [[nodiscard]] double headphoneMix() const;
     [[nodiscard]] bool quantizeEnabled() const { return m_quantizeEnabled; }
-    [[nodiscard]] bool syncEnabled() const { return m_syncEnabled; }
-    [[nodiscard]] bool isSyncMaster() const { return m_isSyncMaster; }
+    [[nodiscard]] bool syncEnabled() const { return m_syncController->snapshot().syncEnabled; }
+    [[nodiscard]] bool isSyncMaster() const { return m_syncController->snapshot().isMaster; }
     [[nodiscard]] bool loopActive() const { return m_cueLoopController.activeLoop().active; }
     [[nodiscard]] bool loopInSet() const { return m_cueLoopController.activeLoop().inSet; }
     [[nodiscard]] double loopLengthBeats() const { return m_cueLoopController.activeLoop().lengthBeats; }
@@ -539,15 +536,6 @@ private:
     // Tempo control: ±6/8/16/32/100% (WIDE) selectable range
     double m_tempoPercent = 0.0;
     double m_tempoRangePercent = 8.0;
-    // Phase correction nudge added to m_tempoPercent inside updateSpeedAndPitch().
-    // Cleared on scratch and when sync is disabled. Normally capped at ±4%; ±8% during reSync.
-    double m_phaseNudge = 0.0;
-    bool   m_resyncBoost = false;
-    // PI phase-lock state. The integral term cancels any systematic tempo bias
-    // (e.g. analysed BPM ≠ true grid spacing) so synced decks don't slowly drift.
-    double m_phaseIntegral = 0.0;
-    QElapsedTimer m_phaseClock;
-
     // Jog outer-rim nudge: temporary speed offset from rim turning (no touch press).
     double m_jogNudgePercent = 0.0;
     QElapsedTimer m_lastJogNudgeClock;
@@ -580,11 +568,8 @@ private:
     bool m_playLogged    = false;   // true once logPlay() has been called for the current track load
     double m_playedAccumSec = 0.0;  // accumulated real playback seconds since last track load
     QElapsedTimer m_playHistoryClock;
-    QElapsedTimer m_tightDoubleAlignClock;
     bool m_keylock = false;
     bool m_quantizeEnabled = false;
-    bool m_syncEnabled = false;
-    bool m_isSyncMaster = false;
 
     // Quantized cue trigger: when quantize is on and the deck is playing, a hot
     // cue / cue press is deferred to the next beat so the jump lands exactly on
@@ -605,21 +590,18 @@ private:
     void updateFxBeatSyncPosition();
 
     void updateSpeedAndPitch();
-    void updatePhaseCorrection();
-    void updateTightDoubleAlignment();
     [[nodiscard]] double keylockLatencySeconds() const;
     // Bypass for internal/sync use — no follower-lock guard, no master propagation.
     void applyTempoPercent(double percent);
-    // Seek this deck so its bar phase (downbeat) matches master's. Called when sync
-    // is first enabled and when a synced follower starts playing.
-    void snapPhaseToMaster(DjEngine* master);
     // Clamped transport seek used by sync to arrange phase (handles pre-roll).
     void applySyncSeekOffset(double seekOffset);
-    // Current sync master deck (locks s_syncMutex). Null when none.
-    [[nodiscard]] DjEngine* currentSyncMaster();
     // When a synced follower starts playing, re-match tempo and arrange bars to
     // the master so it drops in phase-locked (Serato-style).
     void alignToSyncMasterOnPlay();
+    [[nodiscard]] engine::sync::DeckSyncInputSnapshot buildSyncInputSnapshot() const;
+    void publishSyncInputAndApplyActions();
+    void applyPendingSyncActions();
+    void refreshSyncFacadeSignals();
     void refreshHardwareLatency();
     void setSnapAnchor(double positionSec, bool valid);
     void armSnapFromTransportPosition();
@@ -665,12 +647,9 @@ private:
     // Pre-roll countdown: when play is pressed while visual position is negative,
     // we advance the visual clock ourselves until it reaches 0, then start transport.
 
-    static std::mutex s_syncMutex;
-    static std::vector<DjEngine*> s_syncDecks;
-    // Decks in the order they enabled sync (first = master until they disable it).
-    static std::vector<DjEngine*> s_syncEnableOrder;
-    static DjEngine* s_syncMasterDeck;
-    static std::atomic<bool> s_tightDoubleSyncEnabled;
-    static void updateSyncMasterLocked();
-    static void propagateMasterTempoLocked(DjEngine* master);
+    engine::sync::SyncCoordinator& m_syncCoordinator;
+    const int m_deckIndex = 0;
+    std::unique_ptr<engine::sync::DeckSyncController> m_syncController;
+    bool m_lastPublishedSyncEnabled = false;
+    bool m_lastPublishedSyncMaster = false;
 };

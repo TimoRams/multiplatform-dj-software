@@ -66,3 +66,11 @@ Jede Änderung an `getNextAudioBlock()`, `processBlock()`, `prepareToPlay()`-Üb
 - Graph transport commands are control-thread operations and must not be called from `getNextAudioBlock()`.
 - The only audio-to-transport position channel is the pre-injected `std::atomic<double>` playhead sink. It adds no allocation, Qt signal, lock or lifetime transfer to the callback.
 - Track and snapshot generations guard handovers; stale installs must not mutate the current generation.
+
+## Sync control boundary (2026-07-13)
+
+- Snapshot collection, master choice, BPM matching, bar arrange and PI phase math are control-only.
+- Cross-deck data is finite and pointer-free. Commands carry master and target-track generations.
+- Controllers prepare bounded scalar actions; only the owning facade uses its own `DeckTransport`.
+- Fixed four-deck slots avoid update allocation/quadratic traversal. Never traverse decks, choose a
+  master, calculate BPM/phase, lock or emit Qt signals in `getNextAudioBlock()`.

@@ -1,6 +1,5 @@
 #include "SettingsManager.h"
 #include "audio/device/AudioDeviceService.h"
-#include "DjEngine.h"
 #include <algorithm>
 #include <cmath>
 #include <QDebug>
@@ -138,8 +137,6 @@ void SettingsManager::init()
     userSettings->save();
 
     ensureMappingsDirectoryExists();
-
-    DjEngine::setTightDoubleSyncEnabled(tightDoubleSync());
 
     qDebug() << "Settings-Datei erfolgreich erstellt/geladen unter:"
              << QString::fromUtf8(userSettings->getFile().getFullPathName().toRawUTF8());
@@ -434,7 +431,6 @@ void SettingsManager::setTightDoubleSync(bool enabled)
         return;
 
     setUiState(QStringLiteral("tightDoubleSync"), value);
-    DjEngine::setTightDoubleSyncEnabled(enabled);
     emit tightDoubleSyncChanged();
 }
 
