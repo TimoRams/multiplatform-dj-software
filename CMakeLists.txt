@@ -309,6 +309,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/engine/deck/DeckCueLoopController.cpp
     src/engine/deck/DeckCueLoopController.h
     src/engine/deck/DeckTrackLoader.cpp
+    src/engine/deck/DeckAudioGraph.cpp
     src/engine/deck/DeckTrackLoader.h
     src/engine/DjEngine_Scratch.cpp
     src/engine/DjEngine_Settings.cpp
@@ -623,6 +624,21 @@ target_link_libraries(BrockDJ_mixer_dsp_tests PRIVATE Qt6::Core Qt6::Gui juce::j
 target_compile_definitions(BrockDJ_mixer_dsp_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
 target_compile_features(BrockDJ_mixer_dsp_tests PRIVATE cxx_std_26)
 add_test(NAME mixer_dsp COMMAND BrockDJ_mixer_dsp_tests)
+
+add_executable(BrockDJ_deck_audio_graph_tests
+    tests/deck_audio_graph/deck_audio_graph_tests.cpp
+    src/engine/deck/DeckAudioGraph.cpp
+    src/audio/cache/AudioPageCache.cpp src/audio/cache/AudioCacheWorker.cpp src/audio/cache/CachedPlaybackAudioSource.cpp
+    src/engine/audio/ScratchDeckBridge.cpp src/engine/audio/ScratchResampler.cpp src/engine/audio/HermiteResamplingAudioSource.cpp
+    src/engine/scratch/ScratchController.cpp src/engine/scratch/VirtualTurntable.cpp
+    src/engine/audio/TimeStretchAudioSource.cpp src/engine/audio/MixerDspSource.cpp src/engine/audio/MixerFilterCoefficients.cpp
+    src/fx/FxProcessor.cpp src/fx/BrickwallLimiter.cpp
+)
+target_include_directories(BrockDJ_deck_audio_graph_tests PRIVATE src src/engine src/engine/audio src/fx/dsp ${SIGNALSMITH_DSP_DIR})
+target_link_libraries(BrockDJ_deck_audio_graph_tests PRIVATE Qt6::Core Qt6::Gui juce::juce_core juce::juce_data_structures juce::juce_audio_basics juce::juce_audio_formats juce::juce_audio_devices juce::juce_dsp juce::juce_events ThirdParty::RubberBand)
+target_compile_definitions(BrockDJ_deck_audio_graph_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1)
+target_compile_features(BrockDJ_deck_audio_graph_tests PRIVATE cxx_std_26)
+add_test(NAME deck_audio_graph COMMAND BrockDJ_deck_audio_graph_tests)
 
 add_executable(BrockDJ_analysis_lifetime_tests
     tests/analysis/analysis_lifetime_tests.cpp

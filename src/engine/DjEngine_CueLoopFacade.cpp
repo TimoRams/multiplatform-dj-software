@@ -3,7 +3,7 @@
 
 void DjEngine::activateLoopRange(double inSec, double outSec, bool jumpToIn)
 {
-    const double trackLen = transportSource.getLengthInSeconds();
+    const double trackLen = m_audioGraph->transport().getLengthInSeconds();
     if (trackLen <= 0.0)
         return;
 
@@ -29,7 +29,7 @@ void DjEngine::activateLoopRange(double inSec, double outSec, bool jumpToIn)
 
     if (jumpToIn) {
         const double pos = std::max(0.0, in);
-        transportSource.setPosition(pos);
+        m_audioGraph->transport().setPosition(pos);
         m_scrubHoldPosition = pos;
         setSnapAnchor(pos, true);
         armVisualSeekSettle();
@@ -72,7 +72,7 @@ DjEngine::BeatInterval DjEngine::beatIntervalAt(double positionSec) const
 
 void DjEngine::updateFxBeatSyncPosition()
 {
-    if (!mixerSource || !m_trackData)
+    if (!m_audioGraph->mixerPtr() || !m_trackData)
         return;
 
     const double pos = getPosition();
@@ -80,7 +80,7 @@ void DjEngine::updateFxBeatSyncPosition()
     if (beatDur <= 0.001)
         return;
 
-    mixerSource->setBeatSyncPosition(getBeatPosition(), beatDur);
+    m_audioGraph->mixer().setBeatSyncPosition(getBeatPosition(), beatDur);
 }
 
 
@@ -179,7 +179,7 @@ double DjEngine::beatDurationAround(double sec) const
 
 void DjEngine::startLoopAt(double startSec, double lengthBeats)
 {
-    const double trackLen = transportSource.getLengthInSeconds();
+    const double trackLen = m_audioGraph->transport().getLengthInSeconds();
     if (trackLen <= 0.0)
         return;
 
@@ -216,7 +216,7 @@ void DjEngine::setLoopIn()
     if (m_quantizeEnabled)
         pos = quantizedBeatAt(pos);
 
-    const double trackLen = transportSource.getLengthInSeconds();
+    const double trackLen = m_audioGraph->transport().getLengthInSeconds();
     if (trackLen <= 0.0)
         return;
 
@@ -238,7 +238,7 @@ void DjEngine::setLoopIn()
 
 void DjEngine::setLoopOut()
 {
-    const double trackLen = transportSource.getLengthInSeconds();
+    const double trackLen = m_audioGraph->transport().getLengthInSeconds();
     if (trackLen <= 0.0)
         return;
 
@@ -368,7 +368,7 @@ void DjEngine::reactivateLoop()
 
 void DjEngine::beatJump(double beats)
 {
-    const double trackLen = transportSource.getLengthInSeconds();
+    const double trackLen = m_audioGraph->transport().getLengthInSeconds();
     if (trackLen <= 0.0)
         return;
 
@@ -384,7 +384,7 @@ void DjEngine::beatJump(double beats)
 
 void DjEngine::applyLoopRangeToAudioSource()
 {
-    if (!reverseWrapSource || !m_cueLoopController.activeLoop().active || m_cueLoopController.activeLoop().outSec <= m_cueLoopController.activeLoop().inSec)
+    if (!m_audioGraph->playback() || !m_cueLoopController.activeLoop().active || m_cueLoopController.activeLoop().outSec <= m_cueLoopController.activeLoop().inSec)
         return;
 
     if (m_isReverse) {
@@ -400,7 +400,7 @@ void DjEngine::applyLoopRangeToAudioSource()
         return;
     }
 
-    auto* reverseSource = reverseWrapSource.get();
+    auto* reverseSource = m_audioGraph->playback();
     if (!reverseSource)
         return;
 
@@ -417,9 +417,9 @@ void DjEngine::applyLoopRangeToAudioSource()
 
 void DjEngine::clearLoopRangeOnAudioSource()
 {
-    if (!reverseWrapSource)
+    if (!m_audioGraph->playback())
         return;
-    auto* reverseSource = reverseWrapSource.get();
+    auto* reverseSource = m_audioGraph->playback();
     if (reverseSource)
         reverseSource->clearLoopRangeSamples();
 }
@@ -580,7 +580,7 @@ void DjEngine::storeHotCue(int index)
     if (isLoopCuePad(index))
         clearSavedLoop(index);
 
-    const double trackLen = transportSource.getLengthInSeconds();
+    const double trackLen = m_audioGraph->transport().getLengthInSeconds();
     if (trackLen <= 0.0)
         return;
 
@@ -624,12 +624,12 @@ void DjEngine::storeCuePad(int index)
 
 void DjEngine::performCueJump(double targetSec)
 {
-    const double trackLen = transportSource.getLengthInSeconds();
+    const double trackLen = m_audioGraph->transport().getLengthInSeconds();
     if (trackLen <= 0.0)
         return;
 
     const double pos = std::clamp(targetSec, -PRE_ROLL_SECONDS, trackLen);
-    transportSource.setPosition(std::max(0.0, pos));
+    m_audioGraph->transport().setPosition(std::max(0.0, pos));
     m_scrubHoldPosition = pos;
     if (m_playRequested && pos < 0.0) {
         m_preRollCountdownActive = true;
@@ -648,7 +648,7 @@ void DjEngine::performCueJump(double targetSec)
 
 void DjEngine::scheduleQuantizedCueJump(double targetSec)
 {
-    const double cur = transportSource.getCurrentPosition();
+    const double cur = m_audioGraph->transport().getCurrentPosition();
     m_cueLoopController.scheduleCueJump(targetSec, nextBeatBoundaryAfter(cur), cur);
 }
 
@@ -661,7 +661,7 @@ void DjEngine::cancelQuantizedCueJump()
 
 bool DjEngine::serviceQuantizedCueJump()
 {
-    const double cur = transportSource.getCurrentPosition();
+    const double cur = m_audioGraph->transport().getCurrentPosition();
     const auto target = m_cueLoopController.serviceCueJump(cur);
     if (!target)
         return false;
@@ -676,7 +676,7 @@ void DjEngine::triggerHotCueJump(int index)
         return;
 
     const auto& slot = slotAt(index);
-    const double trackLen = transportSource.getLengthInSeconds();
+    const double trackLen = m_audioGraph->transport().getLengthInSeconds();
     if (trackLen <= 0.0)
         return;
 
@@ -684,7 +684,7 @@ void DjEngine::triggerHotCueJump(int index)
 
     // CDJ-3000 quantize: while playing, defer the jump to the next beat so it
     // lands phase-locked on the grid instead of wherever the finger landed.
-    if (m_quantizeEnabled && transportSource.isPlaying()
+    if (m_quantizeEnabled && m_audioGraph->transport().isPlaying()
         && !m_preRollCountdownActive && pos >= 0.0) {
         scheduleQuantizedCueJump(pos);
         return;
@@ -827,7 +827,7 @@ void DjEngine::startMainCueHoldPreview(quint64 pressSerial)
         return;
     }
 
-    const double trackLen = transportSource.getLengthInSeconds();
+    const double trackLen = m_audioGraph->transport().getLengthInSeconds();
     if (trackLen <= 0.0)
         return;
 
@@ -837,7 +837,7 @@ void DjEngine::startMainCueHoldPreview(quint64 pressSerial)
 
     m_cueLoopController.mainCue().holdPreviewPending = false;
     m_cueLoopController.mainCue().previewActive = true;
-    transportSource.setPosition(std::max(0.0, cuePos));
+    m_audioGraph->transport().setPosition(std::max(0.0, cuePos));
     m_scrubHoldPosition = cuePos;
     if (cuePos < 0.0) {
         m_preRollCountdownActive = true;
@@ -848,7 +848,7 @@ void DjEngine::startMainCueHoldPreview(quint64 pressSerial)
     } else {
         setSnapAnchor(cuePos, true);
         armVisualSeekSettle();
-        transportSource.start();
+        m_audioGraph->transport().start();
     }
     emit playingChanged();
     emit progressChanged();
@@ -860,7 +860,7 @@ void DjEngine::cueButtonPress()
     if (!m_hasTrack)
         return;
 
-    const double trackLen = transportSource.getLengthInSeconds();
+    const double trackLen = m_audioGraph->transport().getLengthInSeconds();
     if (trackLen <= 0.0)
         return;
 
@@ -888,7 +888,7 @@ void DjEngine::cueButtonPress()
 
         // CDJ-3000 quantize: defer the return-to-cue to the next beat so it lands
         // phase-locked on the grid while playing.
-        if (m_quantizeEnabled && transportSource.isPlaying()
+        if (m_quantizeEnabled && m_audioGraph->transport().isPlaying()
             && !m_preRollCountdownActive && cuePos >= 0.0) {
             scheduleQuantizedCueJump(cuePos);
             return;
@@ -906,7 +906,7 @@ void DjEngine::cueButtonPress()
     persistMainCuePoint();
     emit mainCueChanged();
 
-    transportSource.setPosition(std::max(0.0, cuePos));
+    m_audioGraph->transport().setPosition(std::max(0.0, cuePos));
     m_scrubHoldPosition = cuePos;
     setSnapAnchor(cuePos, true);
     armVisualSeekSettle();
@@ -942,17 +942,17 @@ void DjEngine::cueButtonRelease()
         return;
     }
 
-    const double trackLen = transportSource.getLengthInSeconds();
+    const double trackLen = m_audioGraph->transport().getLengthInSeconds();
     if (trackLen <= 0.0)
         return;
 
     const double cuePos = std::clamp(m_cueLoopController.mainCue().positionSec >= -PRE_ROLL_SECONDS ? m_cueLoopController.mainCue().positionSec : 0.0, -PRE_ROLL_SECONDS, trackLen);
     m_preRollCountdownActive = false;
-    if (mixerSource)
-        mixerSource->armClickFreeTransition();
-    if (transportSource.isPlaying())
-        transportSource.stop();
-    transportSource.setPosition(std::max(0.0, cuePos));
+    if (m_audioGraph->mixerPtr())
+        m_audioGraph->mixer().armClickFreeTransition();
+    if (m_audioGraph->transport().isPlaying())
+        m_audioGraph->transport().stop();
+    m_audioGraph->transport().setPosition(std::max(0.0, cuePos));
     m_scrubHoldPosition = cuePos;  // sync visual hold so pre-roll position survives timer ticks
 
     m_snapPosition = cuePos;
@@ -1072,7 +1072,7 @@ void DjEngine::storeSavedLoop(int index)
     if (isHotCuePad(index))
         clearHotCue(index);
 
-    const double trackLen = transportSource.getLengthInSeconds();
+    const double trackLen = m_audioGraph->transport().getLengthInSeconds();
     if (trackLen <= 0.0)
         return;
 

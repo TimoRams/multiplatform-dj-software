@@ -1,8 +1,29 @@
 # Active Context
 
-*Last updated: 2026-07-12*
+*Last updated: 2026-07-13*
 
 ## Current task
+**Per-deck audio pipeline extracted into DeckAudioGraph**
+- `DeckAudioGraph` uniquely owns cached playback, JUCE transport, scratch bridge/resampler,
+  time stretch, mixer/FX, audio cache handle, audio generation and complete source lifecycle.
+- `DjEngine` remains the QML/product/transport/sync facade but stores only one graph pointer for
+  the pipeline. Concrete sources are reached through transitional graph forwarding; no aliases,
+  duplicate owners, Qt dependencies, or `DjEngine` backreference exist in the graph.
+- Dedicated tests cover empty/mono/stereo graphs, 44.1/48/96 kHz, 64–8192 blocks, play/pause/seek,
+  reverse/loop, scratch handoff, keylock/tempo, EQ/filter/gain, stale and rapid handovers, four
+  simultaneous graphs, shutdown invalidation, finite output, retained zero RT counters and timings.
+- Release timing found no graph-forwarding regression versus the former direct mixer endpoint, but
+  a stressed synchronous cached-source retirement produced a ~1.05 s control-thread handover;
+  this is recorded for focused cache-retirement profiling rather than hidden by the refactor.
+- Validation: Linux release build and 12/12 CTests pass. Isolated ASAN+UBSAN and TSAN graph stress
+  builds pass without reported memory, UB, or race errors. LeakSanitizer itself cannot run in the
+  ptrace-managed environment; ASAN was rerun successfully with leak detection disabled.
+- Release measurements (single run, microseconds): old-equivalent direct mixer 512 avg 36.45/worst
+  381.74; neutral graph 512 avg 34.52/worst 48.34; keylock 512 avg 449.12/worst 788.49; scratch
+  512 avg 44.95/worst 190.12; EQ/filter 8192 avg 606.14/worst 900.59; four graphs/512 avg
+  2116.28/worst 8891.46; stressed handover 1,053,360.
+
+## Previous task
 **Mixer EQ/color-filter coefficient lifecycle fixed**
 - `MixerDspSource` no longer calls JUCE coefficient factories in `getNextAudioBlock`. Trivial RBJ low-shelf/peak/high-shelf/LP/HP snapshots are built from clamped control targets outside the callback.
 - Two fixed snapshot slots publish complete parameter/device generations. The callback atomically adopts only the newest matching snapshot and crossfades two preallocated stateful filter banks over 128 samples.

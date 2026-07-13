@@ -53,8 +53,8 @@ void DjEngine::setReverse(bool on)
     if (m_isReverse == on) return;
     const bool wasSlipDiverted = isSlipDiverted();
     m_isReverse = on;
-    if (reverseWrapSource) {
-        reverseWrapSource->setReverse(on);
+    if (m_audioGraph->playback()) {
+        m_audioGraph->playback()->setReverse(on);
         if (m_cueLoopController.activeLoop().active)
             applyLoopRangeToAudioSource();
     }
@@ -70,7 +70,7 @@ void DjEngine::setSlip(bool on)
     if (m_slipActive == on) return;
     m_slipActive = on;
     if (on)
-        m_slipPosition = transportSource.getCurrentPosition();
+        m_slipPosition = m_audioGraph->transport().getCurrentPosition();
     emit slipChanged();
 }
 
@@ -79,7 +79,7 @@ void DjEngine::returnToSlipPosition()
 {
     const double dur = std::max(0.001, static_cast<double>(getDuration()));
     const double pos = std::clamp(m_slipPosition, 0.0, dur);
-    transportSource.setPosition(pos);
+    m_audioGraph->transport().setPosition(pos);
     m_snapPosition = pos;
     m_snapClock.restart();
     m_snapValid = true;

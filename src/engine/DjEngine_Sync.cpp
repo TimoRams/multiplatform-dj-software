@@ -49,10 +49,10 @@ bool DjEngine::sameTrackFileAs(const DjEngine* other) const
 
 double DjEngine::keylockLatencySeconds() const
 {
-    if (!m_keylock || !timeStretchSource)
+    if (!m_keylock || !m_audioGraph->timeStretchPtr())
         return 0.0;
     const double sr = m_loadedTrackSampleRate > 0.0 ? m_loadedTrackSampleRate : 44100.0;
-    return static_cast<double>(timeStretchSource->getLatencySamples()) / sr;
+    return static_cast<double>(m_audioGraph->timeStretch().getLatencySamples()) / sr;
 }
 
 void DjEngine::updateTightDoubleAlignment()
@@ -317,7 +317,7 @@ DjEngine* DjEngine::currentSyncMaster()
 
 void DjEngine::applySyncSeekOffset(double seekOffset)
 {
-    const double len    = transportSource.getLengthInSeconds();
+    const double len    = m_audioGraph->transport().getLengthInSeconds();
     const double newPos = std::clamp(getPosition() + seekOffset, -PRE_ROLL_SECONDS,
                                      len > 0.0 ? len : PRE_ROLL_SECONDS);
     if (newPos < 0.0) {
@@ -328,7 +328,7 @@ void DjEngine::applySyncSeekOffset(double seekOffset)
         m_scrubHoldPosition = newPos;
         m_atomicPlayheadPos.store(newPos, std::memory_order_relaxed);
     } else {
-        transportSource.setPosition(newPos);
+        m_audioGraph->transport().setPosition(newPos);
         armSnapFromTransportPosition();
     }
 }
@@ -474,4 +474,3 @@ void DjEngine::reSync()
     m_resyncBoost   = true;
     updatePhaseCorrection();
 }
-

@@ -38,8 +38,7 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
     if (m_analyzer)
         m_analyzer->stopAnalysis();
 
-    m_audioPageCache.releaseTrack(m_audioCacheHandle);
-    m_audioCacheHandle = m_audioPageCache.openTrack({result.canonicalPath});
+    auto preparedCacheHandle = m_audioPageCache.openTrack({result.canonicalPath});
 
     resetTrackLoadState();
     m_trackTitle = result.metadata.title;
@@ -61,7 +60,7 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
     }
 
     m_hasTrack = true;
-    attachCacheToTransport(result.metadata.sampleRate);
+    attachCacheToTransport(preparedCacheHandle, result.metadata.sampleRate);
     updateTrackDuration(result.metadata.durationSec);
     clearLoop();
 
@@ -83,7 +82,7 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
     }
 
     if (!(result.waveformCacheLoaded && hasDbAnalysis) && m_analyzer)
-        m_analyzer->startAnalysis(result.canonicalPath, transportSource.getCurrentPosition());
+        m_analyzer->startAnalysis(result.canonicalPath, m_audioGraph->transport().getCurrentPosition());
 
     if (!result.coverImage.isNull() && m_coverProvider) {
         m_coverProvider->setCoverImage(m_deckId, result.coverImage);
@@ -98,10 +97,10 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
     if (result.autoCueSec > 0.0
         && m_cueLoopController.mainCue().positionSec < 0.0
         && !m_playRequested
-        && !transportSource.isPlaying()) {
+        && !m_audioGraph->transport().isPlaying()) {
         m_cueLoopController.mainCue().positionSec = result.autoCueSec;
         emit mainCueChanged();
-        transportSource.setPosition(result.autoCueSec);
+        m_audioGraph->transport().setPosition(result.autoCueSec);
     }
 
     emit trackMetadataChanged();

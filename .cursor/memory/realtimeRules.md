@@ -1,6 +1,6 @@
 # BrockDJ Realtime Rules
 
-Last updated: 2026-07-11
+Last updated: 2026-07-13
 
 ## AudioPageCache contract
 
@@ -17,6 +17,12 @@ Last updated: 2026-07-11
 - `MixerDspSource::RealtimeStats` coefficient-build/prepare/growth/lock/construction counters must all remain zero.
 
 These rules apply to all code that can execute from the JUCE audio callback, including `DjMasterBus::getNextAudioBlock()`, deck audio sources, scratch/keylock sources, mixer DSP and FX processors.
+
+`DeckAudioGraph::getNextAudioBlock()` is now the stable per-deck callback boundary. It may only
+delegate into the already prepared mixer endpoint. Track install/clear, cache-handle release,
+source destruction, transport source swaps and generation invalidation are control-thread
+operations. `DeckAudioGraph::realtimeStats()` preserves retired cached-playback violations across
+track changes so extraction cannot hide a counter by destroying the old source.
 
 ## Verboten im Audio-Callback
 

@@ -1,6 +1,12 @@
 # Progress
 
 ## Done (recent)
+- [x] **DeckAudioGraph ownership extraction** — one non-Qt component now owns and constructs the
+  full per-deck cached playback → transport → scratch → time-stretch → mixer/FX chain, cache handle,
+  audio generation and lifecycle. `DjEngine` retains its public API and transitional product/
+  transport logic but no concrete audio-source owners or stored aliases. Added generation-safe
+  handover, retained graph-level realtime statistics and a four-graph stress/performance target;
+  release suite 12/12 plus ASAN+UBSAN and TSAN graph runs pass.
 - [x] **First controlled `DjEngine` split** — complete method/state ownership map plus
   runtime-owned, constructor-injected `AudioDeviceService`; one manager/configuration for all four
   decks, unchanged QML forwarding API, explicit callback/shutdown order and focused service tests.

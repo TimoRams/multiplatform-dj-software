@@ -1,8 +1,19 @@
 # BrockDJ Regression Checklist
 
-Last updated: 2026-07-12
+Last updated: 2026-07-13
 
 Use this checklist for manual stability passes after realtime, threading, cache, audio-device or deck-engine changes. Fill the result field with pass/fail, date, platform, audio device, block size and any relevant commit/branch.
+
+Automated DeckAudioGraph coverage (2026-07-13): the dedicated target runs empty, mono/stereo,
+44.1/48/96 kHz and 64–8192-sample cases; play/pause/seek/reverse/loop; scratch enter/move/exit;
+keylock/tempo and mixer targets; stale and A→B→C→D handovers; four simultaneous graphs with a
+small cache; finite-output checks; controlled clear/destruction; and all aggregate realtime
+violation counters at zero. Hardware output, subjective clicks, device callback jitter and actual
+master-bus removal timing remain manual items.
+
+Sanitizers (2026-07-13, Linux): dedicated graph target passed combined ASAN+UBSAN and TSAN stress.
+LeakSanitizer aborted because the managed runner uses ptrace; the same ASAN+UBSAN binary passed with
+`detect_leaks=0`. No sanitizer finding was suppressed. Full release CTest result: 12/12 passed.
 
 ## 1. Four tracks nacheinander und gleichzeitig laden
 

@@ -3,49 +3,49 @@
 
 void DjEngine::setFxEffectType(EffectType type)
 {
-    if (mixerSource) mixerSource->setFxEffectType(type);
+    if (m_audioGraph->mixerPtr()) m_audioGraph->mixer().setFxEffectType(type);
 }
 
 
 void DjEngine::setFxWetDry(float amount)
 {
-    if (mixerSource) mixerSource->setFxAmount(amount);
+    if (m_audioGraph->mixerPtr()) m_audioGraph->mixer().setFxAmount(amount);
 }
 
 
 void DjEngine::setFxExternalDelayTime(float seconds)
 {
-    if (mixerSource) mixerSource->setFxExternalDelayTime(seconds);
+    if (m_audioGraph->mixerPtr()) m_audioGraph->mixer().setFxExternalDelayTime(seconds);
 }
 
 
 void DjEngine::setFxPrimaryParam(float v)
 {
-    if (mixerSource) mixerSource->setFxPrimaryParam(v);
+    if (m_audioGraph->mixerPtr()) m_audioGraph->mixer().setFxPrimaryParam(v);
 }
 
 
 void DjEngine::setFxSlotEffectType(int slot, EffectType type)
 {
-    if (mixerSource) mixerSource->setFxSlotEffectType(slot, type);
+    if (m_audioGraph->mixerPtr()) m_audioGraph->mixer().setFxSlotEffectType(slot, type);
 }
 
 
 void DjEngine::setFxSlotWetDry(int slot, float amount)
 {
-    if (mixerSource) mixerSource->setFxSlotAmount(slot, amount);
+    if (m_audioGraph->mixerPtr()) m_audioGraph->mixer().setFxSlotAmount(slot, amount);
 }
 
 
 void DjEngine::setFxSlotExternalDelayTime(int slot, float seconds)
 {
-    if (mixerSource) mixerSource->setFxSlotExternalDelayTime(slot, seconds);
+    if (m_audioGraph->mixerPtr()) m_audioGraph->mixer().setFxSlotExternalDelayTime(slot, seconds);
 }
 
 
 void DjEngine::setFxSlotPrimaryParam(int slot, float v)
 {
-    if (mixerSource) mixerSource->setFxSlotPrimaryParam(slot, v);
+    if (m_audioGraph->mixerPtr()) m_audioGraph->mixer().setFxSlotPrimaryParam(slot, v);
 }
 
 
@@ -65,17 +65,17 @@ void DjEngine::setPadFx(const QString& effectName, float wet)
         {"RollOut",    EffectType::RollOut},
     };
     const EffectType type = kMap.value(effectName, EffectType::None);
-    if (mixerSource) {
-        mixerSource->setPadFxEffectType(type);
-        mixerSource->setPadFxAmount(wet);
+    if (m_audioGraph->mixerPtr()) {
+        m_audioGraph->mixer().setPadFxEffectType(type);
+        m_audioGraph->mixer().setPadFxAmount(wet);
     }
 }
 
 
 void DjEngine::clearPadFx()
 {
-    if (mixerSource)
-        mixerSource->clearPadFx();
+    if (m_audioGraph->mixerPtr())
+        m_audioGraph->mixer().clearPadFx();
 }
 
 
@@ -86,32 +86,32 @@ void DjEngine::activateStopEffect(StopEffect effect)
         if (m_vinylBrakeActive)
             return;
         m_vinylBrakeActive = true;
-        if (mixerSource)
-            mixerSource->setVinylBrakeActive(true);
+        if (m_audioGraph->mixerPtr())
+            m_audioGraph->mixer().setVinylBrakeActive(true);
         emit vinylBrakeChanged();
         break;
     case StopEffect::EchoOut:
         if (m_echoOutActive)
             return;
         m_echoOutActive = true;
-        if (mixerSource)
-            mixerSource->setEchoOutActive(true);
+        if (m_audioGraph->mixerPtr())
+            m_audioGraph->mixer().setEchoOutActive(true);
         emit echoOutChanged();
         break;
     case StopEffect::Backspin:
         if (m_backspinActive)
             return;
         m_backspinActive = true;
-        if (mixerSource)
-            mixerSource->setBackspinActive(true);
+        if (m_audioGraph->mixerPtr())
+            m_audioGraph->mixer().setBackspinActive(true);
         emit backspinChanged();
         break;
     case StopEffect::RollOut:
         if (m_rollOutActive)
             return;
         m_rollOutActive = true;
-        if (mixerSource)
-            mixerSource->setRollOutActive(true);
+        if (m_audioGraph->mixerPtr())
+            m_audioGraph->mixer().setRollOutActive(true);
         emit rollOutChanged();
         break;
     }
@@ -125,32 +125,32 @@ void DjEngine::deactivateStopEffect(StopEffect effect)
         if (!m_vinylBrakeActive)
             return;
         m_vinylBrakeActive = false;
-        if (mixerSource)
-            mixerSource->setVinylBrakeActive(false);
+        if (m_audioGraph->mixerPtr())
+            m_audioGraph->mixer().setVinylBrakeActive(false);
         emit vinylBrakeChanged();
         break;
     case StopEffect::EchoOut:
         if (!m_echoOutActive)
             return;
         m_echoOutActive = false;
-        if (mixerSource)
-            mixerSource->setEchoOutActive(false);
+        if (m_audioGraph->mixerPtr())
+            m_audioGraph->mixer().setEchoOutActive(false);
         emit echoOutChanged();
         break;
     case StopEffect::Backspin:
         if (!m_backspinActive)
             return;
         m_backspinActive = false;
-        if (mixerSource)
-            mixerSource->setBackspinActive(false);
+        if (m_audioGraph->mixerPtr())
+            m_audioGraph->mixer().setBackspinActive(false);
         emit backspinChanged();
         break;
     case StopEffect::RollOut:
         if (!m_rollOutActive)
             return;
         m_rollOutActive = false;
-        if (mixerSource)
-            mixerSource->setRollOutActive(false);
+        if (m_audioGraph->mixerPtr())
+            m_audioGraph->mixer().setRollOutActive(false);
         emit rollOutChanged();
         break;
     }
@@ -207,12 +207,11 @@ void DjEngine::stopRollOut()
 
 void DjEngine::setFxSCKnob(float knob)
 {
-    if (mixerSource) mixerSource->setFxSCKnob(knob);
+    if (m_audioGraph->mixerPtr()) m_audioGraph->mixer().setFxSCKnob(knob);
 }
 
 
 void DjEngine::setFxSCParam(float param)
 {
-    if (mixerSource) mixerSource->setFxSCParam(param);
+    if (m_audioGraph->mixerPtr()) m_audioGraph->mixer().setFxSCParam(param);
 }
-

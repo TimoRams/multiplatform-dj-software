@@ -16,8 +16,8 @@ void DjEngine::terminateScratchSession(double positionSec)
     m_scratch.clear();
     m_scratchSnapReadPending = false;
 
-    if (scratchBridge)
-        scratchBridge->exitScratchMode(std::max(0.0, positionSec), m_loadedTrackSampleRate);
+    if (m_audioGraph->scratchPtr())
+        m_audioGraph->scratch().exitScratchMode(std::max(0.0, positionSec), m_loadedTrackSampleRate);
 }
 
 
@@ -25,8 +25,8 @@ void DjEngine::updateScrubPlayheadAnchor()
 {
     // Pre-roll: no audio data exists before t=0.  Stop the transport to prevent
     // frame-0 audio leaking through the resampler while the platter is in silence.
-    if (m_scrubHoldPosition < 0.0 && transportSource.isPlaying())
-        transportSource.stop();
+    if (m_scrubHoldPosition < 0.0 && m_audioGraph->transport().isPlaying())
+        m_audioGraph->transport().stop();
 
     if ((m_scratch.scrubbing() || m_scratch.releaseGlide()) && m_scrubHoldPosition >= 0.0) {
         // During scratch the audio callback owns m_atomicPlayheadPos — do not overwrite here.
@@ -36,7 +36,7 @@ void DjEngine::updateScrubPlayheadAnchor()
     // Only sync from transport when not in pre-roll: transport is clamped at 0
     // while visual position is negative, so syncing would erase the pre-roll offset.
     if (m_scrubHoldPosition >= 0.0)
-        m_scrubHoldPosition = transportSource.getCurrentPosition();
+        m_scrubHoldPosition = m_audioGraph->transport().getCurrentPosition();
     m_atomicPlayheadPos.store(m_scrubHoldPosition,
                               std::memory_order_relaxed);
     m_snapPosition = m_scrubHoldPosition;
@@ -45,7 +45,7 @@ void DjEngine::updateScrubPlayheadAnchor()
 
 void DjEngine::tickScratchPhysics()
 {
-    if (!scratchBridge)
+    if (!m_audioGraph->scratchPtr())
         return;
 
     auto& physicsClock = m_scratch.physicsClock();
@@ -54,12 +54,12 @@ void DjEngine::tickScratchPhysics()
         : 0.016;
     physicsClock.restart();
 
-    const double scratchRate = m_scratch.tick(scratchBridge.get(), dtSec);
+    const double scratchRate = m_scratch.tick(m_audioGraph->scratchPtr(), dtSec);
     const double absRate = std::abs(scratchRate);
 
-    if (mixerSource) {
+    if (m_audioGraph->mixerPtr()) {
         const double timbreSignal = std::clamp(std::sqrt(std::max(absRate, 0.08)), 0.18, 1.0);
-        mixerSource->setScratchTimbre(static_cast<float>(timbreSignal));
+        m_audioGraph->mixer().setScratchTimbre(static_cast<float>(timbreSignal));
     }
 
     if (m_scratch.scrubbing() || m_scratch.releaseGlide()) {
@@ -72,13 +72,13 @@ void DjEngine::tickScratchPhysics()
         }
     }
 
-    if (!m_scratch.scrubbing() && m_scratch.releaseGlide() && !scratchBridge->isInertiaActive()) {
+    if (!m_scratch.scrubbing() && m_scratch.releaseGlide() && !m_audioGraph->scratch().isInertiaActive()) {
         m_scratch.setReleaseGlide(false);
         m_scrubHoldPosition = m_atomicPlayheadPos.load(std::memory_order_acquire);
-        scratchBridge->endScratch(false);
+        m_audioGraph->scratch().endScratch(false);
         restorePostScrubPlaybackState();
-        if (mixerSource)
-            mixerSource->setScratchTimbre(0.0f);
+        if (m_audioGraph->mixerPtr())
+            m_audioGraph->mixer().setScratchTimbre(0.0f);
         emit scrubbingChanged();
     }
 
@@ -114,23 +114,23 @@ void DjEngine::decayJogNudge()
 
 void DjEngine::syncReverseReaderToHold() noexcept
 {
-    if (!reverseWrapSource || m_loadedTrackSampleRate <= 0.0)
+    if (!m_audioGraph->playback() || m_loadedTrackSampleRate <= 0.0)
         return;
 
     const juce::int64 samplePos = static_cast<juce::int64>(
         std::lround(std::max(0.0, m_scrubHoldPosition) * m_loadedTrackSampleRate));
-    reverseWrapSource->setNextReadPosition(samplePos);
+    m_audioGraph->playback()->setNextReadPosition(samplePos);
 }
 
 
 void DjEngine::applyScratchNeutralRouting()
 {
-    if (timeStretchSource)
-        timeStretchSource->enterScratchBypass();
-    if (scratchBridge)
-        scratchBridge->setKeylockPassthrough(false);
-    if (reverseWrapSource)
-        reverseWrapSource->setReverse(false);
+    if (m_audioGraph->timeStretchPtr())
+        m_audioGraph->timeStretch().enterScratchBypass();
+    if (m_audioGraph->scratchPtr())
+        m_audioGraph->scratch().setKeylockPassthrough(false);
+    if (m_audioGraph->playback())
+        m_audioGraph->playback()->setReverse(false);
 }
 
 
@@ -139,30 +139,30 @@ void DjEngine::restorePostScrubPlaybackState()
     const double resumeSec = m_scrubHoldPosition;
     const double audioSec  = std::max(0.0, resumeSec);
 
-    if (scratchBridge)
-        scratchBridge->prepareNormalPlaybackHandoff(audioSec, m_loadedTrackSampleRate);
+    if (m_audioGraph->scratchPtr())
+        m_audioGraph->scratch().prepareNormalPlaybackHandoff(audioSec, m_loadedTrackSampleRate);
 
-    transportSource.setPosition(audioSec);
+    m_audioGraph->transport().setPosition(audioSec);
     m_scrubHoldPosition = resumeSec;
     m_atomicPlayheadPos.store(resumeSec, std::memory_order_release);
     m_snapPosition = audioSec;
     syncReverseReaderToHold();
     armVisualSeekSettle();
 
-    if (mixerSource)
-        mixerSource->armClickFreeTransition();
+    if (m_audioGraph->mixerPtr())
+        m_audioGraph->mixer().armClickFreeTransition();
 
-    if (reverseWrapSource)
-        reverseWrapSource->setReverse(m_isReverse);
+    if (m_audioGraph->playback())
+        m_audioGraph->playback()->setReverse(m_isReverse);
 
     if (m_scratch.wasPlaying() && !m_playRequested)
         m_playRequested = true;
 
     if (!m_playRequested)
-        transportSource.stop();
+        m_audioGraph->transport().stop();
 
-    if (timeStretchSource)
-        timeStretchSource->endScratchBypass();
+    if (m_audioGraph->timeStretchPtr())
+        m_audioGraph->timeStretch().endScratchBypass();
 
     // Resume at the live deck tempo — never hard-reset to 1.0× first, which
     // causes a brief slow-down when the tempo fader is above/below center.
@@ -178,12 +178,12 @@ void DjEngine::restorePostScrubPlaybackState()
             // Scratch glide may have started the transport from position 0; stop it
             // before the pre-roll countdown takes over so it does not race with the
             // countdown logic and cause a snap to 0 via getVisualPosition().
-            transportSource.stop();
+            m_audioGraph->transport().stop();
             m_preRollCountdownActive = true;
             m_preRollVisualStartPos = m_scrubHoldPosition;
             m_preRollClock.restart();
         } else {
-            transportSource.start();
+            m_audioGraph->transport().start();
         }
     }
 
@@ -196,12 +196,12 @@ void DjEngine::restorePostScrubPlaybackState()
 
 void DjEngine::pauseForScrub(double anchorPositionSec)
 {
-    if (mixerSource)
-        mixerSource->armClickFreeTransition();
+    if (m_audioGraph->mixerPtr())
+        m_audioGraph->mixer().armClickFreeTransition();
 
     // Capture before scratch / pre-roll flags change (negative pre-roll is valid).
     const double visualAtGrab = getVisualPosition();
-    const double len          = transportSource.getLengthInSeconds();
+    const double len          = m_audioGraph->transport().getLengthInSeconds();
 
     m_phaseNudge      = 0.0;
     m_jogNudgePercent = 0.0;
@@ -210,7 +210,7 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
     const bool regrabActiveScratch = m_scratch.scrubbing() || m_scratch.releaseGlide();
     const bool wasPlayingBeforeGrab = regrabActiveScratch
         ? m_scratch.wasPlaying()
-        : (m_playRequested || transportSource.isPlaying());
+        : (m_playRequested || m_audioGraph->transport().isPlaying());
     m_scratch.setReleaseGlide(false);
     m_scratch.setWasPlaying(wasPlayingBeforeGrab);
     m_scratch.setScrubbing(true);
@@ -219,8 +219,8 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
 
     m_preRollCountdownActive = false;
 
-    if (transportSource.isPlaying())
-        transportSource.stop();
+    if (m_audioGraph->transport().isPlaying())
+        m_audioGraph->transport().stop();
 
     const auto clampVirtual = [len](double sec) {
         return std::clamp(sec, -SCRATCH_PRE_ROLL_SECONDS, len > 0.0 ? len : sec);
@@ -236,7 +236,7 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
     } else if (grabSec >= 0.0) {
         // keep frozen hold (paused mid-track)
     } else {
-        grabSec = std::max(0.0, transportSource.getCurrentPosition());
+        grabSec = std::max(0.0, m_audioGraph->transport().getCurrentPosition());
     }
     grabSec = clampVirtual(grabSec);
 
@@ -244,8 +244,8 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
     m_scrubHoldPosition = m_scratch.armGrab(grabSec, len, loopCtx);
     m_atomicPlayheadPos.store(m_scrubHoldPosition, std::memory_order_relaxed);
 
-    if (scratchBridge) {
-        scratchBridge->beginScratch(m_scrubHoldPosition,
+    if (m_audioGraph->scratchPtr()) {
+        m_audioGraph->scratch().beginScratch(m_scrubHoldPosition,
                                     m_loadedTrackSampleRate,
                                     std::max(0.0, len),
                                     wasPlayingBeforeGrab,
@@ -254,13 +254,13 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
             && m_cueLoopController.activeLoop().outSec > m_cueLoopController.activeLoop().inSec
             && m_cueLoopController.activeLoop().inSec >= 0.0
             && m_cueLoopController.activeLoop().outSec > 0.0;
-        scratchBridge->setLoopRangeSeconds(m_cueLoopController.activeLoop().inSec,
+        m_audioGraph->scratch().setLoopRangeSeconds(m_cueLoopController.activeLoop().inSec,
                                            m_cueLoopController.activeLoop().outSec,
                                            scratchLoopActive,
                                            m_loadedTrackSampleRate);
-        scratchBridge->setReverse(m_isReverse);
-        scratchBridge->setKeylockPassthrough(false);
-        scratchBridge->syncScratchReadPosition(m_scrubHoldPosition, m_loadedTrackSampleRate);
+        m_audioGraph->scratch().setReverse(m_isReverse);
+        m_audioGraph->scratch().setKeylockPassthrough(false);
+        m_audioGraph->scratch().syncScratchReadPosition(m_scrubHoldPosition, m_loadedTrackSampleRate);
     }
 
     emit scrubbingChanged();
@@ -276,24 +276,24 @@ void DjEngine::scratchBySeconds(double deltaSeconds, bool vinylOneToOnePosition)
     if (deltaSeconds == 0.0)
         return;
 
-    if (!m_scratch.scrubbing() || !scratchBridge)
+    if (!m_scratch.scrubbing() || !m_audioGraph->scratchPtr())
         return;
 
-    if (!m_scratch.submitRelative(scratchBridge.get(), deltaSeconds, m_loadedTrackSampleRate))
+    if (!m_scratch.submitRelative(m_audioGraph->scratchPtr(), deltaSeconds, m_loadedTrackSampleRate))
         return;
 }
 
 
 void DjEngine::setScrubPosition(double positionSeconds)
 {
-    if (!m_scratch.scrubbing() || !scratchBridge)
+    if (!m_scratch.scrubbing() || !m_audioGraph->scratchPtr())
         return;
 
-    const double len = transportSource.getLengthInSeconds();
+    const double len = m_audioGraph->transport().getLengthInSeconds();
     if (len <= 0.0)
         return;
 
-    if (!m_scratch.submitAbsolute(scratchBridge.get(),
+    if (!m_scratch.submitAbsolute(m_audioGraph->scratchPtr(),
                                   positionSeconds,
                                   m_loadedTrackSampleRate,
                                   len,
@@ -306,18 +306,18 @@ void DjEngine::setScrubPosition(double positionSeconds)
 
 double DjEngine::platterAngleDegrees() const
 {
-    if (!scratchBridge)
+    if (!m_audioGraph->scratchPtr())
         return 0.0;
-    return scratchBridge->platter().displayAngleDegrees();
+    return m_audioGraph->scratch().platter().displayAngleDegrees();
 }
 
 
 void DjEngine::resumeAfterScrub()
 {
-    if (!m_scratch.scrubbing() || !scratchBridge)
+    if (!m_scratch.scrubbing() || !m_audioGraph->scratchPtr())
         return;
 
-    const double len = transportSource.getLengthInSeconds();
+    const double len = m_audioGraph->transport().getLengthInSeconds();
     m_scrubHoldPosition = std::clamp(m_scratch.lastRawSec(),
                                      -SCRATCH_PRE_ROLL_SECONDS,
                                      len > 0.0 ? len : m_scratch.lastRawSec());
@@ -325,14 +325,14 @@ void DjEngine::resumeAfterScrub()
     m_scratch.setScrubbing(false);
 
     constexpr double kInertiaThreshold = 0.20;
-    if (std::abs(scratchBridge->scratchRate()) > kInertiaThreshold) {
-        scratchBridge->endScratch(true);
+    if (std::abs(m_audioGraph->scratch().scratchRate()) > kInertiaThreshold) {
+        m_audioGraph->scratch().endScratch(true);
         m_scratch.setReleaseGlide(true);
         emit scrubbingChanged();
         return;
     }
 
-    scratchBridge->endScratch(false);
+    m_audioGraph->scratch().endScratch(false);
     restorePostScrubPlaybackState();
 
     emit scrubbingChanged();
@@ -341,11 +341,11 @@ void DjEngine::resumeAfterScrub()
 
 void DjEngine::applyScratchReleaseJog(double deltaSeconds)
 {
-    if (!m_scratch.releaseGlide() || deltaSeconds == 0.0 || !scratchBridge)
+    if (!m_scratch.releaseGlide() || deltaSeconds == 0.0 || !m_audioGraph->scratchPtr())
         return;
 
-    scratchBridge->addTargetDeltaSeconds(deltaSeconds, m_loadedTrackSampleRate);
-    m_scrubHoldPosition = scratchBridge->displayPositionSeconds();
+    m_audioGraph->scratch().addTargetDeltaSeconds(deltaSeconds, m_loadedTrackSampleRate);
+    m_scrubHoldPosition = m_audioGraph->scratch().displayPositionSeconds();
     m_atomicPlayheadPos.store(m_scrubHoldPosition, std::memory_order_relaxed);
     m_snapPosition = m_scrubHoldPosition;
     notifyProgressIfNeeded();

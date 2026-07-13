@@ -4,15 +4,15 @@
 
 float DjEngine::getProgress() const
 {
-    if (transportSource.getTotalLength() > 0.0)
-        return static_cast<float>(transportSource.getCurrentPosition() / transportSource.getLengthInSeconds());
+    if (m_audioGraph->transport().getTotalLength() > 0.0)
+        return static_cast<float>(m_audioGraph->transport().getCurrentPosition() / m_audioGraph->transport().getLengthInSeconds());
     return 0.0f;
 }
 
 
 float DjEngine::getDuration() const
 {
-    return static_cast<float>(transportSource.getLengthInSeconds());
+    return static_cast<float>(m_audioGraph->transport().getLengthInSeconds());
 }
 
 
@@ -26,7 +26,7 @@ double DjEngine::getPosition() const
     // it is kept in sync by freezeTransportAt(), cue operations, and hot cues.
     if (m_scrubHoldPosition < 0.0)
         return m_scrubHoldPosition;
-    return transportSource.getCurrentPosition();
+    return m_audioGraph->transport().getCurrentPosition();
 }
 
 
@@ -46,7 +46,7 @@ double DjEngine::getVisualPosition() const
     }
 
     // When stopped/paused: return the frozen position (set by togglePlay).
-    if (!m_snapValid || !transportSource.isPlaying())
+    if (!m_snapValid || !m_audioGraph->transport().isPlaying())
         return getPosition();
 
     // Forward-interpolate from the last snapshot using elapsed wall-clock time.
@@ -76,7 +76,7 @@ double DjEngine::getVisualPosition() const
     }
     interpolated += m_isReverse ? visualLatency * latencyBlend : -visualLatency * latencyBlend;
 
-    double len = transportSource.getLengthInSeconds();
+    double len = m_audioGraph->transport().getLengthInSeconds();
     interpolated = std::clamp(interpolated, -PRE_ROLL_SECONDS, len > 0.0 ? len : interpolated);
 
     return interpolated;
@@ -168,57 +168,29 @@ void DjEngine::updateTrackDuration(double durationSec)
 }
 
 
-void DjEngine::attachCacheToTransport(double trackSampleRate)
+void DjEngine::attachCacheToTransport(AudioCacheHandle cacheHandle, double trackSampleRate)
 {
     const double scratchResumePos = m_scrubHoldPosition >= 0.0 ? m_scrubHoldPosition : 0.0;
-    transportSource.stop();
-    if (scratchBridge)
-        scratchBridge->beginTransportSwap();
-    transportSource.setSource(nullptr);
-
-    reverseWrapSource.reset();
-    reverseWrapSource = std::make_unique<CachedPlaybackAudioSource>(m_audioPageCache, m_audioCacheHandle);
-    reverseWrapSource->setReverse(m_isReverse);
-    transportSource.setSource(reverseWrapSource.get(), 0, nullptr, trackSampleRate);
+    m_audioGraph->installPreparedTrack({cacheHandle, trackSampleRate, m_trackLoader.currentGeneration()});
+    if (auto* playback = m_audioGraph->playback())
+        playback->setReverse(m_isReverse);
     m_loadedTrackSampleRate = trackSampleRate;
-    if (timeStretchSource)
-        timeStretchSource->setTrackGeneration(m_trackLoader.currentGeneration());
-    if (scratchBridge)
-        scratchBridge->setTrackCacheSource(&m_audioPageCache, m_audioCacheHandle);
-    transportSource.setPosition(0.0);
     syncScratchBridgeToTransport();
     terminateScratchSession(scratchResumePos);
-    if (scratchBridge)
-        scratchBridge->endTransportSwap();
     ensureTransportRunningForPlayIntent();
 }
 
 
 void DjEngine::releaseTransportReaders()
 {
-    transportSource.stop();
-    transportSource.setSource(nullptr);
-    if (timeStretchSource)
-        timeStretchSource->setTrackGeneration(m_trackLoader.currentGeneration());
-
-    if (scratchBridge)
-        scratchBridge->beginTransportSwap();
     terminateScratchSession(0.0);
-    if (scratchBridge)
-        scratchBridge->setTrackCacheSource(nullptr, {});
-
-    reverseWrapSource.reset();
-
-    if (scratchBridge)
-        scratchBridge->endTransportSwap();
+    m_audioGraph->clearTrack(m_trackLoader.currentGeneration());
 }
 
 
 void DjEngine::ejectTrack()
 {
     m_trackLoader.requestCancel();
-    m_audioPageCache.releaseTrack(m_audioCacheHandle);
-    m_audioCacheHandle = {};
     if (!m_trackLoadError.isEmpty()) {
         m_trackLoadError.clear();
         emit trackLoadErrorChanged();
@@ -260,8 +232,8 @@ void DjEngine::togglePlay()
 {
     if (m_playRequested) {
         m_playRequested = false;
-        if (mixerSource)
-            mixerSource->armClickFreeTransition();
+        if (m_audioGraph->mixerPtr())
+            m_audioGraph->mixer().armClickFreeTransition();
         resetMainCueButtonState();
         m_preRollCountdownActive = false;
         // Always freeze: calling stop() on an already-stopped transport is safe.
@@ -303,12 +275,12 @@ void DjEngine::play()
 
 void DjEngine::pause()
 {
-    if (!m_playRequested && !transportSource.isPlaying() && !m_preRollCountdownActive)
+    if (!m_playRequested && !m_audioGraph->transport().isPlaying() && !m_preRollCountdownActive)
         return; // Already paused
 
     m_playRequested = false;
-    if (mixerSource)
-        mixerSource->armClickFreeTransition();
+    if (m_audioGraph->mixerPtr())
+        m_audioGraph->mixer().armClickFreeTransition();
     resetMainCueButtonState();
     m_preRollCountdownActive = false;
     freezeTransportAt(getVisualPosition());
@@ -338,11 +310,11 @@ void DjEngine::ensureTransportRunningForPlayIntent()
         refreshHardwareLatency();
     }
 
-    if (transportSource.isPlaying()) {
+    if (m_audioGraph->transport().isPlaying()) {
         return;
     }
 
-    const double len = transportSource.getLengthInSeconds();
+    const double len = m_audioGraph->transport().getLengthInSeconds();
     if (len <= 0.0) {
         qWarning() << "[DjEngine] cannot start transport: invalid length" << len;
         return;
@@ -350,13 +322,13 @@ void DjEngine::ensureTransportRunningForPlayIntent()
 
     // Keep transport stopped at true EOF. As soon as the playhead is moved
     // back from the end, this function resumes playback automatically.
-    const double pos = transportSource.getCurrentPosition();
+    const double pos = m_audioGraph->transport().getCurrentPosition();
     if (pos >= len - 0.0001) {
         return;
     }
 
     armSnapFromTransportPosition();
-    transportSource.start();
+    m_audioGraph->transport().start();
 }
 
 
@@ -378,15 +350,15 @@ void DjEngine::armVisualSeekSettle()
 
 void DjEngine::armSnapFromTransportPosition()
 {
-    setSnapAnchor(transportSource.getCurrentPosition(), true);
+    setSnapAnchor(m_audioGraph->transport().getCurrentPosition(), true);
 }
 
 
 void DjEngine::freezeTransportAt(double positionSec)
 {
     cancelQuantizedCueJump();
-    transportSource.stop();
-    transportSource.setPosition(std::max(0.0, positionSec));
+    m_audioGraph->transport().stop();
+    m_audioGraph->transport().setPosition(std::max(0.0, positionSec));
     m_snapValid = false;
     // Keep m_scrubHoldPosition in sync so getPosition() returns the right value
     // when stopped in pre-roll (where transport is clamped at 0).
@@ -397,25 +369,25 @@ void DjEngine::freezeTransportAt(double positionSec)
 
 void DjEngine::syncScratchBridgeToTransport()
 {
-    if (!scratchBridge)
+    if (!m_audioGraph->scratchPtr())
         return;
 
-    const double len = std::max(0.0, transportSource.getLengthInSeconds());
-    scratchBridge->configureTrack(m_loadedTrackSampleRate, len);
-    scratchBridge->setReverse(m_isReverse);
-    scratchBridge->setLoopRangeSeconds(m_cueLoopController.activeLoop().inSec, m_cueLoopController.activeLoop().outSec, m_cueLoopController.activeLoop().active, m_loadedTrackSampleRate);
-    scratchBridge->setDeckTempoRatio(getTempoRatio());
-    scratchBridge->setKeylockPassthrough(m_keylock);
+    const double len = std::max(0.0, m_audioGraph->transport().getLengthInSeconds());
+    m_audioGraph->scratch().configureTrack(m_loadedTrackSampleRate, len);
+    m_audioGraph->scratch().setReverse(m_isReverse);
+    m_audioGraph->scratch().setLoopRangeSeconds(m_cueLoopController.activeLoop().inSec, m_cueLoopController.activeLoop().outSec, m_cueLoopController.activeLoop().active, m_loadedTrackSampleRate);
+    m_audioGraph->scratch().setDeckTempoRatio(getTempoRatio());
+    m_audioGraph->scratch().setKeylockPassthrough(m_keylock);
 
-    const double pos = std::max(0.0, transportSource.getCurrentPosition());
-    scratchBridge->syncReadPositionSeconds(pos, m_loadedTrackSampleRate);
+    const double pos = std::max(0.0, m_audioGraph->transport().getCurrentPosition());
+    m_audioGraph->scratch().syncReadPositionSeconds(pos, m_loadedTrackSampleRate);
 }
 
 
 void DjEngine::setPosition(float progress)
 {
     cancelQuantizedCueJump();
-    double len = transportSource.getLengthInSeconds();
+    double len = m_audioGraph->transport().getLengthInSeconds();
     if (len > 0.0) {
         const double newPos = std::clamp(static_cast<double>(progress) * len,
                                          -PRE_ROLL_SECONDS,
@@ -428,8 +400,8 @@ void DjEngine::setPosition(float progress)
         }
         m_preRollCountdownActive = false;
         if (newPos < 0.0) {
-            transportSource.stop();
-            transportSource.setPosition(0.0);
+            m_audioGraph->transport().stop();
+            m_audioGraph->transport().setPosition(0.0);
             m_scrubHoldPosition = newPos;
             m_atomicPlayheadPos.store(newPos, std::memory_order_relaxed);
             m_snapValid = false;
@@ -439,7 +411,7 @@ void DjEngine::setPosition(float progress)
                 m_preRollClock.restart();
             }
         } else {
-            transportSource.setPosition(newPos);
+            m_audioGraph->transport().setPosition(newPos);
             m_scrubHoldPosition = newPos;
             ensureTransportRunningForPlayIntent();
             armSnapFromTransportPosition();
@@ -454,25 +426,25 @@ void DjEngine::setPosition(float progress)
 
 float DjEngine::vuLevelL() const
 {
-    return mixerSource ? mixerSource->m_peakL.load(std::memory_order_relaxed) : 0.0f;
+    return m_audioGraph->mixerPtr() ? m_audioGraph->mixer().m_peakL.load(std::memory_order_relaxed) : 0.0f;
 }
 
 
 float DjEngine::vuLevelR() const
 {
-    return mixerSource ? mixerSource->m_peakR.load(std::memory_order_relaxed) : 0.0f;
+    return m_audioGraph->mixerPtr() ? m_audioGraph->mixer().m_peakR.load(std::memory_order_relaxed) : 0.0f;
 }
 
 
 float DjEngine::preFaderVuLevelL() const
 {
-    return mixerSource ? mixerSource->m_preFaderPeakL.load(std::memory_order_relaxed) : 0.0f;
+    return m_audioGraph->mixerPtr() ? m_audioGraph->mixer().m_preFaderPeakL.load(std::memory_order_relaxed) : 0.0f;
 }
 
 
 float DjEngine::preFaderVuLevelR() const
 {
-    return mixerSource ? mixerSource->m_preFaderPeakR.load(std::memory_order_relaxed) : 0.0f;
+    return m_audioGraph->mixerPtr() ? m_audioGraph->mixer().m_preFaderPeakR.load(std::memory_order_relaxed) : 0.0f;
 }
 
 
@@ -491,11 +463,11 @@ float DjEngine::gainReduction() const
 
 juce::AudioSource* DjEngine::getAudioSource() const
 {
-    return mixerSource.get();
+    return m_audioGraph.get();
 }
 
 
 const juce::AudioBuffer<float>& DjEngine::getPflBuffer() const
 {
-    return mixerSource->getPflBuffer();
+    return m_audioGraph->mixer().getPflBuffer();
 }

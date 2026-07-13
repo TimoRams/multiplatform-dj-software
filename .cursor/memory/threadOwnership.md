@@ -1,6 +1,6 @@
 # Thread Ownership
 
-Last updated: 2026-07-12
+Last updated: 2026-07-13
 
 | Object/state | Owner/lifetime | Allowed callers | Blocking/allocation | Audio-callback rule |
 |---|---|---|---|---|
@@ -8,7 +8,7 @@ Last updated: 2026-07-12
 | `AudioDeviceService::ConfigurationSnapshot` | service, Qt owner thread | service apply/device-notification path; deck/QML readers on Qt thread | trivial | callback does not read it |
 | `DjMasterBus` routing/master atomics | master bus/static atomics; callback unregistered before destruction | service/bootstrap publish on Qt thread; audio callback reads | publishing is trivial atomic work | callback read-only, no device query |
 | `DjEngine` facade | runtime, one per deck; destroyed before service | QML/MIDI/control thread unless method says atomic/audio-only | transport/device changes outside callback | `getAudioSource`/PFL and DSP processing follow explicit audio path |
-| Deck audio graph (`MixerDspSource`, time stretch, scratch bridge) | each deck | prepare/configure on control/device callback boundary; process on audio callback | preparation may allocate; processing must not | realtime rules apply strictly |
+| `DeckAudioGraph` and its cached playback, transport, scratch, time-stretch, mixer/FX chain | uniquely owned by each `DjEngine`; `AudioPageCache` outlives it | prepare/release/install/clear and controls on control/device boundary; `getNextAudioBlock` on callback | prepare/install/clear may allocate or destroy outside RT; processing must not block/allocate | realtime rules apply strictly; no Qt or `DjEngine` backreference |
 | Device enumeration/query helpers | service/control path | Qt owner thread only | may scan hardware, spawn probe manager, lock caches | forbidden |
 | `DeckTrackLoader` | value member of each deck; worker joined before deck dependencies are destroyed | submission/cancel on Qt owner; private worker performs file/decoder/metadata/cover/cache work; completion queued to owner | worker may block/allocate; state/generation are atomic and queue mutex is never used by audio callback | all loader APIs and result application forbidden from audio callback |
 | `WaveformAnalyzer` | remains deck-owned during this transition | started/stopped and result persisted on owner thread; analysis on its joined worker | decode/analysis may block on worker; shutdown join may wait for bounded key analysis | forbidden |
@@ -32,6 +32,19 @@ Shutdown order: stop new UI changes → each deck rejects and joins `DeckTrackLo
 Stop audio readers and destroy guards before joining/destroying the cache.
 
 Scratch lifetime: `ApplicationRuntime::audioPageCache` outlives all decks and their `ScratchDeckBridge`/`ScratchResampler`. Track apply swaps the handle under the existing transport-swap gate; eject invalidates the resampler before releasing the handle. The audio callback only copies from guarded pages into the already allocated half-second scratch window. No control mutex, reader or worker API is reachable from scratch processing.
+
+## DeckAudioGraph public-method contract
+
+| Method | Allowed thread | Allocation/blocking | Audio state |
+|---|---|---|---|
+| constructor/destructor | application/control, callback stopped for destruction | allocation/destruction allowed | builds/destroys complete chain |
+| `prepareToPlay` | device/control boundary | allocation and bounded worker preparation allowed | prepares mixer, time stretch, scratch and transport chain |
+| `releaseResources` | control after callback stop | release/join work allowed | releases complete chain |
+| `installPreparedTrack` | Qt/control handover, never callback | allocates cached source; detaches/destroys old source; no file decode | closes swap gate and atomically changes the audible source boundary |
+| `clearTrack` | Qt/control handover, never callback | destroys source/releases handle | invalidates generation and leaves prepared empty graph |
+| `getNextAudioBlock` | JUCE audio callback only | no allocation, blocking, object destruction, Qt, disk or decoder | delegates to stable mixer endpoint |
+| control accessors/commands | existing Qt/MIDI control path | atomic or existing bounded preparation behavior | transitional until `DeckTransport` and snapshot APIs are extracted |
+| `realtimeStats` | diagnostics/control after or outside callback | no blocking | aggregates current/retired playback plus scratch/stretch/mixer violations |
 
 Normal deck playback now has the same lifetime boundary. `CachedPlaybackAudioSource` is deck-owned, holds an `AudioCacheHandle`, and is installed into `AudioTransportSource` on the Qt/control thread. The callback only holds `AudioPageReadGuard`s and submits bounded page requests; misses advance the track timeline while a 128-sample fade moves to/from silence. `AudioTransportSource` remains responsible for track-rate to device-rate conversion. Track replacement/eject disconnects the transport before destroying the cached source and releases the handle outside the callback. The former `AudioFormatReaderSource`/`BufferingAudioSource` and deck read-ahead thread no longer exist.
 

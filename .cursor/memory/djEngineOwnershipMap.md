@@ -1,6 +1,34 @@
 # DjEngine Ownership Map
 
-Last audited: 2026-07-12
+Last audited: 2026-07-13
+
+## DeckAudioGraph extraction
+
+Before this extraction, `DjEngine` directly owned the cache handle and the complete chain:
+`CachedPlaybackAudioSource -> AudioTransportSource -> ScratchDeckBridge/ScratchResampler ->
+TimeStretchAudioSource -> MixerDspSource`. The mixer's existing order remains Color FX before EQ,
+then EQ/color filter, stop effects before the channel fader, channel gain/fader, and beat/pad FX.
+`DjEngine::getAudioSource()` returned the mixer to `DjMasterBus`.
+
+`DeckAudioGraph` now uniquely owns every object and the cache handle in that chain, builds the
+chain in one constructor, delegates JUCE prepare/release/block processing at its mixer endpoint,
+retains realtime counters across source handovers, and validates audio generations. It depends
+only on the injected application-owned `AudioPageCache`; it has no `DjEngine`, Qt, metadata,
+database, device-service, or master-bus backreference. `DjEngine` retains one
+`std::unique_ptr<DeckAudioGraph>` and transitional transport/product logic. Facade implementations
+forward through that graph directly rather than storing five non-owning source aliases.
+
+Track handover is `DeckTrackLoader -> DjEngine UI generation/path validation -> AudioPageCache::openTrack
+-> DeckAudioGraph::installPreparedTrack`. The graph closes the scratch transport-swap gate, stops
+and detaches the transport, retires the old source/handle outside RT, installs the cached source,
+publishes track generation to time stretch and scratch, then opens the gate. Stale or invalid
+audio generations are rejected and their handles released. Eject invalidates through the current
+loader generation before releasing readers.
+
+`DjMasterBus` remains application-owned and still registers `DjEngine*`; the deck endpoint returned
+by that facade is now the stable `DeckAudioGraph`. `ApplicationLifecycle` removes decks and stops
+the callback before graph destruction. Direct master-bus registration of graph handles remains a
+future hardening item, not part of this ownership-only refactor.
 
 This map covers every out-of-line `DjEngine` method and every mutable state bundle in `DjEngine.h`. Symbols grouped in one row have the same current owner, target owner, thread model and migration risk. `DjEngine` remains the public QML facade until each target component is introduced.
 

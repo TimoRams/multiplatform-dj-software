@@ -1,13 +1,10 @@
 #pragma once
 
-#include "audio/cache/CachedPlaybackAudioSource.h"
-#include "audio/ScratchDeckBridge.hpp"
 #include "deck/DeckCueLoopController.h"
 #include "deck/DeckTrackLoader.h"
 #include "audio/cache/AudioPageCache.h"
 
-class TimeStretchAudioSource;
-class MixerDspSource;
+class DeckAudioGraph;
 class AudioDeviceService;
 #include "scratch/ScratchSession.hpp"
 
@@ -472,7 +469,7 @@ private:
     void applyPreparedTrack(TrackLoadResult result);
     void updateTrackDuration(double durationSec);
     bool hydrateLibraryStateForTrack(const QString& rawPath, double durationSec);
-    void attachCacheToTransport(double trackSampleRate);
+    void attachCacheToTransport(AudioCacheHandle cacheHandle, double trackSampleRate);
     void returnToSlipPosition();
     bool isSlipDiverted() const { return m_slipActive && (loopActive() || m_isReverse); }
 
@@ -506,15 +503,10 @@ private:
 
     AudioDeviceService& m_audioDeviceService;
     AudioPageCache& m_audioPageCache;
-    AudioCacheHandle m_audioCacheHandle;
+    std::unique_ptr<DeckAudioGraph> m_audioGraph;
     DeckCueLoopController m_cueLoopController;
     DeckTrackLoader m_trackLoader;
     juce::AudioFormatManager formatManager;
-    std::unique_ptr<CachedPlaybackAudioSource> reverseWrapSource;
-    juce::AudioTransportSource transportSource;
-    std::unique_ptr<engine::audio::ScratchDeckBridge> scratchBridge;
-    std::unique_ptr<TimeStretchAudioSource> timeStretchSource;
-    std::unique_ptr<MixerDspSource> mixerSource;
     QTimer timer;
     QTimer* m_analysisPersistTimer = nullptr;
 

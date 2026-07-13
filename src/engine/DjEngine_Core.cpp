@@ -49,6 +49,7 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
     : QObject(parent)
     , m_audioDeviceService(audioDeviceService)
     , m_audioPageCache(audioPageCache)
+    , m_audioGraph(std::make_unique<DeckAudioGraph>(audioPageCache))
     , m_trackLoader(static_cast<int>(WAVEFORM_POINTS_PER_SECOND))
 {
     {
@@ -133,14 +134,9 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
 
     // Audio callback is registered by DjMasterBus, not per-deck.
 
-    scratchBridge = std::make_unique<engine::audio::ScratchDeckBridge>(&transportSource, false);
-    scratchBridge->setAudioPlayheadSink(&m_atomicPlayheadPos);
-    timeStretchSource = std::make_unique<TimeStretchAudioSource>(scratchBridge.get());
-    
-    // Create the mixer DSP source to apply EQ, Filter, and Gain based on Pioneer DJM A9.
-    mixerSource = std::make_unique<MixerDspSource>(timeStretchSource.get());
-    mixerSource->setTrim(static_cast<float>(m_trim));
-    mixerSource->setFader(static_cast<float>(m_volume));
+    m_audioGraph->setAudioPlayheadSink(&m_atomicPlayheadPos);
+    m_audioGraph->mixer().setTrim(static_cast<float>(m_trim));
+    m_audioGraph->mixer().setFader(static_cast<float>(m_volume));
 
     // DjMasterBus calls prepareToPlay on this source via addDeck().
 
@@ -169,7 +165,6 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
 DjEngine::~DjEngine()
 {
     m_trackLoader.shutdownAndJoin();
-    m_audioPageCache.releaseTrack(m_audioCacheHandle);
     {
         std::lock_guard<std::mutex> g(s_syncMutex);
         s_syncDecks.erase(std::remove(s_syncDecks.begin(), s_syncDecks.end(), this), s_syncDecks.end());
@@ -187,7 +182,6 @@ DjEngine::~DjEngine()
     releaseTransportReaders();
 }
 
-
 void DjEngine::prepareForShutdown()
 {
     // Disconnect only — QTimer::stop() during aboutToQuit has crashed on macOS when
@@ -204,7 +198,7 @@ void DjEngine::prepareForShutdown()
     }
 
     m_playRequested = false;
-    transportSource.stop();
+    m_audioGraph->transport().stop();
 }
 
 void DjEngine::setCoverArtProvider(CoverArtProvider* provider, const QString& deckId)
@@ -262,25 +256,25 @@ void DjEngine::onTimer()
         return;
     }
 
-    if (mixerSource)
-        mixerSource->setScratchTimbre(0.0f);
+    if (m_audioGraph->mixerPtr())
+        m_audioGraph->mixer().setScratchTimbre(0.0f);
 
     decayJogNudge();
 
     // Safety: transport must not run when there's no play intent and no cue preview.
     // Catches any leftover transport state that togglePlay/pause missed.
-    if (transportSource.isPlaying() && !m_playRequested && !m_cueLoopController.mainCue().previewActive) {
-        freezeTransportAt(transportSource.getCurrentPosition());
+    if (m_audioGraph->transport().isPlaying() && !m_playRequested && !m_cueLoopController.mainCue().previewActive) {
+        freezeTransportAt(m_audioGraph->transport().getCurrentPosition());
         notifyVuMetersIfNeeded();
         return;
     }
 
     // Safety: transport must not run during pre-roll countdown (visual position is
     // negative; transport is clamped at 0 and driven by wall-clock).
-    if (transportSource.isPlaying() && m_preRollCountdownActive)
-        transportSource.stop();
+    if (m_audioGraph->transport().isPlaying() && m_preRollCountdownActive)
+        m_audioGraph->transport().stop();
 
-    if (transportSource.isPlaying()) {
+    if (m_audioGraph->transport().isPlaying()) {
         serviceQuantizedCueJump();
         if (!tickTransportPlaying())
             return;
@@ -331,7 +325,7 @@ bool DjEngine::tickTransportPlaying()
         ? std::clamp(static_cast<double>(m_snapClock.nsecsElapsed()) * 1e-9, 0.001, 0.050)
         : 0.004;
 
-    const double measuredPos = transportSource.getCurrentPosition();
+    const double measuredPos = m_audioGraph->transport().getCurrentPosition();
     m_snapPosition   = measuredPos;
     m_snapTempoRatio = getTempoRatio();
 
@@ -345,14 +339,14 @@ bool DjEngine::tickTransportPlaying()
 
     if (m_cueLoopController.activeLoop().active && m_cueLoopController.activeLoop().outSec > m_cueLoopController.activeLoop().inSec) {
         if (m_isReverse && m_snapPosition <= m_cueLoopController.activeLoop().inSec) {
-            transportSource.setPosition(m_cueLoopController.activeLoop().outSec);
+            m_audioGraph->transport().setPosition(m_cueLoopController.activeLoop().outSec);
             m_snapPosition = m_cueLoopController.activeLoop().outSec;
         } else if (!m_isReverse && m_cueLoopController.activeLoop().inSec < 0.0
                    && m_snapPosition >= m_cueLoopController.activeLoop().outSec) {
             // Loop with pre-roll IN point: the audio source cannot enforce this
             // (no negative samples).  Software-wrap: stop transport and start a
             // pre-roll countdown from the true (negative) loop-in position.
-            transportSource.stop();
+            m_audioGraph->transport().stop();
             m_snapValid = false;
             m_scrubHoldPosition = m_cueLoopController.activeLoop().inSec;
             m_preRollCountdownActive = true;
@@ -396,9 +390,9 @@ void DjEngine::tickTransportStopped()
         if (visualPos >= 0.0) {
             m_preRollCountdownActive = false;
             m_scrubHoldPosition = 0.0;
-            transportSource.setPosition(0.0);
+            m_audioGraph->transport().setPosition(0.0);
             armSnapFromTransportPosition();
-            transportSource.start();
+            m_audioGraph->transport().start();
             // For loops crossing 0: re-apply audio-source loop now that transport
             // is in-track.  applyLoopRangeToAudioSource() was a no-op while
             // loopIn was negative; with loopIn < 0 the audio loop [0, loopOut]
@@ -409,7 +403,7 @@ void DjEngine::tickTransportStopped()
         ensureTransportRunningForPlayIntent();
         // In pre-roll the transport is clamped at 0, so syncing from transport
         // erases the negative visual position. Preserve m_scrubHoldPosition when negative.
-        const double transportPos = transportSource.getCurrentPosition();
+        const double transportPos = m_audioGraph->transport().getCurrentPosition();
         const double atomicPos    = (m_scrubHoldPosition < 0.0)
             ? m_scrubHoldPosition
             : transportPos;
@@ -427,9 +421,9 @@ double DjEngine::getPreRollSeconds() const
 
 void DjEngine::applyMixerEq()
 {
-    if (!mixerSource)
+    if (!m_audioGraph->mixerPtr())
         return;
-    mixerSource->setEq(static_cast<float>(m_eqLow),
+    m_audioGraph->mixer().setEq(static_cast<float>(m_eqLow),
                        static_cast<float>(m_eqMid),
                        static_cast<float>(m_eqHigh));
 }
@@ -437,9 +431,9 @@ void DjEngine::applyMixerEq()
 
 void DjEngine::applyMixerFilter()
 {
-    if (!mixerSource)
+    if (!m_audioGraph->mixerPtr())
         return;
-    mixerSource->setFilterVal(static_cast<float>(m_filter));
+    m_audioGraph->mixer().setFilterVal(static_cast<float>(m_filter));
 }
 
 
@@ -500,8 +494,8 @@ void DjEngine::applyVolume(double value)
         return;
 
     m_volume = clamped;
-    if (mixerSource)
-        mixerSource->setFader(static_cast<float>(m_volume));
+    if (m_audioGraph->mixerPtr())
+        m_audioGraph->mixer().setFader(static_cast<float>(m_volume));
 }
 
 
@@ -519,8 +513,8 @@ void DjEngine::applyTrim(double value)
         return;
 
     m_trim = clamped;
-    if (mixerSource)
-        mixerSource->setTrim(static_cast<float>(m_trim));
+    if (m_audioGraph->mixerPtr())
+        m_audioGraph->mixer().setTrim(static_cast<float>(m_trim));
 }
 
 
@@ -608,8 +602,8 @@ void DjEngine::applyPolarityInverted(bool inverted)
         return;
 
     m_polarityInverted = inverted;
-    if (mixerSource)
-        mixerSource->setPolarityInverted(inverted);
+    if (m_audioGraph->mixerPtr())
+        m_audioGraph->mixer().setPolarityInverted(inverted);
 }
 
 void DjEngine::setPolarityInverted(bool inverted)
