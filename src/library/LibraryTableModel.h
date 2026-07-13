@@ -1,8 +1,10 @@
 #pragma once
 
 #include <QAbstractTableModel>
-#include <QSqlDatabase>
 #include <QVector>
+#include <cstdint>
+
+class LibraryDatabase;
 
 struct LibraryRow {
     QString id;
@@ -75,6 +77,7 @@ public:
     QHash<int, QByteArray> roleNames() const override;
 
     Q_INVOKABLE void refresh();
+    void setDatabase(LibraryDatabase* database);
     void updateAnalysisForTrack(const QString& trackId,
                                 double bpm,
                                 const QString& key,
@@ -124,8 +127,12 @@ private:
     bool aioBrowseFiltersEqual(const QString& field, const QString& value,
                                const QStringList& keys) const;
     void clearAioBrowseFilterFields();
+    void applyLibraryPage(std::uint64_t generation, const QVariantList& rows,
+                          const QString& error);
 
     QString m_connectionName;
+    LibraryDatabase* m_database = nullptr;
+    std::uint64_t m_refreshGeneration = 0;
     QVector<LibraryRow> m_rows;
     QString m_sortField     = "artist";
     bool    m_sortAscending = true;

@@ -6,9 +6,11 @@
 #include <QTimer>
 #include <QVariantList>
 #include <vector>
+#include <memory>
 
 #include "TrackData.h"
 #include "TrackSegment.h"
+#include "database/DatabaseWorker.h"
 
 class LibraryTableModel;
 
@@ -212,6 +214,10 @@ public:
 
     // Flush pending DB work and close the connection for clean shutdown.
     Q_INVOKABLE void shutdown(bool syncBackup = false);
+    Q_INVOKABLE void requestQuickCheck();
+    Q_INVOKABLE void requestFullIntegrityCheck();
+    [[nodiscard]] DatabaseWorkerStats databaseWorkerStats() const noexcept;
+    bool requestLibraryPage(QString sql, QVariantMap bindings, std::uint64_t generation);
 
     // Wire up the table model so it auto-refreshes after mutations.
     void setTableModel(LibraryTableModel* model);
@@ -230,6 +236,8 @@ signals:
     void historyChanged();
     void tagsChanged();
     void smartCollectionsChanged();
+    void libraryPageReady(std::uint64_t generation, const QVariantList& rows,
+                          const QString& error);
 
 private:
     bool createSchema();
@@ -238,12 +246,10 @@ private:
     void markSessionDirty();
     void assessPreviousSessionRecovery();
     void startDeferredBackupSync();
+    void collectDatabaseWorkerResults();
     bool isHealthyDatabaseFile(const QString& path) const;
-    bool recreateDatabaseFileFromLiveConnection(const QString& targetPath);
-    bool reopenDatabaseConnection();
     void performMirrorSelfCheck();
     bool restorePrimaryFromBackup();
-    bool syncBackupFromPrimary();
     bool copyDatabaseFile(const QString& sourcePath, const QString& targetPath) const;
     void clearDatabaseConnection();
 
@@ -258,13 +264,17 @@ private:
     QString m_manualBackupDbPath;
     QString m_lastRecoveryEvent;
     QString m_cachedMirrorStatus;
-    QTimer m_mirrorSelfCheckTimer;
     QTimer m_backupSyncTimer;
+    QTimer m_databaseWorkerResultTimer;
+    std::unique_ptr<DatabaseWorker> m_databaseWorker;
+    std::uint64_t m_nextDatabaseRequestId = 1;
+    std::uint64_t m_backupRequestId = 0;
+    std::uint64_t m_quickCheckRequestId = 0;
+    std::uint64_t m_fullCheckRequestId = 0;
     bool m_primaryMirrorDegraded = false;
     bool m_backupMirrorDegraded = false;
     bool m_tableModelRefreshPending = false;
     bool m_backupSyncRunning = false;
-    bool m_backupSyncAgain = false;
     bool m_shutdownComplete = false;
     bool m_sessionDirty = false;
     bool m_recoveryWarningNeeded = false;

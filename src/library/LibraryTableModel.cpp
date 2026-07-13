@@ -1,7 +1,6 @@
 #include "LibraryTableModel.h"
+#include "LibraryDatabase.h"
 
-#include <QSqlQuery>
-#include <QSqlError>
 #include <QDebug>
 
 namespace {
@@ -49,6 +48,19 @@ LibraryTableModel::LibraryTableModel(const QString& connectionName,
     : QAbstractTableModel(parent)
     , m_connectionName(connectionName)
 {
+}
+
+void LibraryTableModel::setDatabase(LibraryDatabase* database)
+{
+    if (m_database == database)
+        return;
+    if (m_database)
+        disconnect(m_database, nullptr, this, nullptr);
+    m_database = database;
+    if (m_database) {
+        connect(m_database, &LibraryDatabase::libraryPageReady,
+                this, &LibraryTableModel::applyLibraryPage);
+    }
 }
 
 int LibraryTableModel::rowCount(const QModelIndex& parent) const
@@ -405,9 +417,8 @@ void LibraryTableModel::applyAioBrowseFilter(const QString& field, const QString
 
 void LibraryTableModel::refresh()
 {
-    auto db = QSqlDatabase::database(m_connectionName, false);
-    if (!db.isOpen()) {
-        qWarning() << "[LibraryTableModel] DB not open for refresh";
+    if (!m_database) {
+        qWarning() << "[LibraryTableModel] database worker unavailable for refresh";
         return;
     }
 
@@ -495,12 +506,16 @@ void LibraryTableModel::refresh()
 
     const QString sortDir = m_sortAscending ? "ASC" : "DESC";
     QString query =
-        "SELECT t.id, t.title, t.artist, t.duration_sec, t.bpm, t.key,"
-        "       t.bitrate_kbps, t.is_analyzed, COALESCE(l.file_path,''),"
-        "       COALESCE(t.genre,''), COALESCE(t.album,''), COALESCE(t.comment,''),"
-        "       COALESCE(t.rating,0), COALESCE(t.energy,0), COALESCE(t.color,''),"
-        "       COALESCE(t.notes,''), COALESCE(t.play_count,0),"
-        "       COALESCE(t.last_played,0), COALESCE(t.date_added,0)"
+        "SELECT t.id AS id, t.title AS title, t.artist AS artist,"
+        "       t.duration_sec AS duration_sec, t.bpm AS bpm, t.key AS key,"
+        "       t.bitrate_kbps AS bitrate_kbps, t.is_analyzed AS is_analyzed,"
+        "       COALESCE(l.file_path,'') AS file_path,"
+        "       COALESCE(t.genre,'') AS genre, COALESCE(t.album,'') AS album,"
+        "       COALESCE(t.comment,'') AS comment, COALESCE(t.rating,0) AS rating,"
+        "       COALESCE(t.energy,0) AS energy, COALESCE(t.color,'') AS color,"
+        "       COALESCE(t.notes,'') AS notes, COALESCE(t.play_count,0) AS play_count,"
+        "       COALESCE(t.last_played,0) AS last_played,"
+        "       COALESCE(t.date_added,0) AS date_added"
         " FROM Tracks t"
         " JOIN Locations l ON t.id = l.track_id";
 
@@ -510,38 +525,46 @@ void LibraryTableModel::refresh()
     query += QString(" ORDER BY %1 %2, LOWER(t.title) ASC")
         .arg(sortColumnSql(), sortDir);
 
-    QSqlQuery q(db);
-    q.prepare(query);
-    for (auto it = bindings.cbegin(); it != bindings.cend(); ++it)
-        q.bindValue(it.key(), it.value());
+    const auto generation = ++m_refreshGeneration;
+    if (!m_database->requestLibraryPage(std::move(query), std::move(bindings), generation))
+        qWarning() << "[LibraryTableModel] database worker rejected refresh";
+}
 
-    if (!q.exec()) {
-        qWarning() << "[LibraryTableModel] refresh query failed:" << q.lastError().text();
+void LibraryTableModel::applyLibraryPage(std::uint64_t generation,
+                                         const QVariantList& rows,
+                                         const QString& error)
+{
+    if (generation != m_refreshGeneration)
+        return;
+    if (!error.isEmpty()) {
+        qWarning() << "[LibraryTableModel] refresh query failed:" << error;
         return;
     }
 
     QVector<LibraryRow> newRows;
-    while (q.next()) {
+    newRows.reserve(rows.size());
+    for (const auto& value : rows) {
+        const QVariantMap q = value.toMap();
         LibraryRow row;
-        row.id          = q.value(0).toString();
-        row.title       = q.value(1).toString();
-        row.artist      = q.value(2).toString();
-        row.durationSec = q.value(3).toInt();
-        row.bpm         = q.value(4).toDouble();
-        row.key         = q.value(5).toString();
-        row.bitrateKbps = q.value(6).toInt();
-        row.isAnalyzed  = q.value(7).toBool();
-        row.filePath    = q.value(8).toString();
-        row.genre       = q.value(9).toString();
-        row.album       = q.value(10).toString();
-        row.comment     = q.value(11).toString();
-        row.rating      = q.value(12).toInt();
-        row.energy      = q.value(13).toInt();
-        row.color       = q.value(14).toString();
-        row.notes       = q.value(15).toString();
-        row.playCount   = q.value(16).toInt();
-        row.lastPlayed  = q.value(17).toLongLong();
-        row.dateAdded   = q.value(18).toLongLong();
+        row.id          = q.value(QStringLiteral("id")).toString();
+        row.title       = q.value(QStringLiteral("title")).toString();
+        row.artist      = q.value(QStringLiteral("artist")).toString();
+        row.durationSec = q.value(QStringLiteral("duration_sec")).toInt();
+        row.bpm         = q.value(QStringLiteral("bpm")).toDouble();
+        row.key         = q.value(QStringLiteral("key")).toString();
+        row.bitrateKbps = q.value(QStringLiteral("bitrate_kbps")).toInt();
+        row.isAnalyzed  = q.value(QStringLiteral("is_analyzed")).toBool();
+        row.filePath    = q.value(QStringLiteral("file_path")).toString();
+        row.genre       = q.value(QStringLiteral("genre")).toString();
+        row.album       = q.value(QStringLiteral("album")).toString();
+        row.comment     = q.value(QStringLiteral("comment")).toString();
+        row.rating      = q.value(QStringLiteral("rating")).toInt();
+        row.energy      = q.value(QStringLiteral("energy")).toInt();
+        row.color       = q.value(QStringLiteral("color")).toString();
+        row.notes       = q.value(QStringLiteral("notes")).toString();
+        row.playCount   = q.value(QStringLiteral("play_count")).toInt();
+        row.lastPlayed  = q.value(QStringLiteral("last_played")).toLongLong();
+        row.dateAdded   = q.value(QStringLiteral("date_added")).toLongLong();
         newRows.append(std::move(row));
     }
 
@@ -589,37 +612,8 @@ int LibraryTableModel::indexOfTrackId(const QString& trackId) const
 
 void LibraryTableModel::refreshMetaForTrack(const QString& trackId)
 {
-    if (trackId.isEmpty()) return;
-
-    int rowIndex = -1;
-    for (int i = 0; i < m_rows.size(); ++i) {
-        if (m_rows[i].id == trackId) { rowIndex = i; break; }
-    }
-    if (rowIndex < 0) return;
-
-    auto db = QSqlDatabase::database(m_connectionName, false);
-    if (!db.isOpen()) return;
-
-    QSqlQuery q(db);
-    q.prepare(
-        "SELECT COALESCE(t.rating,0), COALESCE(t.energy,0), COALESCE(t.color,''),"
-        "       COALESCE(t.notes,''), COALESCE(t.play_count,0), COALESCE(t.last_played,0)"
-        " FROM Tracks t WHERE t.id = :id LIMIT 1");
-    q.bindValue(":id", trackId);
-    if (!q.exec() || !q.next()) return;
-
-    auto& row = m_rows[rowIndex];
-    row.rating    = q.value(0).toInt();
-    row.energy    = q.value(1).toInt();
-    row.color     = q.value(2).toString();
-    row.notes     = q.value(3).toString();
-    row.playCount = q.value(4).toInt();
-    row.lastPlayed= q.value(5).toLongLong();
-
-    const QModelIndex left  = index(rowIndex, 12);
-    const QModelIndex right = index(rowIndex, 17);
-    emit dataChanged(left, right, { Qt::DisplayRole, RatingRole, EnergyRole,
-                                    ColorRole, NotesRole, PlayCountRole, LastPlayedRole });
+    if (!trackId.isEmpty())
+        refresh();
 }
 
 void LibraryTableModel::updateAnalysisForTrack(const QString& trackId,

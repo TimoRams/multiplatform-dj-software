@@ -4,6 +4,11 @@
 #include <QStringList>
 #include <QStandardPaths>
 #include <QDir>
+#include <QTimer>
+
+#include <cstdint>
+
+class MediaIoScheduler;
 
 class LibraryManager : public QObject
 {
@@ -14,7 +19,7 @@ class LibraryManager : public QObject
     Q_PROPERTY(bool        canNavigateUp READ canNavigateUp NOTIFY currentFolderChanged)
 
 public:
-    explicit LibraryManager(QObject* parent = nullptr);
+    explicit LibraryManager(MediaIoScheduler& mediaIoScheduler, QObject* parent = nullptr);
 
     QStringList folders()       const { return m_folders; }
     QStringList tracks()        const { return m_tracks; }
@@ -32,11 +37,17 @@ signals:
 
 private:
     void refresh();
+    void collectResults();
 
+    MediaIoScheduler& m_mediaIoScheduler;
+    QTimer m_resultTimer;
     QString     m_rootPath;
     QString     m_currentFolder;
     QStringList m_folders;
     QStringList m_tracks;
+    std::uint64_t m_generation = 0;
+    std::uint64_t m_folderRequestId = 0;
+    std::uint64_t m_trackRequestId = 0;
 
     static const inline QStringList kAudioFilters = {
         "*.mp3", "*.flac", "*.wav", "*.aif", "*.aiff",

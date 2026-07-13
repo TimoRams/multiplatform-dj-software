@@ -114,3 +114,18 @@ pre-limiter peak/clip snapshot → BrickwallLimiter → master routing. PFL is c
 before its fader/crossfader gain; selected PFL feeds headphone cue, all PFL feeds booth, and optional
 limited master feeds headphone master cue. Extra device channels are cleared and only configured
 1-based stereo pairs are written; graph endpoints deliver stereo (mono tracks are duplicated earlier).
+
+## Database and media I/O ownership (2026-07-13)
+
+| Component | Thread | Owned resource | Blocking rule |
+|---|---|---|---|
+| `DatabaseWorker` | one joinable DB worker | its unique QSQLITE connection, query objects, backup temp files | may block; bounded command/result queues |
+| `LibraryDatabase` compatibility API | Qt main | `library_conn` only | schema/startup and small legacy CRUD remain; no maintenance/full scans |
+| `MediaIoScheduler` | one joinable I/O worker | file handles, `QImage`, TagLib reads, directory iterator | may block; bounded request/result queues |
+| `LibraryManager` / `LibraryCoverService` | Qt main | immutable names/cover bytes received by polling | no filesystem enumeration or decoding |
+| `AudioCacheWorker` | dedicated audio-cache worker | audio decoders/page fills | remains independent and higher-purpose |
+| audio callback | audio device | no SQLite or general file handle | must never enqueue synchronously or wait |
+
+Shutdown order is ControlClock/deck producers → DB main connection checkpoint/close → DB worker
+drain/checkpoint/connection close/join → cover/library consumers → MediaIoScheduler reject/drain/join.
+The old 3000/1500 ms ownership row above is superseded: no 3 s mirror check and no detached backup.

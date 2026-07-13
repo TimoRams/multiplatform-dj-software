@@ -1,11 +1,9 @@
 #include "LibraryCoverService.h"
 #include "CoverArtProvider.h"
-#include "CoverArtExtractor.h"
+#include "io/MediaIoScheduler.h"
 
 #include <QDateTime>
 #include <QFileInfo>
-#include <QMetaObject>
-#include <QtConcurrent>
 
 namespace {
 
@@ -18,10 +16,22 @@ QString pathKey(const QString& path)
 
 } // namespace
 
-LibraryCoverService::LibraryCoverService(CoverArtProvider* provider, QObject* parent)
+namespace {
+constexpr std::uint32_t kCoverServiceOwner = 2;
+}
+
+LibraryCoverService::LibraryCoverService(CoverArtProvider* provider,
+                                         MediaIoScheduler& mediaIoScheduler,
+                                         QObject* parent)
     : QObject(parent)
     , m_provider(provider)
+    , m_mediaIoScheduler(mediaIoScheduler)
 {
+    m_mediaIoScheduler.setCurrentGeneration(kCoverServiceOwner, m_generation);
+    m_resultTimer.setInterval(20);
+    m_resultTimer.setTimerType(Qt::CoarseTimer);
+    connect(&m_resultTimer, &QTimer::timeout, this, &LibraryCoverService::collectResults);
+    m_resultTimer.start();
 }
 
 QString LibraryCoverService::cacheKey(const QString& path, const QString& trackId)
@@ -75,16 +85,24 @@ void LibraryCoverService::preload(const QString& path, const QString& trackId)
         return;
     }
 
-    m_pending.insert(key);
+    PendingRequest pending;
+    pending.requestId = m_nextRequestId++;
+    pending.path = path;
+    pending.trackId = trackId;
+    pending.cancellation = std::make_shared<std::atomic_bool>(false);
+    m_pending.insert(key, pending);
 
-    (void)QtConcurrent::run([this, path, trackId]() {
-        const auto result = CoverArtExtractor::extractCoverArt(path);
-        const QByteArray data = result.first;
-        QMetaObject::invokeMethod(this, "finishLoad", Qt::QueuedConnection,
-                                  Q_ARG(QString, path),
-                                  Q_ARG(QString, trackId),
-                                  Q_ARG(QByteArray, data));
-    });
+    MediaIoRequest request;
+    request.type = MediaIoRequestType::ReadCoverArt;
+    request.priority = MediaIoPriority::CoverArt;
+    request.ownerId = kCoverServiceOwner;
+    request.requestId = pending.requestId;
+    request.generation = m_generation;
+    request.inputPath = path;
+    request.maximumBytes = 16 * 1024 * 1024;
+    request.cancellation = pending.cancellation;
+    if (!m_mediaIoScheduler.enqueue(std::move(request)))
+        m_pending.remove(key);
 }
 
 void LibraryCoverService::publishCover(const QString& trackId, const QByteArray& data)
@@ -99,18 +117,30 @@ void LibraryCoverService::publishCover(const QString& trackId, const QByteArray&
     storeCover(key, data, {}, trackId);
 }
 
-void LibraryCoverService::finishLoad(const QString& path, const QString& trackId,
-                                     const QByteArray& data)
+void LibraryCoverService::collectResults()
 {
-    const QString key = cacheKey(path, trackId);
-    m_pending.remove(key);
-
-    if (!data.isEmpty())
-        storeCover(key, data, path, trackId);
+    for (auto& result : m_mediaIoScheduler.takeResultsForOwner(kCoverServiceOwner)) {
+        if (result.generation != m_generation)
+            continue;
+        for (auto it = m_pending.begin(); it != m_pending.end(); ++it) {
+            if (it->requestId != result.requestId)
+                continue;
+            const QString key = it.key();
+            const auto pending = it.value();
+            m_pending.erase(it);
+            if (result.success && !result.cancelled && !result.stale && !result.data.isEmpty())
+                storeCover(key, result.data, pending.path, pending.trackId);
+            break;
+        }
+    }
 }
 
 void LibraryCoverService::clearCache()
 {
+    for (auto& pending : m_pending)
+        pending.cancellation->store(true, std::memory_order_release);
+    ++m_generation;
+    m_mediaIoScheduler.setCurrentGeneration(kCoverServiceOwner, m_generation);
     m_urlGen.clear();
     m_pending.clear();
     m_loaded.clear();

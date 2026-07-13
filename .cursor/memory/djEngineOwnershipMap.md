@@ -200,3 +200,11 @@ with blanket silence above it → arbitrary valid callback chunked at 2048, veri
 potential callback buffer-growth sites 1 → 0; blocking callback locks 0 → 0; direct master-bus
 dependencies on `DjEngine`/QML 1/0 → 0/0. The facade's public QML properties and invokables are
 unchanged.
+
+## Database/media boundary (2026-07-13)
+
+No `DjEngine` ownership moved in this task: `DjEngine.h` remains 658 lines and the number of
+`DjEngine_*.cpp` units remains 13. ApplicationRuntime owns the general `MediaIoScheduler`; the
+LibraryDatabase owns its database worker. DeckTrackLoader and AudioCacheWorker remain deck/cache
+specialists. DjEngine receives cover/library value results through existing facade services and has
+no SQLite connection, DatabaseWorker pointer, general file scheduler ownership or worker join duty.

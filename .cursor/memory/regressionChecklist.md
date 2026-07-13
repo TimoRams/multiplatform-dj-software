@@ -223,3 +223,15 @@ injizierte Decks und beendete sauber; echte Hardwarelisten, Wiedergabe und Hot-U
   (`detect_leaks=0` only because ptrace blocks LSan) and TSAN without a report.
 - [ ] Manual hardware: ALSA/JACK/CoreAudio/ASIO block sizes and hot-unplug; audible cue/crossfader/
   limiter transitions, mono/multi-output device routing, callback jitter and shutdown under load.
+
+## Database and media I/O regression (2026-07-13)
+
+- [x] Main target, `BrockDJ_database_worker_tests`, `BrockDJ_media_io_scheduler_tests` build.
+- [x] DB start/repeated start, stop/repeated stop, CRUD, FIFO, batch commit/rollback, cancellation,
+  stale generation, quick/full check, backup temp publication and connection open/close thread hashes.
+- [x] Media cover/thumbnail, path validation, bounded folder scan, cancellation, generation switch,
+  missing path, invalid image and repeated stop.
+- [x] No `detach()` remains in DB/library/media paths; no periodic `integrity_check`; AudioCacheWorker
+  remains independent; full release CTest suite has 18 passing targets.
+- [x] Both worker targets pass combined ASAN+UBSAN (`detect_leaks=0` due runner ptrace) and TSAN.
+- [ ] Portable disk-full/permission and network-share behavior; GUI stress with a production-scale library.

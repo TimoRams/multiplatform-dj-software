@@ -9,65 +9,22 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QMetaObject>
-#include <QPointer>
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QTimer>
-#include <QUuid>
-#include <thread>
-
-namespace {
-
-bool syncBackupFromPath(const QString& activePath, const QString& mirrorPath)
-{
-    if (activePath.isEmpty() || mirrorPath.isEmpty())
-        return false;
-
-    const QString connectionName =
-        QStringLiteral("library_backup_sync_%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
-
-    bool ok = false;
-    {
-        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
-        db.setDatabaseName(activePath);
-
-        if (db.open()) {
-            QSqlQuery q(db);
-            q.exec(QStringLiteral("PRAGMA wal_checkpoint(PASSIVE)"));
-
-            QFile::remove(mirrorPath);
-            QFile::remove(mirrorPath + QStringLiteral("-wal"));
-            QFile::remove(mirrorPath + QStringLiteral("-shm"));
-
-            QString vacuumTarget = mirrorPath;
-            vacuumTarget.replace(QLatin1Char('\''), QStringLiteral("''"));
-            ok = q.exec(QStringLiteral("VACUUM INTO '%1'").arg(vacuumTarget));
-            if (!ok)
-                qWarning() << "[LibraryDatabase] Deferred VACUUM INTO failed for"
-                           << mirrorPath << ':' << q.lastError().text();
-        } else {
-            qWarning() << "[LibraryDatabase] Deferred backup DB open failed:" << db.lastError().text();
-        }
-
-        db.close();
-    }
-    QSqlDatabase::removeDatabase(connectionName);
-    return ok;
-}
-
-} // namespace
 
 LibraryDatabase::LibraryDatabase(QObject* parent)
     : QObject(parent)
 {
-    m_mirrorSelfCheckTimer.setInterval(3000);
-    m_mirrorSelfCheckTimer.setTimerType(Qt::CoarseTimer);
-    connect(&m_mirrorSelfCheckTimer, &QTimer::timeout, this, &LibraryDatabase::performMirrorSelfCheck);
-
     m_backupSyncTimer.setSingleShot(true);
     m_backupSyncTimer.setInterval(1500);
     m_backupSyncTimer.setTimerType(Qt::VeryCoarseTimer);
     connect(&m_backupSyncTimer, &QTimer::timeout, this, &LibraryDatabase::startDeferredBackupSync);
+
+    m_databaseWorkerResultTimer.setInterval(50);
+    m_databaseWorkerResultTimer.setTimerType(Qt::CoarseTimer);
+    connect(&m_databaseWorkerResultTimer, &QTimer::timeout,
+            this, &LibraryDatabase::collectDatabaseWorkerResults);
 }
 
 LibraryDatabase::~LibraryDatabase()
@@ -167,8 +124,18 @@ bool LibraryDatabase::open()
 
     assessPreviousSessionRecovery();
 
-    if (!syncBackupFromPrimary())
-        qWarning() << "[LibraryDatabase] Failed to sync backup DB after open";
+    DatabaseWorker::Configuration workerConfiguration;
+    workerConfiguration.databasePath = m_activeDbPath;
+    workerConfiguration.connectionPrefix = QStringLiteral("library_worker");
+    m_databaseWorker = std::make_unique<DatabaseWorker>(std::move(workerConfiguration));
+    if (!m_databaseWorker->start()) {
+        qWarning() << "[LibraryDatabase] Failed to start database worker";
+        m_databaseWorker.reset();
+        return false;
+    }
+    m_databaseWorkerResultTimer.start();
+    requestQuickCheck();
+    startDeferredBackupSync();
 
     if (!primaryHealthy && backupHealthy)
         m_primaryMirrorDegraded = true;
@@ -181,9 +148,6 @@ bool LibraryDatabase::open()
 
     m_cachedMirrorStatus = mirroredDatabaseStatus();
     emit mirroredDatabaseStatusChanged();
-    if (!m_mirrorSelfCheckTimer.isActive())
-        m_mirrorSelfCheckTimer.start();
-
     qDebug() << "[LibraryDatabase] open(): finished in" << timer.elapsed() << "ms";
 
     return true;
@@ -280,9 +244,10 @@ void LibraryDatabase::shutdown(bool syncBackup)
     if (m_tableModel)
         QObject::disconnect(this, nullptr, m_tableModel, nullptr);
 
-    const bool pendingBackupSync = m_backupSyncTimer.isActive() || m_backupSyncAgain;
-    QObject::disconnect(&m_mirrorSelfCheckTimer, nullptr, this, nullptr);
+    const bool pendingBackupSync = m_backupSyncTimer.isActive() || m_backupSyncRunning;
     QObject::disconnect(&m_backupSyncTimer, nullptr, this, nullptr);
+    m_backupSyncTimer.stop();
+    m_databaseWorkerResultTimer.stop();
 
     {
         QSqlQuery q(m_db);
@@ -293,23 +258,32 @@ void LibraryDatabase::shutdown(bool syncBackup)
     setSetting(QStringLiteral("session_closed_cleanly"), QStringLiteral("1"));
     m_sessionDirty = false;
 
-    if ((syncBackup || pendingBackupSync) && !m_backupSyncRunning) {
-        if (!syncBackupFromPrimary())
-            qWarning() << "[LibraryDatabase] Failed to sync backup DB during shutdown";
-    }
-
-    if (syncBackup) {
-        const QString activePath = !m_activeDbPath.isEmpty() ? m_activeDbPath : m_dbPath;
-        if (!m_manualBackupDbPath.isEmpty() && !copyDatabaseFile(activePath, m_manualBackupDbPath))
-            qWarning() << "[LibraryDatabase] Failed to write manual backup DB during shutdown";
-    }
-
     clearDatabaseConnection();
+
+    if (m_databaseWorker) {
+        if (syncBackup || pendingBackupSync)
+            startDeferredBackupSync();
+        if (syncBackup && !m_manualBackupDbPath.isEmpty()) {
+            DatabaseCommand manual;
+            manual.type = DatabaseCommandType::CreateBackup;
+            manual.priority = DatabasePriority::Background;
+            manual.requestId = m_nextDatabaseRequestId++;
+            manual.targetPath = m_manualBackupDbPath;
+            manual.coalescingKey = QStringLiteral("manual-backup");
+            (void)m_databaseWorker->enqueue(std::move(manual));
+        }
+        m_databaseWorker->requestStop();
+        m_databaseWorker->stopAndJoin();
+        collectDatabaseWorkerResults();
+        m_databaseWorker.reset();
+    }
 }
 
 void LibraryDatabase::setTableModel(LibraryTableModel* model)
 {
     m_tableModel = model;
+    if (m_tableModel)
+        m_tableModel->setDatabase(this);
 }
 
 void LibraryDatabase::scheduleTableModelRefresh()
@@ -340,43 +314,96 @@ void LibraryDatabase::scheduleBackupSync()
 
 void LibraryDatabase::startDeferredBackupSync()
 {
-    if (!m_db.isValid() || !m_db.isOpen())
+    if (!m_databaseWorker || !m_databaseWorker->isRunning())
         return;
-
-    if (m_backupSyncRunning) {
-        m_backupSyncAgain = true;
-        return;
-    }
-
     const QString activePath = !m_activeDbPath.isEmpty() ? m_activeDbPath : m_dbPath;
     const QString mirrorPath = (activePath == m_dbPath) ? m_backupDbPath : m_dbPath;
     if (activePath.isEmpty() || mirrorPath.isEmpty())
         return;
 
-    m_backupSyncRunning = true;
-    QPointer<LibraryDatabase> self(this);
-    std::thread([self, activePath, mirrorPath]() {
-        const bool ok = syncBackupFromPath(activePath, mirrorPath);
+    DatabaseCommand backup;
+    backup.type = DatabaseCommandType::CreateBackup;
+    backup.priority = DatabasePriority::Background;
+    backup.requestId = m_nextDatabaseRequestId++;
+    backup.targetPath = mirrorPath;
+    backup.coalescingKey = QStringLiteral("mirror-backup");
+    if (m_databaseWorker->enqueue(std::move(backup))) {
+        m_backupRequestId = m_nextDatabaseRequestId - 1;
+        m_backupSyncRunning = true;
+    }
+}
 
-        if (!self)
-            return;
+void LibraryDatabase::requestQuickCheck()
+{
+    if (!m_databaseWorker || !m_databaseWorker->isRunning())
+        return;
+    DatabaseCommand command;
+    command.type = DatabaseCommandType::RunQuickCheck;
+    command.priority = DatabasePriority::Maintenance;
+    command.requestId = m_nextDatabaseRequestId++;
+    command.coalescingKey = QStringLiteral("quick-check");
+    if (m_databaseWorker->enqueue(std::move(command)))
+        m_quickCheckRequestId = m_nextDatabaseRequestId - 1;
+}
 
-        QMetaObject::invokeMethod(self, [self, ok]() {
-            if (!self)
-                return;
+void LibraryDatabase::requestFullIntegrityCheck()
+{
+    if (!m_databaseWorker || !m_databaseWorker->isRunning())
+        return;
+    DatabaseCommand command;
+    command.type = DatabaseCommandType::RunFullIntegrityCheck;
+    command.priority = DatabasePriority::Maintenance;
+    command.requestId = m_nextDatabaseRequestId++;
+    command.coalescingKey = QStringLiteral("full-integrity-check");
+    if (m_databaseWorker->enqueue(std::move(command)))
+        m_fullCheckRequestId = m_nextDatabaseRequestId - 1;
+}
 
-            self->m_backupSyncRunning = false;
-            if (!ok)
-                qWarning() << "[LibraryDatabase] Deferred backup DB sync failed";
+DatabaseWorkerStats LibraryDatabase::databaseWorkerStats() const noexcept
+{
+    return m_databaseWorker ? m_databaseWorker->stats() : DatabaseWorkerStats{};
+}
 
-            if (self->m_backupSyncAgain) {
-                self->m_backupSyncAgain = false;
-                self->scheduleBackupSync();
+bool LibraryDatabase::requestLibraryPage(QString sql, QVariantMap bindings,
+                                         std::uint64_t generation)
+{
+    if (!m_databaseWorker || !m_databaseWorker->isRunning())
+        return false;
+    DatabaseCommand command;
+    command.type = DatabaseCommandType::LoadLibraryPage;
+    command.priority = DatabasePriority::Interactive;
+    command.requestId = m_nextDatabaseRequestId++;
+    command.generation = generation;
+    command.sql = std::move(sql);
+    command.bindings = std::move(bindings);
+    command.coalescingKey = QStringLiteral("library-model-page");
+    m_databaseWorker->setCurrentGeneration(generation);
+    return m_databaseWorker->enqueue(std::move(command));
+}
+
+void LibraryDatabase::collectDatabaseWorkerResults()
+{
+    if (!m_databaseWorker)
+        return;
+    for (const auto& result : m_databaseWorker->takeResults()) {
+        if (result.type == DatabaseCommandType::LoadLibraryPage) {
+            emit libraryPageReady(result.generation, result.rows,
+                                  result.success ? QString{} : result.error);
+        } else if (result.requestId == m_backupRequestId) {
+            m_backupSyncRunning = false;
+            if (!result.success)
+                qWarning() << "[LibraryDatabase] Database worker backup failed:" << result.error;
+            emit mirroredDatabaseStatusChanged();
+        } else if (result.requestId == m_quickCheckRequestId
+                   || result.requestId == m_fullCheckRequestId) {
+            if (!result.success) {
+                m_lastRecoveryEvent = QStringLiteral("database check failed: %1").arg(result.error);
+                m_primaryMirrorDegraded = (m_activeDbPath == m_dbPath);
+                m_backupMirrorDegraded = (m_activeDbPath == m_backupDbPath);
+                emit mirroredDatabaseStatusChanged();
             }
-
-            emit self->mirroredDatabaseStatusChanged();
-        }, Qt::QueuedConnection);
-    }).detach();
+        }
+    }
 }
 // ── Generic settings ──────────────────────────────────────────────────────────
 
@@ -414,38 +441,11 @@ bool LibraryDatabase::setSetting(const QString& key, const QString& value)
 bool LibraryDatabase::isHealthyDatabaseFile(const QString& path) const
 {
     const QFileInfo fileInfo(path);
-    if (!fileInfo.exists() || fileInfo.size() <= 0)
+    if (!fileInfo.exists() || fileInfo.size() < 16)
         return false;
-
-    const QString connectionName = QStringLiteral("library_health_%1")
-        .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
-
-    bool ok = false;
-    {
-        QSqlDatabase healthDb = QSqlDatabase::addDatabase("QSQLITE", connectionName);
-        healthDb.setDatabaseName(path);
-
-        if (!healthDb.open()) {
-            qWarning() << "[LibraryDatabase] Health check open failed for" << path << ':' << healthDb.lastError().text();
-        } else {
-            {
-                QSqlQuery q(healthDb);
-                if (!q.exec("PRAGMA integrity_check")) {
-                    qWarning() << "[LibraryDatabase] integrity_check failed to run for" << path << ':' << q.lastError().text();
-                } else {
-                    ok = q.next() && q.value(0).toString().compare(QStringLiteral("ok"), Qt::CaseInsensitive) == 0;
-                    if (!ok)
-                        qWarning() << "[LibraryDatabase] integrity_check reported corruption for" << path;
-                }
-            }
-            healthDb.close();
-        }
-
-        healthDb = QSqlDatabase();
-    }
-
-    QSqlDatabase::removeDatabase(connectionName);
-    return ok;
+    QFile file(path);
+    return file.open(QIODevice::ReadOnly)
+        && file.read(16) == QByteArrayLiteral("SQLite format 3\0");
 }
 
 bool LibraryDatabase::copyDatabaseFile(const QString& sourcePath, const QString& targetPath) const
@@ -477,25 +477,6 @@ bool LibraryDatabase::restorePrimaryFromBackup()
     return copyDatabaseFile(m_backupDbPath, m_dbPath);
 }
 
-bool LibraryDatabase::syncBackupFromPrimary()
-{
-    if (!m_db.isOpen())
-        return false;
-
-    const QString activePath = !m_activeDbPath.isEmpty() ? m_activeDbPath : m_dbPath;
-    const QString mirrorPath = (activePath == m_dbPath) ? m_backupDbPath : m_dbPath;
-
-    {
-        QSqlQuery q(m_db);
-        if (!q.exec("PRAGMA wal_checkpoint(TRUNCATE)")) {
-            qWarning() << "[LibraryDatabase] wal_checkpoint(TRUNCATE) failed:" << q.lastError().text();
-            return false;
-        }
-    }
-
-    return recreateDatabaseFileFromLiveConnection(mirrorPath);
-}
-
 void LibraryDatabase::clearDatabaseConnection()
 {
     if (!m_db.isValid())
@@ -510,131 +491,9 @@ void LibraryDatabase::clearDatabaseConnection()
         QSqlDatabase::removeDatabase(connectionName);
 }
 
-bool LibraryDatabase::recreateDatabaseFileFromLiveConnection(const QString& targetPath)
-{
-    if (!m_db.isOpen() || targetPath.isEmpty())
-        return false;
-
-    QFile::remove(targetPath);
-    QFile::remove(targetPath + QStringLiteral("-wal"));
-    QFile::remove(targetPath + QStringLiteral("-shm"));
-
-    const QString escapedTarget = targetPath;
-    QString vacuumTarget = escapedTarget;
-    vacuumTarget.replace(QLatin1Char('\''), QStringLiteral("''"));
-
-    QSqlQuery q(m_db);
-    if (!q.exec(QStringLiteral("VACUUM INTO '%1'").arg(vacuumTarget))) {
-        qWarning() << "[LibraryDatabase] VACUUM INTO failed for" << targetPath << ':' << q.lastError().text();
-        return false;
-    }
-
-    return true;
-}
-
-bool LibraryDatabase::reopenDatabaseConnection()
-{
-    clearDatabaseConnection();
-
-    m_db = QSqlDatabase::addDatabase("QSQLITE", "library_conn");
-    const QString activePath = !m_activeDbPath.isEmpty() ? m_activeDbPath : m_dbPath;
-    m_db.setDatabaseName(activePath);
-
-    if (!m_db.open()) {
-        qWarning() << "[LibraryDatabase] Failed to reopen:" << m_db.lastError().text();
-        return false;
-    }
-
-    {
-        QSqlQuery pragma(m_db);
-        pragma.exec("PRAGMA journal_mode=WAL");
-        pragma.exec("PRAGMA foreign_keys=ON");
-    }
-
-    if (!createSchema())
-        return false;
-
-    return true;
-}
-
 void LibraryDatabase::performMirrorSelfCheck()
 {
-    if (!m_db.isOpen())
-        return;
-
-    const bool primaryHealthy = isHealthyDatabaseFile(m_dbPath);
-    const bool backupHealthy = isHealthyDatabaseFile(m_backupDbPath);
-    bool repaired = false;
-    bool switched = false;
-
-    QString desiredActivePath = !m_activeDbPath.isEmpty() ? m_activeDbPath : m_dbPath;
-    if (!primaryHealthy && !backupHealthy) {
-        m_lastRecoveryEvent = QStringLiteral("both mirrors missing/corrupted — rebuilding from live session");
-        if (m_db.isOpen()) {
-            if (recreateDatabaseFileFromLiveConnection(m_dbPath)) {
-                repaired = true;
-                if (!recreateDatabaseFileFromLiveConnection(m_backupDbPath))
-                    qWarning() << "[LibraryDatabase] Failed to recreate backup during both-files-missing recovery";
-                m_lastRecoveryEvent = QStringLiteral("both mirrors restored from live session");
-            } else {
-                qWarning() << "[LibraryDatabase] Failed to recreate primary during both-files-missing recovery";
-                m_lastRecoveryEvent = QStringLiteral("restore of both mirrors failed");
-            }
-        }
-        m_primaryMirrorDegraded = true;
-        m_backupMirrorDegraded = true;
-        const QString currentStatus = mirroredDatabaseStatus();
-        if (currentStatus != m_cachedMirrorStatus || repaired) {
-            m_cachedMirrorStatus = currentStatus;
-            emit mirroredDatabaseStatusChanged();
-        }
-        return;
-    }
-
-    if (desiredActivePath == m_dbPath && !primaryHealthy && backupHealthy) {
-        desiredActivePath = m_backupDbPath;
-        m_primaryMirrorDegraded = true;
-        switched = true;
-    } else if (desiredActivePath == m_backupDbPath && !backupHealthy && primaryHealthy) {
-        desiredActivePath = m_dbPath;
-        m_backupMirrorDegraded = true;
-        switched = true;
-    }
-
-    if (desiredActivePath != m_activeDbPath) {
-        const QString previousActivePath = m_activeDbPath;
-        m_activeDbPath = desiredActivePath;
-        const QString fromLabel = (previousActivePath == m_backupDbPath) ? QStringLiteral("B") : QStringLiteral("A");
-        const QString toLabel = (m_activeDbPath == m_backupDbPath) ? QStringLiteral("B") : QStringLiteral("A");
-        qWarning() << "[LibraryDatabase] Active mirror switched from" << fromLabel << "to" << toLabel;
-        m_lastRecoveryEvent = QStringLiteral("Umschaltung %1 -> %2").arg(fromLabel, toLabel);
-        if (!reopenDatabaseConnection())
-            return;
-    }
-
-    if (!primaryHealthy && m_db.isOpen()) {
-        if (recreateDatabaseFileFromLiveConnection(m_dbPath)) {
-            m_primaryMirrorDegraded = true;
-            repaired = true;
-            m_lastRecoveryEvent = QStringLiteral("DB A restored from live session");
-        } else {
-            m_lastRecoveryEvent = QStringLiteral("DB A restore failed");
-        }
-    }
-
-    if (!backupHealthy && m_db.isOpen()) {
-        if (syncBackupFromPrimary()) {
-            m_backupMirrorDegraded = true;
-            repaired = true;
-            m_lastRecoveryEvent = QStringLiteral("DB B restored from active mirror");
-        } else {
-            m_lastRecoveryEvent = QStringLiteral("DB B restore failed");
-        }
-    }
-
-    const QString currentStatus = mirroredDatabaseStatus();
-    if (currentStatus != m_cachedMirrorStatus || repaired || switched) {
-        m_cachedMirrorStatus = currentStatus;
-        emit mirroredDatabaseStatusChanged();
-    }
+    // Error paths request a cheap worker-side diagnostic. Full integrity checks
+    // are deliberately exposed only through requestFullIntegrityCheck().
+    requestQuickCheck();
 }

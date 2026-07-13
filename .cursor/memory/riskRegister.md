@@ -139,3 +139,17 @@ Last updated: 2026-07-13
   order and explicit shutdown keep the bus alive until every token is reset. Future owners must
   preserve token-before-endpoint and token-before-bus destruction ordering.
 | Physical MIDI/FLX10/Link timing unverified | controller and Link hardware paths | Automated tests cover scheduling, deduplication and protocol-independent callbacks, not physical device latency or refresh requirements. | A 60 Hz FLX state / 20 Hz waveform rate may need hardware tuning. | Run FLX10, MIDI and multi-peer Link manual regression. | P1 open |
+
+## Database and general media I/O (2026-07-13)
+
+- Closed: the 3 s GUI timer no longer opens two ad-hoc connections and runs full
+  `PRAGMA integrity_check`; full checks are explicit maintenance commands only.
+- Closed: the detached `VACUUM INTO` backup thread was replaced by the joinable
+  `DatabaseWorker`, with a temporary output, controlled rename, cancellation and result reporting.
+- Closed: Library folder enumeration and library-table full queries, cover extraction and thumbnail
+  decoding now run off the Qt main thread with bounded queues and generation rejection.
+- Open: schema creation/migration and numerous small compatibility-preserving QML CRUD/query methods
+  still use the Qt-owned `library_conn`. These do not cross threads, but a large playlist/history/tag
+  result can still stall UI. Migrate them to immutable async page/result APIs in a later library task.
+- Open: startup legacy-file migration and cheap 16-byte SQLite-header probes remain synchronous;
+  network filesystems, disk-full publication and OS permission behavior require manual validation.

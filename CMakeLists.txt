@@ -364,6 +364,10 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/library/CoverArtProvider.h
     src/library/LibraryCoverService.h
     src/library/LibraryCoverService.cpp
+    src/database/DatabaseWorker.h
+    src/database/DatabaseWorker.cpp
+    src/io/MediaIoScheduler.h
+    src/io/MediaIoScheduler.cpp
     src/library/LibraryPreviewPlayer.h
     src/library/LibraryPreviewPlayer.cpp
     src/fx/FxManager.h
@@ -866,3 +870,21 @@ target_link_libraries(BrockDJ_time_stretch_tests PRIVATE
 target_compile_definitions(BrockDJ_time_stretch_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
 target_compile_features(BrockDJ_time_stretch_tests PRIVATE cxx_std_26)
 add_test(NAME time_stretch COMMAND BrockDJ_time_stretch_tests)
+
+add_executable(BrockDJ_database_worker_tests
+    tests/database_worker/database_worker_tests.cpp
+    src/database/DatabaseWorker.cpp)
+target_include_directories(BrockDJ_database_worker_tests PRIVATE src)
+target_link_libraries(BrockDJ_database_worker_tests PRIVATE Qt6::Core Qt6::Sql)
+target_compile_features(BrockDJ_database_worker_tests PRIVATE cxx_std_26)
+add_test(NAME database_worker COMMAND BrockDJ_database_worker_tests)
+
+add_executable(BrockDJ_media_io_scheduler_tests
+    tests/media_io_scheduler/media_io_scheduler_tests.cpp
+    src/io/MediaIoScheduler.cpp
+    src/library/CoverArtExtractor.cpp)
+target_include_directories(BrockDJ_media_io_scheduler_tests PRIVATE src)
+target_link_libraries(BrockDJ_media_io_scheduler_tests PRIVATE
+    Qt6::Core Qt6::Gui ThirdParty::TagLib)
+target_compile_features(BrockDJ_media_io_scheduler_tests PRIVATE cxx_std_26)
+add_test(NAME media_io_scheduler COMMAND BrockDJ_media_io_scheduler_tests)

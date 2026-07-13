@@ -475,3 +475,18 @@ about 386.77 us/chunk versus 386.22 us for one 2048 block (about 0.1% measured c
 ASAN+UBSAN/TSAN targets pass; LSan is unavailable under ptrace. Architecture/realtime roadmap is
 estimated at about 90% complete. Next: `DatabaseWorker` and `MediaIoScheduler`; do not reopen the
 audio graph/master bus in that task.
+
+## Current database/media I/O state (2026-07-13)
+
+`DatabaseWorker` and `MediaIoScheduler` are now separate single-thread, joinable components with
+fixed priority queues, bounded results, maintenance fairness, coalescing, generation/cancellation and
+atomic statistics. The DB connection is opened/used/checkpointed/closed on its worker. Library model
+pages, backup, quick/full checks use it; full check is explicit only. Cover reads/thumbnail decoding
+and non-recursive folder/track scans use the media scheduler. `AudioCacheWorker` is unchanged.
+
+Release synthetic measurements from dedicated tests: DatabaseWorker start 2.43 ms, stop/join 0.40 ms,
+average command 0.204 ms, worst 0.639 ms; MediaIoScheduler start 0.074 ms, stop/join 0.174 ms,
+average request 8.45 ms, worst 49.86 ms (first Qt image plugin/decode dominates). The full test suite
+has 18 targets. Both new targets pass ASAN+UBSAN (`detect_leaks=0`, same ptrace limitation) and TSAN.
+Remaining risk is synchronous compatibility CRUD/list APIs on `library_conn`.
+Next assignment: TrackData, LibraryAnalysisManager, analysis progress and waveform/RGB snapshots.

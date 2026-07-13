@@ -12,8 +12,6 @@
 #include <taglib/xiphcomment.h>
 #include <taglib/wavfile.h>
 
-#include <QDebug>
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API
 // ─────────────────────────────────────────────────────────────────────────────
@@ -81,7 +79,6 @@ std::pair<QByteArray, QString> CoverArtExtractor::extractFromMP3(const QString& 
     QString fmt = detectImageFormat(data);
 
     if (!fmt.isEmpty()) {
-        qDebug() << "[CoverArt] MP3:" << data.size() << "bytes" << fmt;
         return {data, fmt};
     }
     return {};
@@ -103,7 +100,6 @@ std::pair<QByteArray, QString> CoverArtExtractor::extractFromFLAC(const QString&
     QString fmt = detectImageFormat(data);
 
     if (!fmt.isEmpty()) {
-        qDebug() << "[CoverArt] FLAC:" << data.size() << "bytes" << fmt;
         return {data, fmt};
     }
     return {};
@@ -128,7 +124,6 @@ std::pair<QByteArray, QString> CoverArtExtractor::extractFromMP4(const QString& 
     QString fmt = detectImageFormat(data);
 
     if (!fmt.isEmpty()) {
-        qDebug() << "[CoverArt] MP4:" << data.size() << "bytes" << fmt;
         return {data, fmt};
     }
     return {};
@@ -165,7 +160,6 @@ std::pair<QByteArray, QString> CoverArtExtractor::extractFromOGG(const QString& 
                 QByteArray data(raw + i, sz - i);
                 QString fmt = detectImageFormat(data);
                 if (!fmt.isEmpty()) {
-                    qDebug() << "[CoverArt] OGG:" << data.size() << "bytes" << fmt;
                     return {data, fmt};
                 }
             }
@@ -193,7 +187,6 @@ std::pair<QByteArray, QString> CoverArtExtractor::extractFromWAV(const QString& 
     QString fmt = detectImageFormat(data);
 
     if (!fmt.isEmpty()) {
-        qDebug() << "[CoverArt] WAV:" << data.size() << "bytes" << fmt;
         return {data, fmt};
     }
     return {};

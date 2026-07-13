@@ -36,6 +36,7 @@
 #include "DjEngine.h"
 #include "DjMasterBus.h"
 #include "library/LibraryManager.h"
+#include "io/MediaIoScheduler.h"
 #include "library/CoverArtProvider.h"
 #include "library/LibraryCoverService.h"
 #include "library/LibraryPreviewPlayer.h"
@@ -300,7 +301,9 @@ int runApplication(int argc, char *argv[])
     runtime.settingsManager = &settingsManager;
     runtime.appConfig = &appConfig;
     runtime.parameterStore = std::make_unique<ParameterStore>();
-    runtime.libraryManager = std::make_unique<LibraryManager>();
+    runtime.mediaIoScheduler = std::make_unique<MediaIoScheduler>();
+    runtime.mediaIoScheduler->start();
+    runtime.libraryManager = std::make_unique<LibraryManager>(*runtime.mediaIoScheduler);
     runtime.libraryDb = std::make_unique<LibraryDatabase>();
     runtime.libraryTableModel = std::make_unique<LibraryTableModel>("library_conn");
     runtime.libraryAnalysisManager = std::make_unique<LibraryAnalysisManager>();
@@ -311,7 +314,8 @@ int runApplication(int argc, char *argv[])
     runtime.cursorControl = std::make_unique<CursorControl>();
     runtime.coverProvider = std::make_unique<CoverArtProvider>();
     runtime.coverProviderPtr = runtime.coverProvider.get();
-    runtime.libraryCoverService = std::make_unique<LibraryCoverService>(runtime.coverProviderPtr);
+    runtime.libraryCoverService = std::make_unique<LibraryCoverService>(
+        runtime.coverProviderPtr, *runtime.mediaIoScheduler);
     runtime.mixerControl = std::make_unique<MixerControl>();
     runtime.audioDeviceService = std::make_unique<AudioDeviceService>();
     runtime.audioPageCache = std::make_unique<AudioPageCache>();

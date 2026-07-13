@@ -104,3 +104,13 @@ Jede Änderung an `getNextAudioBlock()`, `processBlock()`, `prepareToPlay()`-Üb
   instrumentation; NaN/Infinity is detected and isolated so one deck cannot poison the master.
 - A callback larger than 2048 may increment `oversizedCallbacks`; the six required violation counters
   and `silentOversizedCallbacks` must remain zero in automated tests.
+
+## Database/media worker boundary (2026-07-13)
+
+- Audio callbacks never access `DatabaseWorker` or `MediaIoScheduler`; `AudioCacheWorker` exclusively
+  serves critical page I/O and is not a fallback through the general scheduler.
+- Database/media queues are bounded and non-blocking for producers. Commands carry priority,
+  generation, coalescing key and optional atomic cancellation; results contain values only, never
+  QObject targets. Main-thread consumers poll bounded result batches.
+- SQLite connections and `QSqlQuery` objects may not cross their creating thread. Full integrity
+  checks are manual/diagnostic only; quick check is startup/error/manual maintenance.

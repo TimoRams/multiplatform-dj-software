@@ -10,6 +10,7 @@
 #include "library/LibraryAnalysisManager.h"
 #include "library/LibraryCoverService.h"
 #include "library/LibraryDatabase.h"
+#include "library/LibraryManager.h"
 #include "library/LibraryPreviewPlayer.h"
 #include "library/LibraryTableModel.h"
 #include "link/LinkManager.h"
@@ -18,6 +19,7 @@
 #include "audio/device/AudioDeviceService.h"
 #include "audio/cache/AudioPageCache.h"
 #include "engine/sync/SyncCoordinator.h"
+#include "io/MediaIoScheduler.h"
 
 #include <QCoreApplication>
 #include <QEventLoop>
@@ -185,6 +187,16 @@ void shutdownApplication(ApplicationRuntime& runtime)
         if (runtime.syncCoordinator)
             runtime.syncCoordinator->shutdown();
         runtime.audioPageCache.reset();
+
+        // Consumers go away before the scheduler rejects new work and joins its
+        // single general-purpose I/O thread.
+        runtime.libraryCoverService.reset();
+        runtime.libraryManager.reset();
+        if (runtime.mediaIoScheduler) {
+            runtime.mediaIoScheduler->requestStop();
+            runtime.mediaIoScheduler->stopAndJoin();
+            runtime.mediaIoScheduler.reset();
+        }
 
         runtime.linkManager.reset();
         runtime.libraryPreviewPlayer.reset();

@@ -32,6 +32,7 @@ class MixerParameterBridge;
 class MixerControl;
 class AudioDeviceService;
 class AudioPageCache;
+class MediaIoScheduler;
 namespace engine::sync { class SyncCoordinator; }
 
 struct ApplicationRuntime {
@@ -53,6 +54,7 @@ struct ApplicationRuntime {
     std::array<DjMasterBus::DeckRegistration, DjMasterBus::kMaximumDecks> deckRegistrations;
 
     std::unique_ptr<ParameterStore> parameterStore;
+    std::unique_ptr<MediaIoScheduler> mediaIoScheduler;
     std::unique_ptr<MixerParameterBridge> mixerParameterBridge;
     std::unique_ptr<MixerControl> mixerControl;
     QPointer<MidiControllerManager> midiManager;

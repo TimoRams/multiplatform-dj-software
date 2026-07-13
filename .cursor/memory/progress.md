@@ -217,3 +217,11 @@ Manual (~15 min):
   synthetic callbacks. All 15 CTest targets pass; isolated clock and the
   four-deck cache/transport/sync integration pass ASAN/UBSAN and TSAN. Leak detection was disabled
   because ptrace prevents LSan in this runner. Next: `DjMasterBus` lifetime/block sizes.
+- Database/general media I/O refactor completed (2026-07-13): joinable `DatabaseWorker` and
+  `MediaIoScheduler`, bounded priority/result queues, fairness, generation/cancellation/coalescing,
+  worker-owned QSQLITE connection, async library model pages, explicit integrity policy, controlled
+  backup publication, worker folder scans and cover decoding. Detached DB/file threads: 1 → 0;
+  periodic full integrity checks: every 3 s/two mirrors → 0; all 18 release tests pass. Remaining
+  synchronous QML CRUD is recorded for later migration. New worker targets pass ASAN+UBSAN and TSAN.
+  Overall threading/realtime roadmap estimate:
+  about 93%. Next: TrackData/LibraryAnalysisManager snapshot and progress handoff.
