@@ -364,13 +364,7 @@ float DjEngine::gainReduction() const
 }
 
 
-juce::AudioSource* DjEngine::getAudioSource() const
+IDeckAudioEndpoint& DjEngine::audioEndpoint() const noexcept
 {
-    return m_audioGraph.get();
-}
-
-
-const juce::AudioBuffer<float>& DjEngine::getPflBuffer() const
-{
-    return m_audioGraph->mixer().getPflBuffer();
+    return *m_audioGraph;
 }

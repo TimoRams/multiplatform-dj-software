@@ -1,6 +1,13 @@
 # Progress
 
 ## Done (recent)
+- [x] **DjMasterBus lifetime and block-size hardening** — removed the raw `DjEngine*` vector and
+  preview pointer, added four generation-tagged audio endpoint slots with movable RAII tokens and
+  explicit reader-drain retirement, and made shutdown deterministic. Fixed 2048-sample chunks replace
+  the 4096 cap/silent return; three stereo scratch buffers use 49,152 preallocated bytes and callback
+  allocation/growth/blocking-lock counters remain zero. Dedicated unit/concurrency/performance tests,
+  fixed-seed four-real-graph stress, all 16 CTest targets, ASAN+UBSAN and TSAN pass. Next:
+  `DatabaseWorker` and `MediaIoScheduler` (architecture/realtime roadmap approximately 90%).
 - [x] **DeckAudioGraph ownership extraction** — one non-Qt component now owns and constructs the
   full per-deck cached playback → transport → scratch → time-stretch → mixer/FX chain, cache handle,
   audio generation and lifecycle. `DjEngine` retains its public API and transitional product/

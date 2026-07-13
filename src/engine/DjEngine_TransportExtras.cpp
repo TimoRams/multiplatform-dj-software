@@ -9,9 +9,15 @@ bool DjEngine::isSlipDiverted() const
 
 void DjEngine::setCueEnabled(bool value)
 {
-    const bool prev = m_cueEnabled.exchange(value, std::memory_order_relaxed);
+    const bool prev = m_audioGraph->cueEnabledForMix();
+    m_audioGraph->setCueEnabledForMix(value);
     if (prev != value)
         emit cueEnabledChanged();
+}
+
+bool DjEngine::cueEnabled() const
+{
+    return m_audioGraph->cueEnabledForMix();
 }
 
 

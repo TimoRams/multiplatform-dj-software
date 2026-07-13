@@ -5,6 +5,7 @@
 #include "audio/cache/AudioPageCache.h"
 #include "sync/DeckSyncController.h"
 #include "app/ControlClock.h"
+#include "MasterBusAudioEndpoint.h"
 
 class DeckAudioGraph;
 class DeckTransport;
@@ -279,7 +280,7 @@ public:
     [[nodiscard]] double eqMid() const { return m_eqMid; }
     [[nodiscard]] double eqLow() const { return m_eqLow; }
     [[nodiscard]] double filter() const { return m_filter; }
-    [[nodiscard]] bool cueEnabled() const { return m_cueEnabled.load(std::memory_order_relaxed); }
+    [[nodiscard]] bool cueEnabled() const;
     [[nodiscard]] bool masterCueEnabled() const;
     [[nodiscard]] double headphoneMix() const;
     [[nodiscard]] bool quantizeEnabled() const { return m_quantizeEnabled; }
@@ -300,13 +301,8 @@ public:
     [[nodiscard]] bool clipDetected() const;
     [[nodiscard]] float gainReduction() const;
 
-    // ── Master bus integration ────────────────────────────────────────────────
-    // Returns the raw audio source for this deck (MixerDspSource).
-    // Used by DjMasterBus to pull audio in the correct signal-chain order.
-    [[nodiscard]] juce::AudioSource* getAudioSource() const;
-    // Returns the pre-fader PFL buffer populated during getNextAudioBlock().
-    // Valid only from the audio thread (or after a getNextAudioBlock call).
-    [[nodiscard]] const juce::AudioBuffer<float>& getPflBuffer() const;
+    // Explicit bootstrap boundary; DjMasterBus stores only this audio endpoint.
+    [[nodiscard]] IDeckAudioEndpoint& audioEndpoint() const noexcept;
     [[nodiscard]] QVariantList hotCues() const;
     [[nodiscard]] QVariantList savedLoops() const;
     [[nodiscard]] bool beatgridLocked() const;
@@ -564,7 +560,6 @@ private:
     double m_eqLow = 0.0;
     double m_filter = 0.0;
     bool   m_polarityInverted = false;
-    std::atomic<bool> m_cueEnabled { false };
     bool m_playLogged    = false;   // true once logPlay() has been called for the current track load
     double m_playedAccumSec = 0.0;  // accumulated real playback seconds since last track load
     QElapsedTimer m_playHistoryClock;

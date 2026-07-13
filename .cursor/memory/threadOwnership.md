@@ -96,3 +96,21 @@ Single-shot analysis persistence (400 ms), track/QML/settings debounces, MIDI jo
 FLX10 bounded 2 ms upload chunks, rendering `FrameAnimation`, and waveform analysis coalescers remain
 separate because they are event-bound, protocol-bounded, or render-frame work rather than periodic
 control scheduling.
+
+## DjMasterBus ownership and retirement (2026-07-13)
+
+| Object / operation | Owner | Thread / boundary | Lifetime rule |
+|---|---|---|---|
+| `DjMasterBus` and sole `AudioSourcePlayer` | `ApplicationRuntime` | device prepare/release/callback; lifecycle register/unregister | callback is removed before registrations and endpoints |
+| Four `DeckRegistration` tokens | `ApplicationRuntime`, declared after decks | Qt bootstrap/lifecycle only | reset token before destroying its graph; token cannot outlive bus |
+| `DeckAudioGraph` endpoint | owning `DjEngine` | control prepares/commands; audio callback processes | slot publication follows prepare; null + reader drain precedes destruction |
+| Preview `AuxRegistration` | `ApplicationRuntime`, declared after preview player | Qt bootstrap/lifecycle only | same generation and reader-drain rule as decks |
+| Slot pointer/generation snapshots | `DjMasterBus` | callback reads atomically once per external block | seq-cst reader-entry/null-publication handshake; registration mutex is never acquired by callback |
+| Registration mutex and retirement wait | `DjMasterBus` | control/lifecycle only | may serialize or yield outside RT; never call registration APIs from callback |
+| Master/cue/routing/meter values | static/member atomics | control publishes, callback reads/writes, ControlClock/UI reads | scalar relaxed snapshots; no Qt signal per block |
+
+Signal order remains `DeckAudioGraph` post-fader/FX output → four-slot sum → preview → master gain →
+pre-limiter peak/clip snapshot → BrickwallLimiter → master routing. PFL is captured inside each graph
+before its fader/crossfader gain; selected PFL feeds headphone cue, all PFL feeds booth, and optional
+limited master feeds headphone master cue. Extra device channels are cleared and only configured
+1-based stereo pairs are written; graph endpoints deliver stereo (mono tracks are duplicated earlier).

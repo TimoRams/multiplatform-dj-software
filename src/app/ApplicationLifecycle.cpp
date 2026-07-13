@@ -148,10 +148,10 @@ void shutdownApplication(ApplicationRuntime& runtime)
 
         if (runtime.masterBus) {
             runtime.masterBus->unregisterCallback(runtime.audioDeviceService->manager());
-            for (DjEngine* deck : {runtime.deckA.get(), runtime.deckB.get(),
-                                   runtime.deckC.get(), runtime.deckD.get()})
-                runtime.masterBus->removeDeck(deck);
-            runtime.masterBus->setPreviewPlayer(nullptr);
+            for (auto& registration : runtime.deckRegistrations)
+                registration.reset();
+            runtime.previewRegistration.reset();
+            runtime.masterBus->beginShutdown();
         }
 
         if (runtime.libraryPreviewPlayer)

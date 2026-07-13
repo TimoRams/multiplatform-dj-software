@@ -467,12 +467,16 @@ int runApplication(int argc, char *argv[])
 
             runtime.libraryPreviewPlayer = std::make_unique<LibraryPreviewPlayer>(
                 *runtime.controlClock, &app);
-            runtime.masterBus->setPreviewPlayer(runtime.libraryPreviewPlayer.get());
+            runtime.previewRegistration = runtime.masterBus->registerAuxEndpoint(
+                *runtime.libraryPreviewPlayer);
             engine.rootContext()->setContextProperty("libraryPreview",
                                                      runtime.libraryPreviewPlayer.get());
-            for (DjEngine* deck : {runtime.deckA.get(), runtime.deckB.get(),
-                                   runtime.deckC.get(), runtime.deckD.get()})
-                runtime.masterBus->addDeck(deck);
+            const std::array<DjEngine*, 4> masterBusDecks {
+                runtime.deckA.get(), runtime.deckB.get(), runtime.deckC.get(), runtime.deckD.get()
+            };
+            for (std::size_t index = 0; index < masterBusDecks.size(); ++index)
+                runtime.deckRegistrations[index] = runtime.masterBus->registerDeck(
+                    masterBusDecks[index]->audioEndpoint(), static_cast<int>(index));
 
             runtime.mixerParameterBridge = std::make_unique<MixerParameterBridge>(
                 runtime.parameterStore.get());

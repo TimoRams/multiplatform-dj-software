@@ -10,9 +10,10 @@ Last updated: 2026-07-13
 - Accepted transition: `DjEngine` still owns transport product state and forwards commands through
   narrow graph views. Moving play/pause/seek/position/reverse/slip/pre-roll into `DeckTransport` is
   the next task; sync remains separate.
-- Accepted transition: `DjMasterBus` registers raw `DjEngine*`, whose endpoint is the graph.
-  Application shutdown removes decks before callback stop and graph destruction, but a future
-  typed/RAII graph registration would make this lifetime invariant local and mechanically enforced.
+- Resolved: `DjMasterBus` no longer knows or stores `DjEngine*`. Four fixed, generation-tagged
+  `IDeckAudioEndpoint` slots are owned by movable RAII registrations. Unregister publishes null and
+  waits outside RT for active endpoint readers before graph retirement; shutdown stops the callback,
+  resets tokens, retires all slots, then destroys graphs.
 - Open verification: headless tests cannot prove device-specific callback jitter, audible handover
   clicks, controller feel, or ASIO/CoreAudio/JACK shutdown behavior.
 - Observed performance risk: one stressed release-build handover took about 1.05 s while retiring
@@ -50,7 +51,7 @@ Last updated: 2026-07-13
 | Track-load worker threads were detached | `DeckTrackLoader`, `DjEngine_TransportLoad.cpp` | Replaced by one deck-owned persistent worker, latest-request generation, QPointer result handoff and deterministic shutdown join. | Previous late-callback/UAF risk removed. | Preserve joined shutdown and generation/path validation. | erledigt |
 | Four decks use precise 4 ms control timers | `src/engine/DjEngine_Core.cpp`, `src/engine/DjEngine.h`; `DjEngine` timer setup and `onTimer()` | Each deck runs a high-frequency timer for transport, sync, VU, scratch control and notifications. | GUI/event-loop pressure and jitter under four-deck load. | Consolidate control ticks or move time-critical state to audio-thread/block-synchronous logic with throttled UI notifications. | open |
 | `DjEngine` setters can emit unchanged-state signals | `src/engine/DjEngine_*.cpp`, `src/engine/DjEngine.h`; `DjEngine` | Some property setters/apply paths have guards, but not all signal-emitting setters are proven change-only. | QML churn, avoidable binding reevaluation, noisy controller feedback. | Audit setters and add idempotent guards without changing QML API. | open |
-| Master bus has a fixed 4096-sample internal buffer cap | `src/engine/DjMasterBus.cpp`; `DjMasterBus::prepareToPlay()`, `getNextAudioBlock()` | `m_bufferCapacity` is fixed at 4096; larger callbacks increment overrun count and return silence. | Silence on devices or hosts that deliver larger blocks. | Size buffers to `max(samplesPerBlockExpected, safeMinimum)` and grow only outside the callback. | open |
+| Master bus has a fixed 4096-sample internal buffer cap | `src/engine/DjMasterBus.*`; `DjMasterBus::prepareToPlay()`, `getNextAudioBlock()` | Resolved with fixed 2048-sample processing chunks. Three stereo scratch buffers and limiter storage are prepared outside RT; valid callbacks are iterated without growth. Tests prove finite, non-silent tails at 8192/16384. | Previous complete silence above 4096 removed. | Preserve chunking and `silentOversizedCallbacks == 0`; do not replace it with a larger fixed callback cap. | erledigt |
 | Audio-device ownership was an implicit function-static shared manager referenced by every deck | `src/audio/device/AudioDeviceService.*`, `src/app/ApplicationBootstrap.cpp`, `src/engine/DjEngine_Settings*.cpp` | Before extraction, `sharedAudioDeviceManager()` owned global hardware outside the application object graph, while every `DjEngine` held a reference and duplicated error/fallback/routing state. Now `ApplicationRuntime` uniquely owns one constructor-injected `AudioDeviceService`; it owns the manager/configuration and outlives all decks and the master bus. | Previously unclear shutdown and global-state ownership. | Keep hardware configuration on the Qt/control thread and decks as QML forwarding facades. | erledigt |
 | `TrackData` worker writes are not yet a single immutable result snapshot | `src/domain/TrackData.*`, `src/rendering/WaveformEnvelopePass.cpp`, `src/rendering/WaveformAnalysisOrchestrator.cpp` | Vectors/metadata are mutex-protected and progress/active plus progress coalescing are atomic; RGB coalescing state/timer now run only on the QObject owner thread. The worker still applies several progressive and final fields directly rather than publishing one immutable final snapshot. Deterministic joins prevent lifetime reuse, but partial results can be observed during a valid current analysis. | No identified UAF/data race in the fixed path; atomic all-fields-at-once semantic publication is still absent. | Consider a bounded `TrackAnalysisResult` final snapshot later without removing useful progressive waveform updates. | open |
 
@@ -113,4 +114,28 @@ Last updated: 2026-07-13
 | Main-thread stalls delay all control groups | `ControlClock` | One precise 250 Hz Qt timer intentionally serializes transport, sync and UI/control feedback. A severe late tick coalesces missed work and skips waveform/display/MIDI/meter/statistics/housekeeping, but transport and sync still run once. | A blocked UI thread can delay control visibility, without a catch-up callback avalanche. | Keep blocking I/O/DB/decoding out of ticks and monitor late/worst statistics. | P1 accepted |
 | Registration token outlives clock | `ControlClock::Registration` | The movable token has a non-owning clock back-pointer. Application ownership and explicit shutdown reset every token before clock destruction. | Violating the lifecycle contract could dereference a dead clock. | Preserve construction order and stop→unregister→destroy ordering; covered by deterministic shutdown tests. | P1 accepted |
 | SQLite mirror integrity polling remains separate | `LibraryDatabase` | The 3 s coarse mirror self-check and deferred 1.5 s backup timer can trigger DB/file work and were deliberately not moved into the main-thread ControlClock. | Periodic DB work may still cause independent load. | Move integrity work to a dedicated database worker in a separately scoped change. | P1 open |
+
+## DjMasterBus risks and closure (2026-07-13)
+
+- Before: one `std::vector<DjEngine*>` held up to four raw facade pointers; callback reads,
+  registration and removal had no local synchronization or lifetime token. A raw preview pointer
+  had the same ordering dependency. Shutdown correctness was implicit and `m_bufferCapacity=4096`
+  returned a completely cleared output for larger callbacks. Preview scratch could call `setSize`
+  from the callback.
+- Now: four fixed atomic `IDeckAudioEndpoint*` slots plus generations are published only from the
+  control/lifecycle path. A movable `DeckRegistration` rejects duplicate/foreign/stale removal and
+  repeated reset is harmless. Null publication followed by the active-reader drain is the explicit
+  retirement barrier; no endpoint may be destroyed before its token reset returns. The auxiliary
+  preview uses the same RAII/generation/reader contract.
+- Callback: no registration mutex is acquired. Three stereo 2048-sample buffers (49,152 bytes) and
+  limiter storage are prepared once; callbacks through at least 16,384 are chunked. Post-fader deck
+  output is summed, master gain and the existing limiter are applied, while headphone cue and booth
+  continue to read pre-fader buffers. Non-finite deck samples are replaced with zero.
+- Verification: `master_bus`, the four-real-graph stress, all 16 CTest targets, ASAN+UBSAN and TSAN
+  pass. Required RT counters are zero. LeakSanitizer cannot run under this runner's ptrace; ASAN was
+  rerun with leak detection disabled. Hardware callback jitter, audible limiter/cue transitions and
+  backend-specific hot-unplug remain manual risks.
+- Remaining contract risk: registration tokens contain a non-owning bus back-pointer. Runtime member
+  order and explicit shutdown keep the bus alive until every token is reset. Future owners must
+  preserve token-before-endpoint and token-before-bus destruction ordering.
 | Physical MIDI/FLX10/Link timing unverified | controller and Link hardware paths | Automated tests cover scheduling, deduplication and protocol-independent callbacks, not physical device latency or refresh requirements. | A 60 Hz FLX state / 20 Hz waveform rate may need hardware tuning. | Run FLX10, MIDI and multi-peer Link manual regression. | P1 open |

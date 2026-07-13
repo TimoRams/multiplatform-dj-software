@@ -28,6 +28,7 @@ struct DeckAudioGraph::Impl {
     std::uint64_t trackGeneration = 0;
     std::uint64_t retiredDiskReadsFromAudioThread = 0;
     std::uint64_t retiredDecoderCallsFromAudioThread = 0;
+    std::atomic<bool> cueEnabled { false };
 };
 
 DeckAudioGraph::DeckAudioGraph(AudioPageCache& cache)
@@ -53,6 +54,21 @@ void DeckAudioGraph::releaseResources()
 void DeckAudioGraph::getNextAudioBlock(const juce::AudioSourceChannelInfo& info) noexcept
 {
     m_impl->mixer->getNextAudioBlock(info);
+}
+
+const juce::AudioBuffer<float>& DeckAudioGraph::preFaderBuffer() const noexcept
+{
+    return m_impl->mixer->getPflBuffer();
+}
+
+bool DeckAudioGraph::cueEnabledForMix() const noexcept
+{
+    return m_impl->cueEnabled.load(std::memory_order_relaxed);
+}
+
+void DeckAudioGraph::setCueEnabledForMix(bool enabled) noexcept
+{
+    m_impl->cueEnabled.store(enabled, std::memory_order_relaxed);
 }
 
 void DeckAudioGraph::setAudioPlayheadSink(std::atomic<double>* sink) noexcept

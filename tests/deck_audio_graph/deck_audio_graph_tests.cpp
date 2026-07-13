@@ -1,4 +1,5 @@
 #include "engine/deck/DeckAudioGraph.h"
+#include "engine/DjMasterBus.h"
 
 #include "audio/cache/AudioPageCache.h"
 #include "audio/cache/CachedPlaybackAudioSource.h"
@@ -16,6 +17,7 @@
 #include <cmath>
 #include <iostream>
 #include <memory>
+#include <random>
 #include <thread>
 #include <vector>
 
@@ -86,6 +88,18 @@ bool realtimeCountersAreZero(DeckAudioGraph& graph)
         && stats.bufferGrowthsFromAudioThread == 0
         && stats.blockingLockAttempts == 0
         && stats.objectConstructionsFromAudioThread == 0;
+}
+
+bool realtimeCountersAreZero(const DjMasterBus& bus)
+{
+    const auto stats = bus.realtimeStats();
+    return stats.allocationsFromAudioThread == 0
+        && stats.bufferGrowthsFromAudioThread == 0
+        && stats.blockingLockAttempts == 0
+        && stats.invalidEndpointReads == 0
+        && stats.staleGenerationReads == 0
+        && stats.silentOversizedCallbacks == 0
+        && stats.nonFiniteDeckBlocks == 0;
 }
 
 struct Timing {
@@ -310,6 +324,132 @@ int main(int argc, char** argv)
     }
     std::cout << "DeckAudioGraph four decks/512: avg=" << fourDeckTotalUs / 100.0
               << " us worst=" << fourDeckWorstUs << " us\n";
+
+    DjMasterBus masterBus;
+    std::array<DjMasterBus::DeckRegistration, 4> registrations;
+    for (int index = 0; index < 4; ++index) {
+        decks[index]->transport().setPosition(0.0);
+        decks[index]->transport().start();
+        decks[index]->setCueEnabledForMix(index % 2 == 0);
+        registrations[index] = masterBus.registerDeck(*decks[index], index);
+        ok &= require(registrations[index].isValid(), "real graph registered with master bus");
+    }
+    DjMasterBus::setOutputRouting(1, 3, 5);
+    DjMasterBus::setMasterVolume(0.7f);
+    DjMasterBus::setHeadphoneMix(0.25f);
+    DjMasterBus::setMasterCueEnabled(true);
+    DjMasterBus::setAntiClipEnabled(true);
+    masterBus.prepareToPlay(16'384, 48'000.0);
+    masterBus.resetRealtimeStats();
+    {
+        juce::AudioBuffer<float> limiterWarmup(6, 512);
+        masterBus.getNextAudioBlock({&limiterWarmup, 0, 512});
+    }
+
+    double masterBusTotalUs = 0.0;
+    double masterBusWorstUs = 0.0;
+    std::mt19937 stressRandom(0xB40CD1u);
+    std::uniform_real_distribution<float> controlValue(0.0f, 1.0f);
+    std::array<std::uint64_t, 4> stressTrackGenerations {20, 20, 20, 20};
+    constexpr std::array callbackSizes {64, 128, 256, 512, 1024, 2048,
+                                        4096, 8192, 16'384};
+    for (int iteration = 0; iteration < 72; ++iteration) {
+        const int blockSize = callbackSizes[static_cast<std::size_t>(iteration)
+                                            % callbackSizes.size()];
+        const int selectedDeck = static_cast<int>(stressRandom() % decks.size());
+        if (iteration % 9 == 0) {
+            for (auto& deck : decks) {
+                deck->transport().setPosition(0.0);
+                deck->transport().start();
+            }
+        }
+        if (iteration % 12 == 3)
+            decks[selectedDeck]->transport().stop();
+        if (iteration % 12 == 4)
+            decks[selectedDeck]->transport().start();
+        if (iteration % 18 == 6) {
+            auto& deck = *decks[selectedDeck];
+            auto replacement = cache.openTrack({iteration % 2 == 0 ? mono44 : stereo96});
+            deck.installPreparedTrack({replacement, iteration % 2 == 0 ? 44'100.0 : 96'000.0,
+                                       ++stressTrackGenerations[selectedDeck]});
+            deck.transport().start();
+        }
+        if (iteration % 16 == 5) {
+            auto& scratchDeck = *decks[selectedDeck];
+            scratchDeck.scratch().configureTrack(48'000.0, 1.0);
+            scratchDeck.scratch().beginScratch(0.1, 48'000.0, 1.0, true, 1.0);
+            scratchDeck.scratch().addTargetDeltaSeconds(0.01, 48'000.0);
+        }
+        if (iteration % 16 == 7)
+            decks[selectedDeck]->scratch().endScratch(false);
+        if (iteration % 10 == 2) {
+            decks[selectedDeck]->timeStretch().setPitchLockEnabled(iteration % 20 == 2);
+            decks[selectedDeck]->timeStretch().setTempoRatio(0.85 + 0.2 * controlValue(stressRandom));
+        }
+        if (iteration % 14 == 8) {
+            decks[selectedDeck]->mixer().setFxEffectType(EffectType::Bitcrusher);
+            decks[selectedDeck]->mixer().setFxAmount(0.15f + 0.2f * controlValue(stressRandom));
+        } else if (iteration % 14 == 10) {
+            decks[selectedDeck]->mixer().setFxEffectType(EffectType::None);
+        }
+        // DjEngine normally maps the crossfader curve/assignment to these post-fader gains.
+        decks[iteration % 4]->mixer().setFader(0.2f + 0.8f * controlValue(stressRandom));
+        decks[(iteration + 1) % 4]->mixer().setFilterVal(
+            -0.5f + controlValue(stressRandom));
+        decks[(iteration + 1) % 4]->mixer().setEq(-0.5f + controlValue(stressRandom),
+                                                  -0.5f + controlValue(stressRandom),
+                                                  -0.5f + controlValue(stressRandom));
+        decks[(iteration + 2) % 4]->setCueEnabledForMix(iteration % 3 != 0);
+        if (iteration == 36) {
+            registrations[3].reset();
+            registrations[3] = masterBus.registerDeck(*decks[3], 3);
+            ok &= require(registrations[3].isValid(),
+                          "registration swap succeeds during active-device stress");
+        }
+
+        juce::AudioBuffer<float> masterOutput(6, blockSize);
+        const auto start = std::chrono::steady_clock::now();
+        masterBus.getNextAudioBlock({&masterOutput, 0, blockSize});
+        const auto elapsed = std::chrono::duration<double, std::micro>(
+            std::chrono::steady_clock::now() - start).count();
+        masterBusTotalUs += elapsed;
+        masterBusWorstUs = std::max(masterBusWorstUs, elapsed);
+        ok &= require(isFinite(masterOutput), "four-graph master-bus output is finite");
+        ok &= require(masterOutput.getMagnitude(0, 0, blockSize) > 0.00001f,
+                      "four-graph master-bus output is non-silent");
+        if (blockSize > DjMasterBus::kProcessingChunkSize) {
+            const int tailStart = blockSize - std::min(64, blockSize);
+            ok &= require(masterOutput.getMagnitude(0, tailStart, blockSize - tailStart)
+                              > 0.00001f,
+                          "chunked master-bus tail is non-silent");
+        }
+    }
+
+    registrations[2].reset();
+    {
+        juce::AudioBuffer<float> retirementOutput(6, 4096);
+        masterBus.getNextAudioBlock({&retirementOutput, 0, 4096});
+        ok &= require(isFinite(retirementOutput), "master bus survives deck retirement");
+    }
+    registrations[2] = masterBus.registerDeck(*decks[2], 2);
+    ok &= require(registrations[2].isValid(), "retired real graph can be re-registered");
+    {
+        juce::AudioBuffer<float> replacementOutput(6, 16'384);
+        masterBus.getNextAudioBlock({&replacementOutput, 0, 16'384});
+        ok &= require(isFinite(replacementOutput), "replacement generation stays finite");
+    }
+    const auto masterStats = masterBus.realtimeStats();
+    ok &= require(masterStats.oversizedCallbacks > 0,
+                  "large callbacks use the chunked master-bus path");
+    ok &= require(realtimeCountersAreZero(masterBus),
+                  "master-bus realtime violation counters are zero");
+    std::cout << "DjMasterBus four real graphs/mixed blocks: avg="
+              << masterBusTotalUs / 72.0 << " us worst=" << masterBusWorstUs << " us\n";
+
+    for (auto& registration : registrations)
+        registration.reset();
+    masterBus.beginShutdown();
+    masterBus.releaseResources();
 
     for (auto& deck : decks) {
         ok &= require(realtimeCountersAreZero(*deck), "four-deck realtime counters are zero");

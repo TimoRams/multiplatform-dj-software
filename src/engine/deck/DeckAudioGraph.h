@@ -1,6 +1,7 @@
 #pragma once
 
 #include "audio/cache/AudioCacheHandle.h"
+#include "engine/MasterBusAudioEndpoint.h"
 
 #include <atomic>
 #include <cstdint>
@@ -14,7 +15,7 @@ class TimeStretchAudioSource;
 namespace juce { class AudioTransportSource; }
 namespace engine::audio { class ScratchDeckBridge; }
 
-class DeckAudioGraph final : public juce::AudioSource {
+class DeckAudioGraph final : public IDeckAudioEndpoint {
 public:
     struct RealtimeStats {
         std::uint64_t diskReadsFromAudioThread = 0;
@@ -51,6 +52,9 @@ public:
     void prepareToPlay(int maximumBlockSize,double sampleRate) override;
     void releaseResources() override;
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) noexcept override;
+    [[nodiscard]] const juce::AudioBuffer<float>& preFaderBuffer() const noexcept override;
+    [[nodiscard]] bool cueEnabledForMix() const noexcept override;
+    void setCueEnabledForMix(bool enabled) noexcept override;
 
     void installPreparedTrack(PreparedTrack track);
     void clearTrack(std::uint64_t invalidThroughGeneration=0);

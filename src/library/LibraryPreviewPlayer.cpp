@@ -97,6 +97,23 @@ void LibraryPreviewPlayer::releaseResources()
     m_positionSec.store(0.0, std::memory_order_relaxed);
 }
 
+void LibraryPreviewPlayer::prepareAuxAudio(int maximumBlockSize, double sampleRate)
+{
+    prepareToPlay(maximumBlockSize, sampleRate);
+}
+
+void LibraryPreviewPlayer::releaseAuxAudio()
+{
+    releaseResources();
+}
+
+void LibraryPreviewPlayer::mixAuxAudio(juce::AudioBuffer<float>& masterBuffer,
+                                       juce::AudioBuffer<float>& scratchBuffer,
+                                       int numberOfSamples) noexcept
+{
+    mixIntoOutputs(masterBuffer, scratchBuffer, 0, numberOfSamples);
+}
+
 double LibraryPreviewPlayer::previewStartSeconds(double trackLengthSec) const
 {
     if (trackLengthSec <= 0.0)
@@ -322,7 +339,7 @@ void LibraryPreviewPlayer::mixIntoOutputs(juce::AudioBuffer<float>& masterBuf,
         return;
 
     if (scratch.getNumSamples() < numSamples || scratch.getNumChannels() < 2)
-        scratch.setSize(2, numSamples, false, false, true);
+        return;
 
     scratch.clear();
     juce::AudioSourceChannelInfo info(&scratch, 0, numSamples);

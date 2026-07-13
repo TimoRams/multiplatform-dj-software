@@ -326,6 +326,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/engine/audio/MetadataUtils.cpp
     src/engine/DjMasterBus.h
     src/engine/DjMasterBus.cpp
+    src/engine/MasterBusAudioEndpoint.h
     src/engine/audio/TimeStretchAudioSource.cpp
     src/engine/audio/MixerDspSource.cpp
     src/engine/audio/MixerFilterCoefficients.cpp
@@ -631,6 +632,7 @@ add_test(NAME mixer_dsp COMMAND BrockDJ_mixer_dsp_tests)
 
 add_executable(BrockDJ_deck_audio_graph_tests
     tests/deck_audio_graph/deck_audio_graph_tests.cpp
+    src/engine/DjMasterBus.cpp
     src/engine/deck/DeckAudioGraph.cpp
     src/audio/cache/AudioPageCache.cpp src/audio/cache/AudioCacheWorker.cpp src/audio/cache/CachedPlaybackAudioSource.cpp
     src/engine/audio/ScratchDeckBridge.cpp src/engine/audio/ScratchResampler.cpp src/engine/audio/HermiteResamplingAudioSource.cpp
@@ -677,6 +679,20 @@ target_include_directories(BrockDJ_control_clock_tests PRIVATE src)
 target_link_libraries(BrockDJ_control_clock_tests PRIVATE Qt6::Core)
 target_compile_features(BrockDJ_control_clock_tests PRIVATE cxx_std_26)
 add_test(NAME control_clock COMMAND BrockDJ_control_clock_tests)
+
+add_executable(BrockDJ_master_bus_tests
+    tests/master_bus/master_bus_tests.cpp
+    src/engine/DjMasterBus.cpp
+    src/fx/BrickwallLimiter.cpp
+)
+target_include_directories(BrockDJ_master_bus_tests PRIVATE src src/engine src/fx/dsp)
+target_link_libraries(BrockDJ_master_bus_tests PRIVATE
+    Qt6::Core
+    juce::juce_core juce::juce_events juce::juce_audio_basics juce::juce_audio_devices)
+target_compile_definitions(BrockDJ_master_bus_tests PRIVATE
+    JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1)
+target_compile_features(BrockDJ_master_bus_tests PRIVATE cxx_std_26)
+add_test(NAME master_bus COMMAND BrockDJ_master_bus_tests)
 
 add_executable(BrockDJ_analysis_lifetime_tests
     tests/analysis/analysis_lifetime_tests.cpp

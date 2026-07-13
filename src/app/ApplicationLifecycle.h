@@ -1,15 +1,16 @@
 #pragma once
 
 #include "app/ControlClock.h"
+#include "DjMasterBus.h"
 
 #include <QPointer>
 #include <QQuickWindow>
 #include <QQmlApplicationEngine>
+#include <array>
 #include <memory>
 #include <mutex>
 
 class DjEngine;
-class DjMasterBus;
 class ParameterStore;
 class MidiControllerManager;
 class ControllerIntegrationManager;
@@ -49,6 +50,7 @@ struct ApplicationRuntime {
     std::unique_ptr<DjEngine> deckB;
     std::unique_ptr<DjEngine> deckC;
     std::unique_ptr<DjEngine> deckD;
+    std::array<DjMasterBus::DeckRegistration, DjMasterBus::kMaximumDecks> deckRegistrations;
 
     std::unique_ptr<ParameterStore> parameterStore;
     std::unique_ptr<MixerParameterBridge> mixerParameterBridge;
@@ -61,6 +63,7 @@ struct ApplicationRuntime {
     std::unique_ptr<LibraryTableModel> libraryTableModel;
     std::unique_ptr<LibraryAnalysisManager> libraryAnalysisManager;
     std::unique_ptr<LibraryPreviewPlayer> libraryPreviewPlayer;
+    DjMasterBus::AuxRegistration previewRegistration;
 
     std::unique_ptr<FxManager> fxManager;
     std::unique_ptr<LinkManager> linkManager;

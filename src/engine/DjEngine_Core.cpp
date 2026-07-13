@@ -129,7 +129,7 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
     m_audioGraph->mixer().setTrim(static_cast<float>(m_trim));
     m_audioGraph->mixer().setFader(static_cast<float>(m_volume));
 
-    // DjMasterBus calls prepareToPlay on this source via addDeck().
+    // DjMasterBus prepares the registered DeckAudioGraph endpoint.
 
     refreshHardwareLatency();
     connect(&m_audioDeviceService, &AudioDeviceService::configurationChanged, this, [this]() {

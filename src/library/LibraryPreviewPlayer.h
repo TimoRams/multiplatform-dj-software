@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QString>
 #include "app/ControlClock.h"
+#include "engine/MasterBusAudioEndpoint.h"
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -11,7 +12,7 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 
-class LibraryPreviewPlayer : public QObject
+class LibraryPreviewPlayer : public QObject, public IMasterBusAuxEndpoint
 {
     Q_OBJECT
     Q_PROPERTY(bool playing READ isPlaying NOTIFY playingChanged)
@@ -42,6 +43,11 @@ public:
                         juce::AudioBuffer<float>& scratch,
                         int startSample,
                         int numSamples);
+    void prepareAuxAudio(int maximumBlockSize, double sampleRate) override;
+    void releaseAuxAudio() override;
+    void mixAuxAudio(juce::AudioBuffer<float>& masterBuffer,
+                     juce::AudioBuffer<float>& scratchBuffer,
+                     int numberOfSamples) noexcept override;
 
 signals:
     void playingChanged();

@@ -204,3 +204,22 @@ injizierte Decks und beendete sauber; echte Hardwarelisten, Wiedergabe und Hot-U
 - [x] Dedicated ControlClock and four-deck integration targets pass TSAN without a report.
 - [ ] Manual: FLX10 display/keepalive/upload, MIDI LEDs/VU, Link peers, visual 60 Hz waveform and
   suspend/resume on a release GUI build.
+
+## DjMasterBus regression (2026-07-13)
+
+- [x] Zero/one/two/four decks; invalid/occupied/duplicate slots; movable and repeated-reset tokens;
+  stale generation rejection; prepare/release/re-prepare and registration rejection after shutdown.
+- [x] 64, 128, 256, 512, 1024, 2048, 4096, 8192 and 16384 sample callbacks are finite and retain a
+  non-silent tail; large callbacks use 2048 chunks without callback buffer growth.
+- [x] Unity/sum/fader/crossfader-derived post-fader gains, mute, master gain, pre-fader one/multi-cue,
+  booth, master/cue mix, peak/clip, limiter/high input, silence and NaN/Infinity isolation.
+- [x] Concurrent callback and token retirement prove no calls after reset; registration cycle and
+  controlled shutdown are deterministic.
+- [x] Fixed-seed four real `DeckAudioGraph` stress covers varying blocks, Play/Pause, track replacement,
+  scratch, keylock, EQ/FX, fader/crossfader targets, cue and registration swaps.
+- [x] Required `MasterBusRealtimeStats` values are zero; `oversizedCallbacks` alone increases for
+  blocks over 2048. Graph/cache/time-stretch/mixer RT counters remain zero.
+- [x] Main Fast-Build and all 16 CTest targets pass. Master-bus plus graph targets pass ASAN+UBSAN
+  (`detect_leaks=0` only because ptrace blocks LSan) and TSAN without a report.
+- [ ] Manual hardware: ALSA/JACK/CoreAudio/ASIO block sizes and hot-unplug; audible cue/crossfader/
+  limiter transitions, mono/multi-output device routing, callback jitter and shutdown under load.

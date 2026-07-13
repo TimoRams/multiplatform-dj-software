@@ -25,10 +25,11 @@ publishes track generation to time stretch and scratch, then opens the gate. Sta
 audio generations are rejected and their handles released. Eject invalidates through the current
 loader generation before releasing readers.
 
-`DjMasterBus` remains application-owned and still registers `DjEngine*`; the deck endpoint returned
-by that facade is now the stable `DeckAudioGraph`. `ApplicationLifecycle` removes decks and stops
-the callback before graph destruction. Direct master-bus registration of graph handles remains a
-future hardening item, not part of this ownership-only refactor.
+`DjMasterBus` remains application-owned but now registers `DeckAudioGraph` only through the narrow
+`IDeckAudioEndpoint`. `DjEngine::audioEndpoint()` is a bootstrap boundary; the bus neither stores nor
+calls the facade. Four application-owned RAII tokens, fixed slot generations and callback-reader
+retirement make graph lifetime explicit. Lifecycle stops the callback and resets tokens before graph
+destruction.
 
 This map covers every out-of-line `DjEngine` method and every mutable state bundle in `DjEngine.h`. Symbols grouped in one row have the same current owner, target owner, thread model and migration risk. `DjEngine` remains the public QML facade until each target component is introduced.
 
@@ -46,7 +47,7 @@ This map covers every out-of-line `DjEngine` method and every mutable state bund
 | `resetTrackLoadState`, `updateTrackDuration`, `attachCacheToTransport`, `releaseTransportReaders`, `ejectTrack` | `DjEngine_Transport.cpp` | cache-source/track ownership transitions / `DjEngine` | DeckTrackLoader + DeckTransport | Qt owner; audio graph lifetime | cache handle, analyzer, scratch bridge | high |
 | `getProgress`, `getDuration`, `getPosition`, `getVisualPosition`, `getVisualPositionQml`, `loopPreviewOutPosition`, `getPlayheadPositionAtomic`, `isPlaying`, `getTrackData`, `currentCoverImage` | `DjEngine_Transport.cpp` | QML/read-only deck facade / `DjEngine` | QML facade + UI-/Visual-State | Qt/QML; atomic visual reads | transport, TrackData, cover service | medium |
 | `togglePlay`, `play`, `pause`, `ensureTransportRunningForPlayIntent`, `freezeTransportAt`, `setPosition`, `setSnapAnchor`, `armSnapFromTransportPosition`, `armVisualSeekSettle`, `syncScratchBridgeToTransport` | `DjEngine_Transport.cpp` | play intent, seek and transport state / `DjEngine` | DeckTransport | Qt owner/control; changes audio-source state outside callback | transport, scratch, sync, injected device service | very high |
-| `vuLevelL/R`, `preFaderVuLevelL/R`, `clipDetected`, `gainReduction`, `getAudioSource`, `getPflBuffer` | `DjEngine_Transport.cpp` | audio graph/master-bus bridge / `DjEngine` | DeckAudioGraph + QML facade | audio callback writes; UI reads atomics; PFL audio-thread-only | `MixerDspSource`, `DjMasterBus` | very high |
+| `vuLevelL/R`, `preFaderVuLevelL/R`, `clipDetected`, `gainReduction`, `audioEndpoint` | `DjEngine_Transport.cpp` | meter facade plus explicit bootstrap endpoint / `DjEngine` | DeckAudioGraph + QML facade | audio callback writes; UI reads atomics; bootstrap borrows graph once | `DeckAudioGraph`, `DjMasterBus` | medium |
 | `setCueEnabled`, `masterCueEnabled`, `headphoneMix`, `setMasterCueEnabled`, `setHeadphoneMix` | `DjEngine_TransportExtras.cpp` | PFL/master monitoring facade / `DjEngine` | DeckAudioGraph/QML facade; global master controls ultimately AudioDeviceService-adjacent | Qt/MIDI writes atomics read by callback | `DjMasterBus`, mixer source | high |
 | `setQuantizeEnabled`, `setReverse`, `setSlip`, `returnToSlipPosition` | `DjEngine_TransportExtras.cpp` | deck transport modes / `DjEngine` | DeckTransport | Qt/control; audio graph transition | reverse source, transport, loop/cue | very high |
 | `setDownbeatAtPosition`, `setDownbeatAtCurrentPosition`, `nudgeBeatgridMs`, `nudgeBeatgridBeats`, `doubleBpm`, `halveBpm`, `setManualBpm` | `DjEngine_CoreTempo.cpp` | user beatgrid/tempo edits / `DjEngine` | DeckSyncController + DeckTrackLoader persistence | Qt owner; emits metadata/sync signals | TrackData, DB, sync coordinator | high |
@@ -178,3 +179,24 @@ Named callbacks split fast scratch (250 Hz), transport (125 Hz), sync input/appl
 deck input and apply phases. `DjEngine` remains the public QML/MIDI/controller facade and no public
 API was removed. The number of `DjEngine_*.cpp` files is unchanged; scheduling ownership moved to
 `src/app/ControlClock.*`, not into another deck facade file.
+
+## Master-bus boundary after hardening (2026-07-13)
+
+Before, `DjMasterBus` included `DjEngine.h`, stored one `std::vector<DjEngine*>` (up to four raw
+pointers), called `getAudioSource()`/`getPflBuffer()` per block, and held a raw preview player.
+Registration was implicit and facade lifetime depended on global shutdown ordering. There were zero
+explicit `DeckAudioGraph*` members, but up to four transient raw source/graph endpoint pointers had no
+local retirement protection.
+
+Now `DjEngine.h` is 658 lines (663 before) and the number of `DjEngine_*.cpp` files remains 13.
+`getAudioSource()` and `getPflBuffer()` were removed from the facade; the sole bridge is
+`IDeckAudioEndpoint& audioEndpoint()`. The bus has zero `DjEngine`/QML dependencies and zero raw graph
+pointers without lifetime protection. Its four raw interface pointers are deliberately non-owning but
+are guarded by token ownership, slot generation, null publication and active-reader drain.
+
+Architecture metrics: raw `DjEngine*` storage 1 collection/up to 4 instances → 0; unprotected typed
+`DeckAudioGraph*` members 0 → 0 (unprotected transient endpoints up to 4 → 0); maximum callback 4096
+with blanket silence above it → arbitrary valid callback chunked at 2048, verified at 8192/16384;
+potential callback buffer-growth sites 1 → 0; blocking callback locks 0 → 0; direct master-bus
+dependencies on `DjEngine`/QML 1/0 → 0/0. The facade's public QML properties and invokables are
+unchanged.

@@ -448,3 +448,30 @@ lateness skips non-musical groups first. QML periodic waveform, Link publish and
 clock signals; render-frame and single-shot debounces remain independent. The four-graph transport
 stress now executes through the clock and keeps every realtime violation counter at zero. Next:
 fix `DjMasterBus` registration lifetime and remove its fixed 4096-sample block limit.
+
+## Current task: DjMasterBus lifetime and arbitrary block sizes (2026-07-13)
+
+`DjMasterBus` is still application-owned and remains the sole device callback, but it has no
+`DjEngine`, QML, transport, sync or metadata dependency. `DeckAudioGraph` implements the narrow
+`IDeckAudioEndpoint` (`AudioSource`, pre-fader buffer and atomic cue flag); preview implements a
+separate auxiliary endpoint. Bootstrap receives four movable RAII tokens for fixed slots. Each slot
+has a generation, duplicate/invalid/stale registration is rejected, and unregister publishes null
+then drains active callback readers before the graph may be destroyed. Lifecycle order is callback
+stop → tokens reset → `beginShutdown()` → graph/preview destruction → bus → device service.
+
+The former hard 4096 limit and silent return are gone. Three stereo 2048-sample scratch buffers are
+prepared outside RT and every valid callback is processed in chunks. Mixing semantics remain graph
+post-fader sum → preview → master gain → pre-limiter peak/clip → existing limiter → output pairs;
+headphone/booth PFL remains pre-fader. Finite guards isolate bad deck samples. The new
+`BrockDJ_master_bus_tests` covers registration, generation, concurrent retirement, 64–16384,
+mix/cue/meter/limiter/NaN and performance. The graph target adds fixed-seed four-real-graph stress
+with playback/track changes/scratch/keylock/EQ/FX/fader/cue/registration/shutdown.
+
+Release unit measurements with routing, cue/master mix, post-crossfader gains and limiter active:
+empty/512 59.73 us, one deck/512 55.35 us, four decks/512 75.10 us, four/2048 386.22 us,
+four/8192 1170.10 us, four/16384 3094.18 us; 16384 worst 4910.38 us, 188.85 ns/sample,
+registration cycle 1.86 us, master scratch memory 49,152 bytes. The eight-chunk 16384 result is
+about 386.77 us/chunk versus 386.22 us for one 2048 block (about 0.1% measured chunk overhead). All 16 tests and
+ASAN+UBSAN/TSAN targets pass; LSan is unavailable under ptrace. Architecture/realtime roadmap is
+estimated at about 90% complete. Next: `DatabaseWorker` and `MediaIoScheduler`; do not reopen the
+audio graph/master bus in that task.

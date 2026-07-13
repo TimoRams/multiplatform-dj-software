@@ -85,3 +85,22 @@ Jede Änderung an `getNextAudioBlock()`, `processBlock()`, `prepareToPlay()`-Üb
   permitted. Severe lateness may skip UI/feedback/slow groups, never the current transport/sync pass.
 - No decoder, file, database integrity operation, object destruction, unbounded allocation or
   control/audio lock may be added to a fast callback group.
+
+## DjMasterBus callback boundary (2026-07-13)
+
+- The callback may read only the four fixed `IDeckAudioEndpoint` slots and the single auxiliary
+  endpoint under `EndpointReadGuard`. The guard is a seq-cst atomic reader count, not a mutex; its
+  ordering with seq-cst null publication closes the weak-memory retirement race.
+- Register/unregister, endpoint prepare/release, generation changes, token destruction and reader
+  draining are control/lifecycle operations. A token must be reset before endpoint destruction.
+- Internal processing is always bounded to `kProcessingChunkSize == 2048`. External valid blocks are
+  processed as consecutive chunks; 4096, 8192 and 16384 must never trigger buffer growth or a blanket
+  silent return.
+- `m_deckScratch`, `m_masterBuf` and `m_previewScratch` are exactly stereo × 2048 and are allocated in
+  `prepareToPlay()`. No callback `setSize`, vector growth, registration mutation or blocking lock is
+  permitted. The limiter is also prepared for 2048 outside the callback and retains continuous state
+  across chunks.
+- Endpoint post-fader audio and PFL must contain at least the requested chunk. Invalid PFL increments
+  instrumentation; NaN/Infinity is detected and isolated so one deck cannot poison the master.
+- A callback larger than 2048 may increment `oversizedCallbacks`; the six required violation counters
+  and `silentOversizedCallbacks` must remain zero in automated tests.
