@@ -4,6 +4,7 @@
 #include <cmath>
 
 namespace {
+thread_local bool g_inMixerCallback=false;
 
 struct StereoBlock {
     float* L;
@@ -71,8 +72,10 @@ void MixerDspSource::armClickFreeTransition() { m_pendingClickFreeBridge.store(t
 const juce::AudioBuffer<float>& MixerDspSource::getPflBuffer() const { return m_preFaderScratch; }
 
 void MixerDspSource::prepareToPlay(int samplesPerBlockExpected, double sampleRate) {
+        if(g_inMixerCallback)m_prepareRt.fetch_add(1,std::memory_order_relaxed);
         if (source) source->prepareToPlay(samplesPerBlockExpected, sampleRate);
 
+        if(g_inMixerCallback)m_growthRt.fetch_add(1,std::memory_order_relaxed);
         m_preFaderScratch.setSize(2, std::max(64, samplesPerBlockExpected), false, true, true);
 
         m_colorFx.prepare(sampleRate, samplesPerBlockExpected, 2);
@@ -80,13 +83,9 @@ void MixerDspSource::prepareToPlay(int samplesPerBlockExpected, double sampleRat
             fx.prepare(sampleRate, samplesPerBlockExpected, 2);
         m_padFx.prepare(sampleRate, samplesPerBlockExpected, 2);
         
-        juce::dsp::ProcessSpec spec { sampleRate, static_cast<juce::uint32>(samplesPerBlockExpected), 2 };
-        lowEq.prepare(spec);
-        midEq.prepare(spec);
-        highEq.prepare(spec);
-        colorFilter.prepare(spec);
-
         m_sampleRate = sampleRate;
+        m_filterSampleRate.store(sampleRate,std::memory_order_release);
+        m_deviceGeneration.fetch_add(1,std::memory_order_acq_rel);
         for (int i = 0; i < 8; ++i) m_scratchWarmLpState[i] = 0.0f;
         m_lastOutputSample[0] = 0.0f;
         m_lastOutputSample[1] = 0.0f;
@@ -100,19 +99,6 @@ void MixerDspSource::prepareToPlay(int samplesPerBlockExpected, double sampleRat
         m_faderSmooth.reset(sr, 0.020f);   // 20 ms — crossfader can move very fast
         m_faderSmooth.setCurrentAndTargetValue(faderVal.load(std::memory_order_relaxed));
 
-        m_eqLowSmooth  .reset(sr, 0.012f);
-        m_eqMidSmooth  .reset(sr, 0.012f);
-        m_eqHighSmooth .reset(sr, 0.012f);
-        m_filterSmooth .reset(sr, 0.012f);
-        m_eqLowSmooth  .setCurrentAndTargetValue(lowVol .load(std::memory_order_relaxed));
-        m_eqMidSmooth  .setCurrentAndTargetValue(midVol .load(std::memory_order_relaxed));
-        m_eqHighSmooth .setCurrentAndTargetValue(highVol.load(std::memory_order_relaxed));
-        m_filterSmooth .setCurrentAndTargetValue(filterVal.load(std::memory_order_relaxed));
-        m_appliedEqLow  = m_eqLowSmooth.getCurrentValue();
-        m_appliedEqMid  = m_eqMidSmooth.getCurrentValue();
-        m_appliedEqHigh = m_eqHighSmooth.getCurrentValue();
-        m_appliedFilter = m_filterSmooth.getCurrentValue();
-        m_filterHoldSamples = 0;
 
         // 1.15 s ramp from full speed to a complete stop
         m_vinylBrakeRampDown  = 1.0f / (1.15f * static_cast<float>(sampleRate));
@@ -145,7 +131,8 @@ void MixerDspSource::prepareToPlay(int samplesPerBlockExpected, double sampleRat
         m_rollOutNeedSync  = true;
         m_rollOutGain      = 1.0f;
 
-        updateFilters();
+        publishFilterSnapshot();
+        activateFilterSnapshot();
     }
 
 void MixerDspSource::releaseResources() {
@@ -153,6 +140,7 @@ void MixerDspSource::releaseResources() {
     }
 
 void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill) {
+        struct Scope{Scope(){g_inMixerCallback=true;}~Scope(){g_inMixerCallback=false;}} scope;
         m_colorFx.applyPendingCommandAtBlockBoundary();
         for (auto& fx : m_fxChain)
             fx.applyPendingCommandAtBlockBoundary();
@@ -170,7 +158,7 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
         if (m_sampleRate <= 0.0 || bufferToFill.buffer->getNumChannels() == 0 || bufferToFill.numSamples == 0) [[unlikely]]
             return;
 
-        maybeRefreshFilterCoefficients(bufferToFill.numSamples);
+        activateFilterSnapshot();
 
         // Rate-proportional 4-pole anti-alias LP + gentle soft-clip during scratch.
         // scratchTimbre carries absRate (0–1); cutoff at rate × sr × 0.25 places
@@ -243,7 +231,6 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
         // the device buffer is wider (e.g. user selects output channels 3+4).
         auto slicedBlock = fullBlock.getSubsetChannelBlock(
                                0, std::min(fullBlock.getNumChannels(), static_cast<size_t>(2)));
-        juce::dsp::ProcessContextReplacing<float> context(slicedBlock);
 
         // Apply trim pre-EQ/pre-fader with per-sample smoothing.
         m_trimSmooth.setTargetValue(trimVal.load(std::memory_order_relaxed));
@@ -273,10 +260,7 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
                               bufferToFill.startSample,
                               bufferToFill.numSamples);
 
-        lowEq.process(context);
-        midEq.process(context);
-        highEq.process(context);
-        colorFilter.process(context);
+        processPreparedFilters(bufferToFill);
 
         // ── Circular buffer: always records; vinyl brake + backspin read from it ──
         {
@@ -506,8 +490,8 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
         // Master volume, limiter, and output routing are handled by DjMasterBus.
     }
 
-void MixerDspSource::setTrim(float val) { trimVal = val; }
-void MixerDspSource::setFader(float val) { faderVal = val; }
+void MixerDspSource::setTrim(float val) { trimVal.store(std::clamp(val,0.0f,4.0f),std::memory_order_relaxed); }
+void MixerDspSource::setFader(float val) { faderVal.store(std::clamp(val,0.0f,1.0f),std::memory_order_relaxed); }
 void MixerDspSource::setPolarityInverted(bool inverted) { m_polarityInverted.store(inverted, std::memory_order_relaxed); }
 
 void MixerDspSource::setStopEffectWanted(std::atomic<bool>& flag, bool active)
@@ -562,18 +546,17 @@ float MixerDspSource::stopTailGain(float value, float fadeStart)
 }
 
 void MixerDspSource::setEq(float l, float m, float h) {
-        lowVol = l;
-        midVol = m;
-        highVol = h;
-        // Signal the audio thread to recompute coefficients.  Writing the
-        // atomics first + release on the flag ensures the audio thread sees
-        // all three values before it reads m_filtersDirty = true.
-        m_filtersDirty.store(true, std::memory_order_release);
+        std::lock_guard lock(m_filterTargetMutex);
+        lowVol.store(std::clamp(l,-1.0f,1.0f),std::memory_order_relaxed);
+        midVol.store(std::clamp(m,-1.0f,1.0f),std::memory_order_relaxed);
+        highVol.store(std::clamp(h,-1.0f,1.0f),std::memory_order_relaxed);
+        publishFilterSnapshot();
     }
 
 void MixerDspSource::setFilterVal(float f) {
-        filterVal = f;
-        m_filtersDirty.store(true, std::memory_order_release);
+        std::lock_guard lock(m_filterTargetMutex);
+        filterVal.store(std::clamp(f,-1.0f,1.0f),std::memory_order_relaxed);
+        publishFilterSnapshot();
     }
 
 float MixerDspSource::getDecibelsFromKnob(float kb) const {
@@ -584,75 +567,50 @@ float MixerDspSource::getDecibelsFromKnob(float kb) const {
         }
     }
 
-void MixerDspSource::updateFiltersFromValues(float low, float mid, float high, float filter)
+void MixerDspSource::publishFilterSnapshot() noexcept
 {
-        if (m_sampleRate <= 0) return;
-
-        // Update EQs using standard DJ shelving/peak frequencies
-        *lowEq.state = *juce::dsp::IIR::Coefficients<float>::makeLowShelf(m_sampleRate, 250.0f, 0.707f, juce::Decibels::decibelsToGain(getDecibelsFromKnob(low)));
-        *midEq.state = *juce::dsp::IIR::Coefficients<float>::makePeakFilter(m_sampleRate, 1000.0f, 0.707f, juce::Decibels::decibelsToGain(getDecibelsFromKnob(mid)));
-        *highEq.state = *juce::dsp::IIR::Coefficients<float>::makeHighShelf(m_sampleRate, 2500.0f, 0.707f, juce::Decibels::decibelsToGain(getDecibelsFromKnob(high)));
-
-        // Color Filter (LPF/HPF combo)
-        if (std::abs(filter) < 0.05f) {
-            *colorFilter.state = *juce::dsp::IIR::Coefficients<float>::makePeakFilter(m_sampleRate, 1000.0f, 0.707f, 1.0f);
-        } else if (filter < 0.0f) {
-            const float t = 1.0f + filter;
-            const float freq = 80.0f * std::pow(20000.0f / 80.0f, t);
-            *colorFilter.state = *juce::dsp::IIR::Coefficients<float>::makeLowPass(m_sampleRate, std::max(20.0f, freq), 1.2f);
-        } else {
-            const float freq = 20.0f * std::pow(10000.0f / 20.0f, filter);
-            *colorFilter.state = *juce::dsp::IIR::Coefficients<float>::makeHighPass(m_sampleRate, std::max(20.0f, freq), 1.2f);
+    if(g_inMixerCallback)m_coeffBuildRt.fetch_add(1,std::memory_order_relaxed);
+    const auto generation=m_parameterGeneration.fetch_add(1,std::memory_order_acq_rel)+1;
+    const MixerFilterTargets targets{lowVol.load(),midVol.load(),highVol.load(),filterVal.load()};
+    const auto snapshot=buildMixerCoefficientSnapshot(targets,m_filterSampleRate.load(std::memory_order_acquire),generation,m_deviceGeneration.load(std::memory_order_acquire));
+    if(!snapshot.valid()){m_invalidSets.fetch_add(1,std::memory_order_relaxed);return;}
+    for(auto& slot:m_coefficientSlots){
+        auto expected=SnapshotState::Empty;
+        if(slot.state.compare_exchange_strong(expected,SnapshotState::Writing,std::memory_order_acq_rel)){
+            slot.snapshot=snapshot;slot.state.store(SnapshotState::Ready,std::memory_order_release);return;
         }
-
-        m_appliedEqLow  = low;
-        m_appliedEqMid  = mid;
-        m_appliedEqHigh = high;
-        m_appliedFilter = filter;
+    }
+    for(auto& slot:m_coefficientSlots){
+        auto expected=SnapshotState::Ready;
+        if(slot.state.compare_exchange_strong(expected,SnapshotState::Writing,std::memory_order_acq_rel)){
+            slot.snapshot=snapshot;slot.state.store(SnapshotState::Ready,std::memory_order_release);m_staleSnapshots.fetch_add(1,std::memory_order_relaxed);return;
+        }
+    }
+    m_staleSnapshots.fetch_add(1,std::memory_order_relaxed);
 }
 
-void MixerDspSource::maybeRefreshFilterCoefficients(int numSamples)
+void MixerDspSource::activateFilterSnapshot() noexcept
 {
-        m_eqLowSmooth  .setTargetValue(lowVol .load(std::memory_order_relaxed));
-        m_eqMidSmooth  .setTargetValue(midVol .load(std::memory_order_relaxed));
-        m_eqHighSmooth .setTargetValue(highVol.load(std::memory_order_relaxed));
-        m_filterSmooth .setTargetValue(filterVal.load(std::memory_order_relaxed));
-
-        m_eqLowSmooth  .skip(numSamples);
-        m_eqMidSmooth  .skip(numSamples);
-        m_eqHighSmooth .skip(numSamples);
-        m_filterSmooth .skip(numSamples);
-
-        m_filterHoldSamples = std::max(0, m_filterHoldSamples - numSamples);
-
-        const float curLow    = m_eqLowSmooth.getCurrentValue();
-        const float curMid    = m_eqMidSmooth.getCurrentValue();
-        const float curHigh   = m_eqHighSmooth.getCurrentValue();
-        const float curFilter = m_filterSmooth.getCurrentValue();
-
-        constexpr float kCoeffEps = 0.0025f;
-        const bool forced = m_filtersDirty.exchange(false, std::memory_order_acquire);
-        const bool moved = std::abs(curLow    - m_appliedEqLow)  > kCoeffEps
-                        || std::abs(curMid    - m_appliedEqMid)  > kCoeffEps
-                        || std::abs(curHigh   - m_appliedEqHigh) > kCoeffEps
-                        || std::abs(curFilter - m_appliedFilter) > kCoeffEps;
-        const bool smoothing = m_eqLowSmooth.isSmoothing() || m_eqMidSmooth.isSmoothing()
-                            || m_eqHighSmooth.isSmoothing() || m_filterSmooth.isSmoothing();
-
-        if (!forced && !moved && !smoothing && m_filterHoldSamples > 0)
-            return;
-
-        m_filterHoldSamples = static_cast<int>(m_sampleRate / 60.0);
-        updateFiltersFromValues(curLow, curMid, curHigh, curFilter);
+    for(auto& slot:m_coefficientSlots){
+        auto expected=SnapshotState::Ready;
+        if(!slot.state.compare_exchange_strong(expected,SnapshotState::Writing,std::memory_order_acq_rel))continue;
+        const auto snapshot=slot.snapshot;
+        if(snapshot.deviceGeneration!=m_deviceGeneration.load(std::memory_order_acquire)||snapshot.parameterGeneration<m_parameterGeneration.load(std::memory_order_acquire)){
+            slot.state.store(SnapshotState::Empty,std::memory_order_release);m_staleSnapshots.fetch_add(1,std::memory_order_relaxed);continue;
+        }
+        const int next=1-m_activeFilterBank;m_filterBanks[next].setSnapshot(snapshot);m_filterBanks[next].clearState();
+        m_activeFilterBank=next;m_filterFadeRemaining=kFilterFadeSamples;m_snapshotSwitches.fetch_add(1,std::memory_order_relaxed);slot.state.store(SnapshotState::Empty,std::memory_order_release);break;
+    }
 }
 
-void MixerDspSource::updateFilters()
+void MixerDspSource::processPreparedFilters(const juce::AudioSourceChannelInfo& info) noexcept
 {
-        updateFiltersFromValues(lowVol.load(std::memory_order_relaxed),
-                                midVol.load(std::memory_order_relaxed),
-                                highVol.load(std::memory_order_relaxed),
-                                filterVal.load(std::memory_order_relaxed));
+    const int channels=std::min(2,info.buffer->getNumChannels());
+    for(int ch=0;ch<channels;++ch){float*w=info.buffer->getWritePointer(ch,info.startSample);for(int i=0;i<info.numSamples;++i){const float input=w[i];const float current=m_filterBanks[m_activeFilterBank].process(ch,input);if(i<m_filterFadeRemaining){const int old=1-m_activeFilterBank;const float previous=m_filterBanks[old].process(ch,input);const float t=static_cast<float>(kFilterFadeSamples-m_filterFadeRemaining+i+1)/kFilterFadeSamples;w[i]=previous+(current-previous)*t;}else w[i]=current;}}
+    m_filterFadeRemaining=std::max(0,m_filterFadeRemaining-info.numSamples);
 }
+
+MixerDspSource::RealtimeStats MixerDspSource::realtimeStats() const noexcept{return{m_coeffBuildRt.load(),m_prepareRt.load(),m_growthRt.load(),m_lockRt.load(),m_constructRt.load(),m_snapshotSwitches.load(),m_staleSnapshots.load(),m_invalidSets.load()};}
 
 FxProcessor* MixerDspSource::fxChainSlot(int slot) {
         if (slot < 1 || slot > kFxChainSlots) return nullptr;

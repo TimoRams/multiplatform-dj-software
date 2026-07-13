@@ -3,6 +3,12 @@
 *Last updated: 2026-07-12*
 
 ## Current task
+**Mixer EQ/color-filter coefficient lifecycle fixed**
+- `MixerDspSource` no longer calls JUCE coefficient factories in `getNextAudioBlock`. Trivial RBJ low-shelf/peak/high-shelf/LP/HP snapshots are built from clamped control targets outside the callback.
+- Two fixed snapshot slots publish complete parameter/device generations. The callback atomically adopts only the newest matching snapshot and crossfades two preallocated stateful filter banks over 128 samples.
+- Trim/fader remain atomic targets with existing per-sample smoothers. Dedicated numerical, block-size, rapid-control and concurrent tests keep all five mixer realtime counters at zero.
+
+## Previous task
 **RubberBand/TimeStretch realtime lifecycle fixed**
 - `TimeStretchAudioSource` owns two fully allocated pipeline slots. RubberBand construction, setters, prewarm, FIFO/buffer setup and latency discovery run in a joined preparation worker or `prepareToPlay`, never in `getNextAudioBlock`.
 - Control changes publish a latest-only configuration generation. The callback atomically activates only a ready slot with matching track/configuration generation and performs a preallocated 256-sample output-tail crossfade.

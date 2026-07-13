@@ -176,3 +176,7 @@ Manual (~15 min):
   preparation worker, block-boundary activation, preallocated crossfade and callback entry-point
   counters. No callback prepare/reset/prewarm/buffer growth/lock attempt remains. Next: move only
   MixerDspSource filter-coefficient and DSP configuration changes out of the callback.
+- Mixer DSP coefficient migration completed: allocation-free custom stereo biquads consume complete
+  prepared RBJ snapshots, fixed slots coalesce rapid control updates, and parallel banks provide a
+  128-sample transition. Mixer realtime counters and numerical/stress tests are green. Next: extract
+  ownership only into `DeckAudioGraph`; do not combine it with `DeckTransport`.

@@ -153,3 +153,9 @@ injizierte Decks und beendete sauber; echte Hardwarelisten, Wiedergabe und Hot-U
 - Musswerte: Callback-Zähler für Prepare, Reset, Prewarm, Bufferwachstum und Lockversuche jeweils null; alle zehn CTest-Targets bestanden.
 - Headless-Messung: 512-Sample-Block über 1000 Aufrufe, 3,29 µs Mittelwert und 10,72 µs Maximum auf diesem Build; kein Hardware-Callback-Vergleich.
 - Manuell offen: hörbarer 256-Sample-Crossfade, extreme Tempo-/Pitchqualität, kurze Loops, Seek/Trackwechsel während laufender Hardwareausgabe und vier Decks mit Controller-Scratch.
+
+## 19. Mixer-EQ und Sound-Color-Snapshots
+
+- Automatisch (2026-07-12): `mixer_dsp` prüft stabile/finite Low-Shelf-, Peak-, High-Shelf-, Low-/High-Pass-Koeffizienten bei 44,1/48/96/192 kHz, 64–8192 Samples, LP-Dämpfung, schnelle kombinierte Reglerbewegungen und parallele Control-/Audiozugriffe.
+- Musswerte: Callback-Zähler für Koeffizientenbau, Prepare, Bufferwachstum, Locks und Objektkonstruktion jeweils null; alle elf CTest-Targets bestanden.
+- Headless 512-Sample-Messung: 22,46 µs Mittelwert, 135,75 µs Maximum. Hardware-/Vierdeckvergleich und subjektive EQ-/Filterabstimmung bleiben offen.

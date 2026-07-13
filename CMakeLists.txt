@@ -323,6 +323,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/engine/DjMasterBus.cpp
     src/engine/audio/TimeStretchAudioSource.cpp
     src/engine/audio/MixerDspSource.cpp
+    src/engine/audio/MixerFilterCoefficients.cpp
     src/analysis/PhraseAnalyzer.h
     src/analysis/PhraseAnalyzer.cpp
     src/analysis/AnalysisCacheVersion.h
@@ -577,6 +578,7 @@ add_executable(BrockDJ_smoke_tests
     tests/smoke/mixer_dsp_smoke.cpp
     src/analysis/AnalysisValidation.cpp
     src/engine/audio/MixerDspSource.cpp
+    src/engine/audio/MixerFilterCoefficients.cpp
     src/fx/FxProcessor.cpp
     src/fx/BrickwallLimiter.cpp
 )
@@ -608,6 +610,19 @@ target_compile_definitions(BrockDJ_smoke_tests PRIVATE
 target_compile_features(BrockDJ_smoke_tests PRIVATE cxx_std_26)
 
 add_test(NAME smoke COMMAND BrockDJ_smoke_tests)
+
+add_executable(BrockDJ_mixer_dsp_tests
+    tests/mixer_dsp/mixer_dsp_tests.cpp
+    src/engine/audio/MixerDspSource.cpp
+    src/engine/audio/MixerFilterCoefficients.cpp
+    src/fx/FxProcessor.cpp
+    src/fx/BrickwallLimiter.cpp
+)
+target_include_directories(BrockDJ_mixer_dsp_tests PRIVATE src src/engine src/engine/audio src/fx/dsp ${SIGNALSMITH_DSP_DIR})
+target_link_libraries(BrockDJ_mixer_dsp_tests PRIVATE Qt6::Core Qt6::Gui juce::juce_core juce::juce_data_structures juce::juce_audio_basics juce::juce_dsp juce::juce_events)
+target_compile_definitions(BrockDJ_mixer_dsp_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
+target_compile_features(BrockDJ_mixer_dsp_tests PRIVATE cxx_std_26)
+add_test(NAME mixer_dsp COMMAND BrockDJ_mixer_dsp_tests)
 
 add_executable(BrockDJ_analysis_lifetime_tests
     tests/analysis/analysis_lifetime_tests.cpp

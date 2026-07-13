@@ -13,6 +13,8 @@ Last updated: 2026-07-11
 - `PlaybackCacheStats::{diskReadsFromAudioThread,decoderCallsFromAudioThread}` must remain zero. The cached-playback test verifies both after hit, miss and recovery paths.
 - RubberBand objects, ratios, FIFOs and buffers may be created/mutated only by `prepareToPlay` or the joined TimeStretch preparation worker. The callback may process an active slot and atomically adopt a matching `Ready` slot, but may not call RubberBand reset/setters/prewarm or resize buffers.
 - `TimeStretchRealtimeStats` prepare/reset/prewarm/growth/lock counters must all remain zero in automated transition and stress tests.
+- Mixer EQ/color coefficients are control-prepared immutable value snapshots. `MixerDspSource::getNextAudioBlock` may copy five-value biquad sets into the inactive preallocated bank and crossfade, but may not call JUCE coefficient factories, `prepare`, resize, lock, construct or destroy DSP objects.
+- `MixerDspSource::RealtimeStats` coefficient-build/prepare/growth/lock/construction counters must all remain zero.
 
 These rules apply to all code that can execute from the JUCE audio callback, including `DjMasterBus::getNextAudioBlock()`, deck audio sources, scratch/keylock sources, mixer DSP and FX processors.
 

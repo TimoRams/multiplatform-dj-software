@@ -1,14 +1,17 @@
 #pragma once
 
 #include "fx/FxProcessor.h"
+#include "MixerFilterCoefficients.h"
 
 #include <array>
 #include <atomic>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
+#include <mutex>
 
 class MixerDspSource : public juce::AudioSource {
 public:
+    struct RealtimeStats { std::uint64_t coefficientBuildsFromAudioThread=0,prepareCallsFromAudioThread=0,bufferGrowthsFromAudioThread=0,blockingLockAttempts=0,objectConstructionsFromAudioThread=0,coefficientSnapshotSwitches=0,staleSnapshots=0,invalidCoefficientSets=0; };
     static constexpr int kFxChainSlots = 3;
 
     explicit MixerDspSource(juce::AudioSource* inSource);
@@ -47,6 +50,7 @@ public:
     void setEq(float l, float m, float h);
     void setFilterVal(float f);
     void setPolarityInverted(bool inverted);
+    [[nodiscard]] RealtimeStats realtimeStats() const noexcept;
 
     std::atomic<float> m_peakL { 0.0f };
     std::atomic<float> m_peakR { 0.0f };
@@ -59,9 +63,9 @@ private:
     [[nodiscard]] int clickFreeBridgeSamples() const;
     [[nodiscard]] static float stopTailGain(float value, float fadeStart);
     [[nodiscard]] float getDecibelsFromKnob(float kb) const;
-    void updateFilters();
-    void updateFiltersFromValues(float low, float mid, float high, float filter);
-    void maybeRefreshFilterCoefficients(int numSamples);
+    void publishFilterSnapshot() noexcept;
+    void activateFilterSnapshot() noexcept;
+    void processPreparedFilters(const juce::AudioSourceChannelInfo&) noexcept;
     FxProcessor* fxChainSlot(int slot);
 
     juce::AudioSource* source = nullptr;
@@ -77,23 +81,16 @@ private:
     std::atomic<float> midVol{0.0f};
     std::atomic<float> highVol{0.0f};
     std::atomic<float> filterVal{0.0f};
-    std::atomic<bool> m_filtersDirty { false };
-
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_eqLowSmooth;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_eqMidSmooth;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_eqHighSmooth;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_filterSmooth;
-    float m_appliedEqLow    = 0.0f;
-    float m_appliedEqMid    = 0.0f;
-    float m_appliedEqHigh   = 0.0f;
-    float m_appliedFilter   = 0.0f;
-    int   m_filterHoldSamples = 0;
-
-    using FilterType = juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>, juce::dsp::IIR::Coefficients<float>>;
-    FilterType lowEq;
-    FilterType midEq;
-    FilterType highEq;
-    FilterType colorFilter;
+    std::mutex m_filterTargetMutex;
+    enum class SnapshotState:std::uint8_t{Empty,Writing,Ready};
+    struct SnapshotSlot{MixerCoefficientSnapshot snapshot;std::atomic<SnapshotState> state{SnapshotState::Empty};};
+    std::array<SnapshotSlot,2> m_coefficientSlots;
+    std::array<MixerFilterBank,2> m_filterBanks;
+    std::atomic<std::uint64_t> m_parameterGeneration{0},m_deviceGeneration{0};
+    std::atomic<double> m_filterSampleRate{0.0};
+    int m_activeFilterBank=0,m_filterFadeRemaining=0;
+    static constexpr int kFilterFadeSamples=128;
+    std::atomic<std::uint64_t> m_coeffBuildRt{0},m_prepareRt{0},m_growthRt{0},m_lockRt{0},m_constructRt{0},m_snapshotSwitches{0},m_staleSnapshots{0},m_invalidSets{0};
 
     FxProcessor m_colorFx;
     std::array<FxProcessor, kFxChainSlots> m_fxChain;
