@@ -6,7 +6,7 @@ void DjEngine::setDownbeatAtPosition(double anchorSec)
     if (!m_trackData || !m_trackData->isBpmAnalyzed())
         return;
 
-    const double trackLengthSec = static_cast<double>(m_audioGraph->transport().getLengthInSeconds());
+    const double trackLengthSec = static_cast<double>(m_transport->trackLengthSeconds());
     if (trackLengthSec <= 0.0)
         return;
 
@@ -27,7 +27,7 @@ void DjEngine::nudgeBeatgridMs(double milliseconds)
     if (!m_trackData || !m_trackData->isBpmAnalyzed())
         return;
 
-    const double trackLen = m_audioGraph->transport().getLengthInSeconds();
+    const double trackLen = m_transport->trackLengthSeconds();
     if (trackLen <= 0.0 || std::abs(milliseconds) < 1e-6)
         return;
 
@@ -70,7 +70,7 @@ static double nearestDownbeatAnchor(const std::vector<TrackData::BeatMarker>& gr
 void DjEngine::doubleBpm()
 {
     if (!m_trackData || !m_trackData->isBpmAnalyzed()) return;
-    double trackLen = static_cast<double>(m_audioGraph->transport().getLengthInSeconds());
+    double trackLen = static_cast<double>(m_transport->trackLengthSeconds());
     if (trackLen <= 0.0) return;
 
     double currentSec = static_cast<double>(getVisualPosition());
@@ -88,7 +88,7 @@ void DjEngine::doubleBpm()
 void DjEngine::halveBpm()
 {
     if (!m_trackData || !m_trackData->isBpmAnalyzed()) return;
-    double trackLen = static_cast<double>(m_audioGraph->transport().getLengthInSeconds());
+    double trackLen = static_cast<double>(m_transport->trackLengthSeconds());
     if (trackLen <= 0.0) return;
 
     double currentSec = static_cast<double>(getVisualPosition());
@@ -110,16 +110,8 @@ void DjEngine::updateSpeedAndPitch()
 
     const bool scratchVarispeed = m_scratch.scrubbing() || m_scratch.releaseGlide();
 
-    if (m_audioGraph->scratchPtr()) {
-        m_audioGraph->scratch().setDeckTempoRatio(speedMultiplier);
-        m_audioGraph->scratch().setKeylockPassthrough(scratchVarispeed ? false : m_keylock);
-    }
-
-    if (m_audioGraph->timeStretchPtr()) {
-        m_audioGraph->timeStretch().setTempoRatio(speedMultiplier);
-        if (!scratchVarispeed)
-            m_audioGraph->timeStretch().setPitchLockEnabled(m_keylock);
-    }
+    m_transport->setPlaybackRate(speedMultiplier);
+    m_transport->setKeylockEnabled(!scratchVarispeed && m_keylock);
 }
 
 
@@ -137,9 +129,6 @@ void DjEngine::applyTempoPercent(double percent)
     percent = std::clamp(percent, -100.0, 100.0);
     if (m_tempoPercent == percent) return;
     m_tempoPercent = percent;
-
-    if (m_audioGraph->scratchPtr() && (m_scratch.scrubbing() || m_scratch.releaseGlide()))
-        m_audioGraph->scratch().setDeckTempoRatio(getTempoRatio());
 
     updateSpeedAndPitch();
     emit tempoChanged();
@@ -188,7 +177,7 @@ void DjEngine::setManualBpm(double bpm)
     if (clamped <= 0.0)
         return;
 
-    const double trackLen = static_cast<double>(m_audioGraph->transport().getLengthInSeconds());
+    const double trackLen = static_cast<double>(m_transport->trackLengthSeconds());
     const double currentSec = static_cast<double>(getVisualPosition());
     const double anchor = nearestDownbeatAnchor(m_trackData->getBeatGrid(), currentSec);
 

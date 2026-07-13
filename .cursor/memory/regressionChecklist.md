@@ -170,3 +170,10 @@ injizierte Decks und beendete sauber; echte Hardwarelisten, Wiedergabe und Hot-U
 - Automatisch (2026-07-12): `mixer_dsp` prüft stabile/finite Low-Shelf-, Peak-, High-Shelf-, Low-/High-Pass-Koeffizienten bei 44,1/48/96/192 kHz, 64–8192 Samples, LP-Dämpfung, schnelle kombinierte Reglerbewegungen und parallele Control-/Audiozugriffe.
 - Musswerte: Callback-Zähler für Koeffizientenbau, Prepare, Bufferwachstum, Locks und Objektkonstruktion jeweils null; alle elf CTest-Targets bestanden.
 - Headless 512-Sample-Messung: 22,46 µs Mittelwert, 135,75 µs Maximum. Hardware-/Vierdeckvergleich und subjektive EQ-/Filterabstimmung bleiben offen.
+
+## 20. DeckTransport
+
+- Automatisch (2026-07-13): ohne Track, idempotentes Play/Pause, EOF/Seek-Clamp, schnelle Seeks, Reverse, Slip-Hintergrund/Rückkehr, negative Pre-Roll-Position und Nullübergang, Loop-Control-Update, Generation/Stale-Install/Clear, A→B→C→D, parallele Snapshot-Leser und deterministischer Vierdeck-Stress.
+- Musswerte: finite pointerfreie Snapshots, monotone State-Generation, korrekte Trackgeneration, keine stale Anwendung und alle aggregierten RT-Verstoßzähler null.
+- Manuell offen: echte QML-Waveform/Remaining-Time, FLX10/MIDI-Feedback, hörbare Cue/Loop/Slip/Reverse/Scratch-Übergänge, vier Decks auf Audiohardware, Hot-Unplug und Shutdown unter Controllerlast.
+- Sanitizer: ASAN/UBSAN ohne Befund; LeakSanitizer im ptrace-Runner technisch nicht verfügbar; TSAN nach Korrektur des gefundenen TimeStretch-Ready-Slot-Races ohne Befund.

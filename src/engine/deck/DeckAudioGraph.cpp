@@ -9,6 +9,7 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 
 #include <algorithm>
+#include <cmath>
 
 struct DeckAudioGraph::Impl {
     explicit Impl(AudioPageCache& pageCache) : cache(pageCache)
@@ -57,6 +58,76 @@ void DeckAudioGraph::getNextAudioBlock(const juce::AudioSourceChannelInfo& info)
 void DeckAudioGraph::setAudioPlayheadSink(std::atomic<double>* sink) noexcept
 {
     m_impl->scratch->setAudioPlayheadSink(sink);
+}
+
+void DeckAudioGraph::setTransportRunning(bool running) noexcept
+{
+    if (running)
+        m_impl->transport.start();
+    else
+        m_impl->transport.stop();
+}
+
+void DeckAudioGraph::seekToSeconds(double seconds) noexcept
+{
+    m_impl->transport.setPosition(std::max(0.0, seconds));
+}
+
+void DeckAudioGraph::setReverse(bool enabled) noexcept
+{
+    if (m_impl->playback)
+        m_impl->playback->setReverse(enabled);
+    m_impl->scratch->setReverse(enabled);
+}
+
+void DeckAudioGraph::setPlaybackRate(double rate) noexcept
+{
+    m_impl->scratch->setDeckTempoRatio(rate);
+    m_impl->timeStretch->setTempoRatio(rate);
+}
+
+void DeckAudioGraph::setKeylockEnabled(bool enabled) noexcept
+{
+    m_impl->scratch->setKeylockPassthrough(enabled);
+    m_impl->timeStretch->setPitchLockEnabled(enabled);
+}
+
+void DeckAudioGraph::setLoopRangeSeconds(double startSeconds, double endSeconds, bool active,
+                                         double sourceSampleRate) noexcept
+{
+    if (m_impl->playback) {
+        if (active) {
+            m_impl->playback->setLoopRangeSamples(
+                static_cast<std::int64_t>(std::llround(startSeconds * sourceSampleRate)),
+                static_cast<std::int64_t>(std::llround(endSeconds * sourceSampleRate)),
+                sourceSampleRate);
+        } else {
+            m_impl->playback->clearLoopRangeSamples();
+        }
+    }
+    m_impl->scratch->setLoopRangeSeconds(startSeconds, endSeconds, active, sourceSampleRate);
+}
+
+void DeckAudioGraph::setPlaybackReadPositionSamples(std::int64_t position) noexcept
+{
+    if (m_impl->playback)
+        m_impl->playback->setNextReadPosition(std::max<std::int64_t>(0, position));
+}
+
+int DeckAudioGraph::keylockLatencySamples() const noexcept
+{
+    return m_impl->timeStretch ? std::max(0, m_impl->timeStretch->getLatencySamples()) : 0;
+}
+
+DeckAudioGraph::TransportSnapshot DeckAudioGraph::transportSnapshot() const noexcept
+{
+    return {
+        m_impl->playback != nullptr,
+        m_impl->transport.isPlaying(),
+        m_impl->transport.getCurrentPosition(),
+        m_impl->transport.getLengthInSeconds(),
+        m_impl->trackGeneration
+    };
 }
 
 void DeckAudioGraph::installPreparedTrack(PreparedTrack track)

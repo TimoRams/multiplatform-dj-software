@@ -59,3 +59,10 @@ track changes so extraction cannot hide a counter by destroying the old source.
 ## Review-Regel
 
 Jede Änderung an `getNextAudioBlock()`, `processBlock()`, `prepareToPlay()`-Übergaben, FX-, Scratch-, Keylock- oder MasterBus-Code muss explizit gegen diese Regeln geprüft werden. Wenn eine Ausnahme unvermeidbar erscheint, muss sie als Risiko in `.cursor/memory/riskRegister.md` dokumentiert werden, bevor sie in den regulären Pfad gelangt.
+
+## Transport snapshots and commands
+
+- `DeckTransportSnapshot` contains values only and is published through an atomic sequence protocol; UI/sync/waveform reads do not touch concrete sources.
+- Graph transport commands are control-thread operations and must not be called from `getNextAudioBlock()`.
+- The only audio-to-transport position channel is the pre-injected `std::atomic<double>` playhead sink. It adds no allocation, Qt signal, lock or lifetime transfer to the callback.
+- Track and snapshot generations guard handovers; stale installs must not mutate the current generation.

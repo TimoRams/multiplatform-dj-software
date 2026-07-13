@@ -226,11 +226,15 @@ void TimeStretchAudioSource::activatePreparedPipelineAtBlockBoundary() noexcept
     const auto wanted = m_desiredGeneration.load(std::memory_order_acquire);
     for (int i = 0; i < 2; ++i) {
         auto& next = m_pipelines[i];
-        if (next.state.load(std::memory_order_acquire) != SlotState::Ready
-            || next.config.configurationGeneration != wanted
-            || next.config.trackGeneration != m_trackGeneration.load(std::memory_order_acquire)) continue;
+        if (next.state.load(std::memory_order_acquire) != SlotState::Ready) continue;
         SlotState ready = SlotState::Ready;
         if (!next.state.compare_exchange_strong(ready, SlotState::Active, std::memory_order_acq_rel)) continue;
+        if (next.config.configurationGeneration != wanted
+            || next.config.trackGeneration != m_trackGeneration.load(std::memory_order_acquire)) {
+            next.state.store(SlotState::Empty, std::memory_order_release);
+            m_workerWake.notify_one();
+            continue;
+        }
         const int old = m_activeSlot.exchange(i, std::memory_order_acq_rel);
         m_activeGeneration.store(next.config.configurationGeneration, std::memory_order_release);
         m_reportedLatencySamples.store(next.config.keylockEnabled ? next.latency : 0, std::memory_order_relaxed);

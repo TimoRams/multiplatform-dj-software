@@ -63,8 +63,7 @@ DjEngine::LatencySnapshot DjEngine::buildLatencySnapshot() const
         snapshot.backendOutputSamples = m_lastLatencySnapshot.backendOutputSamples;
     }
 
-    if (m_audioGraph->timeStretchPtr())
-        snapshot.keylockSamples = std::max(0, m_audioGraph->timeStretch().getLatencySamples());
+    snapshot.keylockSamples = m_transport->keylockLatencySamples();
 
     snapshot.limiterSamples = std::max(0, DjMasterBus::limiterLatencySamples());
     snapshot.resamplerSamples = 0;

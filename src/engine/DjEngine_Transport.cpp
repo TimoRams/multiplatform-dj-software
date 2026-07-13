@@ -4,82 +4,38 @@
 
 float DjEngine::getProgress() const
 {
-    if (m_audioGraph->transport().getTotalLength() > 0.0)
-        return static_cast<float>(m_audioGraph->transport().getCurrentPosition() / m_audioGraph->transport().getLengthInSeconds());
+    const auto transport = m_transport->snapshot();
+    if (transport.trackLengthSeconds > 0.0)
+        return static_cast<float>(transport.audiblePositionSeconds / transport.trackLengthSeconds);
     return 0.0f;
 }
 
 
 float DjEngine::getDuration() const
 {
-    return static_cast<float>(m_audioGraph->transport().getLengthInSeconds());
+    return static_cast<float>(m_transport->trackLengthSeconds());
+}
+
+
+double DjEngine::trackDurationSec() const
+{
+    return m_transport->trackLengthSeconds();
 }
 
 
 
 double DjEngine::getPosition() const
 {
-    if (m_scratch.scrubbing() || m_scratch.releaseGlide() || m_preRollCountdownActive)
-        return m_atomicPlayheadPos.load(std::memory_order_relaxed);
-    // In pre-roll, transport is clamped at 0 while the visual position is
-    // negative. m_scrubHoldPosition is the authoritative visual position here —
-    // it is kept in sync by freezeTransportAt(), cue operations, and hot cues.
-    if (m_scrubHoldPosition < 0.0)
-        return m_scrubHoldPosition;
-    return m_audioGraph->transport().getCurrentPosition();
+    return m_transport->positionSeconds(m_scratch.scrubbing() || m_scratch.releaseGlide());
 }
 
 
 double DjEngine::getVisualPosition() const
 {
-    // Active drag / release glide: playhead published via syncScratchReadPosition().
     if (m_scratch.scrubbing() || m_scratch.releaseGlide())
-        return m_atomicPlayheadPos.load(std::memory_order_acquire);
-
-    // Pre-roll countdown: interpolate using the pre-roll wall clock so the waveform
-    // scrolls smoothly at sub-frame granularity, just like the normal snap-clock path.
-    // Clamp at 0 to avoid briefly overshooting track start before tickTransportStopped()
-    // clears the flag — the timer may lag up to one tick (~16 ms) behind the clock.
-    if (m_preRollCountdownActive) {
-        const double elapsed = static_cast<double>(m_preRollClock.nsecsElapsed()) * 1e-9;
-        return std::min(m_preRollVisualStartPos + elapsed * getTempoRatio(), 0.0);
-    }
-
-    // When stopped/paused: return the frozen position (set by togglePlay).
-    if (!m_snapValid || !m_audioGraph->transport().isPlaying())
-        return getPosition();
-
-    // Forward-interpolate from the last snapshot using elapsed wall-clock time.
-    // This keeps the waveform smooth between onTimer() ticks.
-    // Use the tempo ratio captured at snapshot time to avoid micro speed
-    // discontinuities within a timer interval.
-    const double elapsed = (static_cast<double>(m_snapClock.nsecsElapsed()) * 1e-9)
-        * std::max(0.0001, m_snapTempoRatio);
-
-    // When reverse is on, interpolate backwards instead of forwards
-    double interpolated = m_isReverse
-        ? m_snapPosition - elapsed
-        : m_snapPosition + elapsed;
-
-    // Render the scrolling waveform at the speaker-time playhead. Without this,
-    // larger hardware buffers make the UI visibly lead/lag the audible beat.
-    const double visualLatency = static_cast<double>(
-        m_visualLatencyCompensationSeconds.load(std::memory_order_relaxed));
-    double latencyBlend = 1.0;
-    if (m_visualSeekSettleClock.isValid()) {
-        constexpr double kVisualSeekSettleSeconds = 0.090;
-        const double settleElapsed = static_cast<double>(m_visualSeekSettleClock.nsecsElapsed()) * 1e-9;
-        if (settleElapsed < kVisualSeekSettleSeconds) {
-            const double t = std::clamp(settleElapsed / kVisualSeekSettleSeconds, 0.0, 1.0);
-            latencyBlend = t * t * (3.0 - 2.0 * t);
-        }
-    }
-    interpolated += m_isReverse ? visualLatency * latencyBlend : -visualLatency * latencyBlend;
-
-    double len = m_audioGraph->transport().getLengthInSeconds();
-    interpolated = std::clamp(interpolated, -PRE_ROLL_SECONDS, len > 0.0 ? len : interpolated);
-
-    return interpolated;
+        return m_transport->playheadPositionAtomic();
+    return m_transport->visualPositionSeconds(
+        static_cast<double>(m_visualLatencyCompensationSeconds.load(std::memory_order_relaxed)));
 }
 
 
@@ -97,7 +53,7 @@ double DjEngine::loopPreviewOutPosition() const
     if (!m_cueLoopController.activeLoop().inSet)
         return m_cueLoopController.activeLoop().outSec;
 
-    const double trackLen = m_trackDurationSec;
+    const double trackLen = m_transport->trackLengthSeconds();
     if (trackLen <= 0.0)
         return m_cueLoopController.activeLoop().inSec;
 
@@ -120,7 +76,7 @@ double DjEngine::loopPreviewOutPosition() const
 
 double DjEngine::getPlayheadPositionAtomic() const
 {
-    return m_atomicPlayheadPos.load(std::memory_order_acquire);
+    return m_transport->playheadPositionAtomic();
 }
 
 
@@ -135,7 +91,7 @@ QImage DjEngine::currentCoverImage() const
 
 bool DjEngine::isPlaying() const
 {
-    return m_playRequested;
+    return m_transport->playRequested();
 }
 
 
@@ -161,20 +117,18 @@ void DjEngine::resetTrackLoadState()
 
 void DjEngine::updateTrackDuration(double durationSec)
 {
-    m_trackDurationSec = durationSec;
     const int mins = static_cast<int>(durationSec) / 60;
     const int secs = static_cast<int>(durationSec) % 60;
     m_trackDuration = QString("%1:%2").arg(mins).arg(secs, 2, 10, QChar('0'));
 }
 
 
-void DjEngine::attachCacheToTransport(AudioCacheHandle cacheHandle, double trackSampleRate)
+void DjEngine::attachCacheToTransport(AudioCacheHandle cacheHandle, double trackSampleRate,
+                                      double trackDurationSeconds)
 {
-    const double scratchResumePos = m_scrubHoldPosition >= 0.0 ? m_scrubHoldPosition : 0.0;
-    m_audioGraph->installPreparedTrack({cacheHandle, trackSampleRate, m_trackLoader.currentGeneration()});
-    if (auto* playback = m_audioGraph->playback())
-        playback->setReverse(m_isReverse);
-    m_loadedTrackSampleRate = trackSampleRate;
+    const double scratchResumePos = m_transport->heldPosition() >= 0.0 ? m_transport->heldPosition() : 0.0;
+    m_transport->installPreparedTrack(cacheHandle,
+        {m_trackLoader.currentGeneration(), trackSampleRate, trackDurationSeconds});
     syncScratchBridgeToTransport();
     terminateScratchSession(scratchResumePos);
     ensureTransportRunningForPlayIntent();
@@ -184,7 +138,7 @@ void DjEngine::attachCacheToTransport(AudioCacheHandle cacheHandle, double track
 void DjEngine::releaseTransportReaders()
 {
     terminateScratchSession(0.0);
-    m_audioGraph->clearTrack(m_trackLoader.currentGeneration());
+    m_transport->clearTrack(m_trackLoader.currentGeneration());
 }
 
 
@@ -201,22 +155,19 @@ void DjEngine::ejectTrack()
         m_analyzer->stopAnalysis();
     }
 
-    m_playRequested = false;
     releaseTransportReaders();
 
     // Mark empty before clear()/dataCleared — waveform/FLX10 handlers must not
     // treat a mid-eject clear as a live track update.
     m_hasTrack = false;
-    m_scrubHoldPosition = 0.0;
-    m_atomicPlayheadPos.store(0.0, std::memory_order_relaxed);
-    m_snapValid = false;
+    m_transport->setHeldPosition(0.0);
 
     resetTrackLoadState();
 
     m_trackTitle.clear();   m_trackArtist.clear();  m_trackAlbum.clear();
     m_trackFilePath.clear();
     m_trackGenre.clear();   m_trackComment.clear();
-    m_trackKey.clear();     m_trackDuration.clear(); m_trackDurationSec = 0.0;
+    m_trackKey.clear();     m_trackDuration.clear();
     m_hasCoverArt = false; m_coverArtUrl.clear();
     if (m_coverProvider)
         m_coverProvider->clearCover(m_deckId);
@@ -230,25 +181,14 @@ void DjEngine::ejectTrack()
 
 void DjEngine::togglePlay()
 {
-    if (m_playRequested) {
-        m_playRequested = false;
+    if (m_transport->playRequested()) {
         if (m_audioGraph->mixerPtr())
             m_audioGraph->mixer().armClickFreeTransition();
         resetMainCueButtonState();
-        m_preRollCountdownActive = false;
-        // Always freeze: calling stop() on an already-stopped transport is safe.
-        // Skipping this when isPlaying()==false left the transport in a live state
-        // whenever there was a brief race between the audio thread and this call.
-        freezeTransportAt(getVisualPosition());
+        m_transport->setPlaying(false);
     } else {
-        m_playRequested = true;
-        if (m_scrubHoldPosition < 0.0) {
-            m_preRollCountdownActive = true;
-            m_preRollVisualStartPos = m_scrubHoldPosition;
-            m_preRollClock.restart();
-        } else {
-            ensureTransportRunningForPlayIntent();
-        }
+        m_transport->setPlaying(true);
+        ensureTransportRunningForPlayIntent();
         alignToSyncMasterOnPlay();
     }
 
@@ -258,43 +198,34 @@ void DjEngine::togglePlay()
 
 void DjEngine::play()
 {
-    if (!m_playRequested)
-        m_playRequested = true;
-
-    if (m_scrubHoldPosition < 0.0 && !m_preRollCountdownActive) {
-        m_preRollCountdownActive = true;
-        m_preRollVisualStartPos = m_scrubHoldPosition;
-        m_preRollClock.restart();
-    } else {
-        ensureTransportRunningForPlayIntent();
-    }
+    const bool changed = m_transport->setPlaying(true);
+    ensureTransportRunningForPlayIntent();
     alignToSyncMasterOnPlay();
-    emit playingChanged();
+    if (changed)
+        emit playingChanged();
 }
 
 
 void DjEngine::pause()
 {
-    if (!m_playRequested && !m_audioGraph->transport().isPlaying() && !m_preRollCountdownActive)
+    if (!m_transport->playRequested() && !m_transport->audioRunning() && !m_transport->preRollActive())
         return; // Already paused
 
-    m_playRequested = false;
     if (m_audioGraph->mixerPtr())
         m_audioGraph->mixer().armClickFreeTransition();
     resetMainCueButtonState();
-    m_preRollCountdownActive = false;
-    freezeTransportAt(getVisualPosition());
-    emit playingChanged();
+    if (m_transport->setPlaying(false))
+        emit playingChanged();
 }
 
 
 void DjEngine::ensureTransportRunningForPlayIntent()
 {
-    if (!m_playRequested)
+    if (!m_transport->playRequested())
         return;
 
     // Pre-roll countdown manages its own transport start — don't interfere.
-    if (m_preRollCountdownActive)
+    if (m_transport->preRollActive())
         return;
 
     if (m_scratch.scrubbing() || m_scratch.releaseGlide() || !m_hasTrack) {
@@ -310,11 +241,11 @@ void DjEngine::ensureTransportRunningForPlayIntent()
         refreshHardwareLatency();
     }
 
-    if (m_audioGraph->transport().isPlaying()) {
+    if (m_transport->audioRunning()) {
         return;
     }
 
-    const double len = m_audioGraph->transport().getLengthInSeconds();
+    const double len = m_transport->trackLengthSeconds();
     if (len <= 0.0) {
         qWarning() << "[DjEngine] cannot start transport: invalid length" << len;
         return;
@@ -322,48 +253,37 @@ void DjEngine::ensureTransportRunningForPlayIntent()
 
     // Keep transport stopped at true EOF. As soon as the playhead is moved
     // back from the end, this function resumes playback automatically.
-    const double pos = m_audioGraph->transport().getCurrentPosition();
+    const double pos = m_transport->audioPositionSeconds();
     if (pos >= len - 0.0001) {
         return;
     }
 
-    armSnapFromTransportPosition();
-    m_audioGraph->transport().start();
+    m_transport->ensureAudioRunning();
 }
 
 
 void DjEngine::setSnapAnchor(double positionSec, bool valid)
 {
-    m_snapPosition = positionSec;
-    m_snapTempoRatio = getTempoRatio();
-    m_snapClock.restart();
-    m_snapValid = valid;
-    m_atomicPlayheadPos.store(positionSec, std::memory_order_relaxed);
+    m_transport->setVisualAnchor(positionSec, valid);
 }
 
 
 void DjEngine::armVisualSeekSettle()
 {
-    m_visualSeekSettleClock.restart();
+    m_transport->armVisualSeekSettle();
 }
 
 
 void DjEngine::armSnapFromTransportPosition()
 {
-    setSnapAnchor(m_audioGraph->transport().getCurrentPosition(), true);
+    m_transport->setVisualAnchor(m_transport->audioPositionSeconds(), true);
 }
 
 
 void DjEngine::freezeTransportAt(double positionSec)
 {
     cancelQuantizedCueJump();
-    m_audioGraph->transport().stop();
-    m_audioGraph->transport().setPosition(std::max(0.0, positionSec));
-    m_snapValid = false;
-    // Keep m_scrubHoldPosition in sync so getPosition() returns the right value
-    // when stopped in pre-roll (where transport is clamped at 0).
-    m_scrubHoldPosition = positionSec;
-    m_atomicPlayheadPos.store(positionSec, std::memory_order_relaxed);
+    m_transport->freezeAt(positionSec);
 }
 
 
@@ -372,22 +292,22 @@ void DjEngine::syncScratchBridgeToTransport()
     if (!m_audioGraph->scratchPtr())
         return;
 
-    const double len = std::max(0.0, m_audioGraph->transport().getLengthInSeconds());
-    m_audioGraph->scratch().configureTrack(m_loadedTrackSampleRate, len);
-    m_audioGraph->scratch().setReverse(m_isReverse);
-    m_audioGraph->scratch().setLoopRangeSeconds(m_cueLoopController.activeLoop().inSec, m_cueLoopController.activeLoop().outSec, m_cueLoopController.activeLoop().active, m_loadedTrackSampleRate);
+    const double len = std::max(0.0, m_transport->trackLengthSeconds());
+    m_audioGraph->scratch().configureTrack(m_transport->sourceSampleRate(), len);
+    m_audioGraph->scratch().setReverse(m_transport->reverse());
+    m_audioGraph->scratch().setLoopRangeSeconds(m_cueLoopController.activeLoop().inSec, m_cueLoopController.activeLoop().outSec, m_cueLoopController.activeLoop().active, m_transport->sourceSampleRate());
     m_audioGraph->scratch().setDeckTempoRatio(getTempoRatio());
     m_audioGraph->scratch().setKeylockPassthrough(m_keylock);
 
-    const double pos = std::max(0.0, m_audioGraph->transport().getCurrentPosition());
-    m_audioGraph->scratch().syncReadPositionSeconds(pos, m_loadedTrackSampleRate);
+    const double pos = std::max(0.0, m_transport->audioPositionSeconds());
+    m_audioGraph->scratch().syncReadPositionSeconds(pos, m_transport->sourceSampleRate());
 }
 
 
 void DjEngine::setPosition(float progress)
 {
     cancelQuantizedCueJump();
-    double len = m_audioGraph->transport().getLengthInSeconds();
+    double len = m_transport->trackLengthSeconds();
     if (len > 0.0) {
         const double newPos = std::clamp(static_cast<double>(progress) * len,
                                          -PRE_ROLL_SECONDS,
@@ -398,25 +318,8 @@ void DjEngine::setPosition(float progress)
             m_playedAccumSec = 0.0;
             m_playHistoryClock.restart();
         }
-        m_preRollCountdownActive = false;
-        if (newPos < 0.0) {
-            m_audioGraph->transport().stop();
-            m_audioGraph->transport().setPosition(0.0);
-            m_scrubHoldPosition = newPos;
-            m_atomicPlayheadPos.store(newPos, std::memory_order_relaxed);
-            m_snapValid = false;
-            if (m_playRequested) {
-                m_preRollCountdownActive = true;
-                m_preRollVisualStartPos = newPos;
-                m_preRollClock.restart();
-            }
-        } else {
-            m_audioGraph->transport().setPosition(newPos);
-            m_scrubHoldPosition = newPos;
-            ensureTransportRunningForPlayIntent();
-            armSnapFromTransportPosition();
-            armVisualSeekSettle();
-        }
+        m_transport->seekToSeconds(newPos);
+        ensureTransportRunningForPlayIntent();
         if (m_analyzer && m_analyzer->isThreadRunning())
             m_analyzer->setSeekHint(std::max(0.0, newPos));
     }

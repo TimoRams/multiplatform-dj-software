@@ -5,6 +5,7 @@
 #include "audio/cache/AudioPageCache.h"
 
 class DeckAudioGraph;
+class DeckTransport;
 class AudioDeviceService;
 #include "scratch/ScratchSession.hpp"
 
@@ -244,7 +245,7 @@ public:
     [[nodiscard]] QString trackAlbum()    const { return m_trackAlbum; }
     [[nodiscard]] QString trackKey()      const { return m_trackKey; }
     [[nodiscard]] QString trackDuration() const { return m_trackDuration; }
-    [[nodiscard]] double  trackDurationSec() const { return m_trackDurationSec; }
+    [[nodiscard]] double  trackDurationSec() const;
     [[nodiscard]] bool    hasTrack()      const { return m_hasTrack; }
     [[nodiscard]] QString trackFilePath() const { return m_trackFilePath; }
     [[nodiscard]] bool sameTrackFileAs(const DjEngine* other) const;
@@ -391,10 +392,10 @@ public slots:
     void setFxSlotExternalDelayTime(int slot, float seconds);
     void setFxSlotPrimaryParam(int slot, float v);
 
-    [[nodiscard]] bool isReverse() const { return m_isReverse; }
+    [[nodiscard]] bool isReverse() const;
     Q_INVOKABLE void setReverse(bool on);
 
-    [[nodiscard]] bool slipActive() const { return m_slipActive; }
+    [[nodiscard]] bool slipActive() const;
     Q_INVOKABLE void setSlip(bool on);
 
     // Keep the engine's pixel-scale in sync with the waveform renderer.
@@ -469,9 +470,10 @@ private:
     void applyPreparedTrack(TrackLoadResult result);
     void updateTrackDuration(double durationSec);
     bool hydrateLibraryStateForTrack(const QString& rawPath, double durationSec);
-    void attachCacheToTransport(AudioCacheHandle cacheHandle, double trackSampleRate);
+    void attachCacheToTransport(AudioCacheHandle cacheHandle, double trackSampleRate,
+                                double trackDurationSeconds);
     void returnToSlipPosition();
-    bool isSlipDiverted() const { return m_slipActive && (loopActive() || m_isReverse); }
+    bool isSlipDiverted() const;
 
     void persistCurrentAnalysisToLibrary();
     void clearHotCueState();
@@ -504,6 +506,7 @@ private:
     AudioDeviceService& m_audioDeviceService;
     AudioPageCache& m_audioPageCache;
     std::unique_ptr<DeckAudioGraph> m_audioGraph;
+    std::unique_ptr<DeckTransport> m_transport;
     DeckCueLoopController m_cueLoopController;
     DeckTrackLoader m_trackLoader;
     juce::AudioFormatManager formatManager;
@@ -520,7 +523,6 @@ private:
     QString m_trackComment;
     QString m_trackKey;
     QString m_trackDuration;
-    double  m_trackDurationSec = 0.0;
     bool    m_hasTrack = false;
 
     CoverArtProvider*     m_coverProvider       = nullptr;
@@ -574,11 +576,7 @@ private:
     double m_eqLow = 0.0;
     double m_filter = 0.0;
     bool   m_polarityInverted = false;
-    bool   m_isReverse = false;
-    bool   m_slipActive   = false;
-    double m_slipPosition = 0.0;
     std::atomic<bool> m_cueEnabled { false };
-    bool m_playRequested = false;
     bool m_playLogged    = false;   // true once logPlay() has been called for the current track load
     double m_playedAccumSec = 0.0;  // accumulated real playback seconds since last track load
     QElapsedTimer m_playHistoryClock;
@@ -637,8 +635,6 @@ private:
     void updateScrubPlayheadAnchor();
     void tickScratchPhysics();
     void decayJogNudge();
-    bool tickTransportPlaying();   // returns false → onTimer should return early
-    void tickTransportStopped();
     void emitPlaybackStateChanged() {
         emit progressChanged(); emit vuLevelChanged(); emit gainReductionChanged();
     }
@@ -651,7 +647,6 @@ private:
     // m_latencySeconds tracks effective output latency reported by the audio device.
     // getOutputLatencyInSamples() is JUCE's callback->speaker delay and already
     // includes the callback buffer on compliant drivers.
-    // m_snapPosition + m_snapClock enable sub-frame interpolation in getVisualPosition().
     std::atomic<float> m_latencySeconds  { 0.0f };
     std::atomic<float> m_visualLatencyCompensationSeconds { 0.0f };
     mutable LatencySnapshot m_lastLatencySnapshot;
@@ -662,27 +657,13 @@ private:
     int  m_lastLoggedBufferSamples     = -1;
     int  m_lastLoggedSampleRateRounded = -1;
     bool m_latencyLoggedNoDevice       = false;
-    double         m_snapPosition    = 0.0;
-    double         m_snapTempoRatio  = 1.0;
-    QElapsedTimer  m_snapClock;
-    bool           m_snapValid       = false;
-    QElapsedTimer  m_visualSeekSettleClock;
-
-    // Atomic playhead position (seconds). Written on every onTimer() tick,
-    // read lock-free by getPlayheadPositionAtomic() from the QML FrameAnimation.
-    std::atomic<double> m_atomicPlayheadPos{0.0};
 
     double m_pixelsPerSecond = WAVEFORM_POINTS_PER_SECOND * 1.5;
     engine::scratch::ScratchSession m_scratch;
     bool m_scratchSnapReadPending = false;
-    double m_scrubHoldPosition = 0.0;
-    double m_loadedTrackSampleRate = 44100.0;
 
     // Pre-roll countdown: when play is pressed while visual position is negative,
     // we advance the visual clock ourselves until it reaches 0, then start transport.
-    bool          m_preRollCountdownActive = false;
-    double        m_preRollVisualStartPos  = 0.0;
-    QElapsedTimer m_preRollClock;
 
     static std::mutex s_syncMutex;
     static std::vector<DjEngine*> s_syncDecks;

@@ -421,3 +421,7 @@ Each deck now receives the application cache and opens/releases one versioned ha
 ## Blocked next task: TimeStretch/RubberBand realtime cleanup
 
 The requested prerequisite is not present: normal playback still uses `AudioFormatReaderSource` → `BufferingAudioSource` → `ReverseStreamAudioSource`, there is no cached-playback test, and no `decoderCallsFromAudioThread` proof. The RubberBand audit confirms callback-unsafe work (`getNextAudioBlock` → `resetRealtimePipeline(true)` → `RubberBand::reset` + `prewarmStretcher`, plus ratio setters), but the prompt explicitly forbids starting this refactor until cached playback is complete. Next task must first migrate only normal playback read-ahead to AudioPageCache.
+
+## Current task: DeckTransport extraction (2026-07-13)
+
+`DeckTransport` is now the domain owner for play intent, audible/held/slip-background position, seek/rate/reverse/slip, negative pre-roll, EOF, length and track/state generations. It sends commands only through narrow `DeckAudioGraph` methods and publishes a pointer-free consistent atomic snapshot. `DjEngine` retains its public QML/MIDI/controller surface, signals, validation, history, sync decisions and cue/loop persistence; its timer delegates transport transitions to `updateControlState()`. Direct `transport()`/`playback()` source access from all `DjEngine_*.cpp` files is removed. Next: extract `DeckSyncController`/`SyncCoordinator`; do not combine it with a general control-clock rewrite.

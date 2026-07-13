@@ -49,10 +49,10 @@ bool DjEngine::sameTrackFileAs(const DjEngine* other) const
 
 double DjEngine::keylockLatencySeconds() const
 {
-    if (!m_keylock || !m_audioGraph->timeStretchPtr())
+    if (!m_keylock)
         return 0.0;
-    const double sr = m_loadedTrackSampleRate > 0.0 ? m_loadedTrackSampleRate : 44100.0;
-    return static_cast<double>(m_audioGraph->timeStretch().getLatencySamples()) / sr;
+    const double sr = m_transport->sourceSampleRate() > 0.0 ? m_transport->sourceSampleRate() : 44100.0;
+    return static_cast<double>(m_transport->keylockLatencySamples()) / sr;
 }
 
 void DjEngine::updateTightDoubleAlignment()
@@ -317,18 +317,16 @@ DjEngine* DjEngine::currentSyncMaster()
 
 void DjEngine::applySyncSeekOffset(double seekOffset)
 {
-    const double len    = m_audioGraph->transport().getLengthInSeconds();
+    const double len    = m_transport->trackLengthSeconds();
     const double newPos = std::clamp(getPosition() + seekOffset, -PRE_ROLL_SECONDS,
                                      len > 0.0 ? len : PRE_ROLL_SECONDS);
     if (newPos < 0.0) {
-        if (m_preRollCountdownActive) {
-            m_preRollVisualStartPos = newPos;
-            m_preRollClock.restart();
-        }
-        m_scrubHoldPosition = newPos;
-        m_atomicPlayheadPos.store(newPos, std::memory_order_relaxed);
+        if (m_transport->preRollActive())
+            m_transport->beginPreRoll(newPos);
+        else
+            m_transport->setHeldPosition(newPos);
     } else {
-        m_audioGraph->transport().setPosition(newPos);
+        m_transport->seekAudioToSeconds(newPos);
         armSnapFromTransportPosition();
     }
 }

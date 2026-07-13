@@ -1,5 +1,12 @@
 #include "DjEngineCommonIncludes.h"
 
+bool DjEngine::isReverse() const { return m_transport->reverse(); }
+bool DjEngine::slipActive() const { return m_transport->slipEnabled(); }
+bool DjEngine::isSlipDiverted() const
+{
+    return m_transport->slipDiverted(m_cueLoopController.activeLoop().active);
+}
+
 void DjEngine::setCueEnabled(bool value)
 {
     const bool prev = m_cueEnabled.exchange(value, std::memory_order_relaxed);
@@ -50,14 +57,11 @@ void DjEngine::setQuantizeEnabled(bool enabled)
 
 void DjEngine::setReverse(bool on)
 {
-    if (m_isReverse == on) return;
+    if (m_transport->reverse() == on) return;
     const bool wasSlipDiverted = isSlipDiverted();
-    m_isReverse = on;
-    if (m_audioGraph->playback()) {
-        m_audioGraph->playback()->setReverse(on);
-        if (m_cueLoopController.activeLoop().active)
-            applyLoopRangeToAudioSource();
-    }
+    m_transport->setReverse(on);
+    if (m_cueLoopController.activeLoop().active)
+        applyLoopRangeToAudioSource();
     updateSpeedAndPitch();
     if (!on && wasSlipDiverted && !isSlipDiverted())
         returnToSlipPosition();
@@ -67,21 +71,12 @@ void DjEngine::setReverse(bool on)
 
 void DjEngine::setSlip(bool on)
 {
-    if (m_slipActive == on) return;
-    m_slipActive = on;
-    if (on)
-        m_slipPosition = m_audioGraph->transport().getCurrentPosition();
-    emit slipChanged();
+    if (m_transport->setSlipEnabled(on))
+        emit slipChanged();
 }
 
 
 void DjEngine::returnToSlipPosition()
 {
-    const double dur = std::max(0.001, static_cast<double>(getDuration()));
-    const double pos = std::clamp(m_slipPosition, 0.0, dur);
-    m_audioGraph->transport().setPosition(pos);
-    m_snapPosition = pos;
-    m_snapClock.restart();
-    m_snapValid = true;
-    m_atomicPlayheadPos.store(pos, std::memory_order_relaxed);
+    m_transport->returnToSlipPosition();
 }

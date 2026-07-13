@@ -35,6 +35,14 @@ public:
         std::uint64_t trackGeneration=0;
     };
 
+    struct TransportSnapshot {
+        bool hasTrack = false;
+        bool running = false;
+        double positionSeconds = 0.0;
+        double lengthSeconds = 0.0;
+        std::uint64_t trackGeneration = 0;
+    };
+
     explicit DeckAudioGraph(AudioPageCache& cache);
     ~DeckAudioGraph() override;
     DeckAudioGraph(const DeckAudioGraph&)=delete;
@@ -47,6 +55,16 @@ public:
     void installPreparedTrack(PreparedTrack track);
     void clearTrack(std::uint64_t invalidThroughGeneration=0);
     void setAudioPlayheadSink(std::atomic<double>* sink) noexcept;
+    void setTransportRunning(bool running) noexcept;
+    void seekToSeconds(double seconds) noexcept;
+    void setReverse(bool enabled) noexcept;
+    void setPlaybackRate(double rate) noexcept;
+    void setKeylockEnabled(bool enabled) noexcept;
+    void setLoopRangeSeconds(double startSeconds, double endSeconds, bool active,
+                             double sourceSampleRate) noexcept;
+    void setPlaybackReadPositionSamples(std::int64_t position) noexcept;
+    [[nodiscard]] int keylockLatencySamples() const noexcept;
+    [[nodiscard]] TransportSnapshot transportSnapshot() const noexcept;
     [[nodiscard]] RealtimeStats realtimeStats() const noexcept;
 
     [[nodiscard]] juce::AudioTransportSource& transport() noexcept;

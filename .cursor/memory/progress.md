@@ -186,3 +186,11 @@ Manual (~15 min):
   prepared RBJ snapshots, fixed slots coalesce rapid control updates, and parallel banks provide a
   128-sample transition. Mixer realtime counters and numerical/stress tests are green. Next: extract
   ownership only into `DeckAudioGraph`; do not combine it with `DeckTransport`.
+- DeckTransport extraction completed (2026-07-13): the non-QObject component owns transport domain
+  state, generations, pre-roll/slip/end rules and consistent snapshots; `DjEngine` is the preserved
+  QML/MIDI/controller facade. Narrow graph commands replace direct transport/playback source access.
+  A dedicated deterministic unit/integration/four-deck stress and performance target was added.
+  Next: extract `DeckSyncController` and central `SyncCoordinator`; leave the shared control clock later.
+- Sanitizer validation: combined ASAN/UBSAN passed (LeakSanitizer unavailable under the runner's
+  ptrace); TSAN first exposed a real prepared TimeStretch slot claim race. The narrow claim-before-read
+  handover fix was applied and the complete DeckTransport stress target then passed TSAN.

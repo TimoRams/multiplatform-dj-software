@@ -4,6 +4,7 @@
 #include "audio/MixerDspSource.h"
 #include "DjMasterBus.h"
 #include "deck/DeckAudioGraph.h"
+#include "deck/DeckTransport.h"
 #include "audio/TimeStretchAudioSource.h"
 #include "audio/ScratchDeckBridge.hpp"
 #include "audio/cache/CachedPlaybackAudioSource.h"

@@ -50,6 +50,7 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
     , m_audioDeviceService(audioDeviceService)
     , m_audioPageCache(audioPageCache)
     , m_audioGraph(std::make_unique<DeckAudioGraph>(audioPageCache))
+    , m_transport(std::make_unique<DeckTransport>(*m_audioGraph))
     , m_trackLoader(static_cast<int>(WAVEFORM_POINTS_PER_SECOND))
 {
     {
@@ -134,7 +135,6 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
 
     // Audio callback is registered by DjMasterBus, not per-deck.
 
-    m_audioGraph->setAudioPlayheadSink(&m_atomicPlayheadPos);
     m_audioGraph->mixer().setTrim(static_cast<float>(m_trim));
     m_audioGraph->mixer().setFader(static_cast<float>(m_volume));
 
@@ -150,7 +150,6 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
             this, &DjEngine::audioDeviceErrorChanged);
     connect(&m_audioDeviceService, &AudioDeviceService::fallbackChanged,
             this, &DjEngine::audioDeviceFallbackChanged);
-    m_snapClock.start();
     m_playHistoryClock.start();
     m_vuNotifyClock.start();
     m_progressNotifyClock.start();
@@ -197,8 +196,7 @@ void DjEngine::prepareForShutdown()
         m_analyzer->stopAnalysis();
     }
 
-    m_playRequested = false;
-    m_audioGraph->transport().stop();
+    m_transport->setPlaying(false);
 }
 
 void DjEngine::setCoverArtProvider(CoverArtProvider* provider, const QString& deckId)
@@ -261,34 +259,31 @@ void DjEngine::onTimer()
 
     decayJogNudge();
 
-    // Safety: transport must not run when there's no play intent and no cue preview.
-    // Catches any leftover transport state that togglePlay/pause missed.
-    if (m_audioGraph->transport().isPlaying() && !m_playRequested && !m_cueLoopController.mainCue().previewActive) {
-        freezeTransportAt(m_audioGraph->transport().getCurrentPosition());
-        notifyVuMetersIfNeeded();
-        return;
-    }
-
-    // Safety: transport must not run during pre-roll countdown (visual position is
-    // negative; transport is clamped at 0 and driven by wall-clock).
-    if (m_audioGraph->transport().isPlaying() && m_preRollCountdownActive)
-        m_audioGraph->transport().stop();
-
-    if (m_audioGraph->transport().isPlaying()) {
+    if (m_transport->audioRunning())
         serviceQuantizedCueJump();
-        if (!tickTransportPlaying())
-            return;
+
+    const auto transportUpdate = m_transport->updateControlState(
+        {m_cueLoopController.activeLoop().active,
+         m_cueLoopController.activeLoop().inSec,
+         m_cueLoopController.activeLoop().outSec},
+        false,
+        m_cueLoopController.mainCue().previewActive);
+    if (transportUpdate.positionChanged)
+        notifyProgressIfNeeded();
+
+    if (transportUpdate.audioRunning) {
         // Accumulate real audible playback time for play-count logging. Use wall
         // time instead of assuming the control timer fires exactly every 4 ms.
-        if (!m_playLogged && !m_currentTrackId.isEmpty() && m_playRequested) {
+        if (!m_playLogged && !m_currentTrackId.isEmpty() && m_transport->playRequested()) {
             const double elapsedSec = m_playHistoryClock.isValid()
                 ? static_cast<double>(m_playHistoryClock.restart()) / 1000.0
                 : 0.0;
             m_playedAccumSec += std::clamp(elapsedSec, 0.0, 0.25);
 
             const double playheadSec = std::max(0.0, static_cast<double>(getVisualPosition()));
-            const double nearEndSec = m_trackDurationSec > 0.0 ? m_trackDurationSec * 0.80 : 1e9;
-            const double thresholdSec = playHistoryThresholdSeconds(m_trackDurationSec);
+            const double trackLength = m_transport->trackLengthSeconds();
+            const double nearEndSec = trackLength > 0.0 ? trackLength * 0.80 : 1e9;
+            const double thresholdSec = playHistoryThresholdSeconds(trackLength);
             const bool enoughPlayback = m_playedAccumSec >= thresholdSec;
             const bool mixedNearEnd = playheadSec >= nearEndSec
                 && m_playedAccumSec >= std::min(6.0, thresholdSec * 0.6);
@@ -301,7 +296,6 @@ void DjEngine::onTimer()
         }
     } else {
         m_playHistoryClock.restart();
-        tickTransportStopped();
     }
 
     if (engine::shouldRunFollowerSyncMaintenance(m_syncEnabled,
@@ -315,102 +309,6 @@ void DjEngine::onTimer()
     updateFxBeatSyncPosition();
     notifyVuMetersIfNeeded();
 }
-
-
-bool DjEngine::tickTransportPlaying()
-{
-    // Store a fresh snapshot from the transport each control tick.
-    // Interpolation happens only between these anchors.
-    const double dtSec = m_snapValid
-        ? std::clamp(static_cast<double>(m_snapClock.nsecsElapsed()) * 1e-9, 0.001, 0.050)
-        : 0.004;
-
-    const double measuredPos = m_audioGraph->transport().getCurrentPosition();
-    m_snapPosition   = measuredPos;
-    m_snapTempoRatio = getTempoRatio();
-
-    // Slip shadow: advance continuously while loop/reverse diverts the transport.
-    if (isSlipDiverted()) {
-        const double dur = std::max(0.001, static_cast<double>(getDuration()));
-        m_slipPosition = std::min(m_slipPosition + dtSec * getTempoRatio(), dur);
-    } else {
-        m_slipPosition = measuredPos;
-    }
-
-    if (m_cueLoopController.activeLoop().active && m_cueLoopController.activeLoop().outSec > m_cueLoopController.activeLoop().inSec) {
-        if (m_isReverse && m_snapPosition <= m_cueLoopController.activeLoop().inSec) {
-            m_audioGraph->transport().setPosition(m_cueLoopController.activeLoop().outSec);
-            m_snapPosition = m_cueLoopController.activeLoop().outSec;
-        } else if (!m_isReverse && m_cueLoopController.activeLoop().inSec < 0.0
-                   && m_snapPosition >= m_cueLoopController.activeLoop().outSec) {
-            // Loop with pre-roll IN point: the audio source cannot enforce this
-            // (no negative samples).  Software-wrap: stop transport and start a
-            // pre-roll countdown from the true (negative) loop-in position.
-            m_audioGraph->transport().stop();
-            m_snapValid = false;
-            m_scrubHoldPosition = m_cueLoopController.activeLoop().inSec;
-            m_preRollCountdownActive = true;
-            m_preRollVisualStartPos  = m_cueLoopController.activeLoop().inSec;
-            m_preRollClock.restart();
-            m_atomicPlayheadPos.store(m_cueLoopController.activeLoop().inSec, std::memory_order_relaxed);
-            emitPlaybackStateChanged();
-            return false;
-        }
-    }
-
-    m_snapClock.restart();
-    m_snapValid = true;
-    m_atomicPlayheadPos.store(m_snapPosition, std::memory_order_relaxed);
-    notifyProgressIfNeeded();
-    return true;
-}
-
-
-void DjEngine::tickTransportStopped()
-{
-    m_snapValid = false;
-    if (m_preRollCountdownActive) {
-        // Advance visual position from negative toward 0 at playback rate.
-        const double elapsed   = static_cast<double>(m_preRollClock.nsecsElapsed()) * 1e-9;
-        const double visualPos = m_preRollVisualStartPos + elapsed * getTempoRatio();
-        m_scrubHoldPosition = visualPos;
-        m_atomicPlayheadPos.store(visualPos, std::memory_order_relaxed);
-
-        // Loop entirely in pre-roll: both endpoints negative, wrap back to loop IN.
-        if (m_cueLoopController.activeLoop().active && m_cueLoopController.activeLoop().outSec <= 0.0 && m_cueLoopController.activeLoop().outSec > m_cueLoopController.activeLoop().inSec
-                && visualPos >= m_cueLoopController.activeLoop().outSec) {
-            m_preRollVisualStartPos = m_cueLoopController.activeLoop().inSec;
-            m_scrubHoldPosition     = m_cueLoopController.activeLoop().inSec;
-            m_preRollClock.restart();
-            m_atomicPlayheadPos.store(m_cueLoopController.activeLoop().inSec, std::memory_order_relaxed);
-            emit progressChanged();
-            return;
-        }
-
-        if (visualPos >= 0.0) {
-            m_preRollCountdownActive = false;
-            m_scrubHoldPosition = 0.0;
-            m_audioGraph->transport().setPosition(0.0);
-            armSnapFromTransportPosition();
-            m_audioGraph->transport().start();
-            // For loops crossing 0: re-apply audio-source loop now that transport
-            // is in-track.  applyLoopRangeToAudioSource() was a no-op while
-            // loopIn was negative; with loopIn < 0 the audio loop [0, loopOut]
-            // is software-enforced via the transport-playing branch above.
-        }
-        emit progressChanged();
-    } else {
-        ensureTransportRunningForPlayIntent();
-        // In pre-roll the transport is clamped at 0, so syncing from transport
-        // erases the negative visual position. Preserve m_scrubHoldPosition when negative.
-        const double transportPos = m_audioGraph->transport().getCurrentPosition();
-        const double atomicPos    = (m_scrubHoldPosition < 0.0)
-            ? m_scrubHoldPosition
-            : transportPos;
-        m_atomicPlayheadPos.store(atomicPos, std::memory_order_relaxed);
-    }
-}
-
 
 
 double DjEngine::getPreRollSeconds() const
