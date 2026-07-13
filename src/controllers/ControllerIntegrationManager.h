@@ -15,7 +15,7 @@ class ControllerIntegrationManager : public QObject
     Q_PROPERTY(QString flx10Status READ flx10Status NOTIFY flx10StatusChanged)
 
 public:
-    explicit ControllerIntegrationManager(QObject* parent = nullptr);
+    explicit ControllerIntegrationManager(ControlClock& controlClock, QObject* parent = nullptr);
     ~ControllerIntegrationManager() override;
 
     void setDecks(DjEngine* deckA, DjEngine* deckB);
@@ -39,4 +39,3 @@ private:
     QPointer<DjEngine> m_deckB;
     DDJFLX10Controller m_flx10;
 };
-

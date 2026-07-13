@@ -392,7 +392,7 @@ void DjEngine::applyLoopRangeToAudioSource()
         return;
     }
 
-    // Loops involving pre-roll are enforced in software by onTimer() because the
+    // Loops involving pre-roll are enforced in software by the transport control tick because the
     // audio source has no concept of negative sample positions (silence doesn't
     // exist in the buffer).  Clear any audio-source loop for these cases.
     if (m_cueLoopController.activeLoop().inSec < 0.0 || m_cueLoopController.activeLoop().outSec <= 0.0) {

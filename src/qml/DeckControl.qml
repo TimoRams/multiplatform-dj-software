@@ -504,12 +504,13 @@ Item {
         function onPhaseChanged(){}
     }
 
-    Timer {
-        id: linkDeckSyncTimer
-        interval: 50
-        repeat: true
-        running: deck.linkMode && deck.linkAvailable && deck.engine !== null && deck.engine.isPlaying
-        onTriggered: deck._publishDeckToAbletonLink()
+    Connections {
+        target: (typeof controlClock !== "undefined") ? controlClock : null
+        function onLinkTick() {
+            if (deck.linkMode && deck.linkAvailable && deck.engine !== null
+                    && deck.engine.isPlaying)
+                deck._publishDeckToAbletonLink()
+        }
     }
 
     Connections {

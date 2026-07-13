@@ -1,5 +1,6 @@
 #include "engine/deck/DeckTransport.h"
 
+#include "app/ControlClock.h"
 #include "audio/cache/AudioPageCache.h"
 #include "engine/deck/DeckAudioGraph.h"
 #include "engine/sync/DeckSyncController.h"
@@ -257,6 +258,67 @@ int main(int argc, char** argv)
         syncCoordinator.registerDeck(static_cast<int>(i), syncControllers[i]);
         syncCoordinator.setDeckSyncEnabled(static_cast<int>(i), true);
     }
+    ControlClock controlClock;
+    std::array<bool, 4> scratching {};
+    std::array<bool, 4> loopActive {};
+    std::array<bool, 4> keylockEnabled {};
+    std::array<int, 4> waveformSnapshots {};
+    std::array<int, 4> midiSnapshots {};
+    std::array<ControlClock::Registration, 4> clockRegistrations;
+    for (std::size_t i = 0; i < decks.size(); ++i) {
+        ControlClock::Callbacks callbacks;
+        callbacks.transport = [&, i](const ControlTickContext&) {
+            decks[i]->transport.updateControlState(
+                {loopActive[i], 0.1, 0.4}, scratching[i], false);
+        };
+        callbacks.syncInput = [&, i](const ControlTickContext&) {
+            const auto snapshot = decks[i]->transport.snapshot();
+            engine::sync::DeckSyncInputSnapshot input;
+            input.hasTrack = snapshot.hasTrack;
+            input.playing = snapshot.playing;
+            input.scratching = scratching[i];
+            input.reverse = snapshot.reverse;
+            input.slipEnabled = snapshot.slipEnabled;
+            input.loopActive = loopActive[i];
+            input.keylockEnabled = keylockEnabled[i];
+            input.beatgridValid = true;
+            input.downbeatValid = true;
+            input.trackBpm = 96.0 + static_cast<double>(i) * 12.0;
+            input.effectiveBpm = input.trackBpm * snapshot.playbackRate;
+            input.playbackRate = snapshot.playbackRate;
+            input.audiblePositionSeconds = snapshot.audiblePositionSeconds;
+            input.beatPosition = input.audiblePositionSeconds * input.trackBpm / 60.0;
+            input.beatPhase = std::fmod(input.beatPosition + 4.0, 1.0);
+            input.barPosition = std::fmod(input.beatPosition + 16.0, 4.0) / 4.0;
+            input.beatLengthSeconds = 60.0 / input.trackBpm;
+            input.beatConfidence = 1.0;
+            input.downbeatConfidence = 1.0;
+            input.trackIdentity = i + 1;
+            input.trackGeneration = snapshot.trackGeneration;
+            input.transportGeneration = snapshot.stateGeneration;
+            syncCoordinator.stageDeckInput(static_cast<int>(i), input);
+        };
+        callbacks.syncApply = [&, i](const ControlTickContext&) {
+            const auto actions = syncControllers[i].takeActions();
+            auto& deckTransport = decks[i]->transport;
+            if (actions.tempoChanged)
+                deckTransport.setPlaybackRate(std::clamp(
+                    1.0 + actions.targetTempoPercent / 100.0, 0.01, 8.0));
+            if (actions.seekRequested
+                && actions.targetTrackGeneration == deckTransport.trackGeneration())
+                deckTransport.seekToSeconds(deckTransport.snapshot().audiblePositionSeconds
+                                            + actions.seekOffsetSeconds);
+        };
+        callbacks.waveform = [&, i](const ControlTickContext&) { ++waveformSnapshots[i]; };
+        callbacks.feedback = [&, i](const ControlTickContext&) { ++midiSnapshots[i]; };
+        clockRegistrations[i] = controlClock.registerCallbacks(std::move(callbacks));
+    }
+    ControlClock::Callbacks coordinatorCallbacks;
+    coordinatorCallbacks.syncCoordinate = [&](const ControlTickContext&) {
+        syncCoordinator.update();
+    };
+    auto coordinatorRegistration = controlClock.registerCallbacks(
+        std::move(coordinatorCallbacks));
     std::mt19937 random(0xB40CD1u);
     auto controlStart = std::chrono::steady_clock::now();
     constexpr int stressSteps = 40;
@@ -269,50 +331,16 @@ int main(int argc, char** argv)
             if (command == 2) fixture.transport.setReverse((random() & 1u) != 0);
             if (command == 3) fixture.transport.setSlipEnabled((random() & 1u) != 0);
             if (command == 4) fixture.transport.setPlaybackRate(0.5 + (random() % 1500) / 1000.0);
-            if (command == 5) fixture.transport.setKeylockEnabled((random() & 1u) != 0);
+            if (command == 5) {
+                keylockEnabled[i] = (random() & 1u) != 0;
+                fixture.transport.setKeylockEnabled(keylockEnabled[i]);
+            }
             if (command == 6) fixture.transport.beginPreRoll(-0.001 * (1 + random() % 20));
             if (command == 7) fixture.transport.setLoopRegion({true, 0.1, 0.4});
             if (command == 8) fixture.transport.publishScratchPosition((random() % 1000) / 1000.0);
-            const auto transportSnapshot = fixture.transport.snapshot();
-            engine::sync::DeckSyncInputSnapshot syncInput;
-            syncInput.hasTrack = transportSnapshot.hasTrack;
-            syncInput.playing = transportSnapshot.playing;
-            syncInput.scratching = command == 8;
-            syncInput.reverse = transportSnapshot.reverse;
-            syncInput.slipEnabled = transportSnapshot.slipEnabled;
-            syncInput.loopActive = (step & 3) == 0;
-            syncInput.keylockEnabled = (command == 5);
-            syncInput.beatgridValid = true;
-            syncInput.downbeatValid = true;
-            syncInput.trackBpm = 96.0 + static_cast<double>(i) * 12.0;
-            syncInput.effectiveBpm = syncInput.trackBpm * transportSnapshot.playbackRate;
-            syncInput.playbackRate = transportSnapshot.playbackRate;
-            syncInput.audiblePositionSeconds = transportSnapshot.audiblePositionSeconds;
-            syncInput.beatPosition = syncInput.audiblePositionSeconds * syncInput.trackBpm / 60.0;
-            syncInput.beatPhase = std::fmod(syncInput.beatPosition + 4.0, 1.0);
-            syncInput.barPosition = std::fmod(syncInput.beatPosition + 16.0, 4.0) / 4.0;
-            syncInput.beatLengthSeconds = 60.0 / syncInput.trackBpm;
-            syncInput.beatConfidence = 1.0;
-            syncInput.downbeatConfidence = 1.0;
-            syncInput.trackIdentity = i + 1;
-            syncInput.trackGeneration = transportSnapshot.trackGeneration;
-            syncInput.transportGeneration = transportSnapshot.stateGeneration;
-            syncCoordinator.updateDeck(static_cast<int>(i), syncInput);
-            const auto syncActions = syncControllers[i].takeActions();
-            if (syncActions.tempoChanged)
-                fixture.transport.setPlaybackRate(std::clamp(
-                    1.0 + syncActions.targetTempoPercent / 100.0, 0.01, 8.0));
-            if (syncActions.seekRequested
-                && syncActions.targetTrackGeneration == fixture.transport.trackGeneration())
-                fixture.transport.seekToSeconds(transportSnapshot.audiblePositionSeconds
-                                                + syncActions.seekOffsetSeconds);
+            scratching[i] = command == 8;
+            loopActive[i] = (step & 3) == 0;
             render(fixture.graph);
-            fixture.transport.updateControlState({(step & 3) == 0, 0.1, 0.4},
-                                                  command == 8, false);
-            const auto snapshot = fixture.transport.snapshot();
-            ok &= require(finiteSnapshot(snapshot), "four-deck snapshot finite");
-            ok &= require(snapshot.trackGeneration == generations[i],
-                          "four-deck generation stable");
         }
         if (step % 9 == 0)
             syncCoordinator.requestMaster((step / 9) % 4, true);
@@ -322,6 +350,13 @@ int main(int argc, char** argv)
             link.bpm = 120.0 + step;
             link.generation = static_cast<std::uint64_t>(step + 1);
             syncCoordinator.setLinkSnapshot(link);
+        }
+        controlClock.advanceForTesting(0.008);
+        for (std::size_t i = 0; i < decks.size(); ++i) {
+            const auto snapshot = decks[i]->transport.snapshot();
+            ok &= require(finiteSnapshot(snapshot), "four-deck snapshot finite");
+            ok &= require(snapshot.trackGeneration == generations[i],
+                          "four-deck generation stable");
         }
     }
     const double fourDeckStressStepUs = std::chrono::duration<double, std::micro>(
@@ -359,6 +394,19 @@ int main(int argc, char** argv)
                       "four-deck realtime violation counters remain zero");
     ok &= require(realtimeCountersAreZero(deck.graph),
                   "transport realtime violation counters remain zero");
+    ok &= require(controlClock.stats().maxCallbacksPerTick <= 21,
+                  "control clock has bounded callbacks per tick");
+    for (std::size_t i = 0; i < decks.size(); ++i) {
+        ok &= require(waveformSnapshots[i] > 0, "waveform snapshots clocked");
+        ok &= require(midiSnapshots[i] > 0, "MIDI feedback snapshots clocked");
+        clockRegistrations[i].reset();
+    }
+    coordinatorRegistration.reset();
+    controlClock.stop();
+    const auto stoppedTicks = controlClock.stats().totalTicks;
+    QCoreApplication::processEvents();
+    ok &= require(controlClock.stats().totalTicks == stoppedTicks,
+                  "control clock remains stopped during shutdown");
     syncCoordinator.shutdown();
     ok &= require(generationAccumulator != 0, "snapshot measurement consumed");
     std::cout << "PERF snapshot_read_ns=" << snapshotNs

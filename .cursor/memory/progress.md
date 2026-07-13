@@ -201,3 +201,12 @@ Manual (~15 min):
   stress passed release, ASAN+UBSAN and TSAN. Next: shared `ControlClock`, without reopening sync DSP.
   Release measurements: one-deck update 0.097 us, four-deck cycle 0.470 us, per-deck command/BPM/phase
   path 0.117 us, master selection 0.248 us and master-track generation switch 0.074 us.
+- Application-wide ControlClock completed (2026-07-13): four precise 4 ms deck timers plus Link,
+  MIDI, FLX10, preview, monitoring and periodic QML control timers were consolidated behind one
+  deadline scheduler with fixed registrations, deterministic transport/sync phase order, late-tick
+  coalescing and slow-group shedding. Release unit measurement: empty 0.444 us/base tick, one paused
+  deck 0.498 us, four paused 0.449 us, four playing 0.437 us, four with sync 0.465 us, four with
+  waveform/MIDI 0.583 us; measured full average 0.420 us, observed worst 148 us, maximum 44
+  synthetic callbacks. All 15 CTest targets pass; isolated clock and the
+  four-deck cache/transport/sync integration pass ASAN/UBSAN and TSAN. Leak detection was disabled
+  because ptrace prevents LSan in this runner. Next: `DjMasterBus` lifetime/block sizes.

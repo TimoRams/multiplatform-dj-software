@@ -46,7 +46,8 @@ QString defaultSavedLoopColor(int index)
 } // namespace
 
 DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audioPageCache,
-                   engine::sync::SyncCoordinator& syncCoordinator, int deckIndex, QObject* parent)
+                   ControlClock& controlClock, engine::sync::SyncCoordinator& syncCoordinator,
+                   int deckIndex, QObject* parent)
     : QObject(parent)
     , m_audioDeviceService(audioDeviceService)
     , m_audioPageCache(audioPageCache)
@@ -54,6 +55,7 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
     , m_transport(std::make_unique<DeckTransport>(*m_audioGraph))
     , m_trackLoader(static_cast<int>(WAVEFORM_POINTS_PER_SECOND))
     , m_syncCoordinator(syncCoordinator)
+    , m_controlClock(controlClock)
     , m_deckIndex(deckIndex)
     , m_syncController(std::make_unique<engine::sync::DeckSyncController>(
           engine::sync::DeckSyncController::Configuration {deckIndex}))
@@ -143,15 +145,32 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
     m_vuNotifyClock.start();
     m_progressNotifyClock.start();
 
-    connect(&timer, &QTimer::timeout, this, &DjEngine::onTimer);
-    timer.setTimerType(Qt::PreciseTimer);
-    // Faster control snapshots reduce audible speed stepping while scratching.
-    timer.start(4);
+    ControlClock::Callbacks clockCallbacks;
+    clockCallbacks.fast = [this](const ControlTickContext& context) {
+        onFastControlTick(context);
+    };
+    clockCallbacks.transport = [this](const ControlTickContext& context) {
+        onTransportControlTick(context);
+    };
+    clockCallbacks.syncInput = [this](const ControlTickContext& context) {
+        onSyncInputControlTick(context);
+    };
+    clockCallbacks.syncApply = [this](const ControlTickContext& context) {
+        onSyncApplyControlTick(context);
+    };
+    clockCallbacks.waveform = [this](const ControlTickContext& context) {
+        onWaveformControlTick(context);
+    };
+    clockCallbacks.meters = [this](const ControlTickContext& context) {
+        onMeterControlTick(context);
+    };
+    m_controlClockRegistration = m_controlClock.registerCallbacks(std::move(clockCallbacks));
 }
 
 
 DjEngine::~DjEngine()
 {
+    m_controlClockRegistration.reset();
     m_trackLoader.shutdownAndJoin();
     m_syncCoordinator.unregisterDeck(m_deckIndex);
 
@@ -164,9 +183,7 @@ DjEngine::~DjEngine()
 
 void DjEngine::prepareForShutdown()
 {
-    // Disconnect only — QTimer::stop() during aboutToQuit has crashed on macOS when
-    // a timeout handler is still unwinding on the stack.
-    QObject::disconnect(&timer, nullptr, this, nullptr);
+    m_controlClockRegistration.reset();
     m_trackLoader.shutdownAndJoin();
 
     if (m_analysisPersistTimer)
@@ -227,18 +244,26 @@ void DjEngine::persistCurrentAnalysisToLibrary()
 }
 
 
-void DjEngine::onTimer()
+void DjEngine::onFastControlTick(const ControlTickContext& context)
 {
+    (void)context;
     if (m_scratch.scrubbing() || m_scratch.releaseGlide()) {
         cancelQuantizedCueJump();
         tickScratchPhysics();
         return;
     }
 
+    decayJogNudge();
+}
+
+void DjEngine::onTransportControlTick(const ControlTickContext& context)
+{
+    (void)context;
+    if (m_scratch.scrubbing() || m_scratch.releaseGlide())
+        return;
+
     if (m_audioGraph->mixerPtr())
         m_audioGraph->mixer().setScratchTimbre(0.0f);
-
-    decayJogNudge();
 
     if (m_transport->audioRunning())
         serviceQuantizedCueJump();
@@ -279,9 +304,31 @@ void DjEngine::onTimer()
         m_playHistoryClock.restart();
     }
 
-    publishSyncInputAndApplyActions();
-
     updateFxBeatSyncPosition();
+}
+
+void DjEngine::onSyncInputControlTick(const ControlTickContext& context)
+{
+    (void)context;
+    m_syncCoordinator.stageDeckInput(m_deckIndex, buildSyncInputSnapshot());
+}
+
+void DjEngine::onSyncApplyControlTick(const ControlTickContext& context)
+{
+    (void)context;
+    applyPendingSyncActions();
+    refreshSyncFacadeSignals();
+}
+
+void DjEngine::onWaveformControlTick(const ControlTickContext& context)
+{
+    (void)context;
+    notifyProgressIfNeeded();
+}
+
+void DjEngine::onMeterControlTick(const ControlTickContext& context)
+{
+    (void)context;
     notifyVuMetersIfNeeded();
 }
 

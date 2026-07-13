@@ -284,6 +284,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/main.cpp
     src/app/ApplicationBootstrap.cpp
     src/app/ApplicationLifecycle.cpp
+    src/app/ControlClock.cpp
     src/audio/device/AudioDeviceService.h
     src/audio/device/AudioDeviceService.cpp
     src/audio/device/AudioDeviceServiceQueries.cpp
@@ -645,6 +646,7 @@ add_test(NAME deck_audio_graph COMMAND BrockDJ_deck_audio_graph_tests)
 
 add_executable(BrockDJ_deck_transport_tests
     tests/deck_transport/deck_transport_tests.cpp
+    src/app/ControlClock.cpp
     src/engine/deck/DeckTransport.cpp src/engine/deck/DeckAudioGraph.cpp
     src/engine/sync/DeckSyncController.cpp src/engine/sync/SyncCoordinator.cpp
     src/audio/cache/AudioPageCache.cpp src/audio/cache/AudioCacheWorker.cpp src/audio/cache/CachedPlaybackAudioSource.cpp
@@ -667,6 +669,14 @@ target_include_directories(BrockDJ_sync_coordinator_tests PRIVATE src src/engine
 target_link_libraries(BrockDJ_sync_coordinator_tests PRIVATE Qt6::Core)
 target_compile_features(BrockDJ_sync_coordinator_tests PRIVATE cxx_std_26)
 add_test(NAME sync_coordinator COMMAND BrockDJ_sync_coordinator_tests)
+
+add_executable(BrockDJ_control_clock_tests
+    tests/control_clock/control_clock_tests.cpp
+    src/app/ControlClock.cpp)
+target_include_directories(BrockDJ_control_clock_tests PRIVATE src)
+target_link_libraries(BrockDJ_control_clock_tests PRIVATE Qt6::Core)
+target_compile_features(BrockDJ_control_clock_tests PRIVATE cxx_std_26)
+add_test(NAME control_clock COMMAND BrockDJ_control_clock_tests)
 
 add_executable(BrockDJ_analysis_lifetime_tests
     tests/analysis/analysis_lifetime_tests.cpp

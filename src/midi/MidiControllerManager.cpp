@@ -12,7 +12,8 @@ using namespace midi_internal;
 #include <QtGlobal>
 
 
-MidiControllerManager::MidiControllerManager(ParameterStore* store, QObject* parent)
+MidiControllerManager::MidiControllerManager(ParameterStore* store, ControlClock& controlClock,
+                                             QObject* parent)
     : QObject(parent),
       m_parameterStore(store),
       // Not a QObject child — m_midiFeedback is a C++ member; parenting would make
@@ -38,6 +39,11 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, QObject* par
     {
         return sendMidiShort(status, data1, data2, type);
     });
+    ControlClock::Callbacks clockCallbacks;
+    clockCallbacks.feedback = [this](const ControlTickContext&) {
+        m_midiFeedback.onControlClockFeedbackTick();
+    };
+    m_controlClockRegistration = controlClock.registerCallbacks(std::move(clockCallbacks));
 
     for (QTimer* timer : {&m_jogAReleaseTimer, &m_jogBReleaseTimer}) {
         timer->setSingleShot(true);
@@ -95,6 +101,7 @@ void MidiControllerManager::shutdown()
     // Stop feedback + Qt signal delivery before JUCE/CoreMIDI teardown — device
     // close can pump the Cocoa run loop and re-enter timer/MIDI handlers.
     m_midiFeedback.prepareForShutdown();
+    m_controlClockRegistration.reset();
     QCoreApplication::removePostedEvents(this);
     QCoreApplication::removePostedEvents(&m_midiFeedback);
 

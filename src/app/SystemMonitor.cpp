@@ -15,11 +15,12 @@
 #include <juce_core/juce_core.h>
 #endif
 
-SystemMonitor::SystemMonitor(QObject* parent)
+SystemMonitor::SystemMonitor(ControlClock& controlClock, QObject* parent)
     : QObject(parent)
 {
-    connect(&m_timer, &QTimer::timeout, this, &SystemMonitor::poll);
-    m_timer.start(500);  // 2 Hz
+    ControlClock::Callbacks callbacks;
+    callbacks.housekeeping = [this](const ControlTickContext&) { poll(); };
+    m_clockRegistration = controlClock.registerCallbacks(std::move(callbacks));
     poll();
 
     // Force-emit initial values for QML

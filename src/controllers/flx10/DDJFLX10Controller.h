@@ -1,6 +1,7 @@
 #pragma once
 
 #include "midi/AlsaMidiOutput.h"
+#include "app/ControlClock.h"
 
 #include <QObject>
 #include <QByteArray>
@@ -27,7 +28,7 @@ class DDJFLX10Controller : public QObject
     Q_OBJECT
 
 public:
-    explicit DDJFLX10Controller(QObject* parent = nullptr);
+    explicit DDJFLX10Controller(ControlClock& controlClock, QObject* parent = nullptr);
     ~DDJFLX10Controller() override;
 
     bool start();
@@ -100,10 +101,10 @@ private:
 #if defined(Q_OS_LINUX)
     std::unique_ptr<AlsaMidiOutput> m_sequencerMidiOut;
 #endif
-    QTimer m_keepAliveTimer;
-    QTimer m_stateTimer;
-    QTimer m_waveformTimer;
+    ControlClock::Registration m_clockRegistration;
     QTimer m_uploadTimer;
+    int m_displayTicksUntilWaveform = 1;
+    bool m_keepAliveEnabled = false;
     std::array<QByteArray, 5> m_waveforms;
     std::array<double, 5> m_waveformDurations = {0.0, 30.0, 30.0, 30.0, 30.0};
     std::array<int, 5> m_uploadEntries = {0, 0, 0, 0, 0};

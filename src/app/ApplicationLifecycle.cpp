@@ -68,6 +68,7 @@ void clearQmlContextProperties(QQmlApplicationEngine& engine)
     engine.rootContext()->setContextProperty("controllerManager", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("cursorControl", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("mixerControl", static_cast<QObject*>(nullptr));
+    engine.rootContext()->setContextProperty("controlClock", static_cast<QObject*>(nullptr));
 }
 
 void performExitTeardown(ApplicationRuntime& runtime, bool manualBackup)
@@ -75,6 +76,9 @@ void performExitTeardown(ApplicationRuntime& runtime, bool manualBackup)
     std::call_once(g_exitTeardownOnce, [&]() {
         if (!runtime.settingsManager)
             return;
+
+        if (runtime.controlClock)
+            runtime.controlClock->stop();
 
         runtime.settingsManager->setRequestManualBackupOnExit(manualBackup);
         runtime.settingsManager->flushToDisk();
@@ -177,6 +181,7 @@ void shutdownApplication(ApplicationRuntime& runtime)
         runtime.deckC.reset();
         runtime.deckB.reset();
         runtime.deckA.reset();
+        runtime.syncClockRegistration.reset();
         if (runtime.syncCoordinator)
             runtime.syncCoordinator->shutdown();
         runtime.audioPageCache.reset();

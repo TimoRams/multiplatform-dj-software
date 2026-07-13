@@ -74,3 +74,14 @@ Jede Änderung an `getNextAudioBlock()`, `processBlock()`, `prepareToPlay()`-Üb
 - Controllers prepare bounded scalar actions; only the owning facade uses its own `DeckTransport`.
 - Fixed four-deck slots avoid update allocation/quadratic traversal. Never traverse decks, choose a
   master, calculate BPM/phase, lock or emit Qt signals in `getNextAudioBlock()`.
+
+## ControlClock boundary (2026-07-13)
+
+- `ControlClock` is Qt-main/control-thread only. It may read published scalar snapshots and issue the
+  same bounded control commands as existing UI/MIDI paths; it must never be called by the callback.
+- Per logical tick order is fast scratch, transport, all sync inputs, coordinator once, all sync
+  applies, waveform/UI, feedback/display, meters, statistics and housekeeping.
+- A delayed tick is coalesced to one update with finite delta capped at 100 ms. No catch-up loop is
+  permitted. Severe lateness may skip UI/feedback/slow groups, never the current transport/sync pass.
+- No decoder, file, database integrity operation, object destruction, unbounded allocation or
+  control/audio lock may be added to a fast callback group.

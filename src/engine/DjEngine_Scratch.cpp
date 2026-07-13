@@ -104,9 +104,6 @@ void DjEngine::decayJogNudge()
     }
 }
 
-// Returns true if onTimer should continue to the phase-correction/VU path,
-// false if it should return immediately (pre-roll loop wrap triggered).
-
 void DjEngine::syncReverseReaderToHold() noexcept
 {
     if (!m_transport->hasTrack() || m_transport->sourceSampleRate() <= 0.0)

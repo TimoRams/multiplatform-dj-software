@@ -1,5 +1,7 @@
 #pragma once
 
+#include "app/ControlClock.h"
+
 #include <QPointer>
 #include <QQuickWindow>
 #include <QQmlApplicationEngine>
@@ -40,6 +42,8 @@ struct ApplicationRuntime {
     std::unique_ptr<AudioDeviceService> audioDeviceService;
     std::unique_ptr<AudioPageCache> audioPageCache;
     std::unique_ptr<DjMasterBus> masterBus;
+    std::unique_ptr<ControlClock> controlClock;
+    ControlClock::Registration syncClockRegistration;
     std::unique_ptr<engine::sync::SyncCoordinator> syncCoordinator;
     std::unique_ptr<DjEngine> deckA;
     std::unique_ptr<DjEngine> deckB;

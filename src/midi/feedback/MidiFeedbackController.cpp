@@ -4,6 +4,7 @@
 
 #include <QVariantList>
 #include <QVariantMap>
+#include <QTimer>
 #include <QtGlobal>
 #include <algorithm>
 #include <cmath>
@@ -26,13 +27,6 @@ double hueDistance(double a, double b)
 MidiFeedbackController::MidiFeedbackController(QObject* parent)
     : QObject(parent)
 {
-    m_vuTimer.setInterval(33);
-    connect(&m_vuTimer, &QTimer::timeout,
-            this, &MidiFeedbackController::updateVuMeters);
-
-    m_blinkTimer.setInterval(500);
-    connect(&m_blinkTimer, &QTimer::timeout,
-            this, &MidiFeedbackController::updateBlinkPhase);
 }
 
 void MidiFeedbackController::setMidiSender(MidiSender sender)
@@ -74,28 +68,30 @@ void MidiFeedbackController::start()
 
     clearAll();
     refreshAll();
-    if (!m_vuTimer.isActive())
-        m_vuTimer.start();
-    if (!m_blinkTimer.isActive())
-        m_blinkTimer.start();
+    m_feedbackTicksUntilBlink = 15;
 }
 
 void MidiFeedbackController::stop()
 {
-    if (m_vuTimer.isActive())
-        m_vuTimer.stop();
-    if (m_blinkTimer.isActive())
-        m_blinkTimer.stop();
 }
 
 void MidiFeedbackController::prepareForShutdown() noexcept
 {
-    QObject::disconnect(&m_vuTimer, nullptr, this, nullptr);
-    QObject::disconnect(&m_blinkTimer, nullptr, this, nullptr);
     m_enabled = false;
     m_sender = {};
     for (auto*& deck : m_decks)
         deck = nullptr;
+}
+
+void MidiFeedbackController::onControlClockFeedbackTick()
+{
+    if (!m_enabled || m_rawTestActive)
+        return;
+    updateVuMeters();
+    if (--m_feedbackTicksUntilBlink <= 0) {
+        m_feedbackTicksUntilBlink = 15;
+        updateBlinkPhase();
+    }
 }
 
 void MidiFeedbackController::clearAll()
@@ -241,10 +237,7 @@ void MidiFeedbackController::sendPaletteTest()
 
 void MidiFeedbackController::testRawLedOutput()
 {
-    const bool vuWasActive = m_vuTimer.isActive();
-    const bool blinkWasActive = m_blinkTimer.isActive();
-    m_vuTimer.stop();
-    m_blinkTimer.stop();
+    m_rawTestActive = true;
 
     int delay = 0;
     scheduleRawTestStep(delay, [this] { sendMidiShort(0x90, 0x0B, 0x7F, QStringLiteral("raw-test")); });
@@ -264,13 +257,10 @@ void MidiFeedbackController::testRawLedOutput()
         delay += 20;
     }
 
-    scheduleRawTestStep(delay, [this, vuWasActive, blinkWasActive] {
+    scheduleRawTestStep(delay, [this] {
         sendMidiShort(0xB0, 0x02, 0x00, QStringLiteral("raw-test"));
+        m_rawTestActive = false;
         if (m_enabled) {
-            if (vuWasActive && !m_vuTimer.isActive())
-                m_vuTimer.start();
-            if (blinkWasActive && !m_blinkTimer.isActive())
-                m_blinkTimer.start();
             refreshAll();
         }
     });

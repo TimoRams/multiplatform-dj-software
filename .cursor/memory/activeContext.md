@@ -436,3 +436,15 @@ command distribution, Link snapshot and shutdown. `DjEngine` remains the QML/MID
 builds pointer-free TrackData/DeckTransport input snapshots; no sync path reads another engine.
 The existing four 4-ms timers remain intentionally unchanged. Next: introduce the shared
 `ControlClock` with separate UI/transport/sync/MIDI/waveform rates.
+
+## Current task: application ControlClock (2026-07-13)
+
+`ApplicationRuntime` now owns one deadline-based 250 Hz precise `ControlClock`; the four deck
+timers are removed. Fixed callback slots with RAII registration run fast scratch at 250 Hz,
+transport and the staged all-input→one-coordinator→all-apply sync pass at 125 Hz, waveform/QML and
+FLX state at 60 Hz, MIDI/meters at 30 Hz, FLX waveform/Link at 20 Hz, statistics/preview at 10 Hz,
+and monitoring/keepalive at 2 Hz. Delayed work is coalesced, delta is capped at 100 ms, and severe
+lateness skips non-musical groups first. QML periodic waveform, Link publish and header timers use
+clock signals; render-frame and single-shot debounces remain independent. The four-graph transport
+stress now executes through the clock and keeps every realtime violation counter at zero. Next:
+fix `DjMasterBus` registration lifetime and remove its fixed 4096-sample block limit.

@@ -167,3 +167,14 @@ on handoff or master-track replacement. Controller validates master/track genera
 tight-double, error and pending-action state. The facade applies only its own controller actions to
 its own transport. QML/MIDI/FLX10 APIs remain unchanged. `DjEngine_Sync.cpp` is now a beat-query and
 snapshot/action facade: zero static mutable sync state and zero direct engine-to-engine sync access.
+
+## Scheduling after ControlClock (2026-07-13)
+
+Before this milestone `DjEngine.h` owned a `QTimer` and every deck started a precise 4 ms callback;
+the large `onTimer()` mixed scratch physics, cue service, transport, history, sync, FX, position and
+meter publication. `DjEngine.h` now owns only a non-owning `ControlClock&` plus an RAII registration.
+Named callbacks split fast scratch (250 Hz), transport (125 Hz), sync input/apply (125 Hz), waveform
+(60 Hz) and meter (30 Hz). Application-owned coordinator registration runs exactly once between all
+deck input and apply phases. `DjEngine` remains the public QML/MIDI/controller facade and no public
+API was removed. The number of `DjEngine_*.cpp` files is unchanged; scheduling ownership moved to
+`src/app/ControlClock.*`, not into another deck facade file.

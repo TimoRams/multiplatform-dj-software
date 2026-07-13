@@ -23,18 +23,22 @@
 
 using namespace flx10_protocol;
 
-DDJFLX10Controller::DDJFLX10Controller(QObject* parent)
+DDJFLX10Controller::DDJFLX10Controller(ControlClock& controlClock, QObject* parent)
     : QObject(parent)
 {
-    m_keepAliveTimer.setTimerType(Qt::PreciseTimer);
-    m_stateTimer.setTimerType(Qt::PreciseTimer);
-    m_waveformTimer.setTimerType(Qt::PreciseTimer);
     m_uploadTimer.setTimerType(Qt::PreciseTimer);
 
-    connect(&m_keepAliveTimer, &QTimer::timeout, this, &DDJFLX10Controller::sendKeepAlive);
-    connect(&m_stateTimer, &QTimer::timeout, this, &DDJFLX10Controller::sendStateTick);
-    connect(&m_waveformTimer, &QTimer::timeout, this, &DDJFLX10Controller::sendWaveformTick);
     connect(&m_uploadTimer, &QTimer::timeout, this, &DDJFLX10Controller::sendUploadChunk);
+    ControlClock::Callbacks callbacks;
+    callbacks.display = [this](const ControlTickContext&) {
+        sendStateTick();
+        if (--m_displayTicksUntilWaveform <= 0) {
+            m_displayTicksUntilWaveform = 3;
+            sendWaveformTick();
+        }
+    };
+    callbacks.housekeeping = [this](const ControlTickContext&) { sendKeepAlive(); };
+    m_clockRegistration = controlClock.registerCallbacks(std::move(callbacks));
 
     setStatus(QStringLiteral("DDJ-FLX10 support disabled"));
 }
@@ -47,6 +51,7 @@ DDJFLX10Controller::~DDJFLX10Controller()
 bool DDJFLX10Controller::start()
 {
     stop();
+    m_shuttingDown.store(false, std::memory_order_release);
 
 #if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
     setStatus(QStringLiteral("DDJ-FLX10: starting Linux HID activation"));
@@ -75,10 +80,8 @@ bool DDJFLX10Controller::start()
     m_clockStartMs = QDateTime::currentMSecsSinceEpoch();
     refreshDeckFromEngine(1);
     refreshDeckFromEngine(2);
-    m_stateTimer.start(5);
-    m_waveformTimer.start(kXx36TrickleIntervalMs);
-    if (sequencerMidiReady || !m_midiPort.isEmpty())
-        m_keepAliveTimer.start(500);
+    m_displayTicksUntilWaveform = 1;
+    m_keepAliveEnabled = sequencerMidiReady || !m_midiPort.isEmpty();
 
     setStatus(QStringLiteral("DDJ-FLX10: HID display active"));
     return true;
@@ -97,10 +100,8 @@ void DDJFLX10Controller::prepareForShutdown() noexcept
 {
     m_shuttingDown.store(true, std::memory_order_release);
     disconnectDeckSignals();
-    QObject::disconnect(&m_keepAliveTimer, nullptr, this, nullptr);
-    QObject::disconnect(&m_stateTimer, nullptr, this, nullptr);
-    QObject::disconnect(&m_waveformTimer, nullptr, this, nullptr);
-    QObject::disconnect(&m_uploadTimer, nullptr, this, nullptr);
+    m_uploadTimer.stop();
+    m_keepAliveEnabled = false;
     QCoreApplication::removePostedEvents(this);
     m_deckA = nullptr;
     m_deckB = nullptr;
@@ -108,7 +109,10 @@ void DDJFLX10Controller::prepareForShutdown() noexcept
 
 void DDJFLX10Controller::stop()
 {
-    prepareForShutdown();
+    m_shuttingDown.store(true, std::memory_order_release);
+    disconnectDeckSignals();
+    m_uploadTimer.stop();
+    m_keepAliveEnabled = false;
     m_uploadActive.fill(false);
     m_uploadEntries.fill(0);
     for (int deck = controllers::kFlx10FirstDeckIndex; deck <= controllers::kFlx10LastDeckIndex; ++deck) {
@@ -577,7 +581,8 @@ void DDJFLX10Controller::sendSessionSysEx()
 
 void DDJFLX10Controller::sendKeepAlive()
 {
-    if (m_shuttingDown.load(std::memory_order_acquire) || !m_connected)
+    if (m_shuttingDown.load(std::memory_order_acquire) || !m_connected
+        || !m_keepAliveEnabled)
         return;
     sendMidiHex(QString::fromLatin1(kKeepAlive));
 }
@@ -632,4 +637,3 @@ void DDJFLX10Controller::sendUploadChunk()
     if (!anyActive || (!m_uploadActive[1] && !m_uploadActive[2]))
         m_uploadTimer.stop();
 }
-

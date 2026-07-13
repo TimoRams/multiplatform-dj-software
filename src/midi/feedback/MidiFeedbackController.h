@@ -1,7 +1,6 @@
 #pragma once
 
 #include <QObject>
-#include <QTimer>
 #include <QString>
 #include <array>
 #include <cstdint>
@@ -57,6 +56,7 @@ public:
     void start();
     void stop();
     void prepareForShutdown() noexcept;
+    void onControlClockFeedbackTick();
 
     void clearAll();
     void refreshAll();
@@ -88,9 +88,9 @@ private:
     MidiSender m_sender;
     DjEngine* m_decks[4] = { nullptr, nullptr, nullptr, nullptr };
     MidiFeedbackMapping m_mapping;
-    QTimer m_vuTimer;
-    QTimer m_blinkTimer;
     std::array<uint8_t, 4> m_lastVuValues = { 0xFF, 0xFF, 0xFF, 0xFF };
     bool m_enabled = false;
+    bool m_rawTestActive = false;
     bool m_blinkPhase = false;
+    int m_feedbackTicksUntilBlink = 15;
 };

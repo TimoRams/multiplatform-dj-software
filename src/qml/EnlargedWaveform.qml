@@ -140,14 +140,15 @@ Item {
             onTriggered: waveItem.requestUpdate()
         }
 
-        Timer {
-            id: pausedWaveRefresh
-            interval: 66
-            repeat: true
-            running: root.engine !== null
-                     && !root.engine.isPlaying
-                     && !root.engine.isScratchVisualActive()
-            onTriggered: waveItem.requestUpdate()
+        Connections {
+            target: (typeof controlClock !== "undefined") ? controlClock : null
+            property int pausedTickDivider: 0
+            function onWaveformTick() {
+                if (root.engine !== null && !root.engine.isPlaying
+                        && !root.engine.isScratchVisualActive()
+                        && (++pausedTickDivider % 4) === 0)
+                    waveItem.requestUpdate()
+            }
         }
 
         Connections {

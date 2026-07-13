@@ -1,7 +1,7 @@
 #pragma once
 
 #include <QObject>
-#include <QTimer>
+#include "app/ControlClock.h"
 #include <atomic>
 #include <cstdint>
 #include <ableton/Link.hpp>
@@ -17,7 +17,7 @@ class LinkManager : public QObject
 
 
 public:
-    explicit LinkManager(QObject* parent = nullptr);
+    explicit LinkManager(ControlClock& controlClock, QObject* parent = nullptr);
     ~LinkManager() override;
 
     void shutdown();
@@ -44,7 +44,7 @@ private slots:
 
 private:
     ableton::Link m_link;
-    QTimer        m_pollTimer;
+    ControlClock::Registration m_clockRegistration;
     std::atomic<bool> m_shuttingDown { false };
 
     double m_bpm      = 120.0;

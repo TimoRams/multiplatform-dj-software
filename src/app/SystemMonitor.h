@@ -1,7 +1,7 @@
 #pragma once
 
 #include <QObject>
-#include <QTimer>
+#include "ControlClock.h"
 #include <QElapsedTimer>
 
 // Lightweight system resource monitor for CPU and RAM usage.
@@ -13,7 +13,7 @@ class SystemMonitor : public QObject
     Q_PROPERTY(double ramUsage READ ramUsage NOTIFY ramUsageChanged)
 
 public:
-    explicit SystemMonitor(QObject* parent = nullptr);
+    explicit SystemMonitor(ControlClock& controlClock, QObject* parent = nullptr);
 
     double cpuUsage() const { return m_cpuUsage; }
     double ramUsage() const { return m_ramUsage; }
@@ -26,7 +26,7 @@ private slots:
     void poll();
 
 private:
-    QTimer m_timer;
+    ControlClock::Registration m_clockRegistration;
     double m_cpuUsage = 0.0;
     double m_ramUsage = 0.0;
 

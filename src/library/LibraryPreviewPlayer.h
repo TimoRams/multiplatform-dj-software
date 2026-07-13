@@ -2,7 +2,7 @@
 
 #include <QObject>
 #include <QString>
-#include <QTimer>
+#include "app/ControlClock.h"
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -21,7 +21,7 @@ class LibraryPreviewPlayer : public QObject
     Q_PROPERTY(double progress READ progress NOTIFY positionChanged)
 
 public:
-    explicit LibraryPreviewPlayer(QObject* parent = nullptr);
+    explicit LibraryPreviewPlayer(ControlClock& controlClock, QObject* parent = nullptr);
     ~LibraryPreviewPlayer() override;
 
     [[nodiscard]] bool isPlaying() const { return m_playing.load(std::memory_order_relaxed); }
@@ -64,7 +64,8 @@ private:
     juce::AudioTransportSource m_transport;
 
     mutable std::mutex m_mutex;
-    QTimer m_positionTimer;
+    ControlClock::Registration m_clockRegistration;
+    bool m_positionPollingEnabled = false;
     QString m_currentPath;
     std::atomic<bool> m_playing { false };
     std::atomic<double> m_durationSec { 0.0 };

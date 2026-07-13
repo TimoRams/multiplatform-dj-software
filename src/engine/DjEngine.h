@@ -4,6 +4,7 @@
 #include "deck/DeckTrackLoader.h"
 #include "audio/cache/AudioPageCache.h"
 #include "sync/DeckSyncController.h"
+#include "app/ControlClock.h"
 
 class DeckAudioGraph;
 class DeckTransport;
@@ -120,6 +121,7 @@ public:
     void releaseTransportReaders();
 
     explicit DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audioPageCache,
+                      ControlClock& controlClock,
                       engine::sync::SyncCoordinator& syncCoordinator, int deckIndex,
                       QObject* parent = nullptr);
     ~DjEngine() override;
@@ -447,7 +449,6 @@ signals:
     void rollOutChanged();
 
 private slots:
-    void onTimer();
 
 private:
     struct LatencySnapshot {
@@ -507,7 +508,6 @@ private:
     DeckCueLoopController m_cueLoopController;
     DeckTrackLoader m_trackLoader;
     juce::AudioFormatManager formatManager;
-    QTimer timer;
     QTimer* m_analysisPersistTimer = nullptr;
 
     TrackData* m_trackData;
@@ -573,7 +573,7 @@ private:
 
     // Quantized cue trigger: when quantize is on and the deck is playing, a hot
     // cue / cue press is deferred to the next beat so the jump lands exactly on
-    // the grid (CDJ-style). The deferred jump is serviced from onTimer().
+    // the grid (CDJ-style). The deferred jump is serviced by the ControlClock.
     void   scheduleQuantizedCueJump(double targetSec);
     void   cancelQuantizedCueJump();
     bool   serviceQuantizedCueJump();
@@ -602,6 +602,12 @@ private:
     void publishSyncInputAndApplyActions();
     void applyPendingSyncActions();
     void refreshSyncFacadeSignals();
+    void onFastControlTick(const ControlTickContext& context);
+    void onTransportControlTick(const ControlTickContext& context);
+    void onSyncInputControlTick(const ControlTickContext& context);
+    void onSyncApplyControlTick(const ControlTickContext& context);
+    void onWaveformControlTick(const ControlTickContext& context);
+    void onMeterControlTick(const ControlTickContext& context);
     void refreshHardwareLatency();
     void setSnapAnchor(double positionSec, bool valid);
     void armSnapFromTransportPosition();
@@ -648,8 +654,10 @@ private:
     // we advance the visual clock ourselves until it reaches 0, then start transport.
 
     engine::sync::SyncCoordinator& m_syncCoordinator;
+    ControlClock& m_controlClock;
     const int m_deckIndex = 0;
     std::unique_ptr<engine::sync::DeckSyncController> m_syncController;
+    ControlClock::Registration m_controlClockRegistration;
     bool m_lastPublishedSyncEnabled = false;
     bool m_lastPublishedSyncMaster = false;
 };

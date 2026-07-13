@@ -42,12 +42,16 @@ LoadedPreview loadPreviewFile(const QString& filePath)
 
 } // namespace
 
-LibraryPreviewPlayer::LibraryPreviewPlayer(QObject* parent)
+LibraryPreviewPlayer::LibraryPreviewPlayer(ControlClock& controlClock, QObject* parent)
     : QObject(parent)
 {
     m_formatManager.registerBasicFormats();
-    m_positionTimer.setInterval(80);
-    connect(&m_positionTimer, &QTimer::timeout, this, &LibraryPreviewPlayer::pollPosition);
+    ControlClock::Callbacks callbacks;
+    callbacks.statistics = [this](const ControlTickContext&) {
+        if (m_positionPollingEnabled)
+            pollPosition();
+    };
+    m_clockRegistration = controlClock.registerCallbacks(std::move(callbacks));
 }
 
 LibraryPreviewPlayer::~LibraryPreviewPlayer()
@@ -113,13 +117,12 @@ void LibraryPreviewPlayer::publishTransportStateLocked()
 
 void LibraryPreviewPlayer::startPositionTimer()
 {
-    if (!m_positionTimer.isActive())
-        m_positionTimer.start();
+    m_positionPollingEnabled = true;
 }
 
 void LibraryPreviewPlayer::stopPositionTimer()
 {
-    m_positionTimer.stop();
+    m_positionPollingEnabled = false;
 }
 
 void LibraryPreviewPlayer::pollPosition()

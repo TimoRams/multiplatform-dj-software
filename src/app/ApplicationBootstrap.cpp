@@ -57,6 +57,7 @@
 #include "audio/device/AudioDeviceService.h"
 #include "audio/cache/AudioPageCache.h"
 #include "engine/sync/SyncCoordinator.h"
+#include "app/ControlClock.h"
 
 using namespace Qt::StringLiterals;
 
@@ -304,8 +305,9 @@ int runApplication(int argc, char *argv[])
     runtime.libraryTableModel = std::make_unique<LibraryTableModel>("library_conn");
     runtime.libraryAnalysisManager = std::make_unique<LibraryAnalysisManager>();
     runtime.fxManager = std::make_unique<FxManager>();
-    runtime.linkManager = std::make_unique<LinkManager>();
-    runtime.sysMonitor = std::make_unique<SystemMonitor>();
+    runtime.controlClock = std::make_unique<ControlClock>();
+    runtime.linkManager = std::make_unique<LinkManager>(*runtime.controlClock);
+    runtime.sysMonitor = std::make_unique<SystemMonitor>(*runtime.controlClock);
     runtime.cursorControl = std::make_unique<CursorControl>();
     runtime.coverProvider = std::make_unique<CoverArtProvider>();
     runtime.coverProviderPtr = runtime.coverProvider.get();
@@ -316,6 +318,13 @@ int runApplication(int argc, char *argv[])
     settingsManager.setAudioDeviceService(runtime.audioDeviceService.get());
     runtime.masterBus = std::make_unique<DjMasterBus>();
     runtime.syncCoordinator = std::make_unique<engine::sync::SyncCoordinator>();
+    ControlClock::Callbacks syncClockCallbacks;
+    syncClockCallbacks.syncCoordinate = [&runtime](const ControlTickContext&) {
+        if (runtime.syncCoordinator)
+            runtime.syncCoordinator->update();
+    };
+    runtime.syncClockRegistration = runtime.controlClock->registerCallbacks(
+        std::move(syncClockCallbacks));
     runtime.syncCoordinator->setTightDoubleSyncEnabled(settingsManager.tightDoubleSync());
     QObject::connect(&settingsManager, &SettingsManager::tightDoubleSyncChanged,
                      runtime.linkManager.get(),
@@ -370,6 +379,7 @@ int runApplication(int argc, char *argv[])
     engine.rootContext()->setContextProperty("cursorControl", runtime.cursorControl.get());
     qmlRegisterSingletonInstance("BrockDJ.Mixer", 1, 0, "Control", runtime.mixerControl.get());
     engine.rootContext()->setContextProperty("mixerControl", runtime.mixerControl.get());
+    engine.rootContext()->setContextProperty("controlClock", runtime.controlClock.get());
     engine.rootContext()->setContextProperty("libraryCover", runtime.libraryCoverService.get());
 
     const auto url = QUrl(u"qrc:/DJSoftware/src/qml/main.qml"_s);
@@ -404,12 +414,16 @@ int runApplication(int argc, char *argv[])
 
         QTimer::singleShot(0, &app, [&]() {
             runtime.deckA = std::make_unique<DjEngine>(*runtime.audioDeviceService, *runtime.audioPageCache,
+                                                       *runtime.controlClock,
                                                        *runtime.syncCoordinator, 0);
             runtime.deckB = std::make_unique<DjEngine>(*runtime.audioDeviceService, *runtime.audioPageCache,
+                                                       *runtime.controlClock,
                                                        *runtime.syncCoordinator, 1);
             runtime.deckC = std::make_unique<DjEngine>(*runtime.audioDeviceService, *runtime.audioPageCache,
+                                                       *runtime.controlClock,
                                                        *runtime.syncCoordinator, 2);
             runtime.deckD = std::make_unique<DjEngine>(*runtime.audioDeviceService, *runtime.audioPageCache,
+                                                       *runtime.controlClock,
                                                        *runtime.syncCoordinator, 3);
             logStartupStep("DjEngines constructed");
 
@@ -423,13 +437,15 @@ int runApplication(int argc, char *argv[])
             engine.rootContext()->setContextProperty("deckC", runtime.deckC.get());
             engine.rootContext()->setContextProperty("deckD", runtime.deckD.get());
 
-            auto* midi = new MidiControllerManager(runtime.parameterStore.get(), &app);
+            auto* midi = new MidiControllerManager(runtime.parameterStore.get(),
+                                                   *runtime.controlClock, &app);
             QQmlEngine::setObjectOwnership(midi, QQmlEngine::CppOwnership);
             runtime.midiManager = midi;
             runtime.midiManager->connectDecks(runtime.deckA.get(), runtime.deckB.get());
             engine.rootContext()->setContextProperty("midiManager", runtime.midiManager.data());
 
-            runtime.controllerManager = std::make_unique<ControllerIntegrationManager>();
+            runtime.controllerManager = std::make_unique<ControllerIntegrationManager>(
+                *runtime.controlClock);
             runtime.controllerManager->setDecks(runtime.deckA.get(), runtime.deckB.get());
             engine.rootContext()->setContextProperty("controllerManager", runtime.controllerManager.get());
             QObject::connect(&settingsManager,
@@ -449,7 +465,8 @@ int runApplication(int argc, char *argv[])
             runtime.fxManager->registerEngines(runtime.deckA.get(), runtime.deckB.get(),
                                                runtime.deckC.get(), runtime.deckD.get());
 
-            runtime.libraryPreviewPlayer = std::make_unique<LibraryPreviewPlayer>(&app);
+            runtime.libraryPreviewPlayer = std::make_unique<LibraryPreviewPlayer>(
+                *runtime.controlClock, &app);
             runtime.masterBus->setPreviewPlayer(runtime.libraryPreviewPlayer.get());
             engine.rootContext()->setContextProperty("libraryPreview",
                                                      runtime.libraryPreviewPlayer.get());
@@ -479,6 +496,7 @@ int runApplication(int argc, char *argv[])
             if (actualBuf > 0) settingsManager.setAudioBufferSize(actualBuf);
 
             runtime.masterBus->registerCallback(runtime.audioDeviceService->manager());
+            runtime.controlClock->start();
             qDebug() << "[startup] Audio device settings applied" << startupTimer.elapsed() << "ms";
         });
     };

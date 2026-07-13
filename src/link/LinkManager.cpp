@@ -2,7 +2,7 @@
 #include <QDebug>
 #include <cmath>
 
-LinkManager::LinkManager(QObject* parent)
+LinkManager::LinkManager(ControlClock& controlClock, QObject* parent)
     : QObject(parent)
     , m_link(120.0)      // initial BPM
 {
@@ -19,9 +19,9 @@ LinkManager::LinkManager(QObject* parent)
         }
     });
 
-    // 60 Hz UI poll timer — reads Link state lock-free via captureAppSessionState()
-    connect(&m_pollTimer, &QTimer::timeout, this, &LinkManager::pollLinkState);
-    m_pollTimer.start(16);   // ~60 fps
+    ControlClock::Callbacks callbacks;
+    callbacks.waveform = [this](const ControlTickContext&) { pollLinkState(); };
+    m_clockRegistration = controlClock.registerCallbacks(std::move(callbacks));
 
     qDebug() << "[LinkManager] initialised (120 BPM, disabled)";
 }
@@ -37,7 +37,7 @@ void LinkManager::shutdown()
     if (alreadyShuttingDown)
         return;
 
-    m_pollTimer.stop();
+    m_clockRegistration.reset();
     m_link.setNumPeersCallback([](std::size_t) {});
     m_link.enable(false);
 }

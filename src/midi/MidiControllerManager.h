@@ -7,6 +7,7 @@
 #endif
 
 #include "feedback/MidiFeedbackController.h"
+#include "app/ControlClock.h"
 
 #include <QObject>
 #include <QTimer>
@@ -53,7 +54,8 @@ class MidiControllerManager : public QObject, public juce::MidiInputCallback
     Q_OBJECT
 
 public:
-    explicit MidiControllerManager(ParameterStore* store, QObject* parent = nullptr);
+    MidiControllerManager(ParameterStore* store, ControlClock& controlClock,
+                          QObject* parent = nullptr);
     ~MidiControllerManager() override;
 
     Q_INVOKABLE QStringList getAvailableMidiInputDevices();
@@ -177,6 +179,7 @@ private:
     juce::String m_selectedMidiOutputIdentifier;
     QString m_selectedMidiOutputName;
     MidiFeedbackController m_midiFeedback;
+    ControlClock::Registration m_controlClockRegistration;
     bool m_flx10RawLedTestRun = false;
 
     QString m_selectedController;

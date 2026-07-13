@@ -2,8 +2,9 @@
 
 #include <QDebug>
 
-ControllerIntegrationManager::ControllerIntegrationManager(QObject* parent)
+ControllerIntegrationManager::ControllerIntegrationManager(ControlClock& controlClock, QObject* parent)
     : QObject(parent)
+    , m_flx10(controlClock)
 {
     connect(&m_flx10, &DDJFLX10Controller::statusChanged,
             this, &ControllerIntegrationManager::flx10StatusChanged);

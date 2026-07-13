@@ -19,6 +19,7 @@ public:
     void setDeckSyncEnabled(int deckIndex, bool enabled) noexcept;
     void requestMaster(int deckIndex, bool requested) noexcept;
     void requestPhaseArrange(int deckIndex, bool resync = false) noexcept;
+    void stageDeckInput(int deckIndex, const DeckSyncInputSnapshot& input) noexcept;
     void updateDeck(int deckIndex, const DeckSyncInputSnapshot& input) noexcept;
     void update() noexcept;
 

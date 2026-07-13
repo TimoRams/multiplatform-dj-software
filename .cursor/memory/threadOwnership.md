@@ -69,3 +69,30 @@ Mixer filters: QML/MIDI/control setters own clamped targets and serialize the fo
 Coordinator construction precedes deck construction. Each controller explicitly registers in a
 fixed slot, unregisters during deck destruction, and is gone before coordinator shutdown. The
 Coordinator stores no `DjEngine*`; controllers store no engine/TrackData/QML/DB/audio-source pointer.
+
+## ControlClock ownership and timer audit (2026-07-13)
+
+`ApplicationRuntime` owns exactly one Qt-main-thread `ControlClock`, constructed before Link,
+monitoring, decks and controller feedback. It is started only after all registrations and audio
+wiring are complete. Shutdown stops it first, then unregisters/destroys targets, then destroys the
+coordinator and clock. Communication with the callback remains existing atomics, snapshots and
+bounded graph commands; the clock never runs in or schedules the audio thread.
+
+| Task | Before | Owner/thread | Actual work | Now / required rate |
+|---|---:|---|---|---:|
+| Deck fast/scratch | 4 × 250 Hz precise | each `DjEngine`, Qt main | scratch physics/jog decay | shared base, 250 Hz |
+| Transport snapshot | included in 4 × 250 Hz | each deck, Qt main | graph snapshot, EOF/slip/history | 125 Hz |
+| Sync | included in 4 × 250 Hz | each deck, Qt main | input/master/commands | 125 Hz, coordinator once |
+| Waveform/QML position | included in deck timer + 66 ms paused QML | deck/QML main | coalesced progress/repaint | 60 Hz / paused 15 Hz |
+| MIDI VU/blink | 33/500 ms | feedback, Qt main | deduplicated VU and blink | 30 Hz / divided 2 Hz |
+| FLX10 state/wave/keepalive | 5/50/500 ms precise | controller, Qt main | dynamic display/trickle/session | 60/20/2 Hz |
+| Link state/publish | 16/50 ms | Link/QML main | snapshot/publish | 60/20 Hz |
+| Meter | included in deck timer | deck, Qt main | atomic level publication | 30 Hz |
+| Preview position | 80 ms | preview, Qt main | transport property snapshot | 10 Hz while active |
+| System monitor | 500 ms | monitor, Qt main | `/proc` status | 2 Hz |
+| DB mirror/backup | 3000/1500 ms | database, Qt/DB boundary | integrity and file backup | remains separate |
+
+Single-shot analysis persistence (400 ms), track/QML/settings debounces, MIDI jog-release/startup,
+FLX10 bounded 2 ms upload chunks, rendering `FrameAnimation`, and waveform analysis coalescers remain
+separate because they are event-bound, protocol-bounded, or render-frame work rather than periodic
+control scheduling.

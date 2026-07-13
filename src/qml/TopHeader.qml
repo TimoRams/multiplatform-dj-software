@@ -44,21 +44,19 @@ Rectangle {
     property int    beatUiTick: 0
 
     // ── Timers ───────────────────────────────────────────────────────────────
-    Timer {
-        interval: 1000; running: true; repeat: true
-        onTriggered: {
+    Connections {
+        target: (typeof controlClock !== "undefined") ? controlClock : null
+        property int latencyDivider: 0
+        function onHousekeepingTick() {
             var d = new Date()
             root.currentTime = d.getHours().toString().padStart(2,"0") + ":"
                              + d.getMinutes().toString().padStart(2,"0")
         }
-    }
-    Timer {
-        interval: 350; running: true; repeat: true
-        onTriggered: root.refreshLatencyInfo()
-    }
-    Timer {
-        interval: 50; running: true; repeat: true
-        onTriggered: root.beatUiTick++
+        function onStatisticsTick() {
+            if ((++latencyDivider % 3) === 0)
+                root.refreshLatencyInfo()
+        }
+        function onLinkTick() { root.beatUiTick++ }
     }
 
     Component.onCompleted: {

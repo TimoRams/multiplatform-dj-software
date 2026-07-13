@@ -87,7 +87,7 @@ void SyncCoordinator::requestPhaseArrange(int deckIndex, bool resync) noexcept
     distributeCommands(deckIndex);
 }
 
-void SyncCoordinator::updateDeck(int deckIndex, const DeckSyncInputSnapshot& input) noexcept
+void SyncCoordinator::stageDeckInput(int deckIndex, const DeckSyncInputSnapshot& input) noexcept
 {
     if (m_shuttingDown || !validDeckIndex(deckIndex) || !m_slots[deckIndex].controller)
         return;
@@ -97,6 +97,11 @@ void SyncCoordinator::updateDeck(int deckIndex, const DeckSyncInputSnapshot& inp
         ++m_masterGeneration;
         ++m_stateGeneration;
     }
+}
+
+void SyncCoordinator::updateDeck(int deckIndex, const DeckSyncInputSnapshot& input) noexcept
+{
+    stageDeckInput(deckIndex, input);
     distributeCommands(deckIndex);
 }
 

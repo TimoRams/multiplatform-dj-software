@@ -190,3 +190,17 @@ injizierte Decks und beendete sauber; echte Hardwarelisten, Wiedergabe und Hot-U
   Play/Pause/Seek/Scratch/Reverse/Slip/Loop/master/Link changes keep every RT counter at zero.
 - [ ] Hardware/QML: SYNC LEDs, FLX10 feedback, audible handoff, same-file tight double.
 - [ ] Hardware/manual: Link leader/follower enable/disable and peer phase.
+
+## ControlClock regression (2026-07-13)
+
+- [x] stopped/start/duplicate start/stop, zero/one/four targets and explicit unregister.
+- [x] 250/125/60/30/10/2 Hz rate ratios in deterministic manual-clock mode.
+- [x] transport→all sync inputs→one coordinator→all applies→UI→feedback→slow ordering.
+- [x] finite/capped delta, delayed tick, no catch-up avalanche and slow/UI shedding.
+- [x] position epsilon and MIDI value deduplication.
+- [x] Four cached graphs/transports/sync controllers, scratch/loop/slip/reverse/master/Link changes,
+  fixed seed, bounded callbacks, controlled unregister/stop and all RT counters zero.
+- [x] Main target and 15 CTest targets pass; combined ASAN/UBSAN passes (LSan unavailable under ptrace).
+- [x] Dedicated ControlClock and four-deck integration targets pass TSAN without a report.
+- [ ] Manual: FLX10 display/keepalive/upload, MIDI LEDs/VU, Link peers, visual 60 Hz waveform and
+  suspend/resume on a release GUI build.
