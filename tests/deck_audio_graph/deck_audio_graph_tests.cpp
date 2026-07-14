@@ -76,6 +76,15 @@ bool isFinite(const juce::AudioBuffer<float>& buffer)
     return true;
 }
 
+double absolutePeak(const juce::AudioBuffer<float>& buffer)
+{
+    double peak = 0.0;
+    for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+        for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
+            peak = std::max(peak, std::abs(static_cast<double>(buffer.getSample(channel, sample))));
+    return peak;
+}
+
 bool realtimeCountersAreZero(DeckAudioGraph& graph)
 {
     const auto stats = graph.realtimeStats();
@@ -197,10 +206,20 @@ int main(int argc, char** argv)
     graph.getNextAudioBlock({&output, 0, 512});
     graph.transport().setPosition(0.2);
     graph.transport().start();
-    graph.playback()->setReverse(true);
-    graph.playback()->setLoopRangeSamples(1000, 5000, 44'100.0);
-    graph.getNextAudioBlock({&output, 0, 512});
+    graph.setReverse(true);
+    const auto reverseBefore = graph.playback()->getNextReadPosition();
+    double reversePeak = 0.0;
+    for (int block = 0; block < 32; ++block) {
+        output.clear();
+        graph.getNextAudioBlock({&output, 0, 512});
+        reversePeak = std::max(reversePeak, absolutePeak(output));
+    }
     ok &= require(isFinite(output), "pause, seek, reverse and loop output is finite");
+    ok &= require(graph.playback()->getNextReadPosition() < reverseBefore,
+                  "full graph reverse source position retreats");
+    ok &= require(reversePeak > 1.0e-5,
+                  "full graph reverse produces audible samples");
+    graph.playback()->setLoopRangeSamples(1000, 5000, 44'100.0);
 
     graph.scratch().configureTrack(44'100.0, 1.0);
     graph.scratch().beginScratch(0.2, 44'100.0, 1.0, true, 1.0);

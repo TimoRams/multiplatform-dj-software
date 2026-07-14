@@ -249,3 +249,9 @@ injizierte Decks und beendete sauber; echte Hardwarelisten, Wiedergabe und Hot-U
 
 - [x] `BrockDJ_dj_engine_api_contract_tests` protects key QML/controller names and the public-header implementation boundary.
 - [ ] Add runtime four-deck facade construction/lifecycle coverage once the remaining direct graph forwarding is moved behind product commands.
+
+## Reverse playback regression (2026-07-14)
+
+- [x] Full DeckAudioGraph path: seek to track middle, start, reverse, process 32 blocks; cache-reader position retreats and output peak is audible/finite.
+- [x] Direction remains single-source: reverse PCM reader, positive Hermite/TimeStretch rate.
+- [ ] Add explicit DjMasterBus reverse RMS integration and cold-cache reverse recovery coverage in the release-hardening pass.

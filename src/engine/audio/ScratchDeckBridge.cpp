@@ -45,8 +45,11 @@ void ScratchDeckBridge::applyDeckTempoToHermite() noexcept
 
 double ScratchDeckBridge::effectiveDeckTempoRatio() const noexcept
 {
-    const double rate = m_deckTempoRatio.load(std::memory_order_relaxed);
-    return m_reverse.load(std::memory_order_relaxed) ? -rate : rate;
+    // Direction is carried by CachedPlaybackAudioSource.  Hermite/JUCE
+    // resampling remains a positive-rate boundary; a negative ratio here would
+    // apply reverse a second time and leaves its forward-oriented pull path
+    // starved on several block sizes.
+    return std::abs(m_deckTempoRatio.load(std::memory_order_relaxed));
 }
 
 bool ScratchDeckBridge::isScratchPathActive() const noexcept

@@ -11,6 +11,13 @@ CachedPlaybackAudioSource::CachedPlaybackAudioSource(AudioPageCache& cache,
 
 void CachedPlaybackAudioSource::setNextReadPosition(juce::int64 position)
 {
+    if (m_reverse.load(std::memory_order_acquire))
+        return;
+    setCommandedReadPosition(position);
+}
+
+void CachedPlaybackAudioSource::setCommandedReadPosition(juce::int64 position) noexcept
+{
     m_position.store(std::clamp<juce::int64>(position, 0, getTotalLength()), std::memory_order_release);
 }
 juce::int64 CachedPlaybackAudioSource::getNextReadPosition() const { return m_position.load(std::memory_order_acquire); }

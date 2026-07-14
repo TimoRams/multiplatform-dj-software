@@ -20,6 +20,10 @@ public:
     void releaseResources() override {}
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) noexcept override;
     void setNextReadPosition(juce::int64 position) override;
+    // Explicit control-thread seek.  During reverse the enclosing JUCE transport
+    // still writes its forward bookkeeping position; that must not overwrite the
+    // reader's reverse-progressing cursor.
+    void setCommandedReadPosition(juce::int64 position) noexcept;
     [[nodiscard]] juce::int64 getNextReadPosition() const override;
     [[nodiscard]] juce::int64 getTotalLength() const override;
     [[nodiscard]] bool isLooping() const override;

@@ -3,6 +3,12 @@
 *Last updated: 2026-07-14*
 
 ## Current task
+**Reverse-playback P0 regression fixed (2026-07-14)**
+- `DeckAudioGraph` integration test reproduced a full-path failure: reverse source position did not retreat and the graph output stayed silent.
+- Root cause: reverse was applied twice. `CachedPlaybackAudioSource` read PCM backwards while `ScratchDeckBridge` also passed a negative Hermite resampling ratio.
+- Direction now belongs only to the cache reader. Hermite/TimeStretch continue with positive tempo ratio. A reverse reader ignores forward JUCE transport bookkeeping writes; explicit graph seeks use a separate commanded-position path.
+
+## Previous task
 **Final DjEngine facade audit and include boundary (in progress)**
 - Public QML/controller API is protected by `BrockDJ_dj_engine_api_contract_tests`; the test records critical properties/methods and bans concrete cache, TrackData, analyzer, master-bus and JUCE-device headers from `DjEngine.h`.
 - `DjEngine.h` now uses forward declarations for those implementation dependencies. `EffectType` remains an explicit public API dependency because MIDI calls expose it by value.

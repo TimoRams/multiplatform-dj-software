@@ -86,6 +86,11 @@ void DeckAudioGraph::setTransportRunning(bool running) noexcept
 
 void DeckAudioGraph::seekToSeconds(double seconds) noexcept
 {
+    if (m_impl->playback) {
+        const auto sample = static_cast<std::int64_t>(std::llround(
+            std::max(0.0, seconds) * m_impl->handle.sampleRate()));
+        m_impl->playback->setCommandedReadPosition(sample);
+    }
     m_impl->transport.setPosition(std::max(0.0, seconds));
 }
 
@@ -127,7 +132,7 @@ void DeckAudioGraph::setLoopRangeSeconds(double startSeconds, double endSeconds,
 void DeckAudioGraph::setPlaybackReadPositionSamples(std::int64_t position) noexcept
 {
     if (m_impl->playback)
-        m_impl->playback->setNextReadPosition(std::max<std::int64_t>(0, position));
+        m_impl->playback->setCommandedReadPosition(std::max<std::int64_t>(0, position));
 }
 
 int DeckAudioGraph::keylockLatencySamples() const noexcept

@@ -125,3 +125,9 @@ Jede Änderung an `getNextAudioBlock()`, `processBlock()`, `prepareToPlay()`-Üb
 
 - `DjEngine.h` must not include concrete cache, analyzer, master-bus or JUCE audio-device implementation headers. Public value types that controllers require remain explicit API dependencies.
 - Facade methods may validate and publish; any direct graph forwarding must remain control-thread-only and must not expose callback-owned source internals to QML.
+
+## Reverse playback direction rule (2026-07-14)
+
+- `DeckTransport::reverse` is the single direction command. `CachedPlaybackAudioSource` applies it by reverse PCM order.
+- Scratch/Hermite and TimeStretch ratios remain positive; they must not reverse the already reversed sample stream a second time.
+- JUCE transport bookkeeping may not overwrite the reader cursor while reverse is active. Explicit control seeks use the graph's commanded-position path.

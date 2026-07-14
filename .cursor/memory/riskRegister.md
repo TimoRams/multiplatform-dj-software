@@ -169,3 +169,5 @@ Last updated: 2026-07-13
 |---|---|---|---|---|---|
 | Direct concrete graph-subsystem forwarding remains | `DjEngine_{Core,Fx,Scratch,Transport,CueLoopFacade}.cpp` | The facade still reaches `DeckAudioGraph` mixer/scratch/time-stretch views in several product paths. | Coupling remains despite single ownership. | Add narrow graph product commands and migrate one subsystem at a time, preserving controller API. | P1 open |
 | Compatibility library hydration stays in facade | `DjEngine_CoreMeta.cpp`, `DjEngine_CueLoopFacade.cpp` | Existing QSql owner-thread APIs are called for metadata/cues. | Large DB operations may delay Qt UI. | Migrate only after a compatible immutable repository command API exists. | P1 open |
+
+| Reverse double-direction application | `CachedPlaybackAudioSource`, `ScratchDeckBridge` | The reader reversed PCM while Hermite received a negative ratio, producing reverse silence/stalled source progress. | P0 playback regression. | Keep direction in cache reader and resampling ratios positive; graph regression test asserts retreating position and audible output. | fixed 2026-07-14 |
