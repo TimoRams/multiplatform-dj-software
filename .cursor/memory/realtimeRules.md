@@ -114,3 +114,9 @@ Jede Änderung an `getNextAudioBlock()`, `processBlock()`, `prepareToPlay()`-Üb
   QObject targets. Main-thread consumers poll bounded result batches.
 - SQLite connections and `QSqlQuery` objects may not cross their creating thread. Full integrity
   checks are manual/diagnostic only; quick check is startup/error/manual maintenance.
+
+## Analysis/render handoff (2026-07-14)
+
+- Audio callbacks neither start, join, poll nor apply analysis. Analyzer progress/completion is drained by control/Qt owner ticks only.
+- Render code reads immutable shared overview/RGB/peak snapshots. It must not request a full `TrackData` copy or detach a shared Qt container per paint.
+- Only the final validated analysis snapshot may replace render-visible waveform data; no partial worker mutation of a live `TrackData` is allowed.

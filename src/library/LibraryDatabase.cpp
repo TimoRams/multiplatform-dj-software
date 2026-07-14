@@ -364,6 +364,77 @@ DatabaseWorkerStats LibraryDatabase::databaseWorkerStats() const noexcept
     return m_databaseWorker ? m_databaseWorker->stats() : DatabaseWorkerStats{};
 }
 
+bool LibraryDatabase::requestAnalysisPersistence(const QString& trackId,
+                                                 const analysis::AnalysisResult& result)
+{
+    if (trackId.isEmpty() || !result.validated || !result.complete || !result.error.isEmpty()
+        || !m_databaseWorker || !m_databaseWorker->isRunning())
+        return false;
+
+    DatabaseCommand command;
+    command.type = DatabaseCommandType::Batch;
+    command.priority = DatabasePriority::Persistence;
+    command.requestId = m_nextDatabaseRequestId++;
+    command.generation = result.identity.requestGeneration;
+    command.coalescingKey = QStringLiteral("analysis:%1").arg(trackId);
+
+    QString gridType = QStringLiteral("unknown");
+    if (result.beatGrid.type == TrackData::BeatGridType::ConstantTempo) gridType = QStringLiteral("constant");
+    if (result.beatGrid.type == TrackData::BeatGridType::DynamicTempo) gridType = QStringLiteral("dynamic");
+    command.statements.push_back({
+        QStringLiteral("UPDATE Tracks SET bpm=:bpm,key=CASE WHEN length(trim(:key))>0 THEN :key ELSE key END,"
+                       "is_analyzed=1,first_beat_sample=:first,analysis_sample_rate=:rate,analysis_version=:version,"
+                       "bpm_confidence=:bc,beat_confidence=:bec,downbeat_confidence=:dc,grid_confidence=:gc,"
+                       "beatgrid_type=:type,beatgrid_user_modified=:modified,"
+                       "beatgrid_locked_by_user=CASE WHEN beatgrid_locked_by_user!=0 THEN beatgrid_locked_by_user ELSE :locked END,"
+                       "track_segments=:segments WHERE id=:id"),
+        {{QStringLiteral(":bpm"), result.bpm}, {QStringLiteral(":key"), result.detectedKey},
+         {QStringLiteral(":first"), result.firstBeatSample}, {QStringLiteral(":rate"), result.sampleRate},
+         {QStringLiteral(":version"), static_cast<int>(result.identity.analysisVersion)},
+         {QStringLiteral(":bc"), result.confidence.bpmConfidence},
+         {QStringLiteral(":bec"), result.confidence.beatConfidence},
+         {QStringLiteral(":dc"), result.confidence.downbeatConfidence},
+         {QStringLiteral(":gc"), result.confidence.gridConfidence},
+         {QStringLiteral(":type"), gridType},
+         {QStringLiteral(":modified"), result.beatGrid.userModified ? 1 : 0},
+         {QStringLiteral(":locked"), result.beatGrid.lockedByUser ? 1 : 0},
+         {QStringLiteral(":segments"), trackSegmentsToJson(result.phrases)},
+         {QStringLiteral(":id"), trackId}}});
+
+    const bool manual = result.beatGrid.userModified || result.beatGrid.lockedByUser;
+    const QString writable = manual
+        ? QStringLiteral("1")
+        : QStringLiteral("COALESCE((SELECT beatgrid_locked_by_user FROM Tracks WHERE id=:id),0)=0");
+    command.statements.push_back({QStringLiteral("DELETE FROM BeatGridMarkers WHERE track_id=:id AND %1").arg(writable),
+                                  {{QStringLiteral(":id"), trackId}}});
+    command.statements.push_back({QStringLiteral("DELETE FROM TempoNodes WHERE track_id=:id AND %1").arg(writable),
+                                  {{QStringLiteral(":id"), trackId}}});
+    for (int i = 0; i < static_cast<int>(result.beats.size()); ++i) {
+        const auto& beat = result.beats[static_cast<std::size_t>(i)];
+        command.statements.push_back({
+            QStringLiteral("INSERT INTO BeatGridMarkers(track_id,beat_index,position_sec,is_downbeat,bar_number,beat_in_bar,confidence,user_modified,locked_by_user) "
+                           "SELECT :id,:idx,:pos,:down,:bar,:inbar,:conf,:modified,:locked WHERE %1").arg(writable),
+            {{QStringLiteral(":id"), trackId}, {QStringLiteral(":idx"), i},
+             {QStringLiteral(":pos"), beat.positionSec}, {QStringLiteral(":down"), beat.isDownbeat ? 1 : 0},
+             {QStringLiteral(":bar"), beat.barNumber}, {QStringLiteral(":inbar"), beat.beatInBar},
+             {QStringLiteral(":conf"), beat.confidence}, {QStringLiteral(":modified"), beat.userModified ? 1 : 0},
+             {QStringLiteral(":locked"), beat.lockedByUser ? 1 : 0}}});
+    }
+    for (int i = 0; i < static_cast<int>(result.beatGrid.tempoNodes.size()); ++i) {
+        const auto& node = result.beatGrid.tempoNodes[static_cast<std::size_t>(i)];
+        command.statements.push_back({
+            QStringLiteral("INSERT INTO TempoNodes(track_id,node_index,position_sec,bpm,confidence) "
+                           "SELECT :id,:idx,:pos,:bpm,:conf WHERE %1").arg(writable),
+            {{QStringLiteral(":id"), trackId}, {QStringLiteral(":idx"), i},
+             {QStringLiteral(":pos"), node.positionSec}, {QStringLiteral(":bpm"), node.bpm},
+             {QStringLiteral(":conf"), node.confidence}}});
+    }
+    const auto requestId = command.requestId;
+    if (!m_databaseWorker->enqueue(std::move(command))) return false;
+    m_pendingAnalysisWrites.insert(requestId, trackId);
+    return true;
+}
+
 bool LibraryDatabase::requestLibraryPage(QString sql, QVariantMap bindings,
                                          std::uint64_t generation)
 {
@@ -386,7 +457,18 @@ void LibraryDatabase::collectDatabaseWorkerResults()
     if (!m_databaseWorker)
         return;
     for (const auto& result : m_databaseWorker->takeResults()) {
-        if (result.type == DatabaseCommandType::LoadLibraryPage) {
+        if (const auto analysisIt = m_pendingAnalysisWrites.find(result.requestId);
+            analysisIt != m_pendingAnalysisWrites.end()) {
+            const QString trackId = analysisIt.value();
+            m_pendingAnalysisWrites.erase(analysisIt);
+            if (result.success) {
+                emit analysisUpdated(trackId);
+                scheduleTableModelRefresh();
+                scheduleBackupSync();
+            } else {
+                qWarning() << "[LibraryDatabase] async analysis persistence failed:" << result.error;
+            }
+        } else if (result.type == DatabaseCommandType::LoadLibraryPage) {
             emit libraryPageReady(result.generation, result.rows,
                                   result.success ? QString{} : result.error);
         } else if (result.requestId == m_backupRequestId) {

@@ -3,9 +3,10 @@
 #include <QObject>
 #include <QString>
 #include <QVariantList>
+#include <QTimer>
 #include <memory>
 #include <vector>
-#include <deque>
+#include "analysis/AnalysisJobQueue.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
@@ -47,21 +48,18 @@ signals:
     void progressChanged();
 
 private:
-    struct QueueItem {
-        QString trackId;
-        QString filePath;
-        QString title;
-    };
+    using QueueItem = analysis::AnalysisJob;
 
-    void enqueue(const QVariantList& items);
+    void enqueue(const QVariantList& items, analysis::AnalysisPriority priority);
     void startNext();
     void finishCurrent(bool completed);
+    void drainAnalysisMailbox();
     static QueueItem queueItemFromMap(const QVariantMap& map);
 
     LibraryDatabase* m_db = nullptr;
     juce::AudioFormatManager m_formatManager;
 
-    std::deque<QueueItem> m_queue;
+    analysis::AnalysisJobQueue m_queue{4096, 16};
     QueueItem m_current;
     int m_total = 0;
     int m_completed = 0;
@@ -71,6 +69,8 @@ private:
 
     std::unique_ptr<TrackData> m_trackData;
     std::unique_ptr<WaveformAnalyzer> m_analyzer;
+    std::shared_ptr<AnalyzerResultMailbox> m_analysisMailbox;
+    QTimer m_resultDrainTimer;
     WaveformAnalyzer::AnalysisGeneration m_currentGeneration = 0;
     std::uint64_t m_jobGeneration = 0;
 };

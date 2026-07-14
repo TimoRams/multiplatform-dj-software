@@ -225,3 +225,9 @@ Manual (~15 min):
   synchronous QML CRUD is recorded for later migration. New worker targets pass ASAN+UBSAN and TSAN.
   Overall threading/realtime roadmap estimate:
   about 93%. Next: TrackData/LibraryAnalysisManager snapshot and progress handoff.
+- Analysis snapshot handoff completed (2026-07-14): worker-local `AnalysisWorkingData`, immutable
+  validated result handles, owner-thread apply, path/file/version/request-generation rejection,
+  capacity-one progress/completion mailbox, and bounded fair/deduplicating library queue replace
+  analyzer access to live `TrackData`. Result persistence now enters the async database worker.
+  Main build plus 20 CTests and ASAN+UBSAN analysis tests pass. Remaining scoped work: route the
+  final WaveformCache artifact write through MediaIoScheduler if profiling identifies it as a stall.

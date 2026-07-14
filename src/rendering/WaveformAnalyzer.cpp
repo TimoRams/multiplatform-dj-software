@@ -2,6 +2,8 @@
 #include "WaveformEnvelopePass.h"
 #include "WaveformAnalysisOrchestrator.h"
 #include "WaveformCache.h"
+#include "analysis/AnalysisWorkingData.h"
+#include <QFileInfo>
 #include <QDebug>
 #include <algorithm>
 #include <chrono>
@@ -74,22 +76,24 @@ public:
 
     ~AnalysisCompletionNotifier()
     {
-        m_analyzer.notifyCompletion(m_completed, m_generation, m_filePath);
+        m_analyzer.notifyCompletion(m_completed, m_generation, m_filePath, std::move(m_result));
     }
 
-    void markCompleted() { m_completed = true; }
+    void markCompleted(WaveformAnalyzer::ResultPtr result)
+    { m_result = std::move(result); m_completed = static_cast<bool>(m_result); }
 
 private:
     WaveformAnalyzer& m_analyzer;
     WaveformAnalyzer::AnalysisGeneration m_generation;
     QString m_filePath;
     bool m_completed = false;
+    WaveformAnalyzer::ResultPtr m_result;
 };
 
 } // namespace
 
-WaveformAnalyzer::WaveformAnalyzer(TrackData* trackData, juce::AudioFormatManager* formatManager, int pointsPerSecond)
-    : juce::Thread("WaveformAnalyzerThread"), m_trackData(trackData), m_formatManager(formatManager), m_pointsPerSecond(pointsPerSecond)
+WaveformAnalyzer::WaveformAnalyzer(juce::AudioFormatManager* formatManager, int pointsPerSecond)
+    : juce::Thread("WaveformAnalyzerThread"), m_formatManager(formatManager), m_pointsPerSecond(pointsPerSecond)
 {
 }
 
@@ -99,16 +103,28 @@ WaveformAnalyzer::~WaveformAnalyzer()
 }
 
 WaveformAnalyzer::AnalysisGeneration WaveformAnalyzer::startAnalysis(const QString& filePath,
-                                                                     double seekHintSec)
+                                                                     double seekHintSec,
+                                                                     std::uint64_t trackGeneration,
+                                                                     analysis::AnalysisResult seed)
 {
     shutdownAndJoin();
     const auto newGeneration = m_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
     m_runGeneration = newGeneration;
     m_filePath = filePath;
+    m_seed = std::move(seed);
+    const QFileInfo info(filePath);
+    m_identity.canonicalFilePath = info.canonicalFilePath().isEmpty()
+        ? info.absoluteFilePath() : info.canonicalFilePath();
+    m_identity.trackGeneration = trackGeneration;
+    m_identity.fileSize = static_cast<std::uint64_t>(std::max<qint64>(0, info.size()));
+    m_identity.fileModifiedMs = info.lastModified().toMSecsSinceEpoch();
+    m_identity.analysisVersion = analysis::kCurrentAnalysisVersion;
+    m_identity.requestGeneration = newGeneration;
     m_seekHintSec.store(seekHintSec, std::memory_order_relaxed);
     m_jobState.store(AnalysisJobState::Queued, std::memory_order_release);
-    if (m_trackData)
-        m_trackData->reportAnalysisProgress(0.0, true);
+    ProgressCallback progress;
+    { std::lock_guard<std::mutex> lock(m_callbackMutex); progress = m_progressCallback; }
+    if (progress) progress(0.0, true, newGeneration);
     startThread(juce::Thread::Priority::background);
     return newGeneration;
 }
@@ -142,9 +158,16 @@ void WaveformAnalyzer::setCompletionCallback(CompletionCallback callback)
     m_completionCallback = std::move(callback);
 }
 
+void WaveformAnalyzer::setProgressCallback(ProgressCallback callback)
+{
+    std::lock_guard<std::mutex> lock(m_callbackMutex);
+    m_progressCallback = std::move(callback);
+}
+
 void WaveformAnalyzer::notifyCompletion(bool completed,
                                         AnalysisGeneration completedGeneration,
-                                        const QString& completedFilePath)
+                                        const QString& completedFilePath,
+                                        ResultPtr result)
 {
     const bool current = completedGeneration == generation();
     const bool accepted = completed && current && !threadShouldExit();
@@ -153,17 +176,19 @@ void WaveformAnalyzer::notifyCompletion(bool completed,
                                                     : AnalysisJobState::Failed),
                      std::memory_order_release);
 
-    if (m_trackData)
-        m_trackData->reportAnalysisProgress(accepted ? 1.0 : m_trackData->analysisProgress(), false);
-
     CompletionCallback callback;
+    ProgressCallback progress;
     {
         std::lock_guard<std::mutex> lock(m_callbackMutex);
         callback = m_completionCallback;
+        progress = m_progressCallback;
     }
 
+    if (progress) progress(accepted ? 1.0 : 0.0, false, completedGeneration);
+
     if (callback)
-        callback(accepted, completedGeneration, completedFilePath);
+        callback(accepted, completedGeneration, completedFilePath,
+                 accepted ? std::move(result) : ResultPtr{});
 }
 
 
@@ -173,6 +198,13 @@ void WaveformAnalyzer::run()
     const QString runFilePath = m_filePath;
     m_jobState.store(AnalysisJobState::Running, std::memory_order_release);
     AnalysisCompletionNotifier completion(*this, runGeneration, runFilePath);
+
+    ProgressCallback progress;
+    { std::lock_guard<std::mutex> lock(m_callbackMutex); progress = m_progressCallback; }
+    analysis::AnalysisWorkingData working([progress, runGeneration](double value, bool active) {
+        if (progress) progress(value, active, runGeneration);
+    });
+    working.seed(m_seed);
 
     AnalysisSlot slot(*this);
     if (!slot.acquired())
@@ -192,26 +224,26 @@ void WaveformAnalyzer::run()
     if (numPoints <= 0) return;
 
     // Cached waveform from disk — skip the expensive Pass 1+2 and only run BPM/key.
-    const int existingRgb      = m_trackData->getRgbWaveformSize();
-    const int existingExpected = m_trackData->getTotalExpected();
+    const int existingRgb      = working.getRgbWaveformSize();
+    const int existingExpected = working.getTotalExpected();
     const bool haveFullWaveform = existingExpected >= static_cast<int>(numPoints * 0.95)
                                && existingRgb      >= static_cast<int>(numPoints * 0.95);
 
     if (!haveFullWaveform) {
         // Instant full-track preview so the deck overview never starts blank.
-        if (m_trackData->getOverviewRgbData().isEmpty()) {
+        if (working.getOverviewRgbData().isEmpty()) {
             auto preview = buildInstantOverview(reader.get(), 512);
             if (!preview.isEmpty())
-                m_trackData->setOverviewRgbData(std::move(preview));
+                working.setOverviewRgbData(std::move(preview));
         }
-        m_trackData->clearWaveformData();
-        m_trackData->setTotalExpected(numPoints);
-        m_trackData->reserve(numPoints);
-    } else if (m_trackData->getOverviewRgbData().isEmpty()) {
-        m_trackData->setOverviewRgbData(
-            TrackData::downsampleOverview(m_trackData->getRgbWaveformData()));
+        working.clearWaveformData();
+        working.setTotalExpected(numPoints);
+        working.reserve(numPoints);
+    } else if (working.getOverviewRgbData().isEmpty()) {
+        working.setOverviewRgbData(
+            TrackData::downsampleOverview(working.getRgbWaveformData()));
     } else {
-        m_trackData->reportAnalysisProgress(0.05, true);
+        working.reportAnalysisProgress(0.05, true);
     }
 
 
@@ -219,7 +251,7 @@ void WaveformAnalyzer::run()
     if (!haveFullWaveform) {
         const waveform_internal::EnvelopePassInput envelopeInput{
             *reader,
-            m_trackData,
+            &working,
             *this,
             m_pointsPerSecond,
             m_seekHintSec.load(std::memory_order_relaxed),
@@ -236,7 +268,7 @@ void WaveformAnalyzer::run()
     {
         const waveform_internal::AnalysisOrchestratorInput orchestratorInput{
             *reader,
-            m_trackData,
+            &working,
             *this,
             m_pointsPerSecond,
             totalSamples,
@@ -254,11 +286,11 @@ void WaveformAnalyzer::run()
     if (!threadShouldExit()) {
         WaveformCache::Payload payload;
         payload.pointsPerSecond = m_pointsPerSecond;
-        payload.totalExpected = m_trackData->getTotalExpected();
-        payload.globalMaxPeak = m_trackData->getGlobalMaxPeak();
-        payload.waveform = m_trackData->getWaveformData();
-        payload.rgb = m_trackData->getRgbWaveformData();
-        payload.peakMip = m_trackData->getPeakMipData();
+        payload.totalExpected = working.getTotalExpected();
+        payload.globalMaxPeak = working.getGlobalMaxPeak();
+        payload.waveform = working.getWaveformData();
+        payload.rgb = working.getRgbWaveformData();
+        payload.peakMip = working.getPeakMipData();
 
         if (!payload.waveform.isEmpty() && !payload.rgb.isEmpty()) {
             if (!WaveformCache::saveForFile(m_filePath, payload)) {
@@ -270,7 +302,13 @@ void WaveformAnalyzer::run()
         }
     }
 
-    if (!threadShouldExit())
-        completion.markCompleted();
+    if (!threadShouldExit()) {
+        auto completedResult = std::move(working).finish(m_identity);
+        if (!analysis::validateResult(completedResult))
+            return;
+        completedResult.validated = true;
+        auto result = std::make_shared<const analysis::AnalysisResult>(std::move(completedResult));
+        completion.markCompleted(std::move(result));
+    }
 
 }

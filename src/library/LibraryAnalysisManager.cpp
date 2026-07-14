@@ -11,6 +11,9 @@ LibraryAnalysisManager::LibraryAnalysisManager(QObject* parent)
     : QObject(parent)
 {
     m_formatManager.registerBasicFormats();
+    m_resultDrainTimer.setInterval(33);
+    connect(&m_resultDrainTimer, &QTimer::timeout,
+            this, &LibraryAnalysisManager::drainAnalysisMailbox);
 }
 
 LibraryAnalysisManager::~LibraryAnalysisManager()
@@ -33,7 +36,8 @@ void LibraryAnalysisManager::analyzeAll(bool includeAnalyzed)
     if (!m_db)
         return;
 
-    enqueue(m_db->getAllTrackAnalysisItems(includeAnalyzed));
+    enqueue(m_db->getAllTrackAnalysisItems(includeAnalyzed),
+            analysis::AnalysisPriority::BackgroundLibrary);
 }
 
 void LibraryAnalysisManager::analyzePlaylist(const QString& playlistId, bool includeAnalyzed)
@@ -41,7 +45,8 @@ void LibraryAnalysisManager::analyzePlaylist(const QString& playlistId, bool inc
     if (!m_db || playlistId.isEmpty())
         return;
 
-    enqueue(m_db->getPlaylistAnalysisItems(playlistId, includeAnalyzed));
+    enqueue(m_db->getPlaylistAnalysisItems(playlistId, includeAnalyzed),
+            analysis::AnalysisPriority::VisibleLibrary);
 }
 
 void LibraryAnalysisManager::analyzeTrack(const QString& trackId,
@@ -55,7 +60,7 @@ void LibraryAnalysisManager::analyzeTrack(const QString& trackId,
     item.insert(QStringLiteral("trackId"), trackId);
     item.insert(QStringLiteral("filePath"), filePath);
     item.insert(QStringLiteral("title"), title);
-    enqueue({item});
+    enqueue({item}, analysis::AnalysisPriority::UserSelected);
 }
 
 void LibraryAnalysisManager::cancel()
@@ -72,6 +77,8 @@ void LibraryAnalysisManager::cancel()
 
     m_analyzer.reset();
     m_trackData.reset();
+    m_resultDrainTimer.stop();
+    m_analysisMailbox.reset();
 
     if (m_running) {
         m_running = false;
@@ -81,7 +88,7 @@ void LibraryAnalysisManager::cancel()
     }
 }
 
-void LibraryAnalysisManager::enqueue(const QVariantList& items)
+void LibraryAnalysisManager::enqueue(const QVariantList& items, analysis::AnalysisPriority priority)
 {
     cancel();
 
@@ -89,8 +96,15 @@ void LibraryAnalysisManager::enqueue(const QVariantList& items)
     m_queue.clear();
     for (const QVariant& item : items) {
         const QueueItem q = queueItemFromMap(item.toMap());
-        if (!q.trackId.isEmpty() && !q.filePath.isEmpty())
-            m_queue.push_back(q);
+        if (!q.trackId.isEmpty() && !q.filePath.isEmpty()) {
+            auto queued = q;
+            queued.priority = priority;
+            const QFileInfo info(queued.filePath);
+            queued.key = info.canonicalFilePath() + QLatin1Char('|')
+                + QString::number(info.size()) + QLatin1Char('|')
+                + QString::number(analysis::kCurrentAnalysisVersion);
+            (void)m_queue.push(std::move(queued));
+        }
     }
 
     m_total = static_cast<int>(m_queue.size());
@@ -114,13 +128,16 @@ void LibraryAnalysisManager::startNext()
         m_currentTitle.clear();
         m_analyzer.reset();
         m_trackData.reset();
+        m_resultDrainTimer.stop();
+        m_analysisMailbox.reset();
         emit stateChanged();
         emit progressChanged();
         return;
     }
 
-    m_current = m_queue.front();
-    m_queue.pop_front();
+    const auto next = m_queue.pop();
+    if (!next) return;
+    m_current = *next;
     m_currentTitle = !m_current.title.isEmpty()
         ? m_current.title
         : QFileInfo(m_current.filePath).completeBaseName();
@@ -128,28 +145,40 @@ void LibraryAnalysisManager::startNext()
 
     m_trackData = std::make_unique<TrackData>();
     m_analyzer = std::make_unique<WaveformAnalyzer>(
-        m_trackData.get(),
         &m_formatManager,
         600);
 
-    const QPointer<LibraryAnalysisManager> safeThis(this);
-    const std::uint64_t managerGeneration = ++m_jobGeneration;
-    m_analyzer->setCompletionCallback([safeThis, managerGeneration](bool completed,
-                                                  WaveformAnalyzer::AnalysisGeneration generation,
-                                                  const QString& filePath) {
-        if (!safeThis)
-            return;
-        QMetaObject::invokeMethod(safeThis, [safeThis, completed, generation, filePath,
-                                             managerGeneration]() {
-            if (!safeThis || managerGeneration != safeThis->m_jobGeneration
-                || generation != safeThis->m_currentGeneration
-                || filePath != safeThis->m_current.filePath) {
-                return;
-            }
-            safeThis->finishCurrent(completed);
-        }, Qt::QueuedConnection);
+    ++m_jobGeneration;
+    m_analysisMailbox = std::make_shared<AnalyzerResultMailbox>();
+    const auto mailbox = m_analysisMailbox;
+    m_analyzer->setProgressCallback([mailbox](double progress, bool active,
+                                                  WaveformAnalyzer::AnalysisGeneration generation) {
+        mailbox->publishProgress(progress, active, generation);
     });
-    m_currentGeneration = m_analyzer->startAnalysis(m_current.filePath);
+    m_analyzer->setCompletionCallback([mailbox](bool completed,
+                                                  WaveformAnalyzer::AnalysisGeneration generation,
+                                                  const QString& filePath,
+                                                  WaveformAnalyzer::ResultPtr result) {
+        mailbox->publish({completed, generation, filePath, std::move(result)});
+    });
+    m_currentGeneration = m_analyzer->startAnalysis(
+        m_current.filePath, 0.0, 0, m_trackData->createAnalysisSeed());
+    m_resultDrainTimer.start();
+}
+
+void LibraryAnalysisManager::drainAnalysisMailbox()
+{
+    if (!m_analysisMailbox) return;
+    const auto completion = m_analysisMailbox->take();
+    if (!completion) return;
+    if (completion->generation != m_currentGeneration
+        || completion->filePath != m_current.filePath)
+        return;
+    if (completion->completed && completion->result && m_trackData)
+        m_trackData->applyAnalysisResult(*completion->result);
+    if (completion->completed && completion->result && m_db)
+        (void)m_db->requestAnalysisPersistence(m_current.trackId, *completion->result);
+    finishCurrent(completion->completed);
 }
 
 void LibraryAnalysisManager::finishCurrent(bool completed)
@@ -157,21 +186,7 @@ void LibraryAnalysisManager::finishCurrent(bool completed)
     if (m_cancelRequested)
         return;
 
-    if (completed && m_db && m_trackData) {
-        const double bpm = m_trackData->getBpm();
-        const QString key = m_trackData->getDetectedKey().trimmed();
-        m_db->updateAnalysisData(m_current.trackId,
-                                 static_cast<float>(bpm),
-                                 key,
-                                 m_trackData->getFirstBeatSample(),
-                                 m_trackData->getSampleRate(),
-                                 m_trackData->getBeatGrid(),
-                                 m_trackData->getConfidenceInfo(),
-                                 m_trackData->getBeatGridInfo());
-
-        const auto segments = m_trackData->getSegments();
-        m_db->updateTrackSegments(m_current.trackId, segments);
-    } else if (!completed) {
+    if (!completed) {
         qWarning() << "[LibraryAnalysisManager] Analysis did not finish:" << m_current.filePath;
     }
 

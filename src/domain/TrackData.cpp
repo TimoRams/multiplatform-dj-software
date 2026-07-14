@@ -1,4 +1,5 @@
 #include "TrackData.h"
+#include "analysis/AnalysisResult.h"
 
 #include <QMetaObject>
 #include <QThread>
@@ -15,6 +16,76 @@ TrackData::TrackData(QObject* parent)
     , m_isBpmAnalyzed(false)
     , m_isKeyAnalyzed(false)
 {
+}
+
+void TrackData::assertOwnerThread() const
+{
+    Q_ASSERT_X(QThread::currentThread() == thread(), "TrackData",
+               "TrackData mutations are restricted to the QObject owner thread");
+}
+
+analysis::AnalysisResult TrackData::createAnalysisSeed() const
+{
+    Q_ASSERT(QThread::currentThread() == thread());
+    QMutexLocker locker(&m_mutex);
+    analysis::AnalysisResult seed;
+    seed.totalExpected = m_totalExpected;
+    seed.globalMaxPeak = m_globalMaxPeak;
+    seed.waveform = m_waveformSnapshot ? m_waveformSnapshot
+        : std::make_shared<const QVector<WaveformBin>>(m_data);
+    seed.rgbWaveform = m_rgbSnapshot ? m_rgbSnapshot
+        : std::make_shared<const QVector<RgbWaveformFrame>>(m_rgbData);
+    seed.overviewWaveform = m_overviewSnapshot ? m_overviewSnapshot
+        : std::make_shared<const QVector<RgbWaveformFrame>>(m_overviewRgb);
+    seed.peakMip = m_peakMipSnapshot ? m_peakMipSnapshot
+        : std::make_shared<const QVector<PeakFrame>>(m_peakMip);
+    seed.bpm = m_bpm;
+    seed.firstBeatSample = m_firstBeatSample;
+    seed.sampleRate = m_sampleRate;
+    seed.confidence = m_confidence;
+    seed.beatGrid = m_beatGridInfo;
+    seed.beats = m_beatGrid;
+    seed.phrases = m_segments;
+    seed.detectedKey = m_detectedKey;
+    return seed;
+}
+
+bool TrackData::applyAnalysisResult(const analysis::AnalysisResult& result)
+{
+    Q_ASSERT(QThread::currentThread() == thread());
+    if (!result.validated || !result.complete || !result.error.isEmpty())
+        return false;
+    {
+        QMutexLocker locker(&m_mutex);
+        m_totalExpected = result.totalExpected;
+        m_globalMaxPeak = result.globalMaxPeak;
+        m_waveformSnapshot = result.waveform;
+        m_rgbSnapshot = result.rgbWaveform;
+        m_overviewSnapshot = result.overviewWaveform;
+        m_peakMipSnapshot = result.peakMip;
+        m_data.clear(); m_rgbData.clear(); m_overviewRgb.clear(); m_peakMip.clear();
+        m_bpm = result.bpm;
+        m_firstBeatSample = result.firstBeatSample;
+        m_sampleRate = result.sampleRate;
+        m_isBpmAnalyzed = result.bpm > 0.0;
+        m_confidence = result.confidence;
+        if (!m_beatGridInfo.lockedByUser) {
+            m_beatGridInfo = result.beatGrid;
+            m_beatGrid = result.beats;
+        }
+        m_segments = result.phrases;
+        m_detectedKey = result.detectedKey;
+        m_isKeyAnalyzed = !m_detectedKey.isEmpty();
+    }
+    emit dataUpdated();
+    emit rgbWaveformUpdated();
+    emit overviewRgbUpdated();
+    emit peakMipUpdated();
+    emit bpmAnalyzed();
+    emit beatgridChanged();
+    emit segmentsAnalyzed();
+    emit keyAnalyzed();
+    return true;
 }
 
 QVector<TrackData::RgbWaveformFrame> TrackData::downsampleOverview(
@@ -48,6 +119,7 @@ QVector<TrackData::RgbWaveformFrame> TrackData::downsampleOverview(
 void TrackData::setBpmData(double bpm, qint64 firstBeatSample, double sampleRate,
                            std::vector<BeatMarker> beatGrid)
 {
+    assertOwnerThread();
     setBpmData(bpm, firstBeatSample, sampleRate, std::move(beatGrid), ConfidenceInfo{}, BeatGridInfo{});
 }
 
@@ -79,6 +151,7 @@ void TrackData::setBpmData(double bpm, qint64 firstBeatSample, double sampleRate
 
 void TrackData::shiftBeatgridToDownbeat(double newAnchorSec, double trackLengthSec)
 {
+    assertOwnerThread();
     double bpm;
     {
         QMutexLocker locker(&m_mutex);
@@ -159,6 +232,7 @@ void TrackData::shiftBeatgridToDownbeat(double newAnchorSec, double trackLengthS
 
 void TrackData::nudgeBeatgrid(double deltaSec, double trackLengthSec)
 {
+    assertOwnerThread();
     if (std::abs(deltaSec) < 1e-9 || trackLengthSec <= 0.0)
         return;
 
@@ -194,6 +268,7 @@ void TrackData::nudgeBeatgrid(double deltaSec, double trackLengthSec)
 
 void TrackData::setBeatgridLocked(bool locked)
 {
+    assertOwnerThread();
     {
         QMutexLocker locker(&m_mutex);
         m_beatGridInfo.lockedByUser = locked;
@@ -205,6 +280,7 @@ void TrackData::setBeatgridLocked(bool locked)
 
 void TrackData::setBpm(double bpm)
 {
+    assertOwnerThread();
     bool changed = false;
     {
         QMutexLocker locker(&m_mutex);
@@ -219,6 +295,7 @@ void TrackData::setBpm(double bpm)
 
 void TrackData::setKeyData(const QString& camelotKey)
 {
+    assertOwnerThread();
     {
         QMutexLocker locker(&m_mutex);
         m_detectedKey  = camelotKey;
@@ -229,6 +306,7 @@ void TrackData::setKeyData(const QString& camelotKey)
 
 void TrackData::reportAnalysisProgress(double progress, bool active)
 {
+    assertOwnerThread();
     m_analysisProgress.store(std::clamp(progress, 0.0, 1.0), std::memory_order_relaxed);
     m_analyzing.store(active, std::memory_order_relaxed);
 
@@ -245,6 +323,7 @@ void TrackData::reportAnalysisProgress(double progress, bool active)
 
 void TrackData::setSegmentsData(std::vector<TrackSegment> segments)
 {
+    assertOwnerThread();
     {
         QMutexLocker locker(&m_mutex);
         m_segments = std::move(segments);
@@ -256,13 +335,18 @@ void TrackData::setSegmentsData(std::vector<TrackSegment> segments)
 
 void TrackData::clearWaveformData()
 {
+    assertOwnerThread();
     bool keepPreview = false;
     {
         QMutexLocker locker(&m_mutex);
-        keepPreview = !m_overviewRgb.isEmpty();
+        keepPreview = (m_overviewSnapshot && !m_overviewSnapshot->isEmpty())
+            || !m_overviewRgb.isEmpty();
         m_data.clear();
         m_rgbData.clear();
         m_peakMip.clear();
+        m_waveformSnapshot.reset();
+        m_rgbSnapshot.reset();
+        m_peakMipSnapshot.reset();
         m_progressiveOvr.clear();
         m_progressiveLastFrame = 0;
         if (!keepPreview)
@@ -277,6 +361,7 @@ void TrackData::clearWaveformData()
 
 void TrackData::clear()
 {
+    assertOwnerThread();
     reportAnalysisProgress(0.0, false);
     {
         QMutexLocker locker(&m_mutex);
@@ -284,6 +369,10 @@ void TrackData::clear()
         m_rgbData.clear();
         m_overviewRgb.clear();
         m_peakMip.clear();
+        m_waveformSnapshot.reset();
+        m_rgbSnapshot.reset();
+        m_overviewSnapshot.reset();
+        m_peakMipSnapshot.reset();
         m_progressiveOvr.clear();
         m_progressiveLastFrame = 0;
         m_totalExpected = 0;
@@ -303,9 +392,11 @@ void TrackData::clear()
 
 void TrackData::setPeakMipData(QVector<PeakFrame>&& data)
 {
+    assertOwnerThread();
     {
         QMutexLocker locker(&m_mutex);
-        m_peakMip = std::move(data);
+        m_peakMipSnapshot = std::make_shared<const QVector<PeakFrame>>(std::move(data));
+        m_peakMip.clear();
     }
     emit peakMipUpdated();
 }
@@ -315,16 +406,17 @@ QVector<TrackData::PeakFrame> TrackData::getPeakMipSlice(int startIdx, int endId
     QMutexLocker locker(&m_mutex);
     if (outStartIdx)
         *outStartIdx = 0;
-    if (m_peakMip.isEmpty())
+    const auto* source = m_peakMipSnapshot ? m_peakMipSnapshot.get() : &m_peakMip;
+    if (source->isEmpty())
         return {};
     const int lo = std::max(0, startIdx);
-    const int hi = std::min(endIdx, static_cast<int>(m_peakMip.size()));
+    const int hi = std::min(endIdx, static_cast<int>(source->size()));
     if (lo >= hi)
         return {};
     QVector<PeakFrame> slice;
     slice.reserve(hi - lo);
     for (int i = lo; i < hi; ++i)
-        slice.push_back(m_peakMip[i]);
+        slice.push_back((*source)[i]);
     if (outStartIdx)
         *outStartIdx = lo;
     return slice;
@@ -332,10 +424,14 @@ QVector<TrackData::PeakFrame> TrackData::getPeakMipSlice(int startIdx, int endId
 
 void TrackData::setRgbWaveformData(QVector<RgbWaveformFrame>&& frames)
 {
+    assertOwnerThread();
     {
         QMutexLocker locker(&m_mutex);
-        m_rgbData = std::move(frames);
-        m_overviewRgb = downsampleOverview(m_rgbData);
+        auto overview = downsampleOverview(frames);
+        m_rgbSnapshot = std::make_shared<const QVector<RgbWaveformFrame>>(std::move(frames));
+        m_overviewSnapshot = std::make_shared<const QVector<RgbWaveformFrame>>(std::move(overview));
+        m_rgbData.clear();
+        m_overviewRgb.clear();
         m_progressiveOvr.clear();
         m_progressiveLastFrame = 0;
     }
@@ -345,9 +441,11 @@ void TrackData::setRgbWaveformData(QVector<RgbWaveformFrame>&& frames)
 
 void TrackData::setOverviewRgbData(QVector<RgbWaveformFrame>&& data)
 {
+    assertOwnerThread();
     {
         QMutexLocker locker(&m_mutex);
-        m_overviewRgb = std::move(data);
+        m_overviewSnapshot = std::make_shared<const QVector<RgbWaveformFrame>>(std::move(data));
+        m_overviewRgb.clear();
         m_progressiveOvr.clear();
         m_progressiveLastFrame = 0;
     }
@@ -356,12 +454,15 @@ void TrackData::setOverviewRgbData(QVector<RgbWaveformFrame>&& data)
 
 void TrackData::preallocateRgbWaveform(int numBins)
 {
+    assertOwnerThread();
     QMutexLocker locker(&m_mutex);
+    m_rgbSnapshot.reset();
     m_rgbData.fill(RgbWaveformFrame{}, numBins);
 }
 
 void TrackData::writeRgbWaveformRange(int fromBin, const QVector<RgbWaveformFrame>& data)
 {
+    assertOwnerThread();
     if (data.isEmpty()) return;
     {
         QMutexLocker locker(&m_mutex);
@@ -377,6 +478,7 @@ void TrackData::writeRgbWaveformRange(int fromBin, const QVector<RgbWaveformFram
 
 void TrackData::appendRgbWaveformData(const QVector<RgbWaveformFrame>& frames)
 {
+    assertOwnerThread();
     if (frames.isEmpty())
         return;
     {
@@ -403,18 +505,19 @@ QVector<TrackData::RgbWaveformFrame> TrackData::getRgbWaveformSlice(
     if (outStartIndex)
         *outStartIndex = 0;
 
-    if (m_rgbData.isEmpty())
+    const auto* source = m_rgbSnapshot ? m_rgbSnapshot.get() : &m_rgbData;
+    if (source->isEmpty())
         return {};
 
     const int lo = std::max(0, startIndex);
-    const int hi = std::min(endIndex, static_cast<int>(m_rgbData.size()));
+    const int hi = std::min(endIndex, static_cast<int>(source->size()));
     if (lo >= hi)
         return {};
 
     QVector<RgbWaveformFrame> slice;
     slice.reserve(hi - lo);
     for (int i = lo; i < hi; ++i)
-        slice.push_back(m_rgbData[i]);
+        slice.push_back((*source)[i]);
 
     if (outStartIndex)
         *outStartIndex = lo;
@@ -426,14 +529,15 @@ int TrackData::fillRgbWaveformSlice(QVector<RgbWaveformFrame>& dst, int startInd
 {
     QMutexLocker locker(&m_mutex);
     dst.clear();
-    if (m_rgbData.isEmpty()) return 0;
+    const auto* source = m_rgbSnapshot ? m_rgbSnapshot.get() : &m_rgbData;
+    if (source->isEmpty()) return 0;
     const int lo = std::max(0, startIndex);
-    const int hi = std::min(endIndex, static_cast<int>(m_rgbData.size()));
+    const int hi = std::min(endIndex, static_cast<int>(source->size()));
     if (lo >= hi) return lo;
     const int n = hi - lo;
     dst.resize(n);
     for (int i = 0; i < n; ++i)
-        dst[i] = m_rgbData[lo + i];
+        dst[i] = (*source)[lo + i];
     return lo;
 }
 
@@ -441,21 +545,24 @@ int TrackData::fillPeakMipSlice(QVector<PeakFrame>& dst, int startIdx, int endId
 {
     QMutexLocker locker(&m_mutex);
     dst.clear();
-    if (m_peakMip.isEmpty()) return 0;
+    const auto* source = m_peakMipSnapshot ? m_peakMipSnapshot.get() : &m_peakMip;
+    if (source->isEmpty()) return 0;
     const int lo = std::max(0, startIdx);
-    const int hi = std::min(endIdx, static_cast<int>(m_peakMip.size()));
+    const int hi = std::min(endIdx, static_cast<int>(source->size()));
     if (lo >= hi) return lo;
     const int n = hi - lo;
     dst.resize(n);
     for (int i = 0; i < n; ++i)
-        dst[i] = m_peakMip[lo + i];
+        dst[i] = (*source)[lo + i];
     return lo;
 }
 
 void TrackData::appendData(const QVector<WaveformBin>& newData)
 {
+    assertOwnerThread();
     {
         QMutexLocker locker(&m_mutex);
+        m_waveformSnapshot.reset();
         m_data.append(newData);
     }
     emit dataUpdated();
@@ -463,9 +570,11 @@ void TrackData::appendData(const QVector<WaveformBin>& newData)
 
 void TrackData::replaceAllData(QVector<WaveformBin>&& finalData, float finalGlobalMaxPeak)
 {
+    assertOwnerThread();
     {
         QMutexLocker locker(&m_mutex);
-        m_data = std::move(finalData);
+        m_waveformSnapshot = std::make_shared<const QVector<WaveformBin>>(std::move(finalData));
+        m_data.clear();
         m_globalMaxPeak = finalGlobalMaxPeak;
     }
     emit dataUpdated();
@@ -473,6 +582,7 @@ void TrackData::replaceAllData(QVector<WaveformBin>&& finalData, float finalGlob
 
 void TrackData::reserve(int size)
 {
+    assertOwnerThread();
     QMutexLocker locker(&m_mutex);
     m_data.reserve(size);
 }

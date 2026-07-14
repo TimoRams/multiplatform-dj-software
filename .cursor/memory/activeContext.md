@@ -1,6 +1,14 @@
 # Active Context
 
-*Last updated: 2026-07-13*
+*Last updated: 2026-07-14*
+
+## Current task
+**Immutable TrackData analysis handoff and bounded library scheduling**
+- Analyzer workers now own `analysis::AnalysisWorkingData`, never a `TrackData*`/QObject. They publish one validated immutable `AnalysisResult` through a latest-only mailbox.
+- Deck and library owner threads validate canonical path, file size/mtime, analysis version and request/track generations before applying the result; stale or duplicate completions are discarded.
+- `LibraryAnalysisManager` uses a bounded priority/fair queue with deduplication and promotion. Database persistence is queued through `DatabaseWorker` rather than performed synchronously in completion handling.
+- `TrackData` shares immutable waveform/overview/peak snapshots with the renderer; overview paint no longer copies full RGB waveform data each frame.
+- Current validation: main build, 20 CTests and ASAN+UBSAN analysis targets pass. A final WaveformCache artifact write remains on the analyzer worker and is tracked as follow-up media-I/O work.
 
 ## Current task
 **Per-deck audio pipeline extracted into DeckAudioGraph**

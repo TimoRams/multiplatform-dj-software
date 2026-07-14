@@ -728,6 +728,22 @@ target_compile_definitions(BrockDJ_analysis_lifetime_tests PRIVATE
 target_compile_features(BrockDJ_analysis_lifetime_tests PRIVATE cxx_std_26)
 add_test(NAME analysis_lifetime COMMAND BrockDJ_analysis_lifetime_tests)
 
+add_executable(BrockDJ_analysis_snapshot_tests
+    tests/analysis/analysis_snapshot_tests.cpp
+    src/domain/TrackData.cpp
+)
+target_include_directories(BrockDJ_analysis_snapshot_tests PRIVATE src src/analysis src/domain)
+target_link_libraries(BrockDJ_analysis_snapshot_tests PRIVATE Qt6::Core Qt6::Gui)
+target_compile_features(BrockDJ_analysis_snapshot_tests PRIVATE cxx_std_26)
+add_test(NAME analysis_snapshot COMMAND BrockDJ_analysis_snapshot_tests)
+
+add_executable(BrockDJ_library_analysis_manager_tests
+    tests/analysis/library_analysis_manager_tests.cpp)
+target_include_directories(BrockDJ_library_analysis_manager_tests PRIVATE src)
+target_link_libraries(BrockDJ_library_analysis_manager_tests PRIVATE Qt6::Core)
+target_compile_features(BrockDJ_library_analysis_manager_tests PRIVATE cxx_std_26)
+add_test(NAME library_analysis_manager COMMAND BrockDJ_library_analysis_manager_tests)
+
 if(UNIX)
     add_executable(BrockDJ_posix_signal_tests
         tests/platform/posix_signal_handler_tests.cpp

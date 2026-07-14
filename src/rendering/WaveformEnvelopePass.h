@@ -1,6 +1,6 @@
 #pragma once
 
-#include "TrackData.h"
+#include "analysis/AnalysisWorkingData.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_core/juce_core.h>
 #include <QVector>
@@ -10,7 +10,7 @@ namespace waveform_internal {
 struct EnvelopePassInput
 {
     juce::AudioFormatReader& reader;
-    TrackData* trackData = nullptr;
+    analysis::AnalysisWorkingData* trackData = nullptr;
     juce::Thread& thread;
     int pointsPerSecond = 600;
     double seekHintSec = 0.0;

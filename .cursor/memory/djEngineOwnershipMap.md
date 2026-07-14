@@ -208,3 +208,11 @@ No `DjEngine` ownership moved in this task: `DjEngine.h` remains 658 lines and t
 LibraryDatabase owns its database worker. DeckTrackLoader and AudioCacheWorker remain deck/cache
 specialists. DjEngine receives cover/library value results through existing facade services and has
 no SQLite connection, DatabaseWorker pointer, general file scheduler ownership or worker join duty.
+
+## Deck analysis boundary (2026-07-14)
+
+`DjEngine` retains the persistent UI-facing `TrackData` but no analyzer worker owns or borrows it.
+The engine snapshots it before start, drains an immutable result on the ControlClock waveform tick,
+checks loader/request/file identity, and applies it on the owner thread. `DjEngine.h` keeps the
+mailbox/analyzer orchestration boundary; waveform rendering observes shared snapshot handles only.
+Database persistence is forwarded as an immutable result to `LibraryDatabase::requestAnalysisPersistence()`.

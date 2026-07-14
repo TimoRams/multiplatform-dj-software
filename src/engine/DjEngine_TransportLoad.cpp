@@ -82,7 +82,8 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
     }
 
     if (!(result.waveformCacheLoaded && hasDbAnalysis) && m_analyzer)
-        m_analyzer->startAnalysis(result.canonicalPath, m_transport->audioPositionSeconds());
+        m_analyzer->startAnalysis(result.canonicalPath, m_transport->audioPositionSeconds(),
+                                  result.generation, m_trackData->createAnalysisSeed());
 
     if (!result.coverImage.isNull() && m_coverProvider) {
         m_coverProvider->setCoverImage(m_deckId, result.coverImage);

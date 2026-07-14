@@ -64,9 +64,18 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
 
     m_trackData = new TrackData(this);
     m_analyzer = std::make_unique<WaveformAnalyzer>(
-        m_trackData,
         &formatManager,
         static_cast<int>(WAVEFORM_POINTS_PER_SECOND));
+    m_analysisMailbox = std::make_shared<AnalyzerResultMailbox>();
+    const auto analysisMailbox = m_analysisMailbox;
+    m_analyzer->setProgressCallback([analysisMailbox](double progress, bool active, auto generation) {
+        analysisMailbox->publishProgress(progress, active, generation);
+    });
+    m_analyzer->setCompletionCallback([analysisMailbox](bool completed, auto generation,
+                                                  const QString& filePath,
+                                                  WaveformAnalyzer::ResultPtr result) {
+        analysisMailbox->publish({completed, generation, filePath, std::move(result)});
+    });
     clearHotCueState();
 
     // When the analyzer detects a key, override the (often absent) ID3 key field.
@@ -225,22 +234,25 @@ void DjEngine::persistCurrentAnalysisToLibrary()
     if (!m_libraryDb || m_currentTrackId.isEmpty() || !m_trackData)
         return;
 
-    const double bpm = m_trackData->getBpm();
-    const QString key = m_trackData->getDetectedKey().trimmed();
-    const auto beatGrid = m_trackData->getBeatGrid();
+    auto result = m_trackData->createAnalysisSeed();
+    const double bpm = result.bpm;
+    const QString key = result.detectedKey.trimmed();
+    const auto& beatGrid = result.beats;
 
     if (bpm <= 0.0 && key.isEmpty() && beatGrid.empty())
         return;
 
-    m_libraryDb->updateAnalysisData(
-        m_currentTrackId,
-        static_cast<float>(bpm),
-        key,
-        m_trackData->getFirstBeatSample(),
-        m_trackData->getSampleRate(),
-        beatGrid,
-        m_trackData->getConfidenceInfo(),
-        m_trackData->getBeatGridInfo());
+    const QFileInfo info(m_trackFilePath);
+    result.complete = true;
+    result.validated = true;
+    result.analysisVersion = analysis::kCurrentAnalysisVersion;
+    result.identity.canonicalFilePath = info.canonicalFilePath().isEmpty()
+        ? info.absoluteFilePath() : info.canonicalFilePath();
+    result.identity.trackGeneration = m_trackLoader.currentGeneration();
+    result.identity.fileSize = static_cast<std::uint64_t>(std::max<qint64>(0, info.size()));
+    result.identity.fileModifiedMs = info.lastModified().toMSecsSinceEpoch();
+    result.identity.requestGeneration = m_analyzer ? m_analyzer->generation() : 0;
+    (void)m_libraryDb->requestAnalysisPersistence(m_currentTrackId, result);
 }
 
 
@@ -323,6 +335,27 @@ void DjEngine::onSyncApplyControlTick(const ControlTickContext& context)
 void DjEngine::onWaveformControlTick(const ControlTickContext& context)
 {
     (void)context;
+    if (m_analysisMailbox && m_analyzer) {
+        double value = 0.0; bool active = false;
+        WaveformAnalyzer::AnalysisGeneration progressGeneration = 0;
+        if (m_analysisMailbox->takeProgress(value, active, progressGeneration)
+            && progressGeneration == m_analyzer->generation())
+            m_trackData->reportAnalysisProgress(value, active);
+        if (auto completion = m_analysisMailbox->take()) {
+            const auto& result = completion->result;
+            if (completion->completed && result
+                && completion->generation == m_analyzer->generation()
+                && completion->filePath == m_trackFilePath
+                && result->identity.trackGeneration == m_trackLoader.currentGeneration()) {
+                const QFileInfo current(completion->filePath);
+                if (result->identity.fileSize == static_cast<std::uint64_t>(std::max<qint64>(0, current.size()))
+                    && result->identity.fileModifiedMs == current.lastModified().toMSecsSinceEpoch()) {
+                    m_trackData->applyAnalysisResult(*result);
+                    m_trackData->reportAnalysisProgress(1.0, false);
+                }
+            }
+        }
+    }
     notifyProgressIfNeeded();
 }
 

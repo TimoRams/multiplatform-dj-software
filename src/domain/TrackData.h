@@ -9,9 +9,12 @@
 #include <QString>
 #include <atomic>
 #include <vector>
+#include <memory>
 
 #include "TransportLimits.h"
 #include "TrackSegment.h"
+
+namespace analysis { struct AnalysisResult; }
 
 class TrackData : public QObject
 {
@@ -125,7 +128,13 @@ public:
 
     explicit TrackData(QObject* parent = nullptr);
 
+    // Owner-thread boundary used by WaveformAnalyzer. The seed is captured
+    // before the worker starts; only applyAnalysisResult mutates this QObject.
+    [[nodiscard]] analysis::AnalysisResult createAnalysisSeed() const;
+    bool applyAnalysisResult(const analysis::AnalysisResult& result);
+
     void setTotalExpected(int total) {
+        assertOwnerThread();
         QMutexLocker locker(&m_mutex);
         m_totalExpected = total;
     }
@@ -136,6 +145,7 @@ public:
     }
 
     void setGlobalMaxPeak(float maxPeak) {
+        assertOwnerThread();
         QMutexLocker locker(&m_mutex);
         m_globalMaxPeak = maxPeak;
     }
@@ -241,6 +251,7 @@ public:
 
     QVector<WaveformBin> getWaveformData() const {
         QMutexLocker locker(&m_mutex);
+        if (m_waveformSnapshot) return *m_waveformSnapshot;
         return m_data;
     }
 
@@ -251,6 +262,7 @@ public:
 
     int getPeakMipSize() const {
         QMutexLocker locker(&m_mutex);
+        if (m_peakMipSnapshot) return m_peakMipSnapshot->size();
         return m_peakMip.size();
     }
 
@@ -258,6 +270,7 @@ public:
 
     QVector<PeakFrame> getPeakMipData() const {
         QMutexLocker locker(&m_mutex);
+        if (m_peakMipSnapshot) return *m_peakMipSnapshot;
         return m_peakMip;
     }
 
@@ -268,7 +281,20 @@ public:
 
     QVector<RgbWaveformFrame> getOverviewRgbData() const {
         QMutexLocker locker(&m_mutex);
+        if (m_overviewSnapshot) return *m_overviewSnapshot;
         return m_overviewRgb;
+    }
+    std::shared_ptr<const QVector<RgbWaveformFrame>> getOverviewRgbSnapshot() const {
+        QMutexLocker locker(&m_mutex);
+        return m_overviewSnapshot;
+    }
+    std::shared_ptr<const QVector<RgbWaveformFrame>> getRgbWaveformSnapshot() const {
+        QMutexLocker locker(&m_mutex);
+        return m_rgbSnapshot;
+    }
+    std::shared_ptr<const QVector<PeakFrame>> getPeakMipSnapshot() const {
+        QMutexLocker locker(&m_mutex);
+        return m_peakMipSnapshot;
     }
 
     void preallocateRgbWaveform(int numBins);
@@ -280,11 +306,13 @@ public:
 
     QVector<RgbWaveformFrame> getRgbWaveformData() const {
         QMutexLocker locker(&m_mutex);
+        if (m_rgbSnapshot) return *m_rgbSnapshot;
         return m_rgbData;
     }
 
     int getRgbWaveformSize() const {
         QMutexLocker locker(&m_mutex);
+        if (m_rgbSnapshot) return m_rgbSnapshot->size();
         return m_rgbData.size();
     }
 
@@ -331,6 +359,10 @@ private:
     QVector<RgbWaveformFrame> m_rgbData;
     QVector<RgbWaveformFrame> m_overviewRgb;
     QVector<PeakFrame> m_peakMip;
+    std::shared_ptr<const QVector<WaveformBin>> m_waveformSnapshot;
+    std::shared_ptr<const QVector<RgbWaveformFrame>> m_rgbSnapshot;
+    std::shared_ptr<const QVector<RgbWaveformFrame>> m_overviewSnapshot;
+    std::shared_ptr<const QVector<PeakFrame>> m_peakMipSnapshot;
     int m_totalExpected;
     float m_globalMaxPeak;
 
@@ -358,4 +390,5 @@ private:
 
     void _updateProgressiveOvr(int from, int to);
     void alignSegmentsToBeatgridLocked();
+    void assertOwnerThread() const;
 };

@@ -4,14 +4,14 @@
 #include <juce_core/juce_core.h>
 #include <QString>
 
-class TrackData;
+#include "analysis/AnalysisWorkingData.h"
 
 namespace waveform_internal {
 
 struct AnalysisOrchestratorInput
 {
     juce::AudioFormatReader& reader;
-    TrackData* trackData = nullptr;
+    analysis::AnalysisWorkingData* trackData = nullptr;
     juce::Thread& thread;
     int pointsPerSecond = 600;
     juce::int64 totalSamples = 0;

@@ -1,6 +1,18 @@
 # Thread Ownership
 
-Last updated: 2026-07-13
+Last updated: 2026-07-14
+
+## Analysis snapshot boundary (2026-07-14)
+
+| Object / operation | Owner | Thread / boundary | Lifetime rule |
+|---|---|---|---|
+| `TrackData` | deck or library Qt owner | owner thread only mutates/applies | never captured by analyzer worker |
+| `AnalysisWorkingData` | one `WaveformAnalyzer` run | worker only | destroyed/joined with the run; no QObject affinity |
+| `AnalysisResult` | immutable shared value | mailbox worker -> owner | accepted only after identity/generation/file validation |
+| Analyzer mailbox | analyzer/manager value state | mutex-protected latest-only handoff | capacity one; completion supersedes obsolete progress |
+| `LibraryAnalysisManager` queue | manager Qt owner | owner thread enqueue/start/tick | bounded 4096 jobs, duplicate key promotion, fair background service |
+
+Analyzer callbacks carry values only and cannot call Qt objects. Cancellation invalidates the request generation, then join happens before dependent state can be cleared or destroyed. Waveform cache artifact persistence is still a worker-local final step and must move to `MediaIoScheduler` if its I/O cost proves material.
 
 | Object/state | Owner/lifetime | Allowed callers | Blocking/allocation | Audio-callback rule |
 |---|---|---|---|---|

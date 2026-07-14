@@ -255,15 +255,16 @@ void RgbWaveformItem::paint(QPainter* painter)
 
     auto* td = m_engine->getTrackData();
 
-    const QVector<TrackData::RgbWaveformFrame> overview = td->getOverviewRgbData();
-    const bool hasOverview = !overview.isEmpty();
+    const auto overviewSnapshot = td->getOverviewRgbSnapshot();
+    const bool hasOverview = overviewSnapshot && !overviewSnapshot->isEmpty();
 
     int ovrProcessed = 0;
     const QVector<TrackData::RgbWaveformFrame> progressiveOvr =
         hasOverview ? QVector<TrackData::RgbWaveformFrame>()
                     : td->getProgressiveOvrData(&ovrProcessed);
 
-    const QVector<TrackData::RgbWaveformFrame>& frames = hasOverview ? overview : progressiveOvr;
+    const QVector<TrackData::RgbWaveformFrame>& frames = hasOverview
+        ? *overviewSnapshot : progressiveOvr;
     if (frames.isEmpty()) {
         if (!m_frameCache.isNull() && m_frameCache.size() == QSize(w, h))
             painter->drawImage(0, 0, m_frameCache);

@@ -235,3 +235,12 @@ injizierte Decks und beendete sauber; echte Hardwarelisten, Wiedergabe und Hot-U
   remains independent; full release CTest suite has 18 passing targets.
 - [x] Both worker targets pass combined ASAN+UBSAN (`detect_leaks=0` due runner ptrace) and TSAN.
 - [ ] Portable disk-full/permission and network-share behavior; GUI stress with a production-scale library.
+
+## Analysis snapshot and queue regression (2026-07-14)
+
+- [x] Main build and all 20 CTest targets pass.
+- [x] Snapshot validation rejects malformed/NaN results; owner-thread apply and identity/request-generation stale rejection are covered.
+- [x] Bounded queue covers priority, deduplication/promotion, fairness and 10/100/1k/10k enqueue/dequeue measurements.
+- [x] Analysis snapshot, queue and lifetime targets pass ASAN+UBSAN with `detect_leaks=0` (ptrace runner limitation).
+- [ ] TSAN target run and production GUI test: rapid deck load/eject/reload during visible waveform rendering.
+- [ ] Profile/route the final WaveformCache artifact I/O to `MediaIoScheduler` if it can delay analysis throughput.

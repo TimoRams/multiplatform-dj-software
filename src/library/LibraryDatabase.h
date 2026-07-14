@@ -5,12 +5,14 @@
 #include <QSqlDatabase>
 #include <QTimer>
 #include <QVariantList>
+#include <QHash>
 #include <vector>
 #include <memory>
 
 #include "TrackData.h"
 #include "TrackSegment.h"
 #include "database/DatabaseWorker.h"
+#include "analysis/AnalysisResult.h"
 
 class LibraryTableModel;
 
@@ -59,6 +61,8 @@ public:
                                         TrackData::BeatGridInfo beatGridInfo = {});
 
     bool tryGetAnalysisData(const QString& trackId, AnalysisSnapshot* out) const;
+    bool requestAnalysisPersistence(const QString& trackId,
+                                    const analysis::AnalysisResult& result);
 
     // Segment JSON helpers for DB storage and QML bridge.
     static QString trackSegmentsToJson(const std::vector<TrackSegment>& segments);
@@ -271,6 +275,7 @@ private:
     std::uint64_t m_backupRequestId = 0;
     std::uint64_t m_quickCheckRequestId = 0;
     std::uint64_t m_fullCheckRequestId = 0;
+    QHash<std::uint64_t, QString> m_pendingAnalysisWrites;
     bool m_primaryMirrorDegraded = false;
     bool m_backupMirrorDegraded = false;
     bool m_tableModelRefreshPending = false;

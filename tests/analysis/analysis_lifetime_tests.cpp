@@ -49,11 +49,12 @@ int main(int argc, char** argv)
     bool ok = true;
     {
         TrackData data;
-        WaveformAnalyzer analyzer(&data, &formats, 600);
+        WaveformAnalyzer analyzer(&formats, 600);
         std::atomic<int> callbacks{0};
         std::atomic<WaveformAnalyzer::AnalysisGeneration> callbackGeneration{0};
         analyzer.setCompletionCallback(
-            [&](bool completed, WaveformAnalyzer::AnalysisGeneration generation, const QString&) {
+            [&](bool completed, WaveformAnalyzer::AnalysisGeneration generation, const QString&,
+                WaveformAnalyzer::ResultPtr) {
                 ok &= require(!completed, "an unreadable file must finish as failed");
                 callbackGeneration.store(generation, std::memory_order_release);
                 callbacks.fetch_add(1, std::memory_order_release);
@@ -78,10 +79,11 @@ int main(int argc, char** argv)
     ok &= require(dir.isValid() && writeSilentWave(wavePath), "test wave must be writable");
     if (ok) {
         TrackData data;
-        auto analyzer = std::make_unique<WaveformAnalyzer>(&data, &formats, 600);
+        auto analyzer = std::make_unique<WaveformAnalyzer>(&formats, 600);
         std::atomic<int> acceptedCompletions{0};
         analyzer->setCompletionCallback(
-            [&](bool completed, WaveformAnalyzer::AnalysisGeneration, const QString&) {
+            [&](bool completed, WaveformAnalyzer::AnalysisGeneration, const QString&,
+                WaveformAnalyzer::ResultPtr) {
                 if (completed)
                     acceptedCompletions.fetch_add(1, std::memory_order_relaxed);
             });

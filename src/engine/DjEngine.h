@@ -508,6 +508,7 @@ private:
 
     TrackData* m_trackData;
     std::unique_ptr<WaveformAnalyzer> m_analyzer;
+    std::shared_ptr<AnalyzerResultMailbox> m_analysisMailbox;
 
     QString m_trackTitle;
     QString m_trackArtist;
