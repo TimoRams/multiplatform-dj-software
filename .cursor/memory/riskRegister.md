@@ -162,3 +162,10 @@ Last updated: 2026-07-13
 | UI/render copies full waveform per publish/paint | `TrackData`, `RgbWaveformItem` | Immutable shared waveform, overview and peak handles replace repeated deep copies; renderer reads overview handle. | Large-track allocation and render stutter risk reduced. | Keep render APIs snapshot-based. | closed |
 | Unbounded/flooded analysis scheduling | `LibraryAnalysisManager`, `AnalysisJobQueue` | Capacity 4096, dedup/promotion, priorities, fairness and latest-only result mailbox bound queued work. | Background analysis cannot grow without bound or starve entirely. | Record drops and expose scheduling metrics if product needs them. | mitigated |
 | Final cache artifact I/O runs in analysis worker | `WaveformAnalyzer`, `WaveformCache` | Final cache serialization can still copy/write a full waveform before result delivery. | Slow storage may reduce analysis throughput. | Move this artifact job to `MediaIoScheduler` after profiling/format contract review. | P1 open |
+
+## DjEngine final-facade audit (2026-07-14)
+
+| Risk | Affected files / classes | Technical explanation | Impact | Planned approach | Status |
+|---|---|---|---|---|---|
+| Direct concrete graph-subsystem forwarding remains | `DjEngine_{Core,Fx,Scratch,Transport,CueLoopFacade}.cpp` | The facade still reaches `DeckAudioGraph` mixer/scratch/time-stretch views in several product paths. | Coupling remains despite single ownership. | Add narrow graph product commands and migrate one subsystem at a time, preserving controller API. | P1 open |
+| Compatibility library hydration stays in facade | `DjEngine_CoreMeta.cpp`, `DjEngine_CueLoopFacade.cpp` | Existing QSql owner-thread APIs are called for metadata/cues. | Large DB operations may delay Qt UI. | Migrate only after a compatible immutable repository command API exists. | P1 open |

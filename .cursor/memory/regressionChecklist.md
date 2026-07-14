@@ -244,3 +244,8 @@ injizierte Decks und beendete sauber; echte Hardwarelisten, Wiedergabe und Hot-U
 - [x] Analysis snapshot, queue and lifetime targets pass ASAN+UBSAN with `detect_leaks=0` (ptrace runner limitation).
 - [ ] TSAN target run and production GUI test: rapid deck load/eject/reload during visible waveform rendering.
 - [ ] Profile/route the final WaveformCache artifact I/O to `MediaIoScheduler` if it can delay analysis throughput.
+
+## DjEngine facade contract (2026-07-14)
+
+- [x] `BrockDJ_dj_engine_api_contract_tests` protects key QML/controller names and the public-header implementation boundary.
+- [ ] Add runtime four-deck facade construction/lifecycle coverage once the remaining direct graph forwarding is moved behind product commands.

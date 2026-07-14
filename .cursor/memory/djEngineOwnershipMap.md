@@ -216,3 +216,13 @@ The engine snapshots it before start, drains an immutable result on the ControlC
 checks loader/request/file identity, and applies it on the owner thread. `DjEngine.h` keeps the
 mailbox/analyzer orchestration boundary; waveform rendering observes shared snapshot handles only.
 Database persistence is forwarded as an immutable result to `LibraryDatabase::requestAnalysisPersistence()`.
+
+## Final-facade baseline (2026-07-14)
+
+Public contract: QML properties, invokables, slots and controller-facing methods remain in
+`DjEngine.h`; `tests/engine/dj_engine_api_contract_tests.cpp` snapshots critical stable names.
+The header is now a boundary: it forward-declares cache, analyzer, TrackData, master endpoint and
+audio-device implementation types. `EffectType` is retained because controller APIs take it by value.
+Current remaining transition: direct product forwarding to `DeckAudioGraph` mixer/scratch/time-stretch
+subsystems and Qt-owner compatibility library hydration/persistence. These are not duplicate state
+owners, but should be replaced by narrow graph/library commands in a separately reviewable pass.

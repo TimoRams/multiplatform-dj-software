@@ -1,6 +1,7 @@
 # Progress
 
 ## Done (recent)
+- [x] **DjEngine API/header contract baseline (2026-07-14)** — added a source-level contract test for stable QML/controller entries and removed concrete cache, TrackData, analyzer, master-bus and JUCE device headers from `DjEngine.h`. Remaining direct graph forwarding and compatibility DB facade calls are explicitly tracked, not hidden.
 - [x] **DjMasterBus lifetime and block-size hardening** — removed the raw `DjEngine*` vector and
   preview pointer, added four generation-tagged audio endpoint slots with movable RAII tokens and
   explicit reader-drain retirement, and made shutdown deterministic. Fixed 2048-sample chunks replace

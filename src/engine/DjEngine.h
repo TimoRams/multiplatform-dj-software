@@ -2,42 +2,41 @@
 
 #include "deck/DeckCueLoopController.h"
 #include "deck/DeckTrackLoader.h"
-#include "audio/cache/AudioPageCache.h"
-#include "sync/DeckSyncController.h"
+#include "audio/cache/AudioCacheHandle.h"
 #include "app/ControlClock.h"
-#include "MasterBusAudioEndpoint.h"
-
-class DeckAudioGraph;
-class DeckTransport;
-class AudioDeviceService;
-namespace engine::sync { class SyncCoordinator; }
+#include "sync/DeckSyncController.h"
 #include "scratch/ScratchSession.hpp"
+#include "fx/FxProcessor.h" // EffectType is part of the public controller facade contract.
 
 #include <QObject>
 #include <QImage>
 #include <QString>
 #include <QStringList>
-#include <QTimer>
-#include <QVector>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QElapsedTimer>
 #include <atomic>
-#include <array>
 #include <cstdint>
-#include <expected>
 #include <memory>
-#include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "TransportLimits.h"
-#include "TrackData.h"
-#include "WaveformAnalyzer.h"
-#include "fx/FxProcessor.h"
 
+class AudioDeviceService;
+class AudioPageCache;
+class DeckAudioGraph;
+class DeckTransport;
+class IDeckAudioEndpoint;
+class LibraryDatabase;
+class QTimer;
+class TrackData;
+class WaveformAnalyzer;
+class AnalyzerResultMailbox;
 class CoverArtProvider;
 class LibraryCoverService;
-class LibraryDatabase;
+namespace engine::sync {
+class SyncCoordinator;
+}
 
 class DjEngine : public QObject
 {

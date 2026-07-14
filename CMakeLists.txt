@@ -744,6 +744,14 @@ target_link_libraries(BrockDJ_library_analysis_manager_tests PRIVATE Qt6::Core)
 target_compile_features(BrockDJ_library_analysis_manager_tests PRIVATE cxx_std_26)
 add_test(NAME library_analysis_manager COMMAND BrockDJ_library_analysis_manager_tests)
 
+add_executable(BrockDJ_dj_engine_api_contract_tests
+    tests/engine/dj_engine_api_contract_tests.cpp)
+target_compile_definitions(BrockDJ_dj_engine_api_contract_tests PRIVATE
+    SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(BrockDJ_dj_engine_api_contract_tests PRIVATE Qt6::Core)
+target_compile_features(BrockDJ_dj_engine_api_contract_tests PRIVATE cxx_std_26)
+add_test(NAME dj_engine_api_contract COMMAND BrockDJ_dj_engine_api_contract_tests)
+
 if(UNIX)
     add_executable(BrockDJ_posix_signal_tests
         tests/platform/posix_signal_handler_tests.cpp

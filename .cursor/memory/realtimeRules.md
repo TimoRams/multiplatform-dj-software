@@ -120,3 +120,8 @@ Jede Änderung an `getNextAudioBlock()`, `processBlock()`, `prepareToPlay()`-Üb
 - Audio callbacks neither start, join, poll nor apply analysis. Analyzer progress/completion is drained by control/Qt owner ticks only.
 - Render code reads immutable shared overview/RGB/peak snapshots. It must not request a full `TrackData` copy or detach a shared Qt container per paint.
 - Only the final validated analysis snapshot may replace render-visible waveform data; no partial worker mutation of a live `TrackData` is allowed.
+
+## DjEngine facade boundary (2026-07-14)
+
+- `DjEngine.h` must not include concrete cache, analyzer, master-bus or JUCE audio-device implementation headers. Public value types that controllers require remain explicit API dependencies.
+- Facade methods may validate and publish; any direct graph forwarding must remain control-thread-only and must not expose callback-owned source internals to QML.

@@ -14,6 +14,13 @@ Last updated: 2026-07-14
 
 Analyzer callbacks carry values only and cannot call Qt objects. Cancellation invalidates the request generation, then join happens before dependent state can be cleared or destroyed. Waveform cache artifact persistence is still a worker-local final step and must move to `MediaIoScheduler` if its I/O cost proves material.
 
+## DjEngine facade ownership audit (2026-07-14)
+
+`DjEngine` owns deck-level facade objects (`DeckTransport`, `DeckAudioGraph`, cue/loop controller,
+track loader, TrackData) and borrows application services. Its public header exposes no concrete
+cache/analyzer/master-bus/device implementation. Transitional graph forwarding and compatibility
+library hydration remain Qt-owner operations; neither runs from the audio callback.
+
 | Object/state | Owner/lifetime | Allowed callers | Blocking/allocation | Audio-callback rule |
 |---|---|---|---|---|
 | `AudioDeviceService` | `ApplicationRuntime`; created before decks, destroyed after decks/master bus | Qt application/control thread | enumeration, device open/close, JACK probing and configuration may block/allocate | never call service configuration/enumeration from callback |

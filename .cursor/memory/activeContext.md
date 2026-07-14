@@ -3,6 +3,12 @@
 *Last updated: 2026-07-14*
 
 ## Current task
+**Final DjEngine facade audit and include boundary (in progress)**
+- Public QML/controller API is protected by `BrockDJ_dj_engine_api_contract_tests`; the test records critical properties/methods and bans concrete cache, TrackData, analyzer, master-bus and JUCE-device headers from `DjEngine.h`.
+- `DjEngine.h` now uses forward declarations for those implementation dependencies. `EffectType` remains an explicit public API dependency because MIDI calls expose it by value.
+- Inventory confirms the facade still has transitional direct `DeckAudioGraph::{mixer,scratch,timeStretch}` forwarding and Qt-owner compatibility database hydration/cue persistence. They require a scoped follow-up rather than being mislabeled as completed.
+
+## Previous task
 **Immutable TrackData analysis handoff and bounded library scheduling**
 - Analyzer workers now own `analysis::AnalysisWorkingData`, never a `TrackData*`/QObject. They publish one validated immutable `AnalysisResult` through a latest-only mailbox.
 - Deck and library owner threads validate canonical path, file size/mtime, analysis version and request/track generations before applying the result; stale or duplicate completions are discarded.
