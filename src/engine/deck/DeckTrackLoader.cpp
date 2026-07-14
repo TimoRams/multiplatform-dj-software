@@ -1,13 +1,10 @@
 #include "DeckTrackLoader.h"
 
+#include "audio/cache/AudioPageCache.h"
 #include "engine/audio/MetadataUtils.h"
-#include "library/CoverArtExtractor.h"
-#include "rendering/WaveformAnalyzer.h"
 
 #include <QFileInfo>
 #include <QSemaphore>
-#include <taglib/fileref.h>
-#include <taglib/tag.h>
 
 #include <algorithm>
 #include <cmath>
@@ -57,28 +54,6 @@ TrackMetadataSnapshot readMetadata(const juce::AudioFormatReader& reader,
     result.tagBpm = metadata::parseBpmString(
         metadata::metaValue(values, {"bpm", "tbpm", "tmpo", "tempo", "beatsperminute"}));
 
-    TagLib::FileRef tagFile(path.toLocal8Bit().constData());
-    if (!tagFile.isNull() && tagFile.tag()) {
-        const auto* tag = tagFile.tag();
-        const auto text = [](const TagLib::String& value) {
-            return metadata::cleanup(QString::fromStdString(value.to8Bit(true)));
-        };
-        if (result.title.isEmpty()) result.title = text(tag->title());
-        if (result.artist.isEmpty()) result.artist = text(tag->artist());
-        if (result.album.isEmpty()) result.album = text(tag->album());
-        if (result.genre.isEmpty()) result.genre = text(tag->genre());
-        if (result.comment.isEmpty()) result.comment = text(tag->comment());
-        if (result.year.isEmpty() && tag->year() > 0) result.year = QString::number(tag->year());
-        if (result.trackNumber.isEmpty() && tag->track() > 0) result.trackNumber = QString::number(tag->track());
-    }
-
-    if (const auto v1 = metadata::readId3v1(path)) {
-        if (result.title.isEmpty()) result.title = v1->title;
-        if (result.artist.isEmpty()) result.artist = v1->artist;
-        if (result.album.isEmpty()) result.album = v1->album;
-        if (result.year.isEmpty()) result.year = v1->year;
-    }
-
     const QString baseName = metadata::cleanup(
         QString::fromStdString(file.getFileNameWithoutExtension().toStdString()));
     metadata::filenameHeuristic(baseName, result.title, result.artist);
@@ -92,8 +67,9 @@ TrackMetadataSnapshot readMetadata(const juce::AudioFormatReader& reader,
 }
 }
 
-DeckTrackLoader::DeckTrackLoader(int waveformPointsPerSecond)
+DeckTrackLoader::DeckTrackLoader(AudioPageCache& audioPageCache, int waveformPointsPerSecond)
     : m_waveformPointsPerSecond(waveformPointsPerSecond)
+    , m_audioPageCache(audioPageCache)
 {
     m_formatManager.registerBasicFormats();
     m_worker = std::thread([this] { workerLoop(); });
@@ -178,6 +154,7 @@ void DeckTrackLoader::workerLoop()
         publishState(request.generation, TrackLoadState::Loading);
         auto result = prepare(request);
         if (!isCurrent(request.generation)) {
+            m_audioPageCache.releaseTrack(result.cacheHandle);
             auto expected = TrackLoadState::CancelRequested;
             m_state.compare_exchange_strong(expected, TrackLoadState::Cancelled,
                                             std::memory_order_acq_rel);
@@ -227,50 +204,14 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
     if (!isCurrent(request.generation))
         return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
 
-    publishState(request.generation, TrackLoadState::Preparing);
-    result.waveformCacheLoaded = WaveformCache::loadForFile(
-        result.canonicalPath, m_waveformPointsPerSecond, &result.waveformCache)
-        && !result.waveformCache.waveform.isEmpty() && !result.waveformCache.rgb.isEmpty();
-    if (result.waveformCacheLoaded) {
-        const int expected = result.waveformCache.totalExpected > 0
-            ? result.waveformCache.totalExpected : result.waveformCache.waveform.size();
-        result.waveformCacheLoaded = expected > 0
-            && result.waveformCache.waveform.size() >= static_cast<int>(expected * 0.98)
-            && result.waveformCache.rgb.size() >= static_cast<int>(expected * 0.98);
-    }
-    if (!result.waveformCacheLoaded) {
-        result.instantOverview = WaveformAnalyzer::buildInstantOverview(reader.get());
-        result.instantOverviewExpected = static_cast<int>(
-            result.metadata.durationSec * m_waveformPointsPerSecond);
-    }
-    if (!isCurrent(request.generation))
-        return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
+    // Playback decoder open/page table creation stays off the Qt thread.  The
+    // returned handle is installed immediately by the owner thread.
+    result.cacheHandle = m_audioPageCache.openTrack({result.canonicalPath});
+    if (!result.cacheHandle.isValid())
+        return fail(TrackLoadError::DecoderCreationFailed, QStringLiteral("Could not open playback cache"));
 
-    result.coverBytes = CoverArtExtractor::extractCoverArt(result.canonicalPath).first;
-    if (!result.coverBytes.isEmpty()) result.coverImage.loadFromData(result.coverBytes);
-
-    if (reader->sampleRate > 0.0) {
-        constexpr double maxScanSec = 10.0;
-        constexpr float silenceThreshold = 0.001f;
-        constexpr int blockSize = 1024;
-        const auto maxScan = std::min<juce::int64>(reader->lengthInSamples,
-            static_cast<juce::int64>(reader->sampleRate * maxScanSec));
-        const int channels = static_cast<int>(std::max(reader->numChannels, 1u));
-        juce::AudioBuffer<float> buffer(channels, blockSize);
-        juce::int64 audible = -1;
-        for (juce::int64 pos = 0; pos < maxScan && audible < 0 && isCurrent(request.generation); pos += blockSize) {
-            const int count = static_cast<int>(std::min<juce::int64>(blockSize, maxScan - pos));
-            buffer.clear();
-            reader->read(&buffer, 0, count, pos, true, true);
-            for (int i = 0; i < count && audible < 0; ++i)
-                for (int channel = 0; channel < channels; ++channel)
-                    if (std::abs(buffer.getSample(channel, i)) >= silenceThreshold) {
-                        audible = pos + i;
-                        break;
-                    }
-        }
-        if (audible > 0) result.autoCueSec = static_cast<double>(audible) / reader->sampleRate;
-    }
+    // Waveform cache/overview, cover extraction and auto-cue scanning are
+    // enrichment work.  They must not delay the PlaybackBootstrap result.
     if (!isCurrent(request.generation))
         return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
     return result;

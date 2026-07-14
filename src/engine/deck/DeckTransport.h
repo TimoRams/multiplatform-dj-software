@@ -108,6 +108,7 @@ public:
 private:
     void publishSnapshot() noexcept;
     void setSnapAnchor(double seconds, bool valid) noexcept;
+    void reconcileVisualAnchor(double authoritativePositionSeconds) noexcept;
     void startPreRoll(double seconds) noexcept;
 
     DeckAudioGraph& m_audioGraph;

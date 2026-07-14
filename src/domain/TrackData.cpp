@@ -568,6 +568,36 @@ void TrackData::appendData(const QVector<WaveformBin>& newData)
     emit dataUpdated();
 }
 
+void TrackData::applyProgressiveWaveformChunk(int firstBin, int totalBins,
+                                              const QVector<WaveformBin>& waveform,
+                                              const QVector<RgbWaveformFrame>& rgb)
+{
+    assertOwnerThread();
+    if (totalBins <= 0 || firstBin < 0 || (waveform.isEmpty() && rgb.isEmpty()))
+        return;
+    {
+        QMutexLocker locker(&m_mutex);
+        if (m_totalExpected != totalBins || m_data.size() != totalBins) {
+            m_totalExpected = totalBins;
+            m_data.fill(WaveformBin{}, totalBins);
+            m_rgbData.fill(RgbWaveformFrame{}, totalBins);
+            m_waveformSnapshot.reset();
+            m_rgbSnapshot.reset();
+        }
+        const int waveformCount = std::min(static_cast<int>(waveform.size()), totalBins - firstBin);
+        for (int i = 0; i < waveformCount; ++i)
+            m_data[firstBin + i] = waveform[i];
+        const int rgbCount = std::min(static_cast<int>(rgb.size()), totalBins - firstBin);
+        for (int i = 0; i < rgbCount; ++i)
+            m_rgbData[firstBin + i] = rgb[i];
+        if (rgbCount > 0)
+            _updateProgressiveOvr(firstBin, firstBin + rgbCount);
+    }
+    emit dataUpdated();
+    if (!rgb.isEmpty())
+        scheduleRgbWaveformEmit();
+}
+
 void TrackData::replaceAllData(QVector<WaveformBin>&& finalData, float finalGlobalMaxPeak)
 {
     assertOwnerThread();

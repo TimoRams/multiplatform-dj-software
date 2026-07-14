@@ -510,6 +510,12 @@ bool runEnvelopePass(const EnvelopePassInput& input)
     previewBatch.reserve(kChunk);
     QVector<TrackData::RgbWaveformFrame> previewRgbBatch;
     previewRgbBatch.reserve(kChunk);
+    const auto publishChunk = [&input](int firstBin,
+                                       const QVector<TrackData::WaveformBin>& waveform,
+                                       const QVector<TrackData::RgbWaveformFrame>& rgb) {
+        if (input.publishChunk && (!waveform.isEmpty() || !rgb.isEmpty()))
+            input.publishChunk(firstBin, input.numPoints, waveform, rgb);
+    };
 
     // Shared shaping helper — used identically in preview AND final pass.
     auto shapeBin = [](float norm, float expo, float gain) -> float {
@@ -646,11 +652,15 @@ bool runEnvelopePass(const EnvelopePassInput& input)
             pChunk.append(rgb);
             if (pChunk.size() >= kChunk) {
                 m_trackData->writeRgbWaveformRange(pChunkStart, pChunk);
+                publishChunk(pChunkStart, {}, pChunk);
                 pChunk.clear();
             }
         }
         if (!pChunk.isEmpty())
+        {
             m_trackData->writeRgbWaveformRange(pChunkStart, pChunk);
+            publishChunk(pChunkStart, {}, pChunk);
+        }
     }
     // ─────────────────────────────────────────────────────────────────────
 
@@ -688,7 +698,9 @@ bool runEnvelopePass(const EnvelopePassInput& input)
         // When entering the priority region: flush only the appendData batch
         // (overview waveform). RGB for early bins stays in earlyRgbBuf.
         if (hasPriority && bin == priorityWarmupStart && !previewBatch.isEmpty()) {
+            const int firstBin = std::max(0, bin - static_cast<int>(previewBatch.size()));
             m_trackData->appendData(previewBatch);
+            publishChunk(firstBin, previewBatch, {});
             previewBatch.clear();
             previewRgbBatch.clear();
         }
@@ -697,7 +709,10 @@ bool runEnvelopePass(const EnvelopePassInput& input)
         // the forward fill is visible before going back to fill the beginning.
         if (!earlyFlushed && bin >= priorityEnd) {
             if (!earlyRgbBuf.isEmpty())
+            {
                 m_trackData->writeRgbWaveformRange(earlyRgbStart, earlyRgbBuf);
+                publishChunk(earlyRgbStart, {}, earlyRgbBuf);
+            }
             earlyRgbBuf.clear();
             earlyFlushed = true;
         }
@@ -829,11 +844,15 @@ bool runEnvelopePass(const EnvelopePassInput& input)
                         nChunk.append(rgb);
                         if (nChunk.size() >= kChunk) {
                             m_trackData->writeRgbWaveformRange(nChunkStart, nChunk);
+                            publishChunk(nChunkStart, {}, nChunk);
                             nChunk.clear();
                         }
                     }
                     if (!nChunk.isEmpty())
+                    {
                         m_trackData->writeRgbWaveformRange(nChunkStart, nChunk);
+                        publishChunk(nChunkStart, {}, nChunk);
+                    }
 
                     forwardFrontier = nPriorityEnd; // advance frontier for next iteration
                 }
@@ -988,22 +1007,29 @@ bool runEnvelopePass(const EnvelopePassInput& input)
         }
 
         if (previewBatch.size() >= kChunk) {
+            const int firstBin = std::max(0, bin - static_cast<int>(previewBatch.size()) + 1);
             m_trackData->appendData(previewBatch);
             if (!previewRgbBatch.isEmpty()) {
                 m_trackData->writeRgbWaveformRange(mainChunkStart, previewRgbBatch);
-                previewRgbBatch.clear();
             }
+            publishChunk(firstBin, previewBatch, previewRgbBatch);
+            previewRgbBatch.clear();
             previewBatch.clear();
         }
     }
     if (!previewBatch.isEmpty()) {
+        const int firstBin = std::max(0, numPoints - static_cast<int>(previewBatch.size()));
         m_trackData->appendData(previewBatch);
         if (!previewRgbBatch.isEmpty())
             m_trackData->writeRgbWaveformRange(mainChunkStart, previewRgbBatch);
+        publishChunk(firstBin, previewBatch, previewRgbBatch);
     }
     // Flush early-region buffer if priorityEnd was never reached (e.g. hint near end of track).
     if (!earlyFlushed && !earlyRgbBuf.isEmpty())
+    {
         m_trackData->writeRgbWaveformRange(earlyRgbStart, earlyRgbBuf);
+        publishChunk(earlyRgbStart, {}, earlyRgbBuf);
+    }
 
     if (threadShouldExit()) return false;
 

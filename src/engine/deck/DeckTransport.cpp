@@ -276,7 +276,11 @@ DeckTransport::ControlUpdate DeckTransport::updateControlState(
                 result.enteredPreRoll = true;
             }
         }
-        setSnapAnchor(m_audiblePositionSeconds, !m_preRollActive);
+        // The audio cursor is authoritative, but continuously hard-resetting
+        // the visual clock here turns control-tick jitter into visible waveform
+        // jitter.  Only discontinuities use setSnapAnchor(); normal playback
+        // converges with a bounded correction below.
+        reconcileVisualAnchor(m_audiblePositionSeconds);
         result.positionChanged = true;
     } else if (m_preRollActive) {
         const double elapsed = static_cast<double>(m_preRollClock.nsecsElapsed()) * 1.0e-9;
@@ -523,6 +527,37 @@ void DeckTransport::setSnapAnchor(double seconds, bool valid) noexcept
     m_snapClock.restart();
     m_snapValid = valid;
     m_audioPlayhead.store(seconds, std::memory_order_release);
+}
+
+void DeckTransport::reconcileVisualAnchor(double authoritativePositionSeconds) noexcept
+{
+    if (!m_snapValid || !std::isfinite(authoritativePositionSeconds)) {
+        setSnapAnchor(authoritativePositionSeconds, true);
+        return;
+    }
+
+    constexpr double hardSnapThresholdSeconds = 0.080;
+    constexpr double correctionFactor = 0.20;
+    constexpr double maximumCorrectionPerUpdate = 0.0025;
+    const double elapsed = std::max(0.0,
+        static_cast<double>(m_snapClock.nsecsElapsed()) * 1.0e-9
+            * std::max(0.0001, m_snapPlaybackRate));
+    const double predicted = m_reverse ? m_snapPositionSeconds - elapsed
+                                       : m_snapPositionSeconds + elapsed;
+    const double error = authoritativePositionSeconds - predicted;
+    if (std::abs(error) > hardSnapThresholdSeconds) {
+        setSnapAnchor(authoritativePositionSeconds, true);
+        return;
+    }
+
+    const double correction = std::clamp(error * correctionFactor,
+                                         -maximumCorrectionPerUpdate,
+                                         maximumCorrectionPerUpdate);
+    // Re-anchor at the current prediction instead of the delayed control
+    // cursor.  This preserves monotonic visual motion between control ticks.
+    m_snapPositionSeconds = predicted + correction;
+    m_snapPlaybackRate = m_playbackRate;
+    m_snapClock.restart();
 }
 
 void DeckTransport::startPreRoll(double seconds) noexcept

@@ -1,4 +1,5 @@
 #include "engine/deck/DeckTrackLoader.h"
+#include "audio/cache/AudioPageCache.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -11,6 +12,7 @@
 #include <iostream>
 #include <mutex>
 #include <optional>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -79,10 +81,14 @@ int main(int argc, char** argv)
     ok &= require(directory.isValid(), "temporary directory must be available");
     const QString monoPath = directory.filePath(QStringLiteral("Artist - Mono.wav"));
     const QString stereoPath = directory.filePath(QStringLiteral("Stereo.wav"));
+    const QString mp3Path = QDir::cleanPath(
+        QCoreApplication::applicationDirPath()
+        + QStringLiteral("/../libs/JUCE/examples/Assets/Notifications/sounds/solemn.mp3"));
     ok &= require(writeWave(monoPath, 44100.0, 1, 0.2), "mono fixture must be generated");
     ok &= require(writeWave(stereoPath, 48000.0, 2, 0.3), "stereo fixture must be generated");
 
-    DeckTrackLoader loader(100);
+    AudioPageCache cache(16 * 1024 * 1024);
+    DeckTrackLoader loader(cache, 100);
     {
         ResultWaiter waiter;
         const auto generation = loader.loadTrack(monoPath, waiter.callback());
@@ -96,6 +102,25 @@ int main(int argc, char** argv)
                       "filename metadata fallback must be retained");
         ok &= require(waiter.value().metadata.lengthInSamples > 0,
                       "loader returns metadata only; playback reader belongs to cache");
+        ok &= require(waiter.value().cacheHandle.isValid(),
+                      "playback cache handle must be prepared off the owner thread");
+        cache.releaseTrack(waiter.value().cacheHandle);
+    }
+    {
+        ResultWaiter waiter;
+        const auto ownerThread = std::this_thread::get_id();
+        std::thread::id completionThread;
+        const auto generation = loader.loadTrack(mp3Path, [&waiter, &completionThread](TrackLoadResult result) {
+            completionThread = std::this_thread::get_id();
+            waiter.callback()(std::move(result));
+        });
+        ok &= require(waiter.wait(), "real MP3 bootstrap must complete");
+        ok &= require(waiter.value().succeeded(), "real MP3 bootstrap must succeed");
+        ok &= require(waiter.value().generation == generation, "MP3 generation must match request");
+        ok &= require(waiter.value().cacheHandle.isValid(), "MP3 playback cache must be opened before install");
+        ok &= require(completionThread != ownerThread,
+                      "MP3 reader and cache open must not run on the Qt owner thread");
+        cache.releaseTrack(waiter.value().cacheHandle);
     }
     {
         ResultWaiter waiter;
@@ -158,7 +183,7 @@ int main(int argc, char** argv)
                   "shutdown has a terminal state and joins the worker");
 
     {
-        DeckTrackLoader destructorJoin(100);
+        DeckTrackLoader destructorJoin(cache, 100);
         destructorJoin.loadTrack(stereoPath, [](TrackLoadResult) {});
     }
 

@@ -32,6 +32,10 @@ public:
                                                    ResultPtr result)>;
     using ProgressCallback = std::function<void(double progress, bool active,
                                                  AnalysisGeneration generation)>;
+    using ChunkCallback = std::function<void(AnalysisGeneration generation, int firstBin,
+                                             int totalBins,
+                                             QVector<TrackData::WaveformBin> waveform,
+                                             QVector<TrackData::RgbWaveformFrame> rgb)>;
 
     WaveformAnalyzer(juce::AudioFormatManager* formatManager, int pointsPerSecond = 600);
     ~WaveformAnalyzer();
@@ -52,6 +56,7 @@ public:
     void setSeekHint(double positionSec);
     void setCompletionCallback(CompletionCallback callback);
     void setProgressCallback(ProgressCallback callback);
+    void setChunkCallback(ChunkCallback callback);
     void notifyCompletion(bool completed, AnalysisGeneration generation, const QString& filePath,
                           ResultPtr result = {});
     [[nodiscard]] AnalysisGeneration generation() const noexcept {
@@ -71,7 +76,8 @@ private:
    std::atomic<AnalysisJobState> m_jobState{AnalysisJobState::Finished};
    std::mutex m_callbackMutex;
    CompletionCallback m_completionCallback;
-   ProgressCallback m_progressCallback;
+    ProgressCallback m_progressCallback;
+    ChunkCallback m_chunkCallback;
    analysis::AnalysisResult m_seed;
    analysis::AnalysisIdentity m_identity;
 };
@@ -81,6 +87,13 @@ private:
 class AnalyzerResultMailbox final
 {
 public:
+    struct Chunk {
+        WaveformAnalyzer::AnalysisGeneration generation = 0;
+        int firstBin = 0;
+        int totalBins = 0;
+        std::shared_ptr<const QVector<TrackData::WaveformBin>> waveform;
+        std::shared_ptr<const QVector<TrackData::RgbWaveformFrame>> rgb;
+    };
     struct Completion {
         bool completed = false;
         WaveformAnalyzer::AnalysisGeneration generation = 0;
@@ -115,11 +128,29 @@ public:
         m_progressDirty = false;
         return true;
     }
+    void publishChunk(Chunk value)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        constexpr size_t kMaxChunks = 32;
+        if (m_chunks.size() == kMaxChunks) {
+            m_chunks.erase(m_chunks.begin());
+            ++m_replaced;
+        }
+        m_chunks.push_back(std::move(value));
+    }
+    std::vector<Chunk> takeChunks()
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto value = std::move(m_chunks);
+        m_chunks.clear();
+        return value;
+    }
     [[nodiscard]] std::uint64_t replaced() const
     { std::lock_guard<std::mutex> lock(m_mutex); return m_replaced; }
 private:
     mutable std::mutex m_mutex;
     std::optional<Completion> m_completion;
+    std::vector<Chunk> m_chunks;
     double m_progress = 0.0;
     bool m_active = false;
     bool m_progressDirty = false;

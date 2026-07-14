@@ -2,6 +2,7 @@
 
 #include "TrackData.h"
 #include "WaveformCache.h"
+#include "audio/cache/AudioCacheHandle.h"
 
 #include <QByteArray>
 #include <QImage>
@@ -62,6 +63,7 @@ struct TrackLoadResult {
     std::uint64_t generation = 0;
     QString canonicalPath;
     TrackMetadataSnapshot metadata;
+    AudioCacheHandle cacheHandle;
     WaveformCache::Payload waveformCache;
     QVector<TrackData::RgbWaveformFrame> instantOverview;
     int instantOverviewExpected = 0;
@@ -80,7 +82,7 @@ class DeckTrackLoader
 public:
     using CompletionCallback = std::function<void(TrackLoadResult)>;
 
-    explicit DeckTrackLoader(int waveformPointsPerSecond);
+    DeckTrackLoader(AudioPageCache& audioPageCache, int waveformPointsPerSecond);
     ~DeckTrackLoader();
 
     DeckTrackLoader(const DeckTrackLoader&) = delete;
@@ -106,6 +108,7 @@ private:
     void publishState(std::uint64_t generation, TrackLoadState state) noexcept;
 
     const int m_waveformPointsPerSecond;
+    AudioPageCache& m_audioPageCache;
     juce::AudioFormatManager m_formatManager;
     std::atomic<std::uint64_t> m_generation{0};
     std::atomic<TrackLoadState> m_state{TrackLoadState::Idle};

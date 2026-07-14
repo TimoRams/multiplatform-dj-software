@@ -53,7 +53,7 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
     , m_audioPageCache(audioPageCache)
     , m_audioGraph(std::make_unique<DeckAudioGraph>(audioPageCache))
     , m_transport(std::make_unique<DeckTransport>(*m_audioGraph))
-    , m_trackLoader(static_cast<int>(WAVEFORM_POINTS_PER_SECOND))
+    , m_trackLoader(audioPageCache, static_cast<int>(WAVEFORM_POINTS_PER_SECOND))
     , m_syncCoordinator(syncCoordinator)
     , m_controlClock(controlClock)
     , m_deckIndex(deckIndex)
@@ -70,6 +70,16 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
     const auto analysisMailbox = m_analysisMailbox;
     m_analyzer->setProgressCallback([analysisMailbox](double progress, bool active, auto generation) {
         analysisMailbox->publishProgress(progress, active, generation);
+    });
+    m_analyzer->setChunkCallback([analysisMailbox](auto generation, int firstBin, int totalBins,
+                                                    auto waveform, auto rgb) {
+        AnalyzerResultMailbox::Chunk chunk;
+        chunk.generation = generation;
+        chunk.firstBin = firstBin;
+        chunk.totalBins = totalBins;
+        chunk.waveform = std::make_shared<const QVector<TrackData::WaveformBin>>(std::move(waveform));
+        chunk.rgb = std::make_shared<const QVector<TrackData::RgbWaveformFrame>>(std::move(rgb));
+        analysisMailbox->publishChunk(std::move(chunk));
     });
     m_analyzer->setCompletionCallback([analysisMailbox](bool completed, auto generation,
                                                   const QString& filePath,
@@ -336,6 +346,13 @@ void DjEngine::onWaveformControlTick(const ControlTickContext& context)
 {
     (void)context;
     if (m_analysisMailbox && m_analyzer) {
+        for (const auto& chunk : m_analysisMailbox->takeChunks()) {
+            if (chunk.generation == m_analyzer->generation()
+                && chunk.waveform && chunk.rgb) {
+                m_trackData->applyProgressiveWaveformChunk(
+                    chunk.firstBin, chunk.totalBins, *chunk.waveform, *chunk.rgb);
+            }
+        }
         double value = 0.0; bool active = false;
         WaveformAnalyzer::AnalysisGeneration progressGeneration = 0;
         if (m_analysisMailbox->takeProgress(value, active, progressGeneration)

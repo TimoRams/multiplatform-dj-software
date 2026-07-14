@@ -5,13 +5,18 @@
 void DjEngine::loadTrack(const QString& rawPath)
 {
     QPointer<DjEngine> safeThis(this);
-    m_trackLoader.loadTrack(rawPath, [safeThis](TrackLoadResult result) mutable {
-        if (!safeThis)
+    AudioPageCache* const cache = &m_audioPageCache;
+    m_trackLoader.loadTrack(rawPath, [safeThis, cache](TrackLoadResult result) mutable {
+        if (!safeThis) {
+            cache->releaseTrack(result.cacheHandle);
             return;
+        }
         QMetaObject::invokeMethod(safeThis.data(),
-            [safeThis, result = std::move(result)]() mutable {
+            [safeThis, cache, result = std::move(result)]() mutable {
                 if (safeThis)
                     safeThis->applyPreparedTrack(std::move(result));
+                else
+                    cache->releaseTrack(result.cacheHandle);
             },
             Qt::QueuedConnection);
     });
@@ -19,8 +24,10 @@ void DjEngine::loadTrack(const QString& rawPath)
 
 void DjEngine::applyPreparedTrack(TrackLoadResult result)
 {
-    if (result.generation != m_trackLoader.currentGeneration())
+    if (result.generation != m_trackLoader.currentGeneration()) {
+        m_audioPageCache.releaseTrack(result.cacheHandle);
         return;
+    }
     if (!result.succeeded()) {
         qWarning() << "[DeckTrackLoader] load failed:" << result.errorMessage;
         if (m_trackLoadError != result.errorMessage) {
@@ -38,7 +45,7 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
     if (m_analyzer)
         m_analyzer->stopAnalysis();
 
-    auto preparedCacheHandle = m_audioPageCache.openTrack({result.canonicalPath});
+    auto preparedCacheHandle = result.cacheHandle;
 
     resetTrackLoadState();
     m_trackTitle = result.metadata.title;

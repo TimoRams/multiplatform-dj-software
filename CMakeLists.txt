@@ -802,35 +802,66 @@ add_executable(BrockDJ_track_loader_tests
     tests/track_loader/deck_track_loader_tests.cpp
     src/engine/deck/DeckTrackLoader.h
     src/engine/deck/DeckTrackLoader.cpp
+    src/audio/cache/AudioPageCache.cpp
+    src/audio/cache/AudioCacheWorker.cpp
     src/engine/audio/MetadataUtils.cpp
-    src/library/CoverArtExtractor.cpp
-    src/rendering/WaveformAnalyzer.cpp
-    src/rendering/WaveformEnvelopePass.cpp
-    src/rendering/WaveformAnalysisOrchestrator.cpp
-    src/rendering/WaveformCache.cpp
-    src/domain/TrackData.cpp
-    src/analysis/AnalysisFeatureExtractor.cpp
-    src/analysis/TempoEstimator.cpp
-    src/analysis/BeatTracker.cpp
-    src/analysis/DownbeatDetector.cpp
-    src/analysis/BeatGridFitter.cpp
-    src/analysis/AnalysisValidation.cpp
-    src/analysis/PhraseAnalyzer.cpp
 )
 target_include_directories(BrockDJ_track_loader_tests PRIVATE
-    src src/analysis src/domain src/engine src/library src/rendering
+    src src/domain src/engine src/library src/rendering
 )
 target_link_libraries(BrockDJ_track_loader_tests PRIVATE
     Qt6::Core Qt6::Gui
     juce::juce_core juce::juce_data_structures juce::juce_audio_basics
     juce::juce_audio_formats juce::juce_dsp juce::juce_events
-    ThirdParty::TagLib ThirdParty::KeyFinder
 )
 target_compile_definitions(BrockDJ_track_loader_tests PRIVATE
     JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1
 )
 target_compile_features(BrockDJ_track_loader_tests PRIVATE cxx_std_26)
 add_test(NAME track_loader COMMAND BrockDJ_track_loader_tests)
+
+add_custom_target(BrockDJ_immediate_long_track_playback_tests
+    DEPENDS BrockDJ_track_loader_tests
+)
+add_test(NAME immediate_long_track_playback COMMAND BrockDJ_track_loader_tests)
+
+add_executable(BrockDJ_waveform_motion_tests
+    tests/waveform_motion/waveform_motion_tests.cpp
+)
+target_compile_features(BrockDJ_waveform_motion_tests PRIVATE cxx_std_26)
+add_test(NAME waveform_motion COMMAND BrockDJ_waveform_motion_tests)
+
+add_executable(BrockDJ_progressive_waveform_publication_tests
+    tests/progressive_waveform/progressive_waveform_publication_tests.cpp
+    src/domain/TrackData.cpp
+)
+target_include_directories(BrockDJ_progressive_waveform_publication_tests PRIVATE src src/domain)
+target_link_libraries(BrockDJ_progressive_waveform_publication_tests PRIVATE Qt6::Core Qt6::Gui)
+target_compile_features(BrockDJ_progressive_waveform_publication_tests PRIVATE cxx_std_26)
+add_test(NAME progressive_waveform_publication COMMAND BrockDJ_progressive_waveform_publication_tests)
+
+add_executable(BrockDJ_waveform_line_store_tests
+    tests/waveform_line_store/waveform_line_store_tests.cpp
+    src/waveform/WaveformLineStore.cpp
+)
+target_include_directories(BrockDJ_waveform_line_store_tests PRIVATE src)
+target_compile_features(BrockDJ_waveform_line_store_tests PRIVATE cxx_std_26)
+add_test(NAME waveform_line_store COMMAND BrockDJ_waveform_line_store_tests)
+
+add_executable(BrockDJ_waveform_line_chunk_tests
+    tests/waveform_line_chunk/waveform_line_chunk_tests.cpp
+)
+target_include_directories(BrockDJ_waveform_line_chunk_tests PRIVATE src)
+target_compile_features(BrockDJ_waveform_line_chunk_tests PRIVATE cxx_std_26)
+add_test(NAME waveform_line_chunk COMMAND BrockDJ_waveform_line_chunk_tests)
+
+add_executable(BrockDJ_waveform_line_render_tests
+    tests/waveform_line_render/waveform_line_render_tests.cpp
+    src/waveform/WaveformLineStore.cpp
+)
+target_include_directories(BrockDJ_waveform_line_render_tests PRIVATE src)
+target_compile_features(BrockDJ_waveform_line_render_tests PRIVATE cxx_std_26)
+add_test(NAME waveform_line_render COMMAND BrockDJ_waveform_line_render_tests)
 
 add_executable(BrockDJ_audio_page_cache_tests
     tests/audio_cache/audio_page_cache_tests.cpp

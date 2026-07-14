@@ -326,6 +326,9 @@ public:
     int fillPeakMipSlice(QVector<PeakFrame>& dst, int startIdx, int endIdx) const;
 
     void appendData(const QVector<WaveformBin>& newData);
+    void applyProgressiveWaveformChunk(int firstBin, int totalBins,
+                                       const QVector<WaveformBin>& waveform,
+                                       const QVector<RgbWaveformFrame>& rgb);
 
     // Atomically replace the entire waveform with the final-polish version.
     void replaceAllData(QVector<WaveformBin>&& finalData, float finalGlobalMaxPeak);

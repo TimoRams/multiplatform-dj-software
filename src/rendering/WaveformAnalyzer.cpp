@@ -164,6 +164,12 @@ void WaveformAnalyzer::setProgressCallback(ProgressCallback callback)
     m_progressCallback = std::move(callback);
 }
 
+void WaveformAnalyzer::setChunkCallback(ChunkCallback callback)
+{
+    std::lock_guard<std::mutex> lock(m_callbackMutex);
+    m_chunkCallback = std::move(callback);
+}
+
 void WaveformAnalyzer::notifyCompletion(bool completed,
                                         AnalysisGeneration completedGeneration,
                                         const QString& completedFilePath,
@@ -200,7 +206,12 @@ void WaveformAnalyzer::run()
     AnalysisCompletionNotifier completion(*this, runGeneration, runFilePath);
 
     ProgressCallback progress;
-    { std::lock_guard<std::mutex> lock(m_callbackMutex); progress = m_progressCallback; }
+    ChunkCallback chunks;
+    {
+        std::lock_guard<std::mutex> lock(m_callbackMutex);
+        progress = m_progressCallback;
+        chunks = m_chunkCallback;
+    }
     analysis::AnalysisWorkingData working([progress, runGeneration](double value, bool active) {
         if (progress) progress(value, active, runGeneration);
     });
@@ -258,6 +269,13 @@ void WaveformAnalyzer::run()
             totalSamples,
             sampleRate,
             numPoints,
+            [chunks, runGeneration](int firstBin, int totalBins,
+                                    QVector<TrackData::WaveformBin> waveform,
+                                    QVector<TrackData::RgbWaveformFrame> rgb) {
+                if (chunks)
+                    chunks(runGeneration, firstBin, totalBins,
+                           std::move(waveform), std::move(rgb));
+            },
         };
         if (!waveform_internal::runEnvelopePass(envelopeInput))
             return;
