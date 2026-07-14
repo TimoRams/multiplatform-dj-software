@@ -94,8 +94,8 @@ int main(int argc, char** argv)
                       "mono sample rate must be retained");
         ok &= require(waiter.value().metadata.title == QStringLiteral("Mono"),
                       "filename metadata fallback must be retained");
-        ok &= require(waiter.value().bufferedReader && waiter.value().directReader,
-                      "two prepared playback readers must be returned");
+        ok &= require(waiter.value().metadata.lengthInSamples > 0,
+                      "loader returns metadata only; playback reader belongs to cache");
     }
     {
         ResultWaiter waiter;

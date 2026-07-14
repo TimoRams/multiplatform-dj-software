@@ -62,8 +62,6 @@ struct TrackLoadResult {
     std::uint64_t generation = 0;
     QString canonicalPath;
     TrackMetadataSnapshot metadata;
-    std::unique_ptr<juce::AudioFormatReader> bufferedReader;
-    std::unique_ptr<juce::AudioFormatReader> directReader;
     WaveformCache::Payload waveformCache;
     QVector<TrackData::RgbWaveformFrame> instantOverview;
     int instantOverviewExpected = 0;

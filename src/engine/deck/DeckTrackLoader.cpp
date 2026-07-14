@@ -217,14 +217,13 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
     const QSemaphoreReleaser gateRelease(loadGate());
 
     const juce::File file(result.canonicalPath.toStdString());
-    result.bufferedReader.reset(m_formatManager.createReaderFor(file));
-    if (!result.bufferedReader)
+    // Loader metadata/previews share one bounded, non-playback reader.  The
+    // AudioPageCache opens the sole long-lived playback decoder after install.
+    std::unique_ptr<juce::AudioFormatReader> reader(m_formatManager.createReaderFor(file));
+    if (!reader)
         return fail(TrackLoadError::UnsupportedFormat, QStringLiteral("Unsupported or damaged audio file"));
-    result.directReader.reset(m_formatManager.createReaderFor(file));
-    if (!result.directReader)
-        return fail(TrackLoadError::DecoderCreationFailed, QStringLiteral("Could not create direct audio reader"));
 
-    result.metadata = readMetadata(*result.bufferedReader, result.canonicalPath, file);
+    result.metadata = readMetadata(*reader, result.canonicalPath, file);
     if (!isCurrent(request.generation))
         return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
 
@@ -240,12 +239,9 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
             && result.waveformCache.rgb.size() >= static_cast<int>(expected * 0.98);
     }
     if (!result.waveformCacheLoaded) {
-        std::unique_ptr<juce::AudioFormatReader> overviewReader(m_formatManager.createReaderFor(file));
-        if (overviewReader) {
-            result.instantOverview = WaveformAnalyzer::buildInstantOverview(overviewReader.get());
-            result.instantOverviewExpected = static_cast<int>(
-                result.metadata.durationSec * m_waveformPointsPerSecond);
-        }
+        result.instantOverview = WaveformAnalyzer::buildInstantOverview(reader.get());
+        result.instantOverviewExpected = static_cast<int>(
+            result.metadata.durationSec * m_waveformPointsPerSecond);
     }
     if (!isCurrent(request.generation))
         return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
@@ -253,20 +249,19 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
     result.coverBytes = CoverArtExtractor::extractCoverArt(result.canonicalPath).first;
     if (!result.coverBytes.isEmpty()) result.coverImage.loadFromData(result.coverBytes);
 
-    std::unique_ptr<juce::AudioFormatReader> cueReader(m_formatManager.createReaderFor(file));
-    if (cueReader && cueReader->sampleRate > 0.0) {
+    if (reader->sampleRate > 0.0) {
         constexpr double maxScanSec = 10.0;
         constexpr float silenceThreshold = 0.001f;
         constexpr int blockSize = 1024;
-        const auto maxScan = std::min<juce::int64>(cueReader->lengthInSamples,
-            static_cast<juce::int64>(cueReader->sampleRate * maxScanSec));
-        const int channels = static_cast<int>(std::max(cueReader->numChannels, 1u));
+        const auto maxScan = std::min<juce::int64>(reader->lengthInSamples,
+            static_cast<juce::int64>(reader->sampleRate * maxScanSec));
+        const int channels = static_cast<int>(std::max(reader->numChannels, 1u));
         juce::AudioBuffer<float> buffer(channels, blockSize);
         juce::int64 audible = -1;
         for (juce::int64 pos = 0; pos < maxScan && audible < 0 && isCurrent(request.generation); pos += blockSize) {
             const int count = static_cast<int>(std::min<juce::int64>(blockSize, maxScan - pos));
             buffer.clear();
-            cueReader->read(&buffer, 0, count, pos, true, true);
+            reader->read(&buffer, 0, count, pos, true, true);
             for (int i = 0; i < count && audible < 0; ++i)
                 for (int channel = 0; channel < channels; ++channel)
                     if (std::abs(buffer.getSample(channel, i)) >= silenceThreshold) {
@@ -274,7 +269,7 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
                         break;
                     }
         }
-        if (audible > 0) result.autoCueSec = static_cast<double>(audible) / cueReader->sampleRate;
+        if (audible > 0) result.autoCueSec = static_cast<double>(audible) / reader->sampleRate;
     }
     if (!isCurrent(request.generation))
         return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));

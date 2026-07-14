@@ -255,3 +255,8 @@ injizierte Decks und beendete sauber; echte Hardwarelisten, Wiedergabe und Hot-U
 - [x] Full DeckAudioGraph path: seek to track middle, start, reverse, process 32 blocks; cache-reader position retreats and output peak is audible/finite.
 - [x] Direction remains single-source: reverse PCM reader, positive Hermite/TimeStretch rate.
 - [ ] Add explicit DjMasterBus reverse RMS integration and cold-cache reverse recovery coverage in the release-hardening pass.
+
+## Progressive streaming bootstrap (2026-07-14)
+
+- [x] Loader test verifies a successful load returns metadata only; playback decoder ownership is solely in `AudioPageCache`.
+- [ ] Add bounded header-probe/first-page-resident timing tests for long compressed formats before declaring constant-time playable startup.

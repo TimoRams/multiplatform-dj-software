@@ -3,6 +3,17 @@
 *Last updated: 2026-07-14*
 
 ## Current task
+**Progressive audio streaming bootstrap (in progress, 2026-07-14)**
+- Confirmed loader opened four independent JUCE readers before a deck could install: two obsolete playback readers, overview reader and auto-cue reader; AudioPageCache then opened a fifth playback reader.
+- Loader now uses one short-lived metadata/preview reader and exposes no playback readers. AudioPageCache remains the sole playback-decoder owner after install.
+- The instant overview and ten-second auto-cue scan still run before the loader result, so true constant-time playable bootstrap requires their demotion to lower-priority post-install jobs plus a bounded header probe; that remains the next step.
+
+## Previous task
+**Scrolling waveform motion and progressive-analysis audit (2026-07-14)**
+- Confirmed motion jitter cause: `ScrollingWaveformItem` rounded the entire scroll centre to the device-pixel grid and then held micro opposite-direction deltas. The centre now stays in continuous point space; marker lines retain their independent pixel snapping.
+- Confirmed progressive-analysis gap: `WaveformEnvelopePass` writes chunks to worker-local `AnalysisWorkingData`; the UI receives them only in the final `AnalysisResult`. This explains delayed long-track scrolling waveform/beatgrid publication and is recorded as the next bounded handoff change.
+
+## Previous task
 **Reverse-playback P0 regression fixed (2026-07-14)**
 - `DeckAudioGraph` integration test reproduced a full-path failure: reverse source position did not retreat and the graph output stayed silent.
 - Root cause: reverse was applied twice. `CachedPlaybackAudioSource` read PCM backwards while `ScratchDeckBridge` also passed a negative Hermite resampling ratio.

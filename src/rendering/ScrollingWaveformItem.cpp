@@ -531,7 +531,6 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         : static_cast<double>(m_engine->getVisualPosition());
     const double rawCenterIndexRender = rawPlayheadSec * pointsPerSec;
     const bool scratchVisual = m_engine->isScratchVisualActive();
-    const bool continuousPlayback = m_engine->isPlaying() && !scratchVisual;
 
     // Waveform columns and beat/loop/cue overlays must share the same point-space
     // snap grid when scrolling — otherwise markers drift from peaks at coarse zoom.
@@ -546,34 +545,11 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     m_lastVisualSnapStep.store(lockVisualSampleGrid ? visualSamplesPerPixel : 0.0,
                                std::memory_order_relaxed);
 
-    // Scroll anchor: CDJ-style stable playback scroll vs 1:1 scrub tracking.
-    // Playback uses a device-pixel floor grid with monotonic filtering so timer
-    // jitter and sync phase nudges never nudge the view backward (flicker/jiggle).
-    // Beat/loop/cue overlays share snapPointPos with waveform columns for alignment
-    // at coarse zoom — scroll itself stays pixel-stable, not beat-quantized.
-    // Active scratch uses the raw playhead so finger motion matches the display.
-    double centerIndexRender = rawCenterIndexRender;
-    if (!scratchVisual && pixelsPerPoint > 0.0) {
-        const double pixelSnapDenom = pixelsPerPoint * snapScale;
-        const double anchoredCenter = std::floor(rawCenterIndexRender * pixelSnapDenom)
-                                      / pixelSnapDenom;
-
-        if (continuousPlayback && m_hasLastCenterIndexRender) {
-            const double onePixelPoints = 1.0 / pixelSnapDenom;
-            const double delta = anchoredCenter - m_lastCenterIndexRender;
-            const bool reverse = m_engine->isReverse();
-            const bool largeSeek = std::abs(delta) > onePixelPoints * 2.0;
-            const bool microOpposite = reverse ? (delta > 0.0) : (delta < 0.0);
-            if (largeSeek)
-                centerIndexRender = anchoredCenter;
-            else if (microOpposite)
-                centerIndexRender = m_lastCenterIndexRender;
-            else
-                centerIndexRender = anchoredCenter;
-        } else {
-            centerIndexRender = anchoredCenter;
-        }
-    }
+    // Keep the scrolling centre in continuous point space.  Device-pixel snapping
+    // belongs to the thin marker lines below, not to the waveform timeline: snapping
+    // the centre and then rejecting small opposite deltas turns a smooth transport
+    // clock into visible one-pixel steps and release jitter.
+    const double centerIndexRender = rawCenterIndexRender;
     m_lastCenterIndexRender = centerIndexRender;
     m_hasLastCenterIndexRender = true;
 
