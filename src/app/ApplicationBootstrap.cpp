@@ -59,6 +59,8 @@
 #include "audio/cache/AudioPageCache.h"
 #include "engine/sync/SyncCoordinator.h"
 #include "app/ControlClock.h"
+#include "app/UiScaleController.h"
+#include "app/WaveformZoomController.h"
 
 using namespace Qt::StringLiterals;
 
@@ -312,6 +314,8 @@ int runApplication(int argc, char *argv[])
     runtime.linkManager = std::make_unique<LinkManager>(*runtime.controlClock);
     runtime.sysMonitor = std::make_unique<SystemMonitor>(*runtime.controlClock);
     runtime.cursorControl = std::make_unique<CursorControl>();
+    runtime.uiScaleController = std::make_unique<UiScaleController>(&settingsManager);
+    runtime.waveformZoomController = std::make_unique<WaveformZoomController>(&settingsManager);
     runtime.coverProvider = std::make_unique<CoverArtProvider>();
     runtime.coverProviderPtr = runtime.coverProvider.get();
     runtime.libraryCoverService = std::make_unique<LibraryCoverService>(
@@ -381,6 +385,8 @@ int runApplication(int argc, char *argv[])
     engine.rootContext()->setContextProperty("midiManager", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("controllerManager", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("cursorControl", runtime.cursorControl.get());
+    engine.rootContext()->setContextProperty("uiScaleController", runtime.uiScaleController.get());
+    engine.rootContext()->setContextProperty("waveformZoomController", runtime.waveformZoomController.get());
     qmlRegisterSingletonInstance("BrockDJ.Mixer", 1, 0, "Control", runtime.mixerControl.get());
     engine.rootContext()->setContextProperty("mixerControl", runtime.mixerControl.get());
     engine.rootContext()->setContextProperty("controlClock", runtime.controlClock.get());

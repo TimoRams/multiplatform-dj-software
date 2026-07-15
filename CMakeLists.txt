@@ -236,6 +236,7 @@ endif()
 
 set_source_files_properties(
     src/qml/UiTheme.qml
+    src/qml/shared/UiMetrics.qml
     PROPERTIES QT_QML_SINGLETON_TYPE TRUE
 )
 
@@ -247,6 +248,12 @@ qt_add_qml_module(${PROJECT_NAME}
     QML_FILES
         src/qml/main.qml
         src/qml/UiTheme.qml
+        src/qml/shared/UiMetrics.qml
+        src/qml/shared/UiShortcutManager.qml
+        src/qml/performance/PerformanceWorkspace.qml
+        src/qml/shell/StartupOverlay.qml
+        src/qml/shell/ExitOverlay.qml
+        src/qml/shell/StatusOverlay.qml
         src/qml/Knob.qml
         src/qml/Button.qml
         src/qml/Slider.qml
@@ -285,6 +292,10 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/app/ApplicationBootstrap.cpp
     src/app/ApplicationLifecycle.cpp
     src/app/ControlClock.cpp
+    src/app/UiScaleController.h
+    src/app/UiScaleController.cpp
+    src/app/WaveformZoomController.h
+    src/app/WaveformZoomController.cpp
     src/audio/device/AudioDeviceService.h
     src/audio/device/AudioDeviceService.cpp
     src/audio/device/AudioDeviceServiceQueries.cpp
@@ -356,6 +367,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/rendering/WaveformCache.cpp
     src/domain/TrackData.h
     src/domain/TrackData.cpp
+    src/waveform/WaveformLineStore.cpp
     src/domain/TrackSegment.h
     src/library/LibraryManager.h
     src/library/LibraryManager.cpp
@@ -583,6 +595,32 @@ endif()
 # ── Smoke tests ───────────────────────────────────────────────────────────────
 enable_testing()
 
+add_executable(BrockDJ_ui_scale_tests tests/ui/ui_scale_tests.cpp)
+target_include_directories(BrockDJ_ui_scale_tests PRIVATE src)
+target_link_libraries(BrockDJ_ui_scale_tests PRIVATE Qt6::Core)
+target_compile_features(BrockDJ_ui_scale_tests PRIVATE cxx_std_26)
+add_test(NAME ui_scale COMMAND BrockDJ_ui_scale_tests)
+
+add_executable(BrockDJ_waveform_zoom_tests tests/ui/waveform_zoom_tests.cpp)
+target_include_directories(BrockDJ_waveform_zoom_tests PRIVATE src)
+target_link_libraries(BrockDJ_waveform_zoom_tests PRIVATE Qt6::Core)
+target_compile_features(BrockDJ_waveform_zoom_tests PRIVATE cxx_std_26)
+add_test(NAME waveform_zoom COMMAND BrockDJ_waveform_zoom_tests)
+
+add_executable(BrockDJ_ui_layout_tests tests/ui/ui_layout_tests.cpp)
+target_compile_features(BrockDJ_ui_layout_tests PRIVATE cxx_std_26)
+add_test(NAME ui_layout COMMAND BrockDJ_ui_layout_tests)
+
+add_executable(BrockDJ_qml_component_tests tests/ui/qml_component_tests.cpp)
+target_compile_definitions(BrockDJ_qml_component_tests PRIVATE BROCKDJ_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_features(BrockDJ_qml_component_tests PRIVATE cxx_std_26)
+add_test(NAME qml_component COMMAND BrockDJ_qml_component_tests)
+
+add_executable(BrockDJ_waveform_render_stability_tests
+    tests/waveform_render_stability/waveform_render_stability_tests.cpp)
+target_compile_features(BrockDJ_waveform_render_stability_tests PRIVATE cxx_std_26)
+add_test(NAME waveform_render_stability COMMAND BrockDJ_waveform_render_stability_tests)
+
 add_executable(BrockDJ_smoke_tests
     tests/smoke/smoke_tests.cpp
     tests/smoke/mixer_dsp_smoke.cpp
@@ -705,6 +743,7 @@ add_executable(BrockDJ_analysis_lifetime_tests
     src/rendering/WaveformAnalysisOrchestrator.cpp
     src/rendering/WaveformCache.cpp
     src/domain/TrackData.cpp
+    src/waveform/WaveformLineStore.cpp
     src/analysis/AnalysisFeatureExtractor.cpp
     src/analysis/TempoEstimator.cpp
     src/analysis/BeatTracker.cpp
@@ -731,6 +770,7 @@ add_test(NAME analysis_lifetime COMMAND BrockDJ_analysis_lifetime_tests)
 add_executable(BrockDJ_analysis_snapshot_tests
     tests/analysis/analysis_snapshot_tests.cpp
     src/domain/TrackData.cpp
+    src/waveform/WaveformLineStore.cpp
 )
 target_include_directories(BrockDJ_analysis_snapshot_tests PRIVATE src src/analysis src/domain)
 target_link_libraries(BrockDJ_analysis_snapshot_tests PRIVATE Qt6::Core Qt6::Gui)
@@ -834,6 +874,7 @@ add_test(NAME waveform_motion COMMAND BrockDJ_waveform_motion_tests)
 add_executable(BrockDJ_progressive_waveform_publication_tests
     tests/progressive_waveform/progressive_waveform_publication_tests.cpp
     src/domain/TrackData.cpp
+    src/waveform/WaveformLineStore.cpp
 )
 target_include_directories(BrockDJ_progressive_waveform_publication_tests PRIVATE src src/domain)
 target_link_libraries(BrockDJ_progressive_waveform_publication_tests PRIVATE Qt6::Core Qt6::Gui)

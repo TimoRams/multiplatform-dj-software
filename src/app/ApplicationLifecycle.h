@@ -33,6 +33,8 @@ class MixerControl;
 class AudioDeviceService;
 class AudioPageCache;
 class MediaIoScheduler;
+class UiScaleController;
+class WaveformZoomController;
 namespace engine::sync { class SyncCoordinator; }
 
 struct ApplicationRuntime {
@@ -71,6 +73,8 @@ struct ApplicationRuntime {
     std::unique_ptr<LinkManager> linkManager;
     std::unique_ptr<SystemMonitor> sysMonitor;
     std::unique_ptr<CursorControl> cursorControl;
+    std::unique_ptr<UiScaleController> uiScaleController;
+    std::unique_ptr<WaveformZoomController> waveformZoomController;
     std::unique_ptr<CoverArtProvider> coverProvider;
     std::unique_ptr<LibraryCoverService> libraryCoverService;
 

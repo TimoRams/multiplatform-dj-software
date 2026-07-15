@@ -42,8 +42,8 @@ Item {
             anchors.fill: parent
             engine: root.engine
             pixelsPerPoint: root.waveformZoom
-            onWidthChanged: requestUpdate()
-            onHeightChanged: requestUpdate()
+            onWidthChanged: invalidateGeometry()
+            onHeightChanged: invalidateGeometry()
         }
 
         Binding {
@@ -133,6 +133,21 @@ Item {
             }
         }
 
+        WheelHandler {
+            acceptedModifiers: Qt.ControlModifier
+            onWheel: (event) => {
+                if (!waveformZoomController) {
+                    event.accepted = false
+                    return
+                }
+                if (event.angleDelta.y > 0)
+                    waveformZoomController.zoomIn()
+                else if (event.angleDelta.y < 0)
+                    waveformZoomController.zoomOut()
+                event.accepted = true
+            }
+        }
+
         FrameAnimation {
             id: waveFrameAnim
             running: root.engine !== null
@@ -161,16 +176,16 @@ Item {
                 if (root.engine && !root.engine.isPlaying && !root.engine.isScratchVisualActive())
                     waveItem.requestUpdate()
             }
-            function onLoopChanged() { waveItem.requestUpdate() }
+            function onLoopChanged() { waveItem.invalidateGeometry() }
             function onScrubbingChanged() { waveItem.requestUpdate() }
-            function onHotCuesChanged() { waveItem.requestUpdate() }
-            function onSavedLoopsChanged() { waveItem.requestUpdate() }
-            function onTempoChanged() { waveItem.requestUpdate() }
+            function onHotCuesChanged() { waveItem.invalidateGeometry() }
+            function onSavedLoopsChanged() { waveItem.invalidateGeometry() }
+            function onTempoChanged() { waveItem.invalidateGeometry() }
         }
 
         Connections {
             target: root.engine ? root.engine.trackData : null
-            function onBeatgridChanged() { waveItem.requestUpdate() }
+            function onBeatgridChanged() { waveItem.invalidateGeometry() }
         }
 
         // Playhead — always dead center of the full deck.

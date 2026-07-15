@@ -2,11 +2,25 @@ pragma Singleton
 import QtQuick
 
 QtObject {
+    // Canonical design-token names. Existing aliases below remain during the
+    // component migration; new UI code uses these semantic names.
+    readonly property color surface:           "#181818"
+    readonly property color surfaceRaised:     "#1c1c1c"
+    readonly property color surfaceInset:      "#141414"
+    readonly property color displayBackground: "#101114"
+    readonly property color borderSubtle:      "#262626"
+    readonly property color borderStrong:      "#3a3a3a"
+    readonly property color warning:           "#e6a019"
+    readonly property color error:             "#e03535"
+    readonly property color play:              "#43d17b"
+    readonly property color cue:               "#f2b134"
+    readonly property color sync:              "#56a8ff"
+
     // ── Flat panel surfaces (no faux-3D) ───────────────────────────────────
-    readonly property color panel:         "#181818"
-    readonly property color panelDeep:     "#141414"
+    readonly property color panel:         surface
+    readonly property color panelDeep:     surfaceInset
     readonly property color panelInset:    "#161616"
-    readonly property color panelRaised:   "#1c1c1c"
+    readonly property color panelRaised:   surfaceRaised
 
     // Legacy aliases — keep call sites working with the flat palette
     readonly property color bgDeep:        panelDeep
@@ -16,11 +30,11 @@ QtObject {
     readonly property color bg3:           panelRaised
     readonly property color bg4:           "#222222"
     readonly property color bg5:           "#282828"
-    readonly property color bgDisplay:     "#121214"
+    readonly property color bgDisplay:     displayBackground
 
     // ── Separators (soft grey, never pitch-black) ─────────────────────────
     readonly property color separator:       "#2a2a2a"
-    readonly property color separatorSubtle: "#222222"
+    readonly property color separatorSubtle: borderSubtle
     readonly property color divider:         separatorSubtle
     readonly property color dividerStrong:   separator
 

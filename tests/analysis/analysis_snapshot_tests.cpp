@@ -33,6 +33,7 @@ int main(int argc, char** argv)
     result.bpm = 128.0;
     QVector<TrackData::RgbWaveformFrame> rgb(3);
     rgb[0].rms = 0.25f; rgb[1].rms = 0.5f; rgb[2].rms = 0.75f;
+    rgb[0].low = 0.55f; rgb[1].low = 0.80f; rgb[2].low = 1.0f;
     result.rgbWaveform = std::make_shared<const QVector<TrackData::RgbWaveformFrame>>(rgb);
     result.overviewWaveform = result.rgbWaveform;
     result.waveform = std::make_shared<const QVector<TrackData::WaveformBin>>(3);
@@ -50,6 +51,17 @@ int main(int argc, char** argv)
     ok &= require(data.getRgbWaveformData().size() == 3, "RGB snapshot not published");
     ok &= require(oldRgb->at(2).rms == 0.75f, "old reader snapshot lost lifetime");
     ok &= require(rgbSignals == 1, "snapshot publish signal count is wrong");
+    const auto lineStore = data.getWaveformLineStoreSnapshot();
+    const auto firstLineChunk = lineStore ? lineStore->chunkAt(0) : nullptr;
+    ok &= require(firstLineChunk && firstLineChunk->lines && !firstLineChunk->lines->empty(),
+                  "canonical waveform line chunk not published");
+    if (firstLineChunk && firstLineChunk->lines && !firstLineChunk->lines->empty()) {
+        const auto& line = firstLineChunk->lines->front();
+        ok &= require(line.red > line.green && line.red > line.blue,
+                      "low-band canonical line lost its frequency colour");
+        ok &= require(line.minimum < 0 && line.maximum > 0,
+                      "canonical line lost its vertical peak extent");
+    }
 
     analysis::AnalysisResult invalid = result;
     invalid.bpm = std::numeric_limits<double>::quiet_NaN();

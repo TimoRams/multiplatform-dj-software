@@ -1,6 +1,15 @@
 # Active Context
 
-*Last updated: 2026-07-14*
+*Last updated: 2026-07-15*
+
+## Current task
+**DJ performance UI-system refactor (2026-07-15)**
+- `main.qml` was reduced from 1,384 to 504 lines; performance workspace and startup/status/exit layers now have explicit components while existing shared deck/mixer/FX/library behavior remains intact.
+- Added persisted independent `UiScaleController` (80–140%) and continuous `WaveformZoomController` (0.08–10.0, factor 1.15), centralized shortcuts and semantic QML metrics/theme tokens. The old resize-event counter and fixed zoom lists are gone.
+- `TrackData` now builds immutable 300-lines/s waveform chunks containing signed min/max plus musical RGB derived directly from the four analysed frequency bands; it no longer trusts the analyzer's placeholder-white `QColor`. Scrolling and compact overview renderers consume the same canonical store.
+- `ScrollingWaveformItem` is a fixed 24-node chunk pool under one `QSGTransformNode`. It renders only the viewport plus a guarded off-screen window as literal `DrawLines`; normal playback updates only the transform matrix, while geometry rebuilds on data/zoom/size changes or after travelling through the guard. Beatgrid, loop edges/fill and cue lines share the transform. `renderStats()` exposes frames, transforms, rebuilds, node creation, line/chunk counts and worst build time.
+- The compact overview uses the same signal-derived colours and one vertical line per display column. QML controller bindings and shortcuts tolerate teardown-time null context properties, and lifecycle clears both new controllers explicitly, eliminating the reported repeated `scale`/`zoom` TypeErrors.
+- Five UI/layout/zoom/QML/render-stability targets plus canonical colour/peak assertions pass. The stale cached-playback test uses the documented commanded-seek API during reverse; the full suite passes 32/32.
 
 ## Current task
 **Progressive audio streaming bootstrap (in progress, 2026-07-14)**

@@ -13,6 +13,7 @@
 
 #include "TransportLimits.h"
 #include "TrackSegment.h"
+#include "waveform/WaveformLineStore.h"
 
 namespace analysis { struct AnalysisResult; }
 
@@ -296,6 +297,10 @@ public:
         QMutexLocker locker(&m_mutex);
         return m_peakMipSnapshot;
     }
+    std::shared_ptr<const WaveformLineStoreSnapshot> getWaveformLineStoreSnapshot() const {
+        QMutexLocker locker(&m_mutex);
+        return m_waveformLineStore.snapshot();
+    }
 
     void preallocateRgbWaveform(int numBins);
 
@@ -366,6 +371,8 @@ private:
     std::shared_ptr<const QVector<RgbWaveformFrame>> m_rgbSnapshot;
     std::shared_ptr<const QVector<RgbWaveformFrame>> m_overviewSnapshot;
     std::shared_ptr<const QVector<PeakFrame>> m_peakMipSnapshot;
+    WaveformLineStore m_waveformLineStore;
+    std::uint64_t m_waveformLineGeneration = 0;
     int m_totalExpected;
     float m_globalMaxPeak;
 
@@ -393,5 +400,6 @@ private:
 
     void _updateProgressiveOvr(int from, int to);
     void alignSegmentsToBeatgridLocked();
+    void rebuildWaveformLineStoreLocked(std::uint64_t trackGeneration = 0);
     void assertOwnerThread() const;
 };

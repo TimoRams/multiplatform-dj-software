@@ -67,13 +67,13 @@ int main(int argc, char** argv)
     source.setNextReadPosition(16380);
     juce::AudioBuffer<float> cross(2, 8192); source.getNextAudioBlock({&cross,0,8192});
     ok &= require(source.getNextReadPosition() == 16380 + 8192, "cross-page position advances");
-    source.setReverse(true); source.setNextReadPosition(20000); source.getNextAudioBlock({&cross,0,8192});
+    source.setReverse(true); source.setCommandedReadPosition(20000); source.getNextAudioBlock({&cross,0,8192});
     ok &= require(source.getNextReadPosition() == 20000 - 8192, "reverse position retreats");
-    source.setLoopRangeSamples(16000, 17000, 48000); source.setNextReadPosition(16950);
-    source.setReverse(false); source.getNextAudioBlock({&cross,0,8192});
+    source.setLoopRangeSamples(16000, 17000, 48000); source.setReverse(false);
+    source.setNextReadPosition(16950); source.getNextAudioBlock({&cross,0,8192});
     ok &= require(source.getNextReadPosition() >= 16000 && source.getNextReadPosition() < 17000,
                   "forward loop wraps");
-    source.setReverse(true); source.setNextReadPosition(16010); source.getNextAudioBlock({&cross,0,8192});
+    source.setReverse(true); source.setCommandedReadPosition(16010); source.getNextAudioBlock({&cross,0,8192});
     ok &= require(source.getNextReadPosition() >= 16000 && source.getNextReadPosition() < 17000,
                   "reverse loop wraps");
 
@@ -102,8 +102,9 @@ int main(int argc, char** argv)
     ok &= require(source.cacheStats().diskReadsFromAudioThread == 0, "no RT disk reads");
     ok &= require(source.cacheStats().decoderCallsFromAudioThread == 0, "no RT decoder calls");
 
-    source.setNextReadPosition(-100); ok &= require(source.getNextReadPosition() == 0, "pre-roll clamps to zero");
-    source.setLooping(false); source.setReverse(false); source.setNextReadPosition(h.lengthInSamples()-100);
+    source.setReverse(false); source.setNextReadPosition(-100);
+    ok &= require(source.getNextReadPosition() == 0, "pre-roll clamps to zero");
+    source.setLooping(false); source.setNextReadPosition(h.lengthInSamples()-100);
     source.getNextAudioBlock({&cross,0,8192});
     ok &= require(source.getNextReadPosition() == h.lengthInSamples(), "track end clamps");
 

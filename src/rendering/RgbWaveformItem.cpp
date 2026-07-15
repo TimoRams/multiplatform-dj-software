@@ -160,7 +160,7 @@ void RgbWaveformItem::paintCompactOverview(QPainter* painter,
     const float maxBarH  = static_cast<float>(h - 2);
 
     painter->setRenderHint(QPainter::Antialiasing, false);
-    painter->setPen(Qt::NoPen);
+    painter->setBrush(Qt::NoBrush);
 
     std::vector<float> heights(static_cast<size_t>(drawWidth), 0.0f);
     std::vector<QColor> colors(static_cast<size_t>(drawWidth));
@@ -196,27 +196,16 @@ void RgbWaveformItem::paintCompactOverview(QPainter* painter,
             heights[static_cast<size_t>(x + 1)] * 0.20f;
     }
 
-    // Body fill — saturated, bottom-aligned bars.
+    // The overview uses the same visual primitive as the scrolling waveform:
+    // one coloured vertical line per display column.
     for (int x = 0; x < drawWidth; ++x) {
         const float barH = heights[static_cast<size_t>(x)];
         if (barH <= 0.5f)
             continue;
         const QColor c = colors[static_cast<size_t>(x)];
-        painter->setBrush(QColor(c.red(), c.green(), c.blue(), 210));
-        painter->drawRect(QRectF(static_cast<double>(x), baseline - barH, 1.0, barH + 1.0));
-    }
-
-    // Peak edge — thin bright cap for transients.
-    for (int x = 0; x < drawWidth; ++x) {
-        const float barH = heights[static_cast<size_t>(x)];
-        if (barH <= 1.5f)
-            continue;
-        const QColor c = colors[static_cast<size_t>(x)];
-        painter->setBrush(QColor(
-            std::min(255, c.red()   + 70),
-            std::min(255, c.green() + 70),
-            std::min(255, c.blue()  + 70), 230));
-        painter->drawRect(QRectF(static_cast<double>(x), baseline - barH, 1.0, 1.5));
+        painter->setPen(QPen(QColor(c.red(), c.green(), c.blue(), 225), 1.0));
+        painter->drawLine(QPointF(static_cast<double>(x), baseline),
+                          QPointF(static_cast<double>(x), baseline - barH));
     }
 
     // Cue markers
@@ -242,6 +231,61 @@ void RgbWaveformItem::paintCompactOverview(QPainter* painter,
     }
 }
 
+void RgbWaveformItem::paintCompactOverviewLines(QPainter* painter,
+                                                const WaveformLineStoreSnapshot& snapshot,
+                                                int w, int h)
+{
+    if (!snapshot.chunks || snapshot.totalLineCount == 0)
+        return;
+    m_overviewHeights.resize(w);
+    m_overviewColors.resize(w);
+    std::fill(m_overviewHeights.begin(), m_overviewHeights.end(), 0.0f);
+
+    const auto lineAt = [&snapshot](std::uint32_t index) -> const WaveformLine* {
+        const auto chunk = snapshot.chunkAt(index / snapshot.chunkSize);
+        if (!chunk || !chunk->lines) return nullptr;
+        const auto local = index - chunk->firstLineIndex;
+        return local < chunk->lines->size() ? &(*chunk->lines)[local] : nullptr;
+    };
+
+    const float maxBarH = static_cast<float>(h - 2);
+    for (int x = 0; x < w; ++x) {
+        const auto begin = static_cast<std::uint32_t>((static_cast<std::uint64_t>(x) * snapshot.totalLineCount) / w);
+        const auto end = std::max(begin + 1u, static_cast<std::uint32_t>(
+            (static_cast<std::uint64_t>(x + 1) * snapshot.totalLineCount) / w));
+        float amplitude = 0.0f;
+        std::uint64_t red = 0, green = 0, blue = 0, weight = 0;
+        for (auto index = begin; index < std::min(end, snapshot.totalLineCount); ++index) {
+            const auto* line = lineAt(index);
+            if (!line) continue;
+            const auto magnitude = static_cast<std::uint32_t>(std::max(
+                std::abs(static_cast<int>(line->minimum)), std::abs(static_cast<int>(line->maximum))));
+            amplitude = std::max(amplitude, magnitude / 32767.0f);
+            const auto lineWeight = std::max(1u, magnitude);
+            red += line->red * lineWeight;
+            green += line->green * lineWeight;
+            blue += line->blue * lineWeight;
+            weight += lineWeight;
+        }
+        if (weight == 0) continue;
+        m_overviewHeights[x] = amplitude * maxBarH;
+        m_overviewColors[x] = QColor(static_cast<int>(red / weight),
+                                    static_cast<int>(green / weight),
+                                    static_cast<int>(blue / weight));
+    }
+
+    const float baseline = static_cast<float>(h - 1);
+    painter->setRenderHint(QPainter::Antialiasing, false);
+    painter->setBrush(Qt::NoBrush);
+    for (int x = 0; x < w; ++x) {
+        const float barH = m_overviewHeights[x];
+        if (barH <= 0.5f) continue;
+        const auto color = m_overviewColors[x];
+        painter->setPen(QPen(QColor(color.red(), color.green(), color.blue(), 235), 1.0));
+        painter->drawLine(QPointF(x, baseline), QPointF(x, baseline - barH));
+    }
+}
+
 void RgbWaveformItem::paint(QPainter* painter)
 {
     const int w = std::max(1, static_cast<int>(width()));
@@ -254,6 +298,17 @@ void RgbWaveformItem::paint(QPainter* painter)
     }
 
     auto* td = m_engine->getTrackData();
+    const auto lineSnapshot = td->getWaveformLineStoreSnapshot();
+
+    if (m_rectified && h <= 56 && lineSnapshot && lineSnapshot->totalLineCount > 0) {
+        if (m_frameCache.size() != QSize(w, h))
+            m_frameCache = QImage(w, h, QImage::Format_ARGB32_Premultiplied);
+        m_frameCache.fill(Qt::transparent);
+        QPainter cachePainter(&m_frameCache);
+        paintCompactOverviewLines(&cachePainter, *lineSnapshot, w, h);
+        painter->drawImage(0, 0, m_frameCache);
+        return;
+    }
 
     const auto overviewSnapshot = td->getOverviewRgbSnapshot();
     const bool hasOverview = overviewSnapshot && !overviewSnapshot->isEmpty();

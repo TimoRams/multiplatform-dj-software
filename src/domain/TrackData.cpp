@@ -4,7 +4,47 @@
 #include <QMetaObject>
 #include <QThread>
 #include <algorithm>
+#include <array>
 #include <cmath>
+
+namespace {
+
+std::array<std::uint8_t, 3> waveformLineColor(float low, float lowMid,
+                                               float mid, float high,
+                                               float rms)
+{
+    // Keep colour generation next to the canonical line-store builder.  Both the
+    // scrolling waveform and the overview then consume the exact same RGB value
+    // instead of depending on a renderer-specific interpretation of QColor.
+    const float wLow = std::pow(std::clamp(low, 0.0f, 1.0f), 2.8f);
+    const float wLowMid = std::pow(std::clamp(lowMid, 0.0f, 1.0f), 2.5f);
+    const float wMid = std::pow(std::clamp(mid, 0.0f, 1.0f), 2.2f);
+    const float wHigh = std::pow(std::clamp(high, 0.0f, 1.0f), 1.6f);
+    const float sum = wLow + wLowMid + wMid + wHigh;
+    if (sum <= 1.0e-7f)
+        return {150, 170, 190};
+
+    // Low -> red, low-mid -> orange, mid -> yellow/lime, high -> cyan.
+    float red = (wLow * 255.0f + wLowMid * 255.0f + wMid * 210.0f) / sum;
+    float green = (wLow * 20.0f + wLowMid * 130.0f + wMid * 255.0f
+                   + wHigh * 185.0f) / sum;
+    float blue = (wLow * 20.0f + wHigh * 255.0f) / sum;
+
+    // Height already communicates level.  Only attenuate colour slightly so
+    // quiet passages keep their frequency identity instead of turning black.
+    const float brightness = 0.58f + 0.42f
+        * std::pow(std::clamp(rms, 0.0f, 1.0f), 0.35f);
+    red *= brightness;
+    green *= brightness;
+    blue *= brightness;
+    return {
+        static_cast<std::uint8_t>(std::lround(std::clamp(red, 0.0f, 255.0f))),
+        static_cast<std::uint8_t>(std::lround(std::clamp(green, 0.0f, 255.0f))),
+        static_cast<std::uint8_t>(std::lround(std::clamp(blue, 0.0f, 255.0f)))
+    };
+}
+
+} // namespace
 
 TrackData::TrackData(QObject* parent)
     : QObject(parent)
@@ -63,6 +103,7 @@ bool TrackData::applyAnalysisResult(const analysis::AnalysisResult& result)
         m_rgbSnapshot = result.rgbWaveform;
         m_overviewSnapshot = result.overviewWaveform;
         m_peakMipSnapshot = result.peakMip;
+        rebuildWaveformLineStoreLocked(result.identity.trackGeneration);
         m_data.clear(); m_rgbData.clear(); m_overviewRgb.clear(); m_peakMip.clear();
         m_bpm = result.bpm;
         m_firstBeatSample = result.firstBeatSample;
@@ -86,6 +127,71 @@ bool TrackData::applyAnalysisResult(const analysis::AnalysisResult& result)
     emit segmentsAnalyzed();
     emit keyAnalyzed();
     return true;
+}
+
+void TrackData::rebuildWaveformLineStoreLocked(std::uint64_t trackGeneration)
+{
+    const auto rgb = m_rgbSnapshot ? m_rgbSnapshot
+        : std::make_shared<const QVector<RgbWaveformFrame>>(m_rgbData);
+    const auto peaks = m_peakMipSnapshot ? m_peakMipSnapshot
+        : std::make_shared<const QVector<PeakFrame>>(m_peakMip);
+    if (!rgb || rgb->isEmpty())
+        return;
+
+    if (trackGeneration == 0)
+        trackGeneration = ++m_waveformLineGeneration;
+    else
+        m_waveformLineGeneration = std::max(m_waveformLineGeneration, trackGeneration);
+    if (trackGeneration == 0)
+        trackGeneration = ++m_waveformLineGeneration;
+
+    constexpr int rgbPerLine = 4; // 1200 analysis frames/s -> 300 canonical lines/s
+    constexpr int peakPerLine = PEAK_POINTS_PER_SECOND / 300;
+    const int totalLines = (rgb->size() + rgbPerLine - 1) / rgbPerLine;
+    m_waveformLineStore.reset(trackGeneration, static_cast<std::uint32_t>(totalLines));
+
+    for (int first = 0, chunkIndex = 0; first < totalLines;
+         first += static_cast<int>(WaveformLineStore::kChunkSize), ++chunkIndex) {
+        const int count = std::min(static_cast<int>(WaveformLineStore::kChunkSize), totalLines - first);
+        auto lines = std::make_shared<std::vector<WaveformLine>>(static_cast<size_t>(count));
+        for (int local = 0; local < count; ++local) {
+            const int lineIndex = first + local;
+            const int rgbBegin = lineIndex * rgbPerLine;
+            const int rgbEnd = std::min(rgbBegin + rgbPerLine, static_cast<int>(rgb->size()));
+            float rms = 0.0f;
+            float low = 0.0f, lowMid = 0.0f, mid = 0.0f, high = 0.0f;
+            for (int i = rgbBegin; i < rgbEnd; ++i) {
+                const auto& frame = (*rgb)[i];
+                rms = std::max(rms, frame.rms);
+                low = std::max(low, frame.low);
+                lowMid = std::max(lowMid, frame.lowMid);
+                mid = std::max(mid, frame.mid);
+                high = std::max(high, frame.high);
+            }
+
+            float minimum = -rms;
+            float maximum = rms;
+            if (peaks && !peaks->isEmpty()) {
+                const int peakBegin = lineIndex * peakPerLine;
+                const int peakEnd = std::min(peakBegin + peakPerLine, static_cast<int>(peaks->size()));
+                for (int i = peakBegin; i < peakEnd; ++i) {
+                    minimum = std::min(minimum, (*peaks)[i].minSample / 127.0f);
+                    maximum = std::max(maximum, (*peaks)[i].maxSample / 127.0f);
+                }
+            }
+            auto& line = (*lines)[static_cast<size_t>(local)];
+            line.minimum = static_cast<std::int16_t>(std::lround(std::clamp(minimum, -1.0f, 0.0f) * 32767.0f));
+            line.maximum = static_cast<std::int16_t>(std::lround(std::clamp(maximum, 0.0f, 1.0f) * 32767.0f));
+            const auto color = waveformLineColor(low, lowMid, mid, high, rms);
+            line.red = color[0];
+            line.green = color[1];
+            line.blue = color[2];
+        }
+        const auto published = m_waveformLineStore.publish({
+            trackGeneration, static_cast<std::uint32_t>(chunkIndex), static_cast<std::uint32_t>(first),
+            static_cast<std::uint32_t>(count), static_cast<std::uint32_t>(totalLines), std::move(lines)});
+        Q_ASSERT(published == WaveformLineStore::PublishResult::Accepted);
+    }
 }
 
 QVector<TrackData::RgbWaveformFrame> TrackData::downsampleOverview(
@@ -347,6 +453,7 @@ void TrackData::clearWaveformData()
         m_waveformSnapshot.reset();
         m_rgbSnapshot.reset();
         m_peakMipSnapshot.reset();
+        m_waveformLineStore.reset(++m_waveformLineGeneration, 0);
         m_progressiveOvr.clear();
         m_progressiveLastFrame = 0;
         if (!keepPreview)
@@ -373,6 +480,7 @@ void TrackData::clear()
         m_rgbSnapshot.reset();
         m_overviewSnapshot.reset();
         m_peakMipSnapshot.reset();
+        m_waveformLineStore.reset(++m_waveformLineGeneration, 0);
         m_progressiveOvr.clear();
         m_progressiveLastFrame = 0;
         m_totalExpected = 0;
@@ -397,6 +505,7 @@ void TrackData::setPeakMipData(QVector<PeakFrame>&& data)
         QMutexLocker locker(&m_mutex);
         m_peakMipSnapshot = std::make_shared<const QVector<PeakFrame>>(std::move(data));
         m_peakMip.clear();
+        rebuildWaveformLineStoreLocked();
     }
     emit peakMipUpdated();
 }
@@ -434,6 +543,7 @@ void TrackData::setRgbWaveformData(QVector<RgbWaveformFrame>&& frames)
         m_overviewRgb.clear();
         m_progressiveOvr.clear();
         m_progressiveLastFrame = 0;
+        rebuildWaveformLineStoreLocked();
     }
     emit rgbWaveformUpdated();
     emit overviewRgbUpdated();

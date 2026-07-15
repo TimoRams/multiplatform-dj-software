@@ -41,9 +41,14 @@ private:
     void paintCompactOverview(QPainter* painter,
                               const QVector<TrackData::RgbWaveformFrame>& frames,
                               int drawWidth, int w, int h);
+    void paintCompactOverviewLines(QPainter* painter,
+                                   const WaveformLineStoreSnapshot& snapshot,
+                                   int w, int h);
 
     QPointer<DjEngine> m_engine;
     bool      m_rectified      = true;
     QTimer*   m_updateThrottle = nullptr;
     QImage    m_frameCache;
+    QVector<float> m_overviewHeights;
+    QVector<QColor> m_overviewColors;
 };
