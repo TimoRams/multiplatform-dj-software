@@ -151,7 +151,7 @@ Item {
         FrameAnimation {
             id: waveFrameAnim
             running: root.engine !== null
-                     && (root.engine.isPlaying || root.engine.isScratchVisualActive())
+                     && (root.engine.isPlaying || root.engine.scratchVisualActive)
             onTriggered: waveItem.requestUpdate()
         }
 
@@ -160,7 +160,7 @@ Item {
             property int pausedTickDivider: 0
             function onWaveformTick() {
                 if (root.engine !== null && !root.engine.isPlaying
-                        && !root.engine.isScratchVisualActive()
+                        && !root.engine.scratchVisualActive
                         && (++pausedTickDivider % 4) === 0)
                     waveItem.requestUpdate()
             }
@@ -173,7 +173,7 @@ Item {
             }
             function onProgressChanged() {
                 // FrameAnimation repaints during play/scratch; only refresh when paused idle.
-                if (root.engine && !root.engine.isPlaying && !root.engine.isScratchVisualActive())
+                if (root.engine && !root.engine.isPlaying && !root.engine.scratchVisualActive)
                     waveItem.requestUpdate()
             }
             function onLoopChanged() { waveItem.invalidateGeometry() }

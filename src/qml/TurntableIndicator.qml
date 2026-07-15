@@ -21,7 +21,7 @@ Item {
 
     function updateRotation() {
         if (!root.engine) { ringRotator.rotation = 0; return }
-        var playheadSec = root.engine.isScratchVisualActive()
+        var playheadSec = root.engine.scratchVisualActive
                         ? root.engine.getPlayheadPositionAtomic()
                         : root.engine.getVisualPositionQml()
         var angle = (playheadSec * root.degreesPerSecond) % 360.0
@@ -153,7 +153,7 @@ Item {
         target: root.engine
         function onPlayingChanged()  { root.updateRotation() }
         function onProgressChanged() {
-            if (!root.engine || (!root.engine.isPlaying && !root.engine.isScratchVisualActive()))
+            if (!root.engine || (!root.engine.isPlaying && !root.engine.scratchVisualActive))
                 root.updateRotation()
         }
         function onTempoChanged()    { root.updateRotation() }

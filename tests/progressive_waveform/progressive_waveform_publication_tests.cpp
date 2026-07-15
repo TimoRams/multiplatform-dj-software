@@ -21,6 +21,7 @@ int main(int argc, char** argv)
     waveform[0].low = 0.75f;
     QVector<TrackData::RgbWaveformFrame> rgb(4);
     rgb[0].rms = 0.75f;
+    rgb[0].low = 0.95f;
     bool ok = true;
     // Mirrors the control-thread drain of AnalyzerResultMailbox: completion is
     // deliberately absent while this first immutable chunk is applied.
@@ -28,5 +29,36 @@ int main(int argc, char** argv)
     const auto visible = data.getWaveformData();
     ok &= require(visible.size() == 32, "progressive timeline must have stable final size");
     ok &= require(visible[8].low > 0.7f, "completed chunk must be visible before analysis completion");
+
+    // The scrolling renderer consumes the immutable line store, not the mutable
+    // analysis vectors.  A first RGB chunk therefore has to publish its own
+    // visible line immediately; waiting for applyAnalysisResult() made loaded
+    // tracks appear blank until the entire analysis had finished.
+    const auto lineStore = data.getWaveformLineStoreSnapshot();
+    const auto lineChunk = lineStore ? lineStore->chunkAt(0) : nullptr;
+    ok &= require(lineStore && lineStore->linesPerSecond == 1200,
+                  "scrolling line store must retain full analysis resolution");
+    ok &= require(lineChunk && lineChunk->lines && lineChunk->lines->size() == 32,
+                  "first progressive line chunk was not published");
+    if (lineChunk && lineChunk->lines && lineChunk->lines->size() > 8) {
+        const auto& line = (*lineChunk->lines)[8];
+        ok &= require(line.maximum > 0 && line.minimum < 0,
+                      "progressive canonical line has no visible extent");
+        ok &= require(line.red > line.green && line.red > line.blue,
+                      "progressive canonical line lost its frequency colour");
+    }
+
+    // The production control clock batches worker bursts, then flushes all
+    // touched source chunks once.  Batching must defer allocation only until
+    // that same control tick, not until analysis completion.
+    TrackData batched;
+    batched.applyProgressiveWaveformChunk(8, 32, waveform, rgb, false);
+    const auto beforeFlush = batched.getWaveformLineStoreSnapshot();
+    ok &= require(beforeFlush && !beforeFlush->chunkAt(0),
+                  "batched publication escaped before its control-tick flush");
+    batched.flushProgressiveWaveformLines();
+    const auto afterFlush = batched.getWaveformLineStoreSnapshot();
+    ok &= require(afterFlush && afterFlush->chunkAt(0),
+                  "control-tick flush did not publish progressive chunk");
     return ok ? 0 : 1;
 }

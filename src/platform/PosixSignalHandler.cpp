@@ -101,7 +101,7 @@ bool PosixSignalHandler::initialize()
 
     struct sigaction action {};
     action.sa_handler = handlePosixTerminationSignal;
-    ::sigemptyset(&action.sa_mask);
+    sigemptyset(&action.sa_mask);
     action.sa_flags = SA_RESTART;
 
     g_signalWriteFd = static_cast<sig_atomic_t>(d->writeFd);
@@ -174,9 +174,9 @@ void PosixSignalHandler::reset() noexcept
 #if defined(Q_OS_UNIX)
     sigset_t blockedSignals {};
     sigset_t previousMask {};
-    ::sigemptyset(&blockedSignals);
-    ::sigaddset(&blockedSignals, SIGINT);
-    ::sigaddset(&blockedSignals, SIGTERM);
+    sigemptyset(&blockedSignals);
+    sigaddset(&blockedSignals, SIGINT);
+    sigaddset(&blockedSignals, SIGTERM);
     const bool maskChanged = ::sigprocmask(SIG_BLOCK, &blockedSignals, &previousMask) == 0;
 
     if (d->termInstalled)

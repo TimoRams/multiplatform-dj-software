@@ -29,7 +29,7 @@ Item {
 
     FrameAnimation {
         running: root.engine !== null
-                 && (root.engine.isPlaying || root.engine.isScratchVisualActive())
+                 && (root.engine.isPlaying || root.engine.scratchVisualActive)
         onTriggered: root.updatePlayheadNorm()
     }
 

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=BrockDJ
+Comment=Multiplatform DJ software
+Exec=BrockDJ
+Icon=BrockDJ
+Categories=AudioVideo;Audio;Player;
+Terminal=false
+StartupNotify=true

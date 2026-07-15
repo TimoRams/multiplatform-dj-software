@@ -346,13 +346,20 @@ void DjEngine::onWaveformControlTick(const ControlTickContext& context)
 {
     (void)context;
     if (m_analysisMailbox && m_analyzer) {
-        for (const auto& chunk : m_analysisMailbox->takeChunks()) {
+        const auto chunks = m_analysisMailbox->takeChunks();
+        for (const auto& chunk : chunks) {
             if (chunk.generation == m_analyzer->generation()
                 && chunk.waveform && chunk.rgb) {
                 m_trackData->applyProgressiveWaveformChunk(
-                    chunk.firstBin, chunk.totalBins, *chunk.waveform, *chunk.rgb);
+                    chunk.firstBin, chunk.totalBins, *chunk.waveform, *chunk.rgb,
+                    false);
             }
         }
+        // Coalesce a worker burst: each source chunk receives at most one new
+        // immutable snapshot per 60 Hz control tick, while the first chunk is
+        // still visible on that same tick.
+        if (!chunks.empty())
+            m_trackData->flushProgressiveWaveformLines();
         double value = 0.0; bool active = false;
         WaveformAnalyzer::AnalysisGeneration progressGeneration = 0;
         if (m_analysisMailbox->takeProgress(value, active, progressGeneration)

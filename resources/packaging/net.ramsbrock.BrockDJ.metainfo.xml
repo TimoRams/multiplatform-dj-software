@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>net.ramsbrock.BrockDJ</id>
+  <name>BrockDJ</name>
+  <summary>Multiplatform DJ performance software</summary>
+  <developer id="net.ramsbrock">
+    <name>Ramsbrock.net</name>
+  </developer>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-or-later</project_license>
+  <description>
+    <p>
+      BrockDJ is a two-deck DJ application with real-time audio, RGB waveforms,
+      track analysis, effects, MIDI mapping, and controller integration.
+    </p>
+  </description>
+  <launchable type="desktop-id">net.ramsbrock.BrockDJ.desktop</launchable>
+  <provides>
+    <binary>BrockDJ</binary>
+  </provides>
+  <content_rating type="oars-1.1"/>
+  <url type="homepage">https://github.com/TimoRams/multiplatform-dj-software</url>
+</component>

@@ -2,665 +2,736 @@ name: Cross-Platform Build
 
 on:
   push:
-    branches:
-      - main
-      - master
+    branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
-env:
-  HOMEBREW_NO_AUTO_UPDATE: 1
+permissions:
+  contents: read
 
 concurrency:
-  group: cross-platform-build-${{ github.ref }}
+  group: cross-platform-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-jobs:
-  build-linux:
-    name: Build (ubuntu-latest)
-    runs-on: ubuntu-latest
+env:
+  QT_VERSION: 6.8.3
+  VCPKG_COMMIT: d015e31e90838a4c9dfa3eed45979bc70d9357fc
 
+jobs:
+  workflow-lint:
+    name: Workflow lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install workflow linters
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends appstream shellcheck
+          curl --fail --location --retry 5 \
+            --output actionlint.tar.gz \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          tar -xzf actionlint.tar.gz actionlint
+
+      - name: Validate workflow and CI shell scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./actionlint -color
+          shellcheck scripts/ci/*.sh
+          appstreamcli validate --no-net resources/packaging/net.ramsbrock.BrockDJ.metainfo.xml
+          cmake --list-presets=all
+
+  build-linux-x64:
+    name: Build Linux x86_64
+    needs: workflow-lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository and submodules
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
-      - name: Cache ccache (Linux)
-        uses: actions/cache@v5
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4.3.1
         with:
-          path: |
-            ~/.cache/ccache
-            ~/.ccache
-          key: ccache-linux-${{ github.run_id }}
-          restore-keys: |
-            ccache-linux-
-
-      - name: Cache libkeyfinder (Linux)
-        uses: actions/cache@v5
-        with:
-          path: .ci/keyfinder
-          key: libkeyfinder-linux-x86_64-${{ hashFiles('.github/workflows/cross-platform-build.yml') }}
-          restore-keys: |
-            libkeyfinder-linux-x86_64-
-
-      - name: Install Qt (Linux)
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: '6.8.0'
-          modules: 'qtshadertools'
-          arch: 'linux_gcc_64'
+          version: ${{ env.QT_VERSION }}
+          arch: linux_gcc_64
           cache: true
 
-      - name: Install Dependencies (Linux)
+      - name: Install native dependencies
+        shell: bash
         run: |
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential cmake pkg-config ninja-build ccache \
-            libtag1-dev librubberband-dev libasound2-dev libfftw3-dev libjack-jackd2-dev \
-            libfreetype-dev libfontconfig1-dev \
-            libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxrender-dev \
-            libxkbcommon-dev libxkbcommon-x11-dev libfuse2 \
-            libvulkan-dev libgl1-mesa-dev libgles2-mesa-dev \
-            libwayland-dev libwayland-egl1 libwayland-cursor0 libxcb1-dev libxcb-icccm4-dev
+          sudo apt-get install -y --no-install-recommends \
+            ccache ninja-build pkg-config \
+            libasound2-dev libjack-jackd2-dev libusb-1.0-0-dev \
+            libtag1-dev libkeyfinder-dev librubberband-dev \
+            libfontconfig1-dev libfreetype6-dev libgl1-mesa-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev libxkbcommon-x11-dev
 
-      - name: Install libkeyfinder (Linux)
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-x64-gcc-qt-${{ env.QT_VERSION }}-${{ hashFiles('CMakeLists.txt', 'CMakePresets.json', 'vcpkg.json', '.gitmodules') }}
+          restore-keys: ccache-linux-x64-gcc-qt-${{ env.QT_VERSION }}-
+
+      - name: Show Linux x86_64 toolchain
+        shell: bash
         run: |
-          if [ ! -f .ci/keyfinder/lib/pkgconfig/libkeyfinder.pc ] && [ ! -f .ci/keyfinder/lib/cmake/KeyFinder/KeyFinderConfig.cmake ]; then
-            git clone --depth 1 https://github.com/mixxxdj/libkeyfinder.git
-            cmake -S libkeyfinder -B libkeyfinder/build -G Ninja \
-              -DCMAKE_BUILD_TYPE=Release \
-              -DBUILD_TESTING=OFF \
-              -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/.ci/keyfinder"
-            cmake --build libkeyfinder/build --parallel
-            cmake --install libkeyfinder/build
-          else
-            echo "Using cached libkeyfinder from .ci/keyfinder"
-          fi
+          set -euo pipefail
+          uname -a
+          cmake --version
+          ninja --version
+          c++ --version
+          if command -v qmake6 >/dev/null 2>&1; then qmake6 -query; else qmake -query; fi
 
-      - name: Configure (Linux)
+      - name: Configure
+        run: cmake --preset ci-linux-x64
+
+      - name: Build
+        run: cmake --build --preset ci-linux-x64 --parallel 2
+
+      - name: Test
+        run: ctest --preset ci-linux-x64
+
+      - name: Validate binary and headless startup
+        shell: bash
         run: |
-          cmake -S . -B build -G Ninja \
-            -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/.ci/keyfinder;${CMAKE_PREFIX_PATH:-}" \
-            -DRDBJ_ENABLE_QML_CACHEGEN=OFF
+          set -euo pipefail
+          file build-ci-linux-x64/bin/BrockDJ | tee binary-type.txt
+          grep -Eq 'x86-64|x86_64' binary-type.txt
+          build-ci-linux-x64/bin/BrockDJ --version
+          QT_QPA_PLATFORM=offscreen BROCKDJ_RHI_BACKEND=auto \
+            build-ci-linux-x64/bin/BrockDJ --ci-smoke-test
 
-      - name: Read project version (Linux)
+      - name: Stage build product
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        shell: bash
         run: |
-          PROJECT_VERSION="$(cmake -LA -N build | sed -n 's/^BROCKDJ_PROJECT_VERSION:STRING=//p')"
-          test -n "$PROJECT_VERSION"
-          echo "APP_VERSION=$PROJECT_VERSION" >> "$GITHUB_ENV"
+          set -euo pipefail
+          mkdir -p ci-build-product
+          tar -C build-ci-linux-x64/bin -czf ci-build-product/BrockDJ-linux-x64.tar.gz BrockDJ
+          test -s ci-build-product/BrockDJ-linux-x64.tar.gz
 
-      - name: Build (Linux)
+      - name: Upload build product
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        uses: actions/upload-artifact@v7
+        with:
+          name: BrockDJ-build-linux-x64
+          path: ci-build-product/BrockDJ-linux-x64.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 2
+
+  build-linux-arm64:
+    name: Build Linux ARM64
+    needs: workflow-lint
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 75
+    steps:
+      - name: Check out repository and submodules
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Qt and native dependencies
+        shell: bash
         run: |
-          cmake --build build --parallel
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ccache ninja-build pkg-config \
+            qt6-base-dev qt6-declarative-dev \
+            qml6-module-qtqml-workerscript qml6-module-qtquick \
+            qml6-module-qtquick-controls qml6-module-qtquick-layouts \
+            qml6-module-qtquick-window \
+            libasound2-dev libjack-jackd2-dev libusb-1.0-0-dev \
+            libtag1-dev libkeyfinder-dev librubberband-dev \
+            libfontconfig1-dev libfreetype6-dev libgl1-mesa-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev libxkbcommon-x11-dev
 
-      - name: Smoke tests (Linux)
-        run: ctest --test-dir build --output-on-failure
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-arm64-gcc-ubuntu2404-${{ hashFiles('CMakeLists.txt', 'CMakePresets.json', 'vcpkg.json', '.gitmodules') }}
+          restore-keys: ccache-linux-arm64-gcc-ubuntu2404-
 
-      - name: Deploy Linux (AppImage)
+      - name: Show Linux ARM64 toolchain
+        shell: bash
         run: |
-          mkdir -p deploy/AppDir/usr/bin deploy/AppDir/usr/share/applications deploy/AppDir/usr/share/icons/hicolor/256x256/apps
-          cp build/bin/BrockDJ deploy/AppDir/usr/bin/BrockDJ
-          cat <<EOF > deploy/AppDir/usr/share/applications/BrockDJ.desktop
-          [Desktop Entry]
-          Type=Application
-          Name=BrockDJ
-          Exec=BrockDJ
-          Icon=BrockDJ
-          Categories=AudioVideo;
-          EOF
-          touch deploy/AppDir/usr/share/icons/hicolor/256x256/apps/BrockDJ.png
-          cd deploy
-          ARCH=$(uname -m)
-          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-$ARCH.AppImage
-          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-$ARCH.AppImage
-          wget -q "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-$ARCH.AppImage"
-          chmod +x linuxdeploy*.AppImage appimagetool-$ARCH.AppImage
+          set -euo pipefail
+          uname -a
+          cmake --version
+          ninja --version
+          c++ --version
+          if command -v qmake6 >/dev/null 2>&1; then qmake6 -query; else qmake -query; fi
 
-          export QMAKE=$(which qmake 2>/dev/null || which qmake6)
-          export QML_SOURCES_PATHS=../src/qml
-          export QML_IMPORT_PATHS=$($QMAKE -query QT_INSTALL_QML)
-          export EXTRA_QT_PLUGINS=wayland,xcb
-          export VERSION="${APP_VERSION}"
+      - name: Configure
+        run: cmake --preset ci-linux-arm64
 
-          # Remove Qt SQL drivers that depend on unavailable system libraries
-          # (libqsqlmimer needs libmimerapi.so from Mimer SQL, not in Ubuntu repos)
-          QT_PLUGINS=$($QMAKE -query QT_INSTALL_PLUGINS)
-          rm -f "$QT_PLUGINS/sqldrivers/libqsqlmimer.so" \
-                "$QT_PLUGINS/sqldrivers/libqsqlmysql.so"
+      - name: Build
+        run: cmake --build --preset ci-linux-arm64 --parallel 2
 
-          # Bundle Qt libs, plugins and QML modules (plugin-qt may wrap the binary with a shell script)
-          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run \
-              --appdir AppDir \
-              -e AppDir/usr/bin/BrockDJ \
-              --plugin qt
+      - name: Test
+        run: ctest --preset ci-linux-arm64
 
-          # plugin-qt replaces the binary with a wrapper script; restore the real ELF
-          # and remove any wrapper artifacts (.bin / .real) it left behind
-          cp -f ../build/bin/BrockDJ AppDir/usr/bin/BrockDJ
-          chmod +x AppDir/usr/bin/BrockDJ
-          rm -f AppDir/usr/bin/BrockDJ.bin AppDir/usr/bin/BrockDJ.real
+      - name: Validate binary and headless startup
+        shell: bash
+        run: |
+          set -euo pipefail
+          file build-ci-linux-arm64/bin/BrockDJ | tee binary-type.txt
+          grep -Eqi 'aarch64|ARM64' binary-type.txt
+          build-ci-linux-arm64/bin/BrockDJ --version
+          QT_QPA_PLATFORM=offscreen BROCKDJ_RHI_BACKEND=auto \
+            build-ci-linux-arm64/bin/BrockDJ --ci-smoke-test
 
-          # Keep Vulkan/GPU libraries dynamic so the AppImage uses the host driver stack
-          find AppDir -type f \( \
-            -name 'libEGL*.so*' -o -name 'libGL*.so*' -o -name 'libGLESv2*.so*' -o -name 'libglapi*.so*' \
-            -o -name 'libvulkan*.so*' -o -name 'libdrm*.so*' -o -name 'libgbm*.so*' \
-            -o -name 'libVkLayer*.so*' -o -name 'VkLayer_*.json' \
-            -o -name 'libva*.so*' -o -name 'libva-drm*.so*' -o -name 'libva-x11*.so*' \
-          \) -print0 | xargs -0 -r rm -f
+      - name: Stage build product
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-build-product
+          tar -C build-ci-linux-arm64/bin -czf ci-build-product/BrockDJ-linux-arm64.tar.gz BrockDJ
+          test -s ci-build-product/BrockDJ-linux-arm64.tar.gz
 
-          # Tell Qt where to find plugins/QML relative to the binary location
-          cat <<EOF > AppDir/usr/bin/qt.conf
-          [Paths]
-          Prefix=..
-          Plugins=plugins
-          Libraries=lib
-          Qml2Imports=qml
-          EOF
+      - name: Upload build product
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        uses: actions/upload-artifact@v7
+        with:
+          name: BrockDJ-build-linux-arm64
+          path: ci-build-product/BrockDJ-linux-arm64.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 2
 
-          # Minimal AppRun — AppImage runtime always mounts at a stable path,
-          # so $0's directory is always the correct AppDir root.
-          cat <<'APPRUN' > AppDir/AppRun
-          #!/bin/sh
-          # $APPDIR is set by the AppImage type-2 runtime to the squashfs mount point.
-          # Fall back to $0-based detection only when running AppRun directly.
-          APPDIR="${APPDIR:-$(dirname "$(readlink -f "$0")")}"
-          export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-          export QT_PLUGIN_PATH="$APPDIR/usr/plugins"
-          export QML2_IMPORT_PATH="$APPDIR/usr/qml"
-          export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
-          exec "$APPDIR/usr/bin/BrockDJ" "$@"
-          APPRUN
-          chmod +x AppDir/AppRun
+  build-macos-arm64:
+    name: Build macOS Apple Silicon
+    needs: workflow-lint
+    runs-on: macos-15
+    timeout-minutes: 75
+    steps:
+      - name: Check out repository and submodules
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
-          # Pack with appimagetool directly — avoids a second linuxdeploy pass
-          # that would re-wrap the binary and break the AppRun → binary chain.
-          ./appimagetool-$ARCH.AppImage --appimage-extract-and-run \
-              AppDir "BrockDJ-linux-${ARCH}.AppImage"
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4.3.1
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: clang_64
+          cache: true
 
-      - name: Upload Artifact
+      - name: Install native dependencies
+        shell: bash
+        run: brew install ccache ninja pkg-config taglib rubberband libkeyfinder
+
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: ~/Library/Caches/ccache
+          key: ccache-macos-arm64-appleclang-qt-${{ env.QT_VERSION }}-${{ hashFiles('CMakeLists.txt', 'CMakePresets.json', '.gitmodules') }}
+          restore-keys: ccache-macos-arm64-appleclang-qt-${{ env.QT_VERSION }}-
+
+      - name: Generate bundle icon
+        run: ./scripts/generate_icons.sh
+
+      - name: Show macOS Apple Silicon toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sw_vers
+          uname -m
+          cmake --version
+          ninja --version
+          c++ --version
+          echo "QT_ROOT_DIR=$QT_ROOT_DIR"
+          "$QT_ROOT_DIR/bin/qmake" -query
+
+      - name: Configure
+        run: cmake --preset ci-macos-arm64
+
+      - name: Build
+        run: cmake --build --preset ci-macos-arm64 --parallel 2
+
+      - name: Test
+        run: ctest --preset ci-macos-arm64
+
+      - name: Validate bundle architecture and headless startup
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary=build-ci-macos-arm64/bin/BrockDJ.app/Contents/MacOS/BrockDJ
+          lipo -archs "$binary" | tee binary-arch.txt
+          grep -qw arm64 binary-arch.txt
+          "$binary" --version
+          QT_QPA_PLATFORM=offscreen BROCKDJ_RHI_BACKEND=auto "$binary" --ci-smoke-test
+
+      - name: Stage build product
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-build-product
+          tar -C build-ci-macos-arm64/bin -czf ci-build-product/BrockDJ-macos-arm64.tar.gz BrockDJ.app
+          test -s ci-build-product/BrockDJ-macos-arm64.tar.gz
+
+      - name: Upload build product
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        uses: actions/upload-artifact@v7
+        with:
+          name: BrockDJ-build-macos-arm64
+          path: ci-build-product/BrockDJ-macos-arm64.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 2
+
+  build-macos-x64:
+    name: Build macOS Intel
+    needs: workflow-lint
+    runs-on: macos-15-intel
+    timeout-minutes: 75
+    steps:
+      - name: Check out repository and submodules
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4.3.1
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: clang_64
+          cache: true
+
+      - name: Install native dependencies
+        shell: bash
+        run: brew install ccache ninja pkg-config taglib rubberband libkeyfinder
+
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: ~/Library/Caches/ccache
+          key: ccache-macos-x64-appleclang-qt-${{ env.QT_VERSION }}-${{ hashFiles('CMakeLists.txt', 'CMakePresets.json', '.gitmodules') }}
+          restore-keys: ccache-macos-x64-appleclang-qt-${{ env.QT_VERSION }}-
+
+      - name: Generate bundle icon
+        run: ./scripts/generate_icons.sh
+
+      - name: Show macOS Intel toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sw_vers
+          uname -m
+          cmake --version
+          ninja --version
+          c++ --version
+          echo "QT_ROOT_DIR=$QT_ROOT_DIR"
+          "$QT_ROOT_DIR/bin/qmake" -query
+
+      - name: Configure
+        run: cmake --preset ci-macos-x86_64
+
+      - name: Build
+        run: cmake --build --preset ci-macos-x86_64 --parallel 2
+
+      - name: Test
+        run: ctest --preset ci-macos-x86_64
+
+      - name: Validate bundle architecture and headless startup
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary=build-ci-macos-x86_64/bin/BrockDJ.app/Contents/MacOS/BrockDJ
+          lipo -archs "$binary" | tee binary-arch.txt
+          grep -qw x86_64 binary-arch.txt
+          "$binary" --version
+          QT_QPA_PLATFORM=offscreen BROCKDJ_RHI_BACKEND=auto "$binary" --ci-smoke-test
+
+      - name: Stage build product
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-build-product
+          tar -C build-ci-macos-x86_64/bin -czf ci-build-product/BrockDJ-macos-x64.tar.gz BrockDJ.app
+          test -s ci-build-product/BrockDJ-macos-x64.tar.gz
+
+      - name: Upload build product
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        uses: actions/upload-artifact@v7
+        with:
+          name: BrockDJ-build-macos-x64
+          path: ci-build-product/BrockDJ-macos-x64.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 2
+
+  build-windows-x64:
+    name: Build Windows x64
+    needs: workflow-lint
+    runs-on: windows-2025
+    timeout-minutes: 90
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg-pinned
+      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/vcpkg-binary-cache,readwrite
+    steps:
+      - name: Check out repository and submodules
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Check out pinned vcpkg
+        uses: actions/checkout@v6
+        with:
+          repository: microsoft/vcpkg
+          ref: ${{ env.VCPKG_COMMIT }}
+          path: vcpkg-pinned
+
+      - name: Enable MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+        with:
+          arch: x64
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4.3.1
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v5
+        with:
+          path: vcpkg-binary-cache
+          key: vcpkg-windows-x64-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-windows-x64-${{ env.VCPKG_COMMIT }}-
+
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: '& "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics'
+
+      - name: Show Windows x64 toolchain
+        shell: pwsh
+        run: |
+          cl.exe
+          cmake --version
+          ninja --version
+          Write-Host "Qt6_DIR=$env:Qt6_DIR"
+          Write-Host "QT_ROOT_DIR=$env:QT_ROOT_DIR"
+          & (Join-Path $env:QT_ROOT_DIR 'bin\qmake.exe') -query
+
+      - name: Configure
+        run: cmake --preset ci-windows-x64
+
+      - name: Build
+        run: cmake --build --preset ci-windows-x64 --parallel 2
+
+      - name: Test
+        run: ctest --preset ci-windows-x64
+
+      - name: Validate binary architecture and headless startup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $binary = 'build-ci-windows-x64/bin/BrockDJ.exe'
+          $headers = & dumpbin.exe /nologo /headers $binary
+          $headers | Select-String '8664 machine \(x64\)' | Out-Null
+          $env:PATH = "${{ github.workspace }}\build-ci-windows-x64\vcpkg_installed\x64-windows\bin;$env:PATH"
+          & $binary --version
+          $env:QT_QPA_PLATFORM = 'offscreen'
+          & $binary --ci-smoke-test
+          if ($LASTEXITCODE -ne 0) { throw "BrockDJ smoke test failed with exit code $LASTEXITCODE" }
+
+      - name: Stage build product
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force ci-build-product | Out-Null
+          Copy-Item build-ci-windows-x64/bin/BrockDJ.exe ci-build-product/BrockDJ.exe
+          if ((Get-Item ci-build-product/BrockDJ.exe).Length -eq 0) { throw 'empty executable' }
+
+      - name: Upload build product
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        uses: actions/upload-artifact@v7
+        with:
+          name: BrockDJ-build-windows-x64
+          path: ci-build-product/BrockDJ.exe
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 2
+
+  package-linux-x64:
+    name: Package Linux x86_64 AppImage
+    needs: build-linux-x64
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out packaging files
+        uses: actions/checkout@v6
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4.3.1
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: linux_gcc_64
+          cache: true
+
+      - name: Install packaging dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            curl file patchelf desktop-file-utils \
+            libasound2 libjack-jackd2-0 libusb-1.0-0 \
+            libtag1v5 libkeyfinder2 librubberband2 \
+            libfontconfig1-dev libfreetype6-dev libgl1-mesa-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev libxkbcommon-x11-dev
+
+      - name: Download build product
+        uses: actions/download-artifact@v8
+        with:
+          name: BrockDJ-build-linux-x64
+          path: ci-build-product
+
+      - name: Build and smoke-test AppImage
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p unpacked dist
+          tar -C unpacked -xzf ci-build-product/BrockDJ-linux-x64.tar.gz
+          ./scripts/ci/package-appimage.sh \
+            unpacked/BrockDJ dist/BrockDJ-Linux-x64.AppImage
+
+      - name: Upload Linux x86_64 artifact
         uses: actions/upload-artifact@v7
         with:
           name: BrockDJ-linux-x86_64-AppImage
-          path: deploy/BrockDJ-linux-*.AppImage
+          path: dist/BrockDJ-Linux-x64.AppImage
+          if-no-files-found: error
+          compression-level: 0
 
-  build-extra-platforms:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event_name == 'pull_request' }}
-    name: Build (${{ matrix.artifact }})
-    runs-on: ${{ matrix.runner }}
-    continue-on-error: true
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04-arm
-            os: linux-arm
-            artifact: linux-arm64
-            package: deploy/BrockDJ-linux-*.AppImage
-          - runner: macos-15           # Apple Silicon arm64 runner
-            os: macos-arm
-            artifact: macos-silicon
-            package: deploy/BrockDJ-macos-silicon.zip
-          - runner: macos-15-intel     # Intel runner, avoids Rosetta + second Homebrew bootstrap
-            os: macos-intel
-            artifact: macos-intel
-            package: deploy/BrockDJ-macos-intel.zip
-          - runner: windows-latest
-            os: windows
-            artifact: windows-x64
-            package: deploy/BrockDJ-windows-x64.zip
-
+  package-linux-arm64:
+    name: Package Linux ARM64 AppImage
+    needs: build-linux-arm64
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 35
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          submodules: recursive
+      - name: Check out packaging files
+        uses: actions/checkout@v6
 
-      - name: Cache ccache
-        if: matrix.os != 'windows'
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cache/ccache
-            ~/.ccache
-            ~/Library/Caches/ccache
-          key: ccache-${{ matrix.os }}-${{ github.run_id }}
-          restore-keys: |
-            ccache-${{ matrix.os }}-
-
-      - name: Cache Homebrew downloads
-        if: startsWith(matrix.os, 'macos')
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/Library/Caches/Homebrew
-          key: homebrew-${{ matrix.os }}-${{ hashFiles('.github/workflows/cross-platform-build.yml') }}
-          restore-keys: |
-            homebrew-${{ matrix.os }}-
-
-      - name: Install Qt (Linux ARM)
-        if: matrix.os == 'linux-arm' && github.event_name == 'workflow_dispatch'
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: '6.8.0'
-          modules: 'qtshadertools'
-          arch: 'linux_gcc_arm64'
-          cache: true
-
-      - name: Cache vcpkg (Windows)
-        if: matrix.os == 'windows'
-        uses: actions/cache@v5
-        with:
-          path: |
-            C:\vcpkg\.git
-            C:\vcpkg\installed
-            C:\vcpkg\downloads
-            C:\vcpkg\packages
-            C:\vcpkg\buildtrees
-            C:\vcpkg-binary-cache
-          key: vcpkg-windows-${{ hashFiles('**/CMakeLists.txt', '.github/workflows/cross-platform-build.yml') }}
-          restore-keys: |
-            vcpkg-windows-
-
-      - name: Cache libkeyfinder (Linux ARM)
-        if: matrix.os == 'linux-arm'
-        uses: actions/cache@v5
-        with:
-          path: .ci/keyfinder
-          key: libkeyfinder-linux-arm64-${{ hashFiles('.github/workflows/cross-platform-build.yml') }}
-          restore-keys: |
-            libkeyfinder-linux-arm64-
-
-      - name: Install Qt (Windows)
-        if: matrix.os == 'windows' && github.event_name == 'workflow_dispatch'
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: '6.8.0'
-          modules: 'qtshadertools'
-          cache: true
-
-      - name: Setup MSVC environment (Windows)
-        if: matrix.os == 'windows' && github.event_name == 'workflow_dispatch'
-        uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Install Dependencies (Linux ARM)
-        if: matrix.os == 'linux-arm' && github.event_name == 'workflow_dispatch'
+      - name: Install Qt and packaging dependencies
+        shell: bash
         run: |
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential cmake pkg-config ninja-build ccache \
-            libtag1-dev librubberband-dev libasound2-dev libfftw3-dev libjack-jackd2-dev \
-            libfreetype-dev libfontconfig1-dev \
-            libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxrender-dev \
-            libxkbcommon-dev libxkbcommon-x11-dev libfuse2 \
-            libvulkan-dev libgl1-mesa-dev libgles2-mesa-dev \
-            libwayland-dev libwayland-egl1 libwayland-cursor0 libxcb1-dev libxcb-icccm4-dev
+          sudo apt-get install -y --no-install-recommends \
+            curl file patchelf desktop-file-utils \
+            qt6-base-dev qt6-declarative-dev \
+            qml6-module-qtqml-workerscript qml6-module-qtquick \
+            qml6-module-qtquick-controls qml6-module-qtquick-layouts \
+            qml6-module-qtquick-window \
+            libasound2 libjack-jackd2-0 libusb-1.0-0 \
+            libtag1v5 libkeyfinder2 librubberband2 \
+            libfontconfig1-dev libfreetype6-dev libgl1-mesa-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev libxkbcommon-x11-dev
 
-      - name: Install libkeyfinder (Linux ARM)
-        if: matrix.os == 'linux-arm' && github.event_name == 'workflow_dispatch'
+      - name: Download build product
+        uses: actions/download-artifact@v8
+        with:
+          name: BrockDJ-build-linux-arm64
+          path: ci-build-product
+
+      - name: Build and smoke-test AppImage
+        shell: bash
         run: |
-          if [ ! -f .ci/keyfinder/lib/pkgconfig/libkeyfinder.pc ] && [ ! -f .ci/keyfinder/lib/cmake/KeyFinder/KeyFinderConfig.cmake ]; then
-            git clone --depth 1 https://github.com/mixxxdj/libkeyfinder.git
-            cmake -S libkeyfinder -B libkeyfinder/build -G Ninja \
-              -DCMAKE_BUILD_TYPE=Release \
-              -DBUILD_TESTING=OFF \
-              -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/.ci/keyfinder"
-            cmake --build libkeyfinder/build --parallel
-            cmake --install libkeyfinder/build
-          else
-            echo "Using cached libkeyfinder from .ci/keyfinder"
-          fi
+          set -euo pipefail
+          mkdir -p unpacked dist
+          tar -C unpacked -xzf ci-build-product/BrockDJ-linux-arm64.tar.gz
+          ./scripts/ci/package-appimage.sh \
+            unpacked/BrockDJ dist/BrockDJ-Linux-ARM64.AppImage
 
-      - name: Install Dependencies (macOS Apple Silicon)
-        if: matrix.os == 'macos-arm'
-        run: |
-          brew install cmake ninja pkg-config qt@6 taglib rubberband libkeyfinder ccache \
-            qtsvg qtmultimedia qtimageformats qtvirtualkeyboard qtwebengine \
-            brotli webp
-
-      - name: Install Dependencies (macOS Intel)
-        if: matrix.os == 'macos-intel'
-        run: |
-          brew install cmake ninja pkg-config qt@6 taglib rubberband libkeyfinder ccache \
-            qtsvg qtmultimedia qtimageformats qtvirtualkeyboard qtwebengine \
-            brotli webp
-
-      - name: Install Dependencies (Windows)
-        if: matrix.os == 'windows' && github.event_name == 'workflow_dispatch'
-        shell: pwsh
-        run: |
-          if (-not (Test-Path 'C:\vcpkg\.git')) {
-            git clone https://github.com/microsoft/vcpkg C:\vcpkg
-          } else {
-            Write-Host "Using existing vcpkg checkout at C:\vcpkg"
-          }
-          C:\vcpkg\bootstrap-vcpkg.bat
-          New-Item -ItemType Directory -Force -Path C:\vcpkg-binary-cache | Out-Null
-          C:\vcpkg\vcpkg.exe install taglib rubberband libkeyfinder fftw3 `
-            --triplet x64-windows `
-            --binarysource=clear `
-            --binarysource=files,C:\vcpkg-binary-cache,readwrite
-
-      - name: Configure (macOS Apple Silicon)
-        if: matrix.os == 'macos-arm'
-        run: |
-          cmake -S . -B build -G Ninja \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6)" \
-            -DCMAKE_OSX_ARCHITECTURES=arm64 \
-            -DRDBJ_ENABLE_QML_CACHEGEN=OFF
-
-      - name: Configure (macOS Intel)
-        if: matrix.os == 'macos-intel'
-        run: |
-          cmake -S . -B build -G Ninja \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6)" \
-            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
-            -DRDBJ_ENABLE_QML_CACHEGEN=OFF
-
-      - name: Configure (Linux ARM)
-        if: matrix.os == 'linux-arm' && github.event_name == 'workflow_dispatch'
-        run: |
-          cmake -S . -B build -G Ninja \
-            -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/.ci/keyfinder;${CMAKE_PREFIX_PATH:-}" \
-            -DRDBJ_ENABLE_QML_CACHEGEN=OFF
-
-      - name: Configure (Windows)
-        if: matrix.os == 'windows' && github.event_name == 'workflow_dispatch'
-        shell: pwsh
-        run: |
-          $qt6Dir = $env:Qt6_DIR
-          if (-not $qt6Dir -and $env:QT_ROOT_DIR) {
-            $candidate = Join-Path $env:QT_ROOT_DIR 'lib/cmake/Qt6'
-            if (Test-Path (Join-Path $candidate 'Qt6Config.cmake')) {
-              $qt6Dir = $candidate
-            }
-          }
-          if (-not $qt6Dir) {
-            $qtConfig = Get-ChildItem -Path $env:RUNNER_WORKSPACE -Filter Qt6Config.cmake -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($qtConfig) {
-              $qt6Dir = Split-Path $qtConfig.FullName -Parent
-            }
-          }
-          if (-not $qt6Dir) {
-            throw "Could not locate Qt6_DIR from install-qt-action output."
-          }
-          Write-Host "Using Qt6_DIR=$qt6Dir"
-          "Qt6_DIR=$qt6Dir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          cmake -S . -B build -G Ninja `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake `
-            -DQt6_DIR="$qt6Dir" `
-            -DRDBJ_ENABLE_QML_CACHEGEN=OFF
-
-      - name: Read project version
-        if: matrix.os == 'macos-arm' || matrix.os == 'macos-intel' || (matrix.os == 'linux-arm' && github.event_name == 'workflow_dispatch')
-        run: |
-          PROJECT_VERSION="$(cmake -LA -N build | sed -n 's/^BROCKDJ_PROJECT_VERSION:STRING=//p')"
-          test -n "$PROJECT_VERSION"
-          echo "APP_VERSION=$PROJECT_VERSION" >> "$GITHUB_ENV"
-
-      - name: Build (macOS Apple Silicon)
-        if: matrix.os == 'macos-arm'
-        run: cmake --build build --parallel
-
-      - name: Build (macOS Intel)
-        if: matrix.os == 'macos-intel'
-        run: cmake --build build --parallel
-
-      - name: Build (Linux ARM)
-        if: matrix.os == 'linux-arm' && github.event_name == 'workflow_dispatch'
-        run: cmake --build build --parallel
-
-      - name: Build (Windows)
-        if: matrix.os == 'windows' && github.event_name == 'workflow_dispatch'
-        shell: pwsh
-        run: cmake --build build --parallel
-
-      - name: Deploy (macOS Apple Silicon)
-        if: matrix.os == 'macos-arm'
-        run: |
-          set -o pipefail
-          APP="deploy/BrockDJ-silicon.app"
-          BROCK_EXE="$(find build -type f -name BrockDJ -print -quit)"
-          if [ -z "$BROCK_EXE" ]; then
-            echo "Could not find BrockDJ executable under build directory." >&2
-            exit 1
-          fi
-          echo "Using executable $BROCK_EXE"
-          mkdir -p "$APP/Contents/MacOS"
-          cp "$BROCK_EXE" "$APP/Contents/MacOS/BrockDJ"
-          chmod +x "$APP/Contents/MacOS/BrockDJ"
-          cat > "$APP/Contents/Info.plist" <<PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>CFBundleExecutable</key><string>BrockDJ</string>
-            <key>CFBundleIdentifier</key><string>net.ramsbrock.brockdj</string>
-            <key>CFBundleName</key><string>BrockDJ</string>
-            <key>CFBundleDisplayName</key><string>BrockDJ</string>
-            <key>CFBundlePackageType</key><string>APPL</string>
-            <key>CFBundleShortVersionString</key><string>${APP_VERSION}</string>
-            <key>CFBundleVersion</key><string>${APP_VERSION}</string>
-            <key>LSMinimumSystemVersion</key><string>12.0</string>
-            <key>NSHighResolutionCapable</key><true/>
-          </dict>
-          </plist>
-          PLIST
-          echo "APPL????" > "$APP/Contents/PkgInfo"
-          file "$APP/Contents/MacOS/BrockDJ"
-          lipo -archs "$APP/Contents/MacOS/BrockDJ"
-          test "$(lipo -archs "$APP/Contents/MacOS/BrockDJ")" = "arm64"
-          mkdir -p deploy/lib
-          stage_qt_framework() {
-            local name="$1"
-            local source=""
-            for formula in qt@6 qtwebengine qtsvg qtmultimedia qtimageformats qtvirtualkeyboard; do
-              local prefix
-              prefix="$(brew --prefix "$formula" 2>/dev/null || true)"
-              if [ -n "$prefix" ] && [ -d "$prefix/lib/$name.framework" ]; then
-                source="$prefix/lib/$name.framework"
-                break
-              fi
-            done
-            if [ -z "$source" ]; then
-              echo "Could not find $name.framework in Homebrew Qt prefixes." >&2
-              return 1
-            fi
-            rm -rf "deploy/lib/$name.framework"
-            ditto "$source" "deploy/lib/$name.framework"
-          }
-          for framework in QtPdf QtSvg QtVirtualKeyboard QtVirtualKeyboardQml; do
-            stage_qt_framework "$framework"
-          done
-          DEPLOY_LOG="$(mktemp)"
-          "$(brew --prefix qt@6)/bin/macdeployqt" "$APP" \
-            -verbose=2 \
-            -libpath="$GITHUB_WORKSPACE/deploy/lib" \
-            -libpath="$(brew --prefix qt@6)/lib" \
-            -libpath="$(brew --prefix qtsvg)/lib" \
-            -libpath="$(brew --prefix qtmultimedia)/lib" \
-            -libpath="$(brew --prefix qtimageformats)/lib" \
-            -libpath="$(brew --prefix qtvirtualkeyboard)/lib" \
-            -libpath="$(brew --prefix qtwebengine)/lib" \
-            -libpath="$(brew --prefix brotli)/lib" \
-            -libpath="$(brew --prefix webp)/lib" 2>&1 | tee "$DEPLOY_LOG"
-          if grep -q '^ERROR:' "$DEPLOY_LOG"; then
-            echo "macdeployqt reported errors; refusing to upload a broken bundle." >&2
-            exit 1
-          fi
-          codesign --force --deep --sign - "$APP"
-          codesign --verify --deep --strict --verbose=2 "$APP"
-          ditto -c -k --sequesterRsrc --keepParent "$APP" "deploy/BrockDJ-macos-silicon.zip"
-
-      - name: Deploy (macOS Intel)
-        if: matrix.os == 'macos-intel'
-        run: |
-          set -o pipefail
-          APP="deploy/BrockDJ-intel.app"
-          BROCK_EXE="$(find build -type f -name BrockDJ -print -quit)"
-          if [ -z "$BROCK_EXE" ]; then
-            echo "Could not find BrockDJ executable under build directory." >&2
-            exit 1
-          fi
-          echo "Using executable $BROCK_EXE"
-          mkdir -p "$APP/Contents/MacOS"
-          cp "$BROCK_EXE" "$APP/Contents/MacOS/BrockDJ"
-          chmod +x "$APP/Contents/MacOS/BrockDJ"
-          cat > "$APP/Contents/Info.plist" <<PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>CFBundleExecutable</key><string>BrockDJ</string>
-            <key>CFBundleIdentifier</key><string>net.ramsbrock.brockdj</string>
-            <key>CFBundleName</key><string>BrockDJ</string>
-            <key>CFBundleDisplayName</key><string>BrockDJ</string>
-            <key>CFBundlePackageType</key><string>APPL</string>
-            <key>CFBundleShortVersionString</key><string>${APP_VERSION}</string>
-            <key>CFBundleVersion</key><string>${APP_VERSION}</string>
-            <key>LSMinimumSystemVersion</key><string>12.0</string>
-            <key>NSHighResolutionCapable</key><true/>
-          </dict>
-          </plist>
-          PLIST
-          echo "APPL????" > "$APP/Contents/PkgInfo"
-          file "$APP/Contents/MacOS/BrockDJ"
-          lipo -archs "$APP/Contents/MacOS/BrockDJ"
-          test "$(lipo -archs "$APP/Contents/MacOS/BrockDJ")" = "x86_64"
-          mkdir -p deploy/lib
-          stage_qt_framework() {
-            local name="$1"
-            local source=""
-            for formula in qt@6 qtwebengine qtsvg qtmultimedia qtimageformats qtvirtualkeyboard; do
-              local prefix
-              prefix="$(brew --prefix "$formula" 2>/dev/null || true)"
-              if [ -n "$prefix" ] && [ -d "$prefix/lib/$name.framework" ]; then
-                source="$prefix/lib/$name.framework"
-                break
-              fi
-            done
-            if [ -z "$source" ]; then
-              echo "Could not find $name.framework in Homebrew Qt prefixes." >&2
-              return 1
-            fi
-            rm -rf "deploy/lib/$name.framework"
-            ditto "$source" "deploy/lib/$name.framework"
-          }
-          for framework in QtPdf QtSvg QtVirtualKeyboard QtVirtualKeyboardQml; do
-            stage_qt_framework "$framework"
-          done
-          DEPLOY_LOG="$(mktemp)"
-          "$(brew --prefix qt@6)/bin/macdeployqt" "$APP" \
-            -verbose=2 \
-            -libpath="$GITHUB_WORKSPACE/deploy/lib" \
-            -libpath="$(brew --prefix qt@6)/lib" \
-            -libpath="$(brew --prefix qtsvg)/lib" \
-            -libpath="$(brew --prefix qtmultimedia)/lib" \
-            -libpath="$(brew --prefix qtimageformats)/lib" \
-            -libpath="$(brew --prefix qtvirtualkeyboard)/lib" \
-            -libpath="$(brew --prefix qtwebengine)/lib" \
-            -libpath="$(brew --prefix brotli)/lib" \
-            -libpath="$(brew --prefix webp)/lib" 2>&1 | tee "$DEPLOY_LOG"
-          if grep -q '^ERROR:' "$DEPLOY_LOG"; then
-            echo "macdeployqt reported errors; refusing to upload a broken bundle." >&2
-            exit 1
-          fi
-          codesign --force --deep --sign - "$APP"
-          codesign --verify --deep --strict --verbose=2 "$APP"
-          ditto -c -k --sequesterRsrc --keepParent "$APP" "deploy/BrockDJ-macos-intel.zip"
-
-      - name: Deploy (Windows)
-        if: matrix.os == 'windows'
-        shell: pwsh
-        run: |
-          $exe = Get-ChildItem -Path build -Filter BrockDJ.exe -Recurse | Select-Object -First 1
-          if (-not $exe) {
-            throw "Could not find BrockDJ.exe under build directory."
-          }
-          Write-Host "Using executable $($exe.FullName)"
-          New-Item -ItemType Directory -Force -Path deploy\BrockDJ-windows-x64
-          Copy-Item $exe.FullName deploy\BrockDJ-windows-x64\BrockDJ.exe
-          $qtBin = Join-Path $env:Qt6_DIR 'bin'
-          $windeployqt = Join-Path $qtBin 'windeployqt.exe'
-          & $windeployqt --qmldir src\qml deploy\BrockDJ-windows-x64\BrockDJ.exe
-          Copy-Item "C:\vcpkg\installed\x64-windows\bin\*.dll" -Destination deploy\BrockDJ-windows-x64\
-          Compress-Archive -Path deploy\BrockDJ-windows-x64 -DestinationPath deploy\BrockDJ-windows-x64.zip -Force
-
-      - name: Deploy (Linux ARM)
-        if: matrix.os == 'linux-arm'
-        run: |
-          mkdir -p deploy/AppDir/usr/bin deploy/AppDir/usr/share/applications deploy/AppDir/usr/share/icons/hicolor/256x256/apps
-          cp build/bin/BrockDJ deploy/AppDir/usr/bin/BrockDJ
-          cat <<EOF > deploy/AppDir/usr/share/applications/BrockDJ.desktop
-          [Desktop Entry]
-          Type=Application
-          Name=BrockDJ
-          Exec=BrockDJ
-          Icon=BrockDJ
-          Categories=AudioVideo;
-          EOF
-          touch deploy/AppDir/usr/share/icons/hicolor/256x256/apps/BrockDJ.png
-          cd deploy
-          ARCH=$(uname -m)
-          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-$ARCH.AppImage
-          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-$ARCH.AppImage
-          wget -q "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-$ARCH.AppImage"
-          chmod +x linuxdeploy*.AppImage appimagetool-$ARCH.AppImage
-
-          export QMAKE=$(which qmake 2>/dev/null || which qmake6)
-          export QML_SOURCES_PATHS=../src/qml
-          export QML_IMPORT_PATHS=$($QMAKE -query QT_INSTALL_QML)
-          export EXTRA_QT_PLUGINS=wayland,xcb
-          export VERSION="${APP_VERSION}"
-
-          QT_PLUGINS=$($QMAKE -query QT_INSTALL_PLUGINS)
-          rm -f "$QT_PLUGINS/sqldrivers/libqsqlmimer.so" \
-                "$QT_PLUGINS/sqldrivers/libqsqlmysql.so"
-
-          ./linuxdeploy-$ARCH.AppImage --appimage-extract-and-run \
-              --appdir AppDir \
-              -e AppDir/usr/bin/BrockDJ \
-              --plugin qt
-
-          cp -f ../build/bin/BrockDJ AppDir/usr/bin/BrockDJ
-          chmod +x AppDir/usr/bin/BrockDJ
-          rm -f AppDir/usr/bin/BrockDJ.bin AppDir/usr/bin/BrockDJ.real
-
-          find AppDir -type f \( \
-            -name 'libEGL*.so*' -o -name 'libGL*.so*' -o -name 'libGLESv2*.so*' -o -name 'libglapi*.so*' \
-            -o -name 'libvulkan*.so*' -o -name 'libdrm*.so*' -o -name 'libgbm*.so*' \
-            -o -name 'libVkLayer*.so*' -o -name 'VkLayer_*.json' \
-            -o -name 'libva*.so*' -o -name 'libva-drm*.so*' -o -name 'libva-x11*.so*' \
-          \) -print0 | xargs -0 -r rm -f
-
-          cat <<EOF > AppDir/usr/bin/qt.conf
-          [Paths]
-          Prefix=..
-          Plugins=plugins
-          Libraries=lib
-          Qml2Imports=qml
-          EOF
-
-          cat <<'APPRUN' > AppDir/AppRun
-          #!/bin/sh
-          # $APPDIR is set by the AppImage type-2 runtime to the squashfs mount point.
-          # Fall back to $0-based detection only when running AppRun directly.
-          APPDIR="${APPDIR:-$(dirname "$(readlink -f "$0")")}"
-          export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-          export QT_PLUGIN_PATH="$APPDIR/usr/plugins"
-          export QML2_IMPORT_PATH="$APPDIR/usr/qml"
-          export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
-          exec "$APPDIR/usr/bin/BrockDJ" "$@"
-          APPRUN
-          chmod +x AppDir/AppRun
-
-          ./appimagetool-$ARCH.AppImage --appimage-extract-and-run \
-              AppDir "BrockDJ-linux-${ARCH}.AppImage"
-
-      - name: Upload Artifact
+      - name: Upload Linux ARM64 artifact
         uses: actions/upload-artifact@v7
         with:
-          name: BrockDJ-${{ matrix.artifact }}
-          path: ${{ matrix.package }}
+          name: BrockDJ-linux-arm64-AppImage
+          path: dist/BrockDJ-Linux-ARM64.AppImage
+          if-no-files-found: error
+          compression-level: 0
+
+  package-macos-arm64:
+    name: Package macOS Apple Silicon
+    needs: build-macos-arm64
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - name: Check out packaging files
+        uses: actions/checkout@v6
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4.3.1
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: clang_64
+          cache: true
+
+      - name: Install deployment dependencies
+        run: brew install dylibbundler taglib rubberband libkeyfinder
+
+      - name: Download build product
+        uses: actions/download-artifact@v8
+        with:
+          name: BrockDJ-build-macos-arm64
+          path: ci-build-product
+
+      - name: Deploy, sign and smoke-test app bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p unpacked dist
+          tar -C unpacked -xzf ci-build-product/BrockDJ-macos-arm64.tar.gz
+          ./scripts/ci/package-macos.sh \
+            unpacked/BrockDJ.app arm64 dist/BrockDJ-macOS-Apple-Silicon.zip
+
+      - name: Upload macOS Apple Silicon artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: BrockDJ-macos-arm64
+          path: dist/BrockDJ-macOS-Apple-Silicon.zip
+          if-no-files-found: error
+          compression-level: 0
+
+  package-macos-x64:
+    name: Package macOS Intel
+    needs: build-macos-x64
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: macos-15-intel
+    timeout-minutes: 35
+    steps:
+      - name: Check out packaging files
+        uses: actions/checkout@v6
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4.3.1
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: clang_64
+          cache: true
+
+      - name: Install deployment dependencies
+        run: brew install dylibbundler taglib rubberband libkeyfinder
+
+      - name: Download build product
+        uses: actions/download-artifact@v8
+        with:
+          name: BrockDJ-build-macos-x64
+          path: ci-build-product
+
+      - name: Deploy, sign and smoke-test app bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p unpacked dist
+          tar -C unpacked -xzf ci-build-product/BrockDJ-macos-x64.tar.gz
+          ./scripts/ci/package-macos.sh \
+            unpacked/BrockDJ.app x86_64 dist/BrockDJ-macOS-Intel.zip
+
+      - name: Upload macOS Intel artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: BrockDJ-macos-x86_64
+          path: dist/BrockDJ-macOS-Intel.zip
+          if-no-files-found: error
+          compression-level: 0
+
+  package-windows-x64:
+    name: Package Windows x64
+    needs: build-windows-x64
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: windows-2025
+    timeout-minutes: 45
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg-pinned
+      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/vcpkg-binary-cache,readwrite
+    steps:
+      - name: Check out packaging files
+        uses: actions/checkout@v6
+
+      - name: Check out pinned vcpkg
+        uses: actions/checkout@v6
+        with:
+          repository: microsoft/vcpkg
+          ref: ${{ env.VCPKG_COMMIT }}
+          path: vcpkg-pinned
+
+      - name: Enable MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+        with:
+          arch: x64
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4.3.1
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v5
+        with:
+          path: vcpkg-binary-cache
+          key: vcpkg-windows-x64-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-windows-x64-${{ env.VCPKG_COMMIT }}-
+
+      - name: Bootstrap and install vcpkg dependencies
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap failed" }
+          $vcpkgArgs = @(
+            'install',
+            '--triplet=x64-windows',
+            "--x-manifest-root=$PWD",
+            "--x-install-root=$PWD\build-ci-windows-x64\vcpkg_installed"
+          )
+          & "$env:VCPKG_ROOT\vcpkg.exe" @vcpkgArgs
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg dependency install failed" }
+
+      - name: Download build product
+        uses: actions/download-artifact@v8
+        with:
+          name: BrockDJ-build-windows-x64
+          path: ci-build-product
+
+      - name: Deploy and smoke-test Windows package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          ./scripts/ci/package-windows.ps1 -Executable ci-build-product/BrockDJ.exe -VcpkgBin build-ci-windows-x64/vcpkg_installed/x64-windows/bin -QmlDir src/qml -Output dist/BrockDJ-Windows-x64.zip
+
+      - name: Upload Windows x64 artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: BrockDJ-windows-x86_64
+          path: dist/BrockDJ-Windows-x64.zip
+          if-no-files-found: error
+          compression-level: 0

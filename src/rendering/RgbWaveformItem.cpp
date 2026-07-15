@@ -170,30 +170,47 @@ void RgbWaveformItem::paintCompactOverview(QPainter* painter,
         int i1 = static_cast<int>((static_cast<int64_t>(x + 1) * frames.size()) / std::max(1, drawWidth));
         i1 = std::max(i0 + 1, std::min(i1, static_cast<int>(frames.size())));
 
-        float rms = 0.0f, low = 0.0f, lowMid = 0.0f, mid = 0.0f, high = 0.0f;
+        float peakRms = 0.0f;
+        float rmsSum = 0.0f;
+        float weightedLow = 0.0f, weightedLowMid = 0.0f;
+        float weightedMid = 0.0f, weightedHigh = 0.0f, colorWeight = 0.0f;
         for (int i = i0; i < i1; ++i) {
             const auto& f = frames[i];
-            rms    = std::max(rms,    f.rms);
-            low    = std::max(low,    f.low);
-            lowMid = std::max(lowMid, f.lowMid);
-            mid    = std::max(mid,    f.mid);
-            high   = std::max(high,   f.high);
+            peakRms = std::max(peakRms, f.rms);
+            rmsSum += f.rms;
+            const float weight = std::max(0.01f, f.rms);
+            weightedLow += f.low * weight;
+            weightedLowMid += f.lowMid * weight;
+            weightedMid += f.mid * weight;
+            weightedHigh += f.high * weight;
+            colorWeight += weight;
         }
 
-        if (rms <= 0.001f)
+        if (peakRms <= 0.001f)
             continue;
 
-        const float logH = std::log1p(rms * 8.0f) / std::log1p(8.0f);
-        heights[static_cast<size_t>(x)] = std::clamp(logH, 0.04f, 1.0f) * maxBarH;
-        colors[static_cast<size_t>(x)]  = mixBandColor(low, lowMid, mid, high, rms);
+        const float meanRms = rmsSum / static_cast<float>(std::max(1, i1 - i0));
+        // Peak-only folding turns dense music into a solid rectangle.  Preserve
+        // transients, but let the local energy mean determine most of the body.
+        const float energy = std::clamp(meanRms * 0.68f + peakRms * 0.32f, 0.0f, 1.0f);
+        const float logH = std::log1p(energy * 10.0f) / std::log1p(10.0f);
+        heights[static_cast<size_t>(x)] = std::clamp(logH, 0.018f, 1.0f) * maxBarH;
+        const float invWeight = 1.0f / std::max(0.01f, colorWeight);
+        colors[static_cast<size_t>(x)] = mixBandColor(
+            weightedLow * invWeight, weightedLowMid * invWeight,
+            weightedMid * invWeight, weightedHigh * invWeight, energy);
     }
 
-    // Single-pass light smoothing for a clean DJ-software silhouette.
+    // Symmetric smoothing avoids the old left-to-right smear that made the
+    // compact overview read as one continuous block.
+    const auto rawHeights = heights;
     for (int x = 1; x < drawWidth - 1; ++x) {
         heights[static_cast<size_t>(x)] =
-            heights[static_cast<size_t>(x - 1)] * 0.20f +
-            heights[static_cast<size_t>(x)]     * 0.60f +
-            heights[static_cast<size_t>(x + 1)] * 0.20f;
+            rawHeights[static_cast<size_t>(x - 1)] * 0.20f +
+            rawHeights[static_cast<size_t>(x)]     * 0.60f +
+            rawHeights[static_cast<size_t>(x + 1)] * 0.20f;
+        heights[static_cast<size_t>(x)] = std::max(
+            heights[static_cast<size_t>(x)], rawHeights[static_cast<size_t>(x)] * 0.84f);
     }
 
     // The overview uses the same visual primitive as the scrolling waveform:
@@ -253,14 +270,19 @@ void RgbWaveformItem::paintCompactOverviewLines(QPainter* painter,
         const auto begin = static_cast<std::uint32_t>((static_cast<std::uint64_t>(x) * snapshot.totalLineCount) / w);
         const auto end = std::max(begin + 1u, static_cast<std::uint32_t>(
             (static_cast<std::uint64_t>(x + 1) * snapshot.totalLineCount) / w));
-        float amplitude = 0.0f;
+        float peakAmplitude = 0.0f;
+        float amplitudeSum = 0.0f;
         std::uint64_t red = 0, green = 0, blue = 0, weight = 0;
+        int sampleCount = 0;
         for (auto index = begin; index < std::min(end, snapshot.totalLineCount); ++index) {
             const auto* line = lineAt(index);
             if (!line) continue;
             const auto magnitude = static_cast<std::uint32_t>(std::max(
                 std::abs(static_cast<int>(line->minimum)), std::abs(static_cast<int>(line->maximum))));
-            amplitude = std::max(amplitude, magnitude / 32767.0f);
+            const float amplitude = magnitude / 32767.0f;
+            peakAmplitude = std::max(peakAmplitude, amplitude);
+            amplitudeSum += amplitude;
+            ++sampleCount;
             const auto lineWeight = std::max(1u, magnitude);
             red += line->red * lineWeight;
             green += line->green * lineWeight;
@@ -268,7 +290,10 @@ void RgbWaveformItem::paintCompactOverviewLines(QPainter* painter,
             weight += lineWeight;
         }
         if (weight == 0) continue;
-        m_overviewHeights[x] = amplitude * maxBarH;
+        const float meanAmplitude = amplitudeSum / static_cast<float>(std::max(1, sampleCount));
+        const float energy = std::clamp(meanAmplitude * 0.68f + peakAmplitude * 0.32f,
+                                        0.0f, 1.0f);
+        m_overviewHeights[x] = (std::log1p(energy * 10.0f) / std::log1p(10.0f)) * maxBarH;
         m_overviewColors[x] = QColor(static_cast<int>(red / weight),
                                     static_cast<int>(green / weight),
                                     static_cast<int>(blue / weight));
@@ -298,9 +323,15 @@ void RgbWaveformItem::paint(QPainter* painter)
     }
 
     auto* td = m_engine->getTrackData();
+    const auto overviewSnapshot = td->getOverviewRgbSnapshot();
+    const bool hasOverview = overviewSnapshot && !overviewSnapshot->isEmpty();
     const auto lineSnapshot = td->getWaveformLineStoreSnapshot();
 
-    if (m_rectified && h <= 56 && lineSnapshot && lineSnapshot->totalLineCount > 0) {
+    // The quick full-track overview is intentionally authoritative while
+    // analysis is running.  Switching to a sparse line-store snapshot halfway
+    // through analysis used to make the overview jump into a flat block.
+    if (m_rectified && h <= 56 && !hasOverview
+        && lineSnapshot && lineSnapshot->totalLineCount > 0) {
         if (m_frameCache.size() != QSize(w, h))
             m_frameCache = QImage(w, h, QImage::Format_ARGB32_Premultiplied);
         m_frameCache.fill(Qt::transparent);
@@ -309,9 +340,6 @@ void RgbWaveformItem::paint(QPainter* painter)
         painter->drawImage(0, 0, m_frameCache);
         return;
     }
-
-    const auto overviewSnapshot = td->getOverviewRgbSnapshot();
-    const bool hasOverview = overviewSnapshot && !overviewSnapshot->isEmpty();
 
     int ovrProcessed = 0;
     const QVector<TrackData::RgbWaveformFrame> progressiveOvr =

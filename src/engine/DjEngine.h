@@ -44,6 +44,7 @@ class DjEngine : public QObject
     Q_PROPERTY(float progress READ getProgress NOTIFY progressChanged)
     Q_PROPERTY(bool isPlaying READ isPlaying NOTIFY playingChanged)
     Q_PROPERTY(bool scrubbing READ isScrubbing NOTIFY scrubbingChanged)
+    Q_PROPERTY(bool scratchVisualActive READ isScratchVisualActive NOTIFY scrubbingChanged)
     Q_PROPERTY(bool isReverse READ isReverse NOTIFY reverseChanged)
     Q_PROPERTY(bool keylock READ keylock WRITE setKeylock NOTIFY keylockChanged)
     Q_PROPERTY(double tempoPercent READ getTempoPercent WRITE setTempoPercent NOTIFY tempoChanged)

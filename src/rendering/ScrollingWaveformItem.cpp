@@ -80,15 +80,19 @@ struct WaveformSceneNode final : QSGClipNode {
         setIsRectangular(true);
         timeline = new QSGTransformNode();
         appendChildNode(timeline);
+        markerTimeline = new QSGTransformNode();
+        appendChildNode(markerTimeline);
 
         // Translucent overlays sit below the audio lines.
         loopFill = makeTriangleNode(timeline);
         for (auto& node : waveformNodes)
             node = makeLineNode(timeline);
-        regularBeats = makeLineNode(timeline);
-        downbeats = makeLineNode(timeline);
-        loopEdges = makeLineNode(timeline);
-        cueLines = makeLineNode(timeline);
+        // Vertical overlays need pixel-stable movement, unlike the smoothly
+        // translated audio lines beneath them.
+        regularBeats = makeLineNode(markerTimeline);
+        downbeats = makeLineNode(markerTimeline);
+        loopEdges = makeLineNode(markerTimeline);
+        cueLines = makeLineNode(markerTimeline);
     }
 
     void clearAllGeometry()
@@ -103,6 +107,7 @@ struct WaveformSceneNode final : QSGClipNode {
     }
 
     QSGTransformNode* timeline = nullptr;
+    QSGTransformNode* markerTimeline = nullptr;
     QSGGeometryNode* loopFill = nullptr;
     std::array<QSGGeometryNode*, kWaveformNodePoolSize> waveformNodes{};
     QSGGeometryNode* regularBeats = nullptr;
@@ -126,15 +131,18 @@ struct WaveformSceneNode final : QSGClipNode {
 void writeMarkerGeometry(QSGGeometryNode* node,
                          const std::vector<MarkerLine>& lines,
                          std::int64_t windowStartLine,
-                         double pixelsPerLine)
+                         double pixelsPerLine,
+                         double devicePixelRatio)
 {
     auto* geometry = node->geometry();
     geometry->allocate(static_cast<int>(lines.size() * 2));
     auto* vertices = geometry->vertexDataAsColoredPoint2D();
     int out = 0;
     for (const auto& marker : lines) {
-        const float x = static_cast<float>(
-            (marker.linePosition - static_cast<double>(windowStartLine)) * pixelsPerLine);
+        const double relativeX = (marker.linePosition - static_cast<double>(windowStartLine))
+            * pixelsPerLine;
+        const float x = static_cast<float>(std::round(relativeX * devicePixelRatio)
+                                           / devicePixelRatio);
         vertices[out++].set(x, marker.top,
                             static_cast<uchar>(marker.color.red()),
                             static_cast<uchar>(marker.color.green()),
@@ -291,7 +299,10 @@ ScrollingWaveformItem::ScrollingWaveformItem(QQuickItem* parent)
     setFlag(ItemHasContents, true);
     m_dataUpdateThrottle = new QTimer(this);
     m_dataUpdateThrottle->setSingleShot(true);
-    m_dataUpdateThrottle->setInterval(66);
+    // Analyzer chunks must become visible within one display frame.  This still
+    // coalesces a worker burst, but no longer holds the first playable waveform
+    // segment for four frames.
+    m_dataUpdateThrottle->setInterval(16);
     connect(m_dataUpdateThrottle, &QTimer::timeout, this, [this]() {
         invalidateGeometry();
     });
@@ -395,7 +406,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     if (!scene) {
         scene = new WaveformSceneNode();
         m_sceneGraphNodeCreationCount.fetch_add(
-            2 + kWaveformNodePoolSize + 5, std::memory_order_relaxed);
+            3 + kWaveformNodePoolSize + 5, std::memory_order_relaxed);
         m_forceRebuild = true;
     }
 
@@ -514,9 +525,9 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             }
         }
         writeMarkerGeometry(scene->regularBeats, regularBeats,
-                            scene->windowStartLine, pixelsPerLine);
+                            scene->windowStartLine, pixelsPerLine, dpr);
         writeMarkerGeometry(scene->downbeats, downbeats,
-                            scene->windowStartLine, pixelsPerLine);
+                            scene->windowStartLine, pixelsPerLine, dpr);
 
         auto* loopGeometry = scene->loopFill->geometry();
         std::vector<MarkerLine> loopEdges;
@@ -541,7 +552,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         }
         scene->loopFill->markDirty(QSGNode::DirtyGeometry);
         writeMarkerGeometry(scene->loopEdges, loopEdges,
-                            scene->windowStartLine, pixelsPerLine);
+                            scene->windowStartLine, pixelsPerLine, dpr);
 
         std::vector<MarkerLine> cueLines;
         const QVariantList cues = engine->hotCues();
@@ -565,7 +576,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                                 static_cast<float>(bounds.height())});
         }
         writeMarkerGeometry(scene->cueLines, cueLines,
-                            scene->windowStartLine, pixelsPerLine);
+                            scene->windowStartLine, pixelsPerLine, dpr);
 
         scene->trackGeneration = snapshot->trackGeneration;
         scene->dataGeneration = snapshot->dataGeneration;
@@ -588,6 +599,11 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     transform.translate(static_cast<float>(translationX), 0.0f);
     scene->timeline->setMatrix(transform);
     scene->timeline->markDirty(QSGNode::DirtyMatrix);
+    QMatrix4x4 markerTransform;
+    const double snappedTranslation = std::round(translationX * dpr) / dpr;
+    markerTransform.translate(static_cast<float>(snappedTranslation), 0.0f);
+    scene->markerTimeline->setMatrix(markerTransform);
+    scene->markerTimeline->markDirty(QSGNode::DirtyMatrix);
     m_transformUpdateCount.fetch_add(1, std::memory_order_relaxed);
     return scene;
 }

@@ -19,7 +19,7 @@ Keep updates concise and factual. Do not duplicate full code in memory files.
 ## Project conventions
 
 - **Platform priority:** Linux > Apple Silicon Mac > Intel Mac > Windows
-- **C++26**, minimal diffs, match existing naming and file layout
+- **C++23**, minimal diffs, match existing naming and file layout
 - **Mixer QML → audio:** use context property `mixerControl` (created before QML load), not nested `engine.*` from inline components
 - **Crossfader / volume:** `mixerControl.syncCrossfaderState` + `mixerControl.applyAllVolumes`; fader changes via `mixerControl.setChannelFader`
 - **MIDI sync:** `parameterStore` + `MixerParameterBridge` / `MidiFlx10Bridge`

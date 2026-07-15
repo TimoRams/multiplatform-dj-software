@@ -1,7 +1,7 @@
 # Tech Context
 
 ## Stack
-- **C++26**, CMake 3.22+, Qt 6 (Quick, QML module `DJSoftware`)
+- **C++23**, CMake 3.22+, Qt 6 (Quick, QML module `DJSoftware`)
 - **JUCE** audio graph per deck → `MixerDspSource` (trim/EQ/filter/fader) → `DjMasterBus`
 - **SQLite** library via `LibraryDatabase`
 

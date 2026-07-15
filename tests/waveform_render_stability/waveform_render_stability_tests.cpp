@@ -33,9 +33,11 @@ int main()
     // Model the guarded window used by ScrollingWaveformItem. At steady playback
     // geometry rebuilds only after travelling through the off-screen guard;
     // every intermediate frame is a matrix-only transform update.
-    constexpr double lineRate = 300.0;
+    constexpr double lineRate = 1200.0;
     constexpr double viewportWidth = 1600.0;
-    constexpr double pixelsPerLine = 0.88;
+    // 1200 canonical lines/s retain the former 264 px/s display scale while
+    // providing four times the zoom detail.
+    constexpr double pixelsPerLine = 0.22;
     const double visibleLines = viewportWidth / pixelsPerLine;
     const double halfWindow = visibleLines * 1.25;
     const double rebuildTravel = (halfWindow - visibleLines * 0.5) * 0.58;
@@ -56,6 +58,18 @@ int main()
         }
         ok &= require(rebuilds < (hz * seconds) / 100,
                       "guarded rendering rebuilt geometry too often");
+    }
+
+    // Thin beat/cue overlays are rendered on a separately snapped transform.
+    // They may advance in pixel steps, but never land between physical pixels
+    // where a one-pixel line would alternate coverage and visibly flicker.
+    for (const double dpr : {1.0, 1.25, 1.5, 2.0}) {
+        for (int frame = 0; frame < 240; ++frame) {
+            const double smoothTranslation = 319.375 - frame * 0.2875;
+            const double snapped = std::round(smoothTranslation * dpr) / dpr;
+            ok &= require(std::abs(snapped * dpr - std::round(snapped * dpr)) < 1e-9,
+                          "marker transform must stay on a physical pixel");
+        }
     }
     return ok ? 0 : 1;
 }

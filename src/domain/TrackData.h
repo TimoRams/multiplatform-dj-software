@@ -333,7 +333,12 @@ public:
     void appendData(const QVector<WaveformBin>& newData);
     void applyProgressiveWaveformChunk(int firstBin, int totalBins,
                                        const QVector<WaveformBin>& waveform,
-                                       const QVector<RgbWaveformFrame>& rgb);
+                                       const QVector<RgbWaveformFrame>& rgb,
+                                       bool publishLineStoreImmediately = true);
+    // The control clock batches worker chunks and flushes one immutable
+    // replacement per touched render chunk.  Direct callers retain immediate
+    // publication through the default argument above.
+    void flushProgressiveWaveformLines();
 
     // Atomically replace the entire waveform with the final-polish version.
     void replaceAllData(QVector<WaveformBin>&& finalData, float finalGlobalMaxPeak);
@@ -397,8 +402,15 @@ private:
 
     QVector<RgbWaveformFrame> m_progressiveOvr;
     int                       m_progressiveLastFrame = 0;
+    // Readiness is separate from the RGB values: an all-zero frame is valid
+    // silence and must not be mistaken for an unanalyzed frame.
+    QVector<quint8>           m_progressiveRgbReady;
+    QVector<std::uint32_t>    m_progressiveDirtyLineChunks;
 
     void _updateProgressiveOvr(int from, int to);
+    void markProgressiveWaveformLinesDirtyLocked(int firstRgbFrame, int rgbFrameCount);
+    void flushProgressiveWaveformLinesLocked();
+    void publishProgressiveWaveformLinesLocked(int firstRgbFrame, int rgbFrameCount);
     void alignSegmentsToBeatgridLocked();
     void rebuildWaveformLineStoreLocked(std::uint64_t trackGeneration = 0);
     void assertOwnerThread() const;

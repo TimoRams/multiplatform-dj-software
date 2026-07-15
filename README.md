@@ -5,7 +5,7 @@
 > **by [Ramsbrock.net](https://ramsbrock.net)**
 
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)
-![C++](https://img.shields.io/badge/C%2B%2B-26-informational?style=flat-square)
+![C++](https://img.shields.io/badge/C%2B%2B-23-informational?style=flat-square)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey?style=flat-square)
 
@@ -73,13 +73,17 @@ The playhead position is exposed to the render thread via `std::atomic<double>` 
 
 | Library | Purpose |
 | --- | --- |
-| Qt 6 (Core, Gui, Qml, Quick, Quick3D, Sql) | UI & rendering |
+| Qt 6 (Core, Gui, Qml, Quick, QuickControls2, Sql, Concurrent) | UI & rendering |
 | TagLib | Metadata extraction |
 | libkeyfinder | Key detection |
 | RubberBand | Key lock / time-stretch |
 | CMake ≥ 3.22 | Build system |
 
 > **JUCE** and **Ableton Link** are included as submodules under `libs/` — no separate installation required.
+
+See [the complete build guide](docs/building.md), [dependency pins](docs/dependencies.md)
+and [packaging/artifact documentation](docs/packaging.md) for the five supported
+native CI configurations.
 
 ---
 
@@ -92,7 +96,7 @@ Install dependencies (Debian/Ubuntu):
 sudo apt update
 sudo apt install -y \
   build-essential cmake pkg-config ninja-build \
-  qt6-base-dev qt6-declarative-dev qt6-quick3d-dev \
+  qt6-base-dev qt6-declarative-dev \
   libtag1-dev libkeyfinder-dev librubberband-dev libasound2-dev
 ```
 
@@ -127,7 +131,7 @@ git clone --recurse-submodules https://github.com/TimoRams/multiplatform-dj-soft
 cd multiplatform-dj-software
 cmake -S . -B build -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
 cmake --build build -j
-./build/bin/BrockDJ
+./build/bin/BrockDJ.app/Contents/MacOS/BrockDJ
 ```
 
 > On Apple Silicon, build the arm64 target natively to get the platform's SIMD path automatically.
@@ -137,20 +141,15 @@ cmake --build build -j
 <details>
 <summary>🪟 Windows — Vulkan</summary>
 
-Install dependencies via vcpkg:
-
-```bash
-vcpkg install taglib rubberband libkeyfinder
-```
+Set `VCPKG_ROOT` to the pinned vcpkg checkout described in
+[`docs/building.md`](docs/building.md). CMake installs the repository manifest.
 
 Configure and build:
 
-```bat
-cmake -S . -B build ^
-  -DCMAKE_TOOLCHAIN_FILE=C:/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake ^
-  -DCMAKE_PREFIX_PATH=C:/Qt/6.x.x/msvcxxxx_64
-
-cmake --build build --config Release
+```powershell
+cmake --preset ci-windows-x64
+cmake --build --preset ci-windows-x64 --parallel 2
+ctest --preset ci-windows-x64
 ```
 
 </details>
@@ -164,9 +163,10 @@ cmake --build build --config Release
 | Primary | Linux (festival/live target — use `./build-fast`) |
 | Secondary | macOS Apple Silicon (M1+) |
 | Supported | Intel Mac |
-| Secondary | Windows (manual CI via workflow dispatch) |
+| Secondary | Windows x64 (MSVC 2022; automatic CI) |
 
-CMake presets: `linux-dev-fast`, `macos-dev-arm64`, `macos-dev-x86_64`.
+CMake provides local development presets plus CI presets for Linux x86_64,
+Linux ARM64, macOS arm64, macOS x86_64 and Windows x64.
 
 ---
 

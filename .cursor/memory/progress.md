@@ -1,8 +1,27 @@
 # Progress
 
 ## Done (recent)
+- [x] **Paused scratch waveform motion (2026-07-15)** — exposed scratch visual activity as a
+  `DjEngine` QML property notified by `scrubbingChanged`, then bound scrolling/overview waveform
+  frame loops and turntable display to it. Paused scratching now enables VSync repainting as soon
+  as the platter is grabbed, while retaining the existing immediate lock-free hand-target updates
+  and idle pause throttle. `./build-fast`, QML component, waveform stability and deck transport
+  tests pass.
+- [x] **Scrolling waveform flicker/detail/progressive publication (2026-07-15)** — fixed the
+  missing bridge from progressive analysis RGB chunks into the immutable scrolling line store;
+  increased canonical detail from 300 to 1200 vertical lines/s; batched per-source-chunk
+  replacement at the 60 Hz control tick; and moved thin beat/cue/loop overlays to a separate
+  device-pixel-snapped transform. Compact overview aggregation now preserves mean-energy
+  contrast and weighted colour instead of peak-folding into a flat block. Full build + 32/32
+  CTests pass.
+- [x] **Cross-platform CI/build/package repair (2026-07-15)** — diagnosed Actions run
+  `29372454183`; standardized on C++23, explicit Threads and native CI presets; added a pinned
+  vcpkg manifest, deterministic Linux/macOS/Windows packagers and package-level Qt Quick/SQLite
+  smoke testing. The workflow now has five unconditional build/test jobs plus five event-gated
+  package jobs and stable caches. Local release build, 32/32 CTests and the exact x86_64 AppImage
+  pass; ARM64/macOS/Windows await hosted-run confirmation. No commit or push was performed.
 - [x] **UI system split and independent scaling (2026-07-15)** — `main.qml` 1,384→504 lines; extracted performance/startup/status/exit components; centralized semantic theme/metrics, persisted 80–140% UI scale, persisted exponential waveform zoom and application shortcuts; removed fixed zoom lists and resize counters.
-- [x] **Chunked vertical-line waveform renderer (2026-07-15)** — `TrackData` publishes immutable 300-lines/s/4096-line chunks with signed peaks and RGB derived from analysed frequency bands. Scrolling uses a fixed 24-node pool, viewport+guard window and transform-only steady playback; compact overview uses the same colours and vertical-line primitive. Added render stats, teardown-safe scale/zoom bindings and colour/peak/guard assertions; 32/32 CTests pass.
+- [x] **Chunked vertical-line waveform renderer (2026-07-15)** — `TrackData` publishes immutable 1200-lines/s/4096-line chunks with signed peaks and RGB derived from analysed frequency bands. Scrolling uses a fixed 24-node pool, viewport+guard window and transform-only steady playback; compact overview uses the same colours and vertical-line primitive. Added render stats, teardown-safe scale/zoom bindings and colour/peak/guard assertions; 32/32 CTests pass.
 - [x] **DjEngine API/header contract baseline (2026-07-14)** — added a source-level contract test for stable QML/controller entries and removed concrete cache, TrackData, analyzer, master-bus and JUCE device headers from `DjEngine.h`. Remaining direct graph forwarding and compatibility DB facade calls are explicitly tracked, not hidden.
 - [x] **DjMasterBus lifetime and block-size hardening** — removed the raw `DjEngine*` vector and
   preview pointer, added four generation-tagged audio endpoint slots with movable RAII tokens and

@@ -3,6 +3,30 @@
 #include <algorithm>
 #include <limits>
 
+namespace {
+
+bool sameChunk(const WaveformLineChunk& left, const WaveformLineChunk& right)
+{
+    if (left.trackGeneration != right.trackGeneration
+        || left.chunkIndex != right.chunkIndex
+        || left.firstLineIndex != right.firstLineIndex
+        || left.lineCount != right.lineCount
+        || left.totalLineCount != right.totalLineCount
+        || !left.lines || !right.lines
+        || left.lines->size() != right.lines->size()) {
+        return false;
+    }
+
+    return std::equal(left.lines->cbegin(), left.lines->cend(), right.lines->cbegin(),
+        [](const WaveformLine& a, const WaveformLine& b) {
+            return a.minimum == b.minimum && a.maximum == b.maximum
+                && a.red == b.red && a.green == b.green && a.blue == b.blue
+                && a.flags == b.flags;
+        });
+}
+
+} // namespace
+
 std::shared_ptr<const WaveformLineChunk> WaveformLineStoreSnapshot::chunkAt(std::uint32_t index) const noexcept
 {
     if (!chunks || index >= chunks->size()) return {};
@@ -46,8 +70,13 @@ WaveformLineStore::PublishResult WaveformLineStore::publish(WaveformLineChunk ch
         current->totalLineCount - chunk.firstLineIndex);
     if (chunk.lineCount != expectedCount || !current->chunks || chunk.chunkIndex >= current->chunks->size())
         return PublishResult::Rejected;
-    if ((*current->chunks)[chunk.chunkIndex])
-        return PublishResult::Duplicate;
+    if (const auto& previous = (*current->chunks)[chunk.chunkIndex]) {
+        // A progressive analysis patch replaces only this immutable chunk.  Old
+        // snapshots remain valid for render-thread readers while the latest
+        // snapshot exposes the newly analysed lines immediately.
+        if (sameChunk(*previous, chunk))
+            return PublishResult::Duplicate;
+    }
 
     auto table = std::make_shared<std::vector<std::shared_ptr<const WaveformLineChunk>>>(*current->chunks);
     (*table)[chunk.chunkIndex] = std::make_shared<const WaveformLineChunk>(std::move(chunk));
@@ -62,4 +91,3 @@ std::shared_ptr<const WaveformLineStoreSnapshot> WaveformLineStore::snapshot() c
 {
     return m_snapshot;
 }
-

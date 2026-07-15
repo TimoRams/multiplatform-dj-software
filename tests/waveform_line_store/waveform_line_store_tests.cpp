@@ -42,6 +42,16 @@ int main()
     ok &= require(store.snapshot()->availableChunkCount() == 3, "all chunks visible without store replacement");
     ok &= require(store.publish(makeChunk(9, 2, total, chunkSize)) == WaveformLineStore::PublishResult::Duplicate,
                   "duplicate chunk is idempotent");
+    const auto revisedFirst = chunkSize;
+    auto revisedLines = std::make_shared<std::vector<WaveformLine>>(chunkSize);
+    (*revisedLines)[0] = {.minimum = -100, .maximum = 900,
+                          .red = 255, .green = 80, .blue = 40, .flags = 1};
+    WaveformLineChunk revised{9, 1, revisedFirst, chunkSize, total, std::move(revisedLines)};
+    ok &= require(store.publish(std::move(revised)) == WaveformLineStore::PublishResult::Accepted,
+                  "new immutable revision of a progressive chunk was rejected");
+    const auto revisedChunk = store.snapshot()->chunkAt(1);
+    ok &= require(revisedChunk && (*revisedChunk->lines)[0].maximum == 900,
+                  "latest snapshot did not expose progressive chunk revision");
     ok &= require(store.publish(makeChunk(8, 0, total, chunkSize)) == WaveformLineStore::PublishResult::Rejected,
                   "stale generation rejected");
     auto invalid = makeChunk(9, 0, total, chunkSize);

@@ -11,7 +11,7 @@
 struct WaveformLineStoreSnapshot final {
     std::uint64_t trackGeneration = 0;
     std::uint64_t dataGeneration = 0;
-    std::uint32_t linesPerSecond = 300;
+    std::uint32_t linesPerSecond = 1200;
     std::uint32_t chunkSize = 4096;
     std::uint32_t totalLineCount = 0;
     std::shared_ptr<const std::vector<std::shared_ptr<const WaveformLineChunk>>> chunks;
@@ -22,7 +22,10 @@ struct WaveformLineStoreSnapshot final {
 
 class WaveformLineStore final {
 public:
-    static constexpr std::uint32_t kCanonicalLinesPerSecond = 300;
+    // Keep one canonical vertical line for every 1200 Hz analysis frame.  At the
+    // normal DJ zoom this gives a dense, continuous-looking line field; low zoom
+    // aggregation happens in the renderer rather than throwing detail away.
+    static constexpr std::uint32_t kCanonicalLinesPerSecond = 1200;
     static constexpr std::uint32_t kChunkSize = 4096;
 
     enum class PublishResult : std::uint8_t { Accepted, Duplicate, Rejected };
@@ -37,4 +40,3 @@ public:
 private:
     std::shared_ptr<WaveformLineStoreSnapshot> m_snapshot = std::make_shared<WaveformLineStoreSnapshot>();
 };
-
