@@ -7,6 +7,8 @@ Rectangle {
     id: root
 
     property var engine: null
+    property string deckName: "A"
+    property color accentColor: "#888888"
     property bool editMode: false
     property bool expanded: false
 
@@ -33,7 +35,7 @@ Rectangle {
 
     readonly property int flowCols: Math.max(1, Math.ceil(toolItems.length / maxRows))
     readonly property real flowContentW: flowCols * cellW + 6
-    readonly property real collapsedStripWidth: 22
+    readonly property real collapsedStripWidth: 30
     readonly property real expandedWidth: Math.min(deckWidth * 0.55, Math.max(96, flowContentW))
     readonly property real occupiedWidth: expanded ? expandedWidth : collapsedStripWidth
 
@@ -91,19 +93,20 @@ Rectangle {
 
         Column {
             anchors.centerIn: parent
-            spacing: 3
-            Rectangle {
+            spacing: 1
+            Text {
                 anchors.horizontalCenter: parent.horizontalCenter
-                width: 10; height: 10; radius: 2
-                color: root.editMode ? "#e60000" : "#444"
-                border.color: root.editMode ? "#ff6666" : "#555"
-                border.width: 1
+                text: root.deckName
+                color: root.accentColor
+                font.pixelSize: Math.max(12, Math.min(18, root.deckHeight * 0.25))
+                font.bold: true
+                font.family: "monospace"
             }
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: "G"
-                color: "#888"
-                font.pixelSize: 7
+                text: "›"
+                color: stripHover.containsMouse ? "#d7dde2" : "#77818a"
+                font.pixelSize: Math.max(11, Math.min(15, root.deckHeight * 0.2))
                 font.bold: true
             }
         }
@@ -115,7 +118,7 @@ Rectangle {
             onClicked: root.expanded = true
         }
         ToolTip.visible: stripHover.containsMouse
-        ToolTip.text: "Beat grid editor"
+        ToolTip.text: "Deck " + root.deckName + " beat grid menu"
         ToolTip.delay: 500
     }
 

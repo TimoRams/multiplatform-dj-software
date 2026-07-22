@@ -7,6 +7,7 @@ Item {
     id: root
 
     property var engine: null
+    property string deckName: "A"
     property color backgroundColor: UiTheme.bgDisplay
     property real waveformZoom: 1.5
     property bool dropHovered: false
@@ -237,6 +238,8 @@ Item {
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             engine: root.engine
+            deckName: root.deckName
+            accentColor: UiTheme.deckColor(root.deckName)
         }
 
         Binding {

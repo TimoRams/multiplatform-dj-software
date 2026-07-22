@@ -42,6 +42,7 @@ Item {
                         visible: window.fourDeckMode
                         Layout.fillWidth: true
                         Layout.fillHeight: true
+                        deckName: "C"
                         engine: deckC
                         sameTrackDoubleHint: window.isDuplicatePlayingTrack(deckC)
                         backgroundColor: UiTheme.bgDisplay
@@ -58,6 +59,7 @@ Item {
                     EnlargedWaveform {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
+                        deckName: "A"
                         engine: deckA
                         sameTrackDoubleHint: window.isDuplicatePlayingTrack(deckA)
                         backgroundColor: UiTheme.bgDisplay
@@ -67,6 +69,7 @@ Item {
                     EnlargedWaveform {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
+                        deckName: "B"
                         engine: deckB
                         sameTrackDoubleHint: window.isDuplicatePlayingTrack(deckB)
                         backgroundColor: UiTheme.bgDisplay
@@ -77,6 +80,7 @@ Item {
                         visible: window.fourDeckMode
                         Layout.fillWidth: true
                         Layout.fillHeight: true
+                        deckName: "D"
                         engine: deckD
                         sameTrackDoubleHint: window.isDuplicatePlayingTrack(deckD)
                         backgroundColor: UiTheme.bgDisplay
