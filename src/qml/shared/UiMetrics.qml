@@ -24,7 +24,10 @@ QtObject {
 
     readonly property int controlHeightSmall: px(22)
     readonly property int controlHeightNormal: px(30)
-    readonly property int toolbarHeight: px(30)
+    // The top bar is a primary touch surface in both desktop and AIO layouts.
+    // Keep its resting height large enough for reliable touch targets.
+    readonly property int toolbarHeight: px(48)
+    readonly property int toolbarPullExtra: px(76)
     readonly property int deckHeaderHeight: px(42)
     readonly property int transportStripHeight: px(62)
     readonly property int waveformMinimumHeight: px(120)

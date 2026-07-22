@@ -35,6 +35,9 @@ ApplicationWindow {
     property bool fourDeckMode: false
     property bool allInOneMode: false
     property string activeMainTab: "performance"
+    // Temporary quick-access overlay, controlled by the handle in TopHeader.
+    // This intentionally is not persisted: it is a momentary touch affordance.
+    property real topBarPullProgress: 0.0
     property bool _desktopShowMixer: true
     property bool _desktopShowFxBar: true
     property bool _uiStateRestoring: false
@@ -424,6 +427,8 @@ ApplicationWindow {
     readonly property real uiScale: _snapScaleToPhysicalPixels(rawUiScale)
     readonly property int scaledWaveformHeight: Math.round(window.baseWaveformHeight * window.uiScale)
     readonly property int scaledDeckMixerHeight: Math.round(window.baseDeckMixerHeight * window.uiScale)
+    // The quick-access tray floats above the workspace; it must never resize
+    // or push the decks, waveform, or library below it.
     readonly property int topBarHeight: UiMetrics.toolbarHeight
     readonly property int fxBarHeight: UiMetrics.px(window.compactLayout ? 74 : 90)
     readonly property int crossfaderBarHeight: UiMetrics.px(window.compactLayout ? 30 : 36)

@@ -7,12 +7,16 @@ import DJSoftware
 Rectangle {
     id: root
     color: UiTheme.bg0
-    clip: true
+    // The expanded tray deliberately paints below this fixed-height item as an
+    // overlay.  Keeping it unclipped prevents the workspace from being moved.
+    clip: false
 
     // Height is fully controlled by parent layout — no implicitHeight here.
+    // The first row remains fixed while the pull-down quick-access tray opens.
+    readonly property int collapsedHeight: UiMetrics.toolbarHeight
 
     // ── Sizing helpers ───────────────────────────────────────────────────────
-    readonly property int btnH:    Math.max(1, root.height)
+    readonly property int btnH:    Math.max(1, root.collapsedHeight)
     readonly property int padH:    Math.max(7, Math.round(btnH * 0.25))   // inner horizontal pad
     readonly property int sepW:    1                                        // divider width
 
@@ -585,7 +589,11 @@ Rectangle {
     // MAIN ROW
     // ════════════════════════════════════════════════════════════════════════
     RowLayout {
-        anchors.fill: parent
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: root.collapsedHeight
+        z: 10
         spacing: 0
 
         // ── Branding ─────────────────────────────────────────────────────────
@@ -629,114 +637,48 @@ Rectangle {
         // ── Separator ────────────────────────────────────────────────────────
         Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
 
-        // ── App mode + main tabs ─────────────────────────────────────────────
+        // ── Primary navigation ───────────────────────────────────────────────
         Rectangle {
-            id: appModeBlock
-            Layout.preferredWidth: 46
+            id: libraryButton
+            Layout.preferredWidth: 78
             Layout.fillHeight: true
-            color: modeMouse.pressed ? "#202020" : (modeMouse.containsMouse ? "#1a1a1a" : "#121212")
-
-            readonly property bool allInOne: root.Window.window ? root.Window.window.allInOneMode : false
-
-            Text {
+            readonly property bool active: root.Window.window
+                                           ? (root.Window.window.allInOneMode
+                                              ? root.Window.window.libraryPanelActive
+                                              : root.Window.window.showLibrary)
+                                           : false
+            color: libraryMouse.pressed ? "#203446"
+                 : active ? "#162b3b"
+                 : (libraryMouse.containsMouse ? "#1a2025" : "#121212")
+            Row {
                 anchors.centerIn: parent
-                text: appModeBlock.allInOne ? "AIO" : "DESK"
-                color: appModeBlock.allInOne ? root.accentBlue : "#707070"
-                font.pixelSize: root.sp(8)
-                font.bold: true
-                font.family: "monospace"
-                font.letterSpacing: 0.6
+                spacing: 5
+                Text { text: "▤"; color: libraryButton.active ? "#a9d4ff" : "#788692"; font.pixelSize: root.sp(15); anchors.verticalCenter: parent.verticalCenter }
+                Text { text: "LIBRARY"; color: libraryButton.active ? "#dceeff" : "#aab2b8"; font.pixelSize: root.sp(8); font.bold: true; font.letterSpacing: 0.5; anchors.verticalCenter: parent.verticalCenter }
             }
-
-            // Accent underline signals the active layout mode.
-            Rectangle {
-                anchors.left: parent.left; anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                height: 2
-                color: appModeBlock.allInOne ? root.accentBlue : "#3a3a3a"
-            }
-
-            MouseArea {
-                id: modeMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: if (root.Window.window) root.Window.window.setAllInOneMode(!root.Window.window.allInOneMode)
-            }
+            Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 2; visible: libraryButton.active; color: root.accentBlue }
+            MouseArea { id: libraryMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: if (root.Window.window) root.Window.window.toggleAllInOneLibrary() }
         }
 
-        Rectangle {
-            id: libraryTabButton
-            readonly property bool available: root.Window.window ? root.Window.window.allInOneMode : false
-            readonly property bool active: root.Window.window ? root.Window.window.libraryPanelActive : false
-            Layout.preferredWidth: available ? 36 : 0
-            Layout.fillHeight: true
-            visible: available
-            color: libMouse.pressed ? "#202020" : (active ? "#16222f" : (libMouse.containsMouse ? "#1a1a1a" : "#121212"))
-
-            Text {
-                anchors.centerIn: parent
-                text: "LIB"
-                color: libraryTabButton.active ? "#ffffff" : "#6a7a88"
-                font.pixelSize: root.sp(8)
-                font.bold: true
-                font.family: "monospace"
-                font.letterSpacing: 0.6
-            }
-
-            Rectangle {
-                anchors.left: parent.left; anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                height: 2
-                visible: libraryTabButton.active
-                color: root.accentBlue
-            }
-
-            MouseArea {
-                id: libMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: if (root.Window.window) root.Window.window.toggleAllInOneLibrary()
-            }
-        }
-
-        Rectangle {
-            id: settingsTabButton
-            Layout.preferredWidth: root.btnH
-            Layout.fillHeight: true
-            readonly property bool active: root.Window.window ? root.Window.window.settingsPanelActive : false
-            color: stgMouse.pressed ? "#202020" : (active ? "#16222f" : (stgMouse.containsMouse ? "#1a1a1a" : "#121212"))
-
-            Text {
-                anchors.centerIn: parent
-                text: "⚙"; color: parent.active ? "#ffffff" : "#5f5f5f"
-                font.pixelSize: root.sp(13)
-            }
-
-            Rectangle {
-                anchors.left: parent.left; anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                height: 2
-                visible: settingsTabButton.active
-                color: root.accentBlue
-            }
-
-            MouseArea {
-                id: stgMouse
-                anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                onClicked: {
-                    if (root.Window.window && root.Window.window.toggleAllInOneSettings && root.Window.window.toggleAllInOneSettings())
-                        return
-                    settingsWin.show()
-                    settingsWin.raise()
-                    settingsWin.requestActivate()
-                }
-            }
-        }
-
-        // ── Separator ────────────────────────────────────────────────────────
         Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
+
+        Rectangle {
+            id: searchButton
+            Layout.preferredWidth: 74
+            Layout.fillHeight: true
+            color: searchMouse.pressed ? "#202428" : (searchMouse.containsMouse ? "#1a1e21" : "#121212")
+            Row {
+                anchors.centerIn: parent
+                spacing: 4
+                Text { text: "⌕"; color: "#7d8992"; font.pixelSize: root.sp(17); anchors.verticalCenter: parent.verticalCenter }
+                Text { text: "SEARCH"; color: "#9aa3a9"; font.pixelSize: root.sp(7); font.bold: true; font.letterSpacing: 0.3; anchors.verticalCenter: parent.verticalCenter }
+            }
+            MouseArea { id: searchMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor }
+        }
+
+        // This spacer keeps the navigation left-aligned and moves all mixer and
+        // system controls into a single group on the right.
+        Item { Layout.fillWidth: true }
 
         // ── Anti-Clip ────────────────────────────────────────────────────────
         Rectangle {
@@ -1149,8 +1091,6 @@ Rectangle {
             }
         }
 
-        Item { Layout.fillWidth: true }
-
         // ── Separator ────────────────────────────────────────────────────────
         Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
 
@@ -1256,58 +1196,6 @@ Rectangle {
         // ── Separator ────────────────────────────────────────────────────────
         Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
 
-        // ── REC button ────────────────────────────────────────────────────────
-        Rectangle {
-            Layout.preferredWidth: root.btnH
-            Layout.fillHeight: true
-            color: recMouse.pressed ? "#2a0a0a" : "#131313"
-
-            Column {
-                anchors.centerIn: parent
-                spacing: 2
-                Rectangle {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: 6; height: 6; radius: 3
-                    color: "#993333"
-                }
-                Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: "REC"; color: "#3a3a3a"
-                    font.pixelSize: root.sp(6); font.bold: true; font.letterSpacing: 0.3
-                }
-            }
-            MouseArea { id: recMouse; anchors.fill: parent; cursorShape: Qt.PointingHandCursor }
-        }
-
-        // ── Separator ────────────────────────────────────────────────────────
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
-
-        // ── Fullscreen ────────────────────────────────────────────────────────
-        Rectangle {
-            Layout.preferredWidth: root.btnH
-            Layout.fillHeight: true
-            color: fsMouse.pressed ? "#1e1e1e" : (fsMouse.containsMouse ? "#181818" : "#121212")
-
-            Text {
-                anchors.centerIn: parent
-                text: "⛶"; color: "#555555"
-                font.pixelSize: root.sp(13)
-            }
-            MouseArea {
-                id: fsMouse
-                anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                onClicked: {
-                    if (root.Window.window.visibility === Window.FullScreen)
-                        root.Window.window.showNormal()
-                    else
-                        root.Window.window.showFullScreen()
-                }
-            }
-        }
-
-        // ── Separator ────────────────────────────────────────────────────────
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
-
         // ── Clock ─────────────────────────────────────────────────────────────
         Rectangle {
             Layout.preferredWidth: 52
@@ -1322,6 +1210,216 @@ Rectangle {
                 font.pixelSize: root.sp(12); font.family: "monospace"; font.bold: true
             }
         }
+
+    }
+
+    // ── Pull-down quick access ──────────────────────────────────────────────
+    // The same tray is available in desktop and AIO mode.  It gives touch
+    // users generously sized shortcuts without permanently taking deck space.
+    Rectangle {
+        id: quickAccessTray
+        anchors.left: parent.left
+        anchors.right: parent.right
+        // Start hidden behind the fixed header, then slide down from it.
+        // This gives the interaction the same visual direction as a mobile
+        // notification shade without changing the workspace geometry.
+        y: root.collapsedHeight - height
+           + height * (root.Window.window ? root.Window.window.topBarPullProgress : 0.0)
+        height: UiMetrics.toolbarPullExtra
+        color: "#101214"
+        opacity: Math.min(1.0, (root.Window.window ? root.Window.window.topBarPullProgress : 0.0) * 3.0)
+        visible: opacity > 0.01
+        z: 5
+        clip: true
+
+        Rectangle {
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            height: 1
+            color: "#252a2e"
+        }
+
+        RowLayout {
+            anchors.centerIn: parent
+            width: Math.min(parent.width - UiMetrics.space6 * 2, 680)
+            height: Math.max(0, Math.min(parent.height - UiMetrics.space3 * 2, UiMetrics.px(56)))
+            spacing: UiMetrics.space3
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                radius: 5
+                color: quickModeMouse.pressed ? "#1f3345" : "#18232d"
+                Text {
+                    anchors.centerIn: parent
+                    text: root.Window.window && root.Window.window.allInOneMode ? "AIO MODE" : "DESKTOP MODE"
+                    color: "#a9d4ff"; font.pixelSize: root.sp(10); font.bold: true
+                }
+                MouseArea {
+                    id: quickModeMouse; anchors.fill: parent
+                    onClicked: if (root.Window.window)
+                                   root.Window.window.setAllInOneMode(!root.Window.window.allInOneMode)
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                radius: 5
+                color: quickLibraryMouse.pressed ? "#1f3345" : "#181b1e"
+                Text {
+                    anchors.centerIn: parent
+                    text: "LIBRARY"
+                    color: "#d5dce2"; font.pixelSize: root.sp(10); font.bold: true
+                }
+                MouseArea {
+                    id: quickLibraryMouse; anchors.fill: parent
+                    onClicked: if (root.Window.window) root.Window.window.toggleAllInOneLibrary()
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                radius: 5
+                color: quickPerformanceMouse.pressed ? "#1f3345" : "#181b1e"
+                Text {
+                    anchors.centerIn: parent
+                    text: "PERFORMANCE"
+                    color: "#d5dce2"; font.pixelSize: root.sp(10); font.bold: true
+                }
+                MouseArea {
+                    id: quickPerformanceMouse; anchors.fill: parent
+                    onClicked: if (root.Window.window) root.Window.window.activeMainTab = "performance"
+                }
+            }
+
+            Rectangle {
+                id: quickSettingsBlock
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                radius: 5
+                readonly property bool active: root.Window.window ? root.Window.window.settingsPanelActive : false
+                color: quickSettingsMouse.pressed ? "#1f3345" : (active ? "#1a3042" : "#181b1e")
+                Text {
+                    anchors.centerIn: parent
+                    text: "SETTINGS"
+                    color: quickSettingsBlock.active ? "#a9d4ff" : "#d5dce2"
+                    font.pixelSize: root.sp(10); font.bold: true
+                }
+                MouseArea {
+                    id: quickSettingsMouse; anchors.fill: parent
+                    onClicked: {
+                        if (root.Window.window && root.Window.window.toggleAllInOneSettings
+                                && root.Window.window.toggleAllInOneSettings())
+                            return
+                        settingsWin.show()
+                        settingsWin.raise()
+                        settingsWin.requestActivate()
+                    }
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                radius: 5
+                color: quickRecMouse.pressed ? "#3a1717" : "#211718"
+                Row {
+                    anchors.centerIn: parent
+                    spacing: 5
+                    Rectangle { width: 7; height: 7; radius: 4; color: "#c84848"; anchors.verticalCenter: parent.verticalCenter }
+                    Text { text: "REC"; color: "#e2a4a4"; font.pixelSize: root.sp(10); font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                }
+                MouseArea {
+                    id: quickRecMouse
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    // Recording control is kept as the existing placeholder.
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                radius: 5
+                color: quickFullscreenMouse.pressed ? "#1f3345" : "#181b1e"
+                Row {
+                    anchors.centerIn: parent
+                    spacing: 5
+                    Text { text: "⛶"; color: "#a9bbc8"; font.pixelSize: root.sp(15); anchors.verticalCenter: parent.verticalCenter }
+                    Text { text: "FULLSCREEN"; color: "#d5dce2"; font.pixelSize: root.sp(9); font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                }
+                MouseArea {
+                    id: quickFullscreenMouse
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        if (!root.Window.window)
+                            return
+                        if (root.Window.window.visibility === Window.FullScreen)
+                            root.Window.window.showNormal()
+                        else
+                            root.Window.window.showFullScreen()
+                    }
+                }
+            }
+        }
+    }
+
+    // A familiar Android-style handle: drag it down to reveal the tray, or
+    // tap it to toggle.  It sits above the content, so it is reachable in both
+    // AIO and desktop mode.
+    Item {
+        id: pullHandle
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        width: 112
+        height: 16
+        z: 20
+
+        Rectangle {
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.verticalCenter: parent.verticalCenter
+            width: 54
+            height: 4
+            radius: 2
+            color: pullHandleMouse.pressed ? "#b5c9d9" : "#71808b"
+        }
+
+        MouseArea {
+            id: pullHandleMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.OpenHandCursor
+            preventStealing: true
+            property real pressY: 0
+            property real pressProgress: 0
+
+            onPressed: function(mouse) {
+                pressY = mouse.y
+                pressProgress = root.Window.window ? root.Window.window.topBarPullProgress : 0
+                cursorShape = Qt.ClosedHandCursor
+            }
+            onPositionChanged: function(mouse) {
+                if (!pressed || !root.Window.window)
+                    return
+                var next = pressProgress + (mouse.y - pressY) / UiMetrics.toolbarPullExtra
+                root.Window.window.topBarPullProgress = Math.max(0.0, Math.min(1.0, next))
+            }
+            onReleased: function(mouse) {
+                if (!root.Window.window)
+                    return
+                var moved = Math.abs(mouse.y - pressY)
+                if (moved < 4)
+                    root.Window.window.topBarPullProgress = pressProgress > 0.5 ? 0.0 : 1.0
+                else
+                    root.Window.window.topBarPullProgress = root.Window.window.topBarPullProgress >= 0.35 ? 1.0 : 0.0
+                cursorShape = Qt.OpenHandCursor
+            }
+            onCanceled: cursorShape = Qt.OpenHandCursor
+        }
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -1330,7 +1428,10 @@ Rectangle {
     // ════════════════════════════════════════════════════════════════════════
     Rectangle {
         id: centerMeter
-        anchors.centerIn: parent
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.top: parent.top
+        anchors.topMargin: Math.round((root.collapsedHeight - height) / 2) - 5
+        z: 11
         width: 136
         height: 22
         radius: 3
