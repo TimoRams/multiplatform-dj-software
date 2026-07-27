@@ -336,6 +336,37 @@ Rectangle {
             }
 
             Rectangle {
+                id: vt_developmentControls
+                width: viewMenuPopup.width; height: 26
+                readonly property bool on: root.Window.window ? root.Window.window.showDevelopmentControls : true
+                color: vt_devControlsMouse.containsMouse ? "#191919" : "#131313"
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left; anchors.leftMargin: 12
+                    anchors.right: vt_devControlsPill.left; anchors.rightMargin: 8
+                    text: "Development Controls"
+                    color: vt_developmentControls.on ? "#c0c0c0" : "#484848"
+                    font.pixelSize: root.sp(9); elide: Text.ElideRight
+                }
+                Rectangle {
+                    id: vt_devControlsPill
+                    width: 24; height: 12; radius: 6
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.right: parent.right; anchors.rightMargin: 12
+                    color: vt_developmentControls.on ? "#1e7bd4" : "#252525"
+                    Rectangle {
+                        width: 8; height: 8; radius: 4; color: "#e0e0e0"; y: 2
+                        x: vt_developmentControls.on ? parent.width - 10 : 2
+                        Behavior on x { NumberAnimation { duration: 80 } }
+                    }
+                }
+                MouseArea {
+                    id: vt_devControlsMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                    onClicked: if (root.Window.window) root.Window.window.showDevelopmentControls = !root.Window.window.showDevelopmentControls
+                }
+            }
+
+            Rectangle {
                 id: vt_deckMode
                 width: viewMenuPopup.width
                 height: 30
@@ -461,7 +492,8 @@ Rectangle {
 
             Rectangle {
                 id: vt_mixer
-                width: viewMenuPopup.width; height: 26
+                visible: false
+                width: viewMenuPopup.width; height: 0
                 readonly property bool on: root.Window.window ? root.Window.window.showMixer : true
                 color: vt_mixerMouse.containsMouse ? "#191919" : "#131313"
                 Text {
@@ -492,7 +524,8 @@ Rectangle {
 
             Rectangle {
                 id: vt_fxBar
-                width: viewMenuPopup.width; height: 26
+                visible: false
+                width: viewMenuPopup.width; height: 0
                 readonly property bool on: root.Window.window ? root.Window.window.showFxBar : true
                 color: vt_fxMouse.containsMouse ? "#191919" : "#131313"
                 Text {
@@ -523,7 +556,8 @@ Rectangle {
 
             Rectangle {
                 id: vt_crossfader
-                width: viewMenuPopup.width; height: 26
+                visible: false
+                width: viewMenuPopup.width; height: 0
                 readonly property bool on: root.Window.window ? root.Window.window.showCrossfader : true
                 color: vt_cfMouse.containsMouse ? "#191919" : "#131313"
                 Text {

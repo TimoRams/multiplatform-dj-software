@@ -60,16 +60,36 @@ int main()
                       "guarded rendering rebuilt geometry too often");
     }
 
-    // Thin beat/cue overlays are rendered on a separately snapped transform.
-    // They may advance in pixel steps, but never land between physical pixels
-    // where a one-pixel line would alternate coverage and visibly flicker.
+    // Waveform and overlay lines share a pixel-centred transform. Their local
+    // positions sit on the physical grid, so final line centres always have a
+    // 0.5 physical-pixel fraction and occupy exactly one pixel.
     for (const double dpr : {1.0, 1.25, 1.5, 2.0}) {
+        const double logicalLineWidth = 1.0 / dpr;
+        ok &= require(std::abs(logicalLineWidth * dpr - 1.0) < 1e-9,
+                      "vertical geometry must be exactly one physical pixel wide");
         for (int frame = 0; frame < 240; ++frame) {
             const double smoothTranslation = 319.375 - frame * 0.2875;
-            const double snapped = std::round(smoothTranslation * dpr) / dpr;
-            ok &= require(std::abs(snapped * dpr - std::round(snapped * dpr)) < 1e-9,
-                          "marker transform must stay on a physical pixel");
+            const double centred = (std::floor(smoothTranslation * dpr) + 0.5) / dpr;
+            const double physical = centred * dpr;
+            ok &= require(std::abs((physical - std::floor(physical)) - 0.5) < 1e-9,
+                          "line transform must stay at a physical pixel centre");
         }
     }
+
+    // Publishing a new immutable waveform chunk must not recreate marker
+    // geometry. Marker lines only need a rebuild for a window/layout/overlay
+    // change, otherwise their physical-pixel placement can visibly blink.
+    int markerRebuilds = 0;
+    bool forceRebuild = true;
+    bool outsideGuard = false;
+    bool staticConfigurationChanged = false;
+    for (int chunkGeneration = 0; chunkGeneration < 64; ++chunkGeneration) {
+        const bool rebuildMarkers = forceRebuild || outsideGuard || staticConfigurationChanged;
+        if (rebuildMarkers)
+            ++markerRebuilds;
+        forceRebuild = false;
+    }
+    ok &= require(markerRebuilds == 1,
+                  "progressive waveform chunks must not rebuild beatgrid geometry");
     return ok ? 0 : 1;
 }

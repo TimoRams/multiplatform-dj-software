@@ -38,6 +38,16 @@ Item {
                     anchors.fill: parent
                     spacing: 0
 
+                    PerformanceWaveformScreen {
+                        visible: !window.fourDeckMode
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        deckAEngine: deckA
+                        deckBEngine: deckB
+                        fx: fxManager
+                        waveformZoom: window.waveformZoom
+                    }
+
                     EnlargedWaveform {
                         visible: window.fourDeckMode
                         Layout.fillWidth: true
@@ -50,13 +60,14 @@ Item {
                     }
 
                     AioWaveformInfoSlot {
-                        visible: window.aioTwoDeckWaveformSlots
+                        visible: false
                         slotPosition: "upper"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                     }
 
                     EnlargedWaveform {
+                        visible: window.fourDeckMode
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         deckName: "A"
@@ -67,6 +78,7 @@ Item {
                     }
 
                     EnlargedWaveform {
+                        visible: window.fourDeckMode
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         deckName: "B"
@@ -88,7 +100,7 @@ Item {
                     }
 
                     AioWaveformInfoSlot {
-                        visible: window.aioTwoDeckWaveformSlots
+                        visible: false
                         slotPosition: "lower"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
@@ -144,13 +156,16 @@ Item {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         engine: deckA
+                        hostWindow: window
+                        mixerControl: mixerControl
+                        channelId: "deckA"
                     }
 
                     MixerSection {
-                        visible: window.showMixer
-                        Layout.preferredWidth: window.showMixer ? window.mixerBaseWidth : 0
-                        Layout.minimumWidth: window.showMixer ? window.mixerBaseWidth : 0
-                        Layout.maximumWidth: window.showMixer ? window.mixerBaseWidth : 0
+                        visible: false
+                        Layout.preferredWidth: 0
+                        Layout.minimumWidth: 0
+                        Layout.maximumWidth: 0
                         Layout.fillHeight: true
                         engineA: deckA
                         engineB: deckB
@@ -164,6 +179,9 @@ Item {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         engine: deckB
+                        hostWindow: window
+                        mixerControl: mixerControl
+                        channelId: "deckB"
                     }
                 }
             }
@@ -204,13 +222,16 @@ Item {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         engine: deckC
+                        hostWindow: window
+                        mixerControl: mixerControl
+                        channelId: "deckC"
                     }
 
                     MixerSection {
-                        visible: window.showMixer
-                        Layout.preferredWidth: window.showMixer ? window.mixerBaseWidth : 0
-                        Layout.minimumWidth: window.showMixer ? window.mixerBaseWidth : 0
-                        Layout.maximumWidth: window.showMixer ? window.mixerBaseWidth : 0
+                        visible: false
+                        Layout.preferredWidth: 0
+                        Layout.minimumWidth: 0
+                        Layout.maximumWidth: 0
                         Layout.fillHeight: true
                         engineA: deckC
                         engineB: deckD
@@ -227,6 +248,9 @@ Item {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         engine: deckD
+                        hostWindow: window
+                        mixerControl: mixerControl
+                        channelId: "deckD"
                     }
                 }
             }

@@ -66,6 +66,7 @@ class DjEngine : public QObject
     Q_PROPERTY(QString trackTitle   READ trackTitle   NOTIFY trackMetadataChanged)
     Q_PROPERTY(QString trackArtist  READ trackArtist  NOTIFY trackMetadataChanged)
     Q_PROPERTY(QString trackAlbum   READ trackAlbum   NOTIFY trackMetadataChanged)
+    Q_PROPERTY(QString trackNumber  READ trackNumber  NOTIFY trackMetadataChanged)
     Q_PROPERTY(QString trackKey     READ trackKey     NOTIFY trackMetadataChanged)
     Q_PROPERTY(QString trackDuration READ trackDuration NOTIFY trackMetadataChanged)
     Q_PROPERTY(double trackDurationSec READ trackDurationSec NOTIFY trackMetadataChanged)
@@ -244,6 +245,7 @@ public:
     [[nodiscard]] QString trackTitle()    const { return m_trackTitle; }
     [[nodiscard]] QString trackArtist()   const { return m_trackArtist; }
     [[nodiscard]] QString trackAlbum()    const { return m_trackAlbum; }
+    [[nodiscard]] QString trackNumber()   const { return m_trackNumber; }
     [[nodiscard]] QString trackKey()      const { return m_trackKey; }
     [[nodiscard]] QString trackDuration() const { return m_trackDuration; }
     [[nodiscard]] double  trackDurationSec() const;
@@ -513,6 +515,7 @@ private:
     QString m_trackTitle;
     QString m_trackArtist;
     QString m_trackAlbum;
+    QString m_trackNumber;
     QString m_trackGenre;
     QString m_trackComment;
     QString m_trackKey;

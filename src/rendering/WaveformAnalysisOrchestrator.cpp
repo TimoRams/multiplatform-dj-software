@@ -579,8 +579,11 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
     {
         analysis::AnalysisFeatureExtractor::Options featOpts;
         featOpts.frameSize = 2048;
-        featOpts.hopSize = 1024;
-        featOpts.maxDurationSec = 420.0;
+        // 512 samples gives the grid a roughly 12 ms temporal resolution at
+        // 44.1 kHz (instead of ~23 ms) and avoids basing a long track's tempo
+        // solely on its intro.
+        featOpts.hopSize = 512;
+        featOpts.maxDurationSec = 0.0;
         analysis::AnalysisFeatureExtractor featureExtractor(featOpts);
         analysis::TempoEstimator tempoEstimator;
         analysis::BeatTracker beatTracker;
@@ -609,7 +612,21 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
                 ? tempo.bpm
                 : tempo.candidates[static_cast<size_t>(candidateIndex)].bpm;
             auto candidateTracked = beatTracker.track(features, candidateBpm);
-            auto candidateFit = gridFitter.fit(features, candidateTracked.beats, candidateBpm);
+            double refinedBpm = candidateBpm;
+            if (candidateTracked.beats.size() >= 8) {
+                const double span = candidateTracked.beats.back().positionSec
+                    - candidateTracked.beats.front().positionSec;
+                const double observedBpm = span > 0.0
+                    ? (static_cast<double>(candidateTracked.beats.size() - 1) * 60.0) / span
+                    : 0.0;
+                // The tracker regression removes hop quantisation. Keep the
+                // original candidate if the observed period describes another
+                // metrical level (half/double tempo) instead.
+                if (observedBpm > 0.0
+                    && std::abs(observedBpm - candidateBpm) / candidateBpm < 0.08)
+                    refinedBpm = observedBpm;
+            }
+            auto candidateFit = gridFitter.fit(features, candidateTracked.beats, refinedBpm);
 
             const double tempoPrior = tempo.candidates.empty()
                 ? 1.0

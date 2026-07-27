@@ -87,7 +87,6 @@ void RgbWaveformItem::setEngine(DjEngine* engine)
     if (m_engine) {
         connect(m_engine, &DjEngine::trackLoaded,    this, &RgbWaveformItem::onTrackLoaded,    Qt::UniqueConnection);
         connect(m_engine, &DjEngine::trackEjected,   this, &RgbWaveformItem::onTrackEjected,   Qt::UniqueConnection);
-        connect(m_engine, &DjEngine::progressChanged, this, &RgbWaveformItem::onRgbDataChanged, Qt::UniqueConnection);
         connect(m_engine, &DjEngine::hotCuesChanged,  this, &RgbWaveformItem::onHotCuesChanged,  Qt::UniqueConnection);
     }
 
@@ -132,9 +131,10 @@ void RgbWaveformItem::onTrackLoaded()
 
 void RgbWaveformItem::onRgbDataChanged()
 {
-    // During progressive analysis, rgbWaveformUpdated fires with every new chunk
-    // and progressChanged fires at ~30 fps. Throttle so paint() (which still needs
-    // to bin the growing full-res data) doesn't hammer the render thread.
+    // During progressive analysis rgbWaveformUpdated fires with every new chunk.
+    // This item does not render a moving playhead, so transport progress must not
+    // trigger a repaint. Throttle analysis updates while paint() still needs to
+    // bin the growing full-resolution data.
     // Once overviewRgbUpdated fires, paint() switches to the pre-downsampled path
     // and subsequent calls are O(kOverviewBins), so the throttle becomes a no-op cost.
     if (!m_updateThrottle->isActive())

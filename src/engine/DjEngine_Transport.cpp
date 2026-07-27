@@ -164,7 +164,7 @@ void DjEngine::ejectTrack()
 
     resetTrackLoadState();
 
-    m_trackTitle.clear();   m_trackArtist.clear();  m_trackAlbum.clear();
+    m_trackTitle.clear();   m_trackArtist.clear();  m_trackAlbum.clear(); m_trackNumber.clear();
     m_trackFilePath.clear();
     m_trackGenre.clear();   m_trackComment.clear();
     m_trackKey.clear();     m_trackDuration.clear();

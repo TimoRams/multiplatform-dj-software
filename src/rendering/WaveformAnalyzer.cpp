@@ -266,6 +266,7 @@ void WaveformAnalyzer::run()
             *this,
             m_pointsPerSecond,
             m_seekHintSec.load(std::memory_order_relaxed),
+            [this]() { return m_seekHintSec.load(std::memory_order_relaxed); },
             totalSamples,
             sampleRate,
             numPoints,
@@ -279,6 +280,25 @@ void WaveformAnalyzer::run()
         };
         if (!waveform_internal::runEnvelopePass(envelopeInput))
             return;
+
+        // Persist the finished waveform immediately. BPM/key/phrase analysis
+        // can take considerably longer and does not alter these vectors; tying
+        // cache creation to that later stage meant closing or switching the
+        // deck lost an otherwise complete waveform.
+        WaveformCache::Payload waveformPayload;
+        waveformPayload.pointsPerSecond = m_pointsPerSecond;
+        waveformPayload.totalExpected = working.getTotalExpected();
+        waveformPayload.globalMaxPeak = working.getGlobalMaxPeak();
+        waveformPayload.waveform = working.getWaveformData();
+        waveformPayload.rgb = working.getRgbWaveformData();
+        waveformPayload.peakMip = working.getPeakMipData();
+        if (!WaveformCache::saveForFile(m_filePath, waveformPayload)) {
+            qWarning() << "[WaveformAnalyzer] Failed to write waveform cache for" << m_filePath;
+        } else {
+            qDebug() << "[WaveformAnalyzer] Waveform cache written:"
+                     << waveformPayload.waveform.size() << "bins,"
+                     << waveformPayload.rgb.size() << "rgb frames";
+        }
     }
 
     if (threadShouldExit()) return;
@@ -296,28 +316,6 @@ void WaveformAnalyzer::run()
         };
         if (!waveform_internal::runAnalysisOrchestrator(orchestratorInput))
             return;
-    }
-
-    // -------------------------------------------------------------------------
-    // Stage 6: Persist finished waveform vectors into file cache.
-    // -------------------------------------------------------------------------
-    if (!threadShouldExit()) {
-        WaveformCache::Payload payload;
-        payload.pointsPerSecond = m_pointsPerSecond;
-        payload.totalExpected = working.getTotalExpected();
-        payload.globalMaxPeak = working.getGlobalMaxPeak();
-        payload.waveform = working.getWaveformData();
-        payload.rgb = working.getRgbWaveformData();
-        payload.peakMip = working.getPeakMipData();
-
-        if (!payload.waveform.isEmpty() && !payload.rgb.isEmpty()) {
-            if (!WaveformCache::saveForFile(m_filePath, payload)) {
-                qWarning() << "[WaveformAnalyzer] Failed to write waveform cache for" << m_filePath;
-            } else {
-                qDebug() << "[WaveformAnalyzer] Waveform cache written:" << payload.waveform.size()
-                         << "bins," << payload.rgb.size() << "rgb frames";
-            }
-        }
     }
 
     if (!threadShouldExit()) {

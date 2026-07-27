@@ -1,5 +1,6 @@
 #include "engine/deck/DeckTrackLoader.h"
 #include "audio/cache/AudioPageCache.h"
+#include "rendering/WaveformCache.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -79,6 +80,7 @@ int main(int argc, char** argv)
     bool ok = true;
     QTemporaryDir directory;
     ok &= require(directory.isValid(), "temporary directory must be available");
+    qputenv("XDG_CONFIG_HOME", directory.path().toUtf8());
     const QString monoPath = directory.filePath(QStringLiteral("Artist - Mono.wav"));
     const QString stereoPath = directory.filePath(QStringLiteral("Stereo.wav"));
     const QString mp3Path = QDir::cleanPath(
@@ -105,6 +107,30 @@ int main(int argc, char** argv)
         ok &= require(waiter.value().cacheHandle.isValid(),
                       "playback cache handle must be prepared off the owner thread");
         cache.releaseTrack(waiter.value().cacheHandle);
+    }
+    {
+        WaveformCache::Payload payload;
+        payload.pointsPerSecond = 100;
+        payload.totalExpected = 20;
+        payload.globalMaxPeak = 0.8f;
+        payload.waveform.resize(payload.totalExpected);
+        payload.rgb.resize(payload.totalExpected);
+        payload.waveform[7].low = 0.65f;
+        payload.rgb[7].rms = 0.7f;
+        ok &= require(WaveformCache::saveForFile(monoPath, payload),
+                      "waveform fixture cache must be saved atomically");
+
+        ResultWaiter waiter;
+        loader.loadTrack(monoPath, waiter.callback());
+        ok &= require(waiter.wait(), "cached waveform load must complete");
+        ok &= require(waiter.value().succeeded(), "cached waveform load must succeed");
+        ok &= require(waiter.value().waveformCacheLoaded,
+                      "track loader must restore a saved waveform cache");
+        ok &= require(waiter.value().waveformCache.rgb.size() == payload.totalExpected
+                          && waiter.value().waveformCache.rgb[7].rms > 0.69f,
+                      "restored waveform cache must preserve its timeline");
+        cache.releaseTrack(waiter.value().cacheHandle);
+        QFile::remove(WaveformCache::cachePathFor(monoPath, payload.pointsPerSecond));
     }
     {
         ResultWaiter waiter;

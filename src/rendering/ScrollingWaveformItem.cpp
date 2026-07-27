@@ -24,11 +24,13 @@ namespace {
 
 constexpr std::size_t kWaveformNodePoolSize = 24;
 
-QSGGeometryNode* makeLineNode(QSGNode* parent, float lineWidth = 1.0f)
+QSGGeometryNode* makeLineNode(QSGNode* parent)
 {
     auto* geometry = new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(), 0);
-    geometry->setDrawingMode(QSGGeometry::DrawLines);
-    geometry->setLineWidth(lineWidth);
+    // Backend line primitives can be rasterised as one or two pixels depending
+    // on the graphics API and DPR. Explicit triangles give us an exact
+    // one-physical-pixel rectangle on every backend.
+    geometry->setDrawingMode(QSGGeometry::DrawTriangles);
 
     auto* material = new QSGVertexColorMaterial();
     material->setFlag(QSGMaterial::Blending, true);
@@ -135,24 +137,31 @@ void writeMarkerGeometry(QSGGeometryNode* node,
                          double devicePixelRatio)
 {
     auto* geometry = node->geometry();
-    geometry->allocate(static_cast<int>(lines.size() * 2));
+    geometry->allocate(static_cast<int>(lines.size() * 6));
     auto* vertices = geometry->vertexDataAsColoredPoint2D();
     int out = 0;
+    const float halfPixel = static_cast<float>(0.5 / std::max(1.0, devicePixelRatio));
     for (const auto& marker : lines) {
         const double relativeX = (marker.linePosition - static_cast<double>(windowStartLine))
             * pixelsPerLine;
+        // Store geometry on the physical-pixel grid. The timeline transform is
+        // placed on a half-pixel centre below, so the final line centre always
+        // lands inside exactly one physical pixel rather than on the boundary
+        // between two pixels.
         const float x = static_cast<float>(std::round(relativeX * devicePixelRatio)
                                            / devicePixelRatio);
-        vertices[out++].set(x, marker.top,
-                            static_cast<uchar>(marker.color.red()),
-                            static_cast<uchar>(marker.color.green()),
-                            static_cast<uchar>(marker.color.blue()),
-                            static_cast<uchar>(marker.color.alpha()));
-        vertices[out++].set(x, marker.bottom,
-                            static_cast<uchar>(marker.color.red()),
-                            static_cast<uchar>(marker.color.green()),
-                            static_cast<uchar>(marker.color.blue()),
-                            static_cast<uchar>(marker.color.alpha()));
+        const uchar r = static_cast<uchar>(marker.color.red());
+        const uchar g = static_cast<uchar>(marker.color.green());
+        const uchar b = static_cast<uchar>(marker.color.blue());
+        const uchar a = static_cast<uchar>(marker.color.alpha());
+        const float left = x - halfPixel;
+        const float right = x + halfPixel;
+        vertices[out++].set(left, marker.top, r, g, b, a);
+        vertices[out++].set(right, marker.top, r, g, b, a);
+        vertices[out++].set(left, marker.bottom, r, g, b, a);
+        vertices[out++].set(left, marker.bottom, r, g, b, a);
+        vertices[out++].set(right, marker.top, r, g, b, a);
+        vertices[out++].set(right, marker.bottom, r, g, b, a);
     }
     node->markDirty(QSGNode::DirtyGeometry);
 }
@@ -176,12 +185,13 @@ std::uint64_t writeWaveformChunk(QSGGeometryNode* node,
         1.0, std::ceil(1.0 / std::max(physicalSpacing, 1.0e-6))));
     const std::uint32_t groupCount = (endLine - beginLine + step - 1) / step;
     auto* geometry = node->geometry();
-    geometry->allocate(static_cast<int>(groupCount * 2));
+    geometry->allocate(static_cast<int>(groupCount * 6));
     auto* vertices = geometry->vertexDataAsColoredPoint2D();
 
     const float centerY = height * 0.5f;
     const float halfHeight = std::max(1.0f, height * 0.48f);
     const float minimumVisibleHeight = static_cast<float>(1.0 / std::max(1.0, devicePixelRatio));
+    const float halfPixel = static_cast<float>(0.5 / std::max(1.0, devicePixelRatio));
     std::uint32_t out = 0;
 
     for (std::uint32_t globalBegin = beginLine; globalBegin < endLine; globalBegin += step) {
@@ -212,8 +222,10 @@ std::uint64_t writeWaveformChunk(QSGGeometryNode* node,
 
         const double centerLine = (static_cast<double>(globalBegin)
             + static_cast<double>(globalEnd - 1)) * 0.5;
+        const double relativeX = (centerLine - static_cast<double>(windowStartLine))
+            * pixelsPerLine;
         const float x = static_cast<float>(
-            (centerLine - static_cast<double>(windowStartLine)) * pixelsPerLine);
+            std::round(relativeX * devicePixelRatio) / devicePixelRatio);
         float top = centerY - (static_cast<float>(maximum) / 32767.0f) * halfHeight;
         float bottom = centerY - (static_cast<float>(minimum) / 32767.0f) * halfHeight;
         if ((minimum != 0 || maximum != 0) && bottom - top < minimumVisibleHeight) {
@@ -225,8 +237,14 @@ std::uint64_t writeWaveformChunk(QSGGeometryNode* node,
         const uchar r = static_cast<uchar>(weight > 0 ? red / weight : 150);
         const uchar g = static_cast<uchar>(weight > 0 ? green / weight : 170);
         const uchar b = static_cast<uchar>(weight > 0 ? blue / weight : 190);
-        vertices[out++].set(x, top, r, g, b, 248);
-        vertices[out++].set(x, bottom, r, g, b, 248);
+        const float left = x - halfPixel;
+        const float right = x + halfPixel;
+        vertices[out++].set(left, top, r, g, b, 248);
+        vertices[out++].set(right, top, r, g, b, 248);
+        vertices[out++].set(left, bottom, r, g, b, 248);
+        vertices[out++].set(left, bottom, r, g, b, 248);
+        vertices[out++].set(right, top, r, g, b, 248);
+        vertices[out++].set(right, bottom, r, g, b, 248);
     }
 
     node->markDirty(QSGNode::DirtyGeometry);
@@ -299,12 +317,16 @@ ScrollingWaveformItem::ScrollingWaveformItem(QQuickItem* parent)
     setFlag(ItemHasContents, true);
     m_dataUpdateThrottle = new QTimer(this);
     m_dataUpdateThrottle->setSingleShot(true);
-    // Analyzer chunks must become visible within one display frame.  This still
-    // coalesces a worker burst, but no longer holds the first playable waveform
-    // segment for four frames.
-    m_dataUpdateThrottle->setInterval(16);
+    // The playhead itself is a VSync transform and stays at full frame rate.
+    // Progressive analysis only changes the underlying geometry; rebuilding it
+    // at 60 Hz competes with that transform and produces visible frame drops.
+    // Coalesce worker bursts to 30 Hz while keeping the first segment responsive.
+    m_dataUpdateThrottle->setInterval(33);
     connect(m_dataUpdateThrottle, &QTimer::timeout, this, [this]() {
-        invalidateGeometry();
+        // A progressive chunk changes only the audio-line nodes. Rebuilding
+        // beat/cue geometry here made the one-pixel beatgrid lines blink while
+        // the worker was publishing chunks.
+        update();
     });
 }
 
@@ -327,11 +349,11 @@ void ScrollingWaveformItem::setEngine(DjEngine* engine)
         connect(m_engine, &DjEngine::trackEjected,
                 this, &ScrollingWaveformItem::onTrackEjected, Qt::UniqueConnection);
         connect(m_engine, &DjEngine::loopChanged,
-                this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
+                this, &ScrollingWaveformItem::onOverlayUpdated, Qt::UniqueConnection);
         connect(m_engine, &DjEngine::hotCuesChanged,
-                this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
+                this, &ScrollingWaveformItem::onOverlayUpdated, Qt::UniqueConnection);
         connect(m_engine, &DjEngine::mainCueChanged,
-                this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
+                this, &ScrollingWaveformItem::onOverlayUpdated, Qt::UniqueConnection);
         connect(m_engine, &DjEngine::tempoChanged,
                 this, &ScrollingWaveformItem::invalidateGeometry, Qt::UniqueConnection);
         onTrackLoaded();
@@ -380,9 +402,9 @@ void ScrollingWaveformItem::onTrackLoaded()
         connect(trackData, &TrackData::dataCleared,
                 this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
         connect(trackData, &TrackData::beatgridChanged,
-                this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
+                this, &ScrollingWaveformItem::onOverlayUpdated, Qt::UniqueConnection);
         connect(trackData, &TrackData::bpmAnalyzed,
-                this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
+                this, &ScrollingWaveformItem::onOverlayUpdated, Qt::UniqueConnection);
     }
     invalidateGeometry();
 }
@@ -398,6 +420,11 @@ void ScrollingWaveformItem::onDataUpdated()
 {
     if (!m_dataUpdateThrottle->isActive())
         m_dataUpdateThrottle->start();
+}
+
+void ScrollingWaveformItem::onOverlayUpdated()
+{
+    invalidateGeometry();
 }
 
 QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
@@ -448,12 +475,13 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     const bool outsideGuard = !scene->hasWindow
         || playheadLine < scene->innerStartLine
         || playheadLine > scene->innerEndLine;
-    const bool configurationChanged = !scene->hasWindow
+    const bool staticConfigurationChanged = !scene->hasWindow
         || scene->trackGeneration != snapshot->trackGeneration
-        || scene->dataGeneration != snapshot->dataGeneration
         || !qFuzzyCompare(scene->pixelsPerLine, pixelsPerLine)
         || !qFuzzyCompare(scene->devicePixelRatio, dpr)
         || scene->renderedSize != bounds.size();
+    const bool configurationChanged = staticConfigurationChanged
+        || scene->dataGeneration != snapshot->dataGeneration;
 
     if (m_forceRebuild || outsideGuard || configurationChanged) {
         QElapsedTimer timer;
@@ -502,81 +530,86 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             }
         }
 
-        const double leftSec = static_cast<double>(scene->windowStartLine)
-            / static_cast<double>(snapshot->linesPerSecond);
-        const double rightSec = static_cast<double>(scene->windowEndLine)
-            / static_cast<double>(snapshot->linesPerSecond);
-        const auto beats = visibleBeatGrid(*trackData, leftSec, rightSec);
-        std::vector<MarkerLine> regularBeats;
-        std::vector<MarkerLine> downbeats;
-        regularBeats.reserve(beats.size());
-        downbeats.reserve(beats.size() / 4 + 1);
-        for (const auto& beat : beats) {
-            MarkerLine marker;
-            marker.linePosition = beat.positionSec * snapshot->linesPerSecond;
-            marker.top = 0.0f;
-            marker.bottom = static_cast<float>(bounds.height());
-            if (beat.isDownbeat || beat.beatInBar == 1) {
-                marker.color = QColor(255, 255, 255, 82);
-                downbeats.push_back(marker);
-            } else {
-                marker.color = QColor(255, 255, 255, 34);
-                regularBeats.push_back(marker);
+        // Overlay positions are independent of progressive waveform chunks.
+        // Keep their existing physical-pixel geometry until the guarded window,
+        // track, layout, or actual overlay data changes.
+        if (m_forceRebuild || outsideGuard || staticConfigurationChanged) {
+            const double leftSec = static_cast<double>(scene->windowStartLine)
+                / static_cast<double>(snapshot->linesPerSecond);
+            const double rightSec = static_cast<double>(scene->windowEndLine)
+                / static_cast<double>(snapshot->linesPerSecond);
+            const auto beats = visibleBeatGrid(*trackData, leftSec, rightSec);
+            std::vector<MarkerLine> regularBeats;
+            std::vector<MarkerLine> downbeats;
+            regularBeats.reserve(beats.size());
+            downbeats.reserve(beats.size() / 4 + 1);
+            for (const auto& beat : beats) {
+                MarkerLine marker;
+                marker.linePosition = beat.positionSec * snapshot->linesPerSecond;
+                marker.top = 0.0f;
+                marker.bottom = static_cast<float>(bounds.height());
+                if (beat.isDownbeat || beat.beatInBar == 1) {
+                    marker.color = QColor(255, 255, 255, 82);
+                    downbeats.push_back(marker);
+                } else {
+                    marker.color = QColor(255, 255, 255, 34);
+                    regularBeats.push_back(marker);
+                }
             }
-        }
-        writeMarkerGeometry(scene->regularBeats, regularBeats,
-                            scene->windowStartLine, pixelsPerLine, dpr);
-        writeMarkerGeometry(scene->downbeats, downbeats,
-                            scene->windowStartLine, pixelsPerLine, dpr);
+            writeMarkerGeometry(scene->regularBeats, regularBeats,
+                                scene->windowStartLine, pixelsPerLine, dpr);
+            writeMarkerGeometry(scene->downbeats, downbeats,
+                                scene->windowStartLine, pixelsPerLine, dpr);
 
-        auto* loopGeometry = scene->loopFill->geometry();
-        std::vector<MarkerLine> loopEdges;
-        if (engine->loopActive() && engine->loopOutPosition() > engine->loopInPosition()) {
-            const double loopInLine = engine->loopInPosition() * snapshot->linesPerSecond;
-            const double loopOutLine = engine->loopOutPosition() * snapshot->linesPerSecond;
-            const float x0 = static_cast<float>(
-                (loopInLine - scene->windowStartLine) * pixelsPerLine);
-            const float x1 = static_cast<float>(
-                (loopOutLine - scene->windowStartLine) * pixelsPerLine);
-            loopGeometry->allocate(4);
-            auto* vertices = loopGeometry->vertexDataAsColoredPoint2D();
-            const float h = static_cast<float>(bounds.height());
-            vertices[0].set(x0, 0.0f, 70, 190, 255, 22);
-            vertices[1].set(x0, h, 70, 190, 255, 22);
-            vertices[2].set(x1, 0.0f, 70, 190, 255, 22);
-            vertices[3].set(x1, h, 70, 190, 255, 22);
-            loopEdges.push_back({loopInLine, QColor(70, 190, 255, 190), 0.0f, h});
-            loopEdges.push_back({loopOutLine, QColor(70, 190, 255, 190), 0.0f, h});
-        } else {
-            loopGeometry->allocate(0);
-        }
-        scene->loopFill->markDirty(QSGNode::DirtyGeometry);
-        writeMarkerGeometry(scene->loopEdges, loopEdges,
-                            scene->windowStartLine, pixelsPerLine, dpr);
+            auto* loopGeometry = scene->loopFill->geometry();
+            std::vector<MarkerLine> loopEdges;
+            if (engine->loopActive() && engine->loopOutPosition() > engine->loopInPosition()) {
+                const double loopInLine = engine->loopInPosition() * snapshot->linesPerSecond;
+                const double loopOutLine = engine->loopOutPosition() * snapshot->linesPerSecond;
+                const float x0 = static_cast<float>(
+                    (loopInLine - scene->windowStartLine) * pixelsPerLine);
+                const float x1 = static_cast<float>(
+                    (loopOutLine - scene->windowStartLine) * pixelsPerLine);
+                loopGeometry->allocate(4);
+                auto* vertices = loopGeometry->vertexDataAsColoredPoint2D();
+                const float h = static_cast<float>(bounds.height());
+                vertices[0].set(x0, 0.0f, 70, 190, 255, 22);
+                vertices[1].set(x0, h, 70, 190, 255, 22);
+                vertices[2].set(x1, 0.0f, 70, 190, 255, 22);
+                vertices[3].set(x1, h, 70, 190, 255, 22);
+                loopEdges.push_back({loopInLine, QColor(70, 190, 255, 190), 0.0f, h});
+                loopEdges.push_back({loopOutLine, QColor(70, 190, 255, 190), 0.0f, h});
+            } else {
+                loopGeometry->allocate(0);
+            }
+            scene->loopFill->markDirty(QSGNode::DirtyGeometry);
+            writeMarkerGeometry(scene->loopEdges, loopEdges,
+                                scene->windowStartLine, pixelsPerLine, dpr);
 
-        std::vector<MarkerLine> cueLines;
-        const QVariantList cues = engine->hotCues();
-        cueLines.reserve(static_cast<std::size_t>(cues.size() + 1));
-        for (const QVariant& cueValue : cues) {
-            const QVariantMap cue = cueValue.toMap();
-            if (!cue.value(QStringLiteral("set")).toBool())
-                continue;
-            QColor color(cue.value(QStringLiteral("color")).toString());
-            if (!color.isValid())
-                color = QColor(235, 65, 75);
-            color.setAlpha(215);
-            cueLines.push_back({
-                cue.value(QStringLiteral("positionSec")).toDouble()
-                    * snapshot->linesPerSecond,
-                color, 0.0f, static_cast<float>(bounds.height())});
+            std::vector<MarkerLine> cueLines;
+            const QVariantList cues = engine->hotCues();
+            cueLines.reserve(static_cast<std::size_t>(cues.size() + 1));
+            for (const QVariant& cueValue : cues) {
+                const QVariantMap cue = cueValue.toMap();
+                if (!cue.value(QStringLiteral("set")).toBool())
+                    continue;
+                QColor color(cue.value(QStringLiteral("color")).toString());
+                if (!color.isValid())
+                    color = QColor(235, 65, 75);
+                color.setAlpha(215);
+                cueLines.push_back({
+                    cue.value(QStringLiteral("positionSec")).toDouble()
+                        * snapshot->linesPerSecond,
+                    color, 0.0f, static_cast<float>(bounds.height())});
+            }
+            if (engine->mainCueSec() >= 0.0) {
+                cueLines.push_back({engine->mainCueSec() * snapshot->linesPerSecond,
+                                    QColor(255, 70, 78, 210), 0.0f,
+                                    static_cast<float>(bounds.height())});
+            }
+            writeMarkerGeometry(scene->cueLines, cueLines,
+                                scene->windowStartLine, pixelsPerLine, dpr);
         }
-        if (engine->mainCueSec() >= 0.0) {
-            cueLines.push_back({engine->mainCueSec() * snapshot->linesPerSecond,
-                                QColor(255, 70, 78, 210), 0.0f,
-                                static_cast<float>(bounds.height())});
-        }
-        writeMarkerGeometry(scene->cueLines, cueLines,
-                            scene->windowStartLine, pixelsPerLine, dpr);
 
         scene->trackGeneration = snapshot->trackGeneration;
         scene->dataGeneration = snapshot->dataGeneration;
@@ -595,13 +628,19 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
 
     const double translationX = bounds.width() * 0.5
         - (playheadLine - static_cast<double>(scene->windowStartLine)) * pixelsPerLine;
+    // Both audio and overlay line geometry use integer physical-pixel offsets.
+    // Moving their common origin between pixel centres caused the alternating
+    // one-/two-pixel appearance while scrolling. Quantising the origin to the
+    // centre of a physical pixel keeps every vertical line exactly one pixel
+    // wide on fractional and integer DPR screens alike.
+    const double pixelCenteredTranslation
+        = (std::floor(translationX * dpr) + 0.5) / dpr;
     QMatrix4x4 transform;
-    transform.translate(static_cast<float>(translationX), 0.0f);
+    transform.translate(static_cast<float>(pixelCenteredTranslation), 0.0f);
     scene->timeline->setMatrix(transform);
     scene->timeline->markDirty(QSGNode::DirtyMatrix);
     QMatrix4x4 markerTransform;
-    const double snappedTranslation = std::round(translationX * dpr) / dpr;
-    markerTransform.translate(static_cast<float>(snappedTranslation), 0.0f);
+    markerTransform.translate(static_cast<float>(pixelCenteredTranslation), 0.0f);
     scene->markerTimeline->setMatrix(markerTransform);
     scene->markerTimeline->markDirty(QSGNode::DirtyMatrix);
     m_transformUpdateCount.fetch_add(1, std::memory_order_relaxed);

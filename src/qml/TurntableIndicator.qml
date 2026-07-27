@@ -9,6 +9,7 @@ Item {
     property real  cutoutAngleDeg: 16
     property real  baseRpm: 33.0 + 1.0/3.0   // 33⅓ RPM = 200 °/s
     property real  scratchDeadzoneDeg: 0.05
+    property bool  animationEnabled: true
 
     readonly property real degreesPerSecond: 200.0
 
@@ -145,7 +146,7 @@ Item {
     }
 
     FrameAnimation {
-        running: root.engine !== null
+        running: root.animationEnabled && root.visible && root.engine !== null
         onTriggered: root.updateRotation()
     }
 

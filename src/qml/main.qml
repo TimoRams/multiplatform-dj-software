@@ -32,6 +32,8 @@ ApplicationWindow {
     property bool showFxBar: true
     property bool showLibrary: true
     property bool showCrossfader: true
+    // Desktop-only bridge while we develop the standalone/AIO surface.
+    property bool showDevelopmentControls: true
     property bool fourDeckMode: false
     property bool allInOneMode: false
     property string activeMainTab: "performance"
@@ -123,6 +125,7 @@ ApplicationWindow {
         s("showFxBar", window.allInOneMode ? window._desktopShowFxBar : window.showFxBar)
         s("showLibrary", window.showLibrary)
         s("showCrossfader", window.showCrossfader)
+        s("showDevelopmentControls", window.showDevelopmentControls)
         settingsManager.setUiState("activeMainTab", window.activeMainTab)
     }
 
@@ -136,6 +139,7 @@ ApplicationWindow {
         window.showDeckB      = b("showDeckB", true)
         window.showLibrary    = b("showLibrary", true)
         window.showCrossfader = b("showCrossfader", true)
+        window.showDevelopmentControls = b("showDevelopmentControls", true)
         window.fourDeckMode   = b("fourDeckMode", false)
         window.showMixer      = b("showMixer", true)
         window.showFxBar      = b("showFxBar", true)
@@ -171,6 +175,7 @@ ApplicationWindow {
     onShowFxBarChanged:     _scheduleUiPersist()
     onShowLibraryChanged:   _scheduleUiPersist()
     onShowCrossfaderChanged:_scheduleUiPersist()
+    onShowDevelopmentControlsChanged: _scheduleUiPersist()
     onActiveMainTabChanged: _scheduleUiPersist()
 
     function cancelAppClosePrompt() {
@@ -236,7 +241,9 @@ ApplicationWindow {
         }
     }
 
-    readonly property real baseWaveformHeight: 150
+    // Two stacked performance waveforms need enough vertical room for their
+    // beat grid and fixed playhead; deck controls live below in a compact row.
+    readonly property real baseWaveformHeight: 340
     readonly property real baseDeckMixerHeight: baseUiHeight - baseWaveformHeight
 
     function _isTextInputFocused() {
@@ -434,13 +441,17 @@ ApplicationWindow {
     readonly property int crossfaderBarHeight: UiMetrics.px(window.compactLayout ? 30 : 36)
     readonly property int mixerBaseWidth: UiMetrics.mixerPreferredWidth
 
-    readonly property real baseUiHeight: 150 + (baseUiWidth / 6.5) + 4
+    // Keep the full 375 px deck surface below the taller waveform viewport.
+    // baseDeckMixerHeight is derived from these two values.
+    readonly property real baseUiHeight: baseWaveformHeight + 375 + 4
+    // The primary display is the standalone/AIO surface.  Mixer, FX and
+    // transport controls are intentionally kept out of it during development.
     readonly property bool primaryDeckRowVisible: !window.libraryExpanded
                                                    && !window.allInOnePanelActive
-                                                   && (window.showDeckA || window.showDeckB || window.showMixer)
+                                                   && (window.showDeckA || window.showDeckB)
     readonly property bool secondaryDeckRowVisible: window.fourDeckMode && !window.libraryExpanded && !window.allInOnePanelActive
-    readonly property bool crossfaderVisible: window.showCrossfader && !window.libraryExpanded && !window.allInOnePanelActive
-    readonly property bool fxVisible: window.showFxBar && !window.libraryExpanded && !window.allInOnePanelActive
+    readonly property bool crossfaderVisible: false
+    readonly property bool fxVisible: false
     readonly property int waveformMinimumHeight: window.scaledWaveformHeight
     readonly property int libraryReserveHeight: !window.effectiveLibraryVisible ? 0 : Math.round(180 * window.uiScale)
     readonly property int fixedPerformanceHeight:
@@ -470,6 +481,11 @@ ApplicationWindow {
     // ─────────────────────────────────────────────────────────────────────────
     // MAIN LAYOUT – direct child, no async Loader wrapping
     // ─────────────────────────────────────────────────────────────────────────
+    DevelopmentControlsWindow {
+        id: developmentControlsWindow
+        appWindow: window
+    }
+
     ColumnLayout {
         id: mainLayout
         anchors.fill: parent

@@ -12,6 +12,7 @@ Item {
     property real waveformZoom: 1.5
     property bool dropHovered: false
     property bool beatgridEditMode: false
+    property bool showBeatgridEditor: true
     property bool sameTrackDoubleHint: false
 
     Layout.fillWidth: true
@@ -58,7 +59,7 @@ Item {
             id: scrubArea
             anchors.fill: parent
             // Let clicks pass through to the grid overlay on the left strip.
-            anchors.leftMargin: beatgridPanel.occupiedWidth
+            anchors.leftMargin: root.showBeatgridEditor ? beatgridPanel.occupiedWidth : 0
             preventStealing: true
 
             property real pressMouseX: 0
@@ -71,7 +72,7 @@ Item {
                 if (root.engine === null) return
                 scrubEngaged = false
                 lastDragPx = 0
-                pressMouseX = mouse.x + beatgridPanel.occupiedWidth
+                pressMouseX = mouse.x + (root.showBeatgridEditor ? beatgridPanel.occupiedWidth : 0)
                 if (root.beatgridEditMode && mouse.button === Qt.LeftButton) {
                     pressPlayheadSec = root.engine.getVisualPositionQml()
                     return
@@ -82,7 +83,7 @@ Item {
 
             onPositionChanged: (mouse) => {
                 if (root.engine === null || root.beatgridEditMode) return
-                const dragPx = (mouse.x + beatgridPanel.occupiedWidth) - pressMouseX
+                const dragPx = (mouse.x + (root.showBeatgridEditor ? beatgridPanel.occupiedWidth : 0)) - pressMouseX
 
                 if (!scrubEngaged) {
                     if (Math.abs(dragPx) < scrubDeadzonePx)
@@ -234,6 +235,7 @@ Item {
         // Grid editor overlays the left edge — does not shift waveform/playhead.
         BeatgridEditorPanel {
             id: beatgridPanel
+            visible: root.showBeatgridEditor
             anchors.left: parent.left
             anchors.top: parent.top
             anchors.bottom: parent.bottom
@@ -245,7 +247,7 @@ Item {
         Binding {
             target: root
             property: "beatgridEditMode"
-            value: beatgridPanel.editMode
+            value: root.showBeatgridEditor && beatgridPanel.editMode
         }
 
         // Same file doubled on multiple playing decks — comb-filtering hint.

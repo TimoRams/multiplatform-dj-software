@@ -7,6 +7,15 @@ Item {
     id: deck
     property string deckName: "A"
     property var engine: null
+    // The performance surface deliberately exposes only hot cues.  The full
+    // transport/control strip lives in the development-controls window.
+    property bool developmentControls: false
+    // Development window cards intentionally omit the duplicated display and
+    // pad surface, leaving a dense transport/loop/tempo control strip.
+    property bool controlsOnly: false
+    property var hostWindow: null
+    property var mixerControl: null
+    property string channelId: ""
     property string _manualBpmInput: ""
 
     Layout.fillWidth: true
@@ -23,7 +32,7 @@ Item {
     property string _trackBpm:      ""
     property string _currentBpm:    ""
     readonly property bool linkAvailable: (typeof linkManager !== "undefined" && linkManager !== null && linkManager.enabled)
-    readonly property bool linkMode: (typeof window !== "undefined" && window !== null && window.linkedDeckName === deck.deckName)
+    readonly property bool linkMode: deck.hostWindow !== null && deck.hostWindow.linkedDeckName === deck.deckName
     readonly property bool sameTrackDoubleWarning: {
         if (!deck.engine || !deck.engine.hasTrack || !deck.engine.isPlaying || !deck.engine.trackFilePath)
             return false
@@ -386,9 +395,9 @@ Item {
     }
 
     function _setLinkMode(on) {
-        if (typeof window === "undefined" || window === null)
+        if (deck.hostWindow === null)
             return
-        window.linkedDeckName = on ? deck.deckName : ""
+        deck.hostWindow.linkedDeckName = on ? deck.deckName : ""
     }
 
     function _isLinkLeader() {
@@ -468,6 +477,10 @@ Item {
     }
 
     onLinkModeChanged: {
+        // The always-present AIO deck owns Link clock publication.  The
+        // development-window duplicate is only an input surface.
+        if (deck.developmentControls)
+            return
         if (deck.linkMode) {
             deck._linkSuppressPublishUntilMs = Date.now() + 180
             deck._publishDeckToAbletonLink()
@@ -507,7 +520,7 @@ Item {
     Connections {
         target: (typeof controlClock !== "undefined") ? controlClock : null
         function onLinkTick() {
-            if (deck.linkMode && deck.linkAvailable && deck.engine !== null
+            if (!deck.developmentControls && deck.linkMode && deck.linkAvailable && deck.engine !== null
                     && deck.engine.isPlaying)
                 deck._publishDeckToAbletonLink()
         }
@@ -548,12 +561,26 @@ Item {
             anchors.fill: parent
             spacing: 0
 
+            DeckTrackInfoPanel {
+                visible: !deck.controlsOnly
+                Layout.fillWidth: true
+                Layout.preferredHeight: deck.controlsOnly ? 0 : 275
+                Layout.minimumHeight: deck.controlsOnly ? 0 : 275
+                Layout.maximumHeight: deck.controlsOnly ? 0 : 275
+                deckName: deck.deckName
+                engine: deck.engine
+                onAir: deck.engine && deck.engine.isPlaying
+                       && (!deck.mixerControl || deck.channelId === ""
+                           || deck.mixerControl.faderLevel(deck.channelId) > 0.001)
+            }
+
             // ── Track-info header ──────────────────────────────────────────
             Rectangle {
+                visible: false
                 Layout.fillWidth: true
-                Layout.preferredHeight: deck.headerH
-                Layout.minimumHeight: deck.headerH
-                Layout.maximumHeight: deck.headerH
+                Layout.preferredHeight: 0
+                Layout.minimumHeight: 0
+                Layout.maximumHeight: 0
                 color: UiTheme.panel
 
                 RowLayout {
@@ -615,6 +642,7 @@ Item {
 
                         Rectangle {
                             anchors.fill: parent
+                            visible: deck.developmentControls
                             color: "#000000"
                             opacity: deck._hasTrack && coverHov.hovered ? 0.72 : 0.0
                             Behavior on opacity { NumberAnimation { duration: 100 } }
@@ -643,7 +671,9 @@ Item {
 
                         MouseArea {
                             anchors.fill: parent
+                            visible: deck.developmentControls
                             cursorShape: deck._hasTrack ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            enabled: deck.developmentControls
                             onClicked: { if (deck._hasTrack && deck.engine) deck.engine.ejectTrack() }
                         }
                     }
@@ -713,6 +743,7 @@ Item {
 
                             MouseArea {
                                 anchors.fill: parent
+                                enabled: deck.developmentControls
                                 acceptedButtons: Qt.RightButton
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: (mouse) => {
@@ -748,35 +779,53 @@ Item {
                 }
             }
 
-            Rectangle { Layout.fillWidth: true; height: 1; color: UiTheme.separatorSubtle }
-
-            // ── Overview waveform ─────────────────────────────────────────
-            OverallWaveform {
-                engine: deck.engine
+            Rectangle {
+                visible: false
                 Layout.fillWidth: true
-                Layout.preferredHeight: 28
-                stripeColor: UiTheme.separatorSubtle
+                Layout.preferredHeight: 0
+                Layout.minimumHeight: 0
+                Layout.maximumHeight: 0
+                color: UiTheme.separatorSubtle
             }
 
-            AnalysisProgressBar {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 4
-                engine: deck.engine
-            }
+            // The previous overview and analysis bar are no longer part of the
+            // touch surface. Do not instantiate hidden waveform components here:
+            // they keep signal connections and per-frame work alive off-screen.
 
-            Rectangle { Layout.fillWidth: true; height: 1; color: UiTheme.separatorSubtle }
+            Rectangle {
+                visible: false
+                Layout.fillWidth: true
+                Layout.preferredHeight: 0
+                Layout.minimumHeight: 0
+                Layout.maximumHeight: 0
+                color: UiTheme.separatorSubtle
+            }
 
             // ── Transport / loop controls ─────────────────────────────────
             Item {
                 Layout.fillWidth: true
-                readonly property int controlsHeight: deck.btnH * 2 + 1
+                readonly property int controlsHeight: deck.developmentControls ? deck.btnH * 2 + 1 : 0
                 Layout.minimumHeight: controlsHeight
                 Layout.preferredHeight: controlsHeight
                 Layout.maximumHeight: controlsHeight
+                visible: deck.developmentControls
 
                 Rectangle {
                     anchors.fill: parent
                     color: UiTheme.panelInset
+                }
+
+                Text {
+                    visible: deck.controlsOnly
+                    anchors.right: parent.right
+                    anchors.rightMargin: 8
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "DECK " + deck.deckName
+                    color: deck.accent
+                    font.pixelSize: 8
+                    font.bold: true
+                    font.letterSpacing: 0.8
+                    font.family: "monospace"
                 }
 
             ColumnLayout {
@@ -869,7 +918,7 @@ Item {
                             onClicked: {
                                 if (!deck.linkAvailable) { deck._setLinkMode(false); return }
                                 deck._setLinkMode(!deck.linkMode)
-                                if (deck.linkMode) deck._publishDeckToAbletonLink()
+                                if (deck.linkMode && !deck.developmentControls) deck._publishDeckToAbletonLink()
                             }
                         }
                     }
@@ -1005,33 +1054,54 @@ Item {
 
             Rectangle {
                 Layout.fillWidth: true
-                Layout.minimumHeight: 1
-                Layout.preferredHeight: 1
-                Layout.maximumHeight: 1
+                Layout.minimumHeight: deck.developmentControls ? 1 : 0
+                Layout.preferredHeight: deck.developmentControls ? 1 : 0
+                Layout.maximumHeight: deck.developmentControls ? 1 : 0
+                visible: deck.developmentControls
                 color: UiTheme.separatorSubtle
             }
 
             // ── Performance pads + tempo fader ────────────────────────────
             RowLayout {
                 Layout.fillWidth: true
-                Layout.fillHeight: true
+                Layout.fillHeight: false
+                Layout.preferredHeight: deck.controlsOnly ? 88 : 100
+                Layout.minimumHeight: deck.controlsOnly ? 88 : 100
+                Layout.maximumHeight: deck.controlsOnly ? 88 : 100
                 spacing: 0
 
                 PerformancePads {
                     id: performancePads
+                    visible: !deck.controlsOnly
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+                    Layout.preferredWidth: deck.controlsOnly ? 0 : -1
+                    Layout.minimumWidth: deck.controlsOnly ? 0 : 0
+                    Layout.maximumWidth: deck.controlsOnly ? 0 : 16777215
                     engine: deck.engine
                     accentColor: deck.accent
+                    compact: true
+                    // The touch surface keeps its complete pad-page selector;
+                    // transport and mixer controls still live in the separate
+                    // development window.
+                    hotCueOnly: false
                 }
 
-                Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
+                Rectangle {
+                    visible: deck.developmentControls
+                    Layout.preferredWidth: deck.developmentControls ? 1 : 0
+                    Layout.minimumWidth: deck.developmentControls ? 1 : 0
+                    Layout.maximumWidth: deck.developmentControls ? 1 : 0
+                    Layout.fillHeight: true
+                    color: UiTheme.separatorSubtle
+                }
 
                 Rectangle {
                         id: tempoPanel
-                        Layout.preferredWidth: deck.tempoPanelW
-                        Layout.minimumWidth: deck.tempoPanelW
-                        Layout.maximumWidth: deck.tempoPanelW
+                        visible: deck.developmentControls
+                        Layout.preferredWidth: deck.developmentControls ? deck.tempoPanelW : 0
+                        Layout.minimumWidth: deck.developmentControls ? deck.tempoPanelW : 0
+                        Layout.maximumWidth: deck.developmentControls ? deck.tempoPanelW : 0
                         Layout.fillHeight: true
                         color: UiTheme.panel
 

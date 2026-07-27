@@ -51,6 +51,7 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
     m_trackTitle = result.metadata.title;
     m_trackArtist = result.metadata.artist;
     m_trackAlbum = result.metadata.album;
+    m_trackNumber = result.metadata.trackNumber;
     m_trackGenre = result.metadata.genre;
     m_trackComment = result.metadata.comment;
     m_trackKey = result.metadata.key;

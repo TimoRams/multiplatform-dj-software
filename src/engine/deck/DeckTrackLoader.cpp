@@ -210,8 +210,14 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
     if (!result.cacheHandle.isValid())
         return fail(TrackLoadError::DecoderCreationFailed, QStringLiteral("Could not open playback cache"));
 
-    // Waveform cache/overview, cover extraction and auto-cue scanning are
-    // enrichment work.  They must not delay the PlaybackBootstrap result.
+    // Restore the immutable waveform before publishing the prepared track.
+    // These fields were previously present in TrackLoadResult but never filled,
+    // so every reload unnecessarily started a new analysis and visibly changed
+    // the waveform again.
+    if (!isCurrent(request.generation))
+        return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
+    result.waveformCacheLoaded = WaveformCache::loadForFile(
+        result.canonicalPath, m_waveformPointsPerSecond, &result.waveformCache);
     if (!isCurrent(request.generation))
         return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
     return result;

@@ -10,11 +10,14 @@
 #include <QStandardPaths>
 #include <QtGlobal>
 
+#include <cmath>
+
 namespace {
 
 constexpr quint32 kMagic = 0x52574631; // RWF1
 constexpr qint32 kVersion = 6;         // v6: analysis pipeline version bumped; binary payload stays v5-compatible.
 constexpr int kBlockSize = 4096;
+constexpr qint32 kMaxCachedBins = 100'000'000;
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
 constexpr auto kDataStreamVersion = QDataStream::Qt_6_5;
@@ -84,8 +87,12 @@ bool WaveformCache::loadForFile(const QString& filePath, int pointsPerSecond, Pa
         return false;
     if (magic != kMagic || (version != 5 && version != kVersion) || pps != pointsPerSecond)
         return false;
-    if (wfCount < 0 || rgbCount < 0 || peakCount < 0)
+    if (totalExpected <= 0 || totalExpected > kMaxCachedBins
+        || wfCount != totalExpected || rgbCount != totalExpected
+        || peakCount < 0 || peakCount > kMaxCachedBins
+        || !std::isfinite(globalMaxPeak) || globalMaxPeak <= 0.0f) {
         return false;
+    }
 
     Payload payload;
     payload.pointsPerSecond = pps;
@@ -153,7 +160,7 @@ bool WaveformCache::loadForFile(const QString& filePath, int pointsPerSecond, Pa
         peakRead += n;
     }
 
-    if (in.status() != QDataStream::Ok)
+    if (in.status() != QDataStream::Ok || !f.atEnd())
         return false;
 
     *out = std::move(payload);
@@ -162,8 +169,15 @@ bool WaveformCache::loadForFile(const QString& filePath, int pointsPerSecond, Pa
 
 bool WaveformCache::saveForFile(const QString& filePath, const Payload& payload)
 {
-    if (payload.waveform.isEmpty() || payload.rgb.isEmpty() || payload.pointsPerSecond <= 0)
+    if (payload.waveform.isEmpty() || payload.rgb.isEmpty()
+        || payload.pointsPerSecond <= 0
+        || payload.totalExpected <= 0
+        || payload.totalExpected != payload.waveform.size()
+        || payload.totalExpected != payload.rgb.size()
+        || !std::isfinite(payload.globalMaxPeak)
+        || payload.globalMaxPeak <= 0.0f) {
         return false;
+    }
 
     QSaveFile f(cachePathFor(filePath, payload.pointsPerSecond));
     if (!f.open(QIODevice::WriteOnly))

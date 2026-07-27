@@ -18,6 +18,10 @@ struct EnvelopePassInput
     juce::Thread& thread;
     int pointsPerSecond = 600;
     double seekHintSec = 0.0;
+    // The deck can seek while the progressive pass is running. Read the latest
+    // cursor position before scheduling another priority window instead of
+    // continuing to prefetch around the position that started the analysis.
+    std::function<double()> currentSeekHintSec;
     juce::int64 totalSamples = 0;
     double sampleRate = 0.0;
     int numPoints = 0;

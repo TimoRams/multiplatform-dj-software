@@ -5,8 +5,10 @@
 #include <QTemporaryDir>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <thread>
 
 namespace {
@@ -77,6 +79,36 @@ int main(int argc, char** argv)
     QTemporaryDir dir;
     const QString wavePath = dir.filePath(QStringLiteral("cancel.wav"));
     ok &= require(dir.isValid() && writeSilentWave(wavePath), "test wave must be writable");
+    if (ok) {
+        WaveformAnalyzer analyzer(&formats, 600);
+        std::mutex chunkMutex;
+        std::condition_variable chunkReady;
+        int firstRgbBin = -1;
+        analyzer.setChunkCallback(
+            [&](WaveformAnalyzer::AnalysisGeneration, int firstBin, int,
+                QVector<TrackData::WaveformBin>,
+                QVector<TrackData::RgbWaveformFrame> rgb) {
+                if (rgb.isEmpty())
+                    return;
+                {
+                    std::lock_guard lock(chunkMutex);
+                    if (firstRgbBin < 0)
+                        firstRgbBin = firstBin;
+                }
+                chunkReady.notify_one();
+            });
+        analyzer.startAnalysis(wavePath, 15.0);
+        {
+            std::unique_lock lock(chunkMutex);
+            ok &= require(chunkReady.wait_for(lock, std::chrono::seconds(5),
+                                              [&] { return firstRgbBin >= 0; }),
+                          "cursor-priority waveform chunk must be published promptly");
+        }
+        // 0.5 s of context at 600 pps starts 300 bins before the cursor.
+        ok &= require(firstRgbBin == 15 * 600 - 300,
+                      "first lazy-loaded chunk must start at the cursor context window");
+        analyzer.shutdownAndJoin();
+    }
     if (ok) {
         TrackData data;
         auto analyzer = std::make_unique<WaveformAnalyzer>(&formats, 600);

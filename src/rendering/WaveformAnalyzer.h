@@ -131,7 +131,11 @@ public:
     void publishChunk(Chunk value)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        constexpr size_t kMaxChunks = 32;
+        // A cursor-priority pass publishes its window before the sequential
+        // pass. A tiny FIFO could drop that cursor window again before the next
+        // 60 Hz control tick. 256 small chunks cover a large worker burst while
+        // keeping the mailbox bounded to only a few MiB.
+        constexpr size_t kMaxChunks = 256;
         if (m_chunks.size() == kMaxChunks) {
             m_chunks.erase(m_chunks.begin());
             ++m_replaced;

@@ -36,6 +36,24 @@ float localBeatEvidence(const AnalysisFeatures& f, double frame, int toleranceFr
     return best;
 }
 
+int strongestLocalBeatFrame(const AnalysisFeatures& f, double frame, int toleranceFrames)
+{
+    const int center = static_cast<int>(std::round(frame));
+    int best = std::clamp(center, 0, static_cast<int>(f.onsetStrength.size()) - 1);
+    float bestScore = -1.0f;
+    for (int i = center - toleranceFrames; i <= center + toleranceFrames; ++i) {
+        const float score = beatEvidenceAt(f, i);
+        // Equal-energy plateaus are common after FFT analysis. Prefer the
+        // closest frame so they do not introduce a systematic grid drift.
+        if (score > bestScore
+            || (score == bestScore && std::abs(i - center) < std::abs(best - center))) {
+            bestScore = score;
+            best = std::clamp(i, 0, static_cast<int>(f.onsetStrength.size()) - 1);
+        }
+    }
+    return best;
+}
+
 std::vector<int> strongOnsetFrames(const AnalysisFeatures& f, int startFrame, int endFrame)
 {
     std::vector<int> peaks;
@@ -230,11 +248,19 @@ BeatGridFitResult BeatGridFitter::fit(const AnalysisFeatures& features,
         if (sec > features.durationSec + period * 0.5)
             break;
         BeatMarker marker;
-        marker.positionSec = std::min(sec, features.durationSec);
+        // Keep the global tempo grid stable, but align every visible grid line
+        // to the strongest nearby transient.  The bounded search prevents one
+        // missing kick from pulling a beat into its neighbour.
+        const int predictedFrame = features.secondsToFrame(sec);
+        const int snappedFrame = strongestLocalBeatFrame(features, predictedFrame,
+                                                         toleranceFrames);
+        marker.positionSec = std::min(features.durationSec,
+                                      features.frameToSeconds(static_cast<size_t>(snappedFrame)));
         marker.isBeat = true;
-        marker.confidence = localBeatEvidence(features,
-                                              static_cast<double>(features.secondsToFrame(sec)),
-                                              toleranceFrames);
+        marker.confidence = localBeatEvidence(features, snappedFrame, toleranceFrames);
+        if (!result.beats.empty() && marker.positionSec <= result.beats.back().positionSec)
+            marker.positionSec = std::min(features.durationSec,
+                                          result.beats.back().positionSec + secondsPerFrame * 0.25);
         result.beats.push_back(marker);
     }
 

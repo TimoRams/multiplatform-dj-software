@@ -49,6 +49,7 @@ private slots:
     void onTrackLoaded();
     void onTrackEjected();
     void onDataUpdated();
+    void onOverlayUpdated();
 
 private:
     static float clampZoom(float pixelsPerPoint);

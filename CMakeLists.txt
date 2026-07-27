@@ -262,6 +262,7 @@ qt_add_qml_module(${PROJECT_NAME}
         src/qml/shared/UiMetrics.qml
         src/qml/shared/UiShortcutManager.qml
         src/qml/performance/PerformanceWorkspace.qml
+        src/qml/performance/PerformanceWaveformScreen.qml
         src/qml/shell/StartupOverlay.qml
         src/qml/shell/ExitOverlay.qml
         src/qml/shell/StatusOverlay.qml
@@ -273,10 +274,15 @@ qt_add_qml_module(${PROJECT_NAME}
         src/qml/EnlargedWaveform.qml
         src/qml/AioWaveformInfoSlot.qml
         src/qml/BeatgridEditorPanel.qml
+        src/qml/PerformanceBeatgridPanel.qml
+        src/qml/PerformanceDeckQuickPanel.qml
+        src/qml/PerformanceBeatFxPanel.qml
         src/qml/OverallWaveform.qml
         src/qml/SegmentBar.qml
         src/qml/AnalysisProgressBar.qml
         src/qml/DeckControl.qml
+        src/qml/DeckTrackInfoPanel.qml
+        src/qml/DevelopmentControlsWindow.qml
         src/qml/TrackInfoDisplay.qml
         src/qml/Library.qml
         src/qml/PerformancePads.qml
@@ -861,6 +867,7 @@ add_executable(BrockDJ_track_loader_tests
     src/audio/cache/AudioPageCache.cpp
     src/audio/cache/AudioCacheWorker.cpp
     src/engine/audio/MetadataUtils.cpp
+    src/rendering/WaveformCache.cpp
 )
 target_include_directories(BrockDJ_track_loader_tests PRIVATE
     src src/domain src/engine src/library src/rendering

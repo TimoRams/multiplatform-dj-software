@@ -9,6 +9,10 @@ Item {
     property var engine: null
     property string accentColor: "#ff9900"
     property int activeTab: 0
+    // Standalone/AIO surface: hot-cue mode and its pads are the only controls
+    // retained on the primary display.
+    property bool hotCueOnly: false
+    property bool compact: false
 
     property double hotCueHoldPressedIndex: -1
     property double hotCueHoldCuePosition: 0.0
@@ -16,9 +20,9 @@ Item {
     property bool hotCueHoldHadCue: false
     property bool hotCueHoldReturnOnRelease: false
 
-    readonly property var tabs: ["HOT CUE", "PAD FX", "BEATJUMP"]
+    readonly property var tabs: hotCueOnly ? ["HOT CUE"] : ["HOT CUE", "PAD FX", "BEATJUMP"]
     readonly property real tabBarHeight: 25
-    readonly property real padsContentHeight: Math.max(0, (root.height - tabBarHeight) * (2 / 3))
+    readonly property real padsContentHeight: Math.max(0, (root.height - (hotCueOnly ? 0 : tabBarHeight + 1)) * (2 / 3))
     readonly property var beatJumpPads: [-16, -8, -4, -2, 2, 4, 8, 16]
 
     property int colorTargetIndex: -1
@@ -49,6 +53,10 @@ Item {
     }
 
     onActiveTabChanged: padFxClearAll()
+    onHotCueOnlyChanged: {
+        if (hotCueOnly)
+            activeTab = 0
+    }
 
     function padFxApply(defIndex) {
         if (!root.engine) return
@@ -114,7 +122,7 @@ Item {
         var kind = root.padKind(index)
         if (kind === "loop") return root.savedLoopAt(index).color
         if (kind === "hot")  return root.hotCueAt(index).color
-        return "#1e1e1e"
+        return "#454545"
     }
 
     function formatLoopLabel(loop) {
@@ -176,8 +184,11 @@ Item {
         spacing: 0
 
         RowLayout {
+            visible: true
             Layout.fillWidth: true
-            Layout.preferredHeight: 24
+            Layout.preferredHeight: 26
+            Layout.minimumHeight: 26
+            Layout.maximumHeight: 26
             spacing: 2
 
             Repeater {
@@ -189,12 +200,14 @@ Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     radius: 0
-                    color: root.activeTab === index ? UiTheme.panelRaised : UiTheme.panel
+                    color: root.activeTab === index ? "#666666" : "#454545"
+                    border.width: 1
+                    border.color: root.activeTab === index ? Qt.lighter(root.accentColor, 1.12) : "#737373"
 
                     Rectangle {
                         anchors.bottom: parent.bottom
                         anchors.left: parent.left; anchors.right: parent.right
-                        height: root.activeTab === index ? 2 : 0
+                        height: root.activeTab === index ? 3 : 0
                         visible: root.activeTab === index
                         color: root.accentColor
                     }
@@ -202,8 +215,8 @@ Item {
                     Text {
                         anchors.centerIn: parent
                         text: modelData
-                        color: root.activeTab === index ? UiTheme.textPrimary : UiTheme.textLabel
-                        font.pixelSize: 8
+                        color: root.activeTab === index ? "#ffffff" : "#dddddd"
+                        font.pixelSize: 9
                         font.bold: root.activeTab === index
                         font.letterSpacing: 0.6
                     }
@@ -217,7 +230,14 @@ Item {
             }
         }
 
-        Rectangle { Layout.fillWidth: true; height: 1; color: UiTheme.divider }
+        Rectangle {
+            visible: true
+            Layout.fillWidth: true
+            Layout.preferredHeight: 1
+            Layout.minimumHeight: 1
+            Layout.maximumHeight: 1
+            color: UiTheme.divider
+        }
 
         RowLayout {
             id: contentRow
@@ -265,7 +285,7 @@ Item {
                                 var def = root.padFxDefs[index]
                                 return padFxLit ? def.activeColor : def.baseColor
                             }
-                            return UiTheme.padEmpty
+                            return "#454545"
                         }
 
                         radius: 0
@@ -279,7 +299,7 @@ Item {
                             anchors.top: parent.top; anchors.left: parent.left
                             anchors.margins: 4
                             text: (index + 1).toString()
-                            color: padSet || padFxLit ? "#cccccc" : "#3a3a3a"
+                            color: padSet || padFxLit ? "#eeeeee" : "#c8c8c8"
                             font.pixelSize: 7
                             font.bold: true
                             font.family: "monospace"
@@ -307,7 +327,7 @@ Item {
                             }
                             color: {
                                 if (isHotCueTab && padSet) return "#ffffff"
-                                if (isHotCueTab)           return "#444"
+                                if (isHotCueTab)           return "#f0f0f0"
                                 if (isBeatJumpTab)         return "#ffd38a"
                                 if (isPadFxTab)            return padFxLit ? "#ffffff" : (index < 4 ? "#606060" : "#505050")
                                 return "#333"
@@ -454,8 +474,12 @@ Item {
 
             TurntableIndicator {
                 engine: root.engine
+                // A hidden pad surface (for example in the development window)
+                // must not keep a per-frame QML animation alive.
+                animationEnabled: root.visible
                 Layout.alignment: Qt.AlignVCenter
-                Layout.preferredWidth:  Math.round(Math.min(contentRow.height, Math.max(72, root.width * 0.14)))
+                Layout.preferredWidth:  Math.round(Math.min(contentRow.height, Math.max(root.compact ? 38 : 72, root.width * 0.14)))
+                Layout.minimumWidth:    Layout.preferredWidth
                 Layout.preferredHeight: Layout.preferredWidth
                 Layout.maximumWidth:    Layout.preferredWidth
                 Layout.maximumHeight:   Layout.preferredHeight
