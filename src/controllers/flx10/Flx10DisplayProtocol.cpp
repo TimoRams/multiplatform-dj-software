@@ -22,7 +22,7 @@ namespace {
 
 double validTrackDuration(const DjEngine* engine)
 {
-    if (!engine || engine->getDuration() <= 0.0f)
+    if (!engine || !std::isfinite(engine->getDuration()) || engine->getDuration() <= 0.0f)
         return kPreviewDurationSeconds;
 
     return std::max(1.0, static_cast<double>(engine->getDuration()));
@@ -39,97 +39,18 @@ double validTrackPosition(const DjEngine* engine, double duration)
         ? engine->getPlayheadPositionAtomic()
         : (engine->isPlaying() ? engine->getVisualPosition()
                                : engine->getPlayheadPositionAtomic());
+    if (!std::isfinite(pos))
+        return 0.0;
     return std::clamp(pos, 0.0, duration);
 }
 
 } // namespace
 
-void DDJFLX10Controller::resetDisplayInterp(int deck, double seedFileSec)
+void DDJFLX10Controller::resetDisplayPacketState(int deck)
 {
-    if (deck < 0 || deck >= static_cast<int>(m_displayInterp.size()))
+    if (deck < 0 || deck >= static_cast<int>(m_lastXx27Packet.size()))
         return;
-    m_displayInterp[deck] = {};
     m_lastXx27Packet[deck].clear();
-
-    if (seedFileSec >= 0.0) {
-        auto& state = m_displayInterp[deck];
-        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-        state.initialized = true;
-        state.lastFilePos = seedFileSec;
-        state.lastPosTimeMs = nowMs;
-        state.lastNewPosTimeMs = nowMs;
-        state.lastSmoothFileMs = seedFileSec * 1000.0;
-    }
-}
-double DDJFLX10Controller::smoothFileElapsedSec(int deck, double fileElapsedSec, double rateRatio, bool playing)
-{
-    constexpr qint64 kScrubHoldMs = 200;
-    constexpr qint64 kRunawayClampMs = 500;
-
-    if (deck < 0 || deck >= static_cast<int>(m_displayInterp.size()))
-        return fileElapsedSec;
-
-    auto& state = m_displayInterp[deck];
-    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-    const double safeRate = std::max(0.01, rateRatio);
-    const double fileMs = fileElapsedSec * 1000.0;
-
-    if (!state.initialized) {
-        state.initialized = true;
-        state.lastFilePos = fileElapsedSec;
-        state.lastPosTimeMs = nowMs;
-        state.lastNewPosTimeMs = nowMs;
-        state.lastSmoothFileMs = fileMs;
-        return fileElapsedSec;
-    }
-
-    if (!playing) {
-        state.lastFilePos = fileElapsedSec;
-        state.lastPosTimeMs = nowMs;
-        state.lastNewPosTimeMs = nowMs;
-        state.lastSmoothFileMs = fileMs;
-        return fileElapsedSec;
-    }
-
-    if (std::abs(fileElapsedSec - state.lastFilePos) > 0.005) {
-        state.lastFilePos = fileElapsedSec;
-        state.lastPosTimeMs = nowMs;
-        state.lastNewPosTimeMs = nowMs;
-        state.lastSmoothFileMs = fileMs;
-    } else if (fileElapsedSec != state.lastFilePos) {
-        const double posDelta = fileElapsedSec - state.lastFilePos;
-        state.lastFilePos = fileElapsedSec;
-        state.lastNewPosTimeMs = nowMs;
-        if (posDelta < 0.0) {
-            state.lastSmoothFileMs = fileMs;
-            state.lastPosTimeMs = nowMs;
-        } else {
-            const double extrapolatedMs = state.lastSmoothFileMs
-                + static_cast<double>(nowMs - state.lastPosTimeMs) * safeRate;
-            if (fileMs > extrapolatedMs) {
-                state.lastSmoothFileMs = fileMs;
-                state.lastPosTimeMs = nowMs;
-            }
-        }
-    }
-
-    const qint64 msSince = nowMs - state.lastPosTimeMs;
-    double smoothMs = state.lastSmoothFileMs + static_cast<double>(msSince) * safeRate;
-
-    if (nowMs - state.lastNewPosTimeMs > kScrubHoldMs) {
-        state.lastSmoothFileMs = fileMs;
-        state.lastPosTimeMs = nowMs;
-        smoothMs = fileMs;
-    } else {
-        const double maxMs = fileMs + static_cast<double>(kRunawayClampMs) * safeRate;
-        if (smoothMs > maxMs) {
-            state.lastSmoothFileMs = fileMs;
-            state.lastPosTimeMs = nowMs;
-            smoothMs = fileMs;
-        }
-    }
-
-    return std::max(0.0, smoothMs / 1000.0);
 }
 void DDJFLX10Controller::pushDeckJogDisplay(int deck)
 {
@@ -145,16 +66,15 @@ void DDJFLX10Controller::pushDeckJogDisplay(int deck)
     const bool playIntent = engine ? engine->isPlaying() : true;
     const bool scratchVisual = engine && engine->isScratchVisualActive();
     const bool moving = playIntent || scratchVisual;
-    const double rateRatio = engine ? engine->getTempoRatio() : 1.0;
     const double rawFileElapsed = engine
         ? deckDisplayPosition(deck)
         : std::fmod((QDateTime::currentMSecsSinceEpoch() - m_clockStartMs) / 1000.0,
                     duration);
     const double fileClamped = std::clamp(rawFileElapsed, 0.0, duration);
-    const double displayElapsed = scratchVisual
-        ? fileClamped
-        : smoothFileElapsedSec(deck, fileClamped, rateRatio, moving);
-    sendXx27(deck, displayElapsed, duration, deckBpm(deck), moving);
+    // DjEngine already exposes a continuously extrapolated visual position.
+    // Re-interpolating it here caused normal control updates to pull the display
+    // alternately behind and ahead of the audio playhead.
+    sendXx27(deck, fileClamped, duration, deckBpm(deck), moving);
     updateJogRingWarning(deck, fileClamped, duration, playIntent);
 }
 bool DDJFLX10Controller::uploadDeck(int deck)
@@ -295,9 +215,9 @@ bool DDJFLX10Controller::sendXx2f(int deck)
 
     const std::vector<double> beatTimesMs = deckBeatTimesMs(deck);
     for (size_t i = 0; i < beatTimesMs.size(); ++i) {
-        const double clampedMs = std::max(0.0, beatTimesMs[i]);
-        const uint32_t samples = static_cast<uint32_t>(
-            std::llround(clampedMs * static_cast<double>(kXx2fSampleRate) / 1000.0)) & 0x00FFFFFFu;
+        uint32_t samples = 0;
+        if (!xx2fSampleForMilliseconds(beatTimesMs[i], samples))
+            continue;
         records.push_back({kXx2fBeatTypes[i % kXx2fBeatTypes.size()], samples});
     }
 
@@ -363,17 +283,23 @@ bool DDJFLX10Controller::sendXx27(int deck, double fileElapsedSeconds, double du
     put8(p, 3, 0x80);
     put8(p, 4, 0x01);
 
-    const double tempoPercent = std::clamp(deckTempoPercent(deck), -100.0, 100.0);
+    const double rawTempoPercent = deckTempoPercent(deck);
+    const double tempoPercent = std::isfinite(rawTempoPercent)
+        ? std::clamp(rawTempoPercent, -100.0, 100.0) : 0.0;
     const double rateRatio = std::max(0.01, 1.0 + tempoPercent / 100.0);
-    fileElapsedSeconds = std::max(0.0, fileElapsedSeconds);
-    durationSeconds = std::max(1.0, durationSeconds);
+    fileElapsedSeconds = std::isfinite(fileElapsedSeconds)
+        ? std::max(0.0, fileElapsedSeconds) : 0.0;
+    durationSeconds = std::isfinite(durationSeconds)
+        ? std::max(1.0, durationSeconds) : 1.0;
     fileElapsedSeconds = std::clamp(fileElapsedSeconds, 0.0, durationSeconds);
+    const double maximumDisplaySeconds = kMaximumDisplayMinutes * 60.0 + 59.999;
+    const double encodedElapsedSeconds = std::min(fileElapsedSeconds, maximumDisplaySeconds);
 
     // Needle/handle position is FILE time (track position). Tempo stretch is
     // communicated via bytes 16–17 and wall-time remaining in bytes 9–12 only.
     // Sub-second field is MILLISECONDS (0..999), not 1024ths.
-    const double totalSec = fileElapsedSeconds;
-    const int secInt = static_cast<int>(std::floor(totalSec));
+    const double totalSec = encodedElapsedSeconds;
+    const qint64 secInt = static_cast<qint64>(std::floor(totalSec));
     const double sub = totalSec - static_cast<double>(secInt);
     int subMs = static_cast<int>(std::floor(sub * 1000.0));
     if (subMs > 999)
@@ -384,14 +310,18 @@ bool DDJFLX10Controller::sendXx27(int deck, double fileElapsedSeconds, double du
     put8(p, 7, subMs & 0xFF);
     put8(p, 8, (subMs >> 8) & 0x03);
 
-    const int durationMs = static_cast<int>(std::floor((durationSeconds / rateRatio) * 1000.0));
+    const qint64 maximumDisplayMs = kMaximumDisplayMinutes * 60000LL + 59999LL;
+    const qint64 durationMs = std::min(
+        static_cast<qint64>(std::floor((durationSeconds / rateRatio) * 1000.0)),
+        maximumDisplayMs);
     put8(p, 9, durationMs / 60000);
-    const int rem2 = durationMs % 60000;
+    const int rem2 = static_cast<int>(durationMs % 60000);
     put8(p, 10, rem2 / 1000);
     const int ms2 = rem2 % 1000;
     put8(p, 11, ms2);
     put8(p, 12, ms2 >> 8);
 
+    bpm = std::isfinite(bpm) ? std::clamp(bpm, 0.0, 255.9) : 0.0;
     const int bpmInt = static_cast<int>(bpm);
     put8(p, 13, bpmInt);
     put8(p, 14, (static_cast<int>(std::round((bpm - bpmInt) * 10.0)) & 0x0F) << 4);
@@ -402,21 +332,12 @@ bool DDJFLX10Controller::sendXx27(int deck, double fileElapsedSeconds, double du
     put8(p, 17, (tempoWire >> 8) & 0xFF);
     put8(p, 20, 0x0E);
 
-    // Platter ring phase at 33⅓ RPM. Bytes 21–22 must share one revolution tick
-    // derived from the same subsecTicks as 5–8 — mismatched wraps cause jitter
-    // and snap-backs around 12 o'clock on the jog display.
-    const int totalMs = secInt * 1000 + subMs;
-    constexpr double kVinylRevolutionSeconds = 60.0 / (100.0 / 3.0);
-    const int ticksPerRevolution = static_cast<int>(std::lround(kVinylRevolutionSeconds * 1024.0));
-    const int sub1024 = std::min(1023, (subMs * 1024) / 1000);
-    const int subsecTicks = (totalMs / 1000) * 1024 + sub1024;
-    const int revolutionTick = ticksPerRevolution > 0
-        ? (subsecTicks % ticksPerRevolution + ticksPerRevolution) % ticksPerRevolution
-        : 0;
-    put8(p, 21, (revolutionTick * 2) & 0xFF);
-    put8(p, 22, ticksPerRevolution > 0
-        ? (revolutionTick * 15 / ticksPerRevolution) % 15
-        : 0);
+    // One 1.8-second revolution is encoded as a coherent 16-bit LE phase.
+    // Advancing the high byte independently from the low-byte wrap made the
+    // hardware briefly reverse the handle at every carry boundary.
+    const JogPhaseBytes phase = jogPhaseBytes(fileElapsedSeconds);
+    put8(p, 21, phase.low);
+    put8(p, 22, phase.high);
 
     put8(p, 25, 0x80);
     put8(p, 29, deckKeyByte(deck));
@@ -432,7 +353,7 @@ bool DDJFLX10Controller::sendXx27(int deck, double fileElapsedSeconds, double du
     }
 
     const bool ok = writePacket(p);
-    if (deck >= 0 && deck < static_cast<int>(m_lastXx27Packet.size()))
+    if (ok && deck >= 0 && deck < static_cast<int>(m_lastXx27Packet.size()))
         m_lastXx27Packet[deck] = p;
     return ok;
 }

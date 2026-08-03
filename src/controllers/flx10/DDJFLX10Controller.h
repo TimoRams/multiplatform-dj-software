@@ -6,6 +6,7 @@
 #include <QObject>
 #include <QByteArray>
 #include <QMetaObject>
+#include <QProcess>
 #include <QString>
 #include <QTimer>
 #include <QtGlobal>
@@ -66,6 +67,7 @@ private:
     void stopHidWriter() noexcept;
     void hidWriterLoop();
     void reportHidWriteFailure();
+    void discardQueuedDeckPackets(int deck);
 #endif
 
     QString findMidiPort() const;
@@ -83,8 +85,7 @@ private:
     bool sendXx36Window(int deck, const QByteArray& waveform, int entry);
     bool sendXx2f(int deck);
     bool sendXx27(int deck, double fileElapsedSeconds, double durationSeconds, double bpm, bool moving);
-    double smoothFileElapsedSec(int deck, double fileElapsedSec, double rateRatio, bool playing);
-    void resetDisplayInterp(int deck, double seedFileSec = -1.0);
+    void resetDisplayPacketState(int deck);
     void pushDeckJogDisplay(int deck);
     bool clearDeckDisplay(int deck);
 
@@ -105,11 +106,13 @@ private:
     void disconnectDeckSignals();
     void refreshDeckFromEngine(int deck);
     void resetDeckWaveformOutput(int deck);
+    void invalidateDeckSnapshot(int deck, const QString& trackPath, bool clearDevice);
 
     QString m_status;
     QString m_midiPort;
 #if defined(Q_OS_LINUX)
     std::unique_ptr<AlsaMidiOutput> m_sequencerMidiOut;
+    std::unique_ptr<QProcess> m_keepAliveProcess;
 #endif
     ControlClock::Registration m_clockRegistration;
     QTimer m_uploadTimer;
@@ -133,18 +136,11 @@ private:
     std::array<QMetaObject::Connection, 5> m_scrubbingConnections;
     std::array<QMetaObject::Connection, 5> m_progressConnections;
     std::array<QString, 5> m_lastCoverUrls;
+    std::array<QString, 5> m_waveformTrackPaths;
     std::array<qint64, 5> m_lastWaveformRefreshMs = {0, 0, 0, 0, 0};
     std::array<bool, 5> m_jogRingWarningActive = {false, false, false, false, false};
     std::array<bool, 5> m_jogRingLit = {true, true, true, true, true};
     qint64 m_clockStartMs = 0;
-    struct DeckDisplayInterp {
-        double lastFilePos = -1.0;
-        qint64 lastPosTimeMs = 0;
-        qint64 lastNewPosTimeMs = 0;
-        double lastSmoothFileMs = 0.0;
-        bool initialized = false;
-    };
-    std::array<DeckDisplayInterp, 5> m_displayInterp{};
     std::array<QByteArray, 5> m_lastXx27Packet;
     std::atomic<bool> m_shuttingDown { false };
     bool m_connected = false;
@@ -166,5 +162,6 @@ private:
     std::atomic<bool> m_hidWriteFailurePending { false };
     std::atomic<int> m_hidWriteError { 0 };
     std::atomic<int> m_hidWriteTransferred { 0 };
+    std::atomic<bool> m_hidStateRefreshPending { false };
 #endif
 };

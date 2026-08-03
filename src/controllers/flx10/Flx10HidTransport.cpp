@@ -8,6 +8,7 @@
 #include <QThread>
 
 #include <algorithm>
+#include <chrono>
 
 #include "Flx10ProtocolCommon.h"
 
@@ -205,8 +206,18 @@ void DDJFLX10Controller::stopHidWriter() noexcept
     }
 }
 
+void DDJFLX10Controller::discardQueuedDeckPackets(int deck)
+{
+    const char targetDeck = static_cast<char>(deckByte(deck));
+    std::lock_guard lock(m_hidWriteMutex);
+    std::erase_if(m_hidWriteQueue, [targetDeck](const QByteArray& queued) {
+        return queued.size() == kHidPacketSize && queued.at(0) == targetDeck;
+    });
+}
+
 void DDJFLX10Controller::hidWriterLoop()
 {
+    int consecutiveDroppedPackets = 0;
     while (true) {
         QByteArray packetBytes;
         {
@@ -220,13 +231,51 @@ void DDJFLX10Controller::hidWriterLoop()
             m_hidWriteQueue.pop_front();
         }
 
+        int result = LIBUSB_ERROR_OTHER;
         int transferred = 0;
-        const int result = libusb_interrupt_transfer(
-            m_handle, m_outEndpoint,
-            reinterpret_cast<unsigned char*>(packetBytes.data()), packetBytes.size(),
-            &transferred, 1000);
-        if (result == 0 && transferred == packetBytes.size())
+        for (int attempt = 0; attempt <= kHidTransientRetries; ++attempt) {
+            transferred = 0;
+            result = libusb_interrupt_transfer(
+                m_handle, m_outEndpoint,
+                reinterpret_cast<unsigned char*>(packetBytes.data()), packetBytes.size(),
+                &transferred, kHidTransferTimeoutMs);
+            if (result == 0 && transferred == packetBytes.size())
+                break;
+
+            const bool transient = result == LIBUSB_ERROR_TIMEOUT
+                || result == LIBUSB_ERROR_INTERRUPTED
+                || result == LIBUSB_ERROR_BUSY
+                || result == LIBUSB_ERROR_IO
+                || result == LIBUSB_ERROR_PIPE
+                || (result == 0 && transferred != packetBytes.size());
+            if (!transient || attempt == kHidTransientRetries)
+                break;
+            if (result == LIBUSB_ERROR_PIPE)
+                libusb_clear_halt(m_handle, m_outEndpoint);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2 << attempt));
+        }
+
+        if (result == 0 && transferred == packetBytes.size()) {
+            consecutiveDroppedPackets = 0;
             continue;
+        }
+
+        const bool transient = result == LIBUSB_ERROR_TIMEOUT
+            || result == LIBUSB_ERROR_INTERRUPTED
+            || result == LIBUSB_ERROR_BUSY
+            || result == LIBUSB_ERROR_IO
+            || result == LIBUSB_ERROR_PIPE
+            || (result == 0 && transferred != packetBytes.size());
+        if (transient) {
+            ++consecutiveDroppedPackets;
+            m_hidStateRefreshPending.store(true, std::memory_order_release);
+            if (consecutiveDroppedPackets == 1
+                || (consecutiveDroppedPackets & (consecutiveDroppedPackets - 1)) == 0) {
+                qWarning() << "[DDJ-FLX10] transient HID transfer dropped after retries"
+                           << result << transferred << "consecutive" << consecutiveDroppedPackets;
+            }
+            continue;
+        }
 
         m_hidWriteError.store(result, std::memory_order_release);
         m_hidWriteTransferred.store(transferred, std::memory_order_release);

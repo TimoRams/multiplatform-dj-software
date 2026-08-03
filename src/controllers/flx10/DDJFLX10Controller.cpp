@@ -79,8 +79,25 @@ bool DDJFLX10Controller::start()
     startHidWriter();
     setConnected(true);
     m_clockStartMs = QDateTime::currentMSecsSinceEpoch();
-    refreshDeckFromEngine(1);
-    refreshDeckFromEngine(2);
+    for (int deck = controllers::kFlx10FirstDeckIndex;
+         deck <= controllers::kFlx10LastDeckIndex; ++deck) {
+        m_uploadActive[deck] = false;
+        m_uploadEntries[deck] = 0;
+        resetDisplayPacketState(deck);
+
+        DjEngine* engine = deckEngine(deck);
+        const QString trackPath = engine && engine->hasTrack()
+            ? engine->trackFilePath() : QString {};
+        if (trackPath != m_waveformTrackPaths[deck])
+            invalidateDeckSnapshot(deck, trackPath, false);
+
+        if (!m_waveforms[deck].isEmpty()) {
+            m_waveformDurations[deck] = deckDisplayDuration(deck);
+            uploadDeck(deck);
+        } else {
+            refreshDeckFromEngine(deck);
+        }
+    }
     m_displayTicksUntilWaveform = 1;
     m_keepAliveEnabled = sequencerMidiReady || !m_midiPort.isEmpty();
 
@@ -103,6 +120,10 @@ void DDJFLX10Controller::prepareForShutdown() noexcept
     disconnectDeckSignals();
     m_uploadTimer.stop();
     m_keepAliveEnabled = false;
+#if defined(Q_OS_LINUX)
+    if (m_keepAliveProcess && m_keepAliveProcess->state() != QProcess::NotRunning)
+        m_keepAliveProcess->kill();
+#endif
     QCoreApplication::removePostedEvents(this);
     m_deckA = nullptr;
     m_deckB = nullptr;
@@ -114,6 +135,13 @@ void DDJFLX10Controller::stop()
     disconnectDeckSignals();
     m_uploadTimer.stop();
     m_keepAliveEnabled = false;
+#if defined(Q_OS_LINUX)
+    if (m_keepAliveProcess && m_keepAliveProcess->state() != QProcess::NotRunning) {
+        m_keepAliveProcess->kill();
+        m_keepAliveProcess->waitForFinished(100);
+    }
+    m_keepAliveProcess.reset();
+#endif
     m_uploadActive.fill(false);
     m_uploadEntries.fill(0);
     for (int deck = controllers::kFlx10FirstDeckIndex; deck <= controllers::kFlx10LastDeckIndex; ++deck) {
@@ -233,7 +261,6 @@ void DDJFLX10Controller::connectDeckSignals()
                 return;
             if (DjEngine* eng = deckEngine(deck); !eng || !eng->hasTrack())
                 return;
-            m_lastWaveformRefreshMs[deck] = 0;
             refreshDeckFromEngine(deck);
         });
         m_trackEjectedConnections[deck] = connect(engine, &DjEngine::trackEjected, this, [this, deck] {
@@ -273,7 +300,6 @@ void DDJFLX10Controller::connectDeckSignals()
                     return;
                 if (DjEngine* eng = deckEngine(deck); !eng || !eng->hasTrack())
                     return;
-                m_lastWaveformRefreshMs[deck] = 0;
                 refreshDeckFromEngine(deck);
             });
             m_dataClearedConnections[deck] = connect(trackData, &TrackData::dataCleared, this, [this, deck] {
@@ -321,8 +347,7 @@ void DDJFLX10Controller::connectDeckSignals()
         m_scrubbingConnections[deck] = connect(engine, &DjEngine::scrubbingChanged, this, [this, deck] {
             if (m_shuttingDown.load(std::memory_order_acquire))
                 return;
-            const double seedPos = deckDisplayPosition(deck);
-            resetDisplayInterp(deck, seedPos);
+            resetDisplayPacketState(deck);
             pushDeckJogDisplay(deck);
         });
         m_progressConnections[deck] = connect(engine, &DjEngine::progressChanged, this, [this, deck] {
@@ -341,16 +366,33 @@ void DDJFLX10Controller::resetDeckWaveformOutput(int deck)
     if (deck < 1 || deck > 2)
         return;
 
-    m_waveforms[deck].clear();
-    m_waveformDurations[deck] = kPreviewDurationSeconds;
-    m_uploadActive[deck] = false;
-    m_uploadEntries[deck] = 0;
+    invalidateDeckSnapshot(deck, {}, false);
     m_jogRingWarningActive[deck] = false;
-    m_lastCoverUrls[deck].clear();
-    resetDisplayInterp(deck);
     sendJogRingIllumination(deck, true);
     qInfo() << "[DDJ-FLX10] Deck" << deck << "has no track waveform; HID deck output stopped";
     if (m_connected)
+        clearDeckDisplay(deck);
+}
+
+void DDJFLX10Controller::invalidateDeckSnapshot(int deck, const QString& trackPath,
+                                                bool clearDevice)
+{
+    if (deck < 1 || deck > 2)
+        return;
+
+    m_waveforms[deck].clear();
+    m_waveformTrackPaths[deck] = trackPath;
+    m_waveformDurations[deck] = kPreviewDurationSeconds;
+    m_uploadActive[deck] = false;
+    m_uploadEntries[deck] = 0;
+    m_lastWaveformRefreshMs[deck] = 0;
+    m_lastCoverUrls[deck].clear();
+    resetDisplayPacketState(deck);
+
+#if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
+    discardQueuedDeckPackets(deck);
+#endif
+    if (clearDevice && m_connected)
         clearDeckDisplay(deck);
 }
 
@@ -359,26 +401,35 @@ void DDJFLX10Controller::refreshDeckFromEngine(int deck)
     if (m_shuttingDown.load(std::memory_order_acquire))
         return;
 
-    if (DjEngine* engine = deckEngine(deck); !engine || !engine->hasTrack())
+    DjEngine* engine = deckEngine(deck);
+    if (!engine || !engine->hasTrack())
         return;
+
+    const QString trackPath = engine->trackFilePath();
+    if (trackPath != m_waveformTrackPaths[deck])
+        invalidateDeckSnapshot(deck, trackPath, true);
+
+    // Analysis publishes RGB updates about every 90 ms. Rebuilding and restarting
+    // the complete device waveform on each update made the jog screens visibly
+    // reload forever. The first usable overview is a stable per-track snapshot;
+    // the moving 0x36 window continues to use it for the lifetime of the track.
+    if (!m_waveforms[deck].isEmpty())
+        return;
+
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    if (m_connected && m_lastWaveformRefreshMs[deck] > 0 && now - m_lastWaveformRefreshMs[deck] < 1500)
+    if (m_lastWaveformRefreshMs[deck] > 0 && now - m_lastWaveformRefreshMs[deck] < 250)
         return;
     m_lastWaveformRefreshMs[deck] = now;
-    resetDisplayInterp(deck);
+    resetDisplayPacketState(deck);
 
-    m_waveforms[deck] = generatePreviewWaveform(deck);
-
+    QByteArray waveform = generatePreviewWaveform(deck);
+    if (waveform.isEmpty())
+        return;
+    m_waveforms[deck] = std::move(waveform);
     m_waveformDurations[deck] = deckDisplayDuration(deck);
 
     if (!m_connected)
         return;
-
-    if (m_waveforms[deck].isEmpty()) {
-        qInfo() << "[DDJ-FLX10] Deck" << deck << "has no track waveform; leaving jog display inactive";
-        clearDeckDisplay(deck);
-        return;
-    }
 
     qInfo() << "[DDJ-FLX10] Deck" << deck << "uploading real waveform entries" << (m_waveforms[deck].size() / 2);
     uploadDeck(deck);
@@ -587,7 +638,27 @@ void DDJFLX10Controller::sendKeepAlive()
     if (m_shuttingDown.load(std::memory_order_acquire) || !m_connected
         || !m_keepAliveEnabled)
         return;
+#if defined(Q_OS_LINUX)
+    if (m_sequencerMidiOut && m_sequencerMidiOut->isOpen()) {
+        sendMidiHex(QString::fromLatin1(kKeepAlive));
+        return;
+    }
+
+    // The raw-MIDI fallback used to run amidi synchronously from the shared
+    // control clock every 500 ms. A slow USB response then stalled the whole UI.
+    if (m_midiPort.isEmpty())
+        return;
+    if (!m_keepAliveProcess)
+        m_keepAliveProcess = std::make_unique<QProcess>(this);
+    if (m_keepAliveProcess->state() == QProcess::NotRunning) {
+        m_keepAliveProcess->start(
+            QStringLiteral("amidi"),
+            {QStringLiteral("-p"), m_midiPort, QStringLiteral("-S"),
+             QString::fromLatin1(kKeepAlive)});
+    }
+#else
     sendMidiHex(QString::fromLatin1(kKeepAlive));
+#endif
 }
 
 void DDJFLX10Controller::sendStateTick()
@@ -599,6 +670,10 @@ void DDJFLX10Controller::sendStateTick()
     reportHidWriteFailure();
     if (!m_hidWriteHealthy.load(std::memory_order_acquire))
         return;
+    if (m_hidStateRefreshPending.exchange(false, std::memory_order_acq_rel)) {
+        for (int deck = 1; deck <= 2; ++deck)
+            m_lastXx27Packet[deck].clear();
+    }
 #endif
 
     for (int deck = 1; deck <= 2; ++deck)

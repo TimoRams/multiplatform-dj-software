@@ -735,6 +735,13 @@ target_include_directories(BrockDJ_flx10_jog_routing_tests PRIVATE src src/engin
 target_compile_features(BrockDJ_flx10_jog_routing_tests PRIVATE cxx_std_23)
 add_test(NAME flx10_jog_routing COMMAND BrockDJ_flx10_jog_routing_tests)
 
+add_executable(BrockDJ_flx10_display_protocol_tests
+    tests/midi/flx10_display_protocol_tests.cpp)
+target_include_directories(BrockDJ_flx10_display_protocol_tests PRIVATE src)
+target_link_libraries(BrockDJ_flx10_display_protocol_tests PRIVATE Qt6::Core Qt6::Gui)
+target_compile_features(BrockDJ_flx10_display_protocol_tests PRIVATE cxx_std_23)
+add_test(NAME flx10_display_protocol COMMAND BrockDJ_flx10_display_protocol_tests)
+
 add_executable(BrockDJ_sync_coordinator_tests
     tests/sync/sync_coordinator_tests.cpp
     src/engine/sync/DeckSyncController.cpp

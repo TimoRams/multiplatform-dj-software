@@ -31,13 +31,20 @@ constexpr int kMaxWaveformEntries = 0x7FF00;
 constexpr int kUploadWindowsPerTick = 1;
 constexpr int kUploadTickIntervalMs = 10;
 constexpr std::size_t kHidWriteQueueCapacity = 1024;
+constexpr int kHidTransferTimeoutMs = 250;
+constexpr int kHidTransientRetries = 3;
 constexpr int kAlbumArtMaxBytes = 119 + 122 * 254;
 constexpr double kJogRingWarningSeconds = 30.0;
 constexpr qint64 kJogRingBlinkIntervalMs = 500;
 constexpr int kJogRingOnValue = 0x7F;
 constexpr int kXx2fSampleRate = 22050;
 constexpr int kXx2fRecordsPerPacket = 30;
+constexpr uint32_t kXx2fMaximumSample = 0x00FFFFFFu;
 constexpr int kXx36TrickleIntervalMs = 50;
+constexpr double kJogRevolutionSeconds = 1.8;
+constexpr int kJogPhaseTicksPerSecond = 2000;
+constexpr int kJogPhaseTicksPerRevolution = 3600;
+constexpr int kMaximumDisplayMinutes = 255;
 constexpr std::array<uint8_t, 4> kXx2fBeatTypes = {0x03, 0x04, 0x00, 0x02};
 constexpr std::array<uint8_t, 4> kXx2fStartMarker = {0x80, 0x02, 0x01, 0x00};
 
@@ -46,6 +53,47 @@ struct VendorUnlockCommand
     uint16_t value;
     uint16_t index;
 };
+
+struct JogPhaseBytes
+{
+    uint8_t low = 0;
+    uint8_t high = 0;
+
+    [[nodiscard]] constexpr uint16_t value() const noexcept
+    {
+        return static_cast<uint16_t>(low)
+            | (static_cast<uint16_t>(high) << 8);
+    }
+};
+
+inline JogPhaseBytes jogPhaseBytes(double fileElapsedSeconds) noexcept
+{
+    if (!std::isfinite(fileElapsedSeconds) || fileElapsedSeconds <= 0.0)
+        return {};
+
+    double revolutionSeconds = std::fmod(fileElapsedSeconds, kJogRevolutionSeconds);
+    if (revolutionSeconds < 0.0)
+        revolutionSeconds += kJogRevolutionSeconds;
+    const int ticks = std::clamp(
+        static_cast<int>(std::floor(revolutionSeconds * kJogPhaseTicksPerSecond)),
+        0,
+        kJogPhaseTicksPerRevolution - 1);
+    return {
+        static_cast<uint8_t>(ticks & 0xFF),
+        static_cast<uint8_t>((ticks >> 8) & 0xFF)
+    };
+}
+
+inline bool xx2fSampleForMilliseconds(double milliseconds, uint32_t& sample) noexcept
+{
+    if (!std::isfinite(milliseconds) || milliseconds < 0.0)
+        return false;
+    const double sampleValue = milliseconds * static_cast<double>(kXx2fSampleRate) / 1000.0;
+    if (sampleValue > static_cast<double>(kXx2fMaximumSample))
+        return false;
+    sample = static_cast<uint32_t>(std::llround(sampleValue));
+    return sample <= kXx2fMaximumSample;
+}
 
 constexpr VendorUnlockCommand kVendorUnlockCommands[] = {
     {0x0100, 0xC028},
