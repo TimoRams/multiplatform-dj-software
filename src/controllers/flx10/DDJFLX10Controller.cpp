@@ -76,6 +76,7 @@ bool DDJFLX10Controller::start()
         return false;
     }
 
+    startHidWriter();
     setConnected(true);
     m_clockStartMs = QDateTime::currentMSecsSinceEpoch();
     refreshDeckFromEngine(1);
@@ -123,6 +124,8 @@ void DDJFLX10Controller::stop()
     m_jogRingLit.fill(true);
 
 #if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
+    stopHidWriter();
+
     if (m_handle && m_interfaceClaimed) {
         libusb_release_interface(m_handle, kScreenInterface);
         m_interfaceClaimed = false;
@@ -592,6 +595,12 @@ void DDJFLX10Controller::sendStateTick()
     if (m_shuttingDown.load(std::memory_order_acquire) || !m_connected)
         return;
 
+#if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
+    reportHidWriteFailure();
+    if (!m_hidWriteHealthy.load(std::memory_order_acquire))
+        return;
+#endif
+
     for (int deck = 1; deck <= 2; ++deck)
         pushDeckJogDisplay(deck);
 }
@@ -622,7 +631,8 @@ void DDJFLX10Controller::sendUploadChunk()
         const int entries = m_waveforms[deck].size() / 2;
         int windowsSent = 0;
         while (m_uploadEntries[deck] < entries && windowsSent < kUploadWindowsPerTick) {
-            sendXx36Window(deck, m_waveforms[deck], m_uploadEntries[deck]);
+            if (!sendXx36Window(deck, m_waveforms[deck], m_uploadEntries[deck]))
+                break;
             m_uploadEntries[deck] += 19;
             ++windowsSent;
         }

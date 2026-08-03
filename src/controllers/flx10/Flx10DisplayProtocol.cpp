@@ -171,7 +171,7 @@ bool DDJFLX10Controller::uploadDeck(int deck)
     m_uploadEntries[deck] = 0;
     m_uploadActive[deck] = true;
     if (!m_uploadTimer.isActive())
-        m_uploadTimer.start(2);
+        m_uploadTimer.start(kUploadTickIntervalMs);
     return ok;
 }
 bool DDJFLX10Controller::sendXx30(int deck)
@@ -643,4 +643,3 @@ int DDJFLX10Controller::currentWaveformEntry(int deck) const
     const double fraction = std::fmod(std::max(0.0, elapsed), duration) / duration;
     return std::clamp(static_cast<int>(fraction * entries), 0, entries - 19);
 }
-

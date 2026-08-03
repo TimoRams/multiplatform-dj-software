@@ -12,8 +12,12 @@
 
 #include <array>
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <memory>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 #include <QPointer>
@@ -57,6 +61,12 @@ private:
     bool sendVendorUnlock();
     bool claimScreenInterface();
     bool writePacket(const QByteArray& packet);
+#if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
+    void startHidWriter();
+    void stopHidWriter() noexcept;
+    void hidWriterLoop();
+    void reportHidWriteFailure();
+#endif
 
     QString findMidiPort() const;
     bool openSequencerMidiPort();
@@ -146,5 +156,15 @@ private:
     libusb_device_handle* m_handle = nullptr;
     uint8_t m_outEndpoint = 0;
     bool m_interfaceClaimed = false;
+    std::mutex m_hidWriteMutex;
+    std::condition_variable m_hidWriteCondition;
+    std::deque<QByteArray> m_hidWriteQueue;
+    std::thread m_hidWriter;
+    bool m_hidWriterStopping = false;
+    bool m_hidWriterRunning = false;
+    std::atomic<bool> m_hidWriteHealthy { true };
+    std::atomic<bool> m_hidWriteFailurePending { false };
+    std::atomic<int> m_hidWriteError { 0 };
+    std::atomic<int> m_hidWriteTransferred { 0 };
 #endif
 };

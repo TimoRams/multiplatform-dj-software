@@ -7,6 +7,8 @@
 #include <QDebug>
 #include <QThread>
 
+#include <algorithm>
+
 #include "Flx10ProtocolCommon.h"
 
 using namespace flx10_protocol;
@@ -135,17 +137,32 @@ bool DDJFLX10Controller::writePacket(const QByteArray& packetBytes)
     if (!m_handle || !m_outEndpoint || packetBytes.size() != kHidPacketSize)
         return false;
 
-    int transferred = 0;
-    const int result = libusb_interrupt_transfer(m_handle,
-                                                 m_outEndpoint,
-                                                 reinterpret_cast<unsigned char*>(const_cast<char*>(packetBytes.constData())),
-                                                 packetBytes.size(),
-                                                 &transferred,
-                                                 1000);
-    if (result != 0 || transferred != packetBytes.size()) {
-        qWarning() << "[DDJ-FLX10] HID write failed" << result << transferred;
+    std::lock_guard lock(m_hidWriteMutex);
+    if (!m_hidWriterRunning || m_hidWriterStopping
+        || !m_hidWriteHealthy.load(std::memory_order_acquire)) {
         return false;
     }
+
+    // 0x27 carries only the current jog-display state. Keeping an older one in
+    // the queue wastes endpoint time and can make a busy display look jumpy.
+    if (packetBytes.at(1) == char(0x27)) {
+        const auto pending = std::find_if(m_hidWriteQueue.rbegin(), m_hidWriteQueue.rend(),
+                                          [&packetBytes](const QByteArray& queued) {
+            return queued.size() == kHidPacketSize
+                && queued.at(0) == packetBytes.at(0)
+                && queued.at(1) == char(0x27);
+        });
+        if (pending != m_hidWriteQueue.rend()) {
+            *pending = packetBytes;
+            return true;
+        }
+    }
+
+    if (m_hidWriteQueue.size() >= kHidWriteQueueCapacity)
+        return false;
+
+    m_hidWriteQueue.push_back(packetBytes);
+    m_hidWriteCondition.notify_one();
     return true;
 #else
     Q_UNUSED(packetBytes)
@@ -153,3 +170,85 @@ bool DDJFLX10Controller::writePacket(const QByteArray& packetBytes)
 #endif
 }
 
+#if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
+
+void DDJFLX10Controller::startHidWriter()
+{
+    stopHidWriter();
+    {
+        std::lock_guard lock(m_hidWriteMutex);
+        m_hidWriteQueue.clear();
+        m_hidWriterStopping = false;
+        m_hidWriterRunning = true;
+        m_hidWriteHealthy.store(true, std::memory_order_release);
+        m_hidWriteFailurePending.store(false, std::memory_order_release);
+        m_hidWriteError.store(0, std::memory_order_release);
+        m_hidWriteTransferred.store(0, std::memory_order_release);
+    }
+    m_hidWriter = std::thread([this] { hidWriterLoop(); });
+}
+
+void DDJFLX10Controller::stopHidWriter() noexcept
+{
+    {
+        std::lock_guard lock(m_hidWriteMutex);
+        m_hidWriterStopping = true;
+        m_hidWriteQueue.clear();
+    }
+    m_hidWriteCondition.notify_all();
+    if (m_hidWriter.joinable())
+        m_hidWriter.join();
+    {
+        std::lock_guard lock(m_hidWriteMutex);
+        m_hidWriterRunning = false;
+        m_hidWriterStopping = false;
+    }
+}
+
+void DDJFLX10Controller::hidWriterLoop()
+{
+    while (true) {
+        QByteArray packetBytes;
+        {
+            std::unique_lock lock(m_hidWriteMutex);
+            m_hidWriteCondition.wait(lock, [this] {
+                return m_hidWriterStopping || !m_hidWriteQueue.empty();
+            });
+            if (m_hidWriterStopping)
+                return;
+            packetBytes = std::move(m_hidWriteQueue.front());
+            m_hidWriteQueue.pop_front();
+        }
+
+        int transferred = 0;
+        const int result = libusb_interrupt_transfer(
+            m_handle, m_outEndpoint,
+            reinterpret_cast<unsigned char*>(packetBytes.data()), packetBytes.size(),
+            &transferred, 1000);
+        if (result == 0 && transferred == packetBytes.size())
+            continue;
+
+        m_hidWriteError.store(result, std::memory_order_release);
+        m_hidWriteTransferred.store(transferred, std::memory_order_release);
+        m_hidWriteHealthy.store(false, std::memory_order_release);
+        m_hidWriteFailurePending.store(true, std::memory_order_release);
+        std::lock_guard lock(m_hidWriteMutex);
+        m_hidWriteQueue.clear();
+        return;
+    }
+}
+
+void DDJFLX10Controller::reportHidWriteFailure()
+{
+    if (!m_hidWriteFailurePending.exchange(false, std::memory_order_acq_rel))
+        return;
+
+    const int result = m_hidWriteError.load(std::memory_order_acquire);
+    const int transferred = m_hidWriteTransferred.load(std::memory_order_acquire);
+    qWarning() << "[DDJ-FLX10] HID writer stopped after transfer failure" << result << transferred;
+    setStatus(QStringLiteral("DDJ-FLX10: HID transfer failed (%1, %2 bytes); disable and re-enable display support to reconnect")
+                  .arg(result)
+                  .arg(transferred));
+}
+
+#endif

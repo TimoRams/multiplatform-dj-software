@@ -26,7 +26,11 @@ constexpr int kHidPacketSize = 128;
 constexpr double kPreviewDurationSeconds = 30.0;
 constexpr double kJogWaveformEntriesPerSecond = 150.0;
 constexpr int kMaxWaveformEntries = 0x7FF00;
-constexpr int kUploadWindowsPerTick = 10;
+// One 19-entry window per tick keeps the USB interrupt endpoint comfortably
+// below saturation while both decks are uploading analysis data.
+constexpr int kUploadWindowsPerTick = 1;
+constexpr int kUploadTickIntervalMs = 10;
+constexpr std::size_t kHidWriteQueueCapacity = 1024;
 constexpr int kAlbumArtMaxBytes = 119 + 122 * 254;
 constexpr double kJogRingWarningSeconds = 30.0;
 constexpr qint64 kJogRingBlinkIntervalMs = 500;
