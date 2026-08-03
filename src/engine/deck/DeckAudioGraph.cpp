@@ -171,6 +171,7 @@ void DeckAudioGraph::installPreparedTrack(PreparedTrack track)
     m_impl->scratch->beginTransportSwap();
     m_impl->transport.stop();
     m_impl->transport.setSource(nullptr);
+    m_impl->scratch->setPlaybackSource(nullptr);
     if (m_impl->playback) {
         const auto stats = m_impl->playback->cacheStats();
         m_impl->retiredDiskReadsFromAudioThread += stats.diskReadsFromAudioThread;
@@ -183,6 +184,7 @@ void DeckAudioGraph::installPreparedTrack(PreparedTrack track)
     m_impl->playback = std::make_unique<CachedPlaybackAudioSource>(m_impl->cache, m_impl->handle);
     m_impl->trackGeneration = track.trackGeneration;
     m_impl->transport.setSource(m_impl->playback.get(), 0, nullptr, track.sourceSampleRate);
+    m_impl->scratch->setPlaybackSource(m_impl->playback.get());
     m_impl->timeStretch->setTrackGeneration(track.trackGeneration);
     m_impl->scratch->setTrackCacheSource(&m_impl->cache, m_impl->handle);
     m_impl->transport.setPosition(0.0);
@@ -198,6 +200,7 @@ void DeckAudioGraph::clearTrack(std::uint64_t invalidThroughGeneration)
     m_impl->scratch->beginTransportSwap();
     m_impl->transport.stop();
     m_impl->transport.setSource(nullptr);
+    m_impl->scratch->setPlaybackSource(nullptr);
     m_impl->scratch->setTrackCacheSource(nullptr, {});
     if (m_impl->playback) {
         const auto stats = m_impl->playback->cacheStats();

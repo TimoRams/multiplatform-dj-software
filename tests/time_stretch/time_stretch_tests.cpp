@@ -58,7 +58,11 @@ int main(){
                     "keylock nudge does not rebuild a pipeline");
         ok&=require(source.realtimeStats().successfulPipelineSwitches==switchesBeforeNudge,
                     "keylock nudge does not switch a pipeline");
-        source.enterScratchBypass();source.getNextAudioBlock({&b,0,8192});source.endScratchBypass();
+        const auto preScratchGeneration=source.activeConfigurationGeneration();
+        source.enterScratchBypass();source.getNextAudioBlock({&b,0,8192});
+        ok&=require(waitForGeneration(source,preScratchGeneration),
+                    "scratch prepares a clean keylock pipeline");
+        source.endScratchBypass();source.getNextAudioBlock({&b,0,8192});
         ok&=require(finite(b),"scratch transition finite");
         auto stats=source.realtimeStats();
         ok&=require(stats.prepareCallsFromAudioThread==0,"no prepare in callback");

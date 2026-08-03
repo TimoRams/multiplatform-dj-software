@@ -5,13 +5,32 @@
 #include "../scratch/VirtualTurntable.hpp"
 
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <memory>
 
 class HermiteResamplingAudioSource;
+class CachedPlaybackAudioSource;
 
 namespace engine::audio {
+
+enum class ScratchReleasePhase : std::uint8_t {
+    Idle,
+    ReleasePending,
+    CoastToDeck,
+    CoastToStop,
+    HandoffPending,
+    TailSuppression
+};
+
+struct ScratchReleaseSnapshot {
+    std::uint64_t generation = 0;
+    ScratchReleasePhase phase = ScratchReleasePhase::Idle;
+    engine::scratch::ScratchReleaseDisposition disposition =
+        engine::scratch::ScratchReleaseDisposition::HandoffNow;
+    double finalCursorSeconds = 0.0;
+};
 
 // Normal playback: proven Hermite varispeed (keylock off) or transport pass-through (keylock on).
 // Scratch playback: velocity-based virtual turntable + dedicated scratch resampler.
@@ -30,6 +49,9 @@ public:
                       bool wasPlayingBeforeScratch,
                       double normalPlaybackSpeed);
     [[nodiscard]] engine::scratch::ScratchReleaseDisposition endScratch(bool allowInertia);
+    [[nodiscard]] std::uint64_t requestScratchRelease(double normalizedReleaseSpeed,
+                                                      bool allowInertia) noexcept;
+    void submitScratchReleaseSpeed(double normalizedReleaseSpeed) noexcept;
     void engageScratchDuringInertia() noexcept;
     void addTargetDeltaSeconds(double deltaSeconds, double trackSampleRate) noexcept;
     void submitHandDeltaSeconds(double deltaSeconds, double dtSeconds) noexcept;
@@ -40,6 +62,7 @@ public:
     void configureTrack(double trackSampleRate, double trackLengthSeconds) noexcept;
     void syncReadPositionSeconds(double positionSeconds, double trackSampleRate) noexcept;
     void prepareNormalPlaybackHandoff(double positionSeconds, double trackSampleRate) noexcept;
+    void prepareNormalPlaybackHandoffFromScratchCursor(double trackSampleRate) noexcept;
     void exitScratchMode(double positionSeconds, double trackSampleRate) noexcept;
 
     void setDeckTempoRatio(double ratio) noexcept;
@@ -56,6 +79,9 @@ public:
     [[nodiscard]] double scratchRate() const noexcept;
     [[nodiscard]] double readPositionSeconds(double trackSampleRate) const noexcept;
     [[nodiscard]] double displayPositionSeconds() const noexcept;
+    [[nodiscard]] bool normalPlaybackHandoffPending() const noexcept;
+    [[nodiscard]] ScratchReleaseSnapshot scratchReleaseSnapshot() const noexcept;
+    [[nodiscard]] bool scratchReleaseComplete(std::uint64_t generation) const noexcept;
 
     void snapHermiteToDeckTempo() noexcept;
 
@@ -65,25 +91,50 @@ public:
     void armScalerCrossfade() noexcept { m_crossfadeRemaining.store(kCrossfadeSamples, std::memory_order_relaxed); }
 
     void setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle) noexcept;
+    void setPlaybackSource(CachedPlaybackAudioSource* source) noexcept {
+        m_playbackSource.store(source, std::memory_order_release);
+    }
     [[nodiscard]] ScratchCacheStats scratchCacheStats() const noexcept { return m_scratchResampler.cacheStats(); }
 
     // Audio thread publishes scratch playhead here (seconds) for lock-free UI reads.
     void setAudioPlayheadSink(std::atomic<double>* sink) noexcept { m_audioPlayheadSink = sink; }
 
     // Blocks audio output while DjEngine swaps transport reader sources.
-    void beginTransportSwap() noexcept { m_transportSwapInProgress.store(true, std::memory_order_release); }
-    void endTransportSwap() noexcept { m_transportSwapInProgress.store(false, std::memory_order_release); }
+    void beginTransportSwap() noexcept;
+    void endTransportSwap() noexcept {
+        m_transportSwapInProgress.store(false, std::memory_order_seq_cst);
+    }
 
 private:
     void applyDeckTempoToHermite() noexcept;
     [[nodiscard]] double effectiveDeckTempoRatio() const noexcept;
     void consumePendingAudioCommands() noexcept;
+    void consumeScratchReleaseCommand() noexcept;
+    void finishReleaseDecisionAfterTrackingBlock() noexcept;
+    void finishCoastHandoffAfterScratchBlock(double trackSampleRate) noexcept;
+    void completeActiveReleaseHandoff(double trackSampleRate) noexcept;
+    [[nodiscard]] bool applyReaderHandoff(double positionSeconds,
+                                          double trackSampleRate,
+                                          bool releaseOwned = false) noexcept;
+    void applyNormalPlaybackHandoff(double positionSeconds,
+                                    double trackSampleRate,
+                                    std::uint64_t generation) noexcept;
+    void completeCursorHandoffAfterScratchBlock(double trackSampleRate) noexcept;
     double activePlaybackRate(double trackSampleRate, int bufferSize) noexcept;
     void applyNormalPathCrossfade(const juce::AudioSourceChannelInfo& info) noexcept;
+    void captureScratchTail(const juce::AudioSourceChannelInfo& info) noexcept;
+    void applyScratchExitTail(const juce::AudioSourceChannelInfo& info) noexcept;
+    void publishScratchCursor(double readPositionSamples, double trackSampleRate) noexcept;
+    void publishReleaseSnapshot(std::uint64_t generation,
+                                ScratchReleasePhase phase,
+                                engine::scratch::ScratchReleaseDisposition disposition,
+                                double finalCursorSeconds) noexcept;
     [[nodiscard]] bool isScratchPathActive() const noexcept;
+    [[nodiscard]] double signedDeckTempoRatio() const noexcept;
 
     juce::OptionalScopedPointer<juce::AudioSource> m_transport;
     juce::PositionableAudioSource* m_positionableTransportSource = nullptr;
+    std::atomic<CachedPlaybackAudioSource*> m_playbackSource { nullptr };
     std::unique_ptr<HermiteResamplingAudioSource> m_hermite;
 
     engine::scratch::ScratchController m_controller;
@@ -126,10 +177,67 @@ private:
 
     std::atomic<double> m_handoffPositionSeconds { 0.0 };
     std::atomic<double> m_handoffSampleRate { 44100.0 };
+    std::atomic<bool> m_handoffFromScratchCursor { false };
     std::atomic<std::uint64_t> m_handoffCommandGeneration { 0 };
+    std::atomic<std::uint64_t> m_cancelledHandoffGeneration { 0 };
     std::uint64_t m_appliedHandoffCommandGeneration = 0;
+    std::atomic<std::uint64_t> m_completedHandoffCommandGeneration { 0 };
+    bool m_cursorHandoffPending = false;
+    std::uint64_t m_cursorHandoffGeneration = 0;
+    double m_cursorHandoffSampleRate = 44100.0;
+
+    // Control-thread release publication. The odd/even sequence makes the
+    // multi-field command coherent without making the audio callback spin.
+    std::atomic<std::uint64_t> m_releaseCommandSequence { 0 };
+    std::atomic<std::uint64_t> m_releaseCommandGeneration { 0 };
+    std::atomic<double> m_releaseCommandSpeed { 0.0 };
+    std::atomic<double> m_releaseCommandDeckRate { 1.0 };
+    std::atomic<double> m_releaseCommandSampleRate { 44100.0 };
+    std::atomic<bool> m_releaseCommandWasPlaying { false };
+    std::atomic<bool> m_releaseCommandAllowInertia { true };
+    std::atomic<bool> m_releaseCommandKeylock { false };
+    std::atomic<bool> m_releaseCommandReverse { false };
+    std::atomic<bool> m_releaseCommandLoop { false };
+    std::atomic<std::uint64_t> m_releaseGenerationCounter { 0 };
+    std::atomic<std::uint64_t> m_requestedReleaseGeneration { 0 };
+    std::atomic<std::uint64_t> m_cancelledReleaseGeneration { 0 };
+    std::atomic<std::uint64_t> m_completedReleaseGeneration { 0 };
+    std::atomic<double> m_latestReleaseSpeed { 0.0 };
+
+    struct AudioReleaseCommand {
+        std::uint64_t generation = 0;
+        double speed = 0.0;
+        double deckRate = 1.0;
+        double sampleRate = 44100.0;
+        bool wasPlaying = false;
+        bool allowInertia = true;
+        bool keylock = false;
+        bool reverse = false;
+        bool loop = false;
+    };
+    AudioReleaseCommand m_audioReleaseCommand;
+    std::uint64_t m_appliedReleaseGeneration = 0;
+    ScratchReleasePhase m_audioReleasePhase = ScratchReleasePhase::Idle;
+    engine::scratch::ScratchReleaseDisposition m_audioReleaseDisposition =
+        engine::scratch::ScratchReleaseDisposition::HandoffNow;
+
+    // Audio-thread acknowledgement snapshot, also protected by an odd/even
+    // sequence so the facade never observes a new generation with an old cursor.
+    std::atomic<std::uint64_t> m_releaseAckSequence { 0 };
+    std::atomic<std::uint64_t> m_releaseAckGeneration { 0 };
+    std::atomic<std::uint8_t> m_releaseAckPhase {
+        static_cast<std::uint8_t>(ScratchReleasePhase::Idle) };
+    std::atomic<std::uint8_t> m_releaseAckDisposition {
+        static_cast<std::uint8_t>(engine::scratch::ScratchReleaseDisposition::HandoffNow) };
+    std::atomic<double> m_releaseAckCursorSeconds { 0.0 };
+
+    std::array<float, 2> m_lastScratchOutput { 0.0f, 0.0f };
+    bool m_lastScratchOutputValid = false;
+    bool m_scratchExitTailPending = false;
+    std::uint64_t m_tailReleaseGeneration = 0;
 
     std::atomic<bool> m_transportSwapInProgress { false };
+    std::atomic<unsigned int> m_audioCallbacksActive { 0 };
     std::atomic<double>* m_audioPlayheadSink = nullptr;
 };
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ScratchController.hpp"
+
 #include <QElapsedTimer>
 #include <cmath>
 
@@ -19,15 +21,24 @@ public:
     static constexpr double kEventSpikeClampSec = 0.06;
     static constexpr double kDirectionFlipThresholdRate = 0.08;
 
-    [[nodiscard]] bool scrubbing() const noexcept { return m_scrubbing; }
-    [[nodiscard]] bool releaseGlide() const noexcept { return m_releaseGlide; }
+    [[nodiscard]] bool scrubbing() const noexcept {
+        return m_phase == ScratchPhase::TouchTracking;
+    }
+    [[nodiscard]] bool releaseGlide() const noexcept {
+        return m_phase == ScratchPhase::ReleasePending
+            || m_phase == ScratchPhase::CoastToDeckRate
+            || m_phase == ScratchPhase::CoastToStop
+            || m_phase == ScratchPhase::HandoffPending;
+    }
+    [[nodiscard]] ScratchPhase phase() const noexcept { return m_phase; }
     [[nodiscard]] bool wasPlaying() const noexcept { return m_wasPlaying; }
     [[nodiscard]] bool loopLocked() const noexcept { return m_loopLocked; }
     [[nodiscard]] bool savedReverse() const noexcept { return m_savedReverse; }
     [[nodiscard]] QElapsedTimer& physicsClock() noexcept { return m_physicsClock; }
 
-    void setScrubbing(bool v) noexcept { m_scrubbing = v; }
-    void setReleaseGlide(bool v) noexcept { m_releaseGlide = v; }
+    void setScrubbing(bool v) noexcept;
+    void setReleaseGlide(bool v) noexcept;
+    void setPhase(ScratchPhase phase) noexcept { m_phase = phase; }
     void setWasPlaying(bool v) noexcept { m_wasPlaying = v; }
     void setLoopLocked(bool v) noexcept { m_loopLocked = v; }
     void setSavedReverse(bool v) noexcept { m_savedReverse = v; }
@@ -45,6 +56,10 @@ public:
     bool submitRelative(engine::audio::ScratchDeckBridge* bridge,
                         double deltaSec,
                         double sampleRate) noexcept;
+    bool submitRelativeAtInterval(engine::audio::ScratchDeckBridge* bridge,
+                                  double deltaSec,
+                                  double sampleRate,
+                                  double eventIntervalSeconds) noexcept;
 
     bool submitReleaseRelative(engine::audio::ScratchDeckBridge* bridge,
                                double deltaSec) noexcept;
@@ -62,8 +77,7 @@ public:
     double tick(engine::audio::ScratchDeckBridge* bridge, double dtSec) noexcept;
 
 private:
-    bool m_scrubbing = false;
-    bool m_releaseGlide = false;
+    ScratchPhase m_phase = ScratchPhase::Idle;
     bool m_wasPlaying = false;
     bool m_loopLocked = false;
     bool m_savedReverse = false;

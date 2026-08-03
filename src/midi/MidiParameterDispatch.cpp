@@ -10,7 +10,8 @@ using namespace midi_internal;
 #include <QThread>
 #include <cmath>
 
-void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool isNoteOff)
+void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool isNoteOff,
+                                                    double eventTimestampSeconds)
 {
     // Live MIDI monitor — update for every event (both JUCE and ALSA paths)
     {
@@ -19,7 +20,23 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
         QString evtLabel;
         if (isNoteOff)        evtLabel = QStringLiteral("Ch%1 NoteOff %2").arg(chNo+1).arg(sub);
         else if (sub == 1500) evtLabel = QStringLiteral("Ch%1 PitchBend").arg(chNo+1);
-        else if (sub >= 1000) evtLabel = QStringLiteral("Ch%1 CC %2 = %3").arg(chNo+1).arg(sub-1000).arg(static_cast<int>(value*127));
+        else if (sub >= 1000) {
+            const auto mappingIt = m_midiToParam.find(msgId);
+            const bool relative = mappingIt != m_midiToParam.end()
+                && midi_internal::isRelativeInteraction(mappingIt->second.interactionType);
+            if (relative) {
+                const int ticks = static_cast<int>(std::lround(value));
+                const QString tickText = ticks > 0
+                    ? QStringLiteral("+%1").arg(ticks)
+                    : QString::number(ticks);
+                evtLabel = QStringLiteral("Ch%1 CC %2 ticks %3")
+                    .arg(chNo + 1).arg(sub - 1000).arg(tickText);
+            } else {
+                evtLabel = QStringLiteral("Ch%1 CC %2 = %3")
+                    .arg(chNo + 1).arg(sub - 1000)
+                    .arg(static_cast<int>(std::lround(value * 127.0f)));
+            }
+        }
         else if (sub >= 0)    evtLabel = QStringLiteral("Ch%1 Note %2  vel %3").arg(chNo+1).arg(sub).arg(static_cast<int>(value*127));
 
         qDebug() << "[MIDI IN]" << evtLabel << (m_isLearning ? "(LEARNING)" : "");
@@ -37,7 +54,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
     if (!m_parameterStore)
         return;
 
-    auto dispatchTouchedAbsoluteJogFallback = [this, msgId, value]() -> bool
+    auto dispatchTouchedAbsoluteJogFallback = [this, msgId, value, eventTimestampSeconds]() -> bool
     {
         if (msgId < 10000)
             return false;
@@ -113,7 +130,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
         if (delta == 0.0f)
             return true;
 
-        dispatchToStore(scratchParamId, delta, ParameterStoreDispatch::Midi);
+        dispatchFlx10JogAction(scratchParamId, delta, eventTimestampSeconds);
         return true;
     };
 
@@ -231,6 +248,11 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
     // Relative encoders and buttons can produce repeated identical values that
     // are semantically distinct events, so always emit them. Analog controls
     // use deduplication to avoid MIDI feedback echo loops.
+    if (midi_internal::isFlx10JogInputParam(paramId)
+        && dispatchFlx10JogAction(paramId, dispatchValue, eventTimestampSeconds)) {
+        return;
+    }
+
     if (midi_internal::shouldAlwaysDispatch(interactionType)) {
         dispatchToStore(paramId, dispatchValue, ParameterStoreDispatch::Midi);
     } else {
@@ -290,6 +312,11 @@ void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*
     // then dispatch to the Qt main thread so processDecodedMidiEvent can safely
     // read/write m_isLearning and the maps without a data race.
     const int ch = message.getChannel() - 1; // 0-based
+    const double juceTimestampSeconds = message.getTimeStamp();
+    const double eventTimestampSeconds = std::isfinite(juceTimestampSeconds)
+            && juceTimestampSeconds > 0.0
+        ? juceTimestampSeconds
+        : juce::Time::getMillisecondCounterHiRes() * 0.001;
 
     // rawEnc encoding by type:
     //   CC         → raw controller value 0-127 (int stored as float)
@@ -318,7 +345,7 @@ void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*
 
     // Marshal to Qt main thread. Qt cancels the call automatically if `this`
     // is destroyed before the event loop processes it.
-    QMetaObject::invokeMethod(this, [this, msgId, rawEnc, noteOff]() mutable
+    QMetaObject::invokeMethod(this, [this, msgId, rawEnc, noteOff, eventTimestampSeconds]() mutable
     {
         int   resolvedId    = msgId;
         float resolvedValue = rawEnc;
@@ -351,6 +378,6 @@ void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*
             // sub < 1000 → Note On/Off: rawEnc is already a normalised float velocity
         }
 
-        processDecodedMidiEvent(resolvedId, resolvedValue, noteOff);
+        processDecodedMidiEvent(resolvedId, resolvedValue, noteOff, eventTimestampSeconds);
     }, Qt::QueuedConnection);
 }

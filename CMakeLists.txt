@@ -729,6 +729,12 @@ target_compile_definitions(BrockDJ_deck_transport_tests PRIVATE JUCE_USE_CURL=0 
 target_compile_features(BrockDJ_deck_transport_tests PRIVATE cxx_std_23)
 add_test(NAME deck_transport COMMAND BrockDJ_deck_transport_tests)
 
+add_executable(BrockDJ_flx10_jog_routing_tests
+    tests/midi/flx10_jog_routing_tests.cpp)
+target_include_directories(BrockDJ_flx10_jog_routing_tests PRIVATE src src/engine)
+target_compile_features(BrockDJ_flx10_jog_routing_tests PRIVATE cxx_std_23)
+add_test(NAME flx10_jog_routing COMMAND BrockDJ_flx10_jog_routing_tests)
+
 add_executable(BrockDJ_sync_coordinator_tests
     tests/sync/sync_coordinator_tests.cpp
     src/engine/sync/DeckSyncController.cpp
@@ -1022,6 +1028,7 @@ set(_brockdj_executable_targets
     BrockDJ_mixer_dsp_tests
     BrockDJ_deck_audio_graph_tests
     BrockDJ_deck_transport_tests
+    BrockDJ_flx10_jog_routing_tests
     BrockDJ_sync_coordinator_tests
     BrockDJ_control_clock_tests
     BrockDJ_master_bus_tests

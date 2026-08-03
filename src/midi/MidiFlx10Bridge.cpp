@@ -15,6 +15,46 @@ using namespace midi_internal;
 #include <cmath>
 #include <exception>
 
+namespace {
+
+const char* jogEventName(flx10::JogEventType type) noexcept
+{
+    switch (type) {
+    case flx10::JogEventType::TouchDown: return "touch-down";
+    case flx10::JogEventType::TouchUp: return "touch-up";
+    case flx10::JogEventType::Platter: return "platter-0x22";
+    case flx10::JogEventType::Rim: return "rim-0x21";
+    case flx10::JogEventType::Generic: return "generic";
+    }
+    return "unknown";
+}
+
+const char* jogPhaseName(flx10::JogPhase phase) noexcept
+{
+    switch (phase) {
+    case flx10::JogPhase::Idle: return "idle";
+    case flx10::JogPhase::TouchTracking: return "touch-tracking";
+    case flx10::JogPhase::ReleaseOwned: return "release-owned";
+    case flx10::JogPhase::TailSuppression: return "tail-suppression";
+    }
+    return "unknown";
+}
+
+const char* jogActionName(flx10::JogRouteAction action) noexcept
+{
+    switch (action) {
+    case flx10::JogRouteAction::Ignore: return "ignore";
+    case flx10::JogRouteAction::BeginScratch: return "begin-scratch";
+    case flx10::JogRouteAction::RequestRelease: return "request-release";
+    case flx10::JogRouteAction::ScratchDelta: return "scratch-delta";
+    case flx10::JogRouteAction::ReleaseDelta: return "release-delta";
+    case flx10::JogRouteAction::Nudge: return "nudge";
+    }
+    return "unknown";
+}
+
+} // namespace
+
 void MidiControllerManager::sendFlx10HotcuePaletteTest()
 {
     bool outputOpen =
@@ -657,6 +697,97 @@ void MidiControllerManager::handlePerformancePad(QChar deck,
     toggle = padIndex;
 }
 
+bool MidiControllerManager::dispatchFlx10JogAction(const QString& paramId,
+                                                   float value,
+                                                   double eventTimestampSeconds)
+{
+    const bool deckA = paramId.startsWith(QStringLiteral("deckA_"));
+    const bool deckB = paramId.startsWith(QStringLiteral("deckB_"));
+    if (!deckA && !deckB)
+        return false;
+
+    flx10::JogEventType eventType;
+    if (paramId.endsWith(QStringLiteral("_jog_touch"))) {
+        eventType = value >= 0.5f ? flx10::JogEventType::TouchDown
+                                  : flx10::JogEventType::TouchUp;
+    } else if (paramId.endsWith(QStringLiteral("_jog_scratch"))) {
+        eventType = flx10::JogEventType::Platter;
+    } else if (paramId.endsWith(QStringLiteral("_jog_nudge"))) {
+        eventType = flx10::JogEventType::Rim;
+    } else if (paramId.endsWith(QStringLiteral("_jog_move"))) {
+        eventType = flx10::JogEventType::Generic;
+    } else {
+        return false;
+    }
+
+    DjEngine* const engine = deckA ? m_deckA : m_deckB;
+    auto& router = deckA ? m_jogARouter : m_jogBRouter;
+    bool& touched = deckA ? m_jogATouched : m_jogBTouched;
+    const double timestamp = std::isfinite(eventTimestampSeconds)
+            && eventTimestampSeconds > 0.0
+        ? eventTimestampSeconds
+        : juce::Time::getMillisecondCounterHiRes() * 0.001;
+    const flx10::JogInput input {
+        eventType,
+        eventType == flx10::JogEventType::TouchDown
+                || eventType == flx10::JogEventType::TouchUp
+            ? 0.0
+            : static_cast<double>(value),
+        timestamp,
+        engine != nullptr && engine->isScratchReleaseActive()
+    };
+    const auto route = router.route(input);
+
+    qDebug().nospace()
+        << "[FLX10 JOG] deck=" << (deckA ? 'A' : 'B')
+        << " stream=" << jogEventName(eventType)
+        << " ticks=" << route.ticks
+        << " dtMs=" << route.eventIntervalSeconds * 1000.0
+        << " rate=" << route.estimatedRate
+        << " phase=" << jogPhaseName(route.phase)
+        << " action=" << jogActionName(route.action);
+
+    if (!engine)
+        return true;
+
+    switch (route.action) {
+    case flx10::JogRouteAction::BeginScratch:
+        touched = true;
+        m_scratchAbsoluteLastByMsgId.clear();
+        engine->pauseForScrub();
+        break;
+    case flx10::JogRouteAction::RequestRelease:
+        touched = false;
+        m_scratchAbsoluteLastByMsgId.clear();
+        engine->requestScratchRelease(route.estimatedRate, true);
+        break;
+    case flx10::JogRouteAction::ScratchDelta:
+    {
+        double trackingInterval = route.eventIntervalSeconds;
+        if (!(trackingInterval > 0.0)
+            && std::isfinite(route.estimatedRate)
+            && std::abs(route.estimatedRate) > 1.0e-9) {
+            // The first wheel tick has no previous wheel event, but its rate is
+            // measured from touch-down. Recover that interval instead of making
+            // a fast first tick look like the 16 ms compatibility fallback.
+            trackingInterval = std::abs(route.deltaSeconds / route.estimatedRate);
+        }
+        engine->scratchBySecondsTimed(route.deltaSeconds, trackingInterval);
+        break;
+    }
+    case flx10::JogRouteAction::ReleaseDelta:
+        engine->submitScratchReleaseSpeed(route.estimatedRate);
+        break;
+    case flx10::JogRouteAction::Nudge:
+        engine->applyJogNudge(route.ticks);
+        break;
+    case flx10::JogRouteAction::Ignore:
+        break;
+    }
+
+    return true;
+}
+
 void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
 {
     if (m_deckA)
@@ -670,10 +801,8 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
     m_cueBHeld = false;
     m_jogATouched = false;
     m_jogBTouched = false;
-    m_jogAReleaseTimer.stop();
-    m_jogBReleaseTimer.stop();
-    m_jogAReleasedRecently = false;
-    m_jogBReleasedRecently = false;
+    m_jogARouter.reset();
+    m_jogBRouter.reset();
     m_deckAShiftHeld = false;
     m_deckBShiftHeld = false;
     m_deckAPadMode = MidiPadMode::HotCue;
@@ -1131,181 +1260,6 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
             if (b) {
                 const double range = std::max(1.0, b->tempoRangePercent());
                 b->setTempoPercent(static_cast<double>(value) * 2.0 * range - range);
-            }
-        }
-        // Jog touch: 127 = finger down (enter scratch), 0 = lift (resume)
-        else if (id == "deckA_jog_touch") {
-            const bool currentHeld = value >= 0.5f;
-            const bool previousHeld = m_jogATouched;
-            if (currentHeld) {
-                if (!previousHeld && a) {
-                    m_jogATouched = true;
-                    m_jogAReleasedRecently = false;
-                    m_jogAReleaseTimer.stop();
-                    m_scratchAbsoluteLastByMsgId.clear();
-                    qDebug() << "[MIDI ACTION] action=JogTouch deck=A"
-                             << "previous:" << previousHeld
-                             << "current:" << currentHeld
-                             << "dispatch=pauseForScrub";
-                    a->pauseForScrub();
-                } else {
-                    qDebug() << "[MIDI ACTION] action=JogTouch deck=A"
-                             << "previous:" << previousHeld
-                             << "current:" << currentHeld
-                             << "dispatch=ignored-repeat-press";
-                }
-            } else {
-                m_jogATouched = false;
-                m_scratchAbsoluteLastByMsgId.clear();
-                qDebug() << "[MIDI ACTION] action=JogTouch deck=A"
-                         << "previous:" << previousHeld
-                         << "current:" << currentHeld
-                         << "dispatch=open-top-platter-release-window";
-                m_jogAReleasedRecently = true;
-                m_jogAReleaseTimer.start();
-            }
-        }
-        else if (id == "deckB_jog_touch") {
-            const bool currentHeld = value >= 0.5f;
-            const bool previousHeld = m_jogBTouched;
-            if (currentHeld) {
-                if (!previousHeld && b) {
-                    m_jogBTouched = true;
-                    m_jogBReleasedRecently = false;
-                    m_jogBReleaseTimer.stop();
-                    m_scratchAbsoluteLastByMsgId.clear();
-                    qDebug() << "[MIDI ACTION] action=JogTouch deck=B"
-                             << "previous:" << previousHeld
-                             << "current:" << currentHeld
-                             << "dispatch=pauseForScrub";
-                    b->pauseForScrub();
-                } else {
-                    qDebug() << "[MIDI ACTION] action=JogTouch deck=B"
-                             << "previous:" << previousHeld
-                             << "current:" << currentHeld
-                             << "dispatch=ignored-repeat-press";
-                }
-            } else {
-                m_jogBTouched = false;
-                m_scratchAbsoluteLastByMsgId.clear();
-                qDebug() << "[MIDI ACTION] action=JogTouch deck=B"
-                         << "previous:" << previousHeld
-                         << "current:" << currentHeld
-                         << "dispatch=open-top-platter-release-window";
-                m_jogBReleasedRecently = true;
-                m_jogBReleaseTimer.start();
-            }
-        }
-        // Jog wheels mirror the Mixxx FLX10 mapping: CC 0x22 is the touched
-        // top-platter stream; CC 0x21 is rim / post-release free spin. While the
-        // finger is down only CC 0x22 is used for scratch — routing both would
-        // double the travel and spin the UI handle too fast.
-        else if (id == "deckA_jog_nudge") {
-            // The physical rim is never a scratch continuation. In particular,
-            // post-release rim packets must not restart a scrub or extend its
-            // 120 ms top-platter grace window.
-            if (a)
-                a->applyJogNudge(static_cast<double>(value));
-        }
-        else if (id == "deckB_jog_nudge") {
-            if (b)
-                b->applyJogNudge(static_cast<double>(value));
-        }
-        else if (id == "deckA_jog_scratch") {
-            if (a && std::abs(value) > 0.0f) {
-                const double delta = midi_internal::flx10ScratchDeltaSec(static_cast<double>(value));
-                // The platter keeps emitting CC 0x22 briefly after touch-up while it
-                // physically spins down. Keep that movement in the current scratch
-                // session; treating it as a new grab snaps back to an old position.
-                if (m_jogAReleasedRecently && a->isScrubbing()) {
-                    m_jogAReleaseTimer.start();
-                    a->scratchBySeconds(delta, true);
-                    return;
-                }
-                if (a->isScratchReleaseActive()) {
-                    a->applyScratchReleaseJog(delta);
-                    return;
-                }
-                // CC 0x22 is the vinyl-on platter stream; engage scratch even if the
-                // touch Note arrived a tick later than the first relative CC.
-                if (!m_jogATouched) {
-                    m_jogATouched = true;
-                    m_jogAReleasedRecently = false;
-                    m_jogAReleaseTimer.stop();
-                    m_scratchAbsoluteLastByMsgId.clear();
-                }
-                if (!a->isScrubbing())
-                    a->pauseForScrub();
-                a->scratchBySeconds(delta, true);
-            }
-        }
-        else if (id == "deckB_jog_scratch") {
-            if (b && std::abs(value) > 0.0f) {
-                const double delta = midi_internal::flx10ScratchDeltaSec(static_cast<double>(value));
-                if (m_jogBReleasedRecently && b->isScrubbing()) {
-                    m_jogBReleaseTimer.start();
-                    b->scratchBySeconds(delta, true);
-                    return;
-                }
-                if (b->isScratchReleaseActive()) {
-                    b->applyScratchReleaseJog(delta);
-                    return;
-                }
-                if (!m_jogBTouched) {
-                    m_jogBTouched = true;
-                    m_jogBReleasedRecently = false;
-                    m_jogBReleaseTimer.stop();
-                    m_scratchAbsoluteLastByMsgId.clear();
-                }
-                if (!b->isScrubbing())
-                    b->pauseForScrub();
-                b->scratchBySeconds(delta, true);
-            }
-        }
-        else if (id == "deckA_jog_move") {
-            const double delta = midi_internal::flx10ScratchDeltaSec(static_cast<double>(value));
-            if (a) {
-                if (m_jogATouched || a->isScrubbing()) {
-                    if (!a->isScrubbing())
-                        a->pauseForScrub();
-                    qDebug() << "[MIDI ACTION] action=JogMove deck=A"
-                             << "ticks:" << value
-                             << "deltaSec:" << delta
-                             << "touched:" << m_jogATouched
-                             << "scrubbing:" << a->isScrubbing()
-                             << "dispatch=scratchBySeconds";
-                    a->scratchBySeconds(delta, true);
-                } else {
-                    qDebug() << "[MIDI ACTION] action=JogMove deck=A"
-                             << "ticks:" << value
-                             << "touched:" << m_jogATouched
-                             << "scrubbing:" << a->isScrubbing()
-                             << "dispatch=applyJogNudge";
-                    a->applyJogNudge(static_cast<double>(value));
-                }
-            }
-        }
-        else if (id == "deckB_jog_move") {
-            const double delta = midi_internal::flx10ScratchDeltaSec(static_cast<double>(value));
-            if (b) {
-                if (m_jogBTouched || b->isScrubbing()) {
-                    if (!b->isScrubbing())
-                        b->pauseForScrub();
-                    qDebug() << "[MIDI ACTION] action=JogMove deck=B"
-                             << "ticks:" << value
-                             << "deltaSec:" << delta
-                             << "touched:" << m_jogBTouched
-                             << "scrubbing:" << b->isScrubbing()
-                             << "dispatch=scratchBySeconds";
-                    b->scratchBySeconds(delta, true);
-                } else {
-                    qDebug() << "[MIDI ACTION] action=JogMove deck=B"
-                             << "ticks:" << value
-                             << "touched:" << m_jogBTouched
-                             << "scrubbing:" << b->isScrubbing()
-                             << "dispatch=applyJogNudge";
-                    b->applyJogNudge(static_cast<double>(value));
-                }
             }
         }
     });

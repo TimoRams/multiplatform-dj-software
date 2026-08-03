@@ -45,22 +45,6 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, ControlClock
     };
     m_controlClockRegistration = controlClock.registerCallbacks(std::move(clockCallbacks));
 
-    for (QTimer* timer : {&m_jogAReleaseTimer, &m_jogBReleaseTimer}) {
-        timer->setSingleShot(true);
-        timer->setTimerType(Qt::PreciseTimer);
-        timer->setInterval(120);
-    }
-    connect(&m_jogAReleaseTimer, &QTimer::timeout, this, [this] {
-        m_jogAReleasedRecently = false;
-        if (!m_jogATouched && m_deckA && m_deckA->isScrubbing())
-            m_deckA->resumeAfterScrub();
-    });
-    connect(&m_jogBReleaseTimer, &QTimer::timeout, this, [this] {
-        m_jogBReleasedRecently = false;
-        if (!m_jogBTouched && m_deckB && m_deckB->isScrubbing())
-            m_deckB->resumeAfterScrub();
-    });
-
     m_selectedController = SettingsManager::getInstance().getSelectedController();
     m_selectedMappingFile = SettingsManager::getInstance().getSelectedMappingFile();
 
@@ -106,8 +90,6 @@ void MidiControllerManager::shutdown()
     QCoreApplication::removePostedEvents(&m_midiFeedback);
 
     QObject::disconnect(&m_startupRefreshTimer, nullptr, this, nullptr);
-    QObject::disconnect(&m_jogAReleaseTimer, nullptr, this, nullptr);
-    QObject::disconnect(&m_jogBReleaseTimer, nullptr, this, nullptr);
 
     if (m_deckActionsConnection)
         QObject::disconnect(m_deckActionsConnection);

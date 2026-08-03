@@ -1,4 +1,5 @@
 #include "engine/deck/DeckTransport.h"
+#include "engine/deck/JogNudgePolicy.h"
 
 #include "app/ControlClock.h"
 #include "audio/cache/AudioPageCache.h"
@@ -109,6 +110,18 @@ int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
     bool ok = true;
+    ok &= require(engine::deck::jogNudgeCommandPercent(1.0) == 0.625,
+                  "FLX10 jog tick uses Mixxx bend scale");
+    ok &= require(engine::deck::jogNudgeCommandPercent(100.0) == 6.0
+                  && engine::deck::jogNudgeCommandPercent(-100.0) == -6.0,
+                  "jog bend remains clamped to six percent");
+    const double heldNudge = engine::deck::decayedJogNudgePercent(4.0, 0.080);
+    const double firstDecay = engine::deck::decayedJogNudgePercent(4.0, 0.120);
+    const double secondDecay = engine::deck::decayedJogNudgePercent(4.0, 0.200);
+    ok &= require(heldNudge == 4.0 && firstDecay < heldNudge && secondDecay < firstDecay,
+                  "jog nudge decays monotonically from the fixed command");
+    ok &= require(engine::deck::decayedJogNudgePercent(4.0, 1.0) == 0.0,
+                  "jog nudge settles exactly at base rate");
     QTemporaryDir directory;
     std::array<QString, 4> paths;
     for (int i = 0; i < 4; ++i) {
@@ -159,6 +172,14 @@ int main(int argc, char** argv)
     ok &= require(transport.audioRunning(), "seek back from end permits play");
     ok &= require(transport.setPlaying(false), "pause changes state");
     ok &= require(!transport.setPlaying(false), "identical pause is idempotent");
+
+    transport.seekAudioToSeconds(0.2);
+    transport.publishScratchPosition(0.6);
+    transport.startAudioPreservingScratchPosition();
+    ok &= require(std::abs(transport.playheadPositionAtomic() - 0.6) < 1.0e-9,
+                  "scratch release start does not re-anchor to the stale normal reader");
+    transport.stopAudio();
+    transport.seekAudioToSeconds(0.2);
 
     transport.setReverse(false);
     ok &= require(transport.setReverse(true) && transport.reverse(), "reverse enabled");

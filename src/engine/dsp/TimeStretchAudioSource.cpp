@@ -44,13 +44,27 @@ void TimeStretchAudioSource::setTrackGeneration(std::uint64_t generation) noexce
 
 void TimeStretchAudioSource::enterScratchBypass() noexcept
 {
+    m_scratchExitRequested.store(false, std::memory_order_release);
     m_scratchBypass.store(true, std::memory_order_release);
     m_switchFadeRemaining.store(0, std::memory_order_relaxed);
     m_reportedLatencySamples.store(0, std::memory_order_relaxed);
+
+    // RubberBand may still contain FIFO/audio history from before the grab.
+    // Build a clean pipeline on the worker while scratch audio bypasses it.
+    if (m_pitchLockEnabled.load(std::memory_order_acquire))
+        publishDesiredConfiguration();
 }
 
 void TimeStretchAudioSource::endScratchBypass() noexcept
 {
+    if (m_pitchLockEnabled.load(std::memory_order_acquire)
+        && m_accepting.load(std::memory_order_acquire)) {
+        // Keep direct audio active until the worker-prepared pipeline has been
+        // switched in. Reusing the old FIFO briefly replays the pre-scratch song.
+        m_scratchExitRequested.store(true, std::memory_order_release);
+        return;
+    }
+
     m_scratchBypass.store(false, std::memory_order_release);
     m_scratchExitFadePending.store(true, std::memory_order_release);
 }
@@ -84,6 +98,8 @@ void TimeStretchAudioSource::prepareToPlay(int blockSize, double sr)
     m_desiredGeneration.store(1, std::memory_order_release);
     m_activeGeneration.store(0, std::memory_order_release);
     m_activeSlot.store(-1, std::memory_order_release);
+    m_scratchBypass.store(false, std::memory_order_release);
+    m_scratchExitRequested.store(false, std::memory_order_release);
     m_accepting.store(true, std::memory_order_release);
     m_prepared.store(true, std::memory_order_release);
     m_stopRequested.store(false, std::memory_order_release);
@@ -254,6 +270,16 @@ void TimeStretchAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInf
     struct Scope { Scope(){g_inTimeStretchAudioCallback=true;} ~Scope(){g_inTimeStretchAudioCallback=false;} } scope;
     if (!source || !info.buffer || info.numSamples <= 0) { info.clearActiveBufferRegion(); return; }
     activatePreparedPipelineAtBlockBoundary();
+    if (m_scratchExitRequested.load(std::memory_order_acquire)) {
+        const auto activeGeneration = m_activeGeneration.load(std::memory_order_acquire);
+        const auto desiredGeneration = m_desiredGeneration.load(std::memory_order_acquire);
+        if (!m_pitchLockEnabled.load(std::memory_order_acquire)
+            || activeGeneration == desiredGeneration) {
+            m_scratchExitRequested.store(false, std::memory_order_release);
+            m_scratchBypass.store(false, std::memory_order_release);
+            m_scratchExitFadePending.store(true, std::memory_order_release);
+        }
+    }
     if (m_scratchExitFadePending.exchange(false, std::memory_order_acq_rel))
         m_switchFadeRemaining.store(kSwitchFadeSamples, std::memory_order_relaxed);
     const int active = m_activeSlot.load(std::memory_order_acquire);

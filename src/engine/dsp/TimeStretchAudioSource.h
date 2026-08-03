@@ -93,6 +93,7 @@ private:
     std::atomic<double> m_targetTempoRatio { 1.0 };
     std::atomic<bool> m_pitchLockEnabled { false };
     std::atomic<bool> m_scratchBypass { false };
+    std::atomic<bool> m_scratchExitRequested { false };
     std::atomic<bool> m_scratchExitFadePending { false };
     std::atomic<double> m_sampleRate { 44100.0 };
     std::atomic<int> m_maximumBlockSize { 512 };

@@ -264,7 +264,9 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                     } else {
                         value = midi_internal::clampMidi7bit(b) / 127.0f;
                     }
-                    processDecodedMidiEvent(msgId, value, false);
+                    processDecodedMidiEvent(
+                        msgId, value, false,
+                        juce::Time::getMillisecondCounterHiRes() * 0.001);
                 } else if (line.contains("Note on", Qt::CaseInsensitive) ||
                            line.contains("Note off", Qt::CaseInsensitive)) {
                     const bool isOff = line.contains("Note off", Qt::CaseInsensitive);
@@ -341,7 +343,9 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                                  << "ch0:" << ch0 << "note:" << note << "vel:" << vel
                                  << "msgId:" << msgId
                                  << "raw:" << line;
-                        processDecodedMidiEvent(msgId, zeroVelocity ? 0.0f : vel / 127.0f, zeroVelocity);
+                        processDecodedMidiEvent(
+                            msgId, zeroVelocity ? 0.0f : vel / 127.0f, zeroVelocity,
+                            juce::Time::getMillisecondCounterHiRes() * 0.001);
                     }
                 } else if ((line.contains("Pitchbend", Qt::CaseInsensitive) ||
                             line.contains("Pitch bend", Qt::CaseInsensitive)) &&
@@ -359,7 +363,9 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                         const int channelAwareMsgId = 10000 + std::max(0, std::min(15, pbCh)) * 2000 + 1500;
                         const int msgId = resolveMsgId(channelAwareMsgId, -1, 1500);
                         const float value = static_cast<float>(pbRaw + 8192) / 16383.0f;
-                        processDecodedMidiEvent(msgId, value, false);
+                        processDecodedMidiEvent(
+                            msgId, value, false,
+                            juce::Time::getMillisecondCounterHiRes() * 0.001);
                     }
                 }
             }

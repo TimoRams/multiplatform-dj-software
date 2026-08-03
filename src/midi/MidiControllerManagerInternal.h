@@ -2,6 +2,7 @@
 
 #include "MidiControllerManager.h"
 #include "DjEngine.h"
+#include "controllers/flx10/Flx10Constants.h"
 
 #include <QDesktopServices>
 #include <QDir>
@@ -19,16 +20,6 @@ inline const QString kBuiltInFlx10ControllerName = QStringLiteral("DDJ-FLX10");
 inline const QString kBuiltInFlx10MappingFile = QStringLiteral("DDJ-FLX10.brockdj.xml");
 inline const QString kBuiltInFlx10MappingLabel = QStringLiteral("Built-in: DDJ-FLX10");
 inline const QString kBuiltInFlx10MappingResource = QStringLiteral(":/controllers/mappings/midi/DDJ-FLX10.brockdj.xml");
-// FLX10 hardware jog wheels report ~1500 relative ticks per vinyl revolution
-// (Mixxx scratchEnable uses the same constant). One revolution ≈ 1.8 s @ 33⅓ RPM.
-constexpr double kFlx10ScratchIntervalsPerRevolution = 1500.0;
-constexpr double kVinylRpm = 33.0 + 1.0 / 3.0;
-
-inline double flx10ScratchDeltaSec(double ticks)
-{
-    return ticks * (60.0 / kVinylRpm) / kFlx10ScratchIntervalsPerRevolution;
-}
-
 inline bool isBuiltInFlx10Mapping(const QString& mappingName)
 {
     return mappingName == kBuiltInFlx10MappingLabel
@@ -384,6 +375,12 @@ inline bool isFlx10JogRelativeParam(const QString& paramId)
         || paramId.endsWith(QStringLiteral("_jog_scratch"));
 }
 
+inline bool isFlx10JogInputParam(const QString& paramId)
+{
+    return isFlx10JogRelativeParam(paramId)
+        || paramId.endsWith(QStringLiteral("_jog_touch"));
+}
+
 inline float decodeRelativeCcValue(int rawValue, const QString& paramId)
 {
     const int raw = clampMidi7bit(rawValue);
@@ -391,7 +388,7 @@ inline float decodeRelativeCcValue(int rawValue, const QString& paramId)
         // FLX10 jog CCs are relative around 0x40 for the full 7-bit range:
         // 0x40 = neutral, 0x41..0x7F = +1..+63, 0x3F..0x01 = -1..-63.
         // Treating 0x7F as two's-complement -1 makes fast spins reverse direction.
-        return static_cast<float>(raw - 0x40);
+        return static_cast<float>(flx10::relativeTicksFromRaw(raw));
     }
 
     // Support the two common relative CC encodings for generic encoders:

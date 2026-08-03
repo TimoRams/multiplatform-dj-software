@@ -273,6 +273,7 @@ DeckTransport::ControlUpdate DeckTransport::updateControlState(
             : 0.004;
         m_audiblePositionSeconds = graph.positionSeconds;
         m_heldPositionSeconds = graph.positionSeconds;
+        m_audioPlayhead.store(m_audiblePositionSeconds, std::memory_order_release);
         if (slipDiverted(loop.active))
             m_backgroundPositionSeconds = std::min(
                 m_backgroundPositionSeconds + elapsed * m_playbackRate, m_trackLengthSeconds);
@@ -362,6 +363,15 @@ void DeckTransport::startAudio() noexcept
     const auto graph = m_audioGraph.transportSnapshot();
     m_audiblePositionSeconds = graph.positionSeconds;
     setSnapAnchor(graph.positionSeconds, true);
+    publishSnapshot();
+}
+
+void DeckTransport::startAudioPreservingScratchPosition() noexcept
+{
+    // The normal reader is repositioned by ScratchDeckBridge at the next audio
+    // block boundary. Its current transport position is still the grab cursor.
+    m_audioGraph.setTransportRunning(true);
+    setSnapAnchor(m_heldPositionSeconds, true);
     publishSnapshot();
 }
 
@@ -495,6 +505,15 @@ void DeckTransport::publishScratchPosition(double seconds) noexcept
     if (!std::isfinite(seconds))
         return;
     m_audioPlayhead.store(seconds, std::memory_order_release);
+    m_audiblePositionSeconds = seconds;
+    m_heldPositionSeconds = seconds;
+    publishSnapshot();
+}
+
+void DeckTransport::adoptScratchRenderedPosition(double seconds) noexcept
+{
+    if (!std::isfinite(seconds))
+        return;
     m_audiblePositionSeconds = seconds;
     m_heldPositionSeconds = seconds;
     publishSnapshot();

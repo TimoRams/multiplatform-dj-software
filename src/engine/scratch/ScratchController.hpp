@@ -26,6 +26,15 @@ enum class ScratchReleaseDisposition : std::uint8_t {
     CoastToStop
 };
 
+enum class ScratchPhase : std::uint8_t {
+    Idle,
+    TouchTracking,
+    ReleasePending,
+    CoastToDeckRate,
+    CoastToStop,
+    HandoffPending
+};
+
 // Virtual turntable controller. Hand movement drives playback velocity
 // directly, with light adaptive smoothing for fast throws and clean slow drags.
 // The release path ramps toward the current deck speed instead of decaying
@@ -52,15 +61,34 @@ public:
 
     void startScratch(double audioSamplePos, bool wasPlayingBeforeScratch, double normalPlaybackSpeed) noexcept;
     void stopScratch() noexcept;
+    // Control thread: publish touch-up without taking ownership away from the
+    // audio callback. The callback resolves the release after its final
+    // position-tracking block.
+    [[nodiscard]] bool requestRelease(bool allowInertia) noexcept;
     [[nodiscard]] ScratchReleaseDisposition releaseScratch() noexcept;
+    // Audio thread: resolve ReleasePending from the actually rendered speed.
+    [[nodiscard]] ScratchReleaseDisposition releaseScratchWithSpeed(
+        double measuredNormalizedSpeed,
+        bool allowInertia) noexcept;
+    [[nodiscard]] ScratchReleaseDisposition releaseScratchWithSpeed(
+        double measuredNormalizedSpeed,
+        bool allowInertia,
+        double signedDeckSpeed,
+        bool wasPlaying) noexcept;
+    // Audio thread: acknowledge only the release that still owns the phase.
+    // A concurrent re-grab has already changed the phase and makes this fail.
+    [[nodiscard]] bool completeHandoff() noexcept;
 
-    void setTouching(bool touching) noexcept { m_touching.store(touching, std::memory_order_relaxed); }
+    void setTouching(bool touching) noexcept;
 
     // Control thread: deltaTrackSec / dtSec → normalized speed (1.0 = 1× track speed).
     void submitHandDelta(double deltaTrackSec, double dtSec) noexcept;
     // Control thread: physical top-platter motion that arrives after touch-up.
     // It may refine an existing coast but cannot restart a completed scratch.
     void submitReleaseDelta(double deltaTrackSec, double dtSec) noexcept;
+    // Control thread: publish an already measured normalized wheel speed.
+    // The audio callback consumes it and owns all phase transitions.
+    void submitReleaseSpeed(double measuredNormalizedSpeed) noexcept;
 
     // Control thread: keep integrated read sample counter aligned with hand position.
     void syncReadPositionSamples(double audioSamplePos) noexcept {
@@ -80,23 +108,45 @@ public:
     double processAudioBlock(int bufferSize, double outputSampleRate, double trackSampleRate) noexcept;
 
     [[nodiscard]] bool isScratching() const noexcept {
-        return m_active.load(std::memory_order_relaxed)
-            && m_touching.load(std::memory_order_relaxed);
+        return phase() == ScratchPhase::TouchTracking;
     }
     [[nodiscard]] bool isInertiaActive() const noexcept {
-        return m_inertiaActive.load(std::memory_order_relaxed);
+        const auto current = phase();
+        return current == ScratchPhase::CoastToDeckRate
+            || current == ScratchPhase::CoastToStop;
     }
-    [[nodiscard]] bool isActive() const noexcept { return m_active.load(std::memory_order_relaxed); }
-    [[nodiscard]] bool touching() const noexcept { return m_touching.load(std::memory_order_relaxed); }
+    [[nodiscard]] bool isActive() const noexcept { return phase() != ScratchPhase::Idle; }
+    [[nodiscard]] bool touching() const noexcept {
+        return phase() == ScratchPhase::TouchTracking;
+    }
+    [[nodiscard]] bool requiresPositionTracking() const noexcept {
+        const auto current = phase();
+        return current == ScratchPhase::TouchTracking
+            || current == ScratchPhase::ReleasePending;
+    }
+    [[nodiscard]] bool handoffPending() const noexcept {
+        return phase() == ScratchPhase::HandoffPending;
+    }
+    [[nodiscard]] ScratchPhase phase() const noexcept {
+        return m_phase.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] bool releaseAllowsInertia() const noexcept {
+        return m_releaseAllowsInertia.load(std::memory_order_relaxed);
+    }
     [[nodiscard]] bool wasPlayingBeforeScratch() const noexcept {
         return m_wasPlayingBeforeScratch.load(std::memory_order_relaxed);
     }
 
     [[nodiscard]] double normalizedRate() const noexcept {
-        if (m_touching.load(std::memory_order_relaxed))
+        const auto current = phase();
+        if (current == ScratchPhase::TouchTracking
+            || current == ScratchPhase::ReleasePending)
             return m_smoothedSpeed.load(std::memory_order_relaxed);
-        if (m_inertiaActive.load(std::memory_order_relaxed))
+        if (current == ScratchPhase::CoastToDeckRate
+            || current == ScratchPhase::CoastToStop)
             return m_inertiaSpeed.load(std::memory_order_relaxed);
+        if (current == ScratchPhase::HandoffPending)
+            return m_releaseTargetSpeed.load(std::memory_order_relaxed);
         return 0.0;
     }
 
@@ -120,10 +170,9 @@ private:
 
     std::atomic<bool> m_enabled { true };
     std::atomic<bool> m_inertiaEnabled { true };
-    std::atomic<bool> m_active { false };
-    std::atomic<bool> m_touching { false };
-    std::atomic<bool> m_inertiaActive { false };
     std::atomic<bool> m_wasPlayingBeforeScratch { false };
+    std::atomic<bool> m_releaseAllowsInertia { true };
+    std::atomic<ScratchPhase> m_phase { ScratchPhase::Idle };
 
     std::atomic<double> m_normalPlaybackSpeed { 1.0 };
     std::atomic<double> m_handPositionSec { 0.0 };
@@ -134,6 +183,11 @@ private:
     std::atomic<double> m_readPosition { 0.0 };
     std::atomic<double> m_trackSampleRate { 44100.0 };
     std::atomic<uint64_t> m_lastMoveNs { 0 };
+    std::atomic<double> m_submittedReleaseSpeed { 0.0 };
+    std::atomic<uint64_t> m_submittedReleaseEpoch { 0 };
+    std::atomic<uint64_t> m_releaseSpeedGeneration { 0 };
+    std::atomic<uint64_t> m_appliedReleaseSpeedGeneration { 0 };
+    std::atomic<uint64_t> m_releaseEpoch { 0 };
 };
 
 } // namespace engine::scratch

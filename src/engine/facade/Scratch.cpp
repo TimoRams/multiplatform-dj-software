@@ -1,4 +1,7 @@
 #include "FacadeIncludes.h"
+#include "engine/deck/JogNudgePolicy.h"
+
+#include <limits>
 
 
 engine::scratch::ScratchLoopCtx DjEngine::scratchLoopCtx() const noexcept
@@ -13,11 +16,13 @@ engine::scratch::ScratchLoopCtx DjEngine::scratchLoopCtx() const noexcept
 
 void DjEngine::terminateScratchSession(double positionSec)
 {
+    m_pendingScratchReleaseGeneration = 0;
     m_scratch.clear();
     m_scratchSnapReadPending = false;
 
     if (m_audioGraph->scratchPtr())
-        m_audioGraph->scratch().exitScratchMode(std::max(0.0, positionSec), m_transport->sourceSampleRate());
+        m_audioGraph->scratch().exitScratchMode(
+            std::max(0.0, positionSec), m_transport->sourceSampleRate());
 }
 
 
@@ -60,22 +65,49 @@ void DjEngine::tickScratchPhysics()
     }
 
     if (m_scratch.scrubbing() || m_scratch.releaseGlide()) {
-        // During active drag the session delta sum is authoritative for display.
-        if (m_scratch.scrubbing()) {
-            m_transport->publishScratchPosition(m_scratch.lastRawSec());
-        } else {
-            m_transport->publishScratchPosition(m_transport->playheadPositionAtomic());
-        }
+        m_transport->adoptScratchRenderedPosition(
+            m_transport->playheadPositionAtomic());
     }
 
-    if (!m_scratch.scrubbing() && m_scratch.releaseGlide() && !m_audioGraph->scratch().isInertiaActive()) {
-        m_scratch.setReleaseGlide(false);
-        m_transport->publishScratchPosition(m_transport->playheadPositionAtomic());
-        (void) m_audioGraph->scratch().endScratch(false);
-        restorePostScrubPlaybackState();
-        if (m_audioGraph->mixerPtr())
-            m_audioGraph->mixer().setScratchTimbre(0.0f);
-        emit scrubbingChanged();
+    if (m_scratch.releaseGlide() && m_pendingScratchReleaseGeneration != 0) {
+        const auto release = m_audioGraph->scratch().scratchReleaseSnapshot();
+        if (release.generation == m_pendingScratchReleaseGeneration) {
+            using AudioPhase = engine::audio::ScratchReleasePhase;
+            using SessionPhase = engine::scratch::ScratchPhase;
+            switch (release.phase) {
+            case AudioPhase::ReleasePending:
+                m_scratch.setPhase(SessionPhase::ReleasePending);
+                break;
+            case AudioPhase::CoastToDeck:
+                m_scratch.setPhase(SessionPhase::CoastToDeckRate);
+                break;
+            case AudioPhase::CoastToStop:
+                m_scratch.setPhase(SessionPhase::CoastToStop);
+                break;
+            case AudioPhase::HandoffPending:
+                m_scratch.setPhase(SessionPhase::HandoffPending);
+                break;
+            case AudioPhase::Idle:
+            case AudioPhase::TailSuppression:
+                break;
+            }
+
+            const bool finalSnapshot = release.phase == AudioPhase::TailSuppression
+                || release.phase == AudioPhase::Idle;
+            if (finalSnapshot
+                && m_audioGraph->scratch().scratchReleaseComplete(
+                    m_pendingScratchReleaseGeneration)) {
+                const double finalCursor = release.finalCursorSeconds;
+                m_pendingScratchReleaseGeneration = 0;
+                m_scratch.setReleaseGlide(false);
+                restorePostScrubPlaybackState(finalCursor);
+                if (m_audioGraph->mixerPtr())
+                    m_audioGraph->mixer().setScratchTimbre(0.0f);
+                emit scrubbingChanged();
+                emit playingChanged();
+                emit progressChanged();
+            }
+        }
     }
 
     // Atomic playhead + QML FrameAnimation drive the waveform during scratch.
@@ -87,31 +119,21 @@ void DjEngine::tickScratchPhysics()
 
 void DjEngine::decayJogNudge()
 {
-    if (m_jogNudgePercent == 0.0)
+    if (m_jogNudgeCommandPercent == 0.0 && m_jogNudgePercent == 0.0)
         return;
 
-    // Fade jog outer-rim nudge back to 0% after ~150ms of no new jog events.
     const double idleSec = m_lastJogNudgeClock.isValid()
         ? static_cast<double>(m_lastJogNudgeClock.nsecsElapsed()) * 1e-9
         : 1.0;
-    if (idleSec > 0.080) {
-        constexpr double kNudgeDecayTau = 0.080;
-        const double alpha = 1.0 - std::exp(-idleSec / kNudgeDecayTau);
-        m_jogNudgePercent -= m_jogNudgePercent * alpha;
-        if (std::abs(m_jogNudgePercent) < 0.05)
-            m_jogNudgePercent = 0.0;
+    const double nextPercent = engine::deck::decayedJogNudgePercent(
+        m_jogNudgeCommandPercent, idleSec);
+    if (nextPercent == 0.0)
+        m_jogNudgeCommandPercent = 0.0;
+
+    if (nextPercent != m_jogNudgePercent) {
+        m_jogNudgePercent = nextPercent;
         updateSpeedAndPitch();
     }
-}
-
-void DjEngine::syncReverseReaderToHold() noexcept
-{
-    if (!m_transport->hasTrack() || m_transport->sourceSampleRate() <= 0.0)
-        return;
-
-    const juce::int64 samplePos = static_cast<juce::int64>(
-        std::lround(std::max(0.0, m_transport->heldPosition()) * m_transport->sourceSampleRate()));
-    m_transport->setPlaybackReadPositionSamples(samplePos);
 }
 
 
@@ -121,36 +143,19 @@ void DjEngine::applyScratchNeutralRouting()
         m_audioGraph->timeStretch().enterScratchBypass();
     if (m_audioGraph->scratchPtr())
         m_audioGraph->scratch().setKeylockPassthrough(false);
-    m_transport->setAudioReverseOverride(false);
 }
 
 
-void DjEngine::restorePostScrubPlaybackState()
+void DjEngine::restorePostScrubPlaybackState(double finalCursorSeconds)
 {
-    const double heldResumeSec = m_transport->heldPosition();
-    const double sourceRate = m_transport->sourceSampleRate();
-    const double audioSec = m_audioGraph->scratchPtr()
-        ? std::clamp(m_audioGraph->scratch().readPositionSeconds(sourceRate), 0.0,
-                     m_transport->trackLengthSeconds())
-        : std::max(0.0, heldResumeSec);
-    // Preserve a virtual pre-roll position, but otherwise keep the control
-    // model on the exact cursor the audio callback has just rendered.
-    const double resumeSec = heldResumeSec < 0.0 ? heldResumeSec : audioSec;
+    const double audioSec = std::clamp(
+        std::isfinite(finalCursorSeconds) ? finalCursorSeconds : 0.0,
+        0.0,
+        m_transport->trackLengthSeconds());
 
-    if (m_audioGraph->scratchPtr())
-        m_audioGraph->scratch().prepareNormalPlaybackHandoff(audioSec, sourceRate);
-
-    // The audio callback applies the matching seek as part of the handoff.
-    // Keep the control/visual model in sync without concurrently resetting
-    // JUCE's transport reader from this thread.
+    // Reader seek, Hermite reset and scratch exit were already committed in one
+    // callback. This only adopts the callback's acknowledged cursor.
     m_transport->adoptScratchHandoffPosition(audioSec);
-    m_transport->setHeldPosition(resumeSec);
-    m_transport->setVisualAnchor(audioSec, true);
-    syncReverseReaderToHold();
-    armVisualSeekSettle();
-
-    if (m_audioGraph->mixerPtr())
-        m_audioGraph->mixer().armClickFreeTransition();
 
     m_transport->setAudioReverseOverride(m_transport->reverse());
 
@@ -160,12 +165,11 @@ void DjEngine::restorePostScrubPlaybackState()
     if (!m_transport->playRequested())
         m_transport->stopAudio();
 
-    if (m_audioGraph->timeStretchPtr())
-        m_audioGraph->timeStretch().endScratchBypass();
-
     // Resume at the live deck tempo — never hard-reset to 1.0× first, which
     // causes a brief slow-down when the tempo fader is above/below center.
     updateSpeedAndPitch();
+    if (m_audioGraph->timeStretchPtr())
+        m_audioGraph->timeStretch().endScratchBypass();
 
     // Re-apply loop range to the audio source — scratch neutral routing may have
     // changed the reverse state, which gates loop enforcement in applyLoopRangeToAudioSource.
@@ -179,8 +183,8 @@ void DjEngine::restorePostScrubPlaybackState()
             // countdown logic and cause a snap to 0 via getVisualPosition().
             m_transport->stopAudio();
             m_transport->beginPreRoll(m_transport->heldPosition());
-        } else {
-            m_transport->startAudio();
+        } else if (!m_transport->audioRunning()) {
+            m_transport->startAudioPreservingScratchPosition();
         }
     }
 
@@ -196,6 +200,7 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
     const double len          = m_transport->trackLengthSeconds();
 
     m_jogNudgePercent = 0.0;
+    m_jogNudgeCommandPercent = 0.0;
     m_syncController->resetPhaseCorrection();
 
     const bool regrabActiveScratch = m_scratch.scrubbing() || m_scratch.releaseGlide();
@@ -205,6 +210,7 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
     m_scratch.setReleaseGlide(false);
     m_scratch.setWasPlaying(wasPlayingBeforeGrab);
     m_scratch.setScrubbing(true);
+    m_pendingScratchReleaseGeneration = 0;
     m_transport->setVisualAnchor(visualAtGrab, false);
     m_scratchSnapReadPending = false;
 
@@ -256,7 +262,6 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
     emit scrubbingChanged();
 
     applyScratchNeutralRouting();
-    clearLoopRangeOnAudioSource();
 }
 
 
@@ -271,6 +276,26 @@ void DjEngine::scratchBySeconds(double deltaSeconds, bool vinylOneToOnePosition)
 
     if (!m_scratch.submitRelative(m_audioGraph->scratchPtr(), deltaSeconds, m_transport->sourceSampleRate()))
         return;
+}
+
+
+void DjEngine::scratchBySecondsTimed(double deltaSeconds, double eventIntervalSeconds)
+{
+    if (deltaSeconds == 0.0)
+        return;
+
+    if (!m_scratch.scrubbing() || !m_audioGraph->scratchPtr())
+        return;
+
+    const double interval = std::isfinite(eventIntervalSeconds)
+            && eventIntervalSeconds > 0.0
+        ? eventIntervalSeconds
+        : 0.016;
+    (void) m_scratch.submitRelativeAtInterval(
+        m_audioGraph->scratchPtr(),
+        deltaSeconds,
+        m_transport->sourceSampleRate(),
+        interval);
 }
 
 
@@ -302,26 +327,63 @@ double DjEngine::platterAngleDegrees() const
 }
 
 
-void DjEngine::resumeAfterScrub()
+void DjEngine::completeScratchRelease(bool allowInertia)
 {
-    if (!m_scratch.scrubbing() || !m_audioGraph->scratchPtr())
+    if (!m_audioGraph->scratchPtr())
         return;
+    // UI/mouse release has no hardware-rate snapshot. NaN asks the callback to
+    // decide from the final block it actually rendered.
+    requestScratchRelease(std::numeric_limits<double>::quiet_NaN(), allowInertia);
+}
 
-    const double sourceRate = m_transport->sourceSampleRate();
-    const double audioSec = m_audioGraph->scratch().readPositionSeconds(sourceRate);
-    m_transport->publishScratchPosition(audioSec);
-    m_scratch.setScrubbing(false);
 
-    const auto release = m_audioGraph->scratch().endScratch(true);
-    if (release != engine::scratch::ScratchReleaseDisposition::HandoffNow) {
-        m_scratch.setReleaseGlide(true);
-        emit scrubbingChanged();
+void DjEngine::requestScratchRelease(double normalizedReleaseSpeed, bool allowInertia)
+{
+    if ((!m_scratch.scrubbing() && !m_scratch.releaseGlide())
+        || !m_audioGraph->scratchPtr()) {
         return;
     }
+    if (m_pendingScratchReleaseGeneration != 0)
+        return;
 
-    restorePostScrubPlaybackState();
+    auto& bridge = m_audioGraph->scratch();
+    m_transport->setAudioReverseOverride(m_transport->reverse());
+    bridge.setKeylockPassthrough(m_keylock);
+    if (m_cueLoopController.activeLoop().active)
+        applyLoopRangeToAudioSource();
+
+    m_scratch.setPhase(engine::scratch::ScratchPhase::ReleasePending);
+    m_pendingScratchReleaseGeneration = bridge.requestScratchRelease(
+        normalizedReleaseSpeed,
+        allowInertia);
+
+    // The normal reader runs behind the still-authoritative scratch path. It is
+    // not audible until the callback seeks and commits the handoff.
+    if (m_scratch.wasPlaying() && m_transport->heldPosition() >= 0.0
+        && !m_transport->audioRunning()) {
+        m_transport->startAudioPreservingScratchPosition();
+    }
 
     emit scrubbingChanged();
+}
+
+
+void DjEngine::submitScratchReleaseSpeed(double normalizedReleaseSpeed)
+{
+    if (!m_scratch.releaseGlide() || m_pendingScratchReleaseGeneration == 0
+        || !m_audioGraph->scratchPtr() || !std::isfinite(normalizedReleaseSpeed)) {
+        return;
+    }
+    m_audioGraph->scratch().submitScratchReleaseSpeed(normalizedReleaseSpeed);
+}
+
+
+void DjEngine::resumeAfterScrub()
+{
+    if (!m_scratch.scrubbing())
+        return;
+
+    completeScratchRelease(true);
 }
 
 
@@ -331,7 +393,7 @@ void DjEngine::applyScratchReleaseJog(double deltaSeconds)
         return;
 
     m_scratch.submitReleaseRelative(m_audioGraph->scratchPtr(), deltaSeconds);
-    m_transport->publishScratchPosition(
+    m_transport->adoptScratchRenderedPosition(
         m_audioGraph->scratch().readPositionSeconds(m_transport->sourceSampleRate()));
     notifyProgressIfNeeded();
 }
@@ -342,10 +404,7 @@ void DjEngine::finishScrubWithoutInertia()
     if (!m_scratch.scrubbing() && !m_scratch.releaseGlide())
         return;
 
-    terminateScratchSession(m_transport->heldPosition());
-
-    restorePostScrubPlaybackState();
-    emit scrubbingChanged();
+    completeScratchRelease(false);
     emit playingChanged();
     emit progressChanged();
 }
@@ -356,11 +415,10 @@ void DjEngine::applyJogNudge(double signedTicks)
     if (m_scratch.scrubbing() || m_scratch.releaseGlide())
         return;
 
-    // FLX10 rim ticks are relative jog deltas, not coarse tempo-percent steps.
-    // Keep pitch bend gentle; fast rim turns still reach the clamp naturally.
-    constexpr double kPercentPerTick = 0.75;
-    constexpr double kMaxNudgePercent = 6.0;
-    m_jogNudgePercent = std::clamp(signedTicks * kPercentPerTick, -kMaxNudgePercent, kMaxNudgePercent);
+    // Mixxx's FLX10 mapping divides jog ticks by 16; its 0.1 jog sensitivity
+    // corresponds to a 0.625% temporary rate change per controller tick.
+    m_jogNudgeCommandPercent = engine::deck::jogNudgeCommandPercent(signedTicks);
+    m_jogNudgePercent = m_jogNudgeCommandPercent;
     m_lastJogNudgeClock.restart();
     updateSpeedAndPitch();
 }

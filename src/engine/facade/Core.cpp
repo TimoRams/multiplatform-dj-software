@@ -283,6 +283,9 @@ void DjEngine::onTransportControlTick(const ControlTickContext& context)
     (void)context;
     if (m_scratch.scrubbing() || m_scratch.releaseGlide())
         return;
+    if (m_audioGraph->scratchPtr()
+        && m_audioGraph->scratch().normalPlaybackHandoffPending())
+        return;
 
     if (m_audioGraph->mixerPtr())
         m_audioGraph->mixer().setScratchTimbre(0.0f);

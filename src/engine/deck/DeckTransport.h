@@ -78,6 +78,7 @@ public:
     void setAudioReverseOverride(bool enabled) noexcept;
     void setKeylockEnabled(bool enabled) noexcept;
     void startAudio() noexcept;
+    void startAudioPreservingScratchPosition() noexcept;
     void stopAudio() noexcept;
     void seekAudioToSeconds(double seconds) noexcept;
     void adoptScratchHandoffPosition(double seconds) noexcept;
@@ -101,6 +102,9 @@ public:
     [[nodiscard]] std::uint64_t trackGeneration() const noexcept { return m_trackGeneration; }
 
     void publishScratchPosition(double seconds) noexcept;
+    // Control-thread mirror of the audio-owned scratch cursor. Does not write
+    // back to the atomic sink, so it cannot race the callback with a stale value.
+    void adoptScratchRenderedPosition(double seconds) noexcept;
     void setHeldPosition(double seconds) noexcept;
     [[nodiscard]] double heldPosition() const noexcept { return m_heldPositionSeconds; }
     [[nodiscard]] std::atomic<double>& audioPlayheadSink() noexcept { return m_audioPlayhead; }

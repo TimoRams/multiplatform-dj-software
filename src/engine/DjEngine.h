@@ -152,11 +152,15 @@ public:
     // Scratch: bridge PD physics + Hermite pull. Waveform/turntable → setScrubPosition; MIDI → scratchBySeconds.
     Q_INVOKABLE void pauseForScrub(double anchorPositionSec = -1.0);
     Q_INVOKABLE void scratchBySeconds(double deltaSeconds, bool vinylOneToOnePosition = false);
+    void scratchBySecondsTimed(double deltaSeconds, double eventIntervalSeconds);
     Q_INVOKABLE void setScrubPosition(double positionSeconds);
     [[nodiscard]] Q_INVOKABLE double platterAngleDegrees() const;
     Q_INVOKABLE void resumeAfterScrub();
     Q_INVOKABLE void applyScratchReleaseJog(double deltaSeconds);
     Q_INVOKABLE void finishScrubWithoutInertia();
+    // Hardware release path: signed normalized speed, where 1.0 is track speed.
+    void requestScratchRelease(double normalizedReleaseSpeed, bool allowInertia = true);
+    void submitScratchReleaseSpeed(double normalizedReleaseSpeed);
     // Outer-rim jog nudge: temporarily speeds up/slows down playback without entering scratch mode.
     Q_INVOKABLE void applyJogNudge(double signedTicks);
 
@@ -538,6 +542,7 @@ private:
     double m_tempoRangePercent = 8.0;
     // Jog outer-rim nudge: temporary speed offset from rim turning (no touch press).
     double m_jogNudgePercent = 0.0;
+    double m_jogNudgeCommandPercent = 0.0;
     QElapsedTimer m_lastJogNudgeClock;
 
     bool m_vinylBrakeActive = false;
@@ -616,8 +621,8 @@ private:
     void syncScratchBridgeToTransport();
     void ensureTransportRunningForPlayIntent();
     void applyScratchNeutralRouting();
-    void restorePostScrubPlaybackState();
-    void syncReverseReaderToHold() noexcept;
+    void completeScratchRelease(bool allowInertia);
+    void restorePostScrubPlaybackState(double finalCursorSeconds);
     [[nodiscard]] engine::scratch::ScratchLoopCtx scratchLoopCtx() const noexcept;
     void updateScrubPlayheadAnchor();
     void tickScratchPhysics();
@@ -647,6 +652,7 @@ private:
 
     double m_pixelsPerSecond = WAVEFORM_POINTS_PER_SECOND * 1.5;
     engine::scratch::ScratchSession m_scratch;
+    std::uint64_t m_pendingScratchReleaseGeneration = 0;
     bool m_scratchSnapReadPending = false;
 
     // Pre-roll countdown: when play is pressed while visual position is negative,

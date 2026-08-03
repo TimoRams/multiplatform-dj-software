@@ -56,6 +56,32 @@ bool writeWave(const QString& path, double sampleRate, int channels, double freq
     return writer->writeFromAudioSampleBuffer(buffer, 0, buffer.getNumSamples());
 }
 
+bool writeSampleRampWave(const QString& path, double sampleRate, int channels)
+{
+    juce::WavAudioFormat format;
+    std::unique_ptr<juce::OutputStream> stream =
+        std::make_unique<juce::FileOutputStream>(juce::File(path.toStdString()));
+    auto writer = format.createWriterFor(
+        stream,
+        juce::AudioFormatWriterOptions{}
+            .withSampleRate(sampleRate)
+            .withNumChannels(channels)
+            .withBitsPerSample(24));
+    if (!writer)
+        return false;
+
+    juce::AudioBuffer<float> buffer(channels, 48'000);
+    const double denominator = static_cast<double>(buffer.getNumSamples() - 1);
+    for (int channel = 0; channel < channels; ++channel) {
+        for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
+            const double encodedPosition = static_cast<double>(sample) / denominator;
+            buffer.setSample(channel, sample,
+                             static_cast<float>(-0.6 + encodedPosition * 1.2));
+        }
+    }
+    return writer->writeFromAudioSampleBuffer(buffer, 0, buffer.getNumSamples());
+}
+
 bool waitForPage(AudioPageCache& cache, const AudioCacheHandle& handle)
 {
     cache.requestRange(handle, 0, handle.pageCount() - 1, AudioCachePriority::PlaybackReadAhead);
@@ -171,7 +197,8 @@ int main(int argc, char** argv)
     QTemporaryDir directory;
     const auto mono44 = directory.filePath("mono-44.wav");
     const auto stereo96 = directory.filePath("stereo-96.wav");
-    ok &= require(writeWave(mono44, 44'100.0, 1, 220.0), "mono fixture");
+    ok &= require(writeSampleRampWave(mono44, 44'100.0, 1),
+                  "sample-coded ramp fixture");
     ok &= require(writeWave(stereo96, 96'000.0, 2, 330.0), "stereo fixture");
 
     AudioPageCache cache(4 * 1024 * 1024);
@@ -237,8 +264,162 @@ int main(int argc, char** argv)
                       < 1.0e-6,
                   "scratch handoff keeps the final audio cursor");
 
+    // FLX10 queues relative platter CCs and touch-up on the UI thread. Touch-up
+    // can therefore be handled before the callback has rendered the final CCs.
+    // The callback must render one final tracking block and capture its end cursor.
+    graph.setReverse(false);
+    graph.scratch().configureTrack(44'100.0, 1.0);
+    graph.scratch().beginScratch(0.2, 44'100.0, 1.0, true, 1.0);
+    graph.getNextAudioBlock({&output, 0, 512});
+    const double flx10CursorBeforeQueuedTicks = graph.scratch().readPositionSeconds(44'100.0);
+    graph.scratch().submitHandDeltaSeconds(0.2, 0.016);
+    graph.scratch().prepareNormalPlaybackHandoffFromScratchCursor(44'100.0);
+    ok &= require(graph.scratch().normalPlaybackHandoffPending(),
+                  "FLX10 release waits for the audio-thread cursor");
+    graph.getNextAudioBlock({&output, 0, 512});
+    const double flx10ReleaseCursor = graph.scratch().readPositionSeconds(44'100.0);
+    ok &= require(flx10ReleaseCursor > flx10CursorBeforeQueuedTicks + 0.001,
+                  "FLX10 release renders queued platter ticks before handoff");
+    ok &= require(!graph.scratch().normalPlaybackHandoffPending(),
+                  "FLX10 cursor handoff completes at the block boundary");
+    ok &= require(std::abs(static_cast<double>(graph.playback()->getNextReadPosition()) / 44'100.0
+                           - flx10ReleaseCursor) < 2.0 / 44'100.0,
+                  "normal reader starts at the final FLX10 scratch sample");
+
+    // The hardware path publishes a release command rather than a legacy
+    // immediate handoff. The callback must render the queued touch block,
+    // finish any coast, and seek the normal reader to that exact final cursor.
+    const auto exerciseHardwareRelease = [&](double anchor,
+                                             double releaseSpeed,
+                                             engine::scratch::ScratchReleaseDisposition expected,
+                                             const char* phaseMessage,
+                                             const char* cursorMessage,
+                                             bool wasPlaying = true) {
+        graph.setReverse(false);
+        graph.setPlaybackRate(1.0);
+        graph.setKeylockEnabled(false);
+        if (wasPlaying)
+            graph.transport().start();
+        else
+            graph.transport().stop();
+        graph.scratch().configureTrack(44'100.0, 1.0);
+        graph.scratch().beginScratch(anchor, 44'100.0, 1.0, wasPlaying, 1.0);
+        graph.scratch().submitHandDeltaSeconds(
+            releaseSpeed < 0.0 ? -0.025 : 0.025, 0.004);
+
+        const auto releaseGeneration = graph.scratch().requestScratchRelease(
+            releaseSpeed, true);
+        ok &= require(releaseGeneration != 0,
+                      "hardware release publishes a generation");
+        ok &= require(graph.scratch().normalPlaybackHandoffPending(),
+                      "hardware release keeps the normal reader masked");
+
+        juce::AudioBuffer<float> transition(2, 64);
+        transition.clear();
+        graph.getNextAudioBlock({&transition, 0, 64});
+        auto release = graph.scratch().scratchReleaseSnapshot();
+        ok &= require(release.generation == releaseGeneration,
+                      "audio callback acknowledges the hardware release generation");
+        ok &= require(release.disposition == expected, phaseMessage);
+
+        for (int block = 0;
+             block < 4000 && !graph.scratch().scratchReleaseComplete(releaseGeneration);
+             ++block) {
+            transition.clear();
+            graph.getNextAudioBlock({&transition, 0, 64});
+        }
+
+        release = graph.scratch().scratchReleaseSnapshot();
+        ok &= require(graph.scratch().scratchReleaseComplete(releaseGeneration),
+                      "hardware release completes on the audio thread");
+        ok &= require(release.generation == releaseGeneration
+                          && release.phase == engine::audio::ScratchReleasePhase::TailSuppression,
+                      "reader handoff acknowledges its tail-suppression phase");
+        ok &= require(std::abs(release.finalCursorSeconds
+                               - graph.scratch().readPositionSeconds(44'100.0))
+                          < 2.0 / 44'100.0,
+                      cursorMessage);
+        ok &= require(std::abs(static_cast<double>(graph.playback()->getNextReadPosition())
+                                   / 44'100.0
+                               - release.finalCursorSeconds)
+                          < 2.0 / 44'100.0,
+                      "hardware release directly seeks the cache reader");
+
+        const std::array<float, 2> lastScratchSample {
+            transition.getSample(0, transition.getNumSamples() - 1),
+            transition.getSample(1, transition.getNumSamples() - 1)
+        };
+        transition.clear();
+        graph.getNextAudioBlock({&transition, 0, 64});
+        ok &= require(isFinite(transition),
+                      "first normal block after hardware release is finite");
+        ok &= require(absolutePeak(transition) <= 1.0,
+                      "first normal block after hardware release is bounded");
+        ok &= require(graph.transport().isPlaying() == wasPlaying,
+                      "hardware release preserves the deck play state");
+        for (int channel = 0; channel < 2; ++channel) {
+            ok &= require(std::abs(transition.getSample(channel, 0)
+                                   - lastScratchSample[static_cast<std::size_t>(channel)])
+                              < 0.05f,
+                          "first normal sample stays continuous with the scratch tail");
+        }
+    };
+
+    exerciseHardwareRelease(
+        0.30,
+        1.5,
+        engine::scratch::ScratchReleaseDisposition::CoastToDeckRate,
+        "faster hardware release coasts to deck rate",
+        "forward coast publishes its actual final cursor");
+    exerciseHardwareRelease(
+        0.40,
+        0.7,
+        engine::scratch::ScratchReleaseDisposition::HandoffNow,
+        "slower hardware release hands off after its final tracking block",
+        "immediate hardware handoff publishes its actual final cursor");
+    exerciseHardwareRelease(
+        0.60,
+        -1.2,
+        engine::scratch::ScratchReleaseDisposition::CoastToStop,
+        "reverse hardware release coasts to stop",
+        "reverse coast publishes its actual final cursor");
+    exerciseHardwareRelease(
+        0.50,
+        1.4,
+        engine::scratch::ScratchReleaseDisposition::CoastToStop,
+        "paused hardware throw coasts to stop",
+        "paused coast publishes its actual final cursor",
+        false);
+
+    graph.scratch().beginScratch(0.3, 44'100.0, 1.0, true, 1.0);
+    const auto cancelledRelease = graph.scratch().requestScratchRelease(1.5, true);
+    graph.scratch().beginScratch(0.4, 44'100.0, 1.0, true, 1.0);
+    graph.getNextAudioBlock({&output, 0, 512});
+    ok &= require(graph.scratch().isScratching(),
+                  "new grab supersedes a callback-owned hardware release");
+    ok &= require(graph.scratch().scratchReleaseComplete(cancelledRelease),
+                  "superseded hardware release is acknowledged as cancelled");
+    ok &= require(std::abs(graph.scratch().readPositionSeconds(44'100.0) - 0.4) < 0.01,
+                  "cancelled hardware release cannot seek away from the new grab");
+    (void) graph.scratch().endScratch(false);
+    graph.scratch().prepareNormalPlaybackHandoff(0.4, 44'100.0);
+    graph.getNextAudioBlock({&output, 0, 512});
+
+    graph.scratch().beginScratch(0.3, 44'100.0, 1.0, true, 1.0);
+    graph.scratch().prepareNormalPlaybackHandoffFromScratchCursor(44'100.0);
+    graph.scratch().beginScratch(0.4, 44'100.0, 1.0, true, 1.0);
+    graph.getNextAudioBlock({&output, 0, 512});
+    ok &= require(graph.scratch().isScratching(),
+                  "rapid FLX10 re-grab cancels the pending release");
+    ok &= require(std::abs(graph.scratch().readPositionSeconds(44'100.0) - 0.4) < 0.01,
+                  "rapid FLX10 re-grab keeps the new grab cursor");
+    (void) graph.scratch().endScratch(false);
+    graph.scratch().prepareNormalPlaybackHandoff(0.4, 44'100.0);
+    graph.getNextAudioBlock({&output, 0, 512});
+
     {
         using engine::scratch::ScratchController;
+        using engine::scratch::ScratchPhase;
         using engine::scratch::ScratchReleaseDisposition;
         ScratchController controller;
         controller.startScratch(0.0, true, 1.0);
@@ -260,7 +441,58 @@ int main(int argc, char** argv)
         controller.setMeasuredNormalizedSpeed(-0.8);
         ok &= require(controller.releaseScratch() == ScratchReleaseDisposition::CoastToStop,
                       "reverse release coasts to a stop before normal playback");
+
+        controller.startScratch(0.0, true, 1.0);
+        controller.setMeasuredNormalizedSpeed(1.5);
+        ok &= require(controller.requestRelease(true),
+                      "touch-up publishes a pending audio-thread release");
+        ok &= require(controller.phase() == ScratchPhase::ReleasePending,
+                      "touch-up keeps scratch active until the callback resolves it");
+        ok &= require(controller.releaseScratchWithSpeed(1.5, true, 1.0, true)
+                          == ScratchReleaseDisposition::CoastToDeckRate,
+                      "audio-thread release uses the final rendered speed and deck snapshot");
+        controller.submitReleaseSpeed(0.7);
+        (void) controller.processAudioBlock(64, 48'000.0, 44'100.0);
+        ok &= require(controller.phase() == ScratchPhase::HandoffPending,
+                      "slower wheel tail hands ownership back on the audio thread");
+        ok &= require(controller.isActive(),
+                      "controller stays active until the reader handoff is consumed");
+        ok &= require(controller.completeHandoff(),
+                      "matching reader handoff completes the pending release");
+        ok &= require(controller.phase() == ScratchPhase::Idle,
+                      "completed reader handoff returns the controller to idle");
+        controller.startScratch(0.0, true, 1.0);
+        ok &= require(!controller.completeHandoff()
+                          && controller.phase() == ScratchPhase::TouchTracking,
+                      "an old handoff cannot stop a concurrent re-grab");
+        controller.stopScratch();
     }
+
+    // When inertia finishes, the normal reader is still at its pre-scratch
+    // position until the facade publishes the blockwise handoff. The bridge
+    // must keep serving the scratch path during that short interval.
+    graph.setReverse(false);
+    graph.setKeylockEnabled(false);
+    graph.playback()->clearLoopRangeSamples();
+    graph.scratch().configureTrack(44'100.0, 1.0);
+    graph.scratch().beginScratch(0.2, 44'100.0, 1.0, true, 1.0);
+    graph.scratch().addTargetDeltaSeconds(0.2, 44'100.0);
+    juce::AudioBuffer<float> releaseTransition(2, 64);
+    graph.getNextAudioBlock({&releaseTransition, 0, 64});
+    const auto releaseDisposition = graph.scratch().endScratch(true);
+    ok &= require(releaseDisposition == engine::scratch::ScratchReleaseDisposition::CoastToDeckRate,
+                  "fast scratch release starts inertia");
+    for (int block = 0; block < 2000 && graph.scratch().isInertiaActive(); ++block)
+        graph.getNextAudioBlock({&releaseTransition, 0, 64});
+    ok &= require(!graph.scratch().isInertiaActive(), "scratch inertia reaches deck rate");
+    const auto normalReaderBeforeHandoff = graph.playback()->getNextReadPosition();
+    graph.getNextAudioBlock({&releaseTransition, 0, 64});
+    ok &= require(graph.playback()->getNextReadPosition() == normalReaderBeforeHandoff,
+                  "completed inertia cannot expose the stale normal reader");
+    const double pendingHandoffPosition = graph.scratch().readPositionSeconds(44'100.0);
+    graph.scratch().prepareNormalPlaybackHandoff(pendingHandoffPosition, 44'100.0);
+    graph.getNextAudioBlock({&releaseTransition, 0, 64});
+    ok &= require(isFinite(releaseTransition), "deferred scratch handoff output is finite");
 
     // Exercise callback-owned scratch entry/exit commands across the device
     // block sizes we support. A full cache is already present, so starvation
@@ -310,6 +542,27 @@ int main(int argc, char** argv)
     graph.transport().start();
     graph.getNextAudioBlock({&output, 0, 512});
     ok &= require(isFinite(output), "mono to stereo handover output is finite");
+
+    graph.setReverse(false);
+    graph.setPlaybackRate(1.0);
+    graph.setKeylockEnabled(true);
+    graph.scratch().configureTrack(96'000.0, 0.5);
+    graph.scratch().beginScratch(0.1, 96'000.0, 0.5, true, 1.0);
+    graph.scratch().submitHandDeltaSeconds(0.01, 0.002);
+    const auto release96 = graph.scratch().requestScratchRelease(0.5, true);
+    graph.getNextAudioBlock({&output, 0, 512});
+    const auto snapshot96 = graph.scratch().scratchReleaseSnapshot();
+    ok &= require(graph.scratch().scratchReleaseComplete(release96),
+                  "96 kHz hardware release completes at a 48 kHz callback rate");
+    ok &= require(std::abs(static_cast<double>(graph.playback()->getNextReadPosition())
+                               / 96'000.0
+                           - snapshot96.finalCursorSeconds)
+                      < 2.0 / 96'000.0,
+                  "96/48 hardware handoff seeks the reader within two source samples");
+    graph.getNextAudioBlock({&output, 0, 512});
+    ok &= require(isFinite(output),
+                  "96/48 keylock normal block after hardware release is finite");
+    graph.setKeylockEnabled(false);
 
     auto staleA = cache.openTrack({mono44});
     graph.installPreparedTrack({staleA, 44'100.0, 1});

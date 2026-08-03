@@ -8,6 +8,7 @@
 
 #include "feedback/MidiFeedbackController.h"
 #include "app/ControlClock.h"
+#include "controllers/flx10/Flx10JogRouter.h"
 
 #include <QObject>
 #include <QTimer>
@@ -15,7 +16,6 @@
 #include <QVariantMap>
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <array>
-#include <atomic>
 #include <atomic>
 #include <map>
 #include <memory>
@@ -136,11 +136,9 @@ private:
     bool m_cueBHeld = false;
     bool m_jogATouched = false;
     bool m_jogBTouched = false;
-    QTimer m_jogAReleaseTimer;
-    QTimer m_jogBReleaseTimer;
+    flx10::Flx10JogRouter m_jogARouter;
+    flx10::Flx10JogRouter m_jogBRouter;
     QTimer m_startupRefreshTimer;
-    bool m_jogAReleasedRecently = false;
-    bool m_jogBReleasedRecently = false;
     bool m_deckAShiftHeld = false;
     bool m_deckBShiftHeld = false;
     MidiPadMode m_deckAPadMode = MidiPadMode::HotCue;
@@ -211,7 +209,10 @@ private:
     bool isPseudoAlsaOutputIdentifier(const juce::String& identifier) const;
     void startAlsaInputMonitor(const juce::String& pseudoIdentifier);
     void stopAlsaInputMonitor();
-    void processDecodedMidiEvent(int msgId, float value, bool isNoteOff);
+    void processDecodedMidiEvent(int msgId, float value, bool isNoteOff,
+                                 double eventTimestampSeconds = 0.0);
+    bool dispatchFlx10JogAction(const QString& paramId, float value,
+                                double eventTimestampSeconds);
     void learnMapping(int msgId);
     void restoreSavedDeviceSelections();
     bool autoOpenFlx10MidiOutputIfNeeded();

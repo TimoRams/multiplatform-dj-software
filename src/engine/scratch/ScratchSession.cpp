@@ -8,12 +8,30 @@ namespace engine::scratch {
 
 void ScratchSession::clear() noexcept
 {
-    m_scrubbing = false;
-    m_releaseGlide = false;
+    m_phase = ScratchPhase::Idle;
     m_wasPlaying = false;
     m_loopLocked = false;
     m_savedReverse = false;
     m_lastRawSec = 0.0;
+}
+
+void ScratchSession::setScrubbing(bool value) noexcept
+{
+    if (value) {
+        m_phase = ScratchPhase::TouchTracking;
+    } else if (m_phase == ScratchPhase::TouchTracking) {
+        m_phase = ScratchPhase::Idle;
+    }
+}
+
+void ScratchSession::setReleaseGlide(bool value) noexcept
+{
+    if (value) {
+        if (m_phase == ScratchPhase::Idle || m_phase == ScratchPhase::TouchTracking)
+            m_phase = ScratchPhase::ReleasePending;
+    } else if (releaseGlide()) {
+        m_phase = ScratchPhase::Idle;
+    }
 }
 
 double ScratchSession::wrapLoopPosition(double posSec,
@@ -53,15 +71,27 @@ bool ScratchSession::submitRelative(engine::audio::ScratchDeckBridge* bridge,
                                     double deltaSec,
                                     double sampleRate) noexcept
 {
+    // Preserve high-rate controller timing. Hardware-specific filtering happens
+    // before this compatibility delta path, not by stretching fast events.
+    const double dtSec = m_lastMoveClock.isValid()
+        ? std::clamp(static_cast<double>(m_lastMoveClock.nsecsElapsed()) * 1e-9, 1e-6, 0.120)
+        : 0.016;
+    return submitRelativeAtInterval(bridge, deltaSec, sampleRate, dtSec);
+}
+
+bool ScratchSession::submitRelativeAtInterval(engine::audio::ScratchDeckBridge* bridge,
+                                              double deltaSec,
+                                              double sampleRate,
+                                              double eventIntervalSeconds) noexcept
+{
     if (!bridge || deltaSec == 0.0)
         return false;
 
     const double clamped = std::clamp(deltaSec, -kEventSpikeClampSec, kEventSpikeClampSec);
-
-    // Floor dt at ~one UI frame to avoid velocity spikes from sub-millisecond events.
-    const double dtSec = m_lastMoveClock.isValid()
-        ? std::clamp(static_cast<double>(m_lastMoveClock.nsecsElapsed()) * 1e-9, 0.008, 0.120)
-        : 0.016;
+    const double dtSec = std::clamp(
+        std::isfinite(eventIntervalSeconds) ? eventIntervalSeconds : 0.016,
+        1e-6,
+        0.120);
     m_lastMoveClock.restart();
 
     bridge->submitHandDeltaSeconds(clamped, dtSec);
@@ -81,7 +111,7 @@ bool ScratchSession::submitReleaseRelative(engine::audio::ScratchDeckBridge* bri
 
     const double clamped = std::clamp(deltaSec, -kEventSpikeClampSec, kEventSpikeClampSec);
     const double dtSec = m_lastMoveClock.isValid()
-        ? std::clamp(static_cast<double>(m_lastMoveClock.nsecsElapsed()) * 1e-9, 0.008, 0.120)
+        ? std::clamp(static_cast<double>(m_lastMoveClock.nsecsElapsed()) * 1e-9, 1e-6, 0.120)
         : 0.016;
     m_lastMoveClock.restart();
     bridge->submitReleaseDeltaSeconds(clamped, dtSec);
@@ -95,7 +125,7 @@ bool ScratchSession::submitAbsolute(engine::audio::ScratchDeckBridge* bridge,
                                     double scratchPreRollSec,
                                     const ScratchLoopCtx& loop) noexcept
 {
-    if (!bridge || !m_scrubbing || trackLenSec <= 0.0)
+    if (!bridge || !scrubbing() || trackLenSec <= 0.0)
         return false;
 
     double target = std::clamp(posSec, -scratchPreRollSec, trackLenSec);
