@@ -1,6 +1,15 @@
 # Progress
 
 ## Done (recent)
+- [x] **First architecture cleanup pass (2026-08-03)** — added deterministic source classification
+  (`scripts/architecture_inventory.py`) and architecture reports, merged/deleted five small
+  facade/query sources, removed unreferenced `TrackInfoDisplay.qml` and `AioWaveformInfoSlot.qml`,
+  and moved device probing/routing beside `AudioDeviceService`. `./build-fast`, focused API,
+  device, QML, smoke, transport tests, and the final 32/32 CTest suite pass.
+- [x] **Engine structure cleanup (2026-08-03)** — moved the public `DjEngine` implementation into
+  `src/engine/facade/` with responsibility names, merged track-result application into
+  `facade/Transport.cpp`, and renamed callback-only `src/engine/audio/` to `src/engine/dsp/`.
+  Full build plus facade, DSP, loader, scratch, time-stretch, and both deck integration tests pass.
 - [x] **Paused scratch waveform motion (2026-07-15)** — exposed scratch visual activity as a
   `DjEngine` QML property notified by `scrubbingChanged`, then bound scrolling/overview waveform
   frame loops and turntable display to it. Paused scratching now enables VSync repainting as soon

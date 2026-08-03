@@ -66,4 +66,4 @@ ctest --test-dir build --output-on-failure
 ## Key paths
 - QML mixer: `src/qml/MixerSection.qml`, `src/qml/CrossfaderBar.qml`
 - Mixer C++: `src/app/MixerControl.cpp`
-- Engine core: `src/engine/DjEngine_*.cpp`, `src/engine/audio/MixerDspSource.cpp`
+- Engine facade/DSP: `src/engine/facade/*.cpp`, `src/engine/dsp/MixerDspSource.cpp`

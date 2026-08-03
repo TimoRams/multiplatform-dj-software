@@ -1,7 +1,7 @@
 #include "controllers/DeckIndex.h"
 #include "analysis/AnalysisValidation.h"
 #include "analysis/AnalysisResult.h"
-#include "engine/audio/HermiteKernel.hpp"
+#include "engine/dsp/HermiteKernel.hpp"
 #include "engine/SyncMaintenancePolicy.h"
 
 #include <cmath>

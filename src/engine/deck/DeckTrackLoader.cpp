@@ -1,7 +1,7 @@
 #include "DeckTrackLoader.h"
 
 #include "audio/cache/AudioPageCache.h"
-#include "engine/audio/MetadataUtils.h"
+#include "MetadataUtils.h"
 
 #include <QFileInfo>
 #include <QSemaphore>

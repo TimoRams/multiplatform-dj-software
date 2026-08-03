@@ -1,6 +1,16 @@
 # Active Context
 
-*Last updated: 2026-07-15*
+*Last updated: 2026-08-03*
+
+## Current task
+**Architecture cleanup in progress (2026-08-03)**
+- Added a repeatable source inventory and architecture reports under `docs/architecture/`. The
+  current tree has 223 production C++/QML files and eight `engine/facade` implementation units.
+- Merged and deleted six low-risk facade/query source files, removed unused `TrackInfoDisplay.qml`
+  and `AioWaveformInfoSlot.qml`, and moved `AudioDeviceUtils.*` from callback-DSP code into
+  `src/audio/device/` beside its owner. Public APIs and runtime behavior are unchanged.
+- `engine/{facade,deck,scratch,sync,dsp}` is now the deliberate shallow layout. The next cleanup
+  candidate is device-versus-deck latency ownership, not another broad folder rewrite.
 
 ## Current task
 **Paused scratch waveform motion fixed (2026-07-15)**

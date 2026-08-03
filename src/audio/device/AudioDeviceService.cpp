@@ -1,8 +1,9 @@
 #include "AudioDeviceService.h"
 
-#include "engine/audio/AudioDeviceUtils.h"
+#include "AudioDeviceUtils.h"
 
 #include <QDebug>
+#include <QSet>
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -485,4 +486,193 @@ bool AudioDeviceService::ensureDeviceAvailable()
 void AudioDeviceService::closeAudioDevice()
 {
     m_manager.closeAudioDevice();
+}
+
+QStringList AudioDeviceService::availableDeviceTypes() const
+{
+    QStringList types;
+
+    auto& manager = const_cast<juce::AudioDeviceManager&>(m_manager);
+    const QString currentType = currentDeviceType();
+    QString jackType;
+    QString pipewireType;
+    QString pulseType;
+
+    for (auto* type : manager.getAvailableDeviceTypes()) {
+        if (type == nullptr || type->getTypeName().isEmpty())
+            continue;
+        const QString name = QString::fromUtf8(type->getTypeName().toRawUTF8());
+        types.push_back(name);
+#if JUCE_LINUX || JUCE_BSD
+        const QString lower = name.toLower();
+        if (jackType.isEmpty() && lower == QStringLiteral("jack"))
+            jackType = name;
+        if (pipewireType.isEmpty() && lower.contains(QStringLiteral("pipewire")))
+            pipewireType = name;
+        if (pulseType.isEmpty() && (lower.contains(QStringLiteral("pulse"))
+                                    || lower.contains(QStringLiteral("pulseaudio")))) {
+            pulseType = name;
+        }
+#endif
+    }
+
+    const QString preferredType = !jackType.isEmpty() ? jackType
+                                : !pipewireType.isEmpty() ? pipewireType
+                                : !pulseType.isEmpty() ? pulseType
+                                : currentType;
+    const int preferredIndex = types.indexOf(preferredType);
+    if (preferredIndex > 0) {
+        types.move(preferredIndex, 0);
+    } else {
+        const int currentIndex = types.indexOf(currentType);
+        if (currentIndex > 0)
+            types.move(currentIndex, 0);
+    }
+
+    return types;
+}
+
+QStringList AudioDeviceService::availableOutputDevices(const QString& deviceType) const
+{
+    QStringList devices;
+    QStringList allDevices;
+
+    auto& manager = const_cast<juce::AudioDeviceManager&>(m_manager);
+    auto* type = findDeviceType(manager, deviceType);
+    if (type == nullptr)
+        return devices;
+
+    type->scanForDevices();
+    const QString selectedType = !deviceType.isEmpty()
+        ? deviceType
+        : QString::fromUtf8(type->getTypeName().toRawUTF8());
+    const QString currentOutput = currentOutputDevice();
+    const QString selectedTypeLower = selectedType.toLower();
+    QSet<QString> seen;
+
+    for (const auto& name : type->getDeviceNames(false)) {
+        const QString outputName = QString::fromUtf8(name.toRawUTF8()).trimmed();
+        if (outputName.isEmpty() || seen.contains(outputName))
+            continue;
+
+        seen.insert(outputName);
+        allDevices.push_back(outputName);
+
+        bool keep = true;
+#if JUCE_LINUX || JUCE_BSD
+        const QString lowerName = outputName.toLower();
+        keep = !(lowerName.startsWith(QStringLiteral("hw:"))
+                 || lowerName.startsWith(QStringLiteral("plughw:"))
+                 || lowerName.startsWith(QStringLiteral("sysdefault:"))
+                 || lowerName.startsWith(QStringLiteral("front:"))
+                 || lowerName.startsWith(QStringLiteral("surround"))
+                 || lowerName.startsWith(QStringLiteral("iec958:"))
+                 || lowerName.startsWith(QStringLiteral("dmix:"))
+                 || lowerName.startsWith(QStringLiteral("dsnoop:"))
+                 || lowerName.startsWith(QStringLiteral("usbstream:"))
+                 || lowerName.startsWith(QStringLiteral("jackinput"))
+                 || lowerName.contains(QStringLiteral("internal"))
+                 || lowerName.contains(QStringLiteral("loopback"))
+                 || lowerName.startsWith(QStringLiteral("lavaplayer"))
+                 || lowerName.startsWith(QStringLiteral("Combined"))
+                 || lowerName == QStringLiteral("null"));
+
+        if (!keep && (lowerName == QStringLiteral("default")
+                      || lowerName.contains(QStringLiteral("pipewire"))
+                      || lowerName.contains(QStringLiteral("pulse")))) {
+            keep = true;
+        }
+
+        if (keep && (selectedTypeLower.contains(QStringLiteral("alsa"))
+                     || selectedTypeLower.contains(QStringLiteral("pipewire"))
+                     || selectedTypeLower.contains(QStringLiteral("pulse")))) {
+            keep = !lowerName.contains(QStringLiteral("@"))
+                && !lowerName.startsWith(QStringLiteral("builtin_"))
+                && !lowerName.contains(QStringLiteral(":CARD="))
+                && !lowerName.contains(QStringLiteral(":DEV="));
+        }
+#endif
+
+        if (keep)
+            devices.push_back(outputName);
+    }
+
+    if (devices.isEmpty())
+        devices = allDevices;
+    if (!currentOutput.isEmpty() && !devices.contains(currentOutput)
+        && allDevices.contains(currentOutput)) {
+        devices.push_front(currentOutput);
+    }
+
+    const int currentOutputIndex = devices.indexOf(currentOutput);
+    if (currentOutputIndex > 0)
+        devices.move(currentOutputIndex, 0);
+    return devices;
+}
+
+QStringList AudioDeviceService::availableOutputChannelPairs(const QString& deviceType,
+                                                             const QString& outputDevice) const
+{
+    QString selectedType = deviceType;
+    QString selectedOutput = outputDevice;
+    if (selectedType.isEmpty())
+        selectedType = currentDeviceType();
+    if (selectedOutput.isEmpty())
+        selectedOutput = currentOutputDevice();
+
+    const QString loweredType = selectedType.trimmed().toLower();
+    if (loweredType == QStringLiteral("jack") || loweredType.contains(QStringLiteral("jack")))
+        return buildChannelPairList(kMaxSupportedOutputChannel);
+
+    int channelCount = readCurrentDeviceOutputChannelCount(m_manager, selectedType, selectedOutput);
+    if (channelCount < 2)
+        channelCount = readDeviceOutputChannelCount(selectedType, selectedOutput);
+    return buildChannelPairList(channelCount);
+}
+
+QString AudioDeviceService::currentDeviceType() const
+{
+    return QString::fromUtf8(m_manager.getCurrentAudioDeviceType().toRawUTF8());
+}
+
+QString AudioDeviceService::currentOutputDevice() const
+{
+    if (auto* device = m_manager.getCurrentAudioDevice())
+        return QString::fromUtf8(device->getName().toRawUTF8());
+    return {};
+}
+
+int AudioDeviceService::currentSampleRate() const
+{
+    if (auto* device = m_manager.getCurrentAudioDevice())
+        return static_cast<int>(std::lround(device->getCurrentSampleRate()));
+    return 0;
+}
+
+int AudioDeviceService::currentBufferSize() const
+{
+    if (auto* device = m_manager.getCurrentAudioDevice())
+        return device->getCurrentBufferSizeSamples();
+    return 0;
+}
+
+bool AudioDeviceService::isJackServerRunning() const
+{
+#if JUCE_JACK && (JUCE_LINUX || JUCE_BSD)
+    QString message;
+    return probeJackServer(message);
+#else
+    return false;
+#endif
+}
+
+QString AudioDeviceService::jackServerStatus() const
+{
+#if JUCE_JACK && (JUCE_LINUX || JUCE_BSD)
+    QString message;
+    probeJackServer(message);
+    return message;
+#else
+    return QStringLiteral("JACK backend not built in this binary.");
+#endif
 }

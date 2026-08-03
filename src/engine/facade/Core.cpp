@@ -1,4 +1,4 @@
-#include "DjEngineCommonIncludes.h"
+#include "FacadeIncludes.h"
 #include "audio/device/AudioDeviceService.h"
 #include "sync/SyncCoordinator.h"
 
@@ -587,4 +587,252 @@ void DjEngine::setPolarityInverted(bool inverted)
 {
     applyPolarityInverted(inverted);
     emit polarityInvertedChanged();
+}
+
+bool DjEngine::hydrateLibraryStateForTrack(const QString& rawPath, double durationSec)
+{
+    if (!m_libraryDb)
+        return false;
+
+    const int durationSeconds = static_cast<int>(durationSec);
+    int bitrateKbps = 0;
+    const juce::File file(rawPath.toStdString());
+    if (durationSec > 0.0) {
+        const auto bytes = static_cast<double>(file.getSize());
+        bitrateKbps = static_cast<int>(std::lround((bytes * 8.0) / durationSec / 1000.0));
+    }
+
+    const QString existingId = m_libraryDb->trackIdForFilePath(rawPath);
+    m_currentTrackId = existingId.isEmpty()
+        ? TrackIdGenerator::generate(m_trackArtist, m_trackTitle, durationSeconds, rawPath)
+        : existingId;
+    m_trackFilePath = rawPath;
+    m_playLogged = false;
+    m_playedAccumSec = 0.0;
+    m_playHistoryClock.restart();
+    m_libraryDb->addTrack(m_currentTrackId,
+                          m_trackTitle, m_trackArtist, durationSeconds, rawPath, bitrateKbps,
+                          m_trackGenre, m_trackAlbum, m_trackComment);
+
+    bool hasDatabaseAnalysis = false;
+    LibraryDatabase::AnalysisSnapshot cachedAnalysis;
+    if (m_libraryDb->tryGetAnalysisData(m_currentTrackId, &cachedAnalysis)
+        && cachedAnalysis.isAnalyzed) {
+        hasDatabaseAnalysis = true;
+        m_currentSegments = m_libraryDb->trackSegmentsForTrack(m_currentTrackId);
+        emit segmentsChanged();
+
+        if (cachedAnalysis.bpm > 0.0) {
+            m_trackData->setBpmData(cachedAnalysis.bpm,
+                                    cachedAnalysis.firstBeatSample,
+                                    cachedAnalysis.sampleRate,
+                                    cachedAnalysis.beatGrid,
+                                    cachedAnalysis.confidence,
+                                    cachedAnalysis.beatGridInfo);
+        }
+
+        const QString cachedKey = cachedAnalysis.key.trimmed();
+        if (!cachedKey.isEmpty()) {
+            m_trackKey = cachedKey;
+            m_trackData->setKeyData(cachedKey);
+        }
+
+        std::vector<TrackSegment> cachedSegments;
+        cachedSegments.reserve(static_cast<size_t>(m_currentSegments.size()));
+        for (const QVariant& value : m_currentSegments) {
+            const QVariantMap map = value.toMap();
+            TrackSegment segment;
+            segment.label = map.value(QStringLiteral("label")).toString();
+            segment.startTime = static_cast<float>(map.value(QStringLiteral("startTime")).toDouble());
+            segment.endTime = static_cast<float>(map.value(QStringLiteral("endTime")).toDouble());
+            segment.colorHex = map.value(QStringLiteral("colorHex")).toString();
+            segment.confidence = static_cast<float>(map.value(QStringLiteral("confidence")).toDouble());
+            if (segment.endTime > segment.startTime + 0.01f)
+                cachedSegments.push_back(segment);
+        }
+        if (!cachedSegments.empty())
+            m_trackData->setSegmentsData(std::move(cachedSegments));
+    } else {
+        m_currentSegments = QVariantList();
+        emit segmentsChanged();
+    }
+
+    loadHotCuesForCurrentTrack();
+    loadSavedLoopsForCurrentTrack();
+    loadMainCueForCurrentTrack();
+    emit beatgridLockedChanged();
+    return hasDatabaseAnalysis;
+}
+
+namespace {
+
+double nearestDownbeatAnchor(const std::vector<TrackData::BeatMarker>& grid, double currentSec)
+{
+    double best = currentSec;
+    double bestDistance = std::numeric_limits<double>::max();
+    for (const auto& marker : grid) {
+        if (!marker.isDownbeat)
+            continue;
+        const double distance = std::abs(marker.positionSec - currentSec);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            best = marker.positionSec;
+        }
+    }
+    return best;
+}
+
+} // namespace
+
+void DjEngine::setDownbeatAtPosition(double anchorSec)
+{
+    if (!m_trackData || !m_trackData->isBpmAnalyzed())
+        return;
+
+    const double trackLengthSec = static_cast<double>(m_transport->trackLengthSeconds());
+    if (trackLengthSec <= 0.0)
+        return;
+
+    m_trackData->shiftBeatgridToDownbeat(anchorSec, trackLengthSec);
+    persistCurrentAnalysisToLibrary();
+    emit beatgridLockedChanged();
+}
+
+void DjEngine::setDownbeatAtCurrentPosition()
+{
+    setDownbeatAtPosition(static_cast<double>(getVisualPosition()));
+}
+
+void DjEngine::nudgeBeatgridMs(double milliseconds)
+{
+    if (!m_trackData || !m_trackData->isBpmAnalyzed())
+        return;
+
+    const double trackLengthSec = m_transport->trackLengthSeconds();
+    if (trackLengthSec <= 0.0 || std::abs(milliseconds) < 1e-6)
+        return;
+
+    m_trackData->nudgeBeatgrid(milliseconds / 1000.0, trackLengthSec);
+    persistCurrentAnalysisToLibrary();
+    emit beatgridLockedChanged();
+}
+
+void DjEngine::nudgeBeatgridBeats(double beats)
+{
+    if (!m_trackData || std::abs(beats) < 1e-6)
+        return;
+
+    const double position = static_cast<double>(getVisualPosition());
+    const double beatDuration = beatDurationAround(position);
+    if (beatDuration <= 1e-4)
+        return;
+
+    nudgeBeatgridMs(beats * beatDuration * 1000.0);
+}
+
+void DjEngine::doubleBpm()
+{
+    if (!m_trackData || !m_trackData->isBpmAnalyzed())
+        return;
+    const double trackLengthSec = static_cast<double>(m_transport->trackLengthSeconds());
+    if (trackLengthSec <= 0.0)
+        return;
+
+    const double anchor = nearestDownbeatAnchor(
+        m_trackData->getBeatGrid(), static_cast<double>(getVisualPosition()));
+    m_trackData->setBpm(m_trackData->getBpm() * 2.0);
+    m_trackData->shiftBeatgridToDownbeat(anchor, trackLengthSec);
+    persistCurrentAnalysisToLibrary();
+    emit beatgridLockedChanged();
+    emit tempoChanged();
+}
+
+void DjEngine::halveBpm()
+{
+    if (!m_trackData || !m_trackData->isBpmAnalyzed())
+        return;
+    const double trackLengthSec = static_cast<double>(m_transport->trackLengthSeconds());
+    if (trackLengthSec <= 0.0)
+        return;
+
+    const double anchor = nearestDownbeatAnchor(
+        m_trackData->getBeatGrid(), static_cast<double>(getVisualPosition()));
+    m_trackData->setBpm(m_trackData->getBpm() / 2.0);
+    m_trackData->shiftBeatgridToDownbeat(anchor, trackLengthSec);
+    persistCurrentAnalysisToLibrary();
+    emit beatgridLockedChanged();
+    emit tempoChanged();
+}
+
+void DjEngine::updateSpeedAndPitch()
+{
+    const double phaseNudge = m_syncController
+        ? m_syncController->snapshot().phaseNudgePercent : 0.0;
+    double speedMultiplier = 1.0 + ((m_tempoPercent + phaseNudge + m_jogNudgePercent) / 100.0);
+    speedMultiplier = std::clamp(speedMultiplier, 0.01, 8.0);
+
+    const bool scratchVarispeed = m_scratch.scrubbing() || m_scratch.releaseGlide();
+    m_transport->setPlaybackRate(speedMultiplier);
+    m_transport->setKeylockEnabled(!scratchVarispeed && m_keylock);
+}
+
+void DjEngine::setKeylock(bool on)
+{
+    if (m_keylock == on)
+        return;
+    m_keylock = on;
+    updateSpeedAndPitch();
+    emit keylockChanged();
+}
+
+void DjEngine::applyTempoPercent(double percent)
+{
+    percent = std::clamp(percent, -100.0, 100.0);
+    if (m_tempoPercent == percent)
+        return;
+    m_tempoPercent = percent;
+
+    updateSpeedAndPitch();
+    emit tempoChanged();
+    if (syncEnabled())
+        publishSyncInputAndApplyActions();
+}
+
+void DjEngine::setTempoPercent(double percent)
+{
+    if (syncEnabled() && !isSyncMaster())
+        return;
+    applyTempoPercent(percent);
+}
+
+void DjEngine::setTempoRangePercent(double percent)
+{
+    const double clamped = std::clamp(percent, 6.0, 100.0);
+    if (std::abs(m_tempoRangePercent - clamped) < 0.001)
+        return;
+
+    m_tempoRangePercent = clamped;
+    applyTempoPercent(std::clamp(m_tempoPercent, -m_tempoRangePercent, m_tempoRangePercent));
+    emit tempoRangeChanged();
+}
+
+void DjEngine::setManualBpm(double bpm)
+{
+    if (!m_trackData)
+        return;
+
+    const double clamped = std::clamp(bpm, 20.0, 300.0);
+    const double trackLengthSec = static_cast<double>(m_transport->trackLengthSeconds());
+    const double anchor = nearestDownbeatAnchor(
+        m_trackData->getBeatGrid(), static_cast<double>(getVisualPosition()));
+
+    m_trackData->setBpm(clamped);
+    if (trackLengthSec > 0.0)
+        m_trackData->shiftBeatgridToDownbeat(anchor, trackLengthSec);
+
+    persistCurrentAnalysisToLibrary();
+    emit beatgridLockedChanged();
+    emit tempoChanged();
+    if (syncEnabled())
+        publishSyncInputAndApplyActions();
 }

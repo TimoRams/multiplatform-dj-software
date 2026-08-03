@@ -3,9 +3,9 @@
 
 #include "audio/cache/AudioPageCache.h"
 #include "audio/cache/CachedPlaybackAudioSource.h"
-#include "engine/audio/MixerDspSource.h"
-#include "engine/audio/ScratchDeckBridge.hpp"
-#include "engine/audio/TimeStretchAudioSource.h"
+#include "engine/dsp/MixerDspSource.h"
+#include "engine/dsp/ScratchDeckBridge.hpp"
+#include "engine/dsp/TimeStretchAudioSource.h"
 
 #include <QCoreApplication>
 #include <QTemporaryDir>

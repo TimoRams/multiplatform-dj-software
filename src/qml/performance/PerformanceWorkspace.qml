@@ -59,12 +59,6 @@ Item {
                         waveformZoom: window.waveformZoom
                     }
 
-                    AioWaveformInfoSlot {
-                        visible: false
-                        slotPosition: "upper"
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                    }
 
                     EnlargedWaveform {
                         visible: window.fourDeckMode
@@ -99,12 +93,6 @@ Item {
                         waveformZoom: window.waveformZoom
                     }
 
-                    AioWaveformInfoSlot {
-                        visible: false
-                        slotPosition: "lower"
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                    }
                 }
             }
         }

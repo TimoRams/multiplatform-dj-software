@@ -1,6 +1,6 @@
 #include "ScratchSession.hpp"
 
-#include "audio/ScratchDeckBridge.hpp"
+#include "dsp/ScratchDeckBridge.hpp"
 
 #include <algorithm>
 
