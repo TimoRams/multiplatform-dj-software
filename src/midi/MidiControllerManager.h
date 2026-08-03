@@ -19,6 +19,7 @@
 #include <atomic>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <cstdint>
 #include <vector>
 
@@ -102,7 +103,7 @@ public:
     Q_INVOKABLE void setMappingInverted(const QString& paramId, bool inverted);
 
     // Live MIDI monitor: last received event as a short human-readable string.
-    // Updated on EVERY incoming message so the UI can show what the controller sends.
+    // High-rate wheel traffic is display-throttled so it cannot starve the UI.
     Q_PROPERTY(QString lastMidiEvent READ lastMidiEvent NOTIFY lastMidiEventChanged)
     QString lastMidiEvent() const { return m_lastMidiEvent; }
 
@@ -195,6 +196,23 @@ private:
 
     // Live MIDI monitor
     QString m_lastMidiEvent;
+    bool m_midiTraceEnabled = false;
+    double m_nextMidiMonitorUpdateSeconds = 0.0;
+
+    struct PendingMidiEvent {
+        int msgId = -1;
+        float rawEncodedValue = 0.0f;
+        double timestampSeconds = 0.0;
+        bool noteOff = false;
+    };
+    static constexpr std::size_t kPendingMidiCapacity = 16'384;
+    static constexpr std::size_t kMidiDrainBatchSize = 256;
+    std::array<PendingMidiEvent, kPendingMidiCapacity> m_pendingMidiEvents {};
+    std::mutex m_pendingMidiMutex;
+    std::size_t m_pendingMidiHead = 0;
+    std::size_t m_pendingMidiCount = 0;
+    bool m_midiDrainScheduled = false;
+    std::atomic<std::uint64_t> m_droppedMidiEvents { 0 };
 
 #if defined(Q_OS_LINUX)
     std::vector<std::unique_ptr<QProcess>> m_alsaInputMonitors;
@@ -211,6 +229,11 @@ private:
     void stopAlsaInputMonitor();
     void processDecodedMidiEvent(int msgId, float value, bool isNoteOff,
                                  double eventTimestampSeconds = 0.0);
+    void enqueueRawMidiEvent(int msgId, float rawEncodedValue, bool noteOff,
+                             double eventTimestampSeconds);
+    void drainRawMidiEvents();
+    void processRawMidiEvent(int msgId, float rawEncodedValue, bool noteOff,
+                             double eventTimestampSeconds);
     bool dispatchFlx10JogAction(const QString& paramId, float value,
                                 double eventTimestampSeconds);
     void learnMapping(int msgId);

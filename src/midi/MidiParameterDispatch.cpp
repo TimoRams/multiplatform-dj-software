@@ -8,13 +8,17 @@ using namespace midi_internal;
 #include <QDebug>
 #include <QMetaObject>
 #include <QThread>
+#include <algorithm>
 #include <cmath>
 
 void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool isNoteOff,
                                                     double eventTimestampSeconds)
 {
-    // Live MIDI monitor — update for every event (both JUCE and ALSA paths)
-    {
+    // Keep the UI monitor useful without allocating QStrings and emitting a Qt
+    // signal for every high-resolution jog tick.
+    const double monitorNowSeconds = juce::Time::getMillisecondCounterHiRes() * 0.001;
+    if (m_isLearning || monitorNowSeconds >= m_nextMidiMonitorUpdateSeconds) {
+        m_nextMidiMonitorUpdateSeconds = monitorNowSeconds + 1.0 / 30.0;
         const int sub  = (msgId >= 10000) ? (msgId - 10000) % 2000 : -1;
         const int chNo = (msgId >= 10000) ? (msgId - 10000) / 2000 : 0;
         QString evtLabel;
@@ -39,7 +43,8 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
         }
         else if (sub >= 0)    evtLabel = QStringLiteral("Ch%1 Note %2  vel %3").arg(chNo+1).arg(sub).arg(static_cast<int>(value*127));
 
-        qDebug() << "[MIDI IN]" << evtLabel << (m_isLearning ? "(LEARNING)" : "");
+        if (m_midiTraceEnabled)
+            qDebug() << "[MIDI IN]" << evtLabel << (m_isLearning ? "(LEARNING)" : "");
         if (!evtLabel.isEmpty() && evtLabel != m_lastMidiEvent) {
             m_lastMidiEvent = evtLabel;
             emit lastMidiEventChanged();
@@ -103,7 +108,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
 
         if (previousIt == m_scratchAbsoluteLastByMsgId.end()) {
             m_scratchAbsoluteLastByMsgId[msgId] = raw;
-            qDebug() << "[MIDI MAP]" << midi_internal::midiControlLabel(msgId)
+            if (m_midiTraceEnabled) qDebug() << "[MIDI MAP]" << midi_internal::midiControlLabel(msgId)
                      << "value:" << raw
                      << "mappedAction:" << scratchParamId
                      << "interactionType:touched-absolute-jog"
@@ -119,7 +124,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
         if (invIt != m_paramInverted.end() && invIt->second)
             delta = -delta;
 
-        qDebug() << "[MIDI MAP]" << midi_internal::midiControlLabel(msgId)
+        if (m_midiTraceEnabled) qDebug() << "[MIDI MAP]" << midi_internal::midiControlLabel(msgId)
                  << "value:" << raw
                  << "previous:" << previousRaw
                  << "deltaTicks:" << delta
@@ -173,7 +178,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
         if (dispatchTouchedAbsoluteJogFallback())
             return;
 
-        qDebug() << "[MIDI MAP]" << midi_internal::midiControlLabel(msgId)
+        if (m_midiTraceEnabled) qDebug() << "[MIDI MAP]" << midi_internal::midiControlLabel(msgId)
                  << "value:" << static_cast<int>(std::round(value * 127.0f))
                  << "mapping:not-found";
         return;
@@ -196,7 +201,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
         const int rawMidiValue = static_cast<int>(std::round(value * 127.0f));
 
         if (interactionType == MidiInteractionType::Toggle && !pressed) {
-            qDebug() << "[MIDI MAP]" << midi_internal::midiControlLabel(msgId)
+            if (m_midiTraceEnabled) qDebug() << "[MIDI MAP]" << midi_internal::midiControlLabel(msgId)
                      << "value:" << rawMidiValue
                      << "interpreted:released"
                      << "mappedAction:" << paramId
@@ -220,7 +225,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
                 ? (changed ? "press" : "ignored-repeat-press")
                 : (changed ? "release" : "force-release");
 
-            qDebug() << "[MIDI MAP]" << midi_internal::midiControlLabel(msgId)
+            if (m_midiTraceEnabled) qDebug() << "[MIDI MAP]" << midi_internal::midiControlLabel(msgId)
                      << "value:" << rawMidiValue
                      << "interpreted:" << (currentHeld ? "pressed" : "released")
                      << "mappedAction:" << paramId
@@ -232,7 +237,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
             if (!changed && !forceRelease)
                 return;
         } else {
-            qDebug() << "[MIDI MAP]" << midi_internal::midiControlLabel(msgId)
+            if (m_midiTraceEnabled) qDebug() << "[MIDI MAP]" << midi_internal::midiControlLabel(msgId)
                      << "value:" << rawMidiValue
                      << "interpreted:" << (pressed ? "pressed" : "released")
                      << "mappedAction:" << paramId
@@ -288,6 +293,111 @@ void MidiControllerManager::dispatchToStore(const QString& paramId, float value,
                               Q_ARG(float, value));
 }
 
+void MidiControllerManager::enqueueRawMidiEvent(int msgId,
+                                                float rawEncodedValue,
+                                                bool noteOff,
+                                                double eventTimestampSeconds)
+{
+    bool scheduleDrain = false;
+    {
+        std::lock_guard lock(m_pendingMidiMutex);
+        if (m_pendingMidiCount == kPendingMidiCapacity) {
+            m_pendingMidiHead = (m_pendingMidiHead + 1) % kPendingMidiCapacity;
+            --m_pendingMidiCount;
+            m_droppedMidiEvents.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        const std::size_t tail =
+            (m_pendingMidiHead + m_pendingMidiCount) % kPendingMidiCapacity;
+        m_pendingMidiEvents[tail] = {
+            msgId, rawEncodedValue, eventTimestampSeconds, noteOff
+        };
+        ++m_pendingMidiCount;
+        if (!m_midiDrainScheduled) {
+            m_midiDrainScheduled = true;
+            scheduleDrain = true;
+        }
+    }
+
+    if (scheduleDrain) {
+        QMetaObject::invokeMethod(this, [this] { drainRawMidiEvents(); },
+                                  Qt::QueuedConnection);
+    }
+}
+
+void MidiControllerManager::drainRawMidiEvents()
+{
+    if (m_shutdownComplete.load(std::memory_order_acquire))
+        return;
+
+    std::array<PendingMidiEvent, kMidiDrainBatchSize> batch {};
+    std::size_t batchSize = 0;
+    bool scheduleNextBatch = false;
+    {
+        std::lock_guard lock(m_pendingMidiMutex);
+        batchSize = std::min(m_pendingMidiCount, kMidiDrainBatchSize);
+        for (std::size_t i = 0; i < batchSize; ++i) {
+            batch[i] = m_pendingMidiEvents[m_pendingMidiHead];
+            m_pendingMidiHead = (m_pendingMidiHead + 1) % kPendingMidiCapacity;
+        }
+        m_pendingMidiCount -= batchSize;
+        scheduleNextBatch = m_pendingMidiCount != 0;
+        if (!scheduleNextBatch)
+            m_midiDrainScheduled = false;
+    }
+
+    for (std::size_t i = 0; i < batchSize; ++i) {
+        const auto& event = batch[i];
+        processRawMidiEvent(event.msgId,
+                            event.rawEncodedValue,
+                            event.noteOff,
+                            event.timestampSeconds);
+    }
+
+    if (scheduleNextBatch && !m_shutdownComplete.load(std::memory_order_acquire)) {
+        QMetaObject::invokeMethod(this, [this] { drainRawMidiEvents(); },
+                                  Qt::QueuedConnection);
+    }
+}
+
+void MidiControllerManager::processRawMidiEvent(int msgId,
+                                                float rawEncodedValue,
+                                                bool noteOff,
+                                                double eventTimestampSeconds)
+{
+    int resolvedId = msgId;
+    float resolvedValue = rawEncodedValue;
+
+    if (msgId >= 10000) {
+        const int sub = (msgId - 10000) % 2000;
+
+        if (sub >= 1000 && sub < 1500) {
+            const int cc = sub - 1000;
+            const int legacyId = cc + 1000;
+            if (!m_midiToParam.count(msgId) && m_midiToParam.count(legacyId))
+                resolvedId = legacyId;
+
+            const auto it = m_midiToParam.find(resolvedId);
+            if (it != m_midiToParam.end()
+                && midi_internal::isRelativeInteraction(it->second.interactionType)) {
+                resolvedValue = midi_internal::decodeRelativeCcValue(
+                    static_cast<int>(rawEncodedValue), it->second.paramId);
+            } else {
+                resolvedValue = midi_internal::clampMidi7bit(
+                    static_cast<int>(rawEncodedValue)) / 127.0f;
+            }
+        } else if (sub == 1500) {
+            constexpr int legacyId = 1500;
+            if (!m_midiToParam.count(msgId) && m_midiToParam.count(legacyId))
+                resolvedId = legacyId;
+            resolvedValue = rawEncodedValue / 16383.0f;
+        }
+    }
+
+    processDecodedMidiEvent(resolvedId, resolvedValue, noteOff,
+                            eventTimestampSeconds);
+}
+
 void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*/, const juce::MidiMessage& message)
 {
     if (m_shutdownComplete.load(std::memory_order_acquire))
@@ -295,7 +405,7 @@ void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*
 
     // Diagnostic: log every incoming MIDI message so we can see if JUCE is even
     // receiving Note On events.  The raw status byte tells us the truth.
-    {
+    if (m_midiTraceEnabled) {
         const auto* d = message.getRawData();
         const int   sz = message.getRawDataSize();
         const int   status = sz > 0 ? static_cast<unsigned char>(d[0]) : 0;
@@ -343,41 +453,5 @@ void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*
         return;
     }
 
-    // Marshal to Qt main thread. Qt cancels the call automatically if `this`
-    // is destroyed before the event loop processes it.
-    QMetaObject::invokeMethod(this, [this, msgId, rawEnc, noteOff, eventTimestampSeconds]() mutable
-    {
-        int   resolvedId    = msgId;
-        float resolvedValue = rawEnc;
-
-        if (msgId >= 10000) {
-            const int sub = (msgId - 10000) % 2000;
-
-            if (sub >= 1000 && sub < 1500) {
-                // Regular CC: check legacy (channel-stripped) mapping too
-                const int cc       = sub - 1000;
-                const int legacyId = cc + 1000;
-                if (!m_midiToParam.count(msgId) && m_midiToParam.count(legacyId))
-                    resolvedId = legacyId;
-
-                const auto it = m_midiToParam.find(resolvedId);
-                if (it != m_midiToParam.end() && midi_internal::isRelativeInteraction(it->second.interactionType)) {
-                    const int raw = static_cast<int>(rawEnc);
-                    resolvedValue = midi_internal::decodeRelativeCcValue(raw, it->second.paramId);
-                } else {
-                    resolvedValue = midi_internal::clampMidi7bit(static_cast<int>(rawEnc)) / 127.0f;
-                }
-            } else if (sub == 1500) {
-                const int legacyId = 1500;
-                if (!m_midiToParam.count(msgId) && m_midiToParam.count(legacyId))
-                    resolvedId = legacyId;
-
-                // Pitch bend: normalise 0-16383 → 0.0-1.0
-                resolvedValue = rawEnc / 16383.0f;
-            }
-            // sub < 1000 → Note On/Off: rawEnc is already a normalised float velocity
-        }
-
-        processDecodedMidiEvent(resolvedId, resolvedValue, noteOff, eventTimestampSeconds);
-    }, Qt::QueuedConnection);
+    enqueueRawMidiEvent(msgId, rawEnc, noteOff, eventTimestampSeconds);
 }

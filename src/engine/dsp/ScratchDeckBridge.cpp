@@ -788,6 +788,42 @@ void ScratchDeckBridge::applyScratchExitTail(const juce::AudioSourceChannelInfo&
     }
 }
 
+void ScratchDeckBridge::captureNormalTail(const juce::AudioSourceChannelInfo& info) noexcept
+{
+    if (!info.buffer || info.numSamples <= 0)
+        return;
+    const int sample = info.startSample + info.numSamples - 1;
+    if (sample < 0 || sample >= info.buffer->getNumSamples())
+        return;
+
+    const int channels = std::min(2, info.buffer->getNumChannels());
+    if (channels <= 0)
+        return;
+    m_lastNormalOutput[0] = info.buffer->getSample(0, sample);
+    m_lastNormalOutput[1] = info.buffer->getSample(channels > 1 ? 1 : 0, sample);
+    m_lastNormalOutputValid = true;
+}
+
+void ScratchDeckBridge::applyNormalStopTail(const juce::AudioSourceChannelInfo& info) noexcept
+{
+    if (!m_lastNormalOutputValid || !info.buffer || info.numSamples <= 0)
+        return;
+
+    constexpr int stopFadeSamples = 128;
+    const int channels = std::min(2, info.buffer->getNumChannels());
+    const int count = std::min(stopFadeSamples, info.numSamples);
+    for (int ch = 0; ch < channels; ++ch) {
+        float* output = info.buffer->getWritePointer(ch, info.startSample);
+        const float tail = m_lastNormalOutput[static_cast<std::size_t>(ch)];
+        for (int i = 0; i < count; ++i) {
+            const float gain = 1.0f - static_cast<float>(i + 1)
+                / static_cast<float>(count);
+            output[i] = tail * gain;
+        }
+    }
+    m_lastNormalOutputValid = false;
+}
+
 void ScratchDeckBridge::publishScratchCursor(double readPositionSamples,
                                              double trackSampleRate) noexcept
 {
@@ -836,6 +872,19 @@ void ScratchDeckBridge::getNextAudioBlock(const juce::AudioSourceChannelInfo& bu
     m_prevScratchPath = scratching;
 
     if (!scratching) {
+        const bool normalPlaybackEnabled =
+            m_normalPlaybackEnabled.load(std::memory_order_acquire);
+        if (!normalPlaybackEnabled) {
+            bufferToFill.clearActiveBufferRegion();
+            if (!m_scratchExitTailPending && m_normalPlaybackWasEnabled)
+                applyNormalStopTail(bufferToFill);
+            else
+                m_lastNormalOutputValid = false;
+            m_normalPlaybackWasEnabled = false;
+            applyScratchExitTail(bufferToFill);
+            return;
+        }
+
         // Hermite always owns tempo and jog-rate movement. With keylock active,
         // the downstream RubberBand stage keeps timeRatio at 1 and applies the
         // inverse pitch scale, preserving pitch without losing reader speed.
@@ -846,6 +895,8 @@ void ScratchDeckBridge::getNextAudioBlock(const juce::AudioSourceChannelInfo& bu
         }
         applyNormalPathCrossfade(bufferToFill);
         applyScratchExitTail(bufferToFill);
+        captureNormalTail(bufferToFill);
+        m_normalPlaybackWasEnabled = true;
         return;
     }
 

@@ -67,6 +67,9 @@ public:
 
     void setDeckTempoRatio(double ratio) noexcept;
     void setJogNudgeRatio(double ratio) noexcept;
+    void setNormalPlaybackEnabled(bool enabled) noexcept {
+        m_normalPlaybackEnabled.store(enabled, std::memory_order_release);
+    }
     void setKeylockPassthrough(bool enabled) noexcept {
         m_keylockPassthrough.store(enabled, std::memory_order_relaxed);
     }
@@ -124,6 +127,8 @@ private:
     void applyNormalPathCrossfade(const juce::AudioSourceChannelInfo& info) noexcept;
     void captureScratchTail(const juce::AudioSourceChannelInfo& info) noexcept;
     void applyScratchExitTail(const juce::AudioSourceChannelInfo& info) noexcept;
+    void captureNormalTail(const juce::AudioSourceChannelInfo& info) noexcept;
+    void applyNormalStopTail(const juce::AudioSourceChannelInfo& info) noexcept;
     void publishScratchCursor(double readPositionSamples, double trackSampleRate) noexcept;
     void publishReleaseSnapshot(std::uint64_t generation,
                                 ScratchReleasePhase phase,
@@ -143,6 +148,7 @@ private:
 
     std::atomic<double> m_deckTempoRatio { 1.0 };
     std::atomic<double> m_jogNudgeRatio { 1.0 };
+    std::atomic<bool> m_normalPlaybackEnabled { false };
     std::atomic<bool> m_keylockPassthrough { false };
     std::atomic<bool> m_reverse { false };
     std::atomic<double> m_trackSampleRate { 44100.0 };
@@ -235,6 +241,9 @@ private:
     bool m_lastScratchOutputValid = false;
     bool m_scratchExitTailPending = false;
     std::uint64_t m_tailReleaseGeneration = 0;
+    std::array<float, 2> m_lastNormalOutput { 0.0f, 0.0f };
+    bool m_lastNormalOutputValid = false;
+    bool m_normalPlaybackWasEnabled = false;
 
     std::atomic<bool> m_transportSwapInProgress { false };
     std::atomic<unsigned int> m_audioCallbacksActive { 0 };

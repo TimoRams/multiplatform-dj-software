@@ -3,7 +3,23 @@
 #include <algorithm>
 #include <cmath>
 
-namespace { thread_local bool g_inTimeStretchAudioCallback = false; }
+#ifdef __linux__
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
+
+namespace {
+thread_local bool g_inTimeStretchAudioCallback = false;
+
+void lowerWorkerPriority() noexcept
+{
+#ifdef __linux__
+    const pid_t tid = static_cast<pid_t>(syscall(SYS_gettid));
+    setpriority(PRIO_PROCESS, static_cast<id_t>(tid), 10);
+#endif
+}
+}
 
 TimeStretchAudioSource::TimeStretchAudioSource(juce::AudioSource* inSource) : source(inSource) {}
 TimeStretchAudioSource::~TimeStretchAudioSource() { releaseResources(); }
@@ -27,6 +43,8 @@ void TimeStretchAudioSource::setTempoRatio(double ratio) noexcept
 
 void TimeStretchAudioSource::setPitchLockEnabled(bool enabled) noexcept
 {
+    if (!enabled)
+        m_scratchRefreshInFlight.store(false, std::memory_order_release);
     if (m_pitchLockEnabled.exchange(enabled) != enabled) publishDesiredConfiguration();
 }
 
@@ -45,14 +63,17 @@ void TimeStretchAudioSource::setTrackGeneration(std::uint64_t generation) noexce
 void TimeStretchAudioSource::enterScratchBypass() noexcept
 {
     m_scratchExitRequested.store(false, std::memory_order_release);
-    m_scratchBypass.store(true, std::memory_order_release);
+    const bool alreadyBypassing = m_scratchBypass.exchange(true, std::memory_order_acq_rel);
     m_switchFadeRemaining.store(0, std::memory_order_relaxed);
     m_reportedLatencySamples.store(0, std::memory_order_relaxed);
 
     // RubberBand may still contain FIFO/audio history from before the grab.
     // Build a clean pipeline on the worker while scratch audio bypasses it.
-    if (m_pitchLockEnabled.load(std::memory_order_acquire))
+    if (!alreadyBypassing
+        && m_pitchLockEnabled.load(std::memory_order_acquire)
+        && !m_scratchRefreshInFlight.exchange(true, std::memory_order_acq_rel)) {
         publishDesiredConfiguration();
+    }
 }
 
 void TimeStretchAudioSource::endScratchBypass() noexcept
@@ -100,6 +121,7 @@ void TimeStretchAudioSource::prepareToPlay(int blockSize, double sr)
     m_activeSlot.store(-1, std::memory_order_release);
     m_scratchBypass.store(false, std::memory_order_release);
     m_scratchExitRequested.store(false, std::memory_order_release);
+    m_scratchRefreshInFlight.store(false, std::memory_order_release);
     m_accepting.store(true, std::memory_order_release);
     m_prepared.store(true, std::memory_order_release);
     m_stopRequested.store(false, std::memory_order_release);
@@ -116,7 +138,10 @@ void TimeStretchAudioSource::prepareToPlay(int blockSize, double sr)
         m_activeGeneration.store(1, std::memory_order_release);
     }
     m_pipelines[1].state.store(SlotState::Empty, std::memory_order_release);
-    m_worker = std::thread([this] { workerLoop(); });
+    m_worker = std::thread([this] {
+        lowerWorkerPriority();
+        workerLoop();
+    });
 }
 
 void TimeStretchAudioSource::stopWorker() noexcept
@@ -225,6 +250,7 @@ void TimeStretchAudioSource::workerLoop()
         if (!preparePipeline(p, config)) {
             p.state.store(SlotState::Empty, std::memory_order_release);
             m_failures.fetch_add(1, std::memory_order_relaxed);
+            m_scratchRefreshInFlight.store(false, std::memory_order_release);
             continue;
         }
         const auto latest = m_desiredGeneration.load(std::memory_order_acquire);
@@ -256,6 +282,7 @@ void TimeStretchAudioSource::activatePreparedPipelineAtBlockBoundary() noexcept
         }
         const int old = m_activeSlot.exchange(i, std::memory_order_acq_rel);
         m_activeGeneration.store(next.config.configurationGeneration, std::memory_order_release);
+        m_scratchRefreshInFlight.store(false, std::memory_order_release);
         m_reportedLatencySamples.store(next.config.keylockEnabled ? next.latency : 0, std::memory_order_relaxed);
         m_switchFadeRemaining.store(kSwitchFadeSamples, std::memory_order_relaxed);
         m_switches.fetch_add(1, std::memory_order_relaxed);

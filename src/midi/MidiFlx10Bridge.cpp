@@ -738,14 +738,16 @@ bool MidiControllerManager::dispatchFlx10JogAction(const QString& paramId,
     };
     const auto route = router.route(input);
 
-    qDebug().nospace()
-        << "[FLX10 JOG] deck=" << (deckA ? 'A' : 'B')
-        << " stream=" << jogEventName(eventType)
-        << " ticks=" << route.ticks
-        << " dtMs=" << route.eventIntervalSeconds * 1000.0
-        << " rate=" << route.estimatedRate
-        << " phase=" << jogPhaseName(route.phase)
-        << " action=" << jogActionName(route.action);
+    if (m_midiTraceEnabled) {
+        qDebug().nospace()
+            << "[FLX10 JOG] deck=" << (deckA ? 'A' : 'B')
+            << " stream=" << jogEventName(eventType)
+            << " ticks=" << route.ticks
+            << " dtMs=" << route.eventIntervalSeconds * 1000.0
+            << " rate=" << route.estimatedRate
+            << " phase=" << jogPhaseName(route.phase)
+            << " action=" << jogActionName(route.action);
+    }
 
     if (!engine)
         return true;

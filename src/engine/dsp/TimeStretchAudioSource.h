@@ -95,6 +95,7 @@ private:
     std::atomic<bool> m_scratchBypass { false };
     std::atomic<bool> m_scratchExitRequested { false };
     std::atomic<bool> m_scratchExitFadePending { false };
+    std::atomic<bool> m_scratchRefreshInFlight { false };
     std::atomic<double> m_sampleRate { 44100.0 };
     std::atomic<int> m_maximumBlockSize { 512 };
     std::atomic<std::uint64_t> m_trackGeneration { 0 };

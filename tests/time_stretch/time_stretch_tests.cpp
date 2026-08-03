@@ -62,6 +62,13 @@ int main(){
         source.enterScratchBypass();source.getNextAudioBlock({&b,0,8192});
         ok&=require(waitForGeneration(source,preScratchGeneration),
                     "scratch prepares a clean keylock pipeline");
+        const auto cleanScratchGeneration=source.activeConfigurationGeneration();
+        const auto switchesAfterCleanScratch=source.realtimeStats().successfulPipelineSwitches;
+        source.enterScratchBypass();
+        for(int i=0;i<16;++i){source.getNextAudioBlock({&b,0,8192});std::this_thread::sleep_for(std::chrono::milliseconds(1));}
+        ok&=require(source.activeConfigurationGeneration()==cleanScratchGeneration
+                        && source.realtimeStats().successfulPipelineSwitches==switchesAfterCleanScratch,
+                    "regrab during scratch bypass does not rebuild Rubber Band again");
         source.endScratchBypass();source.getNextAudioBlock({&b,0,8192});
         ok&=require(finite(b),"scratch transition finite");
         auto stats=source.realtimeStats();

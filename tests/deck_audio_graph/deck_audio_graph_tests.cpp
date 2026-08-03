@@ -221,7 +221,7 @@ int main(int argc, char** argv)
     ok &= require(waitForPage(cache, trackA), "track A cached");
     graph.installPreparedTrack({trackA, 44'100.0, 1});
     ok &= require(graph.playback() != nullptr, "track A installed");
-    graph.transport().start();
+    graph.setTransportRunning(true);
 
     for (const int size : {64, 128, 256, 512, 1024, 2048, 4096, 8192}) {
         juce::AudioBuffer<float> output(2, size);
@@ -230,10 +230,19 @@ int main(int argc, char** argv)
     }
 
     juce::AudioBuffer<float> output(2, 512);
-    graph.transport().stop();
-    graph.getNextAudioBlock({&output, 0, 512});
+    const auto pausedReaderPosition = graph.playback()->getNextReadPosition();
+    const auto pauseStart = std::chrono::steady_clock::now();
+    graph.setTransportRunning(false);
+    const auto pauseUs = std::chrono::duration<double, std::micro>(
+        std::chrono::steady_clock::now() - pauseStart).count();
+    for (int block = 0; block < 8; ++block)
+        graph.getNextAudioBlock({&output, 0, 512});
+    ok &= require(pauseUs < 50'000.0,
+                  "transport pause never waits for an audio callback");
+    ok &= require(graph.playback()->getNextReadPosition() == pausedReaderPosition,
+                  "paused playback gate does not advance the source reader");
     graph.transport().setPosition(0.2);
-    graph.transport().start();
+    graph.setTransportRunning(true);
     graph.setReverse(true);
     const auto reverseBefore = graph.playback()->getNextReadPosition();
     double reversePeak = 0.0;
@@ -299,9 +308,9 @@ int main(int argc, char** argv)
         graph.setPlaybackRate(1.0);
         graph.setKeylockEnabled(false);
         if (wasPlaying)
-            graph.transport().start();
+            graph.setTransportRunning(true);
         else
-            graph.transport().stop();
+            graph.setTransportRunning(false);
         graph.scratch().configureTrack(44'100.0, 1.0);
         graph.scratch().beginScratch(anchor, 44'100.0, 1.0, wasPlaying, 1.0);
         graph.scratch().submitHandDeltaSeconds(
@@ -355,7 +364,7 @@ int main(int argc, char** argv)
                       "first normal block after hardware release is finite");
         ok &= require(absolutePeak(transition) <= 1.0,
                       "first normal block after hardware release is bounded");
-        ok &= require(graph.transport().isPlaying() == wasPlaying,
+        ok &= require(graph.transportSnapshot().running == wasPlaying,
                       "hardware release preserves the deck play state");
         for (int channel = 0; channel < 2; ++channel) {
             ok &= require(std::abs(transition.getSample(channel, 0)
@@ -539,7 +548,7 @@ int main(int argc, char** argv)
     auto trackB = cache.openTrack({stereo96});
     ok &= require(waitForPage(cache, trackB), "track B cached");
     graph.installPreparedTrack({trackB, 96'000.0, 2});
-    graph.transport().start();
+    graph.setTransportRunning(true);
     graph.getNextAudioBlock({&output, 0, 512});
     ok &= require(isFinite(output), "mono to stereo handover output is finite");
 
@@ -572,7 +581,7 @@ int main(int argc, char** argv)
         const bool useA = generation % 2 != 0;
         auto handle = cache.openTrack({useA ? mono44 : stereo96});
         graph.installPreparedTrack({handle, useA ? 44'100.0 : 96'000.0, generation});
-        graph.transport().start();
+        graph.setTransportRunning(true);
         graph.getNextAudioBlock({&output, 0, 512});
         ok &= require(isFinite(output), "rapid track handover output is finite");
     }
@@ -582,6 +591,8 @@ int main(int argc, char** argv)
     graph.installPreparedTrack({handoverHandle, 44'100.0, 7});
     const auto handoverUs = std::chrono::duration<double, std::micro>(
         std::chrono::steady_clock::now() - handoverStart).count();
+    ok &= require(handoverUs < 100'000.0,
+                  "track handover cannot enter JUCE's one-second stop wait");
 
     ok &= require(realtimeCountersAreZero(graph), "all realtime violation counters are zero");
 
@@ -632,7 +643,7 @@ int main(int argc, char** argv)
         auto handle = cache.openTrack({index % 2 == 0 ? mono44 : stereo96});
         deck->installPreparedTrack({handle, index % 2 == 0 ? 44'100.0 : 96'000.0,
                                     static_cast<std::uint64_t>(index + 1)});
-        deck->transport().start();
+        deck->setTransportRunning(true);
         deck->timeStretch().setPitchLockEnabled(index % 2 != 0);
         deck->timeStretch().setTempoRatio(0.85 + index * 0.05);
         deck->mixer().setEq(-0.5f, 0.25f, 0.5f);
@@ -666,7 +677,7 @@ int main(int argc, char** argv)
     std::array<DjMasterBus::DeckRegistration, 4> registrations;
     for (int index = 0; index < 4; ++index) {
         decks[index]->transport().setPosition(0.0);
-        decks[index]->transport().start();
+        decks[index]->setTransportRunning(true);
         decks[index]->setCueEnabledForMix(index % 2 == 0);
         registrations[index] = masterBus.registerDeck(*decks[index], index);
         ok &= require(registrations[index].isValid(), "real graph registered with master bus");
@@ -697,19 +708,19 @@ int main(int argc, char** argv)
         if (iteration % 9 == 0) {
             for (auto& deck : decks) {
                 deck->transport().setPosition(0.0);
-                deck->transport().start();
+                deck->setTransportRunning(true);
             }
         }
         if (iteration % 12 == 3)
-            decks[selectedDeck]->transport().stop();
+            decks[selectedDeck]->setTransportRunning(false);
         if (iteration % 12 == 4)
-            decks[selectedDeck]->transport().start();
+            decks[selectedDeck]->setTransportRunning(true);
         if (iteration % 18 == 6) {
             auto& deck = *decks[selectedDeck];
             auto replacement = cache.openTrack({iteration % 2 == 0 ? mono44 : stereo96});
             deck.installPreparedTrack({replacement, iteration % 2 == 0 ? 44'100.0 : 96'000.0,
                                        ++stressTrackGenerations[selectedDeck]});
-            deck.transport().start();
+            deck.setTransportRunning(true);
         }
         if (iteration % 16 == 5) {
             auto& scratchDeck = *decks[selectedDeck];

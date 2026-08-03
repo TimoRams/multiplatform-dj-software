@@ -29,6 +29,7 @@ struct DeckAudioGraph::Impl {
     std::uint64_t retiredDiskReadsFromAudioThread = 0;
     std::uint64_t retiredDecoderCallsFromAudioThread = 0;
     std::atomic<bool> cueEnabled { false };
+    std::atomic<bool> transportRequestedRunning { false };
     double basePlaybackRate = 1.0;
     double jogNudgeRatio = 1.0;
 };
@@ -80,10 +81,10 @@ void DeckAudioGraph::setAudioPlayheadSink(std::atomic<double>* sink) noexcept
 
 void DeckAudioGraph::setTransportRunning(bool running) noexcept
 {
-    if (running)
+    m_impl->transportRequestedRunning.store(running, std::memory_order_release);
+    m_impl->scratch->setNormalPlaybackEnabled(running);
+    if (running && !m_impl->transport.isPlaying())
         m_impl->transport.start();
-    else
-        m_impl->transport.stop();
 }
 
 void DeckAudioGraph::seekToSeconds(double seconds) noexcept
@@ -154,7 +155,8 @@ DeckAudioGraph::TransportSnapshot DeckAudioGraph::transportSnapshot() const noex
 {
     return {
         m_impl->playback != nullptr,
-        m_impl->transport.isPlaying(),
+        m_impl->transportRequestedRunning.load(std::memory_order_acquire)
+            && m_impl->transport.isPlaying(),
         m_impl->transport.getCurrentPosition(),
         m_impl->transport.getLengthInSeconds(),
         m_impl->trackGeneration
@@ -169,7 +171,6 @@ void DeckAudioGraph::installPreparedTrack(PreparedTrack track)
     }
 
     m_impl->scratch->beginTransportSwap();
-    m_impl->transport.stop();
     m_impl->transport.setSource(nullptr);
     m_impl->scratch->setPlaybackSource(nullptr);
     if (m_impl->playback) {
@@ -188,6 +189,11 @@ void DeckAudioGraph::installPreparedTrack(PreparedTrack track)
     m_impl->timeStretch->setTrackGeneration(track.trackGeneration);
     m_impl->scratch->setTrackCacheSource(&m_impl->cache, m_impl->handle);
     m_impl->transport.setPosition(0.0);
+    const bool shouldRun =
+        m_impl->transportRequestedRunning.load(std::memory_order_acquire);
+    m_impl->scratch->setNormalPlaybackEnabled(shouldRun);
+    if (shouldRun)
+        m_impl->transport.start();
     m_impl->scratch->endTransportSwap();
 }
 
@@ -197,8 +203,9 @@ void DeckAudioGraph::clearTrack(std::uint64_t invalidThroughGeneration)
         return;
 
     m_impl->trackGeneration = std::max(m_impl->trackGeneration, invalidThroughGeneration);
+    m_impl->transportRequestedRunning.store(false, std::memory_order_release);
     m_impl->scratch->beginTransportSwap();
-    m_impl->transport.stop();
+    m_impl->scratch->setNormalPlaybackEnabled(false);
     m_impl->transport.setSource(nullptr);
     m_impl->scratch->setPlaybackSource(nullptr);
     m_impl->scratch->setTrackCacheSource(nullptr, {});

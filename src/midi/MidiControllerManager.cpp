@@ -20,6 +20,8 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, ControlClock
       // ~QObject delete it again after the member destructor (UAF on macOS quit).
       m_midiFeedback(nullptr)
 {
+    m_midiTraceEnabled = qEnvironmentVariableIntValue("BROCKDJ_MIDI_TRACE") > 0;
+
     if (m_parameterStore) {
         connect(m_parameterStore, &ParameterStore::parameterChanged,
                 this, &MidiControllerManager::onParameterChanged);
