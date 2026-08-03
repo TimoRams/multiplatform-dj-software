@@ -49,12 +49,13 @@ double ScratchDeckBridge::effectiveDeckTempoRatio() const noexcept
     // resampling remains a positive-rate boundary; a negative ratio here would
     // apply reverse a second time and leaves its forward-oriented pull path
     // starved on several block sizes.
-    return std::abs(m_deckTempoRatio.load(std::memory_order_relaxed));
+    return std::abs(m_deckTempoRatio.load(std::memory_order_relaxed)
+                    * m_jogNudgeRatio.load(std::memory_order_relaxed));
 }
 
 bool ScratchDeckBridge::isScratchPathActive() const noexcept
 {
-    return m_useScratchScaler
+    return m_useScratchScaler.load(std::memory_order_acquire)
         || m_controller.isActive()
         || m_controller.isInertiaActive();
 }
@@ -70,7 +71,7 @@ void ScratchDeckBridge::beginScratch(double anchorSeconds,
 
     const double audioAnchorSec = std::max(0.0, anchorSeconds);
     const double audioAnchorSamples = audioAnchorSec * trackSampleRate;
-    const double targetSamples = anchorSeconds * trackSampleRate;
+    const double targetSamples = audioAnchorSec * trackSampleRate;
     const double playbackSpeed = m_reverse.load(std::memory_order_relaxed)
         ? -std::abs(normalPlaybackSpeed)
         : std::abs(normalPlaybackSpeed);
@@ -79,21 +80,19 @@ void ScratchDeckBridge::beginScratch(double anchorSeconds,
     m_platter.setSamplesPerTick((60.0 / (33.0 + 1.0 / 3.0) / 1500.0) * trackSampleRate);
     m_controller.startScratch(audioAnchorSamples, wasPlayingBeforeScratch, playbackSpeed);
     m_controller.setHandPositionSec(anchorSeconds);
-    m_scratchResampler.setTrackLengthSamples(trackLengthSeconds * trackSampleRate);
-    m_scratchResampler.reset(audioAnchorSamples);
-    m_scratchResampler.snapSmoothedRate(0.0);
-    m_useScratchScaler = true;
+    m_startPositionSeconds.store(audioAnchorSec, std::memory_order_relaxed);
+    m_startSampleRate.store(std::max(1.0, trackSampleRate), std::memory_order_relaxed);
+    m_startLengthSeconds.store(std::max(0.0, trackLengthSeconds), std::memory_order_relaxed);
+    m_startCommandGeneration.fetch_add(1, std::memory_order_release);
 }
 
-void ScratchDeckBridge::endScratch(bool allowInertia)
+engine::scratch::ScratchReleaseDisposition ScratchDeckBridge::endScratch(bool allowInertia)
 {
     if (allowInertia)
-        m_controller.releaseScratch();
-    else
-        m_controller.stopScratch();
+        return m_controller.releaseScratch();
 
-    if (!m_controller.isInertiaActive())
-        m_useScratchScaler = false;
+    m_controller.stopScratch();
+    return engine::scratch::ScratchReleaseDisposition::HandoffNow;
 }
 
 void ScratchDeckBridge::engageScratchDuringInertia() noexcept
@@ -101,16 +100,13 @@ void ScratchDeckBridge::engageScratchDuringInertia() noexcept
     if (!m_controller.isInertiaActive())
         return;
 
-    const double audioPos = m_scratchResampler.readPosition();
     const bool wasPlaying = m_controller.wasPlayingBeforeScratch();
     const double normalSpeed = effectiveDeckTempoRatio();
-    // Seed the position tracker with the current inertia velocity so re-grabbing a
-    // spinning platter is continuous instead of snapping to a standstill.
-    const double sr = m_trackSampleRate.load(std::memory_order_relaxed);
-    const double oneX = sr / std::max(1.0, m_outputSampleRate);
-    m_scratchResampler.primeTrackerVelocity(m_controller.normalizedRate() * oneX);
-    m_controller.startScratch(audioPos, wasPlaying, normalSpeed);
-    m_useScratchScaler = true;
+    // The callback remains the sole owner of the resampler state. The controller
+    // preserves its inertia velocity, so re-grabbing stays continuous without a
+    // control-thread read-head reset.
+    m_controller.startScratch(m_controller.readPositionSamples(), wasPlaying, normalSpeed);
+    m_useScratchScaler.store(true, std::memory_order_release);
 }
 
 void ScratchDeckBridge::addTargetDeltaSeconds(double deltaSeconds, double trackSampleRate) noexcept
@@ -127,19 +123,22 @@ void ScratchDeckBridge::submitHandDeltaSeconds(double deltaSeconds, double dtSec
     m_controller.submitHandDelta(deltaSeconds, dtSeconds);
 }
 
+void ScratchDeckBridge::submitReleaseDeltaSeconds(double deltaSeconds, double dtSeconds) noexcept
+{
+    m_controller.submitReleaseDelta(deltaSeconds, dtSeconds);
+}
+
 void ScratchDeckBridge::syncScratchReadPosition(double displaySec, double trackSampleRate) noexcept
 {
     const double sr = std::max(1.0, trackSampleRate);
     const double audioSec = std::max(0.0, displaySec);
     const double audioSamples = audioSec * sr;
 
-    m_scratchResampler.setReadPositionSamples(audioSamples);
+    m_readerSyncPositionSeconds.store(audioSec, std::memory_order_relaxed);
+    m_readerSyncSampleRate.store(sr, std::memory_order_relaxed);
+    m_readerSyncGeneration.fetch_add(1, std::memory_order_release);
     m_controller.syncReadPositionSamples(audioSamples);
     m_controller.setHandPositionSec(displaySec);
-
-    const double resamplerRate = m_controller.smoothedSpeed()
-        * (sr / std::max(1.0, m_outputSampleRate));
-    m_scratchResampler.snapSmoothedRate(resamplerRate);
 
     if (m_audioPlayheadSink != nullptr)
         m_audioPlayheadSink->store(displaySec, std::memory_order_release);
@@ -156,18 +155,17 @@ void ScratchDeckBridge::publishScratchDisplay(double displaySec) noexcept
     if (m_audioPlayheadSink != nullptr)
         m_audioPlayheadSink->store(displaySec, std::memory_order_release);
 
-    if (!m_loopActive)
+    if (!m_loopActive.load(std::memory_order_acquire))
         return;
 
     // Loop-while-scratching uses the rate-integration path; keep the read head
     // anchored to the hand position as before.
     const double sr = m_trackSampleRate.load(std::memory_order_relaxed);
     const double audioSamples = std::max(0.0, displaySec) * sr;
-    m_scratchResampler.setReadPositionSamples(audioSamples);
+    m_readerSyncPositionSeconds.store(std::max(0.0, displaySec), std::memory_order_relaxed);
+    m_readerSyncSampleRate.store(sr, std::memory_order_relaxed);
+    m_readerSyncGeneration.fetch_add(1, std::memory_order_release);
     m_controller.syncReadPositionSamples(audioSamples);
-    const double resamplerRate = m_controller.smoothedSpeed()
-        * (sr / std::max(1.0, m_outputSampleRate));
-    m_scratchResampler.snapSmoothedRate(resamplerRate);
 }
 
 void ScratchDeckBridge::configureTrack(double trackSampleRate, double trackLengthSeconds) noexcept
@@ -176,36 +174,23 @@ void ScratchDeckBridge::configureTrack(double trackSampleRate, double trackLengt
     m_trackSampleRate.store(sr, std::memory_order_relaxed);
     m_trackLengthSeconds.store(std::max(0.0, trackLengthSeconds), std::memory_order_relaxed);
     m_controller.setTrackSampleRate(sr);
-    m_scratchResampler.setTrackLengthSamples(trackLengthSeconds * sr);
+    m_startLengthSeconds.store(std::max(0.0, trackLengthSeconds), std::memory_order_relaxed);
 }
 
 void ScratchDeckBridge::syncReadPositionSeconds(double positionSeconds, double trackSampleRate) noexcept
 {
-    const double sr = std::max(1.0, trackSampleRate);
-    const double audioSec = std::max(0.0, positionSeconds);
-    const juce::int64 samplePos = static_cast<juce::int64>(std::llround(audioSec * sr));
-    m_scratchResampler.reset(audioSec * sr);
-
-    if (m_positionableTransportSource) {
-        m_positionableTransportSource->setNextReadPosition(samplePos);
-    }
-
-    if (m_hermite) {
-        applyDeckTempoToHermite();
-        m_hermite->resetStream();
-        m_hermite->snapSmoothedRatio();
-    }
+    m_readerSyncPositionSeconds.store(std::max(0.0, positionSeconds), std::memory_order_relaxed);
+    m_readerSyncSampleRate.store(std::max(1.0, trackSampleRate), std::memory_order_relaxed);
+    m_readerSyncGeneration.fetch_add(1, std::memory_order_release);
 }
 
 void ScratchDeckBridge::prepareNormalPlaybackHandoff(double positionSeconds, double trackSampleRate) noexcept
 {
-    // Hand/scratch session position is authoritative at release — the resampler
-    // read head can drift from rate integration between UI drag events.
-    const double syncSec = std::max(0.0, positionSeconds);
-    syncReadPositionSeconds(syncSec, trackSampleRate);
-    m_controller.stopScratch();
-    m_useScratchScaler = false;
-    m_prevScratchPath = false;
+    // The callback owns both the scratch reader and JUCE transport. Publishing a
+    // generation here prevents a control-thread reset from racing a live block.
+    m_handoffPositionSeconds.store(std::max(0.0, positionSeconds), std::memory_order_relaxed);
+    m_handoffSampleRate.store(std::max(1.0, trackSampleRate), std::memory_order_relaxed);
+    m_handoffCommandGeneration.fetch_add(1, std::memory_order_release);
 }
 
 void ScratchDeckBridge::exitScratchMode(double positionSeconds, double trackSampleRate) noexcept
@@ -221,6 +206,13 @@ void ScratchDeckBridge::setDeckTempoRatio(double ratio) noexcept
     applyDeckTempoToHermite();
 }
 
+void ScratchDeckBridge::setJogNudgeRatio(double ratio) noexcept
+{
+    m_jogNudgeRatio.store(std::clamp(ratio, 0.94, 1.06), std::memory_order_relaxed);
+    m_controller.setNormalPlaybackSpeed(effectiveDeckTempoRatio());
+    applyDeckTempoToHermite();
+}
+
 void ScratchDeckBridge::setReverse(bool reverse) noexcept
 {
     m_reverse.store(reverse, std::memory_order_relaxed);
@@ -231,10 +223,10 @@ void ScratchDeckBridge::setReverse(bool reverse) noexcept
 void ScratchDeckBridge::setLoopRangeSeconds(double loopInSec, double loopOutSec, bool active,
                                           double trackSampleRate) noexcept
 {
-    m_loopActive = active;
-    m_loopInSample = loopInSec * trackSampleRate;
-    m_loopOutSample = loopOutSec * trackSampleRate;
-    m_scratchResampler.setLoopRange(m_loopInSample, m_loopOutSample, active);
+    m_loopInSample.store(loopInSec * trackSampleRate, std::memory_order_relaxed);
+    m_loopOutSample.store(loopOutSec * trackSampleRate, std::memory_order_relaxed);
+    m_loopActive.store(active, std::memory_order_release);
+    m_loopCommandGeneration.fetch_add(1, std::memory_order_release);
 }
 
 void ScratchDeckBridge::setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle) noexcept
@@ -260,7 +252,7 @@ double ScratchDeckBridge::scratchRate() const noexcept
 double ScratchDeckBridge::readPositionSeconds(double trackSampleRate) const noexcept
 {
     const double sr = std::max(1.0, trackSampleRate);
-    return m_scratchResampler.readPosition() / sr;
+    return m_audioScratchReadPositionSamples.load(std::memory_order_acquire) / sr;
 }
 
 double ScratchDeckBridge::displayPositionSeconds() const noexcept
@@ -270,11 +262,74 @@ double ScratchDeckBridge::displayPositionSeconds() const noexcept
 
 void ScratchDeckBridge::snapHermiteToDeckTempo() noexcept
 {
-    if (!m_hermite)
-        return;
     applyDeckTempoToHermite();
-    m_hermite->resetStream();
-    m_hermite->snapSmoothedRatio();
+    m_readerSyncPositionSeconds.store(std::max(0.0, displayPositionSeconds()), std::memory_order_relaxed);
+    m_readerSyncSampleRate.store(m_trackSampleRate.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    m_readerSyncGeneration.fetch_add(1, std::memory_order_release);
+}
+
+void ScratchDeckBridge::consumePendingAudioCommands() noexcept
+{
+    const auto loopGeneration = m_loopCommandGeneration.load(std::memory_order_acquire);
+    if (loopGeneration != m_appliedLoopCommandGeneration) {
+        m_scratchResampler.setLoopRange(m_loopInSample.load(std::memory_order_relaxed),
+                                        m_loopOutSample.load(std::memory_order_relaxed),
+                                        m_loopActive.load(std::memory_order_relaxed));
+        m_appliedLoopCommandGeneration = loopGeneration;
+    }
+
+    const auto startGeneration = m_startCommandGeneration.load(std::memory_order_acquire);
+    if (startGeneration != m_appliedStartCommandGeneration) {
+        const double sr = std::max(1.0, m_startSampleRate.load(std::memory_order_relaxed));
+        const double position = std::max(0.0, m_startPositionSeconds.load(std::memory_order_relaxed));
+        m_scratchResampler.setTrackLengthSamples(
+            std::max(0.0, m_startLengthSeconds.load(std::memory_order_relaxed)) * sr);
+        m_scratchResampler.reset(position * sr);
+        m_scratchResampler.snapSmoothedRate(0.0);
+        m_audioScratchReadPositionSamples.store(position * sr, std::memory_order_release);
+        m_useScratchScaler.store(true, std::memory_order_release);
+        m_appliedStartCommandGeneration = startGeneration;
+    }
+
+    const auto handoffGeneration = m_handoffCommandGeneration.load(std::memory_order_acquire);
+    if (handoffGeneration != m_appliedHandoffCommandGeneration) {
+        const double sr = std::max(1.0, m_handoffSampleRate.load(std::memory_order_relaxed));
+        const double position = std::max(0.0, m_handoffPositionSeconds.load(std::memory_order_relaxed));
+        const auto samplePos = static_cast<juce::int64>(std::llround(position * sr));
+        m_scratchResampler.reset(position * sr);
+        m_audioScratchReadPositionSamples.store(position * sr, std::memory_order_release);
+        if (m_positionableTransportSource)
+            m_positionableTransportSource->setNextReadPosition(samplePos);
+        if (m_hermite) {
+            applyDeckTempoToHermite();
+            m_hermite->resetStream();
+            m_hermite->snapSmoothedRatio();
+        }
+        m_controller.stopScratch();
+        m_useScratchScaler.store(false, std::memory_order_release);
+        m_prevScratchPath = false;
+        m_appliedHandoffCommandGeneration = handoffGeneration;
+        // A queued scratch-position sync from before release must not seek the
+        // normal transport back after the handoff has selected its final frame.
+        m_appliedReaderSyncGeneration = m_readerSyncGeneration.load(std::memory_order_acquire);
+    }
+
+    const auto syncGeneration = m_readerSyncGeneration.load(std::memory_order_acquire);
+    if (syncGeneration != m_appliedReaderSyncGeneration) {
+        const double sr = std::max(1.0, m_readerSyncSampleRate.load(std::memory_order_relaxed));
+        const double position = std::max(0.0, m_readerSyncPositionSeconds.load(std::memory_order_relaxed));
+        const auto samplePos = static_cast<juce::int64>(std::llround(position * sr));
+        m_scratchResampler.reset(position * sr);
+        m_audioScratchReadPositionSamples.store(position * sr, std::memory_order_release);
+        if (m_positionableTransportSource)
+            m_positionableTransportSource->setNextReadPosition(samplePos);
+        if (m_hermite) {
+            applyDeckTempoToHermite();
+            m_hermite->resetStream();
+            m_hermite->snapSmoothedRatio();
+        }
+        m_appliedReaderSyncGeneration = syncGeneration;
+    }
 }
 
 double ScratchDeckBridge::activePlaybackRate(double trackSampleRate, int bufferSize) noexcept
@@ -319,10 +374,12 @@ void ScratchDeckBridge::getNextAudioBlock(const juce::AudioSourceChannelInfo& bu
         return;
     }
 
-    if (m_useScratchScaler
+    consumePendingAudioCommands();
+
+    if (m_useScratchScaler.load(std::memory_order_acquire)
             && !m_controller.isActive()
             && !m_controller.isInertiaActive()) {
-        m_useScratchScaler = false;
+        m_useScratchScaler.store(false, std::memory_order_release);
     }
 
     const bool scratching = isScratchPathActive();
@@ -343,7 +400,7 @@ void ScratchDeckBridge::getNextAudioBlock(const juce::AudioSourceChannelInfo& bu
     const double sr = m_trackSampleRate.load(std::memory_order_relaxed);
     const double oneX = sr / std::max(1.0, m_outputSampleRate);
 
-    if (m_controller.touching() && !m_loopActive) {
+    if (m_controller.touching() && !m_loopActive.load(std::memory_order_acquire)) {
         // Position-authoritative scratch: a critically-damped tracker glides the
         // read head to the hand target. Exact tracking for slow/precise moves,
         // momentum across sparse UI events, no overshoot/snap-back warble.
@@ -351,6 +408,9 @@ void ScratchDeckBridge::getNextAudioBlock(const juce::AudioSourceChannelInfo& bu
         const double maxAbsRate = 8.0 * oneX;
         const double usedRate = m_scratchResampler.processScratchTracking(
             target, maxAbsRate, bufferToFill);
+        const double readPositionSamples = m_scratchResampler.readPosition();
+        m_audioScratchReadPositionSamples.store(readPositionSamples, std::memory_order_release);
+        m_controller.syncReadPositionSamples(readPositionSamples);
         m_controller.setMeasuredNormalizedSpeed(usedRate / std::max(1e-9, oneX));
         // Display is published by the UI thread via publishScratchDisplay().
         return;
@@ -358,16 +418,17 @@ void ScratchDeckBridge::getNextAudioBlock(const juce::AudioSourceChannelInfo& bu
 
     const double rate = activePlaybackRate(sr, bufferToFill.numSamples);
     m_scratchResampler.processBlock(rate, bufferToFill);
+    const double readPositionSamples = m_scratchResampler.readPosition();
+    m_audioScratchReadPositionSamples.store(readPositionSamples, std::memory_order_release);
+    m_controller.syncReadPositionSamples(readPositionSamples);
 
     // While the finger is down, only the UI thread may publish the visible
     // playhead — republishing a cached value here races with fresh drag deltas.
     if (m_audioPlayheadSink != nullptr && !m_controller.touching()) {
-        const double normRate = m_controller.normalizedRate();
-        const double blockSec = static_cast<double>(bufferToFill.numSamples)
-                              / std::max(1.0, m_outputSampleRate);
-        double displaySec = m_scratchDisplaySec.load(std::memory_order_relaxed);
-        if (m_controller.isInertiaActive())
-            displaySec += normRate * blockSec;
+        // On release, publish the resampler's actual cursor instead of a
+        // parallel velocity integration. The final normal-playback handoff
+        // then starts at exactly the frame that produced this block.
+        const double displaySec = readPositionSamples / std::max(1.0, sr);
         m_scratchDisplaySec.store(displaySec, std::memory_order_relaxed);
         m_audioPlayheadSink->store(displaySec, std::memory_order_relaxed);
     }

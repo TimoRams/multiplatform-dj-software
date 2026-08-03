@@ -62,6 +62,7 @@ public:
     bool setSlipEnabled(bool enabled) noexcept;
     void returnToSlipPosition() noexcept;
     bool setPlaybackRate(double rate) noexcept;
+    bool setJogNudgeRatio(double ratio) noexcept;
     bool seekToSeconds(double seconds) noexcept;
     bool seekNormalized(double progress) noexcept;
     void freezeAt(double seconds) noexcept;
@@ -79,6 +80,7 @@ public:
     void startAudio() noexcept;
     void stopAudio() noexcept;
     void seekAudioToSeconds(double seconds) noexcept;
+    void adoptScratchHandoffPosition(double seconds) noexcept;
 
     [[nodiscard]] DeckTransportSnapshot snapshot() const noexcept;
     [[nodiscard]] double positionSeconds(bool scratchActive = false) const noexcept;
@@ -94,7 +96,7 @@ public:
     [[nodiscard]] bool slipDiverted(bool loopActive) const noexcept;
     [[nodiscard]] double trackLengthSeconds() const noexcept { return m_trackLengthSeconds; }
     [[nodiscard]] double sourceSampleRate() const noexcept { return m_sourceSampleRate; }
-    [[nodiscard]] double playbackRate() const noexcept { return m_playbackRate; }
+    [[nodiscard]] double playbackRate() const noexcept { return m_playbackRate * m_jogNudgeRatio; }
     [[nodiscard]] int keylockLatencySamples() const noexcept;
     [[nodiscard]] std::uint64_t trackGeneration() const noexcept { return m_trackGeneration; }
 
@@ -124,6 +126,7 @@ private:
     double m_trackLengthSeconds = 0.0;
     double m_sourceSampleRate = 44100.0;
     double m_playbackRate = 1.0;
+    double m_jogNudgeRatio = 1.0;
     double m_preRollStartSeconds = 0.0;
     double m_snapPositionSeconds = 0.0;
     double m_snapPlaybackRate = 1.0;

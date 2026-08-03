@@ -65,25 +65,36 @@ void ScratchController::stopScratch() noexcept
     m_releaseTargetSpeed.store(0.0, std::memory_order_relaxed);
 }
 
-void ScratchController::releaseScratch() noexcept
+ScratchReleaseDisposition ScratchController::releaseScratch() noexcept
 {
     m_touching.store(false, std::memory_order_relaxed);
 
     const double speed = m_smoothedSpeed.load(std::memory_order_relaxed);
-    const double target = m_wasPlayingBeforeScratch.load(std::memory_order_relaxed)
+    const double deckSpeed = m_wasPlayingBeforeScratch.load(std::memory_order_relaxed)
         ? m_normalPlaybackSpeed.load(std::memory_order_relaxed)
         : 0.0;
-    m_releaseTargetSpeed.store(target, std::memory_order_relaxed);
+    const double threshold = std::max(m_config.inertiaStopThreshold, m_config.minScratchSpeed);
+    const bool deckMoving = std::abs(deckSpeed) > threshold;
+    const bool sameDirection = deckMoving && speed * deckSpeed > 0.0;
 
-    if (m_inertiaEnabled.load(std::memory_order_relaxed)
-            && std::abs(speed - target) > m_config.throwThreshold) {
-        m_inertiaSpeed.store(speed, std::memory_order_relaxed);
-        m_inertiaActive.store(true, std::memory_order_relaxed);
-        return;
+    if (!m_inertiaEnabled.load(std::memory_order_relaxed) || std::abs(speed) <= threshold) {
+        stopScratch();
+        return ScratchReleaseDisposition::HandoffNow;
     }
 
-    m_inertiaActive.store(false, std::memory_order_relaxed);
-    m_active.store(false, std::memory_order_relaxed);
+    // A same-direction platter that has already reached (or fallen below) the
+    // deck rate must not be accelerated back up by the scratch engine.
+    if (sameDirection && std::abs(speed) <= std::abs(deckSpeed) + threshold) {
+        stopScratch();
+        return ScratchReleaseDisposition::HandoffNow;
+    }
+
+    m_releaseTargetSpeed.store(sameDirection ? deckSpeed : 0.0, std::memory_order_relaxed);
+    m_inertiaSpeed.store(speed, std::memory_order_relaxed);
+    m_inertiaActive.store(true, std::memory_order_relaxed);
+    m_active.store(true, std::memory_order_relaxed);
+    return sameDirection ? ScratchReleaseDisposition::CoastToDeckRate
+                         : ScratchReleaseDisposition::CoastToStop;
 }
 
 void ScratchController::submitHandDelta(double deltaTrackSec, double dtSec) noexcept
@@ -110,6 +121,44 @@ void ScratchController::submitHandDelta(double deltaTrackSec, double dtSec) noex
     m_handPositionSec.store(target, std::memory_order_relaxed);
     m_rawSpeed.store(raw, std::memory_order_relaxed);
     m_smoothedSpeed.store(velocity, std::memory_order_relaxed);
+    m_lastMoveNs.store(nowNs(), std::memory_order_relaxed);
+}
+
+void ScratchController::submitReleaseDelta(double deltaTrackSec, double dtSec) noexcept
+{
+    if (dtSec < 1e-6 || !m_inertiaActive.load(std::memory_order_relaxed))
+        return;
+
+    const double measured = std::clamp(deltaTrackSec / dtSec,
+                                       -m_config.maxScratchSpeed,
+                                       m_config.maxScratchSpeed);
+    const double target = m_releaseTargetSpeed.load(std::memory_order_relaxed);
+    const double threshold = std::max(m_config.inertiaStopThreshold, m_config.minScratchSpeed);
+    const double current = m_inertiaSpeed.load(std::memory_order_relaxed);
+
+    if (std::abs(target) > threshold) {
+        const bool sameDirection = measured * target > 0.0;
+        if (!sameDirection || std::abs(measured) <= std::abs(target) + threshold) {
+            // The physical wheel has reached the deck speed. Finish at the
+            // normal path instead of following its slower residual spin.
+            m_inertiaSpeed.store(target, std::memory_order_relaxed);
+            m_inertiaActive.store(false, std::memory_order_relaxed);
+            m_active.store(false, std::memory_order_relaxed);
+            return;
+        }
+    } else if (measured * current <= 0.0 || std::abs(measured) <= threshold) {
+        // Reverse throws coast only until they stop, then normal playback owns
+        // the direction again.
+        m_inertiaSpeed.store(0.0, std::memory_order_relaxed);
+        m_inertiaActive.store(false, std::memory_order_relaxed);
+        m_active.store(false, std::memory_order_relaxed);
+        return;
+    }
+
+    const double smoothed = current + (measured - current) * 0.55;
+    m_inertiaSpeed.store(smoothed, std::memory_order_relaxed);
+    m_rawSpeed.store(measured, std::memory_order_relaxed);
+    m_smoothedSpeed.store(smoothed, std::memory_order_relaxed);
     m_lastMoveNs.store(nowNs(), std::memory_order_relaxed);
 }
 

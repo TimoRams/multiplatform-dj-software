@@ -51,6 +51,7 @@ bool DeckTransport::installPreparedTrack(AudioCacheHandle cacheHandle,
     m_atTrackEnd = false;
     m_audioGraph.setReverse(m_reverse);
     m_audioGraph.setPlaybackRate(m_playbackRate);
+    m_audioGraph.setJogNudgeRatio(m_jogNudgeRatio);
     setSnapAnchor(0.0, false);
     if (m_playRequested)
         ensureAudioRunning();
@@ -129,6 +130,19 @@ bool DeckTransport::setPlaybackRate(double rate) noexcept
         return false;
     m_playbackRate = rate;
     m_audioGraph.setPlaybackRate(rate);
+    publishSnapshot();
+    return true;
+}
+
+bool DeckTransport::setJogNudgeRatio(double ratio) noexcept
+{
+    if (!std::isfinite(ratio))
+        return false;
+    ratio = std::clamp(ratio, 0.94, 1.06);
+    if (std::abs(m_jogNudgeRatio - ratio) < 1.0e-12)
+        return false;
+    m_jogNudgeRatio = ratio;
+    m_audioGraph.setJogNudgeRatio(ratio);
     publishSnapshot();
     return true;
 }
@@ -372,6 +386,20 @@ void DeckTransport::seekAudioToSeconds(double seconds) noexcept
     publishSnapshot();
 }
 
+void DeckTransport::adoptScratchHandoffPosition(double seconds) noexcept
+{
+    if (!std::isfinite(seconds))
+        return;
+    const double clamped = std::clamp(seconds, 0.0, m_trackLengthSeconds);
+    m_audiblePositionSeconds = clamped;
+    m_heldPositionSeconds = clamped;
+    if (!m_slipEnabled)
+        m_backgroundPositionSeconds = clamped;
+    setSnapAnchor(clamped, true);
+    armVisualSeekSettle();
+    publishSnapshot();
+}
+
 DeckTransportSnapshot DeckTransport::snapshot() const noexcept
 {
     DeckTransportSnapshot result;
@@ -511,7 +539,7 @@ void DeckTransport::publishSnapshot() noexcept
     m_publishedAudible.store(m_audiblePositionSeconds, std::memory_order_relaxed);
     m_publishedBackground.store(m_backgroundPositionSeconds, std::memory_order_relaxed);
     m_publishedLength.store(m_trackLengthSeconds, std::memory_order_relaxed);
-    m_publishedRate.store(m_playbackRate, std::memory_order_relaxed);
+    m_publishedRate.store(m_playbackRate * m_jogNudgeRatio, std::memory_order_relaxed);
     m_publishedPreRoll.store(m_heldPositionSeconds < 0.0 ? m_heldPositionSeconds : 0.0,
                              std::memory_order_relaxed);
     m_publishedSourceRate.store(m_sourceSampleRate, std::memory_order_relaxed);
@@ -523,7 +551,7 @@ void DeckTransport::publishSnapshot() noexcept
 void DeckTransport::setSnapAnchor(double seconds, bool valid) noexcept
 {
     m_snapPositionSeconds = seconds;
-    m_snapPlaybackRate = m_playbackRate;
+    m_snapPlaybackRate = m_playbackRate * m_jogNudgeRatio;
     m_snapClock.restart();
     m_snapValid = valid;
     m_audioPlayhead.store(seconds, std::memory_order_release);
@@ -556,7 +584,7 @@ void DeckTransport::reconcileVisualAnchor(double authoritativePositionSeconds) n
     // Re-anchor at the current prediction instead of the delayed control
     // cursor.  This preserves monotonic visual motion between control ticks.
     m_snapPositionSeconds = predicted + correction;
-    m_snapPlaybackRate = m_playbackRate;
+    m_snapPlaybackRate = m_playbackRate * m_jogNudgeRatio;
     m_snapClock.restart();
 }
 

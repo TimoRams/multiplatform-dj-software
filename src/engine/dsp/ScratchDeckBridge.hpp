@@ -6,6 +6,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <atomic>
+#include <cstdint>
 #include <memory>
 
 class HermiteResamplingAudioSource;
@@ -28,10 +29,11 @@ public:
                       double trackLengthSeconds,
                       bool wasPlayingBeforeScratch,
                       double normalPlaybackSpeed);
-    void endScratch(bool allowInertia);
+    [[nodiscard]] engine::scratch::ScratchReleaseDisposition endScratch(bool allowInertia);
     void engageScratchDuringInertia() noexcept;
     void addTargetDeltaSeconds(double deltaSeconds, double trackSampleRate) noexcept;
     void submitHandDeltaSeconds(double deltaSeconds, double dtSeconds) noexcept;
+    void submitReleaseDeltaSeconds(double deltaSeconds, double dtSeconds) noexcept;
     void syncScratchReadPosition(double displaySec, double trackSampleRate) noexcept;
     void publishScratchDisplay(double displaySec) noexcept;
 
@@ -41,6 +43,7 @@ public:
     void exitScratchMode(double positionSeconds, double trackSampleRate) noexcept;
 
     void setDeckTempoRatio(double ratio) noexcept;
+    void setJogNudgeRatio(double ratio) noexcept;
     void setKeylockPassthrough(bool enabled) noexcept {
         m_keylockPassthrough.store(enabled, std::memory_order_relaxed);
     }
@@ -74,6 +77,7 @@ public:
 private:
     void applyDeckTempoToHermite() noexcept;
     [[nodiscard]] double effectiveDeckTempoRatio() const noexcept;
+    void consumePendingAudioCommands() noexcept;
     double activePlaybackRate(double trackSampleRate, int bufferSize) noexcept;
     void applyNormalPathCrossfade(const juce::AudioSourceChannelInfo& info) noexcept;
     [[nodiscard]] bool isScratchPathActive() const noexcept;
@@ -87,23 +91,43 @@ private:
     ScratchResampler m_scratchResampler;
 
     std::atomic<double> m_deckTempoRatio { 1.0 };
+    std::atomic<double> m_jogNudgeRatio { 1.0 };
     std::atomic<bool> m_keylockPassthrough { false };
     std::atomic<bool> m_reverse { false };
     std::atomic<double> m_trackSampleRate { 44100.0 };
     std::atomic<double> m_trackLengthSeconds { 0.0 };
     std::atomic<double> m_scratchDisplaySec { 0.0 };
+    std::atomic<double> m_audioScratchReadPositionSamples { 0.0 };
 
     double m_outputSampleRate = 44100.0;
     int m_blockSize = 512;
-    bool m_useScratchScaler = false;
+    std::atomic<bool> m_useScratchScaler { false };
     bool m_prevScratchPath = false;
 
     std::atomic<int> m_crossfadeRemaining { 0 };
     static constexpr int kCrossfadeSamples = 384;
 
-    bool m_loopActive = false;
-    double m_loopInSample = 0.0;
-    double m_loopOutSample = 0.0;
+    std::atomic<bool> m_loopActive { false };
+    std::atomic<double> m_loopInSample { 0.0 };
+    std::atomic<double> m_loopOutSample { 0.0 };
+    std::atomic<std::uint64_t> m_loopCommandGeneration { 0 };
+    std::uint64_t m_appliedLoopCommandGeneration = 0;
+
+    std::atomic<double> m_startPositionSeconds { 0.0 };
+    std::atomic<double> m_startSampleRate { 44100.0 };
+    std::atomic<double> m_startLengthSeconds { 0.0 };
+    std::atomic<std::uint64_t> m_startCommandGeneration { 0 };
+    std::uint64_t m_appliedStartCommandGeneration = 0;
+
+    std::atomic<double> m_readerSyncPositionSeconds { 0.0 };
+    std::atomic<double> m_readerSyncSampleRate { 44100.0 };
+    std::atomic<std::uint64_t> m_readerSyncGeneration { 0 };
+    std::uint64_t m_appliedReaderSyncGeneration = 0;
+
+    std::atomic<double> m_handoffPositionSeconds { 0.0 };
+    std::atomic<double> m_handoffSampleRate { 44100.0 };
+    std::atomic<std::uint64_t> m_handoffCommandGeneration { 0 };
+    std::uint64_t m_appliedHandoffCommandGeneration = 0;
 
     std::atomic<bool> m_transportSwapInProgress { false };
     std::atomic<double>* m_audioPlayheadSink = nullptr;

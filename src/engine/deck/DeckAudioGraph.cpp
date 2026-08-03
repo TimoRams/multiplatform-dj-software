@@ -29,6 +29,8 @@ struct DeckAudioGraph::Impl {
     std::uint64_t retiredDiskReadsFromAudioThread = 0;
     std::uint64_t retiredDecoderCallsFromAudioThread = 0;
     std::atomic<bool> cueEnabled { false };
+    double basePlaybackRate = 1.0;
+    double jogNudgeRatio = 1.0;
 };
 
 DeckAudioGraph::DeckAudioGraph(AudioPageCache& cache)
@@ -103,8 +105,16 @@ void DeckAudioGraph::setReverse(bool enabled) noexcept
 
 void DeckAudioGraph::setPlaybackRate(double rate) noexcept
 {
-    m_impl->scratch->setDeckTempoRatio(rate);
-    m_impl->timeStretch->setTempoRatio(rate);
+    m_impl->basePlaybackRate = std::clamp(rate, 0.01, 8.0);
+    m_impl->scratch->setDeckTempoRatio(m_impl->basePlaybackRate);
+    m_impl->timeStretch->setTempoRatio(m_impl->basePlaybackRate * m_impl->jogNudgeRatio);
+}
+
+void DeckAudioGraph::setJogNudgeRatio(double ratio) noexcept
+{
+    m_impl->jogNudgeRatio = std::clamp(ratio, 0.94, 1.06);
+    m_impl->scratch->setJogNudgeRatio(m_impl->jogNudgeRatio);
+    m_impl->timeStretch->setTempoRatio(m_impl->basePlaybackRate * m_impl->jogNudgeRatio);
 }
 
 void DeckAudioGraph::setKeylockEnabled(bool enabled) noexcept

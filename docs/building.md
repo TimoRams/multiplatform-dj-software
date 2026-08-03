@@ -30,12 +30,20 @@ sudo apt install -y \
   libxinerama-dev libxrandr-dev libxrender-dev libxkbcommon-x11-dev
 ```
 
-For normal local development, use the canonical fast build:
+For normal local development, use the app-only build. It does not compile test
+binaries, so incremental UI/audio work stays fast:
 
 ```bash
 ./build-fast
-ctest --preset linux-dev-fast
 ./build/bin/BrockDJ
+```
+
+Tests use their own `build-tests/` directory and never invalidate the app
+build. The first test invocation has its own one-time dependency configure;
+later runs are incremental. Run the complete local suite with:
+
+```bash
+./test-fast
 ```
 
 CI-equivalent native release builds use one of these presets, according to the

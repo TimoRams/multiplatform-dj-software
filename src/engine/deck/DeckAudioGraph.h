@@ -63,6 +63,7 @@ public:
     void seekToSeconds(double seconds) noexcept;
     void setReverse(bool enabled) noexcept;
     void setPlaybackRate(double rate) noexcept;
+    void setJogNudgeRatio(double ratio) noexcept;
     void setKeylockEnabled(bool enabled) noexcept;
     void setLoopRangeSeconds(double startSeconds, double endSeconds, bool active,
                              double sourceSampleRate) noexcept;

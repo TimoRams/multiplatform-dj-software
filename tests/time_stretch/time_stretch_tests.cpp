@@ -45,8 +45,19 @@ int main(){
         ok&=require(waitForGeneration(source,generation),"prepared keylock pipeline activates");
         juce::AudioBuffer<float>b(2,8192);source.getNextAudioBlock({&b,0,8192});ok&=require(finite(b),"stretched finite");
         generation=source.activeConfigurationGeneration();
-        for(int i=0;i<100;++i)source.setTempoRatio(0.5+0.01*i);
-        ok&=require(waitForGeneration(source,generation),"rapid changes coalesce");
+        const auto switchesBeforeNudge=source.realtimeStats().successfulPipelineSwitches;
+        for(int i=0;i<300;++i){
+            source.setTempoRatio(0.94+0.12*(i%2));
+            juce::AudioBuffer<float> nudgeBlock(2,(i%2)==0?64:8192);
+            source.getNextAudioBlock({&nudgeBlock,0,nudgeBlock.getNumSamples()});
+            ok&=require(finite(nudgeBlock),"keylock nudge output finite");
+        }
+        source.setTempoRatio(1.0);
+        source.getNextAudioBlock({&b,0,8192});
+        ok&=require(source.activeConfigurationGeneration()==generation,
+                    "keylock nudge does not rebuild a pipeline");
+        ok&=require(source.realtimeStats().successfulPipelineSwitches==switchesBeforeNudge,
+                    "keylock nudge does not switch a pipeline");
         source.enterScratchBypass();source.getNextAudioBlock({&b,0,8192});source.endScratchBypass();
         ok&=require(finite(b),"scratch transition finite");
         auto stats=source.realtimeStats();

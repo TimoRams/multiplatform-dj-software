@@ -768,11 +768,13 @@ void DjEngine::updateSpeedAndPitch()
 {
     const double phaseNudge = m_syncController
         ? m_syncController->snapshot().phaseNudgePercent : 0.0;
-    double speedMultiplier = 1.0 + ((m_tempoPercent + phaseNudge + m_jogNudgePercent) / 100.0);
-    speedMultiplier = std::clamp(speedMultiplier, 0.01, 8.0);
+    double baseSpeedMultiplier = 1.0 + ((m_tempoPercent + phaseNudge) / 100.0);
+    baseSpeedMultiplier = std::clamp(baseSpeedMultiplier, 0.01, 8.0);
+    const double jogNudgeRatio = std::clamp(1.0 + (m_jogNudgePercent / 100.0), 0.94, 1.06);
 
     const bool scratchVarispeed = m_scratch.scrubbing() || m_scratch.releaseGlide();
-    m_transport->setPlaybackRate(speedMultiplier);
+    m_transport->setPlaybackRate(baseSpeedMultiplier);
+    m_transport->setJogNudgeRatio(jogNudgeRatio);
     m_transport->setKeylockEnabled(!scratchVarispeed && m_keylock);
 }
 

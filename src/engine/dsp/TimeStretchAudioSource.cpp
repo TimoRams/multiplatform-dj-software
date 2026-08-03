@@ -19,8 +19,10 @@ bool TimeStretchAudioSource::validConfiguration(const TimeStretchConfiguration& 
 void TimeStretchAudioSource::setTempoRatio(double ratio) noexcept
 {
     const auto clamped = std::clamp(std::isfinite(ratio) ? ratio : 1.0, 0.01, 8.0);
-    if (std::abs(m_targetTempoRatio.exchange(clamped) - clamped) >= 0.0005)
-        publishDesiredConfiguration();
+    // Rubber Band accepts real-time ratio and pitch changes from the same
+    // callback as process(). Rebuilding a worker pipeline for every jog tick
+    // causes the very stalls this path is meant to avoid.
+    m_targetTempoRatio.store(clamped, std::memory_order_release);
 }
 
 void TimeStretchAudioSource::setPitchLockEnabled(bool enabled) noexcept
@@ -30,7 +32,7 @@ void TimeStretchAudioSource::setPitchLockEnabled(bool enabled) noexcept
 
 void TimeStretchAudioSource::setScratchBypass(bool enabled) noexcept
 {
-    if (m_scratchBypass.exchange(enabled) != enabled && !enabled) publishDesiredConfiguration();
+    m_scratchBypass.store(enabled, std::memory_order_release);
 }
 
 void TimeStretchAudioSource::setTrackGeneration(std::uint64_t generation) noexcept
@@ -50,7 +52,7 @@ void TimeStretchAudioSource::enterScratchBypass() noexcept
 void TimeStretchAudioSource::endScratchBypass() noexcept
 {
     m_scratchBypass.store(false, std::memory_order_release);
-    publishDesiredConfiguration();
+    m_scratchExitFadePending.store(true, std::memory_order_release);
 }
 
 TimeStretchConfiguration TimeStretchAudioSource::desiredConfiguration() const noexcept
@@ -137,7 +139,8 @@ bool TimeStretchAudioSource::preparePipeline(Pipeline& p, const TimeStretchConfi
         RubberBand::RubberBandStretcher::OptionPitchHighSpeed);
     p.stretcher->setMaxProcessSize(static_cast<size_t>(std::min(4096, std::max(512, c.maximumBlockSize))));
     p.stretcher->setTimeRatio(1.0);
-    p.stretcher->setPitchScale(c.keylockEnabled ? 1.0 / c.tempoRatio : 1.0);
+    p.appliedPitchScale = c.keylockEnabled ? 1.0 / c.tempoRatio : 1.0;
+    p.stretcher->setPitchScale(p.appliedPitchScale);
     resizeBuffer(p.input, 2, std::max(4096, c.maximumBlockSize));
     resizeBuffer(p.output, 2, kFifoCapacity);
     resizeBuffer(p.trim, 2, 4096);
@@ -251,6 +254,8 @@ void TimeStretchAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInf
     struct Scope { Scope(){g_inTimeStretchAudioCallback=true;} ~Scope(){g_inTimeStretchAudioCallback=false;} } scope;
     if (!source || !info.buffer || info.numSamples <= 0) { info.clearActiveBufferRegion(); return; }
     activatePreparedPipelineAtBlockBoundary();
+    if (m_scratchExitFadePending.exchange(false, std::memory_order_acq_rel))
+        m_switchFadeRemaining.store(kSwitchFadeSamples, std::memory_order_relaxed);
     const int active = m_activeSlot.load(std::memory_order_acquire);
     if (m_scratchBypass.load(std::memory_order_acquire) || active < 0
         || m_pipelines[active].config.trackGeneration != m_trackGeneration.load(std::memory_order_acquire)
@@ -268,6 +273,12 @@ void TimeStretchAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInf
 
 void TimeStretchAudioSource::processPipeline(Pipeline& p, const juce::AudioSourceChannelInfo& info) noexcept
 {
+    const double effectiveRate = m_targetTempoRatio.load(std::memory_order_acquire);
+    const double pitchScale = p.config.keylockEnabled ? 1.0 / effectiveRate : 1.0;
+    if (std::abs(p.appliedPitchScale - pitchScale) > 1.0e-7) {
+        p.stretcher->setPitchScale(pitchScale);
+        p.appliedPitchScale = pitchScale;
+    }
     const int needed = info.numSamples;
     int loops = kPullLoopLimit;
     while (p.fifo->getNumReady() < needed && loops-- > 0) {

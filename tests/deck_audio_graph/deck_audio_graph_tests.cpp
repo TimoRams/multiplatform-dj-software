@@ -6,6 +6,7 @@
 #include "engine/dsp/MixerDspSource.h"
 #include "engine/dsp/ScratchDeckBridge.hpp"
 #include "engine/dsp/TimeStretchAudioSource.h"
+#include "engine/scratch/ScratchController.hpp"
 
 #include <QCoreApplication>
 #include <QTemporaryDir>
@@ -225,10 +226,74 @@ int main(int argc, char** argv)
     graph.scratch().beginScratch(0.2, 44'100.0, 1.0, true, 1.0);
     graph.scratch().addTargetDeltaSeconds(0.04, 44'100.0);
     graph.getNextAudioBlock({&output, 0, 512});
-    graph.scratch().endScratch(false);
-    graph.scratch().prepareNormalPlaybackHandoff(0.24, 44'100.0);
+    const double scratchReleasePosition = graph.scratch().readPositionSeconds(44'100.0);
+    ok &= require(std::abs(scratchReleasePosition - 0.2) > 1.0e-4,
+                  "scratch cursor advances away from its grab position");
+    (void) graph.scratch().endScratch(false);
+    graph.scratch().prepareNormalPlaybackHandoff(scratchReleasePosition, 44'100.0);
     graph.getNextAudioBlock({&output, 0, 512});
     ok &= require(isFinite(output), "scratch and playback handoff output is finite");
+    ok &= require(std::abs(graph.scratch().readPositionSeconds(44'100.0) - scratchReleasePosition)
+                      < 1.0e-6,
+                  "scratch handoff keeps the final audio cursor");
+
+    {
+        using engine::scratch::ScratchController;
+        using engine::scratch::ScratchReleaseDisposition;
+        ScratchController controller;
+        controller.startScratch(0.0, true, 1.0);
+        controller.setMeasuredNormalizedSpeed(1.4);
+        ok &= require(controller.releaseScratch() == ScratchReleaseDisposition::CoastToDeckRate,
+                      "faster forward release coasts to the deck rate");
+
+        controller.startScratch(0.0, true, 1.0);
+        controller.setMeasuredNormalizedSpeed(1.0);
+        ok &= require(controller.releaseScratch() == ScratchReleaseDisposition::HandoffNow,
+                      "matching deck speed hands off immediately");
+
+        controller.startScratch(0.0, true, 1.0);
+        controller.setMeasuredNormalizedSpeed(0.6);
+        ok &= require(controller.releaseScratch() == ScratchReleaseDisposition::HandoffNow,
+                      "slower forward release does not accelerate scratch audio");
+
+        controller.startScratch(0.0, true, 1.0);
+        controller.setMeasuredNormalizedSpeed(-0.8);
+        ok &= require(controller.releaseScratch() == ScratchReleaseDisposition::CoastToStop,
+                      "reverse release coasts to a stop before normal playback");
+    }
+
+    // Exercise callback-owned scratch entry/exit commands across the device
+    // block sizes we support. A full cache is already present, so starvation
+    // here would indicate a handoff/read-head regression rather than loading.
+    const auto starvationBeforeScratchStress = graph.scratch().scratchCacheStats().starvationBlocks;
+    for (const bool reverse : {false, true}) {
+        graph.setReverse(reverse);
+        for (const bool keylock : {false, true}) {
+            graph.setKeylockEnabled(keylock);
+            for (const int size : {64, 128, 256, 512, 1024, 2048, 4096, 8192}) {
+                juce::AudioBuffer<float> transition(2, size);
+                for (int cycle = 0; cycle < 3; ++cycle) {
+                    const double anchor = 0.25 + 0.03 * cycle;
+                    graph.scratch().configureTrack(44'100.0, 1.0);
+                    graph.scratch().beginScratch(anchor, 44'100.0, 1.0, true,
+                                                 reverse ? -1.0 : 1.0);
+                    graph.scratch().addTargetDeltaSeconds(reverse ? -0.015 : 0.015, 44'100.0);
+                    graph.getNextAudioBlock({&transition, 0, size});
+                    ok &= require(isFinite(transition), "scratch stress output is finite");
+                    (void) graph.scratch().endScratch(false);
+                    graph.scratch().prepareNormalPlaybackHandoff(anchor, 44'100.0);
+                    graph.getNextAudioBlock({&transition, 0, size});
+                    ok &= require(isFinite(transition), "scratch stress handoff is finite");
+                    ok &= require(absolutePeak(transition) <= 1.0,
+                                  "scratch handoff transition remains bounded");
+                }
+            }
+        }
+    }
+    graph.setReverse(false);
+    graph.setKeylockEnabled(false);
+    ok &= require(graph.scratch().scratchCacheStats().starvationBlocks == starvationBeforeScratchStress,
+                  "scratch handoff has no cache starvation after preload");
 
     graph.timeStretch().setPitchLockEnabled(true);
     graph.timeStretch().setTempoRatio(0.8);
@@ -293,7 +358,7 @@ int main(int argc, char** argv)
     graph.scratch().beginScratch(0.1, 96'000.0, 0.5, true, 1.0);
     graph.scratch().addTargetDeltaSeconds(0.03, 96'000.0);
     const auto scratch512 = measure(graph, 512, 100);
-    graph.scratch().endScratch(false);
+    (void) graph.scratch().endScratch(false);
     std::cout << "Pre-refactor-equivalent direct Mixer 512: avg=" << directMixer512.averageUs
               << " us worst=" << directMixer512.worstUs << " us\n";
     std::cout << "DeckAudioGraph neutral 512: avg=" << neutral512.averageUs
@@ -400,7 +465,7 @@ int main(int argc, char** argv)
             scratchDeck.scratch().addTargetDeltaSeconds(0.01, 48'000.0);
         }
         if (iteration % 16 == 7)
-            decks[selectedDeck]->scratch().endScratch(false);
+            (void) decks[selectedDeck]->scratch().endScratch(false);
         if (iteration % 10 == 2) {
             decks[selectedDeck]->timeStretch().setPitchLockEnabled(iteration % 20 == 2);
             decks[selectedDeck]->timeStretch().setTempoRatio(0.85 + 0.2 * controlValue(stressRandom));

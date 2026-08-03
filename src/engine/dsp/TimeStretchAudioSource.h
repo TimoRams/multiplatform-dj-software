@@ -71,6 +71,7 @@ private:
         std::atomic<SlotState> state { SlotState::Empty };
         int prefill = 0;
         int latency = 0;
+        double appliedPitchScale = 1.0;
     };
 
     void publishDesiredConfiguration() noexcept;
@@ -92,6 +93,7 @@ private:
     std::atomic<double> m_targetTempoRatio { 1.0 };
     std::atomic<bool> m_pitchLockEnabled { false };
     std::atomic<bool> m_scratchBypass { false };
+    std::atomic<bool> m_scratchExitFadePending { false };
     std::atomic<double> m_sampleRate { 44100.0 };
     std::atomic<int> m_maximumBlockSize { 512 };
     std::atomic<std::uint64_t> m_trackGeneration { 0 };

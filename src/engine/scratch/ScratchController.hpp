@@ -20,6 +20,12 @@ struct ScratchControllerConfig {
     double inertiaStopThreshold = 0.02;
 };
 
+enum class ScratchReleaseDisposition : std::uint8_t {
+    HandoffNow,
+    CoastToDeckRate,
+    CoastToStop
+};
+
 // Virtual turntable controller. Hand movement drives playback velocity
 // directly, with light adaptive smoothing for fast throws and clean slow drags.
 // The release path ramps toward the current deck speed instead of decaying
@@ -46,12 +52,15 @@ public:
 
     void startScratch(double audioSamplePos, bool wasPlayingBeforeScratch, double normalPlaybackSpeed) noexcept;
     void stopScratch() noexcept;
-    void releaseScratch() noexcept;
+    [[nodiscard]] ScratchReleaseDisposition releaseScratch() noexcept;
 
     void setTouching(bool touching) noexcept { m_touching.store(touching, std::memory_order_relaxed); }
 
     // Control thread: deltaTrackSec / dtSec → normalized speed (1.0 = 1× track speed).
     void submitHandDelta(double deltaTrackSec, double dtSec) noexcept;
+    // Control thread: physical top-platter motion that arrives after touch-up.
+    // It may refine an existing coast but cannot restart a completed scratch.
+    void submitReleaseDelta(double deltaTrackSec, double dtSec) noexcept;
 
     // Control thread: keep integrated read sample counter aligned with hand position.
     void syncReadPositionSamples(double audioSamplePos) noexcept {

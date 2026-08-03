@@ -71,7 +71,7 @@ void DjEngine::tickScratchPhysics()
     if (!m_scratch.scrubbing() && m_scratch.releaseGlide() && !m_audioGraph->scratch().isInertiaActive()) {
         m_scratch.setReleaseGlide(false);
         m_transport->publishScratchPosition(m_transport->playheadPositionAtomic());
-        m_audioGraph->scratch().endScratch(false);
+        (void) m_audioGraph->scratch().endScratch(false);
         restorePostScrubPlaybackState();
         if (m_audioGraph->mixerPtr())
             m_audioGraph->mixer().setScratchTimbre(0.0f);
@@ -127,13 +127,23 @@ void DjEngine::applyScratchNeutralRouting()
 
 void DjEngine::restorePostScrubPlaybackState()
 {
-    const double resumeSec = m_transport->heldPosition();
-    const double audioSec  = std::max(0.0, resumeSec);
+    const double heldResumeSec = m_transport->heldPosition();
+    const double sourceRate = m_transport->sourceSampleRate();
+    const double audioSec = m_audioGraph->scratchPtr()
+        ? std::clamp(m_audioGraph->scratch().readPositionSeconds(sourceRate), 0.0,
+                     m_transport->trackLengthSeconds())
+        : std::max(0.0, heldResumeSec);
+    // Preserve a virtual pre-roll position, but otherwise keep the control
+    // model on the exact cursor the audio callback has just rendered.
+    const double resumeSec = heldResumeSec < 0.0 ? heldResumeSec : audioSec;
 
     if (m_audioGraph->scratchPtr())
-        m_audioGraph->scratch().prepareNormalPlaybackHandoff(audioSec, m_transport->sourceSampleRate());
+        m_audioGraph->scratch().prepareNormalPlaybackHandoff(audioSec, sourceRate);
 
-    m_transport->seekAudioToSeconds(audioSec);
+    // The audio callback applies the matching seek as part of the handoff.
+    // Keep the control/visual model in sync without concurrently resetting
+    // JUCE's transport reader from this thread.
+    m_transport->adoptScratchHandoffPosition(audioSec);
     m_transport->setHeldPosition(resumeSec);
     m_transport->setVisualAnchor(audioSec, true);
     syncReverseReaderToHold();
@@ -181,9 +191,6 @@ void DjEngine::restorePostScrubPlaybackState()
 
 void DjEngine::pauseForScrub(double anchorPositionSec)
 {
-    if (m_audioGraph->mixerPtr())
-        m_audioGraph->mixer().armClickFreeTransition();
-
     // Capture before scratch / pre-roll flags change (negative pre-roll is valid).
     const double visualAtGrab = getVisualPosition();
     const double len          = m_transport->trackLengthSeconds();
@@ -300,21 +307,18 @@ void DjEngine::resumeAfterScrub()
     if (!m_scratch.scrubbing() || !m_audioGraph->scratchPtr())
         return;
 
-    const double len = m_transport->trackLengthSeconds();
-    m_transport->publishScratchPosition(std::clamp(m_scratch.lastRawSec(),
-                                     -SCRATCH_PRE_ROLL_SECONDS,
-                                     len > 0.0 ? len : m_scratch.lastRawSec()));
+    const double sourceRate = m_transport->sourceSampleRate();
+    const double audioSec = m_audioGraph->scratch().readPositionSeconds(sourceRate);
+    m_transport->publishScratchPosition(audioSec);
     m_scratch.setScrubbing(false);
 
-    constexpr double kInertiaThreshold = 0.20;
-    if (std::abs(m_audioGraph->scratch().scratchRate()) > kInertiaThreshold) {
-        m_audioGraph->scratch().endScratch(true);
+    const auto release = m_audioGraph->scratch().endScratch(true);
+    if (release != engine::scratch::ScratchReleaseDisposition::HandoffNow) {
         m_scratch.setReleaseGlide(true);
         emit scrubbingChanged();
         return;
     }
 
-    m_audioGraph->scratch().endScratch(false);
     restorePostScrubPlaybackState();
 
     emit scrubbingChanged();
@@ -326,8 +330,9 @@ void DjEngine::applyScratchReleaseJog(double deltaSeconds)
     if (!m_scratch.releaseGlide() || deltaSeconds == 0.0 || !m_audioGraph->scratchPtr())
         return;
 
-    m_audioGraph->scratch().addTargetDeltaSeconds(deltaSeconds, m_transport->sourceSampleRate());
-    m_transport->publishScratchPosition(m_audioGraph->scratch().displayPositionSeconds());
+    m_scratch.submitReleaseRelative(m_audioGraph->scratchPtr(), deltaSeconds);
+    m_transport->publishScratchPosition(
+        m_audioGraph->scratch().readPositionSeconds(m_transport->sourceSampleRate()));
     notifyProgressIfNeeded();
 }
 

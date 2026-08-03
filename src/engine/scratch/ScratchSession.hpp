@@ -46,6 +46,9 @@ public:
                         double deltaSec,
                         double sampleRate) noexcept;
 
+    bool submitReleaseRelative(engine::audio::ScratchDeckBridge* bridge,
+                               double deltaSec) noexcept;
+
     bool submitAbsolute(engine::audio::ScratchDeckBridge* bridge,
                         double posSec,
                         double sampleRate,

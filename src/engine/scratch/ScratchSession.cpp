@@ -73,6 +73,21 @@ bool ScratchSession::submitRelative(engine::audio::ScratchDeckBridge* bridge,
     return true;
 }
 
+bool ScratchSession::submitReleaseRelative(engine::audio::ScratchDeckBridge* bridge,
+                                           double deltaSec) noexcept
+{
+    if (!bridge || deltaSec == 0.0)
+        return false;
+
+    const double clamped = std::clamp(deltaSec, -kEventSpikeClampSec, kEventSpikeClampSec);
+    const double dtSec = m_lastMoveClock.isValid()
+        ? std::clamp(static_cast<double>(m_lastMoveClock.nsecsElapsed()) * 1e-9, 0.008, 0.120)
+        : 0.016;
+    m_lastMoveClock.restart();
+    bridge->submitReleaseDeltaSeconds(clamped, dtSec);
+    return true;
+}
+
 bool ScratchSession::submitAbsolute(engine::audio::ScratchDeckBridge* bridge,
                                     double posSec,
                                     double sampleRate,

@@ -43,9 +43,14 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 include(ProcessorCount)
 ProcessorCount(_cpu_count)
-if(_cpu_count GREATER 1)
-    # Let Qt's autogen (moc/uic/rcc) run in parallel on multicore systems.
+set(BROCKDJ_AUTOGEN_PARALLEL "4" CACHE STRING
+    "Maximum parallel Qt autogen (moc/uic/rcc) jobs; 0 uses all available CPUs")
+if(BROCKDJ_AUTOGEN_PARALLEL EQUAL 0)
     set(CMAKE_AUTOGEN_PARALLEL ${_cpu_count})
+elseif(BROCKDJ_AUTOGEN_PARALLEL GREATER 0)
+    # Qt autogen is memory-heavy. Keeping it below the compile-job count makes
+    # incremental builds much more responsive on typical development machines.
+    set(CMAKE_AUTOGEN_PARALLEL ${BROCKDJ_AUTOGEN_PARALLEL})
 endif()
 
 function(_rdbj_define_imported_binary_target target_name include_dir library_path)
@@ -547,6 +552,11 @@ if(UNIX AND NOT APPLE)
 endif()
 
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)
+
+option(BROCKDJ_TESTS_ONLY "Exclude the GUI application from the default test build" OFF)
+if(BROCKDJ_TESTS_ONLY)
+    set_target_properties(${PROJECT_NAME} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+endif()
 
 if(BROCKDJ_ENABLE_NATIVE_ARCH)
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT APPLE)

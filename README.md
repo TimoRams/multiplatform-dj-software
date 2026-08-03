@@ -111,7 +111,7 @@ cd multiplatform-dj-software
 ./build/bin/BrockDJ
 ```
 
-`./build-fast` configures `build/` (RelWithDebInfo, QML cachegen off) and rebuilds incrementally. Use this for all local Linux development builds.
+`./build-fast` configures the app-only `build/` directory (RelWithDebInfo, QML cachegen off) and rebuilds only `BrockDJ` incrementally. `./test-fast` uses the separate `build-tests/` directory for the full CTest suite, so test rebuilds never invalidate the running-app build.
 
 </details>
 

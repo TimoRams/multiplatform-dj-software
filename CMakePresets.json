@@ -14,6 +14,28 @@
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "BUILD_TESTING": "OFF",
+        "BROCKDJ_TESTS_ONLY": "OFF",
+        "BROCKDJ_AUTOGEN_PARALLEL": "4",
+        "RDBJ_ENABLE_QML_CACHEGEN": "OFF"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "linux-tests-fast",
+      "displayName": "Linux tests fast",
+      "description": "Separate local test build: Ninja, RelWithDebInfo, application excluded from all.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-tests",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "BUILD_TESTING": "ON",
+        "BROCKDJ_TESTS_ONLY": "ON",
+        "BROCKDJ_AUTOGEN_PARALLEL": "4",
         "RDBJ_ENABLE_QML_CACHEGEN": "OFF"
       },
       "condition": {
@@ -155,6 +177,7 @@
   ],
   "buildPresets": [
     { "name": "linux-dev-fast", "configurePreset": "linux-dev-fast" },
+    { "name": "linux-tests-fast", "configurePreset": "linux-tests-fast" },
     { "name": "linux-release", "configurePreset": "linux-release" },
     { "name": "macos-dev-arm64", "configurePreset": "macos-dev-arm64" },
     { "name": "macos-dev-x86_64", "configurePreset": "macos-dev-x86_64" },
@@ -167,7 +190,13 @@
   "testPresets": [
     {
       "name": "linux-dev-fast",
-      "configurePreset": "linux-dev-fast",
+      "configurePreset": "linux-tests-fast",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    {
+      "name": "linux-tests-fast",
+      "configurePreset": "linux-tests-fast",
       "output": { "outputOnFailure": true },
       "execution": { "noTestsAction": "error" }
     },

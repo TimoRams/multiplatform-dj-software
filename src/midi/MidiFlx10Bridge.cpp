@@ -1160,9 +1160,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                 qDebug() << "[MIDI ACTION] action=JogTouch deck=A"
                          << "previous:" << previousHeld
                          << "current:" << currentHeld
-                         << "dispatch=resume-scrub-open-real-tick-window";
-                if (a && a->isScrubbing())
-                    a->resumeAfterScrub();
+                         << "dispatch=open-top-platter-release-window";
                 m_jogAReleasedRecently = true;
                 m_jogAReleaseTimer.start();
             }
@@ -1193,9 +1191,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                 qDebug() << "[MIDI ACTION] action=JogTouch deck=B"
                          << "previous:" << previousHeld
                          << "current:" << currentHeld
-                         << "dispatch=resume-scrub-open-real-tick-window";
-                if (b && b->isScrubbing())
-                    b->resumeAfterScrub();
+                         << "dispatch=open-top-platter-release-window";
                 m_jogBReleasedRecently = true;
                 m_jogBReleaseTimer.start();
             }
@@ -1205,51 +1201,31 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
         // finger is down only CC 0x22 is used for scratch — routing both would
         // double the travel and spin the UI handle too fast.
         else if (id == "deckA_jog_nudge") {
-            if (a) {
-                if (m_jogATouched)
-                    return;
-                if (a->isScratchReleaseActive()) {
-                    if (std::abs(value) > 0.0f) {
-                        m_jogAReleaseTimer.start();
-                        a->applyScratchReleaseJog(midi_internal::flx10ScratchDeltaSec(static_cast<double>(value)));
-                    }
-                } else if (m_jogAReleasedRecently || a->isScrubbing()) {
-                    if (!a->isScrubbing() && std::abs(value) <= 0.0f)
-                        return;
-                    if (!a->isScrubbing())
-                        a->pauseForScrub();
-                    if (std::abs(value) > 0.0f)
-                        m_jogAReleaseTimer.start();
-                    a->scratchBySeconds(midi_internal::flx10ScratchDeltaSec(static_cast<double>(value)), true);
-                } else {
-                    a->applyJogNudge(static_cast<double>(value));
-                }
-            }
+            // The physical rim is never a scratch continuation. In particular,
+            // post-release rim packets must not restart a scrub or extend its
+            // 120 ms top-platter grace window.
+            if (a)
+                a->applyJogNudge(static_cast<double>(value));
         }
         else if (id == "deckB_jog_nudge") {
-            if (b) {
-                if (m_jogBTouched)
-                    return;
-                if (b->isScratchReleaseActive()) {
-                    if (std::abs(value) > 0.0f) {
-                        m_jogBReleaseTimer.start();
-                        b->applyScratchReleaseJog(midi_internal::flx10ScratchDeltaSec(static_cast<double>(value)));
-                    }
-                } else if (m_jogBReleasedRecently || b->isScrubbing()) {
-                    if (!b->isScrubbing() && std::abs(value) <= 0.0f)
-                        return;
-                    if (!b->isScrubbing())
-                        b->pauseForScrub();
-                    if (std::abs(value) > 0.0f)
-                        m_jogBReleaseTimer.start();
-                    b->scratchBySeconds(midi_internal::flx10ScratchDeltaSec(static_cast<double>(value)), true);
-                } else {
-                    b->applyJogNudge(static_cast<double>(value));
-                }
-            }
+            if (b)
+                b->applyJogNudge(static_cast<double>(value));
         }
         else if (id == "deckA_jog_scratch") {
             if (a && std::abs(value) > 0.0f) {
+                const double delta = midi_internal::flx10ScratchDeltaSec(static_cast<double>(value));
+                // The platter keeps emitting CC 0x22 briefly after touch-up while it
+                // physically spins down. Keep that movement in the current scratch
+                // session; treating it as a new grab snaps back to an old position.
+                if (m_jogAReleasedRecently && a->isScrubbing()) {
+                    m_jogAReleaseTimer.start();
+                    a->scratchBySeconds(delta, true);
+                    return;
+                }
+                if (a->isScratchReleaseActive()) {
+                    a->applyScratchReleaseJog(delta);
+                    return;
+                }
                 // CC 0x22 is the vinyl-on platter stream; engage scratch even if the
                 // touch Note arrived a tick later than the first relative CC.
                 if (!m_jogATouched) {
@@ -1260,11 +1236,21 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                 }
                 if (!a->isScrubbing())
                     a->pauseForScrub();
-                a->scratchBySeconds(midi_internal::flx10ScratchDeltaSec(static_cast<double>(value)), true);
+                a->scratchBySeconds(delta, true);
             }
         }
         else if (id == "deckB_jog_scratch") {
             if (b && std::abs(value) > 0.0f) {
+                const double delta = midi_internal::flx10ScratchDeltaSec(static_cast<double>(value));
+                if (m_jogBReleasedRecently && b->isScrubbing()) {
+                    m_jogBReleaseTimer.start();
+                    b->scratchBySeconds(delta, true);
+                    return;
+                }
+                if (b->isScratchReleaseActive()) {
+                    b->applyScratchReleaseJog(delta);
+                    return;
+                }
                 if (!m_jogBTouched) {
                     m_jogBTouched = true;
                     m_jogBReleasedRecently = false;
@@ -1273,7 +1259,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                 }
                 if (!b->isScrubbing())
                     b->pauseForScrub();
-                b->scratchBySeconds(midi_internal::flx10ScratchDeltaSec(static_cast<double>(value)), true);
+                b->scratchBySeconds(delta, true);
             }
         }
         else if (id == "deckA_jog_move") {
