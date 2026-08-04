@@ -130,6 +130,10 @@ inline bool parsePadModeParam(const QString& paramId, QChar& deck, MidiPadMode& 
         mode = MidiPadMode::BeatJump;
         return true;
     }
+    if (suffix == QStringLiteral("sampler")) {
+        mode = MidiPadMode::Sampler;
+        return true;
+    }
     return false;
 }
 
@@ -248,6 +252,8 @@ inline MidiInteractionType defaultInteractionTypeForParam(const QString& paramId
         || paramId == QStringLiteral("deckB_jog_touch")
         || paramId == QStringLiteral("deckA_shift")
         || paramId == QStringLiteral("deckB_shift")
+        || paramId.startsWith(QStringLiteral("deckA_sampler_pad"))
+        || paramId.startsWith(QStringLiteral("deckB_sampler_pad"))
         || (isPerformancePadParam(paramId)
             && !paramId.contains(QStringLiteral("_pad_mode_"))
             && !paramId.endsWith(QStringLiteral("_clear")))) {

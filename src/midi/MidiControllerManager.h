@@ -42,7 +42,8 @@ enum class MidiInteractionType {
 enum class MidiPadMode {
     HotCue,
     PadFx,
-    BeatJump
+    BeatJump,
+    Sampler
 };
 
 struct MidiMappingEntry {
@@ -148,6 +149,13 @@ private:
     int m_deckBPadFxMomentary = -1;
     int m_deckAPadFxToggle = -1;
     int m_deckBPadFxToggle = -1;
+    struct HotCueHoldState {
+        int padIndex = -1;
+        double returnPositionSeconds = 0.0;
+        bool returnOnRelease = false;
+    };
+    HotCueHoldState m_deckAHotCueHold;
+    HotCueHoldState m_deckBHotCueHold;
     std::array<bool, 3> m_deckAFxSlotsEnabled = { false, false, false };
     std::array<bool, 3> m_deckBFxSlotsEnabled = { false, false, false };
     bool m_beatFxActive = false;
@@ -261,7 +269,11 @@ private:
     void setPadModeForDeck(QChar deck, MidiPadMode mode);
     void clearPadFxState(QChar deck, DjEngine* engine);
     void stopPadFxToggle(DjEngine* engine, int padIndex);
-    void handlePerformancePad(QChar deck, DjEngine* engine, int padIndex, bool pressed, bool clearRequest);
+    void releaseHeldHotCue(QChar deck, DjEngine* engine);
+    void handleCuePadHold(QChar deck, DjEngine* engine, int padIndex,
+                          bool pressed, bool storeIfEmpty);
+    void handlePerformancePad(QChar deck, DjEngine* engine, MidiPadMode mode,
+                              int padIndex, bool pressed, bool clearRequest);
     void refreshAllDeckLeds();
     void refreshDeckLeds(QChar deck, DjEngine* engine);
     void refreshTransportAndLoopLeds(QChar deck, DjEngine* engine);

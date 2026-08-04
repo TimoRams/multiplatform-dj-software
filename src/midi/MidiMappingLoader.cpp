@@ -445,6 +445,8 @@ bool MidiControllerManager::loadBrockDjXmlMapping(const QString& mappingFileName
         m_midiFeedback.setMapping(feedbackMapping);
         m_deckAPadMode = MidiPadMode::HotCue;
         m_deckBPadMode = MidiPadMode::HotCue;
+        m_deckAHotCueHold = {};
+        m_deckBHotCueHold = {};
     }
 
     const bool outputOpen =

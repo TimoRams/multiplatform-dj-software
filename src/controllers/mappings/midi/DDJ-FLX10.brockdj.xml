@@ -37,29 +37,29 @@
     <Entry paramId="deckA_jog_touch" status="0x90" control="0x36" type="momentary"/>
     <Entry paramId="deckB_jog_touch" status="0x91" control="0x36" type="momentary"/>
 
-    <!-- Loop controls. Loop In/Out become halve/double while a loop is active. Shift + 4 Beat clears the current loop. -->
+    <!-- Loop controls. Loop In/Out become halve/double while a loop is active. -->
     <Entry paramId="deckA_shift" status="0x90" control="0x3F" type="momentary"/>
     <Entry paramId="deckB_shift" status="0x91" control="0x3F" type="momentary"/>
     <Entry paramId="deckA_loop_in" status="0x90" control="0x10" type="toggle"/>
     <Entry paramId="deckB_loop_in" status="0x91" control="0x10" type="toggle"/>
     <Entry paramId="deckA_loop_out" status="0x90" control="0x11" type="toggle"/>
     <Entry paramId="deckB_loop_out" status="0x91" control="0x11" type="toggle"/>
-    <Entry paramId="deckA_loop_4beat" status="0x90" control="0x12" type="toggle"/>
-    <Entry paramId="deckB_loop_4beat" status="0x91" control="0x12" type="toggle"/>
-    <Entry paramId="deckA_loop_reloop" status="0x90" control="0x14" type="toggle"/>
-    <Entry paramId="deckB_loop_reloop" status="0x91" control="0x14" type="toggle"/>
+    <Entry paramId="deckA_loop_4beat" status="0x90" control="0x14" type="toggle"/>
+    <Entry paramId="deckB_loop_4beat" status="0x91" control="0x14" type="toggle"/>
     <Entry paramId="deckA_loop_in_adjust" status="0x90" control="0x4C" type="toggle"/>
     <Entry paramId="deckB_loop_in_adjust" status="0x91" control="0x4C" type="toggle"/>
     <Entry paramId="deckA_loop_out_adjust" status="0x90" control="0x4D" type="toggle"/>
     <Entry paramId="deckB_loop_out_adjust" status="0x91" control="0x4D" type="toggle"/>
 
-    <!-- Performance pads. The active BrockDJ pad mode decides whether these trigger Hot Cues, Pad FX, or Beatjump. -->
-    <Entry paramId="deckA_pad_mode_hotcue" status="0x97" control="0x40" type="toggle"/>
-    <Entry paramId="deckA_pad_mode_padfx" status="0x97" control="0x41" type="toggle"/>
-    <Entry paramId="deckA_pad_mode_beatjump" status="0x97" control="0x42" type="toggle"/>
-    <Entry paramId="deckB_pad_mode_hotcue" status="0x99" control="0x40" type="toggle"/>
-    <Entry paramId="deckB_pad_mode_padfx" status="0x99" control="0x41" type="toggle"/>
-    <Entry paramId="deckB_pad_mode_beatjump" status="0x99" control="0x42" type="toggle"/>
+    <!-- Performance pad mode buttons and their page-specific note banks. -->
+    <Entry paramId="deckA_pad_mode_hotcue" status="0x90" control="0x1B" type="toggle"/>
+    <Entry paramId="deckA_pad_mode_padfx" status="0x90" control="0x1E" type="toggle"/>
+    <Entry paramId="deckA_pad_mode_beatjump" status="0x90" control="0x20" type="toggle"/>
+    <Entry paramId="deckA_pad_mode_sampler" status="0x90" control="0x22" type="toggle"/>
+    <Entry paramId="deckB_pad_mode_hotcue" status="0x91" control="0x1B" type="toggle"/>
+    <Entry paramId="deckB_pad_mode_padfx" status="0x91" control="0x1E" type="toggle"/>
+    <Entry paramId="deckB_pad_mode_beatjump" status="0x91" control="0x20" type="toggle"/>
+    <Entry paramId="deckB_pad_mode_sampler" status="0x91" control="0x22" type="toggle"/>
 
     <Entry paramId="deckA_pad1" status="0x97" control="0x00" type="momentary"/>
     <Entry paramId="deckA_pad2" status="0x97" control="0x01" type="momentary"/>
@@ -95,11 +95,66 @@
     <Entry paramId="deckB_pad7_clear" status="0x9A" control="0x06" type="toggle"/>
     <Entry paramId="deckB_pad8_clear" status="0x9A" control="0x07" type="toggle"/>
 
-    <!-- Dedicated 4 Beat Jump buttons are CCs on the deck channels. -->
-    <Entry paramId="deckA_beatjump_4_forward" status="0xB0" control="0x29" type="toggle"/>
-    <Entry paramId="deckB_beatjump_4_forward" status="0xB1" control="0x29" type="toggle"/>
-    <Entry paramId="deckA_beatjump_4_backward" status="0xB0" control="0x1F" type="toggle"/>
-    <Entry paramId="deckB_beatjump_4_backward" status="0xB1" control="0x1F" type="toggle"/>
+    <Entry paramId="deckA_padfx_pad1" status="0x97" control="0x10" type="momentary"/>
+    <Entry paramId="deckA_padfx_pad2" status="0x97" control="0x11" type="momentary"/>
+    <Entry paramId="deckA_padfx_pad3" status="0x97" control="0x12" type="momentary"/>
+    <Entry paramId="deckA_padfx_pad4" status="0x97" control="0x13" type="momentary"/>
+    <Entry paramId="deckA_padfx_pad5" status="0x97" control="0x14" type="momentary"/>
+    <Entry paramId="deckA_padfx_pad6" status="0x97" control="0x15" type="momentary"/>
+    <Entry paramId="deckA_padfx_pad7" status="0x97" control="0x16" type="momentary"/>
+    <Entry paramId="deckA_padfx_pad8" status="0x97" control="0x17" type="momentary"/>
+    <Entry paramId="deckB_padfx_pad1" status="0x99" control="0x10" type="momentary"/>
+    <Entry paramId="deckB_padfx_pad2" status="0x99" control="0x11" type="momentary"/>
+    <Entry paramId="deckB_padfx_pad3" status="0x99" control="0x12" type="momentary"/>
+    <Entry paramId="deckB_padfx_pad4" status="0x99" control="0x13" type="momentary"/>
+    <Entry paramId="deckB_padfx_pad5" status="0x99" control="0x14" type="momentary"/>
+    <Entry paramId="deckB_padfx_pad6" status="0x99" control="0x15" type="momentary"/>
+    <Entry paramId="deckB_padfx_pad7" status="0x99" control="0x16" type="momentary"/>
+    <Entry paramId="deckB_padfx_pad8" status="0x99" control="0x17" type="momentary"/>
+
+    <Entry paramId="deckA_beatjump_pad1" status="0x97" control="0x20" type="toggle"/>
+    <Entry paramId="deckA_beatjump_pad2" status="0x97" control="0x21" type="toggle"/>
+    <Entry paramId="deckA_beatjump_pad3" status="0x97" control="0x22" type="toggle"/>
+    <Entry paramId="deckA_beatjump_pad4" status="0x97" control="0x23" type="toggle"/>
+    <Entry paramId="deckA_beatjump_pad5" status="0x97" control="0x24" type="toggle"/>
+    <Entry paramId="deckA_beatjump_pad6" status="0x97" control="0x25" type="toggle"/>
+    <Entry paramId="deckA_beatjump_pad7" status="0x97" control="0x26" type="toggle"/>
+    <Entry paramId="deckA_beatjump_pad8" status="0x97" control="0x27" type="toggle"/>
+    <Entry paramId="deckB_beatjump_pad1" status="0x99" control="0x20" type="toggle"/>
+    <Entry paramId="deckB_beatjump_pad2" status="0x99" control="0x21" type="toggle"/>
+    <Entry paramId="deckB_beatjump_pad3" status="0x99" control="0x22" type="toggle"/>
+    <Entry paramId="deckB_beatjump_pad4" status="0x99" control="0x23" type="toggle"/>
+    <Entry paramId="deckB_beatjump_pad5" status="0x99" control="0x24" type="toggle"/>
+    <Entry paramId="deckB_beatjump_pad6" status="0x99" control="0x25" type="toggle"/>
+    <Entry paramId="deckB_beatjump_pad7" status="0x99" control="0x26" type="toggle"/>
+    <Entry paramId="deckB_beatjump_pad8" status="0x99" control="0x27" type="toggle"/>
+
+    <Entry paramId="deckA_sampler_pad1" status="0x97" control="0x30" type="momentary"/>
+    <Entry paramId="deckA_sampler_pad2" status="0x97" control="0x31" type="momentary"/>
+    <Entry paramId="deckA_sampler_pad3" status="0x97" control="0x32" type="momentary"/>
+    <Entry paramId="deckA_sampler_pad4" status="0x97" control="0x33" type="momentary"/>
+    <Entry paramId="deckA_sampler_pad5" status="0x97" control="0x34" type="momentary"/>
+    <Entry paramId="deckA_sampler_pad6" status="0x97" control="0x35" type="momentary"/>
+    <Entry paramId="deckA_sampler_pad7" status="0x97" control="0x36" type="momentary"/>
+    <Entry paramId="deckA_sampler_pad8" status="0x97" control="0x37" type="momentary"/>
+    <Entry paramId="deckB_sampler_pad1" status="0x99" control="0x30" type="momentary"/>
+    <Entry paramId="deckB_sampler_pad2" status="0x99" control="0x31" type="momentary"/>
+    <Entry paramId="deckB_sampler_pad3" status="0x99" control="0x32" type="momentary"/>
+    <Entry paramId="deckB_sampler_pad4" status="0x99" control="0x33" type="momentary"/>
+    <Entry paramId="deckB_sampler_pad5" status="0x99" control="0x34" type="momentary"/>
+    <Entry paramId="deckB_sampler_pad6" status="0x99" control="0x35" type="momentary"/>
+    <Entry paramId="deckB_sampler_pad7" status="0x99" control="0x36" type="momentary"/>
+    <Entry paramId="deckB_sampler_pad8" status="0x99" control="0x37" type="momentary"/>
+
+    <!-- Dedicated 4/16 Beat Jump buttons. -->
+    <Entry paramId="deckA_beatjump_4_backward" status="0x90" control="0x5E" type="toggle"/>
+    <Entry paramId="deckB_beatjump_4_backward" status="0x91" control="0x5E" type="toggle"/>
+    <Entry paramId="deckA_beatjump_4_forward" status="0x90" control="0x5F" type="toggle"/>
+    <Entry paramId="deckB_beatjump_4_forward" status="0x91" control="0x5F" type="toggle"/>
+    <Entry paramId="deckA_beatjump_16_backward" status="0x90" control="0x61" type="toggle"/>
+    <Entry paramId="deckB_beatjump_16_backward" status="0x91" control="0x61" type="toggle"/>
+    <Entry paramId="deckA_beatjump_16_forward" status="0x90" control="0x62" type="toggle"/>
+    <Entry paramId="deckB_beatjump_16_forward" status="0x91" control="0x62" type="toggle"/>
 
     <!-- Beat FX section, MIDI channel 5 in FLX10 terms. -->
     <Entry paramId="beat_fx_select_1" status="0x94" control="0x20" type="toggle"/>
@@ -154,7 +209,7 @@
     <DeckLed name="cue" control="0x0C"/>
     <DeckLed name="loop_in" control="0x10"/>
     <DeckLed name="loop_out" control="0x11"/>
-    <DeckLed name="loop_4beat" control="0x12"/>
+    <DeckLed name="loop_4beat" control="0x14"/>
     <DeckLed name="loop_reloop" control="0x14"/>
     <DeckLed name="tempo_reset" control="0x41"/>
     <DeckLed name="beat_sync" control="0x58"/>

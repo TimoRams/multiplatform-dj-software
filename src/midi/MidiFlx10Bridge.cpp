@@ -53,6 +53,41 @@ const char* jogActionName(flx10::JogRouteAction action) noexcept
     return "unknown";
 }
 
+struct CuePadInfo {
+    bool set = false;
+    double positionSeconds = 0.0;
+    QString color;
+};
+
+CuePadInfo cuePadInfo(DjEngine* engine, int padIndex)
+{
+    CuePadInfo info;
+    if (!engine || padIndex < 0 || padIndex >= 8)
+        return info;
+
+    const QVariantList savedLoops = engine->savedLoops();
+    if (padIndex < savedLoops.size()) {
+        const QVariantMap loop = savedLoops.at(padIndex).toMap();
+        if (loop.value(QStringLiteral("set")).toBool()) {
+            info.set = true;
+            info.positionSeconds = loop.value(QStringLiteral("inSec")).toDouble();
+            info.color = loop.value(QStringLiteral("color")).toString();
+            return info;
+        }
+    }
+
+    const QVariantList hotCues = engine->hotCues();
+    if (padIndex < hotCues.size()) {
+        const QVariantMap cue = hotCues.at(padIndex).toMap();
+        if (cue.value(QStringLiteral("set")).toBool()) {
+            info.set = true;
+            info.positionSeconds = cue.value(QStringLiteral("positionSec")).toDouble();
+            info.color = cue.value(QStringLiteral("color")).toString();
+        }
+    }
+    return info;
+}
+
 } // namespace
 
 void MidiControllerManager::sendFlx10HotcuePaletteTest()
@@ -481,10 +516,9 @@ void MidiControllerManager::refreshTransportAndLoopLeds(QChar deck, DjEngine* en
     sendMappedNoteLed(prefix + QStringLiteral("cue"), !engine->isPlaying());
     sendMappedNoteLed(prefix + QStringLiteral("headphone_cue"), engine->cueEnabled());
     const bool loopOutSet = engine->loopOutPosition() > engine->loopInPosition() + 0.001;
-    const bool isFourBeatLoop = engine->loopActive() && std::abs(engine->loopLengthBeats() - 4.0) < 0.1;
     sendMappedNoteLed(prefix + QStringLiteral("loop_in"), engine->loopInSet());
     sendMappedNoteLed(prefix + QStringLiteral("loop_out"), loopOutSet);
-    sendMappedNoteLed(prefix + QStringLiteral("loop_4beat"), isFourBeatLoop);
+    sendMappedNoteLed(prefix + QStringLiteral("loop_4beat"), engine->loopActive());
     sendMappedNoteLed(prefix + QStringLiteral("loop_reloop"), engine->loopActive());
     sendMappedNoteLed(prefix + QStringLiteral("beat_sync"), engine->syncEnabled());
     sendMappedNoteLed(prefix + QStringLiteral("key_sync"), engine->keylock());
@@ -502,6 +536,7 @@ void MidiControllerManager::refreshPadModeLeds(QChar deck)
     sendMappedNoteLed(prefix + QStringLiteral("hotcue"), mode == MidiPadMode::HotCue);
     sendMappedNoteLed(prefix + QStringLiteral("padfx"), mode == MidiPadMode::PadFx);
     sendMappedNoteLed(prefix + QStringLiteral("beatjump"), mode == MidiPadMode::BeatJump);
+    sendMappedNoteLed(prefix + QStringLiteral("sampler"), mode == MidiPadMode::Sampler);
 }
 
 void MidiControllerManager::refreshHotCueLeds(QChar deck, DjEngine* engine)
@@ -538,19 +573,19 @@ void MidiControllerManager::refreshHotCueLeds(QChar deck, DjEngine* engine)
 
 void MidiControllerManager::refreshPerformancePadLeds(QChar deck, DjEngine* engine)
 {
-    const MidiPadMode mode = padModeForDeck(deck);
-    if (mode == MidiPadMode::HotCue) {
-        refreshHotCueLeds(deck, engine);
-        return;
-    }
+    refreshHotCueLeds(deck, engine);
 
     const int status = hotCueStatusForDeck(deck);
     static constexpr int kPadFxColors[8] = { 0x11, 0x11, 0x15, 0x15, 0x25, 0x25, 0x29, 0x29 };
     static constexpr int kBeatJumpColors[8] = { 0x01, 0x01, 0x11, 0x11, 0x15, 0x15, 0x1D, 0x1D };
-    const int* colors = mode == MidiPadMode::PadFx ? kPadFxColors : kBeatJumpColors;
+    for (int i = 0; i < 8; ++i) {
+        sendMidiNoteLed(status, 0x10 + i, kPadFxColors[i]);
+        sendMidiNoteLed(status, 0x20 + i, kBeatJumpColors[i]);
 
-    for (int i = 0; i < 8; ++i)
-        sendMidiNoteLed(status, i, colors[i]);
+        const CuePadInfo sample = cuePadInfo(engine, i);
+        sendMidiNoteLed(status, 0x30 + i,
+                        sample.set ? hotCueLedValueForColor(sample.color) : 0);
+    }
 }
 
 void MidiControllerManager::refreshDeckLeds(QChar deck, DjEngine* engine)
@@ -621,8 +656,68 @@ void MidiControllerManager::clearPadFxState(QChar deck, DjEngine* engine)
     }
 }
 
+void MidiControllerManager::releaseHeldHotCue(QChar deck, DjEngine* engine)
+{
+    HotCueHoldState& hold = deck == QLatin1Char('A')
+        ? m_deckAHotCueHold
+        : m_deckBHotCueHold;
+    const bool returnOnRelease = hold.returnOnRelease;
+    const double returnPositionSeconds = hold.returnPositionSeconds;
+    hold = {};
+
+    if (!engine || !returnOnRelease)
+        return;
+
+    engine->pause();
+    const double durationSeconds = engine->getDuration();
+    if (durationSeconds > 0.0) {
+        const double normalized = std::clamp(returnPositionSeconds / durationSeconds, 0.0, 1.0);
+        engine->setPosition(static_cast<float>(normalized));
+    }
+}
+
+void MidiControllerManager::handleCuePadHold(QChar deck,
+                                              DjEngine* engine,
+                                              int padIndex,
+                                              bool pressed,
+                                              bool storeIfEmpty)
+{
+    if (!engine || padIndex < 0 || padIndex >= 8)
+        return;
+
+    HotCueHoldState& hold = deck == QLatin1Char('A')
+        ? m_deckAHotCueHold
+        : m_deckBHotCueHold;
+
+    if (!pressed) {
+        if (hold.padIndex == padIndex)
+            releaseHeldHotCue(deck, engine);
+        return;
+    }
+
+    if (hold.padIndex == padIndex)
+        return;
+    if (hold.padIndex >= 0)
+        releaseHeldHotCue(deck, engine);
+
+    const CuePadInfo cue = cuePadInfo(engine, padIndex);
+    if (!cue.set) {
+        if (storeIfEmpty)
+            engine->storeCuePad(padIndex);
+        return;
+    }
+
+    hold.padIndex = padIndex;
+    hold.returnPositionSeconds = cue.positionSeconds;
+    hold.returnOnRelease = !engine->isPlaying();
+    engine->triggerCuePad(padIndex);
+    if (hold.returnOnRelease)
+        engine->play();
+}
+
 void MidiControllerManager::handlePerformancePad(QChar deck,
                                                  DjEngine* engine,
+                                                 MidiPadMode mode,
                                                  int padIndex,
                                                  bool pressed,
                                                  bool clearRequest)
@@ -630,16 +725,25 @@ void MidiControllerManager::handlePerformancePad(QChar deck,
     if (!engine || padIndex < 0 || padIndex >= 8)
         return;
 
-    const MidiPadMode mode = padModeForDeck(deck);
-
     if (mode == MidiPadMode::HotCue) {
-        if (!pressed)
-            return;
-        if (clearRequest)
+        if (clearRequest && pressed) {
+            if ((deck == QLatin1Char('A') ? m_deckAHotCueHold : m_deckBHotCueHold).padIndex == padIndex)
+                releaseHeldHotCue(deck, engine);
             engine->clearCuePad(padIndex);
-        else
-            engine->triggerCuePad(padIndex);
-        refreshHotCueLeds(deck, engine);
+            refreshPerformancePadLeds(deck, engine);
+        } else if (!clearRequest) {
+            handleCuePadHold(deck, engine, padIndex, pressed, true);
+            if (pressed)
+                refreshPerformancePadLeds(deck, engine);
+        }
+        return;
+    }
+
+    if (mode == MidiPadMode::Sampler) {
+        // The current mixer has no independent sampler bus; assigned cue/loop
+        // slots form the deck-local sample bank and empty slots stay untouched.
+        if (!clearRequest)
+            handleCuePadHold(deck, engine, padIndex, pressed, false);
         return;
     }
 
@@ -813,6 +917,8 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
     m_deckBPadFxMomentary = -1;
     m_deckAPadFxToggle = -1;
     m_deckBPadFxToggle = -1;
+    m_deckAHotCueHold = {};
+    m_deckBHotCueHold = {};
     m_deckAFxSlotsEnabled = { false, false, false };
     m_deckBFxSlotsEnabled = { false, false, false };
     m_beatFxActive = false;
@@ -848,9 +954,9 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
         QObject::connect(engine, &DjEngine::slipChanged,
                          this, [this, deck, engine] { refreshTransportAndLoopLeds(deck, engine); });
         QObject::connect(engine, &DjEngine::hotCuesChanged,
-                         this, [this, deck, engine] { refreshHotCueLeds(deck, engine); });
+                         this, [this, deck, engine] { refreshPerformancePadLeds(deck, engine); });
         QObject::connect(engine, &DjEngine::savedLoopsChanged,
-                         this, [this, deck, engine] { refreshHotCueLeds(deck, engine); });
+                         this, [this, deck, engine] { refreshPerformancePadLeds(deck, engine); });
     };
     wireDeckLeds(QLatin1Char('A'), m_deckA);
     wireDeckLeds(QLatin1Char('B'), m_deckB);
@@ -929,6 +1035,19 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                      << "beats:" << beats
                      << "dispatch=beatJump";
             return true;
+        };
+
+        auto handleFourBeatExit = [](DjEngine* engine, bool shiftHeld)
+        {
+            if (!engine)
+                return;
+            if (shiftHeld) {
+                engine->reactivateLoop();
+            } else if (engine->loopActive()) {
+                engine->deactivateLoop();
+            } else {
+                engine->setLoop4Beats();
+            }
         };
 
         auto applyBeatFx = [this, a, b]()
@@ -1046,6 +1165,11 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                 DjEngine* const deckEngine = deck == QLatin1Char('A') ? a : b;
                 if (padModeForDeck(deck) == MidiPadMode::PadFx && mode != MidiPadMode::PadFx)
                     clearPadFxState(deck, deckEngine);
+                if ((padModeForDeck(deck) == MidiPadMode::HotCue
+                     || padModeForDeck(deck) == MidiPadMode::Sampler)
+                    && padModeForDeck(deck) != mode) {
+                    releaseHeldHotCue(deck, deckEngine);
+                }
                 setPadModeForDeck(deck, mode);
                 qDebug() << "[MIDI ACTION] action=PadMode"
                          << "deck:" << deck
@@ -1056,19 +1180,51 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
 
             if (midi_internal::parsePerformancePadParam(id, deck, padIndex, clearPad)) {
                 DjEngine* const deckEngine = deck == QLatin1Char('A') ? a : b;
-                handlePerformancePad(deck, deckEngine, padIndex, value >= 0.5f, clearPad);
+                if (value >= 0.5f && padModeForDeck(deck) != MidiPadMode::HotCue) {
+                    if (padModeForDeck(deck) == MidiPadMode::PadFx)
+                        clearPadFxState(deck, deckEngine);
+                    releaseHeldHotCue(deck, deckEngine);
+                    setPadModeForDeck(deck, MidiPadMode::HotCue);
+                }
+                handlePerformancePad(deck, deckEngine, MidiPadMode::HotCue,
+                                     padIndex, value >= 0.5f, clearPad);
                 return;
             }
 
             if (midi_internal::parseDirectPadParam(id, QStringLiteral("padfx_pad"), deck, padIndex)) {
                 DjEngine* const deckEngine = deck == QLatin1Char('A') ? a : b;
-                handlePerformancePad(deck, deckEngine, padIndex, value >= 0.5f, false);
+                if (value >= 0.5f && padModeForDeck(deck) != MidiPadMode::PadFx) {
+                    releaseHeldHotCue(deck, deckEngine);
+                    setPadModeForDeck(deck, MidiPadMode::PadFx);
+                }
+                handlePerformancePad(deck, deckEngine, MidiPadMode::PadFx,
+                                     padIndex, value >= 0.5f, false);
                 return;
             }
 
             if (midi_internal::parseDirectPadParam(id, QStringLiteral("beatjump_pad"), deck, padIndex)) {
                 DjEngine* const deckEngine = deck == QLatin1Char('A') ? a : b;
-                handlePerformancePad(deck, deckEngine, padIndex, value >= 0.5f, false);
+                if (value >= 0.5f && padModeForDeck(deck) != MidiPadMode::BeatJump) {
+                    if (padModeForDeck(deck) == MidiPadMode::PadFx)
+                        clearPadFxState(deck, deckEngine);
+                    releaseHeldHotCue(deck, deckEngine);
+                    setPadModeForDeck(deck, MidiPadMode::BeatJump);
+                }
+                handlePerformancePad(deck, deckEngine, MidiPadMode::BeatJump,
+                                     padIndex, value >= 0.5f, false);
+                return;
+            }
+
+            if (midi_internal::parseDirectPadParam(id, QStringLiteral("sampler_pad"), deck, padIndex)) {
+                DjEngine* const deckEngine = deck == QLatin1Char('A') ? a : b;
+                if (value >= 0.5f && padModeForDeck(deck) != MidiPadMode::Sampler) {
+                    if (padModeForDeck(deck) == MidiPadMode::PadFx)
+                        clearPadFxState(deck, deckEngine);
+                    releaseHeldHotCue(deck, deckEngine);
+                    setPadModeForDeck(deck, MidiPadMode::Sampler);
+                }
+                handlePerformancePad(deck, deckEngine, MidiPadMode::Sampler,
+                                     padIndex, value >= 0.5f, false);
                 return;
             }
 
@@ -1199,44 +1355,20 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
                 b->doubleLoopLength();
         }
         else if (id == "deckA_loop_reloop") {
-            if (value >= 0.5f && a) {
-                if (a->loopActive())
-                    a->deactivateLoop();
-                else if (m_deckAShiftHeld)
-                    a->reactivateLoop();
-            }
+            if (value >= 0.5f)
+                handleFourBeatExit(a, m_deckAShiftHeld);
         }
         else if (id == "deckB_loop_reloop") {
-            if (value >= 0.5f && b) {
-                if (b->loopActive())
-                    b->deactivateLoop();
-                else if (m_deckBShiftHeld)
-                    b->reactivateLoop();
-            }
+            if (value >= 0.5f)
+                handleFourBeatExit(b, m_deckBShiftHeld);
         }
         else if (id == "deckA_loop_4beat") {
-            if (value >= 0.5f && a) {
-                if (m_deckAShiftHeld) {
-                    if (a->loopActive())
-                        a->deactivateLoop();
-                    else
-                        a->reactivateLoop();
-                } else {
-                    a->setLoop4Beats();
-                }
-            }
+            if (value >= 0.5f)
+                handleFourBeatExit(a, m_deckAShiftHeld);
         }
         else if (id == "deckB_loop_4beat") {
-            if (value >= 0.5f && b) {
-                if (m_deckBShiftHeld) {
-                    if (b->loopActive())
-                        b->deactivateLoop();
-                    else
-                        b->reactivateLoop();
-                } else {
-                    b->setLoop4Beats();
-                }
-            }
+            if (value >= 0.5f)
+                handleFourBeatExit(b, m_deckBShiftHeld);
         }
         else if (id == "deckA_headphone_cue") {
             if (value >= 0.5f && a) a->setCueEnabled(!a->cueEnabled());

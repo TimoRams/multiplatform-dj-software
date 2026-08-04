@@ -106,6 +106,10 @@ struct WaveformSceneNode final : QSGClipNode {
         clearGeometry(downbeats);
         clearGeometry(loopEdges);
         clearGeometry(cueLines);
+        loopVisible = false;
+        loopInLine = std::numeric_limits<double>::quiet_NaN();
+        loopOutLine = std::numeric_limits<double>::quiet_NaN();
+        loopAppearance = -1;
     }
 
     QSGTransformNode* timeline = nullptr;
@@ -128,20 +132,26 @@ struct WaveformSceneNode final : QSGClipNode {
     double devicePixelRatio = 1.0;
     QSizeF renderedSize;
     QRectF clipBounds;
+    bool loopVisible = false;
+    double loopInLine = std::numeric_limits<double>::quiet_NaN();
+    double loopOutLine = std::numeric_limits<double>::quiet_NaN();
+    int loopAppearance = -1;
 };
 
 void writeMarkerGeometry(QSGGeometryNode* node,
-                         const std::vector<MarkerLine>& lines,
+                         const MarkerLine* lines,
+                         std::size_t lineCount,
                          std::int64_t windowStartLine,
                          double pixelsPerLine,
                          double devicePixelRatio)
 {
     auto* geometry = node->geometry();
-    geometry->allocate(static_cast<int>(lines.size() * 6));
+    geometry->allocate(static_cast<int>(lineCount * 6));
     auto* vertices = geometry->vertexDataAsColoredPoint2D();
     int out = 0;
     const float halfPixel = static_cast<float>(0.5 / std::max(1.0, devicePixelRatio));
-    for (const auto& marker : lines) {
+    for (std::size_t lineIndex = 0; lineIndex < lineCount; ++lineIndex) {
+        const auto& marker = lines[lineIndex];
         const double relativeX = (marker.linePosition - static_cast<double>(windowStartLine))
             * pixelsPerLine;
         // Store geometry on the physical-pixel grid. The timeline transform is
@@ -164,6 +174,16 @@ void writeMarkerGeometry(QSGGeometryNode* node,
         vertices[out++].set(right, marker.bottom, r, g, b, a);
     }
     node->markDirty(QSGNode::DirtyGeometry);
+}
+
+void writeMarkerGeometry(QSGGeometryNode* node,
+                         const std::vector<MarkerLine>& lines,
+                         std::int64_t windowStartLine,
+                         double pixelsPerLine,
+                         double devicePixelRatio)
+{
+    writeMarkerGeometry(node, lines.data(), lines.size(), windowStartLine,
+                        pixelsPerLine, devicePixelRatio);
 }
 
 std::uint64_t writeWaveformChunk(QSGGeometryNode* node,
@@ -482,6 +502,9 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         || scene->renderedSize != bounds.size();
     const bool configurationChanged = staticConfigurationChanged
         || scene->dataGeneration != snapshot->dataGeneration;
+    const bool overlayConfigurationChanged = m_forceRebuild
+        || outsideGuard
+        || staticConfigurationChanged;
 
     if (m_forceRebuild || outsideGuard || configurationChanged) {
         QElapsedTimer timer;
@@ -561,31 +584,6 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             writeMarkerGeometry(scene->downbeats, downbeats,
                                 scene->windowStartLine, pixelsPerLine, dpr);
 
-            auto* loopGeometry = scene->loopFill->geometry();
-            std::vector<MarkerLine> loopEdges;
-            if (engine->loopActive() && engine->loopOutPosition() > engine->loopInPosition()) {
-                const double loopInLine = engine->loopInPosition() * snapshot->linesPerSecond;
-                const double loopOutLine = engine->loopOutPosition() * snapshot->linesPerSecond;
-                const float x0 = static_cast<float>(
-                    (loopInLine - scene->windowStartLine) * pixelsPerLine);
-                const float x1 = static_cast<float>(
-                    (loopOutLine - scene->windowStartLine) * pixelsPerLine);
-                loopGeometry->allocate(4);
-                auto* vertices = loopGeometry->vertexDataAsColoredPoint2D();
-                const float h = static_cast<float>(bounds.height());
-                vertices[0].set(x0, 0.0f, 70, 190, 255, 22);
-                vertices[1].set(x0, h, 70, 190, 255, 22);
-                vertices[2].set(x1, 0.0f, 70, 190, 255, 22);
-                vertices[3].set(x1, h, 70, 190, 255, 22);
-                loopEdges.push_back({loopInLine, QColor(70, 190, 255, 190), 0.0f, h});
-                loopEdges.push_back({loopOutLine, QColor(70, 190, 255, 190), 0.0f, h});
-            } else {
-                loopGeometry->allocate(0);
-            }
-            scene->loopFill->markDirty(QSGNode::DirtyGeometry);
-            writeMarkerGeometry(scene->loopEdges, loopEdges,
-                                scene->windowStartLine, pixelsPerLine, dpr);
-
             std::vector<MarkerLine> cueLines;
             const QVariantList cues = engine->hotCues();
             cueLines.reserve(static_cast<std::size_t>(cues.size() + 1));
@@ -624,6 +622,57 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         m_lastVisibleChunkCount.store(visibleChunkCount, std::memory_order_relaxed);
         updateWorst(m_worstGeometryBuildUsec,
                     static_cast<std::uint64_t>(timer.nsecsElapsed() / 1000));
+    }
+
+    const bool loopComplete = engine->loopOutPosition() > engine->loopInPosition();
+    const double visualLoopOut = loopComplete
+        ? engine->loopOutPosition()
+        : engine->loopPreviewOutPosition();
+    const bool loopVisible = engine->loopInSet()
+        && visualLoopOut > engine->loopInPosition();
+    const int loopAppearance = engine->loopActive() && loopComplete
+        ? 2
+        : (loopComplete ? 0 : 1);
+    const double loopInLine = engine->loopInPosition() * snapshot->linesPerSecond;
+    const double loopOutLine = visualLoopOut * snapshot->linesPerSecond;
+    const bool loopGeometryChanged = overlayConfigurationChanged
+        || scene->loopVisible != loopVisible
+        || scene->loopAppearance != loopAppearance
+        || !qFuzzyCompare(scene->loopInLine, loopInLine)
+        || !qFuzzyCompare(scene->loopOutLine, loopOutLine);
+
+    if (loopGeometryChanged) {
+        auto* loopGeometry = scene->loopFill->geometry();
+        std::array<MarkerLine, 2> loopEdges {};
+        std::size_t loopEdgeCount = 0;
+        if (loopVisible) {
+            const int fillAlpha = loopAppearance == 2 ? 22 : (loopAppearance == 1 ? 14 : 9);
+            const int edgeAlpha = loopAppearance == 2 ? 190 : (loopAppearance == 1 ? 150 : 95);
+            const float x0 = static_cast<float>(
+                (loopInLine - scene->windowStartLine) * pixelsPerLine);
+            const float x1 = static_cast<float>(
+                (loopOutLine - scene->windowStartLine) * pixelsPerLine);
+            loopGeometry->allocate(4);
+            auto* vertices = loopGeometry->vertexDataAsColoredPoint2D();
+            const float h = static_cast<float>(bounds.height());
+            vertices[0].set(x0, 0.0f, 70, 190, 255, fillAlpha);
+            vertices[1].set(x0, h, 70, 190, 255, fillAlpha);
+            vertices[2].set(x1, 0.0f, 70, 190, 255, fillAlpha);
+            vertices[3].set(x1, h, 70, 190, 255, fillAlpha);
+            loopEdges[loopEdgeCount++] = {
+                loopInLine, QColor(70, 190, 255, edgeAlpha), 0.0f, h};
+            loopEdges[loopEdgeCount++] = {
+                loopOutLine, QColor(70, 190, 255, edgeAlpha), 0.0f, h};
+        } else {
+            loopGeometry->allocate(0);
+        }
+        scene->loopFill->markDirty(QSGNode::DirtyGeometry);
+        writeMarkerGeometry(scene->loopEdges, loopEdges.data(), loopEdgeCount,
+                            scene->windowStartLine, pixelsPerLine, dpr);
+        scene->loopVisible = loopVisible;
+        scene->loopInLine = loopInLine;
+        scene->loopOutLine = loopOutLine;
+        scene->loopAppearance = loopAppearance;
     }
 
     const double translationX = bounds.width() * 0.5

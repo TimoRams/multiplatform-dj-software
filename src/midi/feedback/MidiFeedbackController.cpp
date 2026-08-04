@@ -102,7 +102,8 @@ void MidiFeedbackController::clearAll()
         sendDeckLed(deck, m_mapping.loopInNote, false);
         sendDeckLed(deck, m_mapping.loopOutNote, false);
         sendDeckLed(deck, m_mapping.loop4BeatNote, false);
-        sendDeckLed(deck, m_mapping.loopReloopNote, false);
+        if (m_mapping.loopReloopNote != m_mapping.loop4BeatNote)
+            sendDeckLed(deck, m_mapping.loopReloopNote, false);
         sendDeckLed(deck, m_mapping.tempoResetNote, false);
         sendDeckLed(deck, m_mapping.beatSyncNote, false);
         sendDeckLed(deck, m_mapping.keySyncNote, false);
@@ -158,8 +159,12 @@ void MidiFeedbackController::refreshDeckLeds(int deck)
     const bool isFourBeatLoop = engine->loopActive() && std::abs(engine->loopLengthBeats() - 4.0) < 0.1;
     sendDeckLed(deck, m_mapping.loopInNote, engine->loopInSet());
     sendDeckLed(deck, m_mapping.loopOutNote, loopOutSet);
-    sendDeckLed(deck, m_mapping.loop4BeatNote, isFourBeatLoop);
-    sendDeckLed(deck, m_mapping.loopReloopNote, engine->loopActive());
+    if (m_mapping.loopReloopNote == m_mapping.loop4BeatNote) {
+        sendDeckLed(deck, m_mapping.loop4BeatNote, engine->loopActive());
+    } else {
+        sendDeckLed(deck, m_mapping.loop4BeatNote, isFourBeatLoop);
+        sendDeckLed(deck, m_mapping.loopReloopNote, engine->loopActive());
+    }
     sendDeckLed(deck, m_mapping.tempoResetNote, qFuzzyIsNull(engine->getTempoPercent()));
     sendDeckLed(deck, m_mapping.beatSyncNote, engine->syncEnabled());
     sendDeckLed(deck, m_mapping.keySyncNote, engine->keylock());
