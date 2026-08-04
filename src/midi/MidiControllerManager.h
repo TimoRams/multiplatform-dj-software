@@ -9,8 +9,10 @@
 #include "feedback/MidiFeedbackController.h"
 #include "app/ControlClock.h"
 #include "controllers/flx10/Flx10JogRouter.h"
+#include "Midi14BitAccumulator.h"
 
 #include <QObject>
+#include <QPointer>
 #include <QTimer>
 #include <QStringList>
 #include <QVariantMap>
@@ -28,6 +30,7 @@
 #endif
 
 class DjEngine;
+class FxManager;
 class ParameterStore;
 class QXmlStreamAttributes;
 
@@ -43,6 +46,16 @@ enum class MidiPadMode {
     HotCue,
     PadFx,
     BeatJump,
+    Sampler
+};
+
+enum class MidiBeatFxTarget {
+    DeckA,
+    DeckB,
+    DeckC,
+    DeckD,
+    Master,
+    Mic,
     Sampler
 };
 
@@ -88,6 +101,7 @@ public:
     Q_INVOKABLE void refreshMidiAndMappings();
 
     void connectDecks(DjEngine* deckA, DjEngine* deckB);
+    void connectFxManager(FxManager* fxManager);
 
     // Stop MIDI I/O and disconnect callbacks before QML/engine teardown.
     void shutdown();
@@ -99,6 +113,7 @@ public:
     Q_INVOKABLE void saveNativeMapping();
     Q_INVOKABLE void sendFlx10HotcuePaletteTest();
     Q_INVOKABLE void testFlx10LedOutput();
+    Q_INVOKABLE void selectPerformancePadMode(const QString& deckId, int mode);
 
     Q_INVOKABLE bool isMappingInverted(const QString& paramId) const;
     Q_INVOKABLE void setMappingInverted(const QString& paramId, bool inverted);
@@ -106,7 +121,13 @@ public:
     // Live MIDI monitor: last received event as a short human-readable string.
     // High-rate wheel traffic is display-throttled so it cannot starve the UI.
     Q_PROPERTY(QString lastMidiEvent READ lastMidiEvent NOTIFY lastMidiEventChanged)
+    Q_PROPERTY(int deckAPadMode READ deckAPadMode NOTIFY deckAPadModeChanged)
+    Q_PROPERTY(int deckBPadMode READ deckBPadMode NOTIFY deckBPadModeChanged)
+    Q_PROPERTY(bool beatFxActive READ beatFxActive NOTIFY beatFxActiveChanged)
     QString lastMidiEvent() const { return m_lastMidiEvent; }
+    int deckAPadMode() const noexcept { return static_cast<int>(m_deckAPadMode); }
+    int deckBPadMode() const noexcept { return static_cast<int>(m_deckBPadMode); }
+    bool beatFxActive() const noexcept { return m_beatFxActive; }
 
 signals:
     void mappingUpdated();
@@ -116,6 +137,10 @@ signals:
     void mappingListUpdated();
     void learnStarted(const QString& parameterId);
     void lastMidiEventChanged();
+    void deckAPadModeChanged();
+    void deckBPadModeChanged();
+    void beatFxActiveChanged();
+    void libraryViewToggleRequested();
 
 public slots:
     void onParameterChanged(const QString& id, float value);
@@ -134,6 +159,7 @@ private:
     ParameterStore* m_parameterStore = nullptr;
     DjEngine* m_deckA = nullptr;
     DjEngine* m_deckB = nullptr;
+    QPointer<FxManager> m_fxManager;
     bool m_cueAHeld = false;
     bool m_cueBHeld = false;
     bool m_jogATouched = false;
@@ -143,6 +169,14 @@ private:
     QTimer m_startupRefreshTimer;
     bool m_deckAShiftHeld = false;
     bool m_deckBShiftHeld = false;
+    std::array<bool, 2> m_tempoRawInputSeen { false, false };
+    std::array<bool, 2> m_tempoInputSeen { false, false };
+    bool m_deckASlipReverseHeld = false;
+    bool m_deckBSlipReverseHeld = false;
+    bool m_deckAReverseBeforeSlip = false;
+    bool m_deckBReverseBeforeSlip = false;
+    bool m_deckASlipBeforeReverse = false;
+    bool m_deckBSlipBeforeReverse = false;
     MidiPadMode m_deckAPadMode = MidiPadMode::HotCue;
     MidiPadMode m_deckBPadMode = MidiPadMode::HotCue;
     int m_deckAPadFxMomentary = -1;
@@ -160,7 +194,8 @@ private:
     std::array<bool, 3> m_deckBFxSlotsEnabled = { false, false, false };
     bool m_beatFxActive = false;
     int m_beatFxPosition = 1;
-    QChar m_beatFxTargetDeck = QLatin1Char('A');
+    MidiBeatFxTarget m_beatFxTarget = MidiBeatFxTarget::DeckA;
+    bool m_applyingBeatFxRouting = false;
     
     std::vector<std::unique_ptr<juce::MidiInput>> m_midiInputs;
     std::unique_ptr<juce::MidiOutput> m_midiOutput;
@@ -198,8 +233,8 @@ private:
     // Learn State
     bool m_isLearning = false;
     QString m_learnParameterId;
-    // 14-bit CC accumulation: paramId → last 7-bit MSB value
-    std::map<QString, int> m_msbAccumulator;
+    // 14-bit CC accumulation accepts both MSB-first and FLX10 LSB-first delivery.
+    std::map<QString, midi_internal::Midi14BitAccumulator> m_14BitAccumulators;
     QMetaObject::Connection m_deckActionsConnection;
 
     // Live MIDI monitor
@@ -235,6 +270,7 @@ private:
     bool isPseudoAlsaOutputIdentifier(const juce::String& identifier) const;
     void startAlsaInputMonitor(const juce::String& pseudoIdentifier);
     void stopAlsaInputMonitor();
+    bool hasActiveMidiInput() const;
     void processDecodedMidiEvent(int msgId, float value, bool isNoteOff,
                                  double eventTimestampSeconds = 0.0);
     void enqueueRawMidiEvent(int msgId, float rawEncodedValue, bool noteOff,
@@ -280,6 +316,8 @@ private:
     void refreshHotCueLeds(QChar deck, DjEngine* engine);
     void refreshPadModeLeds(QChar deck);
     void refreshPerformancePadLeds(QChar deck, DjEngine* engine);
+    void applyBeatFxState();
+    void refreshFxLeds();
     bool sendMidiShort(int statusNo, int controlNo, int value, const QString& messageType = QStringLiteral("raw"));
     bool sendMidiMessageWithDebug(const juce::MidiMessage& message, const QString& messageType);
     void sendMidiNoteLed(int statusNo, int noteNo, int value);

@@ -735,6 +735,19 @@ target_include_directories(BrockDJ_flx10_jog_routing_tests PRIVATE src src/engin
 target_compile_features(BrockDJ_flx10_jog_routing_tests PRIVATE cxx_std_23)
 add_test(NAME flx10_jog_routing COMMAND BrockDJ_flx10_jog_routing_tests)
 
+add_executable(BrockDJ_alsa_midi_line_parser_tests
+    tests/midi/alsa_midi_line_parser_tests.cpp)
+target_include_directories(BrockDJ_alsa_midi_line_parser_tests PRIVATE src)
+target_link_libraries(BrockDJ_alsa_midi_line_parser_tests PRIVATE Qt6::Core)
+target_compile_features(BrockDJ_alsa_midi_line_parser_tests PRIVATE cxx_std_23)
+add_test(NAME alsa_midi_line_parser COMMAND BrockDJ_alsa_midi_line_parser_tests)
+
+add_executable(BrockDJ_midi_14bit_accumulator_tests
+    tests/midi/midi_14bit_accumulator_tests.cpp)
+target_include_directories(BrockDJ_midi_14bit_accumulator_tests PRIVATE src)
+target_compile_features(BrockDJ_midi_14bit_accumulator_tests PRIVATE cxx_std_23)
+add_test(NAME midi_14bit_accumulator COMMAND BrockDJ_midi_14bit_accumulator_tests)
+
 add_executable(BrockDJ_flx10_display_protocol_tests
     tests/midi/flx10_display_protocol_tests.cpp)
 target_include_directories(BrockDJ_flx10_display_protocol_tests PRIVATE src)

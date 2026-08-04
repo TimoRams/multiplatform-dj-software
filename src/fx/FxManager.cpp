@@ -44,6 +44,28 @@ void FxManager::registerEngines(DjEngine* deckA, DjEngine* deckB,
             pushSyncedDelay(2);
         });
     }
+    if (m_engineC) {
+        connect(m_engineC, &DjEngine::tempoChanged, this, [this]() {
+            const double bpm = m_engineC->getCurrentBpm();
+            if (qFuzzyCompare(bpm, m_cachedBpmC)) return;
+            m_cachedBpmC = bpm;
+            emit displayBpm1Changed();
+            emit displayBpm2Changed();
+            pushSyncedDelay(1);
+            pushSyncedDelay(2);
+        });
+    }
+    if (m_engineD) {
+        connect(m_engineD, &DjEngine::tempoChanged, this, [this]() {
+            const double bpm = m_engineD->getCurrentBpm();
+            if (qFuzzyCompare(bpm, m_cachedBpmD)) return;
+            m_cachedBpmD = bpm;
+            emit displayBpm1Changed();
+            emit displayBpm2Changed();
+            pushSyncedDelay(1);
+            pushSyncedDelay(2);
+        });
+    }
 
     qDebug() << "[FxManager] engines registered";
 }
@@ -89,9 +111,13 @@ void FxManager::routeToEngines(int unitId, EffectType type, float wetDry)
     if (unitId == 1) {
         if (m_deck1A && m_engineA) { m_engineA->setFxSlotEffectType(1, type); m_engineA->setFxSlotWetDry(1, wetDry); }
         if (m_deck1B && m_engineB) { m_engineB->setFxSlotEffectType(1, type); m_engineB->setFxSlotWetDry(1, wetDry); }
+        if (m_deck1C && m_engineC) { m_engineC->setFxSlotEffectType(1, type); m_engineC->setFxSlotWetDry(1, wetDry); }
+        if (m_deck1D && m_engineD) { m_engineD->setFxSlotEffectType(1, type); m_engineD->setFxSlotWetDry(1, wetDry); }
     } else {
         if (m_deck2A && m_engineA) { m_engineA->setFxSlotEffectType(2, type); m_engineA->setFxSlotWetDry(2, wetDry); }
         if (m_deck2B && m_engineB) { m_engineB->setFxSlotEffectType(2, type); m_engineB->setFxSlotWetDry(2, wetDry); }
+        if (m_deck2C && m_engineC) { m_engineC->setFxSlotEffectType(2, type); m_engineC->setFxSlotWetDry(2, wetDry); }
+        if (m_deck2D && m_engineD) { m_engineD->setFxSlotEffectType(2, type); m_engineD->setFxSlotWetDry(2, wetDry); }
     }
 }
 
@@ -111,23 +137,31 @@ void FxManager::setWetDry(int unitId, float amount)
 
 void FxManager::setDeckAssignment(int unitId, int deck, bool active)
 {
+    if (unitId < 1 || unitId > 2 || deck < 1 || deck > 4)
+        return;
+
     qDebug() << "[FxManager] FX" << unitId << "deck" << deck
              << (active ? "ASSIGNED" : "REMOVED");
 
     if (unitId == 1) {
-        if (deck == 1) setDeck1A(active);
-        else           setDeck1B(active);
+        switch (deck) {
+        case 1: setDeck1A(active); break;
+        case 2: setDeck1B(active); break;
+        case 3: setDeck1C(active); break;
+        case 4: setDeck1D(active); break;
+        }
     } else {
-        if (deck == 1) setDeck2A(active);
-        else           setDeck2B(active);
+        switch (deck) {
+        case 1: setDeck2A(active); break;
+        case 2: setDeck2B(active); break;
+        case 3: setDeck2C(active); break;
+        case 4: setDeck2D(active); break;
+        }
     }
 
     // When un-assigning, immediately silence FX on that engine
-    DjEngine* target = nullptr;
-    if      (unitId == 1 && deck == 1) target = m_engineA;
-    else if (unitId == 1 && deck == 2) target = m_engineB;
-    else if (unitId == 2 && deck == 1) target = m_engineA;
-    else                               target = m_engineB; // unitId==2, deck==2
+    DjEngine* const targets[] = { m_engineA, m_engineB, m_engineC, m_engineD };
+    DjEngine* target = targets[deck - 1];
 
     if (target) {
         if (!active) {
@@ -216,6 +250,7 @@ void FxManager::setSoundColor(const QString& mode, float value)
 void FxManager::setSoundColorDeck(int deck, float value)
 {
     // value is bipolar -1..+1
+    value = std::clamp(value, -1.0f, 1.0f);
     if (deck == 1)
     {
         m_soundColorValueA = value;
@@ -230,13 +265,12 @@ void FxManager::setSoundColorDeck(int deck, float value)
 
 void FxManager::setSoundColorChannel(const QString& channelId, float value)
 {
+    value = std::clamp(value, -1.0f, 1.0f);
     if (DjEngine* const engine = engineForChannelId(channelId))
         applySoundColorToEngine(engine, m_soundColorMode, value);
 
-    if (m_soundColorMode == QLatin1String("Filter")) {
-        if (channelId == QLatin1String("deckA")) m_soundColorValueA = value;
-        else if (channelId == QLatin1String("deckB")) m_soundColorValueB = value;
-    }
+    if (channelId == QLatin1String("deckA")) m_soundColorValueA = value;
+    else if (channelId == QLatin1String("deckB")) m_soundColorValueB = value;
 }
 
 DjEngine* FxManager::engineForChannelId(const QString& channelId) const
@@ -285,9 +319,13 @@ double FxManager::bpmForUnit(int unitId) const
     if (unitId == 1) {
         if (m_deck1A && m_cachedBpmA > 0.0) return m_cachedBpmA;
         if (m_deck1B && m_cachedBpmB > 0.0) return m_cachedBpmB;
+        if (m_deck1C && m_cachedBpmC > 0.0) return m_cachedBpmC;
+        if (m_deck1D && m_cachedBpmD > 0.0) return m_cachedBpmD;
     } else {
         if (m_deck2B && m_cachedBpmB > 0.0) return m_cachedBpmB;
         if (m_deck2A && m_cachedBpmA > 0.0) return m_cachedBpmA;
+        if (m_deck2C && m_cachedBpmC > 0.0) return m_cachedBpmC;
+        if (m_deck2D && m_cachedBpmD > 0.0) return m_cachedBpmD;
     }
     return 0.0;
 }
@@ -305,9 +343,13 @@ void FxManager::pushSyncedDelay(int unitId)
     if (unitId == 1) {
         if (m_deck1A && m_engineA) m_engineA->setFxSlotExternalDelayTime(1, seconds);
         if (m_deck1B && m_engineB) m_engineB->setFxSlotExternalDelayTime(1, seconds);
+        if (m_deck1C && m_engineC) m_engineC->setFxSlotExternalDelayTime(1, seconds);
+        if (m_deck1D && m_engineD) m_engineD->setFxSlotExternalDelayTime(1, seconds);
     } else {
         if (m_deck2A && m_engineA) m_engineA->setFxSlotExternalDelayTime(2, seconds);
         if (m_deck2B && m_engineB) m_engineB->setFxSlotExternalDelayTime(2, seconds);
+        if (m_deck2C && m_engineC) m_engineC->setFxSlotExternalDelayTime(2, seconds);
+        if (m_deck2D && m_engineD) m_engineD->setFxSlotExternalDelayTime(2, seconds);
     }
 }
 
@@ -344,9 +386,13 @@ void FxManager::setPrimaryParam(int unitId, float v)
     if (unitId == 1) {
         if (m_deck1A && m_engineA) m_engineA->setFxSlotPrimaryParam(1, clamped);
         if (m_deck1B && m_engineB) m_engineB->setFxSlotPrimaryParam(1, clamped);
+        if (m_deck1C && m_engineC) m_engineC->setFxSlotPrimaryParam(1, clamped);
+        if (m_deck1D && m_engineD) m_engineD->setFxSlotPrimaryParam(1, clamped);
     } else {
         if (m_deck2A && m_engineA) m_engineA->setFxSlotPrimaryParam(2, clamped);
         if (m_deck2B && m_engineB) m_engineB->setFxSlotPrimaryParam(2, clamped);
+        if (m_deck2C && m_engineC) m_engineC->setFxSlotPrimaryParam(2, clamped);
+        if (m_deck2D && m_engineD) m_engineD->setFxSlotPrimaryParam(2, clamped);
     }
 }
 
@@ -383,6 +429,20 @@ void FxManager::setDeck1B(bool active)
     emit deck1BChanged();
 }
 
+void FxManager::setDeck1C(bool active)
+{
+    if (m_deck1C == active) return;
+    m_deck1C = active;
+    emit deck1CChanged();
+}
+
+void FxManager::setDeck1D(bool active)
+{
+    if (m_deck1D == active) return;
+    m_deck1D = active;
+    emit deck1DChanged();
+}
+
 // ── Unit 2 setters ────────────────────────────────────────────────────────────
 
 void FxManager::setEffectType2(const QString& type)
@@ -416,3 +476,16 @@ void FxManager::setDeck2B(bool active)
     emit deck2BChanged();
 }
 
+void FxManager::setDeck2C(bool active)
+{
+    if (m_deck2C == active) return;
+    m_deck2C = active;
+    emit deck2CChanged();
+}
+
+void FxManager::setDeck2D(bool active)
+{
+    if (m_deck2D == active) return;
+    m_deck2D = active;
+    emit deck2DChanged();
+}

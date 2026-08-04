@@ -442,8 +442,12 @@ void DjEngine::setReverse(bool on)
 
 void DjEngine::setSlip(bool on)
 {
-    if (m_transport->setSlipEnabled(on))
-        emit slipChanged();
+    const bool wasSlipDiverted = isSlipDiverted();
+    if (!m_transport->setSlipEnabled(on))
+        return;
+    if (!on && wasSlipDiverted && !isSlipDiverted())
+        returnToSlipPosition();
+    emit slipChanged();
 }
 
 void DjEngine::returnToSlipPosition()

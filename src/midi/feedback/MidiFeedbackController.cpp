@@ -107,6 +107,8 @@ void MidiFeedbackController::clearAll()
         sendDeckLed(deck, m_mapping.tempoResetNote, false);
         sendDeckLed(deck, m_mapping.beatSyncNote, false);
         sendDeckLed(deck, m_mapping.keySyncNote, false);
+        sendDeckLed(deck, m_mapping.quantizeNote, false);
+        sendDeckLed(deck, m_mapping.slipReverseNote, false);
 
         for (int pad = 1; pad <= 8; ++pad)
             sendHotcuePadLed(deck, pad, kLedOff);
@@ -150,11 +152,14 @@ void MidiFeedbackController::refreshDeckLeds(int deck)
         sendDeckLed(deck, m_mapping.tempoResetNote, false);
         sendDeckLed(deck, m_mapping.beatSyncNote, false);
         sendDeckLed(deck, m_mapping.keySyncNote, false);
+        sendDeckLed(deck, m_mapping.quantizeNote, false);
+        sendDeckLed(deck, m_mapping.slipReverseNote, false);
         return;
     }
 
     sendDeckLed(deck, m_mapping.playNote, engine->isPlaying());
-    sendDeckLed(deck, m_mapping.cueNote, engine->cueEnabled());
+    sendDeckLed(deck, m_mapping.cueNote,
+                engine->mainCueSec() >= -DjEngine::PRE_ROLL_SECONDS);
     const bool loopOutSet = engine->loopOutPosition() > engine->loopInPosition() + 0.001;
     const bool isFourBeatLoop = engine->loopActive() && std::abs(engine->loopLengthBeats() - 4.0) < 0.1;
     sendDeckLed(deck, m_mapping.loopInNote, engine->loopInSet());
@@ -168,6 +173,8 @@ void MidiFeedbackController::refreshDeckLeds(int deck)
     sendDeckLed(deck, m_mapping.tempoResetNote, qFuzzyIsNull(engine->getTempoPercent()));
     sendDeckLed(deck, m_mapping.beatSyncNote, engine->syncEnabled());
     sendDeckLed(deck, m_mapping.keySyncNote, engine->keylock());
+    sendDeckLed(deck, m_mapping.quantizeNote, engine->quantizeEnabled());
+    sendDeckLed(deck, m_mapping.slipReverseNote, engine->isReverse());
 }
 
 void MidiFeedbackController::refreshHotcuePads(int deck)

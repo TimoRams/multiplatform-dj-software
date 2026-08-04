@@ -7,6 +7,7 @@ Item {
     id: root
 
     property var engine: null
+    property string deckId: "deckA"
     property string accentColor: "#ff9900"
     property int activeTab: 0
     // Standalone/AIO surface: hot-cue mode and its pads are the only controls
@@ -20,7 +21,7 @@ Item {
     property bool hotCueHoldHadCue: false
     property bool hotCueHoldReturnOnRelease: false
 
-    readonly property var tabs: hotCueOnly ? ["HOT CUE"] : ["HOT CUE", "PAD FX", "BEATJUMP"]
+    readonly property var tabs: hotCueOnly ? ["HOT CUE"] : ["HOT CUE", "PAD FX", "BEATJUMP", "SAMPLER"]
     readonly property real tabBarHeight: 25
     readonly property real padsContentHeight: Math.max(0, (root.height - (hotCueOnly ? 0 : tabBarHeight + 1)) * (2 / 3))
     readonly property var beatJumpPads: [-16, -8, -4, -2, 2, 4, 8, 16]
@@ -29,6 +30,32 @@ Item {
 
     property int padFxActiveToggle: -1
     property int padFxMomentaryHeld: -1
+
+    function syncMidiPadMode() {
+        if (root.hotCueOnly || typeof midiManager === "undefined" || !midiManager) {
+            if (root.hotCueOnly) root.activeTab = 0
+            return
+        }
+        if (root.deckId !== "deckA" && root.deckId !== "deckB")
+            return
+        var nextMode = root.deckId === "deckB"
+            ? midiManager.deckBPadMode
+            : midiManager.deckAPadMode
+        if (nextMode >= 0 && nextMode < root.tabs.length && root.activeTab !== nextMode)
+            root.activeTab = nextMode
+    }
+
+    Component.onCompleted: syncMidiPadMode()
+
+    Connections {
+        target: (typeof midiManager !== "undefined" && midiManager) ? midiManager : null
+        function onDeckAPadModeChanged() {
+            if (root.deckId === "deckA") root.syncMidiPadMode()
+        }
+        function onDeckBPadModeChanged() {
+            if (root.deckId === "deckB") root.syncMidiPadMode()
+        }
+    }
 
     readonly property var padFxDefs: [
         { name: "ECHO",    effect: "Echo",    amount: 1.0, baseColor: "#0d2244", activeColor: "#1a4488" },
@@ -224,7 +251,12 @@ Item {
                     MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: root.activeTab = index
+                        onClicked: {
+                            root.activeTab = index
+                            if ((root.deckId === "deckA" || root.deckId === "deckB")
+                                    && typeof midiManager !== "undefined" && midiManager)
+                                midiManager.selectPerformancePadMode(root.deckId, index)
+                        }
                     }
                 }
             }
@@ -267,8 +299,10 @@ Item {
                         readonly property bool isHotCueTab:   root.activeTab === 0
                         readonly property bool isPadFxTab:    root.activeTab === 1
                         readonly property bool isBeatJumpTab: root.activeTab === 2
+                        readonly property bool isSamplerTab:  root.activeTab === 3
+                        readonly property bool isCuePlaybackTab: isHotCueTab || isSamplerTab
                         readonly property string kind:        root.padKind(index)
-                        readonly property bool padSet:        isHotCueTab && kind !== "empty"
+                        readonly property bool padSet:        isCuePlaybackTab && kind !== "empty"
 
                         readonly property bool isPadFxMomentary: isPadFxTab && index < 4
                         readonly property bool isPadFxToggle:    isPadFxTab && index >= 4
@@ -281,6 +315,7 @@ Item {
                         readonly property color activeColor: {
                             if (padSet)        return root.padColor(index)
                             if (isBeatJumpTab) return "#2a2208"
+                            if (isSamplerTab)  return padSet ? root.padColor(index) : "#202a24"
                             if (isPadFxTab) {
                                 var def = root.padFxDefs[index]
                                 return padFxLit ? def.activeColor : def.baseColor
@@ -321,19 +356,21 @@ Item {
                             anchors.centerIn: parent
                             text: {
                                 if (isHotCueTab)   return root.padLabel(index)
+                                if (isSamplerTab)  return padSet ? root.padLabel(index) : "EMPTY"
                                 if (isBeatJumpTab) return root.beatJumpLabel(index)
                                 if (isPadFxTab)    return root.padFxDefs[index].name
                                 return "—"
                             }
                             color: {
-                                if (isHotCueTab && padSet) return "#ffffff"
+                                if (isCuePlaybackTab && padSet) return "#ffffff"
                                 if (isHotCueTab)           return "#f0f0f0"
+                                if (isSamplerTab)          return "#8fbfa4"
                                 if (isBeatJumpTab)         return "#ffd38a"
                                 if (isPadFxTab)            return padFxLit ? "#ffffff" : (index < 4 ? "#606060" : "#505050")
                                 return "#333"
                             }
                             font.pixelSize: (isHotCueTab && !padSet) ? 11 : 8
-                            font.bold: (isHotCueTab && padSet) || isPadFxTab
+                            font.bold: (isCuePlaybackTab && padSet) || isPadFxTab
                             font.letterSpacing: isPadFxTab ? 0.4 : 0.0
                             font.family: "monospace"
                         }
@@ -359,7 +396,7 @@ Item {
                             onPressed: (mouse) => {
                                 if (!root.engine) return
 
-                                if (mouse.button === Qt.LeftButton && isHotCueTab) {
+                                if (mouse.button === Qt.LeftButton && isCuePlaybackTab) {
                                     root.hotCueHoldPressedIndex = index
                                     root.hotCueHoldWasPlaying = root.engine.isPlaying
                                     root.hotCueHoldHadCue = padSet
@@ -371,9 +408,11 @@ Item {
                                         root.hotCueHoldReturnOnRelease = !root.hotCueHoldWasPlaying
                                         root.engine.triggerCuePad(index)
                                         if (!root.hotCueHoldWasPlaying) root.engine.play()
-                                    } else {
+                                    } else if (isHotCueTab) {
                                         root.hotCueHoldReturnOnRelease = false
                                         root.engine.storeCuePad(index)
+                                    } else {
+                                        root.clearHotCueHoldState()
                                     }
                                     return
                                 }
@@ -387,7 +426,7 @@ Item {
                             onReleased: (mouse) => {
                                 if (!root.engine) return
 
-                                if (isHotCueTab) {
+                                if (isCuePlaybackTab) {
                                     if (root.hotCueHoldPressedIndex !== index) return
                                     if (root.hotCueHoldReturnOnRelease) {
                                         root.engine.pause()

@@ -474,6 +474,7 @@ int runApplication(int argc, char *argv[])
 
             runtime.fxManager->registerEngines(runtime.deckA.get(), runtime.deckB.get(),
                                                runtime.deckC.get(), runtime.deckD.get());
+            runtime.midiManager->connectFxManager(runtime.fxManager.get());
 
             runtime.libraryPreviewPlayer = std::make_unique<LibraryPreviewPlayer>(
                 *runtime.controlClock, &app);

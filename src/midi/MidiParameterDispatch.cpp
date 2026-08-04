@@ -14,6 +14,20 @@ using namespace midi_internal;
 void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool isNoteOff,
                                                     double eventTimestampSeconds)
 {
+    if (!isNoteOff && msgId >= 10000) {
+        const int remainder = msgId - 10000;
+        const int channel = remainder / 2000;
+        const int sub = remainder % 2000;
+        if (channel >= 0 && channel < 2 && (sub == 1000 || sub == 1032)
+            && !m_tempoRawInputSeen[static_cast<size_t>(channel)]) {
+            m_tempoRawInputSeen[static_cast<size_t>(channel)] = true;
+            qInfo() << "[MIDI RAW] FLX10 tempo bytes reached BrockDJ"
+                    << "deck:" << (channel == 0 ? 'A' : 'B')
+                    << "cc:" << (sub - 1000)
+                    << "value:" << static_cast<int>(std::lround(value * 127.0f));
+        }
+    }
+
     // Keep the UI monitor useful without allocating QStrings and emitting a Qt
     // signal for every high-resolution jog tick.
     const double monitorNowSeconds = juce::Time::getMillisecondCounterHiRes() * 0.001;
@@ -139,21 +153,39 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
         return true;
     };
 
-    // 14-bit CC handling: accumulate MSB (CC 0-31) and combine with LSB (CC 32-63).
-    // The DDJ-FLX10 (and most modern controllers) send every analog control as a
-    // MSB+LSB pair for 14-bit resolution instead of 7-bit.
+    // 14-bit CC handling. The FLX10 sends tempo LSB first (CC 32), then MSB
+    // (CC 0); other controllers may use the opposite order.
     {
         const int sub = (msgId >= 10000) ? (msgId - 10000) % 2000 : -1;
+        auto dispatchPair = [this](const QString& paramId, int value14)
+        {
+            float combined = static_cast<float>(value14) / 16383.0f;
+            const auto invIt = m_paramInverted.find(paramId);
+            if (invIt != m_paramInverted.end() && invIt->second)
+                combined = 1.0f - combined;
+            dispatchToStore(paramId, combined, ParameterStoreDispatch::Standard);
+        };
 
         if (!isNoteOff && sub >= 1000 && sub < 1032) {
-            // MSB CC (CC 0-31): accumulate the 7-bit value for later LSB pairing
             const auto msbIt = m_midiToParam.find(msgId);
-            if (msbIt != m_midiToParam.end())
-                m_msbAccumulator[msbIt->second.paramId] = static_cast<int>(value * 127.0f);
-            // fall through to standard 7-bit dispatch below so the control moves
-            // immediately, even before the LSB arrives
+            if (msbIt != m_midiToParam.end()) {
+                const QString& paramId = msbIt->second.paramId;
+                auto& accumulator = m_14BitAccumulators[paramId];
+                accumulator.pushMsb(static_cast<int>(std::lround(value * 127.0f)));
+                if (const auto value14 = accumulator.takeValue()) {
+                    dispatchPair(paramId, *value14);
+                    return;
+                }
+
+                const auto lsbIt = m_midiToParam.find(msgId + 32);
+                if (lsbIt != m_midiToParam.end()
+                    && lsbIt->second.paramId == paramId
+                    && !midi_internal::shouldAlwaysDispatch(msbIt->second.interactionType)) {
+                    return;
+                }
+            }
+            // Controls without an explicitly mapped LSB retain immediate 7-bit dispatch.
         } else if (!isNoteOff && sub >= 1032 && sub < 1064) {
-            // LSB CC (CC 32-63): combine with stored MSB for 14-bit precision
             const auto currentIt = m_midiToParam.find(msgId);
             const bool currentIsDiscrete = currentIt != m_midiToParam.end()
                 && midi_internal::shouldAlwaysDispatch(currentIt->second.interactionType);
@@ -162,12 +194,12 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
             if (!currentIsDiscrete
                 && msbIt != m_midiToParam.end()
                 && !midi_internal::shouldAlwaysDispatch(msbIt->second.interactionType)) {
-                const QString& pId = msbIt->second.paramId;
-                const int lsb = static_cast<int>(value * 127.0f);
-                const int msb = m_msbAccumulator.count(pId) ? m_msbAccumulator.at(pId) : 64;
-                const float combined = static_cast<float>((msb << 7) | lsb) / 16383.0f;
-                dispatchToStore(pId, combined, ParameterStoreDispatch::Standard);
-                return; // handled via 14-bit pairing; don't double-dispatch
+                const QString& paramId = msbIt->second.paramId;
+                auto& accumulator = m_14BitAccumulators[paramId];
+                accumulator.pushLsb(static_cast<int>(std::lround(value * 127.0f)));
+                if (const auto value14 = accumulator.takeValue())
+                    dispatchPair(paramId, *value14);
+                return; // wait for MSB or publish the now-complete pair
             }
             // No paired MSB found → fall through to standard dispatch
         }

@@ -382,6 +382,14 @@ Item {
         _currentBpm = cb > 0 ? cb.toFixed(2) : ""
     }
 
+    function _syncTempoSlider() {
+        if (!deck.engine) return
+        var percent = Number(deck.engine.tempoPercent)
+        if (!isFinite(percent)) return
+        if (Math.abs(tempoSlider.value - percent) > 0.0001)
+            tempoSlider.value = percent
+    }
+
     function _showLiveBpmIndicator() {
         if (!deck.engine || deck._currentBpm === "")
             return false
@@ -469,6 +477,7 @@ Item {
     Component.onCompleted: {
         if (typeof linkManager !== "undefined" && linkManager !== null)
             linkManager.enabledChanged.connect(deck._handleLinkEnabledChanged)
+        deck._syncTempoSlider()
     }
 
     Component.onDestruction: {
@@ -491,7 +500,8 @@ Item {
     Connections {
         target: deck.engine
         function onTrackMetadataChanged() { deck._syncMetadata() }
-        function onTempoChanged()         { deck._syncTempo() }
+        function onTempoChanged()         { deck._syncTempo(); deck._syncTempoSlider() }
+        function onTempoRangeChanged()    { deck._syncTempoSlider() }
         function onLoopChanged()          { deck._syncTempo() }
         function onScrubbingChanged() {
             if (!deck.engine) return
@@ -1079,6 +1089,7 @@ Item {
                     Layout.minimumWidth: deck.controlsOnly ? 0 : 0
                     Layout.maximumWidth: deck.controlsOnly ? 0 : 16777215
                     engine: deck.engine
+                    deckId: deck.channelId !== "" ? deck.channelId : (deck.deckName === "B" ? "deckB" : "deckA")
                     accentColor: deck.accent
                     compact: true
                     // The touch surface keeps its complete pad-page selector;
@@ -1194,7 +1205,9 @@ Item {
                     model: [
                         { label: "6%",   value: 6   },
                         { label: "8%",   value: 8   },
+                        { label: "10%",  value: 10  },
                         { label: "16%",  value: 16  },
+                        { label: "20%",  value: 20  },
                         { label: "32%",  value: 32  },
                         { label: "WIDE", value: 100 }
                     ]

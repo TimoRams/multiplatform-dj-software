@@ -18,16 +18,22 @@
     <Entry paramId="deckB_key_sync" status="0x91" control="0x65" type="toggle"/>
     <Entry paramId="deckA_keylock" status="0x90" control="0x1C" type="toggle"/>
     <Entry paramId="deckB_keylock" status="0x91" control="0x1C" type="toggle"/>
+    <Entry paramId="deckA_quantize" status="0x90" control="0x35" type="toggle"/>
+    <Entry paramId="deckB_quantize" status="0x91" control="0x35" type="toggle"/>
     <Entry paramId="deckA_slip" status="0x90" control="0x40" type="toggle"/>
     <Entry paramId="deckB_slip" status="0x91" control="0x40" type="toggle"/>
+    <Entry paramId="deckA_slip_reverse" status="0x90" control="0x15" type="momentary"/>
+    <Entry paramId="deckB_slip_reverse" status="0x91" control="0x15" type="momentary"/>
     <Entry paramId="deckA_tempo_reset" status="0x90" control="0x41" type="toggle"/>
     <Entry paramId="deckB_tempo_reset" status="0x91" control="0x41" type="toggle"/>
-    <Entry paramId="deckA_rate_reset" status="0x90" control="0x46" type="toggle"/>
-    <Entry paramId="deckB_rate_reset" status="0x91" control="0x46" type="toggle"/>
+    <Entry paramId="deckA_tempo_range_cycle" status="0x90" control="0x60" type="toggle"/>
+    <Entry paramId="deckB_tempo_range_cycle" status="0x91" control="0x60" type="toggle"/>
 
-    <!-- Tempo faders, 14-bit MSB. Matching LSB messages at +0x20 are combined automatically. -->
+    <!-- Pioneer: minus side is 0x0000, plus side is 0x3FFF. Mixxx inverts this only because its internal rate sign is opposite. -->
     <Entry paramId="deckA_tempo" status="0xB0" control="0x00" type="fader"/>
+    <Entry paramId="deckA_tempo" status="0xB0" control="0x20" type="fader"/>
     <Entry paramId="deckB_tempo" status="0xB1" control="0x00" type="fader"/>
+    <Entry paramId="deckB_tempo" status="0xB1" control="0x20" type="fader"/>
 
     <!-- Jog wheels. CC 0x22 = touched top-platter scratch only; CC 0x21 = rim / post-release free spin. Relative values centered at 0x40. One physical revolution is approximately 12750 accumulated ticks at 33 1/3 RPM (about 1.8 s). -->
     <Entry paramId="deckA_jog_nudge" status="0xB0" control="0x21" type="encoder-relative"/>
@@ -171,9 +177,23 @@
     <Entry paramId="beat_fx_select_12" status="0x94" control="0x2B" type="toggle"/>
     <Entry paramId="beat_fx_select_13" status="0x94" control="0x2C" type="toggle"/>
     <Entry paramId="beat_fx_select_14" status="0x94" control="0x2D" type="toggle"/>
-    <Entry paramId="beat_fx_channel_deck_b" status="0x94" control="0x10" type="toggle"/>
-    <Entry paramId="beat_fx_channel_deck_a" status="0x94" control="0x11" type="toggle"/>
-    <Entry paramId="beat_fx_on" status="0x94" control="0x46" type="toggle"/>
+    <Entry paramId="beat_fx_channel_deck_a" status="0x94" control="0x10" type="toggle"/>
+    <Entry paramId="beat_fx_channel_deck_b" status="0x94" control="0x11" type="toggle"/>
+    <Entry paramId="beat_fx_channel_deck_c" status="0x94" control="0x12" type="toggle"/>
+    <Entry paramId="beat_fx_channel_deck_d" status="0x94" control="0x13" type="toggle"/>
+    <Entry paramId="beat_fx_channel_master" status="0x94" control="0x14" type="toggle"/>
+    <Entry paramId="beat_fx_channel_mic" status="0x94" control="0x15" type="toggle"/>
+    <Entry paramId="beat_fx_channel_sampler" status="0x94" control="0x16" type="toggle"/>
+    <!-- The hardware ON/OFF switch publishes its latched 0/127 state. -->
+    <Entry paramId="beat_fx_on" status="0x94" control="0x46" type="momentary"/>
+
+    <!-- Sound Color FX selector and per-channel 14-bit color knobs. -->
+    <Entry paramId="sound_color_fx_space" status="0x96" control="0x00" type="toggle"/>
+    <Entry paramId="sound_color_fx_dub_echo" status="0x96" control="0x01" type="toggle"/>
+    <Entry paramId="sound_color_fx_crush" status="0x96" control="0x02" type="toggle"/>
+    <Entry paramId="sound_color_fx_pitch" status="0x96" control="0x03" type="toggle"/>
+    <Entry paramId="sound_color_fx_noise" status="0x96" control="0x04" type="toggle"/>
+    <Entry paramId="sound_color_fx_filter" status="0x96" control="0x05" type="toggle"/>
 
     <!-- Mixer. 14-bit LSB messages at +0x20 are paired by MidiControllerManager where present. -->
     <Entry paramId="deckA_gain" status="0xB0" control="0x04" type="encoder-absolute"/>
@@ -184,8 +204,8 @@
     <Entry paramId="deckB_eqMid" status="0xB1" control="0x0B" type="encoder-absolute"/>
     <Entry paramId="deckA_eqLow" status="0xB0" control="0x0F" type="encoder-absolute"/>
     <Entry paramId="deckB_eqLow" status="0xB1" control="0x0F" type="encoder-absolute"/>
-    <Entry paramId="deckA_filter" status="0xB6" control="0x17" type="encoder-absolute"/>
-    <Entry paramId="deckB_filter" status="0xB6" control="0x18" type="encoder-absolute"/>
+    <Entry paramId="deckA_sound_color" status="0xB6" control="0x17" type="encoder-absolute"/>
+    <Entry paramId="deckB_sound_color" status="0xB6" control="0x18" type="encoder-absolute"/>
     <Entry paramId="deckA_vol" status="0xB0" control="0x13" type="fader"/>
     <Entry paramId="deckB_vol" status="0xB1" control="0x13" type="fader"/>
     <Entry paramId="crossfader" status="0xB6" control="0x1F" type="fader"/>
@@ -195,6 +215,7 @@
     <Entry paramId="deckA_headphone_cue" status="0x90" control="0x54" type="toggle"/>
     <Entry paramId="deckB_headphone_cue" status="0x91" control="0x54" type="toggle"/>
     <Entry paramId="library_browse" status="0xB6" control="0x40" type="encoder-relative"/>
+    <Entry paramId="library_view_toggle" status="0x96" control="0x7A" type="toggle"/>
     <Entry paramId="library_load_deck_a" status="0x96" control="0x46" type="toggle"/>
     <Entry paramId="library_load_deck_b" status="0x96" control="0x47" type="toggle"/>
   </Mappings>
@@ -214,6 +235,8 @@
     <DeckLed name="tempo_reset" control="0x41"/>
     <DeckLed name="beat_sync" control="0x58"/>
     <DeckLed name="key_sync" control="0x65"/>
+    <DeckLed name="quantize" control="0x35"/>
+    <DeckLed name="slip_reverse" control="0x15"/>
 
     <!-- RGB pads are palette-index Note feedback, not raw RGB. -->
     <HotcuePads deck="1" status="0x97" shiftStatus="0x98" firstControl="0x00"/>

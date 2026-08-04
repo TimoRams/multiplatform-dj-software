@@ -24,6 +24,8 @@ struct MidiFeedbackMapping
     uint8_t tempoResetNote = 0x41;
     uint8_t beatSyncNote = 0x58;
     uint8_t keySyncNote = 0x65;
+    uint8_t quantizeNote = 0x35;
+    uint8_t slipReverseNote = 0x15;
     uint8_t vuControl = 0x02;
 
     uint8_t padBlue = 0x01;

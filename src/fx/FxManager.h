@@ -24,6 +24,8 @@ class FxManager : public QObject
     Q_PROPERTY(float   wetDry1      READ wetDry1      WRITE setWetDry1      NOTIFY wetDry1Changed)
     Q_PROPERTY(bool    deck1A       READ deck1A       WRITE setDeck1A       NOTIFY deck1AChanged)
     Q_PROPERTY(bool    deck1B       READ deck1B       WRITE setDeck1B       NOTIFY deck1BChanged)
+    Q_PROPERTY(bool    deck1C       READ deck1C       WRITE setDeck1C       NOTIFY deck1CChanged)
+    Q_PROPERTY(bool    deck1D       READ deck1D       WRITE setDeck1D       NOTIFY deck1DChanged)
     Q_PROPERTY(bool    syncEnabled1 READ syncEnabled1                       NOTIFY syncEnabled1Changed)
     Q_PROPERTY(float   beatDiv1     READ beatDiv1                           NOTIFY beatDiv1Changed)
     Q_PROPERTY(double  displayBpm1  READ displayBpm1                        NOTIFY displayBpm1Changed)
@@ -33,6 +35,8 @@ class FxManager : public QObject
     Q_PROPERTY(float   wetDry2      READ wetDry2      WRITE setWetDry2      NOTIFY wetDry2Changed)
     Q_PROPERTY(bool    deck2A       READ deck2A       WRITE setDeck2A       NOTIFY deck2AChanged)
     Q_PROPERTY(bool    deck2B       READ deck2B       WRITE setDeck2B       NOTIFY deck2BChanged)
+    Q_PROPERTY(bool    deck2C       READ deck2C       WRITE setDeck2C       NOTIFY deck2CChanged)
+    Q_PROPERTY(bool    deck2D       READ deck2D       WRITE setDeck2D       NOTIFY deck2DChanged)
     Q_PROPERTY(bool    syncEnabled2  READ syncEnabled2  NOTIFY syncEnabled2Changed)
     Q_PROPERTY(float   beatDiv2      READ beatDiv2      NOTIFY beatDiv2Changed)
     Q_PROPERTY(double  displayBpm2   READ displayBpm2   NOTIFY displayBpm2Changed)
@@ -74,22 +78,30 @@ public:
     float   wetDry1()     const { return m_wetDry1;     }
     bool    deck1A()      const { return m_deck1A;      }
     bool    deck1B()      const { return m_deck1B;      }
+    bool    deck1C()      const { return m_deck1C;      }
+    bool    deck1D()      const { return m_deck1D;      }
 
     void setEffectType1(const QString& type);
     void setWetDry1(float amount);
     void setDeck1A(bool active);
     void setDeck1B(bool active);
+    void setDeck1C(bool active);
+    void setDeck1D(bool active);
 
     // ── Accessors – unit 2 ───────────────────────────────────────────────────
     QString effectType2() const { return m_effectType2; }
     float   wetDry2()     const { return m_wetDry2;     }
     bool    deck2A()      const { return m_deck2A;      }
     bool    deck2B()      const { return m_deck2B;      }
+    bool    deck2C()      const { return m_deck2C;      }
+    bool    deck2D()      const { return m_deck2D;      }
 
     void setEffectType2(const QString& type);
     void setWetDry2(float amount);
     void setDeck2A(bool active);
     void setDeck2B(bool active);
+    void setDeck2C(bool active);
+    void setDeck2D(bool active);
 
     // ── BPM sync accessors ────────────────────────────────────────────────────
     bool   syncEnabled1()  const { return m_syncEnabled[0]; }
@@ -118,6 +130,8 @@ signals:
     void wetDry1Changed();
     void deck1AChanged();
     void deck1BChanged();
+    void deck1CChanged();
+    void deck1DChanged();
     void syncEnabled1Changed();
     void beatDiv1Changed();
     void displayBpm1Changed();
@@ -126,6 +140,8 @@ signals:
     void wetDry2Changed();
     void deck2AChanged();
     void deck2BChanged();
+    void deck2CChanged();
+    void deck2DChanged();
     void syncEnabled2Changed();
     void beatDiv2Changed();
     void displayBpm2Changed();
@@ -155,12 +171,16 @@ private:
     float   m_wetDry1     { 0.0f  };
     bool    m_deck1A      { false };
     bool    m_deck1B      { false };
+    bool    m_deck1C      { false };
+    bool    m_deck1D      { false };
 
     // ── Unit 2 state ─────────────────────────────────────────────────────────
     QString m_effectType2 { "---" };
     float   m_wetDry2     { 0.0f  };
     bool    m_deck2A      { false };
     bool    m_deck2B      { false };
+    bool    m_deck2C      { false };
+    bool    m_deck2D      { false };
 
     // Convert QML string name → EffectType enum
     static EffectType effectTypeFromString(const QString& name);
@@ -173,6 +193,8 @@ private:
     float  m_primaryParam[2]  { 0.5f,  0.5f  }; // default mid (Reverb: 50% room)
     double m_cachedBpmA     { 0.0 };
     double m_cachedBpmB     { 0.0 };
+    double m_cachedBpmC     { 0.0 };
+    double m_cachedBpmD     { 0.0 };
 
     // Recompute synced delay seconds and push to all assigned engines for unitId.
     // Passes -1 to the engine when sync is off to restore amount-driven timing.

@@ -425,6 +425,13 @@ ApplicationWindow {
         target: (typeof linkManager !== "undefined" && linkManager !== null) ? linkManager : null
     }
 
+    Connections {
+        target: (typeof midiManager !== "undefined" && midiManager !== null) ? midiManager : null
+        function onLibraryViewToggleRequested() {
+            window.toggleAllInOneLibrary()
+        }
+    }
+
     // -------------------------------------------------------------------------
     // VIEWPORT SCALING
     // -------------------------------------------------------------------------

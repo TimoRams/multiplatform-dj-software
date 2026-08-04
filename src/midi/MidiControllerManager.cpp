@@ -5,6 +5,7 @@ using namespace midi_internal;
 
 #include "ParameterStore.h"
 #include "SettingsManager.h"
+#include "fx/FxManager.h"
 
 #include <QCoreApplication>
 #include <QDebug>
@@ -34,6 +35,8 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, ControlClock
             if (m_shutdownComplete.load(std::memory_order_acquire))
                 return;
             refreshMidiAndMappings();
+            if (!hasActiveMidiInput())
+                restoreSavedDeviceSelections();
         }, Qt::QueuedConnection);
     });
 
@@ -51,12 +54,13 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, ControlClock
     m_selectedMappingFile = SettingsManager::getInstance().getSelectedMappingFile();
 
     refreshMidiAndMappings();
-    restoreSavedDeviceSelections();
-
     if (!m_selectedMappingFile.isEmpty())
         loadBrockDjXmlMapping(m_selectedMappingFile);
     else
         loadNativeMappingIfExists();
+    // Build the dispatch table before starting an input. Some controllers send
+    // their current high-resolution fader state immediately on subscription.
+    restoreSavedDeviceSelections();
 
     autoOpenFlx10MidiOutputIfNeeded();
 
@@ -66,9 +70,9 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, ControlClock
         if (m_shutdownComplete.load(std::memory_order_acquire))
             return;
         refreshMidiAndMappings();
+        if (!hasActiveMidiInput())
+            restoreSavedDeviceSelections();
         autoOpenFlx10MidiOutputIfNeeded();
-        // Avoid reopening stale saved identifiers repeatedly on startup.
-        // Users can still select a device explicitly in settings.
     });
     m_startupRefreshTimer.start(750);
 }
@@ -99,6 +103,10 @@ void MidiControllerManager::shutdown()
 
     if (m_parameterStore)
         QObject::disconnect(m_parameterStore, nullptr, this, nullptr);
+
+    if (m_fxManager)
+        QObject::disconnect(m_fxManager.data(), nullptr, this, nullptr);
+    m_fxManager = nullptr;
 
     if (m_deckA)
         QObject::disconnect(m_deckA, nullptr, this, nullptr);

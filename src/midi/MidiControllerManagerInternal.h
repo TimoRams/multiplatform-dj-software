@@ -20,6 +20,55 @@ inline const QString kBuiltInFlx10ControllerName = QStringLiteral("DDJ-FLX10");
 inline const QString kBuiltInFlx10MappingFile = QStringLiteral("DDJ-FLX10.brockdj.xml");
 inline const QString kBuiltInFlx10MappingLabel = QStringLiteral("Built-in: DDJ-FLX10");
 inline const QString kBuiltInFlx10MappingResource = QStringLiteral(":/controllers/mappings/midi/DDJ-FLX10.brockdj.xml");
+struct SoundColorModeMapping {
+    const char* paramId;
+    const char* mode;
+};
+inline constexpr std::array<SoundColorModeMapping, 6> kSoundColorModes {{
+    { "sound_color_fx_space", "Space" },
+    { "sound_color_fx_dub_echo", "D.Echo" },
+    { "sound_color_fx_crush", "Crush" },
+    { "sound_color_fx_pitch", "Pitch" },
+    { "sound_color_fx_noise", "Noise" },
+    { "sound_color_fx_filter", "Filter" }
+}};
+struct BeatFxChannelMapping {
+    const char* paramId;
+    MidiBeatFxTarget target;
+};
+inline constexpr std::array<BeatFxChannelMapping, 7> kBeatFxChannels {{
+    { "beat_fx_channel_deck_a", MidiBeatFxTarget::DeckA },
+    { "beat_fx_channel_deck_b", MidiBeatFxTarget::DeckB },
+    { "beat_fx_channel_deck_c", MidiBeatFxTarget::DeckC },
+    { "beat_fx_channel_deck_d", MidiBeatFxTarget::DeckD },
+    { "beat_fx_channel_master", MidiBeatFxTarget::Master },
+    { "beat_fx_channel_mic", MidiBeatFxTarget::Mic },
+    { "beat_fx_channel_sampler", MidiBeatFxTarget::Sampler }
+}};
+inline int beatFxDeckNumber(MidiBeatFxTarget target)
+{
+    switch (target) {
+    case MidiBeatFxTarget::DeckA: return 1;
+    case MidiBeatFxTarget::DeckB: return 2;
+    case MidiBeatFxTarget::DeckC: return 3;
+    case MidiBeatFxTarget::DeckD: return 4;
+    default: return 0;
+    }
+}
+
+inline const char* beatFxTargetName(MidiBeatFxTarget target)
+{
+    switch (target) {
+    case MidiBeatFxTarget::DeckA: return "deckA";
+    case MidiBeatFxTarget::DeckB: return "deckB";
+    case MidiBeatFxTarget::DeckC: return "deckC";
+    case MidiBeatFxTarget::DeckD: return "deckD";
+    case MidiBeatFxTarget::Master: return "master";
+    case MidiBeatFxTarget::Mic: return "mic";
+    case MidiBeatFxTarget::Sampler: return "sampler";
+    }
+    return "unknown";
+}
 inline bool isBuiltInFlx10Mapping(const QString& mappingName)
 {
     return mappingName == kBuiltInFlx10MappingLabel
@@ -200,6 +249,36 @@ inline EffectType beatFxTypeForPosition(int position)
     return kTypes[static_cast<size_t>(std::clamp(position, 1, 14) - 1)];
 }
 
+inline QString beatFxNameForPosition(int position)
+{
+    static const std::array<QString, 14> kNames = {
+        QStringLiteral("Echo"),
+        QStringLiteral("Low Cut Echo"),
+        QStringLiteral("MT Delay"),
+        QStringLiteral("Spiral"),
+        QStringLiteral("Reverb"),
+        QStringLiteral("Trans"),
+        QStringLiteral("Flanger"),
+        QStringLiteral("Phaser"),
+        QStringLiteral("Bitcrusher"),
+        QStringLiteral("Pitch Shifter"),
+        QStringLiteral("Stretch"),
+        QStringLiteral("Enigma Jet"),
+        QStringLiteral("Roll"),
+        QStringLiteral("Slip Roll")
+    };
+    return kNames[static_cast<size_t>(std::clamp(position, 1, 14) - 1)];
+}
+
+inline int beatFxPositionForName(const QString& name)
+{
+    for (int position = 1; position <= 14; ++position) {
+        if (beatFxNameForPosition(position) == name)
+            return position;
+    }
+    return -1;
+}
+
 inline bool parseHotCueParam(const QString& paramId, QChar& deck, int& index, bool& clear)
 {
     QString suffix;
@@ -252,6 +331,9 @@ inline MidiInteractionType defaultInteractionTypeForParam(const QString& paramId
         || paramId == QStringLiteral("deckB_jog_touch")
         || paramId == QStringLiteral("deckA_shift")
         || paramId == QStringLiteral("deckB_shift")
+        || paramId == QStringLiteral("deckA_slip_reverse")
+        || paramId == QStringLiteral("deckB_slip_reverse")
+        || paramId == QStringLiteral("beat_fx_on")
         || paramId.startsWith(QStringLiteral("deckA_sampler_pad"))
         || paramId.startsWith(QStringLiteral("deckB_sampler_pad"))
         || (isPerformancePadParam(paramId)
@@ -284,12 +366,16 @@ inline MidiInteractionType defaultInteractionTypeForParam(const QString& paramId
         || paramId == QStringLiteral("deckB_key_sync")
         || paramId == QStringLiteral("deckA_keylock")
         || paramId == QStringLiteral("deckB_keylock")
+        || paramId == QStringLiteral("deckA_quantize")
+        || paramId == QStringLiteral("deckB_quantize")
         || paramId == QStringLiteral("deckA_slip")
         || paramId == QStringLiteral("deckB_slip")
         || paramId == QStringLiteral("deckA_tempo_reset")
         || paramId == QStringLiteral("deckB_tempo_reset")
         || paramId == QStringLiteral("deckA_rate_reset")
         || paramId == QStringLiteral("deckB_rate_reset")
+        || paramId == QStringLiteral("deckA_tempo_range_cycle")
+        || paramId == QStringLiteral("deckB_tempo_range_cycle")
         || paramId.startsWith(QStringLiteral("beat_fx_"))
         || paramId == QStringLiteral("deckA_headphone_cue")
         || paramId == QStringLiteral("deckB_headphone_cue")
@@ -299,7 +385,9 @@ inline MidiInteractionType defaultInteractionTypeForParam(const QString& paramId
         || paramId == QStringLiteral("library_expand")
         || paramId == QStringLiteral("library_collapse")
         || paramId == QStringLiteral("library_playlist_next")
-        || paramId == QStringLiteral("library_playlist_prev")) {
+        || paramId == QStringLiteral("library_playlist_prev")
+        || paramId == QStringLiteral("library_view_toggle")
+        || paramId.startsWith(QStringLiteral("sound_color_fx_"))) {
         return MidiInteractionType::Toggle;
     }
 

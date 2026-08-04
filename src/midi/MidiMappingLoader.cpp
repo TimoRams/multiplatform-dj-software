@@ -159,6 +159,7 @@ void MidiControllerManager::selectMapping(const QString& mappingFileName)
     m_paramToMidi.clear();
     m_momentaryHeldByMsgId.clear();
     m_scratchAbsoluteLastByMsgId.clear();
+    m_14BitAccumulators.clear();
 
     if (!mappingFileName.isEmpty()) {
         if (!loadBrockDjXmlMapping(mappingFileName))
@@ -374,7 +375,7 @@ bool MidiControllerManager::loadBrockDjXmlMapping(const QString& mappingFileName
 
     std::map<int, MidiMappingEntry> nextMidiToParam;
     std::map<QString, int> nextParamToMidi;
-    std::map<QString, bool> nextParamInverted = m_paramInverted;
+    std::map<QString, bool> nextParamInverted;
     MidiFeedbackMapping feedbackMapping;
 
     while (!xml.atEnd()) {
@@ -433,6 +434,7 @@ bool MidiControllerManager::loadBrockDjXmlMapping(const QString& mappingFileName
     m_paramInverted = std::move(nextParamInverted);
     m_momentaryHeldByMsgId.clear();
     m_scratchAbsoluteLastByMsgId.clear();
+    m_14BitAccumulators.clear();
     for (const auto& [msgId, entry] : m_midiToParam) {
         if (entry.interactionType == MidiInteractionType::Momentary)
             m_momentaryHeldByMsgId[msgId] = false;
@@ -443,8 +445,8 @@ bool MidiControllerManager::loadBrockDjXmlMapping(const QString& mappingFileName
              << "entries:" << static_cast<int>(m_midiToParam.size());
     if (builtInMapping) {
         m_midiFeedback.setMapping(feedbackMapping);
-        m_deckAPadMode = MidiPadMode::HotCue;
-        m_deckBPadMode = MidiPadMode::HotCue;
+        setPadModeForDeck(QLatin1Char('A'), MidiPadMode::HotCue);
+        setPadModeForDeck(QLatin1Char('B'), MidiPadMode::HotCue);
         m_deckAHotCueHold = {};
         m_deckBHotCueHold = {};
     }
@@ -497,6 +499,10 @@ void MidiControllerManager::applyMidiFeedbackMappingElement(const QString& eleme
             mapping.beatSyncNote = control;
         else if (name == QStringLiteral("key_sync"))
             mapping.keySyncNote = control;
+        else if (name == QStringLiteral("quantize"))
+            mapping.quantizeNote = control;
+        else if (name == QStringLiteral("slip_reverse"))
+            mapping.slipReverseNote = control;
         return;
     }
 
