@@ -202,7 +202,7 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
     QProcess* process = monitor.get();
     m_alsaMonitorBuffers[process].clear();
 
-    connect(process, &QProcess::readyReadStandardOutput, this, [this, process]()
+    connect(process, &QProcess::readyReadStandardOutput, this, [this, process, port]()
     {
         if (!process)
             return;
@@ -235,18 +235,12 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                     return true;
                 };
 
-                // aseqdump formats are not consistent across ALSA/PipeWire paths:
-                // some report MIDI channels as 0-based, others as 1-based. Prefer
-                // an exact mapped ID, then the 1-based-adjusted candidate where safe.
-                auto resolveMsgId = [this](int channelAware, int oneBasedAdjusted, int legacy) -> int
+                // The line parser has already normalized every recognized
+                // ALSA/PipeWire format to a zero-based MIDI channel.
+                auto resolveMsgId = [this](int channelAware, int legacy) -> int
                 {
-                    if (m_midiToParam.count(channelAware))
-                        return channelAware;
-                    if (oneBasedAdjusted >= 0 && m_midiToParam.count(oneBasedAdjusted))
-                        return oneBasedAdjusted;
-                    if (m_midiToParam.count(legacy))
-                        return legacy;
-                    return channelAware; // learning: store channel-aware
+                    return midi_internal::resolveMappedAlsaMessageId(
+                        channelAware, legacy, m_midiToParam);
                 };
 
                 int ch = 0, a = 0, b = 0;
@@ -264,19 +258,37 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                     const int cc              = midi_internal::clampMidi7bit(a);
                     const int chClamped       = std::max(0, std::min(15, ch));
                     const int channelAwareMsgId = 10000 + chClamped * 2000 + 1000 + cc;
-                    const int oneBasedMsgId     = ch > 0 ? 10000 + std::min(15, ch - 1) * 2000 + 1000 + cc : -1;
                     const int legacyMsgId       = cc + 1000;
-                    const int msgId             = resolveMsgId(channelAwareMsgId, oneBasedMsgId, legacyMsgId);
+                    const int msgId             = resolveMsgId(channelAwareMsgId, legacyMsgId);
                     const auto it               = m_midiToParam.find(msgId);
-                    float value;
-                    if (it != m_midiToParam.end() && midi_internal::isRelativeInteraction(it->second.interactionType)) {
-                        value = midi_internal::decodeRelativeCcValue(b, it->second.paramId);
-                    } else {
-                        value = midi_internal::clampMidi7bit(b) / 127.0f;
+                    const bool acceptSource = midi_internal::shouldAcceptAlsaChannelFaderSource(
+                        port, m_primaryAlsaInputPort, cc);
+                    if (cc == 0x13 || cc == 0x33) {
+                        const QString sourceKey = QStringLiteral("%1/ch%2/cc%3")
+                            .arg(port).arg(chClamped + 1).arg(cc);
+                        int& logged = m_alsaFaderSourceLogCounts[sourceKey];
+                        if (logged < 4) {
+                            ++logged;
+                            qInfo().noquote()
+                                << QStringLiteral("[MIDI ALSA] FLX10 channel fader port=%1 channel=%2 cc=%3 value=%4 mapped=%5 source=%6")
+                                       .arg(port).arg(chClamped + 1).arg(cc).arg(b)
+                                       .arg(it != m_midiToParam.end() ? it->second.paramId
+                                                                      : QStringLiteral("unmapped"))
+                                       .arg(acceptSource ? QStringLiteral("accepted")
+                                                         : QStringLiteral("ignored-secondary-port"));
+                        }
                     }
-                    processDecodedMidiEvent(
-                        msgId, value, false,
-                        juce::Time::getMillisecondCounterHiRes() * 0.001);
+                    if (acceptSource) {
+                        float value;
+                        if (it != m_midiToParam.end() && midi_internal::isRelativeInteraction(it->second.interactionType)) {
+                            value = midi_internal::decodeRelativeCcValue(b, it->second.paramId);
+                        } else {
+                            value = midi_internal::clampMidi7bit(b) / 127.0f;
+                        }
+                        processDecodedMidiEvent(
+                            msgId, value, false,
+                            juce::Time::getMillisecondCounterHiRes() * 0.001);
+                    }
                 } else if (line.contains("Note on", Qt::CaseInsensitive) ||
                            line.contains("Note off", Qt::CaseInsensitive)) {
                     const bool isOff = line.contains("Note off", Qt::CaseInsensitive);
@@ -347,7 +359,7 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                         // Note channels are controller-action dense on the FLX10. A one-based
                         // fallback can turn unmapped pad notes into Ch7 library-load buttons,
                         // so notes must be exact or legacy only.
-                        const int msgId             = resolveMsgId(channelAwareMsgId, -1, note);
+                        const int msgId             = resolveMsgId(channelAwareMsgId, note);
                         const bool zeroVelocity     = isOff || (vel == 0);
                         qDebug() << "[MIDI ALSA]" << (isOff ? "NoteOff" : "NoteOn")
                                  << "ch0:" << ch0 << "note:" << note << "vel:" << vel
@@ -371,7 +383,7 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                         const int pbCh  = pbMatch.captured(1).toInt();
                         const int pbRaw = pbMatch.captured(2).toInt(); // -8192..+8191
                         const int channelAwareMsgId = 10000 + std::max(0, std::min(15, pbCh)) * 2000 + 1500;
-                        const int msgId = resolveMsgId(channelAwareMsgId, -1, 1500);
+                        const int msgId = resolveMsgId(channelAwareMsgId, 1500);
                         const float value = static_cast<float>(pbRaw + 8192) / 16383.0f;
                         processDecodedMidiEvent(
                             msgId, value, false,
@@ -440,12 +452,17 @@ void MidiControllerManager::stopAlsaInputMonitor()
 
     m_alsaInputMonitors.clear();
     m_alsaMonitorBuffers.clear();
+    m_alsaFaderSourceLogCounts.clear();
 #endif
 }
 
 void MidiControllerManager::openMidiInputByIdentifier(const juce::String& identifier)
 {
+    resetHighResolutionControlState();
     stopAlsaInputMonitor();
+#if defined(Q_OS_LINUX)
+    m_primaryAlsaInputPort.clear();
+#endif
 
     for (auto& input : m_midiInputs) {
         if (input)
@@ -477,6 +494,12 @@ void MidiControllerManager::openMidiInputByIdentifier(const juce::String& identi
     }
 
     if (isPseudoAlsaIdentifier(identifier)) {
+#if defined(Q_OS_LINUX)
+        const QString selectedAlsaId = midi_internal::toQString(identifier);
+        const QStringList selectedAlsaParts = selectedAlsaId.split(':');
+        if (selectedAlsaParts.size() == 3)
+            m_primaryAlsaInputPort = selectedAlsaParts.at(1) + ":" + selectedAlsaParts.at(2);
+#endif
         const int selectedIndex = midi_internal::indexOfIdentifier(m_availableInputDeviceIdentifiers, identifier);
         const QString selectedName = (selectedIndex >= 0 && selectedIndex < m_availableInputDeviceNames.size())
             ? m_availableInputDeviceNames.at(selectedIndex)

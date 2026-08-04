@@ -40,4 +40,44 @@ private:
     std::optional<int> m_lsb;
 };
 
+// Some controllers expose a nominal 14-bit control but occasionally publish
+// only its MSB when a port is opened. Hold that first coarse sample until a
+// matching LSB arrives or actual movement proves the MSB stream is live.
+class MidiUnpairedMsbGate
+{
+public:
+    [[nodiscard]] bool shouldPublish(int value) noexcept
+    {
+        const int clamped = std::clamp(value, 0, 127);
+        if (m_confirmed)
+            return true;
+
+        if (!m_baseline) {
+            m_baseline = clamped;
+            return false;
+        }
+
+        if (*m_baseline == clamped)
+            return false;
+
+        m_confirmed = true;
+        return true;
+    }
+
+    void confirmPair() noexcept
+    {
+        m_confirmed = true;
+    }
+
+    void reset() noexcept
+    {
+        m_baseline.reset();
+        m_confirmed = false;
+    }
+
+private:
+    std::optional<int> m_baseline;
+    bool m_confirmed = false;
+};
+
 } // namespace midi_internal

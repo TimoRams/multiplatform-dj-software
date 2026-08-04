@@ -224,7 +224,9 @@ void MidiControllerManager::onParameterChanged(const QString& id, float value)
     const MidiInteractionType interactionType = midi_internal::defaultInteractionTypeForParam(id);
     if (midi_internal::isRelativeInteraction(interactionType)
         || midi_internal::isButtonInteraction(interactionType)
-        || interactionType == MidiInteractionType::Fader)
+        || interactionType == MidiInteractionType::Fader
+        || (shouldUseFlx10Feedback()
+            && interactionType == MidiInteractionType::EncoderAbsolute))
         return;
 
     const auto it = m_paramToMidi.find(id);

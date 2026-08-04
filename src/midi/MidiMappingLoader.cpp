@@ -159,7 +159,7 @@ void MidiControllerManager::selectMapping(const QString& mappingFileName)
     m_paramToMidi.clear();
     m_momentaryHeldByMsgId.clear();
     m_scratchAbsoluteLastByMsgId.clear();
-    m_14BitAccumulators.clear();
+    resetHighResolutionControlState();
 
     if (!mappingFileName.isEmpty()) {
         if (!loadBrockDjXmlMapping(mappingFileName))
@@ -419,7 +419,10 @@ bool MidiControllerManager::loadBrockDjXmlMapping(const QString& mappingFileName
             || invertedRaw == QStringLiteral("yes");
 
         nextMidiToParam[msgId] = midi_internal::makeMappingEntry(paramId, interactionType);
-        nextParamToMidi[paramId] = msgId;
+        // A high-resolution control has two entries for the same parameter.
+        // Keep the first (MSB) as its display/feedback identity while both
+        // message IDs remain available to the input dispatcher.
+        nextParamToMidi.try_emplace(paramId, msgId);
         if (inverted)
             nextParamInverted[paramId] = true;
     }
@@ -434,7 +437,7 @@ bool MidiControllerManager::loadBrockDjXmlMapping(const QString& mappingFileName
     m_paramInverted = std::move(nextParamInverted);
     m_momentaryHeldByMsgId.clear();
     m_scratchAbsoluteLastByMsgId.clear();
-    m_14BitAccumulators.clear();
+    resetHighResolutionControlState();
     for (const auto& [msgId, entry] : m_midiToParam) {
         if (entry.interactionType == MidiInteractionType::Momentary)
             m_momentaryHeldByMsgId[msgId] = false;

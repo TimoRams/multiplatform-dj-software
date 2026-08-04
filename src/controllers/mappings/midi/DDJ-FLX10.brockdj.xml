@@ -195,23 +195,37 @@
     <Entry paramId="sound_color_fx_noise" status="0x96" control="0x04" type="toggle"/>
     <Entry paramId="sound_color_fx_filter" status="0x96" control="0x05" type="toggle"/>
 
-    <!-- Mixer. 14-bit LSB messages at +0x20 are paired by MidiControllerManager where present. -->
+    <!-- Mixer. The FLX10 sends these controls as 14-bit CC pairs (MSB plus LSB at +0x20). -->
     <Entry paramId="deckA_gain" status="0xB0" control="0x04" type="encoder-absolute"/>
+    <Entry paramId="deckA_gain" status="0xB0" control="0x24" type="encoder-absolute"/>
     <Entry paramId="deckB_gain" status="0xB1" control="0x04" type="encoder-absolute"/>
+    <Entry paramId="deckB_gain" status="0xB1" control="0x24" type="encoder-absolute"/>
     <Entry paramId="deckA_eqHigh" status="0xB0" control="0x07" type="encoder-absolute"/>
+    <Entry paramId="deckA_eqHigh" status="0xB0" control="0x27" type="encoder-absolute"/>
     <Entry paramId="deckB_eqHigh" status="0xB1" control="0x07" type="encoder-absolute"/>
+    <Entry paramId="deckB_eqHigh" status="0xB1" control="0x27" type="encoder-absolute"/>
     <Entry paramId="deckA_eqMid" status="0xB0" control="0x0B" type="encoder-absolute"/>
+    <Entry paramId="deckA_eqMid" status="0xB0" control="0x2B" type="encoder-absolute"/>
     <Entry paramId="deckB_eqMid" status="0xB1" control="0x0B" type="encoder-absolute"/>
+    <Entry paramId="deckB_eqMid" status="0xB1" control="0x2B" type="encoder-absolute"/>
     <Entry paramId="deckA_eqLow" status="0xB0" control="0x0F" type="encoder-absolute"/>
+    <Entry paramId="deckA_eqLow" status="0xB0" control="0x2F" type="encoder-absolute"/>
     <Entry paramId="deckB_eqLow" status="0xB1" control="0x0F" type="encoder-absolute"/>
+    <Entry paramId="deckB_eqLow" status="0xB1" control="0x2F" type="encoder-absolute"/>
     <Entry paramId="deckA_sound_color" status="0xB6" control="0x17" type="encoder-absolute"/>
+    <Entry paramId="deckA_sound_color" status="0xB6" control="0x37" type="encoder-absolute"/>
     <Entry paramId="deckB_sound_color" status="0xB6" control="0x18" type="encoder-absolute"/>
+    <Entry paramId="deckB_sound_color" status="0xB6" control="0x38" type="encoder-absolute"/>
     <Entry paramId="deckA_vol" status="0xB0" control="0x13" type="fader"/>
+    <Entry paramId="deckA_vol" status="0xB0" control="0x33" type="fader"/>
     <Entry paramId="deckB_vol" status="0xB1" control="0x13" type="fader"/>
+    <Entry paramId="deckB_vol" status="0xB1" control="0x33" type="fader"/>
     <Entry paramId="crossfader" status="0xB6" control="0x1F" type="fader"/>
+    <Entry paramId="crossfader" status="0xB6" control="0x3F" type="fader"/>
 
     <!-- Monitoring and library. -->
     <Entry paramId="headphone_mix" status="0xB6" control="0x0C" type="fader"/>
+    <Entry paramId="headphone_mix" status="0xB6" control="0x2C" type="fader"/>
     <Entry paramId="deckA_headphone_cue" status="0x90" control="0x54" type="toggle"/>
     <Entry paramId="deckB_headphone_cue" status="0x91" control="0x54" type="toggle"/>
     <Entry paramId="library_browse" status="0xB6" control="0x40" type="encoder-relative"/>

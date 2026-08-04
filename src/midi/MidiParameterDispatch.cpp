@@ -11,6 +11,18 @@ using namespace midi_internal;
 #include <algorithm>
 #include <cmath>
 
+namespace {
+
+bool isChannelFaderParameter(const QString& paramId)
+{
+    return paramId == QStringLiteral("deckA_vol")
+        || paramId == QStringLiteral("deckB_vol")
+        || paramId == QStringLiteral("deckC_vol")
+        || paramId == QStringLiteral("deckD_vol");
+}
+
+} // namespace
+
 void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool isNoteOff,
                                                     double eventTimestampSeconds)
 {
@@ -159,6 +171,9 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
         const int sub = (msgId >= 10000) ? (msgId - 10000) % 2000 : -1;
         auto dispatchPair = [this](const QString& paramId, int value14)
         {
+            m_pending14BitMsbFallbacks.erase(paramId);
+            if (isChannelFaderParameter(paramId))
+                m_channelFaderMsbGates[paramId].confirmPair();
             float combined = static_cast<float>(value14) / 16383.0f;
             const auto invIt = m_paramInverted.find(paramId);
             if (invIt != m_paramInverted.end() && invIt->second)
@@ -171,7 +186,9 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
             if (msbIt != m_midiToParam.end()) {
                 const QString& paramId = msbIt->second.paramId;
                 auto& accumulator = m_14BitAccumulators[paramId];
-                accumulator.pushMsb(static_cast<int>(std::lround(value * 127.0f)));
+                const int rawMsb = midi_internal::clampMidi7bit(
+                    static_cast<int>(std::lround(value * 127.0f)));
+                accumulator.pushMsb(rawMsb);
                 if (const auto value14 = accumulator.takeValue()) {
                     dispatchPair(paramId, *value14);
                     return;
@@ -181,6 +198,22 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
                 if (lsbIt != m_midiToParam.end()
                     && lsbIt->second.paramId == paramId
                     && !midi_internal::shouldAlwaysDispatch(msbIt->second.interactionType)) {
+                    // A lone startup MSB from an FLX10 mixer port is not a
+                    // trustworthy channel-fader snapshot. A complete pair is
+                    // still accepted above; coarse fallback begins as soon as
+                    // a changed MSB proves that the physical fader moved.
+                    if (isChannelFaderParameter(paramId)
+                        && !m_channelFaderMsbGates[paramId].shouldPublish(rawMsb)) {
+                        return;
+                    }
+
+                    float fallback = static_cast<float>(rawMsb) / 127.0f;
+                    const auto invIt = m_paramInverted.find(paramId);
+                    if (invIt != m_paramInverted.end() && invIt->second)
+                        fallback = 1.0f - fallback;
+                    m_pending14BitMsbFallbacks[paramId] = fallback;
+                    if (!m_14BitFallbackTimer.isActive())
+                        m_14BitFallbackTimer.start();
                     return;
                 }
             }

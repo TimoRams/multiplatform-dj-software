@@ -36,5 +36,20 @@ int main()
     ok &= require(second && *second == ((80 << 7) | 127),
                   "MSB-first controllers remain supported");
 
+    midi_internal::MidiUnpairedMsbGate fallbackGate;
+    ok &= require(!fallbackGate.shouldPublish(0),
+                  "first unpaired startup MSB is held");
+    ok &= require(!fallbackGate.shouldPublish(0),
+                  "repeated startup MSB is not mistaken for movement");
+    ok &= require(fallbackGate.shouldPublish(1),
+                  "a changed MSB enables coarse fallback");
+    ok &= require(fallbackGate.shouldPublish(1),
+                  "coarse fallback stays enabled after movement");
+
+    midi_internal::MidiUnpairedMsbGate pairedGate;
+    pairedGate.confirmPair();
+    ok &= require(pairedGate.shouldPublish(127),
+                  "a coherent 14-bit pair immediately confirms the control");
+
     return ok ? 0 : 1;
 }

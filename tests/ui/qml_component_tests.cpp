@@ -84,6 +84,30 @@ int main()
                   && flx10Mapping.find("paramId=\"deckB_tempo_range_cycle\" status=\"0x91\" control=\"0x60\"")
                       != std::string::npos,
                   "FLX10 shifted Tempo Reset cycles the hardware tempo range");
+    const auto has14BitPair = [&flx10Mapping](const char* paramId,
+                                              const char* status,
+                                              const char* msb,
+                                              const char* lsb) {
+        const std::string prefix = std::string("paramId=\"") + paramId
+            + "\" status=\"" + status + "\" control=\"";
+        return flx10Mapping.find(prefix + msb + "\"") != std::string::npos
+            && flx10Mapping.find(prefix + lsb + "\"") != std::string::npos;
+    };
+    ok &= require(has14BitPair("deckA_gain", "0xB0", "0x04", "0x24")
+                  && has14BitPair("deckB_gain", "0xB1", "0x04", "0x24")
+                  && has14BitPair("deckA_eqHigh", "0xB0", "0x07", "0x27")
+                  && has14BitPair("deckB_eqHigh", "0xB1", "0x07", "0x27")
+                  && has14BitPair("deckA_eqMid", "0xB0", "0x0B", "0x2B")
+                  && has14BitPair("deckB_eqMid", "0xB1", "0x0B", "0x2B")
+                  && has14BitPair("deckA_eqLow", "0xB0", "0x0F", "0x2F")
+                  && has14BitPair("deckB_eqLow", "0xB1", "0x0F", "0x2F")
+                  && has14BitPair("deckA_vol", "0xB0", "0x13", "0x33")
+                  && has14BitPair("deckB_vol", "0xB1", "0x13", "0x33")
+                  && has14BitPair("crossfader", "0xB6", "0x1F", "0x3F")
+                  && has14BitPair("headphone_mix", "0xB6", "0x0C", "0x2C")
+                  && has14BitPair("deckA_sound_color", "0xB6", "0x17", "0x37")
+                  && has14BitPair("deckB_sound_color", "0xB6", "0x18", "0x38"),
+                  "FLX10 mixer faders and knobs map complete coherent 14-bit pairs");
     ok &= require(flx10Mapping.find("paramId=\"beat_fx_channel_deck_a\" status=\"0x94\" control=\"0x10\"")
                       != std::string::npos
                   && flx10Mapping.find("paramId=\"beat_fx_channel_deck_b\" status=\"0x94\" control=\"0x11\"")

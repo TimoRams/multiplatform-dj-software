@@ -748,6 +748,14 @@ target_include_directories(BrockDJ_midi_14bit_accumulator_tests PRIVATE src)
 target_compile_features(BrockDJ_midi_14bit_accumulator_tests PRIVATE cxx_std_23)
 add_test(NAME midi_14bit_accumulator COMMAND BrockDJ_midi_14bit_accumulator_tests)
 
+add_executable(BrockDJ_parameter_store_tests
+    tests/midi/parameter_store_tests.cpp
+    src/midi/ParameterStore.cpp)
+target_include_directories(BrockDJ_parameter_store_tests PRIVATE src)
+target_link_libraries(BrockDJ_parameter_store_tests PRIVATE Qt6::Core)
+target_compile_features(BrockDJ_parameter_store_tests PRIVATE cxx_std_23)
+add_test(NAME parameter_store COMMAND BrockDJ_parameter_store_tests)
+
 add_executable(BrockDJ_flx10_display_protocol_tests
     tests/midi/flx10_display_protocol_tests.cpp)
 target_include_directories(BrockDJ_flx10_display_protocol_tests PRIVATE src)

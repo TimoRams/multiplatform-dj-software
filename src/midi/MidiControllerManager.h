@@ -167,6 +167,7 @@ private:
     flx10::Flx10JogRouter m_jogARouter;
     flx10::Flx10JogRouter m_jogBRouter;
     QTimer m_startupRefreshTimer;
+    QTimer m_14BitFallbackTimer;
     bool m_deckAShiftHeld = false;
     bool m_deckBShiftHeld = false;
     std::array<bool, 2> m_tempoRawInputSeen { false, false };
@@ -235,12 +236,16 @@ private:
     QString m_learnParameterId;
     // 14-bit CC accumulation accepts both MSB-first and FLX10 LSB-first delivery.
     std::map<QString, midi_internal::Midi14BitAccumulator> m_14BitAccumulators;
+    std::map<QString, midi_internal::MidiUnpairedMsbGate> m_channelFaderMsbGates;
+    std::map<QString, float> m_pending14BitMsbFallbacks;
     QMetaObject::Connection m_deckActionsConnection;
 
     // Live MIDI monitor
     QString m_lastMidiEvent;
     bool m_midiTraceEnabled = false;
     double m_nextMidiMonitorUpdateSeconds = 0.0;
+    double m_nextControllerConnectionCheckSeconds = 0.0;
+    double m_nextControllerFeedbackResyncSeconds = 0.0;
 
     struct PendingMidiEvent {
         int msgId = -1;
@@ -261,6 +266,8 @@ private:
     std::vector<std::unique_ptr<QProcess>> m_alsaInputMonitors;
     std::unique_ptr<AlsaMidiOutput> m_alsaMidiOutput;
     std::map<QProcess*, QString> m_alsaMonitorBuffers;
+    std::map<QString, int> m_alsaFaderSourceLogCounts;
+    QString m_primaryAlsaInputPort;
 #endif
 
     void refreshMidiDeviceCache();
@@ -280,9 +287,12 @@ private:
                              double eventTimestampSeconds);
     bool dispatchFlx10JogAction(const QString& paramId, float value,
                                 double eventTimestampSeconds);
+    void resetHighResolutionControlState();
     void learnMapping(int msgId);
     void restoreSavedDeviceSelections();
     bool autoOpenFlx10MidiOutputIfNeeded();
+    void runControllerHousekeeping(double monotonicSeconds);
+    void forceFlx10FeedbackResync();
     void openMidiInputByIdentifier(const juce::String& identifier);
     void openMidiOutputByIdentifier(const juce::String& identifier);
     int findMatchingMidiOutputIndexForInput(int inputIndex) const;

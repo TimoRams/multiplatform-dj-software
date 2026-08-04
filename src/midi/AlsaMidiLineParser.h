@@ -15,6 +15,30 @@ struct AlsaControlChange
     int value = 0;
 };
 
+inline bool shouldAcceptAlsaChannelFaderSource(const QString& sourcePort,
+                                               const QString& primaryPort,
+                                               int control)
+{
+    const bool isChannelFaderByte = control == 0x13 || control == 0x33;
+    return !isChannelFaderByte || primaryPort.isEmpty() || sourcePort == primaryPort;
+}
+
+template <typename Mapping>
+int resolveMappedAlsaMessageId(int channelAwareMsgId,
+                               int legacyMsgId,
+                               const Mapping& mapping)
+{
+    // parseAlsaControlChange normalizes every recognized format to a zero-based
+    // MIDI channel. Applying another one-based fallback here aliases an
+    // unmapped channel 3 event onto channel 2 (for example Deck C's zero fader
+    // snapshot onto deckB_vol).
+    if (mapping.count(channelAwareMsgId))
+        return channelAwareMsgId;
+    if (mapping.count(legacyMsgId))
+        return legacyMsgId;
+    return channelAwareMsgId;
+}
+
 inline AlsaControlChange parseAlsaControlChange(const QString& line)
 {
     static const QRegularExpression standardRx(

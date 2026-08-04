@@ -28,6 +28,16 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, ControlClock
                 this, &MidiControllerManager::onParameterChanged);
     }
 
+    m_14BitFallbackTimer.setSingleShot(true);
+    m_14BitFallbackTimer.setInterval(4);
+    connect(&m_14BitFallbackTimer, &QTimer::timeout, this, [this]
+    {
+        auto pending = std::move(m_pending14BitMsbFallbacks);
+        m_pending14BitMsbFallbacks.clear();
+        for (const auto& [paramId, value] : pending)
+            dispatchToStore(paramId, value, ParameterStoreDispatch::Standard);
+    });
+
     m_midiDeviceListConnection = juce::MidiDeviceListConnection::make([this]
     {
         QMetaObject::invokeMethod(this, [this]()
@@ -47,6 +57,9 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, ControlClock
     ControlClock::Callbacks clockCallbacks;
     clockCallbacks.feedback = [this](const ControlTickContext&) {
         m_midiFeedback.onControlClockFeedbackTick();
+    };
+    clockCallbacks.housekeeping = [this](const ControlTickContext& context) {
+        runControllerHousekeeping(context.monotonicSeconds);
     };
     m_controlClockRegistration = controlClock.registerCallbacks(std::move(clockCallbacks));
 
@@ -96,6 +109,9 @@ void MidiControllerManager::shutdown()
     QCoreApplication::removePostedEvents(&m_midiFeedback);
 
     QObject::disconnect(&m_startupRefreshTimer, nullptr, this, nullptr);
+    m_14BitFallbackTimer.stop();
+    QObject::disconnect(&m_14BitFallbackTimer, nullptr, this, nullptr);
+    resetHighResolutionControlState();
 
     if (m_deckActionsConnection)
         QObject::disconnect(m_deckActionsConnection);
@@ -151,4 +167,62 @@ void MidiControllerManager::refreshMidiAndMappings()
     emit midiDevicesUpdated();
     emit controllerListUpdated();
     emit mappingListUpdated();
+}
+
+void MidiControllerManager::resetHighResolutionControlState()
+{
+    m_14BitFallbackTimer.stop();
+    m_pending14BitMsbFallbacks.clear();
+    m_14BitAccumulators.clear();
+    m_channelFaderMsbGates.clear();
+}
+
+void MidiControllerManager::runControllerHousekeeping(double monotonicSeconds)
+{
+    if (m_shutdownComplete.load(std::memory_order_acquire))
+        return;
+
+    if (monotonicSeconds >= m_nextControllerConnectionCheckSeconds) {
+        m_nextControllerConnectionCheckSeconds = monotonicSeconds + 2.0;
+
+        const bool inputOpen = hasActiveMidiInput();
+        const bool outputOpen =
+            (m_midiOutput != nullptr)
+#if defined(Q_OS_LINUX)
+            || (m_alsaMidiOutput && m_alsaMidiOutput->isOpen())
+#endif
+            ;
+
+        if (!inputOpen || !outputOpen) {
+            refreshMidiAndMappings();
+            if (!hasActiveMidiInput())
+                restoreSavedDeviceSelections();
+            else if (!outputOpen)
+                autoOpenFlx10MidiOutputIfNeeded();
+        }
+    }
+
+    if (monotonicSeconds >= m_nextControllerFeedbackResyncSeconds) {
+        m_nextControllerFeedbackResyncSeconds = monotonicSeconds + 5.0;
+        forceFlx10FeedbackResync();
+    }
+}
+
+void MidiControllerManager::forceFlx10FeedbackResync()
+{
+    const bool outputOpen =
+        (m_midiOutput != nullptr)
+#if defined(Q_OS_LINUX)
+        || (m_alsaMidiOutput && m_alsaMidiOutput->isOpen())
+#endif
+        ;
+    if (!outputOpen || !shouldUseFlx10Feedback())
+        return;
+
+    // FLX10 has no documented request for passive analog positions. Re-send
+    // all software-owned LED/button state instead, while analog state remains
+    // synchronized from coherent incoming 14-bit pairs in ParameterStore.
+    m_lastMidiShortValues.clear();
+    m_midiFeedback.refreshAll();
+    refreshAllDeckLeds();
 }
