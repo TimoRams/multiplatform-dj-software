@@ -34,13 +34,6 @@ void VirtualTurntable::addTimeDeltaSeconds(double deltaSeconds) noexcept
     m_displayAngleRad += (deltaSeconds * kNominalRpm / 60.0) * 2.0 * kPi;
 }
 
-void VirtualTurntable::addJogTicks(double ticks) noexcept
-{
-    if (ticks == 0.0 || m_samplesPerTick <= 0.0)
-        return;
-    addTargetSampleDelta(ticks * m_samplesPerTick);
-}
-
 void VirtualTurntable::setAbsoluteSamplePosition(double samplePos) noexcept
 {
     m_targetSamplePos.store(samplePos, std::memory_order_relaxed);

@@ -30,6 +30,7 @@ constexpr int kMaxWaveformEntries = 0x7FF00;
 // below saturation while both decks are uploading analysis data.
 constexpr int kUploadWindowsPerTick = 1;
 constexpr int kUploadTickIntervalMs = 10;
+constexpr int kKeepAliveIntervalMs = 250;
 constexpr std::size_t kHidWriteQueueCapacity = 1024;
 constexpr int kHidTransferTimeoutMs = 250;
 constexpr int kHidTransientRetries = 3;

@@ -116,6 +116,7 @@ private:
 #endif
     ControlClock::Registration m_clockRegistration;
     QTimer m_uploadTimer;
+    QTimer m_keepAliveTimer;
     int m_displayTicksUntilWaveform = 1;
     bool m_keepAliveEnabled = false;
     std::array<QByteArray, 5> m_waveforms;

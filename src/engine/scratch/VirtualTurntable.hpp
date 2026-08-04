@@ -27,10 +27,6 @@ public:
     // Waveform / linear UI in seconds.
     void addTimeDeltaSeconds(double deltaSeconds) noexcept;
 
-    // MIDI/HID jog ticks.
-    void setSamplesPerTick(double samplesPerTick) noexcept { m_samplesPerTick = samplesPerTick; }
-    void addJogTicks(double ticks) noexcept;
-
     void setAbsoluteSamplePosition(double samplePos) noexcept;
     void setAbsoluteTimeSeconds(double seconds) noexcept;
 
@@ -55,7 +51,6 @@ public:
 private:
     std::atomic<double> m_targetSamplePos { 0.0 };
     double m_trackSampleRate = 44100.0;
-    double m_samplesPerTick = 0.0;
     double m_displayAngleRad = 0.0;
 };
 

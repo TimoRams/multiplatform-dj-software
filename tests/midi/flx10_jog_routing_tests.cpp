@@ -17,6 +17,11 @@ bool near(double actual, double expected, double tolerance = 1.0e-9)
     return std::abs(actual - expected) <= tolerance;
 }
 
+double ticksForRate(double rate, double elapsedSeconds)
+{
+    return rate * elapsedSeconds / flx10::scratchDeltaSeconds(1.0);
+}
+
 flx10::JogRouteResult route(flx10::Flx10JogRouter& router,
                             flx10::JogEventType type,
                             double timestampSeconds,
@@ -41,6 +46,16 @@ bool testRelativeTickDecoding()
     return ok;
 }
 
+bool testPhysicalRevolutionCalibration()
+{
+    constexpr double vinylRevolutionSeconds = 60.0 / flx10::kVinylRpm;
+    return require(near(
+                       flx10::scratchDeltaSeconds(
+                           flx10::kScratchIntervalsPerRevolution),
+                       vinylRevolutionSeconds),
+                   "one measured FLX10 revolution maps to one virtual revolution");
+}
+
 bool testTimestampedSpeedMeasurement()
 {
     using enum flx10::JogEventType;
@@ -52,7 +67,10 @@ bool testTimestampedSpeedMeasurement()
         double ticks;
     };
 
-    for (const Case test : {Case {0.001, 1.0}, Case {0.002, 2.0}, Case {0.004, 4.0}}) {
+    for (const Case test : {
+             Case {0.001, ticksForRate(1.2, 0.001)},
+             Case {0.002, ticksForRate(1.2, 0.002)},
+             Case {0.004, ticksForRate(1.2, 0.004)}}) {
         flx10::Flx10JogRouter router;
         ok &= require(route(router, TouchDown, 10.0).action == BeginScratch,
                       "touch-down begins scratch tracking");
@@ -70,9 +88,10 @@ bool testTimestampedSpeedMeasurement()
 
     flx10::Flx10JogRouter batched;
     route(batched, TouchDown, 20.0);
-    route(batched, Platter, 20.001, 1.0);
-    route(batched, Platter, 20.002, 1.0);
-    const auto batchedTail = route(batched, Platter, 20.004, 2.0);
+    route(batched, Platter, 20.001, ticksForRate(1.2, 0.001));
+    route(batched, Platter, 20.002, ticksForRate(1.2, 0.001));
+    const auto batchedTail = route(batched, Platter, 20.004,
+                                   ticksForRate(1.2, 0.002));
     ok &= require(near(batchedTail.estimatedRate, 1.2),
                   "batched delivery retains each event's original timestamp");
     ok &= require(near(batchedTail.eventIntervalSeconds, 0.002),
@@ -85,15 +104,19 @@ bool testTimestampedSpeedMeasurement()
 
     flx10::Flx10JogRouter delayedStart;
     route(delayedStart, TouchDown, 30.0);
-    ok &= require(near(route(delayedStart, Platter, 30.100, 1.0).estimatedRate, 0.0),
+    const double oneMillisecondTicks = ticksForRate(1.2, 0.001);
+    ok &= require(near(route(delayedStart, Platter, 30.100,
+                             oneMillisecondTicks).estimatedRate, 0.0),
                   "a first tick after a long touch hold starts a fresh speed window");
-    ok &= require(near(route(delayedStart, Platter, 30.101, 1.0).estimatedRate, 1.2),
+    ok &= require(near(route(delayedStart, Platter, 30.101,
+                             oneMillisecondTicks).estimatedRate, 1.2),
                   "the second tick after a long hold measures only recent motion");
 
     flx10::JogSpeedEstimator estimator;
     estimator.reset(30.0);
     for (int i = 1; i <= 80; ++i)
-        estimator.push(1.0, 30.0 + static_cast<double>(i) * 0.001);
+        estimator.push(oneMillisecondTicks,
+                       30.0 + static_cast<double>(i) * 0.001);
     ok &= require(estimator.sampleCount() <= flx10::JogSpeedEstimator::kCapacity,
                   "speed history never exceeds its fixed 32-sample capacity");
     ok &= require(estimator.sampleCount() <= 32,
@@ -102,9 +125,9 @@ bool testTimestampedSpeedMeasurement()
                   "the rolling 32 ms speed window remains accurate");
     ok &= require(estimator.rate(30.141) == 0.0,
                   "a speed estimate is stale after 60 ms without motion");
-    ok &= require(estimator.push(1.0, 30.200) == 0.0,
+    ok &= require(estimator.push(oneMillisecondTicks, 30.200) == 0.0,
                   "the first tick after stale history starts a new window");
-    ok &= require(near(estimator.push(1.0, 30.201), 1.2),
+    ok &= require(near(estimator.push(oneMillisecondTicks, 30.201), 1.2),
                   "motion after stale history is measured from recent ticks only");
 
     return ok;
@@ -170,7 +193,8 @@ bool testSlowReleaseTailSuppression()
     flx10::Flx10JogRouter router;
 
     route(router, TouchDown, 4.0);
-    const auto slowMotion = route(router, Platter, 4.004, 1.0);
+    const auto slowMotion = route(router, Platter, 4.004,
+                                  ticksForRate(0.3, 0.004));
     ok &= require(near(slowMotion.estimatedRate, 0.3),
                   "a genuinely slow four-millisecond tick is not promoted above deck rate");
     ok &= require(route(router, TouchUp, 4.005).action == RequestRelease,
@@ -204,10 +228,12 @@ bool testDuplicateTouchAndRegrab()
 
     ok &= require(route(router, TouchDown, 6.0).action == BeginScratch,
                   "first touch-down begins scratch");
-    route(router, Platter, 6.001, 1.0);
+    const double oneMillisecondTicks = ticksForRate(1.2, 0.001);
+    route(router, Platter, 6.001, oneMillisecondTicks);
     ok &= require(route(router, TouchDown, 6.0015).action == Ignore,
                   "duplicate touch-down is idempotent");
-    const auto afterDuplicate = route(router, Platter, 6.002, 1.0);
+    const auto afterDuplicate = route(router, Platter, 6.002,
+                                      oneMillisecondTicks);
     ok &= require(near(afterDuplicate.estimatedRate, 1.2),
                   "duplicate touch-down does not reset the speed history");
 
@@ -221,7 +247,8 @@ bool testDuplicateTouchAndRegrab()
     ok &= require(regrab.action == BeginScratch
                       && regrab.phase == TouchTracking,
                   "touch-down during release immediately transfers ownership to a new grab");
-    const auto regrabMotion = route(router, Platter, 6.005, -1.0);
+    const auto regrabMotion = route(router, Platter, 6.005,
+                                    -oneMillisecondTicks);
     ok &= require(near(regrabMotion.estimatedRate, -1.2),
                   "regrab starts a fresh signed speed history at the current timestamp");
 
@@ -258,6 +285,7 @@ int main()
 {
     bool ok = true;
     ok &= testRelativeTickDecoding();
+    ok &= testPhysicalRevolutionCalibration();
     ok &= testTimestampedSpeedMeasurement();
     ok &= testReleaseRoutingAndCompletion();
     ok &= testSlowReleaseTailSuppression();
