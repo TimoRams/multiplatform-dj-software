@@ -114,6 +114,11 @@ public:
     Q_INVOKABLE void sendFlx10HotcuePaletteTest();
     Q_INVOKABLE void testFlx10LedOutput();
     Q_INVOKABLE void selectPerformancePadMode(const QString& deckId, int mode);
+    Q_INVOKABLE void setPerformancePadPressed(const QString& deckId, int padIndex, bool pressed);
+    Q_INVOKABLE void clearPerformancePad(const QString& deckId, int padIndex);
+    Q_INVOKABLE bool consumePerformancePadPlayLatch(const QString& deckId);
+    Q_INVOKABLE int performancePadFxMomentary(const QString& deckId) const;
+    Q_INVOKABLE int performancePadFxToggle(const QString& deckId) const;
 
     Q_INVOKABLE bool isMappingInverted(const QString& paramId) const;
     Q_INVOKABLE void setMappingInverted(const QString& paramId, bool inverted);
@@ -139,6 +144,7 @@ signals:
     void lastMidiEventChanged();
     void deckAPadModeChanged();
     void deckBPadModeChanged();
+    void performancePadStateChanged(const QString& deckId);
     void beatFxActiveChanged();
     void libraryViewToggleRequested();
 

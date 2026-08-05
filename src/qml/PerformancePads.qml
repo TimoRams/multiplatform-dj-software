@@ -10,8 +10,6 @@ Item {
     property string deckId: "deckA"
     property string accentColor: "#ff9900"
     property int activeTab: 0
-    // Standalone/AIO surface: hot-cue mode and its pads are the only controls
-    // retained on the primary display.
     property bool hotCueOnly: false
     property bool compact: false
 
@@ -22,9 +20,12 @@ Item {
     property bool hotCueHoldReturnOnRelease: false
 
     readonly property var tabs: hotCueOnly ? ["HOT CUE"] : ["HOT CUE", "PAD FX", "BEATJUMP", "SAMPLER"]
-    readonly property real tabBarHeight: 25
-    readonly property real padsContentHeight: Math.max(0, (root.height - (hotCueOnly ? 0 : tabBarHeight + 1)) * (2 / 3))
+    readonly property real tabBarHeight: 28
+    readonly property real padsContentHeight: Math.max(0, root.height - tabBarHeight - 1)
     readonly property var beatJumpPads: [-16, -8, -4, -2, 2, 4, 8, 16]
+    readonly property bool usesSharedPadRouter:
+        (deckId === "deckA" || deckId === "deckB")
+        && typeof midiManager !== "undefined" && midiManager
 
     property int colorTargetIndex: -1
 
@@ -45,7 +46,25 @@ Item {
             root.activeTab = nextMode
     }
 
-    Component.onCompleted: syncMidiPadMode()
+    function syncSharedPadState() {
+        if (!root.usesSharedPadRouter)
+            return
+        root.padFxMomentaryHeld = midiManager.performancePadFxMomentary(root.deckId)
+        root.padFxActiveToggle = midiManager.performancePadFxToggle(root.deckId)
+    }
+
+    function selectPadPage(index) {
+        if (index < 0 || index >= root.tabs.length)
+            return
+        root.activeTab = index
+        if (root.usesSharedPadRouter)
+            midiManager.selectPerformancePadMode(root.deckId, index)
+    }
+
+    Component.onCompleted: {
+        syncMidiPadMode()
+        syncSharedPadState()
+    }
 
     Connections {
         target: (typeof midiManager !== "undefined" && midiManager) ? midiManager : null
@@ -54,6 +73,9 @@ Item {
         }
         function onDeckBPadModeChanged() {
             if (root.deckId === "deckB") root.syncMidiPadMode()
+        }
+        function onPerformancePadStateChanged(changedDeckId) {
+            if (changedDeckId === root.deckId) root.syncSharedPadState()
         }
     }
 
@@ -79,7 +101,12 @@ Item {
         }
     }
 
-    onActiveTabChanged: padFxClearAll()
+    onActiveTabChanged: {
+        if (root.usesSharedPadRouter)
+            root.syncSharedPadState()
+        else
+            root.padFxClearAll()
+    }
     onHotCueOnlyChanged: {
         if (hotCueOnly)
             activeTab = 0
@@ -167,6 +194,8 @@ Item {
     }
 
     function consumeHotCueHoldPlayLatch() {
+        if (root.usesSharedPadRouter)
+            return midiManager.consumePerformancePadPlayLatch(root.deckId)
         if (root.hotCueHoldPressedIndex < 0 || !root.hotCueHoldReturnOnRelease)
             return false
         root.hotCueHoldReturnOnRelease = false
@@ -206,6 +235,122 @@ Item {
         root.engine.setPosition(nextPos / duration)
     }
 
+    function beginPadPress(index) {
+        if (!root.engine || index < 0 || index >= 8)
+            return
+
+        if (root.usesSharedPadRouter) {
+            midiManager.setPerformancePadPressed(root.deckId, index, true)
+            root.syncSharedPadState()
+            return
+        }
+
+        const isCuePlaybackPage = root.activeTab === 0 || root.activeTab === 3
+        const kind = root.padKind(index)
+        const padSet = isCuePlaybackPage && kind !== "empty"
+        if (isCuePlaybackPage) {
+            root.hotCueHoldPressedIndex = index
+            root.hotCueHoldWasPlaying = root.engine.isPlaying
+            root.hotCueHoldHadCue = padSet
+            if (padSet) {
+                root.hotCueHoldCuePosition = kind === "loop"
+                    ? root.savedLoopAt(index).inSec
+                    : root.hotCueAt(index).positionSec
+                root.hotCueHoldReturnOnRelease = !root.hotCueHoldWasPlaying
+                root.engine.triggerCuePad(index)
+                if (!root.hotCueHoldWasPlaying) root.engine.play()
+            } else if (root.activeTab === 0) {
+                root.hotCueHoldReturnOnRelease = false
+                root.engine.storeCuePad(index)
+            } else {
+                root.clearHotCueHoldState()
+            }
+            return
+        }
+
+        if (root.activeTab === 1 && index < 4) {
+            root.padFxMomentaryHeld = index
+            root.padFxApply(index)
+            return
+        }
+
+        if (root.activeTab === 1) {
+            if (root.padFxActiveToggle === index) {
+                root.padFxActiveToggle = -1
+                root.padFxDeactivate(index)
+            } else {
+                if (root.padFxActiveToggle >= 0)
+                    root.padFxDeactivate(root.padFxActiveToggle)
+                root.padFxActiveToggle = index
+                root.padFxApply(index)
+            }
+            return
+        }
+
+        if (root.activeTab === 2)
+            root.doBeatJump(root.beatJumpPads[index])
+    }
+
+    function endPadPress(index) {
+        if (index < 0 || index >= 8)
+            return
+        if (root.usesSharedPadRouter) {
+            midiManager.setPerformancePadPressed(root.deckId, index, false)
+            root.syncSharedPadState()
+            return
+        }
+
+        if (root.activeTab === 0 || root.activeTab === 3) {
+            if (root.hotCueHoldPressedIndex !== index)
+                return
+            if (root.hotCueHoldReturnOnRelease && root.engine) {
+                root.engine.pause()
+                const trackLen = root.engine.getDuration()
+                if (trackLen && trackLen > 0) {
+                    const normalizedPos = root.hotCueHoldCuePosition / trackLen
+                    root.engine.setPosition(Math.max(0, Math.min(1.0, normalizedPos)))
+                }
+            }
+            root.clearHotCueHoldState()
+            return
+        }
+
+        if (root.padFxMomentaryHeld === index) {
+            root.padFxMomentaryHeld = -1
+            if (root.engine) root.padFxRelease(index)
+        }
+    }
+
+    function clearPad(index) {
+        if (!root.engine || index < 0 || index >= 8)
+            return
+        if (root.usesSharedPadRouter)
+            midiManager.clearPerformancePad(root.deckId, index)
+        else
+            root.engine.clearCuePad(index)
+    }
+
+    function openPadEditor(index, item, x, y) {
+        if (!root.engine || root.activeTab !== 0)
+            return
+        root.colorTargetIndex = index
+        const p = item.mapToItem(root, x, y)
+        colorPopup.x = Math.max(0, Math.min(root.width - colorPopup.width,
+                                            p.x - colorPopup.width * 0.5))
+        colorPopup.y = Math.max(0, Math.min(root.height - colorPopup.height,
+                                            p.y - colorPopup.height * 0.5))
+        colorPopup.open()
+    }
+
+    function applyPadColor(color) {
+        if (root.colorTargetIndex >= 0 && root.engine) {
+            const cue = root.hotCueAt(root.colorTargetIndex)
+            if (!cue || !cue.set) root.engine.storeHotCue(root.colorTargetIndex)
+            root.engine.setHotCueColor(root.colorTargetIndex, color)
+        }
+        colorPopup.close()
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
@@ -213,9 +358,9 @@ Item {
         RowLayout {
             visible: true
             Layout.fillWidth: true
-            Layout.preferredHeight: 26
-            Layout.minimumHeight: 26
-            Layout.maximumHeight: 26
+            Layout.preferredHeight: root.tabBarHeight
+            Layout.minimumHeight: root.tabBarHeight
+            Layout.maximumHeight: root.tabBarHeight
             spacing: 2
 
             Repeater {
@@ -251,12 +396,13 @@ Item {
                     MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            root.activeTab = index
-                            if ((root.deckId === "deckA" || root.deckId === "deckB")
-                                    && typeof midiManager !== "undefined" && midiManager)
-                                midiManager.selectPerformancePadMode(root.deckId, index)
-                        }
+                        onClicked: root.selectPadPage(index)
+                    }
+
+                    TapHandler {
+                        acceptedDevices: PointerDevice.TouchScreen | PointerDevice.Stylus
+                        gesturePolicy: TapHandler.WithinBounds
+                        onTapped: root.selectPadPage(index)
                     }
                 }
             }
@@ -324,7 +470,7 @@ Item {
                         }
 
                         radius: 0
-                        color: padMouse.pressed
+                        color: padMouse.pressed || padTouch.pressed
                                ? Qt.lighter(activeColor, 1.12)
                                : padMouse.containsMouse
                                  ? Qt.lighter(activeColor, 1.06)
@@ -394,116 +540,49 @@ Item {
                             acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
 
                             onPressed: (mouse) => {
-                                if (!root.engine) return
-
-                                if (mouse.button === Qt.LeftButton && isCuePlaybackTab) {
-                                    root.hotCueHoldPressedIndex = index
-                                    root.hotCueHoldWasPlaying = root.engine.isPlaying
-                                    root.hotCueHoldHadCue = padSet
-                                    if (padSet) {
-                                        if (kind === "loop")
-                                            root.hotCueHoldCuePosition = root.savedLoopAt(index).inSec
-                                        else
-                                            root.hotCueHoldCuePosition = root.hotCueAt(index).positionSec
-                                        root.hotCueHoldReturnOnRelease = !root.hotCueHoldWasPlaying
-                                        root.engine.triggerCuePad(index)
-                                        if (!root.hotCueHoldWasPlaying) root.engine.play()
-                                    } else if (isHotCueTab) {
-                                        root.hotCueHoldReturnOnRelease = false
-                                        root.engine.storeCuePad(index)
-                                    } else {
-                                        root.clearHotCueHoldState()
-                                    }
-                                    return
-                                }
-
-                                if (mouse.button === Qt.LeftButton && isPadFxMomentary) {
-                                    root.padFxMomentaryHeld = index
-                                    root.padFxApply(index)
-                                }
+                                if (mouse.button === Qt.LeftButton)
+                                    root.beginPadPress(index)
                             }
 
                             onReleased: (mouse) => {
-                                if (!root.engine) return
-
-                                if (isCuePlaybackTab) {
-                                    if (root.hotCueHoldPressedIndex !== index) return
-                                    if (root.hotCueHoldReturnOnRelease) {
-                                        root.engine.pause()
-                                        var trackLen = root.engine.getDuration()
-                                        if (trackLen && trackLen > 0) {
-                                            var normalizedPos = root.hotCueHoldCuePosition / trackLen
-                                            root.engine.setPosition(Math.max(0, Math.min(1.0, normalizedPos)))
-                                        }
-                                    }
-                                    root.clearHotCueHoldState()
-                                    return
-                                }
-
-                                if (root.padFxMomentaryHeld === index) {
-                                    root.padFxMomentaryHeld = -1
-                                    root.padFxRelease(index)
-                                }
+                                if (mouse.button === Qt.LeftButton)
+                                    root.endPadPress(index)
                             }
 
-                            onCanceled: {
-                                if (root.hotCueHoldPressedIndex === index) {
-                                    if (root.hotCueHoldReturnOnRelease && root.engine) {
-                                        root.engine.pause()
-                                        var trackLen = root.engine.getDuration()
-                                        if (trackLen && trackLen > 0) {
-                                            var normalizedPos = root.hotCueHoldCuePosition / trackLen
-                                            root.engine.setPosition(Math.max(0, Math.min(1.0, normalizedPos)))
-                                        }
-                                    }
-                                    root.clearHotCueHoldState()
-                                }
-                                if (root.padFxMomentaryHeld === index) {
-                                    root.padFxMomentaryHeld = -1
-                                    if (root.engine) root.padFxRelease(index)
-                                }
-                            }
+                            onCanceled: root.endPadPress(index)
 
                             onClicked: (mouse) => {
                                 if (!root.engine) return
 
-                                if (isBeatJumpTab) {
-                                    if (mouse.button === Qt.LeftButton) root.doBeatJump(root.beatJumpPads[index])
-                                    return
-                                }
-
-                                if (isPadFxToggle && mouse.button === Qt.LeftButton) {
-                                    if (root.padFxActiveToggle === index) {
-                                        root.padFxActiveToggle = -1
-                                        root.padFxDeactivate(index)
-                                    } else {
-                                        if (root.padFxActiveToggle >= 0)
-                                            root.padFxDeactivate(root.padFxActiveToggle)
-                                        root.padFxActiveToggle = index
-                                        root.padFxApply(index)
-                                    }
-                                    return
-                                }
-
                                 if (!isHotCueTab) return
 
                                 if (mouse.button === Qt.MiddleButton) {
-                                    root.engine.clearCuePad(index)
+                                    root.clearPad(index)
                                     return
                                 }
 
                                 if (mouse.button === Qt.RightButton) {
                                     if (kind === "loop") {
-                                        root.engine.clearCuePad(index)
+                                        root.clearPad(index)
                                         return
                                     }
-                                    root.colorTargetIndex = index
-                                    var p = padMouse.mapToItem(root, mouse.x, mouse.y)
-                                    colorPopup.x = Math.max(0, Math.min(root.width - colorPopup.width, p.x - colorPopup.width / 2))
-                                    colorPopup.y = Math.max(0, Math.min(root.height - colorPopup.height, p.y - colorPopup.height / 2))
-                                    colorPopup.open()
+                                    root.openPadEditor(index, padMouse, mouse.x, mouse.y)
                                 }
                             }
+                        }
+
+                        TapHandler {
+                            id: padTouch
+                            acceptedDevices: PointerDevice.TouchScreen | PointerDevice.Stylus
+                            gesturePolicy: TapHandler.WithinBounds
+                            onPressedChanged: {
+                                if (pressed)
+                                    root.beginPadPress(index)
+                                else
+                                    root.endPadPress(index)
+                            }
+                            onLongPressed: root.openPadEditor(
+                                index, padRect, point.position.x, point.position.y)
                         }
 
                         Behavior on color { ColorAnimation { duration: 80 } }
@@ -530,7 +609,7 @@ Item {
 
     Popup {
         id: colorPopup
-        width: 132; height: 132
+        width: 132; height: 164
         modal: false; focus: true
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         padding: 6
@@ -539,27 +618,66 @@ Item {
             color: UiTheme.panelRaised; border.color: UiTheme.separator; border.width: 1; radius: 0
         }
 
-        GridLayout {
+        ColumnLayout {
             anchors.fill: parent
-            columns: 4; rowSpacing: 4; columnSpacing: 4
+            spacing: 5
 
-            Repeater {
-                model: root.palette16
-                Rectangle {
-                    required property var modelData
-                    Layout.preferredWidth: 26; Layout.preferredHeight: 26
-                    radius: 0; color: modelData
+            GridLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                columns: 4
+                rowSpacing: 4
+                columnSpacing: 4
 
-                    MouseArea {
-                        anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            if (root.colorTargetIndex >= 0 && root.engine) {
-                                var cue = root.hotCueAt(root.colorTargetIndex)
-                                if (!cue || !cue.set) root.engine.storeHotCue(root.colorTargetIndex)
-                                root.engine.setHotCueColor(root.colorTargetIndex, modelData)
-                            }
-                            colorPopup.close()
+                Repeater {
+                    model: root.palette16
+                    Rectangle {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        radius: 0
+                        color: modelData
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.applyPadColor(modelData)
                         }
+                        TapHandler {
+                            acceptedDevices: PointerDevice.TouchScreen | PointerDevice.Stylus
+                            onTapped: root.applyPadColor(modelData)
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 26
+                color: "#3b2020"
+                border.color: "#a84a4a"
+                border.width: 1
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "CLEAR"
+                    color: "#ffd4d4"
+                    font.pixelSize: 9
+                    font.bold: true
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        root.clearPad(root.colorTargetIndex)
+                        colorPopup.close()
+                    }
+                }
+                TapHandler {
+                    acceptedDevices: PointerDevice.TouchScreen | PointerDevice.Stylus
+                    onTapped: {
+                        root.clearPad(root.colorTargetIndex)
+                        colorPopup.close()
                     }
                 }
             }

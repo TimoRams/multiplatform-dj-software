@@ -32,6 +32,7 @@ int main()
     const auto performancePads = read("src/qml/PerformancePads.qml");
     const auto flx10Mapping = read("src/controllers/mappings/midi/DDJ-FLX10.brockdj.xml");
     const auto engineHeader = read("src/engine/DjEngine.h");
+    const auto midiManagerHeader = read("src/midi/MidiControllerManager.h");
     ok &= require(std::count(main.begin(), main.end(), '\n') < 600, "main.qml remains a compact shell");
     ok &= require(main.find("PerformanceWorkspace") != std::string::npos, "shell routes to performance workspace");
     ok &= require(workspace.find("DeckControl") != std::string::npos, "workspace uses shared deck component");
@@ -51,6 +52,14 @@ int main()
                   && performancePads.find("selectPerformancePadMode(root.deckId, index)")
                       != std::string::npos,
                   "performance pad tabs and FLX10 mode state stay synchronized");
+    ok &= require(performancePads.find("PointerDevice.TouchScreen") != std::string::npos
+                  && performancePads.find("root.beginPadPress(index)") != std::string::npos
+                  && performancePads.find("root.endPadPress(index)") != std::string::npos,
+                  "performance pad pages and hold actions accept native touch input");
+    ok &= require(midiManagerHeader.find("setPerformancePadPressed") != std::string::npos
+                  && midiManagerHeader.find("consumePerformancePadPlayLatch") != std::string::npos
+                  && midiManagerHeader.find("performancePadStateChanged") != std::string::npos,
+                  "touch and FLX10 pads share one controller state path");
     ok &= require(main.find("onLibraryViewToggleRequested") != std::string::npos,
                   "FLX10 View action toggles the visible library surface");
     ok &= require(flx10Mapping.find("paramId=\"deckA_slip_reverse\" status=\"0x90\" control=\"0x15\"")

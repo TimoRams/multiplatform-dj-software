@@ -89,6 +89,26 @@ CuePadInfo cuePadInfo(DjEngine* engine, int padIndex)
     return info;
 }
 
+bool parsePerformanceDeckId(const QString& deckId, QChar& deck)
+{
+    if (deckId.compare(QStringLiteral("deckA"), Qt::CaseInsensitive) == 0
+        || deckId.compare(QStringLiteral("A"), Qt::CaseInsensitive) == 0) {
+        deck = QLatin1Char('A');
+        return true;
+    }
+    if (deckId.compare(QStringLiteral("deckB"), Qt::CaseInsensitive) == 0
+        || deckId.compare(QStringLiteral("B"), Qt::CaseInsensitive) == 0) {
+        deck = QLatin1Char('B');
+        return true;
+    }
+    return false;
+}
+
+QString performanceDeckId(QChar deck)
+{
+    return deck == QLatin1Char('B') ? QStringLiteral("deckB") : QStringLiteral("deckA");
+}
+
 void cycleFlx10TempoRange(DjEngine* engine)
 {
     if (!engine)
@@ -659,11 +679,76 @@ void MidiControllerManager::selectPerformancePadMode(const QString& deckId, int 
         return;
     }
 
-    const QChar deck = deckId.compare(QStringLiteral("deckB"), Qt::CaseInsensitive) == 0
-        || deckId.compare(QStringLiteral("B"), Qt::CaseInsensitive) == 0
-        ? QLatin1Char('B')
-        : QLatin1Char('A');
-    setPadModeForDeck(deck, static_cast<MidiPadMode>(mode));
+    QChar deck;
+    if (!parsePerformanceDeckId(deckId, deck))
+        return;
+
+    DjEngine* const engine = deck == QLatin1Char('A') ? m_deckA : m_deckB;
+    const MidiPadMode nextMode = static_cast<MidiPadMode>(mode);
+    const MidiPadMode currentMode = padModeForDeck(deck);
+    if (currentMode == nextMode)
+        return;
+
+    if (currentMode == MidiPadMode::PadFx)
+        clearPadFxState(deck, engine);
+    if (currentMode == MidiPadMode::HotCue || currentMode == MidiPadMode::Sampler)
+        releaseHeldHotCue(deck, engine);
+
+    setPadModeForDeck(deck, nextMode);
+    emit performancePadStateChanged(performanceDeckId(deck));
+}
+
+void MidiControllerManager::setPerformancePadPressed(const QString& deckId,
+                                                     int padIndex,
+                                                     bool pressed)
+{
+    QChar deck;
+    if (!parsePerformanceDeckId(deckId, deck) || padIndex < 0 || padIndex >= 8)
+        return;
+
+    DjEngine* const engine = deck == QLatin1Char('A') ? m_deckA : m_deckB;
+    handlePerformancePad(deck, engine, padModeForDeck(deck), padIndex, pressed, false);
+}
+
+void MidiControllerManager::clearPerformancePad(const QString& deckId, int padIndex)
+{
+    QChar deck;
+    if (!parsePerformanceDeckId(deckId, deck) || padIndex < 0 || padIndex >= 8)
+        return;
+
+    DjEngine* const engine = deck == QLatin1Char('A') ? m_deckA : m_deckB;
+    handlePerformancePad(deck, engine, MidiPadMode::HotCue, padIndex, true, true);
+}
+
+bool MidiControllerManager::consumePerformancePadPlayLatch(const QString& deckId)
+{
+    QChar deck;
+    if (!parsePerformanceDeckId(deckId, deck))
+        return false;
+
+    HotCueHoldState& hold = deck == QLatin1Char('A')
+        ? m_deckAHotCueHold
+        : m_deckBHotCueHold;
+    if (hold.padIndex < 0 || !hold.returnOnRelease)
+        return false;
+    hold.returnOnRelease = false;
+    return true;
+}
+
+int MidiControllerManager::performancePadFxMomentary(const QString& deckId) const
+{
+    QChar deck;
+    if (!parsePerformanceDeckId(deckId, deck))
+        return -1;
+    return deck == QLatin1Char('A') ? m_deckAPadFxMomentary : m_deckBPadFxMomentary;
+}
+
+int MidiControllerManager::performancePadFxToggle(const QString& deckId) const
+{
+    QChar deck;
+    if (!parsePerformanceDeckId(deckId, deck))
+        return -1;
+    return deck == QLatin1Char('A') ? m_deckAPadFxToggle : m_deckBPadFxToggle;
 }
 
 void MidiControllerManager::connectFxManager(FxManager* fxManager)
@@ -936,6 +1021,7 @@ void MidiControllerManager::handlePerformancePad(QChar deck,
             engine->clearPadFx();
             momentary = -1;
         }
+        emit performancePadStateChanged(performanceDeckId(deck));
         return;
     }
 
@@ -945,6 +1031,7 @@ void MidiControllerManager::handlePerformancePad(QChar deck,
     if (toggle == padIndex) {
         stopPadFxToggle(engine, padIndex);
         toggle = -1;
+        emit performancePadStateChanged(performanceDeckId(deck));
         return;
     }
 
@@ -959,6 +1046,7 @@ void MidiControllerManager::handlePerformancePad(QChar deck,
     default: break;
     }
     toggle = padIndex;
+    emit performancePadStateChanged(performanceDeckId(deck));
 }
 
 bool MidiControllerManager::dispatchFlx10JogAction(const QString& paramId,
