@@ -33,15 +33,16 @@ Item {
                 id: waveformCanvas
                 anchors.fill: parent
 
-                ColumnLayout {
+                Item {
                     id: waveformSection
                     anchors.fill: parent
-                    spacing: 0
+                    readonly property real renderDpr: window._dpr()
+                    readonly property real physicalRowHeight:
+                        Math.floor(height * renderDpr * 0.25) / renderDpr
 
                     PerformanceWaveformScreen {
                         visible: !window.fourDeckMode
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
+                        anchors.fill: parent
                         deckAEngine: deckA
                         deckBEngine: deckB
                         fx: fxManager
@@ -50,8 +51,10 @@ Item {
 
                     EnlargedWaveform {
                         visible: window.fourDeckMode
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
+                        x: 0
+                        y: 0
+                        width: parent.width
+                        height: waveformSection.physicalRowHeight
                         deckName: "C"
                         engine: deckC
                         sameTrackDoubleHint: window.isDuplicatePlayingTrack(deckC)
@@ -62,8 +65,10 @@ Item {
 
                     EnlargedWaveform {
                         visible: window.fourDeckMode
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
+                        x: 0
+                        y: waveformSection.physicalRowHeight
+                        width: parent.width
+                        height: waveformSection.physicalRowHeight
                         deckName: "A"
                         engine: deckA
                         sameTrackDoubleHint: window.isDuplicatePlayingTrack(deckA)
@@ -73,8 +78,10 @@ Item {
 
                     EnlargedWaveform {
                         visible: window.fourDeckMode
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
+                        x: 0
+                        y: waveformSection.physicalRowHeight * 2
+                        width: parent.width
+                        height: waveformSection.physicalRowHeight
                         deckName: "B"
                         engine: deckB
                         sameTrackDoubleHint: window.isDuplicatePlayingTrack(deckB)
@@ -84,8 +91,10 @@ Item {
 
                     EnlargedWaveform {
                         visible: window.fourDeckMode
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
+                        x: 0
+                        y: waveformSection.physicalRowHeight * 3
+                        width: parent.width
+                        height: Math.max(0, parent.height - y)
                         deckName: "D"
                         engine: deckD
                         sameTrackDoubleHint: window.isDuplicatePlayingTrack(deckD)

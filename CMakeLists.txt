@@ -642,6 +642,7 @@ add_test(NAME qml_component COMMAND BrockDJ_qml_component_tests)
 
 add_executable(BrockDJ_waveform_render_stability_tests
     tests/waveform_render_stability/waveform_render_stability_tests.cpp)
+target_include_directories(BrockDJ_waveform_render_stability_tests PRIVATE src)
 target_compile_features(BrockDJ_waveform_render_stability_tests PRIVATE cxx_std_23)
 add_test(NAME waveform_render_stability COMMAND BrockDJ_waveform_render_stability_tests)
 

@@ -43,12 +43,14 @@ signals:
     void pixelsPerPointChanged();
 
 protected:
+    void geometryChange(const QRectF& newGeometry, const QRectF& oldGeometry) override;
     QSGNode* updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) override;
 
 private slots:
     void onTrackLoaded();
     void onTrackEjected();
     void onDataUpdated();
+    void onLoopUpdated();
     void onOverlayUpdated();
 
 private:
@@ -57,7 +59,7 @@ private:
     QPointer<DjEngine> m_engine;
     QTimer* m_dataUpdateThrottle = nullptr;
     bool m_forceRebuild = true;
-    float m_pixelsPerPoint = 1.5f;
+    float m_pixelsPerPoint = 0.22f;
 
     mutable std::atomic<double> m_lastPlayheadSec{0.0};
     mutable std::atomic<double> m_lastPixelsPerSecond{1.0};

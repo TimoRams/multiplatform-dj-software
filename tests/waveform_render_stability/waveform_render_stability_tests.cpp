@@ -2,6 +2,8 @@
 #include <cmath>
 #include <iostream>
 
+#include "rendering/WaveformMarkerLayout.h"
+
 namespace {
 bool require(bool condition, const char* message)
 {
@@ -76,20 +78,78 @@ int main()
         }
     }
 
-    // Publishing a new immutable waveform chunk must not recreate marker
-    // geometry. Marker lines only need a rebuild for a window/layout/overlay
-    // change, otherwise their physical-pixel placement can visibly blink.
+    // Neither progressive data nor guarded waveform-window changes recreate
+    // track-wide marker geometry. Replacing those nodes at window boundaries
+    // caused the periodic blink that remained during steady playback.
     int markerRebuilds = 0;
+    int waveformWindowRebuilds = 0;
     bool forceRebuild = true;
-    bool outsideGuard = false;
     bool staticConfigurationChanged = false;
     for (int chunkGeneration = 0; chunkGeneration < 64; ++chunkGeneration) {
-        const bool rebuildMarkers = forceRebuild || outsideGuard || staticConfigurationChanged;
+        const bool outsideGuard = chunkGeneration > 0 && (chunkGeneration % 7) == 0;
+        const bool rebuildWaveform = forceRebuild || outsideGuard;
+        const bool rebuildMarkers = forceRebuild || staticConfigurationChanged;
+        if (rebuildWaveform)
+            ++waveformWindowRebuilds;
         if (rebuildMarkers)
             ++markerRebuilds;
         forceRebuild = false;
     }
     ok &= require(markerRebuilds == 1,
                   "progressive waveform chunks must not rebuild beatgrid geometry");
+    ok &= require(waveformWindowRebuilds > markerRebuilds,
+                  "guard crossings rebuild waveform chunks without replacing markers");
+
+    for (const float height : {60.0f, 100.0f, 180.0f}) {
+        const auto layout = waveform_render::verticalMarkerLayout(height);
+        ok &= require(layout.waveformInset >= layout.downbeatTickLength,
+                      "waveform leaves room for beat ticks at both edges");
+        ok &= require(layout.downbeatTickLength > layout.regularTickLength,
+                      "downbeat ticks are slightly longer than regular beats");
+        ok &= require(layout.cueLinePhysicalWidth > 1.0f
+                          && std::fmod(layout.cueLinePhysicalWidth, 2.0f) == 1.0f,
+                      "cue lines use a wider odd physical-pixel width for crisp edges");
+        ok &= require(layout.waveformInset * 2.0f < height,
+                      "waveform inset keeps a visible audio envelope");
+    }
+
+    // Every timeline layer uses one persistent origin and transform. Guarded
+    // source-window changes therefore cannot alter the final waveform/marker
+    // position or put the two layers onto different pixel phases.
+    for (const double dpr : {1.0, 1.25, 1.5, 2.0}) {
+        constexpr double timelineLine = 42'375.25;
+        constexpr double renderOrigin = 40'000.0;
+        constexpr double pixelsPerTimelineLine = 0.22;
+        const double waveformX = waveform_render::snappedTimelineX(
+            timelineLine, renderOrigin, pixelsPerTimelineLine, dpr);
+        const double markerX = waveform_render::snappedTimelineX(
+            timelineLine, renderOrigin, pixelsPerTimelineLine, dpr);
+        ok &= require(std::abs(waveformX - markerX) < 1e-12,
+                      "waveform and overlays must share one local pixel grid");
+        double previousCentre = 0.0;
+        for (int frame = 0; frame < 240; ++frame) {
+            const double playheadLine = 41'000.0 + frame * 0.71;
+            const double translation = waveform_render::snappedTimelineTranslation(
+                1600.0, playheadLine, renderOrigin, pixelsPerTimelineLine, dpr);
+            const double physicalCentre = (waveformX + translation) * dpr;
+            ok &= require(std::abs((physicalCentre - std::floor(physicalCentre)) - 0.5) < 1e-9,
+                          "beat marker stays centred on one physical pixel while scrolling");
+            if (frame > 0)
+                ok &= require(physicalCentre <= previousCentre,
+                              "pixel-snapped timeline must move monotonically");
+            previousCentre = physicalCentre;
+
+            // The guarded source window moves independently, but is never an
+            // input to local geometry or the shared transform.
+            const double guardedWindowStart = 39'000.0 + (frame / 17) * 850.0;
+            (void) guardedWindowStart;
+            const double rebuiltCentre = (waveform_render::snappedTimelineX(
+                timelineLine, renderOrigin, pixelsPerTimelineLine, dpr)
+                + waveform_render::snappedTimelineTranslation(
+                    1600.0, playheadLine, renderOrigin, pixelsPerTimelineLine, dpr)) * dpr;
+            ok &= require(std::abs(rebuiltCentre - physicalCentre) < 1e-9,
+                          "guarded window rebuild must not change timeline phase");
+        }
+    }
     return ok ? 0 : 1;
 }

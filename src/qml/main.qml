@@ -344,6 +344,13 @@ ApplicationWindow {
         return scaledPhysicalWidth / (window.baseUiWidth * dpr)
     }
 
+    function _snapLengthToPhysicalPixels(length) {
+        if (!isFinite(length) || length <= 0)
+            return 0
+        var dpr = _dpr()
+        return Math.round(length * dpr) / dpr
+    }
+
     function _scaledFontSize(basePx) {
         var scale = responsiveFontScale * (uiScaleController ? uiScaleController.scale : 1.0)
         var scaled = basePx * scale
@@ -379,7 +386,7 @@ ApplicationWindow {
         return Math.max(1, Math.round(snapped))
     }
 
-    readonly property real waveformZoom: waveformZoomController ? waveformZoomController.zoom : 1.5
+    readonly property real waveformZoom: waveformZoomController ? waveformZoomController.zoom : 0.22
 
     UiShortcutManager {
         appWindow: window
@@ -439,7 +446,8 @@ ApplicationWindow {
     readonly property real rawUiScale: (width / baseUiWidth)
                                        * (uiScaleController ? uiScaleController.scale : 1.0)
     readonly property real uiScale: _snapScaleToPhysicalPixels(rawUiScale)
-    readonly property int scaledWaveformHeight: Math.round(window.baseWaveformHeight * window.uiScale)
+    readonly property real scaledWaveformHeight:
+        _snapLengthToPhysicalPixels(window.baseWaveformHeight * window.uiScale)
     readonly property int scaledDeckMixerHeight: Math.round(window.baseDeckMixerHeight * window.uiScale)
     // The quick-access tray floats above the workspace; it must never resize
     // or push the decks, waveform, or library below it.
@@ -459,7 +467,7 @@ ApplicationWindow {
     readonly property bool secondaryDeckRowVisible: window.fourDeckMode && !window.libraryExpanded && !window.allInOnePanelActive
     readonly property bool crossfaderVisible: false
     readonly property bool fxVisible: false
-    readonly property int waveformMinimumHeight: window.scaledWaveformHeight
+    readonly property real waveformMinimumHeight: window.scaledWaveformHeight
     readonly property int libraryReserveHeight: !window.effectiveLibraryVisible ? 0 : Math.round(180 * window.uiScale)
     readonly property int fixedPerformanceHeight:
         (window.primaryDeckRowVisible ? window.scaledDeckMixerHeight : 0)
@@ -471,19 +479,20 @@ ApplicationWindow {
         + (!window.libraryExpanded && !window.allInOnePanelActive && window.fourDeckMode && !window.secondaryDeckRowVisible ? window.scaledDeckMixerHeight : 0)
         + (!window.libraryExpanded && !window.allInOnePanelActive && !window.crossfaderVisible ? window.crossfaderBarHeight + 1 : 0)
         + (!window.libraryExpanded && !window.allInOnePanelActive && !window.fxVisible ? window.fxBarHeight : 0)
-    readonly property int waveformAvailableHeight: Math.max(
+    readonly property real waveformAvailableHeight: _snapLengthToPhysicalPixels(Math.max(
         0,
         height - window.topBarHeight - window.fixedPerformanceHeight - window.libraryReserveHeight - 6
-    )
-    readonly property int adaptiveWaveformHeight: !window.showWaveforms ? 0 : Math.max(
-        0,
-        !window.effectiveLibraryVisible
-            ? window.waveformAvailableHeight
-            : Math.min(
-                window.waveformAvailableHeight,
-                window.scaledWaveformHeight + Math.round(window.hiddenPerformanceHeight * 0.75)
-            )
-    )
+    ))
+    readonly property real adaptiveWaveformHeight: !window.showWaveforms ? 0
+        : _snapLengthToPhysicalPixels(Math.max(
+            0,
+            !window.effectiveLibraryVisible
+                ? window.waveformAvailableHeight
+                : Math.min(
+                    window.waveformAvailableHeight,
+                    window.scaledWaveformHeight + Math.round(window.hiddenPerformanceHeight * 0.75)
+                )
+        ))
 
     // ─────────────────────────────────────────────────────────────────────────
     // MAIN LAYOUT – direct child, no async Loader wrapping

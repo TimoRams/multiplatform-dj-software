@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <iostream>
 
 namespace {
@@ -38,5 +39,23 @@ int main()
                         ok &= require(value.mixer <= static_cast<int>(width * 0.5),
                                       "mixer must not consume more than half the viewport");
                     }
+
+    // Waveform rows are divided in physical pixels instead of asking
+    // ColumnLayout to distribute fractional logical remainders.
+    for (const double dpr : {1.0, 1.25, 1.5, 2.0}) {
+        for (const double height : {181.0, 240.0, 301.0, 420.0}) {
+            const double separator = std::max(1.0 / dpr, std::round(2.0 * dpr) / dpr);
+            const double firstDeck = std::floor(
+                std::max(0.0, height - separator) * dpr * 0.5) / dpr;
+            const double secondDeckY = firstDeck + separator;
+            const double secondDeck = std::max(0.0, height - secondDeckY);
+            ok &= require(std::abs(firstDeck * dpr - std::round(firstDeck * dpr)) < 1e-9,
+                          "first waveform deck must end on a physical pixel boundary");
+            ok &= require(std::abs(secondDeckY * dpr - std::round(secondDeckY * dpr)) < 1e-9,
+                          "second waveform deck must start on a physical pixel boundary");
+            ok &= require(std::abs(firstDeck + separator + secondDeck - height) < 1e-9,
+                          "pixel-aligned waveform split must preserve total height");
+        }
+    }
     return ok ? 0 : 1;
 }

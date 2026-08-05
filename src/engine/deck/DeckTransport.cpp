@@ -571,6 +571,7 @@ void DeckTransport::setSnapAnchor(double seconds, bool valid) noexcept
 {
     m_snapPositionSeconds = seconds;
     m_snapPlaybackRate = m_playbackRate * m_jogNudgeRatio;
+    m_visualRateCorrection = 0.0;
     m_snapClock.restart();
     m_snapValid = valid;
     m_audioPlayhead.store(seconds, std::memory_order_release);
@@ -584,8 +585,6 @@ void DeckTransport::reconcileVisualAnchor(double authoritativePositionSeconds) n
     }
 
     constexpr double hardSnapThresholdSeconds = 0.080;
-    constexpr double correctionFactor = 0.20;
-    constexpr double maximumCorrectionPerUpdate = 0.0025;
     const double elapsed = std::max(0.0,
         static_cast<double>(m_snapClock.nsecsElapsed()) * 1.0e-9
             * std::max(0.0001, m_snapPlaybackRate));
@@ -597,13 +596,22 @@ void DeckTransport::reconcileVisualAnchor(double authoritativePositionSeconds) n
         return;
     }
 
-    const double correction = std::clamp(error * correctionFactor,
-                                         -maximumCorrectionPerUpdate,
-                                         maximumCorrectionPerUpdate);
-    // Re-anchor at the current prediction instead of the delayed control
-    // cursor.  This preserves monotonic visual motion between control ticks.
-    m_snapPositionSeconds = predicted + correction;
-    m_snapPlaybackRate = m_playbackRate * m_jogNudgeRatio;
+    // Keep the position continuous and close the small audio-clock error by
+    // gently trimming visual velocity. Applying a fraction of `error` directly
+    // to the position at every 125 Hz control tick made every fixed waveform
+    // marker visibly step forwards and backwards.
+    const double baseRate = std::max(0.0001, m_playbackRate * m_jogNudgeRatio);
+    const double direction = m_reverse ? -1.0 : 1.0;
+    constexpr double correctionWindowSeconds = 0.75;
+    constexpr double maximumRateTrim = 0.015;
+    constexpr double smoothing = 0.08;
+    const double targetCorrection = std::clamp(
+        direction * error / correctionWindowSeconds,
+        -baseRate * maximumRateTrim,
+        baseRate * maximumRateTrim);
+    m_visualRateCorrection += (targetCorrection - m_visualRateCorrection) * smoothing;
+    m_snapPositionSeconds = predicted;
+    m_snapPlaybackRate = std::max(0.0001, baseRate + m_visualRateCorrection);
     m_snapClock.restart();
 }
 

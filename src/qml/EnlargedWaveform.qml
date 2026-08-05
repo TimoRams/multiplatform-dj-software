@@ -9,11 +9,23 @@ Item {
     property var engine: null
     property string deckName: "A"
     property color backgroundColor: UiTheme.bgDisplay
-    property real waveformZoom: 1.5
+    property real waveformZoom: 0.22
     property bool dropHovered: false
     property bool beatgridEditMode: false
     property bool showBeatgridEditor: true
     property bool sameTrackDoubleHint: false
+
+    readonly property real renderDpr: {
+        var value = Screen.devicePixelRatio
+        return isFinite(value) && value > 0 ? value : 1.0
+    }
+    readonly property real physicalPixel: 1.0 / renderDpr
+    readonly property real playheadCenterX:
+        (Math.floor(width * 0.5 * renderDpr) + 0.5) / renderDpr
+
+    function snappedLength(value) {
+        return Math.max(physicalPixel, Math.round(value * renderDpr) / renderDpr)
+    }
 
     Layout.fillWidth: true
     Layout.fillHeight: true
@@ -44,14 +56,15 @@ Item {
             anchors.fill: parent
             engine: root.engine
             pixelsPerPoint: root.waveformZoom
-            onWidthChanged: invalidateGeometry()
-            onHeightChanged: invalidateGeometry()
         }
 
         Binding {
             target: root.engine
             property: "pixelsPerSecond"
-            value: root.engine ? (root.waveformZoom * root.engine.waveformPointsPerSecond) : 0
+            value: root.engine
+                ? (root.waveformZoom * root.engine.waveformPointsPerSecond)
+                    / Math.max(0.05, Math.abs(root.engine.tempoRatio))
+                : 0
             when: root.engine !== null
         }
 
@@ -178,47 +191,40 @@ Item {
                 if (root.engine && !root.engine.isPlaying && !root.engine.scratchVisualActive)
                     waveItem.requestUpdate()
             }
-            function onLoopChanged() { waveItem.invalidateGeometry() }
             function onScrubbingChanged() { waveItem.requestUpdate() }
-            function onHotCuesChanged() { waveItem.invalidateGeometry() }
-            function onSavedLoopsChanged() { waveItem.invalidateGeometry() }
-            function onTempoChanged() { waveItem.invalidateGeometry() }
-        }
-
-        Connections {
-            target: root.engine ? root.engine.trackData : null
-            function onBeatgridChanged() { waveItem.invalidateGeometry() }
         }
 
         // Playhead — always dead center of the full deck.
         Rectangle {
             id: playhead
-            width: 2
+            width: 3.0 / root.renderDpr
             height: parent.height
             color: UiTheme.playhead
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.verticalCenter: parent.verticalCenter
+            x: root.playheadCenterX - width * 0.5
+            y: 0
             z: 10
 
             Rectangle {
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.top: parent.top
-                width: 12; height: 6
+                width: root.snappedLength(12)
+                height: root.snappedLength(6)
                 color: UiTheme.playhead
             }
             Rectangle {
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom
-                width: 12; height: 6
+                width: root.snappedLength(12)
+                height: root.snappedLength(6)
                 color: UiTheme.playhead
             }
         }
 
         Rectangle {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            height: 1
+            x: 0
+            y: Math.floor(parent.height * 0.5 * root.renderDpr) / root.renderDpr
+            width: parent.width
+            height: root.physicalPixel
             color: "#24ffffff"
             z: 9
         }
@@ -227,7 +233,7 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            height: 1
+            height: root.physicalPixel
             color: UiTheme.separatorSubtle
             z: 22
         }

@@ -8,7 +8,7 @@ Item {
     property var deckAEngine: null
     property var deckBEngine: null
     property var fx: null
-    property real waveformZoom: 1.5
+    property real waveformZoom: 0.22
     property string selectedDeck: "A"
     property string leftPanel: "closed" // closed | deck | grid
     property bool rightPanelOpen: false
@@ -17,6 +17,15 @@ Item {
     // The visual grip stays narrow, while the hit target is touch-safe.
     readonly property real handleWidth: 44
     readonly property var selectedEngine: selectedDeck === "A" ? deckAEngine : deckBEngine
+    readonly property real renderDpr: {
+        var value = Screen.devicePixelRatio
+        return isFinite(value) && value > 0 ? value : 1.0
+    }
+    readonly property real separatorHeight:
+        Math.max(1.0 / renderDpr, Math.round(2.0 * renderDpr) / renderDpr)
+    readonly property real deckAHeight:
+        Math.floor(Math.max(0, height - separatorHeight) * renderDpr * 0.5) / renderDpr
+    readonly property real deckBY: deckAHeight + separatorHeight
 
     function toggleDeckPanel() { leftPanel = leftPanel === "deck" ? "closed" : "deck" }
     function openGrid() { leftPanel = "grid" }
@@ -24,31 +33,36 @@ Item {
 
     Rectangle { anchors.fill: parent; color: "#181B1E" }
 
-    ColumnLayout {
-        anchors.fill: parent
-        spacing: 1
+    EnlargedWaveform {
+        x: 0
+        y: 0
+        width: root.width
+        height: root.deckAHeight
+        deckName: "A"
+        engine: root.deckAEngine
+        backgroundColor: "#181B1E"
+        waveformZoom: root.waveformZoom
+        showBeatgridEditor: false
+    }
 
-        EnlargedWaveform {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            deckName: "A"
-            engine: root.deckAEngine
-            backgroundColor: "#181B1E"
-            waveformZoom: root.waveformZoom
-            showBeatgridEditor: false
-        }
+    Rectangle {
+        x: 0
+        y: root.deckAHeight
+        width: root.width
+        height: root.separatorHeight
+        color: "#555C62"
+    }
 
-        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 2; color: "#555C62" }
-
-        EnlargedWaveform {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            deckName: "B"
-            engine: root.deckBEngine
-            backgroundColor: "#181B1E"
-            waveformZoom: root.waveformZoom
-            showBeatgridEditor: false
-        }
+    EnlargedWaveform {
+        x: 0
+        y: root.deckBY
+        width: root.width
+        height: Math.max(0, root.height - y)
+        deckName: "B"
+        engine: root.deckBEngine
+        backgroundColor: "#181B1E"
+        waveformZoom: root.waveformZoom
+        showBeatgridEditor: false
     }
 
     // Waveform context controls stay independent from both side panels.
