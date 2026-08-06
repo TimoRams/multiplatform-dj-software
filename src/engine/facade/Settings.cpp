@@ -21,8 +21,8 @@ void DjEngine::setOutputFirstChannel(int firstChannel)
     m_audioDeviceService.setOutputFirstChannel(firstChannel);
 }
 
-void DjEngine::setMasterVolume(float value) { DjMasterBus::setMasterVolume(value); }
-void DjEngine::setAntiClip(bool enabled) { DjMasterBus::setAntiClipEnabled(enabled); }
+void DjEngine::setMasterVolume(float value) { AudioEngine::setMasterVolume(value); }
+void DjEngine::setAntiClip(bool enabled) { AudioEngine::setAntiClipEnabled(enabled); }
 
 QStringList DjEngine::getAvailableAudioDeviceTypes() const
 {

@@ -1,6 +1,6 @@
-#include "ScratchResampler.hpp"
+#include "audio/internal/ScratchResampler.h"
 
-#include "HermiteKernel.hpp"
+#include "HermiteKernel.h"
 
 #include <algorithm>
 #include <cmath>

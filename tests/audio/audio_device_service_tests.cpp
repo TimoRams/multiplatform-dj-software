@@ -27,6 +27,19 @@ int main(int argc, char** argv)
     DeckDeviceView deckA{service};
     DeckDeviceView deckB{service};
 
+    ok &= require(service.manager().getCurrentAudioDevice() == nullptr,
+                  "constructing the service must not select a default device");
+    const auto noDevicePairs = service.availableOutputChannelPairs(
+        QStringLiteral("Missing backend"), QStringLiteral("None"));
+    ok &= require(noDevicePairs == QStringList { QStringLiteral("None") },
+                  "an unassigned output must expose only the silent None route");
+    const auto missingDevicePairs = service.availableOutputChannelPairs(
+        QStringLiteral("Missing backend"), QStringLiteral("Missing device"));
+    ok &= require(missingDevicePairs == QStringList { QStringLiteral("None") },
+                  "an unavailable device must not expose fallback channel pairs");
+    ok &= require(service.manager().getCurrentAudioDevice() == nullptr,
+                  "querying device choices must not open a default device");
+
     ok &= require(&deckA.service.manager() == &deckB.service.manager(),
                   "all decks must observe one AudioDeviceManager");
 

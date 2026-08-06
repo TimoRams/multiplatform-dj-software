@@ -1,9 +1,15 @@
 #include "LibraryPreviewPlayer.h"
 
+#include "audio/cache/AudioPageCache.h"
+#include "audio/cache/CachedPlaybackAudioSource.h"
+
+#include <juce_audio_formats/juce_audio_formats.h>
+
 #include <QtConcurrent/QtConcurrent>
 #include <QFutureWatcher>
 #include <algorithm>
 #include <cmath>
+#include <thread>
 
 namespace {
 
@@ -42,10 +48,12 @@ LoadedPreview loadPreviewFile(const QString& filePath)
 
 } // namespace
 
-LibraryPreviewPlayer::LibraryPreviewPlayer(ControlClock& controlClock, QObject* parent)
+LibraryPreviewPlayer::LibraryPreviewPlayer(ControlClock& controlClock,
+                                           AudioPageCache& cache,
+                                           QObject* parent)
     : QObject(parent)
+    , m_cache(cache)
 {
-    m_formatManager.registerBasicFormats();
     ControlClock::Callbacks callbacks;
     callbacks.statistics = [this](const ControlTickContext&) {
         if (m_positionPollingEnabled)
@@ -75,26 +83,20 @@ double LibraryPreviewPlayer::progress() const
 
 void LibraryPreviewPlayer::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
 {
+    (void) samplesPerBlockExpected;
+    (void) sampleRate;
     std::lock_guard lock(m_mutex);
-    m_sampleRate = sampleRate > 0.0 ? sampleRate : 44100.0;
-    m_blockSize = std::max(64, samplesPerBlockExpected);
-    m_transport.prepareToPlay(m_blockSize, m_sampleRate);
-    m_prepared = true;
+    if (m_readerSource)
+        m_readerSource->prepareToPlay(samplesPerBlockExpected, sampleRate);
+    m_prepared.store(true, std::memory_order_release);
 }
 
 void LibraryPreviewPlayer::releaseResources()
 {
     stopPositionTimer();
     std::lock_guard lock(m_mutex);
-    m_transport.stop();
-    m_transport.setSource(nullptr);
-    m_transport.releaseResources();
-    m_readerSource.reset();
-    m_reader.reset();
-    m_prepared = false;
-    m_playing.store(false, std::memory_order_relaxed);
-    m_durationSec.store(0.0, std::memory_order_relaxed);
-    m_positionSec.store(0.0, std::memory_order_relaxed);
+    finishPreviewLocked();
+    m_prepared.store(false, std::memory_order_release);
 }
 
 void LibraryPreviewPlayer::prepareAuxAudio(int maximumBlockSize, double sampleRate)
@@ -124,14 +126,6 @@ double LibraryPreviewPlayer::previewStartSeconds(double trackLengthSec) const
     return std::clamp(start, 0.0, std::max(0.0, trackLengthSec - 0.5));
 }
 
-void LibraryPreviewPlayer::publishTransportStateLocked()
-{
-    const double len = m_transport.getLengthInSeconds();
-    const double pos = m_transport.getCurrentPosition();
-    m_durationSec.store(len, std::memory_order_relaxed);
-    m_positionSec.store(pos, std::memory_order_relaxed);
-}
-
 void LibraryPreviewPlayer::startPositionTimer()
 {
     m_positionPollingEnabled = true;
@@ -149,13 +143,15 @@ void LibraryPreviewPlayer::pollPosition()
     double len = 0.0;
     {
         std::lock_guard lock(m_mutex);
-        if (!m_playing.load(std::memory_order_relaxed) || !m_reader) {
+        if (!m_playing.load(std::memory_order_relaxed) || !m_readerSource) {
             stopPositionTimer();
             return;
         }
-        playing = m_transport.isPlaying();
-        pos = m_transport.getCurrentPosition();
-        len = m_transport.getLengthInSeconds();
+        playing = true;
+        pos = static_cast<double>(m_readerSource->getNextReadPosition())
+            / std::max(1.0, m_cacheHandle.sampleRate());
+        len = static_cast<double>(m_cacheHandle.lengthInSamples())
+            / std::max(1.0, m_cacheHandle.sampleRate());
         m_positionSec.store(pos, std::memory_order_relaxed);
         if (len > 0.0)
             m_durationSec.store(len, std::memory_order_relaxed);
@@ -172,44 +168,25 @@ void LibraryPreviewPlayer::pollPosition()
         stop();
 }
 
-void LibraryPreviewPlayer::beginPreviewLocked(const QString& filePath)
-{
-    m_transport.stop();
-    m_transport.setSource(nullptr);
-    m_readerSource.reset();
-    m_reader.reset();
-
-    juce::File file(filePath.toStdString());
-    if (!file.existsAsFile())
-        return;
-
-    m_reader.reset(m_formatManager.createReaderFor(file));
-    if (!m_reader)
-        return;
-
-    m_readerSource = std::make_unique<juce::AudioFormatReaderSource>(m_reader.get(), false);
-    m_transport.setSource(m_readerSource.get(), 0, nullptr, m_reader->sampleRate);
-
-    const double len = m_reader->lengthInSamples / std::max(1.0, m_reader->sampleRate);
-    const double start = previewStartSeconds(len);
-    m_transport.setPosition(start);
-    m_transport.start();
-
-    m_currentPath = filePath;
-    m_playing.store(true, std::memory_order_relaxed);
-    publishTransportStateLocked();
-}
-
 void LibraryPreviewPlayer::finishPreviewLocked()
 {
-    m_transport.stop();
-    m_transport.setSource(nullptr);
+    m_playing.store(false, std::memory_order_release);
+    m_audioReader.store(nullptr, std::memory_order_release);
+    waitForAudioReaders();
+    if (m_readerSource)
+        m_readerSource->releaseResources();
     m_readerSource.reset();
-    m_reader.reset();
+    m_cache.releaseTrack(m_cacheHandle);
+    m_cacheHandle = {};
     m_currentPath.clear();
-    m_playing.store(false, std::memory_order_relaxed);
     m_durationSec.store(0.0, std::memory_order_relaxed);
     m_positionSec.store(0.0, std::memory_order_relaxed);
+}
+
+void LibraryPreviewPlayer::waitForAudioReaders() const noexcept
+{
+    while (m_activeAudioReaders.load(std::memory_order_acquire) != 0)
+        std::this_thread::yield();
 }
 
 void LibraryPreviewPlayer::preview(const QString& filePath)
@@ -231,30 +208,37 @@ void LibraryPreviewPlayer::preview(const QString& filePath)
     }
 
     stop();
+    const auto loadGeneration = m_loadGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
 
     auto* watcher = new QFutureWatcher<LoadedPreview>(this);
-    connect(watcher, &QFutureWatcher<LoadedPreview>::finished, this, [this, watcher]() {
+    connect(watcher, &QFutureWatcher<LoadedPreview>::finished, this,
+            [this, watcher, loadGeneration]() {
         const LoadedPreview loaded = watcher->result();
         watcher->deleteLater();
 
-        if (!loaded.reader)
+        if (!loaded.reader
+            || loadGeneration != m_loadGeneration.load(std::memory_order_acquire))
             return;
+
+        auto cacheHandle = m_cache.openTrack({loaded.path});
+        if (!cacheHandle.isValid())
+            return;
+        auto readerSource = std::make_unique<CachedPlaybackAudioSource>(m_cache, cacheHandle);
+        readerSource->setCommandedReadPosition(static_cast<juce::int64>(
+            std::llround(loaded.startSec * cacheHandle.sampleRate())));
 
         {
             std::lock_guard lock(m_mutex);
-            m_transport.stop();
-            m_transport.setSource(nullptr);
-            m_readerSource.reset();
-            m_reader = loaded.reader;
-            m_readerSource = std::make_unique<juce::AudioFormatReaderSource>(m_reader.get(), false);
-            if (m_prepared)
-                m_transport.prepareToPlay(m_blockSize, m_sampleRate);
-            m_transport.setSource(m_readerSource.get(), 0, nullptr, m_reader->sampleRate);
-            m_transport.setPosition(loaded.startSec);
-            m_transport.start();
+            finishPreviewLocked();
+            m_cacheHandle = cacheHandle;
+            m_readerSource = std::move(readerSource);
             m_currentPath = loaded.path;
-            m_playing.store(true, std::memory_order_relaxed);
-            publishTransportStateLocked();
+            m_durationSec.store(static_cast<double>(m_cacheHandle.lengthInSamples())
+                                    / std::max(1.0, m_cacheHandle.sampleRate()),
+                                std::memory_order_relaxed);
+            m_positionSec.store(loaded.startSec, std::memory_order_relaxed);
+            m_audioReader.store(m_readerSource.get(), std::memory_order_release);
+            m_playing.store(true, std::memory_order_release);
         }
 
         startPositionTimer();
@@ -274,6 +258,7 @@ void LibraryPreviewPlayer::togglePreview(const QString& filePath)
 
 void LibraryPreviewPlayer::stop()
 {
+    m_loadGeneration.fetch_add(1, std::memory_order_acq_rel);
     bool changed = false;
     stopPositionTimer();
     {
@@ -296,17 +281,17 @@ void LibraryPreviewPlayer::seekSeconds(double positionSec)
     bool moved = false;
     {
         std::lock_guard lock(m_mutex);
-        if (!m_reader)
+        if (!m_readerSource)
             return;
 
-        const double len = m_transport.getLengthInSeconds();
+        const double len = static_cast<double>(m_cacheHandle.lengthInSamples())
+            / std::max(1.0, m_cacheHandle.sampleRate());
         if (len <= 0.0)
             return;
 
         positionSec = std::clamp(positionSec, 0.0, len);
-        m_transport.setPosition(positionSec);
-        if (m_playing.load(std::memory_order_relaxed) && !m_transport.isPlaying())
-            m_transport.start();
+        m_readerSource->setCommandedReadPosition(static_cast<juce::int64>(
+            std::llround(positionSec * m_cacheHandle.sampleRate())));
 
         m_positionSec.store(positionSec, std::memory_order_relaxed);
         moved = true;
@@ -326,26 +311,33 @@ void LibraryPreviewPlayer::seekProgress(double progress)
 void LibraryPreviewPlayer::mixIntoOutputs(juce::AudioBuffer<float>& masterBuf,
                                           juce::AudioBuffer<float>& scratch,
                                           int startSample,
-                                          int numSamples)
+                                          int numSamples) noexcept
 {
     if (numSamples <= 0 || !m_playing.load(std::memory_order_relaxed))
         return;
 
-    std::unique_lock lock(m_mutex, std::try_to_lock);
-    if (!lock.owns_lock() || !m_prepared)
+    m_activeAudioReaders.fetch_add(1, std::memory_order_acq_rel);
+    auto* reader = m_audioReader.load(std::memory_order_acquire);
+    if (!reader || !m_prepared.load(std::memory_order_acquire)) {
+        m_activeAudioReaders.fetch_sub(1, std::memory_order_release);
         return;
+    }
 
-    if (!m_transport.isPlaying())
+    if (scratch.getNumSamples() < numSamples || scratch.getNumChannels() < 2) {
+        m_activeAudioReaders.fetch_sub(1, std::memory_order_release);
         return;
+    }
 
-    if (scratch.getNumSamples() < numSamples || scratch.getNumChannels() < 2)
-        return;
-
-    scratch.clear();
+    scratch.clear(0, 0, numSamples);
+    scratch.clear(1, 0, numSamples);
     juce::AudioSourceChannelInfo info(&scratch, 0, numSamples);
-    m_transport.getNextAudioBlock(info);
+    reader->getNextAudioBlock(info);
+    m_positionSec.store(static_cast<double>(reader->getNextReadPosition())
+                            / std::max(1.0, m_cacheHandle.sampleRate()),
+                        std::memory_order_relaxed);
 
     const float gain = static_cast<float>(kPreviewGain);
-    masterBuf.addFrom(0, 0, scratch, 0, 0, numSamples, gain);
-    masterBuf.addFrom(1, 0, scratch, 1, 0, numSamples, gain);
+    masterBuf.addFrom(0, startSample, scratch, 0, 0, numSamples, gain);
+    masterBuf.addFrom(1, startSample, scratch, 1, 0, numSamples, gain);
+    m_activeAudioReaders.fetch_sub(1, std::memory_order_release);
 }

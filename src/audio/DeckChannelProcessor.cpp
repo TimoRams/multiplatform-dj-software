@@ -1,4 +1,4 @@
-#include "MixerDspSource.h"
+#include "DeckChannelProcessor.h"
 
 #include <algorithm>
 #include <cmath>
@@ -30,53 +30,59 @@ struct StereoBlock {
 
 } // namespace
 
-MixerDspSource::MixerDspSource(juce::AudioSource* inSource) : source(inSource) {}
+DeckChannelProcessor::DeckChannelProcessor(juce::AudioSource* inSource) : source(inSource) {}
 
-void MixerDspSource::setFxEffectType(EffectType type) { m_colorFx.setEffectType(type); }
-void MixerDspSource::setFxAmount(float amount) { m_colorFx.setAmount(amount); }
-void MixerDspSource::setFxSCKnob(float knob) { m_colorFx.setSCKnobValue(knob); }
-void MixerDspSource::setFxSCParam(float param) { m_colorFx.setSCParamValue(param); }
-void MixerDspSource::setFxExternalDelayTime(float seconds) { m_colorFx.setExternalDelayTime(seconds); }
-void MixerDspSource::setFxPrimaryParam(float v) { m_colorFx.setPrimaryParam(v); }
+void DeckChannelProcessor::setFxEffectType(EffectType type) { m_colorFx.setEffectType(type); }
+void DeckChannelProcessor::setFxAmount(float amount) { m_colorFx.setAmount(amount); }
+void DeckChannelProcessor::setFxSCKnob(float knob) { m_colorFx.setSCKnobValue(knob); }
+void DeckChannelProcessor::setFxSCParam(float param) { m_colorFx.setSCParamValue(param); }
+void DeckChannelProcessor::setFxExternalDelayTime(float seconds) { m_colorFx.setExternalDelayTime(seconds); }
+void DeckChannelProcessor::setFxPrimaryParam(float v) { m_colorFx.setPrimaryParam(v); }
 
-void MixerDspSource::setFxSlotEffectType(int slot, EffectType type) { if (auto* fx = fxChainSlot(slot)) fx->setEffectType(type); }
-void MixerDspSource::setFxSlotAmount(int slot, float amount) { if (auto* fx = fxChainSlot(slot)) fx->setAmount(amount); }
-void MixerDspSource::setFxSlotExternalDelayTime(int slot, float seconds) { if (auto* fx = fxChainSlot(slot)) fx->setExternalDelayTime(seconds); }
-void MixerDspSource::setFxSlotPrimaryParam(int slot, float v) { if (auto* fx = fxChainSlot(slot)) fx->setPrimaryParam(v); }
+void DeckChannelProcessor::setFxSlotEffectType(int slot, EffectType type) { if (auto* fx = fxChainSlot(slot)) fx->setEffectType(type); }
+void DeckChannelProcessor::setFxSlotAmount(int slot, float amount) { if (auto* fx = fxChainSlot(slot)) fx->setAmount(amount); }
+void DeckChannelProcessor::setFxSlotExternalDelayTime(int slot, float seconds) { if (auto* fx = fxChainSlot(slot)) fx->setExternalDelayTime(seconds); }
+void DeckChannelProcessor::setFxSlotPrimaryParam(int slot, float v) { if (auto* fx = fxChainSlot(slot)) fx->setPrimaryParam(v); }
 
-void MixerDspSource::setBeatSyncPosition(double beatPosition, double beatDurationSec) {
+void DeckChannelProcessor::setBeatSyncPosition(double beatPosition, double beatDurationSec) {
     m_colorFx.setBeatSyncPosition(beatPosition, beatDurationSec);
     for (auto& fx : m_fxChain)
         fx.setBeatSyncPosition(beatPosition, beatDurationSec);
     m_padFx.setBeatSyncPosition(beatPosition, beatDurationSec);
 }
 
-void MixerDspSource::setPadFxEffectType(EffectType type) { m_padFx.setEffectType(type); }
-void MixerDspSource::setPadFxAmount(float amount) { m_padFx.setAmount(amount); }
+void DeckChannelProcessor::setPadFxEffectType(EffectType type) { m_padFx.setEffectType(type); }
+void DeckChannelProcessor::setPadFxAmount(float amount) { m_padFx.setAmount(amount); }
 
-void MixerDspSource::clearPadFx() {
+void DeckChannelProcessor::clearPadFx() {
     m_padFx.setEffectType(EffectType::None);
     m_padFx.setAmount(0.0f);
     armClickFreeTransition();
 }
 
-void MixerDspSource::setVinylBrakeActive(bool active) { setStopEffectWanted(m_vinylBrakeWanted, active); }
-void MixerDspSource::setEchoOutActive(bool active) { setStopEffectWanted(m_echoOutWanted, active); }
-void MixerDspSource::setBackspinActive(bool active) { setStopEffectWanted(m_backspinWanted, active); }
-void MixerDspSource::setRollOutActive(bool active) { setStopEffectWanted(m_rollOutWanted, active); }
-void MixerDspSource::setScratchTimbre(float amount) {
+void DeckChannelProcessor::setVinylBrakeActive(bool active) { setStopEffectWanted(m_vinylBrakeWanted, active); }
+void DeckChannelProcessor::setEchoOutActive(bool active) { setStopEffectWanted(m_echoOutWanted, active); }
+void DeckChannelProcessor::setBackspinActive(bool active) { setStopEffectWanted(m_backspinWanted, active); }
+void DeckChannelProcessor::setRollOutActive(bool active) { setStopEffectWanted(m_rollOutWanted, active); }
+void DeckChannelProcessor::setScratchTimbre(float amount) {
     scratchTimbre.store(std::clamp(amount, 0.0f, 1.0f), std::memory_order_relaxed);
 }
-void MixerDspSource::armClickFreeTransition() { m_pendingClickFreeBridge.store(true, std::memory_order_release); }
+void DeckChannelProcessor::armClickFreeTransition() { m_pendingClickFreeBridge.store(true, std::memory_order_release); }
 
-const juce::AudioBuffer<float>& MixerDspSource::getPflBuffer() const { return m_preFaderScratch; }
+const juce::AudioBuffer<float>& DeckChannelProcessor::getPflBuffer() const { return m_preFaderScratch; }
+const juce::AudioBuffer<float>& DeckChannelProcessor::getPostFaderTailBuffer() const
+{
+    return m_postFaderTailReturn;
+}
 
-void MixerDspSource::prepareToPlay(int samplesPerBlockExpected, double sampleRate) {
+void DeckChannelProcessor::prepareToPlay(int samplesPerBlockExpected, double sampleRate) {
         if(g_inMixerCallback)m_prepareRt.fetch_add(1,std::memory_order_relaxed);
         if (source) source->prepareToPlay(samplesPerBlockExpected, sampleRate);
 
         if(g_inMixerCallback)m_growthRt.fetch_add(1,std::memory_order_relaxed);
         m_preFaderScratch.setSize(2, std::max(64, samplesPerBlockExpected), false, true, true);
+        m_postFaderTailReturn.setSize(2, std::max(64, samplesPerBlockExpected), false, true, true);
+        m_tailScratch.setSize(2, std::max(64, samplesPerBlockExpected), false, true, true);
 
         m_colorFx.prepare(sampleRate, samplesPerBlockExpected, 2);
         for (auto& fx : m_fxChain)
@@ -95,9 +101,10 @@ void MixerDspSource::prepareToPlay(int samplesPerBlockExpected, double sampleRat
         // Initialise per-sample gain smoothers so the first block has no ramp glitch.
         const float sr = static_cast<float>(sampleRate);
         m_trimSmooth .reset(sr, 0.010f);   // 10 ms — trim rarely changes rapidly
-        m_trimSmooth .setCurrentAndTargetValue(trimVal .load(std::memory_order_relaxed));
-        m_faderSmooth.reset(sr, 0.020f);   // 20 ms — crossfader can move very fast
-        m_faderSmooth.setCurrentAndTargetValue(faderVal.load(std::memory_order_relaxed));
+        const Parameters parameters = m_parameters.controlSnapshot();
+        m_trimSmooth .setCurrentAndTargetValue(parameters.trim);
+        m_faderSmooth.reset(sr, 0.020f);   // 20 ms keeps channel-fader moves click-free
+        m_faderSmooth.setCurrentAndTargetValue(parameters.fader);
 
 
         // 1.15 s ramp from full speed to a complete stop
@@ -135,12 +142,13 @@ void MixerDspSource::prepareToPlay(int samplesPerBlockExpected, double sampleRat
         activateFilterSnapshot();
     }
 
-void MixerDspSource::releaseResources() {
+void DeckChannelProcessor::releaseResources() {
         if (source) source->releaseResources();
     }
 
-void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill) {
+void DeckChannelProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill) {
         struct Scope{Scope(){g_inMixerCallback=true;}~Scope(){g_inMixerCallback=false;}} scope;
+        const Parameters parameters = m_parameters.snapshot();
         m_colorFx.applyPendingCommandAtBlockBoundary();
         for (auto& fx : m_fxChain)
             fx.applyPendingCommandAtBlockBoundary();
@@ -233,7 +241,7 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
                                0, std::min(fullBlock.getNumChannels(), static_cast<size_t>(2)));
 
         // Apply trim pre-EQ/pre-fader with per-sample smoothing.
-        m_trimSmooth.setTargetValue(trimVal.load(std::memory_order_relaxed));
+        m_trimSmooth.setTargetValue(parameters.trim);
         if (m_trimSmooth.isSmoothing() || std::abs(m_trimSmooth.getTargetValue() - 1.0f) > 0.001f) {
             const size_t nc = slicedBlock.getNumChannels();
             const int    ns = static_cast<int>(slicedBlock.getNumSamples());
@@ -244,7 +252,7 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
             }
         }
 
-        if (m_polarityInverted.load(std::memory_order_relaxed)) {
+        if (parameters.polarityInverted) {
             const size_t nc = slicedBlock.getNumChannels();
             const int    ns = static_cast<int>(slicedBlock.getNumSamples());
             for (size_t ch = 0; ch < nc; ++ch) {
@@ -425,7 +433,45 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
             }
         }
 
-        // Channel pre-fader meter: post Trim/EQ/Filter/FX, pre channel fader/crossfader.
+        // Deck inserts process in the canonical pre-fader chain. Time-based tail
+        // effects produce a separate wet return so closing/resetting the deck does
+        // not cut their delay/reverb state.
+        m_postFaderTailReturn.clear(0, 0, bufferToFill.numSamples);
+        m_postFaderTailReturn.clear(1, 0, bufferToFill.numSamples);
+        if (!FxProcessor::isColorFxType(m_colorFx.getEffectType())) {
+            for (auto& fx : m_fxChain) {
+                if (FxProcessor::placementForType(fx.getEffectType())
+                    == FxPlacement::PostFaderTail) {
+                    fx.processWetReturn(*bufferToFill.buffer, m_tailScratch,
+                                        bufferToFill.startSample,
+                                        bufferToFill.numSamples);
+                    m_postFaderTailReturn.addFrom(0, 0, m_tailScratch, 0, 0,
+                                                  bufferToFill.numSamples);
+                    m_postFaderTailReturn.addFrom(1, 0, m_tailScratch, 1, 0,
+                                                  bufferToFill.numSamples);
+                } else {
+                    fx.process(*bufferToFill.buffer,
+                               bufferToFill.startSample,
+                               bufferToFill.numSamples);
+                }
+            }
+        }
+        if (FxProcessor::placementForType(m_padFx.getEffectType())
+            == FxPlacement::PostFaderTail) {
+            m_padFx.processWetReturn(*bufferToFill.buffer, m_tailScratch,
+                                     bufferToFill.startSample,
+                                     bufferToFill.numSamples);
+            m_postFaderTailReturn.addFrom(0, 0, m_tailScratch, 0, 0,
+                                          bufferToFill.numSamples);
+            m_postFaderTailReturn.addFrom(1, 0, m_tailScratch, 1, 0,
+                                          bufferToFill.numSamples);
+        } else {
+            m_padFx.process(*bufferToFill.buffer,
+                            bufferToFill.startSample,
+                            bufferToFill.numSamples);
+        }
+
+        // Channel pre-fader meter: post Trim/EQ/Filter/insert FX, pre channel fader.
         {
             auto* buf = bufferToFill.buffer;
             const int s = bufferToFill.startSample;
@@ -449,11 +495,11 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
             }
         }
 
-        // Apply channel volume (crossfader + channel fader) with per-sample smoothing.
+        // Apply the channel fader with per-sample smoothing. Crossfader gain is master-owned.
         // The crossfader fires applyVolumes() on every pixel of slider movement, so
-        // faderVal can change every block.  Smoothing over 20 ms eliminates the
+        // The channel fader can change every block. Smoothing eliminates the
         // step-change pops that occur at block boundaries.
-        m_faderSmooth.setTargetValue(faderVal.load(std::memory_order_relaxed));
+        m_faderSmooth.setTargetValue(parameters.fader);
         if (m_faderSmooth.isSmoothing() || std::abs(m_faderSmooth.getTargetValue() - 1.0f) > 0.001f) {
             const size_t nc = slicedBlock.getNumChannels();
             const int    ns = static_cast<int>(slicedBlock.getNumSamples());
@@ -463,17 +509,6 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
                     slicedBlock.getChannelPointer(ch)[i] *= g;
             }
         }
-
-        // ── Beat FX chain + PAD FX (post-fader: tails continue after fader closes) ──
-        if (!FxProcessor::isColorFxType(m_colorFx.getEffectType())) {
-            for (auto& fx : m_fxChain)
-                fx.process(*bufferToFill.buffer,
-                           bufferToFill.startSample,
-                           bufferToFill.numSamples);
-        }
-        m_padFx.process(*bufferToFill.buffer,
-                        bufferToFill.startSample,
-                        bufferToFill.numSamples);
 
         applyClickFreeTransition(bufferToFill);
 
@@ -487,21 +522,32 @@ void MixerDspSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffe
             if (buf->getNumChannels() > 1)
                 m_peakR.store(buf->getMagnitude(1, s, n), std::memory_order_relaxed);
         }
-        // Master volume, limiter, and output routing are handled by DjMasterBus.
+        // Master volume, limiter, and output routing are handled by AudioEngine.
     }
 
-void MixerDspSource::setTrim(float val) { trimVal.store(std::clamp(val,0.0f,4.0f),std::memory_order_relaxed); }
-void MixerDspSource::setFader(float val) { faderVal.store(std::clamp(val,0.0f,1.0f),std::memory_order_relaxed); }
-void MixerDspSource::setPolarityInverted(bool inverted) { m_polarityInverted.store(inverted, std::memory_order_relaxed); }
+void DeckChannelProcessor::setTrim(float value)
+{
+    m_parameters.update([value](Parameters& p) { p.trim = std::clamp(value, 0.0f, 4.0f); });
+}
 
-void MixerDspSource::setStopEffectWanted(std::atomic<bool>& flag, bool active)
+void DeckChannelProcessor::setFader(float value)
+{
+    m_parameters.update([value](Parameters& p) { p.fader = std::clamp(value, 0.0f, 1.0f); });
+}
+
+void DeckChannelProcessor::setPolarityInverted(bool inverted)
+{
+    m_parameters.update([inverted](Parameters& p) { p.polarityInverted = inverted; });
+}
+
+void DeckChannelProcessor::setStopEffectWanted(std::atomic<bool>& flag, bool active)
 {
     const bool previous = flag.exchange(active, std::memory_order_relaxed);
     if (previous != active)
         armClickFreeTransition();
 }
 
-void MixerDspSource::applyClickFreeTransition(const juce::AudioSourceChannelInfo& bufferToFill)
+void DeckChannelProcessor::applyClickFreeTransition(const juce::AudioSourceChannelInfo& bufferToFill)
 {
     auto* buf = bufferToFill.buffer;
     const int start = bufferToFill.startSample;
@@ -531,7 +577,7 @@ void MixerDspSource::applyClickFreeTransition(const juce::AudioSourceChannelInfo
     m_lastOutputValid = true;
 }
 
-int MixerDspSource::clickFreeBridgeSamples() const
+int DeckChannelProcessor::clickFreeBridgeSamples() const
 {
     const int samples = m_sampleRate > 0.0
         ? static_cast<int>(std::round(m_sampleRate * 0.0025))
@@ -539,27 +585,29 @@ int MixerDspSource::clickFreeBridgeSamples() const
     return std::clamp(samples, 64, 192);
 }
 
-float MixerDspSource::stopTailGain(float value, float fadeStart)
+float DeckChannelProcessor::stopTailGain(float value, float fadeStart)
 {
     const float t = std::clamp(value / fadeStart, 0.0f, 1.0f);
     return t * t * (3.0f - 2.0f * t);
 }
 
-void MixerDspSource::setEq(float l, float m, float h) {
-        std::lock_guard lock(m_filterTargetMutex);
-        lowVol.store(std::clamp(l,-1.0f,1.0f),std::memory_order_relaxed);
-        midVol.store(std::clamp(m,-1.0f,1.0f),std::memory_order_relaxed);
-        highVol.store(std::clamp(h,-1.0f,1.0f),std::memory_order_relaxed);
+void DeckChannelProcessor::setEq(float l, float m, float h) {
+        m_parameters.update([l, m, h](Parameters& p) {
+            p.eqLow = std::clamp(l, -1.0f, 1.0f);
+            p.eqMid = std::clamp(m, -1.0f, 1.0f);
+            p.eqHigh = std::clamp(h, -1.0f, 1.0f);
+        });
         publishFilterSnapshot();
     }
 
-void MixerDspSource::setFilterVal(float f) {
-        std::lock_guard lock(m_filterTargetMutex);
-        filterVal.store(std::clamp(f,-1.0f,1.0f),std::memory_order_relaxed);
+void DeckChannelProcessor::setFilterVal(float f) {
+        m_parameters.update([f](Parameters& p) {
+            p.filter = std::clamp(f, -1.0f, 1.0f);
+        });
         publishFilterSnapshot();
     }
 
-float MixerDspSource::getDecibelsFromKnob(float kb) const {
+float DeckChannelProcessor::getDecibelsFromKnob(float kb) const {
         if (kb < 0.0f) {
             return kb * 32.0f; // -1 -> -32 dB (approx -inf / kill)
         } else {
@@ -567,11 +615,14 @@ float MixerDspSource::getDecibelsFromKnob(float kb) const {
         }
     }
 
-void MixerDspSource::publishFilterSnapshot() noexcept
+void DeckChannelProcessor::publishFilterSnapshot() noexcept
 {
     if(g_inMixerCallback)m_coeffBuildRt.fetch_add(1,std::memory_order_relaxed);
     const auto generation=m_parameterGeneration.fetch_add(1,std::memory_order_acq_rel)+1;
-    const MixerFilterTargets targets{lowVol.load(),midVol.load(),highVol.load(),filterVal.load()};
+    const Parameters parameters = m_parameters.controlSnapshot();
+    const MixerFilterTargets targets {
+        parameters.eqLow, parameters.eqMid, parameters.eqHigh, parameters.filter
+    };
     const auto snapshot=buildMixerCoefficientSnapshot(targets,m_filterSampleRate.load(std::memory_order_acquire),generation,m_deviceGeneration.load(std::memory_order_acquire));
     if(!snapshot.valid()){m_invalidSets.fetch_add(1,std::memory_order_relaxed);return;}
     for(auto& slot:m_coefficientSlots){
@@ -589,7 +640,7 @@ void MixerDspSource::publishFilterSnapshot() noexcept
     m_staleSnapshots.fetch_add(1,std::memory_order_relaxed);
 }
 
-void MixerDspSource::activateFilterSnapshot() noexcept
+void DeckChannelProcessor::activateFilterSnapshot() noexcept
 {
     for(auto& slot:m_coefficientSlots){
         auto expected=SnapshotState::Ready;
@@ -603,16 +654,16 @@ void MixerDspSource::activateFilterSnapshot() noexcept
     }
 }
 
-void MixerDspSource::processPreparedFilters(const juce::AudioSourceChannelInfo& info) noexcept
+void DeckChannelProcessor::processPreparedFilters(const juce::AudioSourceChannelInfo& info) noexcept
 {
     const int channels=std::min(2,info.buffer->getNumChannels());
     for(int ch=0;ch<channels;++ch){float*w=info.buffer->getWritePointer(ch,info.startSample);for(int i=0;i<info.numSamples;++i){const float input=w[i];const float current=m_filterBanks[m_activeFilterBank].process(ch,input);if(i<m_filterFadeRemaining){const int old=1-m_activeFilterBank;const float previous=m_filterBanks[old].process(ch,input);const float t=static_cast<float>(kFilterFadeSamples-m_filterFadeRemaining+i+1)/kFilterFadeSamples;w[i]=previous+(current-previous)*t;}else w[i]=current;}}
     m_filterFadeRemaining=std::max(0,m_filterFadeRemaining-info.numSamples);
 }
 
-MixerDspSource::RealtimeStats MixerDspSource::realtimeStats() const noexcept{return{m_coeffBuildRt.load(),m_prepareRt.load(),m_growthRt.load(),m_lockRt.load(),m_constructRt.load(),m_snapshotSwitches.load(),m_staleSnapshots.load(),m_invalidSets.load()};}
+DeckChannelProcessor::RealtimeStats DeckChannelProcessor::realtimeStats() const noexcept{return{m_coeffBuildRt.load(),m_prepareRt.load(),m_growthRt.load(),m_lockRt.load(),m_constructRt.load(),m_snapshotSwitches.load(),m_staleSnapshots.load(),m_invalidSets.load()};}
 
-FxProcessor* MixerDspSource::fxChainSlot(int slot) {
+FxProcessor* DeckChannelProcessor::fxChainSlot(int slot) {
         if (slot < 1 || slot > kFxChainSlots) return nullptr;
         return &m_fxChain[static_cast<size_t>(slot - 1)];
     }

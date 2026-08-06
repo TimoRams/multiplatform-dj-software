@@ -31,7 +31,7 @@ struct TimeStretchConfiguration {
     std::uint64_t configurationGeneration = 0;
 };
 
-class TimeStretchAudioSource : public juce::AudioSource {
+class TimeStretchProcessor : public juce::AudioSource {
 public:
     static constexpr int kMinPullSize = 64;
     static constexpr int kMaxPullSize = 512;
@@ -40,8 +40,8 @@ public:
     static constexpr int kPullLoopLimit = 24;
     static constexpr int kSwitchFadeSamples = 256;
 
-    explicit TimeStretchAudioSource(juce::AudioSource* inSource);
-    ~TimeStretchAudioSource() override;
+    explicit TimeStretchProcessor(juce::AudioSource* inSource);
+    ~TimeStretchProcessor() override;
 
     void setTempoRatio(double ratio) noexcept;
     void setPitchLockEnabled(bool enabled) noexcept;

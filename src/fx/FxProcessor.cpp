@@ -253,6 +253,62 @@ void FxProcessor::process(juce::AudioBuffer<float>& buffer, int startSample, int
     finishProfile();
 }
 
+FxPlacement FxProcessor::placementForType(EffectType type) noexcept
+{
+    switch (type) {
+    case EffectType::Reverb:
+    case EffectType::Echo:
+    case EffectType::LowCutEcho:
+    case EffectType::MtDelay:
+    case EffectType::Spiral:
+        return FxPlacement::PostFaderTail;
+    default:
+        return FxPlacement::PreFaderInsert;
+    }
+}
+
+void FxProcessor::processWetReturn(const juce::AudioBuffer<float>& input,
+                                   juce::AudioBuffer<float>& wetReturn,
+                                   int startSample,
+                                   int numSamples)
+{
+    if (numSamples <= 0 || wetReturn.getNumChannels() < m_numChannels
+        || wetReturn.getNumSamples() < numSamples) {
+        return;
+    }
+
+    for (int channel = 0; channel < std::min(m_numChannels, wetReturn.getNumChannels()); ++channel)
+        wetReturn.clear(channel, 0, numSamples);
+
+    const EffectType type = m_activeType;
+    if (placementForType(type) != FxPlacement::PostFaderTail || !ensureScratchCapacity(numSamples))
+        return;
+    beginBeatSyncBlock();
+
+    const int inputChannels = input.getNumChannels();
+    for (int channel = 0; channel < m_numChannels; ++channel) {
+        if (inputChannels > 0 && startSample >= 0
+            && startSample + numSamples <= input.getNumSamples()) {
+            m_wetScratch.copyFrom(channel, 0, input,
+                                  std::min(channel, inputChannels - 1),
+                                  startSample, numSamples);
+        } else {
+            m_wetScratch.clear(channel, 0, numSamples);
+        }
+    }
+
+    const float amount = std::clamp(m_amountAtomic.load(std::memory_order_relaxed), 0.0f, 1.0f);
+    m_wetSmooth.setTargetValue(amount);
+    processWetEffect(type, m_wetScratch, numSamples, amount);
+    for (int sample = 0; sample < numSamples; ++sample) {
+        const float wetGain = m_wetSmooth.getNextValue();
+        for (int channel = 0; channel < m_numChannels; ++channel)
+            wetReturn.setSample(channel, sample,
+                                m_wetScratch.getSample(channel, sample) * wetGain);
+    }
+    advanceBeatSyncBlock(numSamples);
+}
+
 FxProcessor::CpuProfile FxProcessor::getCpuProfile(EffectType type)
 {
     const int index = effectProfileIndex(type);

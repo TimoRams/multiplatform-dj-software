@@ -1,6 +1,7 @@
 #pragma once
 
-#include "ScratchResampler.hpp"
+#include "audio/AudioRouting.h"
+#include "audio/internal/ScratchResampler.h"
 #include "../scratch/ScratchController.hpp"
 #include "../scratch/VirtualTurntable.hpp"
 
@@ -14,6 +15,12 @@ class HermiteResamplingAudioSource;
 class CachedPlaybackAudioSource;
 
 namespace engine::audio {
+
+enum class RenderMode : std::uint8_t {
+    Direct,
+    Keylock,
+    Scratch
+};
 
 enum class ScratchReleasePhase : std::uint8_t {
     Idle,
@@ -34,10 +41,10 @@ struct ScratchReleaseSnapshot {
 
 // Normal playback: proven Hermite varispeed (keylock off) or transport pass-through (keylock on).
 // Scratch playback: velocity-based virtual turntable + dedicated scratch resampler.
-class ScratchDeckBridge : public juce::AudioSource {
+class RenderModeRouter : public juce::AudioSource {
 public:
-    explicit ScratchDeckBridge(juce::AudioSource* inputSource, bool deleteInputWhenDeleted = false);
-    ~ScratchDeckBridge() override;
+    explicit RenderModeRouter(juce::AudioSource* inputSource, bool deleteInputWhenDeleted = false);
+    ~RenderModeRouter() override;
 
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override;
     void releaseResources() override;
@@ -70,7 +77,7 @@ public:
     void setNormalPlaybackEnabled(bool enabled) noexcept {
         m_normalPlaybackEnabled.store(enabled, std::memory_order_release);
     }
-    void setKeylockPassthrough(bool enabled) noexcept {
+    void setKeylockEnabled(bool enabled) noexcept {
         m_keylockPassthrough.store(enabled, std::memory_order_relaxed);
     }
     void setLoopRangeSeconds(double loopInSec, double loopOutSec, bool active,
@@ -78,6 +85,8 @@ public:
     void setReverse(bool reverse) noexcept;
 
     [[nodiscard]] bool isScratching() const noexcept;
+    [[nodiscard]] RenderMode activeRenderMode() const noexcept
+    { return m_activeRenderMode.load(std::memory_order_acquire); }
     [[nodiscard]] bool isInertiaActive() const noexcept;
     [[nodiscard]] double scratchRate() const noexcept;
     [[nodiscard]] double readPositionSeconds(double trackSampleRate) const noexcept;
@@ -150,6 +159,7 @@ private:
     std::atomic<double> m_jogNudgeRatio { 1.0 };
     std::atomic<bool> m_normalPlaybackEnabled { false };
     std::atomic<bool> m_keylockPassthrough { false };
+    std::atomic<RenderMode> m_activeRenderMode { RenderMode::Direct };
     std::atomic<bool> m_reverse { false };
     std::atomic<double> m_trackSampleRate { 44100.0 };
     std::atomic<double> m_trackLengthSeconds { 0.0 };
@@ -162,7 +172,8 @@ private:
     bool m_prevScratchPath = false;
 
     std::atomic<int> m_crossfadeRemaining { 0 };
-    static constexpr int kCrossfadeSamples = 384;
+    static constexpr int kCrossfadeSamples =
+        AudioRoutingConstants::kScratchCrossfadeMaxSamples;
 
     std::atomic<bool> m_loopActive { false };
     std::atomic<double> m_loopInSample { 0.0 };

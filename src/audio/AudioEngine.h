@@ -1,7 +1,10 @@
 #pragma once
 
-#include "MasterBusAudioEndpoint.h"
-#include "../fx/BrickwallLimiter.h"
+#include "audio/AudioOutputRouter.h"
+#include "audio/AudioParameters.h"
+#include "audio/DeckAudioPipeline.h"
+#include "audio/HeadphoneBus.h"
+#include "audio/MasterMixer.h"
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
@@ -9,9 +12,12 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 
-struct MasterBusRealtimeStats {
+enum class EffectType;
+
+struct AudioEngineRealtimeStats {
     std::uint64_t allocationsFromAudioThread = 0;
     std::uint64_t bufferGrowthsFromAudioThread = 0;
     std::uint64_t blockingLockAttempts = 0;
@@ -22,33 +28,22 @@ struct MasterBusRealtimeStats {
     std::uint64_t nonFiniteDeckBlocks = 0;
 };
 
+class IAuxAudioEndpoint {
+public:
+    virtual ~IAuxAudioEndpoint() = default;
+    virtual void prepareAuxAudio(int maximumBlockSize, double sampleRate) = 0;
+    virtual void releaseAuxAudio() = 0;
+    virtual void mixAuxAudio(juce::AudioBuffer<float>& masterBuffer,
+                             juce::AudioBuffer<float>& scratchBuffer,
+                             int numberOfSamples) noexcept = 0;
+};
+
 // Application-wide, audio-only summing endpoint. Registration and retirement are
 // control-thread operations; getNextAudioBlock() never locks or allocates.
-class DjMasterBus final : public juce::AudioSource {
+class AudioEngine final : public juce::AudioSource {
 public:
     static constexpr std::size_t kMaximumDecks = 4;
     static constexpr int kProcessingChunkSize = 2048;
-
-    class DeckRegistration final {
-    public:
-        DeckRegistration() = default;
-        ~DeckRegistration();
-        DeckRegistration(const DeckRegistration&) = delete;
-        DeckRegistration& operator=(const DeckRegistration&) = delete;
-        DeckRegistration(DeckRegistration&& other) noexcept;
-        DeckRegistration& operator=(DeckRegistration&& other) noexcept;
-        void reset() noexcept;
-        [[nodiscard]] bool isValid() const noexcept { return m_bus != nullptr; }
-
-    private:
-        friend class DjMasterBus;
-        DeckRegistration(DjMasterBus* bus, std::size_t slot, std::uint64_t generation,
-                         IDeckAudioEndpoint* endpoint) noexcept;
-        DjMasterBus* m_bus = nullptr;
-        IDeckAudioEndpoint* m_endpoint = nullptr;
-        std::size_t m_slot = 0;
-        std::uint64_t m_generation = 0;
-    };
 
     class AuxRegistration final {
     public:
@@ -62,19 +57,20 @@ public:
         [[nodiscard]] bool isValid() const noexcept { return m_bus != nullptr; }
 
     private:
-        friend class DjMasterBus;
-        AuxRegistration(DjMasterBus* bus, std::uint64_t generation,
-                        IMasterBusAuxEndpoint* endpoint) noexcept;
-        DjMasterBus* m_bus = nullptr;
-        IMasterBusAuxEndpoint* m_endpoint = nullptr;
+        friend class AudioEngine;
+        AuxRegistration(AudioEngine* bus, std::uint64_t generation,
+                        IAuxAudioEndpoint* endpoint) noexcept;
+        AudioEngine* m_bus = nullptr;
+        IAuxAudioEndpoint* m_endpoint = nullptr;
         std::uint64_t m_generation = 0;
     };
 
-    DjMasterBus();
-    ~DjMasterBus() override;
+    explicit AudioEngine(AudioPageCache& cache);
+    ~AudioEngine() override;
 
-    [[nodiscard]] DeckRegistration registerDeck(IDeckAudioEndpoint& endpoint, int slotIndex);
-    [[nodiscard]] AuxRegistration registerAuxEndpoint(IMasterBusAuxEndpoint& endpoint);
+    [[nodiscard]] AuxRegistration registerAuxEndpoint(IAuxAudioEndpoint& endpoint);
+    [[nodiscard]] DeckAudioPipeline& deck(std::size_t index) noexcept;
+    [[nodiscard]] const DeckAudioPipeline& deck(std::size_t index) const noexcept;
     void beginShutdown() noexcept;
 
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override;
@@ -104,6 +100,16 @@ public:
     static bool masterCueEnabled();
     static void setHeadphoneMix(float mix);
     static float headphoneMix();
+    static void setHeadphoneGain(float gain);
+    static float headphoneGain();
+    static void setPflEnabled(int deckIndex, bool enabled);
+    static bool pflEnabled(int deckIndex);
+
+    static void setCrossfaderPosition(float position);
+    static void setCrossfaderCurve(CrossfaderCurve curve);
+    static void setCrossfaderAssignment(int deckIndex, CrossfaderAssignment assignment);
+    static void setMasterFx(EffectType type, float amount);
+    static void setMasterFxTiming(float externalDelaySeconds, float primaryParameter);
 
     [[nodiscard]] float masterVuL() const noexcept
     { return m_masterPeakL.load(std::memory_order_relaxed); }
@@ -113,30 +119,23 @@ public:
     { return s_masterClipDetected.load(std::memory_order_relaxed); }
     static bool masterClipDetected_s();
 
-    [[nodiscard]] MasterBusRealtimeStats realtimeStats() const noexcept;
+    [[nodiscard]] AudioEngineRealtimeStats realtimeStats() const noexcept;
+    [[nodiscard]] const juce::AudioBuffer<float>& masterTap() const noexcept
+    { return m_masterBuf; }
     void resetRealtimeStats() noexcept;
 
 private:
-    struct DeckSlot {
-        std::atomic<IDeckAudioEndpoint*> endpoint { nullptr };
-        std::atomic<std::uint64_t> generation { 0 };
-    };
-
-    void unregisterDeck(std::size_t slot, std::uint64_t generation,
-                        IDeckAudioEndpoint* endpoint) noexcept;
-    void unregisterAux(std::uint64_t generation, IMasterBusAuxEndpoint* endpoint) noexcept;
+    void unregisterAux(std::uint64_t generation, IAuxAudioEndpoint* endpoint) noexcept;
     void waitForEndpointReaders() const noexcept;
     void processChunk(juce::AudioBuffer<float>& output, int outputStart, int samples,
-                      const std::array<IDeckAudioEndpoint*, kMaximumDecks>& endpoints,
-                      IMasterBusAuxEndpoint* aux, float& peakL, float& peakR,
+                      const std::array<DeckAudioPipeline*, kMaximumDecks>& endpoints,
+                      IAuxAudioEndpoint* aux,
+                      const AudioParameters& parameters,
+                      float& peakL, float& peakR,
                       float& minimumGainReduction) noexcept;
-    static void routeStereoToPair(juce::AudioBuffer<float>& buffer,
-                                  const float* srcL, const float* srcR,
-                                  int start, int n, int firstChannel,
-                                  bool add = false, float gain = 1.0f) noexcept;
 
-    std::array<DeckSlot, kMaximumDecks> m_deckSlots;
-    std::atomic<IMasterBusAuxEndpoint*> m_auxEndpoint { nullptr };
+    std::array<std::unique_ptr<DeckAudioPipeline>, kMaximumDecks> m_decks;
+    std::atomic<IAuxAudioEndpoint*> m_auxEndpoint { nullptr };
     std::atomic<std::uint64_t> m_auxGeneration { 0 };
     std::atomic<std::uint64_t> m_nextGeneration { 1 };
     mutable std::atomic<std::uint32_t> m_activeEndpointReaders { 0 };
@@ -145,10 +144,13 @@ private:
     std::atomic<bool> m_isPrepared { false };
     std::atomic<double> m_sampleRate { 44100.0 };
 
-    juce::AudioBuffer<float> m_deckScratch;
+    std::array<juce::AudioBuffer<float>, kMaximumDecks> m_deckBuffers;
     juce::AudioBuffer<float> m_masterBuf;
+    juce::AudioBuffer<float> m_headphoneBuf;
     juce::AudioBuffer<float> m_previewScratch;
-    BrickwallLimiter m_limiter;
+    MasterMixer m_masterMixer;
+    HeadphoneBus m_headphoneBus;
+    AudioOutputRouter m_outputRouter;
     juce::AudioSourcePlayer m_sourcePlayer;
 
     std::atomic<float> m_masterPeakL { 0.0f };
@@ -162,18 +164,12 @@ private:
     std::atomic<std::uint64_t> m_silentOversizedCallbacks { 0 };
     std::atomic<std::uint64_t> m_nonFiniteDeckBlocks { 0 };
 
-    static std::atomic<float> s_masterVolume;
-    static std::atomic<bool> s_antiClipEnabled;
+    static AudioParameterStore s_parameterStore;
     static std::atomic<float> s_gainReduction;
     static std::atomic<int> s_limiterLatencySamples;
     static std::atomic<uint64_t> s_callbackCount;
     static std::atomic<uint64_t> s_callbackTotalUsec;
     static std::atomic<uint64_t> s_callbackWorstUsec;
     static std::atomic<uint64_t> s_callbackOverruns;
-    static std::atomic<int> s_masterFirstChannel;
-    static std::atomic<int> s_boothFirstChannel;
-    static std::atomic<int> s_headphonesFirstChannel;
-    static std::atomic<bool> s_masterCueEnabled;
-    static std::atomic<float> s_headphoneMix;
     static std::atomic<bool> s_masterClipDetected;
 };

@@ -34,7 +34,7 @@
 #endif
 
 #include "DjEngine.h"
-#include "DjMasterBus.h"
+#include "audio/AudioEngine.h"
 #include "library/LibraryManager.h"
 #include "io/MediaIoScheduler.h"
 #include "library/CoverArtProvider.h"
@@ -324,7 +324,7 @@ int runApplication(int argc, char *argv[])
     runtime.audioDeviceService = std::make_unique<AudioDeviceService>();
     runtime.audioPageCache = std::make_unique<AudioPageCache>();
     settingsManager.setAudioDeviceService(runtime.audioDeviceService.get());
-    runtime.masterBus = std::make_unique<DjMasterBus>();
+    runtime.audioEngine = std::make_unique<AudioEngine>(*runtime.audioPageCache);
     runtime.syncCoordinator = std::make_unique<engine::sync::SyncCoordinator>();
     ControlClock::Callbacks syncClockCallbacks;
     syncClockCallbacks.syncCoordinate = [&runtime](const ControlTickContext&) {
@@ -362,7 +362,7 @@ int runApplication(int argc, char *argv[])
     publishLinkSnapshot();
     QObject::connect(runtime.audioDeviceService.get(), &AudioDeviceService::routingChanged,
                      [](int master, int booth, int headphones) {
-                         DjMasterBus::setOutputRouting(master, booth, headphones);
+                         AudioEngine::setOutputRouting(master, booth, headphones);
                      });
 
     engine.addImageProvider("coverart", runtime.coverProvider.release());
@@ -424,15 +424,19 @@ int runApplication(int argc, char *argv[])
 
         QTimer::singleShot(0, &app, [&]() {
             runtime.deckA = std::make_unique<DjEngine>(*runtime.audioDeviceService, *runtime.audioPageCache,
+                                                       runtime.audioEngine->deck(0),
                                                        *runtime.controlClock,
                                                        *runtime.syncCoordinator, 0);
             runtime.deckB = std::make_unique<DjEngine>(*runtime.audioDeviceService, *runtime.audioPageCache,
+                                                       runtime.audioEngine->deck(1),
                                                        *runtime.controlClock,
                                                        *runtime.syncCoordinator, 1);
             runtime.deckC = std::make_unique<DjEngine>(*runtime.audioDeviceService, *runtime.audioPageCache,
+                                                       runtime.audioEngine->deck(2),
                                                        *runtime.controlClock,
                                                        *runtime.syncCoordinator, 2);
             runtime.deckD = std::make_unique<DjEngine>(*runtime.audioDeviceService, *runtime.audioPageCache,
+                                                       runtime.audioEngine->deck(3),
                                                        *runtime.controlClock,
                                                        *runtime.syncCoordinator, 3);
             logStartupStep("DjEngines constructed");
@@ -477,18 +481,11 @@ int runApplication(int argc, char *argv[])
             runtime.midiManager->connectFxManager(runtime.fxManager.get());
 
             runtime.libraryPreviewPlayer = std::make_unique<LibraryPreviewPlayer>(
-                *runtime.controlClock, &app);
-            runtime.previewRegistration = runtime.masterBus->registerAuxEndpoint(
+                *runtime.controlClock, *runtime.audioPageCache, &app);
+            runtime.previewRegistration = runtime.audioEngine->registerAuxEndpoint(
                 *runtime.libraryPreviewPlayer);
             engine.rootContext()->setContextProperty("libraryPreview",
                                                      runtime.libraryPreviewPlayer.get());
-            const std::array<DjEngine*, 4> masterBusDecks {
-                runtime.deckA.get(), runtime.deckB.get(), runtime.deckC.get(), runtime.deckD.get()
-            };
-            for (std::size_t index = 0; index < masterBusDecks.size(); ++index)
-                runtime.deckRegistrations[index] = runtime.masterBus->registerDeck(
-                    masterBusDecks[index]->audioEndpoint(), static_cast<int>(index));
-
             runtime.mixerParameterBridge = std::make_unique<MixerParameterBridge>(
                 runtime.parameterStore.get());
             runtime.mixerParameterBridge->setDecks(runtime.deckA.get(), runtime.deckB.get(),
@@ -510,7 +507,7 @@ int runApplication(int argc, char *argv[])
             if (actualSR  > 0) settingsManager.setAudioSampleRate(actualSR);
             if (actualBuf > 0) settingsManager.setAudioBufferSize(actualBuf);
 
-            runtime.masterBus->registerCallback(runtime.audioDeviceService->manager());
+            runtime.audioEngine->registerCallback(runtime.audioDeviceService->manager());
             runtime.controlClock->start();
             qDebug() << "[startup] Audio device settings applied" << startupTimer.elapsed() << "ms";
         });

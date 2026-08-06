@@ -1,7 +1,7 @@
 #include "ApplicationLifecycle.h"
 
 #include "DjEngine.h"
-#include "DjMasterBus.h"
+#include "audio/AudioEngine.h"
 #include "SettingsManager.h"
 #include "app/AppConfig.h"
 #include "app/AppExitGate.h"
@@ -150,12 +150,10 @@ void shutdownApplication(ApplicationRuntime& runtime)
         if (runtime.linkManager)
             runtime.linkManager->shutdown();
 
-        if (runtime.masterBus) {
-            runtime.masterBus->unregisterCallback(runtime.audioDeviceService->manager());
-            for (auto& registration : runtime.deckRegistrations)
-                registration.reset();
+        if (runtime.audioEngine) {
+            runtime.audioEngine->unregisterCallback(runtime.audioDeviceService->manager());
             runtime.previewRegistration.reset();
-            runtime.masterBus->beginShutdown();
+            runtime.audioEngine->beginShutdown();
         }
 
         if (runtime.libraryPreviewPlayer)
@@ -185,6 +183,8 @@ void shutdownApplication(ApplicationRuntime& runtime)
         runtime.deckC.reset();
         runtime.deckB.reset();
         runtime.deckA.reset();
+        runtime.audioEngine.reset();
+        runtime.libraryPreviewPlayer.reset();
         runtime.syncClockRegistration.reset();
         if (runtime.syncCoordinator)
             runtime.syncCoordinator->shutdown();
@@ -201,8 +201,6 @@ void shutdownApplication(ApplicationRuntime& runtime)
         }
 
         runtime.linkManager.reset();
-        runtime.libraryPreviewPlayer.reset();
-        runtime.masterBus.reset();
         runtime.audioDeviceService.reset();
         runtime.libraryDb.reset();
 

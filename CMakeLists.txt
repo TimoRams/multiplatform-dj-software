@@ -338,7 +338,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/engine/deck/DeckCueLoopController.cpp
     src/engine/deck/DeckCueLoopController.h
     src/engine/deck/DeckTrackLoader.cpp
-    src/engine/deck/DeckAudioGraph.cpp
+    src/audio/DeckAudioPipeline.cpp
     src/engine/deck/DeckTransport.cpp
     src/engine/sync/DeckSyncController.cpp
     src/engine/sync/SyncCoordinator.cpp
@@ -350,12 +350,14 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/engine/facade/Diagnostics.cpp
     src/audio/device/AudioDeviceUtils.cpp
     src/engine/deck/MetadataUtils.cpp
-    src/engine/DjMasterBus.h
-    src/engine/DjMasterBus.cpp
-    src/engine/MasterBusAudioEndpoint.h
-    src/engine/dsp/TimeStretchAudioSource.cpp
-    src/engine/dsp/MixerDspSource.cpp
-    src/engine/dsp/MixerFilterCoefficients.cpp
+    src/audio/AudioEngine.h
+    src/audio/AudioEngine.cpp
+    src/audio/MasterMixer.cpp
+    src/audio/HeadphoneBus.cpp
+    src/audio/AudioOutputRouter.cpp
+    src/audio/TimeStretchProcessor.cpp
+    src/audio/DeckChannelProcessor.cpp
+    src/audio/internal/MixerFilterCoefficients.cpp
     src/analysis/PhraseAnalyzer.h
     src/analysis/PhraseAnalyzer.cpp
     src/analysis/AnalysisCacheVersion.h
@@ -447,18 +449,18 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/library/LibraryTableModel.cpp
     src/fx/BrickwallLimiter.h
     src/fx/BrickwallLimiter.cpp
-    src/engine/dsp/HermiteResamplingAudioSource.h
-    src/engine/dsp/HermiteResamplingAudioSource.cpp
+    src/audio/internal/HermiteResamplingAudioSource.h
+    src/audio/internal/HermiteResamplingAudioSource.cpp
     src/engine/scratch/ScratchSession.hpp
     src/engine/scratch/ScratchSession.cpp
     src/engine/scratch/ScratchController.hpp
     src/engine/scratch/ScratchController.cpp
     src/engine/scratch/VirtualTurntable.hpp
     src/engine/scratch/VirtualTurntable.cpp
-    src/engine/dsp/ScratchResampler.hpp
-    src/engine/dsp/ScratchResampler.cpp
-    src/engine/dsp/ScratchDeckBridge.hpp
-    src/engine/dsp/ScratchDeckBridge.cpp
+    src/audio/internal/ScratchResampler.h
+    src/audio/internal/ScratchResampler.cpp
+    src/audio/RenderModeRouter.h
+    src/audio/RenderModeRouter.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE
@@ -650,8 +652,8 @@ add_executable(BrockDJ_smoke_tests
     tests/smoke/smoke_tests.cpp
     tests/smoke/mixer_dsp_smoke.cpp
     src/analysis/AnalysisValidation.cpp
-    src/engine/dsp/MixerDspSource.cpp
-    src/engine/dsp/MixerFilterCoefficients.cpp
+    src/audio/DeckChannelProcessor.cpp
+    src/audio/internal/MixerFilterCoefficients.cpp
     src/fx/FxProcessor.cpp
     src/fx/BrickwallLimiter.cpp
 )
@@ -686,8 +688,8 @@ add_test(NAME smoke COMMAND BrockDJ_smoke_tests)
 
 add_executable(BrockDJ_mixer_dsp_tests
     tests/mixer_dsp/mixer_dsp_tests.cpp
-    src/engine/dsp/MixerDspSource.cpp
-    src/engine/dsp/MixerFilterCoefficients.cpp
+    src/audio/DeckChannelProcessor.cpp
+    src/audio/internal/MixerFilterCoefficients.cpp
     src/fx/FxProcessor.cpp
     src/fx/BrickwallLimiter.cpp
 )
@@ -699,12 +701,15 @@ add_test(NAME mixer_dsp COMMAND BrockDJ_mixer_dsp_tests)
 
 add_executable(BrockDJ_deck_audio_graph_tests
     tests/deck_audio_graph/deck_audio_graph_tests.cpp
-    src/engine/DjMasterBus.cpp
-    src/engine/deck/DeckAudioGraph.cpp
+    src/audio/AudioEngine.cpp
+    src/audio/MasterMixer.cpp
+    src/audio/HeadphoneBus.cpp
+    src/audio/AudioOutputRouter.cpp
+    src/audio/DeckAudioPipeline.cpp
     src/audio/cache/AudioPageCache.cpp src/audio/cache/AudioCacheWorker.cpp src/audio/cache/CachedPlaybackAudioSource.cpp
-    src/engine/dsp/ScratchDeckBridge.cpp src/engine/dsp/ScratchResampler.cpp src/engine/dsp/HermiteResamplingAudioSource.cpp
+    src/audio/RenderModeRouter.cpp src/audio/internal/ScratchResampler.cpp src/audio/internal/HermiteResamplingAudioSource.cpp
     src/engine/scratch/ScratchController.cpp src/engine/scratch/VirtualTurntable.cpp
-    src/engine/dsp/TimeStretchAudioSource.cpp src/engine/dsp/MixerDspSource.cpp src/engine/dsp/MixerFilterCoefficients.cpp
+    src/audio/TimeStretchProcessor.cpp src/audio/DeckChannelProcessor.cpp src/audio/internal/MixerFilterCoefficients.cpp
     src/fx/FxProcessor.cpp src/fx/BrickwallLimiter.cpp
 )
 target_include_directories(BrockDJ_deck_audio_graph_tests PRIVATE src src/engine src/engine/dsp src/fx/dsp ${SIGNALSMITH_DSP_DIR})
@@ -716,12 +721,12 @@ add_test(NAME deck_audio_graph COMMAND BrockDJ_deck_audio_graph_tests)
 add_executable(BrockDJ_deck_transport_tests
     tests/deck_transport/deck_transport_tests.cpp
     src/app/ControlClock.cpp
-    src/engine/deck/DeckTransport.cpp src/engine/deck/DeckAudioGraph.cpp
+    src/engine/deck/DeckTransport.cpp src/audio/DeckAudioPipeline.cpp
     src/engine/sync/DeckSyncController.cpp src/engine/sync/SyncCoordinator.cpp
     src/audio/cache/AudioPageCache.cpp src/audio/cache/AudioCacheWorker.cpp src/audio/cache/CachedPlaybackAudioSource.cpp
-    src/engine/dsp/ScratchDeckBridge.cpp src/engine/dsp/ScratchResampler.cpp src/engine/dsp/HermiteResamplingAudioSource.cpp
+    src/audio/RenderModeRouter.cpp src/audio/internal/ScratchResampler.cpp src/audio/internal/HermiteResamplingAudioSource.cpp
     src/engine/scratch/ScratchController.cpp src/engine/scratch/VirtualTurntable.cpp
-    src/engine/dsp/TimeStretchAudioSource.cpp src/engine/dsp/MixerDspSource.cpp src/engine/dsp/MixerFilterCoefficients.cpp
+    src/audio/TimeStretchProcessor.cpp src/audio/DeckChannelProcessor.cpp src/audio/internal/MixerFilterCoefficients.cpp
     src/fx/FxProcessor.cpp src/fx/BrickwallLimiter.cpp
 )
 target_include_directories(BrockDJ_deck_transport_tests PRIVATE src src/engine src/engine/dsp src/fx/dsp ${SIGNALSMITH_DSP_DIR})
@@ -783,17 +788,41 @@ add_test(NAME control_clock COMMAND BrockDJ_control_clock_tests)
 
 add_executable(BrockDJ_master_bus_tests
     tests/master_bus/master_bus_tests.cpp
-    src/engine/DjMasterBus.cpp
+    src/audio/MasterMixer.cpp
+    src/audio/HeadphoneBus.cpp
+    src/audio/AudioOutputRouter.cpp
+    src/fx/FxProcessor.cpp
     src/fx/BrickwallLimiter.cpp
 )
-target_include_directories(BrockDJ_master_bus_tests PRIVATE src src/engine src/fx/dsp)
+target_include_directories(BrockDJ_master_bus_tests PRIVATE
+    src src/engine src/fx/dsp ${SIGNALSMITH_DSP_DIR})
 target_link_libraries(BrockDJ_master_bus_tests PRIVATE
-    Qt6::Core
-    juce::juce_core juce::juce_events juce::juce_audio_basics juce::juce_audio_devices)
+    Qt6::Core Qt6::Gui
+    juce::juce_core juce::juce_events juce::juce_audio_basics
+    juce::juce_audio_devices juce::juce_dsp)
 target_compile_definitions(BrockDJ_master_bus_tests PRIVATE
     JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1)
 target_compile_features(BrockDJ_master_bus_tests PRIVATE cxx_std_23)
 add_test(NAME master_bus COMMAND BrockDJ_master_bus_tests)
+
+add_executable(BrockDJ_audio_routing_contract_tests
+    tests/audio_routing/audio_routing_contract_tests.cpp
+    src/audio/MasterMixer.cpp
+    src/audio/HeadphoneBus.cpp
+    src/audio/AudioOutputRouter.cpp
+    src/fx/FxProcessor.cpp
+    src/fx/BrickwallLimiter.cpp
+)
+target_include_directories(BrockDJ_audio_routing_contract_tests PRIVATE
+    src src/engine src/fx/dsp ${SIGNALSMITH_DSP_DIR})
+target_link_libraries(BrockDJ_audio_routing_contract_tests PRIVATE
+    Qt6::Core Qt6::Gui
+    juce::juce_core juce::juce_events juce::juce_audio_basics
+    juce::juce_audio_devices juce::juce_dsp)
+target_compile_definitions(BrockDJ_audio_routing_contract_tests PRIVATE
+    JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1)
+target_compile_features(BrockDJ_audio_routing_contract_tests PRIVATE cxx_std_23)
+add_test(NAME audio_routing_contract COMMAND BrockDJ_audio_routing_contract_tests)
 
 add_executable(BrockDJ_analysis_lifetime_tests
     tests/analysis/analysis_lifetime_tests.cpp
@@ -986,7 +1015,7 @@ add_executable(BrockDJ_scratch_cache_tests
     tests/scratch_cache/scratch_cache_tests.cpp
     src/audio/cache/AudioPageCache.cpp
     src/audio/cache/AudioCacheWorker.cpp
-    src/engine/dsp/ScratchResampler.cpp
+    src/audio/internal/ScratchResampler.cpp
 )
 target_include_directories(BrockDJ_scratch_cache_tests PRIVATE src src/engine)
 target_link_libraries(BrockDJ_scratch_cache_tests PRIVATE
@@ -1016,7 +1045,7 @@ add_test(NAME cached_playback COMMAND BrockDJ_cached_playback_tests)
 
 add_executable(BrockDJ_time_stretch_tests
     tests/time_stretch/time_stretch_tests.cpp
-    src/engine/dsp/TimeStretchAudioSource.cpp
+    src/audio/TimeStretchProcessor.cpp
 )
 target_include_directories(BrockDJ_time_stretch_tests PRIVATE src)
 target_link_libraries(BrockDJ_time_stretch_tests PRIVATE

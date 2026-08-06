@@ -117,16 +117,6 @@ std::expected<void, QString> AudioDeviceService::applySettingsExpected(const QSt
         emit routingChanged(masterFirstChannel, boothFirstChannel, headphonesFirstChannel);
 
     auto& manager = m_manager;
-    const juce::String previousType = manager.getCurrentAudioDeviceType();
-    juce::AudioDeviceManager::AudioDeviceSetup previousSetup;
-    manager.getAudioDeviceSetup(previousSetup);
-    if (manager.getCurrentAudioDevice() == nullptr) {
-        qWarning() << "[AudioDeviceService] No current audio device before setup; trying default initialisation";
-        const juce::String initErr = manager.initialiseWithDefaultDevices(0, 2);
-        if (initErr.isNotEmpty())
-            qWarning() << "[AudioDeviceService] initialiseWithDefaultDevices failed:" << QString::fromStdString(initErr.toStdString());
-    }
-    
     auto* type = findDeviceType(manager, deviceType);
     if (!deviceType.isEmpty() && type == nullptr) {
         manager.setCurrentAudioDeviceType(toJuceString(deviceType), true);
@@ -148,6 +138,13 @@ std::expected<void, QString> AudioDeviceService::applySettingsExpected(const QSt
     if (sanitizedOutput.compare(QStringLiteral("None"), Qt::CaseInsensitive) == 0)
         sanitizedOutput.clear();
 
+    if (sanitizedOutput.isEmpty()) {
+        manager.closeAudioDevice();
+        publishDeviceConfigurationSnapshot(0, 0);
+        emit configurationChanged();
+        return {};
+    }
+
     if (!jackBackendRequested && !sanitizedOutput.isEmpty() && type != nullptr) {
         type->scanForDevices();
         const auto names = type->getDeviceNames(false);
@@ -159,13 +156,12 @@ std::expected<void, QString> AudioDeviceService::applySettingsExpected(const QSt
             }
         }
         if (!found) {
-            qWarning() << "[AudioDeviceService] Requested output device not found:" << sanitizedOutput
-                       << "- falling back to system default";
-            setFallbackMessage(
-                QStringLiteral("Saved audio device \"%1\" is no longer available. "
-                               "Falling back to system default — open Settings → Audio Setup to reconfigure.")
-                .arg(sanitizedOutput));
-            sanitizedOutput.clear();
+            manager.closeAudioDevice();
+            const QString message = QStringLiteral(
+                "Audio device \"%1\" is unavailable. No fallback device was selected; output is silent.")
+                .arg(sanitizedOutput);
+            qWarning() << "[AudioDeviceService]" << message;
+            return std::unexpected(message);
         }
     }
 
@@ -217,20 +213,6 @@ std::expected<void, QString> AudioDeviceService::applySettingsExpected(const QSt
         } else {
             setup.outputDeviceName = toJuceString(sanitizedOutput);
         }
-    } else if (sanitizedOutput.isEmpty()) {
-        if (auto* device = manager.getCurrentAudioDevice()) {
-            setup.outputDeviceName = device->getName();
-        } else if (type != nullptr) {
-            // No device open yet (first startup or empty saved config).
-            // Scan and pick the first available device so audio starts automatically.
-            type->scanForDevices();
-            const auto names = type->getDeviceNames(false);
-            if (!names.isEmpty())
-                setup.outputDeviceName = names[0];
-            qDebug() << "[AudioDeviceService] No current device; using first available:"
-                     << QString::fromUtf8(setup.outputDeviceName.toRawUTF8());
-        }
-        // setup.outputDeviceName may still be empty — JUCE will use its own default.
     } else {
         setup.outputDeviceName = toJuceString(sanitizedOutput);
     }
@@ -241,7 +223,6 @@ std::expected<void, QString> AudioDeviceService::applySettingsExpected(const QSt
     };
     int maxRequestedChannel = std::max({
         maxRoutedChannel(masterFirstChannel),
-        maxRoutedChannel(masterFirstChannel + 2),  // second deck auto-assigned to next pair
         maxRoutedChannel(headphonesFirstChannel),
         maxRoutedChannel(boothFirstChannel),
         2
@@ -268,8 +249,7 @@ std::expected<void, QString> AudioDeviceService::applySettingsExpected(const QSt
 
             setup.bufferSize = choosePreferredBufferSize(device, setup.bufferSize);
         } else {
-            // No device open yet — trust the requested channels; JUCE will error
-            // if the hardware doesn't support them and the fallback path kicks in.
+            // No device open yet: request exactly the configured logical buses.
             maxOutputChannels = std::clamp(maxRequestedChannel, 2, kMaxSupportedOutputChannel);
         }
     } else {
@@ -284,7 +264,6 @@ std::expected<void, QString> AudioDeviceService::applySettingsExpected(const QSt
         selectedOutputChannels.setBit(firstChannel);
     };
     setPairBits(masterFirstChannel);
-    setPairBits(masterFirstChannel + 2);  // second deck output pair
     setPairBits(headphonesFirstChannel);
     setPairBits(boothFirstChannel);
     if (jackBackendRequested) {
@@ -306,89 +285,19 @@ std::expected<void, QString> AudioDeviceService::applySettingsExpected(const QSt
     if (needsReopen)
         manager.closeAudioDevice();
 
-    // Try to apply the audio device setup with fallback strategy
+    // Apply exactly the selected device and routing. Failure means silence; the
+    // service never substitutes a different device or channel layout.
     juce::String error = manager.setAudioDeviceSetup(setup, true);
-    
-    if (error.isNotEmpty()) {
-        qWarning() << "[AudioDeviceService] Initial device setup failed:" << QString::fromStdString(error.toStdString());
-        
-        // Fallback 1: Try without custom channel routing
-        if (setup.useDefaultOutputChannels == false) {
-            qWarning() << "[AudioDeviceService] Retrying without custom channel routing";
-            setup.useDefaultOutputChannels = true;
-            error = manager.setAudioDeviceSetup(setup, true);
-        }
-        
-        // Fallback 2: Try with default output device
-        if (error.isNotEmpty() && setup.outputDeviceName.isNotEmpty()) {
-            qWarning() << "[AudioDeviceService] Retrying with default output device";
-            setup.outputDeviceName.clear();
-            error = manager.setAudioDeviceSetup(setup, true);
-        }
-        
-        // Fallback 3: Try minimum viable setup
-        if (error.isNotEmpty()) {
-            qWarning() << "[AudioDeviceService] Attempting minimum viable setup";
-            manager.getAudioDeviceSetup(setup);
-            setup.sampleRate = static_cast<double>(sampleRate);
-            setup.bufferSize = clampToStableBufferSize(requestedType, bufferSize);
-            setup.useDefaultOutputChannels = true;
-            setup.outputDeviceName.clear();
-            error = manager.setAudioDeviceSetup(setup, true);
-        }
-        
-        if (error.isNotEmpty()) {
-            qWarning() << "[AudioDeviceService] Failed to apply audio device settings after all fallbacks:" << QString::fromStdString(error.toStdString());
-        }
-    }
 
     auto* activeDevice = manager.getCurrentAudioDevice();
     bool deviceReady = activeDevice != nullptr && activeDevice->isOpen();
 
-    // Last-ditch recovery: the targeted fallbacks above can return no error yet
-    // still leave no open output device — e.g. when the saved device is an
-    // unplugged controller (DDJ-FLX10) whose name lingers in the saved config.
-    // Force JUCE's own default devices with safe stereo routing so audio keeps
-    // working instead of restoring the unusable saved device (which leaves
-    // everything silent and makes the whole mixer appear dead).
     if (error.isNotEmpty() || !deviceReady) {
-        qWarning() << "[AudioDeviceService] No usable output after fallbacks; forcing system default device";
-        const juce::String defErr = manager.initialiseWithDefaultDevices(0, 2);
-        activeDevice = manager.getCurrentAudioDevice();
-        deviceReady = activeDevice != nullptr && activeDevice->isOpen();
-        if (deviceReady) {
-            error = juce::String();
-            m_outputRoutingPacked.store(packRouting(OutputRoutingConfig{}), std::memory_order_relaxed);
-            emit routingChanged(1, -1, -1);
-            setFallbackMessage(
-                QStringLiteral("Saved audio device was unavailable. Using the system default "
-                               "output — open Settings → Audio Setup to reconfigure."));
-        } else if (defErr.isNotEmpty()) {
-            qWarning() << "[AudioDeviceService] Default-device recovery failed:"
-                       << QString::fromStdString(defErr.toStdString());
-        }
-    }
-
-    if (error.isNotEmpty() || !deviceReady) {
-        if (!deviceReady)
-            qWarning() << "[AudioDeviceService] Audio device not available after apply; restoring previous device";
-
-        if (!previousType.isEmpty() && previousType != manager.getCurrentAudioDeviceType())
-            manager.setCurrentAudioDeviceType(previousType, true);
-
-        const juce::String restoreErr = manager.setAudioDeviceSetup(previousSetup, true);
-        if (restoreErr.isNotEmpty()) {
-            qWarning() << "[AudioDeviceService] Failed to restore previous audio device:" << QString::fromStdString(restoreErr.toStdString());
-        }
-
-        m_outputRoutingPacked.store(packRouting(previousRouting), std::memory_order_relaxed);
-        emit routingChanged(previousRouting.masterFirstChannel,
-                            previousRouting.boothFirstChannel,
-                            previousRouting.headphonesFirstChannel);
+        manager.closeAudioDevice();
 
         QString errorText = QString::fromStdString(error.toStdString());
         if (errorText.isEmpty())
-            errorText = QStringLiteral("Audio device setup failed.");
+            errorText = QStringLiteral("Audio device setup failed. Output is silent; no fallback was used.");
         if (jackBackendRequested && !errorText.contains(QStringLiteral("JACK"), Qt::CaseInsensitive))
             errorText = QStringLiteral("JACK device failed to open. Is the JACK server running?");
         return std::unexpected(errorText);
@@ -470,19 +379,6 @@ void AudioDeviceService::publishDeviceConfigurationSnapshot(int sampleRate, int 
     emit configurationChanged();
 }
 
-bool AudioDeviceService::ensureDeviceAvailable()
-{
-    if (m_manager.getCurrentAudioDevice() != nullptr)
-        return true;
-    const juce::String error = m_manager.initialiseWithDefaultDevices(0, 2);
-    const bool available = error.isEmpty() && m_manager.getCurrentAudioDevice() != nullptr;
-    if (available)
-        emit configurationChanged();
-    else
-        setLastError(QString::fromStdString(error.toStdString()));
-    return available;
-}
-
 void AudioDeviceService::closeAudioDevice()
 {
     m_manager.closeAudioDevice();
@@ -534,7 +430,7 @@ QStringList AudioDeviceService::availableDeviceTypes() const
 
 QStringList AudioDeviceService::availableOutputDevices(const QString& deviceType) const
 {
-    QStringList devices;
+    QStringList devices { QStringLiteral("None") };
     QStringList allDevices;
 
     auto& manager = const_cast<juce::AudioDeviceManager&>(m_manager);
@@ -597,16 +493,16 @@ QStringList AudioDeviceService::availableOutputDevices(const QString& deviceType
             devices.push_back(outputName);
     }
 
-    if (devices.isEmpty())
-        devices = allDevices;
+    if (devices.size() == 1)
+        devices.append(allDevices);
     if (!currentOutput.isEmpty() && !devices.contains(currentOutput)
         && allDevices.contains(currentOutput)) {
         devices.push_front(currentOutput);
     }
 
     const int currentOutputIndex = devices.indexOf(currentOutput);
-    if (currentOutputIndex > 0)
-        devices.move(currentOutputIndex, 0);
+    if (currentOutputIndex > 1)
+        devices.move(currentOutputIndex, 1);
     return devices;
 }
 
@@ -619,6 +515,8 @@ QStringList AudioDeviceService::availableOutputChannelPairs(const QString& devic
         selectedType = currentDeviceType();
     if (selectedOutput.isEmpty())
         selectedOutput = currentOutputDevice();
+    if (selectedOutput.compare(QStringLiteral("None"), Qt::CaseInsensitive) == 0)
+        return { QStringLiteral("None") };
 
     const QString loweredType = selectedType.trimmed().toLower();
     if (loweredType == QStringLiteral("jack") || loweredType.contains(QStringLiteral("jack")))

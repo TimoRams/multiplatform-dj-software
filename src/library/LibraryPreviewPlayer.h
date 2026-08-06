@@ -3,16 +3,19 @@
 #include <QObject>
 #include <QString>
 #include "app/ControlClock.h"
-#include "engine/MasterBusAudioEndpoint.h"
+#include "audio/AudioEngine.h"
+#include "audio/cache/AudioCacheHandle.h"
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 
 #include <juce_audio_basics/juce_audio_basics.h>
-#include <juce_audio_devices/juce_audio_devices.h>
-#include <juce_audio_formats/juce_audio_formats.h>
 
-class LibraryPreviewPlayer : public QObject, public IMasterBusAuxEndpoint
+class AudioPageCache;
+class CachedPlaybackAudioSource;
+
+class LibraryPreviewPlayer : public QObject, public IAuxAudioEndpoint
 {
     Q_OBJECT
     Q_PROPERTY(bool playing READ isPlaying NOTIFY playingChanged)
@@ -22,7 +25,9 @@ class LibraryPreviewPlayer : public QObject, public IMasterBusAuxEndpoint
     Q_PROPERTY(double progress READ progress NOTIFY positionChanged)
 
 public:
-    explicit LibraryPreviewPlayer(ControlClock& controlClock, QObject* parent = nullptr);
+    explicit LibraryPreviewPlayer(ControlClock& controlClock,
+                                  AudioPageCache& cache,
+                                  QObject* parent = nullptr);
     ~LibraryPreviewPlayer() override;
 
     [[nodiscard]] bool isPlaying() const { return m_playing.load(std::memory_order_relaxed); }
@@ -42,7 +47,7 @@ public:
     void mixIntoOutputs(juce::AudioBuffer<float>& masterBuf,
                         juce::AudioBuffer<float>& scratch,
                         int startSample,
-                        int numSamples);
+                        int numSamples) noexcept;
     void prepareAuxAudio(int maximumBlockSize, double sampleRate) override;
     void releaseAuxAudio() override;
     void mixAuxAudio(juce::AudioBuffer<float>& masterBuffer,
@@ -56,18 +61,19 @@ signals:
     void positionChanged();
 
 private:
-    void beginPreviewLocked(const QString& filePath);
     void finishPreviewLocked();
-    void publishTransportStateLocked();
+    void waitForAudioReaders() const noexcept;
     void startPositionTimer();
     void stopPositionTimer();
     void pollPosition();
     double previewStartSeconds(double trackLengthSec) const;
 
-    juce::AudioFormatManager m_formatManager;
-    std::shared_ptr<juce::AudioFormatReader> m_reader;
-    std::unique_ptr<juce::AudioFormatReaderSource> m_readerSource;
-    juce::AudioTransportSource m_transport;
+    AudioPageCache& m_cache;
+    AudioCacheHandle m_cacheHandle;
+    std::unique_ptr<CachedPlaybackAudioSource> m_readerSource;
+    std::atomic<CachedPlaybackAudioSource*> m_audioReader { nullptr };
+    mutable std::atomic<std::uint32_t> m_activeAudioReaders { 0 };
+    std::atomic<std::uint64_t> m_loadGeneration { 0 };
 
     mutable std::mutex m_mutex;
     ControlClock::Registration m_clockRegistration;
@@ -76,9 +82,7 @@ private:
     std::atomic<bool> m_playing { false };
     std::atomic<double> m_durationSec { 0.0 };
     std::atomic<double> m_positionSec { 0.0 };
-    double m_sampleRate = 44100.0;
-    int m_blockSize = 512;
-    bool m_prepared = false;
+    std::atomic<bool> m_prepared { false };
 
     static constexpr double kPreviewGain = 0.72;
 };

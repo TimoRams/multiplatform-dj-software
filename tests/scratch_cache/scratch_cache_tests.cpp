@@ -1,5 +1,5 @@
 #include "audio/cache/AudioPageCache.h"
-#include "engine/dsp/ScratchResampler.hpp"
+#include "audio/internal/ScratchResampler.h"
 
 #include <QCoreApplication>
 #include <QTemporaryDir>

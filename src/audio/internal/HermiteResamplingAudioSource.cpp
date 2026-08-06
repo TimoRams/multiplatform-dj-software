@@ -1,6 +1,6 @@
 #include "HermiteResamplingAudioSource.h"
 
-#include "HermiteKernel.hpp"
+#include "HermiteKernel.h"
 
 #include <algorithm>
 #include <cmath>

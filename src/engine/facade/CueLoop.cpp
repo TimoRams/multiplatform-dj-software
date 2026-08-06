@@ -72,7 +72,7 @@ DjEngine::BeatInterval DjEngine::beatIntervalAt(double positionSec) const
 
 void DjEngine::updateFxBeatSyncPosition()
 {
-    if (!m_audioGraph->mixerPtr() || !m_trackData)
+    if (!m_audioPipeline->mixerPtr() || !m_trackData)
         return;
 
     const double pos = getPosition();
@@ -80,7 +80,7 @@ void DjEngine::updateFxBeatSyncPosition()
     if (beatDur <= 0.001)
         return;
 
-    m_audioGraph->mixer().setBeatSyncPosition(getBeatPosition(), beatDur);
+    m_audioPipeline->mixer().setBeatSyncPosition(getBeatPosition(), beatDur);
 }
 
 
@@ -928,8 +928,8 @@ void DjEngine::cueButtonRelease()
 
     const double cuePos = std::clamp(m_cueLoopController.mainCue().positionSec >= -PRE_ROLL_SECONDS ? m_cueLoopController.mainCue().positionSec : 0.0, -PRE_ROLL_SECONDS, trackLen);
     m_transport->cancelPreRoll();
-    if (m_audioGraph->mixerPtr())
-        m_audioGraph->mixer().armClickFreeTransition();
+    if (m_audioPipeline->mixerPtr())
+        m_audioPipeline->mixer().armClickFreeTransition();
     if (m_transport->audioRunning())
         m_transport->stopAudio();
     m_transport->seekAudioToSeconds(std::max(0.0, cuePos));

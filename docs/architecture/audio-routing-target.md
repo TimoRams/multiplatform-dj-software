@@ -345,7 +345,8 @@ MasterTap after MasterGain. Any separate hardware Booth gain remains outside Bro
 
 `DjEngine` is a facade: it displays snapshots and publishes commands but owns none of the
 audio states above. The same value may not independently exist as truth in QML,
-`MixerControl`, `ParameterStore`, `DjEngine`, `DeckAudioGraph`, and `MixerDspSource`.
+`MixerControl`, `AudioParameterStore`, `DjEngine`, `DeckAudioPipeline`, and
+`DeckChannelProcessor`.
 
 ## 13. Migration invariants
 
@@ -363,4 +364,3 @@ The phased migration must preserve these externally testable outcomes:
 10. No callback locks, allocations, file operations, decoder calls, Qt signals, or logs.
 11. Every parameter has the single owner declared in section 12.
 12. Obsolete wrappers and alternative direct paths are deleted as their function migrates.
-

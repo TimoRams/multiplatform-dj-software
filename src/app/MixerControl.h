@@ -51,7 +51,6 @@ private:
     [[nodiscard]] DjEngine* deckForChannelId(const QString& channelId) const;
     [[nodiscard]] ChannelMixState* mixStateForChannel(const QString& channelId);
     [[nodiscard]] const ChannelMixState* mixStateForChannel(const QString& channelId) const;
-    [[nodiscard]] float crossfaderMultiplierForChannel(const QString& channelId) const;
     void applyChannelVolume(const QString& channelId);
     void applyChannelMixState(const QString& channelId);
 

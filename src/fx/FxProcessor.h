@@ -1,5 +1,6 @@
 #pragma once
 
+#include "audio/AudioRouting.h"
 #include <juce_dsp/juce_dsp.h>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <array>
@@ -72,6 +73,10 @@ public:
     // Called every audio block (audio thread only).
     // Processes buffer in-place with a smoothed wet/dry crossfade.
     void process(juce::AudioBuffer<float>& buffer, int startSample, int numSamples);
+    void processWetReturn(const juce::AudioBuffer<float>& input,
+                          juce::AudioBuffer<float>& wetReturn,
+                          int startSample,
+                          int numSamples);
     void applyPendingCommandAtBlockBoundary() noexcept;
 
     // ── Thread-safe parameter setters (main thread) ──────────────────────────
@@ -111,6 +116,7 @@ public:
     static bool isColorFxType(EffectType type) {
         return type >= EffectType::SoundColorFilter && type <= EffectType::SoundColorSweep;
     }
+    static FxPlacement placementForType(EffectType type) noexcept;
 
 private:
     // ── Shared state ─────────────────────────────────────────────────────────

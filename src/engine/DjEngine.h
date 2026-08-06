@@ -24,9 +24,8 @@
 
 class AudioDeviceService;
 class AudioPageCache;
-class DeckAudioGraph;
+class DeckAudioPipeline;
 class DeckTransport;
-class IDeckAudioEndpoint;
 class LibraryDatabase;
 class QTimer;
 class TrackData;
@@ -123,6 +122,7 @@ public:
     void releaseTransportReaders();
 
     explicit DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audioPageCache,
+                      DeckAudioPipeline& audioPipeline,
                       ControlClock& controlClock,
                       engine::sync::SyncCoordinator& syncCoordinator, int deckIndex,
                       QObject* parent = nullptr);
@@ -307,8 +307,8 @@ public:
     [[nodiscard]] bool clipDetected() const;
     [[nodiscard]] float gainReduction() const;
 
-    // Explicit bootstrap boundary; DjMasterBus stores only this audio endpoint.
-    [[nodiscard]] IDeckAudioEndpoint& audioEndpoint() const noexcept;
+    // Explicit bootstrap boundary; AudioEngine stores only this audio endpoint.
+    [[nodiscard]] DeckAudioPipeline& audioEndpoint() const noexcept;
     [[nodiscard]] QVariantList hotCues() const;
     [[nodiscard]] QVariantList savedLoops() const;
     [[nodiscard]] bool beatgridLocked() const;
@@ -505,7 +505,7 @@ private:
 
     AudioDeviceService& m_audioDeviceService;
     AudioPageCache& m_audioPageCache;
-    std::unique_ptr<DeckAudioGraph> m_audioGraph;
+    DeckAudioPipeline* m_audioPipeline = nullptr;
     std::unique_ptr<DeckTransport> m_transport;
     DeckCueLoopController m_cueLoopController;
     DeckTrackLoader m_trackLoader;

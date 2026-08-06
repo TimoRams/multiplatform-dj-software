@@ -1,7 +1,7 @@
 #pragma once
 
 #include "app/ControlClock.h"
-#include "DjMasterBus.h"
+#include "audio/AudioEngine.h"
 
 #include <QPointer>
 #include <QQuickWindow>
@@ -45,7 +45,7 @@ struct ApplicationRuntime {
 
     std::unique_ptr<AudioDeviceService> audioDeviceService;
     std::unique_ptr<AudioPageCache> audioPageCache;
-    std::unique_ptr<DjMasterBus> masterBus;
+    std::unique_ptr<AudioEngine> audioEngine;
     std::unique_ptr<ControlClock> controlClock;
     ControlClock::Registration syncClockRegistration;
     std::unique_ptr<engine::sync::SyncCoordinator> syncCoordinator;
@@ -53,7 +53,6 @@ struct ApplicationRuntime {
     std::unique_ptr<DjEngine> deckB;
     std::unique_ptr<DjEngine> deckC;
     std::unique_ptr<DjEngine> deckD;
-    std::array<DjMasterBus::DeckRegistration, DjMasterBus::kMaximumDecks> deckRegistrations;
 
     std::unique_ptr<ParameterStore> parameterStore;
     std::unique_ptr<MediaIoScheduler> mediaIoScheduler;
@@ -67,7 +66,7 @@ struct ApplicationRuntime {
     std::unique_ptr<LibraryTableModel> libraryTableModel;
     std::unique_ptr<LibraryAnalysisManager> libraryAnalysisManager;
     std::unique_ptr<LibraryPreviewPlayer> libraryPreviewPlayer;
-    DjMasterBus::AuxRegistration previewRegistration;
+    AudioEngine::AuxRegistration previewRegistration;
 
     std::unique_ptr<FxManager> fxManager;
     std::unique_ptr<LinkManager> linkManager;

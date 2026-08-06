@@ -1,6 +1,6 @@
 #include "ScratchSession.hpp"
 
-#include "dsp/ScratchDeckBridge.hpp"
+#include "audio/RenderModeRouter.h"
 
 #include <algorithm>
 
@@ -67,7 +67,7 @@ double ScratchSession::armGrab(double grabSec, double trackLenSec, const Scratch
     return m_lastRawSec;
 }
 
-bool ScratchSession::submitRelative(engine::audio::ScratchDeckBridge* bridge,
+bool ScratchSession::submitRelative(engine::audio::RenderModeRouter* bridge,
                                     double deltaSec,
                                     double sampleRate) noexcept
 {
@@ -79,7 +79,7 @@ bool ScratchSession::submitRelative(engine::audio::ScratchDeckBridge* bridge,
     return submitRelativeAtInterval(bridge, deltaSec, sampleRate, dtSec);
 }
 
-bool ScratchSession::submitRelativeAtInterval(engine::audio::ScratchDeckBridge* bridge,
+bool ScratchSession::submitRelativeAtInterval(engine::audio::RenderModeRouter* bridge,
                                               double deltaSec,
                                               double sampleRate,
                                               double eventIntervalSeconds) noexcept
@@ -103,7 +103,7 @@ bool ScratchSession::submitRelativeAtInterval(engine::audio::ScratchDeckBridge* 
     return true;
 }
 
-bool ScratchSession::submitReleaseRelative(engine::audio::ScratchDeckBridge* bridge,
+bool ScratchSession::submitReleaseRelative(engine::audio::RenderModeRouter* bridge,
                                            double deltaSec) noexcept
 {
     if (!bridge || deltaSec == 0.0)
@@ -118,7 +118,7 @@ bool ScratchSession::submitReleaseRelative(engine::audio::ScratchDeckBridge* bri
     return true;
 }
 
-bool ScratchSession::submitAbsolute(engine::audio::ScratchDeckBridge* bridge,
+bool ScratchSession::submitAbsolute(engine::audio::RenderModeRouter* bridge,
                                     double posSec,
                                     double sampleRate,
                                     double trackLenSec,
@@ -138,7 +138,7 @@ bool ScratchSession::submitAbsolute(engine::audio::ScratchDeckBridge* bridge,
     return submitRelative(bridge, virtualDelta, sampleRate);
 }
 
-double ScratchSession::tick(engine::audio::ScratchDeckBridge* bridge, double dtSec) noexcept
+double ScratchSession::tick(engine::audio::RenderModeRouter* bridge, double dtSec) noexcept
 {
     (void) dtSec;
     return bridge ? bridge->scratchRate() : 0.0;

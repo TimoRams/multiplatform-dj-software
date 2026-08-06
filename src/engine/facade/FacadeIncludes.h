@@ -1,12 +1,12 @@
 #pragma once
 
 #include "../DjEngine.h"
-#include "../dsp/MixerDspSource.h"
-#include "../DjMasterBus.h"
-#include "deck/DeckAudioGraph.h"
+#include "../audio/DeckChannelProcessor.h"
+#include "audio/AudioEngine.h"
+#include "audio/DeckAudioPipeline.h"
 #include "deck/DeckTransport.h"
-#include "../dsp/TimeStretchAudioSource.h"
-#include "../dsp/ScratchDeckBridge.hpp"
+#include "../audio/TimeStretchProcessor.h"
+#include "../audio/RenderModeRouter.h"
 #include "audio/cache/CachedPlaybackAudioSource.h"
 #include "deck/MetadataUtils.h"
 #include "library/CoverArtExtractor.h"

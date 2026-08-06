@@ -1,13 +1,13 @@
-#include "ScratchDeckBridge.hpp"
+#include "RenderModeRouter.h"
 
 #include "audio/cache/CachedPlaybackAudioSource.h"
-#include "HermiteResamplingAudioSource.h"
+#include "audio/internal/HermiteResamplingAudioSource.h"
 
 #include <thread>
 
 namespace engine::audio {
 
-ScratchDeckBridge::ScratchDeckBridge(juce::AudioSource* inputSource, bool deleteInputWhenDeleted)
+RenderModeRouter::RenderModeRouter(juce::AudioSource* inputSource, bool deleteInputWhenDeleted)
     : m_transport(inputSource, deleteInputWhenDeleted)
 {
     if (m_transport) {
@@ -16,9 +16,9 @@ ScratchDeckBridge::ScratchDeckBridge(juce::AudioSource* inputSource, bool delete
     }
 }
 
-ScratchDeckBridge::~ScratchDeckBridge() = default;
+RenderModeRouter::~RenderModeRouter() = default;
 
-void ScratchDeckBridge::beginTransportSwap() noexcept
+void RenderModeRouter::beginTransportSwap() noexcept
 {
     // Publish the gate before observing callback activity. Sequential
     // consistency prevents the swap thread and a newly entering callback from
@@ -29,7 +29,7 @@ void ScratchDeckBridge::beginTransportSwap() noexcept
         std::this_thread::yield();
 }
 
-void ScratchDeckBridge::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
+void RenderModeRouter::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
 {
     m_outputSampleRate = std::max(1.0, sampleRate);
     m_blockSize = std::max(64, samplesPerBlockExpected);
@@ -41,7 +41,7 @@ void ScratchDeckBridge::prepareToPlay(int samplesPerBlockExpected, double sample
     applyDeckTempoToHermite();
 }
 
-void ScratchDeckBridge::releaseResources()
+void RenderModeRouter::releaseResources()
 {
     if (m_hermite)
         m_hermite->releaseResources();
@@ -49,7 +49,7 @@ void ScratchDeckBridge::releaseResources()
         m_transport->releaseResources();
 }
 
-void ScratchDeckBridge::applyDeckTempoToHermite() noexcept
+void RenderModeRouter::applyDeckTempoToHermite() noexcept
 {
     if (!m_hermite)
         return;
@@ -57,7 +57,7 @@ void ScratchDeckBridge::applyDeckTempoToHermite() noexcept
     m_hermite->setResamplingRatio(effectiveDeckTempoRatio());
 }
 
-double ScratchDeckBridge::effectiveDeckTempoRatio() const noexcept
+double RenderModeRouter::effectiveDeckTempoRatio() const noexcept
 {
     // Direction is carried by CachedPlaybackAudioSource.  Hermite/JUCE
     // resampling remains a positive-rate boundary; a negative ratio here would
@@ -67,20 +67,20 @@ double ScratchDeckBridge::effectiveDeckTempoRatio() const noexcept
                     * m_jogNudgeRatio.load(std::memory_order_relaxed));
 }
 
-double ScratchDeckBridge::signedDeckTempoRatio() const noexcept
+double RenderModeRouter::signedDeckTempoRatio() const noexcept
 {
     const double speed = effectiveDeckTempoRatio();
     return m_reverse.load(std::memory_order_relaxed) ? -speed : speed;
 }
 
-bool ScratchDeckBridge::isScratchPathActive() const noexcept
+bool RenderModeRouter::isScratchPathActive() const noexcept
 {
     return m_useScratchScaler.load(std::memory_order_acquire)
         || m_controller.isActive()
         || m_controller.isInertiaActive();
 }
 
-void ScratchDeckBridge::beginScratch(double anchorSeconds,
+void RenderModeRouter::beginScratch(double anchorSeconds,
                                      double trackSampleRate,
                                      double trackLengthSeconds,
                                      bool wasPlayingBeforeScratch,
@@ -113,7 +113,7 @@ void ScratchDeckBridge::beginScratch(double anchorSeconds,
     m_startCommandGeneration.fetch_add(1, std::memory_order_release);
 }
 
-engine::scratch::ScratchReleaseDisposition ScratchDeckBridge::endScratch(bool allowInertia)
+engine::scratch::ScratchReleaseDisposition RenderModeRouter::endScratch(bool allowInertia)
 {
     if (allowInertia)
         return m_controller.releaseScratch();
@@ -122,7 +122,7 @@ engine::scratch::ScratchReleaseDisposition ScratchDeckBridge::endScratch(bool al
     return engine::scratch::ScratchReleaseDisposition::HandoffNow;
 }
 
-std::uint64_t ScratchDeckBridge::requestScratchRelease(double normalizedReleaseSpeed,
+std::uint64_t RenderModeRouter::requestScratchRelease(double normalizedReleaseSpeed,
                                                        bool allowInertia) noexcept
 {
     // Duplicate touch-up packets refer to the release already in flight.
@@ -163,14 +163,14 @@ std::uint64_t ScratchDeckBridge::requestScratchRelease(double normalizedReleaseS
     return generation;
 }
 
-void ScratchDeckBridge::submitScratchReleaseSpeed(double normalizedReleaseSpeed) noexcept
+void RenderModeRouter::submitScratchReleaseSpeed(double normalizedReleaseSpeed) noexcept
 {
     const double speed = std::clamp(normalizedReleaseSpeed, -8.0, 8.0);
     m_latestReleaseSpeed.store(speed, std::memory_order_release);
     m_controller.submitReleaseSpeed(speed);
 }
 
-void ScratchDeckBridge::engageScratchDuringInertia() noexcept
+void RenderModeRouter::engageScratchDuringInertia() noexcept
 {
     if (!m_controller.isInertiaActive())
         return;
@@ -184,7 +184,7 @@ void ScratchDeckBridge::engageScratchDuringInertia() noexcept
     m_useScratchScaler.store(true, std::memory_order_release);
 }
 
-void ScratchDeckBridge::addTargetDeltaSeconds(double deltaSeconds, double trackSampleRate) noexcept
+void RenderModeRouter::addTargetDeltaSeconds(double deltaSeconds, double trackSampleRate) noexcept
 {
     m_platter.addTimeDeltaSeconds(deltaSeconds);
     const double next = m_scratchDisplaySec.load(std::memory_order_relaxed) + deltaSeconds;
@@ -192,18 +192,18 @@ void ScratchDeckBridge::addTargetDeltaSeconds(double deltaSeconds, double trackS
     juce::ignoreUnused(trackSampleRate);
 }
 
-void ScratchDeckBridge::submitHandDeltaSeconds(double deltaSeconds, double dtSeconds) noexcept
+void RenderModeRouter::submitHandDeltaSeconds(double deltaSeconds, double dtSeconds) noexcept
 {
     m_platter.addTimeDeltaSeconds(deltaSeconds);
     m_controller.submitHandDelta(deltaSeconds, dtSeconds);
 }
 
-void ScratchDeckBridge::submitReleaseDeltaSeconds(double deltaSeconds, double dtSeconds) noexcept
+void RenderModeRouter::submitReleaseDeltaSeconds(double deltaSeconds, double dtSeconds) noexcept
 {
     m_controller.submitReleaseDelta(deltaSeconds, dtSeconds);
 }
 
-void ScratchDeckBridge::syncScratchReadPosition(double displaySec, double trackSampleRate) noexcept
+void RenderModeRouter::syncScratchReadPosition(double displaySec, double trackSampleRate) noexcept
 {
     const double sr = std::max(1.0, trackSampleRate);
     const double audioSec = std::max(0.0, displaySec);
@@ -218,7 +218,7 @@ void ScratchDeckBridge::syncScratchReadPosition(double displaySec, double trackS
     m_scratchDisplaySec.store(displaySec, std::memory_order_relaxed);
 }
 
-void ScratchDeckBridge::publishScratchDisplay(double displaySec) noexcept
+void RenderModeRouter::publishScratchDisplay(double displaySec) noexcept
 {
     // Continuous touch updates from the UI thread. The audio thread's position
     // tracker owns the read head (no readPos slam here → no UI/audio fight), so we
@@ -239,7 +239,7 @@ void ScratchDeckBridge::publishScratchDisplay(double displaySec) noexcept
     m_controller.syncReadPositionSamples(audioSamples);
 }
 
-void ScratchDeckBridge::configureTrack(double trackSampleRate, double trackLengthSeconds) noexcept
+void RenderModeRouter::configureTrack(double trackSampleRate, double trackLengthSeconds) noexcept
 {
     const double sr = std::max(1.0, trackSampleRate);
     m_trackSampleRate.store(sr, std::memory_order_relaxed);
@@ -248,14 +248,14 @@ void ScratchDeckBridge::configureTrack(double trackSampleRate, double trackLengt
     m_startLengthSeconds.store(std::max(0.0, trackLengthSeconds), std::memory_order_relaxed);
 }
 
-void ScratchDeckBridge::syncReadPositionSeconds(double positionSeconds, double trackSampleRate) noexcept
+void RenderModeRouter::syncReadPositionSeconds(double positionSeconds, double trackSampleRate) noexcept
 {
     m_readerSyncPositionSeconds.store(std::max(0.0, positionSeconds), std::memory_order_relaxed);
     m_readerSyncSampleRate.store(std::max(1.0, trackSampleRate), std::memory_order_relaxed);
     m_readerSyncGeneration.fetch_add(1, std::memory_order_release);
 }
 
-void ScratchDeckBridge::prepareNormalPlaybackHandoff(double positionSeconds, double trackSampleRate) noexcept
+void RenderModeRouter::prepareNormalPlaybackHandoff(double positionSeconds, double trackSampleRate) noexcept
 {
     // The callback owns both the scratch reader and JUCE transport. Publishing a
     // generation here prevents a control-thread reset from racing a live block.
@@ -265,7 +265,7 @@ void ScratchDeckBridge::prepareNormalPlaybackHandoff(double positionSeconds, dou
     m_handoffCommandGeneration.fetch_add(1, std::memory_order_release);
 }
 
-void ScratchDeckBridge::prepareNormalPlaybackHandoffFromScratchCursor(double trackSampleRate) noexcept
+void RenderModeRouter::prepareNormalPlaybackHandoffFromScratchCursor(double trackSampleRate) noexcept
 {
     // FLX10 touch-up can reach the UI thread before the audio callback has
     // rendered the last queued platter ticks. The callback therefore captures
@@ -277,12 +277,12 @@ void ScratchDeckBridge::prepareNormalPlaybackHandoffFromScratchCursor(double tra
     m_handoffCommandGeneration.fetch_add(1, std::memory_order_release);
 }
 
-void ScratchDeckBridge::exitScratchMode(double positionSeconds, double trackSampleRate) noexcept
+void RenderModeRouter::exitScratchMode(double positionSeconds, double trackSampleRate) noexcept
 {
     prepareNormalPlaybackHandoff(positionSeconds, trackSampleRate);
 }
 
-void ScratchDeckBridge::setDeckTempoRatio(double ratio) noexcept
+void RenderModeRouter::setDeckTempoRatio(double ratio) noexcept
 {
     const double clamped = std::clamp(ratio, 0.01, 8.0);
     m_deckTempoRatio.store(clamped, std::memory_order_relaxed);
@@ -290,21 +290,21 @@ void ScratchDeckBridge::setDeckTempoRatio(double ratio) noexcept
     applyDeckTempoToHermite();
 }
 
-void ScratchDeckBridge::setJogNudgeRatio(double ratio) noexcept
+void RenderModeRouter::setJogNudgeRatio(double ratio) noexcept
 {
     m_jogNudgeRatio.store(std::clamp(ratio, 0.94, 1.06), std::memory_order_relaxed);
     m_controller.setNormalPlaybackSpeed(signedDeckTempoRatio());
     applyDeckTempoToHermite();
 }
 
-void ScratchDeckBridge::setReverse(bool reverse) noexcept
+void RenderModeRouter::setReverse(bool reverse) noexcept
 {
     m_reverse.store(reverse, std::memory_order_relaxed);
     m_controller.setNormalPlaybackSpeed(signedDeckTempoRatio());
     applyDeckTempoToHermite();
 }
 
-void ScratchDeckBridge::setLoopRangeSeconds(double loopInSec, double loopOutSec, bool active,
+void RenderModeRouter::setLoopRangeSeconds(double loopInSec, double loopOutSec, bool active,
                                           double trackSampleRate) noexcept
 {
     m_loopInSample.store(loopInSec * trackSampleRate, std::memory_order_relaxed);
@@ -313,38 +313,38 @@ void ScratchDeckBridge::setLoopRangeSeconds(double loopInSec, double loopOutSec,
     m_loopCommandGeneration.fetch_add(1, std::memory_order_release);
 }
 
-void ScratchDeckBridge::setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle) noexcept
+void RenderModeRouter::setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle) noexcept
 {
     m_scratchResampler.setTrackCacheSource(cache, handle);
 }
 
-bool ScratchDeckBridge::isScratching() const noexcept
+bool RenderModeRouter::isScratching() const noexcept
 {
     return m_controller.isScratching();
 }
 
-bool ScratchDeckBridge::isInertiaActive() const noexcept
+bool RenderModeRouter::isInertiaActive() const noexcept
 {
     return m_controller.isInertiaActive();
 }
 
-double ScratchDeckBridge::scratchRate() const noexcept
+double RenderModeRouter::scratchRate() const noexcept
 {
     return m_controller.normalizedRate();
 }
 
-double ScratchDeckBridge::readPositionSeconds(double trackSampleRate) const noexcept
+double RenderModeRouter::readPositionSeconds(double trackSampleRate) const noexcept
 {
     const double sr = std::max(1.0, trackSampleRate);
     return m_audioScratchReadPositionSamples.load(std::memory_order_acquire) / sr;
 }
 
-double ScratchDeckBridge::displayPositionSeconds() const noexcept
+double RenderModeRouter::displayPositionSeconds() const noexcept
 {
     return m_scratchDisplaySec.load(std::memory_order_relaxed);
 }
 
-bool ScratchDeckBridge::normalPlaybackHandoffPending() const noexcept
+bool RenderModeRouter::normalPlaybackHandoffPending() const noexcept
 {
     const bool legacyPending = m_completedHandoffCommandGeneration.load(std::memory_order_acquire)
         != m_handoffCommandGeneration.load(std::memory_order_acquire);
@@ -353,7 +353,7 @@ bool ScratchDeckBridge::normalPlaybackHandoffPending() const noexcept
     return legacyPending || releasePending;
 }
 
-ScratchReleaseSnapshot ScratchDeckBridge::scratchReleaseSnapshot() const noexcept
+ScratchReleaseSnapshot RenderModeRouter::scratchReleaseSnapshot() const noexcept
 {
     ScratchReleaseSnapshot snapshot;
     const auto before = m_releaseAckSequence.load(std::memory_order_acquire);
@@ -373,13 +373,13 @@ ScratchReleaseSnapshot ScratchDeckBridge::scratchReleaseSnapshot() const noexcep
     return snapshot;
 }
 
-bool ScratchDeckBridge::scratchReleaseComplete(std::uint64_t generation) const noexcept
+bool RenderModeRouter::scratchReleaseComplete(std::uint64_t generation) const noexcept
 {
     return generation != 0
         && m_completedReleaseGeneration.load(std::memory_order_acquire) >= generation;
 }
 
-void ScratchDeckBridge::publishReleaseSnapshot(
+void RenderModeRouter::publishReleaseSnapshot(
     std::uint64_t generation,
     ScratchReleasePhase phase,
     engine::scratch::ScratchReleaseDisposition disposition,
@@ -394,7 +394,7 @@ void ScratchDeckBridge::publishReleaseSnapshot(
     m_releaseAckSequence.store(oddSequence + 1, std::memory_order_release);
 }
 
-bool ScratchDeckBridge::applyReaderHandoff(double positionSeconds,
+bool RenderModeRouter::applyReaderHandoff(double positionSeconds,
                                            double trackSampleRate,
                                            bool releaseOwned) noexcept
 {
@@ -436,7 +436,7 @@ bool ScratchDeckBridge::applyReaderHandoff(double positionSeconds,
     return true;
 }
 
-void ScratchDeckBridge::applyNormalPlaybackHandoff(double positionSeconds,
+void RenderModeRouter::applyNormalPlaybackHandoff(double positionSeconds,
                                                    double trackSampleRate,
                                                    std::uint64_t generation) noexcept
 {
@@ -444,7 +444,7 @@ void ScratchDeckBridge::applyNormalPlaybackHandoff(double positionSeconds,
     m_completedHandoffCommandGeneration.store(generation, std::memory_order_release);
 }
 
-void ScratchDeckBridge::completeCursorHandoffAfterScratchBlock(double trackSampleRate) noexcept
+void RenderModeRouter::completeCursorHandoffAfterScratchBlock(double trackSampleRate) noexcept
 {
     if (!m_cursorHandoffPending)
         return;
@@ -463,7 +463,7 @@ void ScratchDeckBridge::completeCursorHandoffAfterScratchBlock(double trackSampl
         m_audioPlayheadSink->store(position, std::memory_order_release);
 }
 
-void ScratchDeckBridge::snapHermiteToDeckTempo() noexcept
+void RenderModeRouter::snapHermiteToDeckTempo() noexcept
 {
     applyDeckTempoToHermite();
     m_readerSyncPositionSeconds.store(std::max(0.0, displayPositionSeconds()), std::memory_order_relaxed);
@@ -471,7 +471,7 @@ void ScratchDeckBridge::snapHermiteToDeckTempo() noexcept
     m_readerSyncGeneration.fetch_add(1, std::memory_order_release);
 }
 
-void ScratchDeckBridge::consumeScratchReleaseCommand() noexcept
+void RenderModeRouter::consumeScratchReleaseCommand() noexcept
 {
     const auto before = m_releaseCommandSequence.load(std::memory_order_acquire);
     if ((before & 1U) != 0U)
@@ -524,7 +524,7 @@ void ScratchDeckBridge::consumeScratchReleaseCommand() noexcept
                            readPositionSeconds(command.sampleRate));
 }
 
-void ScratchDeckBridge::completeActiveReleaseHandoff(double trackSampleRate) noexcept
+void RenderModeRouter::completeActiveReleaseHandoff(double trackSampleRate) noexcept
 {
     const auto generation = m_audioReleaseCommand.generation;
     if (generation == 0)
@@ -566,7 +566,7 @@ void ScratchDeckBridge::completeActiveReleaseHandoff(double trackSampleRate) noe
     m_completedReleaseGeneration.store(generation, std::memory_order_release);
 }
 
-void ScratchDeckBridge::finishReleaseDecisionAfterTrackingBlock() noexcept
+void RenderModeRouter::finishReleaseDecisionAfterTrackingBlock() noexcept
 {
     if (m_audioReleasePhase != ScratchReleasePhase::ReleasePending)
         return;
@@ -615,7 +615,7 @@ void ScratchDeckBridge::finishReleaseDecisionAfterTrackingBlock() noexcept
                            readPositionSeconds(m_audioReleaseCommand.sampleRate));
 }
 
-void ScratchDeckBridge::finishCoastHandoffAfterScratchBlock(double trackSampleRate) noexcept
+void RenderModeRouter::finishCoastHandoffAfterScratchBlock(double trackSampleRate) noexcept
 {
     if (m_audioReleasePhase != ScratchReleasePhase::CoastToDeck
         && m_audioReleasePhase != ScratchReleasePhase::CoastToStop) {
@@ -626,7 +626,7 @@ void ScratchDeckBridge::finishCoastHandoffAfterScratchBlock(double trackSampleRa
         completeActiveReleaseHandoff(trackSampleRate);
 }
 
-void ScratchDeckBridge::consumePendingAudioCommands() noexcept
+void RenderModeRouter::consumePendingAudioCommands() noexcept
 {
     const auto loopGeneration = m_loopCommandGeneration.load(std::memory_order_acquire);
     if (loopGeneration != m_appliedLoopCommandGeneration) {
@@ -704,13 +704,13 @@ void ScratchDeckBridge::consumePendingAudioCommands() noexcept
     }
 }
 
-double ScratchDeckBridge::activePlaybackRate(double trackSampleRate, int bufferSize) noexcept
+double RenderModeRouter::activePlaybackRate(double trackSampleRate, int bufferSize) noexcept
 {
     const double sr = std::max(1.0, trackSampleRate);
     return m_controller.processAudioBlock(std::max(1, bufferSize), m_outputSampleRate, sr);
 }
 
-void ScratchDeckBridge::applyNormalPathCrossfade(const juce::AudioSourceChannelInfo& info) noexcept
+void RenderModeRouter::applyNormalPathCrossfade(const juce::AudioSourceChannelInfo& info) noexcept
 {
     int remaining = m_crossfadeRemaining.load(std::memory_order_relaxed);
     if (remaining <= 0 || !info.buffer || info.numSamples <= 0)
@@ -734,7 +734,7 @@ void ScratchDeckBridge::applyNormalPathCrossfade(const juce::AudioSourceChannelI
     m_crossfadeRemaining.store(remaining, std::memory_order_relaxed);
 }
 
-void ScratchDeckBridge::captureScratchTail(const juce::AudioSourceChannelInfo& info) noexcept
+void RenderModeRouter::captureScratchTail(const juce::AudioSourceChannelInfo& info) noexcept
 {
     if (!info.buffer || info.numSamples <= 0)
         return;
@@ -750,7 +750,7 @@ void ScratchDeckBridge::captureScratchTail(const juce::AudioSourceChannelInfo& i
     m_lastScratchOutputValid = true;
 }
 
-void ScratchDeckBridge::applyScratchExitTail(const juce::AudioSourceChannelInfo& info) noexcept
+void RenderModeRouter::applyScratchExitTail(const juce::AudioSourceChannelInfo& info) noexcept
 {
     if (!m_scratchExitTailPending || !m_lastScratchOutputValid
         || !info.buffer || info.numSamples <= 0) {
@@ -787,7 +787,7 @@ void ScratchDeckBridge::applyScratchExitTail(const juce::AudioSourceChannelInfo&
     }
 }
 
-void ScratchDeckBridge::captureNormalTail(const juce::AudioSourceChannelInfo& info) noexcept
+void RenderModeRouter::captureNormalTail(const juce::AudioSourceChannelInfo& info) noexcept
 {
     if (!info.buffer || info.numSamples <= 0)
         return;
@@ -803,7 +803,7 @@ void ScratchDeckBridge::captureNormalTail(const juce::AudioSourceChannelInfo& in
     m_lastNormalOutputValid = true;
 }
 
-void ScratchDeckBridge::applyNormalStopTail(const juce::AudioSourceChannelInfo& info) noexcept
+void RenderModeRouter::applyNormalStopTail(const juce::AudioSourceChannelInfo& info) noexcept
 {
     if (!m_lastNormalOutputValid || !info.buffer || info.numSamples <= 0)
         return;
@@ -823,7 +823,7 @@ void ScratchDeckBridge::applyNormalStopTail(const juce::AudioSourceChannelInfo& 
     m_lastNormalOutputValid = false;
 }
 
-void ScratchDeckBridge::publishScratchCursor(double readPositionSamples,
+void RenderModeRouter::publishScratchCursor(double readPositionSamples,
                                              double trackSampleRate) noexcept
 {
     const double sr = std::max(1.0, trackSampleRate);
@@ -835,7 +835,7 @@ void ScratchDeckBridge::publishScratchCursor(double readPositionSamples,
         m_audioPlayheadSink->store(seconds, std::memory_order_release);
 }
 
-void ScratchDeckBridge::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill)
+void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill)
 {
     struct CallbackActivity final {
         explicit CallbackActivity(std::atomic<unsigned int>& count) noexcept
@@ -869,6 +869,11 @@ void ScratchDeckBridge::getNextAudioBlock(const juce::AudioSourceChannelInfo& bu
     // still point at the pre-scratch position until that command seeks it.
     const bool scratching = isScratchPathActive();
     m_prevScratchPath = scratching;
+    m_activeRenderMode.store(
+        scratching ? RenderMode::Scratch
+                   : (m_keylockPassthrough.load(std::memory_order_relaxed)
+                          ? RenderMode::Keylock : RenderMode::Direct),
+        std::memory_order_release);
 
     if (!scratching) {
         const bool normalPlaybackEnabled =

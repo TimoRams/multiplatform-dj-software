@@ -46,13 +46,14 @@ QString defaultSavedLoopColor(int index)
 } // namespace
 
 DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audioPageCache,
+                   DeckAudioPipeline& audioPipeline,
                    ControlClock& controlClock, engine::sync::SyncCoordinator& syncCoordinator,
                    int deckIndex, QObject* parent)
     : QObject(parent)
     , m_audioDeviceService(audioDeviceService)
     , m_audioPageCache(audioPageCache)
-    , m_audioGraph(std::make_unique<DeckAudioGraph>(audioPageCache))
-    , m_transport(std::make_unique<DeckTransport>(*m_audioGraph))
+    , m_audioPipeline(&audioPipeline)
+    , m_transport(std::make_unique<DeckTransport>(*m_audioPipeline))
     , m_trackLoader(audioPageCache, static_cast<int>(WAVEFORM_POINTS_PER_SECOND))
     , m_syncCoordinator(syncCoordinator)
     , m_controlClock(controlClock)
@@ -143,12 +144,12 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
     juce::MessageManager::getInstance();
     formatManager.registerBasicFormats();
 
-    // Audio callback is registered by DjMasterBus, not per-deck.
+    // Audio callback is registered by AudioEngine, not per-deck.
 
-    m_audioGraph->mixer().setTrim(static_cast<float>(m_trim));
-    m_audioGraph->mixer().setFader(static_cast<float>(m_volume));
+    m_audioPipeline->mixer().setTrim(static_cast<float>(m_trim));
+    m_audioPipeline->mixer().setFader(static_cast<float>(m_volume));
 
-    // DjMasterBus prepares the registered DeckAudioGraph endpoint.
+    // AudioEngine prepares the registered DeckAudioPipeline endpoint.
 
     refreshHardwareLatency();
     connect(&m_audioDeviceService, &AudioDeviceService::configurationChanged, this, [this]() {
@@ -283,12 +284,12 @@ void DjEngine::onTransportControlTick(const ControlTickContext& context)
     (void)context;
     if (m_scratch.scrubbing() || m_scratch.releaseGlide())
         return;
-    if (m_audioGraph->scratchPtr()
-        && m_audioGraph->scratch().normalPlaybackHandoffPending())
+    if (m_audioPipeline->renderModeRouterPtr()
+        && m_audioPipeline->renderModeRouter().normalPlaybackHandoffPending())
         return;
 
-    if (m_audioGraph->mixerPtr())
-        m_audioGraph->mixer().setScratchTimbre(0.0f);
+    if (m_audioPipeline->mixerPtr())
+        m_audioPipeline->mixer().setScratchTimbre(0.0f);
 
     if (m_transport->audioRunning())
         serviceQuantizedCueJump();
@@ -401,9 +402,9 @@ double DjEngine::getPreRollSeconds() const
 
 void DjEngine::applyMixerEq()
 {
-    if (!m_audioGraph->mixerPtr())
+    if (!m_audioPipeline->mixerPtr())
         return;
-    m_audioGraph->mixer().setEq(static_cast<float>(m_eqLow),
+    m_audioPipeline->mixer().setEq(static_cast<float>(m_eqLow),
                        static_cast<float>(m_eqMid),
                        static_cast<float>(m_eqHigh));
 }
@@ -411,9 +412,9 @@ void DjEngine::applyMixerEq()
 
 void DjEngine::applyMixerFilter()
 {
-    if (!m_audioGraph->mixerPtr())
+    if (!m_audioPipeline->mixerPtr())
         return;
-    m_audioGraph->mixer().setFilterVal(static_cast<float>(m_filter));
+    m_audioPipeline->mixer().setFilterVal(static_cast<float>(m_filter));
 }
 
 
@@ -474,8 +475,8 @@ void DjEngine::applyVolume(double value)
         return;
 
     m_volume = clamped;
-    if (m_audioGraph->mixerPtr())
-        m_audioGraph->mixer().setFader(static_cast<float>(m_volume));
+    if (m_audioPipeline->mixerPtr())
+        m_audioPipeline->mixer().setFader(static_cast<float>(m_volume));
 }
 
 
@@ -493,8 +494,8 @@ void DjEngine::applyTrim(double value)
         return;
 
     m_trim = clamped;
-    if (m_audioGraph->mixerPtr())
-        m_audioGraph->mixer().setTrim(static_cast<float>(m_trim));
+    if (m_audioPipeline->mixerPtr())
+        m_audioPipeline->mixer().setTrim(static_cast<float>(m_trim));
 }
 
 
@@ -582,8 +583,8 @@ void DjEngine::applyPolarityInverted(bool inverted)
         return;
 
     m_polarityInverted = inverted;
-    if (m_audioGraph->mixerPtr())
-        m_audioGraph->mixer().setPolarityInverted(inverted);
+    if (m_audioPipeline->mixerPtr())
+        m_audioPipeline->mixer().setPolarityInverted(inverted);
 }
 
 void DjEngine::setPolarityInverted(bool inverted)

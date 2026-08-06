@@ -1,7 +1,7 @@
 #pragma once
 
+#include "audio/AudioParameters.h"
 #include "audio/cache/AudioCacheHandle.h"
-#include "engine/MasterBusAudioEndpoint.h"
 
 #include <atomic>
 #include <cstdint>
@@ -10,12 +10,12 @@
 
 class AudioPageCache;
 class CachedPlaybackAudioSource;
-class MixerDspSource;
-class TimeStretchAudioSource;
+class DeckChannelProcessor;
+class TimeStretchProcessor;
 namespace juce { class AudioTransportSource; }
-namespace engine::audio { class ScratchDeckBridge; }
+namespace engine::audio { class RenderModeRouter; }
 
-class DeckAudioGraph final : public IDeckAudioEndpoint {
+class DeckAudioPipeline final : public juce::AudioSource {
 public:
     struct RealtimeStats {
         std::uint64_t diskReadsFromAudioThread = 0;
@@ -27,6 +27,7 @@ public:
         std::uint64_t bufferGrowthsFromAudioThread = 0;
         std::uint64_t blockingLockAttempts = 0;
         std::uint64_t objectConstructionsFromAudioThread = 0;
+        std::uint64_t droppedCommands = 0;
         std::uint64_t trackGeneration = 0;
     };
 
@@ -44,17 +45,16 @@ public:
         std::uint64_t trackGeneration = 0;
     };
 
-    explicit DeckAudioGraph(AudioPageCache& cache);
-    ~DeckAudioGraph() override;
-    DeckAudioGraph(const DeckAudioGraph&)=delete;
-    DeckAudioGraph& operator=(const DeckAudioGraph&)=delete;
+    explicit DeckAudioPipeline(AudioPageCache& cache);
+    ~DeckAudioPipeline() override;
+    DeckAudioPipeline(const DeckAudioPipeline&)=delete;
+    DeckAudioPipeline& operator=(const DeckAudioPipeline&)=delete;
 
     void prepareToPlay(int maximumBlockSize,double sampleRate) override;
     void releaseResources() override;
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) noexcept override;
-    [[nodiscard]] const juce::AudioBuffer<float>& preFaderBuffer() const noexcept override;
-    [[nodiscard]] bool cueEnabledForMix() const noexcept override;
-    void setCueEnabledForMix(bool enabled) noexcept override;
+    [[nodiscard]] const juce::AudioBuffer<float>& preFaderBuffer() const noexcept;
+    [[nodiscard]] const juce::AudioBuffer<float>& postFaderTailBuffer() const noexcept;
 
     void installPreparedTrack(PreparedTrack track);
     void clearTrack(std::uint64_t invalidThroughGeneration=0);
@@ -76,18 +76,18 @@ public:
     [[nodiscard]] const juce::AudioTransportSource& transport() const noexcept;
     [[nodiscard]] CachedPlaybackAudioSource* playback() noexcept;
     [[nodiscard]] const CachedPlaybackAudioSource* playback() const noexcept;
-    [[nodiscard]] engine::audio::ScratchDeckBridge& scratch() noexcept;
-    [[nodiscard]] const engine::audio::ScratchDeckBridge& scratch() const noexcept;
-    [[nodiscard]] engine::audio::ScratchDeckBridge* scratchPtr() noexcept;
-    [[nodiscard]] const engine::audio::ScratchDeckBridge* scratchPtr() const noexcept;
-    [[nodiscard]] TimeStretchAudioSource& timeStretch() noexcept;
-    [[nodiscard]] const TimeStretchAudioSource& timeStretch() const noexcept;
-    [[nodiscard]] TimeStretchAudioSource* timeStretchPtr() noexcept;
-    [[nodiscard]] const TimeStretchAudioSource* timeStretchPtr() const noexcept;
-    [[nodiscard]] MixerDspSource& mixer() noexcept;
-    [[nodiscard]] const MixerDspSource& mixer() const noexcept;
-    [[nodiscard]] MixerDspSource* mixerPtr() noexcept;
-    [[nodiscard]] const MixerDspSource* mixerPtr() const noexcept;
+    [[nodiscard]] engine::audio::RenderModeRouter& renderModeRouter() noexcept;
+    [[nodiscard]] const engine::audio::RenderModeRouter& renderModeRouter() const noexcept;
+    [[nodiscard]] engine::audio::RenderModeRouter* renderModeRouterPtr() noexcept;
+    [[nodiscard]] const engine::audio::RenderModeRouter* renderModeRouterPtr() const noexcept;
+    [[nodiscard]] TimeStretchProcessor& timeStretch() noexcept;
+    [[nodiscard]] const TimeStretchProcessor& timeStretch() const noexcept;
+    [[nodiscard]] TimeStretchProcessor* timeStretchPtr() noexcept;
+    [[nodiscard]] const TimeStretchProcessor* timeStretchPtr() const noexcept;
+    [[nodiscard]] DeckChannelProcessor& mixer() noexcept;
+    [[nodiscard]] const DeckChannelProcessor& mixer() const noexcept;
+    [[nodiscard]] DeckChannelProcessor* mixerPtr() noexcept;
+    [[nodiscard]] const DeckChannelProcessor* mixerPtr() const noexcept;
 
 private:
     struct Impl;

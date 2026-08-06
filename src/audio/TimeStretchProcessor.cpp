@@ -1,4 +1,4 @@
-#include "TimeStretchAudioSource.h"
+#include "TimeStretchProcessor.h"
 
 #include <algorithm>
 #include <cmath>
@@ -21,10 +21,10 @@ void lowerWorkerPriority() noexcept
 }
 }
 
-TimeStretchAudioSource::TimeStretchAudioSource(juce::AudioSource* inSource) : source(inSource) {}
-TimeStretchAudioSource::~TimeStretchAudioSource() { releaseResources(); }
+TimeStretchProcessor::TimeStretchProcessor(juce::AudioSource* inSource) : source(inSource) {}
+TimeStretchProcessor::~TimeStretchProcessor() { releaseResources(); }
 
-bool TimeStretchAudioSource::validConfiguration(const TimeStretchConfiguration& c) noexcept
+bool TimeStretchProcessor::validConfiguration(const TimeStretchConfiguration& c) noexcept
 {
     return std::isfinite(c.sampleRate) && c.sampleRate >= 8000.0 && c.sampleRate <= 384000.0
         && std::isfinite(c.tempoRatio) && c.tempoRatio >= 0.01 && c.tempoRatio <= 8.0
@@ -32,7 +32,7 @@ bool TimeStretchAudioSource::validConfiguration(const TimeStretchConfiguration& 
         && c.channelCount >= 1 && c.channelCount <= 2 && c.trackGeneration != 0;
 }
 
-void TimeStretchAudioSource::setTempoRatio(double ratio) noexcept
+void TimeStretchProcessor::setTempoRatio(double ratio) noexcept
 {
     const auto clamped = std::clamp(std::isfinite(ratio) ? ratio : 1.0, 0.01, 8.0);
     // Rubber Band accepts real-time ratio and pitch changes from the same
@@ -41,26 +41,26 @@ void TimeStretchAudioSource::setTempoRatio(double ratio) noexcept
     m_targetTempoRatio.store(clamped, std::memory_order_release);
 }
 
-void TimeStretchAudioSource::setPitchLockEnabled(bool enabled) noexcept
+void TimeStretchProcessor::setPitchLockEnabled(bool enabled) noexcept
 {
     if (!enabled)
         m_scratchRefreshInFlight.store(false, std::memory_order_release);
     if (m_pitchLockEnabled.exchange(enabled) != enabled) publishDesiredConfiguration();
 }
 
-void TimeStretchAudioSource::setScratchBypass(bool enabled) noexcept
+void TimeStretchProcessor::setScratchBypass(bool enabled) noexcept
 {
     m_scratchBypass.store(enabled, std::memory_order_release);
 }
 
-void TimeStretchAudioSource::setTrackGeneration(std::uint64_t generation) noexcept
+void TimeStretchProcessor::setTrackGeneration(std::uint64_t generation) noexcept
 {
     generation = std::max<std::uint64_t>(1, generation);
     if (m_trackGeneration.exchange(generation, std::memory_order_acq_rel) != generation)
         publishDesiredConfiguration();
 }
 
-void TimeStretchAudioSource::enterScratchBypass() noexcept
+void TimeStretchProcessor::enterScratchBypass() noexcept
 {
     m_scratchExitRequested.store(false, std::memory_order_release);
     const bool alreadyBypassing = m_scratchBypass.exchange(true, std::memory_order_acq_rel);
@@ -76,7 +76,7 @@ void TimeStretchAudioSource::enterScratchBypass() noexcept
     }
 }
 
-void TimeStretchAudioSource::endScratchBypass() noexcept
+void TimeStretchProcessor::endScratchBypass() noexcept
 {
     if (m_pitchLockEnabled.load(std::memory_order_acquire)
         && m_accepting.load(std::memory_order_acquire)) {
@@ -90,7 +90,7 @@ void TimeStretchAudioSource::endScratchBypass() noexcept
     m_scratchExitFadePending.store(true, std::memory_order_release);
 }
 
-TimeStretchConfiguration TimeStretchAudioSource::desiredConfiguration() const noexcept
+TimeStretchConfiguration TimeStretchProcessor::desiredConfiguration() const noexcept
 {
     TimeStretchConfiguration c;
     c.sampleRate = m_sampleRate.load(std::memory_order_acquire);
@@ -102,14 +102,14 @@ TimeStretchConfiguration TimeStretchAudioSource::desiredConfiguration() const no
     return c;
 }
 
-void TimeStretchAudioSource::publishDesiredConfiguration() noexcept
+void TimeStretchProcessor::publishDesiredConfiguration() noexcept
 {
     if (!m_accepting.load(std::memory_order_acquire)) return;
     m_desiredGeneration.fetch_add(1, std::memory_order_acq_rel);
     m_workerWake.notify_one();
 }
 
-void TimeStretchAudioSource::prepareToPlay(int blockSize, double sr)
+void TimeStretchProcessor::prepareToPlay(int blockSize, double sr)
 {
     stopWorker();
     if (source) source->prepareToPlay(blockSize, sr);
@@ -144,7 +144,7 @@ void TimeStretchAudioSource::prepareToPlay(int blockSize, double sr)
     });
 }
 
-void TimeStretchAudioSource::stopWorker() noexcept
+void TimeStretchProcessor::stopWorker() noexcept
 {
     m_accepting.store(false, std::memory_order_release);
     m_stopRequested.store(true, std::memory_order_release);
@@ -152,7 +152,7 @@ void TimeStretchAudioSource::stopWorker() noexcept
     if (m_worker.joinable()) m_worker.join();
 }
 
-void TimeStretchAudioSource::releaseResources()
+void TimeStretchProcessor::releaseResources()
 {
     if (!m_prepared.exchange(false, std::memory_order_acq_rel)) return;
     stopWorker();
@@ -170,7 +170,7 @@ void TimeStretchAudioSource::releaseResources()
     resizeBuffer(m_previousTail, 0, 0);
 }
 
-bool TimeStretchAudioSource::preparePipeline(Pipeline& p, const TimeStretchConfiguration& c)
+bool TimeStretchProcessor::preparePipeline(Pipeline& p, const TimeStretchConfiguration& c)
 {
     if (g_inTimeStretchAudioCallback) m_prepareFromAudio.fetch_add(1, std::memory_order_relaxed);
     if (!validConfiguration(c)) return false;
@@ -195,13 +195,13 @@ bool TimeStretchAudioSource::preparePipeline(Pipeline& p, const TimeStretchConfi
     return true;
 }
 
-void TimeStretchAudioSource::resizeBuffer(juce::AudioBuffer<float>& buffer, int channels, int samples)
+void TimeStretchProcessor::resizeBuffer(juce::AudioBuffer<float>& buffer, int channels, int samples)
 {
     if (g_inTimeStretchAudioCallback) m_growthFromAudio.fetch_add(1, std::memory_order_relaxed);
     buffer.setSize(channels, samples);
 }
 
-void TimeStretchAudioSource::prewarmPipeline(Pipeline& p)
+void TimeStretchProcessor::prewarmPipeline(Pipeline& p)
 {
     if (g_inTimeStretchAudioCallback) m_prewarmFromAudio.fetch_add(1, std::memory_order_relaxed);
     if (!p.stretcher) return;
@@ -220,7 +220,7 @@ void TimeStretchAudioSource::prewarmPipeline(Pipeline& p)
     }
 }
 
-void TimeStretchAudioSource::workerLoop()
+void TimeStretchProcessor::workerLoop()
 {
     std::uint64_t observed = m_activeGeneration.load(std::memory_order_acquire);
     while (!m_stopRequested.load(std::memory_order_acquire)) {
@@ -266,7 +266,7 @@ void TimeStretchAudioSource::workerLoop()
     }
 }
 
-void TimeStretchAudioSource::activatePreparedPipelineAtBlockBoundary() noexcept
+void TimeStretchProcessor::activatePreparedPipelineAtBlockBoundary() noexcept
 {
     const auto wanted = m_desiredGeneration.load(std::memory_order_acquire);
     for (int i = 0; i < 2; ++i) {
@@ -292,7 +292,7 @@ void TimeStretchAudioSource::activatePreparedPipelineAtBlockBoundary() noexcept
     }
 }
 
-void TimeStretchAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& info) noexcept
+void TimeStretchProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo& info) noexcept
 {
     struct Scope { Scope(){g_inTimeStretchAudioCallback=true;} ~Scope(){g_inTimeStretchAudioCallback=false;} } scope;
     if (!source || !info.buffer || info.numSamples <= 0) { info.clearActiveBufferRegion(); return; }
@@ -324,7 +324,7 @@ void TimeStretchAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInf
     captureOutputTail(info);
 }
 
-void TimeStretchAudioSource::processPipeline(Pipeline& p, const juce::AudioSourceChannelInfo& info) noexcept
+void TimeStretchProcessor::processPipeline(Pipeline& p, const juce::AudioSourceChannelInfo& info) noexcept
 {
     const double effectiveRate = m_targetTempoRatio.load(std::memory_order_acquire);
     const double pitchScale = p.config.keylockEnabled ? 1.0 / effectiveRate : 1.0;
@@ -360,7 +360,7 @@ void TimeStretchAudioSource::processPipeline(Pipeline& p, const juce::AudioSourc
     p.fifo->finishedRead(count);
 }
 
-void TimeStretchAudioSource::applySwitchFade(const juce::AudioSourceChannelInfo& info) noexcept
+void TimeStretchProcessor::applySwitchFade(const juce::AudioSourceChannelInfo& info) noexcept
 {
     int remaining = m_switchFadeRemaining.load(std::memory_order_relaxed);
     const int count = std::min(remaining, info.numSamples);
@@ -376,7 +376,7 @@ void TimeStretchAudioSource::applySwitchFade(const juce::AudioSourceChannelInfo&
     m_switchFadeRemaining.store(remaining-count,std::memory_order_relaxed);
 }
 
-void TimeStretchAudioSource::captureOutputTail(const juce::AudioSourceChannelInfo& info) noexcept
+void TimeStretchProcessor::captureOutputTail(const juce::AudioSourceChannelInfo& info) noexcept
 {
     if (m_previousTail.getNumSamples() != kSwitchFadeSamples) return;
     const int count = std::min(kSwitchFadeSamples, info.numSamples);
@@ -387,9 +387,9 @@ void TimeStretchAudioSource::captureOutputTail(const juce::AudioSourceChannelInf
     }
 }
 
-int TimeStretchAudioSource::getLatencySamples() const noexcept { return m_reportedLatencySamples.load(std::memory_order_relaxed); }
-std::uint64_t TimeStretchAudioSource::activeConfigurationGeneration() const noexcept { return m_activeGeneration.load(std::memory_order_acquire); }
-TimeStretchRealtimeStats TimeStretchAudioSource::realtimeStats() const noexcept
+int TimeStretchProcessor::getLatencySamples() const noexcept { return m_reportedLatencySamples.load(std::memory_order_relaxed); }
+std::uint64_t TimeStretchProcessor::activeConfigurationGeneration() const noexcept { return m_activeGeneration.load(std::memory_order_acquire); }
+TimeStretchRealtimeStats TimeStretchProcessor::realtimeStats() const noexcept
 {
     return {m_prepareFromAudio.load(),m_resetFromAudio.load(),m_prewarmFromAudio.load(),m_growthFromAudio.load(),m_lockFromAudio.load(),m_switches.load(),m_stale.load(),m_failures.load()};
 }

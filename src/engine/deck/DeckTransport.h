@@ -7,7 +7,7 @@
 #include <atomic>
 #include <cstdint>
 
-class DeckAudioGraph;
+class DeckAudioPipeline;
 
 struct DeckTransportSnapshot {
     bool hasTrack = false;
@@ -49,7 +49,7 @@ public:
         bool reachedTrackEnd = false;
     };
 
-    explicit DeckTransport(DeckAudioGraph& audioGraph) noexcept;
+    explicit DeckTransport(DeckAudioPipeline& audioPipeline) noexcept;
     ~DeckTransport() = default;
     DeckTransport(const DeckTransport&) = delete;
     DeckTransport& operator=(const DeckTransport&) = delete;
@@ -117,7 +117,7 @@ private:
     void reconcileVisualAnchor(double authoritativePositionSeconds) noexcept;
     void startPreRoll(double seconds) noexcept;
 
-    DeckAudioGraph& m_audioGraph;
+    DeckAudioPipeline& m_audioPipeline;
     bool m_hasTrack = false;
     bool m_playRequested = false;
     bool m_reverse = false;

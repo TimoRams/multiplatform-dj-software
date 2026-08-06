@@ -5,7 +5,7 @@
 #include <QElapsedTimer>
 #include <cmath>
 
-namespace engine::audio { class ScratchDeckBridge; }
+namespace engine::audio { class RenderModeRouter; }
 
 namespace engine::scratch {
 
@@ -15,7 +15,7 @@ struct ScratchLoopCtx {
     double outSec = 0.0;
 };
 
-// UI/MIDI scratch session state — physics live in ScratchDeckBridge + ScratchController.
+// UI/MIDI scratch session state — physics live in RenderModeRouter + ScratchController.
 class ScratchSession {
 public:
     static constexpr double kEventSpikeClampSec = 0.06;
@@ -53,18 +53,18 @@ public:
 
     [[nodiscard]] double armGrab(double grabSec, double trackLenSec, const ScratchLoopCtx& loop) noexcept;
 
-    bool submitRelative(engine::audio::ScratchDeckBridge* bridge,
+    bool submitRelative(engine::audio::RenderModeRouter* bridge,
                         double deltaSec,
                         double sampleRate) noexcept;
-    bool submitRelativeAtInterval(engine::audio::ScratchDeckBridge* bridge,
+    bool submitRelativeAtInterval(engine::audio::RenderModeRouter* bridge,
                                   double deltaSec,
                                   double sampleRate,
                                   double eventIntervalSeconds) noexcept;
 
-    bool submitReleaseRelative(engine::audio::ScratchDeckBridge* bridge,
+    bool submitReleaseRelative(engine::audio::RenderModeRouter* bridge,
                                double deltaSec) noexcept;
 
-    bool submitAbsolute(engine::audio::ScratchDeckBridge* bridge,
+    bool submitAbsolute(engine::audio::RenderModeRouter* bridge,
                         double posSec,
                         double sampleRate,
                         double trackLenSec,
@@ -74,7 +74,7 @@ public:
     [[nodiscard]] double lastRawSec() const noexcept { return m_lastRawSec; }
 
     // Returns current scratch rate after control-thread tick.
-    double tick(engine::audio::ScratchDeckBridge* bridge, double dtSec) noexcept;
+    double tick(engine::audio::RenderModeRouter* bridge, double dtSec) noexcept;
 
 private:
     ScratchPhase m_phase = ScratchPhase::Idle;

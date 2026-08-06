@@ -3,7 +3,7 @@
 
 #include "app/ControlClock.h"
 #include "audio/cache/AudioPageCache.h"
-#include "engine/deck/DeckAudioGraph.h"
+#include "audio/DeckAudioPipeline.h"
 #include "engine/sync/DeckSyncController.h"
 #include "engine/sync/SyncCoordinator.h"
 
@@ -73,7 +73,7 @@ bool finiteSnapshot(const DeckTransportSnapshot& snapshot)
         && std::isfinite(snapshot.sourceSampleRate);
 }
 
-bool realtimeCountersAreZero(const DeckAudioGraph& graph)
+bool realtimeCountersAreZero(const DeckAudioPipeline& graph)
 {
     const auto stats = graph.realtimeStats();
     return stats.diskReadsFromAudioThread == 0
@@ -87,7 +87,7 @@ bool realtimeCountersAreZero(const DeckAudioGraph& graph)
         && stats.objectConstructionsFromAudioThread == 0;
 }
 
-void render(DeckAudioGraph& graph, int blocks = 1)
+void render(DeckAudioPipeline& graph, int blocks = 1)
 {
     juce::AudioBuffer<float> buffer(2, 256);
     for (int i = 0; i < blocks; ++i)
@@ -100,7 +100,7 @@ struct DeckFixture {
         graph.prepareToPlay(512, 48'000.0);
     }
     ~DeckFixture() { graph.releaseResources(); }
-    DeckAudioGraph graph;
+    DeckAudioPipeline graph;
     DeckTransport transport;
 };
 

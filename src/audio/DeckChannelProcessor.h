@@ -1,20 +1,20 @@
 #pragma once
 
+#include "audio/AudioParameters.h"
 #include "fx/FxProcessor.h"
-#include "MixerFilterCoefficients.h"
+#include "audio/internal/MixerFilterCoefficients.h"
 
 #include <array>
 #include <atomic>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
-#include <mutex>
 
-class MixerDspSource : public juce::AudioSource {
+class DeckChannelProcessor : public juce::AudioSource {
 public:
     struct RealtimeStats { std::uint64_t coefficientBuildsFromAudioThread=0,prepareCallsFromAudioThread=0,bufferGrowthsFromAudioThread=0,blockingLockAttempts=0,objectConstructionsFromAudioThread=0,coefficientSnapshotSwitches=0,staleSnapshots=0,invalidCoefficientSets=0; };
     static constexpr int kFxChainSlots = 3;
 
-    explicit MixerDspSource(juce::AudioSource* inSource);
+    explicit DeckChannelProcessor(juce::AudioSource* inSource);
 
     void setFxEffectType(EffectType type);
     void setFxAmount(float amount);
@@ -40,6 +40,7 @@ public:
     void armClickFreeTransition();
 
     [[nodiscard]] const juce::AudioBuffer<float>& getPflBuffer() const;
+    [[nodiscard]] const juce::AudioBuffer<float>& getPostFaderTailBuffer() const;
 
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override;
     void releaseResources() override;
@@ -58,6 +59,16 @@ public:
     std::atomic<float> m_preFaderPeakR { 0.0f };
 
 private:
+    struct Parameters {
+        float trim = 1.0f;
+        float fader = 1.0f;
+        float eqLow = 0.0f;
+        float eqMid = 0.0f;
+        float eqHigh = 0.0f;
+        float filter = 0.0f;
+        bool polarityInverted = false;
+    };
+
     void setStopEffectWanted(std::atomic<bool>& flag, bool active);
     void applyClickFreeTransition(const juce::AudioSourceChannelInfo& bufferToFill);
     [[nodiscard]] int clickFreeBridgeSamples() const;
@@ -71,17 +82,10 @@ private:
     juce::AudioSource* source = nullptr;
     double m_sampleRate = 0;
 
-    std::atomic<float> trimVal{1.0f};
-    std::atomic<float> faderVal{1.0f};
-    std::atomic<bool>  m_polarityInverted{false};
+    RealtimeSnapshotStore<Parameters> m_parameters;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_trimSmooth;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_faderSmooth;
 
-    std::atomic<float> lowVol{0.0f};
-    std::atomic<float> midVol{0.0f};
-    std::atomic<float> highVol{0.0f};
-    std::atomic<float> filterVal{0.0f};
-    std::mutex m_filterTargetMutex;
     enum class SnapshotState:std::uint8_t{Empty,Writing,Ready};
     struct SnapshotSlot{MixerCoefficientSnapshot snapshot;std::atomic<SnapshotState> state{SnapshotState::Empty};};
     std::array<SnapshotSlot,2> m_coefficientSlots;
@@ -134,6 +138,8 @@ private:
     float m_rollOutRampDown  = 0.0f;
     int   m_rollOutLoopLen   = 0;
     juce::AudioBuffer<float> m_preFaderScratch;
+    juce::AudioBuffer<float> m_postFaderTailReturn;
+    juce::AudioBuffer<float> m_tailScratch;
     std::atomic<float> scratchTimbre { 0.0f };
     float m_scratchWarmLpState[8] {};
     bool  m_scratchLpWasActive = false;

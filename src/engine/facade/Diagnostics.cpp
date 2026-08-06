@@ -65,7 +65,7 @@ DjEngine::LatencySnapshot DjEngine::buildLatencySnapshot() const
 
     snapshot.keylockSamples = m_transport->keylockLatencySamples();
 
-    snapshot.limiterSamples = std::max(0, DjMasterBus::limiterLatencySamples());
+    snapshot.limiterSamples = std::max(0, AudioEngine::limiterLatencySamples());
     snapshot.resamplerSamples = 0;
     snapshot.mixerFxSamples = 0;
     m_lastLatencySnapshot = snapshot;
@@ -181,13 +181,13 @@ QVariantMap DjEngine::audioPerformanceStats() const
         ? (static_cast<double>(snapshot.bufferSamples) / snapshot.sampleRate) * 1000000.0
         : 0.0;
 
-    stats.insert(QStringLiteral("callbackAverageUsec"), DjMasterBus::callbackAverageUsec());
-    stats.insert(QStringLiteral("callbackWorstUsec"), DjMasterBus::callbackWorstUsec());
+    stats.insert(QStringLiteral("callbackAverageUsec"), AudioEngine::callbackAverageUsec());
+    stats.insert(QStringLiteral("callbackWorstUsec"), AudioEngine::callbackWorstUsec());
     stats.insert(QStringLiteral("callbackBudgetUsec"), callbackBudgetUsec);
     stats.insert(QStringLiteral("callbackCount"),
-                 QVariant::fromValue<qulonglong>(DjMasterBus::callbackCount()));
+                 QVariant::fromValue<qulonglong>(AudioEngine::callbackCount()));
     stats.insert(QStringLiteral("callbackOverruns"),
-                 QVariant::fromValue<qulonglong>(DjMasterBus::callbackOverrunCount()));
+                 QVariant::fromValue<qulonglong>(AudioEngine::callbackOverrunCount()));
     stats.insert(QStringLiteral("sampleRate"), snapshot.sampleRate);
     stats.insert(QStringLiteral("bufferSamples"), snapshot.bufferSamples);
 

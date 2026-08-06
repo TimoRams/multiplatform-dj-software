@@ -184,8 +184,8 @@ void DjEngine::ejectTrack()
 void DjEngine::togglePlay()
 {
     if (m_transport->playRequested()) {
-        if (m_audioGraph->mixerPtr())
-            m_audioGraph->mixer().armClickFreeTransition();
+        if (m_audioPipeline->mixerPtr())
+            m_audioPipeline->mixer().armClickFreeTransition();
         resetMainCueButtonState();
         m_transport->setPlaying(false);
     } else {
@@ -213,8 +213,8 @@ void DjEngine::pause()
     if (!m_transport->playRequested() && !m_transport->audioRunning() && !m_transport->preRollActive())
         return; // Already paused
 
-    if (m_audioGraph->mixerPtr())
-        m_audioGraph->mixer().armClickFreeTransition();
+    if (m_audioPipeline->mixerPtr())
+        m_audioPipeline->mixer().armClickFreeTransition();
     resetMainCueButtonState();
     if (m_transport->setPlaying(false))
         emit playingChanged();
@@ -235,12 +235,8 @@ void DjEngine::ensureTransportRunningForPlayIntent()
     }
 
     if (m_audioDeviceService.manager().getCurrentAudioDevice() == nullptr) {
-        qWarning() << "[DjEngine] Play requested without active audio device; trying to recover";
-        if (!m_audioDeviceService.ensureDeviceAvailable()) {
-            qWarning() << "[DjEngine] Could not recover audio device on play";
-            return;
-        }
-        refreshHardwareLatency();
+        qWarning() << "[DjEngine] Play requested without a selected audio device; output remains silent";
+        return;
     }
 
     if (m_transport->audioRunning()) {
@@ -291,18 +287,18 @@ void DjEngine::freezeTransportAt(double positionSec)
 
 void DjEngine::syncScratchBridgeToTransport()
 {
-    if (!m_audioGraph->scratchPtr())
+    if (!m_audioPipeline->renderModeRouterPtr())
         return;
 
     const double len = std::max(0.0, m_transport->trackLengthSeconds());
-    m_audioGraph->scratch().configureTrack(m_transport->sourceSampleRate(), len);
-    m_audioGraph->scratch().setReverse(m_transport->reverse());
-    m_audioGraph->scratch().setLoopRangeSeconds(m_cueLoopController.activeLoop().inSec, m_cueLoopController.activeLoop().outSec, m_cueLoopController.activeLoop().active, m_transport->sourceSampleRate());
-    m_audioGraph->scratch().setDeckTempoRatio(getTempoRatio());
-    m_audioGraph->scratch().setKeylockPassthrough(m_keylock);
+    m_audioPipeline->renderModeRouter().configureTrack(m_transport->sourceSampleRate(), len);
+    m_audioPipeline->renderModeRouter().setReverse(m_transport->reverse());
+    m_audioPipeline->renderModeRouter().setLoopRangeSeconds(m_cueLoopController.activeLoop().inSec, m_cueLoopController.activeLoop().outSec, m_cueLoopController.activeLoop().active, m_transport->sourceSampleRate());
+    m_audioPipeline->renderModeRouter().setDeckTempoRatio(getTempoRatio());
+    m_audioPipeline->renderModeRouter().setKeylockEnabled(m_keylock);
 
     const double pos = std::max(0.0, m_transport->audioPositionSeconds());
-    m_audioGraph->scratch().syncReadPositionSeconds(pos, m_transport->sourceSampleRate());
+    m_audioPipeline->renderModeRouter().syncReadPositionSeconds(pos, m_transport->sourceSampleRate());
 }
 
 
@@ -331,44 +327,44 @@ void DjEngine::setPosition(float progress)
 
 float DjEngine::vuLevelL() const
 {
-    return m_audioGraph->mixerPtr() ? m_audioGraph->mixer().m_peakL.load(std::memory_order_relaxed) : 0.0f;
+    return m_audioPipeline->mixerPtr() ? m_audioPipeline->mixer().m_peakL.load(std::memory_order_relaxed) : 0.0f;
 }
 
 
 float DjEngine::vuLevelR() const
 {
-    return m_audioGraph->mixerPtr() ? m_audioGraph->mixer().m_peakR.load(std::memory_order_relaxed) : 0.0f;
+    return m_audioPipeline->mixerPtr() ? m_audioPipeline->mixer().m_peakR.load(std::memory_order_relaxed) : 0.0f;
 }
 
 
 float DjEngine::preFaderVuLevelL() const
 {
-    return m_audioGraph->mixerPtr() ? m_audioGraph->mixer().m_preFaderPeakL.load(std::memory_order_relaxed) : 0.0f;
+    return m_audioPipeline->mixerPtr() ? m_audioPipeline->mixer().m_preFaderPeakL.load(std::memory_order_relaxed) : 0.0f;
 }
 
 
 float DjEngine::preFaderVuLevelR() const
 {
-    return m_audioGraph->mixerPtr() ? m_audioGraph->mixer().m_preFaderPeakR.load(std::memory_order_relaxed) : 0.0f;
+    return m_audioPipeline->mixerPtr() ? m_audioPipeline->mixer().m_preFaderPeakR.load(std::memory_order_relaxed) : 0.0f;
 }
 
 
 bool DjEngine::clipDetected() const
 {
-    // Master clip detection now comes from DjMasterBus (summed signal).
-    return DjMasterBus::masterClipDetected_s();
+    // Master clip detection now comes from AudioEngine (summed signal).
+    return AudioEngine::masterClipDetected_s();
 }
 
 
 float DjEngine::gainReduction() const
 {
-    return DjMasterBus::gainReduction();
+    return AudioEngine::gainReduction();
 }
 
 
-IDeckAudioEndpoint& DjEngine::audioEndpoint() const noexcept
+DeckAudioPipeline& DjEngine::audioEndpoint() const noexcept
 {
-    return *m_audioGraph;
+    return *m_audioPipeline;
 }
 
 bool DjEngine::isReverse() const { return m_transport->reverse(); }
@@ -380,31 +376,31 @@ bool DjEngine::isSlipDiverted() const
 
 void DjEngine::setCueEnabled(bool value)
 {
-    const bool previous = m_audioGraph->cueEnabledForMix();
-    m_audioGraph->setCueEnabledForMix(value);
+    const bool previous = AudioEngine::pflEnabled(m_deckIndex);
+    AudioEngine::setPflEnabled(m_deckIndex, value);
     if (previous != value)
         emit cueEnabledChanged();
 }
 
 bool DjEngine::cueEnabled() const
 {
-    return m_audioGraph->cueEnabledForMix();
+    return AudioEngine::pflEnabled(m_deckIndex);
 }
 
 bool DjEngine::masterCueEnabled() const
 {
-    return DjMasterBus::masterCueEnabled();
+    return AudioEngine::masterCueEnabled();
 }
 
 double DjEngine::headphoneMix() const
 {
-    return static_cast<double>(DjMasterBus::headphoneMix());
+    return static_cast<double>(AudioEngine::headphoneMix());
 }
 
 void DjEngine::setMasterCueEnabled(bool value)
 {
-    const bool previous = DjMasterBus::masterCueEnabled();
-    DjMasterBus::setMasterCueEnabled(value);
+    const bool previous = AudioEngine::masterCueEnabled();
+    AudioEngine::setMasterCueEnabled(value);
     if (previous != value)
         emit masterCueEnabledChanged();
 }
@@ -412,8 +408,8 @@ void DjEngine::setMasterCueEnabled(bool value)
 void DjEngine::setHeadphoneMix(double value)
 {
     const float clamped = static_cast<float>(std::clamp(value, 0.0, 1.0));
-    const float previous = static_cast<float>(DjMasterBus::headphoneMix());
-    DjMasterBus::setHeadphoneMix(clamped);
+    const float previous = static_cast<float>(AudioEngine::headphoneMix());
+    AudioEngine::setHeadphoneMix(clamped);
     if (std::abs(previous - clamped) > 0.0001f)
         emit headphoneMixChanged();
 }

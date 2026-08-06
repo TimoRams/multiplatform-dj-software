@@ -1,6 +1,6 @@
 #include "DeckTransport.h"
 
-#include "DeckAudioGraph.h"
+#include "audio/DeckAudioPipeline.h"
 #include "domain/TransportLimits.h"
 
 #include <algorithm>
@@ -20,10 +20,10 @@ enum PublishedFlag : std::uint32_t {
 };
 }
 
-DeckTransport::DeckTransport(DeckAudioGraph& audioGraph) noexcept
-    : m_audioGraph(audioGraph)
+DeckTransport::DeckTransport(DeckAudioPipeline& audioPipeline) noexcept
+    : m_audioPipeline(audioPipeline)
 {
-    m_audioGraph.setAudioPlayheadSink(&m_audioPlayhead);
+    m_audioPipeline.setAudioPlayheadSink(&m_audioPlayhead);
     publishSnapshot();
 }
 
@@ -35,9 +35,9 @@ bool DeckTransport::installPreparedTrack(AudioCacheHandle cacheHandle,
         || !std::isfinite(configuration.sampleRate)
         || !std::isfinite(configuration.lengthSeconds))
         return false;
-    m_audioGraph.installPreparedTrack({cacheHandle, configuration.sampleRate,
+    m_audioPipeline.installPreparedTrack({cacheHandle, configuration.sampleRate,
                                        configuration.trackGeneration});
-    const auto installed = m_audioGraph.transportSnapshot();
+    const auto installed = m_audioPipeline.transportSnapshot();
     if (installed.trackGeneration != configuration.trackGeneration)
         return false;
     m_hasTrack = true;
@@ -49,9 +49,9 @@ bool DeckTransport::installPreparedTrack(AudioCacheHandle cacheHandle,
     m_heldPositionSeconds = 0.0;
     m_preRollActive = false;
     m_atTrackEnd = false;
-    m_audioGraph.setReverse(m_reverse);
-    m_audioGraph.setPlaybackRate(m_playbackRate);
-    m_audioGraph.setJogNudgeRatio(m_jogNudgeRatio);
+    m_audioPipeline.setReverse(m_reverse);
+    m_audioPipeline.setPlaybackRate(m_playbackRate);
+    m_audioPipeline.setJogNudgeRatio(m_jogNudgeRatio);
     setSnapAnchor(0.0, false);
     if (m_playRequested)
         ensureAudioRunning();
@@ -61,7 +61,7 @@ bool DeckTransport::installPreparedTrack(AudioCacheHandle cacheHandle,
 
 void DeckTransport::clearTrack(std::uint64_t invalidThroughGeneration) noexcept
 {
-    m_audioGraph.clearTrack(invalidThroughGeneration);
+    m_audioPipeline.clearTrack(invalidThroughGeneration);
     m_trackGeneration = std::max(m_trackGeneration, invalidThroughGeneration);
     m_hasTrack = false;
     m_playRequested = false;
@@ -98,7 +98,7 @@ bool DeckTransport::setReverse(bool enabled) noexcept
     if (m_reverse == enabled)
         return false;
     m_reverse = enabled;
-    m_audioGraph.setReverse(enabled);
+    m_audioPipeline.setReverse(enabled);
     publishSnapshot();
     return true;
 }
@@ -129,7 +129,7 @@ bool DeckTransport::setPlaybackRate(double rate) noexcept
     if (std::abs(m_playbackRate - rate) < 1.0e-12)
         return false;
     m_playbackRate = rate;
-    m_audioGraph.setPlaybackRate(rate);
+    m_audioPipeline.setPlaybackRate(rate);
     publishSnapshot();
     return true;
 }
@@ -142,7 +142,7 @@ bool DeckTransport::setJogNudgeRatio(double ratio) noexcept
     if (std::abs(m_jogNudgeRatio - ratio) < 1.0e-12)
         return false;
     m_jogNudgeRatio = ratio;
-    m_audioGraph.setJogNudgeRatio(ratio);
+    m_audioPipeline.setJogNudgeRatio(ratio);
     publishSnapshot();
     return true;
 }
@@ -161,13 +161,13 @@ bool DeckTransport::seekToSeconds(double seconds) noexcept
         m_backgroundPositionSeconds = clamped;
 
     if (clamped < 0.0) {
-        m_audioGraph.setTransportRunning(false);
-        m_audioGraph.seekToSeconds(0.0);
+        m_audioPipeline.setTransportRunning(false);
+        m_audioPipeline.seekToSeconds(0.0);
         setSnapAnchor(clamped, false);
         if (m_playRequested)
             startPreRoll(clamped);
     } else {
-        m_audioGraph.seekToSeconds(clamped);
+        m_audioPipeline.seekToSeconds(clamped);
         setSnapAnchor(clamped, true);
         armVisualSeekSettle();
         ensureAudioRunning();
@@ -187,8 +187,8 @@ void DeckTransport::freezeAt(double seconds) noexcept
 {
     if (!std::isfinite(seconds))
         seconds = 0.0;
-    m_audioGraph.setTransportRunning(false);
-    m_audioGraph.seekToSeconds(seconds);
+    m_audioPipeline.setTransportRunning(false);
+    m_audioPipeline.seekToSeconds(seconds);
     m_preRollActive = false;
     m_audiblePositionSeconds = seconds;
     m_heldPositionSeconds = seconds;
@@ -202,16 +202,16 @@ void DeckTransport::ensureAudioRunning(bool blockedByScratch) noexcept
 {
     if (!m_playRequested || m_preRollActive || blockedByScratch || !m_hasTrack)
         return;
-    const auto graph = m_audioGraph.transportSnapshot();
+    const auto graph = m_audioPipeline.transportSnapshot();
     if (graph.running || graph.lengthSeconds <= 0.0)
         return;
     if (graph.positionSeconds >= graph.lengthSeconds - kEndEpsilonSeconds) {
         if (!m_reverse)
             return;
-        m_audioGraph.seekToSeconds(std::max(0.0, graph.lengthSeconds - kEndEpsilonSeconds));
+        m_audioPipeline.seekToSeconds(std::max(0.0, graph.lengthSeconds - kEndEpsilonSeconds));
     }
     setSnapAnchor(graph.positionSeconds, true);
-    m_audioGraph.setTransportRunning(true);
+    m_audioPipeline.setTransportRunning(true);
     m_atTrackEnd = false;
     publishSnapshot();
 }
@@ -249,7 +249,7 @@ DeckTransport::ControlUpdate DeckTransport::updateControlState(
     const LoopRegion& loop, bool scratchActive, bool cuePreviewActive) noexcept
 {
     ControlUpdate result;
-    auto graph = m_audioGraph.transportSnapshot();
+    auto graph = m_audioPipeline.transportSnapshot();
     if (scratchActive) {
         m_audiblePositionSeconds = m_audioPlayhead.load(std::memory_order_acquire);
         m_heldPositionSeconds = m_audiblePositionSeconds;
@@ -260,10 +260,10 @@ DeckTransport::ControlUpdate DeckTransport::updateControlState(
 
     if (graph.running && !m_playRequested && !cuePreviewActive) {
         freezeAt(graph.positionSeconds);
-        graph = m_audioGraph.transportSnapshot();
+        graph = m_audioPipeline.transportSnapshot();
     }
     if (graph.running && m_preRollActive) {
-        m_audioGraph.setTransportRunning(false);
+        m_audioPipeline.setTransportRunning(false);
         graph.running = false;
     }
 
@@ -282,11 +282,11 @@ DeckTransport::ControlUpdate DeckTransport::updateControlState(
 
         if (loop.active && loop.endSeconds > loop.startSeconds) {
             if (m_reverse && m_audiblePositionSeconds <= loop.startSeconds) {
-                m_audioGraph.seekToSeconds(loop.endSeconds);
+                m_audioPipeline.seekToSeconds(loop.endSeconds);
                 m_audiblePositionSeconds = loop.endSeconds;
             } else if (!m_reverse && loop.startSeconds < 0.0
                        && m_audiblePositionSeconds >= loop.endSeconds) {
-                m_audioGraph.setTransportRunning(false);
+                m_audioPipeline.setTransportRunning(false);
                 startPreRoll(loop.startSeconds);
                 result.enteredPreRoll = true;
             }
@@ -313,14 +313,14 @@ DeckTransport::ControlUpdate DeckTransport::updateControlState(
             m_preRollActive = false;
             m_audiblePositionSeconds = 0.0;
             m_heldPositionSeconds = 0.0;
-            m_audioGraph.seekToSeconds(0.0);
+            m_audioPipeline.seekToSeconds(0.0);
             setSnapAnchor(0.0, true);
-            m_audioGraph.setTransportRunning(true);
+            m_audioPipeline.setTransportRunning(true);
             result.leftPreRoll = true;
         }
     } else {
         ensureAudioRunning();
-        graph = m_audioGraph.transportSnapshot();
+        graph = m_audioPipeline.transportSnapshot();
         m_audiblePositionSeconds = m_heldPositionSeconds < 0.0
             ? m_heldPositionSeconds : graph.positionSeconds;
     }
@@ -330,7 +330,7 @@ DeckTransport::ControlUpdate DeckTransport::updateControlState(
         && m_trackLengthSeconds > 0.0
         && m_audiblePositionSeconds >= m_trackLengthSeconds - kEndEpsilonSeconds;
     result.reachedTrackEnd = m_atTrackEnd && !wasAtTrackEnd;
-    result.audioRunning = m_audioGraph.transportSnapshot().running;
+    result.audioRunning = m_audioPipeline.transportSnapshot().running;
     publishSnapshot();
     return result;
 }
@@ -338,29 +338,29 @@ DeckTransport::ControlUpdate DeckTransport::updateControlState(
 void DeckTransport::setLoopRegion(const LoopRegion& loop) noexcept
 {
     const bool audioLoop = loop.active && loop.startSeconds >= 0.0 && loop.endSeconds > 0.0;
-    m_audioGraph.setLoopRangeSeconds(loop.startSeconds, loop.endSeconds, audioLoop,
+    m_audioPipeline.setLoopRangeSeconds(loop.startSeconds, loop.endSeconds, audioLoop,
                                      m_sourceSampleRate);
 }
 
 void DeckTransport::setPlaybackReadPositionSamples(std::int64_t samplePosition) noexcept
 {
-    m_audioGraph.setPlaybackReadPositionSamples(samplePosition);
+    m_audioPipeline.setPlaybackReadPositionSamples(samplePosition);
 }
 
 void DeckTransport::setAudioReverseOverride(bool enabled) noexcept
 {
-    m_audioGraph.setReverse(enabled);
+    m_audioPipeline.setReverse(enabled);
 }
 
 void DeckTransport::setKeylockEnabled(bool enabled) noexcept
 {
-    m_audioGraph.setKeylockEnabled(enabled);
+    m_audioPipeline.setKeylockEnabled(enabled);
 }
 
 void DeckTransport::startAudio() noexcept
 {
-    m_audioGraph.setTransportRunning(true);
-    const auto graph = m_audioGraph.transportSnapshot();
+    m_audioPipeline.setTransportRunning(true);
+    const auto graph = m_audioPipeline.transportSnapshot();
     m_audiblePositionSeconds = graph.positionSeconds;
     setSnapAnchor(graph.positionSeconds, true);
     publishSnapshot();
@@ -368,16 +368,16 @@ void DeckTransport::startAudio() noexcept
 
 void DeckTransport::startAudioPreservingScratchPosition() noexcept
 {
-    // The normal reader is repositioned by ScratchDeckBridge at the next audio
+    // The normal reader is repositioned by RenderModeRouter at the next audio
     // block boundary. Its current transport position is still the grab cursor.
-    m_audioGraph.setTransportRunning(true);
+    m_audioPipeline.setTransportRunning(true);
     setSnapAnchor(m_heldPositionSeconds, true);
     publishSnapshot();
 }
 
 void DeckTransport::stopAudio() noexcept
 {
-    m_audioGraph.setTransportRunning(false);
+    m_audioPipeline.setTransportRunning(false);
     m_snapValid = false;
     publishSnapshot();
 }
@@ -387,7 +387,7 @@ void DeckTransport::seekAudioToSeconds(double seconds) noexcept
     if (!std::isfinite(seconds))
         return;
     const double clamped = std::clamp(seconds, 0.0, m_trackLengthSeconds);
-    m_audioGraph.seekToSeconds(clamped);
+    m_audioPipeline.seekToSeconds(clamped);
     m_audiblePositionSeconds = clamped;
     m_heldPositionSeconds = clamped;
     if (!m_slipEnabled)
@@ -445,7 +445,7 @@ double DeckTransport::positionSeconds(bool scratchActive) const noexcept
         return m_audioPlayhead.load(std::memory_order_acquire);
     if (m_heldPositionSeconds < 0.0)
         return m_heldPositionSeconds;
-    return m_audioGraph.transportSnapshot().positionSeconds;
+    return m_audioPipeline.transportSnapshot().positionSeconds;
 }
 
 double DeckTransport::visualPositionSeconds(double latencyCompensationSeconds) const noexcept
@@ -454,7 +454,7 @@ double DeckTransport::visualPositionSeconds(double latencyCompensationSeconds) c
         const double elapsed = static_cast<double>(m_preRollClock.nsecsElapsed()) * 1.0e-9;
         return std::min(m_preRollStartSeconds + elapsed * m_playbackRate, 0.0);
     }
-    if (!m_snapValid || !m_audioGraph.transportSnapshot().running)
+    if (!m_snapValid || !m_audioPipeline.transportSnapshot().running)
         return positionSeconds();
 
     const double elapsed = static_cast<double>(m_snapClock.nsecsElapsed()) * 1.0e-9
@@ -482,17 +482,17 @@ double DeckTransport::playheadPositionAtomic() const noexcept
 
 bool DeckTransport::audioRunning() const noexcept
 {
-    return m_audioGraph.transportSnapshot().running;
+    return m_audioPipeline.transportSnapshot().running;
 }
 
 double DeckTransport::audioPositionSeconds() const noexcept
 {
-    return m_audioGraph.transportSnapshot().positionSeconds;
+    return m_audioPipeline.transportSnapshot().positionSeconds;
 }
 
 int DeckTransport::keylockLatencySamples() const noexcept
 {
-    return m_audioGraph.keylockLatencySamples();
+    return m_audioPipeline.keylockLatencySamples();
 }
 
 bool DeckTransport::slipDiverted(bool loopActive) const noexcept
@@ -549,7 +549,7 @@ void DeckTransport::publishSnapshot() noexcept
     std::uint32_t flags = 0;
     if (m_hasTrack) flags |= HasTrack;
     if (m_playRequested) flags |= Playing;
-    if (m_audioGraph.transportSnapshot().running) flags |= AudioRunning;
+    if (m_audioPipeline.transportSnapshot().running) flags |= AudioRunning;
     if (m_reverse) flags |= Reverse;
     if (m_slipEnabled) flags |= Slip;
     if (m_preRollActive) flags |= PreRoll;
@@ -617,7 +617,7 @@ void DeckTransport::reconcileVisualAnchor(double authoritativePositionSeconds) n
 
 void DeckTransport::startPreRoll(double seconds) noexcept
 {
-    m_audioGraph.setTransportRunning(false);
+    m_audioPipeline.setTransportRunning(false);
     m_preRollActive = true;
     m_preRollStartSeconds = std::clamp(seconds, -TransportLimits::kPreRollSeconds, 0.0);
     m_heldPositionSeconds = m_preRollStartSeconds;

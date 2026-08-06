@@ -1,5 +1,6 @@
 #include "MidiControllerManager.h"
 #include "MidiControllerManagerInternal.h"
+#include "audio/AudioEngine.h"
 #include "fx/FxManager.h"
 
 using namespace midi_internal;
@@ -822,22 +823,25 @@ void MidiControllerManager::applyBeatFxState()
         m_applyingBeatFxRouting = true;
         for (int deck = 1; deck <= 4; ++deck) {
             m_fxManager->setDeckAssignment(1, deck,
-                target == MidiBeatFxTarget::Master || targetDeck == deck);
+                targetDeck == deck);
         }
         m_applyingBeatFxRouting = false;
         m_fxManager->setWetDry1(wet);
+        AudioEngine::setMasterFx(target == MidiBeatFxTarget::Master ? type : EffectType::None,
+                                 target == MidiBeatFxTarget::Master ? wet : 0.0f);
     } else {
+        AudioEngine::setMasterFx(m_beatFxTarget == MidiBeatFxTarget::Master
+                                     ? type : EffectType::None,
+                                 m_beatFxTarget == MidiBeatFxTarget::Master ? wet : 0.0f);
         if (m_deckA) {
             m_deckA->setFxSlotEffectType(1, type);
             m_deckA->setFxSlotWetDry(1,
-                (m_beatFxTarget == MidiBeatFxTarget::DeckA
-                 || m_beatFxTarget == MidiBeatFxTarget::Master) ? wet : 0.0f);
+                m_beatFxTarget == MidiBeatFxTarget::DeckA ? wet : 0.0f);
         }
         if (m_deckB) {
             m_deckB->setFxSlotEffectType(1, type);
             m_deckB->setFxSlotWetDry(1,
-                (m_beatFxTarget == MidiBeatFxTarget::DeckB
-                 || m_beatFxTarget == MidiBeatFxTarget::Master) ? wet : 0.0f);
+                m_beatFxTarget == MidiBeatFxTarget::DeckB ? wet : 0.0f);
         }
     }
 

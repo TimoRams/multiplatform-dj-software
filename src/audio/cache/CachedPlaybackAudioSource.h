@@ -1,5 +1,6 @@
 #pragma once
 
+#include "audio/AudioRouting.h"
 #include "AudioPageCache.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -45,7 +46,8 @@ private:
     std::atomic<juce::int64> m_loopIn{0}, m_loopOut{0};
     float m_starvationGain = 0.0f;
     float m_lastL = 0.0f, m_lastR = 0.0f;
-    static constexpr int kFadeSamples = 128;
+    static constexpr int kFadeSamples =
+        AudioRoutingConstants::kCacheMissResumeCrossfadeMaxSamples;
     std::atomic<std::uint64_t> m_hits{0}, m_misses{0}, m_starvation{0}, m_recovery{0};
     std::atomic<std::uint64_t> m_dropped{0}, m_generationMismatch{0};
 };

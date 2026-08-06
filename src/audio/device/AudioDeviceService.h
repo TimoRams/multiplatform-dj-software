@@ -66,7 +66,6 @@ public:
     // never opens/closes hardware and is also the hardware-independent policy seam.
     void publishDeviceConfigurationSnapshot(int sampleRate, int bufferSize);
 
-    bool ensureDeviceAvailable();
     void setOutputFirstChannel(int firstChannel);
     void closeAudioDevice();
 

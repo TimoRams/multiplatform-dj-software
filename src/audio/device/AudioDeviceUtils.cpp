@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <mutex>
 
 #if JUCE_JACK && (JUCE_LINUX || JUCE_BSD)
@@ -142,73 +143,26 @@ int readDeviceOutputChannelCount(const QString& deviceType, const QString& outpu
     }
 #endif
 
-    int channelCount = 2;
+    const QString selectedOutput = outputDevice.trimmed();
+    if (selectedOutput.isEmpty()
+        || selectedOutput.compare(QStringLiteral("None"), Qt::CaseInsensitive) == 0) {
+        return 0;
+    }
 
+    int channelCount = 0;
     juce::AudioDeviceManager probe;
-    const juce::String initErr = probe.initialiseWithDefaultDevices(0, 2);
-    if (initErr.isNotEmpty() || probe.getCurrentAudioDevice() == nullptr) {
-        std::lock_guard<std::mutex> lock(s_outputChannelCountCacheMutex);
-        s_outputChannelCountCache.insert(key, channelCount);
-        return channelCount;
-    }
-
-    juce::AudioIODeviceType* type = nullptr;
-    if (!deviceType.isEmpty()) {
-        type = findDeviceType(probe, deviceType);
-        if (type != nullptr)
-            probe.setCurrentAudioDeviceType(type->getTypeName(), true);
-    } else {
-        type = probe.getCurrentDeviceTypeObject();
-    }
-
-    if (type == nullptr)
-        type = probe.getCurrentDeviceTypeObject();
-
-    juce::AudioDeviceManager::AudioDeviceSetup setup;
-    probe.getAudioDeviceSetup(setup);
-    setup.useDefaultInputChannels = true;
-    setup.inputDeviceName.clear();
-    setup.useDefaultOutputChannels = true;
-    QString sanitizedOutput = outputDevice.trimmed();
-    if (sanitizedOutput.compare(QStringLiteral("None"), Qt::CaseInsensitive) == 0)
-        sanitizedOutput.clear();
-    if (!sanitizedOutput.isEmpty() && type != nullptr) {
+    if (auto* type = findDeviceType(probe, deviceType)) {
         type->scanForDevices();
         const auto names = type->getDeviceNames(false);
-        bool found = false;
-        for (const auto& name : names) {
-            if (QString::fromUtf8(name.toRawUTF8()).trimmed() == sanitizedOutput) {
-                found = true;
-                break;
-            }
+        const auto selectedName = toJuceString(selectedOutput);
+        if (names.contains(selectedName)) {
+            std::unique_ptr<juce::AudioIODevice> device(type->createDevice(selectedName, {}));
+            if (device)
+                channelCount = device->getOutputChannelNames().size();
         }
-        if (!found)
-            sanitizedOutput.clear();
     }
 
-    if (!sanitizedOutput.isEmpty())
-        setup.outputDeviceName = toJuceString(sanitizedOutput);
-
-    juce::String error = probe.setAudioDeviceSetup(setup, true);
-    if (error.isNotEmpty() && setup.outputDeviceName.isNotEmpty()) {
-        setup.outputDeviceName.clear();
-        error = probe.setAudioDeviceSetup(setup, true);
-    }
-
-    if (auto* device = probe.getCurrentAudioDevice()) {
-        const int namesCount = device->getOutputChannelNames().size();
-        const auto activeChannels = device->getActiveOutputChannels();
-        const int activeSetBits = activeChannels.countNumberOfSetBits();
-
-        if (namesCount > 0 && activeSetBits > 0)
-            channelCount = std::max(namesCount, activeSetBits);
-        else if (namesCount > 0)
-            channelCount = namesCount;
-        else if (activeSetBits > 0)
-            channelCount = activeSetBits;
-    }
-
-    channelCount = std::clamp(channelCount, 2, kMaxSupportedOutputChannel);
+    channelCount = std::clamp(channelCount, 0, kMaxSupportedOutputChannel);
     {
         std::lock_guard<std::mutex> lock(s_outputChannelCountCacheMutex);
         s_outputChannelCountCache.insert(key, channelCount);
@@ -250,6 +204,8 @@ QStringList buildChannelPairList(int channelCount)
     QStringList pairs;
     pairs.push_back(QStringLiteral("None"));
 
+    if (channelCount < 2)
+        return pairs;
     channelCount = std::clamp(channelCount, 2, kMaxSupportedOutputChannel);
     for (int first = 1; first + 1 <= channelCount; first += 2)
         pairs.push_back(QStringLiteral("%1-%2").arg(first).arg(first + 1));

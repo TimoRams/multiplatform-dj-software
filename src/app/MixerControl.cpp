@@ -2,41 +2,28 @@
 
 #include "DeckChannels.h"
 #include "DjEngine.h"
+#include "audio/AudioEngine.h"
 
 #include <algorithm>
 #include <cmath>
 
 namespace {
 
-float curveExponent(float sharpness)
+CrossfaderAssignment assignmentFromString(const QString& assignment)
 {
-    return std::pow(10.0f, -sharpness * 2.0f);
+    if (assignment == QLatin1String("A"))
+        return CrossfaderAssignment::A;
+    if (assignment == QLatin1String("B"))
+        return CrossfaderAssignment::B;
+    return CrossfaderAssignment::Thru;
 }
 
-float channelGain(float t, bool isA, bool linear, float exponent)
+CrossfaderCurve curveFromState(const QString& mode, float sharpness)
 {
-    if (linear)
-        return isA ? std::max(0.0f, 1.0f - t) : std::max(0.0f, t);
-
-    if (isA)
-        return std::pow(std::max(0.0f, 1.0f - t), exponent);
-    return std::pow(std::max(0.0f, t), exponent);
-}
-
-float assignMultiplier(const QString& assign,
-                       float cfPos,
-                       bool linear,
-                       float exponent)
-{
-    if (assign == QLatin1String("T"))
-        return 1.0f;
-
-    const float t = (cfPos + 1.0f) * 0.5f;
-    if (assign == QLatin1String("A"))
-        return channelGain(t, true, linear, exponent);
-    if (assign == QLatin1String("B"))
-        return channelGain(t, false, linear, exponent);
-    return 1.0f;
+    if (mode == QLatin1String("linear"))
+        return CrossfaderCurve::Smooth;
+    return sharpness >= 0.75f ? CrossfaderCurve::Scratch
+                             : CrossfaderCurve::ConstantPower;
 }
 
 } // namespace
@@ -80,22 +67,6 @@ const MixerControl::ChannelMixState* MixerControl::mixStateForChannel(const QStr
     return nullptr;
 }
 
-float MixerControl::crossfaderMultiplierForChannel(const QString& channelId) const
-{
-    const bool linear = (m_cfCurveMode == QLatin1String("linear"));
-    const float exponent = linear ? 1.0f : curveExponent(m_cfSharpness);
-
-    if (channelId == QLatin1String("deckA"))
-        return assignMultiplier(m_assignA, m_cfPos, linear, exponent);
-    if (channelId == QLatin1String("deckB"))
-        return assignMultiplier(m_assignB, m_cfPos, linear, exponent);
-    if (channelId == QLatin1String("deckC"))
-        return assignMultiplier(m_assignC, m_cfPos, linear, exponent);
-    if (channelId == QLatin1String("deckD"))
-        return assignMultiplier(m_assignD, m_cfPos, linear, exponent);
-    return 1.0f;
-}
-
 void MixerControl::applyChannelVolume(const QString& channelId)
 {
     DjEngine* const deck = deckForChannelId(channelId);
@@ -108,7 +79,7 @@ void MixerControl::applyChannelVolume(const QString& channelId)
     else if (channelId == QLatin1String("deckC")) fader = m_faderC;
     else if (channelId == QLatin1String("deckD")) fader = m_faderD;
 
-    deck->applyVolume(static_cast<double>(fader * crossfaderMultiplierForChannel(channelId)));
+    deck->applyVolume(static_cast<double>(fader));
 }
 
 void MixerControl::applyChannelMixState(const QString& channelId)
@@ -195,7 +166,7 @@ void MixerControl::setChannelFader(const QString& channelId, double level)
 void MixerControl::setCrossfaderPosition(float cfPos)
 {
     m_cfPos = std::clamp(cfPos, -1.0f, 1.0f);
-    applyAllVolumes();
+    AudioEngine::setCrossfaderPosition(m_cfPos);
 }
 
 void MixerControl::syncCrossfaderState(float cfPos,
@@ -213,6 +184,12 @@ void MixerControl::syncCrossfaderState(float cfPos,
     m_assignD = assignD;
     m_cfSharpness = cfSharpness;
     m_cfCurveMode = cfCurveMode;
+    AudioEngine::setCrossfaderPosition(std::clamp(m_cfPos, -1.0f, 1.0f));
+    AudioEngine::setCrossfaderCurve(curveFromState(m_cfCurveMode, m_cfSharpness));
+    AudioEngine::setCrossfaderAssignment(0, assignmentFromString(m_assignA));
+    AudioEngine::setCrossfaderAssignment(1, assignmentFromString(m_assignB));
+    AudioEngine::setCrossfaderAssignment(2, assignmentFromString(m_assignC));
+    AudioEngine::setCrossfaderAssignment(3, assignmentFromString(m_assignD));
 }
 
 void MixerControl::applyAllVolumes()
