@@ -4,3 +4,12 @@
 [submodule "libs/link"]
 	path = libs/link
 	url = https://github.com/Ableton/link.git
+[submodule "libs/signalsmith-dsp"]
+	path = libs/signalsmith-dsp
+	url = https://github.com/Signalsmith-Audio/dsp.git
+[submodule "libs/signalsmith-linear"]
+	path = libs/signalsmith-linear
+	url = https://github.com/Signalsmith-Audio/linear.git
+[submodule "libs/signalsmith-stretch"]
+	path = libs/signalsmith-stretch
+	url = https://github.com/Signalsmith-Audio/signalsmith-stretch.git
