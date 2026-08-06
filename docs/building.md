@@ -1,11 +1,30 @@
 # Building BrockDJ
 
-BrockDJ uses CMake 3.22 or newer, Ninja and a portable C++23 baseline. JUCE and
-Ableton Link are Git submodules, so clone with `--recurse-submodules` or run:
+BrockDJ uses CMake 3.24 or newer, Ninja and a portable C++23 baseline. JUCE,
+Ableton Link, Signalsmith DSP, Signalsmith Linear and Signalsmith Stretch are
+Git submodules. Clone a new checkout with:
 
 ```bash
+git clone --recurse-submodules \
+  https://github.com/TimoRams/multiplatform-dj-software.git
+```
+
+For an existing checkout, synchronize and initialize the recorded pins:
+
+```bash
+git submodule sync --recursive
 git submodule update --init --recursive
 ```
+
+Submodules are pinned to exact commits. A normal `git pull` does not update
+their working trees; after a pull that changes a Gitlink, run the two commands
+above. `git submodule update --remote` is not part of the normal build process.
+
+Signalsmith Stretch is present only as a verified build dependency for now; it
+does not replace the production Rubber Band key-lock/time-stretch path.
+Signalsmith Linear is Stretch's technical dependency. All three Signalsmith
+projects are MIT-licensed; their canonical license files remain in the pinned
+submodules.
 
 The supported native configurations are Linux x86_64, Linux ARM64, macOS
 Apple Silicon, macOS Intel and Windows x64. CI builds and tests all five on

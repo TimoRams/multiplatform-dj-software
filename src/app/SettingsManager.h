@@ -27,6 +27,7 @@ class SettingsManager : public QObject
     Q_PROPERTY(int audioBufferSize READ getAudioBufferSize WRITE setAudioBufferSize NOTIFY audioSettingsChanged)
     Q_PROPERTY(bool flx10ControllerSupportEnabled READ flx10ControllerSupportEnabled WRITE setFlx10ControllerSupportEnabled NOTIFY controllerSettingsChanged)
     Q_PROPERTY(bool tightDoubleSync READ tightDoubleSync WRITE setTightDoubleSync NOTIFY tightDoubleSyncChanged)
+    Q_PROPERTY(QString timeStretchBackend READ timeStretchBackend WRITE setTimeStretchBackend NOTIFY timeStretchBackendChanged)
     Q_PROPERTY(bool previousRunUnclean READ previousRunUnclean CONSTANT)
     Q_PROPERTY(QString previousRunWarningMessage READ previousRunWarningMessage CONSTANT)
 
@@ -104,6 +105,8 @@ public:
 
     bool tightDoubleSync() const;
     void setTightDoubleSync(bool enabled);
+    QString timeStretchBackend() const;
+    void setTimeStretchBackend(const QString& backend);
 
     // Generic persisted UI/layout state (mode, deck count, panel visibility, ...).
     // Stored under a "UI/" key prefix in the user properties file.
@@ -141,6 +144,7 @@ signals:
     void audioSettingsChanged();
     void controllerSettingsChanged();
     void tightDoubleSyncChanged();
+    void timeStretchBackendChanged();
     void crossfaderSettingsChanged();
 
 private:

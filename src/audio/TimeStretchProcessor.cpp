@@ -48,6 +48,12 @@ void TimeStretchProcessor::setPitchLockEnabled(bool enabled) noexcept
     if (m_pitchLockEnabled.exchange(enabled) != enabled) publishDesiredConfiguration();
 }
 
+void TimeStretchProcessor::setBackend(TimeStretchBackend backend) noexcept
+{
+    if (m_backend.exchange(backend, std::memory_order_acq_rel) != backend)
+        publishDesiredConfiguration();
+}
+
 void TimeStretchProcessor::setScratchBypass(bool enabled) noexcept
 {
     m_scratchBypass.store(enabled, std::memory_order_release);
@@ -97,6 +103,7 @@ TimeStretchConfiguration TimeStretchProcessor::desiredConfiguration() const noex
     c.tempoRatio = m_targetTempoRatio.load(std::memory_order_acquire);
     c.maximumBlockSize = m_maximumBlockSize.load(std::memory_order_acquire);
     c.keylockEnabled = m_pitchLockEnabled.load(std::memory_order_acquire);
+    c.backend = m_backend.load(std::memory_order_acquire);
     c.trackGeneration = m_trackGeneration.load(std::memory_order_acquire);
     c.configurationGeneration = m_desiredGeneration.load(std::memory_order_acquire);
     return c;
@@ -136,6 +143,7 @@ void TimeStretchProcessor::prepareToPlay(int blockSize, double sr)
         m_pipelines[0].state.store(SlotState::Active, std::memory_order_release);
         m_activeSlot.store(0, std::memory_order_release);
         m_activeGeneration.store(1, std::memory_order_release);
+        m_activeBackend.store(initial.backend, std::memory_order_release);
     }
     m_pipelines[1].state.store(SlotState::Empty, std::memory_order_release);
     m_worker = std::thread([this] {
@@ -160,7 +168,8 @@ void TimeStretchProcessor::releaseResources()
     m_activeSlot.store(-1, std::memory_order_release);
     for (auto& p : m_pipelines) {
         p.state.store(SlotState::Empty, std::memory_order_release);
-        p.stretcher.reset();
+        p.rubberBand.reset();
+        p.signalsmith.reset();
         p.fifo.reset();
         resizeBuffer(p.input, 0, 0);
         resizeBuffer(p.output, 0, 0);
@@ -174,14 +183,26 @@ bool TimeStretchProcessor::preparePipeline(Pipeline& p, const TimeStretchConfigu
 {
     if (g_inTimeStretchAudioCallback) m_prepareFromAudio.fetch_add(1, std::memory_order_relaxed);
     if (!validConfiguration(c)) return false;
-    p.stretcher = std::make_unique<RubberBand::RubberBandStretcher>(c.sampleRate, c.channelCount,
-        RubberBand::RubberBandStretcher::OptionProcessRealTime |
-        RubberBand::RubberBandStretcher::OptionWindowShort |
-        RubberBand::RubberBandStretcher::OptionPitchHighSpeed);
-    p.stretcher->setMaxProcessSize(static_cast<size_t>(std::min(4096, std::max(512, c.maximumBlockSize))));
-    p.stretcher->setTimeRatio(1.0);
     p.appliedPitchScale = c.keylockEnabled ? 1.0 / c.tempoRatio : 1.0;
-    p.stretcher->setPitchScale(p.appliedPitchScale);
+    p.rubberBand.reset();
+    p.signalsmith.reset();
+    if (c.backend == TimeStretchBackend::RubberBand) {
+        p.rubberBand = std::make_unique<RubberBand::RubberBandStretcher>(c.sampleRate, c.channelCount,
+            RubberBand::RubberBandStretcher::OptionProcessRealTime |
+            RubberBand::RubberBandStretcher::OptionWindowShort |
+            RubberBand::RubberBandStretcher::OptionPitchHighSpeed);
+        p.rubberBand->setMaxProcessSize(static_cast<size_t>(std::min(4096, std::max(512, c.maximumBlockSize))));
+        p.rubberBand->setTimeRatio(1.0);
+        p.rubberBand->setPitchScale(p.appliedPitchScale);
+    } else {
+        p.signalsmith = std::make_unique<signalsmith::stretch::SignalsmithStretch<float>>();
+        // A shorter custom window keeps keylock responsive enough for live DJ use
+        // while still using Signalsmith's phase-coherent pitch mapping.
+        const int blockSamples = std::clamp(static_cast<int>(std::lround(c.sampleRate * 0.05)), 1024, 8192);
+        const int intervalSamples = std::clamp(blockSamples / 8, 128, 1024);
+        p.signalsmith->configure(c.channelCount, blockSamples, intervalSamples, true);
+        p.signalsmith->setTransposeFactor(static_cast<float>(p.appliedPitchScale));
+    }
     resizeBuffer(p.input, 2, std::max(4096, c.maximumBlockSize));
     resizeBuffer(p.output, 2, kFifoCapacity);
     resizeBuffer(p.trim, 2, 4096);
@@ -191,7 +212,9 @@ bool TimeStretchProcessor::preparePipeline(Pipeline& p, const TimeStretchConfigu
     p.config = c;
     p.prefill = 0;
     prewarmPipeline(p);
-    p.latency = static_cast<int>(p.stretcher->getLatency());
+    p.latency = p.rubberBand
+        ? static_cast<int>(p.rubberBand->getLatency())
+        : p.signalsmith->inputLatency() + p.signalsmith->outputLatency();
     return true;
 }
 
@@ -204,17 +227,26 @@ void TimeStretchProcessor::resizeBuffer(juce::AudioBuffer<float>& buffer, int ch
 void TimeStretchProcessor::prewarmPipeline(Pipeline& p)
 {
     if (g_inTimeStretchAudioCallback) m_prewarmFromAudio.fetch_add(1, std::memory_order_relaxed);
-    if (!p.stretcher) return;
-    int remaining = static_cast<int>(p.stretcher->getPreferredStartPad() + p.stretcher->getStartDelay());
+    if (p.signalsmith) {
+        const int warmup = std::min(p.zeros.getNumSamples(), p.signalsmith->inputLatency());
+        if (warmup > 0) {
+            const float* in[2] { p.zeros.getReadPointer(0), p.zeros.getReadPointer(1) };
+            float* out[2] { p.trim.getWritePointer(0), p.trim.getWritePointer(1) };
+            p.signalsmith->process(in, warmup, out, warmup);
+        }
+        return;
+    }
+    if (!p.rubberBand) return;
+    int remaining = static_cast<int>(p.rubberBand->getPreferredStartPad() + p.rubberBand->getStartDelay());
     for (int guard = 256; remaining > 0 && guard-- > 0;) {
         const int chunk = std::min(remaining, p.zeros.getNumSamples());
         const float* in[2] { p.zeros.getReadPointer(0), p.zeros.getReadPointer(1) };
-        p.stretcher->process(in, chunk, false);
-        int available = p.stretcher->available();
+        p.rubberBand->process(in, chunk, false);
+        int available = p.rubberBand->available();
         if (available > 0) {
             const int take = std::min({remaining, available, p.trim.getNumSamples()});
             float* out[2] { p.trim.getWritePointer(0), p.trim.getWritePointer(1) };
-            p.stretcher->retrieve(out, take);
+            p.rubberBand->retrieve(out, take);
             remaining -= take;
         }
     }
@@ -282,6 +314,7 @@ void TimeStretchProcessor::activatePreparedPipelineAtBlockBoundary() noexcept
         }
         const int old = m_activeSlot.exchange(i, std::memory_order_acq_rel);
         m_activeGeneration.store(next.config.configurationGeneration, std::memory_order_release);
+        m_activeBackend.store(next.config.backend, std::memory_order_release);
         m_scratchRefreshInFlight.store(false, std::memory_order_release);
         m_reportedLatencySamples.store(next.config.keylockEnabled ? next.latency : 0, std::memory_order_relaxed);
         m_switchFadeRemaining.store(kSwitchFadeSamples, std::memory_order_relaxed);
@@ -329,24 +362,40 @@ void TimeStretchProcessor::processPipeline(Pipeline& p, const juce::AudioSourceC
     const double effectiveRate = m_targetTempoRatio.load(std::memory_order_acquire);
     const double pitchScale = p.config.keylockEnabled ? 1.0 / effectiveRate : 1.0;
     if (std::abs(p.appliedPitchScale - pitchScale) > 1.0e-7) {
-        p.stretcher->setPitchScale(pitchScale);
+        if (p.rubberBand)
+            p.rubberBand->setPitchScale(pitchScale);
+        else if (p.signalsmith)
+            p.signalsmith->setTransposeFactor(static_cast<float>(pitchScale));
         p.appliedPitchScale = pitchScale;
     }
     const int needed = info.numSamples;
     int loops = kPullLoopLimit;
     while (p.fifo->getNumReady() < needed && loops-- > 0) {
-        int pull = p.stretcher->getSamplesRequired();
+        int pull = p.rubberBand ? p.rubberBand->getSamplesRequired() : kMaxPullSize;
         pull = std::clamp(pull > 0 ? pull : kMinPullSize, kMinPullSize,
                           std::min(kMaxPullSize, p.input.getNumSamples()));
         p.input.clear(0, pull);
         source->getNextAudioBlock({&p.input, 0, pull});
         const float* in[2] { p.input.getReadPointer(0), p.input.getReadPointer(1) };
-        p.stretcher->process(in, pull, false);
-        int available = std::min(p.stretcher->available(), p.fifo->getFreeSpace());
+        int available = 0;
+        if (p.rubberBand) {
+            p.rubberBand->process(in, pull, false);
+            available = std::min(p.rubberBand->available(), p.fifo->getFreeSpace());
+        } else if (p.signalsmith) {
+            available = std::min(pull, p.fifo->getFreeSpace());
+        }
         int s1, n1, s2, n2;
         p.fifo->prepareToWrite(std::max(0, available), s1, n1, s2, n2);
-        if (n1 > 0) { float* out[2] {p.output.getWritePointer(0,s1),p.output.getWritePointer(1,s1)}; p.stretcher->retrieve(out,n1); }
-        if (n2 > 0) { float* out[2] {p.output.getWritePointer(0,s2),p.output.getWritePointer(1,s2)}; p.stretcher->retrieve(out,n2); }
+        if (p.rubberBand) {
+            if (n1 > 0) { float* out[2] {p.output.getWritePointer(0,s1),p.output.getWritePointer(1,s1)}; p.rubberBand->retrieve(out,n1); }
+            if (n2 > 0) { float* out[2] {p.output.getWritePointer(0,s2),p.output.getWritePointer(1,s2)}; p.rubberBand->retrieve(out,n2); }
+        } else if (p.signalsmith && available > 0) {
+            // Signalsmith produces a fixed-size stream here: the source has
+            // already applied varispeed, so only pitch correction is needed.
+            p.signalsmith->process(in, pull, p.trim.getArrayOfWritePointers(), pull);
+            if (n1 > 0) p.output.copyFrom(0, s1, p.trim, 0, 0, n1), p.output.copyFrom(1, s1, p.trim, 1, 0, n1);
+            if (n2 > 0) p.output.copyFrom(0, s2, p.trim, 0, n1, n2), p.output.copyFrom(1, s2, p.trim, 1, n1, n2);
+        }
         p.fifo->finishedWrite(n1+n2);
     }
     const int count = std::min(needed, p.fifo->getNumReady());
@@ -388,6 +437,10 @@ void TimeStretchProcessor::captureOutputTail(const juce::AudioSourceChannelInfo&
 }
 
 int TimeStretchProcessor::getLatencySamples() const noexcept { return m_reportedLatencySamples.load(std::memory_order_relaxed); }
+TimeStretchBackend TimeStretchProcessor::activeBackend() const noexcept
+{
+    return m_activeBackend.load(std::memory_order_acquire);
+}
 std::uint64_t TimeStretchProcessor::activeConfigurationGeneration() const noexcept { return m_activeGeneration.load(std::memory_order_acquire); }
 TimeStretchRealtimeStats TimeStretchProcessor::realtimeStats() const noexcept
 {

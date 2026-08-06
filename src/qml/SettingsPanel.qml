@@ -876,6 +876,38 @@ Item {
                             }
                         }
 
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 16
+
+                            Text {
+                                text: "Keylock Engine"
+                                color: "#aaa"
+                                font.pixelSize: 12
+                                Layout.preferredWidth: 130
+                            }
+
+                            ComboBox {
+                                id: timeStretchBackendCombo
+                                Layout.fillWidth: true
+                                height: 32
+                                model: ["Signalsmith (Standard)", "Rubber Band"]
+                                currentIndex: settingsManager && settingsManager.timeStretchBackend === "rubberband" ? 1 : 0
+                                onActivated: {
+                                    if (settingsManager)
+                                        settingsManager.timeStretchBackend = currentIndex === 1 ? "rubberband" : "signalsmith"
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: "Signalsmith is the default keylock engine. The selection applies to all decks immediately; Rubber Band remains available for compatibility."
+                            color: "#7b7b7b"
+                            font.pixelSize: 11
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+
                         Text {
                             text: settingsWindow.isJackDeviceSelected
                                 ? "JACK sample rate follows the server. Frames/period is requested from JACK/PipeWire and the actual opened value is shown after Apply."

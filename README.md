@@ -77,9 +77,9 @@ The playhead position is exposed to the render thread via `std::atomic<double>` 
 | TagLib | Metadata extraction |
 | libkeyfinder | Key detection |
 | RubberBand | Key lock / time-stretch |
-| CMake ≥ 3.22 | Build system |
+| CMake ≥ 3.24 | Build system |
 
-> **JUCE** and **Ableton Link** are included as submodules under `libs/` — no separate installation required.
+> **JUCE**, **Ableton Link** and the three **Signalsmith** projects are included as pinned Git submodules under `libs/` — no separate installation required.
 
 See [the complete build guide](docs/building.md), [dependency pins](docs/dependencies.md)
 and [packaging/artifact documentation](docs/packaging.md) for the five supported
@@ -112,6 +112,13 @@ cd multiplatform-dj-software
 ```
 
 `./build-fast` configures the app-only `build/` directory (RelWithDebInfo, QML cachegen off) and rebuilds only `BrockDJ` incrementally. `./test-fast` uses the separate `build-tests/` directory for the full CTest suite, so test rebuilds never invalidate the running-app build.
+
+For an existing checkout, initialize the exact pinned submodule revisions before building:
+
+```bash
+git submodule sync --recursive
+git submodule update --init --recursive
+```
 
 </details>
 

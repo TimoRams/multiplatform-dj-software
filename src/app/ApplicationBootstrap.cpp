@@ -35,6 +35,7 @@
 
 #include "DjEngine.h"
 #include "audio/AudioEngine.h"
+#include "audio/TimeStretchProcessor.h"
 #include "library/LibraryManager.h"
 #include "io/MediaIoScheduler.h"
 #include "library/CoverArtProvider.h"
@@ -65,6 +66,12 @@
 using namespace Qt::StringLiterals;
 
 namespace {
+TimeStretchBackend timeStretchBackendForSetting(const QString& backend)
+{
+    return backend.compare(QLatin1String("rubberband"), Qt::CaseInsensitive) == 0
+        ? TimeStretchBackend::RubberBand : TimeStretchBackend::Signalsmith;
+}
+
 QtMessageHandler g_previousMessageHandler = nullptr;
 const QString kBreezeDialOverrideWarning = QStringLiteral("Member fillColor of the object BreezeDial overrides a member of the base object");
 
@@ -474,6 +481,16 @@ int runApplication(int argc, char *argv[])
                                  controller->setFlx10Enabled(settingsManager.flx10ControllerSupportEnabled());
                              });
             runtime.controllerManager->setFlx10Enabled(settingsManager.flx10ControllerSupportEnabled());
+
+            const auto applyTimeStretchBackend = [&runtime, &settingsManager] {
+                const auto backend = timeStretchBackendForSetting(settingsManager.timeStretchBackend());
+                for (DjEngine* deck : {runtime.deckA.get(), runtime.deckB.get(),
+                                       runtime.deckC.get(), runtime.deckD.get()})
+                    deck->audioEndpoint().setTimeStretchBackend(backend);
+            };
+            QObject::connect(&settingsManager, &SettingsManager::timeStretchBackendChanged,
+                             &app, applyTimeStretchBackend);
+            applyTimeStretchBackend();
 
             for (DjEngine* deck : {runtime.deckA.get(), runtime.deckB.get(),
                                    runtime.deckC.get(), runtime.deckD.get()}) {

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.22)
+cmake_minimum_required(VERSION 3.24)
 
 set(PROJECT_NAME "BrockDJ")
 if(APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
@@ -217,10 +217,29 @@ if(UNIX AND NOT APPLE)
     endif()
 endif()
 
-# ---- Signalsmith DSP (header-only, MIT) -----------------------------------
-# Vendored subset of https://github.com/Signalsmith-Audio/signalsmith-dsp
-# Only dsp/delay.h is included — the Delay<> circular buffer + Linear interpolator.
-set(SIGNALSMITH_DSP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/libs/signalsmith-dsp")
+# ---- Signalsmith (header-only, MIT) ---------------------------------------
+# Stretch fetches Linear only when its local CMake target does not exist.  Keep
+# this order so an initialized submodule checkout configures without downloads.
+set(SIGNALSMITH_USE_IPP OFF CACHE BOOL "" FORCE)
+set(SIGNALSMITH_USE_PFFFT OFF CACHE BOOL "" FORCE)
+set(SIGNALSMITH_USE_PFFFT_DOUBLE OFF CACHE BOOL "" FORCE)
+set(SIGNALSMITH_USE_XSIMD OFF CACHE BOOL "" FORCE)
+set(SIGNALSMITH_USE_XSIMD_DISPATCH OFF CACHE BOOL "" FORCE)
+set(SIGNALSMITH_USE_CMSISDSP OFF CACHE BOOL "" FORCE)
+
+add_subdirectory(libs/signalsmith-linear EXCLUDE_FROM_ALL)
+add_subdirectory(libs/signalsmith-dsp EXCLUDE_FROM_ALL)
+add_subdirectory(libs/signalsmith-stretch EXCLUDE_FROM_ALL)
+
+if(NOT TARGET ThirdParty::SignalsmithLinear)
+    add_library(ThirdParty::SignalsmithLinear ALIAS signalsmith-linear)
+endif()
+if(NOT TARGET ThirdParty::SignalsmithDSP)
+    add_library(ThirdParty::SignalsmithDSP ALIAS signalsmith-dsp)
+endif()
+if(NOT TARGET ThirdParty::SignalsmithStretch)
+    add_library(ThirdParty::SignalsmithStretch ALIAS signalsmith-stretch)
+endif()
 
 add_subdirectory(libs/JUCE)
 
@@ -476,7 +495,6 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     src/analysis
     src/domain
     src/app
-    ${SIGNALSMITH_DSP_DIR}
 )
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE
@@ -532,6 +550,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     ThirdParty::TagLib
     ThirdParty::KeyFinder
     ThirdParty::RubberBand
+    ThirdParty::SignalsmithDSP
+    ThirdParty::SignalsmithStretch
     Ableton::Link
 )
 
@@ -666,7 +686,6 @@ target_include_directories(BrockDJ_smoke_tests PRIVATE
     src/engine
     src/engine/dsp
     src/fx/dsp
-    ${SIGNALSMITH_DSP_DIR}
 )
 
 target_link_libraries(BrockDJ_smoke_tests PRIVATE
@@ -677,6 +696,7 @@ target_link_libraries(BrockDJ_smoke_tests PRIVATE
     juce::juce_audio_basics
     juce::juce_dsp
     juce::juce_events
+    ThirdParty::SignalsmithDSP
 )
 target_compile_definitions(BrockDJ_smoke_tests PRIVATE
     JUCE_USE_CURL=0
@@ -693,8 +713,8 @@ add_executable(BrockDJ_mixer_dsp_tests
     src/fx/FxProcessor.cpp
     src/fx/BrickwallLimiter.cpp
 )
-target_include_directories(BrockDJ_mixer_dsp_tests PRIVATE src src/engine src/engine/dsp src/fx/dsp ${SIGNALSMITH_DSP_DIR})
-target_link_libraries(BrockDJ_mixer_dsp_tests PRIVATE Qt6::Core Qt6::Gui juce::juce_core juce::juce_data_structures juce::juce_audio_basics juce::juce_dsp juce::juce_events)
+target_include_directories(BrockDJ_mixer_dsp_tests PRIVATE src src/engine src/engine/dsp src/fx/dsp)
+target_link_libraries(BrockDJ_mixer_dsp_tests PRIVATE Qt6::Core Qt6::Gui juce::juce_core juce::juce_data_structures juce::juce_audio_basics juce::juce_dsp juce::juce_events ThirdParty::SignalsmithDSP)
 target_compile_definitions(BrockDJ_mixer_dsp_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
 target_compile_features(BrockDJ_mixer_dsp_tests PRIVATE cxx_std_23)
 add_test(NAME mixer_dsp COMMAND BrockDJ_mixer_dsp_tests)
@@ -712,8 +732,8 @@ add_executable(BrockDJ_deck_audio_graph_tests
     src/audio/TimeStretchProcessor.cpp src/audio/DeckChannelProcessor.cpp src/audio/internal/MixerFilterCoefficients.cpp
     src/fx/FxProcessor.cpp src/fx/BrickwallLimiter.cpp
 )
-target_include_directories(BrockDJ_deck_audio_graph_tests PRIVATE src src/engine src/engine/dsp src/fx/dsp ${SIGNALSMITH_DSP_DIR})
-target_link_libraries(BrockDJ_deck_audio_graph_tests PRIVATE Qt6::Core Qt6::Gui juce::juce_core juce::juce_data_structures juce::juce_audio_basics juce::juce_audio_formats juce::juce_audio_devices juce::juce_dsp juce::juce_events ThirdParty::RubberBand)
+target_include_directories(BrockDJ_deck_audio_graph_tests PRIVATE src src/engine src/engine/dsp src/fx/dsp)
+target_link_libraries(BrockDJ_deck_audio_graph_tests PRIVATE Qt6::Core Qt6::Gui juce::juce_core juce::juce_data_structures juce::juce_audio_basics juce::juce_audio_formats juce::juce_audio_devices juce::juce_dsp juce::juce_events ThirdParty::RubberBand ThirdParty::SignalsmithDSP ThirdParty::SignalsmithStretch)
 target_compile_definitions(BrockDJ_deck_audio_graph_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1)
 target_compile_features(BrockDJ_deck_audio_graph_tests PRIVATE cxx_std_23)
 add_test(NAME deck_audio_graph COMMAND BrockDJ_deck_audio_graph_tests)
@@ -729,8 +749,8 @@ add_executable(BrockDJ_deck_transport_tests
     src/audio/TimeStretchProcessor.cpp src/audio/DeckChannelProcessor.cpp src/audio/internal/MixerFilterCoefficients.cpp
     src/fx/FxProcessor.cpp src/fx/BrickwallLimiter.cpp
 )
-target_include_directories(BrockDJ_deck_transport_tests PRIVATE src src/engine src/engine/dsp src/fx/dsp ${SIGNALSMITH_DSP_DIR})
-target_link_libraries(BrockDJ_deck_transport_tests PRIVATE Qt6::Core Qt6::Gui juce::juce_core juce::juce_data_structures juce::juce_audio_basics juce::juce_audio_formats juce::juce_audio_devices juce::juce_dsp juce::juce_events ThirdParty::RubberBand)
+target_include_directories(BrockDJ_deck_transport_tests PRIVATE src src/engine src/engine/dsp src/fx/dsp)
+target_link_libraries(BrockDJ_deck_transport_tests PRIVATE Qt6::Core Qt6::Gui juce::juce_core juce::juce_data_structures juce::juce_audio_basics juce::juce_audio_formats juce::juce_audio_devices juce::juce_dsp juce::juce_events ThirdParty::RubberBand ThirdParty::SignalsmithDSP ThirdParty::SignalsmithStretch)
 target_compile_definitions(BrockDJ_deck_transport_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1)
 target_compile_features(BrockDJ_deck_transport_tests PRIVATE cxx_std_23)
 add_test(NAME deck_transport COMMAND BrockDJ_deck_transport_tests)
@@ -795,11 +815,11 @@ add_executable(BrockDJ_master_bus_tests
     src/fx/BrickwallLimiter.cpp
 )
 target_include_directories(BrockDJ_master_bus_tests PRIVATE
-    src src/engine src/fx/dsp ${SIGNALSMITH_DSP_DIR})
+    src src/engine src/fx/dsp)
 target_link_libraries(BrockDJ_master_bus_tests PRIVATE
     Qt6::Core Qt6::Gui
     juce::juce_core juce::juce_events juce::juce_audio_basics
-    juce::juce_audio_devices juce::juce_dsp)
+    juce::juce_audio_devices juce::juce_dsp ThirdParty::SignalsmithDSP)
 target_compile_definitions(BrockDJ_master_bus_tests PRIVATE
     JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1)
 target_compile_features(BrockDJ_master_bus_tests PRIVATE cxx_std_23)
@@ -814,15 +834,23 @@ add_executable(BrockDJ_audio_routing_contract_tests
     src/fx/BrickwallLimiter.cpp
 )
 target_include_directories(BrockDJ_audio_routing_contract_tests PRIVATE
-    src src/engine src/fx/dsp ${SIGNALSMITH_DSP_DIR})
+    src src/engine src/fx/dsp)
 target_link_libraries(BrockDJ_audio_routing_contract_tests PRIVATE
     Qt6::Core Qt6::Gui
     juce::juce_core juce::juce_events juce::juce_audio_basics
-    juce::juce_audio_devices juce::juce_dsp)
+    juce::juce_audio_devices juce::juce_dsp ThirdParty::SignalsmithDSP)
 target_compile_definitions(BrockDJ_audio_routing_contract_tests PRIVATE
     JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1)
 target_compile_features(BrockDJ_audio_routing_contract_tests PRIVATE cxx_std_23)
 add_test(NAME audio_routing_contract COMMAND BrockDJ_audio_routing_contract_tests)
+
+add_executable(BrockDJ_signalsmith_dependency_tests
+    tests/third_party/signalsmith_dependency_tests.cpp)
+target_link_libraries(BrockDJ_signalsmith_dependency_tests PRIVATE
+    ThirdParty::SignalsmithDSP
+    ThirdParty::SignalsmithStretch)
+target_compile_features(BrockDJ_signalsmith_dependency_tests PRIVATE cxx_std_23)
+add_test(NAME signalsmith_dependencies COMMAND BrockDJ_signalsmith_dependency_tests)
 
 add_executable(BrockDJ_analysis_lifetime_tests
     tests/analysis/analysis_lifetime_tests.cpp
@@ -1049,7 +1077,7 @@ add_executable(BrockDJ_time_stretch_tests
 )
 target_include_directories(BrockDJ_time_stretch_tests PRIVATE src)
 target_link_libraries(BrockDJ_time_stretch_tests PRIVATE
-    juce::juce_core juce::juce_audio_basics ThirdParty::RubberBand
+    juce::juce_core juce::juce_audio_basics ThirdParty::RubberBand ThirdParty::SignalsmithStretch
 )
 target_compile_definitions(BrockDJ_time_stretch_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
 target_compile_features(BrockDJ_time_stretch_tests PRIVATE cxx_std_23)
@@ -1090,6 +1118,7 @@ set(_brockdj_executable_targets
     BrockDJ_sync_coordinator_tests
     BrockDJ_control_clock_tests
     BrockDJ_master_bus_tests
+    BrockDJ_signalsmith_dependency_tests
     BrockDJ_analysis_lifetime_tests
     BrockDJ_analysis_snapshot_tests
     BrockDJ_library_analysis_manager_tests

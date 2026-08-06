@@ -181,6 +181,11 @@ void DeckAudioPipeline::setKeylockEnabled(bool enabled) noexcept
     m_impl->timeStretch->setPitchLockEnabled(enabled);
 }
 
+void DeckAudioPipeline::setTimeStretchBackend(TimeStretchBackend backend) noexcept
+{
+    m_impl->timeStretch->setBackend(backend);
+}
+
 void DeckAudioPipeline::setLoopRangeSeconds(double startSeconds, double endSeconds, bool active,
                                          double sourceSampleRate) noexcept
 {

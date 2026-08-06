@@ -2,6 +2,25 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+required_submodule_files=(
+    "libs/JUCE/CMakeLists.txt"
+    "libs/link/AbletonLinkConfig.cmake"
+    "libs/signalsmith-dsp/CMakeLists.txt"
+    "libs/signalsmith-linear/CMakeLists.txt"
+    "libs/signalsmith-stretch/CMakeLists.txt"
+)
+for required_file in "${required_submodule_files[@]}"; do
+    if [[ ! -f "${repo_root}/${required_file}" ]]; then
+        printf 'Required Git submodules are not initialized.\n\nRun:\ngit submodule update --init --recursive\n' >&2
+        exit 1
+    fi
+done
+if git -C "${repo_root}" submodule status --recursive | grep -q '^-'; then
+    printf 'Required Git submodules are not initialized.\n\nRun:\ngit submodule update --init --recursive\n' >&2
+    exit 1
+fi
+
 build_dir="${repo_root}/build"
 cpu_count="$(nproc)"
 default_jobs="${cpu_count}"

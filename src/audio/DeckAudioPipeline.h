@@ -12,6 +12,7 @@ class AudioPageCache;
 class CachedPlaybackAudioSource;
 class DeckChannelProcessor;
 class TimeStretchProcessor;
+enum class TimeStretchBackend : std::uint8_t;
 namespace juce { class AudioTransportSource; }
 namespace engine::audio { class RenderModeRouter; }
 
@@ -65,6 +66,7 @@ public:
     void setPlaybackRate(double rate) noexcept;
     void setJogNudgeRatio(double ratio) noexcept;
     void setKeylockEnabled(bool enabled) noexcept;
+    void setTimeStretchBackend(TimeStretchBackend backend) noexcept;
     void setLoopRangeSeconds(double startSeconds, double endSeconds, bool active,
                              double sourceSampleRate) noexcept;
     void setPlaybackReadPositionSamples(std::int64_t position) noexcept;

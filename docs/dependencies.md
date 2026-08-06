@@ -2,7 +2,7 @@
 
 ## Language and toolchain
 
-- CMake 3.22 or newer.
+- CMake 3.24 or newer (required by the upstream Signalsmith Stretch CMake target).
 - C++23 is the portable application and test baseline.
 - Supported CI compilers are GCC on Ubuntu, AppleClang/Xcode on macOS and MSVC
   2022 on Windows.
@@ -40,6 +40,9 @@ installer does not provide an equivalent Linux desktop ARM64 archive.
 | --- | --- | --- |
 | JUCE 8.0.13 | submodule commit `7c9d3783b127263d72bb65fe0a7e2dc8a02a7ac2` | audio devices, codecs and DSP |
 | Ableton Link 4.0 | submodule commit `e9a2e414d63f55f1aad158370b007a6fbdc1eeb9` | network tempo/phase sync |
+| Signalsmith DSP v1.7.1 | submodule commit `2d20161915e733f117545c6be8cd3275a739a1e3` | header-only delay/filter DSP; MIT |
+| Signalsmith Linear 0.5.0 | submodule commit `0dd6b823783f1fe8768e2700e0937903f4270698` | Stretch's local FFT/linear dependency; MIT |
+| Signalsmith Stretch | submodule commit `57b93f4e9206a089a45387eaa39bdc9f310d3308` | verified only; does not replace Rubber Band yet; MIT |
 | TagLib | distro/Homebrew/vcpkg | metadata and cover extraction |
 | libkeyfinder 2.2.8 | distro/Homebrew/vcpkg | musical-key analysis |
 | RubberBand | distro/Homebrew/vcpkg | key-lock time stretching |
@@ -47,8 +50,11 @@ installer does not provide an equivalent Linux desktop ARM64 archive.
 | JACK | Linux only, optional when discovered | JACK audio backend |
 | libusb | Linux only, optional when discovered | direct FLX10 HID support |
 
-The repository records the JUCE and Link commits in Git. CI always checks out
-submodules recursively and never tracks their branches.
+The repository records the JUCE, Link and Signalsmith commits in Git. CI always
+checks out submodules recursively and never tracks their branches. A regular
+`git pull` does not update submodule working trees; after a Gitlink changes,
+run `git submodule sync --recursive` and `git submodule update --init --recursive`.
+`git submodule update --remote` is never part of the normal build process.
 
 libkeyfinder 2.2.8 corresponds to upstream commit
 `b33b5a88e04a5182dd19c38c57762925631118fd`. Windows resolves that release via

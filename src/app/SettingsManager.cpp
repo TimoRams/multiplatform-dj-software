@@ -434,6 +434,24 @@ void SettingsManager::setTightDoubleSync(bool enabled)
     emit tightDoubleSyncChanged();
 }
 
+QString SettingsManager::timeStretchBackend() const
+{
+    const auto backend = readStringSetting(*this, "Audio/TimeStretchBackend", "signalsmith").trimmed().toLower();
+    return backend == QLatin1String("rubberband") ? QStringLiteral("rubberband")
+                                                   : QStringLiteral("signalsmith");
+}
+
+void SettingsManager::setTimeStretchBackend(const QString& backend)
+{
+    const QString normalized = backend.trimmed().compare(QLatin1String("rubberband"), Qt::CaseInsensitive) == 0
+        ? QStringLiteral("rubberband") : QStringLiteral("signalsmith");
+    if (timeStretchBackend() == normalized)
+        return;
+    writeSetting(*this, "Audio/TimeStretchBackend",
+                 juce::String(normalized.toUtf8().constData()));
+    emit timeStretchBackendChanged();
+}
+
 QString SettingsManager::getUiState(const QString& key, const QString& fallback) const
 {
     const auto* settings = userSettings(*this);

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "delay.h"
+#include <signalsmith-dsp/delay.h>
 
 namespace dsp {
 

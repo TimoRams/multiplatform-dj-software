@@ -36,6 +36,24 @@ static_assert(noexcept(std::declval<TimeStretchProcessor&>().getNextAudioBlock(
 
 int main(){
     bool ok=true;
+    { ToneSource tone; TimeStretchProcessor source(&tone); source.prepareToPlay(512, 48000.0);
+        source.setPitchLockEnabled(true);
+        ok &= require(waitForGeneration(source, source.activeConfigurationGeneration()),
+                      "Signalsmith is the default keylock backend");
+        ok &= require(source.activeBackend() == TimeStretchBackend::Signalsmith,
+                      "Signalsmith is active by default");
+        const auto signalsmithGeneration = source.activeConfigurationGeneration();
+        source.setBackend(TimeStretchBackend::RubberBand);
+        ok &= require(waitForGeneration(source, signalsmithGeneration),
+                      "Rubber Band backend switches through prepared pipeline");
+        ok &= require(source.activeBackend() == TimeStretchBackend::RubberBand,
+                      "Rubber Band becomes active after switching");
+        source.setBackend(TimeStretchBackend::Signalsmith);
+        ok &= require(waitForGeneration(source, source.activeConfigurationGeneration()),
+                      "Signalsmith backend switches back through prepared pipeline");
+        ok &= require(source.activeBackend() == TimeStretchBackend::Signalsmith,
+                      "Signalsmith becomes active after switching back");
+    }
     for(double rate:{44100.0,48000.0,96000.0,192000.0}){
         ToneSource tone; TimeStretchProcessor source(&tone); source.prepareToPlay(8192,rate);
         for(int size:{64,128,256,512,1024,2048,4096,8192}){juce::AudioBuffer<float>b(2,size);source.getNextAudioBlock({&b,0,size});ok&=require(finite(b),"bypass finite");}

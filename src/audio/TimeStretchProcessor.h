@@ -9,6 +9,12 @@
 #include <thread>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <rubberband/RubberBandStretcher.h>
+#include <signalsmith-stretch/signalsmith-stretch.h>
+
+enum class TimeStretchBackend : std::uint8_t {
+    Signalsmith,
+    RubberBand,
+};
 
 struct TimeStretchRealtimeStats {
     std::uint64_t prepareCallsFromAudioThread = 0;
@@ -27,6 +33,7 @@ struct TimeStretchConfiguration {
     int maximumBlockSize = 512;
     int channelCount = 2;
     bool keylockEnabled = false;
+    TimeStretchBackend backend = TimeStretchBackend::Signalsmith;
     std::uint64_t trackGeneration = 0;
     std::uint64_t configurationGeneration = 0;
 };
@@ -45,6 +52,7 @@ public:
 
     void setTempoRatio(double ratio) noexcept;
     void setPitchLockEnabled(bool enabled) noexcept;
+    void setBackend(TimeStretchBackend backend) noexcept;
     void setScratchBypass(bool enabled) noexcept;
     void setTrackGeneration(std::uint64_t generation) noexcept;
     void enterScratchBypass() noexcept;
@@ -55,13 +63,15 @@ public:
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) noexcept override;
 
     [[nodiscard]] int getLatencySamples() const noexcept;
+    [[nodiscard]] TimeStretchBackend activeBackend() const noexcept;
     [[nodiscard]] TimeStretchRealtimeStats realtimeStats() const noexcept;
     [[nodiscard]] std::uint64_t activeConfigurationGeneration() const noexcept;
 
 private:
     enum class SlotState : std::uint8_t { Empty, Preparing, Ready, Active };
     struct Pipeline {
-        std::unique_ptr<RubberBand::RubberBandStretcher> stretcher;
+        std::unique_ptr<RubberBand::RubberBandStretcher> rubberBand;
+        std::unique_ptr<signalsmith::stretch::SignalsmithStretch<float>> signalsmith;
         juce::AudioBuffer<float> input;
         juce::AudioBuffer<float> output;
         juce::AudioBuffer<float> trim;
@@ -92,6 +102,7 @@ private:
     std::atomic<int> m_activeSlot { -1 };
     std::atomic<double> m_targetTempoRatio { 1.0 };
     std::atomic<bool> m_pitchLockEnabled { false };
+    std::atomic<TimeStretchBackend> m_backend { TimeStretchBackend::Signalsmith };
     std::atomic<bool> m_scratchBypass { false };
     std::atomic<bool> m_scratchExitRequested { false };
     std::atomic<bool> m_scratchExitFadePending { false };
@@ -101,6 +112,7 @@ private:
     std::atomic<std::uint64_t> m_trackGeneration { 0 };
     std::atomic<std::uint64_t> m_desiredGeneration { 0 };
     std::atomic<std::uint64_t> m_activeGeneration { 0 };
+    std::atomic<TimeStretchBackend> m_activeBackend { TimeStretchBackend::Signalsmith };
     std::atomic<int> m_reportedLatencySamples { 0 };
     std::atomic<int> m_switchFadeRemaining { 0 };
     juce::AudioBuffer<float> m_previousTail;

@@ -11,7 +11,7 @@
 #include "dsp/SsDelay.h"
 #include "dsp/SsLfo.h"
 #include "dsp/SvfSmoothed.h"
-#include "filters.h"
+#include <signalsmith-dsp/filters.h>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FxProcessor
