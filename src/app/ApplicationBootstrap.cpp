@@ -166,7 +166,12 @@ void configureLinuxVulkanBackend(bool& useVulkan,
     requestedVkIcd = qEnvironmentVariable("BROCKDJ_VK_ICD").trimmed();
     if (requestedVkIcd.isEmpty() && qEnvironmentVariableIsEmpty("VK_ICD_FILENAMES")) {
         const QString autoMode = qEnvironmentVariable("BROCKDJ_VK_ICD_AUTO").trimmed().toLower();
-        const bool allowAuto = autoMode.isEmpty() || autoMode == "1" || autoMode == "true" || autoMode == "on";
+        // Let the Vulkan loader choose the GPU by default.  Pinning the first
+        // Intel ICD found here can make a hybrid laptop present through a
+        // different GPU, which shows up as brief black frames.  The old
+        // deterministic selection remains available as an explicit diagnostic
+        // opt-in via BROCKDJ_VK_ICD_AUTO=1.
+        const bool allowAuto = autoMode == "1" || autoMode == "true" || autoMode == "on";
         if (allowAuto)
             requestedVkIcd = pickDefaultVulkanIcd();
     }

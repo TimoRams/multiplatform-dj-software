@@ -5,6 +5,7 @@
 
 #include <QObject>
 #include <QByteArray>
+#include <QElapsedTimer>
 #include <QMetaObject>
 #include <QProcess>
 #include <QString>
@@ -117,7 +118,6 @@ private:
     ControlClock::Registration m_clockRegistration;
     QTimer m_uploadTimer;
     QTimer m_keepAliveTimer;
-    int m_displayTicksUntilWaveform = 1;
     bool m_keepAliveEnabled = false;
     std::array<QByteArray, 5> m_waveforms;
     std::array<double, 5> m_waveformDurations = {0.0, 30.0, 30.0, 30.0, 30.0};
@@ -142,6 +142,9 @@ private:
     std::array<bool, 5> m_jogRingWarningActive = {false, false, false, false, false};
     std::array<bool, 5> m_jogRingLit = {true, true, true, true, true};
     qint64 m_clockStartMs = 0;
+    QElapsedTimer m_hidTrafficClock;
+    std::array<qint64, 5> m_lastXx27SentMs = {-100, -100, -100, -100, -100};
+    qint64 m_lastXx36SentMs = -100;
     std::array<QByteArray, 5> m_lastXx27Packet;
     std::atomic<bool> m_shuttingDown { false };
     bool m_connected = false;

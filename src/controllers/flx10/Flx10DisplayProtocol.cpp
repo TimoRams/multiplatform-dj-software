@@ -51,6 +51,7 @@ void DDJFLX10Controller::resetDisplayPacketState(int deck)
     if (deck < 0 || deck >= static_cast<int>(m_lastXx27Packet.size()))
         return;
     m_lastXx27Packet[deck].clear();
+    m_lastXx27SentMs[deck] = -kJogStateIntervalMs;
 }
 void DDJFLX10Controller::pushDeckJogDisplay(int deck)
 {
@@ -352,9 +353,20 @@ bool DDJFLX10Controller::sendXx27(int deck, double fileElapsedSeconds, double du
         return true;
     }
 
+    // ProgressChanged can fire much faster than the display clock while
+    // scratching.  Keep the latest position, but never turn that burst into an
+    // unbounded stream of USB interrupt reports.
+    const qint64 nowMs = m_hidTrafficClock.isValid() ? m_hidTrafficClock.elapsed() : 0;
+    if (deck >= 0 && deck < static_cast<int>(m_lastXx27SentMs.size())
+        && nowMs - m_lastXx27SentMs[deck] < kJogStateIntervalMs) {
+        return true;
+    }
+
     const bool ok = writePacket(p);
-    if (ok && deck >= 0 && deck < static_cast<int>(m_lastXx27Packet.size()))
+    if (ok && deck >= 0 && deck < static_cast<int>(m_lastXx27Packet.size())) {
         m_lastXx27Packet[deck] = p;
+        m_lastXx27SentMs[deck] = nowMs;
+    }
     return ok;
 }
 QByteArray DDJFLX10Controller::generateCoverJpeg(int deck) const

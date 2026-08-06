@@ -405,7 +405,10 @@ void MidiFeedbackController::updateVuMeters()
     {
         if (!engine)
             return 0.0f;
-        return std::clamp(std::max(engine->vuLevelL(), engine->vuLevelR()), 0.0f, 1.0f);
+        // Channel LEDs are the mixer VUs: they must read the signal after
+        // trim/EQ/filter but before either channel or crossfader gain.
+        return std::clamp(std::max(engine->preFaderVuLevelL(),
+                                   engine->preFaderVuLevelR()), 0.0f, 1.0f);
     };
 
     sendVuMeter(1, deckVu(m_decks[0]));

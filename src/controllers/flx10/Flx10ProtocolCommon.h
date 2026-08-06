@@ -41,7 +41,11 @@ constexpr int kJogRingOnValue = 0x7F;
 constexpr int kXx2fSampleRate = 22050;
 constexpr int kXx2fRecordsPerPacket = 30;
 constexpr uint32_t kXx2fMaximumSample = 0x00FFFFFFu;
-constexpr int kXx36TrickleIntervalMs = 50;
+// The displays remain smooth at these rates, while leaving ample interrupt-endpoint
+// headroom for controller input and MIDI feedback.  In particular, do not send a
+// new full HID report for every UI/control-clock tick.
+constexpr int kJogStateIntervalMs = 33;
+constexpr int kXx36TrickleIntervalMs = 100;
 constexpr double kJogRevolutionSeconds = 1.8;
 constexpr int kJogPhaseTicksPerSecond = 2000;
 constexpr int kJogPhaseTicksPerRevolution = 3600;

@@ -35,10 +35,7 @@ DDJFLX10Controller::DDJFLX10Controller(ControlClock& controlClock, QObject* pare
     ControlClock::Callbacks callbacks;
     callbacks.display = [this](const ControlTickContext&) {
         sendStateTick();
-        if (--m_displayTicksUntilWaveform <= 0) {
-            m_displayTicksUntilWaveform = 3;
-            sendWaveformTick();
-        }
+        sendWaveformTick();
     };
     m_clockRegistration = controlClock.registerCallbacks(std::move(callbacks));
 
@@ -81,6 +78,9 @@ bool DDJFLX10Controller::start()
     startHidWriter();
     setConnected(true);
     m_clockStartMs = QDateTime::currentMSecsSinceEpoch();
+    m_hidTrafficClock.restart();
+    m_lastXx27SentMs.fill(-kJogStateIntervalMs);
+    m_lastXx36SentMs = -kXx36TrickleIntervalMs;
     for (int deck = controllers::kFlx10FirstDeckIndex;
          deck <= controllers::kFlx10LastDeckIndex; ++deck) {
         m_uploadActive[deck] = false;
@@ -100,7 +100,6 @@ bool DDJFLX10Controller::start()
             refreshDeckFromEngine(deck);
         }
     }
-    m_displayTicksUntilWaveform = 1;
     m_keepAliveEnabled = sequencerMidiReady || !m_midiPort.isEmpty();
     if (m_keepAliveEnabled) {
         sendKeepAlive();
@@ -693,9 +692,16 @@ void DDJFLX10Controller::sendWaveformTick()
     if (m_shuttingDown.load(std::memory_order_acquire) || !m_connected)
         return;
 
+    const qint64 nowMs = m_hidTrafficClock.isValid() ? m_hidTrafficClock.elapsed() : 0;
+    if (nowMs - m_lastXx36SentMs < kXx36TrickleIntervalMs)
+        return;
+
+    bool sent = false;
     for (int deck = 1; deck <= 2; ++deck)
         if (!m_waveforms[deck].isEmpty() && !m_uploadActive[deck])
-            sendXx36Window(deck, m_waveforms[deck], currentWaveformEntry(deck));
+            sent = sendXx36Window(deck, m_waveforms[deck], currentWaveformEntry(deck)) || sent;
+    if (sent)
+        m_lastXx36SentMs = nowMs;
 }
 
 void DDJFLX10Controller::sendUploadChunk()
