@@ -30,6 +30,15 @@ struct AudioCacheStats {
     std::uint64_t hits = 0, misses = 0, queuedRequests = 0, droppedRequests = 0;
     std::uint64_t decodedPages = 0, decodeFailures = 0, evictedPages = 0;
     std::uint64_t residentBytes = 0, openTracks = 0;
+    // Permanent, lock-free worker diagnostics.  The values are cumulative from
+    // cache construction and make starvation/eviction regressions observable
+    // without putting logging or timers in the audio callback.
+    std::uint64_t pendingRequests = 0, peakPendingRequests = 0, workerRequests = 0;
+    std::uint64_t workerRequestLatencyMicros = 0, worstWorkerRequestLatencyMicros = 0;
+    std::uint64_t decodeMicros = 0, worstDecodeMicros = 0;
+    std::uint64_t evictionScans = 0, evictionCandidatesVisited = 0;
+    std::uint64_t evictionScanMicros = 0, worstEvictionScanMicros = 0;
+    std::uint64_t evictionReaderWaitMicros = 0, worstEvictionReaderWaitMicros = 0;
 };
 
 class AudioPageReadGuard final

@@ -65,9 +65,13 @@ int main(int argc, char** argv)
     const QString mono = dir.filePath("mono.wav");
     const QString stereo = dir.filePath("stereo.wav");
     const QString exact = dir.filePath("exact.wav");
+    const QString longScratch = dir.filePath("long-scratch.wav");
     ok &= require(writeWave(mono, 44100, 1, 127), "short mono fixture");
     ok &= require(writeWave(stereo, 48000, 2, 32769), "multi-page stereo fixture");
     ok &= require(writeWave(exact, 96000, 2, 16384), "exact-page fixture");
+    ok &= require(writeWave(longScratch, 48000, 1,
+                            65 * static_cast<int>(AudioPage::kSamplesPerChannel)),
+                  "long scratch fixture");
 
     AudioPageCache cache(2 * 16384 * sizeof(float) + 1024);
     auto monoHandle = cache.openTrack({mono});
@@ -103,6 +107,26 @@ int main(int argc, char** argv)
     ok &= require(exactPage && exactPage->validSampleCount == 16384, "exact page count");
     ok &= require(cache.stats().residentBytes <= cache.budgetBytes(), "budget is never exceeded");
     ok &= require(cache.stats().evictedPages > 0, "small budget causes worker eviction");
+    exactPage = {}; // the wide-scratch regression deliberately needs this tiny budget free
+
+    // Regression for wide scratch seeks: eviction must scale with resident
+    // pages, not every page slot in a long track.  The small budget gives the
+    // worker only two resident mono pages while the source has 65 pages.
+    auto longHandle = cache.openTrack({longScratch});
+    ok &= require(longHandle.pageCount() == 65, "long scratch fixture page count");
+    const auto beforeWideScratch = cache.stats();
+    for (std::int64_t page = 0; page < longHandle.pageCount(); page += 2) {
+        ok &= require(cache.requestPage(longHandle, page, AudioCachePriority::ScratchNearPlayhead),
+                      "wide scratch request accepted");
+        auto guard = waitPage(cache, longHandle, page);
+        ok &= require(static_cast<bool>(guard), "wide scratch request becomes resident");
+    }
+    const auto afterWideScratch = cache.stats();
+    const auto evictionDelta = afterWideScratch.evictedPages - beforeWideScratch.evictedPages;
+    const auto candidateDelta = afterWideScratch.evictionCandidatesVisited
+        - beforeWideScratch.evictionCandidatesVisited;
+    ok &= require(evictionDelta > 0 && candidateDelta <= evictionDelta * 8 + 8,
+                  "wide scratch eviction remains independent of track page count");
     if (qEnvironmentVariableIsSet("BROCKDJ_CACHE_BENCHMARK")) {
         constexpr int iterations = 200000;
         const auto hitStart = std::chrono::steady_clock::now();
@@ -118,10 +142,9 @@ int main(int argc, char** argv)
                   << " miss=" << ns(missStart, requestStart)
                   << " duplicate-request=" << ns(requestStart, end) << '\n';
     }
-    exactPage = {};
-
     const auto oldGeneration = sharedB.generation();
     cache.releaseTrack(sharedB);
+    cache.releaseTrack(longHandle);
     ok &= require(!cache.requestPage(sharedB, 0, AudioCachePriority::RealtimeCritical),
                   "released final handle is rejected");
     auto reopened = cache.openTrack({stereo});

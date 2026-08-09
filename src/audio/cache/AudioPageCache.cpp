@@ -8,7 +8,6 @@
 #include <array>
 #include <chrono>
 #include <condition_variable>
-#include <limits>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -21,7 +20,21 @@ struct PageRequest {
     std::uint64_t trackId = 0;
     std::uint64_t generation = 0;
     std::int64_t pageIndex = 0;
+    std::uint64_t queuedAtMicros = 0;
 };
+
+std::uint64_t steadyMicros() noexcept
+{
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+void updateMaximum(std::atomic<std::uint64_t>& target, std::uint64_t value) noexcept
+{
+    auto previous = target.load(std::memory_order_relaxed);
+    while (previous < value
+           && !target.compare_exchange_weak(previous, value, std::memory_order_relaxed)) {}
+}
 
 template <size_t Capacity>
 class BoundedQueue {
@@ -55,6 +68,12 @@ public:
         slot.sequence.store(pos + Capacity, std::memory_order_release);
         return true;
     }
+    [[nodiscard]] size_t approximateSize() const noexcept
+    {
+        const auto queued = m_enqueue.load(std::memory_order_relaxed);
+        const auto consumed = m_dequeue.load(std::memory_order_relaxed);
+        return std::min(Capacity, queued >= consumed ? queued - consumed : size_t{0});
+    }
 private:
     std::array<Slot, Capacity> m_slots;
     alignas(64) std::atomic<size_t> m_enqueue{0};
@@ -73,7 +92,12 @@ struct AudioPageCache::Impl {
         std::atomic<AudioPage*> page{nullptr};
         std::atomic<std::uint32_t> readers{0};
         std::atomic<std::uint8_t> state{0}; // 0 missing, 1 queued, 2 resident, 3 decoding
-        std::atomic<std::uint64_t> accessEpoch{0};
+        std::atomic<bool> recentlyUsed{false};
+        // These links are owned exclusively by the decoder worker.  PageSlot
+        // addresses are stable for the lifetime of the cache entry.
+        PageSlot* evictionPrevious = nullptr;
+        PageSlot* evictionNext = nullptr;
+        bool onEvictionClock = false;
     };
     struct Entry {
         AudioCacheKey key;
@@ -93,13 +117,26 @@ struct AudioPageCache::Impl {
     std::mutex controlMutex;
     std::unordered_map<std::string, Entry*> activeEntries;
     std::vector<std::unique_ptr<Entry>> entries; // stable addresses until cache shutdown
+    struct RetiredPage {
+        PageSlot* slot = nullptr;
+        AudioPage* page = nullptr;
+        std::uint64_t retiredAtMicros = 0;
+    };
+    std::vector<RetiredPage> retiredPages; // worker-owned deferred deletes
+    PageSlot* evictionClockHand = nullptr;
+    size_t evictionClockSize = 0;
     std::array<BoundedQueue<AudioPageCache::kRequestQueueCapacity>,
                static_cast<size_t>(AudioCachePriority::Count)> queues;
     std::condition_variable condition;
     std::mutex conditionMutex;
-    std::atomic<std::uint64_t> nextId{1}, epoch{1};
+    std::atomic<std::uint64_t> nextId{1};
     std::atomic<std::uint64_t> hits{0}, misses{0}, queued{0}, dropped{0};
     std::atomic<std::uint64_t> decoded{0}, failures{0}, evicted{0}, resident{0}, open{0};
+    std::atomic<std::uint64_t> peakPending{0}, workerRequests{0}, workerLatency{0}, worstWorkerLatency{0};
+    std::atomic<std::uint64_t> decodeMicros{0}, worstDecodeMicros{0};
+    std::atomic<std::uint64_t> evictionScans{0}, evictionCandidates{0};
+    std::atomic<std::uint64_t> evictionMicros{0}, worstEvictionMicros{0};
+    std::atomic<std::uint64_t> readerWaitMicros{0}, worstReaderWaitMicros{0};
     std::atomic<bool> accepting{true};
 };
 
@@ -201,7 +238,7 @@ AudioPageReadGuard AudioPageCache::tryGetPage(const AudioCacheHandle& handle,
         slot.readers.fetch_sub(1, std::memory_order_release);
         m_impl->misses.fetch_add(1, std::memory_order_relaxed); return {};
     }
-    slot.accessEpoch.store(m_impl->epoch.fetch_add(1, std::memory_order_relaxed), std::memory_order_relaxed);
+    slot.recentlyUsed.store(true, std::memory_order_relaxed);
     m_impl->hits.fetch_add(1, std::memory_order_relaxed);
     return AudioPageReadGuard(page, &slot.readers);
 }
@@ -218,11 +255,15 @@ bool AudioPageCache::requestPage(const AudioCacheHandle& handle, std::int64_t pa
     std::uint8_t expected = 0;
     if (!slot.state.compare_exchange_strong(expected, 1, std::memory_order_acq_rel))
         return expected == 1 || expected == 2 || expected == 3;
-    PageRequest request{entry, handle.id(), handle.generation(), pageIndex};
+    PageRequest request{entry, handle.id(), handle.generation(), pageIndex, steadyMicros()};
     if (!m_impl->queues[static_cast<size_t>(priority)].tryPush(request)) {
         slot.state.store(0, std::memory_order_release); m_impl->dropped.fetch_add(1); return false;
     }
     m_impl->queued.fetch_add(1, std::memory_order_relaxed);
+    std::uint64_t pending = 0;
+    for (const auto& queue : m_impl->queues)
+        pending += queue.approximateSize();
+    updateMaximum(m_impl->peakPending, pending);
     return true; // worker polls; no condition-variable syscall on the RT producer
 }
 
@@ -237,17 +278,113 @@ bool AudioPageCache::requestRange(const AudioCacheHandle& handle, std::int64_t f
 
 AudioCacheStats AudioPageCache::stats() const noexcept
 {
+    std::uint64_t pending = 0;
+    for (const auto& queue : m_impl->queues)
+        pending += queue.approximateSize();
     return {m_impl->hits.load(), m_impl->misses.load(), m_impl->queued.load(), m_impl->dropped.load(),
             m_impl->decoded.load(), m_impl->failures.load(), m_impl->evicted.load(),
-            m_impl->resident.load(), m_impl->open.load()};
+            m_impl->resident.load(), m_impl->open.load(), pending, m_impl->peakPending.load(),
+            m_impl->workerRequests.load(),
+            m_impl->workerLatency.load(), m_impl->worstWorkerLatency.load(),
+            m_impl->decodeMicros.load(), m_impl->worstDecodeMicros.load(),
+            m_impl->evictionScans.load(), m_impl->evictionCandidates.load(),
+            m_impl->evictionMicros.load(), m_impl->worstEvictionMicros.load(),
+            m_impl->readerWaitMicros.load(), m_impl->worstReaderWaitMicros.load()};
 }
 
 void AudioPageCache::notifyWorker() noexcept { m_impl->condition.notify_one(); }
 
 void AudioPageCache::workerRun(const std::atomic<bool>& shutdown)
 {
+    auto addToEvictionClock = [this](Impl::PageSlot& slot) {
+        if (slot.onEvictionClock) return;
+        if (!m_impl->evictionClockHand) {
+            slot.evictionPrevious = &slot;
+            slot.evictionNext = &slot;
+            m_impl->evictionClockHand = &slot;
+        } else {
+            auto* const head = m_impl->evictionClockHand;
+            auto* const tail = head->evictionPrevious;
+            slot.evictionPrevious = tail;
+            slot.evictionNext = head;
+            tail->evictionNext = &slot;
+            head->evictionPrevious = &slot;
+        }
+        slot.onEvictionClock = true;
+        ++m_impl->evictionClockSize;
+    };
+    auto removeFromEvictionClock = [this](Impl::PageSlot& slot) {
+        if (!slot.onEvictionClock) return;
+        if (slot.evictionNext == &slot) {
+            m_impl->evictionClockHand = nullptr;
+        } else {
+            slot.evictionPrevious->evictionNext = slot.evictionNext;
+            slot.evictionNext->evictionPrevious = slot.evictionPrevious;
+            if (m_impl->evictionClockHand == &slot)
+                m_impl->evictionClockHand = slot.evictionNext;
+        }
+        slot.evictionPrevious = nullptr;
+        slot.evictionNext = nullptr;
+        slot.onEvictionClock = false;
+        --m_impl->evictionClockSize;
+    };
+    auto reapRetiredPages = [this] {
+        const auto now = steadyMicros();
+        auto& retired = m_impl->retiredPages;
+        for (size_t index = 0; index < retired.size();) {
+            auto& candidate = retired[index];
+            if (candidate.slot->readers.load(std::memory_order_acquire) != 0) {
+                ++index;
+                continue;
+            }
+            const auto waited = now - candidate.retiredAtMicros;
+            m_impl->readerWaitMicros.fetch_add(waited, std::memory_order_relaxed);
+            updateMaximum(m_impl->worstReaderWaitMicros, waited);
+            delete candidate.page;
+            candidate = retired.back();
+            retired.pop_back();
+        }
+    };
+    auto evictOne = [this, &removeFromEvictionClock] {
+        const auto scanStartedAt = steadyMicros();
+        m_impl->evictionScans.fetch_add(1, std::memory_order_relaxed);
+        const size_t candidates = m_impl->evictionClockSize;
+        // One turn clears second-chance bits; a second turn finds a victim.
+        // This keeps a full cache immediately decodable after warm-up while
+        // retaining O(1) amortized work across subsequent evictions.
+        for (size_t attempt = 0; attempt < candidates * 2; ++attempt) {
+            auto* const candidate = m_impl->evictionClockHand;
+            m_impl->evictionClockHand = candidate->evictionNext;
+            m_impl->evictionCandidates.fetch_add(1, std::memory_order_relaxed);
+            if (candidate->readers.load(std::memory_order_acquire) != 0)
+                continue;
+            if (candidate->recentlyUsed.exchange(false, std::memory_order_acq_rel))
+                continue;
+            auto* const retired = candidate->page.exchange(nullptr, std::memory_order_acq_rel);
+            if (!retired) {
+                candidate->state.store(0, std::memory_order_release);
+                removeFromEvictionClock(*candidate);
+                continue;
+            }
+            candidate->state.store(0, std::memory_order_release);
+            removeFromEvictionClock(*candidate);
+            m_impl->resident.fetch_sub(retired->byteSize(), std::memory_order_relaxed);
+            m_impl->retiredPages.push_back({candidate, retired, steadyMicros()});
+            m_impl->evicted.fetch_add(1, std::memory_order_relaxed);
+            const auto elapsed = steadyMicros() - scanStartedAt;
+            m_impl->evictionMicros.fetch_add(elapsed, std::memory_order_relaxed);
+            updateMaximum(m_impl->worstEvictionMicros, elapsed);
+            return true;
+        }
+        const auto elapsed = steadyMicros() - scanStartedAt;
+        m_impl->evictionMicros.fetch_add(elapsed, std::memory_order_relaxed);
+        updateMaximum(m_impl->worstEvictionMicros, elapsed);
+        return false;
+    };
+
     unsigned fairness = 0;
     while (!shutdown.load(std::memory_order_acquire)) {
+        reapRetiredPages();
         PageRequest request;
         bool found = false;
         const size_t start = (++fairness % 32 == 0) ? 2 : 0; // periodic lower-priority service
@@ -260,6 +397,10 @@ void AudioPageCache::workerRun(const std::atomic<bool>& shutdown)
             m_impl->condition.wait_for(lock, std::chrono::milliseconds(2));
             continue;
         }
+        const auto queueLatency = steadyMicros() - request.queuedAtMicros;
+        m_impl->workerRequests.fetch_add(1, std::memory_order_relaxed);
+        m_impl->workerLatency.fetch_add(queueLatency, std::memory_order_relaxed);
+        updateMaximum(m_impl->worstWorkerLatency, queueLatency);
         auto* entry = const_cast<Impl::Entry*>(static_cast<const Impl::Entry*>(request.entry));
         auto& slot = entry->pageSlots[static_cast<size_t>(request.pageIndex)];
         if (!entry->active.load() || entry->id != request.trackId
@@ -275,38 +416,34 @@ void AudioPageCache::workerRun(const std::atomic<bool>& shutdown)
         page->planarPcm.resize(static_cast<size_t>(entry->channels * AudioPage::kSamplesPerChannel));
         juce::AudioBuffer<float> buffer(entry->channels, static_cast<int>(AudioPage::kSamplesPerChannel));
         buffer.clear();
+        const auto decodeStartedAt = steadyMicros();
         const bool ok = entry->reader->read(&buffer, 0, static_cast<int>(page->validSampleCount),
                                              page->firstSample, true, true);
+        const auto decodeElapsed = steadyMicros() - decodeStartedAt;
+        m_impl->decodeMicros.fetch_add(decodeElapsed, std::memory_order_relaxed);
+        updateMaximum(m_impl->worstDecodeMicros, decodeElapsed);
         if (!ok) { slot.state.store(0); m_impl->failures.fetch_add(1); continue; }
         for (int channel = 0; channel < entry->channels; ++channel)
             std::copy_n(buffer.getReadPointer(channel), AudioPage::kSamplesPerChannel,
                         page->planarPcm.data() + static_cast<size_t>(channel) * AudioPage::kSamplesPerChannel);
         const auto bytes = page->byteSize();
-        while (m_impl->resident.load() + bytes > m_budgetBytes) {
-            Impl::PageSlot* victim = nullptr;
-            std::uint64_t oldest = std::numeric_limits<std::uint64_t>::max();
-            for (const auto& candidateEntry : m_impl->entries)
-                for (std::int64_t i = 0; i < candidateEntry->pageCount; ++i) {
-                    auto& candidate = candidateEntry->pageSlots[static_cast<size_t>(i)];
-                    if (candidate.state.load() == 2 && candidate.accessEpoch.load() < oldest) {
-                        oldest = candidate.accessEpoch.load(); victim = &candidate;
-                    }
-                }
-            if (!victim) break;
-            auto* retired = victim->page.exchange(nullptr, std::memory_order_acq_rel);
-            victim->state.store(0, std::memory_order_release);
-            while (victim->readers.load(std::memory_order_acquire) != 0 && !shutdown.load())
-                std::this_thread::yield();
-            if (retired) { m_impl->resident.fetch_sub(retired->byteSize()); delete retired;
-                m_impl->evicted.fetch_add(1); }
-        }
+        while (m_impl->resident.load(std::memory_order_relaxed) + bytes > m_budgetBytes
+               && evictOne()) {}
         if (m_impl->resident.load() + bytes > m_budgetBytes || !entry->active.load()
             || entry->generation.load() != request.generation) { slot.state.store(0); continue; }
-        slot.accessEpoch.store(m_impl->epoch.fetch_add(1));
+        slot.recentlyUsed.store(true, std::memory_order_relaxed);
         slot.page.store(page.release(), std::memory_order_release);
         slot.state.store(2, std::memory_order_release);
+        addToEvictionClock(slot);
         m_impl->resident.fetch_add(bytes); m_impl->decoded.fetch_add(1);
     }
+
+    for (auto& retired : m_impl->retiredPages) {
+        while (retired.slot->readers.load(std::memory_order_acquire) != 0)
+            std::this_thread::yield();
+        delete retired.page;
+    }
+    m_impl->retiredPages.clear();
 
     for (auto& entry : m_impl->entries)
         for (std::int64_t i = 0; i < entry->pageCount; ++i) {
