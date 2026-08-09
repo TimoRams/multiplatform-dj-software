@@ -1,4 +1,6 @@
-#include "FacadeIncludes.h"
+#include "../DjEngine.h"
+
+#include "audio/AudioEngine.h"
 #include "audio/device/AudioDeviceService.h"
 
 bool DjEngine::applyAudioDeviceSettings(int sampleRate, int bufferSize)

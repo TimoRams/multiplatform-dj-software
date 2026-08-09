@@ -1,5 +1,13 @@
-#include "FacadeIncludes.h"
+#include "../DjEngine.h"
+
+#include "audio/AudioEngine.h"
 #include "audio/device/AudioDeviceService.h"
+#include "engine/deck/DeckTransport.h"
+#include "fx/FxProcessor.h"
+
+#include <QDebug>
+
+#include <algorithm>
 
 
 void DjEngine::refreshHardwareLatency()
@@ -134,12 +142,12 @@ QVariantList DjEngine::latencyBreakdown() const
     dspRow.insert("countInTotal", false);
     rows.push_back(dspRow);
 
-    QVariantMap rubberbandRow;
-    rubberbandRow.insert("name", QStringLiteral("Keylock / Timestretch"));
-    rubberbandRow.insert("samples", snapshot.keylockSamples);
-    rubberbandRow.insert("ms", toMs(snapshot.keylockSamples));
-    rubberbandRow.insert("countInTotal", true);
-    rows.push_back(rubberbandRow);
+    QVariantMap keylockRow;
+    keylockRow.insert("name", QStringLiteral("Keylock / Time-stretch"));
+    keylockRow.insert("samples", snapshot.keylockSamples);
+    keylockRow.insert("ms", toMs(snapshot.keylockSamples));
+    keylockRow.insert("countInTotal", true);
+    rows.push_back(keylockRow);
 
     QVariantMap resamplerRow;
     resamplerRow.insert("name", QStringLiteral("Resampler"));

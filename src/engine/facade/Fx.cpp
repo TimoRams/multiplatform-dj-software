@@ -1,4 +1,9 @@
-#include "FacadeIncludes.h"
+#include "../DjEngine.h"
+
+#include "audio/DeckAudioPipeline.h"
+#include "audio/DeckChannelProcessor.h"
+
+#include <QHash>
 
 
 void DjEngine::setFxEffectType(EffectType type)
