@@ -19,12 +19,23 @@ bool require(bool condition, const char* message)
     if (!condition) std::cerr << "FAIL: " << message << '\n';
     return condition;
 }
+std::size_t occurrences(const std::string& value, const std::string& needle)
+{
+    std::size_t count = 0;
+    std::size_t offset = 0;
+    while ((offset = value.find(needle, offset)) != std::string::npos) {
+        ++count;
+        offset += needle.size();
+    }
+    return count;
+}
 }
 
 int main()
 {
     bool ok = true;
     const auto main = read("src/qml/main.qml");
+    const auto topHeader = read("src/qml/TopHeader.qml");
     const auto workspace = read("src/qml/performance/PerformanceWorkspace.qml");
     const auto shortcuts = read("src/qml/shared/UiShortcutManager.qml");
     const auto enlargedWaveform = read("src/qml/EnlargedWaveform.qml");
@@ -62,6 +73,20 @@ int main()
                   "touch and FLX10 pads share one controller state path");
     ok &= require(main.find("onLibraryViewToggleRequested") != std::string::npos,
                   "FLX10 View action toggles the visible library surface");
+    ok &= require(main.find("function closeTopBarPullDown()") != std::string::npos
+                  && main.find("function openTopBarPullDown()") != std::string::npos
+                  && main.find("function toggleTopBarPullDown()") != std::string::npos,
+                  "main.qml owns the quick-access tray lifecycle");
+    ok &= require(main.find("if (window.topBarPullProgress > 0.0)") != std::string::npos
+                  && main.find("window.closeTopBarPullDown()") != std::string::npos,
+                  "Escape closes an open quick-access tray before other navigation");
+    ok &= require(topHeader.find("id: quickPerformanceMouse") != std::string::npos
+                  && topHeader.find("id: quickLibraryMouse") != std::string::npos
+                  && topHeader.find("id: quickSettingsMouse") != std::string::npos
+                  && topHeader.find("id: quickModeMouse") != std::string::npos
+                  && topHeader.find("id: quickFullscreenMouse") != std::string::npos
+                  && occurrences(topHeader, "root.Window.window.closeTopBarPullDown()") >= 6,
+                  "quick-access navigation and fullscreen actions close the tray");
     ok &= require(flx10Mapping.find("paramId=\"deckA_slip_reverse\" status=\"0x90\" control=\"0x15\"")
                       != std::string::npos
                   && flx10Mapping.find("paramId=\"library_view_toggle\" status=\"0x96\" control=\"0x7A\"")

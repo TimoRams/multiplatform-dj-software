@@ -51,6 +51,23 @@ ApplicationWindow {
     readonly property bool aioTwoDeckWaveformSlots:
         window.allInOneMode && !window.fourDeckMode && !window.allInOnePanelActive
 
+    function closeTopBarPullDown() {
+        if (topBarPullProgress !== 0.0)
+            topBarPullProgress = 0.0
+    }
+
+    function openTopBarPullDown() {
+        if (topBarPullProgress !== 1.0)
+            topBarPullProgress = 1.0
+    }
+
+    function toggleTopBarPullDown() {
+        if (topBarPullProgress >= 0.5)
+            closeTopBarPullDown()
+        else
+            openTopBarPullDown()
+    }
+
     function isDuplicatePlayingTrack(engine) {
         if (!engine || !engine.hasTrack || !engine.isPlaying || !engine.trackFilePath)
             return false
@@ -89,6 +106,7 @@ ApplicationWindow {
         allInOneMode = enabled
         libraryExpanded = false
         activeMainTab = "performance"
+        closeTopBarPullDown()
     }
 
     function toggleAllInOneLibrary() {
@@ -98,6 +116,7 @@ ApplicationWindow {
         }
         activeMainTab = libraryPanelActive ? "performance" : "library"
         libraryExpanded = false
+        closeTopBarPullDown()
     }
 
     function toggleAllInOneSettings() {
@@ -105,6 +124,7 @@ ApplicationWindow {
             return false
         activeMainTab = settingsPanelActive ? "performance" : "settings"
         libraryExpanded = false
+        closeTopBarPullDown()
         return true
     }
 
@@ -166,7 +186,10 @@ ApplicationWindow {
         onTriggered: window._persistUiState()
     }
 
-    onAllInOneModeChanged:  _scheduleUiPersist()
+    onAllInOneModeChanged: {
+        closeTopBarPullDown()
+        _scheduleUiPersist()
+    }
     onFourDeckModeChanged:  _scheduleUiPersist()
     onShowWaveformsChanged: _scheduleUiPersist()
     onShowDeckAChanged:     _scheduleUiPersist()
@@ -176,7 +199,10 @@ ApplicationWindow {
     onShowLibraryChanged:   _scheduleUiPersist()
     onShowCrossfaderChanged:_scheduleUiPersist()
     onShowDevelopmentControlsChanged: _scheduleUiPersist()
-    onActiveMainTabChanged: _scheduleUiPersist()
+    onActiveMainTabChanged: {
+        closeTopBarPullDown()
+        _scheduleUiPersist()
+    }
 
     function cancelAppClosePrompt() {
         if (exitShutdownInProgress)
@@ -416,6 +442,11 @@ ApplicationWindow {
 
             if (window.exitPromptVisible) {
                 window.cancelAppClosePrompt()
+                return
+            }
+
+            if (window.topBarPullProgress > 0.0) {
+                window.closeTopBarPullDown()
                 return
             }
 

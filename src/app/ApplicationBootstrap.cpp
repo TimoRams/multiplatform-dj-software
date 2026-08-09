@@ -517,6 +517,9 @@ int runApplication(int argc, char *argv[])
             runtime.mixerControl->setDecks(runtime.deckA.get(), runtime.deckB.get(),
                                            runtime.deckC.get(), runtime.deckD.get());
 
+            // SettingsManager owns the preferred configuration.  Do not replace
+            // it with a backend fallback (or an unavailable-device default) at
+            // startup: AudioDeviceService publishes the active configuration.
             runtime.deckA->applyAudioDeviceSettings(settingsManager.getAudioMasterDeviceType(),
                                             settingsManager.getAudioMasterOutputDevice(),
                                             settingsManager.getAudioSampleRate(),
@@ -524,10 +527,6 @@ int runApplication(int argc, char *argv[])
                                             settingsManager.getAudioMasterFirstChannel(),
                                             settingsManager.getAudioHeadphonesFirstChannel(),
                                             settingsManager.getAudioBoothFirstChannel());
-            const int actualSR  = runtime.deckA->getCurrentAudioSampleRate();
-            const int actualBuf = runtime.deckA->getCurrentAudioBufferSize();
-            if (actualSR  > 0) settingsManager.setAudioSampleRate(actualSR);
-            if (actualBuf > 0) settingsManager.setAudioBufferSize(actualBuf);
 
             runtime.audioEngine->registerCallback(runtime.audioDeviceService->manager());
             runtime.controlClock->start();

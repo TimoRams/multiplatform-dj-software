@@ -416,15 +416,11 @@ Window {
                 var actualSR = deckToApply.getCurrentAudioSampleRate()
                 var actualBuf = deckToApply.getCurrentAudioBufferSize()
                 if (actualSR > 0) {
-                    pendingAudioSampleRate = actualSR
-                    settingsManager.audioSampleRate = actualSR
                     audioUiSyncing = true
                     sampleRateCombo.currentIndex = indexForValue(sampleRateOptions, actualSR)
                     audioUiSyncing = false
                 }
                 if (actualBuf > 0) {
-                    pendingAudioBufferSize = actualBuf
-                    settingsManager.audioBufferSize = actualBuf
                     audioUiSyncing = true
                     bufferSizeCombo.currentIndex = indexForValue(bufferSizeOptions, actualBuf)
                     audioUiSyncing = false

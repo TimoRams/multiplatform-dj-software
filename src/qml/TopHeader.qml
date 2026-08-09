@@ -1292,8 +1292,10 @@ Rectangle {
                 }
                 MouseArea {
                     id: quickModeMouse; anchors.fill: parent
-                    onClicked: if (root.Window.window)
+                    onClicked: if (root.Window.window) {
                                    root.Window.window.setAllInOneMode(!root.Window.window.allInOneMode)
+                                   root.Window.window.closeTopBarPullDown()
+                               }
                 }
             }
 
@@ -1309,7 +1311,10 @@ Rectangle {
                 }
                 MouseArea {
                     id: quickLibraryMouse; anchors.fill: parent
-                    onClicked: if (root.Window.window) root.Window.window.toggleAllInOneLibrary()
+                    onClicked: if (root.Window.window) {
+                                   root.Window.window.toggleAllInOneLibrary()
+                                   root.Window.window.closeTopBarPullDown()
+                               }
                 }
             }
 
@@ -1325,7 +1330,10 @@ Rectangle {
                 }
                 MouseArea {
                     id: quickPerformanceMouse; anchors.fill: parent
-                    onClicked: if (root.Window.window) root.Window.window.activeMainTab = "performance"
+                    onClicked: if (root.Window.window) {
+                                   root.Window.window.activeMainTab = "performance"
+                                   root.Window.window.closeTopBarPullDown()
+                               }
                 }
             }
 
@@ -1345,12 +1353,17 @@ Rectangle {
                 MouseArea {
                     id: quickSettingsMouse; anchors.fill: parent
                     onClicked: {
-                        if (root.Window.window && root.Window.window.toggleAllInOneSettings
-                                && root.Window.window.toggleAllInOneSettings())
+                        if (!root.Window.window)
                             return
+                        if (root.Window.window.toggleAllInOneSettings
+                                && root.Window.window.toggleAllInOneSettings()) {
+                            root.Window.window.closeTopBarPullDown()
+                            return
+                        }
                         settingsWin.show()
                         settingsWin.raise()
                         settingsWin.requestActivate()
+                        root.Window.window.closeTopBarPullDown()
                     }
                 }
             }
@@ -1396,6 +1409,7 @@ Rectangle {
                             root.Window.window.showNormal()
                         else
                             root.Window.window.showFullScreen()
+                        root.Window.window.closeTopBarPullDown()
                     }
                 }
             }
@@ -1447,9 +1461,11 @@ Rectangle {
                     return
                 var moved = Math.abs(mouse.y - pressY)
                 if (moved < 4)
-                    root.Window.window.topBarPullProgress = pressProgress > 0.5 ? 0.0 : 1.0
+                    root.Window.window.toggleTopBarPullDown()
+                else if (root.Window.window.topBarPullProgress >= 0.35)
+                    root.Window.window.openTopBarPullDown()
                 else
-                    root.Window.window.topBarPullProgress = root.Window.window.topBarPullProgress >= 0.35 ? 1.0 : 0.0
+                    root.Window.window.closeTopBarPullDown()
                 cursorShape = Qt.OpenHandCursor
             }
             onCanceled: cursorShape = Qt.OpenHandCursor
