@@ -369,6 +369,9 @@ Window {
         pendingAudioBufferSize = bufferSize
 
         settingsManager.audioDeviceType = deviceType
+        // Keep the legacy general key for older configurations, but persist the
+        // authoritative master-device preference as well.
+        settingsManager.audioMasterDeviceType = deviceType
         settingsManager.audioMasterOutputDevice = masterOutputDevice
         settingsManager.audioMasterFirstChannel = masterFirstChannel
         settingsManager.audioHeadphonesOutputDevice = headphonesOutputDevice
