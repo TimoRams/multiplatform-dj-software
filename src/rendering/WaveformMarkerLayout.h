@@ -31,16 +31,23 @@ inline double snappedTimelineX(double linePosition,
     return std::round((linePosition - originLine) * pixelsPerLine * dpr) / dpr;
 }
 
-inline double snappedTimelineTranslation(double width,
-                                         double playheadLine,
-                                         double originLine,
+inline double pixelAlignedTimelineOrigin(double linePosition,
                                          double pixelsPerLine,
                                          double devicePixelRatio) noexcept
 {
     const double dpr = std::max(1.0, devicePixelRatio);
-    const double translation = width * 0.5
-        - (playheadLine - originLine) * pixelsPerLine;
-    return (std::floor(translation * dpr) + 0.5) / dpr;
+    const double physicalPixelsPerLine = pixelsPerLine * dpr;
+    if (physicalPixelsPerLine <= 0.0)
+        return linePosition;
+    return std::round(linePosition * physicalPixelsPerLine) / physicalPixelsPerLine;
+}
+
+inline double smoothTimelineTranslation(double width,
+                                        double playheadLine,
+                                        double originLine,
+                                        double pixelsPerLine) noexcept
+{
+    return width * 0.5 - (playheadLine - originLine) * pixelsPerLine;
 }
 
 } // namespace waveform_render

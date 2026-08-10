@@ -30,6 +30,7 @@ namespace {
 
 constexpr std::size_t kWaveformNodePoolSize = 24;
 constexpr std::size_t kCueLabelNodePoolSize = 9;
+constexpr int kVerticesPerFeatheredLine = 18;
 
 QSGGeometryNode* makeLineNode(QSGNode* parent)
 {
@@ -110,8 +111,13 @@ struct WaveformSceneNode final : QSGClipNode {
     void clearAllGeometry()
     {
         clearGeometry(loopFill);
-        for (auto* node : waveformNodes)
-            clearGeometry(node);
+        for (std::size_t index = 0; index < waveformNodes.size(); ++index) {
+            clearGeometry(waveformNodes[index]);
+            waveformChunks[index].reset();
+            waveformBeginLines[index] = 0;
+            waveformEndLines[index] = 0;
+            waveformRenderedLineCounts[index] = 0;
+        }
         clearGeometry(regularBeats);
         clearGeometry(downbeats);
         clearGeometry(loopEdges);
@@ -134,6 +140,10 @@ struct WaveformSceneNode final : QSGClipNode {
     QSGGeometryNode* loopEdges = nullptr;
     QSGGeometryNode* cueLines = nullptr;
     std::array<QSGSimpleTextureNode*, kCueLabelNodePoolSize> cueLabels{};
+    std::array<std::shared_ptr<const WaveformLineChunk>, kWaveformNodePoolSize> waveformChunks{};
+    std::array<std::uint32_t, kWaveformNodePoolSize> waveformBeginLines{};
+    std::array<std::uint32_t, kWaveformNodePoolSize> waveformEndLines{};
+    std::array<std::uint64_t, kWaveformNodePoolSize> waveformRenderedLineCounts{};
 
     bool hasWindow = false;
     std::uint64_t trackGeneration = 0;
@@ -153,6 +163,65 @@ struct WaveformSceneNode final : QSGClipNode {
     int loopAppearance = -1;
 };
 
+void setPremultipliedVertex(QSGGeometry::ColoredPoint2D& vertex,
+                            float x,
+                            float y,
+                            uchar red,
+                            uchar green,
+                            uchar blue,
+                            uchar alpha)
+{
+    const auto premultiply = [alpha](uchar channel) {
+        return static_cast<uchar>((static_cast<unsigned int>(channel) * alpha + 127u) / 255u);
+    };
+    vertex.set(x, y, premultiply(red), premultiply(green), premultiply(blue), alpha);
+}
+
+void writeSolidQuad(QSGGeometry::ColoredPoint2D* vertices,
+                    int& out,
+                    float left,
+                    float right,
+                    float top,
+                    float bottom,
+                    uchar red,
+                    uchar green,
+                    uchar blue,
+                    uchar leftAlpha,
+                    uchar rightAlpha)
+{
+    setPremultipliedVertex(vertices[out++], left, top, red, green, blue, leftAlpha);
+    setPremultipliedVertex(vertices[out++], right, top, red, green, blue, rightAlpha);
+    setPremultipliedVertex(vertices[out++], left, bottom, red, green, blue, leftAlpha);
+    setPremultipliedVertex(vertices[out++], left, bottom, red, green, blue, leftAlpha);
+    setPremultipliedVertex(vertices[out++], right, top, red, green, blue, rightAlpha);
+    setPremultipliedVertex(vertices[out++], right, bottom, red, green, blue, rightAlpha);
+}
+
+void writeFeatheredVerticalLine(QSGGeometry::ColoredPoint2D* vertices,
+                                int& out,
+                                float x,
+                                float top,
+                                float bottom,
+                                float corePhysicalWidth,
+                                double devicePixelRatio,
+                                uchar red,
+                                uchar green,
+                                uchar blue,
+                                uchar alpha)
+{
+    const float inverseDpr = static_cast<float>(1.0 / std::max(1.0, devicePixelRatio));
+    const float halfCore = std::max(0.5f, corePhysicalWidth) * inverseDpr * 0.5f;
+    const float feather = inverseDpr * 0.5f;
+    const float coreLeft = x - halfCore;
+    const float coreRight = x + halfCore;
+    writeSolidQuad(vertices, out, coreLeft - feather, coreLeft, top, bottom,
+                   red, green, blue, 0, alpha);
+    writeSolidQuad(vertices, out, coreLeft, coreRight, top, bottom,
+                   red, green, blue, alpha, alpha);
+    writeSolidQuad(vertices, out, coreRight, coreRight + feather, top, bottom,
+                   red, green, blue, alpha, 0);
+}
+
 void writeMarkerGeometry(QSGGeometryNode* node,
                          const MarkerLine* lines,
                          std::size_t lineCount,
@@ -161,10 +230,9 @@ void writeMarkerGeometry(QSGGeometryNode* node,
                          double devicePixelRatio)
 {
     auto* geometry = node->geometry();
-    geometry->allocate(static_cast<int>(lineCount * 6));
+    geometry->allocate(static_cast<int>(lineCount * kVerticesPerFeatheredLine));
     auto* vertices = geometry->vertexDataAsColoredPoint2D();
     int out = 0;
-    const float halfPixel = static_cast<float>(0.5 / std::max(1.0, devicePixelRatio));
     for (std::size_t lineIndex = 0; lineIndex < lineCount; ++lineIndex) {
         const auto& marker = lines[lineIndex];
         const float x = static_cast<float>(waveform_render::snappedTimelineX(
@@ -173,15 +241,9 @@ void writeMarkerGeometry(QSGGeometryNode* node,
         const uchar g = static_cast<uchar>(marker.color.green());
         const uchar b = static_cast<uchar>(marker.color.blue());
         const uchar a = static_cast<uchar>(marker.color.alpha());
-        const float halfWidth = halfPixel * std::max(1.0f, marker.physicalWidth);
-        const float left = x - halfWidth;
-        const float right = x + halfWidth;
-        vertices[out++].set(left, marker.top, r, g, b, a);
-        vertices[out++].set(right, marker.top, r, g, b, a);
-        vertices[out++].set(left, marker.bottom, r, g, b, a);
-        vertices[out++].set(left, marker.bottom, r, g, b, a);
-        vertices[out++].set(right, marker.top, r, g, b, a);
-        vertices[out++].set(right, marker.bottom, r, g, b, a);
+        writeFeatheredVerticalLine(vertices, out, x, marker.top, marker.bottom,
+                                   marker.physicalWidth, devicePixelRatio,
+                                   r, g, b, a);
     }
     node->markDirty(QSGNode::DirtyGeometry);
 }
@@ -277,7 +339,7 @@ std::uint64_t writeWaveformChunk(QSGGeometryNode* node,
         1.0, std::ceil(1.0 / std::max(physicalSpacing, 1.0e-6))));
     const std::uint32_t groupCount = (endLine - beginLine + step - 1) / step;
     auto* geometry = node->geometry();
-    geometry->allocate(static_cast<int>(groupCount * 6));
+    geometry->allocate(static_cast<int>(groupCount * kVerticesPerFeatheredLine));
     auto* vertices = geometry->vertexDataAsColoredPoint2D();
 
     const auto verticalLayout = waveform_render::verticalMarkerLayout(height);
@@ -285,8 +347,7 @@ std::uint64_t writeWaveformChunk(QSGGeometryNode* node,
     const float halfHeight = std::max(
         1.0f, (height - verticalLayout.waveformInset * 2.0f) * 0.5f);
     const float minimumVisibleHeight = static_cast<float>(1.0 / std::max(1.0, devicePixelRatio));
-    const float halfPixel = static_cast<float>(0.5 / std::max(1.0, devicePixelRatio));
-    std::uint32_t out = 0;
+    int out = 0;
 
     for (std::uint32_t globalBegin = beginLine; globalBegin < endLine; globalBegin += step) {
         const std::uint32_t globalEnd = std::min(endLine, globalBegin + step);
@@ -329,14 +390,8 @@ std::uint64_t writeWaveformChunk(QSGGeometryNode* node,
         const uchar r = static_cast<uchar>(weight > 0 ? red / weight : 150);
         const uchar g = static_cast<uchar>(weight > 0 ? green / weight : 170);
         const uchar b = static_cast<uchar>(weight > 0 ? blue / weight : 190);
-        const float left = x - halfPixel;
-        const float right = x + halfPixel;
-        vertices[out++].set(left, top, r, g, b, 248);
-        vertices[out++].set(right, top, r, g, b, 248);
-        vertices[out++].set(left, bottom, r, g, b, 248);
-        vertices[out++].set(left, bottom, r, g, b, 248);
-        vertices[out++].set(right, top, r, g, b, 248);
-        vertices[out++].set(right, bottom, r, g, b, 248);
+        writeFeatheredVerticalLine(vertices, out, x, top, bottom, 1.0f,
+                                   devicePixelRatio, r, g, b, 248);
     }
 
     node->markDirty(QSGNode::DirtyGeometry);
@@ -592,33 +647,43 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         || scene->dataGeneration != snapshot->dataGeneration;
     const bool overlayConfigurationChanged = m_forceRebuild
         || staticConfigurationChanged;
+    const bool windowConfigurationChanged = m_forceRebuild
+        || outsideGuard || staticConfigurationChanged;
     bool renderOriginChanged = false;
 
     if (m_forceRebuild || outsideGuard || configurationChanged) {
         QElapsedTimer timer;
         timer.start();
 
-        const double visibleLineCount = bounds.width() / std::max(pixelsPerLine, 1.0e-6);
-        const double maximumHalfWindow = static_cast<double>(snapshot->chunkSize)
-            * static_cast<double>(kWaveformNodePoolSize - 1) * 0.5;
-        const double halfWindow = std::max(visibleLineCount * 0.55,
-            std::min(visibleLineCount * 1.25, maximumHalfWindow));
-        scene->windowStartLine = static_cast<std::int64_t>(std::floor(playheadLine - halfWindow));
-        scene->windowEndLine = static_cast<std::int64_t>(std::ceil(playheadLine + halfWindow));
-        const bool renderOriginNeedsRebase = !scene->hasWindow
-            || staticConfigurationChanged
-            || std::abs((playheadLine - scene->renderOriginLine) * pixelsPerLine) > 2'000'000.0;
-        if (renderOriginNeedsRebase) {
-            scene->renderOriginLine = static_cast<double>(scene->windowStartLine);
-            renderOriginChanged = true;
+        if (windowConfigurationChanged) {
+            const double visibleLineCount = bounds.width() / std::max(pixelsPerLine, 1.0e-6);
+            const double maximumHalfWindow = static_cast<double>(snapshot->chunkSize)
+                * static_cast<double>(kWaveformNodePoolSize - 1) * 0.5;
+            const double halfWindow = std::max(visibleLineCount * 0.55,
+                std::min(visibleLineCount * 1.25, maximumHalfWindow));
+            scene->windowStartLine = static_cast<std::int64_t>(
+                std::floor(playheadLine - halfWindow));
+            scene->windowEndLine = static_cast<std::int64_t>(
+                std::ceil(playheadLine + halfWindow));
+            // Keep local scene-graph coordinates small enough for float matrix
+            // precision. Choosing an origin on the global physical-pixel grid
+            // makes the rebase mathematically invisible to every timeline layer.
+            constexpr double maximumPhysicalTranslation = 262'144.0;
+            const bool renderOriginNeedsRebase = !scene->hasWindow
+                || staticConfigurationChanged
+                || std::abs((playheadLine - scene->renderOriginLine)
+                            * pixelsPerLine * dpr) > maximumPhysicalTranslation;
+            if (renderOriginNeedsRebase) {
+                scene->renderOriginLine = waveform_render::pixelAlignedTimelineOrigin(
+                    static_cast<double>(scene->windowStartLine), pixelsPerLine, dpr);
+                renderOriginChanged = true;
+            }
+            const double availableGuard = std::max(
+                0.0, halfWindow - visibleLineCount * 0.5);
+            const double rebuildTravel = std::max(1.0, availableGuard * 0.58);
+            scene->innerStartLine = playheadLine - rebuildTravel;
+            scene->innerEndLine = playheadLine + rebuildTravel;
         }
-        const double availableGuard = std::max(0.0, halfWindow - visibleLineCount * 0.5);
-        const double rebuildTravel = std::max(1.0, availableGuard * 0.58);
-        scene->innerStartLine = playheadLine - rebuildTravel;
-        scene->innerEndLine = playheadLine + rebuildTravel;
-
-        for (auto* waveformNode : scene->waveformNodes)
-            clearGeometry(waveformNode);
 
         const std::uint32_t sourceBegin = static_cast<std::uint32_t>(std::clamp<std::int64_t>(
             scene->windowStartLine, 0, snapshot->totalLineCount));
@@ -626,26 +691,51 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             scene->windowEndLine, 0, snapshot->totalLineCount));
         std::uint64_t renderedLineCount = 0;
         std::uint64_t visibleChunkCount = 0;
+        std::size_t usedPoolSlots = 0;
 
         if (sourceBegin < sourceEnd) {
             const std::uint32_t firstChunk = sourceBegin / snapshot->chunkSize;
             const std::uint32_t lastChunk = (sourceEnd - 1) / snapshot->chunkSize;
-            std::size_t poolIndex = 0;
             for (std::uint32_t chunkIndex = firstChunk;
-                 chunkIndex <= lastChunk && poolIndex < scene->waveformNodes.size();
+                 chunkIndex <= lastChunk && usedPoolSlots < scene->waveformNodes.size();
                  ++chunkIndex) {
+                const std::size_t poolIndex = usedPoolSlots++;
                 const auto chunk = snapshot->chunkAt(chunkIndex);
-                if (!chunk)
+                if (!chunk) {
+                    clearGeometry(scene->waveformNodes[poolIndex]);
+                    scene->waveformChunks[poolIndex].reset();
+                    scene->waveformBeginLines[poolIndex] = 0;
+                    scene->waveformEndLines[poolIndex] = 0;
+                    scene->waveformRenderedLineCounts[poolIndex] = 0;
                     continue;
+                }
                 const std::uint32_t begin = std::max(sourceBegin, chunk->firstLineIndex);
                 const std::uint32_t end = std::min(sourceEnd,
                     chunk->firstLineIndex + chunk->lineCount);
-                renderedLineCount += writeWaveformChunk(
-                    scene->waveformNodes[poolIndex++], *chunk, begin, end,
-                    scene->renderOriginLine, pixelsPerLine, dpr,
-                    static_cast<float>(bounds.height()));
+                const bool chunkGeometryChanged = renderOriginChanged
+                    || scene->waveformChunks[poolIndex] != chunk
+                    || scene->waveformBeginLines[poolIndex] != begin
+                    || scene->waveformEndLines[poolIndex] != end;
+                if (chunkGeometryChanged) {
+                    scene->waveformRenderedLineCounts[poolIndex] = writeWaveformChunk(
+                        scene->waveformNodes[poolIndex], *chunk, begin, end,
+                        scene->renderOriginLine, pixelsPerLine, dpr,
+                        static_cast<float>(bounds.height()));
+                    scene->waveformChunks[poolIndex] = chunk;
+                    scene->waveformBeginLines[poolIndex] = begin;
+                    scene->waveformEndLines[poolIndex] = end;
+                }
+                renderedLineCount += scene->waveformRenderedLineCounts[poolIndex];
                 ++visibleChunkCount;
             }
+        }
+        for (std::size_t poolIndex = usedPoolSlots;
+             poolIndex < scene->waveformNodes.size(); ++poolIndex) {
+            clearGeometry(scene->waveformNodes[poolIndex]);
+            scene->waveformChunks[poolIndex].reset();
+            scene->waveformBeginLines[poolIndex] = 0;
+            scene->waveformEndLines[poolIndex] = 0;
+            scene->waveformRenderedLineCounts[poolIndex] = 0;
         }
 
         // Every timeline layer uses the same persistent origin. Replacing an
@@ -762,6 +852,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     const double loopInLine = engine->loopInPosition() * snapshot->linesPerSecond;
     const double loopOutLine = visualLoopOut * snapshot->linesPerSecond;
     const bool loopGeometryChanged = overlayConfigurationChanged
+        || renderOriginChanged
         || scene->loopVisible != loopVisible
         || scene->loopAppearance != loopAppearance
         || !qFuzzyCompare(scene->loopInLine, loopInLine)
@@ -781,10 +872,10 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             loopGeometry->allocate(4);
             auto* vertices = loopGeometry->vertexDataAsColoredPoint2D();
             const float h = static_cast<float>(bounds.height());
-            vertices[0].set(x0, 0.0f, 70, 190, 255, fillAlpha);
-            vertices[1].set(x0, h, 70, 190, 255, fillAlpha);
-            vertices[2].set(x1, 0.0f, 70, 190, 255, fillAlpha);
-            vertices[3].set(x1, h, 70, 190, 255, fillAlpha);
+            setPremultipliedVertex(vertices[0], x0, 0.0f, 70, 190, 255, fillAlpha);
+            setPremultipliedVertex(vertices[1], x0, h, 70, 190, 255, fillAlpha);
+            setPremultipliedVertex(vertices[2], x1, 0.0f, 70, 190, 255, fillAlpha);
+            setPremultipliedVertex(vertices[3], x1, h, 70, 190, 255, fillAlpha);
             loopEdges[loopEdgeCount++] = {
                 loopInLine, QColor(70, 190, 255, edgeAlpha), 0.0f, h};
             loopEdges[loopEdgeCount++] = {
@@ -801,10 +892,14 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         scene->loopAppearance = loopAppearance;
     }
 
-    const double pixelCenteredTranslation = waveform_render::snappedTimelineTranslation(
-        bounds.width(), playheadLine, scene->renderOriginLine, pixelsPerLine, dpr);
+    // The visual clock is continuous. Keeping its translation continuous as
+    // well avoids the 1-pixel stop/start cadence that made dense waveforms and
+    // beat ticks shimmer during playback. Feathered line edges provide stable
+    // coverage while the shared timeline moves between physical pixels.
+    const double timelineTranslation = waveform_render::smoothTimelineTranslation(
+        bounds.width(), playheadLine, scene->renderOriginLine, pixelsPerLine);
     QMatrix4x4 transform;
-    transform.translate(static_cast<float>(pixelCenteredTranslation), 0.0f);
+    transform.translate(static_cast<float>(timelineTranslation), 0.0f);
     scene->timeline->setMatrix(transform);
     scene->timeline->markDirty(QSGNode::DirtyMatrix);
     m_transformUpdateCount.fetch_add(1, std::memory_order_relaxed);

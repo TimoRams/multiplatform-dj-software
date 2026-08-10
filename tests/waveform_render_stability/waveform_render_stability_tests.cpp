@@ -62,20 +62,33 @@ int main()
                       "guarded rendering rebuilt geometry too often");
     }
 
-    // Waveform and overlay lines share a pixel-centred transform. Their local
-    // positions sit on the physical grid, so final line centres always have a
-    // 0.5 physical-pixel fraction and occupy exactly one pixel.
+    // Timeline geometry keeps a one-physical-pixel opaque core plus half-pixel
+    // feathering on either side. The transform itself must retain fractional
+    // physical-pixel phases; quantising it was the source of visible stop/start
+    // shimmer at normal playback speed.
     for (const double dpr : {1.0, 1.25, 1.5, 2.0}) {
-        const double logicalLineWidth = 1.0 / dpr;
-        ok &= require(std::abs(logicalLineWidth * dpr - 1.0) < 1e-9,
-                      "vertical geometry must be exactly one physical pixel wide");
+        const double logicalCoreWidth = 1.0 / dpr;
+        const double logicalFeatherWidth = 0.5 / dpr;
+        ok &= require(std::abs((logicalCoreWidth + 2.0 * logicalFeatherWidth)
+                              * dpr - 2.0) < 1e-9,
+                      "vertical geometry uses a one-pixel core with soft edges");
+        int fractionalPhaseFrames = 0;
+        double previous = waveform_render::smoothTimelineTranslation(
+            638.75, 0.0, 0.0, 0.2875);
         for (int frame = 0; frame < 240; ++frame) {
-            const double smoothTranslation = 319.375 - frame * 0.2875;
-            const double centred = (std::floor(smoothTranslation * dpr) + 0.5) / dpr;
-            const double physical = centred * dpr;
-            ok &= require(std::abs((physical - std::floor(physical)) - 0.5) < 1e-9,
-                          "line transform must stay at a physical pixel centre");
+            const double translation = waveform_render::smoothTimelineTranslation(
+                638.75, static_cast<double>(frame), 0.0, 0.2875);
+            const double physical = translation * dpr;
+            const double fraction = physical - std::floor(physical);
+            if (fraction > 1.0e-6 && fraction < 1.0 - 1.0e-6)
+                ++fractionalPhaseFrames;
+            if (frame > 0)
+                ok &= require(std::abs((previous - translation) - 0.2875) < 1e-9,
+                              "timeline translation advances by the smooth clock delta");
+            previous = translation;
         }
+        ok &= require(fractionalPhaseFrames > 180,
+                      "timeline transform must preserve subpixel phases");
     }
 
     // Neither progressive data nor guarded waveform-window changes recreate
@@ -100,6 +113,34 @@ int main()
     ok &= require(waveformWindowRebuilds > markerRebuilds,
                   "guard crossings rebuild waveform chunks without replacing markers");
 
+    // Immutable chunk pointers allow a progressive publication to update only
+    // the newly available node instead of reallocating the complete visible
+    // waveform. Slots include absent chunks so later arrivals never shift the
+    // geometry-to-chunk mapping.
+    std::array<const void*, 6> cachedChunks{};
+    std::array<int, 6> chunks{};
+    chunks[1] = 1;
+    chunks[4] = 4;
+    int rewrittenNodes = 0;
+    for (std::size_t index = 0; index < chunks.size(); ++index) {
+        const void* chunk = chunks[index] == 0 ? nullptr : &chunks[index];
+        if (cachedChunks[index] != chunk) {
+            cachedChunks[index] = chunk;
+            ++rewrittenNodes;
+        }
+    }
+    const int initialRewrites = rewrittenNodes;
+    chunks[3] = 3;
+    for (std::size_t index = 0; index < chunks.size(); ++index) {
+        const void* chunk = chunks[index] == 0 ? nullptr : &chunks[index];
+        if (cachedChunks[index] != chunk) {
+            cachedChunks[index] = chunk;
+            ++rewrittenNodes;
+        }
+    }
+    ok &= require(rewrittenNodes - initialRewrites == 1,
+                  "one progressive chunk publication rewrites exactly one node");
+
     for (const float height : {60.0f, 100.0f, 180.0f}) {
         const auto layout = waveform_render::verticalMarkerLayout(height);
         ok &= require(layout.waveformInset >= layout.downbeatTickLength,
@@ -108,18 +149,20 @@ int main()
                       "downbeat ticks are slightly longer than regular beats");
         ok &= require(layout.cueLinePhysicalWidth > 1.0f
                           && std::fmod(layout.cueLinePhysicalWidth, 2.0f) == 1.0f,
-                      "cue lines use a wider odd physical-pixel width for crisp edges");
+                      "cue lines retain a wider opaque core below their soft edges");
         ok &= require(layout.waveformInset * 2.0f < height,
                       "waveform inset keeps a visible audio envelope");
     }
 
-    // Every timeline layer uses one persistent origin and transform. Guarded
-    // source-window changes therefore cannot alter the final waveform/marker
-    // position or put the two layers onto different pixel phases.
+    // Every layer uses a physical-pixel-aligned origin and one smooth transform.
+    // Rebasing float-sized local coordinates must not alter the final position.
     for (const double dpr : {1.0, 1.25, 1.5, 2.0}) {
         constexpr double timelineLine = 42'375.25;
-        constexpr double renderOrigin = 40'000.0;
         constexpr double pixelsPerTimelineLine = 0.22;
+        const double renderOrigin = waveform_render::pixelAlignedTimelineOrigin(
+            40'000.0, pixelsPerTimelineLine, dpr);
+        const double rebasedOrigin = waveform_render::pixelAlignedTimelineOrigin(
+            41'750.0, pixelsPerTimelineLine, dpr);
         const double waveformX = waveform_render::snappedTimelineX(
             timelineLine, renderOrigin, pixelsPerTimelineLine, dpr);
         const double markerX = waveform_render::snappedTimelineX(
@@ -127,29 +170,29 @@ int main()
         ok &= require(std::abs(waveformX - markerX) < 1e-12,
                       "waveform and overlays must share one local pixel grid");
         double previousCentre = 0.0;
+        int fractionalPhaseFrames = 0;
         for (int frame = 0; frame < 240; ++frame) {
             const double playheadLine = 41'000.0 + frame * 0.71;
-            const double translation = waveform_render::snappedTimelineTranslation(
-                1600.0, playheadLine, renderOrigin, pixelsPerTimelineLine, dpr);
+            const double translation = waveform_render::smoothTimelineTranslation(
+                1600.0, playheadLine, renderOrigin, pixelsPerTimelineLine);
             const double physicalCentre = (waveformX + translation) * dpr;
-            ok &= require(std::abs((physicalCentre - std::floor(physicalCentre)) - 0.5) < 1e-9,
-                          "beat marker stays centred on one physical pixel while scrolling");
+            const double physicalFraction = physicalCentre - std::floor(physicalCentre);
+            if (physicalFraction > 1.0e-6 && physicalFraction < 1.0 - 1.0e-6)
+                ++fractionalPhaseFrames;
             if (frame > 0)
                 ok &= require(physicalCentre <= previousCentre,
-                              "pixel-snapped timeline must move monotonically");
+                              "smooth timeline must move monotonically");
             previousCentre = physicalCentre;
 
-            // The guarded source window moves independently, but is never an
-            // input to local geometry or the shared transform.
-            const double guardedWindowStart = 39'000.0 + (frame / 17) * 850.0;
-            (void) guardedWindowStart;
             const double rebuiltCentre = (waveform_render::snappedTimelineX(
-                timelineLine, renderOrigin, pixelsPerTimelineLine, dpr)
-                + waveform_render::snappedTimelineTranslation(
-                    1600.0, playheadLine, renderOrigin, pixelsPerTimelineLine, dpr)) * dpr;
+                timelineLine, rebasedOrigin, pixelsPerTimelineLine, dpr)
+                + waveform_render::smoothTimelineTranslation(
+                    1600.0, playheadLine, rebasedOrigin, pixelsPerTimelineLine)) * dpr;
             ok &= require(std::abs(rebuiltCentre - physicalCentre) < 1e-9,
-                          "guarded window rebuild must not change timeline phase");
+                          "pixel-aligned origin rebase must not change timeline phase");
         }
+        ok &= require(fractionalPhaseFrames > 180,
+                      "waveform and beatgrid move through stable subpixel phases");
     }
     return ok ? 0 : 1;
 }
