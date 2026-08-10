@@ -66,10 +66,10 @@ second audio graph or decode path.
 
 `engine/facade/FacadeIncludes.h` is a transitional header for the remaining
 large facade implementation units. Small isolated units must include only the
-types they use. `Fx.cpp`, `Settings.cpp`, and `Diagnostics.cpp` now follow this
-policy. The larger Core, Transport, CueLoop, Scratch and Sync units remain on
-the transitional header until their direct dependency sets are extracted and
-compiled as separate low-risk batches.
+types they use. `Fx.cpp`, `Settings.cpp`, `Diagnostics.cpp`, `Scratch.cpp`, and
+`Sync.cpp` now follow this policy. The larger Core, Transport, and CueLoop units
+remain on the transitional header until their direct dependency sets are
+extracted and compiled as separate low-risk batches.
 
 ## Local build workflow
 

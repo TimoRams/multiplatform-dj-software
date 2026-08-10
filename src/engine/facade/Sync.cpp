@@ -1,8 +1,18 @@
-#include "FacadeIncludes.h"
+#include "../DjEngine.h"
+
+#include "audio/DeckAudioPipeline.h"
+#include "deck/DeckTransport.h"
+#include "domain/TrackData.h"
 #include "sync/SyncCoordinator.h"
 
+#include <QFileInfo>
+
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <iterator>
 #include <limits>
+#include <ranges>
 
 namespace {
 

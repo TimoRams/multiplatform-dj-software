@@ -1,7 +1,16 @@
-#include "FacadeIncludes.h"
+#include "../DjEngine.h"
+
+#include "audio/DeckAudioPipeline.h"
+#include "audio/DeckChannelProcessor.h"
+#include "audio/RenderModeRouter.h"
+#include "audio/TimeStretchProcessor.h"
+#include "deck/DeckTransport.h"
 #include "engine/deck/JogNudgePolicy.h"
 
+#include <algorithm>
+#include <cmath>
 #include <limits>
+#include <juce_core/juce_core.h>
 
 
 engine::scratch::ScratchLoopCtx DjEngine::scratchLoopCtx() const noexcept
