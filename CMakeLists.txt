@@ -263,6 +263,27 @@ juce_add_console_app(${PROJECT_NAME}
     COMPANY_NAME "Ramsbrock.net"
 )
 
+target_sources(${PROJECT_NAME} PRIVATE src/main.cpp)
+
+# Keep source ownership next to each production domain. These subdirectories
+# only add files to the already-created application target.
+add_subdirectory(src/analysis)
+add_subdirectory(src/app)
+add_subdirectory(src/audio)
+add_subdirectory(src/controllers)
+add_subdirectory(src/database)
+add_subdirectory(src/domain)
+add_subdirectory(src/engine)
+add_subdirectory(src/fx)
+add_subdirectory(src/io)
+add_subdirectory(src/library)
+add_subdirectory(src/link)
+add_subdirectory(src/midi)
+add_subdirectory(src/platform)
+add_subdirectory(src/qml)
+add_subdirectory(src/rendering)
+add_subdirectory(src/waveform)
+
 # Pack QML files into the binary under URI "DJSoftware".
 set(_rdbj_qml_module_options)
 if(NOT RDBJ_ENABLE_QML_CACHEGEN)
@@ -281,212 +302,14 @@ qt_add_qml_module(${PROJECT_NAME}
     VERSION 1.0
     RESOURCE_PREFIX "/"
     QML_FILES
-        src/qml/main.qml
-        src/qml/UiTheme.qml
-        src/qml/shared/UiMetrics.qml
-        src/qml/shared/UiShortcutManager.qml
-        src/qml/performance/PerformanceWorkspace.qml
-        src/qml/performance/PerformanceWaveformScreen.qml
-        src/qml/shell/StartupOverlay.qml
-        src/qml/shell/ExitOverlay.qml
-        src/qml/shell/StatusOverlay.qml
-        src/qml/Knob.qml
-        src/qml/Button.qml
-        src/qml/Slider.qml
-        src/qml/ComboBox.qml
-        src/qml/TopHeader.qml
-        src/qml/EnlargedWaveform.qml
-        src/qml/BeatgridEditorPanel.qml
-        src/qml/PerformanceBeatgridPanel.qml
-        src/qml/PerformanceDeckQuickPanel.qml
-        src/qml/PerformanceBeatFxPanel.qml
-        src/qml/OverallWaveform.qml
-        src/qml/SegmentBar.qml
-        src/qml/AnalysisProgressBar.qml
-        src/qml/DeckControl.qml
-        src/qml/DeckTrackInfoPanel.qml
-        src/qml/DevelopmentControlsWindow.qml
-        src/qml/Library.qml
-        src/qml/PerformancePads.qml
-        src/qml/TurntableIndicator.qml
-        src/qml/MixerSection.qml
-        src/qml/SettingsPanel.qml
-        src/qml/SettingsWindow.qml
-        src/qml/MappingEditorWindow.qml
-        src/qml/WelcomeScreen.qml
-        src/qml/FxUnit.qml
-        src/qml/FxBar.qml
-        src/qml/CrossfaderBar.qml
+        ${BROCKDJ_QML_FILES}
 )
 
-qt_add_resources(${PROJECT_NAME} "BrockDJ_controller_mappings"
-    PREFIX "/controllers"
-    BASE "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers"
-    FILES
-        src/controllers/mappings/midi/DDJ-FLX10.brockdj.xml
-)
-
-target_sources(${PROJECT_NAME} PRIVATE
-    src/main.cpp
-    src/app/ApplicationBootstrap.cpp
-    src/app/CiSmokeTest.cpp
-    src/app/ApplicationLifecycle.cpp
-    src/app/ControlClock.cpp
-    src/app/UiScaleController.h
-    src/app/UiScaleController.cpp
-    src/app/WaveformZoomController.h
-    src/app/WaveformZoomController.cpp
-    src/audio/device/AudioDeviceService.h
-    src/audio/device/AudioDeviceService.cpp
-    src/audio/cache/AudioPage.h
-    src/audio/cache/AudioCacheHandle.h
-    src/audio/cache/AudioPageCache.h
-    src/audio/cache/AudioPageCache.cpp
-    src/audio/cache/AudioCacheWorker.h
-    src/audio/cache/AudioCacheWorker.cpp
-    src/audio/cache/CachedPlaybackAudioSource.h
-    src/audio/cache/CachedPlaybackAudioSource.cpp
-    src/platform/PosixSignalHandler.h
-    src/platform/PosixSignalHandler.cpp
-    src/app/MixerControl.h
-    src/app/MixerControl.cpp
-    src/engine/DjEngine.h
-    src/engine/facade/Core.cpp
-    src/engine/facade/Fx.cpp
-    src/engine/facade/CueLoop.cpp
-    src/engine/deck/DeckCueLoopController.cpp
-    src/engine/deck/DeckCueLoopController.h
-    src/engine/deck/DeckTrackLoader.cpp
-    src/audio/DeckAudioPipeline.cpp
-    src/engine/deck/DeckTransport.cpp
-    src/engine/sync/DeckSyncController.cpp
-    src/engine/sync/SyncCoordinator.cpp
-    src/engine/deck/DeckTrackLoader.h
-    src/engine/facade/Scratch.cpp
-    src/engine/facade/Settings.cpp
-    src/engine/facade/Sync.cpp
-    src/engine/facade/Transport.cpp
-    src/engine/facade/Diagnostics.cpp
-    src/audio/device/AudioDeviceUtils.cpp
-    src/engine/deck/MetadataUtils.cpp
-    src/audio/AudioEngine.h
-    src/audio/AudioEngine.cpp
-    src/audio/MasterMixer.cpp
-    src/audio/HeadphoneBus.cpp
-    src/audio/AudioOutputRouter.cpp
-    src/audio/TimeStretchProcessor.cpp
-    src/audio/DeckChannelProcessor.cpp
-    src/audio/internal/MixerFilterCoefficients.cpp
-    src/analysis/PhraseAnalyzer.h
-    src/analysis/PhraseAnalyzer.cpp
-    src/analysis/AnalysisCacheVersion.h
-    src/analysis/AnalysisResult.h
-    src/analysis/AnalysisFeatureExtractor.h
-    src/analysis/AnalysisFeatureExtractor.cpp
-    src/analysis/TempoEstimator.h
-    src/analysis/TempoEstimator.cpp
-    src/analysis/BeatTracker.h
-    src/analysis/BeatTracker.cpp
-    src/analysis/DownbeatDetector.h
-    src/analysis/DownbeatDetector.cpp
-    src/analysis/BeatGridFitter.h
-    src/analysis/BeatGridFitter.cpp
-    src/analysis/AnalysisValidation.h
-    src/analysis/AnalysisValidation.cpp
-    src/rendering/RgbWaveformItem.h
-    src/rendering/RgbWaveformItem.cpp
-    src/rendering/ScrollingWaveformItem.cpp
-    src/rendering/WaveformAnalyzer.cpp
-    src/rendering/WaveformEnvelopePass.cpp
-    src/rendering/WaveformAnalysisOrchestrator.cpp
-    src/rendering/WaveformCache.h
-    src/rendering/WaveformCache.cpp
-    src/domain/TrackData.h
-    src/domain/TrackData.cpp
-    src/waveform/WaveformLineStore.cpp
-    src/domain/TrackSegment.h
-    src/library/LibraryManager.h
-    src/library/LibraryManager.cpp
-    src/library/CoverArtExtractor.h
-    src/library/CoverArtExtractor.cpp
-    src/library/CoverArtProvider.h
-    src/library/LibraryCoverService.h
-    src/library/LibraryCoverService.cpp
-    src/database/DatabaseWorker.h
-    src/database/DatabaseWorker.cpp
-    src/io/MediaIoScheduler.h
-    src/io/MediaIoScheduler.cpp
-    src/library/LibraryPreviewPlayer.h
-    src/library/LibraryPreviewPlayer.cpp
-    src/fx/FxManager.h
-    src/fx/FxManager.cpp
-    src/fx/FxProcessor.h
-    src/fx/FxProcessor.cpp
-    src/link/LinkManager.h
-    src/link/LinkManager.cpp
-    src/app/SystemMonitor.h
-    src/app/SystemMonitor.cpp
-    src/app/LsanSuppressions.cpp
-    src/app/CursorControl.h
-    src/app/CursorControl.cpp
-    src/midi/ParameterStore.h
-    src/midi/ParameterStore.cpp
-    src/midi/MixerParameterBridge.h
-    src/midi/MixerParameterBridge.cpp
-    src/midi/AlsaMidiOutput.h
-    src/midi/AlsaMidiOutput.cpp
-    src/midi/feedback/MidiFeedbackController.h
-    src/midi/feedback/MidiFeedbackController.cpp
-    src/midi/MidiControllerManager.h
-    src/midi/MidiControllerManager.cpp
-    src/midi/MidiDeviceEnumeration.cpp
-    src/midi/MidiMappingLoader.cpp
-    src/midi/MidiParameterDispatch.cpp
-    src/midi/MidiFlx10Bridge.cpp
-    src/controllers/ControllerProfile.h
-    src/controllers/ControllerIntegrationManager.h
-    src/controllers/ControllerIntegrationManager.cpp
-    src/controllers/flx10/DDJFLX10Controller.h
-    src/controllers/flx10/DDJFLX10Controller.cpp
-    src/controllers/flx10/Flx10HidTransport.cpp
-    src/controllers/flx10/Flx10DisplayProtocol.cpp
-    src/app/SettingsManager.h
-    src/app/SettingsManager.cpp
-    src/app/AppConfig.h
-    src/app/AppConfig.cpp
-    src/app/AppExitGate.h
-    src/library/TrackIdGenerator.h
-    src/library/LibraryDatabase.h
-    src/library/LibraryDatabase.cpp
-    src/library/LibrarySchema.cpp
-    src/library/LibraryTrackStore.cpp
-    src/library/LibraryCueStore.cpp
-    src/library/LibraryPlaylistStore.cpp
-    src/library/LibraryAnalysisManager.h
-    src/library/LibraryAnalysisManager.cpp
-    src/library/LibraryTableModel.h
-    src/library/LibraryTableModel.cpp
-    src/fx/BrickwallLimiter.h
-    src/fx/BrickwallLimiter.cpp
-    src/audio/internal/HermiteResamplingAudioSource.h
-    src/audio/internal/HermiteResamplingAudioSource.cpp
-    src/engine/scratch/ScratchSession.hpp
-    src/engine/scratch/ScratchSession.cpp
-    src/engine/scratch/ScratchController.hpp
-    src/engine/scratch/ScratchController.cpp
-    src/engine/scratch/VirtualTurntable.hpp
-    src/engine/scratch/VirtualTurntable.cpp
-    src/audio/internal/ScratchResampler.h
-    src/audio/internal/ScratchResampler.cpp
-    src/audio/RenderModeRouter.h
-    src/audio/RenderModeRouter.cpp
-)
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     src
     src/engine
     src/engine/scratch
-    src/engine/dsp
     src/rendering
     src/midi
     src/controllers
@@ -684,7 +507,6 @@ target_include_directories(BrockDJ_smoke_tests PRIVATE
     src/controllers
     src/domain
     src/engine
-    src/engine/dsp
     src/fx/dsp
 )
 
@@ -713,7 +535,7 @@ add_executable(BrockDJ_mixer_dsp_tests
     src/fx/FxProcessor.cpp
     src/fx/BrickwallLimiter.cpp
 )
-target_include_directories(BrockDJ_mixer_dsp_tests PRIVATE src src/engine src/engine/dsp src/fx/dsp)
+target_include_directories(BrockDJ_mixer_dsp_tests PRIVATE src src/engine src/fx/dsp)
 target_link_libraries(BrockDJ_mixer_dsp_tests PRIVATE Qt6::Core Qt6::Gui juce::juce_core juce::juce_data_structures juce::juce_audio_basics juce::juce_dsp juce::juce_events ThirdParty::SignalsmithDSP)
 target_compile_definitions(BrockDJ_mixer_dsp_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
 target_compile_features(BrockDJ_mixer_dsp_tests PRIVATE cxx_std_23)
@@ -732,7 +554,7 @@ add_executable(BrockDJ_deck_audio_graph_tests
     src/audio/TimeStretchProcessor.cpp src/audio/DeckChannelProcessor.cpp src/audio/internal/MixerFilterCoefficients.cpp
     src/fx/FxProcessor.cpp src/fx/BrickwallLimiter.cpp
 )
-target_include_directories(BrockDJ_deck_audio_graph_tests PRIVATE src src/engine src/engine/dsp src/fx/dsp)
+target_include_directories(BrockDJ_deck_audio_graph_tests PRIVATE src src/engine src/fx/dsp)
 target_link_libraries(BrockDJ_deck_audio_graph_tests PRIVATE Qt6::Core Qt6::Gui juce::juce_core juce::juce_data_structures juce::juce_audio_basics juce::juce_audio_formats juce::juce_audio_devices juce::juce_dsp juce::juce_events ThirdParty::RubberBand ThirdParty::SignalsmithDSP ThirdParty::SignalsmithStretch)
 target_compile_definitions(BrockDJ_deck_audio_graph_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1)
 target_compile_features(BrockDJ_deck_audio_graph_tests PRIVATE cxx_std_23)
@@ -749,7 +571,7 @@ add_executable(BrockDJ_deck_transport_tests
     src/audio/TimeStretchProcessor.cpp src/audio/DeckChannelProcessor.cpp src/audio/internal/MixerFilterCoefficients.cpp
     src/fx/FxProcessor.cpp src/fx/BrickwallLimiter.cpp
 )
-target_include_directories(BrockDJ_deck_transport_tests PRIVATE src src/engine src/engine/dsp src/fx/dsp)
+target_include_directories(BrockDJ_deck_transport_tests PRIVATE src src/engine src/fx/dsp)
 target_link_libraries(BrockDJ_deck_transport_tests PRIVATE Qt6::Core Qt6::Gui juce::juce_core juce::juce_data_structures juce::juce_audio_basics juce::juce_audio_formats juce::juce_audio_devices juce::juce_dsp juce::juce_events ThirdParty::RubberBand ThirdParty::SignalsmithDSP ThirdParty::SignalsmithStretch)
 target_compile_definitions(BrockDJ_deck_transport_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1)
 target_compile_features(BrockDJ_deck_transport_tests PRIVATE cxx_std_23)

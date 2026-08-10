@@ -62,6 +62,25 @@ and `MixerSection.qml` consume the pre-fader values.
 `DjEngine`, QML, MIDI and HID are command/display facades. They do not own a
 second audio graph or decode path.
 
+## UI integration boundaries
+
+Desktop and all-in-one layouts share one C++ and QML implementation. Product
+behavior belongs in mode-independent C++ owners and shared QML components;
+`touchMode` or UI metrics may adapt sizing and input. New `allInOneMode`
+composition branches are limited to `main.qml`, `TopHeader.qml`, and
+`Library.qml` unless a reviewed product requirement needs another boundary.
+
+Mixer QML uses the application-owned `mixerControl` context/singleton bridge.
+Channel-fader changes go through `MixerControl::setChannelFader`, while
+crossfader state is published through `syncCrossfaderState` followed by
+`applyAllVolumes`. Inline QML components must not create a second mixer state
+path through nested deck objects. `ParameterStore` and `MixerParameterBridge`
+remain the MIDI-to-control synchronization path.
+
+Reference AIO layouts are 1280x800 and 1024x600. UI changes that affect these
+profiles must also run `scripts/desktop-regression-checklist.sh` and the manual
+checks in `docs/testing/regression-checklist.md`.
+
 ## Facade include policy
 
 `engine/facade/FacadeIncludes.h` is a transitional header for the remaining

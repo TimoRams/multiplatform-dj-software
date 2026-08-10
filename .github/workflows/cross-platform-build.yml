@@ -82,7 +82,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.cache/ccache
-          key: ccache-linux-x64-gcc-qt-${{ env.QT_VERSION }}-${{ hashFiles('CMakeLists.txt', 'CMakePresets.json', 'vcpkg.json', '.gitmodules') }}
+          key: ccache-linux-x64-gcc-qt-${{ env.QT_VERSION }}-${{ hashFiles('CMakeLists.txt', 'src/**/CMakeLists.txt', 'CMakePresets.json', 'vcpkg.json', '.gitmodules') }}
           restore-keys: ccache-linux-x64-gcc-qt-${{ env.QT_VERSION }}-
 
       - name: Show Linux x86_64 toolchain
@@ -165,7 +165,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.cache/ccache
-          key: ccache-linux-arm64-gcc-ubuntu2404-${{ hashFiles('CMakeLists.txt', 'CMakePresets.json', 'vcpkg.json', '.gitmodules') }}
+          key: ccache-linux-arm64-gcc-ubuntu2404-${{ hashFiles('CMakeLists.txt', 'src/**/CMakeLists.txt', 'CMakePresets.json', 'vcpkg.json', '.gitmodules') }}
           restore-keys: ccache-linux-arm64-gcc-ubuntu2404-
 
       - name: Show Linux ARM64 toolchain
@@ -216,11 +216,31 @@ jobs:
           compression-level: 0
           retention-days: 2
 
-  build-macos-arm64:
-    name: Build macOS Apple Silicon
+  build-macos:
+    name: Build macOS ${{ matrix.label }}
     needs: workflow-lint
-    runs-on: macos-15
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Apple Silicon
+            runner: macos-15
+            cache_arch: arm64
+            preset: ci-macos-arm64
+            build_dir: build-ci-macos-arm64
+            binary_arch: arm64
+            archive: BrockDJ-macos-arm64.tar.gz
+            artifact: BrockDJ-build-macos-arm64
+          - label: Intel
+            runner: macos-15-intel
+            cache_arch: x64
+            preset: ci-macos-x86_64
+            build_dir: build-ci-macos-x86_64
+            binary_arch: x86_64
+            archive: BrockDJ-macos-x64.tar.gz
+            artifact: BrockDJ-build-macos-x64
     steps:
       - name: Check out repository and submodules
         uses: actions/checkout@v6
@@ -242,13 +262,13 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/Library/Caches/ccache
-          key: ccache-macos-arm64-appleclang-qt-${{ env.QT_VERSION }}-${{ hashFiles('CMakeLists.txt', 'CMakePresets.json', '.gitmodules') }}
-          restore-keys: ccache-macos-arm64-appleclang-qt-${{ env.QT_VERSION }}-
+          key: ccache-macos-${{ matrix.cache_arch }}-appleclang-qt-${{ env.QT_VERSION }}-${{ hashFiles('CMakeLists.txt', 'src/**/CMakeLists.txt', 'CMakePresets.json', '.gitmodules') }}
+          restore-keys: ccache-macos-${{ matrix.cache_arch }}-appleclang-qt-${{ env.QT_VERSION }}-
 
       - name: Generate bundle icon
         run: ./scripts/generate_icons.sh
 
-      - name: Show macOS Apple Silicon toolchain
+      - name: Show macOS ${{ matrix.label }} toolchain
         shell: bash
         run: |
           set -euo pipefail
@@ -261,21 +281,21 @@ jobs:
           "$QT_ROOT_DIR/bin/qmake" -query
 
       - name: Configure
-        run: cmake --preset ci-macos-arm64
+        run: cmake --preset ${{ matrix.preset }}
 
       - name: Build
-        run: cmake --build --preset ci-macos-arm64 --parallel 2
+        run: cmake --build --preset ${{ matrix.preset }} --parallel 2
 
       - name: Test
-        run: ctest --preset ci-macos-arm64
+        run: ctest --preset ${{ matrix.preset }}
 
       - name: Validate bundle architecture and headless startup
         shell: bash
         run: |
           set -euo pipefail
-          binary=build-ci-macos-arm64/bin/BrockDJ.app/Contents/MacOS/BrockDJ
+          binary=${{ matrix.build_dir }}/bin/BrockDJ.app/Contents/MacOS/BrockDJ
           lipo -archs "$binary" | tee binary-arch.txt
-          grep -qw arm64 binary-arch.txt
+          grep -qw ${{ matrix.binary_arch }} binary-arch.txt
           "$binary" --version
           QT_QPA_PLATFORM=offscreen BROCKDJ_RHI_BACKEND=auto "$binary" --ci-smoke-test
 
@@ -285,97 +305,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ci-build-product
-          tar -C build-ci-macos-arm64/bin -czf ci-build-product/BrockDJ-macos-arm64.tar.gz BrockDJ.app
-          test -s ci-build-product/BrockDJ-macos-arm64.tar.gz
+          tar -C ${{ matrix.build_dir }}/bin -czf ci-build-product/${{ matrix.archive }} BrockDJ.app
+          test -s ci-build-product/${{ matrix.archive }}
 
       - name: Upload build product
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         uses: actions/upload-artifact@v7
         with:
-          name: BrockDJ-build-macos-arm64
-          path: ci-build-product/BrockDJ-macos-arm64.tar.gz
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 2
-
-  build-macos-x64:
-    name: Build macOS Intel
-    needs: workflow-lint
-    runs-on: macos-15-intel
-    timeout-minutes: 75
-    steps:
-      - name: Check out repository and submodules
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4.3.1
-        with:
-          version: ${{ env.QT_VERSION }}
-          arch: clang_64
-          cache: true
-
-      - name: Install native dependencies
-        shell: bash
-        run: brew install ccache ninja pkg-config taglib rubberband libkeyfinder
-
-      - name: Restore compiler cache
-        uses: actions/cache@v5
-        with:
-          path: ~/Library/Caches/ccache
-          key: ccache-macos-x64-appleclang-qt-${{ env.QT_VERSION }}-${{ hashFiles('CMakeLists.txt', 'CMakePresets.json', '.gitmodules') }}
-          restore-keys: ccache-macos-x64-appleclang-qt-${{ env.QT_VERSION }}-
-
-      - name: Generate bundle icon
-        run: ./scripts/generate_icons.sh
-
-      - name: Show macOS Intel toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          sw_vers
-          uname -m
-          cmake --version
-          ninja --version
-          c++ --version
-          echo "QT_ROOT_DIR=$QT_ROOT_DIR"
-          "$QT_ROOT_DIR/bin/qmake" -query
-
-      - name: Configure
-        run: cmake --preset ci-macos-x86_64
-
-      - name: Build
-        run: cmake --build --preset ci-macos-x86_64 --parallel 2
-
-      - name: Test
-        run: ctest --preset ci-macos-x86_64
-
-      - name: Validate bundle architecture and headless startup
-        shell: bash
-        run: |
-          set -euo pipefail
-          binary=build-ci-macos-x86_64/bin/BrockDJ.app/Contents/MacOS/BrockDJ
-          lipo -archs "$binary" | tee binary-arch.txt
-          grep -qw x86_64 binary-arch.txt
-          "$binary" --version
-          QT_QPA_PLATFORM=offscreen BROCKDJ_RHI_BACKEND=auto "$binary" --ci-smoke-test
-
-      - name: Stage build product
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p ci-build-product
-          tar -C build-ci-macos-x86_64/bin -czf ci-build-product/BrockDJ-macos-x64.tar.gz BrockDJ.app
-          test -s ci-build-product/BrockDJ-macos-x64.tar.gz
-
-      - name: Upload build product
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-        uses: actions/upload-artifact@v7
-        with:
-          name: BrockDJ-build-macos-x64
-          path: ci-build-product/BrockDJ-macos-x64.tar.gz
+          name: ${{ matrix.artifact }}
+          path: ci-build-product/${{ matrix.archive }}
           if-no-files-found: error
           compression-level: 0
           retention-days: 2
@@ -577,12 +515,30 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
-  package-macos-arm64:
-    name: Package macOS Apple Silicon
-    needs: build-macos-arm64
+  package-macos:
+    name: Package macOS ${{ matrix.label }}
+    needs: build-macos
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: macos-15
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Apple Silicon
+            runner: macos-15
+            build_artifact: BrockDJ-build-macos-arm64
+            archive: BrockDJ-macos-arm64.tar.gz
+            package_arch: arm64
+            output: BrockDJ-macOS-Apple-Silicon.zip
+            artifact: BrockDJ-macos-arm64
+          - label: Intel
+            runner: macos-15-intel
+            build_artifact: BrockDJ-build-macos-x64
+            archive: BrockDJ-macos-x64.tar.gz
+            package_arch: x86_64
+            output: BrockDJ-macOS-Intel.zip
+            artifact: BrockDJ-macos-x86_64
     steps:
       - name: Check out packaging files
         uses: actions/checkout@v6
@@ -600,7 +556,7 @@ jobs:
       - name: Download build product
         uses: actions/download-artifact@v8
         with:
-          name: BrockDJ-build-macos-arm64
+          name: ${{ matrix.build_artifact }}
           path: ci-build-product
 
       - name: Deploy, sign and smoke-test app bundle
@@ -608,58 +564,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p unpacked dist
-          tar -C unpacked -xzf ci-build-product/BrockDJ-macos-arm64.tar.gz
+          tar -C unpacked -xzf ci-build-product/${{ matrix.archive }}
           ./scripts/ci/package-macos.sh \
-            unpacked/BrockDJ.app arm64 dist/BrockDJ-macOS-Apple-Silicon.zip
+            unpacked/BrockDJ.app ${{ matrix.package_arch }} dist/${{ matrix.output }}
 
-      - name: Upload macOS Apple Silicon artifact
+      - name: Upload macOS ${{ matrix.label }} artifact
         uses: actions/upload-artifact@v7
         with:
-          name: BrockDJ-macos-arm64
-          path: dist/BrockDJ-macOS-Apple-Silicon.zip
-          if-no-files-found: error
-          compression-level: 0
-
-  package-macos-x64:
-    name: Package macOS Intel
-    needs: build-macos-x64
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: macos-15-intel
-    timeout-minutes: 35
-    steps:
-      - name: Check out packaging files
-        uses: actions/checkout@v6
-
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4.3.1
-        with:
-          version: ${{ env.QT_VERSION }}
-          arch: clang_64
-          cache: true
-
-      - name: Install deployment dependencies
-        run: brew install dylibbundler taglib rubberband libkeyfinder
-
-      - name: Download build product
-        uses: actions/download-artifact@v8
-        with:
-          name: BrockDJ-build-macos-x64
-          path: ci-build-product
-
-      - name: Deploy, sign and smoke-test app bundle
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p unpacked dist
-          tar -C unpacked -xzf ci-build-product/BrockDJ-macos-x64.tar.gz
-          ./scripts/ci/package-macos.sh \
-            unpacked/BrockDJ.app x86_64 dist/BrockDJ-macOS-Intel.zip
-
-      - name: Upload macOS Intel artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: BrockDJ-macos-x86_64
-          path: dist/BrockDJ-macOS-Intel.zip
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.output }}
           if-no-files-found: error
           compression-level: 0
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run after AIO UI changes — automated smoke + manual desktop regression prompts.
-# See .cursor/memory/progress.md § Desktop regression checklist.
+# See docs/testing/regression-checklist.md for the complete manual matrix.
 
 set -euo pipefail
 
@@ -42,4 +42,4 @@ cat <<'EOF'
 EOF
 
 echo
-echo "Done. Mark checklist in progress.md when complete."
+echo "Done. Record the result in your review or test report."

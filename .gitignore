@@ -2,6 +2,7 @@
 build/
 build-tests/
 build-release/
+cmake-build-*/
 bin/
 out/
 x64/
@@ -17,12 +18,15 @@ Makefile
 _CPack_Packages/
 CPackConfig.cmake
 CPackSourceConfig.cmake
+/compile_commands.json
+*.o
+*.obj
+*.pdb
 
 # --- IDE-spezifische Dateien ---
 .vscode/
-.cursor/*
-!.cursor/memory/
-!.cursor/memory/**
+.cursor/
+.cursorrules
 .vs/
 *.user
 *.suo
