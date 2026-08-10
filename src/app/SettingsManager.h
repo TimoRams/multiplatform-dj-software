@@ -92,6 +92,20 @@ public:
     void setAudioBoothFirstChannel(int firstChannel);
 
     Q_INVOKABLE QStringList getAvailableAudioDeviceTypes() const;
+    Q_INVOKABLE QStringList getAvailableAudioOutputDevices(const QString& deviceType) const;
+    Q_INVOKABLE void setAudioConfiguration(const QString& deviceType,
+                                           const QString& masterOutputDevice,
+                                           int masterFirstChannel,
+                                           const QString& headphonesOutputDevice,
+                                           int headphonesFirstChannel,
+                                           const QString& boothOutputDevice,
+                                           int boothFirstChannel,
+                                           int sampleRate,
+                                           int bufferSize);
+    void persistActiveAudioConfiguration(const QString& deviceType,
+                                         const QString& outputDevice,
+                                         int sampleRate,
+                                         int bufferSize);
     void setAudioDeviceService(AudioDeviceService* service);
 
     int getAudioSampleRate() const;

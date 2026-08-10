@@ -1,5 +1,6 @@
 #include "SettingsManager.h"
 #include "audio/device/AudioDeviceService.h"
+#include "audio/device/AudioDeviceUtils.h"
 #include <algorithm>
 #include <cmath>
 #include <QDebug>
@@ -131,6 +132,21 @@ void SettingsManager::init()
     userSettings->setValue("App/CurrentRunStarted", juce::Time::getCurrentTime().toString(true, true));
     userSettings->setValue("ProofOfConcept_FileCreated", true);
     userSettings->setValue("LastRun", juce::Time::getCurrentTime().toString(true, true));
+
+    // Older settings could persist a real Master device together with channel
+    // -1 ("None"). That opens the hardware successfully but intentionally routes
+    // no Master samples to it. Migrate that contradictory state to stereo 1-2.
+    const QString savedMasterOutput = QString::fromUtf8(
+        userSettings->getValue("Audio/Master/OutputDevice",
+                               userSettings->getValue("Audio/OutputDevice")).toRawUTF8());
+    const int savedMasterFirstChannel = userSettings->getIntValue("Audio/Master/FirstChannel", 1);
+    const int normalizedMasterFirstChannel = normalizeMasterFirstChannelForOutput(
+        savedMasterOutput, savedMasterFirstChannel);
+    if (normalizedMasterFirstChannel != savedMasterFirstChannel) {
+        userSettings->setValue("Audio/Master/FirstChannel", normalizedMasterFirstChannel);
+        qInfo() << "[SettingsManager] Migrated Master output routing to channel pair"
+                << normalizedMasterFirstChannel << "-" << normalizedMasterFirstChannel + 1;
+    }
 
     // save() forces an immediate write; saveIfNeeded() skips if the file already
     // exists and is up to date, which can silently swallow the first write.
@@ -287,7 +303,7 @@ void SettingsManager::setAudioMasterOutputDevice(const QString& deviceName)
 int SettingsManager::getAudioMasterFirstChannel() const
 {
     const int value = readIntSetting(*this, "Audio/Master/FirstChannel", 1);
-    return value == -1 ? -1 : std::clamp(value, 1, 127);
+    return normalizeMasterFirstChannelForOutput(getAudioMasterOutputDevice(), value);
 }
 
 void SettingsManager::setAudioMasterFirstChannel(int firstChannel)
@@ -370,6 +386,103 @@ void SettingsManager::setAudioBoothFirstChannel(int firstChannel)
 QStringList SettingsManager::getAvailableAudioDeviceTypes() const
 {
     return m_audioDeviceService ? m_audioDeviceService->availableDeviceTypes() : QStringList{};
+}
+
+QStringList SettingsManager::getAvailableAudioOutputDevices(const QString& deviceType) const
+{
+    if (!m_audioDeviceService)
+        return { QStringLiteral("None") };
+
+    QStringList preferredDevices;
+    const auto appendForMatchingType = [&preferredDevices, &deviceType](const QString& savedType,
+                                                                        const QString& savedDevice) {
+        if ((savedType.isEmpty()
+             || savedType.trimmed().compare(deviceType.trimmed(), Qt::CaseInsensitive) == 0)
+            && !savedDevice.trimmed().isEmpty()) {
+            preferredDevices.push_back(savedDevice);
+        }
+    };
+    appendForMatchingType(getAudioMasterDeviceType(), getAudioMasterOutputDevice());
+    appendForMatchingType(getAudioHeadphonesDeviceType(), getAudioHeadphonesOutputDevice());
+    appendForMatchingType(getAudioBoothDeviceType(), getAudioBoothOutputDevice());
+
+    return mergePreferredOutputDevices(
+        m_audioDeviceService->availableOutputDevices(deviceType), preferredDevices);
+}
+
+void SettingsManager::setAudioConfiguration(const QString& deviceType,
+                                            const QString& masterOutputDevice,
+                                            int masterFirstChannel,
+                                            const QString& headphonesOutputDevice,
+                                            int headphonesFirstChannel,
+                                            const QString& boothOutputDevice,
+                                            int boothFirstChannel,
+                                            int sampleRate,
+                                            int bufferSize)
+{
+    auto* settings = userSettings(*this);
+    if (settings == nullptr)
+        return;
+
+    const auto asJuce = [](const QString& value) {
+        return juce::String::fromUTF8(value.trimmed().toUtf8().constData());
+    };
+    const auto clampChannel = [](int channel) {
+        return channel == -1 ? -1 : std::clamp(channel, 1, 127);
+    };
+
+    const juce::String type = asJuce(deviceType);
+    settings->setValue("Audio/DeviceType", type);
+    settings->setValue("Audio/OutputDevice", asJuce(masterOutputDevice));
+    settings->setValue("Audio/Master/DeviceType", type);
+    settings->setValue("Audio/Master/OutputDevice", asJuce(masterOutputDevice));
+    settings->setValue("Audio/Master/FirstChannel",
+                       normalizeMasterFirstChannelForOutput(masterOutputDevice, masterFirstChannel));
+    settings->setValue("Audio/Headphones/DeviceType", type);
+    settings->setValue("Audio/Headphones/OutputDevice", asJuce(headphonesOutputDevice));
+    settings->setValue("Audio/Headphones/FirstChannel", clampChannel(headphonesFirstChannel));
+    settings->setValue("Audio/Booth/DeviceType", type);
+    settings->setValue("Audio/Booth/OutputDevice", asJuce(boothOutputDevice));
+    settings->setValue("Audio/Booth/FirstChannel", clampChannel(boothFirstChannel));
+    settings->setValue("Audio/SampleRate", std::clamp(sampleRate, 8000, 384000));
+    settings->setValue("Audio/BufferSize", std::clamp(bufferSize, 64, 4096));
+    settings->save();
+    emit audioSettingsChanged();
+}
+
+void SettingsManager::persistActiveAudioConfiguration(const QString& deviceType,
+                                                      const QString& outputDevice,
+                                                      int sampleRate,
+                                                      int bufferSize)
+{
+    const QString canonicalType = deviceType.trimmed();
+    const QString canonicalOutput = outputDevice.trimmed();
+    if (canonicalType.isEmpty() || canonicalOutput.isEmpty() || sampleRate <= 0 || bufferSize <= 0)
+        return;
+
+    auto* settings = userSettings(*this);
+    if (settings == nullptr)
+        return;
+
+    const juce::String type = juce::String::fromUTF8(canonicalType.toUtf8().constData());
+    const juce::String output = juce::String::fromUTF8(canonicalOutput.toUtf8().constData());
+    const int normalizedRate = std::clamp(sampleRate, 8000, 384000);
+    const int normalizedBuffer = std::clamp(bufferSize, 64, 4096);
+    const bool unchanged = getAudioMasterDeviceType() == canonicalType
+        && getAudioMasterOutputDevice() == canonicalOutput
+        && getAudioSampleRate() == normalizedRate
+        && getAudioBufferSize() == normalizedBuffer;
+    if (unchanged)
+        return;
+
+    settings->setValue("Audio/DeviceType", type);
+    settings->setValue("Audio/OutputDevice", output);
+    settings->setValue("Audio/Master/DeviceType", type);
+    settings->setValue("Audio/Master/OutputDevice", output);
+    settings->setValue("Audio/SampleRate", normalizedRate);
+    settings->setValue("Audio/BufferSize", normalizedBuffer);
+    settings->save();
+    emit audioSettingsChanged();
 }
 
 void SettingsManager::setAudioDeviceService(AudioDeviceService* service)

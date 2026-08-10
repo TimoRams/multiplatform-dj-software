@@ -336,6 +336,16 @@ int runApplication(int argc, char *argv[])
     runtime.audioDeviceService = std::make_unique<AudioDeviceService>();
     runtime.audioPageCache = std::make_unique<AudioPageCache>();
     settingsManager.setAudioDeviceService(runtime.audioDeviceService.get());
+    QObject::connect(runtime.audioDeviceService.get(), &AudioDeviceService::configurationChanged,
+                     &settingsManager, [&settingsManager, &runtime]() {
+                         if (!runtime.audioDeviceService)
+                             return;
+                         settingsManager.persistActiveAudioConfiguration(
+                             runtime.audioDeviceService->currentDeviceType(),
+                             runtime.audioDeviceService->currentOutputDevice(),
+                             runtime.audioDeviceService->currentSampleRate(),
+                             runtime.audioDeviceService->currentBufferSize());
+                     });
     runtime.audioEngine = std::make_unique<AudioEngine>(*runtime.audioPageCache);
     runtime.syncCoordinator = std::make_unique<engine::sync::SyncCoordinator>();
     ControlClock::Callbacks syncClockCallbacks;
@@ -517,20 +527,73 @@ int runApplication(int argc, char *argv[])
             runtime.mixerControl->setDecks(runtime.deckA.get(), runtime.deckB.get(),
                                            runtime.deckC.get(), runtime.deckD.get());
 
+            // Register the source player before opening the hardware. In
+            // particular, JACK may not fully activate a callback that is added
+            // only after the client/device has already been opened. A manual
+            // Apply appeared to fix startup because it reopened the device with
+            // this callback already registered.
+            runtime.audioEngine->registerCallback(runtime.audioDeviceService->manager());
+
             // SettingsManager owns the preferred configuration.  Do not replace
             // it with a backend fallback (or an unavailable-device default) at
             // startup: AudioDeviceService publishes the active configuration.
-            runtime.deckA->applyAudioDeviceSettings(settingsManager.getAudioMasterDeviceType(),
-                                            settingsManager.getAudioMasterOutputDevice(),
-                                            settingsManager.getAudioSampleRate(),
-                                            settingsManager.getAudioBufferSize(),
-                                            settingsManager.getAudioMasterFirstChannel(),
-                                            settingsManager.getAudioHeadphonesFirstChannel(),
-                                            settingsManager.getAudioBoothFirstChannel());
+            const QString preferredAudioType = settingsManager.getAudioMasterDeviceType();
+            const QString preferredAudioOutput = settingsManager.getAudioMasterOutputDevice();
+            const bool audioSettingsApplied = runtime.deckA->applyAudioDeviceSettings(
+                preferredAudioType,
+                preferredAudioOutput,
+                settingsManager.getAudioSampleRate(),
+                settingsManager.getAudioBufferSize(),
+                settingsManager.getAudioMasterFirstChannel(),
+                settingsManager.getAudioHeadphonesFirstChannel(),
+                settingsManager.getAudioBoothFirstChannel());
 
-            runtime.audioEngine->registerCallback(runtime.audioDeviceService->manager());
+            if (audioSettingsApplied) {
+                qDebug() << "[startup] Audio preference restored:"
+                         << "preferred=" << preferredAudioType << "/" << preferredAudioOutput
+                         << "active=" << runtime.audioDeviceService->currentDeviceType()
+                         << "/" << runtime.audioDeviceService->currentOutputDevice();
+            } else {
+                qWarning() << "[startup] Audio preference could not be restored:"
+                           << preferredAudioType << "/" << preferredAudioOutput
+                           << runtime.audioDeviceService->lastError();
+
+                // Some Linux audio backends become enumerable shortly after the
+                // GUI is ready. Retry a bounded number of times; never poll or
+                // replace the user's preferred device with a fallback.
+                for (const int delayMs : {750, 2500}) {
+                    QTimer::singleShot(delayMs, &app, [&runtime, &settingsManager, delayMs]() {
+                        if (!runtime.audioDeviceService || !runtime.deckA
+                            || !runtime.audioDeviceService->currentOutputDevice().isEmpty()) {
+                            return;
+                        }
+
+                        const QString retryType = settingsManager.getAudioMasterDeviceType();
+                        const QString retryOutput = settingsManager.getAudioMasterOutputDevice();
+                        const bool restored = runtime.audioDeviceService->applySettings(
+                            retryType,
+                            retryOutput,
+                            settingsManager.getAudioSampleRate(),
+                            settingsManager.getAudioBufferSize(),
+                            settingsManager.getAudioMasterFirstChannel(),
+                            settingsManager.getAudioHeadphonesFirstChannel(),
+                            settingsManager.getAudioBoothFirstChannel());
+                        if (restored) {
+                            qDebug() << "[startup] Audio preference restored on retry"
+                                     << delayMs << "ms:"
+                                     << runtime.audioDeviceService->currentDeviceType()
+                                     << "/" << runtime.audioDeviceService->currentOutputDevice();
+                        } else {
+                            qWarning() << "[startup] Audio preference retry failed after"
+                                       << delayMs << "ms:"
+                                       << runtime.audioDeviceService->lastError();
+                        }
+                    });
+                }
+            }
+
             runtime.controlClock->start();
-            qDebug() << "[startup] Audio device settings applied" << startupTimer.elapsed() << "ms";
+            qDebug() << "[startup] Audio device setup finished" << startupTimer.elapsed() << "ms";
         });
     };
 

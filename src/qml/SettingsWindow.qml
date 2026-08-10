@@ -124,10 +124,18 @@ Window {
 
     function indexForText(options, value) {
         for (var i = 0; i < options.length; ++i) {
-            if (String(options[i]) === String(value))
+            if (String(options[i]).toLowerCase() === String(value).toLowerCase())
                 return i
         }
         return -1
+    }
+
+    function firstRealOutput(options) {
+        for (var i = 0; i < options.length; ++i) {
+            if (String(options[i]).toLowerCase() !== "none")
+                return String(options[i])
+        }
+        return "None"
     }
 
     function parseFirstChannel(pairText) {
@@ -204,7 +212,7 @@ Window {
         var listHasRealDevices = outputOptions.length > 1 ||
             (outputOptions.length === 1 && String(outputOptions[0]).toLowerCase() !== "none")
         if (listHasRealDevices && indexForText(outputOptions, selections.outputDevice) < 0)
-            selections.outputDevice = outputOptions[0]
+            selections.outputDevice = firstRealOutput(outputOptions)
 
         setRoleSelections(role, selections.outputDevice, selections.firstChannel)
 
@@ -236,6 +244,12 @@ Window {
         var pairOptions = getOutputPairOptions(selections.outputDevice)
 
         var pairText = pairTextForFirstChannel(pairOptions, selections.firstChannel)
+        if (role === "master"
+                && String(selections.outputDevice).toLowerCase() !== "none"
+                && String(selections.outputDevice) !== ""
+                && pairText === "None") {
+            pairText = pairOptions.length > 1 ? String(pairOptions[1]) : "1-2"
+        }
         var firstChannel = parseFirstChannel(pairText)
         setRoleSelections(role, selections.outputDevice, firstChannel)
 
@@ -263,11 +277,16 @@ Window {
 
         outputChannelPairsCache = ({})
 
-        audioOutputDeviceOptions = deckA.getAvailableAudioOutputDevices(pendingAudioDeviceType)
+        // Assigning a ComboBox model changes currentIndex synchronously. Guard
+        // the assignment itself so index 0 ("None") cannot overwrite a saved
+        // device before we restore the intended index below.
+        audioUiSyncing = true
+        audioOutputDeviceOptions = settingsManager && settingsManager.getAvailableAudioOutputDevices
+            ? settingsManager.getAvailableAudioOutputDevices(pendingAudioDeviceType)
+            : deckA.getAvailableAudioOutputDevices(pendingAudioDeviceType)
         if (!audioOutputDeviceOptions || audioOutputDeviceOptions.length === 0)
             audioOutputDeviceOptions = ["None"]
 
-        audioUiSyncing = true
         refreshRoleOutputAndPairs("master")
         refreshRoleOutputAndPairs("headphones")
         refreshRoleOutputAndPairs("booth")
@@ -284,6 +303,8 @@ Window {
             return
         }
 
+        // The model assignment can emit currentIndexChanged immediately.
+        audioUiSyncing = true
         audioDeviceTypeOptions = deckA.getAvailableAudioDeviceTypes()
         if (!audioDeviceTypeOptions || audioDeviceTypeOptions.length === 0)
             audioDeviceTypeOptions = [""]
@@ -295,7 +316,6 @@ Window {
                 pendingAudioDeviceType = audioDeviceTypeOptions[0]
         }
 
-        audioUiSyncing = true
         audioDeviceTypeCombo.currentIndex = Math.max(0, indexForText(audioDeviceTypeOptions, pendingAudioDeviceType))
         audioUiSyncing = false
 
@@ -368,18 +388,17 @@ Window {
         pendingAudioSampleRate = sampleRate
         pendingAudioBufferSize = bufferSize
 
-        settingsManager.audioDeviceType = deviceType
-        // Keep the legacy general key for older configurations, but persist the
-        // authoritative master-device preference as well.
-        settingsManager.audioMasterDeviceType = deviceType
-        settingsManager.audioMasterOutputDevice = masterOutputDevice
-        settingsManager.audioMasterFirstChannel = masterFirstChannel
-        settingsManager.audioHeadphonesOutputDevice = headphonesOutputDevice
-        settingsManager.audioHeadphonesFirstChannel = headphonesFirstChannel
-        settingsManager.audioBoothOutputDevice = boothOutputDevice
-        settingsManager.audioBoothFirstChannel = boothFirstChannel
-        settingsManager.audioSampleRate = sampleRate
-        settingsManager.audioBufferSize = bufferSize
+        // Persist the complete routing atomically. The old property-by-property
+        // path forced a synchronous XML write and signal emission for every field.
+        settingsManager.setAudioConfiguration(deviceType,
+                                              masterOutputDevice,
+                                              masterFirstChannel,
+                                              headphonesOutputDevice,
+                                              headphonesFirstChannel,
+                                              boothOutputDevice,
+                                              boothFirstChannel,
+                                              sampleRate,
+                                              bufferSize)
 
         var deckToApply = deckA && deckA.applyAudioDeviceSettings ? deckA
             : (deckB && deckB.applyAudioDeviceSettings ? deckB : null)
@@ -408,11 +427,6 @@ Window {
                                                    headphonesFirstChannel,
                                                    boothFirstChannel)
             : false
-
-        // Both decks output to the same master channel pair.
-        // Volume scaling (crossfader) provides the mix; JUCE adds both streams.
-        if (applied && deckB && deckB.setOutputFirstChannel)
-            deckB.setOutputFirstChannel(masterFirstChannel)
 
         if (applied) {
             if (deckToApply && deckToApply.getCurrentAudioSampleRate) {

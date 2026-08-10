@@ -40,6 +40,9 @@ int main()
     const auto shortcuts = read("src/qml/shared/UiShortcutManager.qml");
     const auto enlargedWaveform = read("src/qml/EnlargedWaveform.qml");
     const auto overallWaveform = read("src/qml/OverallWaveform.qml");
+    const auto settingsPanel = read("src/qml/SettingsPanel.qml");
+    const auto settingsWindow = read("src/qml/SettingsWindow.qml");
+    const auto applicationBootstrap = read("src/app/ApplicationBootstrap.cpp");
     const auto performancePads = read("src/qml/PerformancePads.qml");
     const auto flx10Mapping = read("src/controllers/mappings/midi/DDJ-FLX10.brockdj.xml");
     const auto engineHeader = read("src/engine/DjEngine.h");
@@ -49,6 +52,31 @@ int main()
     ok &= require(workspace.find("DeckControl") != std::string::npos, "workspace uses shared deck component");
     ok &= require(workspace.find("MixerSection") != std::string::npos, "workspace uses shared mixer component");
     ok &= require(main.find("waveformZoomLevels") == std::string::npos, "legacy fixed zoom list removed");
+    ok &= require(settingsPanel.find("settingsManager.setAudioConfiguration") != std::string::npos
+                      && settingsWindow.find("settingsManager.setAudioConfiguration") != std::string::npos,
+                  "audio settings use one atomic persistence operation");
+    ok &= require(settingsPanel.find("firstRealOutput(outputOptions)") != std::string::npos
+                      && settingsWindow.find("firstRealOutput(outputOptions)") != std::string::npos,
+                  "device-list reconciliation never replaces a preference with None");
+    ok &= require(settingsPanel.find("pairText === \"None\"") != std::string::npos
+                      && settingsWindow.find("pairText === \"None\"") != std::string::npos
+                      && settingsPanel.find("deckB.setOutputFirstChannel(masterFirstChannel)")
+                          == std::string::npos
+                      && settingsWindow.find("deckB.setOutputFirstChannel(masterFirstChannel)")
+                          == std::string::npos,
+                  "Master routing is normalized explicitly instead of by a hidden deck side effect");
+    ok &= require(settingsPanel.find("audioUiSyncing = true\n        audioOutputDeviceOptions =")
+                          != std::string::npos
+                      && settingsWindow.find("audioUiSyncing = true\n        audioOutputDeviceOptions =")
+                          != std::string::npos,
+                  "ComboBox model changes are guarded before they can select None");
+    const auto audioCallbackRegistration = applicationBootstrap.find(
+        "runtime.audioEngine->registerCallback(runtime.audioDeviceService->manager())");
+    const auto initialAudioApply = applicationBootstrap.find("const bool audioSettingsApplied");
+    ok &= require(audioCallbackRegistration != std::string::npos
+                      && initialAudioApply != std::string::npos
+                      && audioCallbackRegistration < initialAudioApply,
+                  "audio callback is registered before the startup device is opened");
     ok &= require(main.find("resizeThrottleCounter") == std::string::npos, "resize event counter removed");
     ok &= require(shortcuts.find("Ctrl+Shift+0") != std::string::npos
                   && shortcuts.find("Ctrl+0") != std::string::npos, "independent reset shortcuts exist");

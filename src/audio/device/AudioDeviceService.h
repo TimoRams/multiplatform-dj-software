@@ -5,9 +5,12 @@
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QHash>
 #include <atomic>
 #include <algorithm>
+#include <chrono>
 #include <expected>
+#include <mutex>
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
@@ -78,6 +81,11 @@ signals:
                         int headphonesFirstChannel);
 
 private:
+    struct DeviceListCacheEntry {
+        QStringList devices;
+        std::chrono::steady_clock::time_point expiresAt;
+    };
+
     std::expected<void, QString> applySettingsExpected(const QString& deviceType,
                                                        const QString& outputDevice,
                                                        int sampleRate,
@@ -93,4 +101,6 @@ private:
     QString m_lastError;
     QString m_fallbackMessage;
     ConfigurationSnapshot m_configuration;
+    mutable std::mutex m_deviceListCacheMutex;
+    mutable QHash<QString, DeviceListCacheEntry> m_deviceListCache;
 };

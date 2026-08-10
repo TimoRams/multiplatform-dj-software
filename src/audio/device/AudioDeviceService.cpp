@@ -104,7 +104,7 @@ std::expected<void, QString> AudioDeviceService::applySettingsExpected(const QSt
 #endif
     }
 
-    masterFirstChannel = clampFirstChannelForPack(masterFirstChannel);
+    masterFirstChannel = normalizeMasterFirstChannelForOutput(outputDevice, masterFirstChannel);
     headphonesFirstChannel = clampFirstChannelForPack(headphonesFirstChannel);
     boothFirstChannel = clampFirstChannelForPack(boothFirstChannel);
     const OutputRoutingConfig requestedRouting{
@@ -150,7 +150,9 @@ std::expected<void, QString> AudioDeviceService::applySettingsExpected(const QSt
         const auto names = type->getDeviceNames(false);
         bool found = false;
         for (const auto& name : names) {
-            if (QString::fromUtf8(name.toRawUTF8()).trimmed() == sanitizedOutput) {
+            const QString canonicalName = QString::fromUtf8(name.toRawUTF8()).trimmed();
+            if (canonicalName.compare(sanitizedOutput, Qt::CaseInsensitive) == 0) {
+                sanitizedOutput = canonicalName;
                 found = true;
                 break;
             }
@@ -430,6 +432,15 @@ QStringList AudioDeviceService::availableDeviceTypes() const
 
 QStringList AudioDeviceService::availableOutputDevices(const QString& deviceType) const
 {
+    const QString cacheKey = deviceType.trimmed().toCaseFolded();
+    const auto now = std::chrono::steady_clock::now();
+    {
+        std::lock_guard<std::mutex> lock(m_deviceListCacheMutex);
+        const auto cached = m_deviceListCache.constFind(cacheKey);
+        if (cached != m_deviceListCache.cend() && cached->expiresAt > now)
+            return cached->devices;
+    }
+
     QStringList devices { QStringLiteral("None") };
     QStringList allDevices;
 
@@ -503,6 +514,15 @@ QStringList AudioDeviceService::availableOutputDevices(const QString& deviceType
     const int currentOutputIndex = devices.indexOf(currentOutput);
     if (currentOutputIndex > 1)
         devices.move(currentOutputIndex, 1);
+
+    // Settings opens with an immediate scan followed by one short retry. Cache
+    // only successful scans so the retry can still discover a backend that was
+    // not ready during application startup.
+    if (devices.size() > 1) {
+        std::lock_guard<std::mutex> lock(m_deviceListCacheMutex);
+        m_deviceListCache.insert(cacheKey,
+                                 DeviceListCacheEntry{devices, now + std::chrono::milliseconds(1500)});
+    }
     return devices;
 }
 

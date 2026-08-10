@@ -31,8 +31,20 @@ QStringList MidiControllerManager::getAvailableMidiDevices()
     return m_availableControllerDeviceNames;
 }
 
-void MidiControllerManager::refreshMidiDeviceCache()
+bool MidiControllerManager::refreshMidiDeviceCache()
 {
+    const auto identifiersAsStrings = [](const auto& identifiers) {
+        QStringList result;
+        result.reserve(static_cast<qsizetype>(identifiers.size()));
+        for (const auto& identifier : identifiers)
+            result.push_back(midi_internal::toQString(identifier));
+        return result;
+    };
+    const QStringList previousInputIdentifiers = identifiersAsStrings(m_availableInputDeviceIdentifiers);
+    const QStringList previousInputNames = m_availableInputDeviceNames;
+    const QStringList previousOutputIdentifiers = identifiersAsStrings(m_availableOutputDeviceIdentifiers);
+    const QStringList previousOutputNames = m_availableOutputDeviceNames;
+
     m_availableInputDeviceIdentifiers.clear();
     m_availableInputDeviceNames.clear();
 
@@ -59,7 +71,15 @@ void MidiControllerManager::refreshMidiDeviceCache()
 
     rebuildControllerDeviceCache();
 
-    logAvailableMidiPorts();
+    const QStringList currentInputIdentifiers = identifiersAsStrings(m_availableInputDeviceIdentifiers);
+    const QStringList currentOutputIdentifiers = identifiersAsStrings(m_availableOutputDeviceIdentifiers);
+    const bool changed = previousInputIdentifiers != currentInputIdentifiers
+        || previousInputNames != m_availableInputDeviceNames
+        || previousOutputIdentifiers != currentOutputIdentifiers
+        || previousOutputNames != m_availableOutputDeviceNames;
+    if (changed)
+        logAvailableMidiPorts();
+    return changed;
 }
 
 void MidiControllerManager::rebuildControllerDeviceCache()

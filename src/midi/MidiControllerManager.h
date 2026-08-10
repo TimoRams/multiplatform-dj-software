@@ -276,7 +276,8 @@ private:
     QString m_primaryAlsaInputPort;
 #endif
 
-    void refreshMidiDeviceCache();
+    bool refreshMidiDeviceCache();
+    void refreshMidiDevices(bool notifyMappingList);
     void populateFromAlsaFallback();
     void rebuildControllerDeviceCache();
     bool isPseudoAlsaIdentifier(const juce::String& identifier) const;

@@ -19,6 +19,47 @@ juce::String toJuceString(const QString& text)
     return juce::String::fromUTF8(text.toUtf8().constData());
 }
 
+QStringList mergePreferredOutputDevices(QStringList discoveredDevices,
+                                        const QStringList& preferredDevices)
+{
+    if (discoveredDevices.isEmpty())
+        discoveredDevices.push_back(QStringLiteral("None"));
+
+    int insertionIndex = 0;
+    if (discoveredDevices.front().trimmed().compare(QStringLiteral("None"),
+                                                     Qt::CaseInsensitive) == 0) {
+        insertionIndex = 1;
+    }
+
+    for (const QString& preferredValue : preferredDevices) {
+        const QString preferred = preferredValue.trimmed();
+        if (preferred.isEmpty()
+            || preferred.compare(QStringLiteral("None"), Qt::CaseInsensitive) == 0) {
+            continue;
+        }
+
+        const auto existing = std::find_if(discoveredDevices.cbegin(), discoveredDevices.cend(),
+                                           [&preferred](const QString& candidate) {
+                                               return candidate.trimmed().compare(
+                                                          preferred, Qt::CaseInsensitive) == 0;
+                                           });
+        if (existing == discoveredDevices.cend()) {
+            discoveredDevices.insert(insertionIndex, preferred);
+            ++insertionIndex;
+        }
+    }
+
+    return discoveredDevices;
+}
+
+int normalizeMasterFirstChannelForOutput(const QString& outputDevice, int firstChannel)
+{
+    const QString output = outputDevice.trimmed();
+    if (output.isEmpty() || output.compare(QStringLiteral("None"), Qt::CaseInsensitive) == 0)
+        return -1;
+    return firstChannel < 1 ? 1 : std::clamp(firstChannel, 1, 127);
+}
+
 int choosePreferredBufferSize(juce::AudioIODevice* device, int requestedSize)
 {
     if (device == nullptr)

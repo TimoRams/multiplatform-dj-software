@@ -9,6 +9,9 @@
 #include <mutex>
 
 juce::String toJuceString(const QString& text);
+QStringList mergePreferredOutputDevices(QStringList discoveredDevices,
+                                        const QStringList& preferredDevices);
+int normalizeMasterFirstChannelForOutput(const QString& outputDevice, int firstChannel);
 int choosePreferredBufferSize(juce::AudioIODevice* device, int requestedSize);
 int minimumStableBufferSizeForBackend(const QString& deviceType);
 int clampToStableBufferSize(const QString& deviceType, int requestedSize);

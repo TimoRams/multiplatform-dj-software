@@ -44,7 +44,7 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, ControlClock
         {
             if (m_shutdownComplete.load(std::memory_order_acquire))
                 return;
-            refreshMidiAndMappings();
+            refreshMidiDevices(false);
             if (!hasActiveMidiInput())
                 restoreSavedDeviceSelections();
         }, Qt::QueuedConnection);
@@ -66,7 +66,7 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, ControlClock
     m_selectedController = SettingsManager::getInstance().getSelectedController();
     m_selectedMappingFile = SettingsManager::getInstance().getSelectedMappingFile();
 
-    refreshMidiAndMappings();
+    refreshMidiDevices(false);
     if (!m_selectedMappingFile.isEmpty())
         loadBrockDjXmlMapping(m_selectedMappingFile);
     else
@@ -82,7 +82,7 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, ControlClock
     {
         if (m_shutdownComplete.load(std::memory_order_acquire))
             return;
-        refreshMidiAndMappings();
+        refreshMidiDevices(false);
         if (!hasActiveMidiInput())
             restoreSavedDeviceSelections();
         autoOpenFlx10MidiOutputIfNeeded();
@@ -156,17 +156,25 @@ MidiControllerManager::~MidiControllerManager()
 }
 void MidiControllerManager::refreshMidiAndMappings()
 {
+    refreshMidiDevices(true);
+}
+
+void MidiControllerManager::refreshMidiDevices(bool notifyMappingList)
+{
     if (m_shutdownComplete.load(std::memory_order_acquire))
         return;
 
-    refreshMidiDeviceCache();
+    const bool devicesChanged = refreshMidiDeviceCache();
 
     if (m_shutdownComplete.load(std::memory_order_acquire))
         return;
 
-    emit midiDevicesUpdated();
-    emit controllerListUpdated();
-    emit mappingListUpdated();
+    if (devicesChanged) {
+        emit midiDevicesUpdated();
+        emit controllerListUpdated();
+    }
+    if (notifyMappingList)
+        emit mappingListUpdated();
 }
 
 void MidiControllerManager::resetHighResolutionControlState()
@@ -183,7 +191,11 @@ void MidiControllerManager::runControllerHousekeeping(double monotonicSeconds)
         return;
 
     if (monotonicSeconds >= m_nextControllerConnectionCheckSeconds) {
-        m_nextControllerConnectionCheckSeconds = monotonicSeconds + 2.0;
+        // JUCE's device-list callback handles normal hotplug immediately. This
+        // is only a fallback for backends that miss notifications, so a tight
+        // two-second synchronous ALSA rescan wastes UI time when the configured
+        // controller is simply unplugged.
+        m_nextControllerConnectionCheckSeconds = monotonicSeconds + 15.0;
 
         const bool inputOpen = hasActiveMidiInput();
         const bool outputOpen =
@@ -194,7 +206,7 @@ void MidiControllerManager::runControllerHousekeeping(double monotonicSeconds)
             ;
 
         if (!inputOpen || !outputOpen) {
-            refreshMidiAndMappings();
+            refreshMidiDevices(false);
             if (!hasActiveMidiInput())
                 restoreSavedDeviceSelections();
             else if (!outputOpen)

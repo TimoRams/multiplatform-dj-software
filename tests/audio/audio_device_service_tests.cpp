@@ -29,6 +29,19 @@ int main(int argc, char** argv)
 
     ok &= require(service.manager().getCurrentAudioDevice() == nullptr,
                   "constructing the service must not select a default device");
+    ok &= require(mergePreferredOutputDevices(
+                      { QStringLiteral("None"), QStringLiteral("default"), QStringLiteral("USB") },
+                      { QStringLiteral("Default"), QStringLiteral("Remembered device") })
+                      == QStringList { QStringLiteral("None"), QStringLiteral("Remembered device"),
+                                       QStringLiteral("default"), QStringLiteral("USB") },
+                  "saved devices remain selectable without duplicating canonical names");
+    ok &= require(mergePreferredOutputDevices({}, { QStringLiteral("None"), QString() })
+                      == QStringList { QStringLiteral("None") },
+                  "empty and silent preferences never create duplicate choices");
+    ok &= require(normalizeMasterFirstChannelForOutput(QStringLiteral("default"), -1) == 1,
+                  "a selected Master device always defaults to stereo channels 1-2");
+    ok &= require(normalizeMasterFirstChannelForOutput(QStringLiteral("None"), 1) == -1,
+                  "an unassigned Master device remains intentionally silent");
     const auto noDevicePairs = service.availableOutputChannelPairs(
         QStringLiteral("Missing backend"), QStringLiteral("None"));
     ok &= require(noDevicePairs == QStringList { QStringLiteral("None") },
