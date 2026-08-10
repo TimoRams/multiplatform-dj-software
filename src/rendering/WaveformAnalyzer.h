@@ -4,10 +4,12 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <QString>
 #include <QDebug>
+#include <algorithm>
 #include <atomic>
 #include <functional>
 #include <mutex>
 #include <cstdint>
+#include <deque>
 #include <optional>
 #include "TrackData.h"
 #include "analysis/AnalysisResult.h"
@@ -54,6 +56,9 @@ public:
     static QVector<TrackData::RgbWaveformFrame> buildInstantOverview(
         juce::AudioFormatReader* reader, int maxBins = 512);
     void setSeekHint(double positionSec);
+    void setRealtimeInteractionActive(bool active) noexcept {
+        m_realtimeInteractionActive.store(active, std::memory_order_release);
+    }
     void setCompletionCallback(CompletionCallback callback);
     void setProgressCallback(ProgressCallback callback);
     void setChunkCallback(ChunkCallback callback);
@@ -71,6 +76,7 @@ private:
    QString m_filePath;
    int m_pointsPerSecond;
    std::atomic<double> m_seekHintSec{0.0};
+   std::atomic<bool> m_realtimeInteractionActive{false};
    std::atomic<AnalysisGeneration> m_generation{0};
    AnalysisGeneration m_runGeneration = 0; // written before startThread(), read only by that run
    std::atomic<AnalysisJobState> m_jobState{AnalysisJobState::Finished};
@@ -104,6 +110,13 @@ public:
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (m_completion) ++m_replaced;
+        // The validated final result contains the complete waveform. Pending
+        // progressive chunks are then obsolete and must not delay or overwrite
+        // that immutable result on later control ticks.
+        if (value.completed && value.result) {
+            m_replaced += m_chunks.size();
+            m_chunks.clear();
+        }
         m_completion = std::move(value);
     }
     std::optional<Completion> take()
@@ -136,8 +149,15 @@ public:
         // 60 Hz control tick. 256 small chunks cover a large worker burst while
         // keeping the mailbox bounded to only a few MiB.
         constexpr size_t kMaxChunks = 256;
+        // A new track generation supersedes every queued progressive update.
+        // Keeping old chunks would delay the newly loaded track for seconds
+        // now that draining is intentionally bounded per control tick.
+        if (!m_chunks.empty() && m_chunks.back().generation != value.generation) {
+            m_replaced += m_chunks.size();
+            m_chunks.clear();
+        }
         if (m_chunks.size() == kMaxChunks) {
-            m_chunks.erase(m_chunks.begin());
+            m_chunks.pop_front();
             ++m_replaced;
         }
         m_chunks.push_back(std::move(value));
@@ -145,8 +165,17 @@ public:
     std::vector<Chunk> takeChunks()
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        auto value = std::move(m_chunks);
-        m_chunks.clear();
+        // Bound owner-thread work. Six 128-bin chunks are enough to keep the
+        // progressive display moving rapidly without monopolising a 60 Hz UI
+        // tick when a fast decoder publishes a large burst.
+        constexpr size_t kMaxChunksPerDrain = 6;
+        const size_t count = std::min(kMaxChunksPerDrain, m_chunks.size());
+        std::vector<Chunk> value;
+        value.reserve(count);
+        for (size_t index = 0; index < count; ++index) {
+            value.push_back(std::move(m_chunks.front()));
+            m_chunks.pop_front();
+        }
         return value;
     }
     [[nodiscard]] std::uint64_t replaced() const
@@ -154,7 +183,7 @@ public:
 private:
     mutable std::mutex m_mutex;
     std::optional<Completion> m_completion;
-    std::vector<Chunk> m_chunks;
+    std::deque<Chunk> m_chunks;
     double m_progress = 0.0;
     bool m_active = false;
     bool m_progressDirty = false;

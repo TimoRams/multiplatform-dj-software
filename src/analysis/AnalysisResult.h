@@ -10,6 +10,7 @@
 
 #include "TrackData.h"
 #include "TrackSegment.h"
+#include "waveform/WaveformLineBuilder.h"
 
 namespace analysis {
 
@@ -112,6 +113,7 @@ struct AnalysisResult {
     std::shared_ptr<const QVector<TrackData::RgbWaveformFrame>> rgbWaveform;
     std::shared_ptr<const QVector<TrackData::RgbWaveformFrame>> overviewWaveform;
     std::shared_ptr<const QVector<TrackData::PeakFrame>> peakMip;
+    std::shared_ptr<const waveform::PreparedWaveformLines> preparedWaveformLines;
     double bpm = 0.0;
     qint64 firstBeatSample = 0;
     double sampleRate = 44100.0;

@@ -6,6 +6,7 @@
 #include "audio/TimeStretchProcessor.h"
 #include "deck/DeckTransport.h"
 #include "engine/deck/JogNudgePolicy.h"
+#include "rendering/WaveformAnalyzer.h"
 
 #include <algorithm>
 #include <cmath>
@@ -28,6 +29,8 @@ void DjEngine::terminateScratchSession(double positionSec)
     m_pendingScratchReleaseGeneration = 0;
     m_scratch.clear();
     m_scratchSnapReadPending = false;
+    if (m_analyzer)
+        m_analyzer->setRealtimeInteractionActive(false);
 
     if (m_audioPipeline->renderModeRouterPtr())
         m_audioPipeline->renderModeRouter().exitScratchMode(
@@ -157,6 +160,8 @@ void DjEngine::applyScratchNeutralRouting()
 
 void DjEngine::restorePostScrubPlaybackState(double finalCursorSeconds)
 {
+    if (m_analyzer)
+        m_analyzer->setRealtimeInteractionActive(false);
     const double audioSec = std::clamp(
         std::isfinite(finalCursorSeconds) ? finalCursorSeconds : 0.0,
         0.0,
@@ -245,6 +250,11 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
         grabSec = std::max(0.0, m_transport->audioPositionSeconds());
     }
     grabSec = clampVirtual(grabSec);
+
+    if (m_analyzer) {
+        m_analyzer->setSeekHint(std::max(0.0, grabSec));
+        m_analyzer->setRealtimeInteractionActive(true);
+    }
 
     const auto loopCtx = scratchLoopCtx();
     m_transport->publishScratchPosition(m_scratch.armGrab(grabSec, len, loopCtx));

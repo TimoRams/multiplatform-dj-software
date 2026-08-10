@@ -273,6 +273,9 @@ bool AudioPageCache::requestRange(const AudioCacheHandle& handle, std::int64_t f
     if (first < 0 || last < first) return false;
     bool all = true;
     for (auto page = first; page <= last; ++page) all = requestPage(handle, page, priority) && all;
+    // Bulk requests originate outside the real-time callback. Wake the decoder
+    // immediately so track-load prewarming does not wait for its polling tick.
+    notifyWorker();
     return all;
 }
 

@@ -1,5 +1,6 @@
 #include "TrackData.h"
 #include "analysis/AnalysisResult.h"
+#include "waveform/WaveformLineBuilder.h"
 
 #include <QMetaObject>
 #include <QThread>
@@ -151,7 +152,11 @@ bool TrackData::applyAnalysisResult(const analysis::AnalysisResult& result)
         m_rgbSnapshot = result.rgbWaveform;
         m_overviewSnapshot = result.overviewWaveform;
         m_peakMipSnapshot = result.peakMip;
-        rebuildWaveformLineStoreLocked(result.identity.trackGeneration);
+        if (result.preparedWaveformLines)
+            installPreparedWaveformLinesLocked(result.preparedWaveformLines,
+                                               result.identity.trackGeneration);
+        else
+            rebuildWaveformLineStoreLocked(result.identity.trackGeneration);
         m_data.clear(); m_rgbData.clear(); m_overviewRgb.clear(); m_peakMip.clear();
         m_progressiveRgbReady.clear();
         m_progressiveDirtyLineChunks.clear();
@@ -212,6 +217,39 @@ void TrackData::rebuildWaveformLineStoreLocked(std::uint64_t trackGeneration)
             static_cast<std::uint32_t>(count), static_cast<std::uint32_t>(totalLines), std::move(lines)});
         Q_ASSERT(published == WaveformLineStore::PublishResult::Accepted);
     }
+}
+
+void TrackData::installPreparedWaveformLinesLocked(
+    const std::shared_ptr<const waveform::PreparedWaveformLines>& prepared,
+    std::uint64_t trackGeneration)
+{
+    if (!prepared || prepared->totalLineCount == 0 || prepared->chunks.empty()) {
+        rebuildWaveformLineStoreLocked(trackGeneration);
+        return;
+    }
+
+    trackGeneration = std::max(trackGeneration, m_waveformLineGeneration + 1);
+    m_waveformLineGeneration = trackGeneration;
+    m_waveformLineStore.reset(trackGeneration, prepared->totalLineCount);
+    std::uint32_t first = 0;
+    for (std::uint32_t chunkIndex = 0; chunkIndex < prepared->chunks.size(); ++chunkIndex) {
+        const auto& lines = prepared->chunks[chunkIndex];
+        if (!lines || lines->empty() || first >= prepared->totalLineCount) {
+            rebuildWaveformLineStoreLocked(trackGeneration + 1);
+            return;
+        }
+        const auto count = static_cast<std::uint32_t>(lines->size());
+        const auto published = m_waveformLineStore.publish({
+            trackGeneration, chunkIndex, first, count,
+            prepared->totalLineCount, lines});
+        if (published != WaveformLineStore::PublishResult::Accepted) {
+            rebuildWaveformLineStoreLocked(trackGeneration + 1);
+            return;
+        }
+        first += count;
+    }
+    if (first != prepared->totalLineCount)
+        rebuildWaveformLineStoreLocked(trackGeneration + 1);
 }
 
 QVector<TrackData::RgbWaveformFrame> TrackData::downsampleOverview(
@@ -573,6 +611,39 @@ void TrackData::setRgbWaveformData(QVector<RgbWaveformFrame>&& frames)
     }
     emit rgbWaveformUpdated();
     emit overviewRgbUpdated();
+}
+
+void TrackData::installCachedWaveform(
+    QVector<WaveformBin>&& waveform,
+    float globalMaxPeak,
+    QVector<RgbWaveformFrame>&& rgb,
+    QVector<PeakFrame>&& peakMip,
+    std::shared_ptr<const waveform::PreparedWaveformLines> preparedLines)
+{
+    assertOwnerThread();
+    auto overview = downsampleOverview(rgb);
+    {
+        QMutexLocker locker(&m_mutex);
+        m_totalExpected = rgb.size();
+        m_globalMaxPeak = std::max(0.001f, globalMaxPeak);
+        m_waveformSnapshot = std::make_shared<const QVector<WaveformBin>>(std::move(waveform));
+        m_rgbSnapshot = std::make_shared<const QVector<RgbWaveformFrame>>(std::move(rgb));
+        m_overviewSnapshot = std::make_shared<const QVector<RgbWaveformFrame>>(std::move(overview));
+        m_peakMipSnapshot = std::make_shared<const QVector<PeakFrame>>(std::move(peakMip));
+        m_data.clear();
+        m_rgbData.clear();
+        m_overviewRgb.clear();
+        m_peakMip.clear();
+        m_progressiveOvr.clear();
+        m_progressiveLastFrame = 0;
+        m_progressiveRgbReady.clear();
+        m_progressiveDirtyLineChunks.clear();
+        installPreparedWaveformLinesLocked(preparedLines);
+    }
+    emit dataUpdated();
+    emit rgbWaveformUpdated();
+    emit overviewRgbUpdated();
+    emit peakMipUpdated();
 }
 
 void TrackData::setOverviewRgbData(QVector<RgbWaveformFrame>&& data)

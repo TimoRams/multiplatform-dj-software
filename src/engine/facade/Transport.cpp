@@ -528,11 +528,12 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
         const int expected = result.waveformCache.totalExpected > 0
             ? result.waveformCache.totalExpected : result.waveformCache.waveform.size();
         m_trackData->setTotalExpected(expected);
-        m_trackData->replaceAllData(std::move(result.waveformCache.waveform),
-                                    std::max(0.001f, result.waveformCache.globalMaxPeak));
-        m_trackData->setRgbWaveformData(std::move(result.waveformCache.rgb));
-        if (!result.waveformCache.peakMip.isEmpty())
-            m_trackData->setPeakMipData(std::move(result.waveformCache.peakMip));
+        m_trackData->installCachedWaveform(
+            std::move(result.waveformCache.waveform),
+            result.waveformCache.globalMaxPeak,
+            std::move(result.waveformCache.rgb),
+            std::move(result.waveformCache.peakMip),
+            std::move(result.waveformCache.preparedLines));
     } else if (!result.instantOverview.isEmpty()) {
         m_trackData->setTotalExpected(std::max(1, result.instantOverviewExpected));
         m_trackData->setOverviewRgbData(std::move(result.instantOverview));

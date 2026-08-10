@@ -420,7 +420,10 @@ void updateDownbeatCounterNode(QSGSimpleTextureNode*& node,
     textureNode->setFiltering(QSGTexture::Linear);
     const double x = waveform_render::snappedTimelineX(
         label.linePosition, originLine, pixelsPerLine, devicePixelRatio);
-    textureNode->setRect(QRectF(x - badgeWidth * 0.5, top, badgeWidth, badgeHeight));
+    // Keep the downbeat itself unobstructed: the counter follows immediately
+    // to the right of the red marker instead of sitting on top of it.
+    const qreal markerGap = 3.0 / dpr;
+    textureNode->setRect(QRectF(x + markerGap, top, badgeWidth, badgeHeight));
 }
 
 std::uint64_t writeWaveformChunk(QSGSimpleTextureNode*& node,
@@ -588,8 +591,10 @@ ScrollingWaveformItem::ScrollingWaveformItem(QQuickItem* parent)
     // The playhead itself is a VSync transform and stays at full frame rate.
     // Progressive analysis only changes the underlying geometry; rebuilding it
     // at 60 Hz competes with that transform and produces visible frame drops.
-    // Coalesce worker bursts to 30 Hz while keeping the first segment responsive.
-    m_dataUpdateThrottle->setInterval(33);
+    // Progressive textures are informational while analysis is running. 15 Hz
+    // is visually continuous for their fill-in, while playback/scratch motion
+    // remains a full-rate scene-graph transform and never waits for raster work.
+    m_dataUpdateThrottle->setInterval(66);
     connect(m_dataUpdateThrottle, &QTimer::timeout, this, [this]() {
         // A progressive chunk changes only the audio-line nodes. Rebuilding
         // beat/cue geometry here made the one-pixel beatgrid lines blink while

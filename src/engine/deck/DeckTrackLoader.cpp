@@ -7,7 +7,9 @@
 #include <QSemaphore>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <thread>
 #include <utility>
 
 #ifdef __linux__
@@ -210,6 +212,34 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
     if (!result.cacheHandle.isValid())
         return fail(TrackLoadError::DecoderCreationFailed, QStringLiteral("Could not open playback cache"));
 
+    // A successful load means "ready to play/scratch", not merely "decoder
+    // opened". Prime a small window before publishing the track so the first
+    // audio callback never has to begin from a completely cold cache. This
+    // bounded wait happens only on the low-priority loader thread.
+    const auto pageCount = result.cacheHandle.pageCount();
+    if (pageCount > 0) {
+        const auto lastWarmPage = std::min<std::int64_t>(3, pageCount - 1);
+        (void)m_audioPageCache.requestPage(result.cacheHandle, 0,
+                                           AudioCachePriority::RealtimeCritical);
+        (void)m_audioPageCache.requestRange(result.cacheHandle, 0, lastWarmPage,
+                                            AudioCachePriority::ScratchNearPlayhead);
+
+        const auto requiredPages = std::min<std::int64_t>(2, pageCount);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(120);
+        while (isCurrent(request.generation) && std::chrono::steady_clock::now() < deadline) {
+            bool ready = true;
+            for (std::int64_t page = 0; page < requiredPages; ++page) {
+                if (!m_audioPageCache.tryGetPage(result.cacheHandle, page)) {
+                    ready = false;
+                    break;
+                }
+            }
+            if (ready)
+                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+
     // Restore the immutable waveform before publishing the prepared track.
     // These fields were previously present in TrackLoadResult but never filled,
     // so every reload unnecessarily started a new analysis and visibly changed
@@ -218,6 +248,13 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
         return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
     result.waveformCacheLoaded = WaveformCache::loadForFile(
         result.canonicalPath, m_waveformPointsPerSecond, &result.waveformCache);
+    if (result.waveformCacheLoaded) {
+        // Canonical render lines are CPU-heavy for long tracks. Build them on
+        // the loader thread so installing a cached track is pointer publication
+        // rather than a full-timeline UI-thread conversion.
+        result.waveformCache.preparedLines = waveform::prepareWaveformLines(
+            result.waveformCache.rgb, result.waveformCache.peakMip);
+    }
     if (!isCurrent(request.generation))
         return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
     return result;

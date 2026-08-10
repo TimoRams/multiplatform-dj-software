@@ -16,6 +16,7 @@
 #include "waveform/WaveformLineStore.h"
 
 namespace analysis { struct AnalysisResult; }
+namespace waveform { struct PreparedWaveformLines; }
 
 class TrackData : public QObject
 {
@@ -276,6 +277,11 @@ public:
     }
 
     void setRgbWaveformData(QVector<RgbWaveformFrame>&& frames);
+    void installCachedWaveform(QVector<WaveformBin>&& waveform,
+                               float globalMaxPeak,
+                               QVector<RgbWaveformFrame>&& rgb,
+                               QVector<PeakFrame>&& peakMip,
+                               std::shared_ptr<const waveform::PreparedWaveformLines> preparedLines);
 
     // Pre-downsampled overview (≤4096 bins) computed off the main thread.
     void setOverviewRgbData(QVector<RgbWaveformFrame>&& data);
@@ -413,5 +419,8 @@ private:
     void publishProgressiveWaveformLinesLocked(int firstRgbFrame, int rgbFrameCount);
     void alignSegmentsToBeatgridLocked();
     void rebuildWaveformLineStoreLocked(std::uint64_t trackGeneration = 0);
+    void installPreparedWaveformLinesLocked(
+        const std::shared_ptr<const waveform::PreparedWaveformLines>& prepared,
+        std::uint64_t trackGeneration = 0);
     void assertOwnerThread() const;
 };

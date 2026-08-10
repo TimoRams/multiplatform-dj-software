@@ -106,6 +106,8 @@ int main(int argc, char** argv)
                       "loader returns metadata only; playback reader belongs to cache");
         ok &= require(waiter.value().cacheHandle.isValid(),
                       "playback cache handle must be prepared off the owner thread");
+        ok &= require(static_cast<bool>(cache.tryGetPage(waiter.value().cacheHandle, 0)),
+                      "successful load must publish with its first playback page warm");
         cache.releaseTrack(waiter.value().cacheHandle);
     }
     {
@@ -129,6 +131,10 @@ int main(int argc, char** argv)
         ok &= require(waiter.value().waveformCache.rgb.size() == payload.totalExpected
                           && waiter.value().waveformCache.rgb[7].rms > 0.69f,
                       "restored waveform cache must preserve its timeline");
+        ok &= require(waiter.value().waveformCache.preparedLines
+                          && waiter.value().waveformCache.preparedLines->totalLineCount
+                              == static_cast<std::uint32_t>(payload.totalExpected),
+                      "cached render lines must be prepared before owner-thread install");
         cache.releaseTrack(waiter.value().cacheHandle);
         QFile::remove(WaveformCache::cachePathFor(monoPath, payload.pointsPerSecond));
     }

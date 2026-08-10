@@ -390,6 +390,16 @@ bool runEnvelopePass(const EnvelopePassInput& input)
     const int numPoints = input.numPoints;
 
     auto threadShouldExit = [&]() { return thread.threadShouldExit(); };
+    const auto cooperateWithRealtime = [&]() {
+        // Analysis owns a separate decoder, but can still compete for CPU and
+        // storage bandwidth exactly when a cold scratch window needs both.
+        // Pausing in small sleeps keeps cancellation responsive and leaves the
+        // audio/cache/render threads uncontended while the platter is held.
+        while (!threadShouldExit() && input.realtimeInteractionActive
+               && input.realtimeInteractionActive()) {
+            juce::Thread::sleep(4);
+        }
+    };
 
     m_trackData->reportAnalysisProgress(0.02, true);
 
@@ -559,6 +569,8 @@ bool runEnvelopePass(const EnvelopePassInput& input)
 
         // Warmup (no emit)
         for (int bin = priorityWarmupStart; bin < priorityStart && !threadShouldExit(); ++bin) {
+            if ((bin & 0x1F) == 0)
+                cooperateWithRealtime();
             const juce::int64 binStart = (static_cast<juce::int64>(bin) * totalSamples) / numPoints;
             juce::int64 binEnd = (static_cast<juce::int64>(bin + 1) * totalSamples) / numPoints;
             if (binEnd <= binStart) binEnd = std::min(totalSamples, binStart + 1);
@@ -602,6 +614,8 @@ bool runEnvelopePass(const EnvelopePassInput& input)
 
         // Priority window — emit immediately
         for (int bin = priorityStart; bin < priorityEnd && !threadShouldExit(); ++bin) {
+            if ((bin & 0x1F) == 0)
+                cooperateWithRealtime();
             const juce::int64 binStart = (static_cast<juce::int64>(bin) * totalSamples) / numPoints;
             juce::int64 binEnd = (static_cast<juce::int64>(bin + 1) * totalSamples) / numPoints;
             if (binEnd <= binStart) binEnd = std::min(totalSamples, binStart + 1);
@@ -693,6 +707,9 @@ bool runEnvelopePass(const EnvelopePassInput& input)
     {
         if (threadShouldExit()) break;
 
+        if ((bin & 0x1F) == 0)
+            cooperateWithRealtime();
+
         // Yield occasionally without sleeping — keeps UI/audio responsive without
         // throttling analysis to "grandma speed".
         if ((bin & 0xFFF) == 0)
@@ -766,6 +783,8 @@ bool runEnvelopePass(const EnvelopePassInput& input)
 
                     // Warmup
                     for (int wb = nWarmStart; wb < nWindowStart && !threadShouldExit(); ++wb) {
+                        if ((wb & 0x1F) == 0)
+                            cooperateWithRealtime();
                         const juce::int64 wBinStart = (static_cast<juce::int64>(wb) * totalSamples) / numPoints;
                         juce::int64 wBinEnd = (static_cast<juce::int64>(wb + 1) * totalSamples) / numPoints;
                         if (wBinEnd <= wBinStart) wBinEnd = std::min(totalSamples, wBinStart + 1);
@@ -808,6 +827,8 @@ bool runEnvelopePass(const EnvelopePassInput& input)
 
                     // Priority window
                     for (int pb = nWindowStart; pb < nPriorityEnd && !threadShouldExit(); ++pb) {
+                        if ((pb & 0x1F) == 0)
+                            cooperateWithRealtime();
                         const juce::int64 pBinStart = (static_cast<juce::int64>(pb) * totalSamples) / numPoints;
                         juce::int64 pBinEnd = (static_cast<juce::int64>(pb + 1) * totalSamples) / numPoints;
                         if (pBinEnd <= pBinStart) pBinEnd = std::min(totalSamples, pBinStart + 1);

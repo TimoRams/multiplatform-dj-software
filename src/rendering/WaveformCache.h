@@ -4,6 +4,7 @@
 #include <QVector>
 
 #include "TrackData.h"
+#include "waveform/WaveformLineBuilder.h"
 
 class WaveformCache
 {
@@ -15,6 +16,7 @@ public:
         QVector<TrackData::WaveformBin> waveform;
         QVector<TrackData::RgbWaveformFrame> rgb;
         QVector<TrackData::PeakFrame> peakMip;  // high-res signed min/max peaks
+        std::shared_ptr<const waveform::PreparedWaveformLines> preparedLines;
     };
 
     static QString cachePathFor(const QString& filePath, int pointsPerSecond);

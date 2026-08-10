@@ -12,6 +12,12 @@
 #include <mutex>
 #include <thread>
 
+#ifdef __linux__
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
+
 namespace {
 
 // Cap concurrent full-track analyses (BPM/key/beatgrid over the whole file are
@@ -23,7 +29,17 @@ int maxConcurrentAnalyses()
     const unsigned hw = std::thread::hardware_concurrency();
     if (hw == 0)
         return 1;
-    return std::clamp(static_cast<int>(hw) / 3, 1, 4);
+    // Full-track DSP is background work. Reserve enough CPU for Vulkan/Qt,
+    // audio callbacks and cache decoding even when all four decks are loaded.
+    return hw <= 8 ? 1 : 2;
+}
+
+void lowerAnalysisThreadPriority()
+{
+#ifdef __linux__
+    const pid_t tid = static_cast<pid_t>(syscall(SYS_gettid));
+    (void)setpriority(PRIO_PROCESS, static_cast<id_t>(tid), 12);
+#endif
 }
 
 std::mutex g_analysisSlotsMutex;
@@ -200,6 +216,7 @@ void WaveformAnalyzer::notifyCompletion(bool completed,
 
 void WaveformAnalyzer::run()
 {
+    lowerAnalysisThreadPriority();
     const auto runGeneration = m_runGeneration;
     const QString runFilePath = m_filePath;
     m_jobState.store(AnalysisJobState::Running, std::memory_order_release);
@@ -267,6 +284,9 @@ void WaveformAnalyzer::run()
             m_pointsPerSecond,
             m_seekHintSec.load(std::memory_order_relaxed),
             [this]() { return m_seekHintSec.load(std::memory_order_relaxed); },
+            [this]() {
+                return m_realtimeInteractionActive.load(std::memory_order_acquire);
+            },
             totalSamples,
             sampleRate,
             numPoints,
@@ -320,6 +340,10 @@ void WaveformAnalyzer::run()
 
     if (!threadShouldExit()) {
         auto completedResult = std::move(working).finish(m_identity);
+        if (completedResult.rgbWaveform && completedResult.peakMip) {
+            completedResult.preparedWaveformLines = waveform::prepareWaveformLines(
+                *completedResult.rgbWaveform, *completedResult.peakMip);
+        }
         if (!analysis::validateResult(completedResult))
             return;
         completedResult.validated = true;

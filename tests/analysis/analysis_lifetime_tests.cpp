@@ -50,6 +50,26 @@ int main(int argc, char** argv)
 
     bool ok = true;
     {
+        AnalyzerResultMailbox mailbox;
+        const auto emptyWaveform = std::make_shared<const QVector<TrackData::WaveformBin>>();
+        const auto emptyRgb = std::make_shared<const QVector<TrackData::RgbWaveformFrame>>();
+        for (int index = 0; index < 10; ++index) {
+            mailbox.publishChunk({42, index * 128, 1280, emptyWaveform, emptyRgb});
+        }
+        const auto firstDrain = mailbox.takeChunks();
+        const auto secondDrain = mailbox.takeChunks();
+        ok &= require(firstDrain.size() == 6 && secondDrain.size() == 4,
+                      "progressive mailbox must bound work per owner-thread tick");
+
+        mailbox.publishChunk({42, 0, 128, emptyWaveform, emptyRgb});
+        mailbox.publish({true, 42, QStringLiteral("track.wav"),
+                         std::make_shared<const analysis::AnalysisResult>()});
+        ok &= require(mailbox.takeChunks().empty(),
+                      "validated completion must discard obsolete progressive chunks");
+        ok &= require(mailbox.take().has_value(),
+                      "validated completion must remain immediately available");
+    }
+    {
         TrackData data;
         WaveformAnalyzer analyzer(&formats, 600);
         std::atomic<int> callbacks{0};

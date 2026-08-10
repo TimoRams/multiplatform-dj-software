@@ -30,6 +30,17 @@ float tail(const juce::AudioBuffer<float>& buffer, int channel)
 void parameterSnapshotIsCoherent()
 {
     AudioParameterStore store;
+    // Prime the fields used by this synthetic equality invariant before the
+    // reader can run. Production defaults intentionally differ (for example
+    // masterGain=1 and headphoneMix=0.5), so reading the untouched initial
+    // snapshot made this concurrency test scheduler-dependent.
+    store.update([](AudioParameters& p) {
+        p.masterGain = 0.0f;
+        p.headphoneMix = 0.0f;
+        p.crossfaderPosition = 0.0f;
+        p.masterFirstChannel = 0;
+        p.boothFirstChannel = 0;
+    });
     std::atomic<bool> run { true };
     std::thread writer([&] {
         for (int generation = 1; generation < 50'000; ++generation) {
@@ -91,6 +102,11 @@ void mixerHeadphoneAndRouter()
 
     MasterMixer mixer;
     mixer.prepare(48'000.0, samples);
+    // The constant-power crossfader intentionally ramps from its reset gains
+    // during the first 5 ms. Settle that transition before asserting a full-
+    // block peak for the steady-state A-side signal.
+    mixer.mixPrograms(programs, tails, p, master, samples);
+    mixer.finalize(p, master, samples);
     mixer.mixPrograms(programs, tails, p, master, samples);
     mixer.finalize(p, master, samples);
     assert(std::abs(tail(master, 0) - 0.25f) < 0.002f);
@@ -111,6 +127,8 @@ void mixerHeadphoneAndRouter()
     p.pflEnabled[0] = true;
     HeadphoneBus headphoneBus;
     headphoneBus.prepare(48'000.0, samples);
+    // Headphone gain also ramps from its safe 1.0 startup value.
+    headphoneBus.mix(pfl, master, p, headphones, samples);
     headphoneBus.mix(pfl, master, p, headphones, samples);
     assert(std::abs(tail(headphones, 0) - 0.25f) < 0.01f);
     assert(std::abs(tail(master, 0) - 0.25f) < 0.002f);
