@@ -1,0 +1,37 @@
+set(BROCKDJ_QML_FILES
+    src/qml/main.qml
+    src/qml/UiTheme.qml
+    src/qml/shared/UiMetrics.qml
+    src/qml/shared/UiShortcutManager.qml
+    src/qml/performance/PerformanceWorkspace.qml
+    src/qml/performance/PerformanceWaveformScreen.qml
+    src/qml/shell/StartupOverlay.qml
+    src/qml/shell/ExitOverlay.qml
+    src/qml/shell/StatusOverlay.qml
+    src/qml/Knob.qml
+    src/qml/Button.qml
+    src/qml/Slider.qml
+    src/qml/ComboBox.qml
+    src/qml/TopHeader.qml
+    src/qml/EnlargedWaveform.qml
+    src/qml/BeatgridEditorPanel.qml
+    src/qml/PerformanceBeatgridPanel.qml
+    src/qml/PerformanceDeckQuickPanel.qml
+    src/qml/PerformanceBeatFxPanel.qml
+    src/qml/OverallWaveform.qml
+    src/qml/DeckControl.qml
+    src/qml/DeckTrackInfoPanel.qml
+    src/qml/DevelopmentControlsWindow.qml
+    src/qml/Library.qml
+    src/qml/PerformancePads.qml
+    src/qml/TurntableIndicator.qml
+    src/qml/MixerSection.qml
+    src/qml/SettingsPanel.qml
+    src/qml/SettingsWindow.qml
+    src/qml/MappingEditorWindow.qml
+    src/qml/WelcomeScreen.qml
+    src/qml/FxUnit.qml
+    src/qml/FxBar.qml
+    src/qml/CrossfaderBar.qml
+    PARENT_SCOPE
+)

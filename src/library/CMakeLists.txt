@@ -1,0 +1,22 @@
+target_sources(${PROJECT_NAME} PRIVATE
+    LibraryManager.h
+    LibraryManager.cpp
+    CoverArtExtractor.h
+    CoverArtExtractor.cpp
+    CoverArtProvider.h
+    LibraryCoverService.h
+    LibraryCoverService.cpp
+    LibraryPreviewPlayer.h
+    LibraryPreviewPlayer.cpp
+    TrackIdGenerator.h
+    LibraryDatabase.h
+    LibraryDatabase.cpp
+    LibrarySchema.cpp
+    LibraryTrackStore.cpp
+    LibraryCueStore.cpp
+    LibraryPlaylistStore.cpp
+    LibraryAnalysisManager.h
+    LibraryAnalysisManager.cpp
+    LibraryTableModel.h
+    LibraryTableModel.cpp
+)

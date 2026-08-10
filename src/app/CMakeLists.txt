@@ -1,0 +1,22 @@
+target_sources(${PROJECT_NAME} PRIVATE
+    ApplicationBootstrap.cpp
+    CiSmokeTest.cpp
+    ApplicationLifecycle.cpp
+    ControlClock.cpp
+    UiScaleController.h
+    UiScaleController.cpp
+    WaveformZoomController.h
+    WaveformZoomController.cpp
+    MixerControl.h
+    MixerControl.cpp
+    SystemMonitor.h
+    SystemMonitor.cpp
+    LsanSuppressions.cpp
+    CursorControl.h
+    CursorControl.cpp
+    SettingsManager.h
+    SettingsManager.cpp
+    AppConfig.h
+    AppConfig.cpp
+    AppExitGate.h
+)
