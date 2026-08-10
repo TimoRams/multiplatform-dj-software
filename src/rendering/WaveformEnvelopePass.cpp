@@ -317,15 +317,18 @@ QVector<TrackData::RgbWaveformFrame> waveform_internal::buildInstantOverview(
     maxBins = std::clamp(maxBins, 64, TrackData::kProgressiveBins);
     out.resize(maxBins);
 
-    constexpr int kMaxSamplesPerBin = 128;
-    juce::AudioBuffer<float> buf(numCh, kMaxSamplesPerBin);
+    // Keep this preview strictly O(maxBins) in decoder operations. The old
+    // stride loop performed roughly 128 separate reads for every overview bin
+    // (about 65k seeks for a 512-bin long track), despite being intended as the
+    // cheap post-load preview. One short, centred window per bin is enough
+    // until the progressive/full analysis replaces it.
+    constexpr int kSamplesPerBin = 128;
+    juce::AudioBuffer<float> buf(numCh, kSamplesPerBin);
 
     for (int bin = 0; bin < maxBins; ++bin) {
         const juce::int64 binStart = (static_cast<juce::int64>(bin) * totalSamples) / maxBins;
         const juce::int64 binEnd   = (static_cast<juce::int64>(bin + 1) * totalSamples) / maxBins;
         const juce::int64 span     = std::max<juce::int64>(1, binEnd - binStart);
-        const int stride = static_cast<int>(std::max<juce::int64>(1, span / kMaxSamplesPerBin));
-
         float peak = 0.0f;
         float rmsAcc = 0.0f;
         float lowAcc = 0.0f;
@@ -333,26 +336,26 @@ QVector<TrackData::RgbWaveformFrame> waveform_internal::buildInstantOverview(
         int sampleCount = 0;
         float prevMono = 0.0f;
 
-        for (juce::int64 pos = binStart; pos < binEnd; pos += stride) {
-            const int requested = static_cast<int>(std::min<juce::int64>(stride, binEnd - pos));
-            const int toRead = std::min(requested, kMaxSamplesPerBin);
-            buf.clear();
-            reader->read(&buf, 0, toRead, pos, true, true);
+        const int toRead = static_cast<int>(
+            std::min<juce::int64>(span, kSamplesPerBin));
+        const juce::int64 readPosition = binStart
+            + std::max<juce::int64>(0, (span - toRead) / 2);
+        buf.clear();
+        reader->read(&buf, 0, toRead, readPosition, true, true);
 
-            for (int i = 0; i < toRead; ++i) {
-                float mono = 0.0f;
-                for (int ch = 0; ch < numCh; ++ch)
-                    mono += buf.getSample(ch, i);
-                mono /= static_cast<float>(numCh);
+        for (int i = 0; i < toRead; ++i) {
+            float mono = 0.0f;
+            for (int ch = 0; ch < numCh; ++ch)
+                mono += buf.getSample(ch, i);
+            mono /= static_cast<float>(numCh);
 
-                const float absS = std::abs(mono);
-                peak = std::max(peak, absS);
-                rmsAcc += absS * absS;
-                lowAcc += absS;
-                highAcc += std::abs(mono - prevMono);
-                prevMono = mono;
-                ++sampleCount;
-            }
+            const float absS = std::abs(mono);
+            peak = std::max(peak, absS);
+            rmsAcc += absS * absS;
+            lowAcc += absS;
+            highAcc += std::abs(mono - prevMono);
+            prevMono = mono;
+            ++sampleCount;
         }
 
         if (sampleCount <= 0)

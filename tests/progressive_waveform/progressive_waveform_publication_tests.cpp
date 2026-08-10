@@ -27,8 +27,10 @@ int main(int argc, char** argv)
     // deliberately absent while this first immutable chunk is applied.
     data.applyProgressiveWaveformChunk(8, 32, waveform, rgb);
     const auto visible = data.getWaveformData();
-    ok &= require(visible.size() == 32, "progressive timeline must have stable final size");
-    ok &= require(visible[8].low > 0.7f, "completed chunk must be visible before analysis completion");
+    ok &= require(visible.isEmpty(),
+                  "progressive publication must not allocate a duration-sized GUI vector");
+    ok &= require(data.getProgressiveOvrData().size() == TrackData::kProgressiveBins,
+                  "sparse chunks must still update the fixed-size overview");
 
     // The scrolling renderer consumes the immutable line store, not the mutable
     // analysis vectors.  A first RGB chunk therefore has to publish its own
@@ -60,5 +62,17 @@ int main(int argc, char** argv)
     const auto afterFlush = batched.getWaveformLineStoreSnapshot();
     ok &= require(afterFlush && afterFlush->chunkAt(0),
                   "control-tick flush did not publish progressive chunk");
+
+    TrackData hourLong;
+    constexpr int hourAt600BinsPerSecond = 60 * 60 * 600;
+    hourLong.applyProgressiveWaveformChunk(0, hourAt600BinsPerSecond, waveform, rgb);
+    const auto hourStore = hourLong.getWaveformLineStoreSnapshot();
+    ok &= require(hourLong.getWaveformData().isEmpty()
+                      && hourLong.getRgbWaveformData().isEmpty(),
+                  "one-hour progressive load allocated full GUI timeline vectors");
+    ok &= require(hourStore
+                      && hourStore->totalLineCount == hourAt600BinsPerSecond
+                      && hourStore->availableChunkCount() == 1,
+                  "one-hour progressive load did not remain sparse");
     return ok ? 0 : 1;
 }

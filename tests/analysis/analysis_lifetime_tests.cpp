@@ -40,6 +40,34 @@ bool writeSilentWave(const QString& path)
     return true;
 }
 
+class CountingReader final : public juce::AudioFormatReader
+{
+public:
+    explicit CountingReader(juce::int64 samples)
+        : juce::AudioFormatReader(nullptr, "counting")
+    {
+        sampleRate = 48000.0;
+        lengthInSamples = samples;
+        numChannels = 2;
+        bitsPerSample = 32;
+        usesFloatingPointData = true;
+    }
+
+    bool readSamples(int* const* destinations, int destinationCount,
+                     int destinationOffset, juce::int64, int sampleCount) override
+    {
+        ++readCalls;
+        for (int channel = 0; channel < destinationCount; ++channel) {
+            if (destinations[channel])
+                juce::zeromem(destinations[channel] + destinationOffset,
+                              static_cast<size_t>(sampleCount) * sizeof(int));
+        }
+        return true;
+    }
+
+    int readCalls = 0;
+};
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -68,6 +96,14 @@ int main(int argc, char** argv)
                       "validated completion must discard obsolete progressive chunks");
         ok &= require(mailbox.take().has_value(),
                       "validated completion must remain immediately available");
+    }
+    {
+        CountingReader hourLongReader(60LL * 60LL * 48000LL);
+        const auto overview = WaveformAnalyzer::buildInstantOverview(&hourLongReader, 512);
+        ok &= require(overview.size() == 512,
+                      "long-track instant overview must keep its fixed output size");
+        ok &= require(hourLongReader.readCalls <= 512,
+                      "instant overview decoder work must not grow with track duration");
     }
     {
         TrackData data;

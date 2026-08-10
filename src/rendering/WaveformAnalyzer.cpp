@@ -251,6 +251,15 @@ void WaveformAnalyzer::run()
 
     if (numPoints <= 0) return;
 
+    // A user grabbing the platter during the post-load grace period wins before
+    // any duration-sized worker buffers or sequential decoder reads begin.
+    while (!threadShouldExit()
+           && m_realtimeInteractionActive.load(std::memory_order_acquire)) {
+        juce::Thread::sleep(4);
+    }
+    if (threadShouldExit())
+        return;
+
     // Cached waveform from disk — skip the expensive Pass 1+2 and only run BPM/key.
     const int existingRgb      = working.getRgbWaveformSize();
     const int existingExpected = working.getTotalExpected();

@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QVector>
+#include <QHash>
 #include <QMutex>
 #include <QTimer>
 #include <QElapsedTimer>
@@ -281,7 +282,8 @@ public:
                                float globalMaxPeak,
                                QVector<RgbWaveformFrame>&& rgb,
                                QVector<PeakFrame>&& peakMip,
-                               std::shared_ptr<const waveform::PreparedWaveformLines> preparedLines);
+                               std::shared_ptr<const waveform::PreparedWaveformLines> preparedLines,
+                               QVector<RgbWaveformFrame>&& preparedOverview = {});
 
     // Pre-downsampled overview (≤4096 bins) computed off the main thread.
     void setOverviewRgbData(QVector<RgbWaveformFrame>&& data);
@@ -412,11 +414,19 @@ private:
     // silence and must not be mistaken for an unanalyzed frame.
     QVector<quint8>           m_progressiveRgbReady;
     QVector<std::uint32_t>    m_progressiveDirtyLineChunks;
+    // Progressive analysis is sparse: never allocate duration*analysisRate
+    // arrays on the GUI thread. Only touched immutable render chunks are staged.
+    QHash<std::uint32_t, std::shared_ptr<std::vector<WaveformLine>>>
+        m_progressivePendingLineChunks;
 
     void _updateProgressiveOvr(int from, int to);
+    void updateProgressiveOverviewFromChunkLocked(
+        int firstBin, int totalBins, const QVector<RgbWaveformFrame>& rgb);
     void markProgressiveWaveformLinesDirtyLocked(int firstRgbFrame, int rgbFrameCount);
     void flushProgressiveWaveformLinesLocked();
     void publishProgressiveWaveformLinesLocked(int firstRgbFrame, int rgbFrameCount);
+    void stageProgressiveWaveformLinesLocked(
+        int firstBin, const QVector<RgbWaveformFrame>& rgb);
     void alignSegmentsToBeatgridLocked();
     void rebuildWaveformLineStoreLocked(std::uint64_t trackGeneration = 0);
     void installPreparedWaveformLinesLocked(

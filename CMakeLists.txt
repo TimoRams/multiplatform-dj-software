@@ -783,6 +783,8 @@ add_executable(BrockDJ_track_loader_tests
     src/audio/cache/AudioCacheWorker.cpp
     src/engine/deck/MetadataUtils.cpp
     src/rendering/WaveformCache.cpp
+    src/domain/TrackData.cpp
+    src/waveform/WaveformLineStore.cpp
 )
 target_include_directories(BrockDJ_track_loader_tests PRIVATE
     src src/domain src/engine src/library src/rendering

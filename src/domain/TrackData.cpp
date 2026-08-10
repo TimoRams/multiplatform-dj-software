@@ -160,6 +160,7 @@ bool TrackData::applyAnalysisResult(const analysis::AnalysisResult& result)
         m_data.clear(); m_rgbData.clear(); m_overviewRgb.clear(); m_peakMip.clear();
         m_progressiveRgbReady.clear();
         m_progressiveDirtyLineChunks.clear();
+        m_progressivePendingLineChunks.clear();
         m_bpm = result.bpm;
         m_firstBeatSample = result.firstBeatSample;
         m_sampleRate = result.sampleRate;
@@ -516,6 +517,7 @@ void TrackData::clearWaveformData()
         m_progressiveLastFrame = 0;
         m_progressiveRgbReady.clear();
         m_progressiveDirtyLineChunks.clear();
+        m_progressivePendingLineChunks.clear();
         if (!keepPreview)
             m_totalExpected = 0;
         m_globalMaxPeak = 0.001f;
@@ -545,6 +547,7 @@ void TrackData::clear()
         m_progressiveLastFrame = 0;
         m_progressiveRgbReady.clear();
         m_progressiveDirtyLineChunks.clear();
+        m_progressivePendingLineChunks.clear();
         m_totalExpected = 0;
         m_globalMaxPeak = 0.001f;
         m_bpm = 0.0;
@@ -607,6 +610,7 @@ void TrackData::setRgbWaveformData(QVector<RgbWaveformFrame>&& frames)
         m_progressiveLastFrame = 0;
         m_progressiveRgbReady.clear();
         m_progressiveDirtyLineChunks.clear();
+        m_progressivePendingLineChunks.clear();
         rebuildWaveformLineStoreLocked();
     }
     emit rgbWaveformUpdated();
@@ -618,17 +622,22 @@ void TrackData::installCachedWaveform(
     float globalMaxPeak,
     QVector<RgbWaveformFrame>&& rgb,
     QVector<PeakFrame>&& peakMip,
-    std::shared_ptr<const waveform::PreparedWaveformLines> preparedLines)
+    std::shared_ptr<const waveform::PreparedWaveformLines> preparedLines,
+    QVector<RgbWaveformFrame>&& preparedOverview)
 {
     assertOwnerThread();
-    auto overview = downsampleOverview(rgb);
+    // Production cache loads prepare this on the loader thread. Keep a fallback
+    // for direct/test callers, but never rescan a long cached timeline in the UI.
+    if (preparedOverview.isEmpty())
+        preparedOverview = downsampleOverview(rgb);
     {
         QMutexLocker locker(&m_mutex);
         m_totalExpected = rgb.size();
         m_globalMaxPeak = std::max(0.001f, globalMaxPeak);
         m_waveformSnapshot = std::make_shared<const QVector<WaveformBin>>(std::move(waveform));
         m_rgbSnapshot = std::make_shared<const QVector<RgbWaveformFrame>>(std::move(rgb));
-        m_overviewSnapshot = std::make_shared<const QVector<RgbWaveformFrame>>(std::move(overview));
+        m_overviewSnapshot = std::make_shared<const QVector<RgbWaveformFrame>>(
+            std::move(preparedOverview));
         m_peakMipSnapshot = std::make_shared<const QVector<PeakFrame>>(std::move(peakMip));
         m_data.clear();
         m_rgbData.clear();
@@ -783,40 +792,41 @@ void TrackData::applyProgressiveWaveformChunk(int firstBin, int totalBins,
                                               bool publishLineStoreImmediately)
 {
     assertOwnerThread();
+    (void)waveform; // Legacy progressive amplitudes; renderers consume sparse RGB line chunks.
     if (totalBins <= 0 || firstBin < 0 || (waveform.isEmpty() && rgb.isEmpty()))
         return;
     {
         QMutexLocker locker(&m_mutex);
-        if (m_totalExpected != totalBins || m_data.size() != totalBins
-            || m_rgbData.size() != totalBins
-            || m_progressiveRgbReady.size() != totalBins) {
+        const int totalLines = (totalBins + kRgbFramesPerCanonicalLine - 1)
+            / kRgbFramesPerCanonicalLine;
+        const auto lineSnapshot = m_waveformLineStore.snapshot();
+        if (m_totalExpected != totalBins || !lineSnapshot
+            || lineSnapshot->totalLineCount != static_cast<std::uint32_t>(totalLines)) {
             m_totalExpected = totalBins;
-            m_data.fill(WaveformBin{}, totalBins);
-            m_rgbData.fill(RgbWaveformFrame{}, totalBins);
-            m_progressiveRgbReady.fill(0, totalBins);
+            // Full duration-sized vectors used to be allocated and zeroed here
+            // on the GUI thread. For long sets that meant millions of objects in
+            // one frame. Progressive rendering now lives only in sparse line
+            // chunks plus the fixed-size overview until the immutable final
+            // analysis snapshot arrives from the worker.
+            m_data.clear();
+            m_rgbData.clear();
+            m_progressiveRgbReady.clear();
             m_progressiveDirtyLineChunks.clear();
+            m_progressivePendingLineChunks.clear();
             m_waveformSnapshot.reset();
             m_rgbSnapshot.reset();
-            const int totalLines = (totalBins + kRgbFramesPerCanonicalLine - 1)
-                / kRgbFramesPerCanonicalLine;
             m_waveformLineStore.reset(++m_waveformLineGeneration,
                                       static_cast<std::uint32_t>(totalLines));
         }
-        const int waveformCount = std::min(static_cast<int>(waveform.size()), totalBins - firstBin);
-        for (int i = 0; i < waveformCount; ++i)
-            m_data[firstBin + i] = waveform[i];
         const int rgbCount = std::min(static_cast<int>(rgb.size()), totalBins - firstBin);
-        for (int i = 0; i < rgbCount; ++i) {
-            m_rgbData[firstBin + i] = rgb[i];
-            m_progressiveRgbReady[firstBin + i] = 1;
-        }
         if (rgbCount > 0) {
-            markProgressiveWaveformLinesDirtyLocked(firstBin, rgbCount);
+            const QVector<RgbWaveformFrame> boundedRgb = rgbCount == rgb.size()
+                ? rgb : rgb.mid(0, rgbCount);
+            stageProgressiveWaveformLinesLocked(firstBin, boundedRgb);
+            updateProgressiveOverviewFromChunkLocked(firstBin, totalBins, boundedRgb);
             if (publishLineStoreImmediately)
                 flushProgressiveWaveformLinesLocked();
         }
-        if (rgbCount > 0)
-            _updateProgressiveOvr(firstBin, firstBin + rgbCount);
     }
     emit dataUpdated();
     if (!rgb.isEmpty())
@@ -852,21 +862,102 @@ void TrackData::markProgressiveWaveformLinesDirtyLocked(int firstRgbFrame, int r
 
 void TrackData::flushProgressiveWaveformLinesLocked()
 {
-    if (m_progressiveDirtyLineChunks.isEmpty())
+    if (m_progressivePendingLineChunks.isEmpty())
         return;
 
-    const auto snapshot = m_waveformLineStore.snapshot();
-    const auto dirtyChunks = std::move(m_progressiveDirtyLineChunks);
+    auto pending = std::move(m_progressivePendingLineChunks);
+    m_progressivePendingLineChunks.clear();
     m_progressiveDirtyLineChunks.clear();
-    for (const std::uint32_t chunkIndex : dirtyChunks) {
-        if (!snapshot || !snapshot->chunks || chunkIndex >= snapshot->chunks->size())
+    for (auto it = pending.begin(); it != pending.end(); ++it) {
+        const auto snapshot = m_waveformLineStore.snapshot();
+        const std::uint32_t chunkIndex = it.key();
+        const auto& lines = it.value();
+        if (!snapshot || !snapshot->chunks || !lines
+            || chunkIndex >= snapshot->chunks->size()) {
             continue;
-        const int firstLine = static_cast<int>(chunkIndex * snapshot->chunkSize);
-        const int lineCount = std::min(static_cast<int>(snapshot->chunkSize),
-            static_cast<int>(snapshot->totalLineCount) - firstLine);
-        publishProgressiveWaveformLinesLocked(firstLine * kRgbFramesPerCanonicalLine,
-                                              lineCount * kRgbFramesPerCanonicalLine);
+        }
+        const std::uint32_t first = chunkIndex * snapshot->chunkSize;
+        const std::uint32_t count = std::min(snapshot->chunkSize,
+                                             snapshot->totalLineCount - first);
+        const auto published = m_waveformLineStore.publish({
+            snapshot->trackGeneration, chunkIndex, first, count,
+            snapshot->totalLineCount, lines});
+        Q_ASSERT(published != WaveformLineStore::PublishResult::Rejected);
     }
+}
+
+void TrackData::stageProgressiveWaveformLinesLocked(
+    int firstBin, const QVector<RgbWaveformFrame>& rgb)
+{
+    if (rgb.isEmpty())
+        return;
+    const auto snapshot = m_waveformLineStore.snapshot();
+    if (!snapshot || !snapshot->chunks || snapshot->chunkSize == 0
+        || snapshot->totalLineCount == 0) {
+        return;
+    }
+
+    const int firstLine = firstBin / kRgbFramesPerCanonicalLine;
+    const int lastLine = std::min(static_cast<int>(snapshot->totalLineCount) - 1,
+        (firstBin + static_cast<int>(rgb.size()) - 1) / kRgbFramesPerCanonicalLine);
+    const std::uint32_t firstChunk = static_cast<std::uint32_t>(firstLine)
+        / snapshot->chunkSize;
+    const std::uint32_t lastChunk = static_cast<std::uint32_t>(lastLine)
+        / snapshot->chunkSize;
+    const QVector<PeakFrame> emptyPeaks;
+
+    for (std::uint32_t chunkIndex = firstChunk; chunkIndex <= lastChunk; ++chunkIndex) {
+        auto lines = m_progressivePendingLineChunks.value(chunkIndex);
+        const std::uint32_t chunkFirst = chunkIndex * snapshot->chunkSize;
+        const std::uint32_t chunkCount = std::min(snapshot->chunkSize,
+                                                  snapshot->totalLineCount - chunkFirst);
+        if (!lines) {
+            lines = std::make_shared<std::vector<WaveformLine>>(chunkCount);
+            if (const auto previous = snapshot->chunkAt(chunkIndex);
+                previous && previous->lines && previous->lines->size() == lines->size()) {
+                *lines = *previous->lines;
+            }
+            m_progressivePendingLineChunks.insert(chunkIndex, lines);
+        }
+
+        const int begin = std::max(firstLine, static_cast<int>(chunkFirst));
+        const int end = std::min(lastLine + 1, static_cast<int>(chunkFirst + chunkCount));
+        for (int globalLine = begin; globalLine < end; ++globalLine) {
+            const int sourceLine = globalLine - firstLine;
+            (*lines)[static_cast<size_t>(globalLine - static_cast<int>(chunkFirst))]
+                = makeCanonicalWaveformLine(rgb, emptyPeaks, sourceLine);
+        }
+    }
+}
+
+void TrackData::updateProgressiveOverviewFromChunkLocked(
+    int firstBin, int totalBins, const QVector<RgbWaveformFrame>& rgb)
+{
+    if (totalBins <= 0 || rgb.isEmpty())
+        return;
+    if (m_progressiveOvr.size() != kProgressiveBins) {
+        m_progressiveOvr.fill(RgbWaveformFrame{}, kProgressiveBins);
+        m_progressiveLastFrame = 0;
+    }
+    for (int local = 0; local < rgb.size(); ++local) {
+        const int global = firstBin + local;
+        if (global < 0 || global >= totalBins)
+            continue;
+        const int bin = static_cast<int>(
+            (static_cast<int64_t>(global) * kProgressiveBins) / totalBins);
+        if (bin < 0 || bin >= kProgressiveBins)
+            continue;
+        auto& target = m_progressiveOvr[bin];
+        const auto& frame = rgb[local];
+        target.rms = std::max(target.rms, frame.rms);
+        target.low = std::max(target.low, frame.low);
+        target.lowMid = std::max(target.lowMid, frame.lowMid);
+        target.mid = std::max(target.mid, frame.mid);
+        target.high = std::max(target.high, frame.high);
+    }
+    m_progressiveLastFrame = std::max(m_progressiveLastFrame,
+                                      std::min(totalBins,
+                                               firstBin + static_cast<int>(rgb.size())));
 }
 
 void TrackData::publishProgressiveWaveformLinesLocked(int firstRgbFrame, int rgbFrameCount)

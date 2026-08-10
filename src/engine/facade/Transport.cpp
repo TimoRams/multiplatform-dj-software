@@ -533,15 +533,33 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
             result.waveformCache.globalMaxPeak,
             std::move(result.waveformCache.rgb),
             std::move(result.waveformCache.peakMip),
-            std::move(result.waveformCache.preparedLines));
+            std::move(result.waveformCache.preparedLines),
+            std::move(result.instantOverview));
     } else if (!result.instantOverview.isEmpty()) {
         m_trackData->setTotalExpected(std::max(1, result.instantOverviewExpected));
         m_trackData->setOverviewRgbData(std::move(result.instantOverview));
     }
 
-    if (!(result.waveformCacheLoaded && hasDbAnalysis) && m_analyzer)
-        m_analyzer->startAnalysis(result.canonicalPath, m_transport->audioPositionSeconds(),
-                                  result.generation, m_trackData->createAnalysisSeed());
+    if (!(result.waveformCacheLoaded && hasDbAnalysis) && m_analyzer) {
+        // Let playback, the first cache window and immediate platter input take
+        // ownership before background analysis starts allocating/decoding. The
+        // generation check makes this harmless when another track is loaded.
+        QPointer<DjEngine> safeThis(this);
+        const QString analysisPath = result.canonicalPath;
+        const std::uint64_t analysisTrackGeneration = result.generation;
+        QTimer::singleShot(600, this,
+            [safeThis, analysisPath, analysisTrackGeneration]() {
+                if (!safeThis
+                    || analysisTrackGeneration != safeThis->m_trackLoader.currentGeneration()
+                    || analysisPath != safeThis->m_trackFilePath
+                    || !safeThis->m_analyzer) {
+                    return;
+                }
+                safeThis->m_analyzer->startAnalysis(
+                    analysisPath, safeThis->m_transport->audioPositionSeconds(),
+                    analysisTrackGeneration, safeThis->m_trackData->createAnalysisSeed());
+            });
+    }
 
     if (!result.coverImage.isNull() && m_coverProvider) {
         m_coverProvider->setCoverImage(m_deckId, result.coverImage);

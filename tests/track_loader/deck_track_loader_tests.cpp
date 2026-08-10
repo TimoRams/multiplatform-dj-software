@@ -135,6 +135,9 @@ int main(int argc, char** argv)
                           && waiter.value().waveformCache.preparedLines->totalLineCount
                               == static_cast<std::uint32_t>(payload.totalExpected),
                       "cached render lines must be prepared before owner-thread install");
+        ok &= require(!waiter.value().instantOverview.isEmpty()
+                          && waiter.value().instantOverviewExpected == payload.totalExpected,
+                      "cached overview must be prepared before owner-thread install");
         cache.releaseTrack(waiter.value().cacheHandle);
         QFile::remove(WaveformCache::cachePathFor(monoPath, payload.pointsPerSecond));
     }
