@@ -30,6 +30,7 @@ namespace {
 
 constexpr std::size_t kWaveformNodePoolSize = 24;
 constexpr std::size_t kCueLabelNodePoolSize = 9;
+constexpr std::size_t kDownbeatLabelNodePoolSize = 48;
 constexpr int kVerticesPerFeatheredLine = 18;
 
 QSGGeometryNode* makeLineNode(QSGNode* parent)
@@ -69,12 +70,60 @@ QSGGeometryNode* makeTriangleNode(QSGNode* parent)
     return node;
 }
 
+QSGSimpleTextureNode* makeWaveformTextureNode()
+{
+    auto* node = new QSGSimpleTextureNode();
+    node->setOwnsTexture(true);
+    node->setFiltering(QSGTexture::Linear);
+    return node;
+}
+
+QSGSimpleTextureNode* assignTextureNode(QSGSimpleTextureNode*& node,
+                                        QSGTexture* texture,
+                                        QSGNode* parent,
+                                        QSGNode* insertBefore)
+{
+    if (node) {
+        auto* previousTexture = node->texture();
+        node->setOwnsTexture(false);
+        node->setTexture(texture);
+        delete previousTexture;
+        node->setOwnsTexture(true);
+        return node;
+    }
+    node = makeWaveformTextureNode();
+    // QSGSimpleTextureNode must have a valid texture before it becomes part of
+    // the scene graph. Vulkan's opaque-material batcher dereferences it while
+    // sorting, even when the target rectangle is empty.
+    node->setTexture(texture);
+    if (insertBefore)
+        parent->insertChildNodeBefore(node, insertBefore);
+    else
+        parent->appendChildNode(node);
+    return node;
+}
+
 void clearGeometry(QSGGeometryNode* node)
 {
     if (node->geometry()->vertexCount() == 0)
         return;
     node->geometry()->allocate(0);
     node->markDirty(QSGNode::DirtyGeometry);
+}
+
+void clearWaveformTexture(QSGSimpleTextureNode* node)
+{
+    if (node)
+        node->setRect({});
+}
+
+void destroyTextureNode(QSGNode* parent, QSGSimpleTextureNode*& node)
+{
+    if (!node)
+        return;
+    parent->removeChildNode(node);
+    delete node;
+    node = nullptr;
 }
 
 struct MarkerLine {
@@ -100,8 +149,6 @@ struct WaveformSceneNode final : QSGClipNode {
 
         // Translucent overlays sit below the audio lines.
         loopFill = makeTriangleNode(timeline);
-        for (auto& node : waveformNodes)
-            node = makeLineNode(timeline);
         regularBeats = makeLineNode(timeline);
         downbeats = makeLineNode(timeline);
         loopEdges = makeLineNode(timeline);
@@ -112,7 +159,7 @@ struct WaveformSceneNode final : QSGClipNode {
     {
         clearGeometry(loopFill);
         for (std::size_t index = 0; index < waveformNodes.size(); ++index) {
-            clearGeometry(waveformNodes[index]);
+            destroyTextureNode(timeline, waveformNodes[index]);
             waveformChunks[index].reset();
             waveformBeginLines[index] = 0;
             waveformEndLines[index] = 0;
@@ -120,6 +167,8 @@ struct WaveformSceneNode final : QSGClipNode {
         }
         clearGeometry(regularBeats);
         clearGeometry(downbeats);
+        for (auto& label : downbeatLabels)
+            destroyTextureNode(timeline, label);
         clearGeometry(loopEdges);
         clearGeometry(cueLines);
         for (auto* label : cueLabels) {
@@ -134,9 +183,10 @@ struct WaveformSceneNode final : QSGClipNode {
 
     QSGTransformNode* timeline = nullptr;
     QSGGeometryNode* loopFill = nullptr;
-    std::array<QSGGeometryNode*, kWaveformNodePoolSize> waveformNodes{};
+    std::array<QSGSimpleTextureNode*, kWaveformNodePoolSize> waveformNodes{};
     QSGGeometryNode* regularBeats = nullptr;
     QSGGeometryNode* downbeats = nullptr;
+    std::array<QSGSimpleTextureNode*, kDownbeatLabelNodePoolSize> downbeatLabels{};
     QSGGeometryNode* loopEdges = nullptr;
     QSGGeometryNode* cueLines = nullptr;
     std::array<QSGSimpleTextureNode*, kCueLabelNodePoolSize> cueLabels{};
@@ -320,37 +370,101 @@ QSGSimpleTextureNode* replaceCueLabelNode(QSGSimpleTextureNode* previous,
     return node;
 }
 
-std::uint64_t writeWaveformChunk(QSGGeometryNode* node,
+void updateDownbeatCounterNode(QSGSimpleTextureNode*& node,
+                               const CueLabel& label,
+                               QQuickWindow* window,
+                               QSGNode* parent,
+                               QSGNode* insertBefore,
+                               double originLine,
+                               double pixelsPerLine,
+                               double devicePixelRatio,
+                               qreal top)
+{
+    if (!window) {
+        clearWaveformTexture(node);
+        return;
+    }
+
+    constexpr qreal badgeHeight = 14.0;
+    QFont font;
+    font.setBold(true);
+    font.setPixelSize(8);
+    const QFontMetrics metrics(font);
+    const qreal badgeWidth = std::clamp<qreal>(
+        static_cast<qreal>(metrics.horizontalAdvance(label.text) + 8), 16.0, 38.0);
+    const qreal dpr = std::max(1.0, devicePixelRatio);
+    QImage image(QSize(static_cast<int>(std::ceil(badgeWidth * dpr)),
+                       static_cast<int>(std::ceil(badgeHeight * dpr))),
+                 QImage::Format_ARGB32_Premultiplied);
+    image.setDevicePixelRatio(dpr);
+    image.fill(Qt::transparent);
+
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    QColor accent = label.color.isValid() ? label.color : QColor(242, 62, 72);
+    accent.setAlpha(215);
+    painter.setBrush(QColor(13, 16, 22, 218));
+    painter.setPen(QPen(accent, 1.0));
+    painter.drawRoundedRect(QRectF(0.5, 0.5, badgeWidth - 1.0, badgeHeight - 1.0),
+                            2.5, 2.5);
+    painter.setFont(font);
+    painter.setPen(QColor(246, 247, 250, 238));
+    painter.drawText(QRectF(1.5, 0.0, badgeWidth - 3.0, badgeHeight),
+                     Qt::AlignCenter, label.text);
+    painter.end();
+
+    auto* texture = window->createTextureFromImage(image);
+    texture->setFiltering(QSGTexture::Linear);
+    auto* textureNode = assignTextureNode(node, texture, parent, insertBefore);
+    textureNode->setOwnsTexture(true);
+    textureNode->setFiltering(QSGTexture::Linear);
+    const double x = waveform_render::snappedTimelineX(
+        label.linePosition, originLine, pixelsPerLine, devicePixelRatio);
+    textureNode->setRect(QRectF(x - badgeWidth * 0.5, top, badgeWidth, badgeHeight));
+}
+
+std::uint64_t writeWaveformChunk(QSGSimpleTextureNode*& node,
                                  const WaveformLineChunk& chunk,
                                  std::uint32_t beginLine,
                                  std::uint32_t endLine,
                                  double renderOriginLine,
                                  double pixelsPerLine,
                                  double devicePixelRatio,
-                                 float height)
+                                 float height,
+                                 QQuickWindow* window,
+                                 QSGNode* parent,
+                                 QSGNode* insertBefore)
 {
-    if (!chunk.lines || beginLine >= endLine) {
-        clearGeometry(node);
+    if (!window || !chunk.lines || beginLine >= endLine) {
+        clearWaveformTexture(node);
         return 0;
     }
 
-    const double physicalSpacing = pixelsPerLine * std::max(1.0, devicePixelRatio);
-    const std::uint32_t step = static_cast<std::uint32_t>(std::max(
-        1.0, std::ceil(1.0 / std::max(physicalSpacing, 1.0e-6))));
-    const std::uint32_t groupCount = (endLine - beginLine + step - 1) / step;
-    auto* geometry = node->geometry();
-    geometry->allocate(static_cast<int>(groupCount * kVerticesPerFeatheredLine));
-    auto* vertices = geometry->vertexDataAsColoredPoint2D();
+    const double dpr = std::max(1.0, devicePixelRatio);
+    const double logicalWidth = static_cast<double>(endLine - beginLine) * pixelsPerLine;
+    const int imageWidth = std::max(1, static_cast<int>(std::ceil(logicalWidth * dpr)));
+    const int imageHeight = std::max(1, static_cast<int>(std::ceil(height * dpr)));
+    QImage image(imageWidth, imageHeight, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
 
+    const double sourceLinesPerPixel = static_cast<double>(endLine - beginLine)
+        / static_cast<double>(imageWidth);
     const auto verticalLayout = waveform_render::verticalMarkerLayout(height);
-    const float centerY = height * 0.5f;
-    const float halfHeight = std::max(
-        1.0f, (height - verticalLayout.waveformInset * 2.0f) * 0.5f);
-    const float minimumVisibleHeight = static_cast<float>(1.0 / std::max(1.0, devicePixelRatio));
-    int out = 0;
+    const double centerY = static_cast<double>(imageHeight) * 0.5;
+    const double halfHeight = std::max(
+        1.0, (static_cast<double>(height) - verticalLayout.waveformInset * 2.0)
+            * dpr * 0.5);
+    std::uint64_t renderedColumns = 0;
 
-    for (std::uint32_t globalBegin = beginLine; globalBegin < endLine; globalBegin += step) {
-        const std::uint32_t globalEnd = std::min(endLine, globalBegin + step);
+    for (int physicalX = 0; physicalX < imageWidth; ++physicalX) {
+        const std::uint32_t globalBegin = std::clamp<std::uint32_t>(
+            static_cast<std::uint32_t>(std::floor(
+                static_cast<double>(beginLine) + physicalX * sourceLinesPerPixel)),
+            beginLine, endLine - 1);
+        const std::uint32_t globalEnd = std::clamp<std::uint32_t>(
+            static_cast<std::uint32_t>(std::ceil(
+                static_cast<double>(beginLine) + (physicalX + 1) * sourceLinesPerPixel)),
+            globalBegin + 1, endLine);
         std::int16_t minimum = 0;
         std::int16_t maximum = 0;
         std::uint64_t red = 0;
@@ -375,27 +489,34 @@ std::uint64_t writeWaveformChunk(QSGGeometryNode* node,
             weight += lineWeight;
         }
 
-        const double centerLine = (static_cast<double>(globalBegin)
-            + static_cast<double>(globalEnd - 1)) * 0.5;
-        const float x = static_cast<float>(waveform_render::snappedTimelineX(
-            centerLine, renderOriginLine, pixelsPerLine, devicePixelRatio));
-        float top = centerY - (static_cast<float>(maximum) / 32767.0f) * halfHeight;
-        float bottom = centerY - (static_cast<float>(minimum) / 32767.0f) * halfHeight;
-        if ((minimum != 0 || maximum != 0) && bottom - top < minimumVisibleHeight) {
-            const float middle = (top + bottom) * 0.5f;
-            top = middle - minimumVisibleHeight * 0.5f;
-            bottom = middle + minimumVisibleHeight * 0.5f;
+        double top = centerY - (static_cast<double>(maximum) / 32767.0) * halfHeight;
+        double bottom = centerY - (static_cast<double>(minimum) / 32767.0) * halfHeight;
+        if ((minimum != 0 || maximum != 0) && bottom - top < 1.0) {
+            const double middle = (top + bottom) * 0.5;
+            top = middle - 0.5;
+            bottom = middle + 0.5;
         }
 
-        const uchar r = static_cast<uchar>(weight > 0 ? red / weight : 150);
-        const uchar g = static_cast<uchar>(weight > 0 ? green / weight : 170);
-        const uchar b = static_cast<uchar>(weight > 0 ? blue / weight : 190);
-        writeFeatheredVerticalLine(vertices, out, x, top, bottom, 1.0f,
-                                   devicePixelRatio, r, g, b, 248);
+        const int topPixel = std::clamp(static_cast<int>(std::floor(top)), 0, imageHeight - 1);
+        const int bottomPixel = std::clamp(static_cast<int>(std::ceil(bottom)),
+                                           topPixel, imageHeight - 1);
+        const int r = static_cast<int>(weight > 0 ? red / weight : 150);
+        const int g = static_cast<int>(weight > 0 ? green / weight : 170);
+        const int b = static_cast<int>(weight > 0 ? blue / weight : 190);
+        const QRgb color = qPremultiply(qRgba(r, g, b, 248));
+        for (int physicalY = topPixel; physicalY <= bottomPixel; ++physicalY)
+            reinterpret_cast<QRgb*>(image.scanLine(physicalY))[physicalX] = color;
+        ++renderedColumns;
     }
 
-    node->markDirty(QSGNode::DirtyGeometry);
-    return groupCount;
+    auto* texture = window->createTextureFromImage(image);
+    texture->setFiltering(QSGTexture::Linear);
+    auto* textureNode = assignTextureNode(node, texture, parent, insertBefore);
+    textureNode->setOwnsTexture(true);
+    textureNode->setFiltering(QSGTexture::Linear);
+    const double left = (static_cast<double>(beginLine) - renderOriginLine) * pixelsPerLine;
+    textureNode->setRect(QRectF(left, 0.0, logicalWidth, height));
+    return renderedColumns;
 }
 
 std::vector<TrackData::BeatMarker> visibleBeatGrid(const TrackData& trackData,
@@ -596,7 +717,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     if (!scene) {
         scene = new WaveformSceneNode();
         m_sceneGraphNodeCreationCount.fetch_add(
-            2 + kWaveformNodePoolSize + 5, std::memory_order_relaxed);
+            2 + kWaveformNodePoolSize + kDownbeatLabelNodePoolSize + 5,
+            std::memory_order_relaxed);
         m_forceRebuild = true;
     }
 
@@ -702,7 +824,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                 const std::size_t poolIndex = usedPoolSlots++;
                 const auto chunk = snapshot->chunkAt(chunkIndex);
                 if (!chunk) {
-                    clearGeometry(scene->waveformNodes[poolIndex]);
+                    clearWaveformTexture(scene->waveformNodes[poolIndex]);
                     scene->waveformChunks[poolIndex].reset();
                     scene->waveformBeginLines[poolIndex] = 0;
                     scene->waveformEndLines[poolIndex] = 0;
@@ -720,7 +842,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                     scene->waveformRenderedLineCounts[poolIndex] = writeWaveformChunk(
                         scene->waveformNodes[poolIndex], *chunk, begin, end,
                         scene->renderOriginLine, pixelsPerLine, dpr,
-                        static_cast<float>(bounds.height()));
+                        static_cast<float>(bounds.height()), window(),
+                        scene->timeline, scene->regularBeats);
                     scene->waveformChunks[poolIndex] = chunk;
                     scene->waveformBeginLines[poolIndex] = begin;
                     scene->waveformEndLines[poolIndex] = end;
@@ -731,7 +854,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         }
         for (std::size_t poolIndex = usedPoolSlots;
              poolIndex < scene->waveformNodes.size(); ++poolIndex) {
-            clearGeometry(scene->waveformNodes[poolIndex]);
+            clearWaveformTexture(scene->waveformNodes[poolIndex]);
             scene->waveformChunks[poolIndex].reset();
             scene->waveformBeginLines[poolIndex] = 0;
             scene->waveformEndLines[poolIndex] = 0;
@@ -823,6 +946,40 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                 delete scene->cueLabels[labelIndex];
                 scene->cueLabels[labelIndex] = nullptr;
             }
+        }
+
+        if (windowConfigurationChanged || renderOriginChanged) {
+            const double labelsStartSec = static_cast<double>(scene->windowStartLine)
+                / snapshot->linesPerSecond;
+            const double labelsEndSec = static_cast<double>(scene->windowEndLine)
+                / snapshot->linesPerSecond;
+            const auto visibleBeats = visibleBeatGrid(
+                *trackData, labelsStartSec, labelsEndSec);
+            std::vector<CueLabel> labels;
+            labels.reserve(visibleBeats.size() / 4 + 1);
+            for (const auto& beat : visibleBeats) {
+                const bool isDownbeat = beat.isDownbeat || beat.beatInBar == 1;
+                if (!isDownbeat || beat.barNumber <= 0)
+                    continue;
+                labels.push_back({
+                    beat.positionSec * snapshot->linesPerSecond,
+                    QColor(242, 62, 72, 220),
+                    QString::number(beat.barNumber)});
+            }
+
+            const auto markerLayout = waveform_render::verticalMarkerLayout(
+                static_cast<float>(bounds.height()));
+            const qreal labelTop = 1.0 / dpr + markerLayout.downbeatTickLength + 2.0;
+            std::size_t labelIndex = 0;
+            for (; labelIndex < labels.size()
+                   && labelIndex < scene->downbeatLabels.size(); ++labelIndex) {
+                updateDownbeatCounterNode(
+                    scene->downbeatLabels[labelIndex], labels[labelIndex], window(),
+                    scene->timeline, scene->loopEdges, scene->renderOriginLine,
+                    pixelsPerLine, dpr, labelTop);
+            }
+            for (; labelIndex < scene->downbeatLabels.size(); ++labelIndex)
+                clearWaveformTexture(scene->downbeatLabels[labelIndex]);
         }
 
         scene->trackGeneration = snapshot->trackGeneration;

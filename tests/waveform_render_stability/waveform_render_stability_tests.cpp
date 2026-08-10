@@ -62,10 +62,10 @@ int main()
                       "guarded rendering rebuilt geometry too often");
     }
 
-    // Timeline geometry keeps a one-physical-pixel opaque core plus half-pixel
-    // feathering on either side. The transform itself must retain fractional
-    // physical-pixel phases; quantising it was the source of visible stop/start
-    // shimmer at normal playback speed.
+    // Beat/cue geometry keeps a one-physical-pixel opaque core plus half-pixel
+    // feathering on either side. Waveform chunks use linearly filtered textures.
+    // The shared transform must retain fractional physical-pixel phases;
+    // quantising it was the source of visible stop/start shimmer.
     for (const double dpr : {1.0, 1.25, 1.5, 2.0}) {
         const double logicalCoreWidth = 1.0 / dpr;
         const double logicalFeatherWidth = 0.5 / dpr;
@@ -113,10 +113,10 @@ int main()
     ok &= require(waveformWindowRebuilds > markerRebuilds,
                   "guard crossings rebuild waveform chunks without replacing markers");
 
-    // Immutable chunk pointers allow a progressive publication to update only
-    // the newly available node instead of reallocating the complete visible
+    // Immutable chunk pointers allow a progressive publication to upload only
+    // the newly available texture instead of replacing the complete visible
     // waveform. Slots include absent chunks so later arrivals never shift the
-    // geometry-to-chunk mapping.
+    // texture-to-chunk mapping.
     std::array<const void*, 6> cachedChunks{};
     std::array<int, 6> chunks{};
     chunks[1] = 1;
