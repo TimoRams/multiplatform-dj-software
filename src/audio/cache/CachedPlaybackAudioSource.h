@@ -25,6 +25,9 @@ public:
     // still writes its forward bookkeeping position; that must not overwrite the
     // reader's reverse-progressing cursor.
     void setCommandedReadPosition(juce::int64 position) noexcept;
+    // Control-thread cue/seek preparation. Requests the destination before the
+    // next audio callback so a cold mid-track jump does not begin with silence.
+    void prefetchForSeek(juce::int64 position) noexcept;
     [[nodiscard]] juce::int64 getNextReadPosition() const override;
     [[nodiscard]] juce::int64 getTotalLength() const override;
     [[nodiscard]] bool isLooping() const override;

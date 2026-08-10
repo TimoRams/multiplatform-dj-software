@@ -39,6 +39,13 @@ QSemaphore& loadGate()
     return gate;
 }
 
+// Loading and converting a large immutable waveform before publishing the
+// audio handle makes long mixes appear unavailable for seconds. Above this
+// bounded budget the normal analyzer rebuilds the display progressively after
+// playback is already ready. At 600 pps this keeps ordinary tracks on the fast
+// cached path while hour-long timelines never gate transport startup.
+constexpr qint64 kImmediateWaveformCacheBudgetBytes = 8 * 1024 * 1024;
+
 TrackMetadataSnapshot readMetadata(const juce::AudioFormatReader& reader,
                                    const QString& path,
                                    const juce::File& file)
@@ -206,9 +213,11 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
     if (!isCurrent(request.generation))
         return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
 
-    // Playback decoder open/page table creation stays off the Qt thread.  The
-    // returned handle is installed immediately by the owner thread.
-    result.cacheHandle = m_audioPageCache.openTrack({result.canonicalPath});
+    // Transfer the metadata reader into the playback cache. Opening a long
+    // compressed file twice can scan its headers/index twice and used to make
+    // long mixes wait before they could even publish an audio handle.
+    result.cacheHandle = m_audioPageCache.openTrack(
+        {result.canonicalPath}, std::move(reader));
     if (!result.cacheHandle.isValid())
         return fail(TrackLoadError::DecoderCreationFailed, QStringLiteral("Could not open playback cache"));
 
@@ -240,14 +249,19 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
         }
     }
 
-    // Restore the immutable waveform before publishing the prepared track.
-    // These fields were previously present in TrackLoadResult but never filled,
-    // so every reload unnecessarily started a new analysis and visibly changed
-    // the waveform again.
+    // Small immutable waveforms can be restored before publishing without a
+    // visible delay. Large caches must never gate audio readiness: the analyzer
+    // will fill those timelines progressively in cursor-priority chunks after
+    // this result has already installed the page-backed transport.
     if (!isCurrent(request.generation))
         return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
-    result.waveformCacheLoaded = WaveformCache::loadForFile(
-        result.canonicalPath, m_waveformPointsPerSecond, &result.waveformCache);
+    const QFileInfo waveformCacheInfo(
+        WaveformCache::cachePathFor(result.canonicalPath, m_waveformPointsPerSecond));
+    const bool cacheFitsImmediateBudget = !waveformCacheInfo.exists()
+        || waveformCacheInfo.size() <= kImmediateWaveformCacheBudgetBytes;
+    result.waveformCacheLoaded = cacheFitsImmediateBudget
+        && WaveformCache::loadForFile(
+            result.canonicalPath, m_waveformPointsPerSecond, &result.waveformCache);
     if (result.waveformCacheLoaded) {
         result.instantOverviewExpected = result.waveformCache.totalExpected;
         result.instantOverview = TrackData::downsampleOverview(result.waveformCache.rgb);

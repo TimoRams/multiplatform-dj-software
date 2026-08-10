@@ -2,6 +2,7 @@
 
 #include <QCoreApplication>
 
+#include <algorithm>
 #include <iostream>
 #include <memory>
 
@@ -74,5 +75,18 @@ int main(int argc, char** argv)
                       && hourStore->totalLineCount == hourAt600BinsPerSecond
                       && hourStore->availableChunkCount() == 1,
                   "one-hour progressive load did not remain sparse");
+
+    TrackData taggedBeatgrid;
+    taggedBeatgrid.setBpmData(120.0, 0, 48000.0);
+    taggedBeatgrid.ensureProvisionalBeatgrid(60.0 * 60.0);
+    const auto immediateGrid = taggedBeatgrid.getBeatGrid();
+    ok &= require(immediateGrid.size() >= 7199,
+                  "tag BPM must create an immediate full-duration beatgrid");
+    ok &= require(!immediateGrid.empty() && immediateGrid.front().positionSec <= 0.0
+                      && std::any_of(immediateGrid.begin(), immediateGrid.end(),
+                                     [](const auto& beat) { return beat.isDownbeat; }),
+                  "immediate beatgrid must include beat and downbeat markers");
+    ok &= require(!taggedBeatgrid.beatgridLockedByUser(),
+                  "provisional tag beatgrid must remain replaceable by analysis");
     return ok ? 0 : 1;
 }

@@ -167,6 +167,9 @@ public:
                     std::vector<BeatMarker> beatGrid,
                     ConfidenceInfo confidence,
                     BeatGridInfo beatGridInfo);
+    // Creates an unlocked, replaceable grid immediately from trusted tag BPM.
+    // Cached or analyzed beat data replaces it later without changing the API.
+    void ensureProvisionalBeatgrid(double trackLengthSec);
 
     // Returns the elastic beat-marker array.
     // Empty if the analyzer ran before this feature was added.

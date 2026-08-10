@@ -166,6 +166,36 @@ int main(int argc, char** argv)
         analyzer.shutdownAndJoin();
     }
     if (ok) {
+        WaveformAnalyzer analyzer(&formats, 600);
+        std::mutex chunkMutex;
+        std::condition_variable chunkReady;
+        int firstRgbBin = -1;
+        analyzer.setChunkCallback(
+            [&](WaveformAnalyzer::AnalysisGeneration, int firstBin, int,
+                QVector<TrackData::WaveformBin>,
+                QVector<TrackData::RgbWaveformFrame> rgb) {
+                if (rgb.isEmpty())
+                    return;
+                {
+                    std::lock_guard lock(chunkMutex);
+                    if (firstRgbBin < 0)
+                        firstRgbBin = firstBin;
+                }
+                chunkReady.notify_one();
+            });
+        analyzer.setRealtimeInteractionActive(true);
+        analyzer.startAnalysis(wavePath, 0.0);
+        {
+            std::unique_lock lock(chunkMutex);
+            ok &= require(chunkReady.wait_for(lock, std::chrono::seconds(5),
+                                              [&] { return firstRgbBin >= 0; }),
+                          "active scratch must still receive its priority waveform chunk");
+        }
+        ok &= require(firstRgbBin == 0,
+                      "cold-start waveform must publish from the playhead before full buffers");
+        analyzer.shutdownAndJoin();
+    }
+    if (ok) {
         TrackData data;
         auto analyzer = std::make_unique<WaveformAnalyzer>(&formats, 600);
         std::atomic<int> acceptedCompletions{0};

@@ -25,6 +25,7 @@ public:
     void primeTrackerVelocity(double ratePerOutputSample) noexcept;
     void invalidatePrefetch() noexcept { m_sourceSize = 0; }
     void setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle) noexcept;
+    void prefetchAround(double readPositionSamples) noexcept;
 
     void setTrackLengthSamples(double lengthSamples) noexcept {
         m_trackLengthSamples = std::max(0.0, lengthSamples);

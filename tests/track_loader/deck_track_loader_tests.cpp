@@ -142,6 +142,41 @@ int main(int argc, char** argv)
         QFile::remove(WaveformCache::cachePathFor(monoPath, payload.pointsPerSecond));
     }
     {
+        // A long-track cache must not delay publication of the audio handle.
+        // Padding a valid fixture exercises the loader's bounded startup policy
+        // without creating an hour-long PCM test file.
+        WaveformCache::Payload payload;
+        payload.pointsPerSecond = 100;
+        payload.totalExpected = 20;
+        payload.globalMaxPeak = 0.8f;
+        payload.waveform.resize(payload.totalExpected);
+        payload.rgb.resize(payload.totalExpected);
+        ok &= require(WaveformCache::saveForFile(monoPath, payload),
+                      "oversized waveform fixture must be created");
+        const QString cachePath = WaveformCache::cachePathFor(
+            monoPath, payload.pointsPerSecond);
+        QFile oversizedCache(cachePath);
+        ok &= require(oversizedCache.open(QIODevice::ReadWrite)
+                          && oversizedCache.resize(9 * 1024 * 1024),
+                      "waveform fixture must exceed the immediate-load budget");
+        oversizedCache.close();
+
+        ResultWaiter waiter;
+        const auto started = std::chrono::steady_clock::now();
+        loader.loadTrack(monoPath, waiter.callback());
+        ok &= require(waiter.wait(), "oversized-cache track load must complete");
+        const auto elapsed = std::chrono::steady_clock::now() - started;
+        ok &= require(waiter.value().succeeded()
+                          && waiter.value().cacheHandle.isValid(),
+                      "oversized cache must not block audio readiness");
+        ok &= require(!waiter.value().waveformCacheLoaded,
+                      "oversized waveform must use progressive background loading");
+        ok &= require(elapsed < std::chrono::seconds(2),
+                      "oversized waveform cache must not gate track publication");
+        cache.releaseTrack(waiter.value().cacheHandle);
+        QFile::remove(cachePath);
+    }
+    {
         ResultWaiter waiter;
         const auto ownerThread = std::this_thread::get_id();
         std::thread::id completionThread;

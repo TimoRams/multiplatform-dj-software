@@ -150,6 +150,10 @@ void DeckAudioPipeline::setTransportRunning(bool running) noexcept
 void DeckAudioPipeline::seekToSeconds(double seconds) noexcept
 {
     const double commanded = std::max(0.0, seconds);
+    if (m_impl->playback && m_impl->handle.sampleRate() > 0.0) {
+        m_impl->playback->prefetchForSeek(static_cast<juce::int64>(
+            std::llround(commanded * m_impl->handle.sampleRate())));
+    }
     m_impl->commandedPositionSeconds.store(commanded, std::memory_order_release);
     m_impl->seekGeneration.fetch_add(1, std::memory_order_acq_rel);
 }

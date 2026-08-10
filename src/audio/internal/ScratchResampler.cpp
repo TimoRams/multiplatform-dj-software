@@ -146,6 +146,22 @@ bool ScratchResampler::positionInWindow(double position) const noexcept
         && position < m_bufferOriginSample + m_sourceSize - kHermiteRadius - 1;
 }
 
+void ScratchResampler::prefetchAround(double readPositionSamples) noexcept
+{
+    if (!m_cache || !m_cacheHandle.isValid() || m_cacheHandle.pageCount() <= 0)
+        return;
+    const auto sample = std::clamp<std::int64_t>(
+        static_cast<std::int64_t>(std::llround(readPositionSamples)),
+        0, std::max<std::int64_t>(0, m_cacheHandle.lengthInSamples() - 1));
+    const auto current = AudioPage::pageIndexForSample(sample);
+    const auto first = std::max<std::int64_t>(0, current - 6);
+    const auto last = std::min<std::int64_t>(m_cacheHandle.pageCount() - 1, current + 6);
+    (void)m_cache->requestPage(m_cacheHandle, current,
+                               AudioCachePriority::RealtimeCritical);
+    (void)m_cache->requestRange(m_cacheHandle, first, last,
+                                AudioCachePriority::ScratchNearPlayhead);
+}
+
 bool ScratchResampler::refillWindowFromCache(double rate, int outputBlockSize) noexcept
 {
     if (!m_cache || !m_cacheHandle.isValid()) return false;

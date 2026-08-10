@@ -168,6 +168,13 @@ AudioPageCache::~AudioPageCache() { shutdownAndJoin(); }
 
 AudioCacheHandle AudioPageCache::openTrack(const TrackCacheOpenRequest& request)
 {
+    return openTrack(request, {});
+}
+
+AudioCacheHandle AudioPageCache::openTrack(
+    const TrackCacheOpenRequest& request,
+    std::unique_ptr<juce::AudioFormatReader> preparedReader)
+{
     AudioCacheHandle handle;
     if (!m_impl->accepting.load(std::memory_order_acquire)) return handle;
     const QFileInfo info(request.filePath);
@@ -187,7 +194,10 @@ AudioCacheHandle AudioPageCache::openTrack(const TrackCacheOpenRequest& request)
     }
     auto entry = std::make_unique<Impl::Entry>();
     entry->key = key;
-    entry->reader.reset(m_impl->formats.createReaderFor(juce::File(key.canonicalPath.toStdString())));
+    entry->reader = preparedReader
+        ? std::move(preparedReader)
+        : std::unique_ptr<juce::AudioFormatReader>(
+            m_impl->formats.createReaderFor(juce::File(key.canonicalPath.toStdString())));
     if (!entry->reader || entry->reader->sampleRate <= 0.0 || entry->reader->numChannels == 0
         || entry->reader->numChannels > 8 || entry->reader->lengthInSamples <= 0) return handle;
     entry->id = m_impl->nextId.fetch_add(1);

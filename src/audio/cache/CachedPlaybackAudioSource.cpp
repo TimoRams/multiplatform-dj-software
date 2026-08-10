@@ -20,6 +20,19 @@ void CachedPlaybackAudioSource::setCommandedReadPosition(juce::int64 position) n
 {
     m_position.store(std::clamp<juce::int64>(position, 0, getTotalLength()), std::memory_order_release);
 }
+
+void CachedPlaybackAudioSource::prefetchForSeek(juce::int64 position) noexcept
+{
+    if (!m_handle.isValid() || m_handle.pageCount() <= 0)
+        return;
+    const auto clamped = std::clamp<juce::int64>(position, 0, getTotalLength());
+    const auto current = AudioPage::pageIndexForSample(clamped);
+    const auto first = std::max<juce::int64>(0, current - 4);
+    const auto last = std::min<juce::int64>(m_handle.pageCount() - 1, current + 8);
+    (void)m_cache.requestPage(m_handle, current, AudioCachePriority::RealtimeCritical);
+    (void)m_cache.requestRange(m_handle, first, last,
+                               AudioCachePriority::ScratchNearPlayhead);
+}
 juce::int64 CachedPlaybackAudioSource::getNextReadPosition() const { return m_position.load(std::memory_order_acquire); }
 juce::int64 CachedPlaybackAudioSource::getTotalLength() const { return std::max<juce::int64>(0, m_handle.lengthInSamples()); }
 bool CachedPlaybackAudioSource::isLooping() const { return m_loopEnabled.load(std::memory_order_acquire); }

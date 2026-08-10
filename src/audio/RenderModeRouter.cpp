@@ -100,6 +100,7 @@ void RenderModeRouter::beginScratch(double anchorSeconds,
     const double audioAnchorSec = std::max(0.0, anchorSeconds);
     const double audioAnchorSamples = audioAnchorSec * trackSampleRate;
     const double targetSamples = audioAnchorSec * trackSampleRate;
+    m_scratchResampler.prefetchAround(audioAnchorSamples);
     const double playbackSpeed = m_reverse.load(std::memory_order_relaxed)
         ? -std::abs(normalPlaybackSpeed)
         : std::abs(normalPlaybackSpeed);

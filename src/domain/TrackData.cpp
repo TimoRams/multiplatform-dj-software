@@ -293,6 +293,7 @@ void TrackData::setBpmData(double bpm, qint64 firstBeatSample, double sampleRate
                            ConfidenceInfo confidence,
                            BeatGridInfo beatGridInfo)
 {
+    bool beatgridUpdated = false;
     {
         QMutexLocker locker(&m_mutex);
         if (m_beatGridInfo.lockedByUser && !beatGrid.empty()) {
@@ -304,14 +305,76 @@ void TrackData::setBpmData(double bpm, qint64 firstBeatSample, double sampleRate
         m_sampleRate      = sampleRate;
         m_isBpmAnalyzed   = (bpm > 0.0);
         m_confidence      = confidence;
-        if (!beatGrid.empty())
+        if (!beatGrid.empty()) {
             m_beatGrid = std::move(beatGrid);
+            beatgridUpdated = true;
+        }
         if (beatGridInfo.type != BeatGridType::Unknown || !beatGridInfo.tempoNodes.empty()
             || beatGridInfo.userModified || beatGridInfo.lockedByUser) {
             m_beatGridInfo = std::move(beatGridInfo);
         }
     }
     emit bpmAnalyzed();
+    if (beatgridUpdated)
+        emit beatgridChanged();
+}
+
+void TrackData::ensureProvisionalBeatgrid(double trackLengthSec)
+{
+    assertOwnerThread();
+    double bpm = 0.0;
+    double sampleRate = 0.0;
+    qint64 firstBeatSample = 0;
+    float confidence = 0.35f;
+    {
+        QMutexLocker locker(&m_mutex);
+        if (!m_beatGrid.empty() || m_bpm <= 0.0 || m_sampleRate <= 0.0
+            || trackLengthSec <= 0.0) {
+            return;
+        }
+        bpm = m_bpm;
+        sampleRate = m_sampleRate;
+        firstBeatSample = m_firstBeatSample;
+        confidence = std::max(confidence, m_confidence.bpmConfidence);
+    }
+
+    const double beatDuration = 60.0 / bpm;
+    const double anchor = static_cast<double>(firstBeatSample) / sampleRate;
+    const int firstIndex = static_cast<int>(
+        std::floor((-TransportLimits::kPreRollSeconds - anchor) / beatDuration));
+    const int lastIndex = static_cast<int>(
+        std::ceil((trackLengthSec - anchor) / beatDuration));
+    std::vector<BeatMarker> grid;
+    grid.reserve(static_cast<size_t>(std::max(0, lastIndex - firstIndex + 1)));
+    for (int beatIndex = firstIndex; beatIndex <= lastIndex; ++beatIndex) {
+        const double position = anchor + static_cast<double>(beatIndex) * beatDuration;
+        if (position < -TransportLimits::kPreRollSeconds - 0.001
+            || position > trackLengthSec + 0.001) {
+            continue;
+        }
+        const int beatInBarZeroBased = ((beatIndex % 4) + 4) % 4;
+        BeatMarker marker;
+        marker.positionSec = position;
+        marker.isDownbeat = beatInBarZeroBased == 0;
+        marker.barIndex = static_cast<int>(
+            std::floor(static_cast<double>(beatIndex) / 4.0));
+        marker.barNumber = marker.barIndex + 1;
+        marker.beatInBar = beatInBarZeroBased + 1;
+        marker.confidence = confidence;
+        grid.push_back(marker);
+    }
+
+    {
+        QMutexLocker locker(&m_mutex);
+        if (!m_beatGrid.empty() || std::abs(m_bpm - bpm) > 1.0e-9)
+            return;
+        m_beatGrid = std::move(grid);
+        m_beatGridInfo.type = BeatGridType::ConstantTempo;
+        m_beatGridInfo.tempoNodes = {{anchor, bpm, confidence}};
+        m_beatGridInfo.userModified = false;
+        m_beatGridInfo.lockedByUser = false;
+    }
+    emit beatgridChanged();
 }
 
 void TrackData::shiftBeatgridToDownbeat(double newAnchorSec, double trackLengthSec)

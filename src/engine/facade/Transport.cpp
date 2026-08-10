@@ -512,8 +512,10 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
     if (m_coverProvider)
         m_coverProvider->clearCover(m_deckId);
 
-    if (result.metadata.tagBpm > 0.0)
+    if (result.metadata.tagBpm > 0.0) {
         m_trackData->setBpmData(result.metadata.tagBpm, 0, result.metadata.sampleRate);
+        m_trackData->ensureProvisionalBeatgrid(result.metadata.durationSec);
+    }
 
     m_hasTrack = true;
     updateTrackDuration(result.metadata.durationSec);

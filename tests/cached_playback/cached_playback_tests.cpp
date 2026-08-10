@@ -37,6 +37,16 @@ bool waitPages(AudioPageCache& c, const AudioCacheHandle& h)
     }
     return false;
 }
+bool waitPage(AudioPageCache& cache, const AudioCacheHandle& handle, std::int64_t pageIndex)
+{
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < until) {
+        if (cache.tryGetPage(handle, pageIndex))
+            return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return false;
+}
 bool finite(const juce::AudioBuffer<float>& b) {
     for (int c=0;c<b.getNumChannels();++c) for(int i=0;i<b.getNumSamples();++i)
         if(!std::isfinite(b.getSample(c,i))) return false; return true;
@@ -95,6 +105,18 @@ int main(int argc, char** argv)
     ok &= require(waitPages(missCache, missH), "miss requests decode asynchronously");
     miss.setNextReadPosition(0); miss.getNextAudioBlock({&cross,0,8192});
     ok &= require(miss.cacheStats().recoveryEvents > 0, "recovery fades in");
+
+    AudioPageCache seekCache(16 * 1024 * 1024);
+    auto seekHandle = seekCache.openTrack({stereo});
+    CachedPlaybackAudioSource seekSource(seekCache, seekHandle);
+    constexpr juce::int64 seekTarget = AudioPage::kSamplesPerChannel * 2 + 128;
+    seekSource.prefetchForSeek(seekTarget);
+    ok &= require(waitPage(seekCache, seekHandle, 2),
+                  "control-thread seek prefetch must warm the destination page");
+    seekSource.setCommandedReadPosition(seekTarget);
+    seekSource.getNextAudioBlock({&mo, 0, 512});
+    ok &= require(seekSource.cacheStats().starvationBlocks == 0,
+                  "prefetched mid-track cue must start without cache starvation");
 
     auto shared = cache.openTrack({stereo});
     ok &= require(shared.id() == h.id(), "two decks share cache entry");

@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <memory>
 
+namespace juce { class AudioFormatReader; }
+
 enum class AudioCachePriority : std::uint8_t {
     RealtimeCritical,
     ScratchNearPlayhead,
@@ -77,6 +79,9 @@ public:
     AudioPageCache& operator=(const AudioPageCache&) = delete;
 
     AudioCacheHandle openTrack(const TrackCacheOpenRequest& request);
+    AudioCacheHandle openTrack(
+        const TrackCacheOpenRequest& request,
+        std::unique_ptr<juce::AudioFormatReader> preparedReader);
     void releaseTrack(const AudioCacheHandle& handle);
     [[nodiscard]] AudioPageReadGuard tryGetPage(const AudioCacheHandle& handle,
                                                 std::int64_t pageIndex) const noexcept;

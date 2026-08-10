@@ -395,13 +395,13 @@ bool runEnvelopePass(const EnvelopePassInput& input)
     auto threadShouldExit = [&]() { return thread.threadShouldExit(); };
     const auto cooperateWithRealtime = [&]() {
         // Analysis owns a separate decoder, but can still compete for CPU and
-        // storage bandwidth exactly when a cold scratch window needs both.
-        // Pausing in small sleeps keeps cancellation responsive and leaves the
-        // audio/cache/render threads uncontended while the platter is held.
-        while (!threadShouldExit() && input.realtimeInteractionActive
-               && input.realtimeInteractionActive()) {
-            juce::Thread::sleep(4);
-        }
+        // storage bandwidth exactly when a cold scratch window needs both. A
+        // complete pause also prevents the waveform from following a scratch
+        // or cue jump, so throttle each batch while keeping cursor-priority work
+        // alive. Audio pages still run at the higher realtime cache priority.
+        if (!threadShouldExit() && input.realtimeInteractionActive
+            && input.realtimeInteractionActive())
+            juce::Thread::sleep(2);
     };
 
     m_trackData->reportAnalysisProgress(0.02, true);
@@ -492,14 +492,18 @@ bool runEnvelopePass(const EnvelopePassInput& input)
         float mid    = 0.0f;
         float high   = 0.0f;
     };
-    std::vector<RawBin> rawBins(static_cast<size_t>(numPoints));
+    std::vector<RawBin> rawBins;
 
     // Peak mipmap: signed min/max per high-res bin (4× analysis rate).
     // Allows the renderer to show actual audio oscillations at high zoom.
     struct RawPeak { float minRaw = 0.0f; float maxRaw = 0.0f; };
-    const int PEAK_RATIO = TrackData::PEAK_POINTS_PER_SECOND / m_pointsPerSecond;  // = 4
-    const int numPeakPoints = numPoints * PEAK_RATIO;
-    std::vector<RawPeak> rawPeakBuf(static_cast<size_t>(numPeakPoints));
+    const int requestedPeakRatio = TrackData::PEAK_POINTS_PER_SECOND / m_pointsPerSecond;
+    constexpr double kHighResolutionPeakMaxDurationSec = 10.0 * 60.0;
+    const double trackDurationSec = static_cast<double>(totalSamples) / sampleRate;
+    const int peakRatio = trackDurationSec <= kHighResolutionPeakMaxDurationSec
+        ? std::clamp(requestedPeakRatio, 1, 8) : 0;
+    const int numPeakPoints = numPoints * peakRatio;
+    std::vector<RawPeak> rawPeakBuf;
     float globalMaxSample = 0.001f;
 
     // Global per-band maxima — tracked across the entire track (for Pass 2).
@@ -552,13 +556,11 @@ bool runEnvelopePass(const EnvelopePassInput& input)
     const int cursorContextBins = std::max(128, m_pointsPerSecond / 2); // 0.5 s behind
     const int priorityBins = std::max(512, m_pointsPerSecond * 2);      // 2 s ahead
 
-    m_trackData->preallocateRgbWaveform(numPoints);
-
     const int hintBin = seekHintBin();
     const int priorityStart = std::max(0, hintBin - cursorContextBins);
     const int priorityWarmupStart = std::max(0, priorityStart - warmupBins);
     const int priorityEnd = std::min(numPoints, hintBin + priorityBins);
-    const bool hasPriority = hintBin > warmupBins;
+    const bool hasPriority = priorityEnd > priorityStart;
 
     if (hasPriority) {
         FiltState pFilt;
@@ -612,7 +614,6 @@ bool runEnvelopePass(const EnvelopePassInput& input)
             }
             RawBin rb; rb.low = pFilt.envLow.state; rb.lowMid = pFilt.envLowMid.state;
             rb.mid = pFilt.envMid.state; rb.high = pFilt.envHigh.state;
-            rawBins[static_cast<size_t>(bin)] = rb;
         }
 
         // Priority window — emit immediately
@@ -657,7 +658,6 @@ bool runEnvelopePass(const EnvelopePassInput& input)
             }
             RawBin rb; rb.low = pFilt.envLow.state; rb.lowMid = pFilt.envLowMid.state;
             rb.mid = pFilt.envMid.state; rb.high = pFilt.envHigh.state;
-            rawBins[static_cast<size_t>(bin)] = rb;
 
             if (rb.low > pRunMaxLow) pRunMaxLow = rb.low;
             if (rb.lowMid > pRunMaxLowMid) pRunMaxLowMid = rb.lowMid;
@@ -687,6 +687,14 @@ bool runEnvelopePass(const EnvelopePassInput& input)
         }
     }
     // ─────────────────────────────────────────────────────────────────────
+
+    // Publish the playhead window first. Only then allocate/zero the
+    // duration-sized worker buffers; for an hour-long track these allocations
+    // are substantial and must never delay the first visible waveform chunk.
+    rawBins.resize(static_cast<size_t>(numPoints));
+    if (numPeakPoints > 0)
+        rawPeakBuf.resize(static_cast<size_t>(numPeakPoints));
+    m_trackData->preallocateRgbWaveform(numPoints);
 
     int mainChunkStart = 0;
 
@@ -915,7 +923,7 @@ bool runEnvelopePass(const EnvelopePassInput& input)
 
         struct SubPeak { float min = 0.0f; float max = 0.0f; bool init = false; };
         std::array<SubPeak, 8> subPeaks{};
-        const int peakRatioClamped = std::clamp(PEAK_RATIO, 1, static_cast<int>(subPeaks.size()));
+        const int peakRatioClamped = peakRatio;
 
         for (int s = 0; s < toRead; ++s)
         {
@@ -967,17 +975,19 @@ bool runEnvelopePass(const EnvelopePassInput& input)
                 if (b4 > bestHigh)   bestHigh   = b4;
             }
 
-            const float mono = monoAcc / static_cast<float>(numCh);
-            const int pb = std::min(peakRatioClamped - 1,
-                                    (s * peakRatioClamped) / std::max(1, toRead));
-            auto& sp = subPeaks[static_cast<size_t>(pb)];
-            if (!sp.init) {
-                sp.min = mono;
-                sp.max = mono;
-                sp.init = true;
-            } else {
-                if (mono < sp.min) sp.min = mono;
-                if (mono > sp.max) sp.max = mono;
+            if (peakRatioClamped > 0) {
+                const float mono = monoAcc / static_cast<float>(numCh);
+                const int pb = std::min(peakRatioClamped - 1,
+                                        (s * peakRatioClamped) / std::max(1, toRead));
+                auto& sp = subPeaks[static_cast<size_t>(pb)];
+                if (!sp.init) {
+                    sp.min = mono;
+                    sp.max = mono;
+                    sp.init = true;
+                } else {
+                    if (mono < sp.min) sp.min = mono;
+                    if (mono > sp.max) sp.max = mono;
+                }
             }
 
             mainFilt.envLow   .process(bestLow);
@@ -986,8 +996,8 @@ bool runEnvelopePass(const EnvelopePassInput& input)
             mainFilt.envHigh  .process(bestHigh);
         }
 
-        {
-            const int peakBinBase = bin * PEAK_RATIO;
+        if (peakRatioClamped > 0) {
+            const int peakBinBase = bin * peakRatioClamped;
             for (int pb = 0; pb < peakRatioClamped; ++pb) {
                 const auto& sp = subPeaks[static_cast<size_t>(pb)];
                 const float pMin = sp.init ? sp.min : 0.0f;
