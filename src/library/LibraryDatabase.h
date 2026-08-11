@@ -9,10 +9,10 @@
 #include <vector>
 #include <memory>
 
-#include "TrackData.h"
-#include "TrackSegment.h"
-#include "database/DatabaseWorker.h"
-#include "analysis/AnalysisResult.h"
+#include "domain/TrackData.h"
+#include "domain/DomainTypes.h"
+#include "library/persistence/DatabaseWorker.h"
+#include "analysis/AnalysisTypes.h"
 
 class LibraryTableModel;
 

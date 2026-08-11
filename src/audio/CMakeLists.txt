@@ -1,8 +1,7 @@
 target_sources(${PROJECT_NAME} PRIVATE
     device/AudioDeviceService.h
     device/AudioDeviceService.cpp
-    cache/AudioPage.h
-    cache/AudioCacheHandle.h
+    cache/AudioCacheTypes.h
     cache/AudioPageCache.h
     cache/AudioPageCache.cpp
     cache/AudioCacheWorker.h
@@ -19,6 +18,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     TimeStretchProcessor.cpp
     DeckChannelProcessor.cpp
     internal/MixerFilterCoefficients.cpp
+    internal/BrickwallLimiter.h
+    internal/BrickwallLimiter.cpp
     internal/HermiteResamplingAudioSource.h
     internal/HermiteResamplingAudioSource.cpp
     internal/ScratchResampler.h

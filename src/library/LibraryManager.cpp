@@ -1,5 +1,5 @@
 #include "LibraryManager.h"
-#include "io/MediaIoScheduler.h"
+#include "library/MediaIoScheduler.h"
 #include <QDir>
 #include <QTimer>
 

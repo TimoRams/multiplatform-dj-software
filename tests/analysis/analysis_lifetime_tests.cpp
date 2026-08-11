@@ -1,5 +1,5 @@
 #include "TrackData.h"
-#include "WaveformAnalyzer.h"
+#include "waveform/WaveformAnalyzer.h"
 #include "waveform/WaveformLineStore.h"
 
 #include <QCoreApplication>

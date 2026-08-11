@@ -1,12 +1,30 @@
 #pragma once
 
-#include "Flx10Constants.h"
-
 #include <array>
 #include <cmath>
 #include <cstddef>
 
 namespace flx10 {
+
+// The FLX10 relative CC stream yields roughly 12,750 semantic ticks per
+// physical revolution. Keep this conversion beside the jog state machine that
+// owns it; it is not part of the display/HID wire protocol.
+constexpr double kScratchIntervalsPerRevolution = 12750.0;
+constexpr double kVinylRpm = 33.0 + 1.0 / 3.0;
+constexpr double kJogSpeedWindowSeconds = 0.032;
+constexpr double kJogSpeedStaleSeconds = 0.060;
+constexpr double kJogTailSuppressionSeconds = 0.120;
+
+constexpr double scratchDeltaSeconds(double ticks) noexcept
+{
+    return ticks * (60.0 / kVinylRpm) / kScratchIntervalsPerRevolution;
+}
+
+constexpr int relativeTicksFromRaw(int rawValue) noexcept
+{
+    const int raw = rawValue < 0 ? 0 : (rawValue > 127 ? 127 : rawValue);
+    return raw - 0x40;
+}
 
 enum class JogPhase {
     Idle,

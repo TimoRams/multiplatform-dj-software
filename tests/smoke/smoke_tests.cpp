@@ -1,8 +1,8 @@
 #include "controllers/DeckIndex.h"
 #include "analysis/AnalysisValidation.h"
-#include "analysis/AnalysisResult.h"
+#include "analysis/AnalysisTypes.h"
 #include "audio/internal/HermiteKernel.h"
-#include "engine/SyncMaintenancePolicy.h"
+#include "deck/sync/SyncTypes.h"
 
 #include <cmath>
 #include <cstdlib>

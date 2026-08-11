@@ -1,5 +1,4 @@
 #include "app/ApplicationBootstrap.h"
-#include "app/CiSmokeTest.h"
 
 #include <cstring>
 #include <iostream>

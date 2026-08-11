@@ -2,7 +2,7 @@
 
 #include "audio/AudioParameters.h"
 #include "audio/AudioRouting.h"
-#include "fx/BrickwallLimiter.h"
+#include "audio/internal/BrickwallLimiter.h"
 #include "fx/FxProcessor.h"
 
 #include <array>

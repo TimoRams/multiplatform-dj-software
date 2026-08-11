@@ -1,7 +1,6 @@
 #pragma once
 
-#include "AudioCacheHandle.h"
-#include "AudioPage.h"
+#include "AudioCacheTypes.h"
 
 #include <QString>
 #include <atomic>

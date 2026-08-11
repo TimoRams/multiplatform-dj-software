@@ -1,146 +1,122 @@
 # BrockDJ Current-State Inventory
 
-This document is a reviewed description of the production tree as of 2026-08-10. It intentionally
-contains only stable architectural facts and a small set of useful size indicators. It is maintained
-by hand alongside architectural changes; generated file classifications were removed because their
-domain labels and reference lists became stale immediately after refactors.
+This hand-maintained inventory describes the production source tree after the
+2026-08-11 architecture consolidation. Counts exclude vendored `libs/`, build
+trees and packaging output.
 
-## Scope and Metrics
+## Scope and metrics
 
-The counts below exclude vendored code in `libs/`, generated build trees and packaging output.
-
-| Metric | Current count |
+| Metric | Count |
 | --- | ---: |
-| Production C++ headers (`.h`, `.hpp`) | 107 |
-| Production C/C++ sources (`.c`, `.cpp`) | 92 |
+| C++ headers | 100 |
+| C++ sources | 84 |
 | QML components | 34 |
-| Production source and QML files | 233 |
-| Production source and QML lines | 65,326 |
-| Test source/header files | 40 |
-| `engine/facade` implementation files | 8 |
-| CTest cases on Linux | 39 |
+| C++/QML files | 218 |
+| C++/QML lines | 69,895 |
+| Top-level source domains | 12 |
 
-These numbers are orientation points, not an architectural contract. Source ownership and runtime
-boundaries below are the parts that should stay current.
+Counts are orientation points, not a target. Ownership and dependency direction
+are the architectural contract.
 
-## Source Domains
+## Source domains
 
 | Directory | Responsibility | Main owner or boundary |
 | --- | --- | --- |
-| `src/analysis` | tempo, beat, downbeat, phrase and waveform analysis | worker-local analysis state; immutable result publication |
-| `src/app` | startup, runtime lifetime, settings and QML-facing application services | Qt application thread and `ApplicationRuntime` |
-| `src/audio` | callback, deck pipelines, mixing, output routing and streaming cache | `AudioEngine`; audio callback plus bounded workers |
-| `src/controllers` | controller integration and FLX10 HID protocol | Qt/control thread plus device I/O boundary |
-| `src/database` | serialized database work | `DatabaseWorker` thread |
-| `src/domain` | cross-domain track and analysis value types | immutable snapshots where data crosses threads |
-| `src/engine` | stable `DjEngine` QML facade and deck/scratch/sync control logic | Qt/control thread; commands and snapshots cross to audio |
-| `src/fx` | deck/master effects and limiter | audio callback; prepared on control thread |
-| `src/io` | bounded media I/O scheduling | `MediaIoScheduler` workers |
-| `src/library` | database facade, models, analysis scheduling, preview and covers | Qt models, database worker and media workers |
-| `src/link` | Ableton Link integration | Link session bridged to control-clock state |
-| `src/midi` | MIDI enumeration, mapping, feedback and FLX10 bridge | MIDI callbacks normalized onto control state |
-| `src/platform` | operating-system adapters | narrow platform boundary |
-| `src/qml` | desktop/AIO composition and reusable visual components | Qt Quick scene and render thread |
-| `src/rendering` | waveform analysis orchestration and Qt Quick render items | analysis workers and render-thread snapshots |
-| `src/waveform` | immutable progressive waveform line data | producer/consumer snapshot boundary |
+| `src/analysis` | tempo, beat, downbeat, key and phrase analysis | worker-local state -> immutable results |
+| `src/app` | startup, lifetime, settings and QML-facing application state | Qt application thread |
+| `src/audio` | callback, deck pipelines, buses, routing, device and page cache | audio callback plus bounded decoder worker |
+| `src/controllers` | generic MIDI, feedback and FLX10 MIDI/HID/display | device/control threads |
+| `src/deck` | `DjEngine`, transport, loading, cues, scratch and sync | Qt/control -> audio commands |
+| `src/domain` | cross-domain track state and value types | immutable snapshots where possible |
+| `src/fx` | selectable audio effects | prepared state -> audio callback |
+| `src/library` | persistence, models, cover/preview, analysis and media I/O | Qt owner plus joined workers |
+| `src/link` | Ableton Link integration | Link session -> control clock |
+| `src/platform` | narrow OS adapters | platform boundary |
+| `src/qml` | presentation organized by UI domain | Qt Quick scene/render thread |
+| `src/waveform` | waveform extraction, store, cache, LOD and renderers | workers -> immutable store -> scene graph |
 
-## Runtime Ownership
+`src/CMakeLists.txt` is the production-source entry point. Domain CMake files
+only contribute sources/resources to the existing application target.
 
-`ApplicationRuntime` owns the long-lived services and records their destruction order. The important
-audio path is:
+## Audio ownership
 
 ```text
-AudioPageCache workers
-        |
-        v
-DeckAudioPipeline x4
-        |
-        v
-AudioEngine callback
-   |             |
-   v             v
-MasterMixer   HeadphoneBus
-       \       /
-        v     v
-   AudioOutputRouter -> hardware outputs
+AudioPageCache -> DeckAudioPipeline x4 -> AudioEngine
+                                     -> MasterMixer
+                                     -> HeadphoneBus
+                                     -> AudioOutputRouter -> hardware
 ```
 
-`AudioEngine` is the sole application audio source registered with the JUCE device manager. It owns
-four `DeckAudioPipeline` instances, the program and headphone buses, the output router and the
-optional auxiliary endpoint used by library preview. Each deck pipeline owns cached playback,
-render-mode routing, time stretch and its `DeckChannelProcessor`. Callback code consumes prepared
-state and bounded snapshots; disk I/O, decoding and object preparation stay off the callback.
+The protected audio owners remain distinct. The page cache publishes immutable
+decoded pages; the callback never decodes or waits. The limiter is internal
+audio output protection shared by master and headphone buses, not a selectable
+FX unit.
 
-`ControlClock` drives periodic control-domain work. `SyncCoordinator` and the deck sync controllers
-publish control decisions without becoming audio callback owners. The exact thread rules and shutdown
-ordering are documented in [realtime-safety.md](realtime-safety.md) and
-[thread-ownership.md](thread-ownership.md).
+## Deck facade
 
-## DjEngine Facade
-
-`src/engine/DjEngine.h` is the stable Qt/QML compatibility surface. Its implementation is grouped by
-responsibility under `src/engine/facade/`:
+`src/deck/DjEngine.h` remains the stable QML/controller facade. Its methods are
+implemented in four responsibility-sized files:
 
 | File | Responsibility |
 | --- | --- |
-| `Core.cpp` | lifecycle, clock, mixer, library hydration, tempo and keylock facade |
-| `CueLoop.cpp` | cue/loop persistence and `DeckCueLoopController` bridge |
-| `Diagnostics.cpp` | latency composition and diagnostic views |
-| `Fx.cpp` | deck FX commands |
-| `Scratch.cpp` | scratch session and deck-pipeline handoff |
-| `Settings.cpp` | audio-device settings and queries |
-| `Sync.cpp` | sync snapshots and actions |
-| `Transport.cpp` | transport, track loading, reverse/slip and PFL facade |
+| `DjEngine.cpp` | lifecycle, settings, diagnostics and basic facade state |
+| `DjEngineTransport.cpp` | transport, track load and synchronization actions |
+| `DjEngineCues.cpp` | cue, loop, beat-jump and persistence bridge |
+| `DjEnginePerformance.cpp` | scratch and FX performance controls |
 
-The public contract is protected by `dj_engine_api_contract`. The facade monolith is a separate
-refactoring concern and is not part of repository cleanup.
+Direct includes replaced the former umbrella header. `DeckTransport`,
+`DeckTrackLoader`, `DeckCueLoopController`, scratch and sync remain separate
+because they have real ownership or test boundaries.
 
-## Waveform and Analysis
+## Analysis and waveform
 
-`WaveformAnalyzer` manages analysis worker lifetime and publishes immutable `AnalysisResult` values;
-`AnalysisWorkingData` remains worker-local. `WaveformEnvelopePass` is the expensive waveform pass,
-while `WaveformAnalysisOrchestrator` coordinates cache and preview integration. Independently tested
-algorithms such as `TempoEstimator`, `BeatTracker`, `DownbeatDetector`, `BeatGridFitter` and
-`PhraseAnalyzer` remain separate boundaries.
+Public analysis values live in `AnalysisTypes.h`; beat implementation helpers
+live in `analysis/internal/BeatAnalysis.*`. `AnalysisJobQueue` remains separate
+because it owns scheduling state.
 
-`TrackData` currently exposes full RGB frames, overview RGB frames and immutable progressive
-`WaveformLineStore` chunks. This duplication is intentional while cached analysis, Qt rendering and
-FLX10 projection consume different representations. Removing an RGB representation requires a format
-and consumer migration; it is not safe file cleanup.
+Waveform data and rendering now form one domain:
 
-## QML Shape
+```text
+WaveformAnalyzer / WaveformCache
+    -> WaveformLineStore + WaveformTypes
+    -> WaveformLodPyramid
+    -> render/WaveformTileRasterizer
+    -> render/ScrollingWaveformItem + OverviewWaveformItem
+```
 
-`main.qml` composes `PerformanceWorkspace`, settings/development windows and the selected desktop or
-AIO presentation. `DeckControl` is shared across four decks. `EnlargedWaveform` is shared by desktop
-and performance waveform screens. The two UI modes should share behavior and differ only in
-composition; mode-specific application logic is a regression risk.
+The current playhead-demand, immutable chunk, ViewKey, single overview and
+detail-tile behavior is preserved. Analysis/orchestration lives under
+`waveform/internal/`; scene-graph code lives only under `waveform/render/`.
 
-The largest QML files are review candidates, not deletion candidates: `Library.qml` (6,213 lines),
-`SettingsPanel.qml` (1,756), `SettingsWindow.qml` (1,693), `TopHeader.qml` (1,564) and
-`DeckControl.qml` (1,314). Component extraction needs a dedicated QML binding and lifetime review.
+## Library and persistence
 
-## Large Implementation Files
+`LibraryDatabase.cpp` owns setup/lifecycle; `LibraryPersistence.cpp` groups the
+track, cue and playlist CRUD implementation. `DatabaseWorker` retains a joined
+SQLite thread under `library/persistence/`. `MediaIoScheduler` remains a
+separate joined worker but belongs to the library/media domain instead of an
+otherwise empty top-level folder.
 
-The principal non-QML split candidates are `FxProcessor.cpp` (1,834 lines),
-`MidiFlx10Bridge.cpp` (1,734), `WaveformEnvelopePass.cpp` (1,163), `CueLoop.cpp` (1,122),
-`RenderModeRouter.cpp` (944), `MidiDeviceEnumeration.cpp` (936) and `Core.cpp` (844). File size alone
-does not authorize a split: real-time ownership, anonymous implementation state and test boundaries
-must be preserved.
+## Controllers
 
-## Build and Test Shape
+Generic MIDI lives in `controllers/midi/`; all FLX10-specific behavior lives in
+`controllers/flx10/`. FLX10 HID transport remains separate from display
+encoding and MIDI dispatch. Controller bridges translate between existing state
+owners and do not own a second mixer or transport state.
 
-The root CMake project currently declares the application and 39 Linux CTest cases. Several test
-executables compile overlapping production and JUCE sources, which makes clean test builds expensive.
-Consolidating test support may help, but combining tests into fewer executables should only happen
-after measuring startup/build time and checking global-state isolation.
+## QML shape
 
-The fast regression entry point is `./test-fast`; focused subsets can be run through CTest in
-`build-tests`. Manual cross-mode checks live in
-[`docs/testing/regression-checklist.md`](../testing/regression-checklist.md).
+`main.qml` is the only root component. Reusable and product surfaces are grouped
+under `components`, `deck`, `waveform`, `mixer`, `performance`, `library`,
+`settings`, `shell` and `development`. The files remain in one `DJSoftware`
+module, preserving unqualified component use and resource URLs.
 
-## Known Follow-Up Work
+Large QML files remain dedicated review candidates. They were not split during
+this behavior-preserving source cleanup because bindings, focus, popup parents
+and component lifetime require visual testing.
 
-- Modularize the root `CMakeLists.txt` without changing target membership or QML resource paths.
-- Review repeated QML composition in library, settings, header and deck-control surfaces.
-- Keep the `DjEngine` facade split and the waveform representation migration as separate refactors.
-- Treat `libs/` as externally owned submodules; repository cleanup must not alter them.
+## Build and test shape
+
+Use `./build-fast` for the application. Final validation must also configure a
+fresh `BUILD_TESTING=ON` tree and run full CTest; existing binaries are not an
+acceptable result after source moves. Manual UI/controller/audio checks remain
+in `docs/testing/regression-checklist.md`.

@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <chrono>
 
-#include "Flx10ProtocolCommon.h"
+#include "Flx10Protocol.h"
 
 using namespace flx10_protocol;
 

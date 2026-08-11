@@ -3,6 +3,4 @@ target_sources(${PROJECT_NAME} PRIVATE
     FxManager.cpp
     FxProcessor.h
     FxProcessor.cpp
-    BrickwallLimiter.h
-    BrickwallLimiter.cpp
 )

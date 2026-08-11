@@ -1,7 +1,6 @@
 #pragma once
 
-#include "WaveformLineChunk.h"
-#include "WaveformLineBatch.h"
+#include "WaveformTypes.h"
 
 #include <array>
 #include <cstdint>

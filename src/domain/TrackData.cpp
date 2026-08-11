@@ -1,5 +1,5 @@
 #include "TrackData.h"
-#include "analysis/AnalysisResult.h"
+#include "analysis/AnalysisTypes.h"
 #include "waveform/WaveformLineBuilder.h"
 #include "waveform/WaveformVisualStyle.h"
 

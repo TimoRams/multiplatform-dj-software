@@ -1,5 +1,5 @@
-#include "analysis/AnalysisResult.h"
-#include "analysis/AnalysisWorkingData.h"
+#include "analysis/AnalysisTypes.h"
+#include "analysis/internal/AnalysisWorkingData.h"
 #include "domain/TrackData.h"
 
 #include <QCoreApplication>

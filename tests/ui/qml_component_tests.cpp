@@ -35,18 +35,18 @@ int main()
 {
     bool ok = true;
     const auto main = read("src/qml/main.qml");
-    const auto topHeader = read("src/qml/TopHeader.qml");
+    const auto topHeader = read("src/qml/shell/TopHeader.qml");
     const auto workspace = read("src/qml/performance/PerformanceWorkspace.qml");
-    const auto shortcuts = read("src/qml/shared/UiShortcutManager.qml");
-    const auto enlargedWaveform = read("src/qml/EnlargedWaveform.qml");
-    const auto overallWaveform = read("src/qml/OverallWaveform.qml");
-    const auto settingsPanel = read("src/qml/SettingsPanel.qml");
-    const auto settingsWindow = read("src/qml/SettingsWindow.qml");
+    const auto shortcuts = read("src/qml/components/UiShortcutManager.qml");
+    const auto enlargedWaveform = read("src/qml/waveform/EnlargedWaveform.qml");
+    const auto overallWaveform = read("src/qml/waveform/OverallWaveform.qml");
+    const auto settingsPanel = read("src/qml/settings/SettingsPanel.qml");
+    const auto settingsWindow = read("src/qml/settings/SettingsWindow.qml");
     const auto applicationBootstrap = read("src/app/ApplicationBootstrap.cpp");
-    const auto performancePads = read("src/qml/PerformancePads.qml");
+    const auto performancePads = read("src/qml/performance/PerformancePads.qml");
     const auto flx10Mapping = read("src/controllers/mappings/midi/DDJ-FLX10.brockdj.xml");
-    const auto engineHeader = read("src/engine/DjEngine.h");
-    const auto midiManagerHeader = read("src/midi/MidiControllerManager.h");
+    const auto engineHeader = read("src/deck/DjEngine.h");
+    const auto midiManagerHeader = read("src/controllers/midi/MidiControllerManager.h");
     ok &= require(std::count(main.begin(), main.end(), '\n') < 600, "main.qml remains a compact shell");
     ok &= require(main.find("PerformanceWorkspace") != std::string::npos, "shell routes to performance workspace");
     ok &= require(workspace.find("DeckControl") != std::string::npos, "workspace uses shared deck component");

@@ -1,6 +1,6 @@
 #include "LibraryCoverService.h"
 #include "CoverArtProvider.h"
-#include "io/MediaIoScheduler.h"
+#include "library/MediaIoScheduler.h"
 
 #include <QDateTime>
 #include <QFileInfo>

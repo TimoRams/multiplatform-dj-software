@@ -1,4 +1,6 @@
 target_sources(${PROJECT_NAME} PRIVATE
+    MediaIoScheduler.h
+    MediaIoScheduler.cpp
     LibraryManager.h
     LibraryManager.cpp
     CoverArtExtractor.h
@@ -11,10 +13,9 @@ target_sources(${PROJECT_NAME} PRIVATE
     TrackIdGenerator.h
     LibraryDatabase.h
     LibraryDatabase.cpp
-    LibrarySchema.cpp
-    LibraryTrackStore.cpp
-    LibraryCueStore.cpp
-    LibraryPlaylistStore.cpp
+    LibraryPersistence.cpp
+    persistence/DatabaseWorker.h
+    persistence/DatabaseWorker.cpp
     LibraryAnalysisManager.h
     LibraryAnalysisManager.cpp
     LibraryTableModel.h

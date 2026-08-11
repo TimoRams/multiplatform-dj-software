@@ -2,7 +2,7 @@
 
 This baseline was captured before moving production audio code. Its former baseline
 checks are now hard assertions in
-`tests/audio_routing/audio_routing_contract_tests.cpp`.
+`tests/audio/audio_routing_contract_tests.cpp`.
 
 ## Green current behavior
 

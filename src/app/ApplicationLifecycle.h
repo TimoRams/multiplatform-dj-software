@@ -7,6 +7,7 @@
 #include <QQuickWindow>
 #include <QQmlApplicationEngine>
 #include <array>
+#include <functional>
 #include <memory>
 #include <mutex>
 
@@ -27,7 +28,6 @@ class LibraryCoverService;
 class LibraryPreviewPlayer;
 class SettingsManager;
 class AppConfig;
-class AppExitGate;
 class MixerParameterBridge;
 class MixerControl;
 class AudioDeviceService;
@@ -36,6 +36,29 @@ class MediaIoScheduler;
 class UiScaleController;
 class WaveformZoomController;
 namespace engine::sync { class SyncCoordinator; }
+
+// QML entry point for ordered app teardown before Qt.quit().
+class AppExitGate final : public QObject
+{
+    Q_OBJECT
+
+public:
+    explicit AppExitGate(QObject* parent = nullptr) : QObject(parent) {}
+
+    void setHandler(std::function<void(bool manualBackup)> handler)
+    {
+        m_handler = std::move(handler);
+    }
+
+    Q_INVOKABLE void finalizeExit(bool manualBackup)
+    {
+        if (m_handler)
+            m_handler(manualBackup);
+    }
+
+private:
+    std::function<void(bool manualBackup)> m_handler;
+};
 
 struct ApplicationRuntime {
     QQmlApplicationEngine* engine = nullptr;

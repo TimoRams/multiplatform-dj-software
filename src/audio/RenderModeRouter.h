@@ -2,8 +2,8 @@
 
 #include "audio/AudioRouting.h"
 #include "audio/internal/ScratchResampler.h"
-#include "engine/scratch/ScratchController.hpp"
-#include "engine/scratch/VirtualTurntable.hpp"
+#include "deck/scratch/ScratchController.h"
+#include "deck/scratch/VirtualTurntable.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <array>

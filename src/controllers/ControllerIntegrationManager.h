@@ -5,7 +5,7 @@
 #include <QString>
 
 #include "flx10/DDJFLX10Controller.h"
-#include "DjEngine.h"
+#include "deck/DjEngine.h"
 
 class ControllerIntegrationManager : public QObject
 {

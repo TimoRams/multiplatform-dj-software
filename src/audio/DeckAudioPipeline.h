@@ -1,7 +1,7 @@
 #pragma once
 
 #include "audio/AudioParameters.h"
-#include "audio/cache/AudioCacheHandle.h"
+#include "audio/cache/AudioCacheTypes.h"
 
 #include <atomic>
 #include <cstdint>

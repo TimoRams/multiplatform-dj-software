@@ -4,7 +4,7 @@
 #include <QString>
 #include "app/ControlClock.h"
 #include "audio/AudioEngine.h"
-#include "audio/cache/AudioCacheHandle.h"
+#include "audio/cache/AudioCacheTypes.h"
 #include <atomic>
 #include <cstdint>
 #include <memory>

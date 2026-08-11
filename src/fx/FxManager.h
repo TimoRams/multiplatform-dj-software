@@ -4,7 +4,7 @@
 #include <QString>
 #include <QDebug>
 #include "FxProcessor.h"
-#include "DjEngine.h"
+#include "deck/DjEngine.h"
 
 #include <QPointer>
 

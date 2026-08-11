@@ -11,7 +11,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "TrackData.h"
-#include "WaveformAnalyzer.h"
+#include "waveform/WaveformAnalyzer.h"
 
 class LibraryDatabase;
 

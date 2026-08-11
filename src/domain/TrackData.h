@@ -12,11 +12,9 @@
 #include <vector>
 #include <memory>
 
-#include "TransportLimits.h"
-#include "TrackSegment.h"
+#include "DomainTypes.h"
 #include "waveform/WaveformLineStore.h"
-#include "waveform/WaveformLineBatch.h"
-#include "waveform/WaveformNormalizationState.h"
+#include "waveform/WaveformTypes.h"
 
 namespace analysis { struct AnalysisResult; }
 namespace waveform { struct PreparedWaveformLines; }

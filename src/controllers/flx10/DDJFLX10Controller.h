@@ -1,8 +1,8 @@
 #pragma once
 
-#include "midi/AlsaMidiOutput.h"
+#include "controllers/midi/AlsaMidiOutput.h"
 #include "app/ControlClock.h"
-#include "Flx10ProtocolCommon.h"
+#include "Flx10Protocol.h"
 
 #include <QObject>
 #include <QByteArray>
@@ -24,7 +24,7 @@
 #include <vector>
 
 #include <QPointer>
-#include "DjEngine.h"
+#include "deck/DjEngine.h"
 
 #if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
 #include <libusb-1.0/libusb.h>

@@ -1,8 +1,8 @@
 #include "DDJFLX10Controller.h"
 
 #include "controllers/DeckIndex.h"
-#include "DjEngine.h"
-#include "Flx10ProtocolCommon.h"
+#include "deck/DjEngine.h"
+#include "Flx10Protocol.h"
 #include "domain/TrackData.h"
 
 #include <QCoreApplication>

@@ -2,7 +2,7 @@
 
 #include <QString>
 
-#include "AnalysisResult.h"
+#include "AnalysisTypes.h"
 
 namespace analysis {
 

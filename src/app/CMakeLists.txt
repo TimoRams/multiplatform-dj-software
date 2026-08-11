@@ -18,5 +18,4 @@ target_sources(${PROJECT_NAME} PRIVATE
     SettingsManager.cpp
     AppConfig.h
     AppConfig.cpp
-    AppExitGate.h
 )

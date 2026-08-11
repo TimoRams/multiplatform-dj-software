@@ -1,6 +1,6 @@
 #include "FxManager.h"
 #include "DeckChannels.h"
-#include "DjEngine.h"
+#include "deck/DjEngine.h"
 #include <cmath>
 #include <algorithm>
 

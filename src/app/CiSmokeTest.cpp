@@ -1,4 +1,4 @@
-#include "CiSmokeTest.h"
+#include "ApplicationBootstrap.h"
 
 #include <QCoreApplication>
 #include <QFile>

@@ -1,10 +1,24 @@
 target_sources(${PROJECT_NAME} PRIVATE
     WaveformDemand.h
+    WaveformTypes.h
     WaveformLineBuilder.h
-    WaveformLineBatch.h
-    WaveformNormalizationState.h
     WaveformVisualStyle.h
     WaveformLodPyramid.h
     WaveformLodPyramid.cpp
     WaveformLineStore.cpp
+    WaveformAnalyzer.h
+    WaveformAnalyzer.cpp
+    WaveformCache.h
+    WaveformCache.cpp
+    internal/WaveformEnvelopePass.h
+    internal/WaveformEnvelopePass.cpp
+    internal/WaveformAnalysisOrchestrator.h
+    internal/WaveformAnalysisOrchestrator.cpp
+    render/OverviewWaveformItem.h
+    render/OverviewWaveformItem.cpp
+    render/ScrollingWaveformItem.h
+    render/ScrollingWaveformItem.cpp
+    render/WaveformRenderMath.h
+    render/WaveformTileRasterizer.h
+    render/WaveformTileRasterizer.cpp
 )

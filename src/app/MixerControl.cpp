@@ -1,7 +1,7 @@
 #include "MixerControl.h"
 
 #include "DeckChannels.h"
-#include "DjEngine.h"
+#include "deck/DjEngine.h"
 #include "audio/AudioEngine.h"
 
 #include <algorithm>

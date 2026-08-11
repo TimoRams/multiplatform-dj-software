@@ -1,10 +1,9 @@
 #include "ApplicationLifecycle.h"
 
-#include "DjEngine.h"
+#include "deck/DjEngine.h"
 #include "audio/AudioEngine.h"
 #include "SettingsManager.h"
 #include "app/AppConfig.h"
-#include "app/AppExitGate.h"
 #include "controllers/ControllerIntegrationManager.h"
 #include "fx/FxManager.h"
 #include "library/LibraryAnalysisManager.h"
@@ -14,12 +13,12 @@
 #include "library/LibraryPreviewPlayer.h"
 #include "library/LibraryTableModel.h"
 #include "link/LinkManager.h"
-#include "midi/MidiControllerManager.h"
-#include "midi/ParameterStore.h"
+#include "controllers/midi/MidiControllerManager.h"
+#include "controllers/midi/ParameterStore.h"
 #include "audio/device/AudioDeviceService.h"
 #include "audio/cache/AudioPageCache.h"
-#include "engine/sync/SyncCoordinator.h"
-#include "io/MediaIoScheduler.h"
+#include "deck/sync/SyncCoordinator.h"
+#include "library/MediaIoScheduler.h"
 
 #include <QCoreApplication>
 #include <QEventLoop>

@@ -1,0 +1,27 @@
+target_sources(${PROJECT_NAME} PRIVATE
+    DjEngine.h
+    DjEngine.cpp
+    DjEngineTransport.cpp
+    DjEngineCues.cpp
+    DjEnginePerformance.cpp
+    DeckCueLoopController.cpp
+    DeckCueLoopController.h
+    DeckTrackLoader.cpp
+    DeckTrackLoader.h
+    DeckTransport.cpp
+    DeckTransport.h
+    JogNudgePolicy.h
+    MetadataUtils.cpp
+    MetadataUtils.h
+    sync/DeckSyncController.cpp
+    sync/DeckSyncController.h
+    sync/SyncCoordinator.cpp
+    sync/SyncCoordinator.h
+    sync/SyncTypes.h
+    scratch/ScratchSession.h
+    scratch/ScratchSession.cpp
+    scratch/ScratchController.h
+    scratch/ScratchController.cpp
+    scratch/VirtualTurntable.h
+    scratch/VirtualTurntable.cpp
+)

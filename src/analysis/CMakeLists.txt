@@ -1,18 +1,13 @@
 target_sources(${PROJECT_NAME} PRIVATE
-    PhraseAnalyzer.h
-    PhraseAnalyzer.cpp
+    internal/PhraseAnalyzer.h
+    internal/PhraseAnalyzer.cpp
     AnalysisCacheVersion.h
-    AnalysisResult.h
-    AnalysisFeatureExtractor.h
-    AnalysisFeatureExtractor.cpp
-    TempoEstimator.h
-    TempoEstimator.cpp
-    BeatTracker.h
-    BeatTracker.cpp
-    DownbeatDetector.h
-    DownbeatDetector.cpp
-    BeatGridFitter.h
-    BeatGridFitter.cpp
+    AnalysisTypes.h
+    internal/AnalysisWorkingData.h
+    internal/AnalysisFeatureExtractor.h
+    internal/AnalysisFeatureExtractor.cpp
+    internal/BeatAnalysis.h
+    internal/BeatAnalysis.cpp
     AnalysisValidation.h
     AnalysisValidation.cpp
 )
