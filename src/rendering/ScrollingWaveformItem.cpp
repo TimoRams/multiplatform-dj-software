@@ -1,7 +1,10 @@
 #include "ScrollingWaveformItem.h"
 
 #include "TrackData.h"
+#include "app/WaveformZoomController.h"
 #include "WaveformMarkerLayout.h"
+#include "WaveformRenderTile.h"
+#include "WaveformTileRasterizer.h"
 #include "waveform/WaveformLineStore.h"
 
 #include <QColor>
@@ -9,6 +12,7 @@
 #include <QFontMetrics>
 #include <QImage>
 #include <QMatrix4x4>
+#include <QMetaObject>
 #include <QPainter>
 #include <QQuickWindow>
 #include <QSGClipNode>
@@ -24,6 +28,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <vector>
 
 namespace {
@@ -142,6 +147,14 @@ struct CueLabel {
     QString text;
 };
 
+struct PreparedTileSlot {
+    std::size_t poolIndex = 0;
+    waveform_render::RenderTileSpan span;
+    waveform_render::RenderTileKey key;
+    std::shared_ptr<const waveform_render::RasterizedRenderTile> ready;
+    bool alreadyDisplayed = false;
+};
+
 struct WaveformSceneNode final : QSGClipNode {
     WaveformSceneNode()
     {
@@ -151,6 +164,8 @@ struct WaveformSceneNode final : QSGClipNode {
 
         // Translucent overlays sit below the audio lines.
         loopFill = makeTriangleNode(timeline);
+        // Created lazily once an immediate overview is ready. It remains below
+        // every high-resolution tile and prevents transparent loading holes.
         regularBeats = makeLineNode(timeline);
         downbeats = makeLineNode(timeline);
         loopEdges = makeLineNode(timeline);
@@ -160,11 +175,12 @@ struct WaveformSceneNode final : QSGClipNode {
     void clearAllGeometry()
     {
         clearGeometry(loopFill);
+        destroyTextureNode(timeline, fallbackNode);
+        fallbackKey.reset();
+        fallbackRequestedKey.reset();
         for (std::size_t index = 0; index < waveformNodes.size(); ++index) {
             destroyTextureNode(timeline, waveformNodes[index]);
-            waveformChunks[index].reset();
-            waveformBeginLines[index] = 0;
-            waveformEndLines[index] = 0;
+            waveformTileKeys[index].reset();
             waveformRenderedLineCounts[index] = 0;
         }
         clearGeometry(regularBeats);
@@ -178,6 +194,7 @@ struct WaveformSceneNode final : QSGClipNode {
                 label->setRect({});
         }
         loopVisible = false;
+        tileBatchPending = false;
         loopInLine = std::numeric_limits<double>::quiet_NaN();
         loopOutLine = std::numeric_limits<double>::quiet_NaN();
         loopAppearance = -1;
@@ -185,6 +202,7 @@ struct WaveformSceneNode final : QSGClipNode {
 
     QSGTransformNode* timeline = nullptr;
     QSGGeometryNode* loopFill = nullptr;
+    QSGSimpleTextureNode* fallbackNode = nullptr;
     std::array<QSGSimpleTextureNode*, kWaveformNodePoolSize> waveformNodes{};
     QSGGeometryNode* regularBeats = nullptr;
     QSGGeometryNode* downbeats = nullptr;
@@ -192,12 +210,14 @@ struct WaveformSceneNode final : QSGClipNode {
     QSGGeometryNode* loopEdges = nullptr;
     QSGGeometryNode* cueLines = nullptr;
     std::array<QSGSimpleTextureNode*, kCueLabelNodePoolSize> cueLabels{};
-    std::array<std::shared_ptr<const WaveformLineChunk>, kWaveformNodePoolSize> waveformChunks{};
-    std::array<std::uint32_t, kWaveformNodePoolSize> waveformBeginLines{};
-    std::array<std::uint32_t, kWaveformNodePoolSize> waveformEndLines{};
+    std::array<std::optional<waveform_render::RenderTileKey>,
+               kWaveformNodePoolSize> waveformTileKeys{};
     std::array<std::uint64_t, kWaveformNodePoolSize> waveformRenderedLineCounts{};
+    std::optional<waveform_render::OverviewRenderKey> fallbackKey;
+    std::optional<waveform_render::OverviewRenderKey> fallbackRequestedKey;
 
     bool hasWindow = false;
+    bool tileBatchPending = false;
     std::uint64_t trackGeneration = 0;
     std::uint64_t dataGeneration = 0;
     std::int64_t windowStartLine = 0;
@@ -428,120 +448,85 @@ void updateDownbeatCounterNode(QSGSimpleTextureNode*& node,
     textureNode->setRect(QRectF(x + markerGap, top, badgeWidth, badgeHeight));
 }
 
-std::uint64_t writeWaveformChunk(QSGSimpleTextureNode*& node,
-                                 const WaveformLineChunk& chunk,
-                                 std::uint32_t beginLine,
-                                 std::uint32_t endLine,
-                                 double renderOriginLine,
-                                 double pixelsPerLine,
-                                 double devicePixelRatio,
-                                 float height,
-                                 QQuickWindow* window,
-                                 QSGNode* parent,
-                                 QSGNode* insertBefore)
+void positionWaveformTile(QSGSimpleTextureNode* node,
+                          const waveform_render::RenderTileSpan& span,
+                          double renderOriginLine,
+                          double pixelsPerLine,
+                          double devicePixelRatio,
+                          float height)
 {
-    if (!window || !chunk.lines || beginLine >= endLine) {
-        clearWaveformTexture(node);
-        return 0;
-    }
-
+    if (!node)
+        return;
     const double dpr = std::max(1.0, devicePixelRatio);
-    const auto globalPhysicalBegin = waveform_render::timelinePhysicalFloor(
-        static_cast<double>(beginLine), pixelsPerLine, dpr);
-    const auto globalPhysicalEnd = waveform_render::timelinePhysicalCeil(
-        static_cast<double>(endLine), pixelsPerLine, dpr);
-    const auto physicalWidth = std::max<std::int64_t>(
-        1, globalPhysicalEnd - globalPhysicalBegin);
-    if (physicalWidth > std::numeric_limits<int>::max()) {
+    const auto originPhysical = static_cast<std::int64_t>(std::llround(
+        renderOriginLine * pixelsPerLine * dpr));
+    const double left = static_cast<double>(span.physicalBegin - originPhysical) / dpr;
+    const double logicalWidth = static_cast<double>(span.physicalWidth()) / dpr;
+    node->setRect(QRectF(left, 0.0, logicalWidth, height));
+}
+
+std::uint64_t uploadWaveformTile(
+    QSGSimpleTextureNode*& node,
+    const waveform_render::RasterizedRenderTile& tile,
+    double renderOriginLine,
+    double pixelsPerLine,
+    double devicePixelRatio,
+    float height,
+    QQuickWindow* window,
+    QSGNode* parent,
+    QSGNode* insertBefore)
+{
+    if (!window || tile.image.isNull()) {
         clearWaveformTexture(node);
         return 0;
     }
-    const int imageWidth = static_cast<int>(physicalWidth);
-    const int imageHeight = std::max(1, static_cast<int>(std::ceil(height * dpr)));
-    QImage image(imageWidth, imageHeight, QImage::Format_ARGB32_Premultiplied);
-    image.fill(Qt::transparent);
-
-    const double physicalPixelsPerLine = pixelsPerLine * dpr;
-    const auto verticalLayout = waveform_render::verticalMarkerLayout(height);
-    const double centerY = static_cast<double>(imageHeight) * 0.5;
-    const double halfHeight = std::max(
-        1.0, (static_cast<double>(height) - verticalLayout.waveformInset * 2.0)
-            * dpr * 0.5);
-    std::uint64_t renderedColumns = 0;
-
-    for (int physicalX = 0; physicalX < imageWidth; ++physicalX) {
-        const auto globalPhysicalX = globalPhysicalBegin + physicalX;
-        if (!waveform_render::isWaveformStrokeColumn(globalPhysicalX))
-            continue;
-
-        // A stroke represents its complete fixed-pitch cell. At low zoom this
-        // max-folds every source line in the cell; at high zoom it repeats the
-        // detailed line with a crisp gap instead of stretching it into a block.
-        const std::uint32_t globalBegin = std::clamp<std::uint32_t>(
-            static_cast<std::uint32_t>(std::floor(
-                static_cast<double>(globalPhysicalX) / physicalPixelsPerLine)),
-            beginLine, endLine - 1);
-        const std::uint32_t globalEnd = std::clamp<std::uint32_t>(
-            static_cast<std::uint32_t>(std::ceil(
-                static_cast<double>(globalPhysicalX
-                    + waveform_render::kWaveformStrokePitchPhysicalPixels)
-                    / physicalPixelsPerLine)),
-            globalBegin + 1, endLine);
-        std::int16_t minimum = 0;
-        std::int16_t maximum = 0;
-        std::uint64_t red = 0;
-        std::uint64_t green = 0;
-        std::uint64_t blue = 0;
-        std::uint64_t weight = 0;
-
-        for (std::uint32_t lineIndex = globalBegin; lineIndex < globalEnd; ++lineIndex) {
-            const auto local = lineIndex - chunk.firstLineIndex;
-            if (local >= chunk.lines->size())
-                continue;
-            const auto& line = (*chunk.lines)[local];
-            minimum = std::min(minimum, line.minimum);
-            maximum = std::max(maximum, line.maximum);
-            const auto magnitude = static_cast<std::uint32_t>(std::max(
-                std::abs(static_cast<int>(line.minimum)),
-                std::abs(static_cast<int>(line.maximum))));
-            const auto lineWeight = std::max(1u, magnitude);
-            red += static_cast<std::uint64_t>(line.red) * lineWeight;
-            green += static_cast<std::uint64_t>(line.green) * lineWeight;
-            blue += static_cast<std::uint64_t>(line.blue) * lineWeight;
-            weight += lineWeight;
-        }
-
-        double top = centerY - (static_cast<double>(maximum) / 32767.0) * halfHeight;
-        double bottom = centerY - (static_cast<double>(minimum) / 32767.0) * halfHeight;
-        if ((minimum != 0 || maximum != 0) && bottom - top < 1.0) {
-            const double middle = (top + bottom) * 0.5;
-            top = middle - 0.5;
-            bottom = middle + 0.5;
-        }
-
-        const int topPixel = std::clamp(static_cast<int>(std::floor(top)), 0, imageHeight - 1);
-        const int bottomPixel = std::clamp(static_cast<int>(std::ceil(bottom)),
-                                           topPixel, imageHeight - 1);
-        const int r = static_cast<int>(weight > 0 ? red / weight : 150);
-        const int g = static_cast<int>(weight > 0 ? green / weight : 170);
-        const int b = static_cast<int>(weight > 0 ? blue / weight : 190);
-        const QRgb color = qPremultiply(qRgba(r, g, b, 248));
-        for (int physicalY = topPixel; physicalY <= bottomPixel; ++physicalY)
-            reinterpret_cast<QRgb*>(image.scanLine(physicalY))[physicalX] = color;
-        ++renderedColumns;
-    }
-
-    auto* texture = window->createTextureFromImage(image);
+    auto* texture = window->createTextureFromImage(tile.image);
     texture->setFiltering(QSGTexture::Nearest);
     auto* textureNode = assignTextureNode(node, texture, parent, insertBefore);
     textureNode->setOwnsTexture(true);
     textureNode->setFiltering(QSGTexture::Nearest);
-    const auto originPhysical = static_cast<std::int64_t>(std::llround(
-        renderOriginLine * pixelsPerLine * dpr));
-    const double left = static_cast<double>(globalPhysicalBegin - originPhysical) / dpr;
-    const double logicalWidth = static_cast<double>(imageWidth) / dpr;
-    textureNode->setRect(QRectF(left, 0.0, logicalWidth, height));
-    return renderedColumns;
+    positionWaveformTile(textureNode, tile.span, renderOriginLine,
+                         pixelsPerLine, devicePixelRatio, height);
+    return tile.renderedColumns;
+}
+
+void positionFallbackOverview(QSGSimpleTextureNode* node,
+                              std::uint32_t totalLineCount,
+                              double renderOriginLine,
+                              double pixelsPerLine,
+                              float height)
+{
+    if (!node)
+        return;
+    node->setRect(QRectF(
+        -renderOriginLine * pixelsPerLine,
+        0.0,
+        static_cast<double>(totalLineCount) * pixelsPerLine,
+        height));
+}
+
+void uploadFallbackOverview(
+    QSGSimpleTextureNode*& node,
+    const waveform_render::RasterizedOverview& overview,
+    std::uint32_t totalLineCount,
+    double renderOriginLine,
+    double pixelsPerLine,
+    float height,
+    QQuickWindow* window,
+    QSGNode* parent,
+    QSGNode* insertBefore)
+{
+    if (!window || overview.image.isNull()) {
+        clearWaveformTexture(node);
+        return;
+    }
+    auto* texture = window->createTextureFromImage(overview.image);
+    texture->setFiltering(QSGTexture::Linear);
+    auto* textureNode = assignTextureNode(node, texture, parent, insertBefore);
+    textureNode->setOwnsTexture(true);
+    textureNode->setFiltering(QSGTexture::Linear);
+    positionFallbackOverview(textureNode, totalLineCount, renderOriginLine,
+                             pixelsPerLine, height);
 }
 
 std::vector<TrackData::BeatMarker> visibleBeatGrid(const TrackData& trackData,
@@ -608,6 +593,12 @@ ScrollingWaveformItem::ScrollingWaveformItem(QQuickItem* parent)
     : QQuickItem(parent)
 {
     setFlag(ItemHasContents, true);
+    m_tileRasterizer = std::make_unique<waveform_render::WaveformTileRasterizer>(
+        [this] {
+            m_tilesReady.store(true, std::memory_order_release);
+            QMetaObject::invokeMethod(this, [this] { update(); },
+                                      Qt::QueuedConnection);
+        });
     m_dataUpdateThrottle = new QTimer(this);
     m_dataUpdateThrottle->setSingleShot(true);
     // The playhead itself is a VSync transform and stays at full frame rate.
@@ -623,6 +614,13 @@ ScrollingWaveformItem::ScrollingWaveformItem(QQuickItem* parent)
         // the worker was publishing chunks.
         update();
     });
+}
+
+ScrollingWaveformItem::~ScrollingWaveformItem()
+{
+    // Join the raster worker while this QObject is still alive, so no worker
+    // can enqueue a scene update against a partially destroyed item.
+    m_tileRasterizer.reset();
 }
 
 DjEngine* ScrollingWaveformItem::engine() const
@@ -663,6 +661,7 @@ void ScrollingWaveformItem::setPixelsPerPoint(float pixelsPerPoint)
     pixelsPerPoint = clampZoom(pixelsPerPoint);
     if (qFuzzyCompare(m_pixelsPerPoint, pixelsPerPoint))
         return;
+    m_tileRasterizer->cancelPendingTiles();
     m_pixelsPerPoint = pixelsPerPoint;
     emit pixelsPerPointChanged();
     invalidateGeometry();
@@ -701,6 +700,8 @@ void ScrollingWaveformItem::onTrackLoaded()
         connect(trackData, &TrackData::rgbWaveformUpdated,
                 this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
         connect(trackData, &TrackData::peakMipUpdated,
+                this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
+        connect(trackData, &TrackData::overviewRgbUpdated,
                 this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
         connect(trackData, &TrackData::dataCleared,
                 this, &ScrollingWaveformItem::onDataUpdated, Qt::UniqueConnection);
@@ -762,12 +763,14 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     const auto snapshot = trackData ? trackData->getWaveformLineStoreSnapshot() : nullptr;
     if (!engine || !trackData || !snapshot || snapshot->totalLineCount == 0
         || !snapshot->chunks || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
+        m_tileRasterizer->setActiveTrackGeneration(0);
         if (scene->hasWindow || m_forceRebuild)
             scene->clearAllGeometry();
         scene->hasWindow = false;
         m_forceRebuild = false;
         return scene;
     }
+    m_tileRasterizer->setActiveTrackGeneration(snapshot->trackGeneration);
 
     const double tempoRatio = std::max(0.05, std::abs(engine->getTempoRatio()));
     const double pointsPerCanonicalLine = engine->waveformPointsPerSecond()
@@ -794,20 +797,23 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         || scene->renderedSize != bounds.size();
     const bool configurationChanged = staticConfigurationChanged
         || scene->dataGeneration != snapshot->dataGeneration;
+    const bool tilesReady = m_tilesReady.exchange(false, std::memory_order_acq_rel);
     const bool overlayConfigurationChanged = m_forceRebuild
         || staticConfigurationChanged;
-    const bool windowConfigurationChanged = m_forceRebuild
-        || outsideGuard || staticConfigurationChanged;
+    const bool windowConfigurationChanged = outsideGuard
+        || staticConfigurationChanged;
     bool renderOriginChanged = false;
 
-    if (m_forceRebuild || outsideGuard || configurationChanged) {
+    if (m_forceRebuild || outsideGuard || configurationChanged || tilesReady) {
         QElapsedTimer timer;
         timer.start();
 
         if (windowConfigurationChanged) {
             const double visibleLineCount = bounds.width() / std::max(pixelsPerLine, 1.0e-6);
-            const double maximumHalfWindow = static_cast<double>(snapshot->chunkSize)
-                * static_cast<double>(kWaveformNodePoolSize - 1) * 0.5;
+            const double maximumHalfWindow =
+                (static_cast<double>(waveform_render::kRenderTilePhysicalWidth)
+                 * static_cast<double>(kWaveformNodePoolSize - 2) * 0.5)
+                / std::max(pixelsPerLine * dpr, 1.0e-6);
             const double halfWindow = std::max(visibleLineCount * 0.55,
                 std::min(visibleLineCount * 1.25, maximumHalfWindow));
             scene->windowStartLine = static_cast<std::int64_t>(
@@ -839,62 +845,168 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         const std::uint32_t sourceEnd = static_cast<std::uint32_t>(std::clamp<std::int64_t>(
             scene->windowEndLine, 0, snapshot->totalLineCount));
         std::uint64_t renderedLineCount = 0;
-        std::uint64_t visibleChunkCount = 0;
+        std::uint64_t visibleTileCount = 0;
         std::size_t usedPoolSlots = 0;
 
+        const auto overviewSnapshot = trackData->getOverviewRgbSnapshot();
+        if (overviewSnapshot && !overviewSnapshot->isEmpty()) {
+            constexpr std::uint32_t fallbackWidth = 2048;
+            const auto fallbackHeight = static_cast<std::uint32_t>(std::max(
+                1, static_cast<int>(std::ceil(bounds.height() * dpr))));
+            const waveform_render::OverviewRenderKey fallbackKey{
+                snapshot->trackGeneration,
+                static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(
+                    overviewSnapshot.get())),
+                fallbackWidth,
+                fallbackHeight
+            };
+            if (const auto ready = m_tileRasterizer->findOverview(fallbackKey)) {
+                if (!scene->fallbackKey || *scene->fallbackKey != fallbackKey) {
+                    uploadFallbackOverview(
+                        scene->fallbackNode, *ready, snapshot->totalLineCount,
+                        scene->renderOriginLine, pixelsPerLine,
+                        static_cast<float>(bounds.height()), window(),
+                        scene->timeline, scene->regularBeats);
+                    scene->fallbackKey = fallbackKey;
+                } else if (renderOriginChanged) {
+                    positionFallbackOverview(
+                        scene->fallbackNode, snapshot->totalLineCount,
+                        scene->renderOriginLine, pixelsPerLine,
+                        static_cast<float>(bounds.height()));
+                }
+            } else if (!scene->fallbackRequestedKey
+                       || *scene->fallbackRequestedKey != fallbackKey) {
+                auto samples = std::make_shared<std::vector<
+                    waveform_render::OverviewSample>>();
+                samples->reserve(static_cast<std::size_t>(overviewSnapshot->size()));
+                for (const auto& frame : *overviewSnapshot) {
+                    samples->push_back({frame.rms, frame.low, frame.lowMid,
+                                        frame.mid, frame.high});
+                }
+                m_tileRasterizer->requestOverview({fallbackKey, std::move(samples)});
+                scene->fallbackRequestedKey = fallbackKey;
+            }
+        }
+        if (scene->fallbackKey
+            && scene->fallbackKey->trackGeneration != snapshot->trackGeneration) {
+            clearWaveformTexture(scene->fallbackNode);
+            scene->fallbackKey.reset();
+            scene->fallbackRequestedKey.reset();
+        }
+
+        std::vector<PreparedTileSlot> preparedTiles;
+        preparedTiles.reserve(scene->waveformNodes.size());
+        bool completeTileBatch = true;
+        if (windowConfigurationChanged) {
+            scene->tileBatchPending = true;
+            // Old textures use a different global pixel grid after zoom/DPR/
+            // window changes. Never display those with the new transform.
+            for (std::size_t poolIndex = 0;
+                 poolIndex < scene->waveformNodes.size(); ++poolIndex) {
+                clearWaveformTexture(scene->waveformNodes[poolIndex]);
+                scene->waveformTileKeys[poolIndex].reset();
+                scene->waveformRenderedLineCounts[poolIndex] = 0;
+            }
+        }
+
         if (sourceBegin < sourceEnd) {
-            const std::uint32_t firstChunk = sourceBegin / snapshot->chunkSize;
-            const std::uint32_t lastChunk = (sourceEnd - 1) / snapshot->chunkSize;
-            for (std::uint32_t chunkIndex = firstChunk;
-                 chunkIndex <= lastChunk && usedPoolSlots < scene->waveformNodes.size();
-                 ++chunkIndex) {
+            const auto physicalBegin = waveform_render::timelinePhysicalFloor(
+                static_cast<double>(sourceBegin), pixelsPerLine, dpr);
+            const auto physicalEnd = waveform_render::timelinePhysicalCeil(
+                static_cast<double>(sourceEnd), pixelsPerLine, dpr);
+            const auto firstTile = waveform_render::firstRenderTile(physicalBegin);
+            const auto lastTile = waveform_render::lastRenderTile(physicalEnd);
+            for (auto tileIndex = firstTile;
+                 tileIndex <= lastTile && usedPoolSlots < scene->waveformNodes.size();
+                 ++tileIndex) {
                 const std::size_t poolIndex = usedPoolSlots++;
-                const auto chunk = snapshot->chunkAt(chunkIndex);
-                if (!chunk) {
+                const auto tileSpan = waveform_render::renderTileSpan(
+                    tileIndex, pixelsPerLine * dpr, snapshot->totalLineCount);
+                if (!tileSpan.hasSource()) {
                     clearWaveformTexture(scene->waveformNodes[poolIndex]);
-                    scene->waveformChunks[poolIndex].reset();
-                    scene->waveformBeginLines[poolIndex] = 0;
-                    scene->waveformEndLines[poolIndex] = 0;
+                    scene->waveformTileKeys[poolIndex].reset();
                     scene->waveformRenderedLineCounts[poolIndex] = 0;
                     continue;
                 }
-                const std::uint32_t begin = std::max(sourceBegin, chunk->firstLineIndex);
-                const std::uint32_t end = std::min(sourceEnd,
-                    chunk->firstLineIndex + chunk->lineCount);
-                const bool chunkGeometryChanged = renderOriginChanged
-                    || scene->waveformChunks[poolIndex] != chunk
-                    || scene->waveformBeginLines[poolIndex] != begin
-                    || scene->waveformEndLines[poolIndex] != end;
-                if (chunkGeometryChanged) {
-                    scene->waveformRenderedLineCounts[poolIndex] = writeWaveformChunk(
-                        scene->waveformNodes[poolIndex], *chunk, begin, end,
+                const int imageHeight = std::max(
+                    1, static_cast<int>(std::ceil(bounds.height() * dpr)));
+                const auto lodLevel = WaveformZoomController::lodLevelForPhysicalPixels(
+                    pixelsPerLine * dpr);
+                const auto key = waveform_render::WaveformTileRasterizer::makeKey(
+                    *snapshot, tileIndex, tileSpan, pixelsPerLine * dpr,
+                    imageHeight, dpr, lodLevel);
+                PreparedTileSlot prepared{poolIndex, tileSpan, key};
+                prepared.alreadyDisplayed = scene->waveformTileKeys[poolIndex]
+                    && *scene->waveformTileKeys[poolIndex] == key;
+                if (!prepared.alreadyDisplayed)
+                    prepared.ready = m_tileRasterizer->find(key);
+                if (!prepared.alreadyDisplayed && !prepared.ready) {
+                    completeTileBatch = false;
+                    const double tileCentre = static_cast<double>(
+                        tileSpan.physicalBegin + tileSpan.physicalEnd) * 0.5;
+                    const double playheadPhysical = playheadLine * pixelsPerLine * dpr;
+                    m_tileRasterizer->request({
+                        key,
+                        tileSpan,
+                        snapshot,
+                        pixelsPerLine * dpr,
+                        bounds.height(),
+                        dpr,
+                        std::abs(tileCentre - playheadPhysical)
+                    });
+                }
+                preparedTiles.push_back(std::move(prepared));
+            }
+        }
+
+        // Zoom/window transitions are swapped as one coherent frame. Mixing
+        // textures generated for different scales made the waveform look
+        // stretched and exposed seams while wheel events were still arriving.
+        const bool mayPublishPreparedTiles = !scene->tileBatchPending
+            || completeTileBatch;
+        if (mayPublishPreparedTiles) {
+            for (const auto& prepared : preparedTiles) {
+                const auto poolIndex = prepared.poolIndex;
+                if (prepared.alreadyDisplayed) {
+                    if (renderOriginChanged) {
+                        positionWaveformTile(
+                            scene->waveformNodes[poolIndex], prepared.span,
+                            scene->renderOriginLine, pixelsPerLine, dpr,
+                            static_cast<float>(bounds.height()));
+                    }
+                } else if (prepared.ready) {
+                    scene->waveformRenderedLineCounts[poolIndex] = uploadWaveformTile(
+                        scene->waveformNodes[poolIndex], *prepared.ready,
                         scene->renderOriginLine, pixelsPerLine, dpr,
                         static_cast<float>(bounds.height()), window(),
                         scene->timeline, scene->regularBeats);
-                    scene->waveformChunks[poolIndex] = chunk;
-                    scene->waveformBeginLines[poolIndex] = begin;
-                    scene->waveformEndLines[poolIndex] = end;
+                    scene->waveformTileKeys[poolIndex] = prepared.key;
                 }
                 renderedLineCount += scene->waveformRenderedLineCounts[poolIndex];
-                ++visibleChunkCount;
+                ++visibleTileCount;
             }
+            scene->tileBatchPending = false;
+        } else {
+            visibleTileCount = preparedTiles.size();
         }
         for (std::size_t poolIndex = usedPoolSlots;
-             poolIndex < scene->waveformNodes.size(); ++poolIndex) {
+            poolIndex < scene->waveformNodes.size(); ++poolIndex) {
             clearWaveformTexture(scene->waveformNodes[poolIndex]);
-            scene->waveformChunks[poolIndex].reset();
-            scene->waveformBeginLines[poolIndex] = 0;
-            scene->waveformEndLines[poolIndex] = 0;
+            scene->waveformTileKeys[poolIndex].reset();
             scene->waveformRenderedLineCounts[poolIndex] = 0;
         }
 
         // Every timeline layer uses the same persistent origin. Replacing an
         // off-screen waveform chunk therefore cannot change the pixel phase of
         // either the audio columns or an overlay at a guarded window boundary.
-        if (m_forceRebuild || staticConfigurationChanged || renderOriginChanged) {
-            const double gridStartSec = -10.0;
-            const double gridEndSec = std::max(
-                gridStartSec + 1.0, static_cast<double>(engine->getDuration()) + 10.0);
+        if (m_forceRebuild || windowConfigurationChanged || renderOriginChanged) {
+            // Keep QSG float coordinates local. Building the beat geometry for
+            // an entire hour-long track loses pixel precision at high zoom and
+            // manifests as missing or warped grid lines on Vulkan.
+            const double gridStartSec = static_cast<double>(scene->windowStartLine)
+                / snapshot->linesPerSecond;
+            const double gridEndSec = static_cast<double>(scene->windowEndLine)
+                / snapshot->linesPerSecond;
             const auto beats = visibleBeatGrid(*trackData, gridStartSec, gridEndSec);
             std::vector<MarkerLine> regularBeats;
             std::vector<MarkerLine> downbeats;
@@ -975,7 +1087,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             }
         }
 
-        if (windowConfigurationChanged || renderOriginChanged) {
+        if (m_forceRebuild || windowConfigurationChanged || renderOriginChanged) {
             const double labelsStartSec = static_cast<double>(scene->windowStartLine)
                 / snapshot->linesPerSecond;
             const double labelsEndSec = static_cast<double>(scene->windowEndLine)
@@ -1019,7 +1131,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
 
         m_geometryRebuildCount.fetch_add(1, std::memory_order_relaxed);
         m_lastRenderedLineCount.store(renderedLineCount, std::memory_order_relaxed);
-        m_lastVisibleChunkCount.store(visibleChunkCount, std::memory_order_relaxed);
+        m_lastVisibleChunkCount.store(visibleTileCount, std::memory_order_relaxed);
         updateWorst(m_worstGeometryBuildUsec,
                     static_cast<std::uint64_t>(timer.nsecsElapsed() / 1000));
     }
@@ -1126,6 +1238,7 @@ QVariantList ScrollingWaveformItem::beatLabels() const
 QVariantMap ScrollingWaveformItem::renderStats() const
 {
     QVariantMap stats;
+    const auto tileStats = m_tileRasterizer->stats();
     stats.insert(QStringLiteral("frames"),
                  QVariant::fromValue<qulonglong>(m_frameCount.load(std::memory_order_relaxed)));
     stats.insert(QStringLiteral("geometryRebuilds"),
@@ -1138,8 +1251,26 @@ QVariantMap ScrollingWaveformItem::renderStats() const
                  QVariant::fromValue<qulonglong>(m_lastRenderedLineCount.load(std::memory_order_relaxed)));
     stats.insert(QStringLiteral("visibleChunks"),
                  QVariant::fromValue<qulonglong>(m_lastVisibleChunkCount.load(std::memory_order_relaxed)));
-    stats.insert(QStringLiteral("chunkPoolCapacity"),
+    stats.insert(QStringLiteral("visibleTiles"),
+                 QVariant::fromValue<qulonglong>(m_lastVisibleChunkCount.load(std::memory_order_relaxed)));
+    stats.insert(QStringLiteral("tilePoolCapacity"),
                  static_cast<qulonglong>(kWaveformNodePoolSize));
+    stats.insert(QStringLiteral("tilePhysicalWidth"),
+                 static_cast<qlonglong>(waveform_render::kRenderTilePhysicalWidth));
+    stats.insert(QStringLiteral("tileCacheHits"),
+                 QVariant::fromValue<qulonglong>(tileStats.cacheHits));
+    stats.insert(QStringLiteral("tileCacheMisses"),
+                 QVariant::fromValue<qulonglong>(tileStats.cacheMisses));
+    stats.insert(QStringLiteral("tileCacheBytes"),
+                 QVariant::fromValue<qulonglong>(tileStats.cacheBytes));
+    stats.insert(QStringLiteral("tileCacheEntries"),
+                 QVariant::fromValue<qulonglong>(tileStats.cacheEntries));
+    stats.insert(QStringLiteral("pendingTileRequests"),
+                 QVariant::fromValue<qulonglong>(tileStats.pendingRequests));
+    stats.insert(QStringLiteral("rasterizedTiles"),
+                 QVariant::fromValue<qulonglong>(tileStats.rasterizedTiles));
+    stats.insert(QStringLiteral("worstTileRasterUsec"),
+                 QVariant::fromValue<qulonglong>(tileStats.worstRasterUsec));
     stats.insert(QStringLiteral("worstGeometryBuildUsec"),
                  QVariant::fromValue<qulonglong>(m_worstGeometryBuildUsec.load(std::memory_order_relaxed)));
     return stats;
@@ -1147,6 +1278,7 @@ QVariantMap ScrollingWaveformItem::renderStats() const
 
 void ScrollingWaveformItem::resetRenderStats()
 {
+    m_tileRasterizer->resetStats();
     m_frameCount.store(0, std::memory_order_relaxed);
     m_geometryRebuildCount.store(0, std::memory_order_relaxed);
     m_transformUpdateCount.store(0, std::memory_order_relaxed);

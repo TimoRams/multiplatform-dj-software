@@ -1,6 +1,8 @@
 #include "waveform/WaveformLineStore.h"
+#include "waveform/WaveformVisualStyle.h"
 
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 
 int main()
@@ -16,6 +18,19 @@ int main()
     // Overview aggregation reads the exact same immutable chunk as scrolling.
     const auto chunk = store.snapshot()->chunkAt(0);
     const auto& line = (*chunk->lines)[10];
+    const auto sharedColor = waveform_visual::color({0.9f, 0.0f, 0.0f, 0.0f, 0.75f});
+    if (sharedColor[0] <= sharedColor[1] || sharedColor[0] <= sharedColor[2]) {
+        std::cerr << "FAIL: shared visual style lost low-frequency colour identity\n";
+        return 1;
+    }
+    if (std::abs(waveform_visual::verticalPixelCoverage(4.25, 9.75, 4)
+                 - 0.75f) > 1.0e-6f
+        || waveform_visual::verticalPixelCoverage(4.25, 9.75, 5) != 1.0f
+        || std::abs(waveform_visual::verticalPixelCoverage(4.25, 9.75, 9)
+                    - 0.75f) > 1.0e-6f) {
+        std::cerr << "FAIL: subpixel envelope coverage is not symmetric\n";
+        return 1;
+    }
     const auto min = std::min_element(chunk->lines->cbegin(), chunk->lines->cend(),
         [](const auto& a, const auto& b) { return a.minimum < b.minimum; });
     const auto max = std::max_element(chunk->lines->cbegin(), chunk->lines->cend(),

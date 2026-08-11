@@ -100,6 +100,64 @@ int main(int argc, char** argv)
     ok &= require(!cachedLines.getOverviewRgbData().isEmpty(),
                   "cached waveform header must publish its full-track overview");
 
+    TrackData batchedCache;
+    constexpr int batchedTotal = 4096 * 4;
+    batchedCache.initializeCachedWaveformLines(
+        batchedTotal, 1200, QVector<TrackData::RgbWaveformFrame>(32));
+    int batchSignals = 0;
+    QObject::connect(&batchedCache, &TrackData::dataUpdated,
+                     [&batchSignals] { ++batchSignals; });
+    WaveformLineBatch guardedWindow;
+    guardedWindow.push_back({4096,
+        std::make_shared<std::vector<WaveformLine>>(4096)});
+    guardedWindow.push_back({8192,
+        std::make_shared<std::vector<WaveformLine>>(4096)});
+    batchedCache.applyCachedWaveformLineBatch(
+        batchedTotal, 1200, std::move(guardedWindow));
+    const auto guardedSnapshot = batchedCache.getWaveformLineStoreSnapshot();
+    ok &= require(guardedSnapshot && guardedSnapshot->chunkAt(1)
+                      && guardedSnapshot->chunkAt(2),
+                  "viewport and guard chunks must become visible in one batch");
+    ok &= require(batchSignals == 1,
+                  "one guarded cache batch must emit one publication signal");
+
+    TrackData stableNormalization;
+    QVector<TrackData::RgbWaveformFrame> finalRgb(4);
+    finalRgb[0].rms = 0.82f;
+    finalRgb[0].low = 0.9f;
+    stableNormalization.applyProgressiveWaveformChunk(
+        0, 32, {}, finalRgb, true, WaveformNormalizationState::Final);
+    const auto finalSnapshot = stableNormalization.getWaveformLineStoreSnapshot();
+    const auto finalChunk = finalSnapshot ? finalSnapshot->chunkAt(0) : nullptr;
+    const auto finalMaximum = finalChunk && finalChunk->lines
+        ? (*finalChunk->lines)[0].maximum : 0;
+    QVector<TrackData::RgbWaveformFrame> latePreview(4);
+    latePreview[0].rms = 0.08f;
+    latePreview[0].high = 1.0f;
+    stableNormalization.applyProgressiveWaveformChunk(
+        0, 32, {}, latePreview, true, WaveformNormalizationState::Preview);
+    const auto afterPreview = stableNormalization.getWaveformLineStoreSnapshot();
+    const auto protectedChunk = afterPreview ? afterPreview->chunkAt(0) : nullptr;
+    ok &= require(protectedChunk && protectedChunk->lines
+                      && (*protectedChunk->lines)[0].maximum == finalMaximum,
+                  "late preview normalization changed a delivered final range");
+    ok &= require(protectedChunk && protectedChunk->lines
+                      && ((*protectedChunk->lines)[0].flags
+                          & waveform_line_flags::kFinal) != 0,
+                  "final waveform range lost its immutable state flag");
+
+    const auto previousVisualGeneration = afterPreview
+        ? afterPreview->trackGeneration : 0;
+    stableNormalization.beginVisualTrackLoad(previousVisualGeneration + 7);
+    const auto invalidatedVisual = stableNormalization.getWaveformLineStoreSnapshot();
+    ok &= require(invalidatedVisual
+                      && invalidatedVisual->trackGeneration > previousVisualGeneration
+                      && invalidatedVisual->totalLineCount == 0
+                      && invalidatedVisual->availableChunkCount() == 0,
+                  "new track request retained the previous visual generation");
+    ok &= require(stableNormalization.getOverviewRgbData().isEmpty(),
+                  "new track request retained the previous overview fallback");
+
     TrackData taggedBeatgrid;
     taggedBeatgrid.setBpmData(120.0, 0, 48000.0);
     taggedBeatgrid.ensureProvisionalBeatgrid(60.0 * 60.0);

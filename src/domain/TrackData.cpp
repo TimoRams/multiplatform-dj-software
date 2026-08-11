@@ -1,6 +1,7 @@
 #include "TrackData.h"
 #include "analysis/AnalysisResult.h"
 #include "waveform/WaveformLineBuilder.h"
+#include "waveform/WaveformVisualStyle.h"
 
 #include <QMetaObject>
 #include <QThread>
@@ -10,49 +11,16 @@
 
 namespace {
 
-std::array<std::uint8_t, 3> waveformLineColor(float low, float lowMid,
-                                               float mid, float high,
-                                               float rms)
-{
-    // Keep colour generation next to the canonical line-store builder.  Both the
-    // scrolling waveform and the overview then consume the exact same RGB value
-    // instead of depending on a renderer-specific interpretation of QColor.
-    const float wLow = std::pow(std::clamp(low, 0.0f, 1.0f), 2.8f);
-    const float wLowMid = std::pow(std::clamp(lowMid, 0.0f, 1.0f), 2.5f);
-    const float wMid = std::pow(std::clamp(mid, 0.0f, 1.0f), 2.2f);
-    const float wHigh = std::pow(std::clamp(high, 0.0f, 1.0f), 1.6f);
-    const float sum = wLow + wLowMid + wMid + wHigh;
-    if (sum <= 1.0e-7f)
-        return {150, 170, 190};
-
-    // Low -> red, low-mid -> orange, mid -> yellow/lime, high -> cyan.
-    float red = (wLow * 255.0f + wLowMid * 255.0f + wMid * 210.0f) / sum;
-    float green = (wLow * 20.0f + wLowMid * 130.0f + wMid * 255.0f
-                   + wHigh * 185.0f) / sum;
-    float blue = (wLow * 20.0f + wHigh * 255.0f) / sum;
-
-    // Height already communicates level.  Only attenuate colour slightly so
-    // quiet passages keep their frequency identity instead of turning black.
-    const float brightness = 0.58f + 0.42f
-        * std::pow(std::clamp(rms, 0.0f, 1.0f), 0.35f);
-    red *= brightness;
-    green *= brightness;
-    blue *= brightness;
-    return {
-        static_cast<std::uint8_t>(std::lround(std::clamp(red, 0.0f, 255.0f))),
-        static_cast<std::uint8_t>(std::lround(std::clamp(green, 0.0f, 255.0f))),
-        static_cast<std::uint8_t>(std::lround(std::clamp(blue, 0.0f, 255.0f)))
-    };
-}
-
 constexpr int kRgbFramesPerCanonicalLine = 1;
+constexpr int kNormalizationRangeBins = 128;
 constexpr int kPeakFramesPerCanonicalLine = TrackData::PEAK_POINTS_PER_SECOND
     / static_cast<int>(WaveformLineStore::kCanonicalLinesPerSecond);
 static_assert(kPeakFramesPerCanonicalLine > 0);
 
 WaveformLine makeCanonicalWaveformLine(const QVector<TrackData::RgbWaveformFrame>& rgb,
                                        const QVector<TrackData::PeakFrame>& peaks,
-                                       int lineIndex)
+                                       int lineIndex,
+                                       WaveformNormalizationState normalizationState)
 {
     const int rgbBegin = lineIndex * kRgbFramesPerCanonicalLine;
     const int rgbEnd = std::min(rgbBegin + kRgbFramesPerCanonicalLine,
@@ -85,11 +53,13 @@ WaveformLine makeCanonicalWaveformLine(const QVector<TrackData::RgbWaveformFrame
         std::clamp(minimum, -1.0f, 0.0f) * 32767.0f));
     line.maximum = static_cast<std::int16_t>(std::lround(
         std::clamp(maximum, 0.0f, 1.0f) * 32767.0f));
-    const auto color = waveformLineColor(low, lowMid, mid, high, rms);
+    const auto color = waveform_visual::color({low, lowMid, mid, high, rms});
     line.red = color[0];
     line.green = color[1];
     line.blue = color[2];
-    line.flags = 1;
+    line.flags = waveform_line_flags::kAvailable;
+    if (normalizationState == WaveformNormalizationState::Final)
+        line.flags |= waveform_line_flags::kFinal;
     return line;
 }
 
@@ -159,6 +129,7 @@ bool TrackData::applyAnalysisResult(const analysis::AnalysisResult& result)
             rebuildWaveformLineStoreLocked(result.identity.trackGeneration);
         m_data.clear(); m_rgbData.clear(); m_overviewRgb.clear(); m_peakMip.clear();
         m_progressiveRgbReady.clear();
+        m_progressiveNormalizationStates.clear();
         m_progressiveDirtyLineChunks.clear();
         m_progressivePendingLineChunks.clear();
         m_bpm = result.bpm;
@@ -212,7 +183,8 @@ void TrackData::rebuildWaveformLineStoreLocked(std::uint64_t trackGeneration)
         const auto& peakData = peaks ? *peaks : emptyPeaks;
         for (int local = 0; local < count; ++local)
             (*lines)[static_cast<size_t>(local)] = makeCanonicalWaveformLine(
-                *rgb, peakData, first + local);
+                *rgb, peakData, first + local,
+                WaveformNormalizationState::Final);
         const auto published = m_waveformLineStore.publish({
             trackGeneration, static_cast<std::uint32_t>(chunkIndex), static_cast<std::uint32_t>(first),
             static_cast<std::uint32_t>(count), static_cast<std::uint32_t>(totalLines), std::move(lines)});
@@ -579,6 +551,7 @@ void TrackData::clearWaveformData()
         m_progressiveOvr.clear();
         m_progressiveLastFrame = 0;
         m_progressiveRgbReady.clear();
+        m_progressiveNormalizationStates.clear();
         m_progressiveDirtyLineChunks.clear();
         m_progressivePendingLineChunks.clear();
         if (!keepPreview)
@@ -589,6 +562,38 @@ void TrackData::clearWaveformData()
         emit overviewRgbUpdated();
     else
         emit dataCleared();
+}
+
+void TrackData::beginVisualTrackLoad(std::uint64_t trackGeneration)
+{
+    assertOwnerThread();
+    {
+        QMutexLocker locker(&m_mutex);
+        m_data.clear();
+        m_rgbData.clear();
+        m_overviewRgb.clear();
+        m_peakMip.clear();
+        m_waveformSnapshot.reset();
+        m_rgbSnapshot.reset();
+        m_overviewSnapshot.reset();
+        m_peakMipSnapshot.reset();
+        m_progressiveOvr.clear();
+        m_progressiveLastFrame = 0;
+        m_progressiveRgbReady.clear();
+        m_progressiveNormalizationStates.clear();
+        m_progressiveDirtyLineChunks.clear();
+        m_progressivePendingLineChunks.clear();
+        m_totalExpected = 0;
+        m_globalMaxPeak = 0.001f;
+
+        // Loader generations and renderer generations share only the identity
+        // boundary. Preserve monotonicity even if a direct/test caller supplies
+        // an older loader generation.
+        m_waveformLineGeneration = std::max(
+            trackGeneration, m_waveformLineGeneration + 1);
+        m_waveformLineStore.reset(m_waveformLineGeneration, 0);
+    }
+    emit dataCleared();
 }
 
 void TrackData::clear()
@@ -609,6 +614,7 @@ void TrackData::clear()
         m_progressiveOvr.clear();
         m_progressiveLastFrame = 0;
         m_progressiveRgbReady.clear();
+        m_progressiveNormalizationStates.clear();
         m_progressiveDirtyLineChunks.clear();
         m_progressivePendingLineChunks.clear();
         m_totalExpected = 0;
@@ -672,6 +678,7 @@ void TrackData::setRgbWaveformData(QVector<RgbWaveformFrame>&& frames)
         m_progressiveOvr.clear();
         m_progressiveLastFrame = 0;
         m_progressiveRgbReady.clear();
+        m_progressiveNormalizationStates.clear();
         m_progressiveDirtyLineChunks.clear();
         m_progressivePendingLineChunks.clear();
         rebuildWaveformLineStoreLocked();
@@ -709,6 +716,7 @@ void TrackData::installCachedWaveform(
         m_progressiveOvr.clear();
         m_progressiveLastFrame = 0;
         m_progressiveRgbReady.clear();
+        m_progressiveNormalizationStates.clear();
         m_progressiveDirtyLineChunks.clear();
         installPreparedWaveformLinesLocked(preparedLines);
     }
@@ -757,11 +765,19 @@ void TrackData::applyCachedWaveformLineChunk(
     int linesPerSecond,
     std::shared_ptr<const std::vector<WaveformLine>> lines)
 {
+    WaveformLineBatch batch;
+    batch.push_back({firstLine, std::move(lines)});
+    applyCachedWaveformLineBatch(totalLines, linesPerSecond, std::move(batch));
+}
+
+void TrackData::applyCachedWaveformLineBatch(
+    int totalLines,
+    int linesPerSecond,
+    WaveformLineBatch chunks)
+{
     assertOwnerThread();
-    if (firstLine < 0 || totalLines <= 0 || linesPerSecond <= 0
-        || !lines || lines->empty()) {
+    if (totalLines <= 0 || linesPerSecond <= 0 || chunks.empty())
         return;
-    }
     bool accepted = false;
     {
         QMutexLocker locker(&m_mutex);
@@ -776,25 +792,55 @@ void TrackData::applyCachedWaveformLineChunk(
             snapshot = m_waveformLineStore.snapshot();
         }
         const auto chunkSize = static_cast<int>(snapshot->chunkSize);
-        if (chunkSize <= 0 || firstLine % chunkSize != 0)
+        if (chunkSize <= 0)
             return;
-        const auto count = static_cast<int>(lines->size());
-        if (count != std::min(chunkSize, totalLines - firstLine))
-            return;
-        const auto chunkIndex = static_cast<std::uint32_t>(firstLine / chunkSize);
-        const auto published = m_waveformLineStore.publish({
-            snapshot->trackGeneration,
-            chunkIndex,
-            static_cast<std::uint32_t>(firstLine),
-            static_cast<std::uint32_t>(count),
-            static_cast<std::uint32_t>(totalLines),
-            std::move(lines)});
-        accepted = published != WaveformLineStore::PublishResult::Rejected;
+
+        // Validate the complete viewport batch before publishing its first
+        // member. Readers hold the same TrackData mutex, so they can observe
+        // either the old snapshot or the complete guarded window, never a
+        // partially filled sequence of adjacent cache chunks.
+        for (const auto& chunk : chunks) {
+            if (chunk.firstLine < 0 || chunk.firstLine >= totalLines
+                || chunk.firstLine % chunkSize != 0
+                || !chunk.lines || chunk.lines->empty()
+                || static_cast<int>(chunk.lines->size())
+                    != std::min(chunkSize, totalLines - chunk.firstLine)) {
+                return;
+            }
+        }
+        for (auto& chunk : chunks) {
+            const auto count = static_cast<int>(chunk.lines->size());
+            const auto chunkIndex = static_cast<std::uint32_t>(
+                chunk.firstLine / chunkSize);
+            const auto published = m_waveformLineStore.publish({
+                snapshot->trackGeneration,
+                chunkIndex,
+                static_cast<std::uint32_t>(chunk.firstLine),
+                static_cast<std::uint32_t>(count),
+                static_cast<std::uint32_t>(totalLines),
+                std::move(chunk.lines)});
+            accepted = accepted
+                || published != WaveformLineStore::PublishResult::Rejected;
+        }
     }
     if (accepted) {
         emit dataUpdated();
         scheduleRgbWaveformEmit();
     }
+}
+
+void TrackData::applyCachedWaveformLodBatch(WaveformLodBatch chunks)
+{
+    assertOwnerThread();
+    if (chunks.empty())
+        return;
+    bool accepted = false;
+    {
+        QMutexLocker locker(&m_mutex);
+        accepted = m_waveformLineStore.publishLodBatch(std::move(chunks));
+    }
+    if (accepted)
+        emit dataUpdated();
 }
 
 void TrackData::setOverviewRgbData(QVector<RgbWaveformFrame>&& data)
@@ -931,12 +977,14 @@ void TrackData::appendData(const QVector<WaveformBin>& newData)
 void TrackData::applyProgressiveWaveformChunk(int firstBin, int totalBins,
                                               const QVector<WaveformBin>& waveform,
                                               const QVector<RgbWaveformFrame>& rgb,
-                                              bool publishLineStoreImmediately)
+                                              bool publishLineStoreImmediately,
+                                              WaveformNormalizationState normalizationState)
 {
     assertOwnerThread();
     (void)waveform; // Legacy progressive amplitudes; renderers consume sparse RGB line chunks.
     if (totalBins <= 0 || firstBin < 0 || (waveform.isEmpty() && rgb.isEmpty()))
         return;
+    bool acceptedUpdate = false;
     {
         QMutexLocker locker(&m_mutex);
         const int totalLines = (totalBins + kRgbFramesPerCanonicalLine - 1)
@@ -953,6 +1001,10 @@ void TrackData::applyProgressiveWaveformChunk(int firstBin, int totalBins,
             m_data.clear();
             m_rgbData.clear();
             m_progressiveRgbReady.clear();
+            m_progressiveNormalizationStates.fill(
+                static_cast<quint8>(WaveformNormalizationState::Preview),
+                (totalBins + kNormalizationRangeBins - 1)
+                    / kNormalizationRangeBins);
             m_progressiveDirtyLineChunks.clear();
             m_progressivePendingLineChunks.clear();
             m_waveformSnapshot.reset();
@@ -964,14 +1016,48 @@ void TrackData::applyProgressiveWaveformChunk(int firstBin, int totalBins,
         if (rgbCount > 0) {
             const QVector<RgbWaveformFrame> boundedRgb = rgbCount == rgb.size()
                 ? rgb : rgb.mid(0, rgbCount);
-            stageProgressiveWaveformLinesLocked(firstBin, boundedRgb);
-            updateProgressiveOverviewFromChunkLocked(firstBin, totalBins, boundedRgb);
-            if (publishLineStoreImmediately)
+            if (m_progressiveNormalizationStates.isEmpty()) {
+                m_progressiveNormalizationStates.fill(
+                    static_cast<quint8>(WaveformNormalizationState::Preview),
+                    (totalBins + kNormalizationRangeBins - 1)
+                        / kNormalizationRangeBins);
+            }
+            int local = 0;
+            while (local < boundedRgb.size()) {
+                const int global = firstBin + local;
+                const int range = global / kNormalizationRangeBins;
+                const int rangeEnd = std::min(
+                    firstBin + static_cast<int>(boundedRgb.size()),
+                    (range + 1) * kNormalizationRangeBins);
+                const int count = rangeEnd - global;
+                const bool alreadyFinal = range >= 0
+                    && range < m_progressiveNormalizationStates.size()
+                    && m_progressiveNormalizationStates[range]
+                        == static_cast<quint8>(WaveformNormalizationState::Final);
+                if (!(normalizationState == WaveformNormalizationState::Preview
+                      && alreadyFinal)) {
+                    const auto segment = boundedRgb.mid(local, count);
+                    stageProgressiveWaveformLinesLocked(
+                        global, segment, normalizationState);
+                    updateProgressiveOverviewFromChunkLocked(
+                        global, totalBins, segment);
+                    acceptedUpdate = true;
+                    if (normalizationState == WaveformNormalizationState::Final
+                        && range >= 0
+                        && range < m_progressiveNormalizationStates.size()) {
+                        m_progressiveNormalizationStates[range] =
+                            static_cast<quint8>(WaveformNormalizationState::Final);
+                    }
+                }
+                local += count;
+            }
+            if (acceptedUpdate && publishLineStoreImmediately)
                 flushProgressiveWaveformLinesLocked();
         }
     }
-    emit dataUpdated();
-    if (!rgb.isEmpty())
+    if (acceptedUpdate)
+        emit dataUpdated();
+    if (acceptedUpdate && !rgb.isEmpty())
         scheduleRgbWaveformEmit();
 }
 
@@ -1029,7 +1115,8 @@ void TrackData::flushProgressiveWaveformLinesLocked()
 }
 
 void TrackData::stageProgressiveWaveformLinesLocked(
-    int firstBin, const QVector<RgbWaveformFrame>& rgb)
+    int firstBin, const QVector<RgbWaveformFrame>& rgb,
+    WaveformNormalizationState normalizationState)
 {
     if (rgb.isEmpty())
         return;
@@ -1067,7 +1154,8 @@ void TrackData::stageProgressiveWaveformLinesLocked(
         for (int globalLine = begin; globalLine < end; ++globalLine) {
             const int sourceLine = globalLine - firstLine;
             (*lines)[static_cast<size_t>(globalLine - static_cast<int>(chunkFirst))]
-                = makeCanonicalWaveformLine(rgb, emptyPeaks, sourceLine);
+                = makeCanonicalWaveformLine(rgb, emptyPeaks, sourceLine,
+                                            normalizationState);
         }
     }
 }
@@ -1146,7 +1234,9 @@ void TrackData::publishProgressiveWaveformLinesLocked(int firstRgbFrame, int rgb
                                            m_progressiveRgbReady.cbegin() + rgbEnd,
                                            [](quint8 value) { return value != 0; });
             (*lines)[static_cast<size_t>(lineIndex - static_cast<int>(first))]
-                = ready ? makeCanonicalWaveformLine(m_rgbData, m_peakMip, lineIndex)
+                = ready ? makeCanonicalWaveformLine(
+                              m_rgbData, m_peakMip, lineIndex,
+                              WaveformNormalizationState::Preview)
                         : WaveformLine{};
         }
 

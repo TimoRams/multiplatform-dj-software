@@ -3,6 +3,7 @@
 #include <QObject>
 #include <algorithm>
 #include <cmath>
+#include "waveform/WaveformLodPyramid.h"
 
 class SettingsManager;
 
@@ -33,6 +34,12 @@ public:
     [[nodiscard]] static double decreasedZoom(double value) noexcept
     {
         return validatedZoom(validatedZoom(value) / kFactor);
+    }
+    [[nodiscard]] static std::uint8_t lodLevelForPhysicalPixels(
+        double physicalPixelsPerCanonicalLine) noexcept
+    {
+        return waveform::WaveformLodPyramid::selectLevel(
+            physicalPixelsPerCanonicalLine);
     }
 
     Q_INVOKABLE void setZoom(double value);

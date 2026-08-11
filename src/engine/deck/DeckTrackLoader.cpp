@@ -91,14 +91,15 @@ DeckTrackLoader::~DeckTrackLoader()
 
 std::uint64_t DeckTrackLoader::loadTrack(QString path,
                                          CompletionCallback completion,
-                                         RenderChunkCallback renderChunk)
+                                         RenderChunkCallback renderChunk,
+                                         RenderLodCallback renderLod)
 {
     if (m_shuttingDown.load(std::memory_order_acquire)) return currentGeneration();
     const auto generation = m_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
     {
         std::lock_guard lock(m_mutex);
         m_pending = Request{std::move(path), generation, std::move(completion),
-                            std::move(renderChunk)};
+                            std::move(renderChunk), std::move(renderLod)};
         m_state.store(TrackLoadState::Queued, std::memory_order_release);
     }
     m_waveformSeekHintSec.store(0.0, std::memory_order_relaxed);
@@ -191,6 +192,23 @@ void DeckTrackLoader::workerLoop()
 
         if (restoreRenderCache && isCurrent(request.generation)) {
             const auto generation = request.generation;
+            // Warm persisted levels first, coarsest to finest. They are
+            // published once per complete level, so even an hour-long cache
+            // adds four owner-thread messages instead of thousands.
+            if (request.renderLod) {
+                for (const int level : {4, 3, 2, 1}) {
+                    WaveformLodBatch levelBatch;
+                    const bool restored = WaveformCache::streamRenderLodCache(
+                        renderCachePath, renderLinesPerSecond, level,
+                        [this, generation]() { return !isCurrent(generation); },
+                        [&levelBatch](WaveformCache::LodTile tile) {
+                            levelBatch.push_back(std::move(tile));
+                        });
+                    if (!restored || !isCurrent(generation))
+                        break;
+                    request.renderLod(generation, std::move(levelBatch));
+                }
+            }
             WaveformCache::streamRenderCache(
                 renderCachePath, renderLinesPerSecond,
                 [this, generation]() { return !isCurrent(generation); },
@@ -198,11 +216,10 @@ void DeckTrackLoader::workerLoop()
                     return m_waveformSeekHintSec.load(std::memory_order_relaxed);
                 },
                 [this, generation, renderLinesPerSecond, &request](
-                    int firstLine, int totalLines,
-                    std::shared_ptr<const std::vector<WaveformLine>> lines) {
+                    int totalLines, WaveformLineBatch chunks) {
                     if (isCurrent(generation) && request.renderChunk) {
-                        request.renderChunk(generation, firstLine, totalLines,
-                                            renderLinesPerSecond, std::move(lines));
+                        request.renderChunk(generation, totalLines,
+                                            renderLinesPerSecond, std::move(chunks));
                     }
                 });
         }

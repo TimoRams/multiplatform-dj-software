@@ -536,9 +536,11 @@ bool runEnvelopePass(const EnvelopePassInput& input)
     previewRgbBatch.reserve(kChunk);
     const auto publishChunk = [&input](int firstBin,
                                        const QVector<TrackData::WaveformBin>& waveform,
-                                       const QVector<TrackData::RgbWaveformFrame>& rgb) {
+                                       const QVector<TrackData::RgbWaveformFrame>& rgb,
+                                       WaveformNormalizationState state
+                                           = WaveformNormalizationState::Preview) {
         if (input.publishChunk && (!waveform.isEmpty() || !rgb.isEmpty()))
-            input.publishChunk(firstBin, input.numPoints, waveform, rgb);
+            input.publishChunk(firstBin, input.numPoints, waveform, rgb, state);
     };
 
     // Shared shaping helper — used identically in preview AND final pass.

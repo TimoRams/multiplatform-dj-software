@@ -5,6 +5,7 @@
 #include <juce_core/juce_core.h>
 #include <QVector>
 #include <functional>
+#include "waveform/WaveformNormalizationState.h"
 
 namespace waveform_internal {
 
@@ -12,7 +13,8 @@ struct EnvelopePassInput
 {
     using ChunkCallback = std::function<void(int firstBin, int totalBins,
                                              QVector<TrackData::WaveformBin>,
-                                             QVector<TrackData::RgbWaveformFrame>)>;
+                                             QVector<TrackData::RgbWaveformFrame>,
+                                             WaveformNormalizationState)>;
     juce::AudioFormatReader& reader;
     analysis::AnalysisWorkingData* trackData = nullptr;
     juce::Thread& thread;

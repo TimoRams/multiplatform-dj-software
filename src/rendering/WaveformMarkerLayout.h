@@ -58,8 +58,12 @@ inline double snappedTimelineX(double linePosition,
                                double pixelsPerLine,
                                double devicePixelRatio) noexcept
 {
-    const double dpr = std::max(1.0, devicePixelRatio);
-    return std::round((linePosition - originLine) * pixelsPerLine * dpr) / dpr;
+    // Do not snap every marker independently. Per-marker rounding changes the
+    // distance between adjacent beats as zoom crosses a physical-pixel phase,
+    // which looks like gaps or a warped grid. The shared origin keeps floats
+    // small and the feathered geometry provides stable subpixel coverage.
+    (void)devicePixelRatio;
+    return (linePosition - originLine) * pixelsPerLine;
 }
 
 inline double pixelAlignedTimelineOrigin(double linePosition,

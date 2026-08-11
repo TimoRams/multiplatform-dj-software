@@ -13,6 +13,10 @@ struct WaveformLineChunk final {
     std::uint32_t lineCount = 0;
     std::uint32_t totalLineCount = 0;
     std::shared_ptr<const std::vector<WaveformLine>> lines;
+    // Monotonic content identity assigned by WaveformLineStore::publish().
+    // Render tiles depend only on revisions of chunks they actually cover,
+    // rather than being invalidated when an unrelated timeline chunk arrives.
+    std::uint64_t revision = 0;
 
     [[nodiscard]] bool isWellFormed(std::uint32_t chunkSize) const noexcept
     {
@@ -24,4 +28,3 @@ struct WaveformLineChunk final {
             && lineCount <= totalLineCount - firstLineIndex;
     }
 };
-

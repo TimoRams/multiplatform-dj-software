@@ -3,6 +3,7 @@
 #include <iostream>
 
 #include "rendering/WaveformMarkerLayout.h"
+#include "rendering/WaveformRenderTile.h"
 
 namespace {
 bool require(bool condition, const char* message)
@@ -15,6 +16,43 @@ bool require(bool condition, const char* message)
 int main()
 {
     bool ok = true;
+    // Render textures are fixed physical-pixel tiles. Analysis chunks may map
+    // to one or many tiles, but zoom and DPR can never grow a single texture.
+    for (const double dpr : {1.0, 1.25, 1.5, 2.0, 3.0}) {
+        for (const double zoom : {0.08, 0.22, 1.0, 10.0}) {
+            const double physicalPixelsPerLine = zoom * dpr;
+            const auto first = waveform_render::renderTileSpan(
+                0, physicalPixelsPerLine, 4'320'000);
+            const auto distant = waveform_render::renderTileSpan(
+                17'000, physicalPixelsPerLine, 4'320'000);
+            ok &= require(first.physicalWidth()
+                              == waveform_render::kRenderTilePhysicalWidth,
+                          "render tile width must be independent of zoom and DPR");
+            ok &= require(distant.physicalWidth()
+                              == waveform_render::kRenderTilePhysicalWidth,
+                          "distant render tiles must remain fixed-size");
+            ok &= require(first.sourceEnd >= first.sourceBegin,
+                          "tile source interval must be ordered");
+        }
+    }
+    const auto zoomedChunkPhysicalWidth = waveform_render::timelinePhysicalCeil(
+        4096.0, 10.0, 3.0);
+    const auto zoomedChunkTileCount =
+        waveform_render::lastRenderTile(zoomedChunkPhysicalWidth)
+        - waveform_render::firstRenderTile(0) + 1;
+    ok &= require(zoomedChunkTileCount > 1,
+                  "one analysis chunk must split into bounded tiles at high zoom");
+    const auto lowZoomTile = waveform_render::renderTileSpan(
+        0, 0.08, 100'000);
+    ok &= require(lowZoomTile.sourceEnd > 4096,
+                  "one low-zoom tile must be able to read across analysis chunks");
+    ok &= require(!waveform_render::physicalStrokeIntersectsTrack(
+                      -2, 0.22, 100'000)
+                      && waveform_render::physicalStrokeIntersectsTrack(
+                          0, 0.22, 100'000)
+                      && !waveform_render::physicalStrokeIntersectsTrack(
+                          22'000, 0.22, 100'000),
+                  "tile edge columns repeated audio outside the track bounds");
     for (const int hz : std::array{30, 60, 90, 120, 144, 240}) {
         for (const double rate : {1.0, -1.0}) {
             double position = rate > 0.0 ? 0.0 : 30.0;
@@ -124,9 +162,9 @@ int main()
         }
     }
 
-    // Neither progressive data nor guarded waveform-window changes recreate
-    // track-wide marker geometry. Replacing those nodes at window boundaries
-    // caused the periodic blink that remained during steady playback.
+    // Progressive source publication never rebuilds marker geometry. Guard
+    // crossings do rebuild only the local marker window: keeping an entire
+    // hour-long beatgrid in float QSG coordinates loses precision at high zoom.
     int markerRebuilds = 0;
     int waveformWindowRebuilds = 0;
     bool forceRebuild = true;
@@ -134,17 +172,17 @@ int main()
     for (int chunkGeneration = 0; chunkGeneration < 64; ++chunkGeneration) {
         const bool outsideGuard = chunkGeneration > 0 && (chunkGeneration % 7) == 0;
         const bool rebuildWaveform = forceRebuild || outsideGuard;
-        const bool rebuildMarkers = forceRebuild || staticConfigurationChanged;
+        const bool rebuildMarkers = forceRebuild || outsideGuard
+            || staticConfigurationChanged;
         if (rebuildWaveform)
             ++waveformWindowRebuilds;
         if (rebuildMarkers)
             ++markerRebuilds;
         forceRebuild = false;
     }
-    ok &= require(markerRebuilds == 1,
-                  "progressive waveform chunks must not rebuild beatgrid geometry");
-    ok &= require(waveformWindowRebuilds > markerRebuilds,
-                  "guard crossings rebuild waveform chunks without replacing markers");
+    ok &= require(markerRebuilds == waveformWindowRebuilds
+                      && markerRebuilds < 16,
+                  "beatgrid must follow bounded guard windows, not frame updates");
 
     // Immutable chunk pointers allow a progressive publication to upload only
     // the newly available texture instead of replacing the complete visible
@@ -226,6 +264,30 @@ int main()
         }
         ok &= require(fractionalPhaseFrames > 180,
                       "waveform and beatgrid move through stable subpixel phases");
+    }
+
+    // Changing zoom must keep the playhead's timeline coordinate at the exact
+    // visual centre. This covers every LOD transition as well as fractional DPR.
+    for (const double dpr : {1.0, 1.25, 1.5, 2.0, 3.0}) {
+        for (const double zoom : {0.08, 0.092, 0.22, 0.44, 1.0, 3.75, 10.0}) {
+            constexpr double width = 1601.25;
+            constexpr double playheadLine = 2'731'337.375;
+            const double origin = waveform_render::pixelAlignedTimelineOrigin(
+                playheadLine - 20'000.0, zoom, dpr);
+            const double local = waveform_render::snappedTimelineX(
+                playheadLine, origin, zoom, dpr);
+            const double translated = local
+                + waveform_render::smoothTimelineTranslation(
+                    width, playheadLine, origin, zoom);
+            ok &= require(std::abs(translated - width * 0.5) <= 1.0e-9,
+                          "zoom changed the shared waveform/beatgrid centre");
+            constexpr double beatSpacingLines = 587.375;
+            const double nextBeat = waveform_render::snappedTimelineX(
+                playheadLine + beatSpacingLines, origin, zoom, dpr);
+            ok &= require(std::abs((nextBeat - local)
+                                      - beatSpacingLines * zoom) <= 1.0e-9,
+                          "per-marker snapping warped beat spacing during zoom");
+        }
     }
     return ok ? 0 : 1;
 }

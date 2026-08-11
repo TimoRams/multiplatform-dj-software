@@ -1,4 +1,5 @@
 #include "RgbWaveformItem.h"
+#include "waveform/WaveformVisualStyle.h"
 
 #include <QPainter>
 #include <algorithm>
@@ -7,38 +8,10 @@
 
 namespace {
 
-static inline QColor mixBandColor(float low, float lowMid, float mid, float high, float rms)
+QColor visualColor(float low, float lowMid, float mid, float high, float rms)
 {
-    constexpr float lR = 255.0f, lG = 20.0f,  lB = 20.0f;   // vivid red
-    constexpr float mR = 255.0f, mG = 130.0f, mB = 0.0f;    // orange
-    constexpr float hR = 210.0f, hG = 255.0f, hB = 0.0f;    // yellow-lime
-    constexpr float xR = 0.0f,   xG = 185.0f, xB = 255.0f;  // electric cyan
-
-    // Higher exponents → dominant band wins clearly.
-    const float wL  = std::pow(low,    2.8f);
-    const float wLM = std::pow(lowMid, 2.5f);
-    const float wM  = std::pow(mid,    2.2f);
-    const float wH  = std::pow(high,   1.6f);
-    const float wSum = wL + wLM + wM + wH + 1e-7f;
-
-    float r = (wL * lR + wLM * mR + wM * hR + wH * xR) / wSum;
-    float g = (wL * lG + wLM * mG + wM * hG + wH * xG) / wSum;
-    float b = (wL * lB + wLM * mB + wM * hB + wH * xB) / wSum;
-
-    // QPainter lacks scene-graph linear blending — apply brightness + saturation boost.
-    const float bright = std::pow(rms, 0.35f);
-    r *= bright;
-    g *= bright;
-    b *= bright;
-
-    float h2 = 0.0f, s2 = 0.0f, v2 = 0.0f;
-    QColor tmp(std::clamp(int(r), 0, 255), std::clamp(int(g), 0, 255), std::clamp(int(b), 0, 255));
-    tmp.getHsvF(&h2, &s2, &v2);
-    // Boost saturation + brightness for vivid, immediately readable overview colors.
-    s2 = std::clamp(static_cast<float>(s2 * 1.70f + 0.10f), 0.0f, 1.0f);
-    v2 = std::clamp(static_cast<float>(v2 * 1.22f + 0.05f), 0.0f, 1.0f);
-    tmp.setHsvF(h2, s2, v2, 1.0);
-    return tmp;
+    const auto color = waveform_visual::color({low, lowMid, mid, high, rms});
+    return QColor(color[0], color[1], color[2]);
 }
 
 struct OverviewBin {
@@ -192,11 +165,11 @@ void RgbWaveformItem::paintCompactOverview(QPainter* painter,
         const float meanRms = rmsSum / static_cast<float>(std::max(1, i1 - i0));
         // Peak-only folding turns dense music into a solid rectangle.  Preserve
         // transients, but let the local energy mean determine most of the body.
-        const float energy = std::clamp(meanRms * 0.68f + peakRms * 0.32f, 0.0f, 1.0f);
-        const float logH = std::log1p(energy * 10.0f) / std::log1p(10.0f);
+        const float energy = waveform_visual::foldedEnergy(meanRms, peakRms);
+        const float logH = waveform_visual::logarithmicAmplitude(energy);
         heights[static_cast<size_t>(x)] = std::clamp(logH, 0.018f, 1.0f) * maxBarH;
         const float invWeight = 1.0f / std::max(0.01f, colorWeight);
-        colors[static_cast<size_t>(x)] = mixBandColor(
+        colors[static_cast<size_t>(x)] = visualColor(
             weightedLow * invWeight, weightedLowMid * invWeight,
             weightedMid * invWeight, weightedHigh * invWeight, energy);
     }
@@ -291,9 +264,9 @@ void RgbWaveformItem::paintCompactOverviewLines(QPainter* painter,
         }
         if (weight == 0) continue;
         const float meanAmplitude = amplitudeSum / static_cast<float>(std::max(1, sampleCount));
-        const float energy = std::clamp(meanAmplitude * 0.68f + peakAmplitude * 0.32f,
-                                        0.0f, 1.0f);
-        m_overviewHeights[x] = (std::log1p(energy * 10.0f) / std::log1p(10.0f)) * maxBarH;
+        const float energy = waveform_visual::foldedEnergy(
+            meanAmplitude, peakAmplitude);
+        m_overviewHeights[x] = waveform_visual::logarithmicAmplitude(energy) * maxBarH;
         m_overviewColors[x] = QColor(static_cast<int>(red / weight),
                                     static_cast<int>(green / weight),
                                     static_cast<int>(blue / weight));
@@ -466,7 +439,7 @@ void RgbWaveformItem::paint(QPainter* painter)
         const float rms   = std::clamp(bin.rms, 0.0f, 1.0f);
         const float bodyH = smoothH[static_cast<size_t>(x)] * maxBarH;
         cols[static_cast<size_t>(x)] = {
-            mixBandColor(bin.low, bin.lowMid, bin.mid, bin.high, rms),
+            visualColor(bin.low, bin.lowMid, bin.mid, bin.high, rms),
             bodyH,
             bodyH * 0.18f,
             std::max(0.8f, bodyH * 0.22f),

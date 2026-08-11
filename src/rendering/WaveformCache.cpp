@@ -1,4 +1,6 @@
 #include "WaveformCache.h"
+#include "analysis/AnalysisCacheVersion.h"
+#include "waveform/WaveformLodPyramid.h"
 
 #include <QByteArray>
 #include <QCryptographicHash>
@@ -14,6 +16,7 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <thread>
 
 namespace {
@@ -21,7 +24,9 @@ namespace {
 constexpr quint32 kMagic = 0x52574631; // RWF1
 constexpr qint32 kVersion = 6;         // v6: analysis pipeline version bumped; binary payload stays v5-compatible.
 constexpr quint32 kRenderMagic = 0x52574c31; // RWL1
-constexpr qint32 kRenderVersion = 1;
+constexpr qint32 kRenderVersion = analysis::kWaveformRenderCacheVersion;
+constexpr qint32 kLegacyRenderVersion = 1;
+constexpr quint32 kLodMagic = 0x4c4f4432; // LOD2
 constexpr int kBlockSize = 4096;
 constexpr qint32 kMaxCachedBins = 100'000'000;
 constexpr int kRenderOverviewBins = 4096;
@@ -29,6 +34,7 @@ constexpr qint64 kFullPayloadMaximumDurationSeconds = 10LL * 60LL;
 constexpr qint64 kRenderHeaderBytes = 6 * sizeof(qint32);
 constexpr qint64 kRenderOverviewRecordBytes = 5;
 constexpr qint64 kRenderLineRecordBytes = 8;
+constexpr qint32 kPersistedLodTileSamples = 4096;
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
 constexpr auto kDataStreamVersion = QDataStream::Qt_6_5;
@@ -76,19 +82,20 @@ float dequantizeUnit(quint8 value)
 
 bool readRenderHeader(QFile& file, int expectedPointsPerSecond,
                       qint32& totalLines, qint32& chunkSize,
-                      qint32& overviewCount)
+                      qint32& overviewCount, qint32& renderVersion)
 {
     if (!file.isOpen() || !file.seek(0))
         return false;
     QDataStream in(&file);
     in.setVersion(kDataStreamVersion);
     quint32 magic = 0;
-    qint32 version = 0;
     qint32 pointsPerSecond = 0;
-    in >> magic >> version >> pointsPerSecond >> totalLines
+    in >> magic >> renderVersion >> pointsPerSecond >> totalLines
        >> chunkSize >> overviewCount;
     if (in.status() != QDataStream::Ok
-        || magic != kRenderMagic || version != kRenderVersion
+        || magic != kRenderMagic
+        || (renderVersion != kLegacyRenderVersion
+            && renderVersion != kRenderVersion)
         || pointsPerSecond != expectedPointsPerSecond
         || totalLines <= 0 || totalLines > kMaxCachedBins
         || chunkSize != static_cast<qint32>(WaveformLineStore::kChunkSize)
@@ -98,7 +105,48 @@ bool readRenderHeader(QFile& file, int expectedPointsPerSecond,
     const qint64 expectedSize = kRenderHeaderBytes
         + static_cast<qint64>(overviewCount) * kRenderOverviewRecordBytes
         + static_cast<qint64>(totalLines) * kRenderLineRecordBytes;
-    return file.size() == expectedSize;
+    return renderVersion == kLegacyRenderVersion
+        ? file.size() == expectedSize
+        : file.size() > expectedSize;
+}
+
+void writeRenderLine(QDataStream& out, const WaveformLine& line)
+{
+    out << static_cast<qint16>(line.minimum)
+        << static_cast<qint16>(line.maximum)
+        << static_cast<quint8>(line.red)
+        << static_cast<quint8>(line.green)
+        << static_cast<quint8>(line.blue)
+        << static_cast<quint8>(line.flags);
+}
+
+WaveformLine foldRenderLines(const std::vector<WaveformLine>& source,
+                             int begin, int end)
+{
+    WaveformLine result;
+    std::uint64_t red = 0, green = 0, blue = 0, weight = 0;
+    std::uint8_t flags = 0xff;
+    for (int index = begin; index < end; ++index) {
+        const auto& line = source[static_cast<std::size_t>(index)];
+        result.minimum = std::min(result.minimum, line.minimum);
+        result.maximum = std::max(result.maximum, line.maximum);
+        const auto magnitude = static_cast<std::uint32_t>(std::max(
+            std::abs(static_cast<int>(line.minimum)),
+            std::abs(static_cast<int>(line.maximum))));
+        const auto lineWeight = std::max(1u, magnitude);
+        red += static_cast<std::uint64_t>(line.red) * lineWeight;
+        green += static_cast<std::uint64_t>(line.green) * lineWeight;
+        blue += static_cast<std::uint64_t>(line.blue) * lineWeight;
+        weight += lineWeight;
+        flags &= line.flags;
+    }
+    if (weight > 0) {
+        result.red = static_cast<std::uint8_t>(red / weight);
+        result.green = static_cast<std::uint8_t>(green / weight);
+        result.blue = static_cast<std::uint8_t>(blue / weight);
+        result.flags = flags;
+    }
+    return result;
 }
 
 bool saveRenderCache(const QString& path, const WaveformCache::Payload& payload)
@@ -137,15 +185,40 @@ bool saveRenderCache(const QString& path, const WaveformCache::Payload& payload)
             << quantizeUnit(high);
     }
 
+    std::vector<WaveformLine> canonical(static_cast<std::size_t>(total));
     for (int index = 0; index < total; ++index) {
-        const auto line = waveform::makeCanonicalLine(
+        canonical[static_cast<std::size_t>(index)] = waveform::makeCanonicalLine(
             payload.rgb, payload.peakMip, index);
-        out << static_cast<qint16>(line.minimum)
-            << static_cast<qint16>(line.maximum)
-            << static_cast<quint8>(line.red)
-            << static_cast<quint8>(line.green)
-            << static_cast<quint8>(line.blue)
-            << static_cast<quint8>(line.flags);
+        writeRenderLine(out, canonical[static_cast<std::size_t>(index)]);
+    }
+
+    out << static_cast<quint32>(kLodMagic)
+        << static_cast<qint32>(waveform::WaveformLodPyramid::kLevels.size() - 1);
+    for (std::size_t levelIndex = 1;
+         levelIndex < waveform::WaveformLodPyramid::kLevels.size(); ++levelIndex) {
+        const auto level = waveform::WaveformLodPyramid::kLevels[levelIndex];
+        const int stride = level.canonicalLineStride;
+        const int sampleCount = (total + stride - 1) / stride;
+        const int tileCount = (sampleCount + kPersistedLodTileSamples - 1)
+            / kPersistedLodTileSamples;
+        out << static_cast<qint32>(level.index)
+            << static_cast<qint32>(stride)
+            << static_cast<qint32>(sampleCount)
+            << static_cast<qint32>(kPersistedLodTileSamples)
+            << static_cast<qint32>(tileCount);
+        for (int tileIndex = 0; tileIndex < tileCount; ++tileIndex) {
+            const int firstSample = tileIndex * kPersistedLodTileSamples;
+            const int count = std::min(kPersistedLodTileSamples,
+                                       sampleCount - firstSample);
+            out << static_cast<qint32>(firstSample)
+                << static_cast<qint32>(count);
+            for (int local = 0; local < count; ++local) {
+                const int sample = firstSample + local;
+                const int begin = sample * stride;
+                const int end = std::min(total, begin + stride);
+                writeRenderLine(out, foldRenderLines(canonical, begin, end));
+            }
+        }
     }
     if (out.status() != QDataStream::Ok)
         return false;
@@ -180,8 +253,9 @@ bool WaveformCache::inspectRenderCache(const QString& filePath,
     qint32 totalLines = 0;
     qint32 chunkSize = 0;
     qint32 overviewCount = 0;
+    qint32 renderVersion = 0;
     if (!readRenderHeader(file, pointsPerSecond, totalLines,
-                          chunkSize, overviewCount)) {
+                          chunkSize, overviewCount, renderVersion)) {
         return false;
     }
 
@@ -190,6 +264,7 @@ bool WaveformCache::inspectRenderCache(const QString& filePath,
     RenderInfo info;
     info.pointsPerSecond = pointsPerSecond;
     info.totalLines = totalLines;
+    info.cacheVersion = renderVersion;
     info.overview.reserve(overviewCount);
     for (int index = 0; index < overviewCount; ++index) {
         quint8 rms = 0, low = 0, lowMid = 0, mid = 0, high = 0;
@@ -204,6 +279,21 @@ bool WaveformCache::inspectRenderCache(const QString& filePath,
     }
     if (in.status() != QDataStream::Ok)
         return false;
+    if (renderVersion >= 2) {
+        const qint64 lodOffset = kRenderHeaderBytes
+            + static_cast<qint64>(overviewCount) * kRenderOverviewRecordBytes
+            + static_cast<qint64>(totalLines) * kRenderLineRecordBytes;
+        if (!file.seek(lodOffset))
+            return false;
+        quint32 lodMagic = 0;
+        qint32 lodLevelCount = 0;
+        in >> lodMagic >> lodLevelCount;
+        if (in.status() != QDataStream::Ok || lodMagic != kLodMagic
+            || lodLevelCount != 4) {
+            return false;
+        }
+        info.lodLevelCount = lodLevelCount;
+    }
     *out = std::move(info);
     return true;
 }
@@ -223,8 +313,9 @@ bool WaveformCache::streamRenderCache(
     qint32 totalLines = 0;
     qint32 chunkSize = 0;
     qint32 overviewCount = 0;
+    qint32 renderVersion = 0;
     if (!readRenderHeader(file, pointsPerSecond, totalLines,
-                          chunkSize, overviewCount)) {
+                          chunkSize, overviewCount, renderVersion)) {
         return false;
     }
 
@@ -233,8 +324,40 @@ bool WaveformCache::streamRenderCache(
     int loadedCount = 0;
     int sequentialCursor = 0;
     constexpr int kPriorityForwardChunks = 8;
+    constexpr int kViewportGuardRadiusChunks = 2;
     const qint64 linesOffset = kRenderHeaderBytes
         + static_cast<qint64>(overviewCount) * kRenderOverviewRecordBytes;
+
+    const auto readChunk = [&](int chunkIndex)
+        -> std::optional<WaveformLineBlock> {
+        const int firstLine = chunkIndex * chunkSize;
+        const int count = std::min(chunkSize, totalLines - firstLine);
+        const qint64 offset = linesOffset
+            + static_cast<qint64>(firstLine) * kRenderLineRecordBytes;
+        if (!file.seek(offset))
+            return std::nullopt;
+        QDataStream in(&file);
+        in.setVersion(kDataStreamVersion);
+        auto lines = std::make_shared<std::vector<WaveformLine>>(
+            static_cast<size_t>(count));
+        for (int local = 0; local < count; ++local) {
+            qint16 minimum = 0, maximum = 0;
+            quint8 red = 0, green = 0, blue = 0, flags = 0;
+            in >> minimum >> maximum >> red >> green >> blue >> flags;
+            auto& line = (*lines)[static_cast<size_t>(local)];
+            line.minimum = minimum;
+            line.maximum = maximum;
+            line.red = red;
+            line.green = green;
+            line.blue = blue;
+            // Persisted render-cache lines are authoritative analysis output,
+            // including caches written before the explicit Final flag existed.
+            line.flags = flags | waveform_line_flags::kFinal;
+        }
+        if (in.status() != QDataStream::Ok)
+            return std::nullopt;
+        return WaveformLineBlock{firstLine, std::move(lines)};
+    };
 
     while (loadedCount < chunkCount) {
         if (shouldCancel && shouldCancel())
@@ -270,39 +393,127 @@ bool WaveformCache::streamRenderCache(
         if (selected < 0)
             break;
 
-        const int firstLine = selected * chunkSize;
-        const int count = std::min(chunkSize, totalLines - firstLine);
-        const qint64 offset = linesOffset
-            + static_cast<qint64>(firstLine) * kRenderLineRecordBytes;
-        if (!file.seek(offset))
-            return false;
-        QDataStream in(&file);
-        in.setVersion(kDataStreamVersion);
-        auto lines = std::make_shared<std::vector<WaveformLine>>(
-            static_cast<size_t>(count));
-        for (int local = 0; local < count; ++local) {
-            qint16 minimum = 0, maximum = 0;
-            quint8 red = 0, green = 0, blue = 0, flags = 0;
-            in >> minimum >> maximum >> red >> green >> blue >> flags;
-            auto& line = (*lines)[static_cast<size_t>(local)];
-            line.minimum = minimum;
-            line.maximum = maximum;
-            line.red = red;
-            line.green = green;
-            line.blue = blue;
-            line.flags = flags;
+        std::vector<int> batchIndices;
+        batchIndices.reserve(1 + kViewportGuardRadiusChunks * 2);
+        batchIndices.push_back(selected);
+        for (int distance = 1; distance <= kViewportGuardRadiusChunks; ++distance) {
+            const int behindCandidate = selected - distance;
+            const int aheadCandidate = selected + distance;
+            if (behindCandidate >= 0
+                && !loaded[static_cast<size_t>(behindCandidate)]) {
+                batchIndices.push_back(behindCandidate);
+            }
+            if (aheadCandidate < chunkCount
+                && !loaded[static_cast<size_t>(aheadCandidate)]) {
+                batchIndices.push_back(aheadCandidate);
+            }
         }
-        if (in.status() != QDataStream::Ok)
-            return false;
 
-        loaded[static_cast<size_t>(selected)] = true;
-        ++loadedCount;
-        publishChunk(firstLine, totalLines, std::move(lines));
+        WaveformLineBatch batch;
+        batch.reserve(batchIndices.size());
+        for (const int chunkIndex : batchIndices) {
+            if (loaded[static_cast<size_t>(chunkIndex)])
+                continue;
+            auto chunk = readChunk(chunkIndex);
+            if (!chunk)
+                return false;
+            loaded[static_cast<size_t>(chunkIndex)] = true;
+            ++loadedCount;
+            batch.push_back(std::move(*chunk));
+        }
+        publishChunk(totalLines, std::move(batch));
         // Do not flood the Qt owner queue when a warm SSD can read thousands of
         // small chunks per second. The current/playhead window is still first.
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     return loadedCount == chunkCount;
+}
+
+bool WaveformCache::streamRenderLodCache(
+    const QString& filePath,
+    int pointsPerSecond,
+    int requestedLevel,
+    const std::function<bool()>& shouldCancel,
+    const std::function<void(LodTile)>& publishTile)
+{
+    if (!publishTile || requestedLevel < 1 || requestedLevel > 4)
+        return false;
+    QFile file(renderCachePathFor(filePath, pointsPerSecond));
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    qint32 totalLines = 0, chunkSize = 0, overviewCount = 0, renderVersion = 0;
+    if (!readRenderHeader(file, pointsPerSecond, totalLines, chunkSize,
+                          overviewCount, renderVersion)
+        || renderVersion < 2) {
+        return false;
+    }
+    const qint64 lodOffset = kRenderHeaderBytes
+        + static_cast<qint64>(overviewCount) * kRenderOverviewRecordBytes
+        + static_cast<qint64>(totalLines) * kRenderLineRecordBytes;
+    if (!file.seek(lodOffset))
+        return false;
+    QDataStream in(&file);
+    in.setVersion(kDataStreamVersion);
+    quint32 lodMagic = 0;
+    qint32 levelCount = 0;
+    in >> lodMagic >> levelCount;
+    if (in.status() != QDataStream::Ok || lodMagic != kLodMagic
+        || levelCount != 4) {
+        return false;
+    }
+
+    bool found = false;
+    for (int storedLevel = 0; storedLevel < levelCount; ++storedLevel) {
+        qint32 level = 0, stride = 0, sampleCount = 0;
+        qint32 tileSize = 0, tileCount = 0;
+        in >> level >> stride >> sampleCount >> tileSize >> tileCount;
+        if (in.status() != QDataStream::Ok
+            || level < 1 || level > 4
+            || stride != waveform::WaveformLodPyramid::level(level).canonicalLineStride
+            || sampleCount != (totalLines + stride - 1) / stride
+            || tileSize != kPersistedLodTileSamples
+            || tileCount != (sampleCount + tileSize - 1) / tileSize) {
+            return false;
+        }
+        for (int tileIndex = 0; tileIndex < tileCount; ++tileIndex) {
+            if (shouldCancel && shouldCancel())
+                return false;
+            qint32 firstSample = 0, count = 0;
+            in >> firstSample >> count;
+            if (in.status() != QDataStream::Ok
+                || firstSample != tileIndex * tileSize
+                || count != std::min(tileSize, sampleCount - firstSample)) {
+                return false;
+            }
+            if (level != requestedLevel) {
+                if (!file.seek(file.pos()
+                               + static_cast<qint64>(count)
+                                   * kRenderLineRecordBytes)) {
+                    return false;
+                }
+                continue;
+            }
+
+            auto lines = std::make_shared<std::vector<WaveformLine>>(
+                static_cast<std::size_t>(count));
+            for (auto& line : *lines) {
+                qint16 minimum = 0, maximum = 0;
+                quint8 red = 0, green = 0, blue = 0, flags = 0;
+                in >> minimum >> maximum >> red >> green >> blue >> flags;
+                line.minimum = minimum;
+                line.maximum = maximum;
+                line.red = red;
+                line.green = green;
+                line.blue = blue;
+                line.flags = flags | waveform_line_flags::kFinal;
+            }
+            if (in.status() != QDataStream::Ok)
+                return false;
+            publishTile({level, stride, firstSample, sampleCount, std::move(lines)});
+            found = true;
+        }
+    }
+    return found;
 }
 
 bool WaveformCache::loadForFile(const QString& filePath, int pointsPerSecond, Payload* out)

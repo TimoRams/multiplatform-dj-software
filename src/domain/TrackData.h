@@ -15,6 +15,8 @@
 #include "TransportLimits.h"
 #include "TrackSegment.h"
 #include "waveform/WaveformLineStore.h"
+#include "waveform/WaveformLineBatch.h"
+#include "waveform/WaveformNormalizationState.h"
 
 namespace analysis { struct AnalysisResult; }
 namespace waveform { struct PreparedWaveformLines; }
@@ -262,6 +264,10 @@ public:
     }
 
     void clearWaveformData();
+    // Starts a new visual generation before asynchronous track preparation
+    // completes. This prevents renderers from retaining tiles or overview data
+    // belonging to the previously loaded track while the next track is queued.
+    void beginVisualTrackLoad(std::uint64_t trackGeneration);
     void clear();
 
     void setPeakMipData(QVector<PeakFrame>&& data);
@@ -292,6 +298,9 @@ public:
     void applyCachedWaveformLineChunk(
         int firstLine, int totalLines, int linesPerSecond,
         std::shared_ptr<const std::vector<WaveformLine>> lines);
+    void applyCachedWaveformLineBatch(
+        int totalLines, int linesPerSecond, WaveformLineBatch chunks);
+    void applyCachedWaveformLodBatch(WaveformLodBatch chunks);
 
     // Pre-downsampled overview (≤4096 bins) computed off the main thread.
     void setOverviewRgbData(QVector<RgbWaveformFrame>&& data);
@@ -350,7 +359,9 @@ public:
     void applyProgressiveWaveformChunk(int firstBin, int totalBins,
                                        const QVector<WaveformBin>& waveform,
                                        const QVector<RgbWaveformFrame>& rgb,
-                                       bool publishLineStoreImmediately = true);
+                                       bool publishLineStoreImmediately = true,
+                                       WaveformNormalizationState normalizationState
+                                           = WaveformNormalizationState::Preview);
     // The control clock batches worker chunks and flushes one immutable
     // replacement per touched render chunk.  Direct callers retain immediate
     // publication through the default argument above.
@@ -421,6 +432,7 @@ private:
     // Readiness is separate from the RGB values: an all-zero frame is valid
     // silence and must not be mistaken for an unanalyzed frame.
     QVector<quint8>           m_progressiveRgbReady;
+    QVector<quint8>           m_progressiveNormalizationStates;
     QVector<std::uint32_t>    m_progressiveDirtyLineChunks;
     // Progressive analysis is sparse: never allocate duration*analysisRate
     // arrays on the GUI thread. Only touched immutable render chunks are staged.
@@ -434,7 +446,8 @@ private:
     void flushProgressiveWaveformLinesLocked();
     void publishProgressiveWaveformLinesLocked(int firstRgbFrame, int rgbFrameCount);
     void stageProgressiveWaveformLinesLocked(
-        int firstBin, const QVector<RgbWaveformFrame>& rgb);
+        int firstBin, const QVector<RgbWaveformFrame>& rgb,
+        WaveformNormalizationState normalizationState);
     void alignSegmentsToBeatgridLocked();
     void rebuildWaveformLineStoreLocked(std::uint64_t trackGeneration = 0);
     void installPreparedWaveformLinesLocked(

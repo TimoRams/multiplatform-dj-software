@@ -73,13 +73,15 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
         analysisMailbox->publishProgress(progress, active, generation);
     });
     m_analyzer->setChunkCallback([analysisMailbox](auto generation, int firstBin, int totalBins,
-                                                    auto waveform, auto rgb) {
+                                                    auto waveform, auto rgb,
+                                                    auto normalizationState) {
         AnalyzerResultMailbox::Chunk chunk;
         chunk.generation = generation;
         chunk.firstBin = firstBin;
         chunk.totalBins = totalBins;
         chunk.waveform = std::make_shared<const QVector<TrackData::WaveformBin>>(std::move(waveform));
         chunk.rgb = std::make_shared<const QVector<TrackData::RgbWaveformFrame>>(std::move(rgb));
+        chunk.normalizationState = normalizationState;
         analysisMailbox->publishChunk(std::move(chunk));
     });
     m_analyzer->setCompletionCallback([analysisMailbox](bool completed, auto generation,
@@ -356,7 +358,7 @@ void DjEngine::onWaveformControlTick(const ControlTickContext& context)
                 && chunk.waveform && chunk.rgb) {
                 m_trackData->applyProgressiveWaveformChunk(
                     chunk.firstBin, chunk.totalBins, *chunk.waveform, *chunk.rgb,
-                    false);
+                    false, chunk.normalizationState);
             }
         }
         // Coalesce a worker burst: each source chunk receives at most one new

@@ -86,9 +86,10 @@ class DeckTrackLoader
 public:
     using CompletionCallback = std::function<void(TrackLoadResult)>;
     using RenderChunkCallback = std::function<void(
-        std::uint64_t generation, int firstLine, int totalLines,
-        int linesPerSecond,
-        std::shared_ptr<const std::vector<WaveformLine>> lines)>;
+        std::uint64_t generation, int totalLines, int linesPerSecond,
+        WaveformLineBatch chunks)>;
+    using RenderLodCallback = std::function<void(
+        std::uint64_t generation, WaveformLodBatch chunks)>;
 
     DeckTrackLoader(AudioPageCache& audioPageCache, int waveformPointsPerSecond);
     ~DeckTrackLoader();
@@ -97,7 +98,8 @@ public:
     DeckTrackLoader& operator=(const DeckTrackLoader&) = delete;
 
     std::uint64_t loadTrack(QString path, CompletionCallback completion,
-                            RenderChunkCallback renderChunk = {});
+                            RenderChunkCallback renderChunk = {},
+                            RenderLodCallback renderLod = {});
     void setWaveformSeekHint(double positionSec) noexcept;
     void requestCancel() noexcept;
     void shutdownAndJoin() noexcept;
@@ -111,6 +113,7 @@ private:
         std::uint64_t generation = 0;
         CompletionCallback completion;
         RenderChunkCallback renderChunk;
+        RenderLodCallback renderLod;
     };
 
     void workerLoop();

@@ -8,8 +8,13 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 
 #include "DjEngine.h"
+
+namespace waveform_render {
+class WaveformTileRasterizer;
+}
 
 class ScrollingWaveformItem : public QQuickItem
 {
@@ -20,6 +25,7 @@ class ScrollingWaveformItem : public QQuickItem
 
 public:
     explicit ScrollingWaveformItem(QQuickItem* parent = nullptr);
+    ~ScrollingWaveformItem() override;
 
     [[nodiscard]] DjEngine* engine() const;
     void setEngine(DjEngine* engine);
@@ -58,6 +64,8 @@ private:
 
     QPointer<DjEngine> m_engine;
     QTimer* m_dataUpdateThrottle = nullptr;
+    std::unique_ptr<waveform_render::WaveformTileRasterizer> m_tileRasterizer;
+    std::atomic<bool> m_tilesReady{false};
     bool m_forceRebuild = true;
     float m_pixelsPerPoint = 0.22f;
 

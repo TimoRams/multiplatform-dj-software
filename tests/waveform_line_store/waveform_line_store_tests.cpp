@@ -1,4 +1,5 @@
 #include "waveform/WaveformLineStore.h"
+#include "waveform/WaveformLodPyramid.h"
 
 #include <iostream>
 
@@ -35,11 +36,43 @@ int main()
     const auto afterFirst = store.snapshot();
     ok &= require(afterFirst->availableChunkCount() == 1 && !afterFirst->chunkAt(1),
                   "missing chunks remain absent in the same timeline");
+    const auto firstChunkRevision = waveform::WaveformLodPyramid::sourceRevision(
+        *afterFirst, 0, 0, chunkSize);
+    const auto missingChunkRevision = waveform::WaveformLodPyramid::sourceRevision(
+        *afterFirst, 0, chunkSize, chunkSize * 2);
     ok &= require(store.publish(makeChunk(9, 1, total, chunkSize)) == WaveformLineStore::PublishResult::Accepted,
                   "middle chunk accepted");
     ok &= require(store.publish(makeChunk(9, 2, total, chunkSize)) == WaveformLineStore::PublishResult::Accepted,
                   "partial final chunk accepted");
+    ok &= require(waveform::WaveformLodPyramid::sourceRevision(
+                      *store.snapshot(), 0, 0, chunkSize) == firstChunkRevision,
+                  "unrelated chunk publication invalidated a stable render range");
+    ok &= require(waveform::WaveformLodPyramid::sourceRevision(
+                      *store.snapshot(), 0, chunkSize, chunkSize * 2)
+                      != missingChunkRevision,
+                  "new chunk publication did not invalidate its render range");
     ok &= require(store.snapshot()->availableChunkCount() == 3, "all chunks visible without store replacement");
+    const auto lodSnapshot = store.snapshot();
+    const auto lodSample = waveform::WaveformLodPyramid::sample(
+        *lodSnapshot, 4, chunkSize / 16);
+    ok &= require(lodSample.hasData && lodSample.complete
+                      && lodSample.line.maximum == 200,
+                  "LOD pyramid did not derive a complete cross-chunk level");
+    ok &= require(waveform::WaveformLodPyramid::linesPerSecond(1200, 4) == 75,
+                  "LOD pyramid rate does not reach 75 lines per second");
+    WaveformLodBatch persistedLod;
+    auto persistedLines = std::make_shared<std::vector<WaveformLine>>(
+        (total + 15) / 16);
+    (*persistedLines)[chunkSize / 16].maximum = 3210;
+    persistedLod.push_back({4, 16, 0,
+        static_cast<int>(persistedLines->size()), std::move(persistedLines)});
+    ok &= require(store.publishLodBatch(std::move(persistedLod)),
+                  "persisted LOD level was rejected");
+    const auto persistedSample = waveform::WaveformLodPyramid::sample(
+        *store.snapshot(), 4, chunkSize / 16);
+    ok &= require(persistedSample.complete
+                      && persistedSample.line.maximum == 3210,
+                  "renderer did not consume the persisted LOD sample");
     ok &= require(store.publish(makeChunk(9, 2, total, chunkSize)) == WaveformLineStore::PublishResult::Duplicate,
                   "duplicate chunk is idempotent");
     const auto revisedFirst = chunkSize;

@@ -10,6 +10,7 @@
 
 #include "TrackData.h"
 #include "waveform/WaveformLineBuilder.h"
+#include "waveform/WaveformLineBatch.h"
 
 class WaveformCache
 {
@@ -27,12 +28,15 @@ public:
     struct RenderInfo {
         int pointsPerSecond = 0;
         int totalLines = 0;
+        int cacheVersion = 0;
+        int lodLevelCount = 0;
         QVector<TrackData::RgbWaveformFrame> overview;
     };
 
+    using LodTile = WaveformLodBlock;
+
     using RenderChunkCallback = std::function<void(
-        int firstLine, int totalLines,
-        std::shared_ptr<const std::vector<WaveformLine>> lines)>;
+        int totalLines, WaveformLineBatch chunks)>;
 
     static QString cachePathFor(const QString& filePath, int pointsPerSecond);
     static QString renderCachePathFor(const QString& filePath, int pointsPerSecond);
@@ -44,5 +48,9 @@ public:
         const std::function<bool()>& shouldCancel,
         const std::function<double()>& seekHintSeconds,
         const RenderChunkCallback& publishChunk);
+    static bool streamRenderLodCache(
+        const QString& filePath, int pointsPerSecond, int level,
+        const std::function<bool()>& shouldCancel,
+        const std::function<void(LodTile)>& publishTile);
     static bool saveForFile(const QString& filePath, const Payload& payload);
 };

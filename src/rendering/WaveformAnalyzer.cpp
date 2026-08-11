@@ -293,10 +293,11 @@ void WaveformAnalyzer::run()
             numPoints,
             [chunks, runGeneration](int firstBin, int totalBins,
                                     QVector<TrackData::WaveformBin> waveform,
-                                    QVector<TrackData::RgbWaveformFrame> rgb) {
+                                    QVector<TrackData::RgbWaveformFrame> rgb,
+                                    WaveformNormalizationState state) {
                 if (chunks)
                     chunks(runGeneration, firstBin, totalBins,
-                           std::move(waveform), std::move(rgb));
+                           std::move(waveform), std::move(rgb), state);
             },
         };
         if (!waveform_internal::runEnvelopePass(envelopeInput))

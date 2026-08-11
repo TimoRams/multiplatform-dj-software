@@ -13,4 +13,9 @@ struct WaveformLine final {
     std::uint8_t flags = 0;
 };
 
+namespace waveform_line_flags {
+inline constexpr std::uint8_t kAvailable = 1u << 0u;
+inline constexpr std::uint8_t kFinal = 1u << 1u;
+}
+
 static_assert(sizeof(WaveformLine) == 8);

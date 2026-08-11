@@ -13,6 +13,7 @@
 #include <optional>
 #include "TrackData.h"
 #include "analysis/AnalysisResult.h"
+#include "waveform/WaveformNormalizationState.h"
 
 class WaveformAnalyzer : public juce::Thread
 {
@@ -37,7 +38,8 @@ public:
     using ChunkCallback = std::function<void(AnalysisGeneration generation, int firstBin,
                                              int totalBins,
                                              QVector<TrackData::WaveformBin> waveform,
-                                             QVector<TrackData::RgbWaveformFrame> rgb)>;
+                                             QVector<TrackData::RgbWaveformFrame> rgb,
+                                             WaveformNormalizationState state)>;
 
     WaveformAnalyzer(juce::AudioFormatManager* formatManager, int pointsPerSecond = 600);
     ~WaveformAnalyzer();
@@ -99,6 +101,8 @@ public:
         int totalBins = 0;
         std::shared_ptr<const QVector<TrackData::WaveformBin>> waveform;
         std::shared_ptr<const QVector<TrackData::RgbWaveformFrame>> rgb;
+        WaveformNormalizationState normalizationState =
+            WaveformNormalizationState::Preview;
     };
     struct Completion {
         bool completed = false;

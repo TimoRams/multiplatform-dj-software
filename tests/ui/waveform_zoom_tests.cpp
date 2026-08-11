@@ -27,5 +27,11 @@ int main()
     double value = WaveformZoomController::kDefault;
     for (int i = 0; i < 100; ++i) value = WaveformZoomController::increasedZoom(value);
     ok &= require(near(value, WaveformZoomController::kMaximum), "repeated shortcut reaches maximum");
+    ok &= require(WaveformZoomController::lodLevelForPhysicalPixels(0.08) == 4,
+                  "minimum zoom selects 75-lines-per-second LOD");
+    ok &= require(WaveformZoomController::lodLevelForPhysicalPixels(0.22) == 3,
+                  "default zoom selects 150-lines-per-second LOD");
+    ok &= require(WaveformZoomController::lodLevelForPhysicalPixels(10.0) == 0,
+                  "maximum zoom retains canonical 1200-lines-per-second detail");
     return ok ? 0 : 1;
 }

@@ -491,6 +491,16 @@ target_include_directories(BrockDJ_waveform_render_stability_tests PRIVATE src)
 target_compile_features(BrockDJ_waveform_render_stability_tests PRIVATE cxx_std_23)
 add_test(NAME waveform_render_stability COMMAND BrockDJ_waveform_render_stability_tests)
 
+add_executable(BrockDJ_waveform_render_tile_tests
+    tests/waveform_render_tiles/waveform_render_tile_tests.cpp
+    src/rendering/WaveformTileRasterizer.cpp
+    src/waveform/WaveformLodPyramid.cpp
+    src/waveform/WaveformLineStore.cpp)
+target_include_directories(BrockDJ_waveform_render_tile_tests PRIVATE src src/rendering)
+target_link_libraries(BrockDJ_waveform_render_tile_tests PRIVATE Qt6::Core Qt6::Gui)
+target_compile_features(BrockDJ_waveform_render_tile_tests PRIVATE cxx_std_23)
+add_test(NAME waveform_render_tiles COMMAND BrockDJ_waveform_render_tile_tests)
+
 add_executable(BrockDJ_smoke_tests
     tests/smoke/smoke_tests.cpp
     tests/smoke/mixer_dsp_smoke.cpp
@@ -823,6 +833,7 @@ add_test(NAME progressive_waveform_publication COMMAND BrockDJ_progressive_wavef
 
 add_executable(BrockDJ_waveform_line_store_tests
     tests/waveform_line_store/waveform_line_store_tests.cpp
+    src/waveform/WaveformLodPyramid.cpp
     src/waveform/WaveformLineStore.cpp
 )
 target_include_directories(BrockDJ_waveform_line_store_tests PRIVATE src)
@@ -949,6 +960,7 @@ set(_brockdj_executable_targets
     BrockDJ_ui_layout_tests
     BrockDJ_qml_component_tests
     BrockDJ_waveform_render_stability_tests
+    BrockDJ_waveform_render_tile_tests
     BrockDJ_smoke_tests
     BrockDJ_mixer_dsp_tests
     BrockDJ_deck_audio_graph_tests

@@ -457,7 +457,7 @@ void DjEngine::loadTrack(const QString& rawPath)
 {
     QPointer<DjEngine> safeThis(this);
     AudioPageCache* const cache = &m_audioPageCache;
-    m_trackLoader.loadTrack(
+    const auto visualGeneration = m_trackLoader.loadTrack(
         rawPath,
         [safeThis, cache](TrackLoadResult result) mutable {
             if (!safeThis) {
@@ -473,24 +473,44 @@ void DjEngine::loadTrack(const QString& rawPath)
                 },
                 Qt::QueuedConnection);
         },
-        [safeThis](std::uint64_t generation, int firstLine, int totalLines,
-                   int linesPerSecond,
-                   std::shared_ptr<const std::vector<WaveformLine>> lines) {
+        [safeThis](std::uint64_t generation, int totalLines,
+                   int linesPerSecond, WaveformLineBatch chunks) {
             if (!safeThis)
                 return;
             QMetaObject::invokeMethod(safeThis.data(),
-                [safeThis, generation, firstLine, totalLines, linesPerSecond,
-                 lines = std::move(lines)]() mutable {
+                [safeThis, generation, totalLines, linesPerSecond,
+                 chunks = std::move(chunks)]() mutable {
                     if (!safeThis
                         || generation != safeThis->m_trackLoader.currentGeneration()
                         || !safeThis->m_trackData) {
                         return;
                     }
-                    safeThis->m_trackData->applyCachedWaveformLineChunk(
-                        firstLine, totalLines, linesPerSecond, std::move(lines));
+                    safeThis->m_trackData->applyCachedWaveformLineBatch(
+                        totalLines, linesPerSecond, std::move(chunks));
+                },
+                Qt::QueuedConnection);
+        },
+        [safeThis](std::uint64_t generation, WaveformLodBatch chunks) {
+            if (!safeThis)
+                return;
+            QMetaObject::invokeMethod(safeThis.data(),
+                [safeThis, generation, chunks = std::move(chunks)]() mutable {
+                    if (!safeThis
+                        || generation != safeThis->m_trackLoader.currentGeneration()
+                        || !safeThis->m_trackData) {
+                        return;
+                    }
+                    safeThis->m_trackData->applyCachedWaveformLodBatch(
+                        std::move(chunks));
                 },
                 Qt::QueuedConnection);
         });
+
+    // Invalidate the previous track's complete visual generation immediately.
+    // Worker callbacks are queued back to this owner thread, so this happens
+    // before any cache batch for the new request can become visible.
+    if (m_trackData)
+        m_trackData->beginVisualTrackLoad(visualGeneration);
 }
 
 void DjEngine::applyPreparedTrack(TrackLoadResult result)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "domain/TrackData.h"
+#include "WaveformVisualStyle.h"
 
 #include <algorithm>
 #include <array>
@@ -15,31 +16,6 @@ struct PreparedWaveformLines final {
     std::uint32_t totalLineCount = 0;
     std::vector<std::shared_ptr<const std::vector<WaveformLine>>> chunks;
 };
-
-inline std::array<std::uint8_t, 3> lineColor(float low, float lowMid,
-                                             float mid, float high, float rms)
-{
-    const float wLow = std::pow(std::clamp(low, 0.0f, 1.0f), 2.8f);
-    const float wLowMid = std::pow(std::clamp(lowMid, 0.0f, 1.0f), 2.5f);
-    const float wMid = std::pow(std::clamp(mid, 0.0f, 1.0f), 2.2f);
-    const float wHigh = std::pow(std::clamp(high, 0.0f, 1.0f), 1.6f);
-    const float sum = wLow + wLowMid + wMid + wHigh;
-    if (sum <= 1.0e-7f)
-        return {150, 170, 190};
-
-    const float brightness = 0.58f + 0.42f
-        * std::pow(std::clamp(rms, 0.0f, 1.0f), 0.35f);
-    const float red = ((wLow * 255.0f + wLowMid * 255.0f + wMid * 210.0f) / sum)
-        * brightness;
-    const float green = ((wLow * 20.0f + wLowMid * 130.0f + wMid * 255.0f
-                          + wHigh * 185.0f) / sum) * brightness;
-    const float blue = ((wLow * 20.0f + wHigh * 255.0f) / sum) * brightness;
-    return {
-        static_cast<std::uint8_t>(std::lround(std::clamp(red, 0.0f, 255.0f))),
-        static_cast<std::uint8_t>(std::lround(std::clamp(green, 0.0f, 255.0f))),
-        static_cast<std::uint8_t>(std::lround(std::clamp(blue, 0.0f, 255.0f)))
-    };
-}
 
 inline WaveformLine makeCanonicalLine(const QVector<TrackData::RgbWaveformFrame>& rgb,
                                       const QVector<TrackData::PeakFrame>& peaks,
@@ -63,11 +39,12 @@ inline WaveformLine makeCanonicalLine(const QVector<TrackData::RgbWaveformFrame>
         std::clamp(minimum, -1.0f, 0.0f) * 32767.0f));
     line.maximum = static_cast<std::int16_t>(std::lround(
         std::clamp(maximum, 0.0f, 1.0f) * 32767.0f));
-    const auto color = lineColor(frame.low, frame.lowMid, frame.mid, frame.high, frame.rms);
+    const auto color = waveform_visual::color(
+        {frame.low, frame.lowMid, frame.mid, frame.high, frame.rms});
     line.red = color[0];
     line.green = color[1];
     line.blue = color[2];
-    line.flags = 1;
+    line.flags = waveform_line_flags::kAvailable | waveform_line_flags::kFinal;
     return line;
 }
 

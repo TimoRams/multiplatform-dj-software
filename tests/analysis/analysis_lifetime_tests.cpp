@@ -143,7 +143,8 @@ int main(int argc, char** argv)
         analyzer.setChunkCallback(
             [&](WaveformAnalyzer::AnalysisGeneration, int firstBin, int,
                 QVector<TrackData::WaveformBin>,
-                QVector<TrackData::RgbWaveformFrame> rgb) {
+                QVector<TrackData::RgbWaveformFrame> rgb,
+                WaveformNormalizationState) {
                 if (rgb.isEmpty())
                     return;
                 {
@@ -173,7 +174,8 @@ int main(int argc, char** argv)
         analyzer.setChunkCallback(
             [&](WaveformAnalyzer::AnalysisGeneration, int firstBin, int,
                 QVector<TrackData::WaveformBin>,
-                QVector<TrackData::RgbWaveformFrame> rgb) {
+                QVector<TrackData::RgbWaveformFrame> rgb,
+                WaveformNormalizationState) {
                 if (rgb.isEmpty())
                     return;
                 {

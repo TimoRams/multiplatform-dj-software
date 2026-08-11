@@ -1,13 +1,16 @@
 #include "engine/deck/DeckTrackLoader.h"
 #include "audio/cache/AudioPageCache.h"
 #include "rendering/WaveformCache.h"
+#include "analysis/AnalysisCacheVersion.h"
 
 #include <QCoreApplication>
+#include <QDataStream>
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
 
 #include <chrono>
+#include <array>
 #include <cmath>
 #include <condition_variable>
 #include <iostream>
@@ -162,31 +165,144 @@ int main(int argc, char** argv)
         ok &= require(info.totalLines == payload.totalExpected
                           && !info.overview.isEmpty(),
                       "render cache must retain timeline and instant overview");
+        ok &= require(info.cacheVersion == analysis::kWaveformRenderCacheVersion
+                          && info.lodLevelCount == 4,
+                      "render cache V2 must advertise its complete LOD pyramid");
 
         std::vector<int> streamedFirstLines;
+        std::vector<int> batchSizes;
         bool restoredProbe = false;
         ok &= require(WaveformCache::streamRenderCache(
                           monoPath, payload.pointsPerSecond,
                           [] { return false; },
                           [] { return 85.0; },
-                          [&](int firstLine, int totalLines,
-                              std::shared_ptr<const std::vector<WaveformLine>> lines) {
-                              streamedFirstLines.push_back(firstLine);
-                              if (firstLine <= 8500
-                                  && 8500 < firstLine + static_cast<int>(lines->size())) {
-                                  const auto& line = (*lines)[static_cast<size_t>(8500 - firstLine)];
-                                  restoredProbe = line.maximum > 0 && line.red > 0;
+                          [&](int totalLines, WaveformLineBatch chunks) {
+                              batchSizes.push_back(static_cast<int>(chunks.size()));
+                              for (const auto& chunk : chunks) {
+                                  streamedFirstLines.push_back(chunk.firstLine);
+                                  if (chunk.firstLine <= 8500
+                                      && 8500 < chunk.firstLine
+                                          + static_cast<int>(chunk.lines->size())) {
+                                      const auto& line = (*chunk.lines)[static_cast<size_t>(
+                                          8500 - chunk.firstLine)];
+                                      restoredProbe = line.maximum > 0 && line.red > 0;
+                                  }
                               }
                               ok &= require(totalLines == payload.totalExpected,
-                                            "every render chunk retains total line count");
+                                            "every render batch retains total line count");
                           }),
                       "compact render cache must stream every immutable chunk");
         ok &= require(!streamedFirstLines.empty()
                           && streamedFirstLines.front() == 8192,
                       "render-cache restore must start at the playhead chunk");
+        ok &= require(!batchSizes.empty() && batchSizes.front() >= 2,
+                      "playhead cache restore must publish its guard window atomically");
         ok &= require(restoredProbe,
                       "streamed render lines must preserve amplitude and colour");
-        QFile::remove(WaveformCache::cachePathFor(monoPath, payload.pointsPerSecond));
+        bool restoredLodProbe = false;
+        int restoredLodTiles = 0;
+        ok &= require(WaveformCache::streamRenderLodCache(
+                          monoPath, payload.pointsPerSecond, 4,
+                          [] { return false; },
+                          [&](WaveformCache::LodTile tile) {
+                              ++restoredLodTiles;
+                              const int probe = 8500 / tile.canonicalLineStride;
+                              if (tile.firstSample <= probe
+                                  && probe < tile.firstSample
+                                      + static_cast<int>(tile.lines->size())) {
+                                  restoredLodProbe = (*tile.lines)[static_cast<std::size_t>(
+                                      probe - tile.firstSample)].maximum > 0;
+                              }
+                          }),
+                      "render cache V2 must stream persisted LOD tiles");
+        ok &= require(restoredLodTiles > 0 && restoredLodProbe,
+                      "persisted 75-lines-per-second LOD lost its probe amplitude");
+
+        // Force the loader onto the compact deferred path and verify that its
+        // warm-load stream really publishes all persisted LOD levels before it
+        // finishes restoring canonical chunks.
+        QFile::remove(WaveformCache::cachePathFor(
+            monoPath, payload.pointsPerSecond));
+        struct DeferredRestoreState {
+            std::mutex mutex;
+            std::condition_variable condition;
+            std::array<bool, 5> lodLevels{};
+            int canonicalLines = 0;
+        } restoreState;
+        ResultWaiter deferredWaiter;
+        const auto deferredGeneration = loader.loadTrack(
+            monoPath, deferredWaiter.callback(),
+            [&restoreState](std::uint64_t, int, int,
+                            WaveformLineBatch chunks) {
+                {
+                    std::lock_guard lock(restoreState.mutex);
+                    for (const auto& chunk : chunks)
+                        restoreState.canonicalLines += static_cast<int>(
+                            chunk.lines ? chunk.lines->size() : 0);
+                }
+                restoreState.condition.notify_all();
+            },
+            [&restoreState](std::uint64_t, WaveformLodBatch chunks) {
+                {
+                    std::lock_guard lock(restoreState.mutex);
+                    if (!chunks.empty() && chunks.front().level >= 1
+                        && chunks.front().level <= 4) {
+                        restoreState.lodLevels[static_cast<std::size_t>(
+                            chunks.front().level)] = true;
+                    }
+                }
+                restoreState.condition.notify_all();
+            });
+        ok &= require(deferredWaiter.wait(),
+                      "deferred V2 render-cache load must publish audio readiness");
+        ok &= require(deferredWaiter.value().generation == deferredGeneration
+                          && deferredWaiter.value().waveformRenderCacheDeferred,
+                      "loader did not select the deferred V2 render cache");
+        {
+            std::unique_lock lock(restoreState.mutex);
+            ok &= require(restoreState.condition.wait_for(
+                              lock, std::chrono::seconds(5), [&] {
+                                  return restoreState.canonicalLines
+                                          == payload.totalExpected
+                                      && std::all_of(
+                                          restoreState.lodLevels.cbegin() + 1,
+                                          restoreState.lodLevels.cend(),
+                                          [](bool ready) { return ready; });
+                              }),
+                          "loader did not publish persisted LOD and canonical data");
+        }
+        cache.releaseTrack(deferredWaiter.value().cacheHandle);
+
+        // V1 files end immediately after canonical lines. Keep accepting that
+        // exact historical layout while exposing no persisted LOD levels.
+        const QString renderPath = WaveformCache::renderCachePathFor(
+            monoPath, payload.pointsPerSecond);
+        QFile legacyFile(renderPath);
+        ok &= require(legacyFile.open(QIODevice::ReadWrite),
+                      "render cache must open for legacy compatibility fixture");
+        if (legacyFile.isOpen()) {
+            ok &= require(legacyFile.seek(sizeof(quint32)),
+                          "legacy fixture version field must be seekable");
+            QDataStream versionStream(&legacyFile);
+            versionStream << static_cast<qint32>(1);
+            const qint64 legacySize = 6 * static_cast<qint64>(sizeof(qint32))
+                + static_cast<qint64>(info.overview.size()) * 5
+                + static_cast<qint64>(payload.totalExpected) * 8;
+            ok &= require(versionStream.status() == QDataStream::Ok
+                              && legacyFile.resize(legacySize),
+                          "legacy render-cache fixture must be truncated exactly");
+            legacyFile.close();
+        }
+        WaveformCache::RenderInfo legacyInfo;
+        ok &= require(WaveformCache::inspectRenderCache(
+                          monoPath, payload.pointsPerSecond, &legacyInfo)
+                          && legacyInfo.cacheVersion == 1
+                          && legacyInfo.lodLevelCount == 0,
+                      "render cache V1 compatibility was broken by V2");
+        ok &= require(!WaveformCache::streamRenderLodCache(
+                          monoPath, payload.pointsPerSecond, 4,
+                          [] { return false; }, [](WaveformCache::LodTile) {}),
+                      "legacy cache must not pretend to contain persisted LOD");
         QFile::remove(WaveformCache::renderCachePathFor(
             monoPath, payload.pointsPerSecond));
     }
