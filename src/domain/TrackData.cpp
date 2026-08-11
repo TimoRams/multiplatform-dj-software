@@ -718,6 +718,85 @@ void TrackData::installCachedWaveform(
     emit peakMipUpdated();
 }
 
+void TrackData::initializeCachedWaveformLines(
+    int totalLines,
+    int linesPerSecond,
+    QVector<RgbWaveformFrame>&& preparedOverview)
+{
+    assertOwnerThread();
+    if (totalLines <= 0 || linesPerSecond <= 0)
+        return;
+    {
+        QMutexLocker locker(&m_mutex);
+        m_totalExpected = totalLines;
+        m_data.clear();
+        m_rgbData.clear();
+        m_peakMip.clear();
+        m_waveformSnapshot.reset();
+        m_rgbSnapshot.reset();
+        m_peakMipSnapshot.reset();
+        m_progressiveOvr.clear();
+        m_progressiveLastFrame = 0;
+        m_progressivePendingLineChunks.clear();
+        m_progressiveDirtyLineChunks.clear();
+        m_overviewSnapshot = std::make_shared<const QVector<RgbWaveformFrame>>(
+            std::move(preparedOverview));
+        m_overviewRgb.clear();
+        m_waveformLineStore.reset(
+            ++m_waveformLineGeneration,
+            static_cast<std::uint32_t>(totalLines),
+            static_cast<std::uint32_t>(linesPerSecond));
+    }
+    emit overviewRgbUpdated();
+    emit dataUpdated();
+}
+
+void TrackData::applyCachedWaveformLineChunk(
+    int firstLine,
+    int totalLines,
+    int linesPerSecond,
+    std::shared_ptr<const std::vector<WaveformLine>> lines)
+{
+    assertOwnerThread();
+    if (firstLine < 0 || totalLines <= 0 || linesPerSecond <= 0
+        || !lines || lines->empty()) {
+        return;
+    }
+    bool accepted = false;
+    {
+        QMutexLocker locker(&m_mutex);
+        auto snapshot = m_waveformLineStore.snapshot();
+        if (!snapshot || snapshot->totalLineCount != static_cast<std::uint32_t>(totalLines)
+            || snapshot->linesPerSecond != static_cast<std::uint32_t>(linesPerSecond)) {
+            m_totalExpected = totalLines;
+            m_waveformLineStore.reset(
+                ++m_waveformLineGeneration,
+                static_cast<std::uint32_t>(totalLines),
+                static_cast<std::uint32_t>(linesPerSecond));
+            snapshot = m_waveformLineStore.snapshot();
+        }
+        const auto chunkSize = static_cast<int>(snapshot->chunkSize);
+        if (chunkSize <= 0 || firstLine % chunkSize != 0)
+            return;
+        const auto count = static_cast<int>(lines->size());
+        if (count != std::min(chunkSize, totalLines - firstLine))
+            return;
+        const auto chunkIndex = static_cast<std::uint32_t>(firstLine / chunkSize);
+        const auto published = m_waveformLineStore.publish({
+            snapshot->trackGeneration,
+            chunkIndex,
+            static_cast<std::uint32_t>(firstLine),
+            static_cast<std::uint32_t>(count),
+            static_cast<std::uint32_t>(totalLines),
+            std::move(lines)});
+        accepted = published != WaveformLineStore::PublishResult::Rejected;
+    }
+    if (accepted) {
+        emit dataUpdated();
+        scheduleRgbWaveformEmit();
+    }
+}
+
 void TrackData::setOverviewRgbData(QVector<RgbWaveformFrame>&& data)
 {
     assertOwnerThread();

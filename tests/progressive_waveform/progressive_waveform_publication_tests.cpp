@@ -76,6 +76,30 @@ int main(int argc, char** argv)
                       && hourStore->availableChunkCount() == 1,
                   "one-hour progressive load did not remain sparse");
 
+    // A persisted line cache can arrive out of chronological order: the
+    // playhead chunk is intentionally restored before the beginning.
+    TrackData cachedLines;
+    QVector<TrackData::RgbWaveformFrame> cachedOverview(32);
+    cachedOverview[10].rms = 0.5f;
+    cachedLines.initializeCachedWaveformLines(9000, 100,
+                                              std::move(cachedOverview));
+    auto playheadChunk = std::make_shared<std::vector<WaveformLine>>(808);
+    (*playheadChunk)[308].minimum = -12000;
+    (*playheadChunk)[308].maximum = 14000;
+    (*playheadChunk)[308].red = 220;
+    cachedLines.applyCachedWaveformLineChunk(8192, 9000, 100,
+                                             std::move(playheadChunk));
+    const auto cachedStore = cachedLines.getWaveformLineStoreSnapshot();
+    const auto cachedPlayhead = cachedStore ? cachedStore->chunkAt(2) : nullptr;
+    ok &= require(cachedStore && cachedStore->linesPerSecond == 100
+                      && cachedStore->availableChunkCount() == 1,
+                  "cached waveform restore must remain sparse and retain its rate");
+    ok &= require(cachedPlayhead && cachedPlayhead->lines
+                      && (*cachedPlayhead->lines)[308].maximum == 14000,
+                  "out-of-order playhead cache chunk was not published exactly");
+    ok &= require(!cachedLines.getOverviewRgbData().isEmpty(),
+                  "cached waveform header must publish its full-track overview");
+
     TrackData taggedBeatgrid;
     taggedBeatgrid.setBpmData(120.0, 0, 48000.0);
     taggedBeatgrid.ensureProvisionalBeatgrid(60.0 * 60.0);

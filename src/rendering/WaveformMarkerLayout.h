@@ -2,8 +2,39 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 namespace waveform_render {
+
+// Audio is rendered as a stable picket-fence of one-physical-pixel strokes.
+// Keeping the cadence in physical pixels makes the apparent density identical
+// at every zoom level and on every device pixel ratio.
+inline constexpr std::int64_t kWaveformStrokePitchPhysicalPixels = 2;
+
+inline bool isWaveformStrokeColumn(std::int64_t globalPhysicalColumn) noexcept
+{
+    const auto remainder = globalPhysicalColumn
+        % kWaveformStrokePitchPhysicalPixels;
+    return remainder == 0;
+}
+
+inline std::int64_t timelinePhysicalFloor(double linePosition,
+                                          double pixelsPerLine,
+                                          double devicePixelRatio) noexcept
+{
+    const double dpr = std::max(1.0, devicePixelRatio);
+    return static_cast<std::int64_t>(
+        std::floor(linePosition * pixelsPerLine * dpr));
+}
+
+inline std::int64_t timelinePhysicalCeil(double linePosition,
+                                         double pixelsPerLine,
+                                         double devicePixelRatio) noexcept
+{
+    const double dpr = std::max(1.0, devicePixelRatio);
+    return static_cast<std::int64_t>(
+        std::ceil(linePosition * pixelsPerLine * dpr));
+}
 
 struct VerticalMarkerLayout {
     float waveformInset = 0.0f;

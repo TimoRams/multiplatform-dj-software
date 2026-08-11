@@ -255,6 +255,7 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
         m_analyzer->setSeekHint(std::max(0.0, grabSec));
         m_analyzer->setRealtimeInteractionActive(true);
     }
+    m_trackLoader.setWaveformSeekHint(std::max(0.0, grabSec));
 
     const auto loopCtx = scratchLoopCtx();
     m_transport->publishScratchPosition(m_scratch.armGrab(grabSec, len, loopCtx));

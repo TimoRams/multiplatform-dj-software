@@ -68,6 +68,10 @@ struct TrackLoadResult {
     QVector<TrackData::RgbWaveformFrame> instantOverview;
     int instantOverviewExpected = 0;
     bool waveformCacheLoaded = false;
+    bool waveformRenderCacheAvailable = false;
+    bool waveformRenderCacheDeferred = false;
+    int waveformRenderLinesPerSecond = 0;
+    int waveformRenderTotalLines = 0;
     QByteArray coverBytes;
     QImage coverImage;
     double autoCueSec = -1.0;
@@ -81,6 +85,10 @@ class DeckTrackLoader
 {
 public:
     using CompletionCallback = std::function<void(TrackLoadResult)>;
+    using RenderChunkCallback = std::function<void(
+        std::uint64_t generation, int firstLine, int totalLines,
+        int linesPerSecond,
+        std::shared_ptr<const std::vector<WaveformLine>> lines)>;
 
     DeckTrackLoader(AudioPageCache& audioPageCache, int waveformPointsPerSecond);
     ~DeckTrackLoader();
@@ -88,7 +96,9 @@ public:
     DeckTrackLoader(const DeckTrackLoader&) = delete;
     DeckTrackLoader& operator=(const DeckTrackLoader&) = delete;
 
-    std::uint64_t loadTrack(QString path, CompletionCallback completion);
+    std::uint64_t loadTrack(QString path, CompletionCallback completion,
+                            RenderChunkCallback renderChunk = {});
+    void setWaveformSeekHint(double positionSec) noexcept;
     void requestCancel() noexcept;
     void shutdownAndJoin() noexcept;
 
@@ -100,6 +110,7 @@ private:
         QString path;
         std::uint64_t generation = 0;
         CompletionCallback completion;
+        RenderChunkCallback renderChunk;
     };
 
     void workerLoop();
@@ -113,6 +124,7 @@ private:
     std::atomic<std::uint64_t> m_generation{0};
     std::atomic<TrackLoadState> m_state{TrackLoadState::Idle};
     std::atomic<bool> m_shuttingDown{false};
+    std::atomic<double> m_waveformSeekHintSec{0.0};
     mutable std::mutex m_mutex;
     std::condition_variable m_condition;
     std::optional<Request> m_pending;

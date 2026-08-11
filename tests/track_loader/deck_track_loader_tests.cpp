@@ -142,6 +142,55 @@ int main(int argc, char** argv)
         QFile::remove(WaveformCache::cachePathFor(monoPath, payload.pointsPerSecond));
     }
     {
+        // The compact render cache is independently valid and streams the
+        // current playhead chunk before the beginning of a long timeline.
+        WaveformCache::Payload payload;
+        payload.pointsPerSecond = 100;
+        payload.totalExpected = 9000;
+        payload.globalMaxPeak = 0.9f;
+        payload.waveform.resize(payload.totalExpected);
+        payload.rgb.resize(payload.totalExpected);
+        payload.rgb[8500].rms = 0.75f;
+        payload.rgb[8500].low = 0.8f;
+        ok &= require(WaveformCache::saveForFile(monoPath, payload),
+                      "render-cache fixture must be saved atomically");
+
+        WaveformCache::RenderInfo info;
+        ok &= require(WaveformCache::inspectRenderCache(
+                          monoPath, payload.pointsPerSecond, &info),
+                      "compact render cache must validate independently");
+        ok &= require(info.totalLines == payload.totalExpected
+                          && !info.overview.isEmpty(),
+                      "render cache must retain timeline and instant overview");
+
+        std::vector<int> streamedFirstLines;
+        bool restoredProbe = false;
+        ok &= require(WaveformCache::streamRenderCache(
+                          monoPath, payload.pointsPerSecond,
+                          [] { return false; },
+                          [] { return 85.0; },
+                          [&](int firstLine, int totalLines,
+                              std::shared_ptr<const std::vector<WaveformLine>> lines) {
+                              streamedFirstLines.push_back(firstLine);
+                              if (firstLine <= 8500
+                                  && 8500 < firstLine + static_cast<int>(lines->size())) {
+                                  const auto& line = (*lines)[static_cast<size_t>(8500 - firstLine)];
+                                  restoredProbe = line.maximum > 0 && line.red > 0;
+                              }
+                              ok &= require(totalLines == payload.totalExpected,
+                                            "every render chunk retains total line count");
+                          }),
+                      "compact render cache must stream every immutable chunk");
+        ok &= require(!streamedFirstLines.empty()
+                          && streamedFirstLines.front() == 8192,
+                      "render-cache restore must start at the playhead chunk");
+        ok &= require(restoredProbe,
+                      "streamed render lines must preserve amplitude and colour");
+        QFile::remove(WaveformCache::cachePathFor(monoPath, payload.pointsPerSecond));
+        QFile::remove(WaveformCache::renderCachePathFor(
+            monoPath, payload.pointsPerSecond));
+    }
+    {
         // A long-track cache must not delay publication of the audio handle.
         // Padding a valid fixture exercises the loader's bounded startup policy
         // without creating an hour-long PCM test file.

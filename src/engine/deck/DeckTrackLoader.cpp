@@ -89,17 +89,28 @@ DeckTrackLoader::~DeckTrackLoader()
     shutdownAndJoin();
 }
 
-std::uint64_t DeckTrackLoader::loadTrack(QString path, CompletionCallback completion)
+std::uint64_t DeckTrackLoader::loadTrack(QString path,
+                                         CompletionCallback completion,
+                                         RenderChunkCallback renderChunk)
 {
     if (m_shuttingDown.load(std::memory_order_acquire)) return currentGeneration();
     const auto generation = m_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
     {
         std::lock_guard lock(m_mutex);
-        m_pending = Request{std::move(path), generation, std::move(completion)};
+        m_pending = Request{std::move(path), generation, std::move(completion),
+                            std::move(renderChunk)};
         m_state.store(TrackLoadState::Queued, std::memory_order_release);
     }
+    m_waveformSeekHintSec.store(0.0, std::memory_order_relaxed);
     m_condition.notify_one();
     return generation;
+}
+
+void DeckTrackLoader::setWaveformSeekHint(double positionSec) noexcept
+{
+    if (std::isfinite(positionSec))
+        m_waveformSeekHintSec.store(std::max(0.0, positionSec),
+                                    std::memory_order_relaxed);
 }
 
 void DeckTrackLoader::requestCancel() noexcept
@@ -171,7 +182,30 @@ void DeckTrackLoader::workerLoop()
         }
         publishState(request.generation,
                      result.succeeded() ? TrackLoadState::Ready : TrackLoadState::Failed);
+        const bool restoreRenderCache = result.succeeded()
+            && result.waveformRenderCacheDeferred
+            && static_cast<bool>(request.renderChunk);
+        const QString renderCachePath = result.canonicalPath;
+        const int renderLinesPerSecond = result.waveformRenderLinesPerSecond;
         if (request.completion) request.completion(std::move(result));
+
+        if (restoreRenderCache && isCurrent(request.generation)) {
+            const auto generation = request.generation;
+            WaveformCache::streamRenderCache(
+                renderCachePath, renderLinesPerSecond,
+                [this, generation]() { return !isCurrent(generation); },
+                [this]() {
+                    return m_waveformSeekHintSec.load(std::memory_order_relaxed);
+                },
+                [this, generation, renderLinesPerSecond, &request](
+                    int firstLine, int totalLines,
+                    std::shared_ptr<const std::vector<WaveformLine>> lines) {
+                    if (isCurrent(generation) && request.renderChunk) {
+                        request.renderChunk(generation, firstLine, totalLines,
+                                            renderLinesPerSecond, std::move(lines));
+                    }
+                });
+        }
     }
 }
 
@@ -270,6 +304,17 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
         // rather than a full-timeline UI-thread conversion.
         result.waveformCache.preparedLines = waveform::prepareWaveformLines(
             result.waveformCache.rgb, result.waveformCache.peakMip);
+    } else {
+        WaveformCache::RenderInfo renderInfo;
+        if (WaveformCache::inspectRenderCache(
+                result.canonicalPath, m_waveformPointsPerSecond, &renderInfo)) {
+            result.waveformRenderCacheAvailable = true;
+            result.waveformRenderCacheDeferred = true;
+            result.waveformRenderLinesPerSecond = renderInfo.pointsPerSecond;
+            result.waveformRenderTotalLines = renderInfo.totalLines;
+            result.instantOverviewExpected = renderInfo.totalLines;
+            result.instantOverview = std::move(renderInfo.overview);
+        }
     }
     if (!isCurrent(request.generation))
         return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));

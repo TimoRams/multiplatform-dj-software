@@ -74,7 +74,9 @@ QSGSimpleTextureNode* makeWaveformTextureNode()
 {
     auto* node = new QSGSimpleTextureNode();
     node->setOwnsTexture(true);
-    node->setFiltering(QSGTexture::Linear);
+    // The image contains intentional one-physical-pixel gaps. Linear sampling
+    // blends neighbouring strokes back into a solid slab while zooming.
+    node->setFiltering(QSGTexture::Nearest);
     return node;
 }
 
@@ -444,14 +446,22 @@ std::uint64_t writeWaveformChunk(QSGSimpleTextureNode*& node,
     }
 
     const double dpr = std::max(1.0, devicePixelRatio);
-    const double logicalWidth = static_cast<double>(endLine - beginLine) * pixelsPerLine;
-    const int imageWidth = std::max(1, static_cast<int>(std::ceil(logicalWidth * dpr)));
+    const auto globalPhysicalBegin = waveform_render::timelinePhysicalFloor(
+        static_cast<double>(beginLine), pixelsPerLine, dpr);
+    const auto globalPhysicalEnd = waveform_render::timelinePhysicalCeil(
+        static_cast<double>(endLine), pixelsPerLine, dpr);
+    const auto physicalWidth = std::max<std::int64_t>(
+        1, globalPhysicalEnd - globalPhysicalBegin);
+    if (physicalWidth > std::numeric_limits<int>::max()) {
+        clearWaveformTexture(node);
+        return 0;
+    }
+    const int imageWidth = static_cast<int>(physicalWidth);
     const int imageHeight = std::max(1, static_cast<int>(std::ceil(height * dpr)));
     QImage image(imageWidth, imageHeight, QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::transparent);
 
-    const double sourceLinesPerPixel = static_cast<double>(endLine - beginLine)
-        / static_cast<double>(imageWidth);
+    const double physicalPixelsPerLine = pixelsPerLine * dpr;
     const auto verticalLayout = waveform_render::verticalMarkerLayout(height);
     const double centerY = static_cast<double>(imageHeight) * 0.5;
     const double halfHeight = std::max(
@@ -460,13 +470,22 @@ std::uint64_t writeWaveformChunk(QSGSimpleTextureNode*& node,
     std::uint64_t renderedColumns = 0;
 
     for (int physicalX = 0; physicalX < imageWidth; ++physicalX) {
+        const auto globalPhysicalX = globalPhysicalBegin + physicalX;
+        if (!waveform_render::isWaveformStrokeColumn(globalPhysicalX))
+            continue;
+
+        // A stroke represents its complete fixed-pitch cell. At low zoom this
+        // max-folds every source line in the cell; at high zoom it repeats the
+        // detailed line with a crisp gap instead of stretching it into a block.
         const std::uint32_t globalBegin = std::clamp<std::uint32_t>(
             static_cast<std::uint32_t>(std::floor(
-                static_cast<double>(beginLine) + physicalX * sourceLinesPerPixel)),
+                static_cast<double>(globalPhysicalX) / physicalPixelsPerLine)),
             beginLine, endLine - 1);
         const std::uint32_t globalEnd = std::clamp<std::uint32_t>(
             static_cast<std::uint32_t>(std::ceil(
-                static_cast<double>(beginLine) + (physicalX + 1) * sourceLinesPerPixel)),
+                static_cast<double>(globalPhysicalX
+                    + waveform_render::kWaveformStrokePitchPhysicalPixels)
+                    / physicalPixelsPerLine)),
             globalBegin + 1, endLine);
         std::int16_t minimum = 0;
         std::int16_t maximum = 0;
@@ -513,11 +532,14 @@ std::uint64_t writeWaveformChunk(QSGSimpleTextureNode*& node,
     }
 
     auto* texture = window->createTextureFromImage(image);
-    texture->setFiltering(QSGTexture::Linear);
+    texture->setFiltering(QSGTexture::Nearest);
     auto* textureNode = assignTextureNode(node, texture, parent, insertBefore);
     textureNode->setOwnsTexture(true);
-    textureNode->setFiltering(QSGTexture::Linear);
-    const double left = (static_cast<double>(beginLine) - renderOriginLine) * pixelsPerLine;
+    textureNode->setFiltering(QSGTexture::Nearest);
+    const auto originPhysical = static_cast<std::int64_t>(std::llround(
+        renderOriginLine * pixelsPerLine * dpr));
+    const double left = static_cast<double>(globalPhysicalBegin - originPhysical) / dpr;
+    const double logicalWidth = static_cast<double>(imageWidth) / dpr;
     textureNode->setRect(QRectF(left, 0.0, logicalWidth, height));
     return renderedColumns;
 }

@@ -63,7 +63,7 @@ int main()
     }
 
     // Beat/cue geometry keeps a one-physical-pixel opaque core plus half-pixel
-    // feathering on either side. Waveform chunks use linearly filtered textures.
+    // feathering on either side. Waveform chunks use nearest-filtered textures.
     // The shared transform must retain fractional physical-pixel phases;
     // quantising it was the source of visible stop/start shimmer.
     for (const double dpr : {1.0, 1.25, 1.5, 2.0}) {
@@ -89,6 +89,39 @@ int main()
         }
         ok &= require(fractionalPhaseFrames > 180,
                       "timeline transform must preserve subpixel phases");
+    }
+
+    // The audio primitive is always one physical pixel followed by one physical
+    // pixel of air. Zoom and DPR may change which source frames a stroke folds,
+    // but never its screen density or phase across adjacent render chunks.
+    for (const double dpr : {1.0, 1.25, 1.5, 2.0}) {
+        for (const double pixelsPerLine : {0.01, 0.055, 0.22, 1.0, 8.0, 40.0}) {
+            constexpr double firstChunkBegin = 8192.0;
+            constexpr double chunkBoundary = 12288.0;
+            constexpr double secondChunkEnd = 16384.0;
+            const auto firstPhysical = waveform_render::timelinePhysicalFloor(
+                firstChunkBegin, pixelsPerLine, dpr);
+            const auto boundaryLeft = waveform_render::timelinePhysicalCeil(
+                chunkBoundary, pixelsPerLine, dpr);
+            const auto boundaryRight = waveform_render::timelinePhysicalFloor(
+                chunkBoundary, pixelsPerLine, dpr);
+            const auto lastPhysical = waveform_render::timelinePhysicalCeil(
+                secondChunkEnd, pixelsPerLine, dpr);
+            ok &= require(boundaryLeft >= boundaryRight
+                              && boundaryLeft - boundaryRight <= 1,
+                          "adjacent waveform chunks share one physical grid");
+
+            std::int64_t previousStroke = -1;
+            for (auto column = firstPhysical; column < lastPhysical; ++column) {
+                if (!waveform_render::isWaveformStrokeColumn(column))
+                    continue;
+                if (previousStroke >= 0)
+                    ok &= require(column - previousStroke
+                                      == waveform_render::kWaveformStrokePitchPhysicalPixels,
+                                  "waveform stroke density must not change with zoom or DPR");
+                previousStroke = column;
+            }
+        }
     }
 
     // Neither progressive data nor guarded waveform-window changes recreate

@@ -287,6 +287,11 @@ public:
                                QVector<PeakFrame>&& peakMip,
                                std::shared_ptr<const waveform::PreparedWaveformLines> preparedLines,
                                QVector<RgbWaveformFrame>&& preparedOverview = {});
+    void initializeCachedWaveformLines(int totalLines, int linesPerSecond,
+                                       QVector<RgbWaveformFrame>&& preparedOverview);
+    void applyCachedWaveformLineChunk(
+        int firstLine, int totalLines, int linesPerSecond,
+        std::shared_ptr<const std::vector<WaveformLine>> lines);
 
     // Pre-downsampled overview (≤4096 bins) computed off the main thread.
     void setOverviewRgbData(QVector<RgbWaveformFrame>&& data);

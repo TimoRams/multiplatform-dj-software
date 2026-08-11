@@ -318,6 +318,7 @@ void DjEngine::setPosition(float progress)
         }
         m_transport->seekToSeconds(newPos);
         ensureTransportRunningForPlayIntent();
+        m_trackLoader.setWaveformSeekHint(std::max(0.0, newPos));
         if (m_analyzer && m_analyzer->isThreadRunning())
             m_analyzer->setSeekHint(std::max(0.0, newPos));
     }
@@ -456,20 +457,40 @@ void DjEngine::loadTrack(const QString& rawPath)
 {
     QPointer<DjEngine> safeThis(this);
     AudioPageCache* const cache = &m_audioPageCache;
-    m_trackLoader.loadTrack(rawPath, [safeThis, cache](TrackLoadResult result) mutable {
-        if (!safeThis) {
-            cache->releaseTrack(result.cacheHandle);
-            return;
-        }
-        QMetaObject::invokeMethod(safeThis.data(),
-            [safeThis, cache, result = std::move(result)]() mutable {
-                if (safeThis)
-                    safeThis->applyPreparedTrack(std::move(result));
-                else
-                    cache->releaseTrack(result.cacheHandle);
-            },
-            Qt::QueuedConnection);
-    });
+    m_trackLoader.loadTrack(
+        rawPath,
+        [safeThis, cache](TrackLoadResult result) mutable {
+            if (!safeThis) {
+                cache->releaseTrack(result.cacheHandle);
+                return;
+            }
+            QMetaObject::invokeMethod(safeThis.data(),
+                [safeThis, cache, result = std::move(result)]() mutable {
+                    if (safeThis)
+                        safeThis->applyPreparedTrack(std::move(result));
+                    else
+                        cache->releaseTrack(result.cacheHandle);
+                },
+                Qt::QueuedConnection);
+        },
+        [safeThis](std::uint64_t generation, int firstLine, int totalLines,
+                   int linesPerSecond,
+                   std::shared_ptr<const std::vector<WaveformLine>> lines) {
+            if (!safeThis)
+                return;
+            QMetaObject::invokeMethod(safeThis.data(),
+                [safeThis, generation, firstLine, totalLines, linesPerSecond,
+                 lines = std::move(lines)]() mutable {
+                    if (!safeThis
+                        || generation != safeThis->m_trackLoader.currentGeneration()
+                        || !safeThis->m_trackData) {
+                        return;
+                    }
+                    safeThis->m_trackData->applyCachedWaveformLineChunk(
+                        firstLine, totalLines, linesPerSecond, std::move(lines));
+                },
+                Qt::QueuedConnection);
+        });
 }
 
 void DjEngine::applyPreparedTrack(TrackLoadResult result)
@@ -537,12 +558,19 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
             std::move(result.waveformCache.peakMip),
             std::move(result.waveformCache.preparedLines),
             std::move(result.instantOverview));
+    } else if (result.waveformRenderCacheDeferred) {
+        m_trackData->initializeCachedWaveformLines(
+            result.waveformRenderTotalLines,
+            result.waveformRenderLinesPerSecond,
+            std::move(result.instantOverview));
     } else if (!result.instantOverview.isEmpty()) {
         m_trackData->setTotalExpected(std::max(1, result.instantOverviewExpected));
         m_trackData->setOverviewRgbData(std::move(result.instantOverview));
     }
 
-    if (!(result.waveformCacheLoaded && hasDbAnalysis) && m_analyzer) {
+    const bool hasReusableWaveform = result.waveformCacheLoaded
+        || result.waveformRenderCacheAvailable;
+    if (!(hasReusableWaveform && hasDbAnalysis) && m_analyzer) {
         // Let playback, the first cache window and immediate platter input take
         // ownership before background analysis starts allocating/decoding. The
         // generation check makes this harmless when another track is loaded.
