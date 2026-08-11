@@ -57,7 +57,8 @@ public:
                       double normalPlaybackSpeed);
     [[nodiscard]] engine::scratch::ScratchReleaseDisposition endScratch(bool allowInertia);
     [[nodiscard]] std::uint64_t requestScratchRelease(double normalizedReleaseSpeed,
-                                                      bool allowInertia) noexcept;
+                                                      bool allowInertia,
+                                                      bool playbackIntent) noexcept;
     void submitScratchReleaseSpeed(double normalizedReleaseSpeed) noexcept;
     void engageScratchDuringInertia() noexcept;
     void addTargetDeltaSeconds(double deltaSeconds, double trackSampleRate) noexcept;
@@ -210,7 +211,7 @@ private:
     std::atomic<double> m_releaseCommandSpeed { 0.0 };
     std::atomic<double> m_releaseCommandDeckRate { 1.0 };
     std::atomic<double> m_releaseCommandSampleRate { 44100.0 };
-    std::atomic<bool> m_releaseCommandWasPlaying { false };
+    std::atomic<bool> m_releaseCommandPlaybackIntent { false };
     std::atomic<bool> m_releaseCommandAllowInertia { true };
     std::atomic<bool> m_releaseCommandKeylock { false };
     std::atomic<bool> m_releaseCommandReverse { false };
@@ -226,7 +227,7 @@ private:
         double speed = 0.0;
         double deckRate = 1.0;
         double sampleRate = 44100.0;
-        bool wasPlaying = false;
+        bool playbackIntent = false;
         bool allowInertia = true;
         bool keylock = false;
         bool reverse = false;

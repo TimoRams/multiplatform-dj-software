@@ -144,19 +144,22 @@ bool DDJFLX10Controller::writePacket(const QByteArray& packetBytes)
         return false;
     }
 
-    // 0x27 carries only the current jog-display state. Keeping an older one in
-    // the queue wastes endpoint time and can make a busy display look jumpy.
+    // 0x27 is mutable state, not an ordered upload. Keep one latest packet per
+    // deck in priority slots so a new scratch cursor never waits behind cover,
+    // beatgrid or full-waveform packets already in the static FIFO.
     if (packetBytes.at(1) == char(0x27)) {
-        const auto pending = std::find_if(m_hidWriteQueue.rbegin(), m_hidWriteQueue.rend(),
-                                          [&packetBytes](const QByteArray& queued) {
-            return queued.size() == kHidPacketSize
-                && queued.at(0) == packetBytes.at(0)
-                && queued.at(1) == char(0x27);
-        });
-        if (pending != m_hidWriteQueue.rend()) {
-            *pending = packetBytes;
-            return true;
-        }
+        const auto sequence = m_displaySnapshotsPublished.fetch_add(
+            1, std::memory_order_relaxed) + 1;
+        if (m_latestHidDisplayPackets.publish(packetBytes, sequence))
+            m_displayFramesCoalesced.fetch_add(1, std::memory_order_relaxed);
+        const auto depth = static_cast<std::uint64_t>(
+            m_hidWriteQueue.size() + m_latestHidDisplayPackets.size());
+        auto maximum = m_maximumDisplayQueueDepth.load(std::memory_order_relaxed);
+        while (depth > maximum
+               && !m_maximumDisplayQueueDepth.compare_exchange_weak(
+                   maximum, depth, std::memory_order_relaxed)) {}
+        m_hidWriteCondition.notify_one();
+        return true;
     }
 
     if (m_hidWriteQueue.size() >= kHidWriteQueueCapacity)
@@ -179,12 +182,22 @@ void DDJFLX10Controller::startHidWriter()
     {
         std::lock_guard lock(m_hidWriteMutex);
         m_hidWriteQueue.clear();
+        m_latestHidDisplayPackets.clear();
         m_hidWriterStopping = false;
         m_hidWriterRunning = true;
         m_hidWriteHealthy.store(true, std::memory_order_release);
         m_hidWriteFailurePending.store(false, std::memory_order_release);
         m_hidWriteError.store(0, std::memory_order_release);
         m_hidWriteTransferred.store(0, std::memory_order_release);
+        m_displaySnapshotsPublished.store(0, std::memory_order_relaxed);
+        m_displayFramesSent.store(0, std::memory_order_relaxed);
+        m_displayFramesCoalesced.store(0, std::memory_order_relaxed);
+        m_displayWriteFailures.store(0, std::memory_order_relaxed);
+        m_displayWriteTimeouts.store(0, std::memory_order_relaxed);
+        m_maximumDisplayQueueDepth.store(0, std::memory_order_relaxed);
+        m_lastDisplaySequence.store(0, std::memory_order_relaxed);
+        m_worstDisplayWriteUsec.store(0, std::memory_order_relaxed);
+        m_hidDiagnosticsEnabled = qEnvironmentVariableIsSet("BROCKDJ_FLX10_DIAGNOSTICS");
     }
     m_hidWriter = std::thread([this] { hidWriterLoop(); });
 }
@@ -195,6 +208,7 @@ void DDJFLX10Controller::stopHidWriter() noexcept
         std::lock_guard lock(m_hidWriteMutex);
         m_hidWriterStopping = true;
         m_hidWriteQueue.clear();
+        m_latestHidDisplayPackets.clear();
     }
     m_hidWriteCondition.notify_all();
     if (m_hidWriter.joinable())
@@ -203,6 +217,18 @@ void DDJFLX10Controller::stopHidWriter() noexcept
         std::lock_guard lock(m_hidWriteMutex);
         m_hidWriterRunning = false;
         m_hidWriterStopping = false;
+    }
+    if (m_hidDiagnosticsEnabled
+        && m_displaySnapshotsPublished.load(std::memory_order_relaxed) > 0) {
+        qInfo() << "[DDJ-FLX10 diagnostics] display snapshots="
+                << m_displaySnapshotsPublished.load(std::memory_order_relaxed)
+                << "sent=" << m_displayFramesSent.load(std::memory_order_relaxed)
+                << "coalesced=" << m_displayFramesCoalesced.load(std::memory_order_relaxed)
+                << "writeFailures=" << m_displayWriteFailures.load(std::memory_order_relaxed)
+                << "timeouts=" << m_displayWriteTimeouts.load(std::memory_order_relaxed)
+                << "maxQueueDepth=" << m_maximumDisplayQueueDepth.load(std::memory_order_relaxed)
+                << "lastSequence=" << m_lastDisplaySequence.load(std::memory_order_relaxed)
+                << "worstWriteUsec=" << m_worstDisplayWriteUsec.load(std::memory_order_relaxed);
     }
 }
 
@@ -213,6 +239,7 @@ void DDJFLX10Controller::discardQueuedDeckPackets(int deck)
     std::erase_if(m_hidWriteQueue, [targetDeck](const QByteArray& queued) {
         return queued.size() == kHidPacketSize && queued.at(0) == targetDeck;
     });
+    m_latestHidDisplayPackets.clearDeck(deck);
 }
 
 void DDJFLX10Controller::hidWriterLoop()
@@ -220,17 +247,25 @@ void DDJFLX10Controller::hidWriterLoop()
     int consecutiveDroppedPackets = 0;
     while (true) {
         QByteArray packetBytes;
+        std::uint64_t displaySequence = 0;
         {
             std::unique_lock lock(m_hidWriteMutex);
             m_hidWriteCondition.wait(lock, [this] {
-                return m_hidWriterStopping || !m_hidWriteQueue.empty();
+                return m_hidWriterStopping || !m_latestHidDisplayPackets.empty()
+                    || !m_hidWriteQueue.empty();
             });
             if (m_hidWriterStopping)
                 return;
-            packetBytes = std::move(m_hidWriteQueue.front());
-            m_hidWriteQueue.pop_front();
+            if (auto display = m_latestHidDisplayPackets.takeNext()) {
+                packetBytes = std::move(display->bytes);
+                displaySequence = display->sequence;
+            } else {
+                packetBytes = std::move(m_hidWriteQueue.front());
+                m_hidWriteQueue.pop_front();
+            }
         }
 
+        const auto writeStarted = std::chrono::steady_clock::now();
         int result = LIBUSB_ERROR_OTHER;
         int transferred = 0;
         for (int attempt = 0; attempt <= kHidTransientRetries; ++attempt) {
@@ -255,9 +290,29 @@ void DDJFLX10Controller::hidWriterLoop()
             std::this_thread::sleep_for(std::chrono::milliseconds(2 << attempt));
         }
 
+        if (displaySequence != 0) {
+            const auto elapsedUsec = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - writeStarted).count());
+            auto worst = m_worstDisplayWriteUsec.load(std::memory_order_relaxed);
+            while (elapsedUsec > worst
+                   && !m_worstDisplayWriteUsec.compare_exchange_weak(
+                       worst, elapsedUsec, std::memory_order_relaxed)) {}
+        }
+
         if (result == 0 && transferred == packetBytes.size()) {
             consecutiveDroppedPackets = 0;
+            if (displaySequence != 0) {
+                m_displayFramesSent.fetch_add(1, std::memory_order_relaxed);
+                m_lastDisplaySequence.store(displaySequence, std::memory_order_relaxed);
+            }
             continue;
+        }
+
+        if (displaySequence != 0) {
+            m_displayWriteFailures.fetch_add(1, std::memory_order_relaxed);
+            if (result == LIBUSB_ERROR_TIMEOUT)
+                m_displayWriteTimeouts.fetch_add(1, std::memory_order_relaxed);
         }
 
         const bool transient = result == LIBUSB_ERROR_TIMEOUT
@@ -283,6 +338,7 @@ void DDJFLX10Controller::hidWriterLoop()
         m_hidWriteFailurePending.store(true, std::memory_order_release);
         std::lock_guard lock(m_hidWriteMutex);
         m_hidWriteQueue.clear();
+        m_latestHidDisplayPackets.clear();
         return;
     }
 }

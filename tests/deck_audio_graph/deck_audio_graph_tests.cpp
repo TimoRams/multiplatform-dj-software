@@ -318,7 +318,7 @@ int main(int argc, char** argv)
             releaseSpeed < 0.0 ? -0.025 : 0.025, 0.004);
 
         const auto releaseGeneration = graph.renderModeRouter().requestScratchRelease(
-            releaseSpeed, true);
+            releaseSpeed, true, wasPlaying);
         ok &= require(releaseGeneration != 0,
                       "hardware release publishes a generation");
         ok &= require(graph.renderModeRouter().normalPlaybackHandoffPending(),
@@ -401,8 +401,54 @@ int main(int argc, char** argv)
         "paused coast publishes its actual final cursor",
         false);
 
+    // Regression: the play state at grab time is historical context only. A
+    // newer explicit Pause must determine release behaviour and must never be
+    // replaced by the pre-scratch Playing state.
+    graph.setTransportRunning(false);
+    graph.renderModeRouter().configureTrack(44'100.0, 1.0);
+    graph.renderModeRouter().beginScratch(0.45, 44'100.0, 1.0, true, 1.0);
+    graph.renderModeRouter().submitHandDeltaSeconds(0.025, 0.004);
+    const auto pausedDuringScratchRelease =
+        graph.renderModeRouter().requestScratchRelease(1.4, true, false);
+    juce::AudioBuffer<float> pausedReleaseOutput(2, 64);
+    graph.getNextAudioBlock({&pausedReleaseOutput, 0, 64});
+    ok &= require(graph.renderModeRouter().scratchReleaseSnapshot().disposition
+                      == engine::scratch::ScratchReleaseDisposition::CoastToStop,
+                  "current Pause intent overrides the play state captured at scratch begin");
+    for (int block = 0;
+         block < 4000
+             && !graph.renderModeRouter().scratchReleaseComplete(pausedDuringScratchRelease);
+         ++block) {
+        graph.getNextAudioBlock({&pausedReleaseOutput, 0, 64});
+    }
+    ok &= require(graph.renderModeRouter().scratchReleaseComplete(pausedDuringScratchRelease)
+                      && !graph.transportSnapshot().running,
+                  "scratch release after Pause leaves normal transport paused");
+
+    // Regression: Pause after a coast has already begun invalidates that
+    // callback-owned generation. The explicit handoff wins at the next audio
+    // block and stale inertia cannot restart or move the normal transport.
+    graph.setTransportRunning(true);
+    graph.renderModeRouter().beginScratch(0.35, 44'100.0, 1.0, true, 1.0);
+    graph.renderModeRouter().submitHandDeltaSeconds(0.025, 0.004);
+    const auto cancelledByPauseRelease =
+        graph.renderModeRouter().requestScratchRelease(1.5, true, true);
+    graph.getNextAudioBlock({&pausedReleaseOutput, 0, 64});
+    ok &= require(graph.renderModeRouter().scratchReleaseSnapshot().phase
+                      == engine::audio::ScratchReleasePhase::CoastToDeck,
+                  "playing scratch release enters coast before Pause");
+    const double pausedCursor = graph.renderModeRouter().readPositionSeconds(44'100.0);
+    graph.setTransportRunning(false);
+    graph.renderModeRouter().exitScratchMode(pausedCursor, 44'100.0);
+    graph.getNextAudioBlock({&pausedReleaseOutput, 0, 64});
+    ok &= require(graph.renderModeRouter().scratchReleaseComplete(cancelledByPauseRelease)
+                      && !graph.renderModeRouter().isInertiaActive()
+                      && !graph.transportSnapshot().running,
+                  "Pause cancels active release inertia and keeps transport stopped");
+
     graph.renderModeRouter().beginScratch(0.3, 44'100.0, 1.0, true, 1.0);
-    const auto cancelledRelease = graph.renderModeRouter().requestScratchRelease(1.5, true);
+    const auto cancelledRelease = graph.renderModeRouter().requestScratchRelease(
+        1.5, true, true);
     graph.renderModeRouter().beginScratch(0.4, 44'100.0, 1.0, true, 1.0);
     graph.getNextAudioBlock({&output, 0, 512});
     ok &= require(graph.renderModeRouter().isScratching(),
@@ -559,7 +605,8 @@ int main(int argc, char** argv)
     graph.renderModeRouter().configureTrack(96'000.0, 0.5);
     graph.renderModeRouter().beginScratch(0.1, 96'000.0, 0.5, true, 1.0);
     graph.renderModeRouter().submitHandDeltaSeconds(0.01, 0.002);
-    const auto release96 = graph.renderModeRouter().requestScratchRelease(0.5, true);
+    const auto release96 = graph.renderModeRouter().requestScratchRelease(
+        0.5, true, true);
     graph.getNextAudioBlock({&output, 0, 512});
     const auto snapshot96 = graph.renderModeRouter().scratchReleaseSnapshot();
     ok &= require(graph.renderModeRouter().scratchReleaseComplete(release96),

@@ -64,6 +64,61 @@ void beatgridRangeDoesNotWrap()
     assert(!flx10_protocol::xx2fSampleForMilliseconds(13.0 * 60.0 * 1000.0, sample));
 }
 
+void tempoDoesNotMoveAbsoluteProgress()
+{
+    flx10_protocol::DeckDisplaySnapshot snapshot;
+    snapshot.sourcePositionSec = 300.0;
+    snapshot.trackDurationSec = 600.0;
+    snapshot.bpm = 120.0;
+    snapshot.tempoPercent = 0.0;
+    const QByteArray neutral = flx10_protocol::encodeXx27Packet(1, snapshot);
+
+    snapshot.tempoPercent = 10.0;
+    snapshot.bpm = 132.0;
+    const QByteArray faster = flx10_protocol::encodeXx27Packet(1, snapshot);
+    snapshot.tempoPercent = -10.0;
+    snapshot.bpm = 108.0;
+    const QByteArray slower = flx10_protocol::encodeXx27Packet(1, snapshot);
+
+    // Position and source duration fields stay byte-identical. Only BPM/tempo
+    // metadata may differ when the fader moves at a fixed source cursor.
+    assert(neutral.mid(5, 8) == faster.mid(5, 8));
+    assert(neutral.mid(5, 8) == slower.mid(5, 8));
+    assert(neutral.mid(13, 5) != faster.mid(13, 5));
+    assert(neutral.mid(13, 5) != slower.mid(13, 5));
+
+    const auto timeline = flx10_protocol::xx27TimelineEncoding(
+        snapshot.sourcePositionSec, snapshot.trackDurationSec);
+    assert(std::abs(timeline.progress() - 0.5) < 1.0e-12);
+}
+
+void latestDisplayStateWinsWithoutBacklog()
+{
+    flx10_protocol::LatestDisplayPacketSlots pendingDisplay;
+    bool replaced = false;
+    for (std::uint64_t sequence = 1; sequence <= 1000; ++sequence) {
+        flx10_protocol::DeckDisplaySnapshot snapshot;
+        snapshot.sourcePositionSec = static_cast<double>(sequence) * 0.001;
+        snapshot.trackDurationSec = 120.0;
+        replaced = pendingDisplay.publish(
+            flx10_protocol::encodeXx27Packet(1, snapshot), sequence);
+    }
+    assert(replaced);
+    assert(pendingDisplay.size() == 1);
+
+    flx10_protocol::DeckDisplaySnapshot deckTwo;
+    deckTwo.sourcePositionSec = 42.0;
+    deckTwo.trackDurationSec = 120.0;
+    assert(!pendingDisplay.publish(flx10_protocol::encodeXx27Packet(2, deckTwo), 2000));
+    assert(pendingDisplay.size() == 2);
+
+    const auto deckOneLatest = pendingDisplay.takeNext();
+    const auto deckTwoLatest = pendingDisplay.takeNext();
+    assert(deckOneLatest && deckOneLatest->sequence == 1000);
+    assert(deckTwoLatest && deckTwoLatest->sequence == 2000);
+    assert(pendingDisplay.empty());
+}
+
 } // namespace
 
 int main()
@@ -72,5 +127,7 @@ int main()
     continuousAtDisplayRate();
     longPositionDoesNotOverflow();
     beatgridRangeDoesNotWrap();
+    tempoDoesNotMoveAbsoluteProgress();
+    latestDisplayStateWinsWithoutBacklog();
     return 0;
 }

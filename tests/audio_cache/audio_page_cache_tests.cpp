@@ -40,13 +40,12 @@ bool writeWave(const QString& path, double sampleRate, int channels, int samples
 AudioPageReadGuard waitPage(AudioPageCache& cache, const AudioCacheHandle& handle,
                             std::int64_t page, std::chrono::seconds timeout = std::chrono::seconds(5))
 {
-    const auto end = std::chrono::steady_clock::now() + timeout;
-    while (std::chrono::steady_clock::now() < end) {
-        auto guard = cache.tryGetPage(handle, page);
-        if (guard) return guard;
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    if (!cache.waitForPageRange(
+            handle, page, page,
+            std::chrono::duration_cast<std::chrono::milliseconds>(timeout))) {
+        return {};
     }
-    return {};
+    return cache.tryGetPage(handle, page);
 }
 }
 

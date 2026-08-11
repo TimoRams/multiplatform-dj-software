@@ -129,6 +129,8 @@ struct AudioPageCache::Impl {
                static_cast<size_t>(AudioCachePriority::Count)> queues;
     std::condition_variable condition;
     std::mutex conditionMutex;
+    std::condition_variable pageReadyCondition;
+    std::mutex pageReadyMutex;
     std::atomic<std::uint64_t> nextId{1};
     std::atomic<std::uint64_t> hits{0}, misses{0}, queued{0}, dropped{0};
     std::atomic<std::uint64_t> decoded{0}, failures{0}, evicted{0}, resident{0}, open{0};
@@ -289,6 +291,59 @@ bool AudioPageCache::requestRange(const AudioCacheHandle& handle, std::int64_t f
     return all;
 }
 
+bool AudioPageCache::waitForPageRange(
+    const AudioCacheHandle& handle,
+    std::int64_t firstPage,
+    std::int64_t lastPage,
+    std::chrono::milliseconds timeout,
+    const std::function<bool()>& shouldCancel) const
+{
+    if (!handle.isValid() || firstPage < 0 || lastPage < firstPage
+        || timeout < std::chrono::milliseconds::zero()) {
+        return false;
+    }
+    auto* entry = static_cast<const Impl::Entry*>(handle.m_token);
+    if (entry->id != handle.id()
+        || entry->generation.load(std::memory_order_acquire)
+            != handle.generation()
+        || !entry->active.load(std::memory_order_acquire)
+        || lastPage >= entry->pageCount) {
+        return false;
+    }
+    const auto ready = [&]() {
+        if (shouldCancel && shouldCancel())
+            return true;
+        if (!entry->active.load(std::memory_order_acquire)
+            || entry->generation.load(std::memory_order_acquire)
+                != handle.generation()) {
+            return true;
+        }
+        for (auto page = firstPage; page <= lastPage; ++page) {
+            const auto& slot = entry->pageSlots[static_cast<std::size_t>(page)];
+            const auto* value = slot.page.load(std::memory_order_acquire);
+            if (!value || value->generation != handle.generation())
+                return false;
+        }
+        return true;
+    };
+    std::unique_lock lock(m_impl->pageReadyMutex);
+    (void)m_impl->pageReadyCondition.wait_for(lock, timeout, ready);
+    if (shouldCancel && shouldCancel())
+        return false;
+    if (!entry->active.load(std::memory_order_acquire)
+        || entry->generation.load(std::memory_order_acquire)
+            != handle.generation()) {
+        return false;
+    }
+    for (auto page = firstPage; page <= lastPage; ++page) {
+        const auto& slot = entry->pageSlots[static_cast<std::size_t>(page)];
+        const auto* value = slot.page.load(std::memory_order_acquire);
+        if (!value || value->generation != handle.generation())
+            return false;
+    }
+    return true;
+}
+
 AudioCacheStats AudioPageCache::stats() const noexcept
 {
     std::uint64_t pending = 0;
@@ -435,7 +490,16 @@ void AudioPageCache::workerRun(const std::atomic<bool>& shutdown)
         const auto decodeElapsed = steadyMicros() - decodeStartedAt;
         m_impl->decodeMicros.fetch_add(decodeElapsed, std::memory_order_relaxed);
         updateMaximum(m_impl->worstDecodeMicros, decodeElapsed);
-        if (!ok) { slot.state.store(0); m_impl->failures.fetch_add(1); continue; }
+        if (!ok) {
+            slot.state.store(0);
+            m_impl->failures.fetch_add(1);
+            // Pair the state transition with the mutex used by blocking
+            // loader-side waiters so a completion notification cannot be lost
+            // between their predicate check and wait operation.
+            const std::lock_guard readyLock(m_impl->pageReadyMutex);
+            m_impl->pageReadyCondition.notify_all();
+            continue;
+        }
         for (int channel = 0; channel < entry->channels; ++channel)
             std::copy_n(buffer.getReadPointer(channel), AudioPage::kSamplesPerChannel,
                         page->planarPcm.data() + static_cast<size_t>(channel) * AudioPage::kSamplesPerChannel);
@@ -449,6 +513,8 @@ void AudioPageCache::workerRun(const std::atomic<bool>& shutdown)
         slot.state.store(2, std::memory_order_release);
         addToEvictionClock(slot);
         m_impl->resident.fetch_add(bytes); m_impl->decoded.fetch_add(1);
+        const std::lock_guard readyLock(m_impl->pageReadyMutex);
+        m_impl->pageReadyCondition.notify_all();
     }
 
     for (auto& retired : m_impl->retiredPages) {

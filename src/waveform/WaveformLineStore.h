@@ -8,6 +8,8 @@
 #include <memory>
 #include <vector>
 
+inline constexpr std::uint32_t kWaveformCanonicalChunkSize = 1024;
+
 struct WaveformLodChunk final {
     std::uint64_t revision = 0;
     std::uint32_t firstSampleIndex = 0;
@@ -18,7 +20,7 @@ struct WaveformLodChunk final {
 struct WaveformLodLevelSnapshot final {
     std::uint8_t level = 0;
     std::uint32_t canonicalLineStride = 1;
-    std::uint32_t chunkSize = 4096;
+    std::uint32_t chunkSize = kWaveformCanonicalChunkSize;
     std::uint32_t totalSampleCount = 0;
     std::shared_ptr<const std::vector<std::shared_ptr<const WaveformLodChunk>>> chunks;
 
@@ -32,7 +34,7 @@ struct WaveformLineStoreSnapshot final {
     std::uint64_t trackGeneration = 0;
     std::uint64_t dataGeneration = 0;
     std::uint32_t linesPerSecond = 1200;
-    std::uint32_t chunkSize = 4096;
+    std::uint32_t chunkSize = kWaveformCanonicalChunkSize;
     std::uint32_t totalLineCount = 0;
     std::shared_ptr<const std::vector<std::shared_ptr<const WaveformLineChunk>>> chunks;
     std::array<std::shared_ptr<const WaveformLodLevelSnapshot>, 5> lodLevels{};
@@ -49,7 +51,10 @@ public:
     // normal DJ zoom this gives a dense, continuous-looking line field; low zoom
     // aggregation happens in the renderer rather than throwing detail away.
     static constexpr std::uint32_t kCanonicalLinesPerSecond = 1200;
-    static constexpr std::uint32_t kChunkSize = 4096;
+    // 1024 lines are about 0.853 seconds at the canonical 1200 Hz rate. This is
+    // small enough for seek/scratch demand to become immutable quickly while
+    // keeping chunk-table and cache-index overhead bounded for two-hour sets.
+    static constexpr std::uint32_t kChunkSize = kWaveformCanonicalChunkSize;
 
     enum class PublishResult : std::uint8_t { Accepted, Duplicate, Rejected };
 
@@ -58,6 +63,8 @@ public:
                std::uint32_t linesPerSecond = kCanonicalLinesPerSecond,
                std::uint32_t chunkSize = kChunkSize);
     [[nodiscard]] PublishResult publish(WaveformLineChunk chunk);
+    [[nodiscard]] PublishResult publishBatch(
+        std::vector<WaveformLineChunk> chunks);
     [[nodiscard]] bool publishLodBatch(WaveformLodBatch batch);
     [[nodiscard]] std::shared_ptr<const WaveformLineStoreSnapshot> snapshot() const;
 

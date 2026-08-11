@@ -2,6 +2,8 @@
 #include "waveform/WaveformLodPyramid.h"
 
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <iostream>
 
 namespace {
@@ -89,12 +91,49 @@ int main()
                                          std::move(oneSidedLines)})
                       == WaveformLineStore::PublishResult::Accepted,
                   "one-sided LOD fixture was rejected");
+    ok &= require(oneSidedStore.snapshot()->availableChunkCount() == 0
+                      && oneSidedStore.snapshot()->chunkAt(0)
+                      && oneSidedStore.snapshot()->chunkAt(0)->state
+                          == WaveformChunkState::Loading,
+                  "partially populated chunk was incorrectly classified READY");
     const auto oneSidedLod = waveform::WaveformLodPyramid::sample(
         *oneSidedStore.snapshot(), 4, 0);
     ok &= require(oneSidedLod.hasData && !oneSidedLod.complete
                       && oneSidedLod.line.minimum == 1200
                       && oneSidedLod.line.maximum == 4800,
                   "LOD aggregation used missing data as a false zero extremum");
+    WaveformLineStore batchStore;
+    batchStore.reset(11, chunkSize * 3, 1200, chunkSize);
+    const auto beforeBatchGeneration = batchStore.snapshot()->dataGeneration;
+    std::vector<WaveformLineChunk> viewportBatch;
+    viewportBatch.push_back(makeChunk(11, 1, chunkSize * 3, chunkSize));
+    viewportBatch.push_back(makeChunk(11, 2, chunkSize * 3, chunkSize));
+    ok &= require(batchStore.publishBatch(std::move(viewportBatch))
+                      == WaveformLineStore::PublishResult::Accepted,
+                  "viewport batch publication was rejected");
+    const auto afterBatch = batchStore.snapshot();
+    ok &= require(afterBatch->chunkAt(1) && afterBatch->chunkAt(2)
+                      && afterBatch->dataGeneration == beforeBatchGeneration + 1,
+                  "viewport batch did not publish through one immutable table swap");
+    WaveformLineStore finalStore;
+    finalStore.reset(12, 16, 1200, 16);
+    auto finalLines = std::make_shared<std::vector<WaveformLine>>(16);
+    for (auto& line : *finalLines) {
+        line.maximum = 400;
+        line.flags = waveform_line_flags::kAvailable
+            | waveform_line_flags::kFinal;
+    }
+    ok &= require(finalStore.publish({12, 0, 0, 16, 16, finalLines})
+                      == WaveformLineStore::PublishResult::Accepted,
+                  "final chunk fixture was rejected");
+    auto lateLines = std::make_shared<std::vector<WaveformLine>>(*finalLines);
+    (*lateLines)[0].maximum = 900;
+    (*lateLines)[0].flags = waveform_line_flags::kAvailable;
+    ok &= require(finalStore.publish({12, 0, 0, 16, 16, lateLines})
+                      == WaveformLineStore::PublishResult::Duplicate
+                      && finalStore.snapshot()->chunkAt(0)
+                      && (*finalStore.snapshot()->chunkAt(0)->lines)[0].maximum == 400,
+                  "late publication changed an immutable final chunk");
     ok &= require(store.publish(makeChunk(9, 2, total, chunkSize)) == WaveformLineStore::PublishResult::Duplicate,
                   "duplicate chunk is idempotent");
     const auto revisedFirst = chunkSize;
@@ -113,5 +152,39 @@ int main()
     invalid.firstLineIndex = 3;
     ok &= require(store.publish(std::move(invalid)) == WaveformLineStore::PublishResult::Rejected,
                   "invalid fixed range rejected");
+
+    // Two-hour chunk-size evaluation. Render textures stay fixed at 1024
+    // physical pixels independently (covered by render-tile tests); this
+    // measures the store/index side and records the seek granularity tradeoff.
+    constexpr std::uint32_t twoHourLines = 2 * 60 * 60
+        * WaveformLineStore::kCanonicalLinesPerSecond;
+    for (const auto candidate : std::array<std::uint32_t, 4>{512, 1024, 2048, 4096}) {
+        const auto started = std::chrono::steady_clock::now();
+        WaveformLineStore candidateStore;
+        candidateStore.reset(20 + candidate, twoHourLines,
+                             WaveformLineStore::kCanonicalLinesPerSecond,
+                             candidate);
+        const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - started).count();
+        const auto candidateSnapshot = candidateStore.snapshot();
+        const auto chunkCount = candidateSnapshot->chunks->size();
+        const auto metadataBytes = chunkCount
+            * sizeof(std::shared_ptr<const WaveformLineChunk>);
+        const double secondsPerChunk = static_cast<double>(candidate)
+            / WaveformLineStore::kCanonicalLinesPerSecond;
+        std::cout << "waveform chunk candidate=" << candidate
+                  << " lines, seconds=" << secondsPerChunk
+                  << ", chunks=" << chunkCount
+                  << ", pointer-table=" << metadataBytes
+                  << " bytes, reset=" << elapsed << " us\n";
+        if (candidate == WaveformLineStore::kChunkSize) {
+            ok &= require(secondsPerChunk < 1.0,
+                          "selected chunk cannot become ready within one second");
+            ok &= require(metadataBytes < 160 * 1024,
+                          "selected two-hour chunk index exceeds metadata budget");
+        }
+    }
+    ok &= require(WaveformLineStore::kChunkSize == 1024,
+                  "chunk benchmark selection and production constant diverged");
     return ok ? 0 : 1;
 }

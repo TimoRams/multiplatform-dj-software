@@ -3,6 +3,7 @@
 #include "TrackData.h"
 #include "WaveformCache.h"
 #include "audio/cache/AudioCacheHandle.h"
+#include "waveform/WaveformDemand.h"
 
 #include <QByteArray>
 #include <QImage>
@@ -88,9 +89,6 @@ public:
     using RenderChunkCallback = std::function<void(
         std::uint64_t generation, int totalLines, int linesPerSecond,
         WaveformLineBatch chunks)>;
-    using RenderLodCallback = std::function<void(
-        std::uint64_t generation, WaveformLodBatch chunks)>;
-
     DeckTrackLoader(AudioPageCache& audioPageCache, int waveformPointsPerSecond);
     ~DeckTrackLoader();
 
@@ -98,9 +96,9 @@ public:
     DeckTrackLoader& operator=(const DeckTrackLoader&) = delete;
 
     std::uint64_t loadTrack(QString path, CompletionCallback completion,
-                            RenderChunkCallback renderChunk = {},
-                            RenderLodCallback renderLod = {});
+                            RenderChunkCallback renderChunk = {});
     void setWaveformSeekHint(double positionSec) noexcept;
+    void setWaveformDemand(const waveform::WaveformDemand& demand) noexcept;
     void requestCancel() noexcept;
     void shutdownAndJoin() noexcept;
 
@@ -113,13 +111,13 @@ private:
         std::uint64_t generation = 0;
         CompletionCallback completion;
         RenderChunkCallback renderChunk;
-        RenderLodCallback renderLod;
     };
 
     void workerLoop();
     TrackLoadResult prepare(const Request& request);
     [[nodiscard]] bool isCurrent(std::uint64_t generation) const noexcept;
     void publishState(std::uint64_t generation, TrackLoadState state) noexcept;
+    [[nodiscard]] waveform::WaveformDemand waveformDemandSnapshot() const noexcept;
 
     const int m_waveformPointsPerSecond;
     AudioPageCache& m_audioPageCache;
@@ -128,6 +126,8 @@ private:
     std::atomic<TrackLoadState> m_state{TrackLoadState::Idle};
     std::atomic<bool> m_shuttingDown{false};
     std::atomic<double> m_waveformSeekHintSec{0.0};
+    mutable std::mutex m_demandMutex;
+    waveform::WaveformDemand m_waveformDemand;
     mutable std::mutex m_mutex;
     std::condition_variable m_condition;
     std::optional<Request> m_pending;

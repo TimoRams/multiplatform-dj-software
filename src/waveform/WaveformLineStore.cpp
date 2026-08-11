@@ -25,6 +25,25 @@ bool sameChunk(const WaveformLineChunk& left, const WaveformLineChunk& right)
         });
 }
 
+WaveformChunkState classifyChunk(const WaveformLineChunk& chunk)
+{
+    if (!chunk.lines || chunk.lines->empty())
+        return WaveformChunkState::Missing;
+
+    bool allAvailable = true;
+    bool allFinal = true;
+    for (const auto& line : *chunk.lines) {
+        const bool available = (line.flags & waveform_line_flags::kAvailable) != 0;
+        allAvailable = allAvailable && available;
+        allFinal = allFinal && available
+            && (line.flags & waveform_line_flags::kFinal) != 0;
+    }
+    if (!allAvailable)
+        return WaveformChunkState::Loading;
+    return allFinal ? WaveformChunkState::FinalReady
+                    : WaveformChunkState::PreviewReady;
+}
+
 } // namespace
 
 std::shared_ptr<const WaveformLodChunk>
@@ -44,7 +63,7 @@ std::uint32_t WaveformLineStoreSnapshot::availableChunkCount() const noexcept
 {
     if (!chunks) return 0;
     return static_cast<std::uint32_t>(std::count_if(chunks->cbegin(), chunks->cend(),
-        [](const auto& chunk) { return static_cast<bool>(chunk); }));
+        [](const auto& chunk) { return chunk && chunk->isReady(); }));
 }
 
 std::shared_ptr<const WaveformLodLevelSnapshot>
@@ -74,28 +93,59 @@ void WaveformLineStore::reset(std::uint64_t trackGeneration, std::uint32_t total
 
 WaveformLineStore::PublishResult WaveformLineStore::publish(WaveformLineChunk chunk)
 {
+    std::vector<WaveformLineChunk> batch;
+    batch.push_back(std::move(chunk));
+    return publishBatch(std::move(batch));
+}
+
+WaveformLineStore::PublishResult WaveformLineStore::publishBatch(
+    std::vector<WaveformLineChunk> chunks)
+{
     const auto current = m_snapshot;
-    if (!current || chunk.trackGeneration != current->trackGeneration
-        || chunk.totalLineCount != current->totalLineCount
-        || !chunk.isWellFormed(current->chunkSize))
+    if (!current || !current->chunks || chunks.empty())
         return PublishResult::Rejected;
-    const auto expectedCount = std::min(current->chunkSize,
-        current->totalLineCount - chunk.firstLineIndex);
-    if (chunk.lineCount != expectedCount || !current->chunks || chunk.chunkIndex >= current->chunks->size())
-        return PublishResult::Rejected;
-    if (const auto& previous = (*current->chunks)[chunk.chunkIndex]) {
-        // A progressive analysis patch replaces only this immutable chunk.  Old
-        // snapshots remain valid for render-thread readers while the latest
-        // snapshot exposes the newly analysed lines immediately.
-        if (sameChunk(*previous, chunk))
-            return PublishResult::Duplicate;
+    std::vector<bool> seen(current->chunks->size(), false);
+    for (const auto& chunk : chunks) {
+        if (chunk.trackGeneration != current->trackGeneration
+            || chunk.totalLineCount != current->totalLineCount
+            || !chunk.isWellFormed(current->chunkSize)
+            || chunk.chunkIndex >= current->chunks->size()
+            || seen[chunk.chunkIndex]) {
+            return PublishResult::Rejected;
+        }
+        const auto expectedCount = std::min(
+            current->chunkSize,
+            current->totalLineCount - chunk.firstLineIndex);
+        if (chunk.lineCount != expectedCount)
+            return PublishResult::Rejected;
+        seen[chunk.chunkIndex] = true;
     }
 
-    chunk.revision = current->dataGeneration + 1;
-    auto table = std::make_shared<std::vector<std::shared_ptr<const WaveformLineChunk>>>(*current->chunks);
-    (*table)[chunk.chunkIndex] = std::make_shared<const WaveformLineChunk>(std::move(chunk));
+    bool changed = false;
+    const auto revision = current->dataGeneration + 1;
+    auto table = std::make_shared<std::vector<
+        std::shared_ptr<const WaveformLineChunk>>>(*current->chunks);
+    for (auto& chunk : chunks) {
+        const auto& previous = (*current->chunks)[chunk.chunkIndex];
+        if (previous && sameChunk(*previous, chunk))
+            continue;
+        // Final means immutable for this TrackGeneration. A late preview or a
+        // duplicate final pass may not reshape an already delivered region.
+        if (previous && previous->state == WaveformChunkState::FinalReady)
+            continue;
+        chunk.revision = revision;
+        chunk.state = classifyChunk(chunk);
+        (*table)[chunk.chunkIndex]
+            = std::make_shared<const WaveformLineChunk>(std::move(chunk));
+        changed = true;
+    }
+    if (!changed)
+        return PublishResult::Duplicate;
+
+    // One immutable table swap publishes the complete viewport/control-tick
+    // batch. Render-thread snapshots can never observe its middle.
     auto next = std::make_shared<WaveformLineStoreSnapshot>(*current);
-    next->dataGeneration = current->dataGeneration + 1;
+    next->dataGeneration = revision;
     next->chunks = std::move(table);
     m_snapshot = std::move(next);
     return PublishResult::Accepted;

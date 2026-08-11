@@ -21,6 +21,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "TransportLimits.h"
+#include "waveform/WaveformDemand.h"
 
 class AudioDeviceService;
 class AudioPageCache;
@@ -405,6 +406,9 @@ public slots:
         m_pixelsPerSecond = pps;
         emit pixelsPerSecondChanged();
     }
+    // GUI-owner-thread publication. The renderer sends only on chunk/view/state
+    // boundaries, never once per rendered frame.
+    void updateWaveformDemand(waveform::WaveformDemand demand);
 
 signals:
     void progressChanged();
@@ -515,6 +519,7 @@ private:
     TrackData* m_trackData;
     std::unique_ptr<WaveformAnalyzer> m_analyzer;
     std::shared_ptr<AnalyzerResultMailbox> m_analysisMailbox;
+    waveform::WaveformDemand m_waveformDemand;
 
     QString m_trackTitle;
     QString m_trackArtist;

@@ -84,6 +84,15 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
         chunk.normalizationState = normalizationState;
         analysisMailbox->publishChunk(std::move(chunk));
     });
+    m_analyzer->setOverviewCallback(
+        [analysisMailbox](auto generation, int totalBins, auto overview) {
+            AnalyzerResultMailbox::Overview publication;
+            publication.generation = generation;
+            publication.totalBins = totalBins;
+            publication.samples = std::make_shared<const QVector<
+                TrackData::RgbWaveformFrame>>(std::move(overview));
+            analysisMailbox->publishOverview(std::move(publication));
+        });
     m_analyzer->setCompletionCallback([analysisMailbox](bool completed, auto generation,
                                                   const QString& filePath,
                                                   WaveformAnalyzer::ResultPtr result) {
@@ -352,7 +361,17 @@ void DjEngine::onWaveformControlTick(const ControlTickContext& context)
 {
     (void)context;
     if (m_analysisMailbox && m_analyzer) {
-        const auto chunks = m_analysisMailbox->takeChunks();
+        if (auto overview = m_analysisMailbox->takeOverview()) {
+            if (overview->generation == m_analyzer->generation()
+                && overview->samples && !overview->samples->isEmpty()) {
+                m_trackData->publishWaveformOverview(
+                    overview->totalBins,
+                    static_cast<int>(WAVEFORM_POINTS_PER_SECOND),
+                    QVector<TrackData::RgbWaveformFrame>(*overview->samples));
+            }
+        }
+        const auto chunks = m_analysisMailbox->takeChunks(
+            m_waveformDemand, WAVEFORM_POINTS_PER_SECOND);
         for (const auto& chunk : chunks) {
             if (chunk.generation == m_analyzer->generation()
                 && chunk.waveform && chunk.rgb) {

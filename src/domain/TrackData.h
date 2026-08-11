@@ -295,6 +295,8 @@ public:
                                QVector<RgbWaveformFrame>&& preparedOverview = {});
     void initializeCachedWaveformLines(int totalLines, int linesPerSecond,
                                        QVector<RgbWaveformFrame>&& preparedOverview);
+    void publishWaveformOverview(int totalLines, int linesPerSecond,
+                                 QVector<RgbWaveformFrame>&& overview);
     void applyCachedWaveformLineChunk(
         int firstLine, int totalLines, int linesPerSecond,
         std::shared_ptr<const std::vector<WaveformLine>> lines);

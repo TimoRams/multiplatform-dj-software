@@ -150,6 +150,26 @@ void WaveformAnalyzer::setSeekHint(double positionSec)
     m_seekHintSec.store(positionSec, std::memory_order_relaxed);
 }
 
+void WaveformAnalyzer::setWaveformDemand(
+    const waveform::WaveformDemand& demand)
+{
+    if (!demand.valid())
+        return;
+    {
+        std::lock_guard lock(m_demandMutex);
+        m_waveformDemand = demand;
+    }
+    m_seekHintSec.store(demand.playheadSec, std::memory_order_relaxed);
+    m_realtimeInteractionActive.store(
+        demand.scratching, std::memory_order_release);
+}
+
+waveform::WaveformDemand WaveformAnalyzer::waveformDemandSnapshot() const
+{
+    std::lock_guard lock(m_demandMutex);
+    return m_waveformDemand;
+}
+
 void WaveformAnalyzer::requestCancel() noexcept
 {
     m_generation.fetch_add(1, std::memory_order_acq_rel);
@@ -184,6 +204,12 @@ void WaveformAnalyzer::setChunkCallback(ChunkCallback callback)
 {
     std::lock_guard<std::mutex> lock(m_callbackMutex);
     m_chunkCallback = std::move(callback);
+}
+
+void WaveformAnalyzer::setOverviewCallback(OverviewCallback callback)
+{
+    std::lock_guard<std::mutex> lock(m_callbackMutex);
+    m_overviewCallback = std::move(callback);
 }
 
 void WaveformAnalyzer::notifyCompletion(bool completed,
@@ -224,19 +250,17 @@ void WaveformAnalyzer::run()
 
     ProgressCallback progress;
     ChunkCallback chunks;
+    OverviewCallback overview;
     {
         std::lock_guard<std::mutex> lock(m_callbackMutex);
         progress = m_progressCallback;
         chunks = m_chunkCallback;
+        overview = m_overviewCallback;
     }
     analysis::AnalysisWorkingData working([progress, runGeneration](double value, bool active) {
         if (progress) progress(value, active, runGeneration);
     });
     working.seed(m_seed);
-
-    AnalysisSlot slot(*this);
-    if (!slot.acquired())
-        return;
 
     juce::File file(m_filePath.toStdString());
     if (!file.existsAsFile()) return;
@@ -248,6 +272,9 @@ void WaveformAnalyzer::run()
     const double      sampleRate   = reader->sampleRate;
     const double      duration     = totalSamples / sampleRate;
     const int         numPoints    = static_cast<int>(duration * m_pointsPerSecond);
+    constexpr double kLegacyWaveformMaximumDurationSec = 10.0 * 60.0;
+    const bool retainLegacyWaveform = duration
+        <= kLegacyWaveformMaximumDurationSec;
 
     if (numPoints <= 0) return;
 
@@ -259,15 +286,16 @@ void WaveformAnalyzer::run()
 
     if (!haveFullWaveform) {
         // Instant full-track preview so the deck overview never starts blank.
-        if (working.getOverviewRgbData().isEmpty()
-            && !m_realtimeInteractionActive.load(std::memory_order_acquire)) {
+        if (working.getOverviewRgbData().isEmpty()) {
             auto preview = buildInstantOverview(reader.get(), 512);
-            if (!preview.isEmpty())
+            if (!preview.isEmpty()) {
+                if (overview)
+                    overview(runGeneration, numPoints, preview);
                 working.setOverviewRgbData(std::move(preview));
+            }
         }
         working.clearWaveformData();
         working.setTotalExpected(numPoints);
-        working.reserve(numPoints);
     } else if (working.getOverviewRgbData().isEmpty()) {
         working.setOverviewRgbData(
             TrackData::downsampleOverview(working.getRgbWaveformData()));
@@ -275,8 +303,12 @@ void WaveformAnalyzer::run()
         working.reportAnalysisProgress(0.05, true);
     }
 
+    if (!haveFullWaveform && retainLegacyWaveform)
+        working.reserve(numPoints);
+    if (!haveFullWaveform && !retainLegacyWaveform)
+        working.initializePreparedWaveformLines(numPoints);
 
-
+    std::unique_ptr<AnalysisSlot> backgroundSlot;
     if (!haveFullWaveform) {
         const waveform_internal::EnvelopePassInput envelopeInput{
             *reader,
@@ -285,12 +317,18 @@ void WaveformAnalyzer::run()
             m_pointsPerSecond,
             m_seekHintSec.load(std::memory_order_relaxed),
             [this]() { return m_seekHintSec.load(std::memory_order_relaxed); },
+            [this]() { return waveformDemandSnapshot(); },
             [this]() {
                 return m_realtimeInteractionActive.load(std::memory_order_acquire);
+            },
+            [this, &backgroundSlot]() {
+                backgroundSlot = std::make_unique<AnalysisSlot>(*this);
+                return backgroundSlot->acquired();
             },
             totalSamples,
             sampleRate,
             numPoints,
+            retainLegacyWaveform,
             [chunks, runGeneration](int firstBin, int totalBins,
                                     QVector<TrackData::WaveformBin> waveform,
                                     QVector<TrackData::RgbWaveformFrame> rgb,
@@ -313,7 +351,9 @@ void WaveformAnalyzer::run()
         waveformPayload.globalMaxPeak = working.getGlobalMaxPeak();
         waveformPayload.waveform = working.getWaveformData();
         waveformPayload.rgb = working.getRgbWaveformData();
+        waveformPayload.overview = working.getOverviewRgbData();
         waveformPayload.peakMip = working.getPeakMipData();
+        waveformPayload.preparedLines = working.preparedWaveformLines();
         if (!WaveformCache::saveForFile(m_filePath, waveformPayload)) {
             qWarning() << "[WaveformAnalyzer] Failed to write waveform cache for" << m_filePath;
         } else {
@@ -324,6 +364,15 @@ void WaveformAnalyzer::run()
     }
 
     if (threadShouldExit()) return;
+
+    // A fully cached waveform skips the envelope pass, so it has not acquired
+    // the background gate yet. Cached visual readiness remains immediate;
+    // only BPM/key/phrase work below waits for capacity.
+    if (!backgroundSlot) {
+        backgroundSlot = std::make_unique<AnalysisSlot>(*this);
+        if (!backgroundSlot->acquired())
+            return;
+    }
 
     {
         const waveform_internal::AnalysisOrchestratorInput orchestratorInput{
@@ -342,7 +391,10 @@ void WaveformAnalyzer::run()
 
     if (!threadShouldExit()) {
         auto completedResult = std::move(working).finish(m_identity);
-        if (completedResult.rgbWaveform && completedResult.peakMip) {
+        if (!completedResult.preparedWaveformLines
+            && completedResult.rgbWaveform
+            && !completedResult.rgbWaveform->isEmpty()
+            && completedResult.peakMip) {
             completedResult.preparedWaveformLines = waveform::prepareWaveformLines(
                 *completedResult.rgbWaveform, *completedResult.peakMip);
         }

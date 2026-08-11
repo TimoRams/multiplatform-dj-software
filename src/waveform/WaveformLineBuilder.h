@@ -17,6 +17,24 @@ struct PreparedWaveformLines final {
     std::vector<std::shared_ptr<const std::vector<WaveformLine>>> chunks;
 };
 
+inline WaveformLine makeCanonicalLine(
+    const TrackData::RgbWaveformFrame& frame) noexcept
+{
+    WaveformLine line;
+    line.minimum = static_cast<std::int16_t>(std::lround(
+        -std::clamp(frame.rms, 0.0f, 1.0f) * 32767.0f));
+    line.maximum = static_cast<std::int16_t>(std::lround(
+        std::clamp(frame.rms, 0.0f, 1.0f) * 32767.0f));
+    const auto color = waveform_visual::color(
+        {frame.low, frame.lowMid, frame.mid, frame.high, frame.rms});
+    line.red = color[0];
+    line.green = color[1];
+    line.blue = color[2];
+    line.flags = waveform_line_flags::kAvailable
+        | waveform_line_flags::kFinal;
+    return line;
+}
+
 inline WaveformLine makeCanonicalLine(const QVector<TrackData::RgbWaveformFrame>& rgb,
                                       const QVector<TrackData::PeakFrame>& peaks,
                                       int lineIndex)
@@ -34,17 +52,11 @@ inline WaveformLine makeCanonicalLine(const QVector<TrackData::RgbWaveformFrame>
         maximum = std::max(maximum, peaks[index].maxSample / 127.0f);
     }
 
-    WaveformLine line;
+    WaveformLine line = makeCanonicalLine(frame);
     line.minimum = static_cast<std::int16_t>(std::lround(
         std::clamp(minimum, -1.0f, 0.0f) * 32767.0f));
     line.maximum = static_cast<std::int16_t>(std::lround(
         std::clamp(maximum, 0.0f, 1.0f) * 32767.0f));
-    const auto color = waveform_visual::color(
-        {frame.low, frame.lowMid, frame.mid, frame.high, frame.rms});
-    line.red = color[0];
-    line.green = color[1];
-    line.blue = color[2];
-    line.flags = waveform_line_flags::kAvailable | waveform_line_flags::kFinal;
     return line;
 }
 

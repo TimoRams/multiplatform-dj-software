@@ -149,7 +149,7 @@ int main(int argc, char** argv)
         // current playhead chunk before the beginning of a long timeline.
         WaveformCache::Payload payload;
         payload.pointsPerSecond = 100;
-        payload.totalExpected = 9000;
+        payload.totalExpected = 100000;
         payload.globalMaxPeak = 0.9f;
         payload.waveform.resize(payload.totalExpected);
         payload.rgb.resize(payload.totalExpected);
@@ -172,11 +172,16 @@ int main(int argc, char** argv)
         std::vector<int> streamedFirstLines;
         std::vector<int> batchSizes;
         bool restoredProbe = false;
+        bool seekDemandWonSecondBatch = false;
+        int publishedBatch = 0;
+        auto liveDemand = waveform::makeViewportDemand(
+            85.0, 1200.0, 100.0, true, false, false, 0, 1);
         ok &= require(WaveformCache::streamRenderCache(
                           monoPath, payload.pointsPerSecond,
                           [] { return false; },
-                          [] { return 85.0; },
+                          [&liveDemand] { return liveDemand; },
                           [&](int totalLines, WaveformLineBatch chunks) {
+                              ++publishedBatch;
                               batchSizes.push_back(static_cast<int>(chunks.size()));
                               for (const auto& chunk : chunks) {
                                   streamedFirstLines.push_back(chunk.firstLine);
@@ -187,6 +192,17 @@ int main(int argc, char** argv)
                                           8500 - chunk.firstLine)];
                                       restoredProbe = line.maximum > 0 && line.red > 0;
                                   }
+                                  if (publishedBatch == 2
+                                      && chunk.firstLine <= 90000
+                                      && 90000 < chunk.firstLine
+                                          + static_cast<int>(chunk.lines->size())) {
+                                      seekDemandWonSecondBatch = true;
+                                  }
+                              }
+                              if (publishedBatch == 1) {
+                                  liveDemand = waveform::makeViewportDemand(
+                                      900.0, 1200.0, 100.0,
+                                      true, false, false, 0, 2);
                               }
                               ok &= require(totalLines == payload.totalExpected,
                                             "every render batch retains total line count");
@@ -195,8 +211,10 @@ int main(int argc, char** argv)
         ok &= require(!streamedFirstLines.empty()
                           && streamedFirstLines.front() == 8192,
                       "render-cache restore must start at the playhead chunk");
-        ok &= require(!batchSizes.empty() && batchSizes.front() >= 2,
-                      "playhead cache restore must publish its guard window atomically");
+        ok &= require(!batchSizes.empty() && batchSizes.front() == 1,
+                      "first cache publication must contain only the playhead chunk");
+        ok &= require(seekDemandWonSecondBatch,
+                      "new seek demand must outrank queued background cache work");
         ok &= require(restoredProbe,
                       "streamed render lines must preserve amplitude and colour");
         bool restoredLodProbe = false;
@@ -219,14 +237,13 @@ int main(int argc, char** argv)
                       "persisted 75-lines-per-second LOD lost its probe amplitude");
 
         // Force the loader onto the compact deferred path and verify that its
-        // warm-load stream really publishes all persisted LOD levels before it
-        // finishes restoring canonical chunks.
+        // warm-load stream publishes canonical chunks directly. Persisted LOD
+        // levels are no longer preloaded wholesale before the visible source.
         QFile::remove(WaveformCache::cachePathFor(
             monoPath, payload.pointsPerSecond));
         struct DeferredRestoreState {
             std::mutex mutex;
             std::condition_variable condition;
-            std::array<bool, 5> lodLevels{};
             int canonicalLines = 0;
         } restoreState;
         ResultWaiter deferredWaiter;
@@ -241,17 +258,6 @@ int main(int argc, char** argv)
                             chunk.lines ? chunk.lines->size() : 0);
                 }
                 restoreState.condition.notify_all();
-            },
-            [&restoreState](std::uint64_t, WaveformLodBatch chunks) {
-                {
-                    std::lock_guard lock(restoreState.mutex);
-                    if (!chunks.empty() && chunks.front().level >= 1
-                        && chunks.front().level <= 4) {
-                        restoreState.lodLevels[static_cast<std::size_t>(
-                            chunks.front().level)] = true;
-                    }
-                }
-                restoreState.condition.notify_all();
             });
         ok &= require(deferredWaiter.wait(),
                       "deferred V2 render-cache load must publish audio readiness");
@@ -263,13 +269,9 @@ int main(int argc, char** argv)
             ok &= require(restoreState.condition.wait_for(
                               lock, std::chrono::seconds(5), [&] {
                                   return restoreState.canonicalLines
-                                          == payload.totalExpected
-                                      && std::all_of(
-                                          restoreState.lodLevels.cbegin() + 1,
-                                          restoreState.lodLevels.cend(),
-                                          [](bool ready) { return ready; });
+                                      == payload.totalExpected;
                               }),
-                          "loader did not publish persisted LOD and canonical data");
+                          "loader did not publish demand-ordered canonical data");
         }
         cache.releaseTrack(deferredWaiter.value().cacheHandle);
 
@@ -340,6 +342,67 @@ int main(int argc, char** argv)
                       "oversized waveform cache must not gate track publication");
         cache.releaseTrack(waiter.value().cacheHandle);
         QFile::remove(cachePath);
+    }
+    {
+        // A >10 minute render cache can be written directly from immutable
+        // line chunks. It must not require the duplicate legacy float payload.
+        WaveformCache::Payload payload;
+        payload.pointsPerSecond = 100;
+        payload.totalExpected = 60'001;
+        payload.globalMaxPeak = 0.8f;
+        payload.overview.resize(512);
+        for (auto& frame : payload.overview) {
+            frame.rms = 0.4f;
+            frame.low = 0.7f;
+            frame.mid = 0.25f;
+        }
+        auto prepared = std::make_shared<waveform::PreparedWaveformLines>();
+        prepared->totalLineCount = payload.totalExpected;
+        for (int first = 0; first < payload.totalExpected;
+             first += static_cast<int>(WaveformLineStore::kChunkSize)) {
+            const int count = std::min(
+                static_cast<int>(WaveformLineStore::kChunkSize),
+                payload.totalExpected - first);
+            auto lines = std::make_shared<std::vector<WaveformLine>>(count);
+            for (auto& line : *lines) {
+                line.minimum = -12'000;
+                line.maximum = 14'000;
+                line.red = 220;
+                line.green = 90;
+                line.blue = 45;
+                line.flags = waveform_line_flags::kAvailable
+                    | waveform_line_flags::kFinal;
+            }
+            prepared->chunks.push_back(std::move(lines));
+        }
+        payload.preparedLines = std::move(prepared);
+        ok &= require(WaveformCache::saveForFile(monoPath, payload),
+                      "prepared-only long render cache must save");
+        ok &= require(!QFile::exists(WaveformCache::cachePathFor(
+                          monoPath, payload.pointsPerSecond)),
+                      "long track unexpectedly retained legacy float cache");
+        WaveformCache::RenderInfo info;
+        ok &= require(WaveformCache::inspectRenderCache(
+                          monoPath, payload.pointsPerSecond, &info)
+                          && info.totalLines == payload.totalExpected
+                          && info.overview.size() == payload.overview.size(),
+                      "prepared-only render cache lost overview or timeline");
+        bool sawPreparedLine = false;
+        ok &= require(WaveformCache::streamRenderCache(
+                          monoPath, payload.pointsPerSecond,
+                          [] { return false; }, {},
+                          [&](int, WaveformLineBatch chunks) {
+                              for (const auto& chunk : chunks) {
+                                  if (chunk.lines && !chunk.lines->empty()
+                                      && chunk.lines->front().maximum == 14'000) {
+                                      sawPreparedLine = true;
+                                  }
+                              }
+                          })
+                          && sawPreparedLine,
+                      "prepared-only canonical chunks were not random-readable");
+        QFile::remove(WaveformCache::renderCachePathFor(
+            monoPath, payload.pointsPerSecond));
     }
     {
         ResultWaiter waiter;

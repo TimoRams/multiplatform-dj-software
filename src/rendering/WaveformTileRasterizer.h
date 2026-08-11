@@ -32,9 +32,31 @@ struct RenderTileKey final {
     std::uint32_t imageHeight = 0;
     std::uint16_t devicePixelRatioMillis = 1000;
     std::uint8_t lodLevel = 0;
+    std::uint32_t visualStyleRevision = 0;
+    std::uint32_t backgroundRgba = 0xff101114u;
 
     bool operator==(const RenderTileKey&) const noexcept = default;
 };
+
+struct WaveformViewKey final {
+    std::uint64_t trackGeneration = 0;
+    std::uint64_t physicalPixelsPerLineMicros = 0;
+    std::uint32_t imageHeight = 0;
+    std::uint16_t devicePixelRatioMillis = 1000;
+    std::uint8_t lodLevel = 0;
+    std::uint32_t visualStyleRevision = 0;
+    std::uint32_t backgroundRgba = 0xff101114u;
+
+    bool operator==(const WaveformViewKey&) const noexcept = default;
+};
+
+[[nodiscard]] inline WaveformViewKey viewKeyFor(
+    const RenderTileKey& key) noexcept
+{
+    return {key.trackGeneration, key.physicalPixelsPerLineMicros,
+            key.imageHeight, key.devicePixelRatioMillis, key.lodLevel,
+            key.visualStyleRevision, key.backgroundRgba};
+}
 
 struct RenderTileKeyHash final {
     [[nodiscard]] std::size_t operator()(const RenderTileKey& key) const noexcept;
@@ -99,8 +121,10 @@ struct RasterizedOverview final {
 class WaveformTileRasterizer final
 {
 public:
-    static constexpr std::size_t kMaximumCacheBytes = 64u * 1024u * 1024u;
-    static constexpr std::size_t kMaximumCacheEntries = 96;
+    // Per deck. Four active decks therefore cap CPU raster images at 192 MiB;
+    // GPU textures and the compact source store are reported separately.
+    static constexpr std::size_t kMaximumCacheBytes = 48u * 1024u * 1024u;
+    static constexpr std::size_t kMaximumCacheEntries = 64;
     static constexpr std::size_t kMaximumPendingRequests = 64;
 
     struct Stats final {
@@ -146,7 +170,8 @@ public:
         double physicalPixelsPerLine,
         int imageHeight,
         double devicePixelRatio,
-        std::uint8_t lodLevel = 0) noexcept;
+        std::uint8_t lodLevel = 0,
+        std::uint32_t backgroundRgba = 0xff101114u) noexcept;
 
 private:
     struct CacheEntry final {

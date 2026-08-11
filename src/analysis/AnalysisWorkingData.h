@@ -48,6 +48,7 @@ public:
         out.rgbWaveform = std::make_shared<const QVector<TrackData::RgbWaveformFrame>>(std::move(m_rgbData));
         out.overviewWaveform = std::make_shared<const QVector<TrackData::RgbWaveformFrame>>(std::move(m_overviewRgb));
         out.peakMip = std::make_shared<const QVector<TrackData::PeakFrame>>(std::move(m_peakMip));
+        out.preparedWaveformLines = preparedWaveformLines();
         out.bpm = m_bpm;
         out.firstBeatSample = m_firstBeatSample;
         out.sampleRate = m_sampleRate;
@@ -91,6 +92,9 @@ public:
     void clearWaveformData()
     {
         m_data.clear(); m_rgbData.clear(); m_peakMip.clear();
+        m_preparedLineChunks.clear();
+        m_preparedTotalLines = 0;
+        m_preparedReadyLines = 0;
         m_globalMaxPeak = 0.001f;
     }
     void appendData(const QVector<TrackData::WaveformBin>& value) { m_data.append(value); }
@@ -107,6 +111,66 @@ public:
     { m_rgbData = std::move(value); m_overviewRgb = TrackData::downsampleOverview(m_rgbData); }
     void setOverviewRgbData(QVector<TrackData::RgbWaveformFrame>&& value) { m_overviewRgb = std::move(value); }
     void setPeakMipData(QVector<TrackData::PeakFrame>&& value) { m_peakMip = std::move(value); }
+
+    // Long-track analysis writes the canonical immutable store directly. This
+    // avoids retaining duration-sized legacy waveform + RGB vectors merely to
+    // convert them into WaveformLines after the pass has already completed.
+    void initializePreparedWaveformLines(int totalLines)
+    {
+        if (totalLines <= 0) return;
+        m_preparedTotalLines = totalLines;
+        m_preparedReadyLines = 0;
+        const auto chunkCount = (static_cast<std::uint32_t>(totalLines)
+            + WaveformLineStore::kChunkSize - 1)
+            / WaveformLineStore::kChunkSize;
+        m_preparedLineChunks.assign(chunkCount, nullptr);
+    }
+
+    void writePreparedWaveformRange(
+        int firstLine, const QVector<TrackData::RgbWaveformFrame>& frames)
+    {
+        if (firstLine < 0 || frames.isEmpty() || m_preparedTotalLines <= 0)
+            return;
+        const int count = std::min(
+            static_cast<int>(frames.size()), m_preparedTotalLines - firstLine);
+        for (int local = 0; local < count; ++local) {
+            const auto lineIndex = static_cast<std::uint32_t>(firstLine + local);
+            const auto chunkIndex = lineIndex / WaveformLineStore::kChunkSize;
+            const auto chunkFirst = chunkIndex * WaveformLineStore::kChunkSize;
+            auto& chunk = m_preparedLineChunks[chunkIndex];
+            if (!chunk) {
+                const auto chunkSize = std::min(
+                    WaveformLineStore::kChunkSize,
+                    static_cast<std::uint32_t>(m_preparedTotalLines) - chunkFirst);
+                chunk = std::make_shared<std::vector<WaveformLine>>(chunkSize);
+            }
+            auto& line = (*chunk)[lineIndex - chunkFirst];
+            if ((line.flags & waveform_line_flags::kAvailable) != 0)
+                continue;
+            line = waveform::makeCanonicalLine(frames[local]);
+            ++m_preparedReadyLines;
+        }
+    }
+
+    [[nodiscard]] std::shared_ptr<const waveform::PreparedWaveformLines>
+    preparedWaveformLines() const
+    {
+        if (m_preparedTotalLines <= 0
+            || m_preparedReadyLines != m_preparedTotalLines
+            || m_preparedLineChunks.empty()) {
+            return {};
+        }
+        auto prepared = std::make_shared<waveform::PreparedWaveformLines>();
+        prepared->totalLineCount = static_cast<std::uint32_t>(
+            m_preparedTotalLines);
+        prepared->chunks.reserve(m_preparedLineChunks.size());
+        for (const auto& chunk : m_preparedLineChunks) {
+            if (!chunk)
+                return {};
+            prepared->chunks.push_back(chunk);
+        }
+        return prepared;
+    }
 
     void setBpmData(double bpm, qint64 first, double rate,
                     std::vector<TrackData::BeatMarker> beats = {},
@@ -140,6 +204,10 @@ private:
     QVector<TrackData::RgbWaveformFrame> m_rgbData;
     QVector<TrackData::RgbWaveformFrame> m_overviewRgb;
     QVector<TrackData::PeakFrame> m_peakMip;
+    std::vector<std::shared_ptr<std::vector<WaveformLine>>>
+        m_preparedLineChunks;
+    int m_preparedTotalLines = 0;
+    int m_preparedReadyLines = 0;
     double m_bpm = 0.0;
     qint64 m_firstBeatSample = 0;
     double m_sampleRate = 44100.0;

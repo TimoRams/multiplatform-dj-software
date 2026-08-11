@@ -31,7 +31,8 @@ int main(int argc, char** argv)
     WaveformLineStore store;
     constexpr std::uint32_t totalLines = 256'000;
     store.reset(77, totalLines);
-    constexpr std::uint32_t populatedChunkIndex = 19;
+    constexpr int requestedTiles = 80;
+    constexpr std::uint32_t populatedChunkIndex = requestedTiles - 1;
     auto populatedLines = std::make_shared<std::vector<WaveformLine>>(
         WaveformLineStore::kChunkSize);
     for (std::size_t index = 0; index < populatedLines->size(); ++index) {
@@ -58,7 +59,6 @@ int main(int argc, char** argv)
     });
     rasterizer.setActiveTrackGeneration(snapshot->trackGeneration);
 
-    constexpr int requestedTiles = 80;
     for (int index = 0; index < requestedTiles; ++index) {
         const auto span = waveform_render::renderTileSpan(index, 1.0, totalLines);
         const auto key = waveform_render::WaveformTileRasterizer::makeKey(
@@ -124,27 +124,6 @@ int main(int argc, char** argv)
     }
     ok &= require(overview && !overview->image.isNull(),
                   "fallback overview must provide visible pixels");
-    const waveform_render::OverviewRenderKey viewportOverviewKey{
-        snapshot->trackGeneration, 1234, 2048, 128,
-        96'000, 112'000, totalLines};
-    rasterizer.requestOverview({viewportOverviewKey, overviewSamples});
-    std::shared_ptr<const waveform_render::RasterizedOverview> viewportOverview;
-    {
-        std::unique_lock lock(readyMutex);
-        ok &= require(readyCondition.wait_for(
-                          lock, std::chrono::seconds(2), [&] {
-                              viewportOverview = rasterizer.findOverview(
-                                  viewportOverviewKey);
-                              return static_cast<bool>(viewportOverview);
-                          }),
-                      "viewport fallback was not rasterized promptly");
-    }
-    ok &= require(viewportOverview
-                      && viewportOverview->image.width() == 2048
-                      && viewportOverview->key.sourceBegin == 96'000
-                      && viewportOverview->key.sourceEnd == 112'000,
-                  "viewport fallback lost its bounded source-to-pixel mapping");
-
     WaveformLineStore oneSidedStore;
     constexpr std::uint32_t oneSidedLineCount = 1024;
     oneSidedStore.reset(99, oneSidedLineCount);
@@ -187,20 +166,81 @@ int main(int argc, char** argv)
                           }),
                       "one-sided render tile was not rasterized promptly");
     }
+    constexpr QRgb detailBackground = 0xff101114u;
     ok &= require(oneSidedTile
-                      && qAlpha(oneSidedTile->image.pixel(0, 115)) > 0
-                      && qAlpha(oneSidedTile->image.pixel(0, 126)) == 0,
+                      && oneSidedTile->image.pixel(0, 115) != detailBackground
+                      && oneSidedTile->image.pixel(0, 126) == detailBackground,
                   "positive-only extrema were incorrectly extended to zero");
     ok &= require(oneSidedTile
-                      && qAlpha(oneSidedTile->image.pixel(600, 140)) > 0
-                      && qAlpha(oneSidedTile->image.pixel(600, 129)) == 0,
+                      && oneSidedTile->image.pixel(600, 140) != detailBackground
+                      && oneSidedTile->image.pixel(600, 129) == detailBackground,
                   "negative-only extrema were incorrectly extended to zero");
+    ok &= require(oneSidedTile
+                      && oneSidedTile->image.pixel(1, 115) == detailBackground,
+                  "detail spacing did not mask the coarse overview");
+
+    // Image-level precision regression. A complete detail tile must always
+    // retain the same one-physical-pixel stroke and one-pixel gap regardless
+    // of zoom or DPR. The background-filled gaps are intentionally counted as
+    // non-waveform pixels; this reproduces the final overview/detail composite
+    // instead of testing timeline math alone.
+    const std::array<double, 4> zoomLevels{0.08, 0.22, 1.0, 10.0};
+    const std::array<double, 4> devicePixelRatios{1.0, 1.25, 2.0, 3.0};
+    for (const double zoom : zoomLevels) {
+        for (const double dpr : devicePixelRatios) {
+            const double physicalPixelsPerLine = zoom * dpr;
+            const auto preciseSpan = waveform_render::renderTileSpan(
+                0, physicalPixelsPerLine, oneSidedLineCount);
+            const auto preciseKey = waveform_render::WaveformTileRasterizer::makeKey(
+                *oneSidedSnapshot, 0, preciseSpan, physicalPixelsPerLine,
+                256, dpr);
+            rasterizer.request({preciseKey, preciseSpan, oneSidedSnapshot,
+                                physicalPixelsPerLine, 256.0, dpr, 0.0});
+            std::shared_ptr<const waveform_render::RasterizedRenderTile> preciseTile;
+            {
+                std::unique_lock lock(readyMutex);
+                ok &= require(readyCondition.wait_for(
+                                  lock, std::chrono::seconds(2), [&] {
+                                      preciseTile = rasterizer.find(preciseKey);
+                                      return static_cast<bool>(preciseTile);
+                                  }),
+                              "zoom/DPR precision tile was not rasterized");
+            }
+            if (!preciseTile)
+                continue;
+            ok &= require(preciseTile->image.width()
+                              == waveform_render::kRenderTilePhysicalWidth,
+                          "zoom changed the physical detail texture width");
+            int maximumHorizontalInkRun = 0;
+            int inkPixels = 0;
+            for (int y = 0; y < preciseTile->image.height(); ++y) {
+                int currentRun = 0;
+                for (int x = 0; x < preciseTile->image.width(); ++x) {
+                    if (preciseTile->image.pixel(x, y) != detailBackground) {
+                        ++currentRun;
+                        ++inkPixels;
+                        maximumHorizontalInkRun = std::max(
+                            maximumHorizontalInkRun, currentRun);
+                    } else {
+                        currentRun = 0;
+                    }
+                }
+            }
+            ok &= require(inkPixels > 0 && maximumHorizontalInkRun == 1,
+                          "zoom/DPR produced a broad or interpolated detail bar");
+        }
+    }
     ok &= require(waveform_render::bestAvailableCoverage(false, true)
                       == waveform_render::WaveformCoverage::Fallback,
                   "missing high-resolution data must retain fallback coverage");
     ok &= require(waveform_render::bestAvailableCoverage(true, true)
                       == waveform_render::WaveformCoverage::HighResolution,
                   "ready high-resolution tiles must cover the fallback");
+    ok &= require(!waveform_render::completeDetailMayCoverOverview(
+                      true, true, false)
+                      && waveform_render::completeDetailMayCoverOverview(
+                          true, true, true),
+                  "partial detail tile must never replace the overview fallback");
 
     // Regression: a guard-window rebase must not wait for one atomic batch.
     // Only two of six new-configuration tiles are deliberately made ready.
@@ -212,7 +252,7 @@ int main(int argc, char** argv)
     for (std::size_t index = 0; index < requiredKeys.size(); ++index) {
         requiredKeys[index] = {
             77, 100 + index, static_cast<std::int64_t>(index),
-            220'000, 256, 1000, 0};
+            220'000, 256, 1000, 0, 1};
         auto oldScaleKey = requiredKeys[index];
         oldScaleKey.physicalPixelsPerLineMicros = 1'000'000;
         displayedKeys[index] = oldScaleKey;
@@ -239,6 +279,9 @@ int main(int argc, char** argv)
                   "ready tiles must publish before the batch is complete");
     ok &= require(rejectedOldConfiguration == 6,
                   "old zoom/window tile keys must never survive a rebase");
+    ok &= require(waveform_render::viewKeyFor(requiredKeys[0])
+                      != waveform_render::viewKeyFor(*displayedKeys[0]),
+                  "old and new zoom configurations shared one ViewKey");
 
     // Rebase workload used to compare serial and parallel rasterization. Queue
     // all slots together, as ScrollingWaveformItem does after crossing a guard.

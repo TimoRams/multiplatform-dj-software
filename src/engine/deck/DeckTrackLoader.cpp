@@ -91,15 +91,14 @@ DeckTrackLoader::~DeckTrackLoader()
 
 std::uint64_t DeckTrackLoader::loadTrack(QString path,
                                          CompletionCallback completion,
-                                         RenderChunkCallback renderChunk,
-                                         RenderLodCallback renderLod)
+                                         RenderChunkCallback renderChunk)
 {
     if (m_shuttingDown.load(std::memory_order_acquire)) return currentGeneration();
     const auto generation = m_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
     {
         std::lock_guard lock(m_mutex);
         m_pending = Request{std::move(path), generation, std::move(completion),
-                            std::move(renderChunk), std::move(renderLod)};
+                            std::move(renderChunk)};
         m_state.store(TrackLoadState::Queued, std::memory_order_release);
     }
     m_waveformSeekHintSec.store(0.0, std::memory_order_relaxed);
@@ -112,6 +111,24 @@ void DeckTrackLoader::setWaveformSeekHint(double positionSec) noexcept
     if (std::isfinite(positionSec))
         m_waveformSeekHintSec.store(std::max(0.0, positionSec),
                                     std::memory_order_relaxed);
+}
+
+void DeckTrackLoader::setWaveformDemand(
+    const waveform::WaveformDemand& demand) noexcept
+{
+    if (!demand.valid())
+        return;
+    {
+        std::lock_guard lock(m_demandMutex);
+        m_waveformDemand = demand;
+    }
+    setWaveformSeekHint(demand.playheadSec);
+}
+
+waveform::WaveformDemand DeckTrackLoader::waveformDemandSnapshot() const noexcept
+{
+    std::lock_guard lock(m_demandMutex);
+    return m_waveformDemand;
 }
 
 void DeckTrackLoader::requestCancel() noexcept
@@ -192,28 +209,11 @@ void DeckTrackLoader::workerLoop()
 
         if (restoreRenderCache && isCurrent(request.generation)) {
             const auto generation = request.generation;
-            // Warm persisted levels first, coarsest to finest. They are
-            // published once per complete level, so even an hour-long cache
-            // adds four owner-thread messages instead of thousands.
-            if (request.renderLod) {
-                for (const int level : {4, 3, 2, 1}) {
-                    WaveformLodBatch levelBatch;
-                    const bool restored = WaveformCache::streamRenderLodCache(
-                        renderCachePath, renderLinesPerSecond, level,
-                        [this, generation]() { return !isCurrent(generation); },
-                        [&levelBatch](WaveformCache::LodTile tile) {
-                            levelBatch.push_back(std::move(tile));
-                        });
-                    if (!restored || !isCurrent(generation))
-                        break;
-                    request.renderLod(generation, std::move(levelBatch));
-                }
-            }
             WaveformCache::streamRenderCache(
                 renderCachePath, renderLinesPerSecond,
                 [this, generation]() { return !isCurrent(generation); },
                 [this]() {
-                    return m_waveformSeekHintSec.load(std::memory_order_relaxed);
+                    return waveformDemandSnapshot();
                 },
                 [this, generation, renderLinesPerSecond, &request](
                     int totalLines, WaveformLineBatch chunks) {
@@ -285,19 +285,12 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
                                             AudioCachePriority::ScratchNearPlayhead);
 
         const auto requiredPages = std::min<std::int64_t>(2, pageCount);
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(120);
-        while (isCurrent(request.generation) && std::chrono::steady_clock::now() < deadline) {
-            bool ready = true;
-            for (std::int64_t page = 0; page < requiredPages; ++page) {
-                if (!m_audioPageCache.tryGetPage(result.cacheHandle, page)) {
-                    ready = false;
-                    break;
-                }
-            }
-            if (ready)
-                break;
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
+        (void)m_audioPageCache.waitForPageRange(
+            result.cacheHandle, 0, requiredPages - 1,
+            std::chrono::milliseconds(120),
+            [this, generation = request.generation] {
+                return !isCurrent(generation);
+            });
     }
 
     // Small immutable waveforms can be restored before publishing without a

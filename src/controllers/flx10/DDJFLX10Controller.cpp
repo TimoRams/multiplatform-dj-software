@@ -361,7 +361,7 @@ void DDJFLX10Controller::connectDeckSignals()
             if (m_shuttingDown.load(std::memory_order_acquire) || !m_connected)
                 return;
             const DjEngine* eng = deckEngine(deck);
-            if (!eng || !eng->isScratchVisualActive() || m_waveforms[deck].isEmpty())
+            if (!eng || !eng->isScratchVisualActive())
                 return;
             pushDeckJogDisplay(deck);
         });

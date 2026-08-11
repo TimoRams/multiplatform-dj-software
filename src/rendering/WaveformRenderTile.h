@@ -27,6 +27,13 @@ inline WaveformCoverage bestAvailableCoverage(bool highResolutionReady,
                          : WaveformCoverage::Missing;
 }
 
+inline bool completeDetailMayCoverOverview(bool keyIsCurrent,
+                                           bool hasAnySourceData,
+                                           bool hasCompleteSourceData) noexcept
+{
+    return keyIsCurrent && hasAnySourceData && hasCompleteSourceData;
+}
+
 struct RenderTileSpan final {
     std::int64_t tileIndex = 0;
     std::int64_t physicalBegin = 0;

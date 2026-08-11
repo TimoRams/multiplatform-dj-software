@@ -5,7 +5,9 @@
 
 #include <QString>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 namespace juce { class AudioFormatReader; }
@@ -89,6 +91,14 @@ public:
                      AudioCachePriority priority) noexcept;
     bool requestRange(const AudioCacheHandle& handle, std::int64_t firstPage,
                       std::int64_t lastPage, AudioCachePriority priority) noexcept;
+    // Blocking consumer-side wait for loader/tests only. The audio callback
+    // continues to use tryGetPage() exclusively and never touches a mutex.
+    bool waitForPageRange(
+        const AudioCacheHandle& handle,
+        std::int64_t firstPage,
+        std::int64_t lastPage,
+        std::chrono::milliseconds timeout,
+        const std::function<bool()>& shouldCancel = {}) const;
     [[nodiscard]] AudioCacheStats stats() const noexcept;
     [[nodiscard]] std::uint64_t budgetBytes() const noexcept { return m_budgetBytes; }
     void shutdownAndJoin() noexcept;

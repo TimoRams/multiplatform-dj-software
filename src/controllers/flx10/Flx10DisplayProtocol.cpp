@@ -59,24 +59,13 @@ void DDJFLX10Controller::pushDeckJogDisplay(int deck)
         return;
     if (m_shuttingDown.load(std::memory_order_acquire) || !m_connected)
         return;
-    if (m_waveforms[deck].isEmpty())
-        return;
 
-    const DjEngine* engine = deckEngine(deck);
-    const double duration = deckDisplayDuration(deck);
-    const bool playIntent = engine ? engine->isPlaying() : true;
-    const bool scratchVisual = engine && engine->isScratchVisualActive();
-    const bool moving = playIntent || scratchVisual;
-    const double rawFileElapsed = engine
-        ? deckDisplayPosition(deck)
-        : std::fmod((QDateTime::currentMSecsSinceEpoch() - m_clockStartMs) / 1000.0,
-                    duration);
-    const double fileClamped = std::clamp(rawFileElapsed, 0.0, duration);
-    // DjEngine already exposes a continuously extrapolated visual position.
-    // Re-interpolating it here caused normal control updates to pull the display
-    // alternately behind and ahead of the audio playhead.
-    sendXx27(deck, fileClamped, duration, deckBpm(deck), moving);
-    updateJogRingWarning(deck, fileClamped, duration, playIntent);
+    const DeckDisplaySnapshot snapshot = captureDeckDisplaySnapshot(deck);
+    sendXx27(deck, snapshot);
+    updateJogRingWarning(deck,
+                         snapshot.sourcePositionSec,
+                         snapshot.trackDurationSec,
+                         snapshot.playing);
 }
 bool DDJFLX10Controller::uploadDeck(int deck)
 {
@@ -272,81 +261,9 @@ bool DDJFLX10Controller::clearDeckDisplay(int deck)
     }
     return ok;
 }
-bool DDJFLX10Controller::sendXx27(int deck, double fileElapsedSeconds, double durationSeconds, double bpm, bool moving)
+bool DDJFLX10Controller::sendXx27(int deck, const DeckDisplaySnapshot& snapshot)
 {
-    Q_UNUSED(moving);
-
-    const uint8_t db = deckByte(deck);
-    QByteArray p = packet();
-    put8(p, 0, db);
-    put8(p, 1, 0x27);
-    put8(p, 2, 0xB4);
-    put8(p, 3, 0x80);
-    put8(p, 4, 0x01);
-
-    const double rawTempoPercent = deckTempoPercent(deck);
-    const double tempoPercent = std::isfinite(rawTempoPercent)
-        ? std::clamp(rawTempoPercent, -100.0, 100.0) : 0.0;
-    const double rateRatio = std::max(0.01, 1.0 + tempoPercent / 100.0);
-    fileElapsedSeconds = std::isfinite(fileElapsedSeconds)
-        ? std::max(0.0, fileElapsedSeconds) : 0.0;
-    durationSeconds = std::isfinite(durationSeconds)
-        ? std::max(1.0, durationSeconds) : 1.0;
-    fileElapsedSeconds = std::clamp(fileElapsedSeconds, 0.0, durationSeconds);
-    const double maximumDisplaySeconds = kMaximumDisplayMinutes * 60.0 + 59.999;
-    const double encodedElapsedSeconds = std::min(fileElapsedSeconds, maximumDisplaySeconds);
-
-    // Needle/handle position is FILE time (track position). Tempo stretch is
-    // communicated via bytes 16–17 and wall-time remaining in bytes 9–12 only.
-    // Sub-second field is MILLISECONDS (0..999), not 1024ths.
-    const double totalSec = encodedElapsedSeconds;
-    const qint64 secInt = static_cast<qint64>(std::floor(totalSec));
-    const double sub = totalSec - static_cast<double>(secInt);
-    int subMs = static_cast<int>(std::floor(sub * 1000.0));
-    if (subMs > 999)
-        subMs = 999;
-
-    put8(p, 5, (secInt / 60) & 0xFF);
-    put8(p, 6, (secInt % 60) & 0xFF);
-    put8(p, 7, subMs & 0xFF);
-    put8(p, 8, (subMs >> 8) & 0x03);
-
-    const qint64 maximumDisplayMs = kMaximumDisplayMinutes * 60000LL + 59999LL;
-    const qint64 durationMs = std::min(
-        static_cast<qint64>(std::floor((durationSeconds / rateRatio) * 1000.0)),
-        maximumDisplayMs);
-    put8(p, 9, durationMs / 60000);
-    const int rem2 = static_cast<int>(durationMs % 60000);
-    put8(p, 10, rem2 / 1000);
-    const int ms2 = rem2 % 1000;
-    put8(p, 11, ms2);
-    put8(p, 12, ms2 >> 8);
-
-    bpm = std::isfinite(bpm) ? std::clamp(bpm, 0.0, 255.9) : 0.0;
-    const int bpmInt = static_cast<int>(bpm);
-    put8(p, 13, bpmInt);
-    put8(p, 14, (static_cast<int>(std::round((bpm - bpmInt) * 10.0)) & 0x0F) << 4);
-    put8(p, 15, 0x01);
-    const int tempoEnc = std::clamp(static_cast<int>(std::llround(tempoPercent * 100.0)), -32768, 32767);
-    const uint16_t tempoWire = static_cast<uint16_t>(tempoEnc & 0xFFFF);
-    put8(p, 16, tempoWire & 0xFF);
-    put8(p, 17, (tempoWire >> 8) & 0xFF);
-    put8(p, 20, 0x0E);
-
-    // One 1.8-second revolution is encoded as a coherent 16-bit LE phase.
-    // Advancing the high byte independently from the low-byte wrap made the
-    // hardware briefly reverse the handle at every carry boundary.
-    const JogPhaseBytes phase = jogPhaseBytes(fileElapsedSeconds);
-    put8(p, 21, phase.low);
-    put8(p, 22, phase.high);
-
-    put8(p, 25, 0x80);
-    put8(p, 29, deckKeyByte(deck));
-    put8(p, 30, 0x0D);
-    put8(p, 31, displayDeckState(db));
-    put8(p, 32, 0xFF);
-    put8(p, 33, 0xFF);
-    put8(p, 34, 0xFF);
+    const QByteArray p = encodeXx27Packet(deck, snapshot);
 
     if (deck >= 0 && deck < static_cast<int>(m_lastXx27Packet.size())
         && m_lastXx27Packet[deck] == p) {
@@ -480,17 +397,33 @@ double DDJFLX10Controller::deckDisplayPosition(int deck) const
 {
     return validTrackPosition(deckEngine(deck), deckDisplayDuration(deck));
 }
-double DDJFLX10Controller::deckBpm(int deck) const
+DeckDisplaySnapshot DDJFLX10Controller::captureDeckDisplaySnapshot(int deck)
 {
+    DeckDisplaySnapshot snapshot;
+    if (deck < 1 || deck > 2)
+        return snapshot;
+
+    snapshot.generation = ++m_displaySnapshotSequence[deck];
     const DjEngine* engine = deckEngine(deck);
-    if (!engine || engine->getCurrentBpm() <= 0.0)
-        return 0.0;
-    return engine->getCurrentBpm();
-}
-double DDJFLX10Controller::deckTempoPercent(int deck) const
-{
-    const DjEngine* engine = deckEngine(deck);
-    return engine ? engine->getTempoPercent() : 0.0;
+    snapshot.trackDurationSec = deckDisplayDuration(deck);
+    if (!engine) {
+        snapshot.sourcePositionSec = std::fmod(
+            (QDateTime::currentMSecsSinceEpoch() - m_clockStartMs) / 1000.0,
+            snapshot.trackDurationSec);
+        snapshot.playing = true;
+        return snapshot;
+    }
+
+    snapshot.sourcePositionSec = validTrackPosition(engine, snapshot.trackDurationSec);
+    snapshot.bpm = std::max(0.0, engine->getCurrentBpm());
+    snapshot.tempoPercent = engine->getTempoPercent();
+    snapshot.playing = engine->isPlaying();
+    snapshot.scratching = engine->isScratchVisualActive();
+    snapshot.reverse = engine->isReverse();
+    snapshot.title = engine->trackTitle();
+    snapshot.artist = engine->trackArtist();
+    snapshot.keyByte = deckKeyByte(deck);
+    return snapshot;
 }
 double DDJFLX10Controller::deckTempoRangePercent(int deck) const
 {

@@ -79,7 +79,10 @@ std::size_t RenderTileKeyHash::operator()(const RenderTileKey& key) const noexce
                         std::hash<std::uint64_t>{}(key.physicalPixelsPerLineMicros));
     value = hashCombine(value, std::hash<std::uint32_t>{}(key.imageHeight));
     value = hashCombine(value, std::hash<std::uint16_t>{}(key.devicePixelRatioMillis));
-    return hashCombine(value, std::hash<std::uint8_t>{}(key.lodLevel));
+    value = hashCombine(value, std::hash<std::uint8_t>{}(key.lodLevel));
+    value = hashCombine(value,
+                        std::hash<std::uint32_t>{}(key.visualStyleRevision));
+    return hashCombine(value, std::hash<std::uint32_t>{}(key.backgroundRgba));
 }
 
 WaveformTileRasterizer::WaveformTileRasterizer(
@@ -112,7 +115,8 @@ RenderTileKey WaveformTileRasterizer::makeKey(
     double physicalPixelsPerLine,
     int imageHeight,
     double devicePixelRatio,
-    std::uint8_t lodLevel) noexcept
+    std::uint8_t lodLevel,
+    std::uint32_t backgroundRgba) noexcept
 {
     return {
         snapshot.trackGeneration,
@@ -124,7 +128,9 @@ RenderTileKey WaveformTileRasterizer::makeKey(
         static_cast<std::uint32_t>(std::max(0, imageHeight)),
         static_cast<std::uint16_t>(std::clamp(
             std::lround(devicePixelRatio * 1000.0), 1L, 65'535L)),
-        lodLevel
+        lodLevel,
+        waveform_visual::kRevision,
+        backgroundRgba
     };
 }
 
@@ -504,7 +510,13 @@ WaveformTileRasterizer::rasterize(const RenderTileRequest& request)
 
     result->image = QImage(imageWidth, imageHeight,
                            QImage::Format_ARGB32_Premultiplied);
-    result->image.fill(Qt::transparent);
+    // A complete detail tile is an opaque replacement for the coarse
+    // overview. Keeping its intentional 1 px spacing transparent lets the
+    // linearly scaled overview bleed through and visually turns the picket
+    // fence back into broad, blurred bars. Incomplete tiles are rejected as a
+    // whole by the renderer, so filling the background here cannot conceal a
+    // loading hole.
+    result->image.fill(static_cast<QRgb>(request.key.backgroundRgba));
 
     const auto verticalLayout = verticalMarkerLayout(
         static_cast<float>(request.logicalHeight));

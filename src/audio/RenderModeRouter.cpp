@@ -124,7 +124,8 @@ engine::scratch::ScratchReleaseDisposition RenderModeRouter::endScratch(bool all
 }
 
 std::uint64_t RenderModeRouter::requestScratchRelease(double normalizedReleaseSpeed,
-                                                       bool allowInertia) noexcept
+                                                       bool allowInertia,
+                                                       bool playbackIntent) noexcept
 {
     // Duplicate touch-up packets refer to the release already in flight.
     const auto current = m_requestedReleaseGeneration.load(std::memory_order_acquire);
@@ -146,7 +147,7 @@ std::uint64_t RenderModeRouter::requestScratchRelease(double normalizedReleaseSp
     m_releaseCommandSpeed.store(speed, std::memory_order_relaxed);
     m_releaseCommandDeckRate.store(signedDeckTempoRatio(), std::memory_order_relaxed);
     m_releaseCommandSampleRate.store(trackRate, std::memory_order_relaxed);
-    m_releaseCommandWasPlaying.store(m_controller.wasPlayingBeforeScratch(), std::memory_order_relaxed);
+    m_releaseCommandPlaybackIntent.store(playbackIntent, std::memory_order_relaxed);
     m_releaseCommandAllowInertia.store(allowInertia, std::memory_order_relaxed);
     m_releaseCommandKeylock.store(m_keylockPassthrough.load(std::memory_order_relaxed),
                                   std::memory_order_relaxed);
@@ -280,6 +281,14 @@ void RenderModeRouter::prepareNormalPlaybackHandoffFromScratchCursor(double trac
 
 void RenderModeRouter::exitScratchMode(double positionSeconds, double trackSampleRate) noexcept
 {
+    // Explicitly leaving scratch (pause, eject, track replacement) supersedes
+    // every callback-owned release that may still be coasting. The following
+    // handoff generation moves both readers to the authoritative cursor; the
+    // cancelled release cannot later re-enable its old scratch path.
+    m_cancelledReleaseGeneration.store(
+        m_requestedReleaseGeneration.load(std::memory_order_acquire),
+        std::memory_order_release);
+    m_latestReleaseSpeed.store(0.0, std::memory_order_release);
     prepareNormalPlaybackHandoff(positionSeconds, trackSampleRate);
 }
 
@@ -483,7 +492,7 @@ void RenderModeRouter::consumeScratchReleaseCommand() noexcept
     command.speed = m_releaseCommandSpeed.load(std::memory_order_relaxed);
     command.deckRate = m_releaseCommandDeckRate.load(std::memory_order_relaxed);
     command.sampleRate = m_releaseCommandSampleRate.load(std::memory_order_relaxed);
-    command.wasPlaying = m_releaseCommandWasPlaying.load(std::memory_order_relaxed);
+    command.playbackIntent = m_releaseCommandPlaybackIntent.load(std::memory_order_relaxed);
     command.allowInertia = m_releaseCommandAllowInertia.load(std::memory_order_relaxed);
     command.keylock = m_releaseCommandKeylock.load(std::memory_order_relaxed);
     command.reverse = m_releaseCommandReverse.load(std::memory_order_relaxed);
@@ -590,7 +599,7 @@ void RenderModeRouter::finishReleaseDecisionAfterTrackingBlock() noexcept
         speed,
         m_audioReleaseCommand.allowInertia,
         m_audioReleaseCommand.deckRate,
-        m_audioReleaseCommand.wasPlaying);
+        m_audioReleaseCommand.playbackIntent);
 
     switch (m_audioReleaseDisposition) {
     case engine::scratch::ScratchReleaseDisposition::CoastToDeckRate:
@@ -658,6 +667,27 @@ void RenderModeRouter::consumePendingAudioCommands() noexcept
     }
 
     consumeScratchReleaseCommand();
+
+    // Pause or track replacement can cancel a release after the callback has
+    // already accepted it. Complete that generation before consuming the
+    // explicit reader handoff so no stale inertia state survives the command.
+    const auto activeReleaseGeneration = m_audioReleaseCommand.generation;
+    if (activeReleaseGeneration != 0
+        && activeReleaseGeneration
+            <= m_cancelledReleaseGeneration.load(std::memory_order_acquire)
+        && m_completedReleaseGeneration.load(std::memory_order_acquire)
+            < activeReleaseGeneration) {
+        m_audioReleasePhase = ScratchReleasePhase::Idle;
+        m_audioReleaseDisposition = engine::scratch::ScratchReleaseDisposition::HandoffNow;
+        m_controller.stopScratch();
+        publishReleaseSnapshot(activeReleaseGeneration,
+                               m_audioReleasePhase,
+                               m_audioReleaseDisposition,
+                               readPositionSeconds(m_audioReleaseCommand.sampleRate));
+        m_completedReleaseGeneration.store(activeReleaseGeneration,
+                                           std::memory_order_release);
+        m_tailReleaseGeneration = 0;
+    }
 
     const auto handoffGeneration = m_handoffCommandGeneration.load(std::memory_order_acquire);
     if (handoffGeneration != m_appliedHandoffCommandGeneration) {

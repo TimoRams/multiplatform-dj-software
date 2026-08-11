@@ -2,6 +2,7 @@
 
 #include "midi/AlsaMidiOutput.h"
 #include "app/ControlClock.h"
+#include "Flx10ProtocolCommon.h"
 
 #include <QObject>
 #include <QByteArray>
@@ -85,7 +86,7 @@ private:
     bool sendXx35(int deck, int entryCount);
     bool sendXx36Window(int deck, const QByteArray& waveform, int entry);
     bool sendXx2f(int deck);
-    bool sendXx27(int deck, double fileElapsedSeconds, double durationSeconds, double bpm, bool moving);
+    bool sendXx27(int deck, const flx10_protocol::DeckDisplaySnapshot& snapshot);
     void resetDisplayPacketState(int deck);
     void pushDeckJogDisplay(int deck);
     bool clearDeckDisplay(int deck);
@@ -94,10 +95,9 @@ private:
     bool uploadCoverArt(int deck);
     QByteArray generatePreviewWaveform(int deck) const;
     int currentWaveformEntry(int deck) const;
+    flx10_protocol::DeckDisplaySnapshot captureDeckDisplaySnapshot(int deck);
     double deckDisplayDuration(int deck) const;
     double deckDisplayPosition(int deck) const;
-    double deckBpm(int deck) const;
-    double deckTempoPercent(int deck) const;
     double deckTempoRangePercent(int deck) const;
     QString deckKey(int deck) const;
     uint8_t deckKeyByte(int deck) const;
@@ -146,6 +146,7 @@ private:
     std::array<qint64, 5> m_lastXx27SentMs = {-100, -100, -100, -100, -100};
     qint64 m_lastXx36SentMs = -100;
     std::array<QByteArray, 5> m_lastXx27Packet;
+    std::array<std::uint64_t, 5> m_displaySnapshotSequence {0, 0, 0, 0, 0};
     std::atomic<bool> m_shuttingDown { false };
     bool m_connected = false;
     QPointer<DjEngine> m_deckA;
@@ -159,6 +160,7 @@ private:
     std::mutex m_hidWriteMutex;
     std::condition_variable m_hidWriteCondition;
     std::deque<QByteArray> m_hidWriteQueue;
+    flx10_protocol::LatestDisplayPacketSlots m_latestHidDisplayPackets;
     std::thread m_hidWriter;
     bool m_hidWriterStopping = false;
     bool m_hidWriterRunning = false;
@@ -167,5 +169,14 @@ private:
     std::atomic<int> m_hidWriteError { 0 };
     std::atomic<int> m_hidWriteTransferred { 0 };
     std::atomic<bool> m_hidStateRefreshPending { false };
+    bool m_hidDiagnosticsEnabled = false;
+    std::atomic<std::uint64_t> m_displaySnapshotsPublished { 0 };
+    std::atomic<std::uint64_t> m_displayFramesSent { 0 };
+    std::atomic<std::uint64_t> m_displayFramesCoalesced { 0 };
+    std::atomic<std::uint64_t> m_displayWriteFailures { 0 };
+    std::atomic<std::uint64_t> m_displayWriteTimeouts { 0 };
+    std::atomic<std::uint64_t> m_maximumDisplayQueueDepth { 0 };
+    std::atomic<std::uint64_t> m_lastDisplaySequence { 0 };
+    std::atomic<std::uint64_t> m_worstDisplayWriteUsec { 0 };
 #endif
 };

@@ -11,6 +11,7 @@
 #include "TrackData.h"
 #include "waveform/WaveformLineBuilder.h"
 #include "waveform/WaveformLineBatch.h"
+#include "waveform/WaveformDemand.h"
 
 class WaveformCache
 {
@@ -21,6 +22,7 @@ public:
         float globalMaxPeak = 0.001f;
         QVector<TrackData::WaveformBin> waveform;
         QVector<TrackData::RgbWaveformFrame> rgb;
+        QVector<TrackData::RgbWaveformFrame> overview;
         QVector<TrackData::PeakFrame> peakMip;  // high-res signed min/max peaks
         std::shared_ptr<const waveform::PreparedWaveformLines> preparedLines;
     };
@@ -46,7 +48,7 @@ public:
     static bool streamRenderCache(
         const QString& filePath, int pointsPerSecond,
         const std::function<bool()>& shouldCancel,
-        const std::function<double()>& seekHintSeconds,
+        const std::function<waveform::WaveformDemand()>& demandSnapshot,
         const RenderChunkCallback& publishChunk);
     static bool streamRenderLodCache(
         const QString& filePath, int pointsPerSecond, int level,

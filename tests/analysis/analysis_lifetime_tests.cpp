@@ -1,8 +1,10 @@
 #include "TrackData.h"
 #include "WaveformAnalyzer.h"
+#include "waveform/WaveformLineStore.h"
 
 #include <QCoreApplication>
 #include <QTemporaryDir>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -89,11 +91,71 @@ int main(int argc, char** argv)
         ok &= require(firstDrain.size() == 6 && secondDrain.size() == 4,
                       "progressive mailbox must bound work per owner-thread tick");
 
-        mailbox.publishChunk({42, 0, 128, emptyWaveform, emptyRgb});
-        mailbox.publish({true, 42, QStringLiteral("track.wav"),
+        // A new visible range must jump ahead of older background work, and a
+        // later result for the same chunk must coalesce instead of extending a
+        // FIFO queue.
+        const auto oneSecondRgb = std::make_shared<const QVector<
+            TrackData::RgbWaveformFrame>>(600);
+        for (const int firstBin : {100 * 600, 101 * 600, 1 * 600,
+                                   99 * 600, 102 * 600, 0}) {
+            mailbox.publishChunk({43, firstBin, 120 * 600,
+                                  emptyWaveform, oneSecondRgb});
+        }
+        mailbox.publishChunk({43, 100 * 600, 120 * 600,
+                              emptyWaveform, oneSecondRgb,
+                              WaveformNormalizationState::Final});
+        mailbox.publishChunk({43, 100 * 600, 120 * 600,
+                              emptyWaveform, oneSecondRgb,
+                              WaveformNormalizationState::Preview});
+        const auto demand = waveform::makeViewportDemand(
+            100.5, 1200.0, 600.0, true, false, false, 0, 43);
+        const auto prioritized = mailbox.takeChunks(demand, 600.0);
+        ok &= require(!prioritized.empty()
+                          && prioritized.front().firstBin == 100 * 600,
+                      "visible playhead chunk was delayed behind FIFO background work");
+        const auto sameChunkCount = std::count_if(
+            prioritized.begin(), prioritized.end(), [](const auto& chunk) {
+                return chunk.firstBin == 100 * 600;
+            });
+        ok &= require(sameChunkCount == 1
+                          && prioritized.front().normalizationState
+                              == WaveformNormalizationState::Final,
+                      "Preview/Final publications for one chunk were not coalesced");
+
+        AnalyzerResultMailbox firstPaintMailbox;
+        firstPaintMailbox.publishChunk({44, 0, 120 * 600,
+                                        emptyWaveform, oneSecondRgb});
+        firstPaintMailbox.publishChunk({44, 60 * 600, 120 * 600,
+                                        emptyWaveform, oneSecondRgb});
+        const auto firstPaintDemand = waveform::makeViewportDemand(
+            50.5, 1200.0, 600.0, true, false, false, 0, 44);
+        ok &= require(firstPaintMailbox.takeChunks(
+                          firstPaintDemand, 600.0).empty(),
+                      "background detail escaped before the playhead chunk");
+        firstPaintMailbox.publishChunk({44, 50 * 600, 120 * 600,
+                                        emptyWaveform, oneSecondRgb});
+        const auto firstPaint = firstPaintMailbox.takeChunks(
+            firstPaintDemand, 600.0);
+        ok &= require(firstPaint.size() == 1
+                          && firstPaint.front().firstBin == 50 * 600,
+                      "first published detail did not contain the playhead");
+
+        auto overviewSamples = std::make_shared<const QVector<
+            TrackData::RgbWaveformFrame>>(512);
+        mailbox.publishOverview({43, 72'000, overviewSamples});
+        const auto overview = mailbox.takeOverview();
+        ok &= require(overview && overview->generation == 43
+                          && overview->totalBins == 72'000
+                          && overview->samples == overviewSamples,
+                      "instant overview did not cross the bounded owner mailbox");
+        mailbox.publishOverview({43, 72'000, overviewSamples});
+        mailbox.publishChunk({43, 0, 128, emptyWaveform, emptyRgb});
+        mailbox.publish({true, 43, QStringLiteral("track.wav"),
                          std::make_shared<const analysis::AnalysisResult>()});
         ok &= require(mailbox.takeChunks().empty(),
                       "validated completion must discard obsolete progressive chunks");
+        ok &= require(!mailbox.takeOverview(),
+                      "validated completion must discard its obsolete overview publication");
         ok &= require(mailbox.take().has_value(),
                       "validated completion must remain immediately available");
     }
@@ -140,6 +202,14 @@ int main(int argc, char** argv)
         std::mutex chunkMutex;
         std::condition_variable chunkReady;
         int firstRgbBin = -1;
+        std::atomic<int> publishedOverviewBins{0};
+        std::atomic<int> publishedOverviewTotal{0};
+        analyzer.setOverviewCallback(
+            [&](WaveformAnalyzer::AnalysisGeneration, int totalBins,
+                QVector<TrackData::RgbWaveformFrame> overview) {
+                publishedOverviewTotal.store(totalBins, std::memory_order_release);
+                publishedOverviewBins.store(overview.size(), std::memory_order_release);
+            });
         analyzer.setChunkCallback(
             [&](WaveformAnalyzer::AnalysisGeneration, int firstBin, int,
                 QVector<TrackData::WaveformBin>,
@@ -161,9 +231,20 @@ int main(int argc, char** argv)
                                               [&] { return firstRgbBin >= 0; }),
                           "cursor-priority waveform chunk must be published promptly");
         }
-        // 0.5 s of context at 600 pps starts 300 bins before the cursor.
-        ok &= require(firstRgbBin == 15 * 600 - 300,
-                      "first lazy-loaded chunk must start at the cursor context window");
+        // Without a renderer demand yet, the cold-start range must still span
+        // at least one complete immutable store chunk on either side. This is
+        // stronger than the old fixed 0.5 s context: it guarantees that the
+        // chunk containing the playhead can become READY rather than exposing
+        // a partially populated detail tile.
+        ok &= require(firstRgbBin
+                          == (15 * 600
+                              / static_cast<int>(WaveformLineStore::kChunkSize))
+                              * static_cast<int>(WaveformLineStore::kChunkSize),
+                      "first lazy-loaded range must be the aligned playhead chunk");
+        ok &= require(publishedOverviewBins.load(std::memory_order_acquire) == 512
+                          && publishedOverviewTotal.load(std::memory_order_acquire)
+                              == 30 * 600,
+                      "fresh analysis did not publish one complete bounded overview first");
         analyzer.shutdownAndJoin();
     }
     if (ok) {
@@ -171,6 +252,13 @@ int main(int argc, char** argv)
         std::mutex chunkMutex;
         std::condition_variable chunkReady;
         int firstRgbBin = -1;
+        std::atomic<int> scratchOverviewBins{0};
+        analyzer.setOverviewCallback(
+            [&](WaveformAnalyzer::AnalysisGeneration, int,
+                QVector<TrackData::RgbWaveformFrame> overview) {
+                scratchOverviewBins.store(overview.size(),
+                                          std::memory_order_release);
+            });
         analyzer.setChunkCallback(
             [&](WaveformAnalyzer::AnalysisGeneration, int firstBin, int,
                 QVector<TrackData::WaveformBin>,
@@ -195,6 +283,8 @@ int main(int argc, char** argv)
         }
         ok &= require(firstRgbBin == 0,
                       "cold-start waveform must publish from the playhead before full buffers");
+        ok &= require(scratchOverviewBins.load(std::memory_order_acquire) == 512,
+                      "active scratch suppressed the always-available overview");
         analyzer.shutdownAndJoin();
     }
     if (ok) {

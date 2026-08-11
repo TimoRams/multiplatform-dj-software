@@ -7,6 +7,11 @@
 
 namespace waveform_visual {
 
+// Increment when raster output changes for identical source samples. It is part
+// of the render-tile identity, preventing incompatible images from surviving a
+// visual-style change in the CPU tile cache.
+inline constexpr std::uint32_t kRevision = 1;
+
 struct BandEnergy final {
     float low = 0.0f;
     float lowMid = 0.0f;

@@ -395,13 +395,12 @@ bool runEnvelopePass(const EnvelopePassInput& input)
     auto threadShouldExit = [&]() { return thread.threadShouldExit(); };
     const auto cooperateWithRealtime = [&]() {
         // Analysis owns a separate decoder, but can still compete for CPU and
-        // storage bandwidth exactly when a cold scratch window needs both. A
-        // complete pause also prevents the waveform from following a scratch
-        // or cue jump, so throttle each batch while keeping cursor-priority work
-        // alive. Audio pages still run at the higher realtime cache priority.
+        // storage bandwidth exactly when a cold scratch window needs both.
+        // Cooperate with the scheduler without a timer-based sleep: sleeps made
+        // seek latency depend on how many batches happened to precede P0 work.
         if (!threadShouldExit() && input.realtimeInteractionActive
             && input.realtimeInteractionActive())
-            juce::Thread::sleep(2);
+            juce::Thread::yield();
     };
 
     m_trackData->reportAnalysisProgress(0.02, true);
@@ -477,14 +476,9 @@ bool runEnvelopePass(const EnvelopePassInput& input)
     FiltState mainFilt;
     mainFilt.reset(numCh, sampleRate);
 
-    // =========================================================================
-    // PASS 1 — Raw Analysis + Live Preview (progressive rendering)
-    //
-    //  • Collects raw envelope values in rawBins for the final pass.
-    //  • Tracks global per-band maxima for true normalization later.
-    //  • Simultaneously sends a live preview to QML using running-max
-    //    normalization (so the waveform builds up on screen in real-time).
-    // =========================================================================
+    // One robust normalization profile is fixed before the first detail chunk
+    // is published. Every priority, seek and sequential job uses the same
+    // values, so a completed immutable range never changes brightness later.
 
     struct RawBin {
         float low    = 0.0f;   // raw envelope value, NOT normalized
@@ -492,8 +486,6 @@ bool runEnvelopePass(const EnvelopePassInput& input)
         float mid    = 0.0f;
         float high   = 0.0f;
     };
-    std::vector<RawBin> rawBins;
-
     // Peak mipmap: signed min/max per high-res bin (4× analysis rate).
     // Allows the renderer to show actual audio oscillations at high zoom.
     struct RawPeak { float minRaw = 0.0f; float maxRaw = 0.0f; };
@@ -506,30 +498,50 @@ bool runEnvelopePass(const EnvelopePassInput& input)
     std::vector<RawPeak> rawPeakBuf;
     float globalMaxSample = 0.001f;
 
-    // Global per-band maxima — tracked across the entire track (for Pass 2).
-    float globalMaxLow    = 0.0f;
-    float globalMaxLowMid = 0.0f;
-    float globalMaxMid    = 0.0f;
-    float globalMaxHigh   = 0.0f;
     float globalMaxPeak   = 0.001f;
 
-    // Running maxima for live preview — start at 0.1 so the first quiet
-    // sample doesn't explode to full height.
-    float runMaxLow    = 0.1f;
-    float runMaxLowMid = 0.1f;
-    float runMaxMid    = 0.1f;
-    float runMaxHigh   = 0.1f;
+    struct NormalizationProfile final {
+        float low = 0.1f;
+        float lowMid = 0.1f;
+        float mid = 0.1f;
+        float high = 0.1f;
+    };
+    const auto overview = m_trackData->getOverviewRgbData();
+    const auto robustBand = [&overview](auto member) {
+        std::vector<float> values;
+        values.reserve(static_cast<std::size_t>(overview.size()));
+        for (const auto& frame : overview) {
+            const float value = std::max(0.0f, frame.*member);
+            if (std::isfinite(value))
+                values.push_back(value);
+        }
+        if (values.empty())
+            return 0.1f;
+        const auto percentileIndex = std::min(
+            values.size() - 1,
+            static_cast<std::size_t>(std::floor(
+                static_cast<double>(values.size() - 1) * 0.98)));
+        std::nth_element(values.begin(), values.begin() + percentileIndex,
+                         values.end());
+        return std::max(0.08f, values[percentileIndex]);
+    };
+    const NormalizationProfile normalization{
+        robustBand(&TrackData::RgbWaveformFrame::low),
+        robustBand(&TrackData::RgbWaveformFrame::lowMid),
+        robustBand(&TrackData::RgbWaveformFrame::mid),
+        robustBand(&TrackData::RgbWaveformFrame::high)};
 
-    constexpr int kChunk = 128;
+    // Progressive publication uses exactly the immutable store chunk size.
+    // Smaller 128-bin messages used to expose a Loading source chunk eight
+    // times before it became renderable, delaying first detail even though
+    // analysis had already reached the playhead.
+    constexpr int kChunk = static_cast<int>(WaveformLineStore::kChunkSize);
     const auto seekHintBin = [&input, m_pointsPerSecond, numPoints]() {
         const double hint = input.currentSeekHintSec
             ? input.currentSeekHintSec() : input.seekHintSec;
         return std::clamp(static_cast<int>(std::max(0.0, hint) * m_pointsPerSecond),
                           0, numPoints - 1);
     };
-    // Prefetch remains enabled even if analysis started near the beginning: a
-    // later seek must immediately take ownership of the loading frontier.
-    const bool enableForwardPrefetch = true;
     QVector<TrackData::WaveformBin> previewBatch;
     previewBatch.reserve(kChunk);
     QVector<TrackData::RgbWaveformFrame> previewRgbBatch;
@@ -538,7 +550,9 @@ bool runEnvelopePass(const EnvelopePassInput& input)
                                        const QVector<TrackData::WaveformBin>& waveform,
                                        const QVector<TrackData::RgbWaveformFrame>& rgb,
                                        WaveformNormalizationState state
-                                           = WaveformNormalizationState::Preview) {
+                                           = WaveformNormalizationState::Final) {
+        if (!input.retainLegacyWaveform && !rgb.isEmpty())
+            input.trackData->writePreparedWaveformRange(firstBin, rgb);
         if (input.publishChunk && (!waveform.isEmpty() || !rgb.isEmpty()))
             input.publishChunk(firstBin, input.numPoints, waveform, rgb, state);
     };
@@ -550,171 +564,170 @@ bool runEnvelopePass(const EnvelopePassInput& input)
 
     juce::AudioBuffer<float> readBuf(static_cast<int>(reader.numChannels), static_cast<int>(maxSamplesPerBin));
 
-    // ─── Priority window: analyze around seek hint first ─────────────────
-    // This gives immediate waveform feedback at the seek position before the
-    // sequential fill pass reaches it. Uses cold-start filters (tiny warmup
-    // error in first ~20 bins, invisible at display scale).
-    const int warmupBins = std::max(24, m_pointsPerSecond / 20);       // 50 ms
-    const int cursorContextBins = std::max(128, m_pointsPerSecond / 2); // 0.5 s behind
-    const int priorityBins = std::max(512, m_pointsPerSecond * 2);      // 2 s ahead
+    // ─── Interactive chunks: playhead first, then deterministic expansion ──
+    const int warmupBins = std::max(24, m_pointsPerSecond / 20); // 50 ms
+    const auto demandSnapshot = [&input]() {
+        return input.currentDemand
+            ? input.currentDemand() : waveform::WaveformDemand{};
+    };
+    const int sourceChunkCount = (numPoints + kChunk - 1) / kChunk;
+    std::vector<bool> priorityAnalyzed(
+        static_cast<std::size_t>(sourceChunkCount), false);
+
+    const auto processPriorityBin = [&](int bin, FiltState& filter,
+                                        juce::AudioBuffer<float>& buffer) {
+        const juce::int64 binStart =
+            (static_cast<juce::int64>(bin) * totalSamples) / numPoints;
+        juce::int64 binEnd =
+            (static_cast<juce::int64>(bin + 1) * totalSamples) / numPoints;
+        if (binEnd <= binStart)
+            binEnd = std::min(totalSamples, binStart + 1);
+        const int toRead = static_cast<int>(
+            std::max<juce::int64>(1, binEnd - binStart));
+        reader.read(&buffer, 0, toRead, binStart, true, false);
+
+        for (int sample = 0; sample < toRead; ++sample) {
+            float low = 0.0f, lowMid = 0.0f, mid = 0.0f, high = 0.0f;
+            for (int channel = 0; channel < numCh; ++channel) {
+                const auto index = static_cast<std::size_t>(channel);
+                const float in = buffer.getReadPointer(channel)[sample];
+                filter.lp110[index] = aLP110 * in
+                    + (1.0f - aLP110) * filter.lp110[index];
+                const float bandLow = std::abs(filter.lp110[index]);
+                filter.hp150s1[index] = aHP150 * in
+                    + (1.0f - aHP150) * filter.hp150s1[index];
+                const float hp1 = in - filter.hp150s1[index];
+                filter.hp150s2[index] = aHP150 * hp1
+                    + (1.0f - aHP150) * filter.hp150s2[index];
+                filter.lp160[index] = aLP160 * (hp1 - filter.hp150s2[index])
+                    + (1.0f - aLP160) * filter.lp160[index];
+                const float bandLowMid = std::abs(filter.lp160[index]);
+                filter.hp180s1[index] = aHP180 * in
+                    + (1.0f - aHP180) * filter.hp180s1[index];
+                const float hp3 = in - filter.hp180s1[index];
+                filter.hp180s2[index] = aHP180 * hp3
+                    + (1.0f - aHP180) * filter.hp180s2[index];
+                filter.lp800[index] = aLP800 * (hp3 - filter.hp180s2[index])
+                    + (1.0f - aLP800) * filter.lp800[index];
+                const float bandMid = std::abs(filter.lp800[index]);
+                const float v3 = in - filter.svfIc2[index];
+                const float v1 = svfD * (filter.svfIc1[index] + svfG * v3);
+                const float v2 = filter.svfIc2[index] + svfG * v1;
+                filter.svfIc1[index] = 2.0f * v1 - filter.svfIc1[index];
+                filter.svfIc2[index] = 2.0f * v2 - filter.svfIc2[index];
+                filter.hp19k[index] = aHP19k * in
+                    + (1.0f - aHP19k) * filter.hp19k[index];
+                const float bandHigh = std::abs(v1)
+                    + std::abs(in - filter.hp19k[index]);
+                low = std::max(low, bandLow);
+                lowMid = std::max(lowMid, bandLowMid);
+                mid = std::max(mid, bandMid);
+                high = std::max(high, bandHigh);
+            }
+            filter.envLow.process(low);
+            filter.envLowMid.process(lowMid);
+            filter.envMid.process(mid);
+            filter.envHigh.process(high);
+        }
+        return RawBin{filter.envLow.state, filter.envLowMid.state,
+                      filter.envMid.state, filter.envHigh.state};
+    };
+
+    const auto analyzePriorityChunk = [&](int chunkIndex) {
+        if (chunkIndex < 0 || chunkIndex >= sourceChunkCount
+            || priorityAnalyzed[static_cast<std::size_t>(chunkIndex)]
+            || threadShouldExit()) {
+            return;
+        }
+        const int begin = chunkIndex * kChunk;
+        const int end = std::min(numPoints, begin + kChunk);
+        FiltState filter;
+        filter.reset(numCh, sampleRate);
+        juce::AudioBuffer<float> buffer(
+            static_cast<int>(reader.numChannels),
+            static_cast<int>(maxSamplesPerBin));
+        for (int bin = std::max(0, begin - warmupBins);
+             bin < begin && !threadShouldExit(); ++bin) {
+            if ((bin & 0x1F) == 0)
+                cooperateWithRealtime();
+            (void)processPriorityBin(bin, filter, buffer);
+        }
+
+        QVector<TrackData::RgbWaveformFrame> frames;
+        frames.reserve(end - begin);
+        for (int bin = begin; bin < end && !threadShouldExit(); ++bin) {
+            if ((bin & 0x1F) == 0)
+                cooperateWithRealtime();
+            const auto raw = processPriorityBin(bin, filter, buffer);
+            TrackData::RgbWaveformFrame rgb;
+            rgb.low = shapeBin(raw.low / normalization.low, 1.8f, 1.0f);
+            rgb.lowMid = shapeBin(
+                raw.lowMid / normalization.lowMid, 1.6f, 0.9f);
+            rgb.mid = shapeBin(raw.mid / normalization.mid, 1.5f, 0.7f);
+            rgb.high = shapeBin(
+                raw.high / normalization.high, 1.3f, 0.5f);
+            rgb.rms = std::clamp(
+                0.5f * std::max({rgb.low, rgb.lowMid, rgb.mid, rgb.high})
+                    + 0.5f * ((rgb.low + rgb.lowMid + rgb.mid + rgb.high)
+                              / 4.0f),
+                0.0f, 1.0f);
+            rgb.color = QColor(255, 255, 255, 230);
+            frames.push_back(rgb);
+        }
+        if (frames.size() != end - begin)
+            return;
+        if (input.retainLegacyWaveform)
+            m_trackData->writeRgbWaveformRange(begin, frames);
+        publishChunk(begin, {}, frames);
+        priorityAnalyzed[static_cast<std::size_t>(chunkIndex)] = true;
+    };
+
+    const auto analyzeDemand = [&](int centreBin,
+                                   const waveform::WaveformDemand& demand) {
+        const int current = std::clamp(centreBin / kChunk,
+                                       0, sourceChunkCount - 1);
+        analyzePriorityChunk(current);
+        constexpr int kPreferredLookaheadChunks = 3;
+        constexpr int kOppositeGuardChunks = 2;
+        const bool scratching = demand.scratching
+            || (input.realtimeInteractionActive
+                && input.realtimeInteractionActive());
+        if (scratching) {
+            for (int distance = 1; distance <= kPreferredLookaheadChunks;
+                 ++distance) {
+                analyzePriorityChunk(current - distance);
+                analyzePriorityChunk(current + distance);
+            }
+            return;
+        }
+        const int direction = demand.reverse ? -1 : 1;
+        for (int distance = 1; distance <= kPreferredLookaheadChunks;
+             ++distance) {
+            analyzePriorityChunk(current + direction * distance);
+        }
+        for (int distance = 1; distance <= kOppositeGuardChunks; ++distance)
+            analyzePriorityChunk(current - direction * distance);
+    };
 
     const int hintBin = seekHintBin();
-    const int priorityStart = std::max(0, hintBin - cursorContextBins);
-    const int priorityWarmupStart = std::max(0, priorityStart - warmupBins);
-    const int priorityEnd = std::min(numPoints, hintBin + priorityBins);
-    const bool hasPriority = priorityEnd > priorityStart;
-
-    if (hasPriority) {
-        FiltState pFilt;
-        pFilt.reset(numCh, sampleRate);
-        juce::AudioBuffer<float> pBuf(static_cast<int>(reader.numChannels), static_cast<int>(maxSamplesPerBin));
-
-        float pRunMaxLow = 0.1f, pRunMaxLowMid = 0.1f, pRunMaxMid = 0.1f, pRunMaxHigh = 0.1f;
-        QVector<TrackData::RgbWaveformFrame> pChunk;
-        pChunk.reserve(kChunk);
-        int pChunkStart = priorityStart;
-
-        // Warmup (no emit)
-        for (int bin = priorityWarmupStart; bin < priorityStart && !threadShouldExit(); ++bin) {
-            if ((bin & 0x1F) == 0)
-                cooperateWithRealtime();
-            const juce::int64 binStart = (static_cast<juce::int64>(bin) * totalSamples) / numPoints;
-            juce::int64 binEnd = (static_cast<juce::int64>(bin + 1) * totalSamples) / numPoints;
-            if (binEnd <= binStart) binEnd = std::min(totalSamples, binStart + 1);
-            const int toRead = static_cast<int>(std::max<juce::int64>(1, binEnd - binStart));
-            reader.read(&pBuf, 0, toRead, binStart, true, false);
-
-            for (int s = 0; s < toRead; ++s) {
-                float bL = 0, bLM = 0, bM = 0, bH = 0;
-                for (int ch = 0; ch < numCh; ++ch) {
-                    const size_t ci = static_cast<size_t>(ch);
-                    const float in = pBuf.getReadPointer(ch)[s];
-                    pFilt.lp110[ci] = aLP110 * in + (1.0f - aLP110) * pFilt.lp110[ci];
-                    const float b1 = std::abs(pFilt.lp110[ci]);
-                    pFilt.hp150s1[ci] = aHP150 * in + (1.0f - aHP150) * pFilt.hp150s1[ci];
-                    const float hp1o = in - pFilt.hp150s1[ci];
-                    pFilt.hp150s2[ci] = aHP150 * hp1o + (1.0f - aHP150) * pFilt.hp150s2[ci];
-                    pFilt.lp160[ci] = aLP160 * (hp1o - pFilt.hp150s2[ci]) + (1.0f - aLP160) * pFilt.lp160[ci];
-                    const float b2 = std::abs(pFilt.lp160[ci]);
-                    pFilt.hp180s1[ci] = aHP180 * in + (1.0f - aHP180) * pFilt.hp180s1[ci];
-                    const float hp3o = in - pFilt.hp180s1[ci];
-                    pFilt.hp180s2[ci] = aHP180 * hp3o + (1.0f - aHP180) * pFilt.hp180s2[ci];
-                    pFilt.lp800[ci] = aLP800 * (hp3o - pFilt.hp180s2[ci]) + (1.0f - aLP800) * pFilt.lp800[ci];
-                    const float b3 = std::abs(pFilt.lp800[ci]);
-                    const float v3 = in - pFilt.svfIc2[ci];
-                    const float v1 = svfD * (pFilt.svfIc1[ci] + svfG * v3);
-                    const float v2 = pFilt.svfIc2[ci] + svfG * v1;
-                    pFilt.svfIc1[ci] = 2.0f * v1 - pFilt.svfIc1[ci];
-                    pFilt.svfIc2[ci] = 2.0f * v2 - pFilt.svfIc2[ci];
-                    pFilt.hp19k[ci] = aHP19k * in + (1.0f - aHP19k) * pFilt.hp19k[ci];
-                    const float b4 = std::abs(v1) + std::abs(in - pFilt.hp19k[ci]);
-                    if (b1 > bL) bL = b1; if (b2 > bLM) bLM = b2;
-                    if (b3 > bM) bM = b3; if (b4 > bH)  bH  = b4;
-                }
-                pFilt.envLow.process(bL); pFilt.envLowMid.process(bLM);
-                pFilt.envMid.process(bM); pFilt.envHigh.process(bH);
-            }
-            RawBin rb; rb.low = pFilt.envLow.state; rb.lowMid = pFilt.envLowMid.state;
-            rb.mid = pFilt.envMid.state; rb.high = pFilt.envHigh.state;
-        }
-
-        // Priority window — emit immediately
-        for (int bin = priorityStart; bin < priorityEnd && !threadShouldExit(); ++bin) {
-            if ((bin & 0x1F) == 0)
-                cooperateWithRealtime();
-            const juce::int64 binStart = (static_cast<juce::int64>(bin) * totalSamples) / numPoints;
-            juce::int64 binEnd = (static_cast<juce::int64>(bin + 1) * totalSamples) / numPoints;
-            if (binEnd <= binStart) binEnd = std::min(totalSamples, binStart + 1);
-            const int toRead = static_cast<int>(std::max<juce::int64>(1, binEnd - binStart));
-            reader.read(&pBuf, 0, toRead, binStart, true, false);
-
-            for (int s = 0; s < toRead; ++s) {
-                float bL = 0, bLM = 0, bM = 0, bH = 0;
-                for (int ch = 0; ch < numCh; ++ch) {
-                    const size_t ci = static_cast<size_t>(ch);
-                    const float in = pBuf.getReadPointer(ch)[s];
-                    pFilt.lp110[ci] = aLP110 * in + (1.0f - aLP110) * pFilt.lp110[ci];
-                    const float b1 = std::abs(pFilt.lp110[ci]);
-                    pFilt.hp150s1[ci] = aHP150 * in + (1.0f - aHP150) * pFilt.hp150s1[ci];
-                    const float hp1o = in - pFilt.hp150s1[ci];
-                    pFilt.hp150s2[ci] = aHP150 * hp1o + (1.0f - aHP150) * pFilt.hp150s2[ci];
-                    pFilt.lp160[ci] = aLP160 * (hp1o - pFilt.hp150s2[ci]) + (1.0f - aLP160) * pFilt.lp160[ci];
-                    const float b2 = std::abs(pFilt.lp160[ci]);
-                    pFilt.hp180s1[ci] = aHP180 * in + (1.0f - aHP180) * pFilt.hp180s1[ci];
-                    const float hp3o = in - pFilt.hp180s1[ci];
-                    pFilt.hp180s2[ci] = aHP180 * hp3o + (1.0f - aHP180) * pFilt.hp180s2[ci];
-                    pFilt.lp800[ci] = aLP800 * (hp3o - pFilt.hp180s2[ci]) + (1.0f - aLP800) * pFilt.lp800[ci];
-                    const float b3 = std::abs(pFilt.lp800[ci]);
-                    const float v3 = in - pFilt.svfIc2[ci];
-                    const float v1 = svfD * (pFilt.svfIc1[ci] + svfG * v3);
-                    const float v2 = pFilt.svfIc2[ci] + svfG * v1;
-                    pFilt.svfIc1[ci] = 2.0f * v1 - pFilt.svfIc1[ci];
-                    pFilt.svfIc2[ci] = 2.0f * v2 - pFilt.svfIc2[ci];
-                    pFilt.hp19k[ci] = aHP19k * in + (1.0f - aHP19k) * pFilt.hp19k[ci];
-                    const float b4 = std::abs(v1) + std::abs(in - pFilt.hp19k[ci]);
-                    if (b1 > bL) bL = b1; if (b2 > bLM) bLM = b2;
-                    if (b3 > bM) bM = b3; if (b4 > bH)  bH  = b4;
-                }
-                pFilt.envLow.process(bL); pFilt.envLowMid.process(bLM);
-                pFilt.envMid.process(bM); pFilt.envHigh.process(bH);
-            }
-            RawBin rb; rb.low = pFilt.envLow.state; rb.lowMid = pFilt.envLowMid.state;
-            rb.mid = pFilt.envMid.state; rb.high = pFilt.envHigh.state;
-
-            if (rb.low > pRunMaxLow) pRunMaxLow = rb.low;
-            if (rb.lowMid > pRunMaxLowMid) pRunMaxLowMid = rb.lowMid;
-            if (rb.mid > pRunMaxMid) pRunMaxMid = rb.mid;
-            if (rb.high > pRunMaxHigh) pRunMaxHigh = rb.high;
-
-            TrackData::RgbWaveformFrame rgb;
-            const float lowN    = shapeBin(rb.low    / pRunMaxLow,    1.8f, 1.0f);
-            const float lowMidN = shapeBin(rb.lowMid / pRunMaxLowMid, 1.6f, 0.9f);
-            const float midN    = shapeBin(rb.mid    / pRunMaxMid,    1.5f, 0.7f);
-            const float highN   = shapeBin(rb.high   / pRunMaxHigh,   1.3f, 0.5f);
-            const float rmsN    = std::clamp(0.5f * std::max({lowN, lowMidN, midN, highN}) + 0.5f * ((lowN + lowMidN + midN + highN) / 4.0f), 0.0f, 1.0f);
-            rgb.color = QColor(255, 255, 255, 230);
-            rgb.rms = rmsN; rgb.low = lowN; rgb.lowMid = lowMidN; rgb.mid = midN; rgb.high = highN;
-            if (pChunk.isEmpty()) pChunkStart = bin;
-            pChunk.append(rgb);
-            if (pChunk.size() >= kChunk) {
-                m_trackData->writeRgbWaveformRange(pChunkStart, pChunk);
-                publishChunk(pChunkStart, {}, pChunk);
-                pChunk.clear();
-            }
-        }
-        if (!pChunk.isEmpty())
-        {
-            m_trackData->writeRgbWaveformRange(pChunkStart, pChunk);
-            publishChunk(pChunkStart, {}, pChunk);
-        }
-    }
+    analyzeDemand(hintBin, demandSnapshot());
+    if (threadShouldExit())
+        return false;
+    if (input.acquireBackgroundSlot && !input.acquireBackgroundSlot())
+        return false;
     // ─────────────────────────────────────────────────────────────────────
 
-    // Publish the playhead window first. Only then allocate/zero the
-    // duration-sized worker buffers; for an hour-long track these allocations
-    // are substantial and must never delay the first visible waveform chunk.
-    rawBins.resize(static_cast<size_t>(numPoints));
+    // Publish the playhead window first. Short tracks keep the legacy vectors
+    // for backward-compatible cache payloads. Long tracks build only canonical
+    // immutable chunks and never allocate duration-sized legacy RGB arrays.
     if (numPeakPoints > 0)
         rawPeakBuf.resize(static_cast<size_t>(numPeakPoints));
-    m_trackData->preallocateRgbWaveform(numPoints);
+    if (input.retainLegacyWaveform)
+        m_trackData->preallocateRgbWaveform(numPoints);
 
     int mainChunkStart = 0;
 
-    // Bins before the priority region are buffered here and flushed only after
-    // the forward region (priorityEnd..N) begins, so the user sees waveform
-    // continue forward from the seek point before the earlier section fills in.
-    QVector<TrackData::RgbWaveformFrame> earlyRgbBuf;
-    if (hasPriority) earlyRgbBuf.reserve(priorityStart);
-    int earlyRgbStart = 0;
-    bool earlyFlushed = !hasPriority;
-
-    // Tracks how far ahead we've pre-rendered via cold-start priority passes.
-    // Advances by priorityBins while the main loop runs so the waveform
-    // continues filling forward from the seek point instead of restarting at 0.
-    int forwardFrontier = hasPriority ? priorityEnd : 0;
-    // Tracks which hint position the current frontier run was started from.
-    // When the user seeks significantly (forward or backward), frontier resets.
-    int lastActedHint = hasPriority ? hintBin : 0;
+    int lastDemandChunk = hintBin / kChunk;
 
     for (int bin = 0; bin < numPoints; ++bin)
     {
@@ -732,184 +745,16 @@ bool runEnvelopePass(const EnvelopePassInput& input)
             m_trackData->reportAnalysisProgress(
                 (static_cast<double>(bin) / static_cast<double>(numPoints)) * 0.50, true);
 
-        // When entering the priority region: flush only the appendData batch
-        // (overview waveform). RGB for early bins stays in earlyRgbBuf.
-        if (hasPriority && bin == priorityStart && !previewBatch.isEmpty()) {
-            const int firstBin = std::max(0, bin - static_cast<int>(previewBatch.size()));
-            m_trackData->appendData(previewBatch);
-            publishChunk(firstBin, previewBatch, {});
-            previewBatch.clear();
-            previewRgbBatch.clear();
-        }
-
-        // When leaving the priority region: flush the early-bin RGB buffer so
-        // the forward fill is visible before going back to fill the beginning.
-        if (!earlyFlushed && bin >= priorityEnd) {
-            if (!earlyRgbBuf.isEmpty())
-            {
-                m_trackData->writeRgbWaveformRange(earlyRgbStart, earlyRgbBuf);
-                publishChunk(earlyRgbStart, {}, earlyRgbBuf);
-            }
-            earlyRgbBuf.clear();
-            earlyFlushed = true;
-        }
-
-        // Poll the live cursor frequently. Forward extension itself is paced
-        // more slowly so priority loading does not multiply total analysis work.
-        if (enableForwardPrefetch && bin > 0 && bin % 128 == 0) {
-            // Check for a new user seek in either direction — must happen before
-            // the frontier gate so a backward seek (or cold start) still takes effect.
-            bool cursorTargetChanged = false;
-            {
-                const int latestHint = seekHintBin();
-                // Treat a viewport-sized seek as a new cursor target.  The
-                // shorter threshold keeps a fast scrub responsive without
-                // restarting the priority pass for normal playback movement.
-                if (std::abs(latestHint - lastActedHint) > priorityBins / 4) {
-                    forwardFrontier = latestHint;
-                    lastActedHint   = latestHint;
-                    cursorTargetChanged = true;
-                }
-            }
-            const int prefetchInterval
-                = ((std::max(128, priorityBins / 2) + 127) / 128) * 128;
-            const bool extendForward = !cursorTargetChanged
-                && forwardFrontier > bin
-                && bin % prefetchInterval == 0;
-            if (forwardFrontier < numPoints
-                && (cursorTargetChanged || extendForward)) {
-                const int nWindowStart = cursorTargetChanged
-                    ? std::max(0, forwardFrontier - cursorContextBins)
-                    : forwardFrontier;
-                const int nWarmStart = std::max(0, nWindowStart - warmupBins);
-                const int nPriorityEnd = std::min(numPoints, forwardFrontier + priorityBins);
-                // A cursor can jump behind the sequential pass. It still has
-                // priority; normal sequential work is left alone otherwise.
-                if (cursorTargetChanged || nPriorityEnd > bin) {
-                    FiltState nFilt;
-                    nFilt.reset(numCh, sampleRate);
-                    juce::AudioBuffer<float> nBuf(static_cast<int>(reader.numChannels), static_cast<int>(maxSamplesPerBin));
-                    float nRunMaxLow = 0.1f, nRunMaxLowMid = 0.1f, nRunMaxMid = 0.1f, nRunMaxHigh = 0.1f;
-                    QVector<TrackData::RgbWaveformFrame> nChunk;
-                    nChunk.reserve(kChunk);
-                    int nChunkStart = nWindowStart;
-
-                    // Warmup
-                    for (int wb = nWarmStart; wb < nWindowStart && !threadShouldExit(); ++wb) {
-                        if ((wb & 0x1F) == 0)
-                            cooperateWithRealtime();
-                        const juce::int64 wBinStart = (static_cast<juce::int64>(wb) * totalSamples) / numPoints;
-                        juce::int64 wBinEnd = (static_cast<juce::int64>(wb + 1) * totalSamples) / numPoints;
-                        if (wBinEnd <= wBinStart) wBinEnd = std::min(totalSamples, wBinStart + 1);
-                        const int wToRead = static_cast<int>(std::max<juce::int64>(1, wBinEnd - wBinStart));
-                        reader.read(&nBuf, 0, wToRead, wBinStart, true, false);
-                        for (int s = 0; s < wToRead; ++s) {
-                            float bL = 0, bLM = 0, bM = 0, bH = 0;
-                            for (int ch = 0; ch < numCh; ++ch) {
-                                const size_t ci = static_cast<size_t>(ch);
-                                const float in = nBuf.getReadPointer(ch)[s];
-                                nFilt.lp110[ci] = aLP110 * in + (1.0f - aLP110) * nFilt.lp110[ci];
-                                const float b1 = std::abs(nFilt.lp110[ci]);
-                                nFilt.hp150s1[ci] = aHP150 * in + (1.0f - aHP150) * nFilt.hp150s1[ci];
-                                const float hp1o = in - nFilt.hp150s1[ci];
-                                nFilt.hp150s2[ci] = aHP150 * hp1o + (1.0f - aHP150) * nFilt.hp150s2[ci];
-                                nFilt.lp160[ci] = aLP160 * (hp1o - nFilt.hp150s2[ci]) + (1.0f - aLP160) * nFilt.lp160[ci];
-                                const float b2 = std::abs(nFilt.lp160[ci]);
-                                nFilt.hp180s1[ci] = aHP180 * in + (1.0f - aHP180) * nFilt.hp180s1[ci];
-                                const float hp3o = in - nFilt.hp180s1[ci];
-                                nFilt.hp180s2[ci] = aHP180 * hp3o + (1.0f - aHP180) * nFilt.hp180s2[ci];
-                                nFilt.lp800[ci] = aLP800 * (hp3o - nFilt.hp180s2[ci]) + (1.0f - aLP800) * nFilt.lp800[ci];
-                                const float b3 = std::abs(nFilt.lp800[ci]);
-                                const float v3 = in - nFilt.svfIc2[ci];
-                                const float v1 = svfD * (nFilt.svfIc1[ci] + svfG * v3);
-                                const float v2 = nFilt.svfIc2[ci] + svfG * v1;
-                                nFilt.svfIc1[ci] = 2.0f * v1 - nFilt.svfIc1[ci];
-                                nFilt.svfIc2[ci] = 2.0f * v2 - nFilt.svfIc2[ci];
-                                nFilt.hp19k[ci] = aHP19k * in + (1.0f - aHP19k) * nFilt.hp19k[ci];
-                                const float b4 = std::abs(v1) + std::abs(in - nFilt.hp19k[ci]);
-                                if (b1 > bL) bL = b1; if (b2 > bLM) bLM = b2;
-                                if (b3 > bM) bM = b3; if (b4 > bH)  bH  = b4;
-                            }
-                            nFilt.envLow.process(bL); nFilt.envLowMid.process(bLM);
-                            nFilt.envMid.process(bM); nFilt.envHigh.process(bH);
-                        }
-                        RawBin nrb; nrb.low = nFilt.envLow.state; nrb.lowMid = nFilt.envLowMid.state;
-                        nrb.mid = nFilt.envMid.state; nrb.high = nFilt.envHigh.state;
-                        rawBins[static_cast<size_t>(wb)] = nrb;
-                    }
-
-                    // Priority window
-                    for (int pb = nWindowStart; pb < nPriorityEnd && !threadShouldExit(); ++pb) {
-                        if ((pb & 0x1F) == 0)
-                            cooperateWithRealtime();
-                        const juce::int64 pBinStart = (static_cast<juce::int64>(pb) * totalSamples) / numPoints;
-                        juce::int64 pBinEnd = (static_cast<juce::int64>(pb + 1) * totalSamples) / numPoints;
-                        if (pBinEnd <= pBinStart) pBinEnd = std::min(totalSamples, pBinStart + 1);
-                        const int pToRead = static_cast<int>(std::max<juce::int64>(1, pBinEnd - pBinStart));
-                        reader.read(&nBuf, 0, pToRead, pBinStart, true, false);
-                        for (int s = 0; s < pToRead; ++s) {
-                            float bL = 0, bLM = 0, bM = 0, bH = 0;
-                            for (int ch = 0; ch < numCh; ++ch) {
-                                const size_t ci = static_cast<size_t>(ch);
-                                const float in = nBuf.getReadPointer(ch)[s];
-                                nFilt.lp110[ci] = aLP110 * in + (1.0f - aLP110) * nFilt.lp110[ci];
-                                const float b1 = std::abs(nFilt.lp110[ci]);
-                                nFilt.hp150s1[ci] = aHP150 * in + (1.0f - aHP150) * nFilt.hp150s1[ci];
-                                const float hp1o = in - nFilt.hp150s1[ci];
-                                nFilt.hp150s2[ci] = aHP150 * hp1o + (1.0f - aHP150) * nFilt.hp150s2[ci];
-                                nFilt.lp160[ci] = aLP160 * (hp1o - nFilt.hp150s2[ci]) + (1.0f - aLP160) * nFilt.lp160[ci];
-                                const float b2 = std::abs(nFilt.lp160[ci]);
-                                nFilt.hp180s1[ci] = aHP180 * in + (1.0f - aHP180) * nFilt.hp180s1[ci];
-                                const float hp3o = in - nFilt.hp180s1[ci];
-                                nFilt.hp180s2[ci] = aHP180 * hp3o + (1.0f - aHP180) * nFilt.hp180s2[ci];
-                                nFilt.lp800[ci] = aLP800 * (hp3o - nFilt.hp180s2[ci]) + (1.0f - aLP800) * nFilt.lp800[ci];
-                                const float b3 = std::abs(nFilt.lp800[ci]);
-                                const float v3 = in - nFilt.svfIc2[ci];
-                                const float v1 = svfD * (nFilt.svfIc1[ci] + svfG * v3);
-                                const float v2 = nFilt.svfIc2[ci] + svfG * v1;
-                                nFilt.svfIc1[ci] = 2.0f * v1 - nFilt.svfIc1[ci];
-                                nFilt.svfIc2[ci] = 2.0f * v2 - nFilt.svfIc2[ci];
-                                nFilt.hp19k[ci] = aHP19k * in + (1.0f - aHP19k) * nFilt.hp19k[ci];
-                                const float b4 = std::abs(v1) + std::abs(in - nFilt.hp19k[ci]);
-                                if (b1 > bL) bL = b1; if (b2 > bLM) bLM = b2;
-                                if (b3 > bM) bM = b3; if (b4 > bH)  bH  = b4;
-                            }
-                            nFilt.envLow.process(bL); nFilt.envLowMid.process(bLM);
-                            nFilt.envMid.process(bM); nFilt.envHigh.process(bH);
-                        }
-                        RawBin nrb; nrb.low = nFilt.envLow.state; nrb.lowMid = nFilt.envLowMid.state;
-                        nrb.mid = nFilt.envMid.state; nrb.high = nFilt.envHigh.state;
-                        rawBins[static_cast<size_t>(pb)] = nrb;
-
-                        if (nrb.low > nRunMaxLow) nRunMaxLow = nrb.low;
-                        if (nrb.lowMid > nRunMaxLowMid) nRunMaxLowMid = nrb.lowMid;
-                        if (nrb.mid > nRunMaxMid) nRunMaxMid = nrb.mid;
-                        if (nrb.high > nRunMaxHigh) nRunMaxHigh = nrb.high;
-
-                        TrackData::RgbWaveformFrame rgb;
-                        const float lowN    = shapeBin(nrb.low    / nRunMaxLow,    1.8f, 1.0f);
-                        const float lowMidN = shapeBin(nrb.lowMid / nRunMaxLowMid, 1.6f, 0.9f);
-                        const float midN    = shapeBin(nrb.mid    / nRunMaxMid,    1.5f, 0.7f);
-                        const float highN   = shapeBin(nrb.high   / nRunMaxHigh,   1.3f, 0.5f);
-                        const float rmsN    = std::clamp(0.5f * std::max({lowN, lowMidN, midN, highN}) + 0.5f * ((lowN + lowMidN + midN + highN) / 4.0f), 0.0f, 1.0f);
-                        rgb.color = QColor(255, 255, 255, 230);
-                        rgb.rms = rmsN; rgb.low = lowN; rgb.lowMid = lowMidN; rgb.mid = midN; rgb.high = highN;
-                        if (nChunk.isEmpty()) nChunkStart = pb;
-                        nChunk.append(rgb);
-                        if (nChunk.size() >= kChunk) {
-                            m_trackData->writeRgbWaveformRange(nChunkStart, nChunk);
-                            publishChunk(nChunkStart, {}, nChunk);
-                            nChunk.clear();
-                        }
-                    }
-                    if (!nChunk.isEmpty())
-                    {
-                        m_trackData->writeRgbWaveformRange(nChunkStart, nChunk);
-                        publishChunk(nChunkStart, {}, nChunk);
-                    }
-
-                    forwardFrontier = nPriorityEnd; // advance frontier for next iteration
-                }
+        // A changed source chunk means playback, seek or scratch crossed a
+        // meaningful demand boundary.  The new cursor chunk is analyzed
+        // synchronously before background sequential work resumes; no timer or
+        // FIFO of old background requests can sit in front of it.
+        if (bin > 0 && bin % 128 == 0) {
+            const int latestHint = seekHintBin();
+            const int latestDemandChunk = latestHint / kChunk;
+            if (latestDemandChunk != lastDemandChunk) {
+                analyzeDemand(latestHint, demandSnapshot());
+                lastDemandChunk = latestDemandChunk;
             }
         }
 
@@ -1010,161 +855,69 @@ bool runEnvelopePass(const EnvelopePassInput& input)
             }
         }
 
-        // Store RAW envelope values for the final pass.
         RawBin rb;
         rb.low    = mainFilt.envLow   .state;
         rb.lowMid = mainFilt.envLowMid.state;
         rb.mid    = mainFilt.envMid   .state;
         rb.high   = mainFilt.envHigh  .state;
-        rawBins[static_cast<size_t>(bin)] = rb;
-
-        // Track global per-band maxima (for Pass 2+3).
-        if (rb.low    > globalMaxLow)    globalMaxLow    = rb.low;
-        if (rb.lowMid > globalMaxLowMid) globalMaxLowMid = rb.lowMid;
-        if (rb.mid    > globalMaxMid)    globalMaxMid    = rb.mid;
-        if (rb.high   > globalMaxHigh)   globalMaxHigh   = rb.high;
         const float binMax = std::max({rb.low, rb.lowMid, rb.mid, rb.high});
         if (binMax > globalMaxPeak) globalMaxPeak = binMax;
 
-        // ── Live Preview: running-max normalization + shaping ────────────────
-        if (rb.low    > runMaxLow)    runMaxLow    = rb.low;
-        if (rb.lowMid > runMaxLowMid) runMaxLowMid = rb.lowMid;
-        if (rb.mid    > runMaxMid)    runMaxMid    = rb.mid;
-        if (rb.high   > runMaxHigh)   runMaxHigh   = rb.high;
-
         TrackData::WaveformBin pbin;
-        pbin.low    = shapeBin(rb.low    / runMaxLow,    1.8f, 1.0f);
-        pbin.lowMid = shapeBin(rb.lowMid / runMaxLowMid, 1.6f, 0.9f);
-        pbin.mid    = shapeBin(rb.mid    / runMaxMid,    1.5f, 0.7f);
-        pbin.high   = shapeBin(rb.high   / runMaxHigh,   1.3f, 0.5f);
+        pbin.low = shapeBin(rb.low / normalization.low, 1.8f, 1.0f);
+        pbin.lowMid = shapeBin(
+            rb.lowMid / normalization.lowMid, 1.6f, 0.9f);
+        pbin.mid = shapeBin(rb.mid / normalization.mid, 1.5f, 0.7f);
+        pbin.high = shapeBin(rb.high / normalization.high, 1.3f, 0.5f);
 
-        previewBatch.append(pbin);
+        if (input.retainLegacyWaveform)
+            previewBatch.append(pbin);
 
-        // Skip emitting RGB for bins already covered by the priority pass.
-        const bool inPriorityRegion = hasPriority && bin >= priorityStart && bin < priorityEnd;
-        const bool beforePriority   = hasPriority && !earlyFlushed && bin < priorityStart;
-        if (!inPriorityRegion) {
-            TrackData::RgbWaveformFrame rgb;
-            const float lowN    = std::clamp(pbin.low,    0.0f, 1.0f);
-            const float lowMidN = std::clamp(pbin.lowMid, 0.0f, 1.0f);
-            const float midN    = std::clamp(pbin.mid,    0.0f, 1.0f);
-            const float highN   = std::clamp(pbin.high,   0.0f, 1.0f);
-            const float rmsN    = std::clamp(0.5f * std::max({lowN, lowMidN, midN, highN}) + 0.5f * ((lowN + lowMidN + midN + highN) / 4.0f), 0.0f, 1.0f);
-            rgb.color = QColor(255, 255, 255, 230);
-            rgb.rms = rmsN; rgb.low = lowN; rgb.lowMid = lowMidN; rgb.mid = midN; rgb.high = highN;
-            if (beforePriority) {
-                // Defer: emit the early section only after the forward fill starts.
-                if (earlyRgbBuf.isEmpty()) earlyRgbStart = bin;
-                earlyRgbBuf.append(rgb);
-            } else {
-                if (previewRgbBatch.isEmpty()) mainChunkStart = bin;
-                previewRgbBatch.append(rgb);
-            }
-        }
+        TrackData::RgbWaveformFrame rgb;
+        const float lowN = std::clamp(pbin.low, 0.0f, 1.0f);
+        const float lowMidN = std::clamp(pbin.lowMid, 0.0f, 1.0f);
+        const float midN = std::clamp(pbin.mid, 0.0f, 1.0f);
+        const float highN = std::clamp(pbin.high, 0.0f, 1.0f);
+        const float rmsN = std::clamp(
+            0.5f * std::max({lowN, lowMidN, midN, highN})
+                + 0.5f * ((lowN + lowMidN + midN + highN) / 4.0f),
+            0.0f, 1.0f);
+        rgb.color = QColor(255, 255, 255, 230);
+        rgb.rms = rmsN;
+        rgb.low = lowN;
+        rgb.lowMid = lowMidN;
+        rgb.mid = midN;
+        rgb.high = highN;
+        if (previewRgbBatch.isEmpty())
+            mainChunkStart = bin;
+        previewRgbBatch.append(rgb);
 
-        if (previewBatch.size() >= kChunk) {
-            const int firstBin = std::max(0, bin - static_cast<int>(previewBatch.size()) + 1);
-            m_trackData->appendData(previewBatch);
-            if (!previewRgbBatch.isEmpty()) {
+        if (previewRgbBatch.size() >= kChunk) {
+            const int firstBin = mainChunkStart;
+            if (input.retainLegacyWaveform) {
+                m_trackData->appendData(previewBatch);
                 m_trackData->writeRgbWaveformRange(mainChunkStart, previewRgbBatch);
             }
-            // Waveform and RGB batches can have different offsets directly
-            // after a cursor-priority region. Never apply the RGB vector using
-            // the waveform offset; that made the loaded waveform appear shifted.
-            if (!previewRgbBatch.isEmpty()
-                && firstBin == mainChunkStart
-                && previewBatch.size() == previewRgbBatch.size()) {
-                publishChunk(firstBin, previewBatch, previewRgbBatch);
-            } else {
-                publishChunk(firstBin, previewBatch, {});
-                if (!previewRgbBatch.isEmpty())
-                    publishChunk(mainChunkStart, {}, previewRgbBatch);
-            }
+            publishChunk(firstBin, previewBatch, previewRgbBatch);
             previewRgbBatch.clear();
             previewBatch.clear();
         }
     }
-    if (!previewBatch.isEmpty()) {
-        const int firstBin = std::max(0, numPoints - static_cast<int>(previewBatch.size()));
-        m_trackData->appendData(previewBatch);
-        if (!previewRgbBatch.isEmpty())
+    if (!previewRgbBatch.isEmpty()) {
+        const int firstBin = mainChunkStart;
+        if (input.retainLegacyWaveform) {
+            m_trackData->appendData(previewBatch);
             m_trackData->writeRgbWaveformRange(mainChunkStart, previewRgbBatch);
-        if (!previewRgbBatch.isEmpty()
-            && firstBin == mainChunkStart
-            && previewBatch.size() == previewRgbBatch.size()) {
-            publishChunk(firstBin, previewBatch, previewRgbBatch);
-        } else {
-            publishChunk(firstBin, previewBatch, {});
-            if (!previewRgbBatch.isEmpty())
-                publishChunk(mainChunkStart, {}, previewRgbBatch);
         }
-    }
-    // Flush early-region buffer if priorityEnd was never reached (e.g. hint near end of track).
-    if (!earlyFlushed && !earlyRgbBuf.isEmpty())
-    {
-        m_trackData->writeRgbWaveformRange(earlyRgbStart, earlyRgbBuf);
-        publishChunk(earlyRgbStart, {}, earlyRgbBuf);
+        publishChunk(firstBin, previewBatch, previewRgbBatch);
     }
 
     if (threadShouldExit()) return false;
 
     m_trackData->reportAnalysisProgress(0.52, true);
 
-    // =========================================================================
-    // PASS 2+3 — Global Normalization → Anti-Crush Shaping → Final Output
-    //
-    //  Uses the TRUE global per-band maxima (known after full Pass 1) for
-    //  perfect proportions.  Same soft exponents + 2 % base floor as preview.
-    //  Atomically replaces the preview data so the renderer switches seamlessly.
-    // =========================================================================
-
-    // Guard against division by zero for silent bands.
-    if (globalMaxLow    < 1e-8f) globalMaxLow    = 1e-8f;
-    if (globalMaxLowMid < 1e-8f) globalMaxLowMid = 1e-8f;
-    if (globalMaxMid    < 1e-8f) globalMaxMid    = 1e-8f;
-    if (globalMaxHigh   < 1e-8f) globalMaxHigh   = 1e-8f;
-
-    QVector<TrackData::WaveformBin> finalData;
-    finalData.reserve(static_cast<int>(rawBins.size()));
-    QVector<TrackData::RgbWaveformFrame> polishedRgbData;
-    polishedRgbData.reserve(static_cast<int>(rawBins.size()));
-
-    int pass2Idx = 0;
-    const int pass2Total = static_cast<int>(rawBins.size());
-    for (const RawBin& rb : rawBins)
-    {
-        if (threadShouldExit()) break;
-
-        if ((pass2Idx & 0x3FFF) == 0 && pass2Total > 0)
-            m_trackData->reportAnalysisProgress(
-                0.52 + (static_cast<double>(pass2Idx) / static_cast<double>(pass2Total)) * 0.06, true);
-        ++pass2Idx;
-
-        // ── Global normalization → shaping → gain → base floor ──────────────
-        TrackData::WaveformBin wbin;
-        wbin.low    = shapeBin(rb.low    / globalMaxLow,    1.8f, 1.0f);
-        wbin.lowMid = shapeBin(rb.lowMid / globalMaxLowMid, 1.6f, 0.9f);
-        wbin.mid    = shapeBin(rb.mid    / globalMaxMid,    1.5f, 0.7f);
-        wbin.high   = shapeBin(rb.high   / globalMaxHigh,   1.3f, 0.5f);
-
-        finalData.append(wbin);
-
-        TrackData::RgbWaveformFrame rgb;
-        const float lowN    = std::clamp(wbin.low,    0.0f, 1.0f);
-        const float lowMidN = std::clamp(wbin.lowMid, 0.0f, 1.0f);
-        const float midN    = std::clamp(wbin.mid,    0.0f, 1.0f);
-        const float highN   = std::clamp(wbin.high,   0.0f, 1.0f);
-        const float rmsN    = std::clamp(0.5f * std::max({lowN, lowMidN, midN, highN}) + 0.5f * ((lowN + lowMidN + midN + highN) / 4.0f), 0.0f, 1.0f);
-        rgb.color = QColor(255, 255, 255, 230);
-        rgb.rms = rmsN; rgb.low = lowN; rgb.lowMid = lowMidN; rgb.mid = midN; rgb.high = highN;
-        polishedRgbData.append(rgb);
-    }
-
     if (!threadShouldExit()) {
-        m_trackData->replaceAllData(std::move(finalData), globalMaxPeak);
-        // Pass 2 output is authoritative — skip the expensive full-vector blend copy.
-        m_trackData->setRgbWaveformData(std::move(polishedRgbData));
-
+        m_trackData->setGlobalMaxPeak(globalMaxPeak);
         if (!rawPeakBuf.empty()) {
             m_trackData->reportAnalysisProgress(0.58, true);
             const float normScale = 127.0f / std::max(0.001f, globalMaxSample);

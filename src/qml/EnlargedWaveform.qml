@@ -56,15 +56,13 @@ Item {
             anchors.fill: parent
             engine: root.engine
             pixelsPerPoint: root.waveformZoom
+            backgroundColor: root.backgroundColor
         }
 
         Binding {
             target: root.engine
             property: "pixelsPerSecond"
-            value: root.engine
-                ? (root.waveformZoom * root.engine.waveformPointsPerSecond)
-                    / Math.max(0.05, Math.abs(root.engine.tempoRatio))
-                : 0
+            value: waveItem.effectivePixelsPerSecond
             when: root.engine !== null
         }
 
@@ -106,9 +104,7 @@ Item {
                     return
                 }
 
-                var tempoRatio = Math.max(0.05, Math.abs(root.engine.tempoRatio))
-                var effectivePixelsPerSecond = (root.waveformZoom * root.engine.waveformPointsPerSecond) / tempoRatio
-                if (effectivePixelsPerSecond <= 0.0)
+                if (waveItem.effectivePixelsPerSecond <= 0.0)
                     return
 
                 const deltaPx = dragPx - lastDragPx
@@ -117,7 +113,7 @@ Item {
                     return
 
                 // Vinyl pull: drag right = earlier in track (negative delta seconds).
-                const deltaSec = -deltaPx / effectivePixelsPerSecond
+                const deltaSec = waveItem.screenDeltaToSeconds(-deltaPx)
                 root.engine.scratchBySeconds(deltaSec)
             }
 
@@ -126,11 +122,10 @@ Item {
                 if (root.beatgridEditMode && mouse.button === Qt.LeftButton && !scrubEngaged) {
                     // Renderer: x = w/2 + (t - playhead) * pxPerSec  →  t = playhead + (x - w/2) / pxPerSec
                     // (Minus was wrong — felt mirrored; scrub drag uses minus because it's vinyl-pull.)
-                    var tempoRatio = Math.max(0.05, Math.abs(root.engine.tempoRatio))
-                    var pxPerSec = (root.waveformZoom * root.engine.waveformPointsPerSecond) / tempoRatio
-                    if (pxPerSec > 0) {
+                    if (waveItem.effectivePixelsPerSecond > 0) {
                         var wavePos = scrubArea.mapToItem(waveItem, mouse.x, mouse.y)
-                        var clickedSec = pressPlayheadSec + ((wavePos.x - waveItem.width * 0.5) / pxPerSec)
+                        var clickedSec = waveItem.timelineSecondsAtX(
+                            wavePos.x, pressPlayheadSec)
                         root.engine.setDownbeatAtPosition(clickedSec)
                     }
                     return

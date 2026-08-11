@@ -22,16 +22,15 @@
 #include <QEventLoop>
 #include <QTimer>
 #include <QStandardPaths>
+#include <QThread>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QPointer>
 #include <QQuickGraphicsConfiguration>
+#include <QScreen>
+#include <QSGRendererInterface>
 #include <QtGlobal>
-#include <QVersionNumber>
-#if defined(Q_OS_LINUX)
-#include <QVulkanInstance>
-#endif
 
 #include "DjEngine.h"
 #include "audio/AudioEngine.h"
@@ -81,6 +80,66 @@ void setEnvDefault(const char* name, const char* value)
         qputenv(name, value);
 }
 
+bool renderDiagnosticsEnabled()
+{
+    const auto value = qEnvironmentVariable("BROCKDJ_RENDER_DIAGNOSTICS")
+                           .trimmed().toLower();
+    return value == "1" || value == "true" || value == "on";
+}
+
+const char* graphicsApiName(QSGRendererInterface::GraphicsApi api)
+{
+    switch (api) {
+    case QSGRendererInterface::Software: return "software";
+    case QSGRendererInterface::OpenVG: return "openvg";
+    case QSGRendererInterface::OpenGL: return "opengl";
+    case QSGRendererInterface::Direct3D11: return "d3d11";
+    case QSGRendererInterface::Vulkan: return "vulkan";
+    case QSGRendererInterface::Metal: return "metal";
+    case QSGRendererInterface::Null: return "null";
+    case QSGRendererInterface::Direct3D12: return "d3d12";
+    case QSGRendererInterface::Unknown: break;
+    }
+    return "unknown";
+}
+
+class RenderDiagnosticsEventFilter final : public QObject
+{
+public:
+    explicit RenderDiagnosticsEventFilter(QObject* parent)
+        : QObject(parent)
+    {
+    }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        auto* window = qobject_cast<QWindow*>(watched);
+        if (!window)
+            return QObject::eventFilter(watched, event);
+        switch (event->type()) {
+        case QEvent::Expose:
+        case QEvent::Show:
+        case QEvent::Hide:
+        case QEvent::WindowStateChange:
+        case QEvent::ScreenChangeInternal:
+        case QEvent::DevicePixelRatioChange:
+            qInfo() << "[render-diagnostics] window event=" << event->type()
+                    << "visible=" << window->isVisible()
+                    << "exposed=" << window->isExposed()
+                    << "state=" << window->windowState()
+                    << "size=" << window->size()
+                    << "dpr=" << window->devicePixelRatio()
+                    << "screen="
+                    << (window->screen() ? window->screen()->name() : QString());
+            break;
+        default:
+            break;
+        }
+        return QObject::eventFilter(watched, event);
+    }
+};
+
 void configureQtRuntimeDefaults()
 {
     // Cross-platform UI: never inherit the host OS Quick Controls theme (e.g. KDE Breeze).
@@ -88,46 +147,10 @@ void configureQtRuntimeDefaults()
     setEnvDefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "RoundPreferFloor");
 
     if (qEnvironmentVariableIsEmpty("QT_LOGGING_RULES")) {
-        qputenv("QT_LOGGING_RULES",
-                "qt.scenegraph.general=false;"
-                "qt.rhi.general=false");
+        qputenv("QT_LOGGING_RULES", renderDiagnosticsEnabled()
+                ? "qt.scenegraph.general=true;qt.rhi.general=true"
+                : "qt.scenegraph.general=false;qt.rhi.general=false");
     }
-}
-
-QString pickDefaultVulkanIcd()
-{
-#if defined(Q_OS_LINUX)
-    const QString icdDirPath = QStringLiteral("/usr/share/vulkan/icd.d");
-    QDir icdDir(icdDirPath);
-    if (!icdDir.exists())
-        return {};
-
-    const QStringList files = icdDir.entryList({QStringLiteral("*.json")}, QDir::Files);
-    if (files.isEmpty())
-        return {};
-
-    const auto hasFile = [&files](const QString& name) { return files.contains(name); };
-    const auto filePath = [&icdDir](const QString& name) { return icdDir.absoluteFilePath(name); };
-
-    const QString glVendor = qEnvironmentVariable("__GLX_VENDOR_LIBRARY_NAME").trimmed().toLower();
-    const bool wantNvidia = qEnvironmentVariable("__NV_PRIME_RENDER_OFFLOAD") == "1"
-        || qEnvironmentVariable("DRI_PRIME") == "1"
-        || glVendor == "nvidia";
-
-    if (wantNvidia && hasFile("nvidia_icd.json"))
-        return filePath("nvidia_icd.json");
-
-    if (hasFile("intel_icd.json"))
-        return filePath("intel_icd.json");
-
-    if (hasFile("intel_hasvk_icd.json"))
-        return filePath("intel_hasvk_icd.json");
-
-    if (files.size() == 1)
-        return filePath(files.first());
-#endif
-
-    return {};
 }
 
 void filteredMessageHandler(QtMsgType type, const QMessageLogContext& context, const QString& message)
@@ -141,8 +164,6 @@ void filteredMessageHandler(QtMsgType type, const QMessageLogContext& context, c
 
 #if defined(Q_OS_LINUX)
 void configureLinuxVulkanBackend(bool& useVulkan,
-                                 QVersionNumber& requestedVkApi,
-                                 QString& requestedVkApiRaw,
                                  QString& requestedVkIcd)
 {
     QString rhiBackend = qEnvironmentVariable("BROCKDJ_RHI_BACKEND").trimmed().toLower();
@@ -161,43 +182,16 @@ void configureLinuxVulkanBackend(bool& useVulkan,
     } else if (rhiBackend == "auto") {
         qDebug() << "[startup] RHI backend auto (BROCKDJ_RHI_BACKEND=auto)";
     } else {
-        qWarning() << "[startup] Unknown BROCKDJ_RHI_BACKEND value, forcing vulkan:" << rhiBackend;
-        qputenv("QSG_RHI_BACKEND", "vulkan");
-        QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
-        useVulkan = true;
+        qWarning() << "[startup] Unknown BROCKDJ_RHI_BACKEND value; using Qt auto selection:"
+                   << rhiBackend;
     }
 
     if (!useVulkan)
         return;
 
     requestedVkIcd = qEnvironmentVariable("BROCKDJ_VK_ICD").trimmed();
-    if (requestedVkIcd.isEmpty() && qEnvironmentVariableIsEmpty("VK_ICD_FILENAMES")) {
-        const QString autoMode = qEnvironmentVariable("BROCKDJ_VK_ICD_AUTO").trimmed().toLower();
-        // Let the Vulkan loader choose the GPU by default.  Pinning the first
-        // Intel ICD found here can make a hybrid laptop present through a
-        // different GPU, which shows up as brief black frames.  The old
-        // deterministic selection remains available as an explicit diagnostic
-        // opt-in via BROCKDJ_VK_ICD_AUTO=1.
-        const bool allowAuto = autoMode == "1" || autoMode == "true" || autoMode == "on";
-        if (allowAuto)
-            requestedVkIcd = pickDefaultVulkanIcd();
-    }
-
     if (!requestedVkIcd.isEmpty())
         qputenv("VK_ICD_FILENAMES", requestedVkIcd.toUtf8());
-
-    requestedVkApiRaw = qEnvironmentVariable("BROCKDJ_VK_API").trimmed();
-    QString apiEnv = requestedVkApiRaw;
-    apiEnv.remove('"');
-    apiEnv.remove('\'');
-    apiEnv = apiEnv.trimmed().toLower();
-
-    if (!apiEnv.isEmpty()) {
-        if (apiEnv == "latest")
-            requestedVkApi = QVersionNumber(1, 4);
-        else
-            requestedVkApi = QVersionNumber::fromString(apiEnv);
-    }
 }
 #endif
 }
@@ -205,8 +199,6 @@ void configureLinuxVulkanBackend(bool& useVulkan,
 int runApplication(int argc, char *argv[])
 {
     bool useVulkan = false;
-    QVersionNumber requestedVkApi;
-    QString requestedVkApiRaw;
     QString requestedVkIcd;
     QElapsedTimer startupTimer;
     startupTimer.start();
@@ -229,8 +221,10 @@ int runApplication(int argc, char *argv[])
     configureQtRuntimeDefaults();
 
 #if defined(Q_OS_LINUX)
-    // Vulkan is required for production; allow env override for diagnostics.
-    configureLinuxVulkanBackend(useVulkan, requestedVkApi, requestedVkApiRaw, requestedVkIcd);
+    // Preserve the current Vulkan production default while keeping auto and
+    // OpenGL available for the Wayland comparison matrix. Qt owns whichever
+    // backend is selected; do not manufacture a second Vulkan lifecycle here.
+    configureLinuxVulkanBackend(useVulkan, requestedVkIcd);
 #endif
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::RoundPreferFloor);
 
@@ -238,6 +232,16 @@ int runApplication(int argc, char *argv[])
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
     QGuiApplication app(argc, argv);
+    const bool renderDiagnostics = renderDiagnosticsEnabled();
+    if (renderDiagnostics) {
+        qInfo() << "[render-diagnostics] Qt=" << qVersion()
+                << "platform=" << QGuiApplication::platformName()
+                << "session=" << qEnvironmentVariable("XDG_SESSION_TYPE")
+                << "requestedRhi=" << qEnvironmentVariable("BROCKDJ_RHI_BACKEND", "vulkan")
+                << "renderLoop=" << qEnvironmentVariable("QSG_RENDER_LOOP", "default")
+                << "pipelineCache=" << qEnvironmentVariable("BROCKDJ_VK_CACHE", "on")
+                << "icdOverride=" << qEnvironmentVariable("VK_ICD_FILENAMES");
+    }
 #if defined(Q_OS_UNIX)
     PosixSignalHandler posixSignals;
     if (posixSignals.initialize()) {
@@ -251,30 +255,19 @@ int runApplication(int argc, char *argv[])
     logStartupStep("QGuiApplication created");
 
 #if defined(Q_OS_LINUX)
-    std::unique_ptr<QVulkanInstance> vkInstance;
     if (useVulkan) {
         if (!requestedVkIcd.isEmpty())
             qDebug() << "[startup] Vulkan ICD override:" << requestedVkIcd;
-
-        if (!requestedVkApiRaw.isEmpty()) {
-            if (!requestedVkApi.isNull())
-                qDebug() << "[startup] Vulkan API override:" << requestedVkApi;
-            else
-                qWarning() << "[startup] Invalid BROCKDJ_VK_API value:" << requestedVkApiRaw;
+        const QString requestedVkApi = qEnvironmentVariable("BROCKDJ_VK_API").trimmed();
+        if (!requestedVkApi.isEmpty()) {
+            qWarning() << "[startup] BROCKDJ_VK_API is ignored: Qt owns the Vulkan instance"
+                       << "and negotiates the API required by Qt Quick:" << requestedVkApi;
         }
-
-        vkInstance = std::make_unique<QVulkanInstance>();
-        if (!requestedVkApi.isNull())
-            vkInstance->setApiVersion(requestedVkApi);
-
-        QElapsedTimer vkTimer;
-        vkTimer.start();
-        const bool vkOk = vkInstance->create();
-        qDebug() << "[startup] Vulkan instance create" << (vkOk ? "ok" : "failed")
-                 << vkTimer.elapsed() << "ms";
-
-        if (!vkOk)
-            vkInstance.reset();
+        if (!qEnvironmentVariableIsEmpty("BROCKDJ_VK_ICD_AUTO")) {
+            qWarning() << "[startup] BROCKDJ_VK_ICD_AUTO is obsolete;"
+                       << "the Vulkan loader now selects the device unless BROCKDJ_VK_ICD is explicit";
+        }
+        qDebug() << "[startup] Vulkan instance ownership delegated to Qt Quick";
     }
 #endif // Q_OS_LINUX
 
@@ -607,14 +600,11 @@ int runApplication(int argc, char *argv[])
 
             if (auto* quickWindow = qobject_cast<QQuickWindow*>(rootWindow)) {
                 const bool usingVulkan = (QQuickWindow::graphicsApi() == QSGRendererInterface::Vulkan);
-#if defined(Q_OS_LINUX)
-                if (usingVulkan && vkInstance)
-                    quickWindow->setVulkanInstance(vkInstance.get());
-#endif
                 if (usingVulkan) {
                     const QString cacheMode = qEnvironmentVariable("BROCKDJ_VK_CACHE").trimmed().toLower();
-                    const bool enableCache = cacheMode.isEmpty() || cacheMode == "1" || cacheMode == "on" || cacheMode == "true";
                     const bool resetCache = (cacheMode == "reset");
+                    const bool enableCache = resetCache || cacheMode.isEmpty()
+                        || cacheMode == "1" || cacheMode == "on" || cacheMode == "true";
 
                     if (enableCache) {
                         const QString cacheDir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
@@ -643,10 +633,37 @@ int runApplication(int argc, char *argv[])
                     quickWindow,
                     &QQuickWindow::sceneGraphInitialized,
                     &app,
-                    [&startupTimer]() {
+                    [quickWindow, &startupTimer, renderDiagnostics]() {
                     qDebug() << "[startup] Scene graph initialized" << startupTimer.elapsed() << "ms";
+                    if (renderDiagnostics) {
+                        const auto* renderer = quickWindow->rendererInterface();
+                        qInfo() << "[render-diagnostics] scene graph initialized"
+                                << "api=" << graphicsApiName(
+                                       renderer ? renderer->graphicsApi()
+                                                : QSGRendererInterface::Unknown)
+                                << "thread=" << QThread::currentThread();
+                    }
                     },
                     static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::SingleShotConnection));
+
+                if (renderDiagnostics) {
+                    auto* diagnosticsFilter = new RenderDiagnosticsEventFilter(quickWindow);
+                    quickWindow->installEventFilter(diagnosticsFilter);
+                    QObject::connect(
+                        quickWindow, &QQuickWindow::sceneGraphInvalidated,
+                        &app, [] {
+                            qInfo() << "[render-diagnostics] scene graph invalidated"
+                                    << "thread=" << QThread::currentThread();
+                        }, Qt::DirectConnection);
+                    QObject::connect(
+                        quickWindow, &QWindow::screenChanged,
+                        &app, [quickWindow](QScreen* screen) {
+                            qInfo() << "[render-diagnostics] screen changed"
+                                    << "screen=" << (screen ? screen->name() : QString())
+                                    << "dpr=" << quickWindow->devicePixelRatio()
+                                    << "refresh=" << (screen ? screen->refreshRate() : 0.0);
+                        });
+                }
 
                 QObject::connect(
                     quickWindow,

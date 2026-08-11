@@ -13,11 +13,9 @@
 #include <QtGlobal>
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <limits>
 #include <optional>
-#include <thread>
 
 namespace {
 
@@ -120,15 +118,52 @@ void writeRenderLine(QDataStream& out, const WaveformLine& line)
         << static_cast<quint8>(line.flags);
 }
 
-WaveformLine foldRenderLines(const std::vector<WaveformLine>& source,
-                             int begin, int end)
+bool preparedLinesAreComplete(const WaveformCache::Payload& payload)
+{
+    const auto& prepared = payload.preparedLines;
+    if (!prepared || prepared->totalLineCount == 0
+        || prepared->totalLineCount
+            != static_cast<std::uint32_t>(payload.totalExpected)) {
+        return false;
+    }
+    std::uint32_t covered = 0;
+    for (const auto& chunk : prepared->chunks) {
+        if (!chunk || chunk->empty()
+            || chunk->size() > WaveformLineStore::kChunkSize
+            || covered + chunk->size() > prepared->totalLineCount) {
+            return false;
+        }
+        covered += static_cast<std::uint32_t>(chunk->size());
+    }
+    return covered == prepared->totalLineCount;
+}
+
+WaveformLine payloadLineAt(const WaveformCache::Payload& payload, int index)
+{
+    if (payload.preparedLines) {
+        const auto chunkIndex = static_cast<std::uint32_t>(index)
+            / WaveformLineStore::kChunkSize;
+        const auto local = static_cast<std::uint32_t>(index)
+            % WaveformLineStore::kChunkSize;
+        if (chunkIndex < payload.preparedLines->chunks.size()) {
+            const auto& chunk = payload.preparedLines->chunks[chunkIndex];
+            if (chunk && local < chunk->size())
+                return (*chunk)[local];
+        }
+        return {};
+    }
+    return waveform::makeCanonicalLine(payload.rgb, payload.peakMip, index);
+}
+
+WaveformLine foldPayloadLines(const WaveformCache::Payload& payload,
+                              int begin, int end)
 {
     WaveformLine result;
     std::uint64_t red = 0, green = 0, blue = 0, weight = 0;
     std::uint8_t flags = 0xff;
     bool hasExtrema = false;
     for (int index = begin; index < end; ++index) {
-        const auto& line = source[static_cast<std::size_t>(index)];
+        const auto line = payloadLineAt(payload, index);
         if (!hasExtrema) {
             result.minimum = line.minimum;
             result.maximum = line.maximum;
@@ -164,8 +199,13 @@ bool saveRenderCache(const QString& path, const WaveformCache::Payload& payload)
     QDataStream out(&file);
     out.setVersion(kDataStreamVersion);
 
-    const int total = payload.rgb.size();
-    const int overviewCount = std::min(kRenderOverviewBins, total);
+    const int total = payload.preparedLines
+        ? static_cast<int>(payload.preparedLines->totalLineCount)
+        : static_cast<int>(payload.rgb.size());
+    const bool hasPreparedOverview = !payload.overview.isEmpty();
+    const int overviewSourceCount = hasPreparedOverview
+        ? static_cast<int>(payload.overview.size()) : total;
+    const int overviewCount = std::min(kRenderOverviewBins, overviewSourceCount);
     out << static_cast<quint32>(kRenderMagic)
         << static_cast<qint32>(kRenderVersion)
         << static_cast<qint32>(payload.pointsPerSecond)
@@ -174,13 +214,17 @@ bool saveRenderCache(const QString& path, const WaveformCache::Payload& payload)
         << static_cast<qint32>(overviewCount);
 
     for (int bin = 0; bin < overviewCount; ++bin) {
-        const int begin = static_cast<int>(
-            (static_cast<qint64>(bin) * total) / overviewCount);
+        const int begin = static_cast<int>((static_cast<qint64>(bin)
+            * overviewSourceCount) / overviewCount);
         const int end = std::max(begin + 1, static_cast<int>(
-            (static_cast<qint64>(bin + 1) * total) / overviewCount));
+            (static_cast<qint64>(bin + 1) * overviewSourceCount)
+                / overviewCount));
         float rms = 0.0f, low = 0.0f, lowMid = 0.0f, mid = 0.0f, high = 0.0f;
-        for (int index = begin; index < std::min(end, total); ++index) {
-            const auto& frame = payload.rgb[index];
+        const auto& overviewSource = hasPreparedOverview
+            ? payload.overview : payload.rgb;
+        for (int index = begin;
+             index < std::min(end, overviewSourceCount); ++index) {
+            const auto& frame = overviewSource[index];
             rms = std::max(rms, frame.rms);
             low = std::max(low, frame.low);
             lowMid = std::max(lowMid, frame.lowMid);
@@ -192,11 +236,9 @@ bool saveRenderCache(const QString& path, const WaveformCache::Payload& payload)
             << quantizeUnit(high);
     }
 
-    std::vector<WaveformLine> canonical(static_cast<std::size_t>(total));
     for (int index = 0; index < total; ++index) {
-        canonical[static_cast<std::size_t>(index)] = waveform::makeCanonicalLine(
-            payload.rgb, payload.peakMip, index);
-        writeRenderLine(out, canonical[static_cast<std::size_t>(index)]);
+        const auto line = payloadLineAt(payload, index);
+        writeRenderLine(out, line);
     }
 
     out << static_cast<quint32>(kLodMagic)
@@ -223,7 +265,7 @@ bool saveRenderCache(const QString& path, const WaveformCache::Payload& payload)
                 const int sample = firstSample + local;
                 const int begin = sample * stride;
                 const int end = std::min(total, begin + stride);
-                writeRenderLine(out, foldRenderLines(canonical, begin, end));
+                writeRenderLine(out, foldPayloadLines(payload, begin, end));
             }
         }
     }
@@ -309,7 +351,7 @@ bool WaveformCache::streamRenderCache(
     const QString& filePath,
     int pointsPerSecond,
     const std::function<bool()>& shouldCancel,
-    const std::function<double()>& seekHintSeconds,
+    const std::function<waveform::WaveformDemand()>& demandSnapshot,
     const RenderChunkCallback& publishChunk)
 {
     if (!publishChunk)
@@ -329,9 +371,9 @@ bool WaveformCache::streamRenderCache(
     const int chunkCount = (totalLines + chunkSize - 1) / chunkSize;
     std::vector<bool> loaded(static_cast<size_t>(chunkCount), false);
     int loadedCount = 0;
-    int sequentialCursor = 0;
-    constexpr int kPriorityForwardChunks = 8;
-    constexpr int kViewportGuardRadiusChunks = 2;
+    constexpr std::size_t kInteractiveBatchChunks = 4;
+    constexpr std::size_t kBackgroundBatchChunks = 32;
+    bool publishedFirstPlayheadChunk = false;
     const qint64 linesOffset = kRenderHeaderBytes
         + static_cast<qint64>(overviewCount) * kRenderOverviewRecordBytes;
 
@@ -370,57 +412,62 @@ bool WaveformCache::streamRenderCache(
         if (shouldCancel && shouldCancel())
             return false;
 
-        const double hintSeconds = seekHintSeconds ? seekHintSeconds() : 0.0;
-        const int hintLine = std::clamp(
-            static_cast<int>(std::max(0.0, hintSeconds) * pointsPerSecond),
-            0, totalLines - 1);
-        const int hintChunk = hintLine / chunkSize;
-        int selected = -1;
-        if (!loaded[static_cast<size_t>(hintChunk)])
-            selected = hintChunk;
-        for (int offset = 1;
-             selected < 0 && offset < kPriorityForwardChunks;
-             ++offset) {
-            const int candidate = hintChunk + offset;
-            if (candidate < chunkCount
-                && !loaded[static_cast<size_t>(candidate)]) {
-                selected = candidate;
+        const auto demand = demandSnapshot
+            ? demandSnapshot() : waveform::WaveformDemand{};
+        struct Candidate final {
+            int chunkIndex = 0;
+            waveform::WaveformPriorityScore score;
+        };
+        std::vector<Candidate> candidates;
+        candidates.reserve(static_cast<std::size_t>(chunkCount - loadedCount));
+        for (int chunkIndex = 0; chunkIndex < chunkCount; ++chunkIndex) {
+            if (loaded[static_cast<std::size_t>(chunkIndex)])
+                continue;
+            const double beginSec = static_cast<double>(chunkIndex * chunkSize)
+                / static_cast<double>(pointsPerSecond);
+            const double endSec = static_cast<double>(std::min(
+                totalLines, (chunkIndex + 1) * chunkSize))
+                / static_cast<double>(pointsPerSecond);
+            auto score = waveform::priorityForRange(
+                demand, beginSec, endSec);
+            if (!demand.valid()) {
+                score.priority = waveform::WaveformPriority::BackgroundRest;
+                score.distanceSec = static_cast<double>(chunkIndex);
             }
+            candidates.push_back({chunkIndex, score});
         }
-        const int behind = hintChunk - 1;
-        if (selected < 0 && behind >= 0
-            && !loaded[static_cast<size_t>(behind)]) {
-            selected = behind;
-        }
-        while (selected < 0 && sequentialCursor < chunkCount) {
-            if (!loaded[static_cast<size_t>(sequentialCursor)])
-                selected = sequentialCursor;
-            ++sequentialCursor;
-        }
-        if (selected < 0)
+        std::stable_sort(candidates.begin(), candidates.end(),
+            [](const Candidate& left, const Candidate& right) {
+                if (waveform::higherPriority(left.score, right.score))
+                    return true;
+                if (waveform::higherPriority(right.score, left.score))
+                    return false;
+                return left.chunkIndex < right.chunkIndex;
+            });
+        if (candidates.empty())
             break;
 
-        std::vector<int> batchIndices;
-        batchIndices.reserve(1 + kViewportGuardRadiusChunks * 2);
-        batchIndices.push_back(selected);
-        for (int distance = 1; distance <= kViewportGuardRadiusChunks; ++distance) {
-            const int behindCandidate = selected - distance;
-            const int aheadCandidate = selected + distance;
-            if (behindCandidate >= 0
-                && !loaded[static_cast<size_t>(behindCandidate)]) {
-                batchIndices.push_back(behindCandidate);
-            }
-            if (aheadCandidate < chunkCount
-                && !loaded[static_cast<size_t>(aheadCandidate)]) {
-                batchIndices.push_back(aheadCandidate);
-            }
-        }
+        // The first cache publication after load is deliberately one immutable
+        // source chunk.  Reading a 32-chunk guard batch before notifying the
+        // owner thread delayed first paint and let a subsequent seek wait
+        // behind stale disk work.  Later interactive batches stay small so the
+        // demand snapshot is re-evaluated frequently; only background fill is
+        // amortised into larger reads.
+        const bool interactive = demand.valid()
+            && candidates.front().score.expansionRank <= 2;
+        const std::size_t requestedBatch = !publishedFirstPlayheadChunk
+            && demand.valid()
+            ? 1
+            : (interactive ? kInteractiveBatchChunks
+                           : kBackgroundBatchChunks);
+        const std::size_t batchCount = std::min(
+            candidates.size(), requestedBatch);
 
         WaveformLineBatch batch;
-        batch.reserve(batchIndices.size());
-        for (const int chunkIndex : batchIndices) {
-            if (loaded[static_cast<size_t>(chunkIndex)])
-                continue;
+        batch.reserve(batchCount);
+        for (std::size_t candidateIndex = 0;
+             candidateIndex < batchCount; ++candidateIndex) {
+            const int chunkIndex = candidates[candidateIndex].chunkIndex;
             auto chunk = readChunk(chunkIndex);
             if (!chunk)
                 return false;
@@ -429,9 +476,7 @@ bool WaveformCache::streamRenderCache(
             batch.push_back(std::move(*chunk));
         }
         publishChunk(totalLines, std::move(batch));
-        // Do not flood the Qt owner queue when a warm SSD can read thousands of
-        // small chunks per second. The current/playhead window is still first.
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        publishedFirstPlayheadChunk = true;
     }
     return loadedCount == chunkCount;
 }
@@ -631,13 +676,24 @@ bool WaveformCache::loadForFile(const QString& filePath, int pointsPerSecond, Pa
 
 bool WaveformCache::saveForFile(const QString& filePath, const Payload& payload)
 {
-    if (payload.waveform.isEmpty() || payload.rgb.isEmpty()
-        || payload.pointsPerSecond <= 0
+    if (payload.pointsPerSecond <= 0
         || payload.totalExpected <= 0
-        || payload.totalExpected != payload.waveform.size()
-        || payload.totalExpected != payload.rgb.size()
         || !std::isfinite(payload.globalMaxPeak)
         || payload.globalMaxPeak <= 0.0f) {
+        return false;
+    }
+
+    const qint64 fullPayloadMaximumBins = kFullPayloadMaximumDurationSeconds
+        * static_cast<qint64>(payload.pointsPerSecond);
+    const bool longTrack = payload.totalExpected > fullPayloadMaximumBins;
+    const bool hasLegacyVectors = !payload.waveform.isEmpty()
+        && !payload.rgb.isEmpty()
+        && payload.totalExpected == payload.waveform.size()
+        && payload.totalExpected == payload.rgb.size();
+    const bool hasPreparedLines = preparedLinesAreComplete(payload);
+    if ((!longTrack && !hasLegacyVectors)
+        || (longTrack && !hasLegacyVectors && !hasPreparedLines)
+        || (payload.rgb.isEmpty() && payload.overview.isEmpty())) {
         return false;
     }
 
@@ -649,9 +705,7 @@ bool WaveformCache::saveForFile(const QString& filePath, const Payload& payload)
     // For long sets it can grow to hundreds of MiB and is never needed for
     // rendering after library analysis has been persisted. Keep the compact,
     // progressively readable line cache instead.
-    const qint64 fullPayloadMaximumBins = kFullPayloadMaximumDurationSeconds
-        * static_cast<qint64>(payload.pointsPerSecond);
-    if (payload.totalExpected > fullPayloadMaximumBins) {
+    if (longTrack) {
         QFile::remove(cachePathFor(filePath, payload.pointsPerSecond));
         return true;
     }

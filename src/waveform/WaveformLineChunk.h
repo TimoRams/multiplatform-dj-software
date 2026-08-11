@@ -6,6 +6,13 @@
 #include <memory>
 #include <vector>
 
+enum class WaveformChunkState : std::uint8_t {
+    Missing,
+    Loading,
+    PreviewReady,
+    FinalReady
+};
+
 struct WaveformLineChunk final {
     std::uint64_t trackGeneration = 0;
     std::uint32_t chunkIndex = 0;
@@ -17,6 +24,16 @@ struct WaveformLineChunk final {
     // Render tiles depend only on revisions of chunks they actually cover,
     // rather than being invalidated when an unrelated timeline chunk arrives.
     std::uint64_t revision = 0;
+    // A chunk pointer alone does not mean the range is renderable. Progressive
+    // analysis may stage only part of its fixed line range. Detail rendering is
+    // allowed only after every line in that range is available.
+    WaveformChunkState state = WaveformChunkState::Loading;
+
+    [[nodiscard]] bool isReady() const noexcept
+    {
+        return state == WaveformChunkState::PreviewReady
+            || state == WaveformChunkState::FinalReady;
+    }
 
     [[nodiscard]] bool isWellFormed(std::uint32_t chunkSize) const noexcept
     {

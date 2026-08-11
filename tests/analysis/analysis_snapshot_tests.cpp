@@ -77,5 +77,42 @@ int main(int argc, char** argv)
     working.reportAnalysisProgress(1.0, false);
     ok &= require(progressPublications <= 102, "progress was not coalesced to percent changes");
 
+    // Long-track working state owns only immutable canonical chunks. Exercise
+    // out-of-order and duplicate writes without allocating legacy full vectors.
+    analysis::AnalysisWorkingData sparseWorking;
+    constexpr int sparseLineCount = 4097;
+    sparseWorking.setTotalExpected(sparseLineCount);
+    sparseWorking.initializePreparedWaveformLines(sparseLineCount);
+    QVector<TrackData::RgbWaveformFrame> sparseFrames(1024);
+    for (auto& frame : sparseFrames) {
+        frame.rms = 0.5f;
+        frame.low = 0.8f;
+        frame.mid = 0.3f;
+    }
+    sparseWorking.writePreparedWaveformRange(2048, sparseFrames);
+    sparseWorking.writePreparedWaveformRange(0, sparseFrames);
+    sparseWorking.writePreparedWaveformRange(2048, sparseFrames);
+    sparseWorking.writePreparedWaveformRange(1024, sparseFrames);
+    sparseWorking.writePreparedWaveformRange(3072, sparseFrames);
+    sparseWorking.writePreparedWaveformRange(
+        4096, QVector<TrackData::RgbWaveformFrame>{sparseFrames.front()});
+    const auto sparsePrepared = sparseWorking.preparedWaveformLines();
+    ok &= require(sparsePrepared
+                      && sparsePrepared->totalLineCount == sparseLineCount
+                      && sparsePrepared->chunks.size() == 5,
+                  "sparse long-track chunks did not finalize completely");
+    ok &= require(sparsePrepared
+                      && sparsePrepared->chunks.back()->size() == 1
+                      && (sparsePrepared->chunks.back()->front().flags
+                          & waveform_line_flags::kFinal) != 0,
+                  "prepared tail chunk lost final immutable state");
+    analysis::AnalysisIdentity sparseIdentity;
+    sparseIdentity.trackGeneration = 11;
+    auto sparseResult = std::move(sparseWorking).finish(sparseIdentity);
+    ok &= require(sparseResult.preparedWaveformLines
+                      && sparseResult.waveform->isEmpty()
+                      && sparseResult.rgbWaveform->isEmpty(),
+                  "long-track result retained duration-sized legacy vectors");
+
     return ok ? 0 : 1;
 }

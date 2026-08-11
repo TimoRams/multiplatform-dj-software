@@ -175,6 +175,10 @@ void TrackData::rebuildWaveformLineStoreLocked(std::uint64_t trackGeneration)
     const int totalLines = (rgb->size() + rgbPerLine - 1) / rgbPerLine;
     m_waveformLineStore.reset(trackGeneration, static_cast<std::uint32_t>(totalLines));
 
+    std::vector<WaveformLineChunk> publication;
+    publication.reserve(static_cast<std::size_t>(
+        (totalLines + static_cast<int>(WaveformLineStore::kChunkSize) - 1)
+        / static_cast<int>(WaveformLineStore::kChunkSize)));
     for (int first = 0, chunkIndex = 0; first < totalLines;
          first += static_cast<int>(WaveformLineStore::kChunkSize), ++chunkIndex) {
         const int count = std::min(static_cast<int>(WaveformLineStore::kChunkSize), totalLines - first);
@@ -185,11 +189,13 @@ void TrackData::rebuildWaveformLineStoreLocked(std::uint64_t trackGeneration)
             (*lines)[static_cast<size_t>(local)] = makeCanonicalWaveformLine(
                 *rgb, peakData, first + local,
                 WaveformNormalizationState::Final);
-        const auto published = m_waveformLineStore.publish({
+        publication.push_back({
             trackGeneration, static_cast<std::uint32_t>(chunkIndex), static_cast<std::uint32_t>(first),
             static_cast<std::uint32_t>(count), static_cast<std::uint32_t>(totalLines), std::move(lines)});
-        Q_ASSERT(published == WaveformLineStore::PublishResult::Accepted);
     }
+    const auto published = m_waveformLineStore.publishBatch(
+        std::move(publication));
+    Q_ASSERT(published == WaveformLineStore::PublishResult::Accepted);
 }
 
 void TrackData::installPreparedWaveformLinesLocked(
@@ -205,6 +211,8 @@ void TrackData::installPreparedWaveformLinesLocked(
     m_waveformLineGeneration = trackGeneration;
     m_waveformLineStore.reset(trackGeneration, prepared->totalLineCount);
     std::uint32_t first = 0;
+    std::vector<WaveformLineChunk> publication;
+    publication.reserve(prepared->chunks.size());
     for (std::uint32_t chunkIndex = 0; chunkIndex < prepared->chunks.size(); ++chunkIndex) {
         const auto& lines = prepared->chunks[chunkIndex];
         if (!lines || lines->empty() || first >= prepared->totalLineCount) {
@@ -212,17 +220,16 @@ void TrackData::installPreparedWaveformLinesLocked(
             return;
         }
         const auto count = static_cast<std::uint32_t>(lines->size());
-        const auto published = m_waveformLineStore.publish({
+        publication.push_back({
             trackGeneration, chunkIndex, first, count,
             prepared->totalLineCount, lines});
-        if (published != WaveformLineStore::PublishResult::Accepted) {
-            rebuildWaveformLineStoreLocked(trackGeneration + 1);
-            return;
-        }
         first += count;
     }
-    if (first != prepared->totalLineCount)
+    if (first != prepared->totalLineCount
+        || m_waveformLineStore.publishBatch(std::move(publication))
+            != WaveformLineStore::PublishResult::Accepted) {
         rebuildWaveformLineStoreLocked(trackGeneration + 1);
+    }
 }
 
 QVector<TrackData::RgbWaveformFrame> TrackData::downsampleOverview(
@@ -759,6 +766,36 @@ void TrackData::initializeCachedWaveformLines(
     emit dataUpdated();
 }
 
+void TrackData::publishWaveformOverview(
+    int totalLines,
+    int linesPerSecond,
+    QVector<RgbWaveformFrame>&& overview)
+{
+    assertOwnerThread();
+    if (totalLines <= 0 || linesPerSecond <= 0 || overview.isEmpty())
+        return;
+    {
+        QMutexLocker locker(&m_mutex);
+        m_totalExpected = totalLines;
+        const auto snapshot = m_waveformLineStore.snapshot();
+        if (!snapshot
+            || snapshot->totalLineCount != static_cast<std::uint32_t>(totalLines)
+            || snapshot->linesPerSecond != static_cast<std::uint32_t>(linesPerSecond)) {
+            m_waveformLineStore.reset(
+                ++m_waveformLineGeneration,
+                static_cast<std::uint32_t>(totalLines),
+                static_cast<std::uint32_t>(linesPerSecond));
+            m_progressivePendingLineChunks.clear();
+            m_progressiveDirtyLineChunks.clear();
+        }
+        m_overviewSnapshot = std::make_shared<const QVector<RgbWaveformFrame>>(
+            std::move(overview));
+        m_overviewRgb.clear();
+    }
+    emit overviewRgbUpdated();
+    emit dataUpdated();
+}
+
 void TrackData::applyCachedWaveformLineChunk(
     int firstLine,
     int totalLines,
@@ -808,20 +845,23 @@ void TrackData::applyCachedWaveformLineBatch(
                 return;
             }
         }
+        std::vector<WaveformLineChunk> publication;
+        publication.reserve(chunks.size());
         for (auto& chunk : chunks) {
             const auto count = static_cast<int>(chunk.lines->size());
             const auto chunkIndex = static_cast<std::uint32_t>(
                 chunk.firstLine / chunkSize);
-            const auto published = m_waveformLineStore.publish({
+            publication.push_back({
                 snapshot->trackGeneration,
                 chunkIndex,
                 static_cast<std::uint32_t>(chunk.firstLine),
                 static_cast<std::uint32_t>(count),
                 static_cast<std::uint32_t>(totalLines),
                 std::move(chunk.lines)});
-            accepted = accepted
-                || published != WaveformLineStore::PublishResult::Rejected;
         }
+        const auto published = m_waveformLineStore.publishBatch(
+            std::move(publication));
+        accepted = published != WaveformLineStore::PublishResult::Rejected;
     }
     if (accepted) {
         emit dataUpdated();
@@ -1096,6 +1136,8 @@ void TrackData::flushProgressiveWaveformLinesLocked()
     auto pending = std::move(m_progressivePendingLineChunks);
     m_progressivePendingLineChunks.clear();
     m_progressiveDirtyLineChunks.clear();
+    std::vector<WaveformLineChunk> publication;
+    publication.reserve(static_cast<std::size_t>(pending.size()));
     for (auto it = pending.begin(); it != pending.end(); ++it) {
         const auto snapshot = m_waveformLineStore.snapshot();
         const std::uint32_t chunkIndex = it.key();
@@ -1107,9 +1149,13 @@ void TrackData::flushProgressiveWaveformLinesLocked()
         const std::uint32_t first = chunkIndex * snapshot->chunkSize;
         const std::uint32_t count = std::min(snapshot->chunkSize,
                                              snapshot->totalLineCount - first);
-        const auto published = m_waveformLineStore.publish({
+        publication.push_back({
             snapshot->trackGeneration, chunkIndex, first, count,
             snapshot->totalLineCount, lines});
+    }
+    if (!publication.empty()) {
+        const auto published = m_waveformLineStore.publishBatch(
+            std::move(publication));
         Q_ASSERT(published != WaveformLineStore::PublishResult::Rejected);
     }
 }

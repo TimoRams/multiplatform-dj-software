@@ -14,6 +14,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
+#include <optional>
 
 class DjEngine;
 
@@ -71,6 +73,40 @@ struct JogPhaseBytes
     }
 };
 
+// One control-tick-consistent source-timeline snapshot. Fast display fields
+// are encoded from this value object instead of re-reading DjEngine between
+// individual bytes while MIDI/transport state may be changing.
+struct DeckDisplaySnapshot
+{
+    std::uint64_t generation = 0;
+    double sourcePositionSec = 0.0;
+    double trackDurationSec = 0.0;
+    double bpm = 0.0;
+    double tempoPercent = 0.0;
+    bool playing = false;
+    bool scratching = false;
+    bool reverse = false;
+    QString title;
+    QString artist;
+    uint8_t keyByte = 0x80;
+};
+
+struct Xx27TimelineEncoding
+{
+    qint64 elapsedMilliseconds = 0;
+    qint64 durationMilliseconds = 1000;
+
+    [[nodiscard]] double progress() const noexcept
+    {
+        return durationMilliseconds > 0
+            ? std::clamp(static_cast<double>(elapsedMilliseconds)
+                             / static_cast<double>(durationMilliseconds),
+                         0.0,
+                         1.0)
+            : 0.0;
+    }
+};
+
 inline JogPhaseBytes jogPhaseBytes(double fileElapsedSeconds) noexcept
 {
     if (!std::isfinite(fileElapsedSeconds) || fileElapsedSeconds <= 0.0)
@@ -86,6 +122,22 @@ inline JogPhaseBytes jogPhaseBytes(double fileElapsedSeconds) noexcept
     return {
         static_cast<uint8_t>(ticks & 0xFF),
         static_cast<uint8_t>((ticks >> 8) & 0xFF)
+    };
+}
+
+inline Xx27TimelineEncoding xx27TimelineEncoding(double sourcePositionSeconds,
+                                                 double sourceDurationSeconds) noexcept
+{
+    const double duration = std::isfinite(sourceDurationSeconds)
+        ? std::max(1.0, sourceDurationSeconds) : 1.0;
+    const double position = std::clamp(
+        std::isfinite(sourcePositionSeconds) ? sourcePositionSeconds : 0.0,
+        0.0,
+        duration);
+    constexpr qint64 maximumDisplayMs = kMaximumDisplayMinutes * 60000LL + 59999LL;
+    return {
+        std::min(static_cast<qint64>(std::floor(position * 1000.0)), maximumDisplayMs),
+        std::min(static_cast<qint64>(std::floor(duration * 1000.0)), maximumDisplayMs)
     };
 }
 
@@ -232,6 +284,140 @@ inline void put8(QByteArray& p, int index, int value)
         return;
     p[index] = static_cast<char>(value & 0xFF);
 }
+
+inline QByteArray encodeXx27Packet(int deck, const DeckDisplaySnapshot& snapshot)
+{
+    const uint8_t db = deckByte(deck);
+    QByteArray p = packet();
+    put8(p, 0, db);
+    put8(p, 1, 0x27);
+    put8(p, 2, 0xB4);
+    put8(p, 3, 0x80);
+    put8(p, 4, 0x01);
+
+    const Xx27TimelineEncoding timeline = xx27TimelineEncoding(
+        snapshot.sourcePositionSec, snapshot.trackDurationSec);
+    const qint64 elapsedSeconds = timeline.elapsedMilliseconds / 1000;
+    const int elapsedSubMs = static_cast<int>(timeline.elapsedMilliseconds % 1000);
+    put8(p, 5, (elapsedSeconds / 60) & 0xFF);
+    put8(p, 6, (elapsedSeconds % 60) & 0xFF);
+    put8(p, 7, elapsedSubMs & 0xFF);
+    put8(p, 8, (elapsedSubMs >> 8) & 0x03);
+
+    // Track progress is always sourcePosition / sourceDuration. Tempo affects
+    // how quickly sourcePosition evolves, never the absolute timeline scale.
+    put8(p, 9, timeline.durationMilliseconds / 60000);
+    const int remainingDurationMs = static_cast<int>(
+        timeline.durationMilliseconds % 60000);
+    put8(p, 10, remainingDurationMs / 1000);
+    put8(p, 11, remainingDurationMs % 1000);
+    put8(p, 12, (remainingDurationMs % 1000) >> 8);
+
+    const double bpm = std::isfinite(snapshot.bpm)
+        ? std::clamp(snapshot.bpm, 0.0, 255.9) : 0.0;
+    const int bpmInteger = static_cast<int>(bpm);
+    put8(p, 13, bpmInteger);
+    put8(p, 14,
+         (static_cast<int>(std::round((bpm - bpmInteger) * 10.0)) & 0x0F) << 4);
+    put8(p, 15, 0x01);
+
+    const double tempoPercent = std::isfinite(snapshot.tempoPercent)
+        ? std::clamp(snapshot.tempoPercent, -100.0, 100.0) : 0.0;
+    const int tempoEncoded = std::clamp(
+        static_cast<int>(std::llround(tempoPercent * 100.0)), -32768, 32767);
+    const auto tempoWire = static_cast<uint16_t>(tempoEncoded & 0xFFFF);
+    put8(p, 16, tempoWire & 0xFF);
+    put8(p, 17, (tempoWire >> 8) & 0xFF);
+    put8(p, 20, 0x0E);
+
+    const JogPhaseBytes phase = jogPhaseBytes(snapshot.sourcePositionSec);
+    put8(p, 21, phase.low);
+    put8(p, 22, phase.high);
+    put8(p, 25, 0x80);
+    put8(p, 29, snapshot.keyByte);
+    put8(p, 30, 0x0D);
+    put8(p, 31, displayDeckState(db));
+    put8(p, 32, 0xFF);
+    put8(p, 33, 0xFF);
+    put8(p, 34, 0xFF);
+    return p;
+}
+
+struct PendingDisplayPacket
+{
+    QByteArray bytes;
+    std::uint64_t sequence = 0;
+};
+
+// Fixed-size latest-state slots. Callers provide synchronization; keeping this
+// policy separate makes the actual coalescing/backlog contract testable without
+// USB hardware.
+class LatestDisplayPacketSlots
+{
+public:
+    [[nodiscard]] bool publish(const QByteArray& bytes, std::uint64_t sequence)
+    {
+        const int deck = packetDeck(bytes);
+        if (deck < 1 || deck > 4)
+            return false;
+        const bool replaced = m_pending[static_cast<std::size_t>(deck)].has_value();
+        m_pending[static_cast<std::size_t>(deck)] = PendingDisplayPacket {bytes, sequence};
+        return replaced;
+    }
+
+    [[nodiscard]] std::optional<PendingDisplayPacket> takeNext()
+    {
+        for (int offset = 0; offset < 4; ++offset) {
+            const int deck = 1 + ((m_nextDeck - 1 + offset) % 4);
+            auto& slot = m_pending[static_cast<std::size_t>(deck)];
+            if (!slot)
+                continue;
+            auto result = std::move(slot);
+            slot.reset();
+            m_nextDeck = 1 + (deck % 4);
+            return result;
+        }
+        return std::nullopt;
+    }
+
+    void clear()
+    {
+        for (auto& slot : m_pending)
+            slot.reset();
+        m_nextDeck = 1;
+    }
+
+    void clearDeck(int deck)
+    {
+        if (deck >= 1 && deck <= 4)
+            m_pending[static_cast<std::size_t>(deck)].reset();
+    }
+
+    [[nodiscard]] bool empty() const noexcept
+    {
+        return std::none_of(m_pending.begin(), m_pending.end(),
+                            [](const auto& slot) { return slot.has_value(); });
+    }
+
+    [[nodiscard]] std::size_t size() const noexcept
+    {
+        return static_cast<std::size_t>(std::count_if(
+            m_pending.begin(), m_pending.end(),
+            [](const auto& slot) { return slot.has_value(); }));
+    }
+
+private:
+    [[nodiscard]] static int packetDeck(const QByteArray& bytes) noexcept
+    {
+        if (bytes.size() != kHidPacketSize || bytes.at(1) != char(0x27))
+            return 0;
+        const int value = static_cast<unsigned char>(bytes.at(0));
+        return value % 0x10 == 0 ? value / 0x10 : 0;
+    }
+
+    std::array<std::optional<PendingDisplayPacket>, 5> m_pending;
+    int m_nextDeck = 1;
+};
 
 inline QByteArray encodePwv5Entry(int height, int red, int green, int blue)
 {

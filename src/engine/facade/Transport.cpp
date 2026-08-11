@@ -183,18 +183,10 @@ void DjEngine::ejectTrack()
 
 void DjEngine::togglePlay()
 {
-    if (m_transport->playRequested()) {
-        if (m_audioPipeline->mixerPtr())
-            m_audioPipeline->mixer().armClickFreeTransition();
-        resetMainCueButtonState();
-        m_transport->setPlaying(false);
-    } else {
-        m_transport->setPlaying(true);
-        ensureTransportRunningForPlayIntent();
-        alignToSyncMasterOnPlay();
-    }
-
-    emit playingChanged();
+    if (m_transport->playRequested())
+        pause();
+    else
+        play();
 }
 
 
@@ -210,13 +202,41 @@ void DjEngine::play()
 
 void DjEngine::pause()
 {
-    if (!m_transport->playRequested() && !m_transport->audioRunning() && !m_transport->preRollActive())
+    const bool scratchActive = m_scratch.scrubbing() || m_scratch.releaseGlide();
+    if (!m_transport->playRequested() && !m_transport->audioRunning()
+        && !m_transport->preRollActive() && !scratchActive) {
         return; // Already paused
+    }
 
     if (m_audioPipeline->mixerPtr())
         m_audioPipeline->mixer().armClickFreeTransition();
     resetMainCueButtonState();
-    if (m_transport->setPlaying(false))
+
+    if (scratchActive) {
+        const double finalCursor = std::clamp(
+            m_transport->playheadPositionAtomic(),
+            0.0,
+            std::max(0.0, m_transport->trackLengthSeconds()));
+
+        // EndScratch is only a render-mode transition. Explicit Pause remains
+        // authoritative: cancel the release generation, hand both readers to
+        // the current cursor and only then freeze the normal transport.
+        terminateScratchSession(finalCursor);
+        m_transport->adoptScratchHandoffPosition(finalCursor);
+        m_transport->setAudioReverseOverride(m_transport->reverse());
+        if (m_audioPipeline->mixerPtr())
+            m_audioPipeline->mixer().setScratchTimbre(0.0f);
+        updateSpeedAndPitch();
+        if (m_audioPipeline->timeStretchPtr())
+            m_audioPipeline->timeStretch().endScratchBypass();
+        m_transport->setVisualAnchor(finalCursor, true);
+        emit scrubbingChanged();
+    }
+
+    const bool playingChangedNow = m_transport->setPlaying(false);
+    if (scratchActive)
+        m_transport->stopAudio();
+    if (playingChangedNow)
         emit playingChanged();
 }
 
@@ -323,6 +343,15 @@ void DjEngine::setPosition(float progress)
             m_analyzer->setSeekHint(std::max(0.0, newPos));
     }
     emit progressChanged();
+}
+
+void DjEngine::updateWaveformDemand(waveform::WaveformDemand demand)
+{
+    demand.generation = m_trackLoader.currentGeneration();
+    m_waveformDemand = demand;
+    m_trackLoader.setWaveformDemand(demand);
+    if (m_analyzer)
+        m_analyzer->setWaveformDemand(demand);
 }
 
 
@@ -489,21 +518,6 @@ void DjEngine::loadTrack(const QString& rawPath)
                         totalLines, linesPerSecond, std::move(chunks));
                 },
                 Qt::QueuedConnection);
-        },
-        [safeThis](std::uint64_t generation, WaveformLodBatch chunks) {
-            if (!safeThis)
-                return;
-            QMetaObject::invokeMethod(safeThis.data(),
-                [safeThis, generation, chunks = std::move(chunks)]() mutable {
-                    if (!safeThis
-                        || generation != safeThis->m_trackLoader.currentGeneration()
-                        || !safeThis->m_trackData) {
-                        return;
-                    }
-                    safeThis->m_trackData->applyCachedWaveformLodBatch(
-                        std::move(chunks));
-                },
-                Qt::QueuedConnection);
         });
 
     // Invalidate the previous track's complete visual generation immediately.
@@ -591,24 +605,13 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
     const bool hasReusableWaveform = result.waveformCacheLoaded
         || result.waveformRenderCacheAvailable;
     if (!(hasReusableWaveform && hasDbAnalysis) && m_analyzer) {
-        // Let playback, the first cache window and immediate platter input take
-        // ownership before background analysis starts allocating/decoding. The
-        // generation check makes this harmless when another track is loaded.
-        QPointer<DjEngine> safeThis(this);
-        const QString analysisPath = result.canonicalPath;
-        const std::uint64_t analysisTrackGeneration = result.generation;
-        QTimer::singleShot(600, this,
-            [safeThis, analysisPath, analysisTrackGeneration]() {
-                if (!safeThis
-                    || analysisTrackGeneration != safeThis->m_trackLoader.currentGeneration()
-                    || analysisPath != safeThis->m_trackFilePath
-                    || !safeThis->m_analyzer) {
-                    return;
-                }
-                safeThis->m_analyzer->startAnalysis(
-                    analysisPath, safeThis->m_transport->audioPositionSeconds(),
-                    analysisTrackGeneration, safeThis->m_trackData->createAnalysisSeed());
-            });
+        // Audio publication and first-page priming have already completed.
+        // Start the background worker now; a fixed post-load delay only made
+        // overview/detail latency depend on a timer and did not protect the
+        // realtime callback (which never executes this analysis code).
+        m_analyzer->startAnalysis(
+            result.canonicalPath, m_transport->audioPositionSeconds(),
+            result.generation, m_trackData->createAnalysisSeed());
     }
 
     if (!result.coverImage.isNull() && m_coverProvider) {

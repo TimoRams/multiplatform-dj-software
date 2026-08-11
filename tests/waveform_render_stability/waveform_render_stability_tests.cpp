@@ -4,6 +4,9 @@
 
 #include "rendering/WaveformMarkerLayout.h"
 #include "rendering/WaveformRenderTile.h"
+#include "rendering/WaveformTimelineMath.h"
+#include "waveform/WaveformDemand.h"
+#include "waveform/WaveformLodPyramid.h"
 
 namespace {
 bool require(bool condition, const char* message)
@@ -289,5 +292,130 @@ int main()
                           "per-marker snapping warped beat spacing during zoom");
         }
     }
+
+    // C++, QML interaction math and every marker layer share this conversion.
+    // Exercise all acceptance zoom/DPR/tempo combinations and rapid alternating
+    // zoom without accumulating a scale from the previous frame.
+    for (const double dpr : {1.0, 1.25, 1.5, 1.75, 2.0, 3.0}) {
+        for (const double tempo : {0.5, 0.8, 1.0, 1.2, 2.0}) {
+            for (const double zoom : {0.08, 0.10, 0.15, 0.22, 0.44,
+                                      1.0, 2.0, 5.0, 10.0}) {
+                constexpr double canonicalRate = 1200.0;
+                constexpr double playhead = 4'981.125;
+                constexpr double point = 5'017.875;
+                constexpr double center = 800.25;
+                const double pps = waveform_render::timelinePixelsPerSecond(
+                    zoom, canonicalRate, tempo);
+                const double screen = waveform_render::timelineScreenX(
+                    center, point, playhead, pps);
+                const double recovered = playhead
+                    + waveform_render::screenDeltaToTimelineSeconds(
+                        screen - center, pps);
+                ok &= require(std::isfinite(screen)
+                                  && std::abs(recovered - point) < 1.0e-9,
+                              "timeline conversion changed across zoom/DPR/tempo");
+                const double physicalPixelsPerLine = pps / canonicalRate * dpr;
+                const auto tile = waveform_render::renderTileSpan(
+                    1234, physicalPixelsPerLine, 9'000'000);
+                ok &= require(tile.physicalWidth()
+                                  == waveform_render::kRenderTilePhysicalWidth,
+                              "zoom matrix grew a render texture");
+            }
+        }
+    }
+    double stressZoom = 0.22;
+    for (int event = 0; event < 200; ++event) {
+        stressZoom = event % 2 == 0
+            ? std::min(10.0, stressZoom * 1.15)
+            : std::max(0.08, stressZoom / 1.15);
+        const double pps = waveform_render::timelinePixelsPerSecond(
+            stressZoom, 1200.0, 1.0);
+        ok &= require(std::isfinite(pps) && pps > 0.0,
+                      "rapid zoom produced NaN, infinity or non-positive scale");
+    }
+
+    // Cross every LOD boundary from both sides. LOD selection is allowed to
+    // change, but neither the world-to-screen mapping nor the track-wide
+    // physical tile grid may inherit any scale from the previous view.
+    constexpr double lodEpsilon = 1.0e-7;
+    for (const double threshold : {0.125, 0.25, 0.5, 1.0}) {
+        const double below = threshold - lodEpsilon;
+        const double above = threshold + lodEpsilon;
+        const auto belowLod = waveform::WaveformLodPyramid::selectLevel(below);
+        const auto aboveLod = waveform::WaveformLodPyramid::selectLevel(above);
+        ok &= require(belowLod == static_cast<std::uint8_t>(aboveLod + 1),
+                      "LOD did not change exactly once across its threshold");
+
+        constexpr double centre = 800.0;
+        constexpr double playheadLine = 3'750'000.25;
+        constexpr double pointLine = playheadLine + 731.5;
+        const double belowX = centre
+            + (pointLine - playheadLine) * below;
+        const double aboveX = centre
+            + (pointLine - playheadLine) * above;
+        ok &= require(std::abs((aboveX - belowX)
+                                  - (pointLine - playheadLine)
+                                      * (above - below)) < 1.0e-9,
+                      "LOD transition introduced a non-linear timeline jump");
+
+        const auto belowSpan = waveform_render::renderTileSpan(
+            waveform_render::firstRenderTile(
+                waveform_render::timelinePhysicalFloor(
+                    pointLine, below, 1.0)),
+            below, 9'000'000);
+        const auto aboveSpan = waveform_render::renderTileSpan(
+            waveform_render::firstRenderTile(
+                waveform_render::timelinePhysicalFloor(
+                    pointLine, above, 1.0)),
+            above, 9'000'000);
+        ok &= require(belowSpan.physicalWidth()
+                          == waveform_render::kRenderTilePhysicalWidth
+                          && aboveSpan.physicalWidth()
+                              == waveform_render::kRenderTilePhysicalWidth,
+                      "LOD transition changed physical render-tile width");
+    }
+
+    const auto forwardDemand = waveform::makeViewportDemand(
+        100.0, 1600.0, 400.0, true, false, false, 2, 9);
+    const auto reverseDemand = waveform::makeViewportDemand(
+        100.0, 1600.0, 400.0, true, true, false, 2, 9);
+    const auto scratchDemand = waveform::makeViewportDemand(
+        100.0, 1600.0, 400.0, false, false, true, 2, 9);
+    ok &= require(waveform::priorityForRange(
+                      forwardDemand, 100.5, 101.0).priority
+                      == waveform::WaveformPriority::Visible,
+                  "visible viewport did not receive P0 demand");
+    ok &= require(waveform::priorityForRange(
+                      forwardDemand, 104.5, 105.0).priority
+                      < waveform::priorityForRange(
+                          forwardDemand, 94.5, 95.0).priority,
+                  "forward playback did not prioritize the forward guard");
+    ok &= require(waveform::priorityForRange(
+                      reverseDemand, 94.5, 95.0).priority
+                      < waveform::priorityForRange(
+                          reverseDemand, 104.5, 105.0).priority,
+                  "reverse playback did not mirror demand priority");
+    ok &= require(waveform::priorityForRange(
+                      scratchDemand, 94.5, 95.0).priority
+                      == waveform::priorityForRange(
+                          scratchDemand, 104.5, 105.0).priority,
+                  "scratch demand was not symmetric around the playhead");
+    const auto playheadScore = waveform::priorityForRange(
+        forwardDemand, 99.5, 100.5);
+    const auto nextScore = waveform::priorityForRange(
+        forwardDemand, 100.5, 101.5);
+    const auto previousScore = waveform::priorityForRange(
+        forwardDemand, 98.5, 99.5);
+    ok &= require(playheadScore.expansionRank == 0
+                      && waveform::higherPriority(playheadScore, nextScore),
+                  "playhead-containing chunk was not the strict first demand");
+    ok &= require(waveform::higherPriority(nextScore, previousScore),
+                  "forward expansion did not precede the equally near trailing chunk");
+    const auto reverseNext = waveform::priorityForRange(
+        reverseDemand, 98.5, 99.5);
+    const auto reversePrevious = waveform::priorityForRange(
+        reverseDemand, 100.5, 101.5);
+    ok &= require(waveform::higherPriority(reverseNext, reversePrevious),
+                  "reverse expansion did not mirror the directional order");
     return ok ? 0 : 1;
 }

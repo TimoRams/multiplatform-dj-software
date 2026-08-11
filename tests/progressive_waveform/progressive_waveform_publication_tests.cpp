@@ -41,8 +41,9 @@ int main(int argc, char** argv)
     const auto lineChunk = lineStore ? lineStore->chunkAt(0) : nullptr;
     ok &= require(lineStore && lineStore->linesPerSecond == 1200,
                   "scrolling line store must retain full analysis resolution");
-    ok &= require(lineChunk && lineChunk->lines && lineChunk->lines->size() == 32,
-                  "first progressive line chunk was not published");
+    ok &= require(lineChunk && lineChunk->lines && lineChunk->lines->size() == 32
+                      && lineChunk->state == WaveformChunkState::Loading,
+                  "first progressive line chunk was not staged as loading");
     if (lineChunk && lineChunk->lines && lineChunk->lines->size() > 8) {
         const auto& line = (*lineChunk->lines)[8];
         ok &= require(line.maximum > 0 && line.minimum < 0,
@@ -63,6 +64,14 @@ int main(int argc, char** argv)
     const auto afterFlush = batched.getWaveformLineStoreSnapshot();
     ok &= require(afterFlush && afterFlush->chunkAt(0),
                   "control-tick flush did not publish progressive chunk");
+    QVector<TrackData::RgbWaveformFrame> instantOverview(512);
+    instantOverview[3].rms = 0.6f;
+    batched.publishWaveformOverview(32, 1200, std::move(instantOverview));
+    const auto afterOverview = batched.getWaveformLineStoreSnapshot();
+    ok &= require(afterOverview && afterOverview->chunkAt(0)
+                      && batched.getOverviewRgbSnapshot()
+                      && batched.getOverviewRgbSnapshot()->size() == 512,
+                  "late instant overview reset already published detail chunks");
 
     TrackData hourLong;
     constexpr int hourAt600BinsPerSecond = 60 * 60 * 600;
@@ -73,7 +82,9 @@ int main(int argc, char** argv)
                   "one-hour progressive load allocated full GUI timeline vectors");
     ok &= require(hourStore
                       && hourStore->totalLineCount == hourAt600BinsPerSecond
-                      && hourStore->availableChunkCount() == 1,
+                      && hourStore->availableChunkCount() == 0
+                      && hourStore->chunkAt(0)
+                      && hourStore->chunkAt(0)->state == WaveformChunkState::Loading,
                   "one-hour progressive load did not remain sparse");
 
     // A persisted line cache can arrive out of chronological order: the
@@ -84,13 +95,17 @@ int main(int argc, char** argv)
     cachedLines.initializeCachedWaveformLines(9000, 100,
                                               std::move(cachedOverview));
     auto playheadChunk = std::make_shared<std::vector<WaveformLine>>(808);
+    for (auto& line : *playheadChunk) {
+        line.flags = waveform_line_flags::kAvailable
+            | waveform_line_flags::kFinal;
+    }
     (*playheadChunk)[308].minimum = -12000;
     (*playheadChunk)[308].maximum = 14000;
     (*playheadChunk)[308].red = 220;
     cachedLines.applyCachedWaveformLineChunk(8192, 9000, 100,
                                              std::move(playheadChunk));
     const auto cachedStore = cachedLines.getWaveformLineStoreSnapshot();
-    const auto cachedPlayhead = cachedStore ? cachedStore->chunkAt(2) : nullptr;
+    const auto cachedPlayhead = cachedStore ? cachedStore->chunkAt(8) : nullptr;
     ok &= require(cachedStore && cachedStore->linesPerSecond == 100
                       && cachedStore->availableChunkCount() == 1,
                   "cached waveform restore must remain sparse and retain its rate");
@@ -101,17 +116,24 @@ int main(int argc, char** argv)
                   "cached waveform header must publish its full-track overview");
 
     TrackData batchedCache;
-    constexpr int batchedTotal = 4096 * 4;
+    constexpr int renderChunkSize = static_cast<int>(WaveformLineStore::kChunkSize);
+    constexpr int batchedTotal = renderChunkSize * 4;
     batchedCache.initializeCachedWaveformLines(
         batchedTotal, 1200, QVector<TrackData::RgbWaveformFrame>(32));
     int batchSignals = 0;
     QObject::connect(&batchedCache, &TrackData::dataUpdated,
                      [&batchSignals] { ++batchSignals; });
     WaveformLineBatch guardedWindow;
-    guardedWindow.push_back({4096,
-        std::make_shared<std::vector<WaveformLine>>(4096)});
-    guardedWindow.push_back({8192,
-        std::make_shared<std::vector<WaveformLine>>(4096)});
+    for (int chunkIndex : {1, 2}) {
+        auto cachedChunk = std::make_shared<std::vector<WaveformLine>>(
+            renderChunkSize);
+        for (auto& line : *cachedChunk) {
+            line.flags = waveform_line_flags::kAvailable
+                | waveform_line_flags::kFinal;
+        }
+        guardedWindow.push_back({renderChunkSize * chunkIndex,
+                                 std::move(cachedChunk)});
+    }
     batchedCache.applyCachedWaveformLineBatch(
         batchedTotal, 1200, std::move(guardedWindow));
     const auto guardedSnapshot = batchedCache.getWaveformLineStoreSnapshot();

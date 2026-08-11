@@ -173,9 +173,6 @@ void DjEngine::restorePostScrubPlaybackState(double finalCursorSeconds)
 
     m_transport->setAudioReverseOverride(m_transport->reverse());
 
-    if (m_scratch.wasPlaying() && !m_transport->playRequested())
-        m_transport->setPlaying(true);
-
     if (!m_transport->playRequested())
         m_transport->stopAudio();
 
@@ -218,9 +215,10 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
     m_syncController->resetPhaseCorrection();
 
     const bool regrabActiveScratch = m_scratch.scrubbing() || m_scratch.releaseGlide();
-    const bool wasPlayingBeforeGrab = regrabActiveScratch
-        ? m_scratch.wasPlaying()
-        : (m_transport->playRequested() || m_transport->audioRunning());
+    // The current explicit transport intent wins over the state captured by a
+    // previous grab. Pause followed by a rapid re-grab must not resurrect the
+    // pre-pause Playing state.
+    const bool wasPlayingBeforeGrab = m_transport->playRequested();
     m_scratch.setReleaseGlide(false);
     m_scratch.setWasPlaying(wasPlayingBeforeGrab);
     m_scratch.setScrubbing(true);
@@ -375,11 +373,12 @@ void DjEngine::requestScratchRelease(double normalizedReleaseSpeed, bool allowIn
     m_scratch.setPhase(engine::scratch::ScratchPhase::ReleasePending);
     m_pendingScratchReleaseGeneration = bridge.requestScratchRelease(
         normalizedReleaseSpeed,
-        allowInertia);
+        allowInertia,
+        m_transport->playRequested());
 
     // The normal reader runs behind the still-authoritative scratch path. It is
     // not audible until the callback seeks and commits the handoff.
-    if (m_scratch.wasPlaying() && m_transport->heldPosition() >= 0.0
+    if (m_transport->playRequested() && m_transport->heldPosition() >= 0.0
         && !m_transport->audioRunning()) {
         m_transport->startAudioPreservingScratchPosition();
     }
