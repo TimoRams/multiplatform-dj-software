@@ -126,10 +126,17 @@ WaveformLine foldRenderLines(const std::vector<WaveformLine>& source,
     WaveformLine result;
     std::uint64_t red = 0, green = 0, blue = 0, weight = 0;
     std::uint8_t flags = 0xff;
+    bool hasExtrema = false;
     for (int index = begin; index < end; ++index) {
         const auto& line = source[static_cast<std::size_t>(index)];
-        result.minimum = std::min(result.minimum, line.minimum);
-        result.maximum = std::max(result.maximum, line.maximum);
+        if (!hasExtrema) {
+            result.minimum = line.minimum;
+            result.maximum = line.maximum;
+            hasExtrema = true;
+        } else {
+            result.minimum = std::min(result.minimum, line.minimum);
+            result.maximum = std::max(result.maximum, line.maximum);
+        }
         const auto magnitude = static_cast<std::uint32_t>(std::max(
             std::abs(static_cast<int>(line.minimum)),
             std::abs(static_cast<int>(line.maximum))));

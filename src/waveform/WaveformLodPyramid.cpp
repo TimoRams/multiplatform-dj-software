@@ -61,9 +61,18 @@ WaveformLodPyramid::Sample WaveformLodPyramid::sample(
             continue;
         }
         const auto& line = (*chunk->lines)[local];
-        result.hasData = true;
-        result.line.minimum = std::min(result.line.minimum, line.minimum);
-        result.line.maximum = std::max(result.line.maximum, line.maximum);
+        if ((line.flags & waveform_line_flags::kAvailable) == 0) {
+            result.complete = false;
+            continue;
+        }
+        if (!result.hasData) {
+            result.line.minimum = line.minimum;
+            result.line.maximum = line.maximum;
+            result.hasData = true;
+        } else {
+            result.line.minimum = std::min(result.line.minimum, line.minimum);
+            result.line.maximum = std::max(result.line.maximum, line.maximum);
+        }
         const auto magnitude = static_cast<std::uint32_t>(std::max(
             std::abs(static_cast<int>(line.minimum)),
             std::abs(static_cast<int>(line.maximum))));

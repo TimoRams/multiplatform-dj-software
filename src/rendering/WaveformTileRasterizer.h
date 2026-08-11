@@ -40,6 +40,13 @@ struct RenderTileKeyHash final {
     [[nodiscard]] std::size_t operator()(const RenderTileKey& key) const noexcept;
 };
 
+[[nodiscard]] inline bool currentRenderTileKey(
+    const std::optional<RenderTileKey>& displayed,
+    const RenderTileKey& required) noexcept
+{
+    return displayed && *displayed == required;
+}
+
 struct RasterizedRenderTile final {
     RenderTileKey key;
     RenderTileSpan span;
@@ -72,6 +79,9 @@ struct OverviewRenderKey final {
     std::uint64_t sourceRevision = 0;
     std::uint32_t imageWidth = 0;
     std::uint32_t imageHeight = 0;
+    std::uint32_t sourceBegin = 0;
+    std::uint32_t sourceEnd = 0;
+    std::uint32_t totalLineCount = 0;
 
     bool operator==(const OverviewRenderKey&) const noexcept = default;
 };
@@ -99,6 +109,10 @@ public:
         std::uint64_t rasterizedTiles = 0;
         std::uint64_t discardedTiles = 0;
         std::uint64_t worstRasterUsec = 0;
+        std::uint64_t totalRasterUsec = 0;
+        std::size_t workerCount = 0;
+        std::size_t activeWorkers = 0;
+        std::size_t maximumConcurrentWorkers = 0;
         std::size_t cacheBytes = 0;
         std::size_t cacheEntries = 0;
         std::size_t pendingRequests = 0;
@@ -142,6 +156,7 @@ private:
     };
 
     void run(std::stop_token stopToken);
+    void notifyTileReady();
     void insert(std::shared_ptr<const RasterizedRenderTile> tile);
     void evictToBudgetLocked();
     [[nodiscard]] static std::shared_ptr<const RasterizedRenderTile>
@@ -155,18 +170,24 @@ private:
     std::deque<RenderTileRequest> m_pending;
     std::optional<OverviewRenderRequest> m_pendingOverview;
     std::unordered_set<RenderTileKey, RenderTileKeyHash> m_pendingKeys;
+    std::unordered_set<RenderTileKey, RenderTileKeyHash> m_inFlightKeys;
+    std::optional<OverviewRenderKey> m_overviewInFlightKey;
     std::unordered_map<RenderTileKey, CacheEntry, RenderTileKeyHash> m_cache;
     std::list<RenderTileKey> m_lru;
     std::size_t m_cacheBytes = 0;
     std::uint64_t m_activeTrackGeneration = 0;
     std::shared_ptr<const RasterizedOverview> m_overview;
-    std::jthread m_worker;
+    std::vector<std::jthread> m_workers;
+    std::mutex m_callbackMutex;
 
     std::atomic<std::uint64_t> m_cacheHits{0};
     std::atomic<std::uint64_t> m_cacheMisses{0};
     std::atomic<std::uint64_t> m_rasterizedTiles{0};
     std::atomic<std::uint64_t> m_discardedTiles{0};
     std::atomic<std::uint64_t> m_worstRasterUsec{0};
+    std::atomic<std::uint64_t> m_totalRasterUsec{0};
+    std::atomic<std::uint64_t> m_activeWorkers{0};
+    std::atomic<std::uint64_t> m_maximumConcurrentWorkers{0};
 };
 
 } // namespace waveform_render

@@ -1,6 +1,7 @@
 #include "waveform/WaveformLineStore.h"
 #include "waveform/WaveformLodPyramid.h"
 
+#include <algorithm>
 #include <iostream>
 
 namespace {
@@ -16,7 +17,9 @@ WaveformLineChunk makeChunk(std::uint64_t generation, std::uint32_t index,
     const auto first = index * chunkSize;
     const auto count = std::min(chunkSize, total - first);
     auto lines = std::make_shared<std::vector<WaveformLine>>(count);
-    (*lines)[0] = {.minimum = -100, .maximum = 200, .red = 255, .green = 80, .blue = 40, .flags = 1};
+    std::fill(lines->begin(), lines->end(), WaveformLine{
+        .minimum = -100, .maximum = 200, .red = 255,
+        .green = 80, .blue = 40, .flags = waveform_line_flags::kAvailable});
     return {generation, index, first, count, total, std::move(lines)};
 }
 }
@@ -73,6 +76,25 @@ int main()
     ok &= require(persistedSample.complete
                       && persistedSample.line.maximum == 3210,
                   "renderer did not consume the persisted LOD sample");
+    WaveformLineStore oneSidedStore;
+    oneSidedStore.reset(10, 16, 1200, 16);
+    auto oneSidedLines = std::make_shared<std::vector<WaveformLine>>(16);
+    for (std::size_t index = 1; index < oneSidedLines->size(); ++index) {
+        auto& line = (*oneSidedLines)[index];
+        line = {.minimum = 1200, .maximum = 4800,
+                .red = 200, .green = 100, .blue = 50,
+                .flags = waveform_line_flags::kAvailable};
+    }
+    ok &= require(oneSidedStore.publish({10, 0, 0, 16, 16,
+                                         std::move(oneSidedLines)})
+                      == WaveformLineStore::PublishResult::Accepted,
+                  "one-sided LOD fixture was rejected");
+    const auto oneSidedLod = waveform::WaveformLodPyramid::sample(
+        *oneSidedStore.snapshot(), 4, 0);
+    ok &= require(oneSidedLod.hasData && !oneSidedLod.complete
+                      && oneSidedLod.line.minimum == 1200
+                      && oneSidedLod.line.maximum == 4800,
+                  "LOD aggregation used missing data as a false zero extremum");
     ok &= require(store.publish(makeChunk(9, 2, total, chunkSize)) == WaveformLineStore::PublishResult::Duplicate,
                   "duplicate chunk is idempotent");
     const auto revisedFirst = chunkSize;

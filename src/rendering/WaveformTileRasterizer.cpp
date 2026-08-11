@@ -24,6 +24,14 @@ void updateWorst(std::atomic<std::uint64_t>& target, std::uint64_t value)
     }
 }
 
+std::size_t rasterWorkerCount() noexcept
+{
+    const auto hardwareThreads = std::thread::hardware_concurrency();
+    if (hardwareThreads <= 2)
+        return 1;
+    return std::clamp<std::size_t>(hardwareThreads / 2, 2, 4);
+}
+
 std::size_t hashCombine(std::size_t seed, std::size_t value) noexcept
 {
     return seed ^ (value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U));
@@ -76,17 +84,25 @@ std::size_t RenderTileKeyHash::operator()(const RenderTileKey& key) const noexce
 
 WaveformTileRasterizer::WaveformTileRasterizer(
     std::function<void()> tileReadyCallback)
-    : m_tileReadyCallback(std::move(tileReadyCallback)),
-      m_worker([this](std::stop_token stopToken) { run(stopToken); })
+    : m_tileReadyCallback(std::move(tileReadyCallback))
 {
+    const auto count = rasterWorkerCount();
+    m_workers.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        m_workers.emplace_back(
+            [this](std::stop_token stopToken) { run(stopToken); });
+    }
 }
 
 WaveformTileRasterizer::~WaveformTileRasterizer()
 {
-    m_worker.request_stop();
+    for (auto& worker : m_workers)
+        worker.request_stop();
     m_condition.notify_all();
-    if (m_worker.joinable())
-        m_worker.join();
+    for (auto& worker : m_workers) {
+        if (worker.joinable())
+            worker.join();
+    }
 }
 
 RenderTileKey WaveformTileRasterizer::makeKey(
@@ -135,7 +151,8 @@ void WaveformTileRasterizer::request(RenderTileRequest request)
         std::lock_guard lock(m_mutex);
         if (request.key.trackGeneration != m_activeTrackGeneration
             || m_cache.contains(request.key)
-            || m_pendingKeys.contains(request.key)) {
+            || m_pendingKeys.contains(request.key)
+            || m_inFlightKeys.contains(request.key)) {
             return;
         }
 
@@ -173,7 +190,9 @@ void WaveformTileRasterizer::requestOverview(OverviewRenderRequest request)
         std::lock_guard lock(m_mutex);
         if (request.key.trackGeneration != m_activeTrackGeneration
             || (m_overview && m_overview->key == request.key)
-            || (m_pendingOverview && m_pendingOverview->key == request.key)) {
+            || (m_pendingOverview && m_pendingOverview->key == request.key)
+            || (m_overviewInFlightKey
+                && *m_overviewInFlightKey == request.key)) {
             return;
         }
         // There is only one useful fallback: the newest visual generation.
@@ -198,6 +217,8 @@ void WaveformTileRasterizer::setActiveTrackGeneration(std::uint64_t generation)
     m_pending.clear();
     m_pendingOverview.reset();
     m_pendingKeys.clear();
+    m_inFlightKeys.clear();
+    m_overviewInFlightKey.reset();
     m_cache.clear();
     m_lru.clear();
     m_cacheBytes = 0;
@@ -210,6 +231,8 @@ void WaveformTileRasterizer::clear()
     m_pending.clear();
     m_pendingOverview.reset();
     m_pendingKeys.clear();
+    m_inFlightKeys.clear();
+    m_overviewInFlightKey.reset();
     m_cache.clear();
     m_lru.clear();
     m_cacheBytes = 0;
@@ -225,10 +248,17 @@ WaveformTileRasterizer::Stats WaveformTileRasterizer::stats() const
     result.rasterizedTiles = m_rasterizedTiles.load(std::memory_order_relaxed);
     result.discardedTiles = m_discardedTiles.load(std::memory_order_relaxed);
     result.worstRasterUsec = m_worstRasterUsec.load(std::memory_order_relaxed);
+    result.totalRasterUsec = m_totalRasterUsec.load(std::memory_order_relaxed);
+    result.workerCount = m_workers.size();
+    result.activeWorkers = static_cast<std::size_t>(
+        m_activeWorkers.load(std::memory_order_relaxed));
+    result.maximumConcurrentWorkers = static_cast<std::size_t>(
+        m_maximumConcurrentWorkers.load(std::memory_order_relaxed));
     std::lock_guard lock(m_mutex);
     result.cacheBytes = m_cacheBytes;
     result.cacheEntries = m_cache.size();
-    result.pendingRequests = m_pending.size() + (m_pendingOverview ? 1u : 0u);
+    result.pendingRequests = m_pending.size() + m_inFlightKeys.size()
+        + (m_pendingOverview ? 1u : 0u) + (m_overviewInFlightKey ? 1u : 0u);
     return result;
 }
 
@@ -239,6 +269,10 @@ void WaveformTileRasterizer::resetStats()
     m_rasterizedTiles.store(0, std::memory_order_relaxed);
     m_discardedTiles.store(0, std::memory_order_relaxed);
     m_worstRasterUsec.store(0, std::memory_order_relaxed);
+    m_totalRasterUsec.store(0, std::memory_order_relaxed);
+    m_maximumConcurrentWorkers.store(
+        m_activeWorkers.load(std::memory_order_relaxed),
+        std::memory_order_relaxed);
 }
 
 void WaveformTileRasterizer::run(std::stop_token stopToken)
@@ -249,12 +283,14 @@ void WaveformTileRasterizer::run(std::stop_token stopToken)
         {
             std::unique_lock lock(m_mutex);
             m_condition.wait(lock, stopToken, [this] {
-                return m_pendingOverview.has_value() || !m_pending.empty();
+                return (!m_overviewInFlightKey && m_pendingOverview.has_value())
+                    || !m_pending.empty();
             });
             if (stopToken.stop_requested())
                 break;
-            if (m_pendingOverview) {
+            if (!m_overviewInFlightKey && m_pendingOverview) {
                 overviewRequest.emplace(std::move(*m_pendingOverview));
+                m_overviewInFlightKey = overviewRequest->key;
                 m_pendingOverview.reset();
             } else {
                 const auto best = std::min_element(
@@ -264,9 +300,14 @@ void WaveformTileRasterizer::run(std::stop_token stopToken)
                     });
                 request.emplace(std::move(*best));
                 m_pendingKeys.erase(request->key);
+                m_inFlightKeys.insert(request->key);
                 m_pending.erase(best);
             }
         }
+
+        const auto concurrent = m_activeWorkers.fetch_add(
+            1, std::memory_order_relaxed) + 1;
+        updateWorst(m_maximumConcurrentWorkers, concurrent);
 
         QElapsedTimer timer;
         timer.start();
@@ -275,22 +316,40 @@ void WaveformTileRasterizer::run(std::stop_token stopToken)
             bool accepted = false;
             {
                 std::lock_guard lock(m_mutex);
+                if (m_overviewInFlightKey
+                    && *m_overviewInFlightKey == overviewRequest->key) {
+                    m_overviewInFlightKey.reset();
+                }
                 if (overview
                     && overview->key.trackGeneration == m_activeTrackGeneration) {
                     m_overview = std::move(overview);
                     accepted = true;
                 }
             }
-            if (accepted && m_tileReadyCallback)
-                m_tileReadyCallback();
+            m_activeWorkers.fetch_sub(1, std::memory_order_relaxed);
+            m_condition.notify_one();
+            if (accepted)
+                notifyTileReady();
             continue;
         }
         auto tile = rasterize(*request);
+        const auto rasterUsec = static_cast<std::uint64_t>(
+            timer.nsecsElapsed() / 1000);
         updateWorst(m_worstRasterUsec,
-                    static_cast<std::uint64_t>(timer.nsecsElapsed() / 1000));
+                    rasterUsec);
+        m_totalRasterUsec.fetch_add(rasterUsec, std::memory_order_relaxed);
         m_rasterizedTiles.fetch_add(1, std::memory_order_relaxed);
         insert(std::move(tile));
+        m_activeWorkers.fetch_sub(1, std::memory_order_relaxed);
     }
+}
+
+void WaveformTileRasterizer::notifyTileReady()
+{
+    if (!m_tileReadyCallback)
+        return;
+    std::lock_guard lock(m_callbackMutex);
+    m_tileReadyCallback();
 }
 
 std::shared_ptr<const RasterizedOverview>
@@ -309,14 +368,32 @@ WaveformTileRasterizer::rasterizeOverview(const OverviewRenderRequest& request)
     result->image.fill(Qt::transparent);
     const double centre = static_cast<double>(height) * 0.5;
     const double halfHeight = std::max(1.0, centre - 2.0);
+    const auto totalLineCount = std::max(
+        request.key.totalLineCount, request.key.sourceEnd);
+    const auto sourceBegin = std::min(
+        request.key.sourceBegin, totalLineCount);
+    const auto sourceEnd = std::clamp(
+        request.key.sourceEnd, sourceBegin, totalLineCount);
+    if (sourceBegin >= sourceEnd || totalLineCount == 0)
+        return result;
 
     for (int x = 0; x < width; ++x) {
-        const auto begin = static_cast<std::size_t>(
-            static_cast<std::uint64_t>(x) * request.samples->size()
-            / static_cast<std::uint64_t>(width));
-        const auto end = std::max(begin + 1, static_cast<std::size_t>(
-            static_cast<std::uint64_t>(x + 1) * request.samples->size()
-            / static_cast<std::uint64_t>(width)));
+        const long double sourceRange = static_cast<long double>(
+            sourceEnd - sourceBegin);
+        const long double lineBegin = static_cast<long double>(sourceBegin)
+            + sourceRange * static_cast<long double>(x)
+                / static_cast<long double>(width);
+        const long double lineEnd = static_cast<long double>(sourceBegin)
+            + sourceRange * static_cast<long double>(x + 1)
+                / static_cast<long double>(width);
+        const auto begin = std::min(request.samples->size() - 1,
+            static_cast<std::size_t>(std::floor(
+                lineBegin * static_cast<long double>(request.samples->size())
+                / static_cast<long double>(totalLineCount))));
+        const auto end = std::min(request.samples->size(),
+            std::max(begin + 1, static_cast<std::size_t>(std::ceil(
+                lineEnd * static_cast<long double>(request.samples->size())
+                / static_cast<long double>(totalLineCount)))));
         float peak = 0.0f;
         float rmsSum = 0.0f;
         float low = 0.0f;
@@ -369,6 +446,7 @@ void WaveformTileRasterizer::insert(
     bool accepted = false;
     {
         std::lock_guard lock(m_mutex);
+        m_inFlightKeys.erase(tile->key);
         if (tile->key.trackGeneration == m_activeTrackGeneration) {
             const auto bytes = static_cast<std::size_t>(tile->image.sizeInBytes());
             m_lru.push_front(tile->key);
@@ -388,8 +466,7 @@ void WaveformTileRasterizer::insert(
         m_discardedTiles.fetch_add(1, std::memory_order_relaxed);
         return;
     }
-    if (m_tileReadyCallback)
-        m_tileReadyCallback();
+    notifyTileReady();
 }
 
 void WaveformTileRasterizer::evictToBudgetLocked()
@@ -468,6 +545,7 @@ WaveformTileRasterizer::rasterize(const RenderTileRequest& request)
         std::uint64_t green = 0;
         std::uint64_t blue = 0;
         std::uint64_t weight = 0;
+        bool hasExtrema = false;
         const auto stride = static_cast<std::uint32_t>(
             waveform::WaveformLodPyramid::level(
                 request.key.lodLevel).canonicalLineStride);
@@ -481,8 +559,14 @@ WaveformTileRasterizer::rasterize(const RenderTileRequest& request)
             if (!lodSample.hasData)
                 continue;
             const auto& line = lodSample.line;
-            minimum = std::min(minimum, line.minimum);
-            maximum = std::max(maximum, line.maximum);
+            if (!hasExtrema) {
+                minimum = line.minimum;
+                maximum = line.maximum;
+                hasExtrema = true;
+            } else {
+                minimum = std::min(minimum, line.minimum);
+                maximum = std::max(maximum, line.maximum);
+            }
             const auto magnitude = static_cast<std::uint32_t>(std::max(
                 std::abs(static_cast<int>(line.minimum)),
                 std::abs(static_cast<int>(line.maximum))));
@@ -492,7 +576,7 @@ WaveformTileRasterizer::rasterize(const RenderTileRequest& request)
             blue += static_cast<std::uint64_t>(line.blue) * lineWeight;
             weight += lineWeight;
         }
-        if (weight == 0)
+        if (!hasExtrema || weight == 0)
             continue;
 
         result->hasAnySourceData = true;

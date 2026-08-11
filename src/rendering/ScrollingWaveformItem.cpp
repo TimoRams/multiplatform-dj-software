@@ -176,8 +176,11 @@ struct WaveformSceneNode final : QSGClipNode {
     {
         clearGeometry(loopFill);
         destroyTextureNode(timeline, fallbackNode);
+        destroyTextureNode(timeline, viewportFallbackNode);
         fallbackKey.reset();
         fallbackRequestedKey.reset();
+        viewportFallbackKey.reset();
+        viewportFallbackRequestedKey.reset();
         for (std::size_t index = 0; index < waveformNodes.size(); ++index) {
             destroyTextureNode(timeline, waveformNodes[index]);
             waveformTileKeys[index].reset();
@@ -194,7 +197,6 @@ struct WaveformSceneNode final : QSGClipNode {
                 label->setRect({});
         }
         loopVisible = false;
-        tileBatchPending = false;
         loopInLine = std::numeric_limits<double>::quiet_NaN();
         loopOutLine = std::numeric_limits<double>::quiet_NaN();
         loopAppearance = -1;
@@ -203,6 +205,7 @@ struct WaveformSceneNode final : QSGClipNode {
     QSGTransformNode* timeline = nullptr;
     QSGGeometryNode* loopFill = nullptr;
     QSGSimpleTextureNode* fallbackNode = nullptr;
+    QSGSimpleTextureNode* viewportFallbackNode = nullptr;
     std::array<QSGSimpleTextureNode*, kWaveformNodePoolSize> waveformNodes{};
     QSGGeometryNode* regularBeats = nullptr;
     QSGGeometryNode* downbeats = nullptr;
@@ -215,9 +218,10 @@ struct WaveformSceneNode final : QSGClipNode {
     std::array<std::uint64_t, kWaveformNodePoolSize> waveformRenderedLineCounts{};
     std::optional<waveform_render::OverviewRenderKey> fallbackKey;
     std::optional<waveform_render::OverviewRenderKey> fallbackRequestedKey;
+    std::optional<waveform_render::OverviewRenderKey> viewportFallbackKey;
+    std::optional<waveform_render::OverviewRenderKey> viewportFallbackRequestedKey;
 
     bool hasWindow = false;
-    bool tileBatchPending = false;
     std::uint64_t trackGeneration = 0;
     std::uint64_t dataGeneration = 0;
     std::int64_t windowStartLine = 0;
@@ -491,7 +495,8 @@ std::uint64_t uploadWaveformTile(
 }
 
 void positionFallbackOverview(QSGSimpleTextureNode* node,
-                              std::uint32_t totalLineCount,
+                              std::uint32_t sourceBegin,
+                              std::uint32_t sourceEnd,
                               double renderOriginLine,
                               double pixelsPerLine,
                               float height)
@@ -499,16 +504,15 @@ void positionFallbackOverview(QSGSimpleTextureNode* node,
     if (!node)
         return;
     node->setRect(QRectF(
-        -renderOriginLine * pixelsPerLine,
+        (static_cast<double>(sourceBegin) - renderOriginLine) * pixelsPerLine,
         0.0,
-        static_cast<double>(totalLineCount) * pixelsPerLine,
+        static_cast<double>(sourceEnd - sourceBegin) * pixelsPerLine,
         height));
 }
 
 void uploadFallbackOverview(
     QSGSimpleTextureNode*& node,
     const waveform_render::RasterizedOverview& overview,
-    std::uint32_t totalLineCount,
     double renderOriginLine,
     double pixelsPerLine,
     float height,
@@ -525,7 +529,8 @@ void uploadFallbackOverview(
     auto* textureNode = assignTextureNode(node, texture, parent, insertBefore);
     textureNode->setOwnsTexture(true);
     textureNode->setFiltering(QSGTexture::Linear);
-    positionFallbackOverview(textureNode, totalLineCount, renderOriginLine,
+    positionFallbackOverview(textureNode, overview.key.sourceBegin,
+                             overview.key.sourceEnd, renderOriginLine,
                              pixelsPerLine, height);
 }
 
@@ -851,6 +856,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         const auto overviewSnapshot = trackData->getOverviewRgbSnapshot();
         if (overviewSnapshot && !overviewSnapshot->isEmpty()) {
             constexpr std::uint32_t fallbackWidth = 2048;
+            constexpr std::uint32_t maximumViewportFallbackWidth = 4096;
             const auto fallbackHeight = static_cast<std::uint32_t>(std::max(
                 1, static_cast<int>(std::ceil(bounds.height() * dpr))));
             const waveform_render::OverviewRenderKey fallbackKey{
@@ -858,33 +864,95 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                 static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(
                     overviewSnapshot.get())),
                 fallbackWidth,
-                fallbackHeight
+                fallbackHeight,
+                0,
+                snapshot->totalLineCount,
+                snapshot->totalLineCount
+            };
+            std::shared_ptr<std::vector<waveform_render::OverviewSample>> samples;
+            const auto requestOverview = [&](const auto& key) {
+                if (!samples) {
+                    samples = std::make_shared<std::vector<
+                        waveform_render::OverviewSample>>();
+                    samples->reserve(static_cast<std::size_t>(
+                        overviewSnapshot->size()));
+                    for (const auto& frame : *overviewSnapshot) {
+                        samples->push_back({frame.rms, frame.low, frame.lowMid,
+                                            frame.mid, frame.high});
+                    }
+                }
+                m_tileRasterizer->requestOverview({key, samples});
+            };
+            const auto firstHighResolutionNode = [&]() -> QSGNode* {
+                for (auto* node : scene->waveformNodes) {
+                    if (node)
+                        return node;
+                }
+                return scene->regularBeats;
             };
             if (const auto ready = m_tileRasterizer->findOverview(fallbackKey)) {
                 if (!scene->fallbackKey || *scene->fallbackKey != fallbackKey) {
                     uploadFallbackOverview(
-                        scene->fallbackNode, *ready, snapshot->totalLineCount,
+                        scene->fallbackNode, *ready,
                         scene->renderOriginLine, pixelsPerLine,
                         static_cast<float>(bounds.height()), window(),
-                        scene->timeline, scene->regularBeats);
+                        scene->timeline, scene->viewportFallbackNode
+                            ? static_cast<QSGNode*>(scene->viewportFallbackNode)
+                            : firstHighResolutionNode());
                     scene->fallbackKey = fallbackKey;
                 } else if (renderOriginChanged) {
                     positionFallbackOverview(
-                        scene->fallbackNode, snapshot->totalLineCount,
+                        scene->fallbackNode, 0, snapshot->totalLineCount,
                         scene->renderOriginLine, pixelsPerLine,
                         static_cast<float>(bounds.height()));
                 }
             } else if (!scene->fallbackRequestedKey
                        || *scene->fallbackRequestedKey != fallbackKey) {
-                auto samples = std::make_shared<std::vector<
-                    waveform_render::OverviewSample>>();
-                samples->reserve(static_cast<std::size_t>(overviewSnapshot->size()));
-                for (const auto& frame : *overviewSnapshot) {
-                    samples->push_back({frame.rms, frame.low, frame.lowMid,
-                                        frame.mid, frame.high});
-                }
-                m_tileRasterizer->requestOverview({fallbackKey, std::move(samples)});
+                requestOverview(fallbackKey);
                 scene->fallbackRequestedKey = fallbackKey;
+            }
+
+            const bool currentCoarseFallbackReady = scene->fallbackKey
+                && *scene->fallbackKey == fallbackKey;
+            if (staticConfigurationChanged && scene->viewportFallbackNode) {
+                clearWaveformTexture(scene->viewportFallbackNode);
+                scene->viewportFallbackKey.reset();
+                scene->viewportFallbackRequestedKey.reset();
+            }
+            if (currentCoarseFallbackReady && sourceBegin < sourceEnd) {
+                const auto viewportPhysicalWidth = static_cast<std::uint32_t>(
+                    std::clamp<std::int64_t>(waveform_render::timelinePhysicalCeil(
+                        static_cast<double>(sourceEnd - sourceBegin),
+                        pixelsPerLine, dpr), 1, maximumViewportFallbackWidth));
+                const waveform_render::OverviewRenderKey viewportKey{
+                    fallbackKey.trackGeneration,
+                    fallbackKey.sourceRevision,
+                    viewportPhysicalWidth,
+                    fallbackHeight,
+                    sourceBegin,
+                    sourceEnd,
+                    snapshot->totalLineCount
+                };
+                if (const auto ready = m_tileRasterizer->findOverview(viewportKey)) {
+                    if (!scene->viewportFallbackKey
+                        || *scene->viewportFallbackKey != viewportKey) {
+                        uploadFallbackOverview(
+                            scene->viewportFallbackNode, *ready,
+                            scene->renderOriginLine, pixelsPerLine,
+                            static_cast<float>(bounds.height()), window(),
+                            scene->timeline, firstHighResolutionNode());
+                        scene->viewportFallbackKey = viewportKey;
+                    } else if (renderOriginChanged) {
+                        positionFallbackOverview(
+                            scene->viewportFallbackNode, sourceBegin, sourceEnd,
+                            scene->renderOriginLine, pixelsPerLine,
+                            static_cast<float>(bounds.height()));
+                    }
+                } else if (!scene->viewportFallbackRequestedKey
+                           || *scene->viewportFallbackRequestedKey != viewportKey) {
+                    requestOverview(viewportKey);
+                    scene->viewportFallbackRequestedKey = viewportKey;
+                }
             }
         }
         if (scene->fallbackKey
@@ -893,22 +961,16 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             scene->fallbackKey.reset();
             scene->fallbackRequestedKey.reset();
         }
+        if (scene->viewportFallbackKey
+            && scene->viewportFallbackKey->trackGeneration
+                != snapshot->trackGeneration) {
+            clearWaveformTexture(scene->viewportFallbackNode);
+            scene->viewportFallbackKey.reset();
+            scene->viewportFallbackRequestedKey.reset();
+        }
 
         std::vector<PreparedTileSlot> preparedTiles;
         preparedTiles.reserve(scene->waveformNodes.size());
-        bool completeTileBatch = true;
-        if (windowConfigurationChanged) {
-            scene->tileBatchPending = true;
-            // Old textures use a different global pixel grid after zoom/DPR/
-            // window changes. Never display those with the new transform.
-            for (std::size_t poolIndex = 0;
-                 poolIndex < scene->waveformNodes.size(); ++poolIndex) {
-                clearWaveformTexture(scene->waveformNodes[poolIndex]);
-                scene->waveformTileKeys[poolIndex].reset();
-                scene->waveformRenderedLineCounts[poolIndex] = 0;
-            }
-        }
-
         if (sourceBegin < sourceEnd) {
             const auto physicalBegin = waveform_render::timelinePhysicalFloor(
                 static_cast<double>(sourceBegin), pixelsPerLine, dpr);
@@ -936,12 +998,11 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                     *snapshot, tileIndex, tileSpan, pixelsPerLine * dpr,
                     imageHeight, dpr, lodLevel);
                 PreparedTileSlot prepared{poolIndex, tileSpan, key};
-                prepared.alreadyDisplayed = scene->waveformTileKeys[poolIndex]
-                    && *scene->waveformTileKeys[poolIndex] == key;
+                prepared.alreadyDisplayed = waveform_render::currentRenderTileKey(
+                    scene->waveformTileKeys[poolIndex], key);
                 if (!prepared.alreadyDisplayed)
                     prepared.ready = m_tileRasterizer->find(key);
                 if (!prepared.alreadyDisplayed && !prepared.ready) {
-                    completeTileBatch = false;
                     const double tileCentre = static_cast<double>(
                         tileSpan.physicalBegin + tileSpan.physicalEnd) * 0.5;
                     const double playheadPhysical = playheadLine * pixelsPerLine * dpr;
@@ -959,35 +1020,34 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             }
         }
 
-        // Zoom/window transitions are swapped as one coherent frame. Mixing
-        // textures generated for different scales made the waveform look
-        // stretched and exposed seams while wheel events were still arriving.
-        const bool mayPublishPreparedTiles = !scene->tileBatchPending
-            || completeTileBatch;
-        if (mayPublishPreparedTiles) {
-            for (const auto& prepared : preparedTiles) {
-                const auto poolIndex = prepared.poolIndex;
-                if (prepared.alreadyDisplayed) {
-                    if (renderOriginChanged) {
-                        positionWaveformTile(
-                            scene->waveformNodes[poolIndex], prepared.span,
-                            scene->renderOriginLine, pixelsPerLine, dpr,
-                            static_cast<float>(bounds.height()));
-                    }
-                } else if (prepared.ready) {
-                    scene->waveformRenderedLineCounts[poolIndex] = uploadWaveformTile(
-                        scene->waveformNodes[poolIndex], *prepared.ready,
+        // Publish each current-generation tile as soon as it is ready. A slot
+        // may only retain a texture whose complete RenderTileKey matches the
+        // current window/zoom/DPR configuration. Missing slots are zero-area
+        // nodes, so the fallback overview below them remains visible instead
+        // of an old-scale texture or a transparent loading hole.
+        for (const auto& prepared : preparedTiles) {
+            const auto poolIndex = prepared.poolIndex;
+            if (prepared.alreadyDisplayed) {
+                if (renderOriginChanged) {
+                    positionWaveformTile(
+                        scene->waveformNodes[poolIndex], prepared.span,
                         scene->renderOriginLine, pixelsPerLine, dpr,
-                        static_cast<float>(bounds.height()), window(),
-                        scene->timeline, scene->regularBeats);
-                    scene->waveformTileKeys[poolIndex] = prepared.key;
+                        static_cast<float>(bounds.height()));
                 }
-                renderedLineCount += scene->waveformRenderedLineCounts[poolIndex];
-                ++visibleTileCount;
+            } else if (prepared.ready && prepared.ready->key == prepared.key) {
+                scene->waveformRenderedLineCounts[poolIndex] = uploadWaveformTile(
+                    scene->waveformNodes[poolIndex], *prepared.ready,
+                    scene->renderOriginLine, pixelsPerLine, dpr,
+                    static_cast<float>(bounds.height()), window(),
+                    scene->timeline, scene->regularBeats);
+                scene->waveformTileKeys[poolIndex] = prepared.key;
+            } else {
+                clearWaveformTexture(scene->waveformNodes[poolIndex]);
+                scene->waveformTileKeys[poolIndex].reset();
+                scene->waveformRenderedLineCounts[poolIndex] = 0;
             }
-            scene->tileBatchPending = false;
-        } else {
-            visibleTileCount = preparedTiles.size();
+            renderedLineCount += scene->waveformRenderedLineCounts[poolIndex];
+            ++visibleTileCount;
         }
         for (std::size_t poolIndex = usedPoolSlots;
             poolIndex < scene->waveformNodes.size(); ++poolIndex) {
