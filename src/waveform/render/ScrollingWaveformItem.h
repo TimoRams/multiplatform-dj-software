@@ -114,7 +114,8 @@ private:
     std::atomic<std::uint64_t> m_estimatedGpuTextureBytes{0};
     std::atomic<std::uint64_t> m_worstGeometryBuildUsec{0};
 
-    static constexpr float kMinimumZoom = 0.08f;
+    // Three more zoomOut() steps below the previous 0.08f floor (0.08 / 1.15^3).
+    static constexpr float kMinimumZoom = 0.0526f;
     static constexpr float kMaximumZoom = 10.0f;
     static constexpr float kZoomFactor = 1.15f;
 };

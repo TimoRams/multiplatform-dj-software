@@ -183,6 +183,7 @@ struct WaveformSceneNode final : QSGClipNode {
         for (std::size_t index = 0; index < waveformNodes.size(); ++index) {
             destroyTextureNode(timeline, waveformNodes[index]);
             waveformTileKeys[index].reset();
+            waveformSpans[index] = {};
             waveformRenderedLineCounts[index] = 0;
             waveformTextureBytes[index] = 0;
         }
@@ -190,12 +191,19 @@ struct WaveformSceneNode final : QSGClipNode {
         clearGeometry(downbeats);
         for (auto& label : downbeatLabels)
             destroyTextureNode(timeline, label);
+        downbeatLabelTexts.fill(QString());
+        downbeatLabelColors.fill(QColor());
         clearGeometry(loopEdges);
         clearGeometry(cueLines);
         for (auto* label : cueLabels) {
             if (label)
                 label->setRect({});
         }
+        // The hidden node keeps its old texture until reused; clear the
+        // content cache too, or a coincidental text/colour match on the next
+        // track would skip repainting and reveal stale content.
+        cueLabelTexts.fill(QString());
+        cueLabelColors.fill(QColor());
         loopVisible = false;
         loopInLine = std::numeric_limits<double>::quiet_NaN();
         loopOutLine = std::numeric_limits<double>::quiet_NaN();
@@ -209,11 +217,25 @@ struct WaveformSceneNode final : QSGClipNode {
     QSGGeometryNode* regularBeats = nullptr;
     QSGGeometryNode* downbeats = nullptr;
     std::array<QSGSimpleTextureNode*, kDownbeatLabelNodePoolSize> downbeatLabels{};
+    // Last-painted content per label slot, so a rebase that leaves a badge's
+    // text/colour unchanged can reposition it instead of repainting and
+    // re-uploading its GPU texture (see replaceCueLabelNode /
+    // updateDownbeatCounterNode).
+    std::array<QString, kDownbeatLabelNodePoolSize> downbeatLabelTexts{};
+    std::array<QColor, kDownbeatLabelNodePoolSize> downbeatLabelColors{};
     QSGGeometryNode* loopEdges = nullptr;
     QSGGeometryNode* cueLines = nullptr;
     std::array<QSGSimpleTextureNode*, kCueLabelNodePoolSize> cueLabels{};
+    std::array<QString, kCueLabelNodePoolSize> cueLabelTexts{};
+    std::array<QColor, kCueLabelNodePoolSize> cueLabelColors{};
     std::array<std::optional<waveform_render::RenderTileKey>,
                kWaveformNodePoolSize> waveformTileKeys{};
+    // Remembers the true source-line range each slot's texture currently
+    // depicts. A stale (previous-zoom) texture is repositioned every frame
+    // from this range rather than from its now-outdated physical tile span,
+    // so it keeps landing on the correct audio position while it waits to be
+    // replaced by a freshly rasterised tile for the new zoom level.
+    std::array<waveform_render::RenderTileSpan, kWaveformNodePoolSize> waveformSpans{};
     std::array<std::uint64_t, kWaveformNodePoolSize> waveformRenderedLineCounts{};
     std::array<std::uint64_t, kWaveformNodePoolSize> waveformTextureBytes{};
     std::optional<waveform_render::OverviewRenderKey> fallbackKey;
@@ -341,7 +363,9 @@ QSGSimpleTextureNode* replaceCueLabelNode(QSGSimpleTextureNode* previous,
                                           QQuickWindow* window,
                                           double originLine,
                                           double pixelsPerLine,
-                                          double devicePixelRatio)
+                                          double devicePixelRatio,
+                                          QString& cachedText,
+                                          QColor& cachedColor)
 {
     if (!window) {
         if (previous)
@@ -360,6 +384,19 @@ QSGSimpleTextureNode* replaceCueLabelNode(QSGSimpleTextureNode* previous,
         Qt::ElideRight, maximumTextWidth);
     const qreal badgeWidth = std::clamp<qreal>(
         static_cast<qreal>(metrics.horizontalAdvance(text) + 10), 22.0, 96.0);
+    const double x = waveform_render::snappedTimelineX(
+        label.linePosition, originLine, pixelsPerLine, devicePixelRatio);
+
+    // Repositioning is one setRect() call; repainting is a QImage fill plus
+    // a fresh GPU texture upload. Hot cue badges keep the same text/colour
+    // across most guard-window rebases (the cues themselves don't move), so
+    // skip the repaint — and the texture churn that comes with it — when
+    // nothing about the badge's appearance actually changed.
+    if (previous && cachedText == text && cachedColor == label.color) {
+        previous->setRect(QRectF(x - badgeWidth * 0.5, 0.0, badgeWidth, badgeHeight));
+        return previous;
+    }
+
     const qreal dpr = std::max(1.0, devicePixelRatio);
     QImage image(QSize(static_cast<int>(std::ceil(badgeWidth * dpr)),
                        static_cast<int>(std::ceil(badgeHeight * dpr))),
@@ -390,14 +427,14 @@ QSGSimpleTextureNode* replaceCueLabelNode(QSGSimpleTextureNode* previous,
     node->setTexture(texture);
     node->setOwnsTexture(true);
     node->setFiltering(QSGTexture::Linear);
-    const double x = waveform_render::snappedTimelineX(
-        label.linePosition, originLine, pixelsPerLine, devicePixelRatio);
     node->setRect(QRectF(x - badgeWidth * 0.5, 0.0, badgeWidth, badgeHeight));
     if (previous) {
         parent->removeChildNode(previous);
         delete previous;
     }
     parent->appendChildNode(node);
+    cachedText = text;
+    cachedColor = label.color;
     return node;
 }
 
@@ -409,7 +446,9 @@ void updateDownbeatCounterNode(QSGSimpleTextureNode*& node,
                                double originLine,
                                double pixelsPerLine,
                                double devicePixelRatio,
-                               qreal top)
+                               qreal top,
+                               QString& cachedText,
+                               QColor& cachedColor)
 {
     if (!window) {
         clearWaveformTexture(node);
@@ -424,6 +463,21 @@ void updateDownbeatCounterNode(QSGSimpleTextureNode*& node,
     const qreal badgeWidth = std::clamp<qreal>(
         static_cast<qreal>(metrics.horizontalAdvance(label.text) + 8), 16.0, 38.0);
     const qreal dpr = std::max(1.0, devicePixelRatio);
+    const double x = waveform_render::snappedTimelineX(
+        label.linePosition, originLine, pixelsPerLine, devicePixelRatio);
+    // Keep the downbeat itself unobstructed: the counter follows immediately
+    // to the right of the red marker instead of sitting on top of it.
+    const qreal markerGap = 3.0 / dpr;
+
+    // Same reasoning as replaceCueLabelNode: a rebase often leaves every
+    // visible bar number unchanged (e.g. a hot-cue edit invalidates
+    // geometry without moving the window), so skip the repaint/texture
+    // upload when this slot's bar number and colour are still the same.
+    if (node && cachedText == label.text && cachedColor == label.color) {
+        node->setRect(QRectF(x + markerGap, top, badgeWidth, badgeHeight));
+        return;
+    }
+
     QImage image(QSize(static_cast<int>(std::ceil(badgeWidth * dpr)),
                        static_cast<int>(std::ceil(badgeHeight * dpr))),
                  QImage::Format_ARGB32_Premultiplied);
@@ -453,12 +507,9 @@ void updateDownbeatCounterNode(QSGSimpleTextureNode*& node,
     auto* textureNode = assignTextureNode(node, texture, parent, insertBefore);
     textureNode->setOwnsTexture(true);
     textureNode->setFiltering(QSGTexture::Linear);
-    const double x = waveform_render::snappedTimelineX(
-        label.linePosition, originLine, pixelsPerLine, devicePixelRatio);
-    // Keep the downbeat itself unobstructed: the counter follows immediately
-    // to the right of the red marker instead of sitting on top of it.
-    const qreal markerGap = 3.0 / dpr;
     textureNode->setRect(QRectF(x + markerGap, top, badgeWidth, badgeHeight));
+    cachedText = label.text;
+    cachedColor = label.color;
 }
 
 void positionWaveformTile(QSGSimpleTextureNode* node,
@@ -1088,6 +1139,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                 if (!tileSpan.hasSource()) {
                     clearWaveformTexture(scene->waveformNodes[poolIndex]);
                     scene->waveformTileKeys[poolIndex].reset();
+                    scene->waveformSpans[poolIndex] = {};
                     scene->waveformRenderedLineCounts[poolIndex] = 0;
                     scene->waveformTextureBytes[poolIndex] = 0;
                     continue;
@@ -1102,20 +1154,17 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                     static_cast<std::uint32_t>(m_backgroundColor.rgba()));
                 const auto requiredViewKey = waveform_render::viewKeyFor(key);
                 if (!scene->viewKey || *scene->viewKey != requiredViewKey) {
+                    // A zoom/DPR/background change invalidates every pool
+                    // slot's key, but the textures themselves still depict
+                    // valid audio at their remembered source-line range.
+                    // Leave them in place — the per-tile loop below keeps
+                    // displaying each one, repositioned for the new zoom,
+                    // until its replacement for the new view is ready. This
+                    // avoids a hard cut to the coarse whole-track fallback on
+                    // every zoom step.
                     const bool zoomTransition = scene->viewKey
                         && scene->viewKey->trackGeneration
                             == requiredViewKey.trackGeneration;
-                    for (std::size_t oldIndex = 0;
-                         oldIndex < scene->waveformNodes.size(); ++oldIndex) {
-                        if (scene->waveformTileKeys[oldIndex]) {
-                            m_staleZoomTilesRejected.fetch_add(
-                                1, std::memory_order_relaxed);
-                        }
-                        clearWaveformTexture(scene->waveformNodes[oldIndex]);
-                        scene->waveformTileKeys[oldIndex].reset();
-                        scene->waveformRenderedLineCounts[oldIndex] = 0;
-                        scene->waveformTextureBytes[oldIndex] = 0;
-                    }
                     scene->viewKey = requiredViewKey;
                     ++scene->viewGeneration;
                     m_viewGeneration.store(scene->viewGeneration,
@@ -1151,10 +1200,11 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         std::uint64_t missingVisibleTiles = 0;
 
         // Publish each current-generation tile as soon as it is ready. A slot
-        // may only retain a texture whose complete RenderTileKey matches the
-        // current window/zoom/DPR configuration. Missing slots are zero-area
-        // nodes, so the fallback overview below them remains visible instead
-        // of an old-scale texture or a transparent loading hole.
+        // whose replacement isn't ready yet keeps showing its previous
+        // texture (see the stale-zoom branch below) instead of falling back
+        // to the coarse whole-track overview. Only a slot with no valid
+        // texture at all — from any zoom level of the current track — turns
+        // into a zero-area node that exposes the fallback beneath it.
         for (const auto& prepared : preparedTiles) {
             const auto poolIndex = prepared.poolIndex;
             if (prepared.alreadyDisplayed) {
@@ -1180,6 +1230,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                         = upload->renderedColumns;
                     scene->waveformTextureBytes[poolIndex] = upload->bytes;
                     scene->waveformTileKeys[poolIndex] = prepared.key;
+                    scene->waveformSpans[poolIndex] = prepared.span;
                     ++readyVisibleTiles;
                     m_textureUploadCount.fetch_add(1, std::memory_order_relaxed);
                     m_textureUploadBytes.fetch_add(upload->bytes,
@@ -1190,10 +1241,25 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                     }
                 } else {
                     scene->waveformTileKeys[poolIndex].reset();
+                    scene->waveformSpans[poolIndex] = {};
                     scene->waveformRenderedLineCounts[poolIndex] = 0;
                     scene->waveformTextureBytes[poolIndex] = 0;
                     ++missingVisibleTiles;
                 }
+            } else if (scene->waveformTileKeys[poolIndex]
+                       && scene->waveformTileKeys[poolIndex]->trackGeneration
+                           == prepared.key.trackGeneration) {
+                // The replacement tile for the new zoom isn't rasterised
+                // yet. Keep the previous zoom level's texture on screen,
+                // positioned by its own true source range, instead of
+                // clearing it and exposing the coarse whole-track fallback.
+                positionFallbackOverview(
+                    scene->waveformNodes[poolIndex],
+                    scene->waveformSpans[poolIndex].sourceBegin,
+                    scene->waveformSpans[poolIndex].sourceEnd,
+                    scene->renderOriginLine, pixelsPerLine,
+                    static_cast<float>(bounds.height()));
+                m_staleZoomTilesRejected.fetch_add(1, std::memory_order_relaxed);
             } else {
                 if (prepared.ready && prepared.ready->hasAnySourceData
                     && !prepared.ready->hasCompleteSourceData) {
@@ -1202,6 +1268,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                 }
                 clearWaveformTexture(scene->waveformNodes[poolIndex]);
                 scene->waveformTileKeys[poolIndex].reset();
+                scene->waveformSpans[poolIndex] = {};
                 scene->waveformRenderedLineCounts[poolIndex] = 0;
                 scene->waveformTextureBytes[poolIndex] = 0;
                 ++missingVisibleTiles;
@@ -1224,6 +1291,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             poolIndex < scene->waveformNodes.size(); ++poolIndex) {
             clearWaveformTexture(scene->waveformNodes[poolIndex]);
             scene->waveformTileKeys[poolIndex].reset();
+            scene->waveformSpans[poolIndex] = {};
             scene->waveformRenderedLineCounts[poolIndex] = 0;
             scene->waveformTextureBytes[poolIndex] = 0;
         }
@@ -1313,10 +1381,13 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                 scene->cueLabels[labelIndex] = replaceCueLabelNode(
                     scene->cueLabels[labelIndex], scene->timeline,
                     cueLabels[labelIndex], window(), scene->renderOriginLine,
-                    pixelsPerLine, dpr);
+                    pixelsPerLine, dpr, scene->cueLabelTexts[labelIndex],
+                    scene->cueLabelColors[labelIndex]);
                 m_sceneGraphNodeCreationCount.fetch_add(1, std::memory_order_relaxed);
             }
             for (; labelIndex < scene->cueLabels.size(); ++labelIndex) {
+                scene->cueLabelTexts[labelIndex].clear();
+                scene->cueLabelColors[labelIndex] = QColor();
                 if (!scene->cueLabels[labelIndex])
                     continue;
                 scene->timeline->removeChildNode(scene->cueLabels[labelIndex]);
@@ -1353,7 +1424,9 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                 updateDownbeatCounterNode(
                     scene->downbeatLabels[labelIndex], labels[labelIndex], window(),
                     scene->timeline, scene->loopEdges, scene->renderOriginLine,
-                    pixelsPerLine, dpr, labelTop);
+                    pixelsPerLine, dpr, labelTop,
+                    scene->downbeatLabelTexts[labelIndex],
+                    scene->downbeatLabelColors[labelIndex]);
             }
             for (; labelIndex < scene->downbeatLabels.size(); ++labelIndex)
                 clearWaveformTexture(scene->downbeatLabels[labelIndex]);

@@ -13,7 +13,8 @@ class WaveformZoomController final : public QObject
     Q_PROPERTY(double zoom READ zoom WRITE setZoom NOTIFY zoomChanged)
 
 public:
-    static constexpr double kMinimum = 0.08;
+    // Three more zoomOut() steps below the previous 0.08 floor (0.08 / 1.15^3).
+    static constexpr double kMinimum = 0.0526;
     static constexpr double kMaximum = 10.0;
     static constexpr double kDefault = 0.22;
     static constexpr double kFactor = 1.15;

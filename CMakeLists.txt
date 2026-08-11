@@ -787,6 +787,7 @@ target_link_libraries(BrockDJ_track_loader_tests PRIVATE
 )
 target_compile_definitions(BrockDJ_track_loader_tests PRIVATE
     JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1
+    BROCKDJ_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 target_compile_features(BrockDJ_track_loader_tests PRIVATE cxx_std_23)
 add_test(NAME track_loader COMMAND BrockDJ_track_loader_tests)

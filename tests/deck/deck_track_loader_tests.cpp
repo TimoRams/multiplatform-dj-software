@@ -87,8 +87,8 @@ int main(int argc, char** argv)
     const QString monoPath = directory.filePath(QStringLiteral("Artist - Mono.wav"));
     const QString stereoPath = directory.filePath(QStringLiteral("Stereo.wav"));
     const QString mp3Path = QDir::cleanPath(
-        QCoreApplication::applicationDirPath()
-        + QStringLiteral("/../libs/JUCE/examples/Assets/Notifications/sounds/solemn.mp3"));
+        QStringLiteral(BROCKDJ_SOURCE_DIR)
+        + QStringLiteral("/libs/JUCE/examples/Assets/Notifications/sounds/solemn.mp3"));
     ok &= require(writeWave(monoPath, 44100.0, 1, 0.2), "mono fixture must be generated");
     ok &= require(writeWave(stereoPath, 48000.0, 2, 0.3), "stereo fixture must be generated");
 

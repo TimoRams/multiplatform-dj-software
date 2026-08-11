@@ -132,11 +132,15 @@ void OverviewWaveformItem::paintCompactOverview(QPainter* painter,
     const float baseline = static_cast<float>(h - 1);
     const float maxBarH  = static_cast<float>(h - 2);
 
-    painter->setRenderHint(QPainter::Antialiasing, false);
+    // Antialiased round caps turn each column's tip into a soft peak instead
+    // of a hard-edged bar-chart rectangle, closer to a real waveform's
+    // silhouette at this scale.
+    painter->setRenderHint(QPainter::Antialiasing, true);
     painter->setBrush(Qt::NoBrush);
 
     std::vector<float> heights(static_cast<size_t>(drawWidth), 0.0f);
     std::vector<QColor> colors(static_cast<size_t>(drawWidth));
+    std::vector<float> energies(static_cast<size_t>(drawWidth), 0.0f);
 
     for (int x = 0; x < drawWidth; ++x) {
         const int i0 = static_cast<int>((static_cast<int64_t>(x) * frames.size()) / std::max(1, drawWidth));
@@ -145,18 +149,22 @@ void OverviewWaveformItem::paintCompactOverview(QPainter* painter,
 
         float peakRms = 0.0f;
         float rmsSum = 0.0f;
-        float weightedLow = 0.0f, weightedLowMid = 0.0f;
-        float weightedMid = 0.0f, weightedHigh = 0.0f, colorWeight = 0.0f;
+        float peakLow = 0.0f, peakLowMid = 0.0f, peakMid = 0.0f, peakHigh = 0.0f;
         for (int i = i0; i < i1; ++i) {
             const auto& f = frames[i];
-            peakRms = std::max(peakRms, f.rms);
             rmsSum += f.rms;
-            const float weight = std::max(0.01f, f.rms);
-            weightedLow += f.low * weight;
-            weightedLowMid += f.lowMid * weight;
-            weightedMid += f.mid * weight;
-            weightedHigh += f.high * weight;
-            colorWeight += weight;
+            // Colour follows the loudest instant in the bin — the same rule
+            // the scrolling waveform uses for its narrow per-column slices.
+            // Averaging band energy across the whole bin used to wash a
+            // bass-driven track toward mid/high hues here while the
+            // scrolling view stayed bass-red for the same audio.
+            if (f.rms >= peakRms) {
+                peakRms = f.rms;
+                peakLow = f.low;
+                peakLowMid = f.lowMid;
+                peakMid = f.mid;
+                peakHigh = f.high;
+            }
         }
 
         if (peakRms <= 0.001f)
@@ -168,10 +176,14 @@ void OverviewWaveformItem::paintCompactOverview(QPainter* painter,
         const float energy = waveform_visual::foldedEnergy(meanRms, peakRms);
         const float logH = waveform_visual::logarithmicAmplitude(energy);
         heights[static_cast<size_t>(x)] = std::clamp(logH, 0.018f, 1.0f) * maxBarH;
-        const float invWeight = 1.0f / std::max(0.01f, colorWeight);
+        energies[static_cast<size_t>(x)] = energy;
+        // Colour brightness follows the peak instant's own loudness, not the
+        // mean-dampened envelope energy above — canonical per-line colours
+        // (what the scrolling waveform shows) are brightened by their own
+        // raw rms the same way, so matching that here keeps the two views
+        // at the same saturation instead of the overview reading washed out.
         colors[static_cast<size_t>(x)] = visualColor(
-            weightedLow * invWeight, weightedLowMid * invWeight,
-            weightedMid * invWeight, weightedHigh * invWeight, energy);
+            peakLow, peakLowMid, peakMid, peakHigh, peakRms);
     }
 
     // Symmetric smoothing avoids the old left-to-right smear that made the
@@ -186,16 +198,48 @@ void OverviewWaveformItem::paintCompactOverview(QPainter* painter,
             heights[static_cast<size_t>(x)], rawHeights[static_cast<size_t>(x)] * 0.84f);
     }
 
-    // The overview uses the same visual primitive as the scrolling waveform:
-    // one coloured vertical line per display column.
+    // Pass 1: soft glow beneath the silhouette, louder columns bloom more —
+    // gives the strip the same layered depth as the main deck waveform
+    // instead of a flat single-tone bar chart.
     for (int x = 0; x < drawWidth; ++x) {
         const float barH = heights[static_cast<size_t>(x)];
         if (barH <= 0.5f)
             continue;
-        const QColor c = colors[static_cast<size_t>(x)];
-        painter->setPen(QPen(QColor(c.red(), c.green(), c.blue(), 225), 1.0));
+        const QColor& c = colors[static_cast<size_t>(x)];
+        const int alpha = std::clamp(
+            static_cast<int>(16 + energies[static_cast<size_t>(x)] * 30.0f), 16, 46);
+        painter->setPen(QPen(QColor(c.red(), c.green(), c.blue(), alpha), 2.4,
+                             Qt::SolidLine, Qt::RoundCap));
+        painter->drawLine(QPointF(static_cast<double>(x), baseline),
+                          QPointF(static_cast<double>(x), baseline - barH * 1.12f));
+    }
+
+    // Pass 2: solid body — one coloured vertical line per display column.
+    for (int x = 0; x < drawWidth; ++x) {
+        const float barH = heights[static_cast<size_t>(x)];
+        if (barH <= 0.5f)
+            continue;
+        const QColor& c = colors[static_cast<size_t>(x)];
+        painter->setPen(QPen(QColor(c.red(), c.green(), c.blue(), 230), 1.3,
+                             Qt::SolidLine, Qt::RoundCap));
         painter->drawLine(QPointF(static_cast<double>(x), baseline),
                           QPointF(static_cast<double>(x), baseline - barH));
+    }
+
+    // Pass 3: bright tip highlight at each column's peak.
+    for (int x = 0; x < drawWidth; ++x) {
+        const float barH = heights[static_cast<size_t>(x)];
+        if (barH <= 2.0f)
+            continue;
+        const QColor& c = colors[static_cast<size_t>(x)];
+        const int tr = c.red()   + (255 - c.red())   * 60 / 100;
+        const int tg = c.green() + (255 - c.green()) * 60 / 100;
+        const int tb = c.blue()  + (255 - c.blue())  * 60 / 100;
+        const float tipLen = std::clamp(barH * 0.16f, 1.0f, 3.0f);
+        painter->setPen(QPen(QColor(tr, tg, tb, 235), 1.3,
+                             Qt::SolidLine, Qt::RoundCap));
+        painter->drawLine(QPointF(static_cast<double>(x), baseline - barH),
+                          QPointF(static_cast<double>(x), baseline - barH + tipLen));
     }
 
     // Cue markers
