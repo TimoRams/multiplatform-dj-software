@@ -82,12 +82,13 @@ void WaveformLineStore::reset(std::uint64_t trackGeneration, std::uint32_t total
         return;
     auto next = std::make_shared<WaveformLineStoreSnapshot>();
     next->trackGeneration = trackGeneration;
-    next->dataGeneration = m_snapshot ? m_snapshot->dataGeneration + 1 : 1;
     next->linesPerSecond = linesPerSecond;
     next->chunkSize = chunkSize;
     next->totalLineCount = totalLineCount;
     next->chunks = std::make_shared<const std::vector<std::shared_ptr<const WaveformLineChunk>>>(
         static_cast<size_t>(chunkCount));
+    std::lock_guard lock(m_snapshotMutex);
+    next->dataGeneration = m_snapshot ? m_snapshot->dataGeneration + 1 : 1;
     m_snapshot = std::move(next);
 }
 
@@ -101,7 +102,11 @@ WaveformLineStore::PublishResult WaveformLineStore::publish(WaveformLineChunk ch
 WaveformLineStore::PublishResult WaveformLineStore::publishBatch(
     std::vector<WaveformLineChunk> chunks)
 {
-    const auto current = m_snapshot;
+    // Only the owner thread mutates, so reading the current snapshot outside
+    // the lock and swapping under it is safe: no other writer can interleave.
+    // Keeping the (potentially large) table copy below outside the lock is the
+    // point — readers must not wait for it.
+    const auto current = snapshot();
     if (!current || !current->chunks || chunks.empty())
         return PublishResult::Rejected;
     std::vector<bool> seen(current->chunks->size(), false);
@@ -147,13 +152,16 @@ WaveformLineStore::PublishResult WaveformLineStore::publishBatch(
     auto next = std::make_shared<WaveformLineStoreSnapshot>(*current);
     next->dataGeneration = revision;
     next->chunks = std::move(table);
-    m_snapshot = std::move(next);
+    {
+        std::lock_guard lock(m_snapshotMutex);
+        m_snapshot = std::move(next);
+    }
     return PublishResult::Accepted;
 }
 
 bool WaveformLineStore::publishLodBatch(WaveformLodBatch batch)
 {
-    const auto current = m_snapshot;
+    const auto current = snapshot();
     if (!current || current->trackGeneration == 0 || batch.empty())
         return false;
 
@@ -220,11 +228,15 @@ bool WaveformLineStore::publishLodBatch(WaveformLodBatch batch)
     auto next = std::make_shared<WaveformLineStoreSnapshot>(*current);
     next->dataGeneration = revision;
     next->lodLevels[static_cast<std::size_t>(level)] = std::move(nextLevel);
-    m_snapshot = std::move(next);
+    {
+        std::lock_guard lock(m_snapshotMutex);
+        m_snapshot = std::move(next);
+    }
     return true;
 }
 
 std::shared_ptr<const WaveformLineStoreSnapshot> WaveformLineStore::snapshot() const
 {
+    std::lock_guard lock(m_snapshotMutex);
     return m_snapshot;
 }

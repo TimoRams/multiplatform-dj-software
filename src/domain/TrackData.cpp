@@ -140,6 +140,7 @@ bool TrackData::applyAnalysisResult(const analysis::AnalysisResult& result)
         if (!m_beatGridInfo.lockedByUser) {
             m_beatGridInfo = result.beatGrid;
             m_beatGrid = result.beats;
+            m_beatGridSnapshot.reset();
         }
         m_segments = result.phrases;
         m_detectedKey = result.detectedKey;
@@ -286,6 +287,7 @@ void TrackData::setBpmData(double bpm, qint64 firstBeatSample, double sampleRate
         m_confidence      = confidence;
         if (!beatGrid.empty()) {
             m_beatGrid = std::move(beatGrid);
+        m_beatGridSnapshot.reset();
             beatgridUpdated = true;
         }
         if (beatGridInfo.type != BeatGridType::Unknown || !beatGridInfo.tempoNodes.empty()
@@ -348,6 +350,7 @@ void TrackData::ensureProvisionalBeatgrid(double trackLengthSec)
         if (!m_beatGrid.empty() || std::abs(m_bpm - bpm) > 1.0e-9)
             return;
         m_beatGrid = std::move(grid);
+        m_beatGridSnapshot.reset();
         m_beatGridInfo.type = BeatGridType::ConstantTempo;
         m_beatGridInfo.tempoNodes = {{anchor, bpm, confidence}};
         m_beatGridInfo.userModified = false;
@@ -428,6 +431,7 @@ void TrackData::shiftBeatgridToDownbeat(double newAnchorSec, double trackLengthS
         QMutexLocker locker(&m_mutex);
         m_firstBeatSample = static_cast<qint64>(std::llround(newAnchorSec * m_sampleRate));
         m_beatGrid = std::move(grid);
+        m_beatGridSnapshot.reset();
         m_beatGridInfo.type = BeatGridType::ConstantTempo;
         m_beatGridInfo.userModified = true;
         m_beatGridInfo.lockedByUser = true;
@@ -634,6 +638,7 @@ void TrackData::clear()
         m_detectedKey.clear();
         m_isKeyAnalyzed = false;
         m_beatGrid.clear();
+        m_beatGridSnapshot.reset();
         m_segments.clear();
     }
     emit dataCleared();

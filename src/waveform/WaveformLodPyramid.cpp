@@ -49,8 +49,22 @@ WaveformLodPyramid::Sample WaveformLodPyramid::sample(
     std::uint64_t blue = 0;
     std::uint64_t weight = 0;
     std::uint8_t flags = 0xff;
+    // The whole [begin, end) fold almost always lives inside a single chunk
+    // (stride is at most 16, chunks hold 1024 lines). chunkAt() returns a
+    // shared_ptr by value, so looking it up per line cost an atomic refcount
+    // pair for every source sample — the dominant per-tile overhead now that
+    // no persisted LOD level exists and this fallback runs for every sample.
+    // Hold the chunk across the fold and only re-resolve on a boundary.
+    std::shared_ptr<const WaveformLineChunk> chunk;
+    std::uint32_t chunkIndex = 0;
+    bool chunkResolved = false;
     for (auto lineIndex = begin; lineIndex < end; ++lineIndex) {
-        const auto chunk = snapshot.chunkAt(lineIndex / snapshot.chunkSize);
+        const auto wantedChunkIndex = lineIndex / snapshot.chunkSize;
+        if (!chunkResolved || wantedChunkIndex != chunkIndex) {
+            chunk = snapshot.chunkAt(wantedChunkIndex);
+            chunkIndex = wantedChunkIndex;
+            chunkResolved = true;
+        }
         if (!chunk || !chunk->lines || lineIndex < chunk->firstLineIndex) {
             result.complete = false;
             continue;

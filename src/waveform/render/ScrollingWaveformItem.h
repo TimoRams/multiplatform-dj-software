@@ -119,6 +119,12 @@ private:
     std::atomic<std::uint64_t> m_textureUploadBytes{0};
     std::atomic<std::uint64_t> m_estimatedGpuTextureBytes{0};
     std::atomic<std::uint64_t> m_worstGeometryBuildUsec{0};
+    // Whole-updatePaintNode cost and the store-snapshot acquisition inside it.
+    // The snapshot figure is the direct read-out of render-thread lock
+    // contention: it used to queue behind progressive chunk staging on the
+    // coarse TrackData mutex, which is what stalled the UI while scratching.
+    std::atomic<std::uint64_t> m_worstPaintNodeUsec{0};
+    std::atomic<std::uint64_t> m_worstSnapshotAcquireUsec{0};
 
     // Three more zoomOut() steps below the previous 0.08f floor (0.08 / 1.15^3).
     static constexpr float kMinimumZoom = 0.0526f;

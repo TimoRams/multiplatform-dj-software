@@ -620,7 +620,11 @@ std::vector<TrackData::BeatMarker> visibleBeatGrid(const TrackData& trackData,
                                                    double leftSec,
                                                    double rightSec)
 {
-    const auto grid = trackData.getBeatGrid();
+    // Snapshot rather than getBeatGrid(): this runs on the render thread on
+    // every guarded-window rebuild, and copying the whole marker vector under
+    // the shared TrackData mutex was a per-rebuild stall during scratching.
+    const auto gridSnapshot = trackData.getBeatGridSnapshot();
+    const auto& grid = *gridSnapshot;
     if (!grid.empty()) {
         const auto first = std::lower_bound(grid.cbegin(), grid.cend(), leftSec,
             [](const TrackData::BeatMarker& marker, double second) {
@@ -949,6 +953,20 @@ void ScrollingWaveformItem::onTimelineScaleChanged()
 
 QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
 {
+    QElapsedTimer paintNodeTimer;
+    paintNodeTimer.start();
+    // Records the worst whole-sync cost on scope exit, including every early
+    // return, so a stall cannot hide in a branch that skips the timer.
+    const struct PaintNodeTimingScope final {
+        QElapsedTimer& timer;
+        std::atomic<std::uint64_t>& worst;
+        ~PaintNodeTimingScope()
+        {
+            updateWorst(worst,
+                        static_cast<std::uint64_t>(timer.nsecsElapsed() / 1000));
+        }
+    } paintNodeTiming{paintNodeTimer, m_worstPaintNodeUsec};
+
     auto* scene = static_cast<WaveformSceneNode*>(oldNode);
     if (!scene) {
         scene = new WaveformSceneNode();
@@ -968,7 +986,11 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
 
     DjEngine* engine = m_engine.data();
     TrackData* trackData = engine ? engine->getTrackData() : nullptr;
+    QElapsedTimer snapshotTimer;
+    snapshotTimer.start();
     const auto snapshot = trackData ? trackData->getWaveformLineStoreSnapshot() : nullptr;
+    updateWorst(m_worstSnapshotAcquireUsec,
+                static_cast<std::uint64_t>(snapshotTimer.nsecsElapsed() / 1000));
     if (!engine || !trackData || !snapshot || snapshot->totalLineCount == 0
         || !snapshot->chunks || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
         m_tileRasterizer->setActiveTrackGeneration(0);
@@ -1658,6 +1680,10 @@ QVariantMap ScrollingWaveformItem::renderStats() const
                  QVariant::fromValue<qulonglong>(tileStats.worstRasterUsec));
     stats.insert(QStringLiteral("worstGeometryBuildUsec"),
                  QVariant::fromValue<qulonglong>(m_worstGeometryBuildUsec.load(std::memory_order_relaxed)));
+    stats.insert(QStringLiteral("worstPaintNodeUsec"),
+                 QVariant::fromValue<qulonglong>(m_worstPaintNodeUsec.load(std::memory_order_relaxed)));
+    stats.insert(QStringLiteral("worstSnapshotAcquireUsec"),
+                 QVariant::fromValue<qulonglong>(m_worstSnapshotAcquireUsec.load(std::memory_order_relaxed)));
     return stats;
 }
 
@@ -1685,4 +1711,6 @@ void ScrollingWaveformItem::resetRenderStats()
     m_estimatedGpuTextureBytes.store(0, std::memory_order_relaxed);
     m_incompleteTileRejectedCount.store(0, std::memory_order_relaxed);
     m_worstGeometryBuildUsec.store(0, std::memory_order_relaxed);
+    m_worstPaintNodeUsec.store(0, std::memory_order_relaxed);
+    m_worstSnapshotAcquireUsec.store(0, std::memory_order_relaxed);
 }

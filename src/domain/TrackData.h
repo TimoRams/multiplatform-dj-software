@@ -178,6 +178,21 @@ public:
         return m_beatGrid;
     }
 
+    // Copy-free variant for the render thread. getBeatGrid() copies the whole
+    // marker vector while holding m_mutex; the scrolling waveform needs the
+    // grid on every guarded-window rebuild, so during scratching that meant
+    // repeatedly copying hundreds of KB on the render thread inside the same
+    // mutex that progressive chunk staging holds. The snapshot is replaced
+    // wholesale on every grid edit, so readers can hold it without a lock.
+    std::shared_ptr<const std::vector<BeatMarker>> getBeatGridSnapshot() const {
+        QMutexLocker locker(&m_mutex);
+        if (!m_beatGridSnapshot) {
+            m_beatGridSnapshot =
+                std::make_shared<const std::vector<BeatMarker>>(m_beatGrid);
+        }
+        return m_beatGridSnapshot;
+    }
+
     ConfidenceInfo getConfidenceInfo() const {
         QMutexLocker locker(&m_mutex);
         return m_confidence;
@@ -323,7 +338,13 @@ public:
         return m_peakMipSnapshot;
     }
     std::shared_ptr<const WaveformLineStoreSnapshot> getWaveformLineStoreSnapshot() const {
-        QMutexLocker locker(&m_mutex);
+        // Deliberately does NOT take m_mutex. The store synchronises its own
+        // snapshot pointer internally, and this is called every frame by the
+        // render thread plus once per frame by publishViewportDemand on the
+        // GUI thread. Routing it through m_mutex made those readers queue
+        // behind progressive chunk staging (which copies whole 1024-line
+        // chunks while holding m_mutex), which is what stalled the UI during
+        // scratching and right after a track load.
         return m_waveformLineStore.snapshot();
     }
 
@@ -415,6 +436,9 @@ private:
     ConfidenceInfo m_confidence;
     BeatGridInfo m_beatGridInfo;
     std::vector<BeatMarker> m_beatGrid;
+    // Lazily rebuilt copy of m_beatGrid handed to readers as an immutable
+    // shared snapshot. Invalidated (reset to null) by every m_beatGrid edit.
+    mutable std::shared_ptr<const std::vector<BeatMarker>> m_beatGridSnapshot;
     std::vector<TrackSegment> m_segments;
 
     QString m_detectedKey;

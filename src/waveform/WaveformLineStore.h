@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 inline constexpr std::uint32_t kWaveformCanonicalChunkSize = 1024;
@@ -68,5 +69,13 @@ public:
     [[nodiscard]] std::shared_ptr<const WaveformLineStoreSnapshot> snapshot() const;
 
 private:
+    // Guards m_snapshot only. Publication swaps one shared_ptr, so this is
+    // held for microseconds. Readers (notably the Qt render thread, which
+    // takes a snapshot every frame) must never have to wait behind the much
+    // coarser TrackData mutex, which is also held while progressive chunks are
+    // staged and copied — that contention was what made scratching stall the
+    // whole UI. Lock order is always TrackData::m_mutex -> this, never the
+    // reverse: readers take this one alone.
+    mutable std::mutex m_snapshotMutex;
     std::shared_ptr<WaveformLineStoreSnapshot> m_snapshot = std::make_shared<WaveformLineStoreSnapshot>();
 };
