@@ -84,6 +84,42 @@ inline double smoothTimelineTranslation(double width,
 // is deliberately independent of analysis chunk boundaries, zoom and DPR.
 inline constexpr std::int64_t kRenderTilePhysicalWidth = 1024;
 
+// The coarse whole-track fallback overview is rasterized once at a fixed texel
+// count for the entire track, so one texel already aggregates many canonical
+// lines. Drawing it underneath the detail tiles is only honest while each of
+// its texels still maps to roughly one physical pixel. Magnified further it
+// stops being "coarse context" and becomes fake detail: a single aggregated
+// sample smeared across dozens of pixels, which reads as a broad solid block
+// of waveform that was never in the audio. At a typical deck zoom
+// (0.22 px/line) a 7-minute track is ~504k lines wide, so a 2048-texel
+// overview would be magnified ~54x — exactly the broad blocks seen before
+// real detail arrives. Past the budget below the neutral background is the
+// truthful placeholder until genuine detail tiles are ready.
+inline constexpr double kMaximumFallbackOverviewMagnification = 2.0;
+
+// Physical pixels each fallback-overview texel is stretched across.
+inline double fallbackOverviewMagnification(
+    std::uint32_t textureTexelWidth,
+    std::uint32_t totalLineCount,
+    double pixelsPerLine,
+    double devicePixelRatio) noexcept
+{
+    if (textureTexelWidth == 0 || totalLineCount == 0
+        || !(pixelsPerLine > 0.0) || !std::isfinite(pixelsPerLine)) {
+        return 0.0;
+    }
+    const double dpr = std::max(1.0, devicePixelRatio);
+    const double physicalWidth =
+        static_cast<double>(totalLineCount) * pixelsPerLine * dpr;
+    return physicalWidth / static_cast<double>(textureTexelWidth);
+}
+
+inline bool fallbackOverviewMayRepresentDetail(double magnification) noexcept
+{
+    return magnification > 0.0
+        && magnification <= kMaximumFallbackOverviewMagnification;
+}
+
 enum class WaveformCoverage : std::uint8_t {
     Missing,
     Fallback,

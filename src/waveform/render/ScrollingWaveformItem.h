@@ -80,6 +80,9 @@ private:
 
     QPointer<DjEngine> m_engine;
     QTimer* m_dataUpdateThrottle = nullptr;
+    // Set when a progressive publication arrived while the throttle window was
+    // still open, so the trailing edge knows it has work to repaint.
+    bool m_pendingDataUpdate = false;
     std::unique_ptr<waveform_render::WaveformTileRasterizer> m_tileRasterizer;
     std::atomic<bool> m_tilesReady{false};
     bool m_forceRebuild = true;
@@ -104,6 +107,9 @@ private:
     std::atomic<std::uint64_t> m_missingVisibleTileCount{0};
     std::atomic<std::uint64_t> m_detailCoveragePermille{0};
     std::atomic<std::uint64_t> m_overviewFallbackFrameCount{0};
+    // Frames where the coarse whole-track fallback was deliberately hidden
+    // because the current zoom would have magnified it into fake detail.
+    std::atomic<std::uint64_t> m_fallbackSuppressedFrameCount{0};
     std::atomic<std::uint64_t> m_viewGeneration{0};
     std::atomic<std::uint64_t> m_trackGeneration{0};
     std::atomic<std::uint64_t> m_zoomTransitionCount{0};

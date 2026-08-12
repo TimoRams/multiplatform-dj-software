@@ -242,6 +242,108 @@ int main(int argc, char** argv)
                           true, true, true),
                   "partial detail tile must never replace the overview fallback");
 
+    // Regression: a tile whose source lines are all present must be publishable
+    // as complete detail immediately — detail that is READY is never withheld
+    // waiting for some later analysis milestone. Holding ready detail back
+    // (combined with correctly suppressing the magnified fallback) leaves the
+    // deck showing nothing at all, which is strictly worse than showing the
+    // real, already-available waveform.
+    {
+        WaveformLineStore readyStore;
+        readyStore.reset(201, WaveformLineStore::kChunkSize);
+        auto readyLines = std::make_shared<std::vector<WaveformLine>>(
+            WaveformLineStore::kChunkSize);
+        for (auto& line : *readyLines) {
+            line.minimum = -8000;
+            line.maximum = 8000;
+            line.red = 200; line.green = 80; line.blue = 40;
+            line.flags = waveform_line_flags::kAvailable;
+        }
+        ok &= require(readyStore.publish({
+                          201, 0, 0, WaveformLineStore::kChunkSize,
+                          WaveformLineStore::kChunkSize, std::move(readyLines)})
+                          == WaveformLineStore::PublishResult::Accepted,
+                      "ready-detail fixture was rejected");
+        const auto readySnapshot = readyStore.snapshot();
+        rasterizer.setActiveTrackGeneration(readySnapshot->trackGeneration);
+        const auto readySpan = waveform_render::renderTileSpan(
+            0, 1.0, WaveformLineStore::kChunkSize);
+        const auto readyKey = waveform_render::WaveformTileRasterizer::makeKey(
+            *readySnapshot, 0, readySpan, 1.0, 256, 1.0);
+        rasterizer.request({readyKey, readySpan, readySnapshot,
+                            1.0, 256.0, 1.0, 0.0});
+        std::shared_ptr<const waveform_render::RasterizedRenderTile> readyTile;
+        {
+            std::unique_lock lock(readyMutex);
+            ok &= require(readyCondition.wait_for(
+                              lock, std::chrono::seconds(2), [&] {
+                                  readyTile = rasterizer.find(readyKey);
+                                  return static_cast<bool>(readyTile);
+                              }),
+                          "ready-detail tile was not rasterized promptly");
+        }
+        ok &= require(readyTile && readyTile->hasAnySourceData
+                          && readyTile->hasCompleteSourceData,
+                      "fully populated source lines must publish as complete detail");
+    }
+
+    // Regression: the coarse whole-track fallback overview must never be shown
+    // magnified into fake detail. It carries a fixed texel count for the whole
+    // track, so at ordinary deck zoom levels stretching it across the timeline
+    // turns each aggregated sample into a broad smeared block — the "huge wide
+    // blocks visible right after load, correct waveform only much later"
+    // symptom. Only a view where the whole track roughly fits the viewport may
+    // display it.
+    {
+        constexpr std::uint32_t fallbackTexels = 2048;
+        // A 7-minute track at the canonical 1200 lines/s.
+        constexpr std::uint32_t sevenMinuteLines = 7 * 60 * 1200;
+
+        // Default deck zoom: ~54x magnification. Must be suppressed.
+        const double deckZoomMagnification =
+            waveform_render::fallbackOverviewMagnification(
+                fallbackTexels, sevenMinuteLines, 0.22, 1.0);
+        ok &= require(deckZoomMagnification > 10.0,
+                      "test fixture no longer reproduces the magnified fallback");
+        ok &= require(!waveform_render::fallbackOverviewMayRepresentDetail(
+                          deckZoomMagnification),
+                      "hugely magnified whole-track overview must not stand in for detail");
+
+        // Fully zoomed out far enough that the track fits the texel budget.
+        const double zoomedOutMagnification =
+            waveform_render::fallbackOverviewMagnification(
+                fallbackTexels, sevenMinuteLines,
+                static_cast<double>(fallbackTexels)
+                    / static_cast<double>(sevenMinuteLines),
+                1.0);
+        ok &= require(waveform_render::fallbackOverviewMayRepresentDetail(
+                          zoomedOutMagnification),
+                      "1:1 whole-track overview must remain usable as context");
+
+        // DPR participates: the same logical zoom on a 2x display doubles the
+        // physical stretch, so the budget has to be evaluated in physical px.
+        const double retinaMagnification =
+            waveform_render::fallbackOverviewMagnification(
+                fallbackTexels, sevenMinuteLines,
+                static_cast<double>(fallbackTexels)
+                    / static_cast<double>(sevenMinuteLines),
+                2.0);
+        ok &= require(retinaMagnification > zoomedOutMagnification,
+                      "device pixel ratio must scale fallback magnification");
+
+        // Degenerate inputs must never report a usable fallback.
+        ok &= require(!waveform_render::fallbackOverviewMayRepresentDetail(
+                          waveform_render::fallbackOverviewMagnification(
+                              0, sevenMinuteLines, 0.22, 1.0))
+                      && !waveform_render::fallbackOverviewMayRepresentDetail(
+                          waveform_render::fallbackOverviewMagnification(
+                              fallbackTexels, 0, 0.22, 1.0))
+                      && !waveform_render::fallbackOverviewMayRepresentDetail(
+                          waveform_render::fallbackOverviewMagnification(
+                              fallbackTexels, sevenMinuteLines, 0.0, 1.0)),
+                      "degenerate fallback geometry must never be displayed");
+    }
+
     // Regression: a guard-window rebase must not wait for one atomic batch.
     // Only two of six new-configuration tiles are deliberately made ready.
     // Those two publish immediately, old-scale keys are rejected per slot,

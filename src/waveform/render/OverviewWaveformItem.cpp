@@ -132,114 +132,52 @@ void OverviewWaveformItem::paintCompactOverview(QPainter* painter,
     const float baseline = static_cast<float>(h - 1);
     const float maxBarH  = static_cast<float>(h - 2);
 
-    // Antialiased round caps turn each column's tip into a soft peak instead
-    // of a hard-edged bar-chart rectangle, closer to a real waveform's
-    // silhouette at this scale.
-    painter->setRenderHint(QPainter::Antialiasing, true);
-    painter->setBrush(Qt::NoBrush);
-
-    std::vector<float> heights(static_cast<size_t>(drawWidth), 0.0f);
-    std::vector<QColor> colors(static_cast<size_t>(drawWidth));
-    std::vector<float> energies(static_cast<size_t>(drawWidth), 0.0f);
+    // One flat rectangle per column: min/max-derived height, one colour read
+    // straight off this bucket's dominant frame. No glow, no highlight, no
+    // second pass — those were what made this strip look shaded/gradiented.
+    painter->setRenderHint(QPainter::Antialiasing, false);
+    painter->setPen(Qt::NoPen);
 
     for (int x = 0; x < drawWidth; ++x) {
         const int i0 = static_cast<int>((static_cast<int64_t>(x) * frames.size()) / std::max(1, drawWidth));
         int i1 = static_cast<int>((static_cast<int64_t>(x + 1) * frames.size()) / std::max(1, drawWidth));
         i1 = std::max(i0 + 1, std::min(i1, static_cast<int>(frames.size())));
 
+        // Height uses the bucket's general loudness (mean+peak), not just its
+        // loudest instant — a single transient (hi-hat, click) shouldn't yank
+        // one column to a wildly different height than its neighbours.
+        // Colour is an rms-weighted mean across the whole bucket rather than
+        // whichever single frame happened to be loudest: picking one "winner"
+        // frame's colour made the strip jump between unrelated hues from
+        // column to column at busy/transient-heavy moments. A weighted mean
+        // gives every column one stable, smoothly-varying colour instead.
         float peakRms = 0.0f;
         float rmsSum = 0.0f;
-        float peakLow = 0.0f, peakLowMid = 0.0f, peakMid = 0.0f, peakHigh = 0.0f;
+        float weightedLow = 0.0f, weightedLowMid = 0.0f;
+        float weightedMid = 0.0f, weightedHigh = 0.0f, colorWeight = 0.0f;
         for (int i = i0; i < i1; ++i) {
             const auto& f = frames[i];
+            peakRms = std::max(peakRms, f.rms);
             rmsSum += f.rms;
-            // Colour follows the loudest instant in the bin — the same rule
-            // the scrolling waveform uses for its narrow per-column slices.
-            // Averaging band energy across the whole bin used to wash a
-            // bass-driven track toward mid/high hues here while the
-            // scrolling view stayed bass-red for the same audio.
-            if (f.rms >= peakRms) {
-                peakRms = f.rms;
-                peakLow = f.low;
-                peakLowMid = f.lowMid;
-                peakMid = f.mid;
-                peakHigh = f.high;
-            }
+            const float weight = std::max(0.01f, f.rms);
+            weightedLow += f.low * weight;
+            weightedLowMid += f.lowMid * weight;
+            weightedMid += f.mid * weight;
+            weightedHigh += f.high * weight;
+            colorWeight += weight;
         }
-
         if (peakRms <= 0.001f)
             continue;
 
         const float meanRms = rmsSum / static_cast<float>(std::max(1, i1 - i0));
-        // Peak-only folding turns dense music into a solid rectangle.  Preserve
-        // transients, but let the local energy mean determine most of the body.
         const float energy = waveform_visual::foldedEnergy(meanRms, peakRms);
-        const float logH = waveform_visual::logarithmicAmplitude(energy);
-        heights[static_cast<size_t>(x)] = std::clamp(logH, 0.018f, 1.0f) * maxBarH;
-        energies[static_cast<size_t>(x)] = energy;
-        // Colour brightness follows the peak instant's own loudness, not the
-        // mean-dampened envelope energy above — canonical per-line colours
-        // (what the scrolling waveform shows) are brightened by their own
-        // raw rms the same way, so matching that here keeps the two views
-        // at the same saturation instead of the overview reading washed out.
-        colors[static_cast<size_t>(x)] = visualColor(
-            peakLow, peakLowMid, peakMid, peakHigh, peakRms);
-    }
-
-    // Symmetric smoothing avoids the old left-to-right smear that made the
-    // compact overview read as one continuous block.
-    const auto rawHeights = heights;
-    for (int x = 1; x < drawWidth - 1; ++x) {
-        heights[static_cast<size_t>(x)] =
-            rawHeights[static_cast<size_t>(x - 1)] * 0.20f +
-            rawHeights[static_cast<size_t>(x)]     * 0.60f +
-            rawHeights[static_cast<size_t>(x + 1)] * 0.20f;
-        heights[static_cast<size_t>(x)] = std::max(
-            heights[static_cast<size_t>(x)], rawHeights[static_cast<size_t>(x)] * 0.84f);
-    }
-
-    // Pass 1: soft glow beneath the silhouette, louder columns bloom more —
-    // gives the strip the same layered depth as the main deck waveform
-    // instead of a flat single-tone bar chart.
-    for (int x = 0; x < drawWidth; ++x) {
-        const float barH = heights[static_cast<size_t>(x)];
-        if (barH <= 0.5f)
-            continue;
-        const QColor& c = colors[static_cast<size_t>(x)];
-        const int alpha = std::clamp(
-            static_cast<int>(16 + energies[static_cast<size_t>(x)] * 30.0f), 16, 46);
-        painter->setPen(QPen(QColor(c.red(), c.green(), c.blue(), alpha), 2.4,
-                             Qt::SolidLine, Qt::RoundCap));
-        painter->drawLine(QPointF(static_cast<double>(x), baseline),
-                          QPointF(static_cast<double>(x), baseline - barH * 1.12f));
-    }
-
-    // Pass 2: solid body — one coloured vertical line per display column.
-    for (int x = 0; x < drawWidth; ++x) {
-        const float barH = heights[static_cast<size_t>(x)];
-        if (barH <= 0.5f)
-            continue;
-        const QColor& c = colors[static_cast<size_t>(x)];
-        painter->setPen(QPen(QColor(c.red(), c.green(), c.blue(), 230), 1.3,
-                             Qt::SolidLine, Qt::RoundCap));
-        painter->drawLine(QPointF(static_cast<double>(x), baseline),
-                          QPointF(static_cast<double>(x), baseline - barH));
-    }
-
-    // Pass 3: bright tip highlight at each column's peak.
-    for (int x = 0; x < drawWidth; ++x) {
-        const float barH = heights[static_cast<size_t>(x)];
-        if (barH <= 2.0f)
-            continue;
-        const QColor& c = colors[static_cast<size_t>(x)];
-        const int tr = c.red()   + (255 - c.red())   * 60 / 100;
-        const int tg = c.green() + (255 - c.green()) * 60 / 100;
-        const int tb = c.blue()  + (255 - c.blue())  * 60 / 100;
-        const float tipLen = std::clamp(barH * 0.16f, 1.0f, 3.0f);
-        painter->setPen(QPen(QColor(tr, tg, tb, 235), 1.3,
-                             Qt::SolidLine, Qt::RoundCap));
-        painter->drawLine(QPointF(static_cast<double>(x), baseline - barH),
-                          QPointF(static_cast<double>(x), baseline - barH + tipLen));
+        const float barH = std::clamp(
+            waveform_visual::logarithmicAmplitude(energy), 0.018f, 1.0f) * maxBarH;
+        const float invWeight = 1.0f / std::max(0.01f, colorWeight);
+        const QColor color = visualColor(
+            weightedLow * invWeight, weightedLowMid * invWeight,
+            weightedMid * invWeight, weightedHigh * invWeight, energy);
+        painter->fillRect(QRectF(x, baseline - barH, 1.0, barH), color);
     }
 
     // Cue markers
@@ -347,7 +285,18 @@ void OverviewWaveformItem::paint(QPainter* painter)
     // The quick full-track overview is intentionally authoritative while
     // analysis is running.  Switching to a sparse line-store snapshot halfway
     // through analysis used to make the overview jump into a flat block.
-    if (m_rectified && h <= 56 && !hasOverview
+    //
+    // The rectified (single-sided "skyline") path below used to be gated by
+    // h <= 56, on the assumption that deck overview strips are always that
+    // short. DeckTrackInfoPanel.qml actually sizes them to 60 * scale, and
+    // scale reaches 1.0 on any panel wider than 720px — so on ordinary
+    // window sizes this strip silently fell through to the tall, multi-pass
+    // glow/core/tip-highlight renderer further down, which is exactly the
+    // soft gradient/fade look at the peaks that shouldn't be there. Every
+    // rectified overview now uses this same flat, line-based path
+    // regardless of height; only the (currently unused) non-rectified,
+    // mirrored overview still falls through to the renderer below.
+    if (m_rectified && !hasOverview
         && lineSnapshot && lineSnapshot->totalLineCount > 0) {
         if (m_frameCache.size() != QSize(w, h))
             m_frameCache = QImage(w, h, QImage::Format_ARGB32_Premultiplied);
@@ -382,7 +331,7 @@ void OverviewWaveformItem::paint(QPainter* painter)
             0, TrackData::kProgressiveBins);
 
     // Deck overview: compact rectified path — fast, stable, no multi-pass glow.
-    if (m_rectified && h <= 56) {
+    if (m_rectified) {
         const int drawWidth = hasOverview
             ? w
             : std::clamp(

@@ -178,12 +178,12 @@ struct WaveformSceneNode final : QSGClipNode {
         destroyTextureNode(timeline, fallbackNode);
         fallbackKey.reset();
         fallbackRequestedKey.reset();
+        fallbackVisible = false;
         fallbackTextureBytes = 0;
         viewKey.reset();
         for (std::size_t index = 0; index < waveformNodes.size(); ++index) {
             destroyTextureNode(timeline, waveformNodes[index]);
             waveformTileKeys[index].reset();
-            waveformSpans[index] = {};
             waveformRenderedLineCounts[index] = 0;
             waveformTextureBytes[index] = 0;
         }
@@ -230,17 +230,16 @@ struct WaveformSceneNode final : QSGClipNode {
     std::array<QColor, kCueLabelNodePoolSize> cueLabelColors{};
     std::array<std::optional<waveform_render::RenderTileKey>,
                kWaveformNodePoolSize> waveformTileKeys{};
-    // Remembers the true source-line range each slot's texture currently
-    // depicts. A stale (previous-zoom) texture is repositioned every frame
-    // from this range rather than from its now-outdated physical tile span,
-    // so it keeps landing on the correct audio position while it waits to be
-    // replaced by a freshly rasterised tile for the new zoom level.
-    std::array<waveform_render::RenderTileSpan, kWaveformNodePoolSize> waveformSpans{};
     std::array<std::uint64_t, kWaveformNodePoolSize> waveformRenderedLineCounts{};
     std::array<std::uint64_t, kWaveformNodePoolSize> waveformTextureBytes{};
     std::optional<waveform_render::OverviewRenderKey> fallbackKey;
     std::optional<waveform_render::OverviewRenderKey> fallbackRequestedKey;
     std::optional<waveform_render::WaveformViewKey> viewKey;
+    // Whether the coarse fallback currently occupies a non-empty rect. It is
+    // hidden whenever the zoom would magnify it past the point of being
+    // honest context (see kMaximumFallbackOverviewMagnification), so the
+    // transition back to visible has to reposition it for the current origin.
+    bool fallbackVisible = false;
     std::uint64_t fallbackTextureBytes = 0;
     std::uint64_t viewGeneration = 0;
 
@@ -700,7 +699,12 @@ ScrollingWaveformItem::ScrollingWaveformItem(QQuickItem* parent)
         // A progressive chunk changes only the audio-line nodes. Rebuilding
         // beat/cue geometry here made the one-pixel beatgrid lines blink while
         // the worker was publishing chunks.
+        if (!m_pendingDataUpdate)
+            return;
+        m_pendingDataUpdate = false;
         update();
+        // Keep coalescing for as long as chunks keep streaming in.
+        m_dataUpdateThrottle->start();
     });
 }
 
@@ -908,8 +912,19 @@ void ScrollingWaveformItem::onTrackEjected()
 
 void ScrollingWaveformItem::onDataUpdated()
 {
-    if (!m_dataUpdateThrottle->isActive())
-        m_dataUpdateThrottle->start();
+    // Leading edge: the first result after an idle gap — which is exactly the
+    // playhead chunk after a load or seek — paints on the next frame instead
+    // of waiting out a throttle interval. Only the follow-up stream of
+    // background chunks is coalesced to ~15 Hz, which is what the throttle
+    // was actually meant to bound. Previously every publication, including
+    // that first one, was delayed by a full interval.
+    if (m_dataUpdateThrottle->isActive()) {
+        m_pendingDataUpdate = true;
+        return;
+    }
+    m_pendingDataUpdate = false;
+    update();
+    m_dataUpdateThrottle->start();
 }
 
 void ScrollingWaveformItem::onLoopUpdated()
@@ -1045,8 +1060,23 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         std::size_t usedPoolSlots = 0;
 
         const auto overviewSnapshot = trackData->getOverviewRgbSnapshot();
-        if (overviewSnapshot && !overviewSnapshot->isEmpty()) {
-            constexpr std::uint32_t fallbackWidth = 2048;
+        constexpr std::uint32_t fallbackWidth = 2048;
+        // The whole-track fallback only ever carries fallbackWidth aggregated
+        // samples. At normal deck zoom levels stretching it across the full
+        // timeline magnifies each sample into a broad smear that looks like
+        // real (but entirely fabricated) waveform detail. Suppress it past the
+        // honesty budget and let the neutral background stand in until genuine
+        // detail tiles arrive.
+        const double fallbackMagnification =
+            waveform_render::fallbackOverviewMagnification(
+                fallbackWidth, snapshot->totalLineCount, pixelsPerLine, dpr);
+        const bool fallbackMayRepresentDetail =
+            waveform_render::fallbackOverviewMayRepresentDetail(
+                fallbackMagnification);
+        m_fallbackSuppressedFrameCount.fetch_add(
+            fallbackMayRepresentDetail ? 0 : 1, std::memory_order_relaxed);
+        if (fallbackMayRepresentDetail && overviewSnapshot
+            && !overviewSnapshot->isEmpty()) {
             const auto fallbackHeight = static_cast<std::uint32_t>(std::max(
                 1, static_cast<int>(std::ceil(bounds.height() * dpr))));
             const waveform_render::OverviewRenderKey fallbackKey{
@@ -1089,6 +1119,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                         scene->timeline, firstHighResolutionNode());
                     if (upload) {
                         scene->fallbackKey = fallbackKey;
+                        scene->fallbackVisible = true;
                         scene->fallbackTextureBytes = upload->bytes;
                         m_textureUploadCount.fetch_add(1, std::memory_order_relaxed);
                         m_textureUploadBytes.fetch_add(upload->bytes,
@@ -1099,13 +1130,18 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                         }
                     } else {
                         scene->fallbackKey.reset();
+                        scene->fallbackVisible = false;
                         scene->fallbackTextureBytes = 0;
                     }
-                } else if (renderOriginChanged) {
+                } else if (renderOriginChanged || !scene->fallbackVisible) {
+                    // Also covers coming back from a suppressed zoom level:
+                    // the node still owns its texture but was hidden, so it
+                    // needs its rect restored for the current origin.
                     positionFallbackOverview(
                         scene->fallbackNode, 0, snapshot->totalLineCount,
                         scene->renderOriginLine, pixelsPerLine,
                         static_cast<float>(bounds.height()));
+                    scene->fallbackVisible = true;
                 }
             } else if (!scene->fallbackRequestedKey
                        || *scene->fallbackRequestedKey != fallbackKey) {
@@ -1113,6 +1149,9 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                 scene->fallbackRequestedKey = fallbackKey;
             }
 
+        } else if (scene->fallbackVisible) {
+            clearWaveformTexture(scene->fallbackNode);
+            scene->fallbackVisible = false;
         }
         if (scene->fallbackKey
             && scene->fallbackKey->trackGeneration != snapshot->trackGeneration) {
@@ -1139,7 +1178,6 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                 if (!tileSpan.hasSource()) {
                     clearWaveformTexture(scene->waveformNodes[poolIndex]);
                     scene->waveformTileKeys[poolIndex].reset();
-                    scene->waveformSpans[poolIndex] = {};
                     scene->waveformRenderedLineCounts[poolIndex] = 0;
                     scene->waveformTextureBytes[poolIndex] = 0;
                     continue;
@@ -1200,11 +1238,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         std::uint64_t missingVisibleTiles = 0;
 
         // Publish each current-generation tile as soon as it is ready. A slot
-        // whose replacement isn't ready yet keeps showing its previous
-        // texture (see the stale-zoom branch below) instead of falling back
-        // to the coarse whole-track overview. Only a slot with no valid
-        // texture at all — from any zoom level of the current track — turns
-        // into a zero-area node that exposes the fallback beneath it.
+        // whose replacement isn't ready yet becomes a zero-area node, which
+        // exposes the coarse whole-track fallback beneath it.
         for (const auto& prepared : preparedTiles) {
             const auto poolIndex = prepared.poolIndex;
             if (prepared.alreadyDisplayed) {
@@ -1230,7 +1265,6 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                         = upload->renderedColumns;
                     scene->waveformTextureBytes[poolIndex] = upload->bytes;
                     scene->waveformTileKeys[poolIndex] = prepared.key;
-                    scene->waveformSpans[poolIndex] = prepared.span;
                     ++readyVisibleTiles;
                     m_textureUploadCount.fetch_add(1, std::memory_order_relaxed);
                     m_textureUploadBytes.fetch_add(upload->bytes,
@@ -1241,26 +1275,25 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                     }
                 } else {
                     scene->waveformTileKeys[poolIndex].reset();
-                    scene->waveformSpans[poolIndex] = {};
                     scene->waveformRenderedLineCounts[poolIndex] = 0;
                     scene->waveformTextureBytes[poolIndex] = 0;
                     ++missingVisibleTiles;
                 }
-            } else if (scene->waveformTileKeys[poolIndex]
-                       && scene->waveformTileKeys[poolIndex]->trackGeneration
-                           == prepared.key.trackGeneration) {
-                // The replacement tile for the new zoom isn't rasterised
-                // yet. Keep the previous zoom level's texture on screen,
-                // positioned by its own true source range, instead of
-                // clearing it and exposing the coarse whole-track fallback.
-                positionFallbackOverview(
-                    scene->waveformNodes[poolIndex],
-                    scene->waveformSpans[poolIndex].sourceBegin,
-                    scene->waveformSpans[poolIndex].sourceEnd,
-                    scene->renderOriginLine, pixelsPerLine,
-                    static_cast<float>(bounds.height()));
-                m_staleZoomTilesRejected.fetch_add(1, std::memory_order_relaxed);
             } else {
+                // The replacement tile isn't rasterised yet (zoom change,
+                // live analysis still settling, or freshly scrolled-into
+                // territory). Earlier this held the previous tile on screen,
+                // repositioned to the new scale, instead of clearing it —
+                // but independently-stale tiles at independently-stretched
+                // scales produced a patchwork of mismatched blocky
+                // rectangles across the pool, which reads far worse than a
+                // brief, uniform flash to the coarse whole-track fallback.
+                // Clearing here lets that single coherent fallback texture
+                // cover the whole gap instead.
+                if (scene->waveformTileKeys[poolIndex]) {
+                    m_staleZoomTilesRejected.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
                 if (prepared.ready && prepared.ready->hasAnySourceData
                     && !prepared.ready->hasCompleteSourceData) {
                     m_incompleteTileRejectedCount.fetch_add(
@@ -1268,7 +1301,6 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                 }
                 clearWaveformTexture(scene->waveformNodes[poolIndex]);
                 scene->waveformTileKeys[poolIndex].reset();
-                scene->waveformSpans[poolIndex] = {};
                 scene->waveformRenderedLineCounts[poolIndex] = 0;
                 scene->waveformTextureBytes[poolIndex] = 0;
                 ++missingVisibleTiles;
@@ -1284,14 +1316,13 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             visibleTileCount == 0 ? 0
                 : (readyVisibleTiles * 1000) / visibleTileCount,
             std::memory_order_relaxed);
-        if (missingVisibleTiles > 0 && scene->fallbackKey)
+        if (missingVisibleTiles > 0 && scene->fallbackVisible)
             m_overviewFallbackFrameCount.fetch_add(
                 1, std::memory_order_relaxed);
         for (std::size_t poolIndex = usedPoolSlots;
             poolIndex < scene->waveformNodes.size(); ++poolIndex) {
             clearWaveformTexture(scene->waveformNodes[poolIndex]);
             scene->waveformTileKeys[poolIndex].reset();
-            scene->waveformSpans[poolIndex] = {};
             scene->waveformRenderedLineCounts[poolIndex] = 0;
             scene->waveformTextureBytes[poolIndex] = 0;
         }
@@ -1578,6 +1609,8 @@ QVariantMap ScrollingWaveformItem::renderStats() const
                  static_cast<double>(m_detailCoveragePermille.load(std::memory_order_relaxed)) / 10.0);
     stats.insert(QStringLiteral("overviewFallbackFrames"),
                  QVariant::fromValue<qulonglong>(m_overviewFallbackFrameCount.load(std::memory_order_relaxed)));
+    stats.insert(QStringLiteral("fallbackSuppressedFrames"),
+                 QVariant::fromValue<qulonglong>(m_fallbackSuppressedFrameCount.load(std::memory_order_relaxed)));
     stats.insert(QStringLiteral("viewGeneration"),
                  QVariant::fromValue<qulonglong>(m_viewGeneration.load(std::memory_order_relaxed)));
     stats.insert(QStringLiteral("trackGeneration"),
@@ -1641,6 +1674,7 @@ void ScrollingWaveformItem::resetRenderStats()
     m_missingVisibleTileCount.store(0, std::memory_order_relaxed);
     m_detailCoveragePermille.store(0, std::memory_order_relaxed);
     m_overviewFallbackFrameCount.store(0, std::memory_order_relaxed);
+    m_fallbackSuppressedFrameCount.store(0, std::memory_order_relaxed);
     m_viewGeneration.store(0, std::memory_order_relaxed);
     m_trackGeneration.store(0, std::memory_order_relaxed);
     m_zoomTransitionCount.store(0, std::memory_order_relaxed);
