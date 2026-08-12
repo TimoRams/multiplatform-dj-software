@@ -2,7 +2,7 @@
 
 #include "deck/DjEngine.h"
 #include "domain/TrackData.h"
-#include "waveform/WaveformLodPyramid.h"
+#include "waveform/WaveformAggregator.h"
 #include "waveform/WaveformTypes.h"
 
 #include <QDateTime>
@@ -74,8 +74,6 @@ const char* chunkStateName(std::uint8_t state)
 }
 
 void logFlx10WaveformComparison(int deck,
-                                bool usingPersistedLod,
-                                std::uint8_t lodLevel,
                                 std::uint32_t playheadChunkIndex,
                                 std::uint8_t playheadChunkState,
                                 std::uint32_t sourceLineBegin,
@@ -97,15 +95,11 @@ void logFlx10WaveformComparison(int deck,
         return;
     lastLogMs[deck] = nowMs;
 
-    const char* source = usingPersistedLod
-        ? "lod-persisted"
-        : (lodLevel == 0 ? "canonical" : "lod-derived");
     qInfo().nospace()
         << "[WaveformCompare][FLX10] deck=" << deck
-        << " source=" << source
+        << " source=shared-aggregator"
         << " chunk=" << playheadChunkIndex
         << " state=" << chunkStateName(playheadChunkState)
-        << " lod=" << static_cast<int>(lodLevel)
         << " sourceLineRange=[" << sourceLineBegin << "," << sourceLineEnd << ")"
         << " displayWaveformWidth=" << outputWidth
         << " generatedColumns=" << generatedColumns
@@ -147,9 +141,9 @@ bool DDJFLX10Controller::uploadDeck(int deck)
     ok = sendXx30(deck) && ok;
     ok = sendXx39(deck) && ok;
     ok = uploadCoverArt(deck) && ok;
-    ok = sendXx35(deck, m_waveforms[deck].size() / 2) && ok;
+    ok = sendXx35(deck) && ok;
 
-    m_uploadEntries[deck] = 0;
+    m_uploadWindowsSent[deck] = 0;
     m_uploadActive[deck] = true;
     if (!m_uploadTimer.isActive())
         m_uploadTimer.start(kUploadTickIntervalMs);
@@ -219,7 +213,7 @@ bool DDJFLX10Controller::sendXx33Album(int deck, const QByteArray& jpeg)
     }
     return ok;
 }
-bool DDJFLX10Controller::sendXx35(int deck, int entryCount)
+bool DDJFLX10Controller::sendXx35(int deck)
 {
     QByteArray clear = packet();
     put8(clear, 0, deckByte(deck));
@@ -230,10 +224,8 @@ bool DDJFLX10Controller::sendXx35(int deck, int entryCount)
         QByteArray p = packet();
         put8(p, 0, deckByte(deck));
         put8(p, 1, 0x35);
-        put8(p, 2, entryCount);
-        put8(p, 3, entryCount >> 8);
-        put8(p, 4, entryCount >> 16);
-        put8(p, 5, entryCount >> 24);
+        put8(p, 2, 0x0E);
+        put8(p, 3, 0xE3);
         ok = writePacket(p) && ok;
     }
     return ok;
@@ -321,7 +313,7 @@ bool DDJFLX10Controller::sendXx2f(int deck)
 bool DDJFLX10Controller::clearDeckDisplay(int deck)
 {
     m_uploadActive[deck] = false;
-    m_uploadEntries[deck] = 0;
+    m_uploadWindowsSent[deck] = 0;
 
     bool ok = true;
     for (int command : {0x27, 0x30, 0x33, 0x35, 0x36, 0x2F}) {
@@ -411,90 +403,31 @@ QByteArray DDJFLX10Controller::generatePreviewWaveform(
     if (targetEntries <= 0)
         return {};
 
-    const double physicalPixelsPerCanonicalLine = static_cast<double>(targetEntries)
-        / static_cast<double>(snapshot->totalLineCount);
-    const auto lodLevel = waveform::WaveformLodPyramid::selectLevel(
-        physicalPixelsPerCanonicalLine);
-    const auto stride = static_cast<std::uint32_t>(
-        waveform::WaveformLodPyramid::level(lodLevel).canonicalLineStride);
-    const auto persisted = snapshot->lodLevel(lodLevel);
-    const bool usingPersistedLod = persisted
-        && persisted->canonicalLineStride == stride
-        && persisted->chunkSize > 0;
-
     QByteArray out;
     out.reserve(targetEntries * 2);
     std::uint32_t columnsWithData = 0;
     std::uint32_t completeColumns = 0;
 
+    // The FLX10 is just another consumer of the shared column semantics: it
+    // differs from the desktop waveform only in target resolution (a fixed
+    // 150 entries per second) and in quantising the result to PWV5's 5-bit
+    // height / 3-bit RGB. It no longer selects an LOD level or aggregates
+    // source lines itself — that belongs to aggregateWaveformColumn() so the
+    // hardware can never disagree with the screen about what the track looks
+    // like.
     for (int i = 0; i < targetEntries; ++i) {
-        const long double sourceBeginExact
-            = static_cast<long double>(snapshot->totalLineCount)
-            * static_cast<long double>(i)
-            / static_cast<long double>(targetEntries);
-        const long double sourceEndExact
-            = static_cast<long double>(snapshot->totalLineCount)
-            * static_cast<long double>(i + 1)
-            / static_cast<long double>(targetEntries);
-        const auto globalBegin = std::clamp<std::uint32_t>(
-            static_cast<std::uint32_t>(std::floor(sourceBeginExact)),
-            0u, snapshot->totalLineCount - 1);
-        const auto globalEnd = std::clamp<std::uint32_t>(
-            static_cast<std::uint32_t>(std::ceil(sourceEndExact)),
-            globalBegin + 1, snapshot->totalLineCount);
+        const auto range = waveform::sourceLineRangeForColumn(
+            snapshot->totalLineCount, i, targetEntries);
+        const auto column = waveform::aggregateWaveformColumn(*snapshot, range);
 
-        std::int16_t minimum = 0;
-        std::int16_t maximum = 0;
-        std::uint64_t red = 0;
-        std::uint64_t green = 0;
-        std::uint64_t blue = 0;
-        std::uint64_t weight = 0;
-        bool hasExtrema = false;
-        bool complete = true;
-        const auto lodBegin = globalBegin / stride;
-        const auto lodEnd = (globalEnd + stride - 1) / stride;
-        for (auto lodIndex = lodBegin; lodIndex < lodEnd; ++lodIndex) {
-            const auto sample = waveform::WaveformLodPyramid::sample(
-                *snapshot, lodLevel, lodIndex);
-            complete = complete && sample.complete;
-            if (!sample.hasData)
-                continue;
-            const auto& line = sample.line;
-            if (!hasExtrema) {
-                minimum = line.minimum;
-                maximum = line.maximum;
-                hasExtrema = true;
-            } else {
-                minimum = std::min(minimum, line.minimum);
-                maximum = std::max(maximum, line.maximum);
-            }
-            const auto magnitude = static_cast<std::uint32_t>(std::max(
-                std::abs(static_cast<int>(line.minimum)),
-                std::abs(static_cast<int>(line.maximum))));
-            const auto lineWeight = std::max(1u, magnitude);
-            red += static_cast<std::uint64_t>(line.red) * lineWeight;
-            green += static_cast<std::uint64_t>(line.green) * lineWeight;
-            blue += static_cast<std::uint64_t>(line.blue) * lineWeight;
-            weight += lineWeight;
-        }
-
-        if (!hasExtrema || weight == 0) {
+        if (!column.hasData) {
             out += encodePwv5Entry(1, 0, 0, 0);
             continue;
         }
         ++columnsWithData;
-        if (complete)
+        if (column.complete)
             ++completeColumns;
-
-        const float amplitude = static_cast<float>(std::max(
-            std::abs(static_cast<int>(minimum)),
-            std::abs(static_cast<int>(maximum)))) / 32767.0f;
-        const int height = std::clamp(
-            static_cast<int>(std::lround(std::sqrt(amplitude) * 31.0f)), 1, 31);
-        const int red3 = std::clamp(static_cast<int>(red / weight + 15) / 32, 0, 7);
-        const int green3 = std::clamp(static_cast<int>(green / weight + 15) / 32, 0, 7);
-        const int blue3 = std::clamp(static_cast<int>(blue / weight + 15) / 32, 0, 7);
-        out += encodePwv5Entry(height, red3, green3, blue3);
+        out += encodePwv5Column(column);
     }
 
     if (outInfo) {
@@ -518,10 +451,7 @@ QByteArray DDJFLX10Controller::generatePreviewWaveform(
         outInfo->playheadChunkIndex = playheadChunkIndex;
         outInfo->playheadChunkState = static_cast<std::uint8_t>(
             playheadChunk ? playheadChunk->state : WaveformChunkState::Missing);
-        outInfo->lodLevel = lodLevel;
-        outInfo->usingPersistedLod = usingPersistedLod;
-        logFlx10WaveformComparison(deck, outInfo->usingPersistedLod,
-                                   outInfo->lodLevel,
+        logFlx10WaveformComparison(deck,
                                    outInfo->playheadChunkIndex,
                                    outInfo->playheadChunkState,
                                    outInfo->sourceLineBegin,

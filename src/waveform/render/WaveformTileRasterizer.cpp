@@ -2,6 +2,7 @@
 
 #include "WaveformRenderMath.h"
 #include "waveform/WaveformLineStore.h"
+#include "waveform/WaveformAggregator.h"
 #include "waveform/WaveformLodPyramid.h"
 #include "waveform/WaveformVisualStyle.h"
 
@@ -551,60 +552,30 @@ WaveformTileRasterizer::rasterize(const RenderTileRequest& request)
             static_cast<std::uint32_t>(std::ceil(sourceEndExact)),
             globalBegin + 1, request.span.sourceEnd);
 
-        std::int16_t minimum = 0;
-        std::int16_t maximum = 0;
-        std::uint64_t red = 0;
-        std::uint64_t green = 0;
-        std::uint64_t blue = 0;
-        std::uint64_t weight = 0;
-        bool hasExtrema = false;
-        const auto stride = static_cast<std::uint32_t>(
-            waveform::WaveformLodPyramid::level(
-                request.key.lodLevel).canonicalLineStride);
-        const auto lodBegin = globalBegin / stride;
-        const auto lodEnd = (globalEnd + stride - 1) / stride;
-        for (auto lodIndex = lodBegin; lodIndex < lodEnd; ++lodIndex) {
-            const auto lodSample = waveform::WaveformLodPyramid::sample(
-                *request.snapshot, request.key.lodLevel, lodIndex);
-            if (!lodSample.complete)
-                allSourcePresent = false;
-            if (!lodSample.hasData)
-                continue;
-            const auto& line = lodSample.line;
-            if (!hasExtrema) {
-                minimum = line.minimum;
-                maximum = line.maximum;
-                hasExtrema = true;
-            } else {
-                minimum = std::min(minimum, line.minimum);
-                maximum = std::max(maximum, line.maximum);
-            }
-            const auto magnitude = static_cast<std::uint32_t>(std::max(
-                std::abs(static_cast<int>(line.minimum)),
-                std::abs(static_cast<int>(line.maximum))));
-            const auto lineWeight = std::max(1u, magnitude);
-            red += static_cast<std::uint64_t>(line.red) * lineWeight;
-            green += static_cast<std::uint64_t>(line.green) * lineWeight;
-            blue += static_cast<std::uint64_t>(line.blue) * lineWeight;
-            weight += lineWeight;
-        }
-        if (!hasExtrema || weight == 0)
+        // One physical column = one shared WaveformColumn. The same call the
+        // FLX10 encoder makes, so hardware and screen cannot disagree about
+        // the track's shape. LOD selection lives inside the aggregator.
+        const auto column = waveform::aggregateWaveformColumn(
+            *request.snapshot, {globalBegin, globalEnd});
+        if (!column.complete)
+            allSourcePresent = false;
+        if (!column.hasData)
             continue;
 
         result->hasAnySourceData = true;
-        double top = centerY - (static_cast<double>(maximum) / 32767.0) * halfHeight;
-        double bottom = centerY - (static_cast<double>(minimum) / 32767.0) * halfHeight;
-        if ((minimum != 0 || maximum != 0) && bottom - top < 1.0) {
+        double top = centerY
+            - (static_cast<double>(column.maximum) / 32767.0) * halfHeight;
+        double bottom = centerY
+            - (static_cast<double>(column.minimum) / 32767.0) * halfHeight;
+        if ((column.minimum != 0 || column.maximum != 0) && bottom - top < 1.0) {
             const double middle = (top + bottom) * 0.5;
             top = middle - 0.5;
             bottom = middle + 0.5;
         }
 
-        const int r = static_cast<int>(red / weight);
-        const int g = static_cast<int>(green / weight);
-        const int b = static_cast<int>(blue / weight);
         writeAntialiasedVerticalStroke(
-            result->image, physicalX, top, bottom, r, g, b, 248);
+            result->image, physicalX, top, bottom,
+            column.red, column.green, column.blue, 248);
         ++result->renderedColumns;
     }
     result->hasCompleteSourceData = allSourcePresent && result->hasAnySourceData;

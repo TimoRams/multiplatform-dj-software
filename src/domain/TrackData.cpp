@@ -17,8 +17,17 @@ constexpr int kPeakFramesPerCanonicalLine = TrackData::PEAK_POINTS_PER_SECOND
     / static_cast<int>(WaveformLineStore::kCanonicalLinesPerSecond);
 static_assert(kPeakFramesPerCanonicalLine > 0);
 
+// Amplitude comes exclusively from the band envelope, never from the peak
+// mipmap. The two are normalised on completely different scales — the
+// envelope by a per-band robust percentile, the peak mip by the global
+// maximum sample — so mixing them meant the waveform visibly grew taller the
+// moment the peak mip landed at the end of analysis. That end-of-analysis
+// rebuild was the "everything suddenly stretches" artefact. Using one
+// definition throughout keeps the geometry a track is first drawn with
+// identical to the one it keeps forever. It also removes an existing
+// inconsistency: peak mips are only produced for tracks up to ten minutes, so
+// longer tracks never had the second pass and already looked like this.
 WaveformLine makeCanonicalWaveformLine(const QVector<TrackData::RgbWaveformFrame>& rgb,
-                                       const QVector<TrackData::PeakFrame>& peaks,
                                        int lineIndex,
                                        WaveformNormalizationState normalizationState)
 {
@@ -36,17 +45,8 @@ WaveformLine makeCanonicalWaveformLine(const QVector<TrackData::RgbWaveformFrame
         high = std::max(high, frame.high);
     }
 
-    float minimum = -rms;
-    float maximum = rms;
-    if (!peaks.isEmpty()) {
-        const int peakBegin = lineIndex * kPeakFramesPerCanonicalLine;
-        const int peakEnd = std::min(peakBegin + kPeakFramesPerCanonicalLine,
-                                     static_cast<int>(peaks.size()));
-        for (int i = peakBegin; i < peakEnd; ++i) {
-            minimum = std::min(minimum, peaks[i].minSample / 127.0f);
-            maximum = std::max(maximum, peaks[i].maxSample / 127.0f);
-        }
-    }
+    const float minimum = -rms;
+    const float maximum = rms;
 
     WaveformLine line;
     line.minimum = static_cast<std::int16_t>(std::lround(
@@ -161,8 +161,6 @@ void TrackData::rebuildWaveformLineStoreLocked(std::uint64_t trackGeneration)
 {
     const auto rgb = m_rgbSnapshot ? m_rgbSnapshot
         : std::make_shared<const QVector<RgbWaveformFrame>>(m_rgbData);
-    const auto peaks = m_peakMipSnapshot ? m_peakMipSnapshot
-        : std::make_shared<const QVector<PeakFrame>>(m_peakMip);
     if (!rgb || rgb->isEmpty())
         return;
 
@@ -184,11 +182,9 @@ void TrackData::rebuildWaveformLineStoreLocked(std::uint64_t trackGeneration)
          first += static_cast<int>(WaveformLineStore::kChunkSize), ++chunkIndex) {
         const int count = std::min(static_cast<int>(WaveformLineStore::kChunkSize), totalLines - first);
         auto lines = std::make_shared<std::vector<WaveformLine>>(static_cast<size_t>(count));
-        const QVector<PeakFrame> emptyPeaks;
-        const auto& peakData = peaks ? *peaks : emptyPeaks;
         for (int local = 0; local < count; ++local)
             (*lines)[static_cast<size_t>(local)] = makeCanonicalWaveformLine(
-                *rgb, peakData, first + local,
+                *rgb, first + local,
                 WaveformNormalizationState::Final);
         publication.push_back({
             trackGeneration, static_cast<std::uint32_t>(chunkIndex), static_cast<std::uint32_t>(first),
@@ -651,7 +647,11 @@ void TrackData::setPeakMipData(QVector<PeakFrame>&& data)
         QMutexLocker locker(&m_mutex);
         m_peakMipSnapshot = std::make_shared<const QVector<PeakFrame>>(std::move(data));
         m_peakMip.clear();
-        rebuildWaveformLineStoreLocked();
+        // No line-store rebuild here any more. The peak mip no longer feeds
+        // canonical line amplitude, so rebuilding every chunk when it arrived
+        // changed nothing visually — it only re-published the whole timeline
+        // near the end of analysis, which is exactly what made the waveform
+        // appear to stretch and stalled the UI on long tracks.
     }
     emit peakMipUpdated();
 }
@@ -1184,7 +1184,6 @@ void TrackData::stageProgressiveWaveformLinesLocked(
         / snapshot->chunkSize;
     const std::uint32_t lastChunk = static_cast<std::uint32_t>(lastLine)
         / snapshot->chunkSize;
-    const QVector<PeakFrame> emptyPeaks;
 
     for (std::uint32_t chunkIndex = firstChunk; chunkIndex <= lastChunk; ++chunkIndex) {
         auto lines = m_progressivePendingLineChunks.value(chunkIndex);
@@ -1205,7 +1204,7 @@ void TrackData::stageProgressiveWaveformLinesLocked(
         for (int globalLine = begin; globalLine < end; ++globalLine) {
             const int sourceLine = globalLine - firstLine;
             (*lines)[static_cast<size_t>(globalLine - static_cast<int>(chunkFirst))]
-                = makeCanonicalWaveformLine(rgb, emptyPeaks, sourceLine,
+                = makeCanonicalWaveformLine(rgb, sourceLine,
                                             normalizationState);
         }
     }
@@ -1262,7 +1261,6 @@ void TrackData::publishProgressiveWaveformLinesLocked(int firstRgbFrame, int rgb
         / initial->chunkSize;
     const std::uint32_t lastChunk = static_cast<std::uint32_t>(lastLine)
         / initial->chunkSize;
-    const QVector<PeakFrame> emptyPeaks;
 
     for (std::uint32_t chunkIndex = firstChunk; chunkIndex <= lastChunk; ++chunkIndex) {
         const auto snapshot = m_waveformLineStore.snapshot();
@@ -1286,7 +1284,7 @@ void TrackData::publishProgressiveWaveformLinesLocked(int firstRgbFrame, int rgb
                                            [](quint8 value) { return value != 0; });
             (*lines)[static_cast<size_t>(lineIndex - static_cast<int>(first))]
                 = ready ? makeCanonicalWaveformLine(
-                              m_rgbData, m_peakMip, lineIndex,
+                              m_rgbData, lineIndex,
                               WaveformNormalizationState::Preview)
                         : WaveformLine{};
         }

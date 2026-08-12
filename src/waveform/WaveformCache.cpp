@@ -152,7 +152,7 @@ WaveformLine payloadLineAt(const WaveformCache::Payload& payload, int index)
         }
         return {};
     }
-    return waveform::makeCanonicalLine(payload.rgb, payload.peakMip, index);
+    return waveform::makeCanonicalLine(payload.rgb[index]);
 }
 
 WaveformLine foldPayloadLines(const WaveformCache::Payload& payload,

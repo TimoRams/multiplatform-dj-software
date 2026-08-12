@@ -1,5 +1,7 @@
 #pragma once
 
+#include "waveform/WaveformAggregator.h"
+
 #include <QByteArray>
 #include <QBuffer>
 #include <QChar>
@@ -28,10 +30,16 @@ constexpr int kHidPacketSize = 128;
 constexpr double kPreviewDurationSeconds = 30.0;
 constexpr double kJogWaveformEntriesPerSecond = 150.0;
 constexpr int kMaxWaveformEntries = 0x7FF00;
-// One 19-entry window per tick keeps the USB interrupt endpoint comfortably
-// below saturation while both decks are uploading analysis data.
+// Each xx36 packet carries 19 PWV5 entries (38 payload bytes).
+constexpr int kXx36EntriesPerWindow = 19;
+// The screen protocol sustains roughly 200 waveform entries per second. One
+// 19-entry window per ~95 ms lands on that budget. The previous 10 ms tick
+// pushed ~1900 entries/s, nearly ten times the sustainable rate: it saturated
+// the interrupt endpoint, starved the 50 Hz xx27 state packets behind a
+// backlog of bulk waveform writes, and showed up as heavily lagging jog
+// wheels and near-frozen screens while a track was loading.
 constexpr int kUploadWindowsPerTick = 1;
-constexpr int kUploadTickIntervalMs = 10;
+constexpr int kUploadTickIntervalMs = 95;
 constexpr int kKeepAliveIntervalMs = 250;
 constexpr std::size_t kHidWriteQueueCapacity = 1024;
 constexpr int kHidTransferTimeoutMs = 250;
@@ -46,8 +54,11 @@ constexpr uint32_t kXx2fMaximumSample = 0x00FFFFFFu;
 // The displays remain smooth at these rates, while leaving ample interrupt-endpoint
 // headroom for controller input and MIDI feedback.  In particular, do not send a
 // new full HID report for every UI/control-clock tick.
-constexpr int kJogStateIntervalMs = 33;
-constexpr int kXx36TrickleIntervalMs = 100;
+// The reference protocol runs xx27 state at ~50 Hz continuously, even idle.
+constexpr int kJogStateIntervalMs = 20;
+// Keep one steady playhead window stream, but stay within the known endpoint
+// throughput budget to avoid starving jog/state packets.
+constexpr int kXx36TrickleIntervalMs = 95;
 constexpr double kJogRevolutionSeconds = 1.8;
 constexpr int kJogPhaseTicksPerSecond = 2000;
 constexpr int kJogPhaseTicksPerRevolution = 3600;
@@ -430,6 +441,24 @@ inline QByteArray encodePwv5Entry(int height, int red, int green, int blue)
     out.append(static_cast<char>(value & 0xFF));
     out.append(static_cast<char>((value >> 8) & 0xFF));
     return out;
+}
+
+// Adapter only: quantises one shared WaveformColumn into a PWV5 entry. It
+// performs no aggregation, no LOD selection and no colour analysis of its own
+// — every one of those decisions was already made by
+// waveform::aggregateWaveformColumn(), which the desktop renderer uses too.
+inline QByteArray encodePwv5Column(const waveform::WaveformColumn& column)
+{
+    if (!column.hasData)
+        return encodePwv5Entry(1, 0, 0, 0);
+    // Square root keeps quiet passages legible on the small 5-bit height axis.
+    const int height = std::clamp(static_cast<int>(std::lround(
+        std::sqrt(column.amplitude()) * 31.0f)), 1, 31);
+    const auto to3Bit = [](std::uint8_t value) {
+        return std::clamp((static_cast<int>(value) + 15) / 32, 0, 7);
+    };
+    return encodePwv5Entry(height, to3Bit(column.red), to3Bit(column.green),
+                           to3Bit(column.blue));
 }
 
 inline QByteArray encodeCoverJpeg(const QImage& source, int side, int quality)

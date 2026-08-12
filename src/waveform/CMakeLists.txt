@@ -4,6 +4,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     WaveformLineBuilder.h
     WaveformVisualStyle.h
     WaveformLodPyramid.h
+    WaveformAggregator.cpp
     WaveformLodPyramid.cpp
     WaveformLineStore.cpp
     WaveformAnalyzer.h

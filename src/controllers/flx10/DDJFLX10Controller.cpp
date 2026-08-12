@@ -84,7 +84,7 @@ bool DDJFLX10Controller::start()
     for (int deck = controllers::kFlx10FirstDeckIndex;
          deck <= controllers::kFlx10LastDeckIndex; ++deck) {
         m_uploadActive[deck] = false;
-        m_uploadEntries[deck] = 0;
+        m_uploadWindowsSent[deck] = 0;
         resetDisplayPacketState(deck);
 
         DjEngine* engine = deckEngine(deck);
@@ -150,7 +150,7 @@ void DDJFLX10Controller::stop()
     m_keepAliveProcess.reset();
 #endif
     m_uploadActive.fill(false);
-    m_uploadEntries.fill(0);
+    m_uploadWindowsSent.fill(0);
     for (int deck = controllers::kFlx10FirstDeckIndex; deck <= controllers::kFlx10LastDeckIndex; ++deck) {
         if (m_jogRingWarningActive[deck] || !m_jogRingLit[deck])
             sendJogRingIllumination(deck, true);
@@ -391,7 +391,7 @@ void DDJFLX10Controller::invalidateDeckSnapshot(int deck, const QString& trackPa
     m_waveformTrackPaths[deck] = trackPath;
     m_waveformDurations[deck] = kPreviewDurationSeconds;
     m_uploadActive[deck] = false;
-    m_uploadEntries[deck] = 0;
+    m_uploadWindowsSent[deck] = 0;
     m_lastWaveformRefreshMs[deck] = 0;
     m_lastWaveformUploadMs[deck] = 0;
     m_waveformUploadTrackGenerations[deck] = 0;
@@ -464,7 +464,6 @@ void DDJFLX10Controller::refreshDeckFromEngine(int deck)
     qInfo() << "[DDJ-FLX10] Deck" << deck
             << "uploading waveform entries" << (m_waveforms[deck].size() / 2)
             << "quality" << qualityPermille << "permille"
-            << "lod" << renderInfo.lodLevel
             << "source chunk" << renderInfo.playheadChunkIndex
             << "state" << renderInfo.playheadChunkState;
     uploadDeck(deck);
@@ -724,12 +723,21 @@ void DDJFLX10Controller::sendWaveformTick()
     if (nowMs - m_lastXx36SentMs < kXx36TrickleIntervalMs)
         return;
 
-    bool sent = false;
-    for (int deck = 1; deck <= 2; ++deck)
-        if (!m_waveforms[deck].isEmpty() && !m_uploadActive[deck])
-            sent = sendXx36Window(deck, m_waveforms[deck], currentWaveformEntry(deck)) || sent;
-    if (sent)
-        m_lastXx36SentMs = nowMs;
+    // Send at most one playhead window per tick and only while the deck is
+    // moving, otherwise endpoint pressure can starve state/jog updates.
+    for (int offset = 0; offset < 2; ++offset) {
+        const int deck = 1 + ((m_nextWaveformDeck - 1 + offset) % 2);
+        if (m_waveforms[deck].isEmpty())
+            continue;
+        const DjEngine* engine = deckEngine(deck);
+        if (!engine || (!engine->isPlaying() && !engine->isScratchVisualActive()))
+            continue;
+        if (sendXx36Window(deck, m_waveforms[deck], currentWaveformEntry(deck))) {
+            m_lastXx36SentMs = nowMs;
+            m_nextWaveformDeck = deck == 1 ? 2 : 1;
+            break;
+        }
+    }
 }
 
 void DDJFLX10Controller::sendUploadChunk()
@@ -739,28 +747,52 @@ void DDJFLX10Controller::sendUploadChunk()
         return;
     }
 
-    bool anyActive = false;
-    for (int deck = 1; deck <= 2; ++deck) {
+    bool anyActive = m_uploadActive[1] || m_uploadActive[2];
+    if (!anyActive) {
+        m_uploadTimer.stop();
+        return;
+    }
+
+    // Background upload is intentionally opportunistic: keep active playback
+    // smooth first, then fill the rest when the deck is idle.
+    for (int offset = 0; offset < 2; ++offset) {
+        const int deck = 1 + ((m_nextUploadDeck - 1 + offset) % 2);
         if (!m_uploadActive[deck] || m_waveforms[deck].isEmpty())
             continue;
-
-        anyActive = true;
+        if (const DjEngine* engine = deckEngine(deck);
+            engine && (engine->isPlaying() || engine->isScratchVisualActive())) {
+            continue;
+        }
         const int entries = m_waveforms[deck].size() / 2;
-        int windowsSent = 0;
-        while (m_uploadEntries[deck] < entries && windowsSent < kUploadWindowsPerTick) {
-            if (!sendXx36Window(deck, m_waveforms[deck], m_uploadEntries[deck]))
+        const int totalWindows = (entries + kXx36EntriesPerWindow - 1)
+            / kXx36EntriesPerWindow;
+        // Fill outward from the playhead rather than from entry 0. The xx36
+        // position counter lets the firmware accept out-of-order windows, and
+        // at the protocol's sustainable rate a full track takes minutes to
+        // transfer — so uploading sequentially from the start meant the region
+        // actually being played stayed empty for the entire upload, which is
+        // why no waveform appeared on the screens.
+        const int startWindow = totalWindows > 0
+            ? (currentWaveformEntry(deck) / kXx36EntriesPerWindow) % totalWindows
+            : 0;
+        if (m_uploadWindowsSent[deck] < totalWindows) {
+            const int window = (startWindow + m_uploadWindowsSent[deck]) % totalWindows;
+            if (sendXx36Window(deck, m_waveforms[deck], window * kXx36EntriesPerWindow)) {
+                ++m_uploadWindowsSent[deck];
+            } else {
                 break;
-            m_uploadEntries[deck] += 19;
-            ++windowsSent;
+            }
         }
 
-        if (m_uploadEntries[deck] >= entries) {
+        if (m_uploadWindowsSent[deck] >= totalWindows) {
             sendXx2f(deck);
             m_uploadActive[deck] = false;
             qInfo() << "[DDJ-FLX10] Deck" << deck << "waveform upload finished entries" << entries;
         }
+        m_nextUploadDeck = deck == 1 ? 2 : 1;
+        break;
     }
 
-    if (!anyActive || (!m_uploadActive[1] && !m_uploadActive[2]))
+    if (!m_uploadActive[1] && !m_uploadActive[2])
         m_uploadTimer.stop();
 }

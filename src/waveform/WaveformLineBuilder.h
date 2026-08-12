@@ -35,34 +35,12 @@ inline WaveformLine makeCanonicalLine(
     return line;
 }
 
-inline WaveformLine makeCanonicalLine(const QVector<TrackData::RgbWaveformFrame>& rgb,
-                                      const QVector<TrackData::PeakFrame>& peaks,
-                                      int lineIndex)
-{
-    const auto& frame = rgb[lineIndex];
-    float minimum = -frame.rms;
-    float maximum = frame.rms;
-    constexpr int peakFramesPerLine = TrackData::PEAK_POINTS_PER_SECOND
-        / static_cast<int>(WaveformLineStore::kCanonicalLinesPerSecond);
-    const int peakBegin = lineIndex * peakFramesPerLine;
-    const int peakEnd = std::min(peakBegin + peakFramesPerLine,
-                                 static_cast<int>(peaks.size()));
-    for (int index = peakBegin; index < peakEnd; ++index) {
-        minimum = std::min(minimum, peaks[index].minSample / 127.0f);
-        maximum = std::max(maximum, peaks[index].maxSample / 127.0f);
-    }
-
-    WaveformLine line = makeCanonicalLine(frame);
-    line.minimum = static_cast<std::int16_t>(std::lround(
-        std::clamp(minimum, -1.0f, 0.0f) * 32767.0f));
-    line.maximum = static_cast<std::int16_t>(std::lround(
-        std::clamp(maximum, 0.0f, 1.0f) * 32767.0f));
-    return line;
-}
-
+// Peak samples deliberately do not participate: see the comment on
+// makeCanonicalWaveformLine in TrackData.cpp. The envelope and the peak mip
+// use different normalisations, so letting peaks in here would make a cached
+// track render taller than the same track did while it was being analysed.
 inline std::shared_ptr<const PreparedWaveformLines> prepareWaveformLines(
-    const QVector<TrackData::RgbWaveformFrame>& rgb,
-    const QVector<TrackData::PeakFrame>& peaks)
+    const QVector<TrackData::RgbWaveformFrame>& rgb)
 {
     if (rgb.isEmpty())
         return {};
@@ -77,7 +55,7 @@ inline std::shared_ptr<const PreparedWaveformLines> prepareWaveformLines(
                                     prepared->totalLineCount - first);
         auto lines = std::make_shared<std::vector<WaveformLine>>(count);
         for (std::uint32_t local = 0; local < count; ++local)
-            (*lines)[local] = makeCanonicalLine(rgb, peaks, static_cast<int>(first + local));
+            (*lines)[local] = makeCanonicalLine(rgb[static_cast<int>(first + local)]);
         prepared->chunks.push_back(std::move(lines));
     }
     return prepared;

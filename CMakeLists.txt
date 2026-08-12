@@ -478,6 +478,7 @@ add_test(NAME waveform_render_stability COMMAND BrockDJ_waveform_render_stabilit
 add_executable(BrockDJ_waveform_render_tile_tests
     tests/waveform/waveform_render_tile_tests.cpp
     src/waveform/render/WaveformTileRasterizer.cpp
+    src/waveform/WaveformAggregator.cpp
     src/waveform/WaveformLodPyramid.cpp
     src/waveform/WaveformLineStore.cpp)
 target_include_directories(BrockDJ_waveform_render_tile_tests PRIVATE src)
@@ -815,12 +816,24 @@ add_test(NAME progressive_waveform_publication COMMAND BrockDJ_progressive_wavef
 
 add_executable(BrockDJ_waveform_line_store_tests
     tests/waveform/waveform_line_store_tests.cpp
+    src/waveform/WaveformAggregator.cpp
     src/waveform/WaveformLodPyramid.cpp
     src/waveform/WaveformLineStore.cpp
 )
 target_include_directories(BrockDJ_waveform_line_store_tests PRIVATE src)
 target_compile_features(BrockDJ_waveform_line_store_tests PRIVATE cxx_std_23)
 add_test(NAME waveform_line_store COMMAND BrockDJ_waveform_line_store_tests)
+
+add_executable(BrockDJ_waveform_aggregator_tests
+    tests/waveform/waveform_aggregator_tests.cpp
+    src/waveform/WaveformAggregator.cpp
+    src/waveform/WaveformLodPyramid.cpp
+    src/waveform/WaveformLineStore.cpp
+)
+target_link_libraries(BrockDJ_waveform_aggregator_tests PRIVATE Qt6::Core Qt6::Gui)
+target_include_directories(BrockDJ_waveform_aggregator_tests PRIVATE src)
+target_compile_features(BrockDJ_waveform_aggregator_tests PRIVATE cxx_std_23)
+add_test(NAME waveform_aggregator COMMAND BrockDJ_waveform_aggregator_tests)
 
 add_executable(BrockDJ_waveform_line_chunk_tests
     tests/waveform/waveform_line_chunk_tests.cpp
@@ -961,6 +974,7 @@ set(_brockdj_executable_targets
     BrockDJ_waveform_motion_tests
     BrockDJ_progressive_waveform_publication_tests
     BrockDJ_waveform_line_store_tests
+    BrockDJ_waveform_aggregator_tests
     BrockDJ_waveform_line_chunk_tests
     BrockDJ_waveform_line_render_tests
     BrockDJ_audio_page_cache_tests

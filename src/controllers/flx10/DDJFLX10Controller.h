@@ -83,7 +83,7 @@ private:
     bool sendXx30(int deck);
     bool sendXx39(int deck);
     bool sendXx33Album(int deck, const QByteArray& jpeg);
-    bool sendXx35(int deck, int entryCount);
+    bool sendXx35(int deck);
     bool sendXx36Window(int deck, const QByteArray& waveform, int entry);
     bool sendXx2f(int deck);
     bool sendXx27(int deck, const flx10_protocol::DeckDisplaySnapshot& snapshot);
@@ -104,8 +104,8 @@ private:
         std::uint32_t completeColumns = 0;
         std::uint32_t playheadChunkIndex = 0;
         std::uint8_t playheadChunkState = 0;
-        std::uint8_t lodLevel = 0;
-        bool usingPersistedLod = false;
+        // No LOD fields: the FLX10 path asks waveform::aggregateWaveformColumn
+        // for a source-line range and never learns which level answered it.
     };
 
     QByteArray generatePreviewWaveform(int deck,
@@ -137,7 +137,10 @@ private:
     bool m_keepAliveEnabled = false;
     std::array<QByteArray, 5> m_waveforms;
     std::array<double, 5> m_waveformDurations = {0.0, 30.0, 30.0, 30.0, 30.0};
-    std::array<int, 5> m_uploadEntries = {0, 0, 0, 0, 0};
+    // Number of 19-entry xx36 windows already pushed for this deck's bulk
+    // upload. The window actually sent is derived from this plus the playhead,
+    // so filling always starts at what is about to be played.
+    std::array<int, 5> m_uploadWindowsSent = {0, 0, 0, 0, 0};
     std::array<bool, 5> m_uploadActive = {false, false, false, false, false};
     std::array<QMetaObject::Connection, 5> m_trackLoadedConnections;
     std::array<QMetaObject::Connection, 5> m_trackEjectedConnections;
@@ -166,6 +169,8 @@ private:
     qint64 m_lastXx36SentMs = -100;
     std::array<QByteArray, 5> m_lastXx27Packet;
     std::array<std::uint64_t, 5> m_displaySnapshotSequence {0, 0, 0, 0, 0};
+    int m_nextWaveformDeck = 1;
+    int m_nextUploadDeck = 1;
     std::atomic<bool> m_shuttingDown { false };
     bool m_connected = false;
     QPointer<DjEngine> m_deckA;

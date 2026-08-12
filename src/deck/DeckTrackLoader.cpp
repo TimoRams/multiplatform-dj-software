@@ -313,7 +313,7 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
         // the loader thread so installing a cached track is pointer publication
         // rather than a full-timeline UI-thread conversion.
         result.waveformCache.preparedLines = waveform::prepareWaveformLines(
-            result.waveformCache.rgb, result.waveformCache.peakMip);
+            result.waveformCache.rgb);
     } else {
         WaveformCache::RenderInfo renderInfo;
         if (WaveformCache::inspectRenderCache(

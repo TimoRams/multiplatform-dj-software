@@ -393,10 +393,9 @@ void WaveformAnalyzer::run()
         auto completedResult = std::move(working).finish(m_identity);
         if (!completedResult.preparedWaveformLines
             && completedResult.rgbWaveform
-            && !completedResult.rgbWaveform->isEmpty()
-            && completedResult.peakMip) {
+            && !completedResult.rgbWaveform->isEmpty()) {
             completedResult.preparedWaveformLines = waveform::prepareWaveformLines(
-                *completedResult.rgbWaveform, *completedResult.peakMip);
+                *completedResult.rgbWaveform);
         }
         if (!analysis::validateResult(completedResult))
             return;
