@@ -93,7 +93,23 @@ private:
 
     QByteArray generateCoverJpeg(int deck) const;
     bool uploadCoverArt(int deck);
-    QByteArray generatePreviewWaveform(int deck) const;
+    struct WaveformPreviewRenderInfo final {
+        std::uint64_t trackGeneration = 0;
+        std::uint64_t dataGeneration = 0;
+        std::uint32_t sourceLineBegin = 0;
+        std::uint32_t sourceLineEnd = 0;
+        std::uint32_t outputWidth = 0;
+        std::uint32_t generatedColumns = 0;
+        std::uint32_t columnsWithData = 0;
+        std::uint32_t completeColumns = 0;
+        std::uint32_t playheadChunkIndex = 0;
+        std::uint8_t playheadChunkState = 0;
+        std::uint8_t lodLevel = 0;
+        bool usingPersistedLod = false;
+    };
+
+    QByteArray generatePreviewWaveform(int deck,
+                                       WaveformPreviewRenderInfo* outInfo = nullptr) const;
     int currentWaveformEntry(int deck) const;
     flx10_protocol::DeckDisplaySnapshot captureDeckDisplaySnapshot(int deck);
     double deckDisplayDuration(int deck) const;
@@ -139,6 +155,9 @@ private:
     std::array<QString, 5> m_lastCoverUrls;
     std::array<QString, 5> m_waveformTrackPaths;
     std::array<qint64, 5> m_lastWaveformRefreshMs = {0, 0, 0, 0, 0};
+    std::array<qint64, 5> m_lastWaveformUploadMs = {0, 0, 0, 0, 0};
+    std::array<std::uint64_t, 5> m_waveformUploadTrackGenerations = {0, 0, 0, 0, 0};
+    std::array<std::uint32_t, 5> m_waveformUploadQualityPermille = {0, 0, 0, 0, 0};
     std::array<bool, 5> m_jogRingWarningActive = {false, false, false, false, false};
     std::array<bool, 5> m_jogRingLit = {true, true, true, true, true};
     qint64 m_clockStartMs = 0;

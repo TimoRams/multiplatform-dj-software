@@ -393,6 +393,9 @@ void DDJFLX10Controller::invalidateDeckSnapshot(int deck, const QString& trackPa
     m_uploadActive[deck] = false;
     m_uploadEntries[deck] = 0;
     m_lastWaveformRefreshMs[deck] = 0;
+    m_lastWaveformUploadMs[deck] = 0;
+    m_waveformUploadTrackGenerations[deck] = 0;
+    m_waveformUploadQualityPermille[deck] = 0;
     m_lastCoverUrls[deck].clear();
     resetDisplayPacketState(deck);
 
@@ -416,29 +419,54 @@ void DDJFLX10Controller::refreshDeckFromEngine(int deck)
     if (trackPath != m_waveformTrackPaths[deck])
         invalidateDeckSnapshot(deck, trackPath, true);
 
-    // Analysis publishes RGB updates about every 90 ms. Rebuilding and restarting
-    // the complete device waveform on each update made the jog screens visibly
-    // reload forever. The first usable overview is a stable per-track snapshot;
-    // the moving 0x36 window continues to use it for the lifetime of the track.
-    if (!m_waveforms[deck].isEmpty())
-        return;
-
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     if (m_lastWaveformRefreshMs[deck] > 0 && now - m_lastWaveformRefreshMs[deck] < 250)
         return;
     m_lastWaveformRefreshMs[deck] = now;
-    resetDisplayPacketState(deck);
-
-    QByteArray waveform = generatePreviewWaveform(deck);
+    WaveformPreviewRenderInfo renderInfo;
+    QByteArray waveform = generatePreviewWaveform(deck, &renderInfo);
     if (waveform.isEmpty())
         return;
+
+    const std::uint32_t qualityPermille = renderInfo.generatedColumns == 0
+        ? 0
+        : static_cast<std::uint32_t>(
+              (static_cast<std::uint64_t>(renderInfo.completeColumns) * 1000ULL)
+              / static_cast<std::uint64_t>(renderInfo.generatedColumns));
+    const bool trackChanged = m_waveformUploadTrackGenerations[deck]
+        != renderInfo.trackGeneration;
+    const bool firstUploadForTrack = m_waveforms[deck].isEmpty() || trackChanged;
+    const std::uint32_t previousQuality = m_waveformUploadQualityPermille[deck];
+    const bool qualityImprovedEnough = qualityPermille
+        >= previousQuality + 25;
+    const bool reachedComplete = qualityPermille == 1000
+        && previousQuality < 1000;
+    const bool staleUpload = m_lastWaveformUploadMs[deck] == 0
+        || now - m_lastWaveformUploadMs[deck] > 3500;
+    if (!firstUploadForTrack
+        && !qualityImprovedEnough
+        && !reachedComplete
+        && !staleUpload) {
+        return;
+    }
+
     m_waveforms[deck] = std::move(waveform);
     m_waveformDurations[deck] = deckDisplayDuration(deck);
+    m_waveformUploadTrackGenerations[deck] = renderInfo.trackGeneration;
+    m_waveformUploadQualityPermille[deck] = std::max(
+        previousQuality, qualityPermille);
+    m_lastWaveformUploadMs[deck] = now;
+    resetDisplayPacketState(deck);
 
     if (!m_connected)
         return;
 
-    qInfo() << "[DDJ-FLX10] Deck" << deck << "uploading real waveform entries" << (m_waveforms[deck].size() / 2);
+    qInfo() << "[DDJ-FLX10] Deck" << deck
+            << "uploading waveform entries" << (m_waveforms[deck].size() / 2)
+            << "quality" << qualityPermille << "permille"
+            << "lod" << renderInfo.lodLevel
+            << "source chunk" << renderInfo.playheadChunkIndex
+            << "state" << renderInfo.playheadChunkState;
     uploadDeck(deck);
 }
 

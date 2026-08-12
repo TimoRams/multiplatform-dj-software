@@ -2,6 +2,8 @@
 
 #include "deck/DjEngine.h"
 #include "domain/TrackData.h"
+#include "waveform/WaveformLodPyramid.h"
+#include "waveform/WaveformTypes.h"
 
 #include <QDateTime>
 #include <QDebug>
@@ -10,6 +12,7 @@
 #include <QPainter>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <utility>
 #include <vector>
@@ -42,6 +45,74 @@ double validTrackPosition(const DjEngine* engine, double duration)
     if (!std::isfinite(pos))
         return 0.0;
     return std::clamp(pos, 0.0, duration);
+}
+
+bool waveformCompareLoggingEnabled()
+{
+    static const bool enabled = [] {
+        bool ok = false;
+        const int value = qEnvironmentVariableIntValue(
+            "BROCKDJ_WAVEFORM_COMPARE_LOG", &ok);
+        return ok && value != 0;
+    }();
+    return enabled;
+}
+
+const char* chunkStateName(std::uint8_t state)
+{
+    switch (static_cast<WaveformChunkState>(state)) {
+    case WaveformChunkState::Missing:
+        return "Missing";
+    case WaveformChunkState::Loading:
+        return "Loading";
+    case WaveformChunkState::PreviewReady:
+        return "PreviewReady";
+    case WaveformChunkState::FinalReady:
+        return "FinalReady";
+    }
+    return "Unknown";
+}
+
+void logFlx10WaveformComparison(int deck,
+                                bool usingPersistedLod,
+                                std::uint8_t lodLevel,
+                                std::uint32_t playheadChunkIndex,
+                                std::uint8_t playheadChunkState,
+                                std::uint32_t sourceLineBegin,
+                                std::uint32_t sourceLineEnd,
+                                std::uint32_t outputWidth,
+                                std::uint32_t generatedColumns,
+                                std::uint32_t columnsWithData,
+                                std::uint32_t completeColumns,
+                                std::uint64_t trackGeneration,
+                                std::uint64_t dataGeneration)
+{
+    if (!waveformCompareLoggingEnabled())
+        return;
+    static std::array<qint64, 5> lastLogMs {0, 0, 0, 0, 0};
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (deck < 0 || deck >= static_cast<int>(lastLogMs.size()))
+        return;
+    if (nowMs - lastLogMs[deck] < 700)
+        return;
+    lastLogMs[deck] = nowMs;
+
+    const char* source = usingPersistedLod
+        ? "lod-persisted"
+        : (lodLevel == 0 ? "canonical" : "lod-derived");
+    qInfo().nospace()
+        << "[WaveformCompare][FLX10] deck=" << deck
+        << " source=" << source
+        << " chunk=" << playheadChunkIndex
+        << " state=" << chunkStateName(playheadChunkState)
+        << " lod=" << static_cast<int>(lodLevel)
+        << " sourceLineRange=[" << sourceLineBegin << "," << sourceLineEnd << ")"
+        << " displayWaveformWidth=" << outputWidth
+        << " generatedColumns=" << generatedColumns
+        << " columnsWithData=" << columnsWithData
+        << " completeColumns=" << completeColumns
+        << " trackGeneration=" << trackGeneration
+        << " dataGeneration=" << dataGeneration;
 }
 
 } // namespace
@@ -313,7 +384,8 @@ bool DDJFLX10Controller::uploadCoverArt(int deck)
     qInfo() << "[DDJ-FLX10] Deck" << deck << "uploading cover art bytes" << jpeg.size();
     return sendXx33Album(deck, jpeg);
 }
-QByteArray DDJFLX10Controller::generatePreviewWaveform(int deck) const
+QByteArray DDJFLX10Controller::generatePreviewWaveform(
+    int deck, WaveformPreviewRenderInfo* outInfo) const
 {
     const DjEngine* engine = deck == 1 ? m_deckA : m_deckB;
     if (!engine || engine->getDuration() <= 0.0f)
@@ -323,68 +395,143 @@ QByteArray DDJFLX10Controller::generatePreviewWaveform(int deck) const
     if (!trackData)
         return {};
 
-    QVector<TrackData::RgbWaveformFrame> frames = trackData->getRgbWaveformData();
-    if (frames.isEmpty())
-        frames = trackData->getOverviewRgbData();
-    if (frames.isEmpty())
-        frames = trackData->getProgressiveOvrData();
-    if (frames.isEmpty())
+    const auto snapshot = trackData->getWaveformLineStoreSnapshot();
+    if (!snapshot || snapshot->trackGeneration == 0
+        || snapshot->linesPerSecond == 0
+        || snapshot->totalLineCount == 0
+        || snapshot->chunkSize == 0
+        || !snapshot->chunks) {
         return {};
+    }
 
     const int targetEntries = std::clamp(
         static_cast<int>(std::ceil(deckDisplayDuration(deck) * kJogWaveformEntriesPerSecond)),
         150,
         kMaxWaveformEntries);
+    if (targetEntries <= 0)
+        return {};
+
+    const double physicalPixelsPerCanonicalLine = static_cast<double>(targetEntries)
+        / static_cast<double>(snapshot->totalLineCount);
+    const auto lodLevel = waveform::WaveformLodPyramid::selectLevel(
+        physicalPixelsPerCanonicalLine);
+    const auto stride = static_cast<std::uint32_t>(
+        waveform::WaveformLodPyramid::level(lodLevel).canonicalLineStride);
+    const auto persisted = snapshot->lodLevel(lodLevel);
+    const bool usingPersistedLod = persisted
+        && persisted->canonicalLineStride == stride
+        && persisted->chunkSize > 0;
+
     QByteArray out;
     out.reserve(targetEntries * 2);
+    std::uint32_t columnsWithData = 0;
+    std::uint32_t completeColumns = 0;
 
     for (int i = 0; i < targetEntries; ++i) {
-        const double startFraction = static_cast<double>(i) / static_cast<double>(targetEntries);
-        const double endFraction = static_cast<double>(i + 1) / static_cast<double>(targetEntries);
-        const int startIndex = std::clamp(static_cast<int>(std::floor(startFraction * frames.size())), 0, static_cast<int>(frames.size() - 1));
-        const int endIndex = std::clamp(static_cast<int>(std::ceil(endFraction * frames.size())), startIndex + 1, static_cast<int>(frames.size()));
+        const long double sourceBeginExact
+            = static_cast<long double>(snapshot->totalLineCount)
+            * static_cast<long double>(i)
+            / static_cast<long double>(targetEntries);
+        const long double sourceEndExact
+            = static_cast<long double>(snapshot->totalLineCount)
+            * static_cast<long double>(i + 1)
+            / static_cast<long double>(targetEntries);
+        const auto globalBegin = std::clamp<std::uint32_t>(
+            static_cast<std::uint32_t>(std::floor(sourceBeginExact)),
+            0u, snapshot->totalLineCount - 1);
+        const auto globalEnd = std::clamp<std::uint32_t>(
+            static_cast<std::uint32_t>(std::ceil(sourceEndExact)),
+            globalBegin + 1, snapshot->totalLineCount);
 
-        float rms = 0.0f;
-        float low = 0.0f;
-        float lowMid = 0.0f;
-        float mid = 0.0f;
-        float high = 0.0f;
-        int fallbackRed = 0;
-        int fallbackGreen = 0;
-        int fallbackBlue = 0;
-        int colorCount = 0;
-
-        for (int src = startIndex; src < endIndex; ++src) {
-            const auto& frame = frames[src];
-            rms = std::max(rms, std::max(0.0f, frame.rms));
-            low = std::max(low, std::max(0.0f, frame.low));
-            lowMid = std::max(lowMid, std::max(0.0f, frame.lowMid));
-            mid = std::max(mid, std::max(0.0f, frame.mid));
-            high = std::max(high, std::max(0.0f, frame.high));
-            fallbackRed += frame.color.red();
-            fallbackGreen += frame.color.green();
-            fallbackBlue += frame.color.blue();
-            ++colorCount;
+        std::int16_t minimum = 0;
+        std::int16_t maximum = 0;
+        std::uint64_t red = 0;
+        std::uint64_t green = 0;
+        std::uint64_t blue = 0;
+        std::uint64_t weight = 0;
+        bool hasExtrema = false;
+        bool complete = true;
+        const auto lodBegin = globalBegin / stride;
+        const auto lodEnd = (globalEnd + stride - 1) / stride;
+        for (auto lodIndex = lodBegin; lodIndex < lodEnd; ++lodIndex) {
+            const auto sample = waveform::WaveformLodPyramid::sample(
+                *snapshot, lodLevel, lodIndex);
+            complete = complete && sample.complete;
+            if (!sample.hasData)
+                continue;
+            const auto& line = sample.line;
+            if (!hasExtrema) {
+                minimum = line.minimum;
+                maximum = line.maximum;
+                hasExtrema = true;
+            } else {
+                minimum = std::min(minimum, line.minimum);
+                maximum = std::max(maximum, line.maximum);
+            }
+            const auto magnitude = static_cast<std::uint32_t>(std::max(
+                std::abs(static_cast<int>(line.minimum)),
+                std::abs(static_cast<int>(line.maximum))));
+            const auto lineWeight = std::max(1u, magnitude);
+            red += static_cast<std::uint64_t>(line.red) * lineWeight;
+            green += static_cast<std::uint64_t>(line.green) * lineWeight;
+            blue += static_cast<std::uint64_t>(line.blue) * lineWeight;
+            weight += lineWeight;
         }
 
-        const int height = std::clamp(static_cast<int>(std::sqrt(rms) * 31.0f), 1, 31);
-        const float bandMax = std::max({low, lowMid, mid, high, 0.001f});
-
-        int red = std::clamp(static_cast<int>(std::round(7.0f * (0.90f * low + 0.45f * lowMid) / bandMax)), 0, 7);
-        int green = std::clamp(static_cast<int>(std::round(7.0f * (0.75f * mid + 0.35f * lowMid) / bandMax)), 0, 7);
-        int blue = std::clamp(static_cast<int>(std::round(7.0f * (0.90f * high + 0.25f * mid) / bandMax)), 0, 7);
-
-        if (red == 0 && green == 0 && blue == 0) {
-            const QColor color(
-                colorCount > 0 ? fallbackRed / colorCount : 255,
-                colorCount > 0 ? fallbackGreen / colorCount : 255,
-                colorCount > 0 ? fallbackBlue / colorCount : 255);
-            red = std::clamp((color.red() + 15) / 32, 0, 7);
-            green = std::clamp((color.green() + 15) / 32, 0, 7);
-            blue = std::clamp((color.blue() + 15) / 32, 0, 7);
+        if (!hasExtrema || weight == 0) {
+            out += encodePwv5Entry(1, 0, 0, 0);
+            continue;
         }
+        ++columnsWithData;
+        if (complete)
+            ++completeColumns;
 
-        out += encodePwv5Entry(height, red, green, blue);
+        const float amplitude = static_cast<float>(std::max(
+            std::abs(static_cast<int>(minimum)),
+            std::abs(static_cast<int>(maximum)))) / 32767.0f;
+        const int height = std::clamp(
+            static_cast<int>(std::lround(std::sqrt(amplitude) * 31.0f)), 1, 31);
+        const int red3 = std::clamp(static_cast<int>(red / weight + 15) / 32, 0, 7);
+        const int green3 = std::clamp(static_cast<int>(green / weight + 15) / 32, 0, 7);
+        const int blue3 = std::clamp(static_cast<int>(blue / weight + 15) / 32, 0, 7);
+        out += encodePwv5Entry(height, red3, green3, blue3);
+    }
+
+    if (outInfo) {
+        const double duration = validTrackDuration(engine);
+        const double playheadSec = validTrackPosition(engine, duration);
+        const auto playheadLine = static_cast<std::uint32_t>(std::clamp<std::int64_t>(
+            static_cast<std::int64_t>(std::llround(
+                playheadSec * static_cast<double>(snapshot->linesPerSecond))),
+            0, static_cast<std::int64_t>(snapshot->totalLineCount - 1)));
+        const auto playheadChunkIndex = snapshot->chunkSize > 0
+            ? playheadLine / snapshot->chunkSize : 0u;
+        const auto playheadChunk = snapshot->chunkAt(playheadChunkIndex);
+        outInfo->trackGeneration = snapshot->trackGeneration;
+        outInfo->dataGeneration = snapshot->dataGeneration;
+        outInfo->sourceLineBegin = 0;
+        outInfo->sourceLineEnd = snapshot->totalLineCount;
+        outInfo->outputWidth = static_cast<std::uint32_t>(targetEntries);
+        outInfo->generatedColumns = static_cast<std::uint32_t>(targetEntries);
+        outInfo->columnsWithData = columnsWithData;
+        outInfo->completeColumns = completeColumns;
+        outInfo->playheadChunkIndex = playheadChunkIndex;
+        outInfo->playheadChunkState = static_cast<std::uint8_t>(
+            playheadChunk ? playheadChunk->state : WaveformChunkState::Missing);
+        outInfo->lodLevel = lodLevel;
+        outInfo->usingPersistedLod = usingPersistedLod;
+        logFlx10WaveformComparison(deck, outInfo->usingPersistedLod,
+                                   outInfo->lodLevel,
+                                   outInfo->playheadChunkIndex,
+                                   outInfo->playheadChunkState,
+                                   outInfo->sourceLineBegin,
+                                   outInfo->sourceLineEnd,
+                                   outInfo->outputWidth,
+                                   outInfo->generatedColumns,
+                                   outInfo->columnsWithData,
+                                   outInfo->completeColumns,
+                                   outInfo->trackGeneration,
+                                   outInfo->dataGeneration);
     }
 
     return out;

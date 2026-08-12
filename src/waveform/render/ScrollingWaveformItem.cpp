@@ -7,6 +7,7 @@
 #include "waveform/WaveformLineStore.h"
 
 #include <QColor>
+#include <QDateTime>
 #include <QElapsedTimer>
 #include <QFontMetrics>
 #include <QImage>
@@ -32,6 +33,73 @@
 #include <vector>
 
 namespace {
+
+bool waveformCompareLoggingEnabled()
+{
+    static const bool enabled = [] {
+        bool ok = false;
+        const int value = qEnvironmentVariableIntValue(
+            "BROCKDJ_WAVEFORM_COMPARE_LOG", &ok);
+        return ok && value != 0;
+    }();
+    return enabled;
+}
+
+const char* chunkStateName(WaveformChunkState state)
+{
+    switch (state) {
+    case WaveformChunkState::Missing:
+        return "Missing";
+    case WaveformChunkState::Loading:
+        return "Loading";
+    case WaveformChunkState::PreviewReady:
+        return "PreviewReady";
+    case WaveformChunkState::FinalReady:
+        return "FinalReady";
+    }
+    return "Unknown";
+}
+
+void logDesktopWaveformComparison(const WaveformLineStoreSnapshot& snapshot,
+                                  std::uint8_t lodLevel,
+                                  std::uint32_t sourceBegin,
+                                  std::uint32_t sourceEnd,
+                                  std::uint32_t physicalWidth,
+                                  std::uint64_t generatedColumns,
+                                  std::uint64_t missingVisibleTiles,
+                                  bool fallbackVisible,
+                                  double playheadLine)
+{
+    if (!waveformCompareLoggingEnabled())
+        return;
+    static qint64 lastLogMs = 0;
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (nowMs - lastLogMs < 700)
+        return;
+    lastLogMs = nowMs;
+
+    const auto playheadIndex = static_cast<std::uint32_t>(std::clamp<std::int64_t>(
+        static_cast<std::int64_t>(std::llround(playheadLine)),
+        0, static_cast<std::int64_t>(snapshot.totalLineCount - 1)));
+    const auto chunkIndex = snapshot.chunkSize == 0
+        ? 0u : playheadIndex / snapshot.chunkSize;
+    const auto chunk = snapshot.chunkAt(chunkIndex);
+    const auto chunkState = chunk ? chunk->state : WaveformChunkState::Missing;
+    const char* source = (fallbackVisible && missingVisibleTiles > 0)
+        ? "overview-fallback"
+        : (missingVisibleTiles > 0 ? "detail-incomplete" : "detail");
+
+    qInfo().nospace()
+        << "[WaveformCompare][Desktop] source=" << source
+        << " chunk=" << chunkIndex
+        << " state=" << chunkStateName(chunkState)
+        << " lod=" << static_cast<int>(lodLevel)
+        << " sourceLineRange=[" << sourceBegin << "," << sourceEnd << ")"
+        << " outputPhysicalWidth=" << physicalWidth
+        << " generatedColumns=" << generatedColumns
+        << " trackGeneration=" << snapshot.trackGeneration
+        << " dataGeneration=" << snapshot.dataGeneration;
+}
 
 constexpr std::size_t kWaveformNodePoolSize = 24;
 constexpr std::size_t kCueLabelNodePoolSize = 9;
@@ -1184,6 +1252,9 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         }
         std::vector<PreparedTileSlot> preparedTiles;
         preparedTiles.reserve(scene->waveformNodes.size());
+        const auto selectedLodLevel
+            = WaveformZoomController::lodLevelForPhysicalPixels(
+                pixelsPerLine * dpr);
         if (sourceBegin < sourceEnd) {
             const auto physicalBegin = waveform_render::timelinePhysicalFloor(
                 static_cast<double>(sourceBegin), pixelsPerLine, dpr);
@@ -1206,11 +1277,9 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                 }
                 const int imageHeight = std::max(
                     1, static_cast<int>(std::ceil(bounds.height() * dpr)));
-                const auto lodLevel = WaveformZoomController::lodLevelForPhysicalPixels(
-                    pixelsPerLine * dpr);
                 const auto key = waveform_render::WaveformTileRasterizer::makeKey(
                     *snapshot, tileIndex, tileSpan, pixelsPerLine * dpr,
-                    imageHeight, dpr, lodLevel,
+                    imageHeight, dpr, selectedLodLevel,
                     static_cast<std::uint32_t>(m_backgroundColor.rgba()));
                 const auto requiredViewKey = waveform_render::viewKeyFor(key);
                 if (!scene->viewKey || *scene->viewKey != requiredViewKey) {
@@ -1338,6 +1407,12 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             visibleTileCount == 0 ? 0
                 : (readyVisibleTiles * 1000) / visibleTileCount,
             std::memory_order_relaxed);
+        logDesktopWaveformComparison(
+            *snapshot, selectedLodLevel, sourceBegin, sourceEnd,
+            static_cast<std::uint32_t>(std::max(
+                0, static_cast<int>(std::ceil(bounds.width() * dpr)))),
+            renderedLineCount, missingVisibleTiles, scene->fallbackVisible,
+            playheadLine);
         if (missingVisibleTiles > 0 && scene->fallbackVisible)
             m_overviewFallbackFrameCount.fetch_add(
                 1, std::memory_order_relaxed);
