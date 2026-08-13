@@ -375,7 +375,14 @@ bool LibraryDatabase::requestAnalysisPersistence(const QString& trackId,
     command.type = DatabaseCommandType::Batch;
     command.priority = DatabasePriority::Persistence;
     command.requestId = m_nextDatabaseRequestId++;
-    command.generation = result.identity.requestGeneration;
+    // No generation: the worker's generation counter tracks the library page
+    // the table model is currently showing, and anything tagged with a
+    // different value is dropped as stale before it reaches SQLite. Feeding an
+    // analyzer request generation into that field meant practically every
+    // finished analysis was discarded instead of written, so BPM, key and
+    // beatgrid never survived a reload and every load re-ran a full analysis.
+    // A superseded write for the same track is already replaced in the queue by
+    // the coalescing key below.
     command.coalescingKey = QStringLiteral("analysis:%1").arg(trackId);
 
     QString gridType = QStringLiteral("unknown");
@@ -466,7 +473,14 @@ void LibraryDatabase::collectDatabaseWorkerResults()
                 scheduleTableModelRefresh();
                 scheduleBackupSync();
             } else {
-                qWarning() << "[LibraryDatabase] async analysis persistence failed:" << result.error;
+                // Stale and cancelled results carry no SQL error text, so name
+                // the reason instead of logging an empty string.
+                const QString reason = result.stale
+                    ? QStringLiteral("dropped as stale")
+                    : (result.cancelled ? QStringLiteral("cancelled")
+                                        : result.error);
+                qWarning() << "[LibraryDatabase] async analysis persistence failed:"
+                           << reason;
             }
         } else if (result.type == DatabaseCommandType::LoadLibraryPage) {
             emit libraryPageReady(result.generation, result.rows,

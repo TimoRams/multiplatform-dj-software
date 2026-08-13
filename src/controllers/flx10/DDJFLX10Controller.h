@@ -20,6 +20,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -110,6 +111,32 @@ private:
 
     QByteArray generatePreviewWaveform(int deck,
                                        WaveformPreviewRenderInfo* outInfo = nullptr) const;
+    // Full-track PWV5 generation is O(duration x 150) aggregate calls. Running
+    // it on the owner thread every 250 ms while analysis streamed in was what
+    // froze the jog handle: it stalled the ControlClock display callback, so
+    // xx27 state packets stopped flowing. It now runs on a dedicated worker
+    // and the result is posted back.
+    void requestPreviewWaveform(int deck);
+    void onPreviewWaveformReady(int deck, const QByteArray& waveform,
+                                std::uint64_t trackGeneration,
+                                std::uint32_t generatedColumns,
+                                std::uint32_t completeColumns);
+    void startWaveformWorker();
+    void stopWaveformWorker() noexcept;
+    void waveformWorkerLoop();
+
+    struct PendingWaveformJob final {
+        int deck = 0;
+        std::shared_ptr<const WaveformLineStoreSnapshot> snapshot;
+        int targetEntries = 0;
+        std::uint64_t trackGeneration = 0;
+    };
+    std::mutex m_waveformJobMutex;
+    std::condition_variable m_waveformJobCondition;
+    // Latest-wins per deck: an newer analysis state supersedes a queued job.
+    std::array<std::optional<PendingWaveformJob>, 5> m_pendingWaveformJobs;
+    std::thread m_waveformWorker;
+    bool m_waveformWorkerStopping = false;
     int currentWaveformEntry(int deck) const;
     flx10_protocol::DeckDisplaySnapshot captureDeckDisplaySnapshot(int deck);
     double deckDisplayDuration(int deck) const;

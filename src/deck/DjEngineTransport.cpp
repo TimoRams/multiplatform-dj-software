@@ -175,11 +175,15 @@ void DjEngine::updateTrackDuration(double durationSec)
 void DjEngine::attachCacheToTransport(AudioCacheHandle cacheHandle, double trackSampleRate,
                                       double trackDurationSeconds)
 {
-    const double scratchResumePos = m_transport->heldPosition() >= 0.0 ? m_transport->heldPosition() : 0.0;
     m_transport->installPreparedTrack(cacheHandle,
         {m_trackLoader.currentGeneration(), trackSampleRate, trackDurationSeconds});
     syncScratchBridgeToTransport();
-    terminateScratchSession(scratchResumePos);
+    // A newly loaded track starts at its beginning, and installPreparedTrack has
+    // just zeroed every transport position to match. The handoff position given
+    // to the render router has to agree: it used to be read from the outgoing
+    // track's held position, so loading a new song into a deck left the readers
+    // parked at the previous song's playhead instead of at 0.
+    terminateScratchSession(0.0);
     ensureTransportRunningForPlayIntent();
 }
 

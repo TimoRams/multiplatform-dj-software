@@ -199,7 +199,11 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
             const int toRead = static_cast<int>(
                 std::min(static_cast<juce::int64>(kfBlockSize), keySamples - offset));
 
-            reader.read(&kfReadBuf, 0, toRead, offset, true, false);
+            // Both channels: reading with useReaderRightChan = false makes JUCE
+            // duplicate the left channel, so the "mono downmix" below was the
+            // left channel alone and a right-panned harmonic never reached the
+            // key estimator.
+            reader.read(&kfReadBuf, 0, toRead, offset, true, true);
 
             const int numCh2 = static_cast<int>(reader.numChannels);
             for (int s = 0; s < toRead; ++s) {

@@ -76,6 +76,7 @@ bool DDJFLX10Controller::start()
     }
 
     startHidWriter();
+    startWaveformWorker();
     setConnected(true);
     m_clockStartMs = QDateTime::currentMSecsSinceEpoch();
     m_hidTrafficClock.restart();
@@ -126,6 +127,7 @@ void DDJFLX10Controller::prepareForShutdown() noexcept
     m_uploadTimer.stop();
     m_keepAliveTimer.stop();
     m_keepAliveEnabled = false;
+    stopWaveformWorker();
 #if defined(Q_OS_LINUX)
     if (m_keepAliveProcess && m_keepAliveProcess->state() != QProcess::NotRunning)
         m_keepAliveProcess->kill();
@@ -157,6 +159,8 @@ void DDJFLX10Controller::stop()
     }
     m_jogRingWarningActive.fill(false);
     m_jogRingLit.fill(true);
+
+    stopWaveformWorker();
 
 #if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
     stopHidWriter();
@@ -406,6 +410,89 @@ void DDJFLX10Controller::invalidateDeckSnapshot(int deck, const QString& trackPa
         clearDeckDisplay(deck);
 }
 
+void DDJFLX10Controller::startWaveformWorker()
+{
+    stopWaveformWorker();
+    m_waveformWorkerStopping = false;
+    m_waveformWorker = std::thread([this] { waveformWorkerLoop(); });
+}
+
+void DDJFLX10Controller::stopWaveformWorker() noexcept
+{
+    {
+        std::lock_guard lock(m_waveformJobMutex);
+        m_waveformWorkerStopping = true;
+        for (auto& job : m_pendingWaveformJobs)
+            job.reset();
+    }
+    m_waveformJobCondition.notify_all();
+    if (m_waveformWorker.joinable())
+        m_waveformWorker.join();
+}
+
+void DDJFLX10Controller::waveformWorkerLoop()
+{
+    for (;;) {
+        PendingWaveformJob job;
+        {
+            std::unique_lock lock(m_waveformJobMutex);
+            m_waveformJobCondition.wait(lock, [this] {
+                if (m_waveformWorkerStopping)
+                    return true;
+                for (const auto& pending : m_pendingWaveformJobs) {
+                    if (pending)
+                        return true;
+                }
+                return false;
+            });
+            if (m_waveformWorkerStopping)
+                return;
+            for (auto& pending : m_pendingWaveformJobs) {
+                if (pending) {
+                    job = std::move(*pending);
+                    pending.reset();
+                    break;
+                }
+            }
+        }
+        if (!job.snapshot || job.targetEntries <= 0)
+            continue;
+
+        // The expensive part, now off the owner thread entirely.
+        QByteArray out;
+        out.reserve(job.targetEntries * 2);
+        std::uint32_t columnsWithData = 0;
+        std::uint32_t completeColumns = 0;
+        for (int i = 0; i < job.targetEntries; ++i) {
+            if (m_shuttingDown.load(std::memory_order_acquire))
+                return;
+            const auto range = waveform::sourceLineRangeForColumn(
+                job.snapshot->totalLineCount, i, job.targetEntries);
+            const auto column = waveform::aggregateWaveformColumn(
+                *job.snapshot, range);
+            if (!column.hasData) {
+                out += encodePwv5Entry(1, 0, 0, 0);
+                continue;
+            }
+            ++columnsWithData;
+            if (column.complete)
+                ++completeColumns;
+            out += encodePwv5Column(column);
+        }
+
+        const int deck = job.deck;
+        const auto generation = job.trackGeneration;
+        const auto generated = static_cast<std::uint32_t>(job.targetEntries);
+        QMetaObject::invokeMethod(
+            this,
+            [this, deck, out, generation, generated, completeColumns] {
+                onPreviewWaveformReady(deck, out, generation, generated,
+                                       completeColumns);
+            },
+            Qt::QueuedConnection);
+    }
+}
+
 void DDJFLX10Controller::refreshDeckFromEngine(int deck)
 {
     if (m_shuttingDown.load(std::memory_order_acquire))
@@ -423,10 +510,50 @@ void DDJFLX10Controller::refreshDeckFromEngine(int deck)
     if (m_lastWaveformRefreshMs[deck] > 0 && now - m_lastWaveformRefreshMs[deck] < 250)
         return;
     m_lastWaveformRefreshMs[deck] = now;
-    WaveformPreviewRenderInfo renderInfo;
-    QByteArray waveform = generatePreviewWaveform(deck, &renderInfo);
-    if (waveform.isEmpty())
+    requestPreviewWaveform(deck);
+}
+
+void DDJFLX10Controller::requestPreviewWaveform(int deck)
+{
+    DjEngine* engine = deckEngine(deck);
+    TrackData* trackData = engine ? engine->getTrackData() : nullptr;
+    if (!trackData)
         return;
+    // Cheap on the owner thread: a snapshot is one shared_ptr copy.
+    auto snapshot = trackData->getWaveformLineStoreSnapshot();
+    if (!snapshot || snapshot->trackGeneration == 0
+        || snapshot->totalLineCount == 0 || !snapshot->chunks) {
+        return;
+    }
+    const int targetEntries = std::clamp(
+        static_cast<int>(std::ceil(deckDisplayDuration(deck)
+                                   * kJogWaveformEntriesPerSecond)),
+        150, kMaxWaveformEntries);
+
+    PendingWaveformJob job;
+    job.deck = deck;
+    job.snapshot = std::move(snapshot);
+    job.targetEntries = targetEntries;
+    job.trackGeneration = job.snapshot->trackGeneration;
+    {
+        std::lock_guard lock(m_waveformJobMutex);
+        m_pendingWaveformJobs[deck] = std::move(job);
+    }
+    m_waveformJobCondition.notify_one();
+}
+
+void DDJFLX10Controller::onPreviewWaveformReady(
+    int deck, const QByteArray& incoming, std::uint64_t trackGeneration,
+    std::uint32_t generatedColumns, std::uint32_t completeColumns)
+{
+    if (m_shuttingDown.load(std::memory_order_acquire) || incoming.isEmpty())
+        return;
+    QByteArray waveform = incoming;
+    WaveformPreviewRenderInfo renderInfo;
+    renderInfo.trackGeneration = trackGeneration;
+    renderInfo.generatedColumns = generatedColumns;
+    renderInfo.completeColumns = completeColumns;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
 
     const std::uint32_t qualityPermille = renderInfo.generatedColumns == 0
         ? 0
@@ -450,6 +577,17 @@ void DDJFLX10Controller::refreshDeckFromEngine(int deck)
         return;
     }
 
+    // A quality refresh for the track that is already streaming must not
+    // restart the transfer. The log showed eleven full re-uploads of the same
+    // 63487-entry waveform (quality 0 -> 26 -> 106 -> ... -> 393 permille);
+    // each one reset the window cursor to zero, so a 3342-window transfer that
+    // needs ~33 s never got anywhere near finishing before the next analysis
+    // chunk restarted it. Windows that have not been sent yet automatically
+    // pick up the improved samples, because they are read out of
+    // m_waveforms[deck] at send time.
+    const bool sameTrackRefresh = !firstUploadForTrack
+        && m_waveforms[deck].size() == waveform.size();
+
     m_waveforms[deck] = std::move(waveform);
     m_waveformDurations[deck] = deckDisplayDuration(deck);
     m_waveformUploadTrackGenerations[deck] = renderInfo.trackGeneration;
@@ -460,6 +598,18 @@ void DDJFLX10Controller::refreshDeckFromEngine(int deck)
 
     if (!m_connected)
         return;
+
+    if (sameTrackRefresh) {
+        // Same track, better data: never re-send the init sequence
+        // (xx30/xx39/cover art/xx35) and never rewind an in-flight transfer.
+        if (!m_uploadActive[deck]) {
+            m_uploadWindowsSent[deck] = 0;
+            m_uploadActive[deck] = true;
+            if (!m_uploadTimer.isActive())
+                m_uploadTimer.start(kUploadTickIntervalMs);
+        }
+        return;
+    }
 
     qInfo() << "[DDJ-FLX10] Deck" << deck
             << "uploading waveform entries" << (m_waveforms[deck].size() / 2)

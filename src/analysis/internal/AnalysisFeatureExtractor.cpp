@@ -29,6 +29,63 @@ float positiveFlux(const std::vector<float>& current,
     return static_cast<float>(sum);
 }
 
+// Sliding mono window over a decoder.
+//
+// Frames overlap 4:1 (2048-sample frame, 512-sample hop), so reading one frame
+// per hop decoded every sample four times and re-ran the channel downmix four
+// times with it. Analysis positions only ever move forward, so one large block
+// serves many frames: a seven-minute track now costs ~340 reader calls and one
+// decode of each sample instead of ~43k calls and four.
+class MonoWindow final
+{
+public:
+    static constexpr int kCapacitySamples = 1 << 16;
+
+    MonoWindow(juce::AudioFormatReader& reader, juce::int64 totalSamples)
+        : m_reader(reader)
+        , m_totalSamples(totalSamples)
+        , m_channels(std::max(1, static_cast<int>(reader.numChannels)))
+        , m_buffer(m_channels, kCapacitySamples)
+        , m_mono(static_cast<std::size_t>(kCapacitySamples), 0.0f)
+    {
+    }
+
+    // Returns a pointer to `length` mono samples starting at `start`, or
+    // nullptr when the range cannot be served.
+    const float* acquire(juce::int64 start, int length)
+    {
+        if (start < 0 || length <= 0 || length > kCapacitySamples)
+            return nullptr;
+        if (start < m_start || start + length > m_start + m_length) {
+            const int toRead = static_cast<int>(std::min<juce::int64>(
+                kCapacitySamples,
+                std::max<juce::int64>(length, m_totalSamples - start)));
+            m_buffer.clear();
+            if (!m_reader.read(&m_buffer, 0, toRead, start, true, true))
+                return nullptr;
+            const float invChannels = 1.0f / static_cast<float>(m_channels);
+            for (int s = 0; s < toRead; ++s) {
+                float mono = 0.0f;
+                for (int ch = 0; ch < m_channels; ++ch)
+                    mono += m_buffer.getSample(ch, s);
+                m_mono[static_cast<std::size_t>(s)] = mono * invChannels;
+            }
+            m_start = start;
+            m_length = toRead;
+        }
+        return m_mono.data() + (start - m_start);
+    }
+
+private:
+    juce::AudioFormatReader& m_reader;
+    juce::int64 m_totalSamples = 0;
+    int m_channels = 1;
+    juce::AudioBuffer<float> m_buffer;
+    std::vector<float> m_mono;
+    juce::int64 m_start = 0;
+    int m_length = 0;
+};
+
 } // namespace
 
 AnalysisFeatureExtractor::AnalysisFeatureExtractor()
@@ -64,7 +121,7 @@ AnalysisFeatures AnalysisFeatureExtractor::extract(juce::AudioFormatReader& read
     const int fftSize = 1 << order;
     const int bins = fftSize / 2;
 
-    juce::AudioBuffer<float> readBuffer(channels, out.frameSize);
+    MonoWindow monoWindow(reader, reader.lengthInSamples);
     std::vector<float> window(static_cast<size_t>(fftSize), 0.0f);
     for (int i = 0; i < out.frameSize; ++i)
         window[static_cast<size_t>(i)] = 0.5f - 0.5f * std::cos(2.0f * juce::MathConstants<float>::pi * i / std::max(1, out.frameSize - 1));
@@ -99,18 +156,14 @@ AnalysisFeatures AnalysisFeatureExtractor::extract(juce::AudioFormatReader& read
             onProgress(static_cast<double>(hopCount) / static_cast<double>(totalHops));
         ++hopCount;
 
-        readBuffer.clear();
-        if (!reader.read(&readBuffer, 0, out.frameSize, pos, true, true))
+        const float* frame = monoWindow.acquire(pos, out.frameSize);
+        if (frame == nullptr)
             break;
 
         std::fill(fftData.begin(), fftData.end(), 0.0f);
         double sumSq = 0.0;
-        const float invChannels = 1.0f / static_cast<float>(channels);
         for (int s = 0; s < out.frameSize; ++s) {
-            float mono = 0.0f;
-            for (int ch = 0; ch < channels; ++ch)
-                mono += readBuffer.getSample(ch, s);
-            mono *= invChannels;
+            const float mono = frame[s];
             sumSq += static_cast<double>(mono) * static_cast<double>(mono);
             fftData[static_cast<size_t>(s)] = mono * window[static_cast<size_t>(s)];
         }
@@ -145,7 +198,9 @@ AnalysisFeatures AnalysisFeatureExtractor::extract(juce::AudioFormatReader& read
         out.spectralFlux.push_back(flux);
         out.lowSpectralFlux.push_back(lowFlux);
 
-        previousMagnitudes = magnitudes;
+        // Every bin from 1..bins is rewritten next iteration and bin 0 is never
+        // written, so swapping is equivalent to the copy this used to make.
+        std::swap(previousMagnitudes, magnitudes);
     }
 
     const size_t n = out.rms.size();

@@ -5,9 +5,18 @@
 #include <QDebug>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
+#include <mutex>
 #include <numeric>
+#include <thread>
 #include <vector>
+
+#ifdef __linux__
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -292,6 +301,233 @@ struct FiltState {
     }
 };
 
+namespace {
+
+// Raw (un-normalized) band envelope state at the end of one waveform bin.
+struct RawBin {
+    float low    = 0.0f;
+    float lowMid = 0.0f;
+    float mid    = 0.0f;
+    float high   = 0.0f;
+};
+
+// Peak mipmap entry: signed min/max of the mono downmix over a sub-bin.
+struct RawPeak { float minRaw = 0.0f; float maxRaw = 0.0f; };
+
+// Fixed filter coefficients for the 4-band bank described below. They depend
+// only on the sample rate, so every segment worker shares one instance while
+// keeping its own FiltState.
+struct BandCoefficients {
+    float lp110 = 0.0f;
+    float hp150 = 0.0f;
+    float lp160 = 0.0f;
+    float hp180 = 0.0f;
+    float lp800 = 0.0f;
+    float hp19k = 0.0f;
+    float svfG  = 0.0f;
+    float svfD  = 0.0f;
+
+    static BandCoefficients forSampleRate(double sampleRate)
+    {
+        const float sr = static_cast<float>(sampleRate);
+        // 1-pole LP coefficient: a = 2*pi*fc / (2*pi*fc + sr).
+        const auto lpCoef1 = [sr](float fc) {
+            const float w = 2.0f * juce::MathConstants<float>::pi * fc / sr;
+            return w / (w + 1.0f);
+        };
+        BandCoefficients c;
+        c.lp110 = lpCoef1(110.0f);
+        c.hp150 = lpCoef1(150.0f);
+        c.lp160 = lpCoef1(160.0f);
+        c.hp180 = lpCoef1(180.0f);
+        c.lp800 = lpCoef1(800.0f);
+        c.hp19k = lpCoef1(19000.0f);
+        // SVF (state-variable, TPT) for the resonant 2750 Hz band, Q = 2.
+        c.svfG = std::tan(juce::MathConstants<float>::pi * 2750.0f / sr);
+        const float svfR = 1.0f / (2.0f * 2.0f);
+        c.svfD = 1.0f / (1.0f + 2.0f * svfR * c.svfG + c.svfG * c.svfG);
+        return c;
+    }
+};
+
+// Sequential block window over a decoder.
+//
+// The pass used to issue one AudioFormatReader::read() per waveform bin. At
+// 1200 bins/s that is ~1200 decoder entries per second of audio — over half a
+// million for a seven-minute track — each re-entering the reader's seek and
+// reservoir bookkeeping to hand back roughly forty samples. One 64k-sample
+// block now serves about 1600 bins.
+class DecodeWindow final
+{
+public:
+    static constexpr int kCapacitySamples = 1 << 16;
+
+    DecodeWindow(juce::AudioFormatReader& reader, juce::int64 totalSamples)
+        : m_reader(reader)
+        , m_totalSamples(totalSamples)
+        , m_buffer(std::max(1, static_cast<int>(reader.numChannels)),
+                   kCapacitySamples)
+    {
+    }
+
+    // Makes [start, start + length) resident and returns its offset inside the
+    // window, or -1 when the range cannot be served.
+    int acquire(juce::int64 start, int length)
+    {
+        if (start < 0 || length <= 0 || length > kCapacitySamples)
+            return -1;
+        if (start < m_start || start + length > m_start + m_length) {
+            const int toRead = static_cast<int>(std::min<juce::int64>(
+                kCapacitySamples,
+                std::max<juce::int64>(length, m_totalSamples - start)));
+            // Both channels are decoded on purpose: the per-channel maximum
+            // taken below is only meaningful when the channels differ. Reading
+            // with useReaderRightChan = false makes JUCE duplicate the left
+            // channel, which hid right-panned material from the waveform and
+            // made the filter bank run twice over identical samples.
+            if (!m_reader.read(&m_buffer, 0, toRead, start, true, true))
+                return -1;
+            m_start = start;
+            m_length = toRead;
+        }
+        return static_cast<int>(start - m_start);
+    }
+
+    const float* channel(int index) const
+    { return m_buffer.getReadPointer(index); }
+
+private:
+    juce::AudioFormatReader& m_reader;
+    juce::int64 m_totalSamples = 0;
+    juce::AudioBuffer<float> m_buffer;
+    juce::int64 m_start = 0;
+    int m_length = 0;
+};
+
+// Advances the filter bank across one bin and returns its envelope state.
+// `peaks`, when non-null, receives `peakRatio` signed min/max sub-bins for the
+// peak mipmap. Returns false when the bin's samples could not be decoded.
+bool processBin(const BandCoefficients& c,
+                FiltState& filt,
+                DecodeWindow& window,
+                int numCh,
+                juce::int64 binStart,
+                int numSamples,
+                RawBin& out,
+                RawPeak* peaks,
+                int peakRatio)
+{
+    const int offset = window.acquire(binStart, numSamples);
+    if (offset < 0)
+        return false;
+
+    std::array<const float*, 8> channels{};
+    const int channelCount = std::min<int>(numCh, static_cast<int>(channels.size()));
+    for (int ch = 0; ch < channelCount; ++ch)
+        channels[static_cast<std::size_t>(ch)] = window.channel(ch) + offset;
+
+    if (peaks != nullptr) {
+        for (int pb = 0; pb < peakRatio; ++pb)
+            peaks[pb] = RawPeak{};
+    }
+    std::array<bool, 8> peakSeen{};
+
+    for (int s = 0; s < numSamples; ++s) {
+        float bestLow = 0.0f, bestLowMid = 0.0f, bestMid = 0.0f, bestHigh = 0.0f;
+        float monoAcc = 0.0f;
+
+        for (int ch = 0; ch < channelCount; ++ch) {
+            const auto ci = static_cast<std::size_t>(ch);
+            const float in = channels[ci][s];
+            monoAcc += in;
+
+            // Band 1: LP @ 110 Hz (1st order).
+            filt.lp110[ci] = c.lp110 * in + (1.0f - c.lp110) * filt.lp110[ci];
+            const float b1 = std::abs(filt.lp110[ci]);
+
+            // Band 2: HP @ 150 Hz (2nd order) -> LP @ 160 Hz.
+            filt.hp150s1[ci] = c.hp150 * in + (1.0f - c.hp150) * filt.hp150s1[ci];
+            const float hp1out = in - filt.hp150s1[ci];
+            filt.hp150s2[ci] = c.hp150 * hp1out + (1.0f - c.hp150) * filt.hp150s2[ci];
+            const float hp2out = hp1out - filt.hp150s2[ci];
+            filt.lp160[ci] = c.lp160 * hp2out + (1.0f - c.lp160) * filt.lp160[ci];
+            const float b2 = std::abs(filt.lp160[ci]);
+
+            // Band 3: HP @ 180 Hz (2nd order) -> LP @ 800 Hz.
+            filt.hp180s1[ci] = c.hp180 * in + (1.0f - c.hp180) * filt.hp180s1[ci];
+            const float hp3out = in - filt.hp180s1[ci];
+            filt.hp180s2[ci] = c.hp180 * hp3out + (1.0f - c.hp180) * filt.hp180s2[ci];
+            const float hp4out = hp3out - filt.hp180s2[ci];
+            filt.lp800[ci] = c.lp800 * hp4out + (1.0f - c.lp800) * filt.lp800[ci];
+            const float b3 = std::abs(filt.lp800[ci]);
+
+            // Band 4: resonant BP @ 2750 Hz + HP @ 19 kHz.
+            const float v3 = in - filt.svfIc2[ci];
+            const float v1 = c.svfD * (filt.svfIc1[ci] + c.svfG * v3);
+            const float v2 = filt.svfIc2[ci] + c.svfG * v1;
+            filt.svfIc1[ci] = 2.0f * v1 - filt.svfIc1[ci];
+            filt.svfIc2[ci] = 2.0f * v2 - filt.svfIc2[ci];
+            filt.hp19k[ci] = c.hp19k * in + (1.0f - c.hp19k) * filt.hp19k[ci];
+            const float b4 = std::abs(v1) + std::abs(in - filt.hp19k[ci]);
+
+            if (b1 > bestLow)    bestLow    = b1;
+            if (b2 > bestLowMid) bestLowMid = b2;
+            if (b3 > bestMid)    bestMid    = b3;
+            if (b4 > bestHigh)   bestHigh   = b4;
+        }
+
+        if (peaks != nullptr && peakRatio > 0) {
+            const float mono = monoAcc / static_cast<float>(std::max(1, channelCount));
+            const auto pb = static_cast<std::size_t>(std::min(
+                peakRatio - 1, (s * peakRatio) / std::max(1, numSamples)));
+            if (!peakSeen[pb]) {
+                peaks[pb].minRaw = mono;
+                peaks[pb].maxRaw = mono;
+                peakSeen[pb] = true;
+            } else {
+                if (mono < peaks[pb].minRaw) peaks[pb].minRaw = mono;
+                if (mono > peaks[pb].maxRaw) peaks[pb].maxRaw = mono;
+            }
+        }
+
+        filt.envLow   .process(bestLow);
+        filt.envLowMid.process(bestLowMid);
+        filt.envMid   .process(bestMid);
+        filt.envHigh  .process(bestHigh);
+    }
+
+    out.low    = filt.envLow.state;
+    out.lowMid = filt.envLowMid.state;
+    out.mid    = filt.envMid.state;
+    out.high   = filt.envHigh.state;
+    return true;
+}
+
+// Segments of the full-track pass decode and filter in parallel. The DSP chain
+// is stateful, so each worker replays a short warm-up prefix before its own
+// range; that costs a fraction of a percent of the bins and leaves no visible
+// seam. The budget deliberately keeps cores free for audio, Qt and the Vulkan
+// render thread, and a worker only pays for itself once it owns several store
+// chunks.
+int envelopeWorkerCount(int sourceChunkCount)
+{
+    const unsigned hw = std::thread::hardware_concurrency();
+    if (hw <= 4 || sourceChunkCount <= 2)
+        return 1;
+    const int budget = static_cast<int>(std::min<unsigned>(4u, hw / 2u - 1u));
+    return std::clamp(std::min(budget, sourceChunkCount / 2), 1, 4);
+}
+
+void lowerCurrentThreadPriority()
+{
+#ifdef __linux__
+    (void)setpriority(PRIO_PROCESS,
+                      static_cast<id_t>(syscall(SYS_gettid)), 12);
+#endif
+}
+
+} // namespace
+
 // Linkwitz-Riley 4th-order crossover (LR4, -24 dB/oct).
 // Uses juce::dsp::LinkwitzRileyFilter with the two-output processSample()
 // overload that returns phase-aligned LP and HP in one call.
@@ -405,13 +641,6 @@ bool runEnvelopePass(const EnvelopePassInput& input)
 
     m_trackData->reportAnalysisProgress(0.02, true);
 
-    // Use exact integer-ratio partitioning per bin to avoid cumulative timeline
-    // drift on long tracks (which otherwise degrades quality toward the end).
-    const juce::int64 maxSamplesPerBin = std::max<juce::int64>(
-        1,
-        (totalSamples + static_cast<juce::int64>(numPoints) - 1)
-            / static_cast<juce::int64>(numPoints));
-
     // -------------------------------------------------------------------------
     // DSP-Kette: Parallel 4-Band Filterbank (overlapping)
     //
@@ -439,56 +668,15 @@ bool runEnvelopePass(const EnvelopePassInput& input)
     // -------------------------------------------------------------------------
 
     const int numCh = static_cast<int>(reader.numChannels);
-    const float sr  = static_cast<float>(sampleRate);
-
-    // ── 1-pole LP coefficient: a = 2π·fc / (2π·fc + sr) ─────────────────────
-    auto lpCoef1 = [&](float fc) -> float {
-        const float w = 2.0f * juce::MathConstants<float>::pi * fc / sr;
-        return w / (w + 1.0f);
-    };
-
-    // ── Band 1: LP @ 110 Hz (1st order = 6 dB/oct) ──────────────────────────
-    const float aLP110 = lpCoef1(110.0f);
-
-    // ── Band 2: HP @ 150 Hz (2nd order) + LP @ 160 Hz (1st order) ───────────
-    //    2nd order HP = two cascaded 1st-order HP stages.
-    //    HP coefficient: same as LP but applied as HP (out = in - lp).
-    const float aHP150 = lpCoef1(150.0f);
-    const float aLP160 = lpCoef1(160.0f);
-
-    // ── Band 3: HP @ 180 Hz (2nd order) + LP @ 800 Hz (1st order) ───────────
-    const float aHP180 = lpCoef1(180.0f);
-    const float aLP800 = lpCoef1(800.0f);
-
-    // ── Band 4: BP @ 2750 Hz (resonant) + HP @ 19000 Hz ─────────────────────
-    //    Sub-path A: 2nd-order resonant BP at 2750 Hz using SVF (State Variable TPT).
-    //    Sub-path B: HP @ 19000 Hz (1st order) for extreme hi-hat ticks.
-    //    Final = abs(A) + abs(B).
-    const float aHP19k = lpCoef1(19000.0f);
-
-    // SVF (State Variable Filter) for the 2750 Hz resonant BP.
-    // g = tan(π·fc/sr), R = 1/(2·Q) — Q=2 for moderate resonance.
-    const float svfG = std::tan(juce::MathConstants<float>::pi * 2750.0f / sr);
-    const float svfR = 1.0f / (2.0f * 2.0f);  // Q = 2
-    const float svfD = 1.0f / (1.0f + 2.0f * svfR * svfG + svfG * svfG);
-
-    // ── Filter state (main sequential pass) ──────────────────────────────────
-    FiltState mainFilt;
-    mainFilt.reset(numCh, sampleRate);
+    const BandCoefficients coefficients =
+        BandCoefficients::forSampleRate(sampleRate);
 
     // One robust normalization profile is fixed before the first detail chunk
     // is published. Every priority, seek and sequential job uses the same
     // values, so a completed immutable range never changes brightness later.
 
-    struct RawBin {
-        float low    = 0.0f;   // raw envelope value, NOT normalized
-        float lowMid = 0.0f;
-        float mid    = 0.0f;
-        float high   = 0.0f;
-    };
     // Peak mipmap: signed min/max per high-res bin (4× analysis rate).
     // Allows the renderer to show actual audio oscillations at high zoom.
-    struct RawPeak { float minRaw = 0.0f; float maxRaw = 0.0f; };
     const int requestedPeakRatio = TrackData::PEAK_POINTS_PER_SECOND / m_pointsPerSecond;
     constexpr double kHighResolutionPeakMaxDurationSec = 10.0 * 60.0;
     const double trackDurationSec = static_cast<double>(totalSamples) / sampleRate;
@@ -542,10 +730,6 @@ bool runEnvelopePass(const EnvelopePassInput& input)
         return std::clamp(static_cast<int>(std::max(0.0, hint) * m_pointsPerSecond),
                           0, numPoints - 1);
     };
-    QVector<TrackData::WaveformBin> previewBatch;
-    previewBatch.reserve(kChunk);
-    QVector<TrackData::RgbWaveformFrame> previewRgbBatch;
-    previewRgbBatch.reserve(kChunk);
     const auto publishChunk = [&input](int firstBin,
                                        const QVector<TrackData::WaveformBin>& waveform,
                                        const QVector<TrackData::RgbWaveformFrame>& rgb,
@@ -562,7 +746,33 @@ bool runEnvelopePass(const EnvelopePassInput& input)
         return std::min(1.0f, std::pow(std::clamp(norm, 0.0f, 1.0f), expo) * gain);
     };
 
-    juce::AudioBuffer<float> readBuf(static_cast<int>(reader.numChannels), static_cast<int>(maxSamplesPerBin));
+    // Single conversion from raw band envelopes to a display frame. The
+    // priority prologue and the full pass must agree exactly, otherwise a
+    // region changes brightness when the pass overwrites a priority chunk.
+    const auto makeRgbFrame = [&](const RawBin& raw) {
+        TrackData::RgbWaveformFrame rgb;
+        rgb.low = shapeBin(raw.low / normalization.low, 1.8f, 1.0f);
+        rgb.lowMid = shapeBin(raw.lowMid / normalization.lowMid, 1.6f, 0.9f);
+        rgb.mid = shapeBin(raw.mid / normalization.mid, 1.5f, 0.7f);
+        rgb.high = shapeBin(raw.high / normalization.high, 1.3f, 0.5f);
+        rgb.rms = std::clamp(
+            0.5f * std::max({rgb.low, rgb.lowMid, rgb.mid, rgb.high})
+                + 0.5f * ((rgb.low + rgb.lowMid + rgb.mid + rgb.high) / 4.0f),
+            0.0f, 1.0f);
+        rgb.color = QColor(255, 255, 255, 230);
+        return rgb;
+    };
+
+    // Sample range covered by one waveform bin. Exact integer-ratio
+    // partitioning avoids cumulative timeline drift on long tracks.
+    const auto binSampleRange = [&](int bin, juce::int64& start, int& length) {
+        start = (static_cast<juce::int64>(bin) * totalSamples) / numPoints;
+        juce::int64 end =
+            (static_cast<juce::int64>(bin + 1) * totalSamples) / numPoints;
+        if (end <= start)
+            end = std::min(totalSamples, start + 1);
+        length = static_cast<int>(std::max<juce::int64>(1, end - start));
+    };
 
     // ─── Interactive chunks: playhead first, then deterministic expansion ──
     const int warmupBins = std::max(24, m_pointsPerSecond / 20); // 50 ms
@@ -574,63 +784,16 @@ bool runEnvelopePass(const EnvelopePassInput& input)
     std::vector<bool> priorityAnalyzed(
         static_cast<std::size_t>(sourceChunkCount), false);
 
+    // The prologue is strictly single-threaded and finishes before the parallel
+    // pass starts, so it may keep one decode window on the caller's reader.
+    DecodeWindow priorityWindow(reader, totalSamples);
     const auto processPriorityBin = [&](int bin, FiltState& filter,
-                                        juce::AudioBuffer<float>& buffer) {
-        const juce::int64 binStart =
-            (static_cast<juce::int64>(bin) * totalSamples) / numPoints;
-        juce::int64 binEnd =
-            (static_cast<juce::int64>(bin + 1) * totalSamples) / numPoints;
-        if (binEnd <= binStart)
-            binEnd = std::min(totalSamples, binStart + 1);
-        const int toRead = static_cast<int>(
-            std::max<juce::int64>(1, binEnd - binStart));
-        reader.read(&buffer, 0, toRead, binStart, true, false);
-
-        for (int sample = 0; sample < toRead; ++sample) {
-            float low = 0.0f, lowMid = 0.0f, mid = 0.0f, high = 0.0f;
-            for (int channel = 0; channel < numCh; ++channel) {
-                const auto index = static_cast<std::size_t>(channel);
-                const float in = buffer.getReadPointer(channel)[sample];
-                filter.lp110[index] = aLP110 * in
-                    + (1.0f - aLP110) * filter.lp110[index];
-                const float bandLow = std::abs(filter.lp110[index]);
-                filter.hp150s1[index] = aHP150 * in
-                    + (1.0f - aHP150) * filter.hp150s1[index];
-                const float hp1 = in - filter.hp150s1[index];
-                filter.hp150s2[index] = aHP150 * hp1
-                    + (1.0f - aHP150) * filter.hp150s2[index];
-                filter.lp160[index] = aLP160 * (hp1 - filter.hp150s2[index])
-                    + (1.0f - aLP160) * filter.lp160[index];
-                const float bandLowMid = std::abs(filter.lp160[index]);
-                filter.hp180s1[index] = aHP180 * in
-                    + (1.0f - aHP180) * filter.hp180s1[index];
-                const float hp3 = in - filter.hp180s1[index];
-                filter.hp180s2[index] = aHP180 * hp3
-                    + (1.0f - aHP180) * filter.hp180s2[index];
-                filter.lp800[index] = aLP800 * (hp3 - filter.hp180s2[index])
-                    + (1.0f - aLP800) * filter.lp800[index];
-                const float bandMid = std::abs(filter.lp800[index]);
-                const float v3 = in - filter.svfIc2[index];
-                const float v1 = svfD * (filter.svfIc1[index] + svfG * v3);
-                const float v2 = filter.svfIc2[index] + svfG * v1;
-                filter.svfIc1[index] = 2.0f * v1 - filter.svfIc1[index];
-                filter.svfIc2[index] = 2.0f * v2 - filter.svfIc2[index];
-                filter.hp19k[index] = aHP19k * in
-                    + (1.0f - aHP19k) * filter.hp19k[index];
-                const float bandHigh = std::abs(v1)
-                    + std::abs(in - filter.hp19k[index]);
-                low = std::max(low, bandLow);
-                lowMid = std::max(lowMid, bandLowMid);
-                mid = std::max(mid, bandMid);
-                high = std::max(high, bandHigh);
-            }
-            filter.envLow.process(low);
-            filter.envLowMid.process(lowMid);
-            filter.envMid.process(mid);
-            filter.envHigh.process(high);
-        }
-        return RawBin{filter.envLow.state, filter.envLowMid.state,
-                      filter.envMid.state, filter.envHigh.state};
+                                        RawBin& raw) {
+        juce::int64 binStart = 0;
+        int length = 0;
+        binSampleRange(bin, binStart, length);
+        return processBin(coefficients, filter, priorityWindow, numCh,
+                          binStart, length, raw, nullptr, 0);
     };
 
     const auto analyzePriorityChunk = [&](int chunkIndex) {
@@ -643,14 +806,13 @@ bool runEnvelopePass(const EnvelopePassInput& input)
         const int end = std::min(numPoints, begin + kChunk);
         FiltState filter;
         filter.reset(numCh, sampleRate);
-        juce::AudioBuffer<float> buffer(
-            static_cast<int>(reader.numChannels),
-            static_cast<int>(maxSamplesPerBin));
+        RawBin raw;
         for (int bin = std::max(0, begin - warmupBins);
              bin < begin && !threadShouldExit(); ++bin) {
             if ((bin & 0x1F) == 0)
                 cooperateWithRealtime();
-            (void)processPriorityBin(bin, filter, buffer);
+            if (!processPriorityBin(bin, filter, raw))
+                return;
         }
 
         QVector<TrackData::RgbWaveformFrame> frames;
@@ -658,21 +820,9 @@ bool runEnvelopePass(const EnvelopePassInput& input)
         for (int bin = begin; bin < end && !threadShouldExit(); ++bin) {
             if ((bin & 0x1F) == 0)
                 cooperateWithRealtime();
-            const auto raw = processPriorityBin(bin, filter, buffer);
-            TrackData::RgbWaveformFrame rgb;
-            rgb.low = shapeBin(raw.low / normalization.low, 1.8f, 1.0f);
-            rgb.lowMid = shapeBin(
-                raw.lowMid / normalization.lowMid, 1.6f, 0.9f);
-            rgb.mid = shapeBin(raw.mid / normalization.mid, 1.5f, 0.7f);
-            rgb.high = shapeBin(
-                raw.high / normalization.high, 1.3f, 0.5f);
-            rgb.rms = std::clamp(
-                0.5f * std::max({rgb.low, rgb.lowMid, rgb.mid, rgb.high})
-                    + 0.5f * ((rgb.low + rgb.lowMid + rgb.mid + rgb.high)
-                              / 4.0f),
-                0.0f, 1.0f);
-            rgb.color = QColor(255, 255, 255, 230);
-            frames.push_back(rgb);
+            if (!processPriorityBin(bin, filter, raw))
+                return;
+            frames.push_back(makeRgbFrame(raw));
         }
         if (frames.size() != end - begin)
             return;
@@ -709,6 +859,18 @@ bool runEnvelopePass(const EnvelopePassInput& input)
             analyzePriorityChunk(current - direction * distance);
     };
 
+    // Publish the playhead window first. Short tracks keep the legacy vectors
+    // for backward-compatible cache payloads. Long tracks build only canonical
+    // immutable chunks and never allocate duration-sized legacy RGB arrays.
+    // The legacy vectors are sized before the prologue runs: priority chunks
+    // used to be dropped because the target vector was still empty.
+    if (numPeakPoints > 0)
+        rawPeakBuf.resize(static_cast<size_t>(numPeakPoints));
+    if (input.retainLegacyWaveform) {
+        m_trackData->preallocateRgbWaveform(numPoints);
+        m_trackData->preallocateWaveform(numPoints);
+    }
+
     const int hintBin = seekHintBin();
     analyzeDemand(hintBin, demandSnapshot());
     if (threadShouldExit())
@@ -717,199 +879,189 @@ bool runEnvelopePass(const EnvelopePassInput& input)
         return false;
     // ─────────────────────────────────────────────────────────────────────
 
-    // Publish the playhead window first. Short tracks keep the legacy vectors
-    // for backward-compatible cache payloads. Long tracks build only canonical
-    // immutable chunks and never allocate duration-sized legacy RGB arrays.
-    if (numPeakPoints > 0)
-        rawPeakBuf.resize(static_cast<size_t>(numPeakPoints));
-    if (input.retainLegacyWaveform)
-        m_trackData->preallocateRgbWaveform(numPoints);
+    // ─── Full-track pass, split into independently decoded segments ───────
+    //
+    // Each segment owns a whole number of store chunks, so its published
+    // batches line up with the immutable store exactly as the old sequential
+    // pass did. Before touching its own range a segment replays a warm-up
+    // prefix, long enough for the filter bank and the envelope followers to
+    // settle (the slowest release constant is 35 ms), which is what keeps the
+    // segment boundaries invisible.
+    //
+    // The sequential pass used to re-check the seek hint every 128 bins and
+    // interrupt itself with a priority chunk. That existed because a full pass
+    // took long enough for the playhead to outrun it; with the whole track
+    // finishing in a fraction of that time the playhead prologue above is
+    // enough, and dropping it keeps the segments independent.
+    struct Segment {
+        int binBegin = 0;
+        int binEnd = 0;
+        float maxPeak = 0.001f;
+        float maxSample = 0.001f;
+    };
 
-    int mainChunkStart = 0;
-
-    int lastDemandChunk = hintBin / kChunk;
-
-    for (int bin = 0; bin < numPoints; ++bin)
-    {
-        if (threadShouldExit()) break;
-
-        if ((bin & 0x1F) == 0)
-            cooperateWithRealtime();
-
-        // Yield occasionally without sleeping — keeps UI/audio responsive without
-        // throttling analysis to "grandma speed".
-        if ((bin & 0xFFF) == 0)
-            juce::Thread::yield();
-
-        if ((bin & 0x7F) == 0)
-            m_trackData->reportAnalysisProgress(
-                (static_cast<double>(bin) / static_cast<double>(numPoints)) * 0.50, true);
-
-        // A changed source chunk means playback, seek or scratch crossed a
-        // meaningful demand boundary.  The new cursor chunk is analyzed
-        // synchronously before background sequential work resumes; no timer or
-        // FIFO of old background requests can sit in front of it.
-        if (bin > 0 && bin % 128 == 0) {
-            const int latestHint = seekHintBin();
-            const int latestDemandChunk = latestHint / kChunk;
-            if (latestDemandChunk != lastDemandChunk) {
-                analyzeDemand(latestHint, demandSnapshot());
-                lastDemandChunk = latestDemandChunk;
-            }
-        }
-
-        const juce::int64 binStart = (static_cast<juce::int64>(bin) * totalSamples)
-                                   / static_cast<juce::int64>(numPoints);
-        juce::int64 binEnd = (static_cast<juce::int64>(bin + 1) * totalSamples)
-                           / static_cast<juce::int64>(numPoints);
-        if (binEnd <= binStart)
-            binEnd = std::min(totalSamples, binStart + 1);
-
-        const int toRead = static_cast<int>(std::max<juce::int64>(1, binEnd - binStart));
-        reader.read(&readBuf, 0, toRead, binStart, true, false);
-
-        struct SubPeak { float min = 0.0f; float max = 0.0f; bool init = false; };
-        std::array<SubPeak, 8> subPeaks{};
-        const int peakRatioClamped = peakRatio;
-
-        for (int s = 0; s < toRead; ++s)
-        {
-            float bestLow = 0.0f, bestLowMid = 0.0f, bestMid = 0.0f, bestHigh = 0.0f;
-            float monoAcc = 0.0f;
-
-            for (int ch = 0; ch < numCh; ++ch)
-            {
-                const size_t ci = static_cast<size_t>(ch);
-                const float in = readBuf.getReadPointer(ch)[s];
-                monoAcc += in;
-
-                // ── Band 1: LP @ 110 Hz (1st order) ─────────────────────────
-                mainFilt.lp110[ci] = aLP110 * in + (1.0f - aLP110) * mainFilt.lp110[ci];
-                const float b1 = std::abs(mainFilt.lp110[ci]);
-
-                // ── Band 2: HP @ 150 Hz (2nd order) → LP @ 160 Hz ───────────
-                mainFilt.hp150s1[ci] = aHP150 * in + (1.0f - aHP150) * mainFilt.hp150s1[ci];
-                const float hp1out = in - mainFilt.hp150s1[ci];
-                mainFilt.hp150s2[ci] = aHP150 * hp1out + (1.0f - aHP150) * mainFilt.hp150s2[ci];
-                const float hp2out = hp1out - mainFilt.hp150s2[ci];
-                mainFilt.lp160[ci] = aLP160 * hp2out + (1.0f - aLP160) * mainFilt.lp160[ci];
-                const float b2 = std::abs(mainFilt.lp160[ci]);
-
-                // ── Band 3: HP @ 180 Hz (2nd order) → LP @ 800 Hz ───────────
-                mainFilt.hp180s1[ci] = aHP180 * in + (1.0f - aHP180) * mainFilt.hp180s1[ci];
-                const float hp3out = in - mainFilt.hp180s1[ci];
-                mainFilt.hp180s2[ci] = aHP180 * hp3out + (1.0f - aHP180) * mainFilt.hp180s2[ci];
-                const float hp4out = hp3out - mainFilt.hp180s2[ci];
-                mainFilt.lp800[ci] = aLP800 * hp4out + (1.0f - aLP800) * mainFilt.lp800[ci];
-                const float b3 = std::abs(mainFilt.lp800[ci]);
-
-                // ── Band 4: Resonant BP @ 2750 Hz + HP @ 19 kHz ─────────────
-                const float v3 = in - mainFilt.svfIc2[ci];
-                const float v1 = svfD * (mainFilt.svfIc1[ci] + svfG * v3);
-                const float v2 = mainFilt.svfIc2[ci] + svfG * v1;
-                mainFilt.svfIc1[ci] = 2.0f * v1 - mainFilt.svfIc1[ci];
-                mainFilt.svfIc2[ci] = 2.0f * v2 - mainFilt.svfIc2[ci];
-                const float bp2750 = v1;
-
-                mainFilt.hp19k[ci] = aHP19k * in + (1.0f - aHP19k) * mainFilt.hp19k[ci];
-                const float hp19kVal = in - mainFilt.hp19k[ci];
-
-                const float b4 = std::abs(bp2750) + std::abs(hp19kVal);
-
-                if (b1 > bestLow)    bestLow    = b1;
-                if (b2 > bestLowMid) bestLowMid = b2;
-                if (b3 > bestMid)    bestMid    = b3;
-                if (b4 > bestHigh)   bestHigh   = b4;
-            }
-
-            if (peakRatioClamped > 0) {
-                const float mono = monoAcc / static_cast<float>(numCh);
-                const int pb = std::min(peakRatioClamped - 1,
-                                        (s * peakRatioClamped) / std::max(1, toRead));
-                auto& sp = subPeaks[static_cast<size_t>(pb)];
-                if (!sp.init) {
-                    sp.min = mono;
-                    sp.max = mono;
-                    sp.init = true;
-                } else {
-                    if (mono < sp.min) sp.min = mono;
-                    if (mono > sp.max) sp.max = mono;
-                }
-            }
-
-            mainFilt.envLow   .process(bestLow);
-            mainFilt.envLowMid.process(bestLowMid);
-            mainFilt.envMid   .process(bestMid);
-            mainFilt.envHigh  .process(bestHigh);
-        }
-
-        if (peakRatioClamped > 0) {
-            const int peakBinBase = bin * peakRatioClamped;
-            for (int pb = 0; pb < peakRatioClamped; ++pb) {
-                const auto& sp = subPeaks[static_cast<size_t>(pb)];
-                const float pMin = sp.init ? sp.min : 0.0f;
-                const float pMax = sp.init ? sp.max : 0.0f;
-                rawPeakBuf[static_cast<size_t>(peakBinBase + pb)] = { pMin, pMax };
-                if (pMax > globalMaxSample) globalMaxSample = pMax;
-                if (-pMin > globalMaxSample) globalMaxSample = -pMin;
-            }
-        }
-
-        RawBin rb;
-        rb.low    = mainFilt.envLow   .state;
-        rb.lowMid = mainFilt.envLowMid.state;
-        rb.mid    = mainFilt.envMid   .state;
-        rb.high   = mainFilt.envHigh  .state;
-        const float binMax = std::max({rb.low, rb.lowMid, rb.mid, rb.high});
-        if (binMax > globalMaxPeak) globalMaxPeak = binMax;
-
-        TrackData::WaveformBin pbin;
-        pbin.low = shapeBin(rb.low / normalization.low, 1.8f, 1.0f);
-        pbin.lowMid = shapeBin(
-            rb.lowMid / normalization.lowMid, 1.6f, 0.9f);
-        pbin.mid = shapeBin(rb.mid / normalization.mid, 1.5f, 0.7f);
-        pbin.high = shapeBin(rb.high / normalization.high, 1.3f, 0.5f);
-
-        if (input.retainLegacyWaveform)
-            previewBatch.append(pbin);
-
-        TrackData::RgbWaveformFrame rgb;
-        const float lowN = std::clamp(pbin.low, 0.0f, 1.0f);
-        const float lowMidN = std::clamp(pbin.lowMid, 0.0f, 1.0f);
-        const float midN = std::clamp(pbin.mid, 0.0f, 1.0f);
-        const float highN = std::clamp(pbin.high, 0.0f, 1.0f);
-        const float rmsN = std::clamp(
-            0.5f * std::max({lowN, lowMidN, midN, highN})
-                + 0.5f * ((lowN + lowMidN + midN + highN) / 4.0f),
-            0.0f, 1.0f);
-        rgb.color = QColor(255, 255, 255, 230);
-        rgb.rms = rmsN;
-        rgb.low = lowN;
-        rgb.lowMid = lowMidN;
-        rgb.mid = midN;
-        rgb.high = highN;
-        if (previewRgbBatch.isEmpty())
-            mainChunkStart = bin;
-        previewRgbBatch.append(rgb);
-
-        if (previewRgbBatch.size() >= kChunk) {
-            const int firstBin = mainChunkStart;
-            if (input.retainLegacyWaveform) {
-                m_trackData->appendData(previewBatch);
-                m_trackData->writeRgbWaveformRange(mainChunkStart, previewRgbBatch);
-            }
-            publishChunk(firstBin, previewBatch, previewRgbBatch);
-            previewRgbBatch.clear();
-            previewBatch.clear();
+    std::vector<std::unique_ptr<juce::AudioFormatReader>> segmentReaders;
+    if (input.createReader) {
+        const int desiredWorkers = envelopeWorkerCount(sourceChunkCount);
+        for (int i = 1; i < desiredWorkers; ++i) {
+            auto extra = input.createReader();
+            if (!extra)
+                break;
+            segmentReaders.push_back(std::move(extra));
         }
     }
-    if (!previewRgbBatch.isEmpty()) {
-        const int firstBin = mainChunkStart;
-        if (input.retainLegacyWaveform) {
-            m_trackData->appendData(previewBatch);
-            m_trackData->writeRgbWaveformRange(mainChunkStart, previewRgbBatch);
+
+    const int workerCount = 1 + static_cast<int>(segmentReaders.size());
+    std::vector<Segment> segments;
+    segments.reserve(static_cast<std::size_t>(workerCount));
+    for (int i = 0; i < workerCount; ++i) {
+        const int chunkBegin = static_cast<int>(
+            (static_cast<juce::int64>(i) * sourceChunkCount) / workerCount);
+        const int chunkEnd = static_cast<int>(
+            (static_cast<juce::int64>(i + 1) * sourceChunkCount) / workerCount);
+        if (chunkBegin >= chunkEnd)
+            continue;
+        segments.push_back(Segment{chunkBegin * kChunk,
+                                   std::min(numPoints, chunkEnd * kChunk),
+                                   0.001f, 0.001f});
+    }
+
+    const int segmentWarmupBins = std::max(warmupBins, m_pointsPerSecond / 2);
+    std::mutex publishMutex;
+    std::atomic<int> completedBins{0};
+    std::atomic<bool> segmentFailed{false};
+
+    const auto runSegment = [&](Segment& segment,
+                                juce::AudioFormatReader& segmentReader) {
+        FiltState filter;
+        filter.reset(numCh, sampleRate);
+        DecodeWindow window(segmentReader, totalSamples);
+        RawBin raw;
+        std::array<RawPeak, 8> peaks{};
+        juce::int64 binStart = 0;
+        int length = 0;
+
+        for (int bin = std::max(0, segment.binBegin - segmentWarmupBins);
+             bin < segment.binBegin; ++bin) {
+            if (threadShouldExit())
+                return;
+            binSampleRange(bin, binStart, length);
+            if (!processBin(coefficients, filter, window, numCh, binStart,
+                            length, raw, nullptr, 0)) {
+                segmentFailed.store(true, std::memory_order_relaxed);
+                return;
+            }
         }
-        publishChunk(firstBin, previewBatch, previewRgbBatch);
+
+        QVector<TrackData::WaveformBin> binBatch;
+        QVector<TrackData::RgbWaveformFrame> rgbBatch;
+        binBatch.reserve(kChunk);
+        rgbBatch.reserve(kChunk);
+        int batchStart = segment.binBegin;
+
+        const auto flush = [&]() {
+            if (rgbBatch.isEmpty())
+                return;
+            const std::lock_guard<std::mutex> lock(publishMutex);
+            if (input.retainLegacyWaveform) {
+                m_trackData->writeWaveformRange(batchStart, binBatch);
+                m_trackData->writeRgbWaveformRange(batchStart, rgbBatch);
+            }
+            publishChunk(batchStart, binBatch, rgbBatch);
+            m_trackData->reportAnalysisProgress(
+                (static_cast<double>(
+                     completedBins.load(std::memory_order_relaxed))
+                 / static_cast<double>(numPoints)) * 0.50, true);
+            binBatch.clear();
+            rgbBatch.clear();
+        };
+
+        for (int bin = segment.binBegin; bin < segment.binEnd; ++bin) {
+            if (threadShouldExit())
+                return;
+
+            if ((bin & 0x1F) == 0)
+                cooperateWithRealtime();
+
+            // Yield occasionally without sleeping — keeps UI/audio responsive
+            // without throttling analysis to "grandma speed".
+            if ((bin & 0xFFF) == 0)
+                juce::Thread::yield();
+
+            binSampleRange(bin, binStart, length);
+            if (!processBin(coefficients, filter, window, numCh, binStart,
+                            length, raw,
+                            peakRatio > 0 ? peaks.data() : nullptr,
+                            peakRatio)) {
+                segmentFailed.store(true, std::memory_order_relaxed);
+                return;
+            }
+
+            if (peakRatio > 0) {
+                const int peakBinBase = bin * peakRatio;
+                for (int pb = 0; pb < peakRatio; ++pb) {
+                    const auto& peak = peaks[static_cast<std::size_t>(pb)];
+                    rawPeakBuf[static_cast<std::size_t>(peakBinBase + pb)] = peak;
+                    segment.maxSample = std::max(
+                        {segment.maxSample, peak.maxRaw, -peak.minRaw});
+                }
+            }
+            segment.maxPeak = std::max(
+                segment.maxPeak,
+                std::max({raw.low, raw.lowMid, raw.mid, raw.high}));
+
+            if (rgbBatch.isEmpty())
+                batchStart = bin;
+            const auto frame = makeRgbFrame(raw);
+            rgbBatch.append(frame);
+            if (input.retainLegacyWaveform) {
+                binBatch.append(TrackData::WaveformBin{
+                    frame.low, frame.lowMid, frame.mid, frame.high});
+            }
+            completedBins.fetch_add(1, std::memory_order_relaxed);
+
+            if (rgbBatch.size() >= kChunk)
+                flush();
+        }
+        flush();
+    };
+
+    {
+        std::vector<std::thread> workers;
+        workers.reserve(segments.empty() ? 0 : segments.size() - 1);
+        for (std::size_t i = 1; i < segments.size(); ++i) {
+            workers.emplace_back([&, i]() {
+                lowerCurrentThreadPriority();
+                try {
+                    runSegment(segments[i], *segmentReaders[i - 1]);
+                } catch (const std::exception& e) {
+                    segmentFailed.store(true, std::memory_order_relaxed);
+                    qWarning() << "[WaveformAnalyzer] Envelope segment failed:"
+                               << e.what();
+                }
+            });
+        }
+        // The caller's own segment must not escape with an exception while
+        // workers are still running: unwinding past a joinable std::thread
+        // terminates the process.
+        try {
+            if (!segments.empty())
+                runSegment(segments.front(), reader);
+        } catch (const std::exception& e) {
+            segmentFailed.store(true, std::memory_order_relaxed);
+            qWarning() << "[WaveformAnalyzer] Envelope segment failed:"
+                       << e.what();
+        }
+        for (auto& worker : workers)
+            worker.join();
+    }
+
+    if (segmentFailed.load(std::memory_order_relaxed))
+        return false;
+
+    for (const auto& segment : segments) {
+        globalMaxPeak = std::max(globalMaxPeak, segment.maxPeak);
+        globalMaxSample = std::max(globalMaxSample, segment.maxSample);
     }
 
     if (threadShouldExit()) return false;

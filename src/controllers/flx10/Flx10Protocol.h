@@ -32,14 +32,16 @@ constexpr double kJogWaveformEntriesPerSecond = 150.0;
 constexpr int kMaxWaveformEntries = 0x7FF00;
 // Each xx36 packet carries 19 PWV5 entries (38 payload bytes).
 constexpr int kXx36EntriesPerWindow = 19;
-// The screen protocol sustains roughly 200 waveform entries per second. One
-// 19-entry window per ~95 ms lands on that budget. The previous 10 ms tick
-// pushed ~1900 entries/s, nearly ten times the sustainable rate: it saturated
-// the interrupt endpoint, starved the 50 Hz xx27 state packets behind a
-// backlog of bulk waveform writes, and showed up as heavily lagging jog
-// wheels and near-frozen screens while a track was loading.
+// A 19-entry window every 10 ms fills a 5-minute track (2368 windows) in
+// about 24 s. An earlier pass throttled this to one window per 95 ms after
+// reading a "~200 entries/sec" figure in a prose protocol summary; at that
+// rate the same track needs nearly four minutes, so the display only ever
+// showed scattered half-filled segments around the playhead. The captures
+// show Serato pushing its ~420-490 xx36 packets per deck in a burst at
+// roughly 1 ms spacing, so 10 ms per window remains well inside what the
+// endpoint sustains while still leaving room for xx27 state packets.
 constexpr int kUploadWindowsPerTick = 1;
-constexpr int kUploadTickIntervalMs = 95;
+constexpr int kUploadTickIntervalMs = 10;
 constexpr int kKeepAliveIntervalMs = 250;
 constexpr std::size_t kHidWriteQueueCapacity = 1024;
 constexpr int kHidTransferTimeoutMs = 250;
@@ -56,9 +58,13 @@ constexpr uint32_t kXx2fMaximumSample = 0x00FFFFFFu;
 // new full HID report for every UI/control-clock tick.
 // The reference protocol runs xx27 state at ~50 Hz continuously, even idle.
 constexpr int kJogStateIntervalMs = 20;
-// Keep one steady playhead window stream, but stay within the known endpoint
-// throughput budget to avoid starving jog/state packets.
-constexpr int kXx36TrickleIntervalMs = 95;
+// Even when the encoded state has not changed, resend it at least this often.
+// The firmware needs a continuous stream; permanent dedup on an idle or paused
+// deck stops the display updating entirely until something moves again.
+constexpr int kXx27HeartbeatIntervalMs = 100;
+// 20 Hz playhead keepalive window: the firmware drops the waveform after
+// about a minute without it. Independent of the bulk fill above.
+constexpr int kXx36TrickleIntervalMs = 50;
 constexpr double kJogRevolutionSeconds = 1.8;
 constexpr int kJogPhaseTicksPerSecond = 2000;
 constexpr int kJogPhaseTicksPerRevolution = 3600;

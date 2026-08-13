@@ -135,11 +135,20 @@ inline WaveformCoverage bestAvailableCoverage(bool highResolutionReady,
                          : WaveformCoverage::Missing;
 }
 
-inline bool completeDetailMayCoverOverview(bool keyIsCurrent,
-                                           bool hasAnySourceData,
-                                           bool hasCompleteSourceData) noexcept
+// A detail tile may be shown as soon as it carries any real audio, even if
+// part of its source range is still being analysed. Requiring every source
+// line to be present meant a tile spanning any not-yet-analysed region was
+// discarded whole, so nothing appeared until analysis had swept past it.
+// That rule only existed so the coarse whole-track overview could not bleed
+// through a partly-drawn tile's gaps — and that overview is now suppressed
+// whenever it would be magnified into fake detail, so the reason is gone.
+// Columns without data simply stay background; the tile's key carries the
+// source revision, so a better version replaces it automatically as chunks
+// land.
+inline bool detailTileMayBeDisplayed(bool keyIsCurrent,
+                                     bool hasAnySourceData) noexcept
 {
-    return keyIsCurrent && hasAnySourceData && hasCompleteSourceData;
+    return keyIsCurrent && hasAnySourceData;
 }
 
 struct RenderTileSpan final {

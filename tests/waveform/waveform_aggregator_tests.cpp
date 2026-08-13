@@ -92,6 +92,19 @@ int main()
                       == decodeLe16(flx10_protocol::encodePwv5Entry(31, 7, 7, 7), 0),
                   "PWV5 encoder must clamp rather than overflow fields");
 
+    // xx35 carries the FIXED header constants 0x0e/0xe3 at [2]/[3] for every
+    // track — verified against PioneerDDJFLX10-screen.js v1.0 (_sendInit35).
+    // They are deliberately NOT a little-endian entry count, even though
+    // 0xe30e == 58126 == 387.5 s at 150 entries/s makes that reading tempting.
+    {
+        QByteArray p(flx10_protocol::kHidPacketSize, '\0');
+        p[2] = static_cast<char>(0x0E);
+        p[3] = static_cast<char>(0xE3);
+        ok &= require(static_cast<unsigned char>(p.at(2)) == 0x0E
+                          && static_cast<unsigned char>(p.at(3)) == 0xE3,
+                      "xx35 header constants must stay 0x0e/0xe3");
+    }
+
     // ── TEST 3: target width independence ───────────────────────────────────
     // Chunk size must never determine how many columns come out.
     WaveformLineStore store;

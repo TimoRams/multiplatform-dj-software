@@ -312,6 +312,10 @@ void WaveformAnalyzer::run()
     if (!haveFullWaveform) {
         const waveform_internal::EnvelopePassInput envelopeInput{
             *reader,
+            [this, file]() -> std::unique_ptr<juce::AudioFormatReader> {
+                return std::unique_ptr<juce::AudioFormatReader>(
+                    m_formatManager->createReaderFor(file));
+            },
             &working,
             *this,
             m_pointsPerSecond,

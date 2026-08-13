@@ -1342,10 +1342,9 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                         static_cast<float>(bounds.height()));
                 }
             } else if (prepared.ready
-                       && waveform_render::completeDetailMayCoverOverview(
+                       && waveform_render::detailTileMayBeDisplayed(
                            prepared.ready->key == prepared.key,
-                           prepared.ready->hasAnySourceData,
-                           prepared.ready->hasCompleteSourceData)) {
+                           prepared.ready->hasAnySourceData)) {
                 const auto upload = uploadWaveformTile(
                     scene->waveformNodes[poolIndex], *prepared.ready,
                     scene->renderOriginLine, pixelsPerLine, dpr,

@@ -236,11 +236,10 @@ int main(int argc, char** argv)
     ok &= require(waveform_render::bestAvailableCoverage(true, true)
                       == waveform_render::WaveformCoverage::HighResolution,
                   "ready high-resolution tiles must cover the fallback");
-    ok &= require(!waveform_render::completeDetailMayCoverOverview(
-                      true, true, false)
-                      && waveform_render::completeDetailMayCoverOverview(
-                          true, true, true),
-                  "partial detail tile must never replace the overview fallback");
+    ok &= require(waveform_render::detailTileMayBeDisplayed(true, true)
+                      && !waveform_render::detailTileMayBeDisplayed(false, true)
+                      && !waveform_render::detailTileMayBeDisplayed(true, false),
+                  "a tile with real audio must display once its key is current");
 
     // Regression: a tile whose source lines are all present must be publishable
     // as complete detail immediately — detail that is READY is never withheld

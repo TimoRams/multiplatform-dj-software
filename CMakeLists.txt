@@ -814,6 +814,18 @@ target_link_libraries(BrockDJ_progressive_waveform_publication_tests PRIVATE Qt6
 target_compile_features(BrockDJ_progressive_waveform_publication_tests PRIVATE cxx_std_23)
 add_test(NAME progressive_waveform_publication COMMAND BrockDJ_progressive_waveform_publication_tests)
 
+add_executable(BrockDJ_waveform_cache_repair_tests
+    tests/waveform/waveform_cache_repair_tests.cpp
+    src/waveform/WaveformCache.cpp
+    src/waveform/WaveformLodPyramid.cpp
+    src/waveform/WaveformLineStore.cpp
+    src/domain/TrackData.cpp
+)
+target_include_directories(BrockDJ_waveform_cache_repair_tests PRIVATE src src/domain)
+target_link_libraries(BrockDJ_waveform_cache_repair_tests PRIVATE Qt6::Core Qt6::Gui)
+target_compile_features(BrockDJ_waveform_cache_repair_tests PRIVATE cxx_std_23)
+add_test(NAME waveform_cache_repair COMMAND BrockDJ_waveform_cache_repair_tests)
+
 add_executable(BrockDJ_waveform_line_store_tests
     tests/waveform/waveform_line_store_tests.cpp
     src/waveform/WaveformAggregator.cpp
@@ -973,6 +985,7 @@ set(_brockdj_executable_targets
     BrockDJ_track_loader_tests
     BrockDJ_waveform_motion_tests
     BrockDJ_progressive_waveform_publication_tests
+    BrockDJ_waveform_cache_repair_tests
     BrockDJ_waveform_line_store_tests
     BrockDJ_waveform_aggregator_tests
     BrockDJ_waveform_line_chunk_tests

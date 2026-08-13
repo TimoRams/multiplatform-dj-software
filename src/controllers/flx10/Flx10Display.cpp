@@ -215,14 +215,22 @@ bool DDJFLX10Controller::sendXx33Album(int deck, const QByteArray& jpeg)
 }
 bool DDJFLX10Controller::sendXx35(int deck)
 {
-    QByteArray clear = packet();
-    put8(clear, 0, deckByte(deck));
-    put8(clear, 1, 0x35);
-    bool ok = writePacket(clear);
+    // Verified against PioneerDDJFLX10-screen.js v1.0 (_sendInit35): one
+    // all-zero packet followed by two packets carrying the CONSTANTS
+    // 0x0e/0xe3 at [2]/[3]. An earlier pass here reinterpreted those two
+    // bytes as a little-endian PWV5 entry count (0xe30e == 58126 == 387.5 s
+    // at 150 entries/s looked like a captured track length). The working
+    // implementation sends them unchanged for every track, so they are a
+    // fixed header, not a length.
+    const auto db = deckByte(deck);
+    QByteArray first = packet();
+    put8(first, 0, db);
+    put8(first, 1, 0x35);
+    bool ok = writePacket(first);
 
     for (int i = 0; i < 2; ++i) {
         QByteArray p = packet();
-        put8(p, 0, deckByte(deck));
+        put8(p, 0, db);
         put8(p, 1, 0x35);
         put8(p, 2, 0x0E);
         put8(p, 3, 0xE3);
@@ -245,6 +253,12 @@ bool DDJFLX10Controller::sendXx36Window(int deck, const QByteArray& waveform, in
     put8(p, 2, 0x01);
     put8(p, 4, 0x01);
     put8(p, 6, 0x13);
+    // Byte layout verified against PioneerDDJFLX10-screen.js v1.0
+    // (_uploadWaveform), which is byte-for-byte checked against Serato
+    // captures: [2]=0x01 constant (NOT a segment counter), [4]=0x01,
+    // [6]=0x13 (19 entries), LE32 entry position at [10..13], payload at
+    // [14]. An earlier pass moved the position to [8..11] on the strength of
+    // a prose summary; the working implementation disagrees and wins.
     put8(p, 10, entry);
     put8(p, 11, entry >> 8);
     put8(p, 12, entry >> 16);
@@ -327,16 +341,24 @@ bool DDJFLX10Controller::clearDeckDisplay(int deck)
 bool DDJFLX10Controller::sendXx27(int deck, const DeckDisplaySnapshot& snapshot)
 {
     const QByteArray p = encodeXx27Packet(deck, snapshot);
+    const qint64 nowMs = m_hidTrafficClock.isValid() ? m_hidTrafficClock.elapsed() : 0;
 
+    // Suppressing byte-identical packets indefinitely made the firmware treat
+    // the state stream as stopped: while scratching the position changes every
+    // tick so packets differ and flow, but on a paused or idle deck the packet
+    // is identical forever and nothing was sent at all. That is exactly the
+    // "display only updates while I scratch" behaviour. Dedup still bounds the
+    // rate, but an unchanged state is refreshed as a heartbeat.
     if (deck >= 0 && deck < static_cast<int>(m_lastXx27Packet.size())
-        && m_lastXx27Packet[deck] == p) {
+        && m_lastXx27Packet[deck] == p
+        && deck < static_cast<int>(m_lastXx27SentMs.size())
+        && nowMs - m_lastXx27SentMs[deck] < kXx27HeartbeatIntervalMs) {
         return true;
     }
 
     // ProgressChanged can fire much faster than the display clock while
     // scratching.  Keep the latest position, but never turn that burst into an
     // unbounded stream of USB interrupt reports.
-    const qint64 nowMs = m_hidTrafficClock.isValid() ? m_hidTrafficClock.elapsed() : 0;
     if (deck >= 0 && deck < static_cast<int>(m_lastXx27SentMs.size())
         && nowMs - m_lastXx27SentMs[deck] < kJogStateIntervalMs) {
         return true;

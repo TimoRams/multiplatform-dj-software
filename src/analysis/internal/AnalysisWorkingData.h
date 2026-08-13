@@ -98,6 +98,15 @@ public:
         m_globalMaxPeak = 0.001f;
     }
     void appendData(const QVector<TrackData::WaveformBin>& value) { m_data.append(value); }
+    // Parallel envelope segments finish out of order, so the legacy bin vector
+    // is sized up front and written by index instead of appended.
+    void preallocateWaveform(int size) { m_data.fill({}, size); }
+    void writeWaveformRange(int from, const QVector<TrackData::WaveformBin>& value)
+    {
+        if (from < 0 || from >= m_data.size()) return;
+        const int count = std::min(value.size(), m_data.size() - from);
+        std::copy_n(value.cbegin(), count, m_data.begin() + from);
+    }
     void replaceAllData(QVector<TrackData::WaveformBin>&& value, float peak)
     { m_data = std::move(value); m_globalMaxPeak = peak; }
     void preallocateRgbWaveform(int size) { m_rgbData.fill({}, size); }

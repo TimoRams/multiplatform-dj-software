@@ -5,6 +5,7 @@
 #include <juce_core/juce_core.h>
 #include <QVector>
 #include <functional>
+#include <memory>
 #include "waveform/WaveformTypes.h"
 #include "waveform/WaveformDemand.h"
 
@@ -17,6 +18,11 @@ struct EnvelopePassInput
                                              QVector<TrackData::RgbWaveformFrame>,
                                              WaveformNormalizationState)>;
     juce::AudioFormatReader& reader;
+    // The full-track pass is split into segments that decode in parallel, and a
+    // decoder cannot be shared across threads. Each additional segment asks for
+    // its own reader over the same file; without a factory the pass simply runs
+    // single-threaded on `reader`.
+    std::function<std::unique_ptr<juce::AudioFormatReader>()> createReader;
     analysis::AnalysisWorkingData* trackData = nullptr;
     juce::Thread& thread;
     int pointsPerSecond = 600;

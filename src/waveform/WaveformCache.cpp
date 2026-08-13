@@ -8,6 +8,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QDebug>
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QtGlobal>
@@ -65,6 +66,38 @@ QString cacheKeyFor(const QString& filePath, int pointsPerSecond)
 
     const QByteArray hash = QCryptographicHash::hash(src.toUtf8(), QCryptographicHash::Sha256).toHex();
     return QString::fromLatin1(hash.left(24));
+}
+
+// A cache file that exists but fails validation can never become usable again.
+// The key already covers the source path, its size, its modification time and
+// the analysis resolution, so a mismatch here means the file is truncated,
+// corrupt, or was written by a format this build no longer reads. Leaving it in
+// place meant every later load re-read and re-rejected the same bytes and
+// nothing ever cleaned them up.
+//
+// Both files of a pair are dropped together. They are only ever written
+// together, and discarding just one leaves a half-cache that the analyzer will
+// not complete: a surviving payload cache makes the analyzer skip the envelope
+// pass, and the missing render cache is written by that very pass. Removing
+// both forces one fresh analysis, which then restores a consistent pair.
+void discardUnusableCache(const QString& filePath, int pointsPerSecond,
+                          const char* reason)
+{
+    const QString payloadPath =
+        WaveformCache::cachePathFor(filePath, pointsPerSecond);
+    const QString renderPath =
+        WaveformCache::renderCachePathFor(filePath, pointsPerSecond);
+
+    bool removedAny = false;
+    for (const QString& path : {payloadPath, renderPath}) {
+        if (QFile::exists(path) && QFile::remove(path))
+            removedAny = true;
+    }
+    if (removedAny) {
+        qWarning() << "[WaveformCache] Discarded unusable cache for" << filePath
+                   << "- reason:" << reason
+                   << "- it will be rebuilt by the next analysis";
+    }
 }
 
 quint8 quantizeUnit(float value)
@@ -299,13 +332,19 @@ bool WaveformCache::inspectRenderCache(const QString& filePath,
     QFile file(renderCachePathFor(filePath, pointsPerSecond));
     if (!file.open(QIODevice::ReadOnly))
         return false;
+    const auto discard = [&](const char* reason) {
+        file.close();
+        discardUnusableCache(filePath, pointsPerSecond, reason);
+        return false;
+    };
+
     qint32 totalLines = 0;
     qint32 chunkSize = 0;
     qint32 overviewCount = 0;
     qint32 renderVersion = 0;
     if (!readRenderHeader(file, pointsPerSecond, totalLines,
                           chunkSize, overviewCount, renderVersion)) {
-        return false;
+        return discard("render header failed validation");
     }
 
     QDataStream in(&file);
@@ -327,19 +366,19 @@ bool WaveformCache::inspectRenderCache(const QString& filePath,
         info.overview.push_back(frame);
     }
     if (in.status() != QDataStream::Ok)
-        return false;
+        return discard("render overview is truncated");
     if (renderVersion >= 2) {
         const qint64 lodOffset = kRenderHeaderBytes
             + static_cast<qint64>(overviewCount) * kRenderOverviewRecordBytes
             + static_cast<qint64>(totalLines) * kRenderLineRecordBytes;
         if (!file.seek(lodOffset))
-            return false;
+            return discard("render cache is shorter than its own header claims");
         quint32 lodMagic = 0;
         qint32 lodLevelCount = 0;
         in >> lodMagic >> lodLevelCount;
         if (in.status() != QDataStream::Ok || lodMagic != kLodMagic
             || lodLevelCount != 4) {
-            return false;
+            return discard("render cache is missing its LOD trailer");
         }
         info.lodLevelCount = lodLevelCount;
     }
@@ -363,9 +402,14 @@ bool WaveformCache::streamRenderCache(
     qint32 chunkSize = 0;
     qint32 overviewCount = 0;
     qint32 renderVersion = 0;
+    const auto discard = [&](const char* reason) {
+        file.close();
+        discardUnusableCache(filePath, pointsPerSecond, reason);
+        return false;
+    };
     if (!readRenderHeader(file, pointsPerSecond, totalLines,
                           chunkSize, overviewCount, renderVersion)) {
-        return false;
+        return discard("render header failed validation");
     }
 
     const int chunkCount = (totalLines + chunkSize - 1) / chunkSize;
@@ -469,8 +513,11 @@ bool WaveformCache::streamRenderCache(
              candidateIndex < batchCount; ++candidateIndex) {
             const int chunkIndex = candidates[candidateIndex].chunkIndex;
             auto chunk = readChunk(chunkIndex);
-            if (!chunk)
-                return false;
+            if (!chunk) {
+                // The header validated but a line block did not read back, so
+                // the file is damaged past its header.
+                return discard("render line block could not be read");
+            }
             loaded[static_cast<size_t>(chunkIndex)] = true;
             ++loadedCount;
             batch.push_back(std::move(*chunk));
@@ -589,16 +636,26 @@ bool WaveformCache::loadForFile(const QString& filePath, int pointsPerSecond, Pa
     qint32 rgbCount = 0;
     qint32 peakCount = 0;
 
+    const auto discard = [&](const char* reason) {
+        f.close();
+        discardUnusableCache(filePath, pointsPerSecond, reason);
+        return false;
+    };
+
     in >> magic >> version >> pps >> totalExpected >> globalMaxPeak >> wfCount >> rgbCount >> peakCount;
     if (in.status() != QDataStream::Ok)
-        return false;
-    if (magic != kMagic || (version != 5 && version != kVersion) || pps != pointsPerSecond)
-        return false;
+        return discard("payload header is truncated");
+    if (magic != kMagic)
+        return discard("payload magic does not match");
+    if (version != 5 && version != kVersion)
+        return discard("payload was written by another cache version");
+    if (pps != pointsPerSecond)
+        return discard("payload resolution does not match the request");
     if (totalExpected <= 0 || totalExpected > kMaxCachedBins
         || wfCount != totalExpected || rgbCount != totalExpected
         || peakCount < 0 || peakCount > kMaxCachedBins
         || !std::isfinite(globalMaxPeak) || globalMaxPeak <= 0.0f) {
-        return false;
+        return discard("payload header describes an impossible waveform");
     }
 
     Payload payload;
@@ -667,8 +724,10 @@ bool WaveformCache::loadForFile(const QString& filePath, int pointsPerSecond, Pa
         peakRead += n;
     }
 
-    if (in.status() != QDataStream::Ok || !f.atEnd())
-        return false;
+    if (in.status() != QDataStream::Ok)
+        return discard("payload body is truncated");
+    if (!f.atEnd())
+        return discard("payload body has trailing bytes");
 
     *out = std::move(payload);
     return true;
