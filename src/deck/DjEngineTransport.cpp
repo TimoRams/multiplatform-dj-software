@@ -154,12 +154,17 @@ void DjEngine::resetTrackLoadState()
 {
     m_trackData->clear();
     m_currentSegments.clear();
+    m_memoryCues.clear();
+    m_currentTrackId.clear();
+    m_externalSourceId.clear();
+    m_readOnlyExternalTrack = false;
     // Reset every cue/loop state under the new track generation, including
     // deferred quantized commands and any active loop.
     m_cueLoopController.beginTrack(m_trackLoader.currentGeneration());
     emit segmentsChanged();
     emit hotCuesChanged();
     emit savedLoopsChanged();
+    emit memoryCuesChanged();
     emit beatgridLockedChanged();
 }
 
@@ -521,11 +526,129 @@ void DjEngine::returnToSlipPosition()
 
 void DjEngine::loadTrack(const QString& rawPath)
 {
+    beginTrackLoad(rawPath);
+}
+
+void DjEngine::loadExternalTrack(const QVariantMap& request)
+{
+    if (!request.value(QStringLiteral("readOnlyExternal")).toBool()
+        || request.value(QStringLiteral("sourceType")).toString()
+            != QStringLiteral("rekordboxDevice")) {
+        const QString error = QStringLiteral("Rejected untrusted external track request");
+        if (m_trackLoadError != error) {
+            m_trackLoadError = error;
+            emit trackLoadErrorChanged();
+        }
+        return;
+    }
+
+    const QString path = request.value(QStringLiteral("filePath")).toString();
+    ExternalTrackLoadSnapshot external;
+    external.sourceId = request.value(QStringLiteral("sourceId")).toString();
+    external.sourceAwareId = request.value(QStringLiteral("trackId")).toString();
+    external.artworkPath = request.value(QStringLiteral("artworkPath")).toString();
+    external.metadata.title = request.value(QStringLiteral("title")).toString();
+    external.metadata.artist = request.value(QStringLiteral("artist")).toString();
+    external.metadata.album = request.value(QStringLiteral("album")).toString();
+    external.metadata.genre = request.value(QStringLiteral("genre")).toString();
+    external.metadata.comment = request.value(QStringLiteral("comment")).toString();
+    external.metadata.key = request.value(QStringLiteral("key")).toString();
+    external.metadata.tagBpm = request.value(QStringLiteral("bpm")).toDouble();
+    external.metadata.durationSec = request.value(QStringLiteral("durationSec")).toDouble();
+
+    const QVariantList beatValues = request.value(QStringLiteral("beats")).toList();
+    external.analysis.beats.reserve(static_cast<size_t>(beatValues.size()));
+    double lastPosition = -1.0;
+    double lastTempo = -1.0;
+    int barIndex = 0;
+    bool sawBeat = false;
+    bool dynamicTempo = false;
+    for (const QVariant& value : beatValues) {
+        const QVariantMap map = value.toMap();
+        const double position = map.value(QStringLiteral("positionSec")).toDouble();
+        const double bpm = map.value(QStringLiteral("bpm")).toDouble();
+        const int beatInBar = map.value(QStringLiteral("beatInBar")).toInt();
+        if (!std::isfinite(position) || position < 0.0 || position <= lastPosition
+            || !std::isfinite(bpm) || bpm <= 0.0 || bpm > 400.0
+            || beatInBar < 1 || beatInBar > 4) {
+            continue;
+        }
+        if (sawBeat && beatInBar == 1)
+            ++barIndex;
+        TrackData::BeatMarker marker;
+        marker.positionSec = position;
+        marker.isDownbeat = beatInBar == 1;
+        marker.barIndex = barIndex;
+        marker.barNumber = barIndex + 1;
+        marker.beatInBar = beatInBar;
+        marker.confidence = 1.0f;
+        marker.lockedByUser = true;
+        external.analysis.beats.push_back(marker);
+        if (lastTempo < 0.0 || std::abs(lastTempo - bpm) > 0.001) {
+            if (lastTempo > 0.0)
+                dynamicTempo = true;
+            external.analysis.beatGridInfo.tempoNodes.push_back(
+                {position, bpm, 1.0f});
+            lastTempo = bpm;
+        }
+        if (external.analysis.bpm <= 0.0)
+            external.analysis.bpm = bpm;
+        lastPosition = position;
+        sawBeat = true;
+    }
+    if (external.analysis.hasBeatgrid()) {
+        external.analysis.beatGridInfo.type = dynamicTempo
+            ? TrackData::BeatGridType::DynamicTempo
+            : TrackData::BeatGridType::ConstantTempo;
+        external.analysis.beatGridInfo.lockedByUser = true;
+        external.analysis.beatGridInfo.origin = TrackData::AnalysisOrigin::RekordboxDevice;
+    }
+
+    auto decodeCues = [](const QVariantList& values) {
+        QVector<ImportedCueSnapshot> result;
+        result.reserve(std::min<qsizetype>(values.size(), 64));
+        for (const QVariant& value : values) {
+            const QVariantMap map = value.toMap();
+            ImportedCueSnapshot cue;
+            cue.index = map.value(QStringLiteral("hotCueIndex"), -1).toInt();
+            cue.positionSec = map.value(QStringLiteral("positionSec")).toDouble();
+            cue.loopEndSec = map.value(QStringLiteral("loopEndSec"), -1.0).toDouble();
+            cue.label = map.value(QStringLiteral("label")).toString();
+            cue.color = map.value(QStringLiteral("color")).toString();
+            if (std::isfinite(cue.positionSec) && cue.positionSec >= 0.0)
+                result.append(cue);
+            if (result.size() >= 64)
+                break;
+        }
+        return result;
+    };
+    external.analysis.hotCues = decodeCues(
+        request.value(QStringLiteral("hotCues")).toList());
+    external.analysis.memoryCues = decodeCues(
+        request.value(QStringLiteral("memoryCues")).toList());
+    external.analysis.loops = decodeCues(
+        request.value(QStringLiteral("loops")).toList());
+    beginTrackLoad(path, std::move(external));
+}
+
+void DjEngine::externalSourceUnavailable(const QString& sourceId)
+{
+    if (!m_readOnlyExternalTrack || sourceId != m_externalSourceId)
+        return;
+    const QString error = QStringLiteral(
+        "USB device removed; buffered playback may continue until more data is needed");
+    if (m_trackLoadError != error) {
+        m_trackLoadError = error;
+        emit trackLoadErrorChanged();
+    }
+}
+
+void DjEngine::beginTrackLoad(
+    QString rawPath, std::optional<ExternalTrackLoadSnapshot> external)
+{
     QPointer<DjEngine> safeThis(this);
     AudioPageCache* const cache = &m_audioPageCache;
-    const auto visualGeneration = m_trackLoader.loadTrack(
-        rawPath,
-        [safeThis, cache](TrackLoadResult result) mutable {
+    auto completion = [safeThis, cache](TrackLoadResult result) mutable {
             if (!safeThis) {
                 cache->releaseTrack(result.cacheHandle);
                 return;
@@ -538,8 +661,8 @@ void DjEngine::loadTrack(const QString& rawPath)
                         cache->releaseTrack(result.cacheHandle);
                 },
                 Qt::QueuedConnection);
-        },
-        [safeThis](std::uint64_t generation, int totalLines,
+        };
+    auto renderChunk = [safeThis](std::uint64_t generation, int totalLines,
                    int linesPerSecond, WaveformLineBatch chunks) {
             if (!safeThis)
                 return;
@@ -555,7 +678,12 @@ void DjEngine::loadTrack(const QString& rawPath)
                         totalLines, linesPerSecond, std::move(chunks));
                 },
                 Qt::QueuedConnection);
-        });
+        };
+    const auto visualGeneration = external
+        ? m_trackLoader.loadExternalTrack(std::move(rawPath), std::move(*external),
+                                          std::move(completion), std::move(renderChunk))
+        : m_trackLoader.loadTrack(std::move(rawPath), std::move(completion),
+                                  std::move(renderChunk));
 
     // Invalidate the previous track's complete visual generation immediately.
     // Worker callbacks are queued back to this owner thread, so this happens
@@ -604,7 +732,9 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
     if (m_coverProvider)
         m_coverProvider->clearCover(m_deckId);
 
-    if (result.metadata.tagBpm > 0.0) {
+    const bool hasExternalGrid = result.external
+        && result.external->analysis.hasBeatgrid();
+    if (result.metadata.tagBpm > 0.0 && !hasExternalGrid) {
         m_trackData->setBpmData(result.metadata.tagBpm, 0, result.metadata.sampleRate);
         m_trackData->ensureProvisionalBeatgrid(result.metadata.durationSec);
     }
@@ -615,8 +745,31 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
                            result.metadata.durationSec);
     clearLoop();
 
-    const bool hasDbAnalysis = hydrateLibraryStateForTrack(
-        result.canonicalPath, result.metadata.durationSec);
+    bool hasReusableAnalysis = false;
+    if (result.external) {
+        m_readOnlyExternalTrack = true;
+        m_externalSourceId = result.external->sourceId;
+        m_currentTrackId.clear();
+        m_playLogged = false;
+        if (hasExternalGrid) {
+            const auto& imported = result.external->analysis;
+            TrackData::ConfidenceInfo confidence;
+            confidence.bpmConfidence = 1.0f;
+            confidence.beatConfidence = 1.0f;
+            confidence.downbeatConfidence = 1.0f;
+            confidence.gridConfidence = 1.0f;
+            const qint64 firstBeatSample = static_cast<qint64>(std::llround(
+                imported.beats.front().positionSec * result.metadata.sampleRate));
+            m_trackData->setBpmData(imported.bpm, firstBeatSample,
+                                    result.metadata.sampleRate, imported.beats,
+                                    confidence, imported.beatGridInfo);
+            hasReusableAnalysis = true;
+        }
+        installExternalCues(*result.external);
+    } else {
+        hasReusableAnalysis = hydrateLibraryStateForTrack(
+            result.canonicalPath, result.metadata.durationSec);
+    }
 
     if (result.waveformCacheLoaded) {
         const int expected = result.waveformCache.totalExpected > 0
@@ -641,7 +794,7 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
 
     const bool hasReusableWaveform = result.waveformCacheLoaded
         || result.waveformRenderCacheAvailable;
-    if (!(hasReusableWaveform && hasDbAnalysis) && m_analyzer) {
+    if (!(hasReusableWaveform && hasReusableAnalysis) && m_analyzer) {
         // Audio publication and first-page priming have already completed.
         // Start the background worker now; a fixed post-load delay only made
         // overview/detail latency depend on a timer and did not protect the

@@ -132,12 +132,12 @@ bool TrackData::applyAnalysisResult(const analysis::AnalysisResult& result)
         m_progressiveNormalizationStates.clear();
         m_progressiveDirtyLineChunks.clear();
         m_progressivePendingLineChunks.clear();
-        m_bpm = result.bpm;
-        m_firstBeatSample = result.firstBeatSample;
         m_sampleRate = result.sampleRate;
-        m_isBpmAnalyzed = result.bpm > 0.0;
-        m_confidence = result.confidence;
         if (!m_beatGridInfo.lockedByUser) {
+            m_bpm = result.bpm;
+            m_firstBeatSample = result.firstBeatSample;
+            m_isBpmAnalyzed = result.bpm > 0.0;
+            m_confidence = result.confidence;
             m_beatGridInfo = result.beatGrid;
             m_beatGrid = result.beats;
             m_beatGridSnapshot.reset();

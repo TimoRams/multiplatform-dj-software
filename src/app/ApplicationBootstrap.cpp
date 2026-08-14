@@ -36,6 +36,7 @@
 #include "audio/AudioEngine.h"
 #include "audio/TimeStretchProcessor.h"
 #include "library/LibraryManager.h"
+#include "library/devices/DeviceLibraryManager.h"
 #include "library/MediaIoScheduler.h"
 #include "library/CoverArtProvider.h"
 #include "library/LibraryCoverService.h"
@@ -313,6 +314,7 @@ int runApplication(int argc, char *argv[])
     runtime.libraryDb = std::make_unique<LibraryDatabase>();
     runtime.libraryTableModel = std::make_unique<LibraryTableModel>("library_conn");
     runtime.libraryAnalysisManager = std::make_unique<LibraryAnalysisManager>();
+    runtime.deviceLibraryManager = std::make_unique<DeviceLibraryManager>();
     runtime.fxManager = std::make_unique<FxManager>();
     runtime.controlClock = std::make_unique<ControlClock>();
     runtime.linkManager = std::make_unique<LinkManager>(*runtime.controlClock);
@@ -392,6 +394,7 @@ int runApplication(int argc, char *argv[])
     engine.rootContext()->setContextProperty("libraryDb",    static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("libraryModel", runtime.libraryTableModel.get());
     engine.rootContext()->setContextProperty("libraryAnalyzer", runtime.libraryAnalysisManager.get());
+    engine.rootContext()->setContextProperty("deviceLibraryManager", runtime.deviceLibraryManager.get());
     engine.rootContext()->setContextProperty("fxManager", runtime.fxManager.get());
     engine.rootContext()->setContextProperty("linkManager", runtime.linkManager.get());
     engine.rootContext()->setContextProperty("sysMonitor", runtime.sysMonitor.get());
@@ -500,6 +503,9 @@ int runApplication(int argc, char *argv[])
                                    runtime.deckC.get(), runtime.deckD.get()}) {
                 deck->setLibraryDatabase(runtime.libraryDb.get());
                 deck->setLibraryCoverService(runtime.libraryCoverService.get());
+                QObject::connect(runtime.deviceLibraryManager.get(),
+                                 &DeviceLibraryManager::deviceRemoved,
+                                 deck, &DjEngine::externalSourceUnavailable);
             }
 
             runtime.fxManager->registerEngines(runtime.deckA.get(), runtime.deckB.get(),

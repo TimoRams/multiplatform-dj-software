@@ -52,11 +52,17 @@ public:
         float confidence = 0.0f;
     };
 
+    enum class AnalysisOrigin {
+        BrockDJ = 0,
+        RekordboxDevice
+    };
+
     struct BeatGridInfo {
         BeatGridType type = BeatGridType::Unknown;
         std::vector<TempoNode> tempoNodes;
         bool userModified = false;
         bool lockedByUser = false;
+        AnalysisOrigin origin = AnalysisOrigin::BrockDJ;
     };
 
     // Beat marker: one entry per beat in the track.

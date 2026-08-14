@@ -520,6 +520,67 @@ QVariantList DjEngine::hotCues() const
     return out;
 }
 
+void DjEngine::installExternalCues(const ExternalTrackLoadSnapshot& external)
+{
+    clearHotCueState();
+    clearSavedLoopState();
+    m_memoryCues.clear();
+
+    int nextHotCue = 0;
+    for (const auto& cue : external.analysis.hotCues) {
+        int index = cue.index;
+        if (!isValidHotCueIndex(index)) {
+            while (nextHotCue < DeckCueLoopController::kSlotCount
+                   && slotAt(nextHotCue).set) {
+                ++nextHotCue;
+            }
+            index = nextHotCue;
+        }
+        if (!isValidHotCueIndex(index))
+            break;
+        auto& slot = slotAt(index);
+        slot.set = true;
+        slot.positionSec = cue.positionSec;
+        slot.label = cue.label;
+        slot.color = cue.color.isEmpty()
+            ? defaultHotCueColor(index) : cue.color;
+    }
+
+    int loopIndex = 0;
+    for (const auto& cue : external.analysis.loops) {
+        if (!std::isfinite(cue.loopEndSec)
+            || cue.loopEndSec <= cue.positionSec || !isValidSavedLoopIndex(loopIndex)) {
+            continue;
+        }
+        auto& slot = savedLoopAt(loopIndex);
+        slot.set = true;
+        slot.inSec = cue.positionSec;
+        slot.outSec = cue.loopEndSec;
+        const double beatDuration = beatDurationAround(slot.inSec);
+        slot.lengthBeats = beatDuration > 1e-4
+            ? (slot.outSec - slot.inSec) / beatDuration : 0.0;
+        slot.label = cue.label;
+        slot.color = cue.color.isEmpty()
+            ? defaultSavedLoopColor(loopIndex) : cue.color;
+        ++loopIndex;
+    }
+
+    for (const auto& cue : external.analysis.memoryCues) {
+        m_memoryCues.append(QVariantMap{
+            {QStringLiteral("positionSec"), cue.positionSec},
+            {QStringLiteral("label"), cue.label},
+            {QStringLiteral("color"), cue.color}});
+    }
+    if (!external.analysis.memoryCues.isEmpty())
+        m_cueLoopController.mainCue().positionSec =
+            external.analysis.memoryCues.front().positionSec;
+
+    emit hotCuesChanged();
+    emit savedLoopsChanged();
+    emit memoryCuesChanged();
+    emit mainCueChanged();
+}
+
 
 bool DjEngine::isValidHotCueIndex(int index) const
 {

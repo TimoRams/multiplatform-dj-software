@@ -109,6 +109,14 @@ int main()
                   && library.find("waveformZoomController.zoomIn()") != std::string::npos
                   && library.find("waveformZoomController.zoomOut()") != std::string::npos,
                   "FLX10 browse encoder controls waveform zoom while the library is hidden");
+    ok &= require(library.find("function aioActivateBrowsePickerEntry(index)")
+                          != std::string::npos
+                      && library.find("if (aioBrowseScreen === \"source\") {\n"
+                                      "            aioDrillBrowseEntryByIndex(index)")
+                          != std::string::npos
+                      && library.find("onClicked: libraryRoot.aioActivateBrowsePickerEntry(index)")
+                          != std::string::npos,
+                  "AIO Source rows drill into USB/Files/Stream views on the first tap");
     ok &= require(main.find("function closeTopBarPullDown()") != std::string::npos
                   && main.find("function openTopBarPullDown()") != std::string::npos
                   && main.find("function toggleTopBarPullDown()") != std::string::npos,

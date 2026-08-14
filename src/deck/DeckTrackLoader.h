@@ -60,6 +60,36 @@ struct TrackMetadataSnapshot {
     std::int64_t fileSize = 0;
 };
 
+struct ImportedCueSnapshot {
+    int index = -1;
+    double positionSec = 0.0;
+    double loopEndSec = -1.0;
+    QString label;
+    QString color;
+};
+
+struct ImportedTrackAnalysisSnapshot {
+    double bpm = 0.0;
+    std::vector<TrackData::BeatMarker> beats;
+    TrackData::BeatGridInfo beatGridInfo;
+    QVector<ImportedCueSnapshot> hotCues;
+    QVector<ImportedCueSnapshot> memoryCues;
+    QVector<ImportedCueSnapshot> loops;
+
+    [[nodiscard]] bool hasBeatgrid() const noexcept {
+        return bpm > 0.0 && !beats.empty();
+    }
+};
+
+struct ExternalTrackLoadSnapshot {
+    QString sourceId;
+    QString sourceAwareId;
+    QString artworkPath;
+    TrackMetadataSnapshot metadata;
+    ImportedTrackAnalysisSnapshot analysis;
+    bool readOnly = true;
+};
+
 struct TrackLoadResult {
     std::uint64_t generation = 0;
     QString canonicalPath;
@@ -78,6 +108,7 @@ struct TrackLoadResult {
     double autoCueSec = -1.0;
     TrackLoadError error = TrackLoadError::None;
     QString errorMessage;
+    std::optional<ExternalTrackLoadSnapshot> external;
 
     [[nodiscard]] bool succeeded() const noexcept { return error == TrackLoadError::None; }
 };
@@ -97,6 +128,9 @@ public:
 
     std::uint64_t loadTrack(QString path, CompletionCallback completion,
                             RenderChunkCallback renderChunk = {});
+    std::uint64_t loadExternalTrack(QString path, ExternalTrackLoadSnapshot external,
+                                    CompletionCallback completion,
+                                    RenderChunkCallback renderChunk = {});
     void setWaveformSeekHint(double positionSec) noexcept;
     void setWaveformDemand(const waveform::WaveformDemand& demand) noexcept;
     void requestCancel() noexcept;
@@ -108,6 +142,7 @@ public:
 private:
     struct Request {
         QString path;
+        std::optional<ExternalTrackLoadSnapshot> external;
         std::uint64_t generation = 0;
         CompletionCallback completion;
         RenderChunkCallback renderChunk;

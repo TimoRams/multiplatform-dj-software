@@ -19,6 +19,7 @@ class LibraryManager;
 class LibraryDatabase;
 class LibraryTableModel;
 class LibraryAnalysisManager;
+class DeviceLibraryManager;
 class FxManager;
 class LinkManager;
 class SystemMonitor;
@@ -88,6 +89,7 @@ struct ApplicationRuntime {
     std::unique_ptr<LibraryDatabase> libraryDb;
     std::unique_ptr<LibraryTableModel> libraryTableModel;
     std::unique_ptr<LibraryAnalysisManager> libraryAnalysisManager;
+    std::unique_ptr<DeviceLibraryManager> deviceLibraryManager;
     std::unique_ptr<LibraryPreviewPlayer> libraryPreviewPlayer;
     AudioEngine::AuxRegistration previewRegistration;
 

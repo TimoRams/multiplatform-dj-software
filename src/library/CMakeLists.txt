@@ -20,4 +20,13 @@ target_sources(${PROJECT_NAME} PRIVATE
     LibraryAnalysisManager.cpp
     LibraryTableModel.h
     LibraryTableModel.cpp
+    devices/DeviceLibraryManager.h
+    devices/DeviceLibraryManager.cpp
+    devices/rekordbox/RekordboxTypes.h
+    devices/rekordbox/RekordboxPdbReader.h
+    devices/rekordbox/RekordboxPdbReader.cpp
+    devices/rekordbox/RekordboxAnalysisReader.h
+    devices/rekordbox/RekordboxAnalysisReader.cpp
+    devices/rekordbox/RekordboxDeviceSource.h
+    devices/rekordbox/RekordboxDeviceSource.cpp
 )

@@ -63,6 +63,37 @@ int main(int argc, char** argv)
                       "canonical line lost its vertical peak extent");
     }
 
+    // An exact grid imported from an external device is authoritative. A later
+    // local waveform/key analysis may publish its other results, but must not
+    // replace the imported tempo or beat positions.
+    std::vector<TrackData::BeatMarker> importedBeats {
+        {0.5, true, true, 0, 1, 1, 1.0f, false, true},
+        {1.0, true, false, 0, 1, 2, 1.0f, false, true},
+        {1.5, true, false, 0, 1, 3, 1.0f, false, true},
+        {2.0, true, false, 0, 1, 4, 1.0f, false, true}
+    };
+    TrackData::BeatGridInfo importedGrid;
+    importedGrid.type = TrackData::BeatGridType::ConstantTempo;
+    importedGrid.lockedByUser = true;
+    importedGrid.origin = TrackData::AnalysisOrigin::RekordboxDevice;
+    data.setBpmData(128.0, 24'000, 48'000.0, importedBeats,
+                    TrackData::ConfidenceInfo{}, importedGrid);
+    analysis::AnalysisResult localReplacement = result;
+    localReplacement.bpm = 90.0;
+    localReplacement.firstBeatSample = 4'800;
+    localReplacement.beats = {{0.1, true, true, 0, 1, 1, 1.0f}};
+    ok &= require(data.applyAnalysisResult(localReplacement),
+                  "local analysis was not accepted around imported grid");
+    const auto preservedBeats = data.getBeatGrid();
+    const auto preservedGrid = data.getBeatGridInfo();
+    ok &= require(data.getBpm() == 128.0 && preservedBeats.size() == 4
+                      && preservedBeats.front().positionSec == 0.5
+                      && preservedBeats.back().positionSec == 2.0,
+                  "local analysis overwrote imported exact beat positions");
+    ok &= require(preservedGrid.lockedByUser
+                      && preservedGrid.origin == TrackData::AnalysisOrigin::RekordboxDevice,
+                  "local analysis lost imported beatgrid origin/lock");
+
     analysis::AnalysisResult invalid = result;
     invalid.bpm = std::numeric_limits<double>::quiet_NaN();
     ok &= require(!analysis::validateResult(invalid), "NaN result accepted");

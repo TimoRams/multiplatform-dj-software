@@ -102,8 +102,15 @@ bool truncateTo(const QString& path, qint64 size)
 
 int main(int argc, char** argv)
 {
+    QTemporaryDir configDir;
+    if (!require(configDir.isValid(), "temporary config directory is available"))
+        return 1;
+
+    // Keep the cache written by this test inside its temporary fixture. This
+    // also makes the test independent of the developer's real Qt config path
+    // and works in read-only/sandboxed home directories.
+    qputenv("XDG_CONFIG_HOME", configDir.path().toUtf8());
     QCoreApplication app(argc, argv);
-    QStandardPaths::setTestModeEnabled(true);
 
     QTemporaryDir sourceDir;
     if (!require(sourceDir.isValid(), "temporary source directory is available"))

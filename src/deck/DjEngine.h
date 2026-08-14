@@ -76,6 +76,8 @@ class DjEngine : public QObject
     Q_PROPERTY(bool    hasCoverArt  READ hasCoverArt  NOTIFY trackMetadataChanged)
     Q_PROPERTY(QString trackLoadError READ trackLoadError NOTIFY trackLoadErrorChanged)
     Q_PROPERTY(QVariantList currentSegments READ currentSegments NOTIFY segmentsChanged)
+    Q_PROPERTY(QVariantList memoryCues READ memoryCues NOTIFY memoryCuesChanged)
+    Q_PROPERTY(bool readOnlyExternalTrack READ readOnlyExternalTrack NOTIFY trackMetadataChanged)
 
     Q_PROPERTY(double waveformPointsPerSecond READ waveformPointsPerSecond CONSTANT)
     Q_PROPERTY(double preRollSeconds READ getPreRollSeconds CONSTANT)
@@ -261,6 +263,8 @@ public:
     [[nodiscard]] bool    hasCoverArt()   const { return m_hasCoverArt; }
     [[nodiscard]] QImage  currentCoverImage() const;
     [[nodiscard]] QVariantList currentSegments() const { return m_currentSegments; }
+    [[nodiscard]] QVariantList memoryCues() const { return m_memoryCues; }
+    [[nodiscard]] bool readOnlyExternalTrack() const { return m_readOnlyExternalTrack; }
     [[nodiscard]] double  getTempoPercent() const { return m_tempoPercent; }
     [[nodiscard]] double  tempoRangePercent() const { return m_tempoRangePercent; }
     // Beat phase: 0.0 = on the beat, 0.5 = halfway between beats, approaches 1.0 just before the next beat.
@@ -325,6 +329,8 @@ public:
 
 public slots:
     void loadTrack(const QString& rawPath);
+    Q_INVOKABLE void loadExternalTrack(const QVariantMap& request);
+    Q_INVOKABLE void externalSourceUnavailable(const QString& sourceId);
     void togglePlay();
     void setPosition(float progress);
     void setTempoPercent(double percent);
@@ -445,6 +451,7 @@ signals:
     void segmentsChanged();
     void hotCuesChanged();
     void savedLoopsChanged();
+    void memoryCuesChanged();
     void beatgridLockedChanged();
     void mainCueChanged();
     void audioDeviceErrorChanged();
@@ -471,6 +478,8 @@ private:
     LatencySnapshot buildLatencySnapshot() const;
 
     void resetTrackLoadState();
+    void beginTrackLoad(QString path,
+                        std::optional<ExternalTrackLoadSnapshot> external = std::nullopt);
     void applyPreparedTrack(TrackLoadResult result);
     void updateTrackDuration(double durationSec);
     bool hydrateLibraryStateForTrack(const QString& rawPath, double durationSec);
@@ -492,6 +501,7 @@ private:
     bool isValidSavedLoopIndex(int index) const;
     void activateLoopRange(double inSec, double outSec, bool jumpToIn);
     void loadMainCueForCurrentTrack();
+    void installExternalCues(const ExternalTrackLoadSnapshot& external);
     void persistMainCuePoint();
     void resetMainCueButtonState();
     void startMainCueHoldPreview(quint64 pressSerial);
@@ -541,6 +551,9 @@ private:
     QString m_trackLoadError;
     bool    m_hasCoverArt = false;
     QVariantList m_currentSegments;
+    QVariantList m_memoryCues;
+    QString m_externalSourceId;
+    bool m_readOnlyExternalTrack = false;
 
     // Tempo control: ±6/8/16/32/100% (WIDE) selectable range
     double m_tempoPercent = 0.0;

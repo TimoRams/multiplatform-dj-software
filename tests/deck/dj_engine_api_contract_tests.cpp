@@ -34,11 +34,13 @@ int main(int argc, char** argv)
     // intentionally migrated in the same change.
     for (const char* property : std::array {
              "progress", "isPlaying", "tempoPercent", "trackData", "syncEnabled",
-             "loopActive", "volume", "hotCues", "savedLoops", "beatgridLocked" })
+             "loopActive", "volume", "hotCues", "savedLoops", "beatgridLocked",
+             "readOnlyExternalTrack" })
         ok &= require(header.contains(QString::fromUtf8(property)), property);
     for (const char* method : std::array {
              "loadTrack", "play", "pause", "setPosition", "setTempoPercent",
-             "triggerHotCue", "setSyncEnabled", "setReverse", "setSlip" })
+             "triggerHotCue", "setSyncEnabled", "setReverse", "setSlip",
+             "loadExternalTrack", "externalSourceUnavailable" })
         ok &= require(header.contains(QString::fromUtf8(method)), method);
 
     // Header-level architecture boundary: implementation dependencies belong in

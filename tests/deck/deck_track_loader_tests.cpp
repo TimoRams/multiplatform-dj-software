@@ -114,6 +114,51 @@ int main(int argc, char** argv)
         cache.releaseTrack(waiter.value().cacheHandle);
     }
     {
+        ExternalTrackLoadSnapshot external;
+        external.sourceId = QStringLiteral("test-usb");
+        external.sourceAwareId = QStringLiteral("rekordbox:test-usb:1001");
+        external.metadata.title = QStringLiteral("External title");
+        external.metadata.artist = QStringLiteral("External artist");
+        external.metadata.album = QStringLiteral("External album");
+        external.metadata.genre = QStringLiteral("External genre");
+        external.metadata.key = QStringLiteral("8A");
+        external.metadata.tagBpm = 128.0;
+        external.analysis.bpm = 128.0;
+        external.analysis.beats = {
+            {0.5, true, true, 0, 1, 1, 1.0f, false, true},
+            {1.0, true, false, 0, 1, 2, 1.0f, false, true}
+        };
+        external.analysis.beatGridInfo.type = TrackData::BeatGridType::ConstantTempo;
+        external.analysis.beatGridInfo.lockedByUser = true;
+        external.analysis.beatGridInfo.origin = TrackData::AnalysisOrigin::RekordboxDevice;
+
+        ResultWaiter waiter;
+        const auto generation = loader.loadExternalTrack(
+            monoPath, external, waiter.callback());
+        ok &= require(waiter.wait(), "external USB load must complete");
+        ok &= require(waiter.value().succeeded()
+                          && waiter.value().generation == generation,
+                      "external USB audio must load directly through the normal cache");
+        ok &= require(waiter.value().external.has_value()
+                          && waiter.value().external->readOnly
+                          && waiter.value().external->sourceAwareId
+                              == QStringLiteral("rekordbox:test-usb:1001"),
+                      "external source/read-only snapshot was not preserved");
+        ok &= require(waiter.value().metadata.title == QStringLiteral("External title")
+                          && waiter.value().metadata.artist == QStringLiteral("External artist")
+                          && waiter.value().metadata.album == QStringLiteral("External album")
+                          && waiter.value().metadata.genre == QStringLiteral("External genre")
+                          && waiter.value().metadata.key == QStringLiteral("8A")
+                          && waiter.value().metadata.tagBpm == 128.0,
+                      "external Rekordbox metadata was not installed");
+        ok &= require(waiter.value().external->analysis.beats.size() == 2
+                          && waiter.value().external->analysis.beats.front().positionSec == 0.5
+                          && waiter.value().external->analysis.beatGridInfo.origin
+                              == TrackData::AnalysisOrigin::RekordboxDevice,
+                      "external exact beatgrid snapshot was not preserved");
+        cache.releaseTrack(waiter.value().cacheHandle);
+    }
+    {
         WaveformCache::Payload payload;
         payload.pointsPerSecond = 100;
         payload.totalExpected = 20;

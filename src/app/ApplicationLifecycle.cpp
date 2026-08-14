@@ -12,6 +12,7 @@
 #include "library/LibraryManager.h"
 #include "library/LibraryPreviewPlayer.h"
 #include "library/LibraryTableModel.h"
+#include "library/devices/DeviceLibraryManager.h"
 #include "link/LinkManager.h"
 #include "controllers/midi/MidiControllerManager.h"
 #include "controllers/midi/ParameterStore.h"
@@ -61,6 +62,7 @@ void clearQmlContextProperties(QQmlApplicationEngine& engine)
     engine.rootContext()->setContextProperty("libraryDb", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("libraryModel", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("libraryAnalyzer", static_cast<QObject*>(nullptr));
+    engine.rootContext()->setContextProperty("deviceLibraryManager", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("fxManager", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("linkManager", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("sysMonitor", static_cast<QObject*>(nullptr));
@@ -192,6 +194,7 @@ void shutdownApplication(ApplicationRuntime& runtime)
         // Consumers go away before the scheduler rejects new work and joins its
         // single general-purpose I/O thread.
         runtime.libraryCoverService.reset();
+        runtime.deviceLibraryManager.reset();
         runtime.libraryManager.reset();
         if (runtime.mediaIoScheduler) {
             runtime.mediaIoScheduler->requestStop();

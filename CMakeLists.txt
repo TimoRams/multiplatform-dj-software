@@ -726,6 +726,24 @@ target_link_libraries(BrockDJ_library_analysis_manager_tests PRIVATE Qt6::Core)
 target_compile_features(BrockDJ_library_analysis_manager_tests PRIVATE cxx_std_23)
 add_test(NAME library_analysis_manager COMMAND BrockDJ_library_analysis_manager_tests)
 
+add_executable(BrockDJ_rekordbox_read_only_tests
+    tests/library/rekordbox_read_only_tests.cpp
+    src/library/devices/DeviceLibraryManager.h
+    src/library/devices/DeviceLibraryManager.cpp
+    src/library/devices/rekordbox/RekordboxTypes.h
+    src/library/devices/rekordbox/RekordboxPdbReader.h
+    src/library/devices/rekordbox/RekordboxPdbReader.cpp
+    src/library/devices/rekordbox/RekordboxAnalysisReader.h
+    src/library/devices/rekordbox/RekordboxAnalysisReader.cpp
+    src/library/devices/rekordbox/RekordboxDeviceSource.h
+    src/library/devices/rekordbox/RekordboxDeviceSource.cpp)
+target_compile_definitions(BrockDJ_rekordbox_read_only_tests PRIVATE
+    SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(BrockDJ_rekordbox_read_only_tests PRIVATE src)
+target_link_libraries(BrockDJ_rekordbox_read_only_tests PRIVATE Qt6::Core)
+target_compile_features(BrockDJ_rekordbox_read_only_tests PRIVATE cxx_std_23)
+add_test(NAME rekordbox_read_only COMMAND BrockDJ_rekordbox_read_only_tests)
+
 add_executable(BrockDJ_dj_engine_api_contract_tests
     tests/deck/dj_engine_api_contract_tests.cpp)
 target_compile_definitions(BrockDJ_dj_engine_api_contract_tests PRIVATE

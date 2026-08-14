@@ -5,6 +5,7 @@
 #include "MetadataUtils.h"
 
 #include <QFileInfo>
+#include <QFile>
 #include <QImage>
 #include <QSemaphore>
 
@@ -99,8 +100,25 @@ std::uint64_t DeckTrackLoader::loadTrack(QString path,
     const auto generation = m_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
     {
         std::lock_guard lock(m_mutex);
-        m_pending = Request{std::move(path), generation, std::move(completion),
-                            std::move(renderChunk)};
+        m_pending = Request{std::move(path), std::nullopt, generation,
+                            std::move(completion), std::move(renderChunk)};
+        m_state.store(TrackLoadState::Queued, std::memory_order_release);
+    }
+    m_waveformSeekHintSec.store(0.0, std::memory_order_relaxed);
+    m_condition.notify_one();
+    return generation;
+}
+
+std::uint64_t DeckTrackLoader::loadExternalTrack(
+    QString path, ExternalTrackLoadSnapshot external,
+    CompletionCallback completion, RenderChunkCallback renderChunk)
+{
+    if (m_shuttingDown.load(std::memory_order_acquire)) return currentGeneration();
+    const auto generation = m_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
+    {
+        std::lock_guard lock(m_mutex);
+        m_pending = Request{std::move(path), std::move(external), generation,
+                            std::move(completion), std::move(renderChunk)};
         m_state.store(TrackLoadState::Queued, std::memory_order_release);
     }
     m_waveformSeekHintSec.store(0.0, std::memory_order_relaxed);
@@ -232,6 +250,7 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
 {
     TrackLoadResult result;
     result.generation = request.generation;
+    result.external = request.external;
     auto fail = [&result](TrackLoadError error, QString message) {
         result.error = error;
         result.errorMessage = std::move(message);
@@ -263,6 +282,18 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
         return fail(TrackLoadError::UnsupportedFormat, QStringLiteral("Unsupported or damaged audio file"));
 
     result.metadata = readMetadata(*reader, result.canonicalPath, file);
+    if (request.external) {
+        const auto& supplied = request.external->metadata;
+        if (!supplied.title.isEmpty()) result.metadata.title = supplied.title;
+        if (!supplied.artist.isEmpty()) result.metadata.artist = supplied.artist;
+        if (!supplied.album.isEmpty()) result.metadata.album = supplied.album;
+        if (!supplied.genre.isEmpty()) result.metadata.genre = supplied.genre;
+        if (!supplied.comment.isEmpty()) result.metadata.comment = supplied.comment;
+        if (!supplied.key.isEmpty()) result.metadata.key = supplied.key;
+        if (supplied.tagBpm > 0.0) result.metadata.tagBpm = supplied.tagBpm;
+        if (result.metadata.durationSec <= 0.0 && supplied.durationSec > 0.0)
+            result.metadata.durationSec = supplied.durationSec;
+    }
     if (!isCurrent(request.generation))
         return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
 
@@ -272,8 +303,16 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
     // hasCoverArt() was therefore false for every track, so neither the deck
     // nor the controller jog screens could show artwork. Decoding here keeps
     // it off the GUI thread, where this load already runs.
-    auto [coverBytes, coverFormat] =
-        CoverArtExtractor::extractCoverArt(result.canonicalPath);
+    QByteArray coverBytes;
+    if (request.external && !request.external->artworkPath.isEmpty()) {
+        QFile artwork(request.external->artworkPath);
+        if (artwork.open(QIODevice::ReadOnly))
+            coverBytes = artwork.readAll();
+    }
+    if (coverBytes.isEmpty()) {
+        auto extracted = CoverArtExtractor::extractCoverArt(result.canonicalPath);
+        coverBytes = std::move(extracted.first);
+    }
     if (!coverBytes.isEmpty()) {
         QImage cover;
         if (cover.loadFromData(coverBytes)) {

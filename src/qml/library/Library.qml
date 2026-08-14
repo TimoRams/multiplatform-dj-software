@@ -13,6 +13,7 @@ Rectangle {
     property string searchText:        ""
     property string currentPlaylistId: ""
     property string currentPlaylistName: ""
+    property bool usbPlaylistTreeExpanded: false
 
     // Playlist data (loaded from C++ on demand)
     property var allPlaylists:   []   // [{id, name, parentId, sortOrder, trackCount}, ...]
@@ -58,7 +59,7 @@ Rectangle {
     property string activeTrackId:       ""
     property string activeTrackFilePath: ""
     property int    activeTrackIndex:    -1
-    property string activeTrackSource:   ""   // "library" | "playlist"
+    property string activeTrackSource:   ""   // "library" | "playlist" | "usb"
 
     // ── Sidebar keyboard navigation map ─────────────────────────────────
     readonly property int sidebarTopNavCount: 5   // All Tracks + Favorites + History + Crate + Queue
@@ -186,7 +187,7 @@ Rectangle {
         return viewMode === "normal" ? rowHNormal : rowH
     }
 
-    function loadTrackToDeck(deckLetter, filePath) {
+    function loadTrackToDeck(deckLetter, filePath, trackId) {
         if (!filePath) return
         if (typeof libraryPreview !== "undefined" && libraryPreview)
             libraryPreview.stop()
@@ -198,6 +199,11 @@ Rectangle {
         closeAllSwipes()
         if (touchMode && window)
             window.activeMainTab = "performance"
+        if (trackId && trackId.indexOf("rekordbox:") === 0
+                && typeof deviceLibraryManager !== "undefined" && deviceLibraryManager) {
+            deviceLibraryManager.requestDeckLoad(trackId, deckLetter)
+            return
+        }
         Qt.callLater(function() { deck.loadTrack(filePath) })
     }
 
@@ -263,6 +269,15 @@ Rectangle {
         aioPreviewBrowseEntryByIndex(idx)
     }
 
+    function aioActivateBrowsePickerEntry(index) {
+        if (aioBrowseScreen === "source") {
+            aioDrillBrowseEntryByIndex(index)
+            return
+        }
+        aioPreviewBrowseEntryByIndex(index)
+        aioFocusZone = "picker"
+    }
+
     function aioBrowseCursorRight() {
         forceActiveFocus()
         if (aioFocusZone === "nav") {
@@ -277,6 +292,10 @@ Rectangle {
             return
         }
         if (aioFocusZone === "picker") {
+            if (aioBrowseScreen === "source") {
+                aioDrillBrowseEntryByIndex(aioBrowseFocusIndex)
+                return
+            }
             aioFocusZone = "tracks"
             ensureActiveTrackForCurrentTab()
             return
@@ -310,12 +329,16 @@ Rectangle {
             return
         }
         if (aioFocusZone === "picker") {
+            if (aioBrowseScreen === "source") {
+                aioDrillBrowseEntryByIndex(aioBrowseFocusIndex)
+                return
+            }
             aioFocusZone = "tracks"
             ensureActiveTrackForCurrentTab()
             return
         }
         if (aioFocusZone === "tracks")
-            loadTrackToDeck("A", getCursorFilePath())
+            loadTrackToDeck("A", getCursorFilePath(), getCursorTrackId())
     }
 
     function aioMoveBrowseVertical(rawDelta) {
@@ -1280,6 +1303,14 @@ Rectangle {
             _applyActiveTrack(browserCursorIndex, id, fp, "library")
             return
         }
+        if (activeTab === "usb") {
+            var usbTracks = deviceLibraryManager ? deviceLibraryManager.currentTracks : []
+            var usbTrack = usbTracks[browserCursorIndex]
+            if (usbTrack)
+                _applyActiveTrack(browserCursorIndex, usbTrack.trackId || "",
+                                  usbTrack.filePath || "", "usb")
+            return
+        }
         // Covers playlist + all varlist tabs
         var t = currentListTracks[browserCursorIndex]
         if (t) _applyActiveTrack(browserCursorIndex, t.trackId || "", t.filePath || "", activeTab)
@@ -1289,6 +1320,7 @@ Rectangle {
 
     function ensureActiveTrackForCurrentTab() {
         var isNavList = activeTab === "library" || activeTab === "playlist"
+                     || activeTab === "usb"
                      || _varlistTabs.indexOf(activeTab) >= 0
         if (!isNavList) {
             browserCursorActive = false
@@ -1298,6 +1330,7 @@ Rectangle {
 
         var list = activeTab === "playlist" ? plTrackList
                  : activeTab === "library"  ? libTrackList
+                 : activeTab === "usb"      ? usbTrackList
                  : varlistTrackList
         var count = list ? list.count : 0
         if (count === 0) {
@@ -1310,6 +1343,14 @@ Rectangle {
         if (activeTrackId) {
             if (activeTab === "library") {
                 idx = libraryModel ? libraryModel.indexOfTrackId(activeTrackId) : -1
+            } else if (activeTab === "usb") {
+                var usbRows = deviceLibraryManager ? deviceLibraryManager.currentTracks : []
+                for (var usbIndex = 0; usbIndex < usbRows.length; ++usbIndex) {
+                    if (usbRows[usbIndex].trackId === activeTrackId) {
+                        idx = usbIndex
+                        break
+                    }
+                }
             } else {
                 var arr = (activeTab === "playlist") ? sortedPlaylistTracks : currentListTracks
                 for (var i = 0; i < arr.length; i++) {
@@ -1348,10 +1389,12 @@ Rectangle {
 
     function moveCursor(rawDelta) {
         var isNavList = activeTab === "library" || activeTab === "playlist"
+                     || activeTab === "usb"
                      || _varlistTabs.indexOf(activeTab) >= 0
         if (!isNavList) return
         var list = activeTab === "playlist" ? plTrackList
                  : activeTab === "library"  ? libTrackList
+                 : activeTab === "usb"      ? usbTrackList
                  : varlistTrackList
         var count = list.count
         if (count === 0) { browserCursorActive = false; return }
@@ -1377,6 +1420,12 @@ Rectangle {
         if (!browserCursorActive || browserCursorIndex < 0) return ""
         if (activeTrackIndex !== browserCursorIndex) syncActiveTrackFromCursor()
         return activeTrackFilePath || ""
+    }
+
+    function getCursorTrackId() {
+        if (!browserCursorActive || browserCursorIndex < 0) return ""
+        if (activeTrackIndex !== browserCursorIndex) syncActiveTrackFromCursor()
+        return activeTrackId || ""
     }
 
     function selectNextPlaylist(direction) {
@@ -1540,6 +1589,22 @@ Rectangle {
     Connections { target: deckC; function onTrackMetadataChanged() { libraryRoot.refreshReferenceKeys() } }
     Connections { target: deckD; function onTrackMetadataChanged() { libraryRoot.refreshReferenceKeys() } }
 
+    Connections {
+        target: typeof deviceLibraryManager !== "undefined" ? deviceLibraryManager : null
+        function onDeckLoadReady(deckLetter, request) {
+            var deck = deckLetter === "A" ? deckA
+                     : deckLetter === "B" ? deckB
+                     : deckLetter === "C" ? deckC
+                     : deckLetter === "D" ? deckD : null
+            if (deck)
+                deck.loadExternalTrack(request)
+        }
+        function onCurrentTracksChanged() {
+            if (libraryRoot.activeTab === "usb")
+                libraryRoot.ensureActiveTrackForCurrentTab()
+        }
+    }
+
     onViewModeChanged: {
         if (libraryDb && (viewMode === "compact" || viewMode === "normal"))
             libraryDb.setSetting("library_view_mode", viewMode)
@@ -1625,13 +1690,13 @@ Rectangle {
                     }
                 }
             } else if (id === "library_load_deck_a") {
-                if (value > 0) libraryRoot.loadTrackToDeck("A", libraryRoot.getCursorFilePath())
+                if (value > 0) libraryRoot.loadTrackToDeck("A", libraryRoot.getCursorFilePath(), libraryRoot.getCursorTrackId())
             } else if (id === "library_load_deck_b") {
-                if (value > 0) libraryRoot.loadTrackToDeck("B", libraryRoot.getCursorFilePath())
+                if (value > 0) libraryRoot.loadTrackToDeck("B", libraryRoot.getCursorFilePath(), libraryRoot.getCursorTrackId())
             } else if (id === "library_load_deck_c") {
-                if (value > 0) libraryRoot.loadTrackToDeck("C", libraryRoot.getCursorFilePath())
+                if (value > 0) libraryRoot.loadTrackToDeck("C", libraryRoot.getCursorFilePath(), libraryRoot.getCursorTrackId())
             } else if (id === "library_load_deck_d") {
-                if (value > 0) libraryRoot.loadTrackToDeck("D", libraryRoot.getCursorFilePath())
+                if (value > 0) libraryRoot.loadTrackToDeck("D", libraryRoot.getCursorFilePath(), libraryRoot.getCursorTrackId())
             } else if (id === "library_playlist_next") {
                 if (value > 0) libraryRoot.selectNextPlaylist(1)
             } else if (id === "library_playlist_prev") {
@@ -1691,7 +1756,8 @@ Rectangle {
                 if (aioFocusZone === "tracks" && (event.modifiers & (Qt.ShiftModifier | Qt.ControlModifier | Qt.AltModifier))) {
                     loadTrackToDeck(event.modifiers & Qt.ShiftModifier ? "B"
                         : (event.modifiers & Qt.ControlModifier ? "C"
-                        : (event.modifiers & Qt.AltModifier ? "D" : "A")), getCursorFilePath())
+                        : (event.modifiers & Qt.AltModifier ? "D" : "A")),
+                        getCursorFilePath(), getCursorTrackId())
                 } else {
                     aioBrowseCursorActivate()
                 }
@@ -1718,7 +1784,8 @@ Rectangle {
             } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                 loadTrackToDeck(event.modifiers & Qt.ShiftModifier ? "B"
                     : (event.modifiers & Qt.ControlModifier ? "C"
-                    : (event.modifiers & Qt.AltModifier ? "D" : "A")), getCursorFilePath())
+                    : (event.modifiers & Qt.AltModifier ? "D" : "A")),
+                    getCursorFilePath(), getCursorTrackId())
                 event.accepted = true
             } else if (event.key === Qt.Key_P) {
                 togglePreview(getCursorFilePath()); event.accepted = true
@@ -1909,7 +1976,9 @@ Rectangle {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: libraryRoot.loadTrackToDeck(modelData, libraryRoot.activeTrackFilePath)
+                        onClicked: libraryRoot.loadTrackToDeck(modelData,
+                                                               libraryRoot.activeTrackFilePath,
+                                                               libraryRoot.activeTrackId)
                     }
                 }
             }
@@ -2240,10 +2309,7 @@ Rectangle {
                 MouseArea {
                     id: rowMa
                     anchors.fill: parent
-                    onClicked: {
-                        libraryRoot.aioPreviewBrowseEntryByIndex(index)
-                        libraryRoot.aioFocusZone = "picker"
-                    }
+                    onClicked: libraryRoot.aioActivateBrowsePickerEntry(index)
                 }
             }
         }
@@ -2296,12 +2362,15 @@ Rectangle {
         property string rowTrackId: ""
         property string rowTitle: ""
         property string rowArtist: ""
+        property string rowAlbum: ""
+        property string rowGenre: ""
         property int    rowDurationSec: 0
         property real   rowBpm: 0
         property string rowKey: ""
         property int    rowBitrateKbps: 0
         property bool   rowIsAnalyzed: false
         property string rowFilePath: ""
+        property string rowArtworkPath: ""
         property string rowColor:   ""
         property int    rowRating:  0
         property bool   rowIsHistory: false
@@ -2335,6 +2404,11 @@ Rectangle {
         property string rowCoverUrl: ""
 
         function refreshCoverUrl() {
+            if (tr.rowArtworkPath) {
+                tr.rowCoverUrl = "file://" + encodeURI(tr.rowArtworkPath)
+                    .replace(/#/g, "%23").replace(/\?/g, "%3F")
+                return
+            }
             if (typeof libraryCover === "undefined" || !libraryCover || !tr.rowFilePath) {
                 tr.rowCoverUrl = ""
                 return
@@ -2387,16 +2461,17 @@ Rectangle {
             }
         }
         Component.onCompleted: {
-            if (typeof libraryCover !== "undefined" && libraryCover && tr.rowFilePath) {
+            if (!tr.rowArtworkPath && typeof libraryCover !== "undefined" && libraryCover && tr.rowFilePath) {
                 libraryCover.preload(tr.rowFilePath, tr.rowTrackId)
                 tr.refreshCoverUrl()
             }
         }
         onRowFilePathChanged: {
             tr.rowCoverUrl = ""
-            if (typeof libraryCover !== "undefined" && libraryCover && tr.rowFilePath)
+            if (!tr.rowArtworkPath && typeof libraryCover !== "undefined" && libraryCover && tr.rowFilePath)
                 libraryCover.preload(tr.rowFilePath, tr.rowTrackId)
         }
+        onRowArtworkPathChanged: tr.refreshCoverUrl()
         onRowTrackIdChanged: tr.refreshCoverUrl()
 
         Row {
@@ -2435,7 +2510,7 @@ Rectangle {
                                 var path = tr.rowFilePath
                                 tr.closeSwipe()
                                 mouse.accepted = true
-                                libraryRoot.loadTrackToDeck(deck, path)
+                                libraryRoot.loadTrackToDeck(deck, path, tr.rowTrackId)
                             }
                         }
                     }
@@ -2524,7 +2599,9 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 text: tr.rowIsHistory
                       ? ((tr.rowArtist || "—") + (tr.rowPlayedAt > 0 ? "  ·  " + libraryRoot.formatHistoryDate(tr.rowPlayedAt) : ""))
-                      : (tr.rowArtist || "—")
+                      : ((tr.rowArtist || "—")
+                         + (tr.rowAlbum ? "  ·  " + tr.rowAlbum : "")
+                         + (tr.rowGenre ? "  ·  " + tr.rowGenre : ""))
                 color: libraryRoot.textSecond
                 font.pixelSize: window.sp(11)
                 elide: Text.ElideRight
@@ -2653,7 +2730,9 @@ Rectangle {
                 }
                 Text {
                     width: parent.width
-                    text: tr.rowArtist || "—"
+                    text: (tr.rowArtist || "—")
+                          + (tr.rowAlbum ? "  ·  " + tr.rowAlbum : "")
+                          + (tr.rowGenre ? "  ·  " + tr.rowGenre : "")
                     color: libraryRoot.textSecond
                     font.pixelSize: window.sp(10)
                     elide: Text.ElideRight
@@ -2930,11 +3009,17 @@ Rectangle {
                     if (tr.touchMode && !tr.swipeOpen) {
                         var now = Date.now()
                         if (now - tr.lastTapMs < 380)
-                            libraryRoot.loadTrackToDeck("A", tr.rowFilePath)
+                            libraryRoot.loadTrackToDeck("A", tr.rowFilePath, tr.rowTrackId)
                         tr.lastTapMs = now
                     }
                     libraryRoot.focusedPanel = "tracks"
                     libraryRoot.forceActiveFocus()
+                }
+            }
+            onDoubleClicked: (mouse) => {
+                if (mouse.button === Qt.LeftButton) {
+                    libraryRoot.loadTrackToDeck("A", tr.rowFilePath, tr.rowTrackId)
+                    mouse.accepted = true
                 }
             }
         }
@@ -3631,7 +3716,9 @@ Rectangle {
                         id: navUsb
                         tabKey: "usb"
                         btnIcon: "⊕"
-                        btnLabel: "USB"
+                        btnLabel: "Devices"
+                        badgeCount: typeof deviceLibraryManager !== "undefined" && deviceLibraryManager
+                                    ? deviceLibraryManager.devices.length : -1
                         cursorIndex: libraryRoot.sidebarTopNavCount + libraryRoot.sidebarSmartCollCount + libraryRoot.visiblePlaylists.length + 2
                     }
 
@@ -5217,12 +5304,276 @@ Rectangle {
                 }
 
                 // ════════════════════════════════════════════════
-                // D) PLACEHOLDER (Streaming / USB)
+                // D) DEVICE LIBRARY (read-only Rekordbox / generic USB)
+                // ════════════════════════════════════════════════
+                Rectangle {
+                    id: usbDeviceView
+                    anchors.fill: parent
+                    color: libraryRoot.bgBase
+                    visible: libraryRoot.activeTab === "usb"
+
+                    onVisibleChanged: {
+                        if (visible && deviceLibraryManager)
+                            deviceLibraryManager.setFilterText(libraryRoot.searchText)
+                    }
+                    Connections {
+                        target: libraryRoot
+                        function onSearchTextChanged() {
+                            if (usbDeviceView.visible && deviceLibraryManager)
+                                deviceLibraryManager.setFilterText(libraryRoot.searchText)
+                        }
+                    }
+
+                    RowLayout {
+                        anchors.fill: parent
+                        spacing: 0
+
+                        Rectangle {
+                            Layout.preferredWidth: 255
+                            Layout.fillHeight: true
+                            color: libraryRoot.bgSidebar
+                            border.color: libraryRoot.borderMain
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                spacing: 0
+
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: libraryRoot.hdrH
+                                    color: libraryRoot.bgHeader
+                                    Text {
+                                        anchors.left: parent.left; anchors.leftMargin: 12
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: "DEVICES"
+                                        color: libraryRoot.textSecond
+                                        font.pixelSize: window.sp(10); font.bold: true
+                                    }
+                                    MouseArea {
+                                        anchors.right: parent.right; anchors.rightMargin: 5
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: 30; height: 24; cursorShape: Qt.PointingHandCursor
+                                        onClicked: if (deviceLibraryManager) deviceLibraryManager.rescanNow()
+                                        Text { anchors.centerIn: parent; text: "↻"; color: libraryRoot.textMeta; font.pixelSize: window.sp(13) }
+                                    }
+                                }
+
+                                ListView {
+                                    id: usbDevices
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: Math.min(180, Math.max(54, count * 54))
+                                    clip: true
+                                    model: deviceLibraryManager ? deviceLibraryManager.devices : []
+                                    delegate: Rectangle {
+                                        required property var modelData
+                                        required property int index
+                                        width: ListView.view.width; height: 54
+                                        color: deviceLibraryManager
+                                               && deviceLibraryManager.selectedDeviceId === modelData.id
+                                               ? libraryRoot.sidebarSel
+                                               : (usbDeviceMouse.containsMouse ? libraryRoot.bgSidebarHv : "transparent")
+                                        Rectangle {
+                                            anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+                                            width: 3; color: libraryRoot.accentBlue
+                                            visible: deviceLibraryManager
+                                                     && deviceLibraryManager.selectedDeviceId === modelData.id
+                                        }
+                                        Column {
+                                            anchors.left: parent.left; anchors.leftMargin: 13
+                                            anchors.right: parent.right; anchors.rightMargin: 8
+                                            anchors.verticalCenter: parent.verticalCenter; spacing: 3
+                                            Text { text: modelData.name; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); elide: Text.ElideRight; width: parent.width }
+                                            Row {
+                                                spacing: 7
+                                                Rectangle {
+                                                    width: usbBadge.implicitWidth + 10; height: 15; radius: 3
+                                                    color: modelData.badge === "REKORDBOX" ? libraryRoot.bgRowActive : libraryRoot.bgRowEven
+                                                    border.color: modelData.badge === "REKORDBOX" ? libraryRoot.accentBlue : libraryRoot.borderHigh
+                                                    Text { id: usbBadge; anchors.centerIn: parent; text: modelData.badge; color: modelData.badge === "REKORDBOX" ? libraryRoot.accentBlueLt : libraryRoot.textMeta; font.pixelSize: window.sp(8); font.bold: true }
+                                                }
+                                                Text { text: modelData.scanning ? "Scanning library…" : (modelData.trackCount > 0 ? modelData.trackCount + " tracks" : modelData.status); color: libraryRoot.textDim; font.pixelSize: window.sp(8); elide: Text.ElideRight; width: 112 }
+                                            }
+                                        }
+                                        MouseArea {
+                                            id: usbDeviceMouse
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: {
+                                                libraryRoot.usbPlaylistTreeExpanded = false
+                                                deviceLibraryManager.chooseDevice(modelData.id)
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: libraryRoot.borderMain }
+
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 38
+                                    visible: deviceLibraryManager && deviceLibraryManager.selectedDeviceId !== ""
+                                    color: deviceLibraryManager && deviceLibraryManager.selectedViewName === "All Tracks"
+                                           ? libraryRoot.sidebarSel
+                                           : (usbAllTracksMouse.containsMouse ? libraryRoot.bgSidebarHv : "transparent")
+                                    Rectangle {
+                                        anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+                                        width: 3; color: libraryRoot.accentBlue
+                                        visible: deviceLibraryManager && deviceLibraryManager.selectedViewName === "All Tracks"
+                                    }
+                                    Text {
+                                        anchors.left: parent.left; anchors.leftMargin: 16
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: "♫  All Tracks"
+                                        color: libraryRoot.textSecond
+                                        font.pixelSize: window.sp(10)
+                                        font.bold: true
+                                    }
+                                    MouseArea {
+                                        id: usbAllTracksMouse
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            libraryRoot.usbPlaylistTreeExpanded = false
+                                            deviceLibraryManager.chooseTracks()
+                                        }
+                                    }
+                                }
+
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 38
+                                    visible: deviceLibraryManager && deviceLibraryManager.selectedDeviceId !== ""
+                                    color: deviceLibraryManager && deviceLibraryManager.selectedViewName === "Playlists"
+                                           ? libraryRoot.sidebarSel
+                                           : (usbPlaylistRootMouse.containsMouse ? libraryRoot.bgSidebarHv : "transparent")
+                                    Rectangle {
+                                        anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+                                        width: 3; color: libraryRoot.accentBlue
+                                        visible: deviceLibraryManager && deviceLibraryManager.selectedViewName === "Playlists"
+                                    }
+                                    Text {
+                                        anchors.left: parent.left; anchors.leftMargin: 16
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: (libraryRoot.usbPlaylistTreeExpanded ? "▾  " : "▸  ") + "Playlists"
+                                        color: libraryRoot.textSecond
+                                        font.pixelSize: window.sp(10)
+                                        font.bold: true
+                                    }
+                                    MouseArea {
+                                        id: usbPlaylistRootMouse
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            libraryRoot.usbPlaylistTreeExpanded = !libraryRoot.usbPlaylistTreeExpanded
+                                            if (libraryRoot.usbPlaylistTreeExpanded)
+                                                deviceLibraryManager.choosePlaylists()
+                                            else
+                                                deviceLibraryManager.chooseDevice(deviceLibraryManager.selectedDeviceId)
+                                        }
+                                    }
+                                }
+
+                                ListView {
+                                    id: usbPlaylists
+                                    Layout.fillWidth: true; Layout.fillHeight: true
+                                    visible: libraryRoot.usbPlaylistTreeExpanded
+                                    clip: true
+                                    model: deviceLibraryManager ? deviceLibraryManager.currentPlaylists : []
+                                    delegate: Rectangle {
+                                        required property var modelData
+                                        width: ListView.view.width; height: 34
+                                        color: !modelData.folder && usbPlaylistMouse.containsMouse ? libraryRoot.bgRowHover : "transparent"
+                                        Text {
+                                            anchors.left: parent.left; anchors.leftMargin: 12 + modelData.depth * 14
+                                            anchors.right: usbPlaylistCount.left; anchors.verticalCenter: parent.verticalCenter
+                                            text: (modelData.folder ? "▾  " : "♫  ") + modelData.name
+                                            color: modelData.folder ? libraryRoot.textNav : libraryRoot.textSecond
+                                            font.pixelSize: window.sp(10); font.bold: modelData.folder; elide: Text.ElideRight
+                                        }
+                                        Text { id: usbPlaylistCount; anchors.right: parent.right; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter; text: modelData.folder ? "" : modelData.trackCount; color: libraryRoot.textDim; font.pixelSize: window.sp(9) }
+                                        MouseArea { id: usbPlaylistMouse; anchors.fill: parent; enabled: !modelData.folder; hoverEnabled: true; cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: deviceLibraryManager.choosePlaylist(modelData.id) }
+                                    }
+                                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                                }
+
+                                Item {
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    visible: !libraryRoot.usbPlaylistTreeExpanded
+                                }
+                            }
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true; Layout.fillHeight: true; spacing: 0
+                            Rectangle {
+                                Layout.fillWidth: true; Layout.preferredHeight: libraryRoot.hdrH
+                                color: libraryRoot.bgHeader
+                                Text { anchors.left: parent.left; anchors.leftMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: deviceLibraryManager ? deviceLibraryManager.selectedViewName : "Devices"; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); font.bold: true }
+                                Text { anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: deviceLibraryManager ? deviceLibraryManager.statusMessage : ""; color: libraryRoot.textDim; font.pixelSize: window.sp(9) }
+                            }
+                            Rectangle {
+                                Layout.fillWidth: true; Layout.preferredHeight: 30
+                                color: libraryRoot.bgHeader
+                                Row {
+                                    anchors.left: parent.left; anchors.leftMargin: 10; anchors.verticalCenter: parent.verticalCenter; spacing: 5
+                                    Text { text: "SORT"; color: libraryRoot.textDim; font.pixelSize: window.sp(9); font.bold: true }
+                                    SortPill { label: "Titel"; ascending: deviceLibraryManager ? deviceLibraryManager.sortAscending : true; isActive: deviceLibraryManager && deviceLibraryManager.sortField === "title"; onTapped: deviceLibraryManager.toggleSort("title") }
+                                    SortPill { label: "Künstler"; ascending: deviceLibraryManager ? deviceLibraryManager.sortAscending : true; isActive: deviceLibraryManager && deviceLibraryManager.sortField === "artist"; onTapped: deviceLibraryManager.toggleSort("artist") }
+                                    SortPill { label: "Album"; ascending: deviceLibraryManager ? deviceLibraryManager.sortAscending : true; isActive: deviceLibraryManager && deviceLibraryManager.sortField === "album"; onTapped: deviceLibraryManager.toggleSort("album") }
+                                    SortPill { label: "Genre"; ascending: deviceLibraryManager ? deviceLibraryManager.sortAscending : true; isActive: deviceLibraryManager && deviceLibraryManager.sortField === "genre"; onTapped: deviceLibraryManager.toggleSort("genre") }
+                                    SortPill { label: "BPM"; ascending: deviceLibraryManager ? deviceLibraryManager.sortAscending : true; isActive: deviceLibraryManager && deviceLibraryManager.sortField === "bpm"; onTapped: deviceLibraryManager.toggleSort("bpm") }
+                                    SortPill { label: "Key"; ascending: deviceLibraryManager ? deviceLibraryManager.sortAscending : true; isActive: deviceLibraryManager && deviceLibraryManager.sortField === "key"; onTapped: deviceLibraryManager.toggleSort("key") }
+                                }
+                            }
+                            ListView {
+                                id: usbTrackList
+                                Layout.fillWidth: true; Layout.fillHeight: true
+                                clip: true
+                                model: deviceLibraryManager ? deviceLibraryManager.currentTracks : []
+                                delegate: TrackRow {
+                                    required property var modelData
+                                    required property int index
+                                    rowIndex: index
+                                    rowTrackId: modelData.trackId || ""
+                                    rowTitle: modelData.title || ""
+                                    rowArtist: modelData.artist || ""
+                                    rowAlbum: modelData.album || ""
+                                    rowGenre: modelData.genre || ""
+                                    rowDurationSec: Math.round(modelData.durationSec || 0)
+                                    rowBpm: modelData.bpm || 0
+                                    rowKey: modelData.key || ""
+                                    rowBitrateKbps: modelData.bitrateKbps || 0
+                                    rowIsAnalyzed: modelData.isAnalyzed || false
+                                    rowFilePath: modelData.filePath || ""
+                                    rowArtworkPath: modelData.artworkPath || ""
+                                    rowColor: modelData.trackColor || ""
+                                    rowRating: modelData.rating || 0
+                                    rowSourceTab: "usb"
+                                    width: ListView.view.width; viewWidth: ListView.view.width
+                                }
+                                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                                Column {
+                                    anchors.centerIn: parent; spacing: 8
+                                    visible: usbTrackList.count === 0
+                                    Text { anchors.horizontalCenter: parent.horizontalCenter; text: deviceLibraryManager && deviceLibraryManager.busy ? "Scanning library…" : (deviceLibraryManager ? deviceLibraryManager.statusMessage : "No device"); color: libraryRoot.textDim; font.pixelSize: window.sp(12) }
+                                    BusyIndicator { anchors.horizontalCenter: parent.horizontalCenter; running: deviceLibraryManager ? deviceLibraryManager.busy : false; visible: running; width: 28; height: 28 }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ════════════════════════════════════════════════
+                // E) PLACEHOLDER (Streaming)
                 // ════════════════════════════════════════════════
                 Rectangle {
                     anchors.fill: parent; color: libraryRoot.bgBase
                     visible: libraryRoot.activeTab !== "files" && libraryRoot.activeTab !== "library"
-                             && libraryRoot.activeTab !== "playlist"
+                             && libraryRoot.activeTab !== "playlist" && libraryRoot.activeTab !== "usb"
                              && libraryRoot._varlistTabs.indexOf(libraryRoot.activeTab) < 0
 
                     Column {
@@ -5246,6 +5597,7 @@ Rectangle {
     // Track right-click menu
     Menu {
         id: trackContextMenu
+        readonly property bool externalTrack: libraryRoot.ctxTrackId.indexOf("rekordbox:") === 0
         background: Rectangle { implicitWidth: 260; color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
 
         MenuItem {
@@ -5261,31 +5613,32 @@ Rectangle {
             text: "Load to Deck A"
             contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
             background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
-            onTriggered: { libraryRoot.loadTrackToDeck("A", libraryRoot.ctxFilePath) }
+            onTriggered: { libraryRoot.loadTrackToDeck("A", libraryRoot.ctxFilePath, libraryRoot.ctxTrackId) }
         }
         MenuItem {
             text: "Load to Deck B"
             contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
             background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
-            onTriggered: { libraryRoot.loadTrackToDeck("B", libraryRoot.ctxFilePath) }
+            onTriggered: { libraryRoot.loadTrackToDeck("B", libraryRoot.ctxFilePath, libraryRoot.ctxTrackId) }
         }
         MenuItem {
             text: "Load to Deck C"
             contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
             background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
-            onTriggered: { libraryRoot.loadTrackToDeck("C", libraryRoot.ctxFilePath) }
+            onTriggered: { libraryRoot.loadTrackToDeck("C", libraryRoot.ctxFilePath, libraryRoot.ctxTrackId) }
         }
         MenuItem {
             text: "Load to Deck D"
             contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
             background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
-            onTriggered: { libraryRoot.loadTrackToDeck("D", libraryRoot.ctxFilePath) }
+            onTriggered: { libraryRoot.loadTrackToDeck("D", libraryRoot.ctxFilePath, libraryRoot.ctxTrackId) }
         }
         MenuSeparator {
             contentItem: Rectangle { height: 1; color: "#2a2a2a" }
         }
         MenuItem {
             text: "Track analysieren / erneut analysieren"
+            visible: !trackContextMenu.externalTrack
             contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
             background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
             onTriggered: {
@@ -5301,6 +5654,7 @@ Rectangle {
         Menu {
             id: addToPlaylistMenu
             title: "Zu Playlist hinzufügen"
+            visible: !trackContextMenu.externalTrack
             background: Rectangle { implicitWidth: 220; color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
 
             // Show ALL playlists (top-level and sub-crates) with depth indent.
@@ -5346,6 +5700,7 @@ Rectangle {
         }
         MenuItem {
             text: "Notes bearbeiten…"
+            visible: !trackContextMenu.externalTrack
             contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
             background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
             onTriggered: {
@@ -5359,6 +5714,7 @@ Rectangle {
         // ── Rating submenu ──────────────────────────────────────────────
         Menu {
             title: "Bewertung setzen"
+            visible: !trackContextMenu.externalTrack
             background: Rectangle { implicitWidth: 160; color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
             contentItem: Text { leftPadding: 12; text: "Bewertung setzen ★"; color: "#dcdcdc"; font.pixelSize: window.sp(11) }
 
@@ -5387,6 +5743,7 @@ Rectangle {
         // ── Color picker submenu ────────────────────────────────────────
         Menu {
             title: "Farbe setzen"
+            visible: !trackContextMenu.externalTrack
             background: Rectangle { implicitWidth: 160; color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
             contentItem: Text { leftPadding: 12; text: "Farbe setzen ●"; color: "#dcdcdc"; font.pixelSize: window.sp(11) }
 
@@ -5419,6 +5776,7 @@ Rectangle {
         // ── Favorites / Crate / Queue (tab-sensitive) ───────────────────
         MenuItem {
             id: ctxFavoriteItem
+            visible: !trackContextMenu.externalTrack
             readonly property bool isFav: libraryDb ? libraryDb.isFavorite(libraryRoot.ctxTrackId) : false
             text: isFav ? "★ Aus Favoriten entfernen" : "★ Zu Favoriten"
             contentItem: Text { text: parent.text; color: "#e8b84b"; font.pixelSize: window.sp(11); leftPadding: 12 }
@@ -5433,6 +5791,7 @@ Rectangle {
             }
         }
         MenuItem {
+            visible: !trackContextMenu.externalTrack
             text: libraryRoot.activeTab === "crate" ? "⊞ Aus Crate entfernen" : "⊞ Zu Prepare Crate"
             contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
             background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
@@ -5446,6 +5805,7 @@ Rectangle {
             }
         }
         MenuItem {
+            visible: !trackContextMenu.externalTrack
             text: libraryRoot.activeTab === "queue" ? "► Aus Queue entfernen" : "► In Queue"
             contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
             background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
@@ -5461,6 +5821,7 @@ Rectangle {
         MenuSeparator { contentItem: Rectangle { height: 1; color: "#2a2a2a" } }
         MenuItem {
             text: "Remove from Library"
+            visible: !trackContextMenu.externalTrack
             contentItem: Text { text: parent.text; color: "#e06060"; font.pixelSize: window.sp(11); leftPadding: 12 }
             background: Rectangle { color: parent.highlighted ? "#3a1a1a" : "transparent" }
             onTriggered: {
