@@ -5,6 +5,7 @@ import DJSoftware
 
 Item {
     id: root
+    clip: true
     property var deckAEngine: null
     property var deckBEngine: null
     property var fx: null
@@ -15,6 +16,8 @@ Item {
 
     readonly property real panelWidth: Math.min(230, Math.max(176, width * 0.155))
     readonly property real handleWidth: 22
+    property real leftPanelReveal: leftPanel === "closed" ? 0.0 : 1.0
+    property real rightPanelReveal: rightPanelOpen ? 1.0 : 0.0
     readonly property var selectedEngine: selectedDeck === "A" ? deckAEngine : deckBEngine
     readonly property real renderDpr: {
         var value = Screen.devicePixelRatio
@@ -29,6 +32,13 @@ Item {
     function toggleDeckPanel() { leftPanel = leftPanel === "deck" ? "closed" : "deck" }
     function openGrid() { leftPanel = "grid" }
     function closeLeftPanel() { leftPanel = "closed" }
+
+    Behavior on leftPanelReveal {
+        NumberAnimation { duration: 190; easing.type: Easing.OutCubic }
+    }
+    Behavior on rightPanelReveal {
+        NumberAnimation { duration: 190; easing.type: Easing.OutCubic }
+    }
 
     Rectangle { anchors.fill: parent; color: "#181B1E" }
 
@@ -96,9 +106,9 @@ Item {
         id: leftHost
         width: root.panelWidth
         anchors.top: parent.top; anchors.bottom: parent.bottom
-        x: root.leftPanel === "closed" ? -width : 0
+        x: -width * (1.0 - root.leftPanelReveal)
+        visible: root.leftPanelReveal > 0.001
         z: 30
-        Behavior on x { NumberAnimation { duration: 190; easing.type: Easing.OutCubic } }
 
         PerformanceBeatgridPanel {
             anchors.fill: parent
@@ -146,9 +156,9 @@ Item {
         id: rightHost
         width: root.panelWidth
         anchors.top: parent.top; anchors.bottom: parent.bottom
-        x: root.rightPanelOpen ? root.width - width : root.width
+        x: root.width - width * root.rightPanelReveal
+        visible: root.rightPanelReveal > 0.001
         z: 30
-        Behavior on x { NumberAnimation { duration: 190; easing.type: Easing.OutCubic } }
         PerformanceBeatFxPanel { anchors.fill: parent; fx: root.fx; onCloseRequested: root.rightPanelOpen = false }
     }
 

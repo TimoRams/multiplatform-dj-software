@@ -30,7 +30,8 @@ public:
                      int samples) noexcept;
     void finalize(const AudioParameters& parameters,
                   juce::AudioBuffer<float>& master,
-                  int samples) noexcept;
+                  int samples,
+                  juce::AudioBuffer<float>* preMasterGainTap = nullptr) noexcept;
 
     [[nodiscard]] const MasterMeterSnapshot& meter() const noexcept { return m_meter; }
     [[nodiscard]] int limiterLatencySamples() const noexcept

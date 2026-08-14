@@ -146,6 +146,7 @@ private:
 
     std::array<juce::AudioBuffer<float>, kMaximumDecks> m_deckBuffers;
     juce::AudioBuffer<float> m_masterBuf;
+    juce::AudioBuffer<float> m_masterCueTap;
     juce::AudioBuffer<float> m_headphoneBuf;
     juce::AudioBuffer<float> m_previewScratch;
     MasterMixer m_masterMixer;

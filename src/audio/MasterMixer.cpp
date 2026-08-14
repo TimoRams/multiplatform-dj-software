@@ -87,7 +87,8 @@ void MasterMixer::mixPrograms(
 
 void MasterMixer::finalize(const AudioParameters& parameters,
                            juce::AudioBuffer<float>& master,
-    int samples) noexcept
+                           int samples,
+                           juce::AudioBuffer<float>* preMasterGainTap) noexcept
 {
     const auto requestedFx = static_cast<EffectType>(parameters.masterFxType);
     if (m_masterFx.getRequestedEffectType() != requestedFx)
@@ -96,6 +97,17 @@ void MasterMixer::finalize(const AudioParameters& parameters,
     m_masterFx.setExternalDelayTime(parameters.masterFxExternalDelaySeconds);
     m_masterFx.setPrimaryParam(parameters.masterFxPrimaryParameter);
     m_masterFx.process(master, 0, samples);
+
+    // MASTER CUE monitors the canonical mix (including Master FX), but it is
+    // electrically upstream of the hardware MASTER LEVEL control. Preserve
+    // that exact tap before applying output gain and the master limiter.
+    if (preMasterGainTap
+        && preMasterGainTap != &master
+        && preMasterGainTap->getNumChannels() >= 2
+        && preMasterGainTap->getNumSamples() >= samples) {
+        preMasterGainTap->copyFrom(0, 0, master, 0, 0, samples);
+        preMasterGainTap->copyFrom(1, 0, master, 1, 0, samples);
+    }
 
     const float targetGain = std::clamp(parameters.masterGain, 0.0f, 1.5f);
     const float gainStep = 1.0f / static_cast<float>(

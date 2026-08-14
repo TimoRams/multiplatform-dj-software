@@ -196,6 +196,7 @@ void AudioEngine::prepareToPlay(int, double sampleRate)
     for (auto& buffer : m_deckBuffers)
         buffer.setSize(2, kProcessingChunkSize, false, true, true);
     m_masterBuf.setSize(2, kProcessingChunkSize, false, true, true);
+    m_masterCueTap.setSize(2, kProcessingChunkSize, false, true, true);
     m_headphoneBuf.setSize(2, kProcessingChunkSize, false, true, true);
     m_previewScratch.setSize(2, kProcessingChunkSize, false, true, true);
     m_masterMixer.prepare(validRate, kProcessingChunkSize);
@@ -330,13 +331,14 @@ void AudioEngine::processChunk(
     if (aux)
         aux->mixAuxAudio(m_masterBuf, m_previewScratch, samples);
     sanitizeStereo(m_masterBuf, samples);
-    m_masterMixer.finalize(parameters, m_masterBuf, samples);
+    m_masterMixer.finalize(parameters, m_masterBuf, samples,
+                           parameters.masterCueEnabled ? &m_masterCueTap : nullptr);
     const auto& meter = m_masterMixer.meter();
     peakL = std::max(peakL, meter.finalPeakL);
     peakR = std::max(peakR, meter.finalPeakR);
     minimumGainReduction = std::min(minimumGainReduction, meter.minimumGainReduction);
 
-    m_headphoneBus.mix(pfl, m_masterBuf, parameters,
+    m_headphoneBus.mix(pfl, m_masterCueTap, parameters,
                        m_headphoneBuf, samples);
     m_outputRouter.write(m_masterBuf, m_headphoneBuf, parameters,
                          output, outputStart, samples);

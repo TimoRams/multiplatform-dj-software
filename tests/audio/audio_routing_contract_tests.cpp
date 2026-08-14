@@ -44,14 +44,15 @@ struct RoutingFixture {
         : deck0(2, kSamples), deck1(2, kSamples), deck2(2, kSamples), deck3(2, kSamples),
           tail0(2, kSamples), tail1(2, kSamples), tail2(2, kSamples), tail3(2, kSamples),
           pfl0(2, kSamples), pfl1(2, kSamples), pfl2(2, kSamples), pfl3(2, kSamples),
-          master(2, kSamples), headphones(2, kSamples), hardware(8, kSamples)
+          master(2, kSamples), masterCueTap(2, kSamples),
+          headphones(2, kSamples), hardware(8, kSamples)
     {
         mixer.prepare(48'000.0, kSamples);
         headphoneBus.prepare(48'000.0, kSamples);
         deck0.clear(); deck1.clear(); deck2.clear(); deck3.clear();
         tail0.clear(); tail1.clear(); tail2.clear(); tail3.clear();
         pfl0.clear(); pfl1.clear(); pfl2.clear(); pfl3.clear();
-        master.clear(); headphones.clear(); hardware.clear();
+        master.clear(); masterCueTap.clear(); headphones.clear(); hardware.clear();
     }
 
     void render()
@@ -66,8 +67,8 @@ struct RoutingFixture {
             &pfl0, &pfl1, &pfl2, &pfl3
         };
         mixer.mixPrograms(programs, tails, parameters, master, kSamples);
-        mixer.finalize(parameters, master, kSamples);
-        headphoneBus.mix(pfl, master, parameters, headphones, kSamples);
+        mixer.finalize(parameters, master, kSamples, &masterCueTap);
+        headphoneBus.mix(pfl, masterCueTap, parameters, headphones, kSamples);
         hardware.clear();
         router.write(master, headphones, parameters, hardware, 0, kSamples);
     }
@@ -79,7 +80,7 @@ struct RoutingFixture {
     juce::AudioBuffer<float> deck0, deck1, deck2, deck3;
     juce::AudioBuffer<float> tail0, tail1, tail2, tail3;
     juce::AudioBuffer<float> pfl0, pfl1, pfl2, pfl3;
-    juce::AudioBuffer<float> master, headphones, hardware;
+    juce::AudioBuffer<float> master, masterCueTap, headphones, hardware;
 };
 
 } // namespace
@@ -146,7 +147,31 @@ int main()
     ok &= require(close(averageTail(fixture.master, 0), 0.2f),
                   "Headphone Gain does not alter Master");
 
+    // MASTER LEVEL controls only the physical Master/Booth outputs. MASTER
+    // CUE listens to the pre-level master tap and must remain unchanged.
+    fill(fixture.tail0, 0.0f);
+    fill(fixture.deck0, 0.2f);
+    fixture.parameters.crossfaderAssignments.fill(CrossfaderAssignment::Thru);
+    fixture.parameters.pflEnabled.fill(false);
     fixture.parameters.headphoneGain = 1.0f;
+    fixture.parameters.headphoneMix = 1.0f;
+    fixture.parameters.masterCueEnabled = true;
+    fixture.parameters.masterGain = 1.0f;
+    fixture.render();
+    fixture.render();
+    const float masterCueAtUnity = averageTail(fixture.headphones, 0);
+    fixture.parameters.masterGain = 0.0f;
+    fixture.render();
+    fixture.render();
+    ok &= require(close(averageTail(fixture.master, 0), 0.0f),
+                  "Master Level closes the physical Master output");
+    ok &= require(close(averageTail(fixture.headphones, 0), masterCueAtUnity)
+                      && masterCueAtUnity > 0.15f,
+                  "Master Level does not alter Master Cue headphone volume");
+
+    fixture.parameters.masterGain = 1.0f;
+    fixture.parameters.headphoneMix = 0.0f;
+    fixture.parameters.masterCueEnabled = false;
     fixture.parameters.masterFxType = static_cast<int>(EffectType::Bitcrusher);
     fixture.parameters.masterFxAmount = 1.0f;
     fill(fixture.tail0, 0.1234f);

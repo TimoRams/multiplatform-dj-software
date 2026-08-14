@@ -213,6 +213,15 @@ int main()
                   && waveformScreen.find("readonly property real handleWidth: 22")
                       != std::string::npos,
                   "performance song information is open by default with compact side handles");
+    ok &= require(waveformScreen.find("clip: true") != std::string::npos
+                  && waveformScreen.find(
+                         "x: -width * (1.0 - root.leftPanelReveal)")
+                      != std::string::npos
+                  && waveformScreen.find(
+                         "x: root.width - width * root.rightPanelReveal")
+                      != std::string::npos
+                  && waveformScreen.find("Behavior on x") == std::string::npos,
+                  "collapsed performance panels do not lag into view while resizing");
     ok &= require(deckQuickPanel.find("root.engine.trackTitle") != std::string::npos
                   && deckQuickPanel.find("root.engine.trackArtist") != std::string::npos,
                   "compact deck side panel shows real song information");
