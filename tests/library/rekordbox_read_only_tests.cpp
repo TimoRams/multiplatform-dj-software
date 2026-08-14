@@ -1,5 +1,6 @@
 #include "library/devices/DeviceLibraryManager.h"
 #include "library/devices/rekordbox/RekordboxAnalysisReader.h"
+#include "library/devices/rekordbox/RekordboxDeviceIdentity.h"
 #include "library/devices/rekordbox/RekordboxDeviceSource.h"
 #include "library/devices/rekordbox/RekordboxPdbReader.h"
 
@@ -19,6 +20,10 @@
 
 #ifdef Q_OS_LINUX
 #include <sys/resource.h>
+
+#ifdef BROCKDJ_HAVE_SQLCIPHER
+#include <sqlite3.h>
+#endif
 #endif
 
 namespace {
@@ -374,6 +379,35 @@ void setTreeOwnerWritable(const QString& root)
                                     | QFileDevice::ExeOwner);
 }
 
+#ifdef BROCKDJ_HAVE_SQLCIPHER
+// Builds an encrypted device database the way the exporting software writes
+// one, so the identity reader can be tested without shipping a real device
+// export. This writes into the test's own temporary directory only.
+bool writeIdentityFixture(const QString& path, const QString& deviceName, int colorType)
+{
+    static const char* const keyPragma =
+        "PRAGMA key = 'r8gddnr4k847830ar6cqzbkk0el6qytmb3trbbx805jm74vez64i5o8fnrqryqls';";
+    sqlite3* db = nullptr;
+    if (sqlite3_open_v2(path.toUtf8().constData(), &db,
+                        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr) != SQLITE_OK) {
+        sqlite3_close(db);
+        return false;
+    }
+    const QString script =
+        QStringLiteral("CREATE TABLE property(deviceName varchar, dbVersion varchar,"
+                       " numberOfContents integer, createdDate varchar,"
+                       " backGroundColorType integer, myTagMasterDBID integer);"
+                       "INSERT INTO property VALUES('%1', '1000', 3, '2026-01-01', %2, 1);")
+            .arg(QString(deviceName).replace(QLatin1Char('\''), QLatin1String("''")))
+            .arg(colorType);
+    const bool wrote =
+        sqlite3_exec(db, keyPragma, nullptr, nullptr, nullptr) == SQLITE_OK
+        && sqlite3_exec(db, script.toUtf8().constData(), nullptr, nullptr, nullptr) == SQLITE_OK;
+    sqlite3_close(db);
+    return wrote;
+}
+#endif
+
 bool sourceReadOnlyAudit()
 {
     const QString root = QStringLiteral(SOURCE_DIR "/src/library/devices/rekordbox");
@@ -381,7 +415,12 @@ bool sourceReadOnlyAudit()
         QStringLiteral("QIODevice::WriteOnly"), QStringLiteral("QIODevice::ReadWrite"),
         QStringLiteral("QSaveFile"), QStringLiteral("QFile::remove"),
         QStringLiteral("QFile::rename"), QStringLiteral("QFile::resize"),
-        QStringLiteral(".mkdir("), QStringLiteral(".mkpath(")
+        QStringLiteral(".mkdir("), QStringLiteral(".mkpath("),
+        // The device database must never be opened in a mode that lets SQLite
+        // write, create or journal anything on the connected medium.
+        QStringLiteral("SQLITE_OPEN_READWRITE"), QStringLiteral("SQLITE_OPEN_CREATE"),
+        QStringLiteral("sqlite3_open("), QStringLiteral("sqlite3_exec(db, \"INSERT"),
+        QStringLiteral("journal_mode")
     };
     int explicitReadOnlyOpens = 0;
     QDirIterator it(root, {QStringLiteral("*.cpp"), QStringLiteral("*.h")},
@@ -603,9 +642,74 @@ int main(int argc, char** argv)
     const QString plusMount = temp.path() + QStringLiteral("/DLP_USB");
     QDir().mkpath(genericMount);
     QDir().mkpath(plusMount + QStringLiteral("/PIONEER/rekordbox"));
-    ok &= require(saveFile(plusMount + QStringLiteral("/PIONEER/rekordbox/exportLibrary.db"),
-                           QByteArray("read-only detection fixture")),
+    const QString identityDb =
+        plusMount + QStringLiteral("/PIONEER/rekordbox/exportLibrary.db");
+
+    // The colour palette is fixed regardless of whether this build can open an
+    // encrypted device database, so it is checked unconditionally. The mapping
+    // was verified against a device exported with purple, which stores 8, and
+    // one left on the default, which stores 0.
+    using rekordbox::DeviceColor;
+    using rekordbox::DeviceIdentityReader;
+    ok &= require(DeviceIdentityReader::colorFromType(0) == DeviceColor::None
+                      && DeviceIdentityReader::colorFromType(8) == DeviceColor::Purple
+                      && DeviceIdentityReader::colorFromType(6) == DeviceColor::Aqua,
+                  "background colour type maps to the palette");
+    ok &= require(DeviceIdentityReader::colorFromType(999) == DeviceColor::Unknown
+                      && DeviceIdentityReader::colorFromType(-1) == DeviceColor::Unknown
+                      && DeviceIdentityReader::colorHex(DeviceColor::Unknown).isEmpty()
+                      && DeviceIdentityReader::colorHex(DeviceColor::None).isEmpty(),
+                  "unknown colour type stays neutral instead of crashing");
+    ok &= require(DeviceIdentityReader::colorHex(DeviceColor::Purple)
+                      == QStringLiteral("#AF52DE"),
+                  "palette entry has a display colour");
+
+    // A device that carries no identity at all — the reader must stay quiet
+    // rather than invent a name.
+    ok &= require(DeviceIdentityReader{}.readReadOnly(genericMount).name.isEmpty()
+                      && DeviceIdentityReader{}
+                             .readReadOnly(QStringLiteral("/nonexistent-mount"))
+                             .name.isEmpty(),
+                  "device without an identity database reads as empty");
+
+#ifdef BROCKDJ_HAVE_SQLCIPHER
+    ok &= require(writeIdentityFixture(identityDb, QStringLiteral("TIMO USB"), 8),
+                  "write encrypted device identity fixture");
+    {
+        const rekordbox::DeviceIdentity identity =
+            DeviceIdentityReader{}.readReadOnly(plusMount);
+        ok &= require(identity.name == QStringLiteral("TIMO USB"),
+                      "device name is read from the identity database");
+        ok &= require(identity.color == DeviceColor::Purple && identity.rawColorType == 8,
+                      "background colour is read and the raw value preserved");
+    }
+
+    // The reader must work on a medium that is genuinely not writable, and must
+    // not leave a journal, WAL or temporary file behind next to the database.
+    {
+        const QString dbDir = plusMount + QStringLiteral("/PIONEER/rekordbox");
+        QFile::setPermissions(identityDb, QFile::ReadOwner | QFile::ReadGroup);
+        QFile::setPermissions(dbDir, QFile::ReadOwner | QFile::ExeOwner
+                                         | QFile::ReadGroup | QFile::ExeGroup);
+        const rekordbox::DeviceIdentity identity =
+            DeviceIdentityReader{}.readReadOnly(plusMount);
+        const QStringList leftovers =
+            QDir(dbDir).entryList(QDir::Files | QDir::Hidden | QDir::System);
+        QFile::setPermissions(dbDir, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner
+                                         | QFile::ReadGroup | QFile::ExeGroup);
+        QFile::setPermissions(identityDb, QFile::ReadOwner | QFile::WriteOwner
+                                              | QFile::ReadGroup);
+        ok &= require(identity.name == QStringLiteral("TIMO USB"),
+                      "identity is readable from a read-only medium");
+        ok &= require(leftovers == QStringList {QStringLiteral("exportLibrary.db")},
+                      "no journal, WAL or temporary file is created on the device");
+    }
+#else
+    ok &= require(saveFile(identityDb, QByteArray("read-only detection fixture")),
                   "write Device Library Plus signature fixture");
+    ok &= require(!DeviceIdentityReader::isSupported(),
+                  "identity reader reports itself unavailable without SQLCipher");
+#endif
     {
         DeviceLibraryManager systemDeviceManager(false, nullptr);
         QVariantMap systemVolume {
@@ -648,8 +752,35 @@ int main(int argc, char** argv)
         classificationManager.inspectTestMounts({genericMount, plusMount});
         bool foundGeneric = false;
         bool foundPlus = false;
+        bool profilePublished = false;
+        bool profileFallback = false;
         for (const QVariant& value : classificationManager.devices()) {
             const QVariantMap device = value.toMap();
+            // The identity fixture sits on the Device Library Plus mount, so
+            // the generic one doubles as the "never named" case.
+            if (device.value(QStringLiteral("libraryType")) == QStringLiteral("genericUsb")) {
+                profileFallback =
+                    device.value(QStringLiteral("libraryName")).toString().isEmpty()
+                    && device.value(QStringLiteral("color")).toString().isEmpty()
+                    && device.value(QStringLiteral("name")).toString()
+                           == device.value(QStringLiteral("volumeLabel")).toString()
+                    && device.value(QStringLiteral("name")) == QStringLiteral("GENERIC_USB");
+            } else {
+                // The name from the exporting software wins over the volume
+                // label, but both stay available to the UI.
+                profilePublished =
+                    device.value(QStringLiteral("volumeLabel")) == QStringLiteral("DLP_USB")
+                    && (DeviceIdentityReader::isSupported()
+                            ? (device.value(QStringLiteral("libraryName"))
+                                   == QStringLiteral("TIMO USB")
+                               && device.value(QStringLiteral("name"))
+                                   == QStringLiteral("TIMO USB")
+                               && device.value(QStringLiteral("color"))
+                                   == QStringLiteral("#AF52DE"))
+                            : (device.value(QStringLiteral("libraryName")).toString().isEmpty()
+                               && device.value(QStringLiteral("name"))
+                                   == QStringLiteral("DLP_USB")));
+            }
             foundGeneric = foundGeneric
                 || (device.value(QStringLiteral("badge")) == QStringLiteral("USB")
                     && device.value(QStringLiteral("libraryType"))
@@ -663,6 +794,10 @@ int main(int argc, char** argv)
         }
         ok &= require(foundGeneric, "generic USB classification");
         ok &= require(foundPlus, "Device Library Plus detection and safe status");
+        ok &= require(profilePublished,
+                      "device identity name and colour reach the device list");
+        ok &= require(profileFallback,
+                      "device without an identity shows its volume label");
     }
 
     DeviceLibraryManager manager(false, nullptr);

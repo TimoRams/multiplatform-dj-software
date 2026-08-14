@@ -82,6 +82,23 @@ if(UNIX AND NOT APPLE)
     endif()
 endif()
 
+# ---- SQLCipher ------------------------------------------------------------
+# Only used to read a connected device's own name and background colour out of
+# its encrypted device database. Optional: without it the device list simply
+# falls back to the filesystem volume label.
+add_library(ThirdParty::SQLCipher INTERFACE IMPORTED)
+if(PkgConfig_FOUND)
+    pkg_check_modules(SQLCIPHER QUIET IMPORTED_TARGET sqlcipher)
+    if(TARGET PkgConfig::SQLCIPHER)
+        message(STATUS "Enabling device identity reader via SQLCipher")
+        target_link_libraries(ThirdParty::SQLCipher INTERFACE PkgConfig::SQLCIPHER)
+        target_compile_definitions(ThirdParty::SQLCipher INTERFACE BROCKDJ_HAVE_SQLCIPHER=1)
+    else()
+        message(STATUS "SQLCipher not found - device name and colour will fall back "
+                       "to the filesystem volume label")
+    endif()
+endif()
+
 # ---- TagLib ---------------------------------------------------------------
 if(NOT TARGET ThirdParty::TagLib)
     add_library(ThirdParty::TagLib INTERFACE IMPORTED)
@@ -362,6 +379,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     ThirdParty::RubberBand
     ThirdParty::SignalsmithDSP
     ThirdParty::SignalsmithStretch
+    ThirdParty::SQLCipher
     Ableton::Link
 )
 
@@ -742,11 +760,13 @@ add_executable(BrockDJ_rekordbox_read_only_tests
     src/library/devices/rekordbox/RekordboxAnalysisReader.h
     src/library/devices/rekordbox/RekordboxAnalysisReader.cpp
     src/library/devices/rekordbox/RekordboxDeviceSource.h
-    src/library/devices/rekordbox/RekordboxDeviceSource.cpp)
+    src/library/devices/rekordbox/RekordboxDeviceSource.cpp
+    src/library/devices/rekordbox/RekordboxDeviceIdentity.h
+    src/library/devices/rekordbox/RekordboxDeviceIdentity.cpp)
 target_compile_definitions(BrockDJ_rekordbox_read_only_tests PRIVATE
     SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_include_directories(BrockDJ_rekordbox_read_only_tests PRIVATE src)
-target_link_libraries(BrockDJ_rekordbox_read_only_tests PRIVATE Qt6::Core)
+target_link_libraries(BrockDJ_rekordbox_read_only_tests PRIVATE Qt6::Core ThirdParty::SQLCipher)
 if(UNIX AND NOT APPLE)
     target_link_libraries(BrockDJ_rekordbox_read_only_tests PRIVATE Qt6::DBus)
     target_compile_definitions(BrockDJ_rekordbox_read_only_tests PRIVATE

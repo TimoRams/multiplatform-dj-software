@@ -27,6 +27,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     devices/rekordbox/RekordboxPdbReader.cpp
     devices/rekordbox/RekordboxAnalysisReader.h
     devices/rekordbox/RekordboxAnalysisReader.cpp
+    devices/rekordbox/RekordboxDeviceIdentity.h
+    devices/rekordbox/RekordboxDeviceIdentity.cpp
     devices/rekordbox/RekordboxDeviceSource.h
     devices/rekordbox/RekordboxDeviceSource.cpp
 )

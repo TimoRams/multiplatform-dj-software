@@ -5367,25 +5367,56 @@ Rectangle {
                                     delegate: Rectangle {
                                         required property var modelData
                                         required property int index
+                                        // Colour the device was given in the exporting library
+                                        // software. Used only for the small indicator dot and
+                                        // the selection bar — the row itself keeps the standard
+                                        // sidebar colours so the list stays calm.
+                                        readonly property color deviceAccent: modelData.color
+                                            ? modelData.color : libraryRoot.accentBlue
+                                        readonly property bool isSelected: deviceLibraryManager
+                                            && deviceLibraryManager.selectedDeviceId === modelData.id
                                         width: ListView.view.width; height: 54
-                                        color: deviceLibraryManager
-                                               && deviceLibraryManager.selectedDeviceId === modelData.id
+                                        color: isSelected
                                                ? libraryRoot.sidebarSel
-                                               : (usbDeviceMouse.containsMouse ? libraryRoot.bgSidebarHv : "transparent")
+                                               : (usbDeviceMouse.containsMouse
+                                                  ? libraryRoot.bgSidebarHv : "transparent")
                                         Rectangle {
                                             anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-                                            width: 3; color: libraryRoot.accentBlue
-                                            visible: deviceLibraryManager
-                                                     && deviceLibraryManager.selectedDeviceId === modelData.id
+                                            width: 3; color: deviceAccent
+                                            visible: isSelected
+                                        }
+                                        // The device's own colour, shown as a small dot rather
+                                        // than by tinting anything larger.
+                                        Rectangle {
+                                            id: usbDeviceDot
+                                            anchors.left: parent.left; anchors.leftMargin: 13
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            width: 7; height: 7; radius: 3.5
+                                            visible: modelData.color
+                                            color: deviceAccent
                                         }
                                         Column {
-                                            anchors.left: parent.left; anchors.leftMargin: 13
+                                            anchors.left: usbDeviceDot.visible ? usbDeviceDot.right : parent.left
+                                            anchors.leftMargin: usbDeviceDot.visible ? 8 : 13
                                             anchors.right: usbDeviceAction.visible ? usbDeviceAction.left : parent.right
                                             anchors.rightMargin: 8
                                             anchors.verticalCenter: parent.verticalCenter; spacing: 3
                                             Text { text: modelData.name; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); elide: Text.ElideRight; width: parent.width }
                                             Row {
                                                 spacing: 7
+                                                // Both names matter: the one assigned in the
+                                                // exporting software is on the line above, the
+                                                // volume label the operating system reports goes
+                                                // here — but only when it adds information.
+                                                Text {
+                                                    visible: modelData.volumeLabel
+                                                             && modelData.volumeLabel !== modelData.name
+                                                    text: modelData.volumeLabel
+                                                    color: libraryRoot.textMeta
+                                                    font.pixelSize: window.sp(8)
+                                                    elide: Text.ElideRight
+                                                    width: visible ? Math.min(implicitWidth, 80) : 0
+                                                }
                                                 Rectangle {
                                                     width: usbBadge.implicitWidth + 10; height: 15; radius: 3
                                                     color: modelData.badge === "REKORDBOX" ? libraryRoot.bgRowActive : libraryRoot.bgRowEven

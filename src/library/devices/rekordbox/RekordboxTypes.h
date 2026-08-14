@@ -80,6 +80,36 @@ struct DeviceIndex {
     QHash<QString, qsizetype> trackBySourceAwareId;
 };
 
+// Background colour a device was assigned in the exporting library software.
+// The numbering matches the track-colour palette; 0 means the user left the
+// device on the neutral default.
+enum class DeviceColor {
+    None = 0,
+    Pink,
+    Red,
+    Orange,
+    Yellow,
+    Green,
+    Aqua,
+    Blue,
+    Purple,
+    // A value a newer exporter wrote that this build does not know yet. Kept
+    // distinct from None so the UI can stay neutral without pretending the
+    // device had no colour at all.
+    Unknown
+};
+
+// How a device presents itself, independent of which track library it carries.
+// A device that was never named in the exporting software leaves `name` empty
+// and the caller falls back to the filesystem volume label.
+struct DeviceIdentity {
+    QString name;
+    DeviceColor color = DeviceColor::None;
+    // The value exactly as stored, so nothing is lost when a future exporter
+    // introduces a colour this build cannot name.
+    int rawColorType = 0;
+};
+
 struct ReadResult {
     bool ok = false;
     QString error;

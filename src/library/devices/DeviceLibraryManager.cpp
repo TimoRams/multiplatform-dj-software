@@ -1,5 +1,6 @@
 #include "library/devices/DeviceLibraryManager.h"
 
+#include "library/devices/rekordbox/RekordboxDeviceIdentity.h"
 #include "library/devices/rekordbox/RekordboxDeviceSource.h"
 
 #include <QCryptographicHash>
@@ -177,7 +178,16 @@ QVariantList aggregateValues(const rekordbox::DeviceIndex& index,
 
 struct DeviceLibraryManager::DeviceState {
     QString id;
+    // Display name: the name the device was given in the exporting library
+    // software when it carries one, otherwise the filesystem volume label.
     QString name;
+    // The volume label as the operating system reports it. Kept separately so
+    // the UI can show both — they are frequently different.
+    QString volumeLabel;
+    // Name and accent colour the device was assigned in the exporting library
+    // software. Empty when the device was never given an identity.
+    QString libraryName;
+    QString colorHex;
     QString mountPath;
     QString fileSystemType;
     QString systemObjectPath;
@@ -407,7 +417,7 @@ void DeviceLibraryManager::applySystemVolumes(QVector<SystemVolume> volumes)
         const bool mounted = !volume.mountPath.isEmpty();
 
         state.id = id;
-        state.name = volume.name;
+        state.volumeLabel = volume.name;
         state.mountPath = volume.mountPath;
         state.fileSystemType = QString::fromLatin1(volume.fileSystemType);
         state.systemObjectPath = volume.objectPath;
@@ -426,6 +436,15 @@ void DeviceLibraryManager::applySystemVolumes(QVector<SystemVolume> volumes)
         }
 
         if (mounted) {
+            // The identity is a single row, so it is read on the discovery pass
+            // rather than deferred to the index worker — the device list needs
+            // the name and colour right away. It is read independently of which
+            // library format is used for tracks below: a device can carry both,
+            // and only the newer one holds the name.
+            const rekordbox::DeviceIdentity identity =
+                rekordbox::DeviceIdentityReader{}.readReadOnly(volume.mountPath);
+            state.libraryName = identity.name;
+            state.colorHex = rekordbox::DeviceIdentityReader::colorHex(identity.color);
             const bool legacy = hasFile(volume.mountPath,
                                         QStringLiteral("PIONEER/rekordbox/export.pdb"));
             const bool plus = hasFile(volume.mountPath,
@@ -435,7 +454,7 @@ void DeviceLibraryManager::applySystemVolumes(QVector<SystemVolume> volumes)
                                         : rekordbox::DeviceLibraryKind::GenericUsb);
             if (!state.operationPending) {
                 if (state.kind == rekordbox::DeviceLibraryKind::DeviceLibraryPlus)
-                    state.status = QStringLiteral("Device Library Plus detected — not yet supported");
+                    state.status = QStringLiteral("OneLibrary export — track browsing not yet supported");
                 else if (state.kind == rekordbox::DeviceLibraryKind::GenericUsb)
                     state.status = QStringLiteral("Mounted");
                 else if (state.index)
@@ -446,9 +465,12 @@ void DeviceLibraryManager::applySystemVolumes(QVector<SystemVolume> volumes)
         } else {
             state.index.reset();
             state.scanning = false;
+            state.libraryName.clear();
+            state.colorHex.clear();
             if (!state.operationPending)
                 state.status = QStringLiteral("Not mounted");
         }
+        state.name = state.libraryName.isEmpty() ? state.volumeLabel : state.libraryName;
 
         m_devices.insert(id, state);
         if (!m_deviceOrder.contains(id))
@@ -561,7 +583,7 @@ void DeviceLibraryManager::inspectStorageVolumes(const QList<QStorageInfo>& volu
                             : (plus ? rekordbox::DeviceLibraryKind::DeviceLibraryPlus
                                     : rekordbox::DeviceLibraryKind::GenericUsb);
         if (state.kind == rekordbox::DeviceLibraryKind::DeviceLibraryPlus)
-            state.status = QStringLiteral("Device Library Plus detected — not yet supported");
+            state.status = QStringLiteral("OneLibrary export — track browsing not yet supported");
         m_devices.insert(id, state);
         if (!m_deviceOrder.contains(id))
             m_deviceOrder.append(id);
@@ -619,7 +641,12 @@ void DeviceLibraryManager::inspectMountPaths(const QStringList& paths)
         if (m_devices.contains(id))
             state = m_devices.value(id);
         state.id = id;
-        state.name = name;
+        state.volumeLabel = name;
+        const rekordbox::DeviceIdentity identity =
+            rekordbox::DeviceIdentityReader{}.readReadOnly(root);
+        state.libraryName = identity.name;
+        state.colorHex = rekordbox::DeviceIdentityReader::colorHex(identity.color);
+        state.name = state.libraryName.isEmpty() ? name : state.libraryName;
         state.mountPath = root;
         state.fileSystemType = QStringLiteral("test");
         state.ready = true;
@@ -630,7 +657,7 @@ void DeviceLibraryManager::inspectMountPaths(const QStringList& paths)
                             : (plus ? rekordbox::DeviceLibraryKind::DeviceLibraryPlus
                                     : rekordbox::DeviceLibraryKind::GenericUsb);
         if (state.kind == rekordbox::DeviceLibraryKind::DeviceLibraryPlus)
-            state.status = QStringLiteral("Device Library Plus detected — not yet supported");
+            state.status = QStringLiteral("OneLibrary export — track browsing not yet supported");
         m_devices.insert(id, state);
         present.insert(id);
         if (!m_deviceOrder.contains(id))
@@ -856,6 +883,9 @@ void DeviceLibraryManager::publishDevices()
         QVariantMap item;
         item.insert(QStringLiteral("id"), state.id);
         item.insert(QStringLiteral("name"), state.name);
+        item.insert(QStringLiteral("volumeLabel"), state.volumeLabel);
+        item.insert(QStringLiteral("libraryName"), state.libraryName);
+        item.insert(QStringLiteral("color"), state.colorHex);
         item.insert(QStringLiteral("mountPath"), state.mountPath);
         item.insert(QStringLiteral("fileSystemType"), state.fileSystemType);
         item.insert(QStringLiteral("ready"), state.ready);
