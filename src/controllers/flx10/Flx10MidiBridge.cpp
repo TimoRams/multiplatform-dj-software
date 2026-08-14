@@ -547,13 +547,12 @@ void MidiControllerManager::refreshTransportAndLoopLeds(QChar deck, DjEngine* en
         return;
 
     if (shouldUseFlx10Feedback()) {
-        m_midiFeedback.refreshDeckLeds(deck == QLatin1Char('A') ? 1 : 2);
+        const int deckNumber = std::clamp(deck.toLatin1() - 'A' + 1, 1, 4);
+        m_midiFeedback.refreshDeckLeds(deckNumber);
         return;
     }
 
-    const QString prefix = deck == QLatin1Char('A')
-        ? QStringLiteral("deckA_")
-        : QStringLiteral("deckB_");
+    const QString prefix = QStringLiteral("deck%1_").arg(deck.toUpper());
 
     sendMappedNoteLed(prefix + QStringLiteral("play"), engine->isPlaying());
     sendMappedNoteLed(prefix + QStringLiteral("cue"),
@@ -649,6 +648,11 @@ void MidiControllerManager::refreshDeckLeds(QChar deck, DjEngine* engine)
 
 void MidiControllerManager::refreshAllDeckLeds()
 {
+    if (shouldUseFlx10Feedback()) {
+        m_midiFeedback.refreshAll();
+        refreshFxLeds();
+        return;
+    }
     refreshDeckLeds(QLatin1Char('A'), m_deckA);
     refreshDeckLeds(QLatin1Char('B'), m_deckB);
     refreshFxLeds();
@@ -1146,15 +1150,22 @@ bool MidiControllerManager::dispatchFlx10JogAction(const QString& paramId,
     return true;
 }
 
-void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
+void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
+                                         DjEngine* deckC, DjEngine* deckD)
 {
     if (m_deckA)
         QObject::disconnect(m_deckA, nullptr, this, nullptr);
     if (m_deckB && m_deckB != m_deckA)
         QObject::disconnect(m_deckB, nullptr, this, nullptr);
+    if (m_deckC && m_deckC != m_deckA && m_deckC != m_deckB)
+        QObject::disconnect(m_deckC, nullptr, this, nullptr);
+    if (m_deckD && m_deckD != m_deckA && m_deckD != m_deckB && m_deckD != m_deckC)
+        QObject::disconnect(m_deckD, nullptr, this, nullptr);
 
     m_deckA = deckA;
     m_deckB = deckB;
+    m_deckC = deckC;
+    m_deckD = deckD;
     m_cueAHeld = false;
     m_cueBHeld = false;
     m_jogATouched = false;
@@ -1186,7 +1197,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
     m_beatFxActive = false;
     m_beatFxPosition = 1;
     m_beatFxTarget = MidiBeatFxTarget::DeckA;
-    m_midiFeedback.setDecks(m_deckA, m_deckB);
+    m_midiFeedback.setDecks(m_deckA, m_deckB, m_deckC, m_deckD);
     if (deckAPadModeWasChanged)
         emit deckAPadModeChanged();
     if (deckBPadModeWasChanged)
@@ -1230,6 +1241,17 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
     };
     wireDeckLeds(QLatin1Char('A'), m_deckA);
     wireDeckLeds(QLatin1Char('B'), m_deckB);
+    // Channels 3/4 currently expose their mixer strip rather than full deck
+    // performance controls. Their PFL state still owns a real FLX10 CUE LED.
+    auto wireMixerCueLed = [this](int deck, DjEngine* engine)
+    {
+        if (!engine)
+            return;
+        QObject::connect(engine, &DjEngine::cueEnabledChanged,
+                         this, [this, deck] { m_midiFeedback.refreshDeckLeds(deck); });
+    };
+    wireMixerCueLed(3, m_deckC);
+    wireMixerCueLed(4, m_deckD);
     refreshAllDeckLeds();
 
     if (!m_parameterStore)
@@ -1691,18 +1713,6 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB)
         else if (id == "deckB_loop_4beat") {
             if (value >= 0.5f)
                 handleFourBeatExit(b, m_deckBShiftHeld);
-        }
-        else if (id == "deckA_headphone_cue") {
-            if (value >= 0.5f && a) a->setCueEnabled(!a->cueEnabled());
-        }
-        else if (id == "deckB_headphone_cue") {
-            if (value >= 0.5f && b) b->setCueEnabled(!b->cueEnabled());
-        }
-        else if (id == "master_cue") {
-            if (value >= 0.5f && a) a->setMasterCueEnabled(!a->masterCueEnabled());
-        }
-        else if (id == "headphone_mix") {
-            if (a) a->setHeadphoneMix(static_cast<double>(value));
         }
         // Trim/EQ/filter: MixerParameterBridge applies these for all four decks.
         // Tempo fader: MIDI 0-1 -> current deck tempo range.

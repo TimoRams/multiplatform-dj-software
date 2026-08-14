@@ -224,10 +224,17 @@
     <Entry paramId="crossfader" status="0xB6" control="0x3F" type="fader"/>
 
     <!-- Monitoring and library. -->
+    <Entry paramId="master_level" status="0xB6" control="0x08" type="fader"/>
+    <Entry paramId="master_level" status="0xB6" control="0x28" type="fader"/>
+    <Entry paramId="master_cue" status="0x96" control="0x63" type="toggle"/>
     <Entry paramId="headphone_mix" status="0xB6" control="0x0C" type="fader"/>
     <Entry paramId="headphone_mix" status="0xB6" control="0x2C" type="fader"/>
+    <Entry paramId="headphone_level" status="0xB6" control="0x0D" type="fader"/>
+    <Entry paramId="headphone_level" status="0xB6" control="0x2D" type="fader"/>
     <Entry paramId="deckA_headphone_cue" status="0x90" control="0x54" type="toggle"/>
     <Entry paramId="deckB_headphone_cue" status="0x91" control="0x54" type="toggle"/>
+    <Entry paramId="deckC_headphone_cue" status="0x92" control="0x54" type="toggle"/>
+    <Entry paramId="deckD_headphone_cue" status="0x93" control="0x54" type="toggle"/>
     <Entry paramId="library_browse" status="0xB6" control="0x40" type="encoder-relative"/>
     <Entry paramId="library_view_toggle" status="0x96" control="0x7A" type="toggle"/>
     <Entry paramId="library_load_deck_a" status="0x96" control="0x46" type="toggle"/>
@@ -242,6 +249,7 @@
     <DeckStatus deck="4" status="0x93"/>
     <DeckLed name="play" control="0x0B"/>
     <DeckLed name="cue" control="0x0C"/>
+    <DeckLed name="headphone_cue" control="0x54"/>
     <DeckLed name="loop_in" control="0x10"/>
     <DeckLed name="loop_out" control="0x11"/>
     <DeckLed name="loop_4beat" control="0x14"/>

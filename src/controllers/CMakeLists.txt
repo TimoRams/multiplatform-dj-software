@@ -5,6 +5,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     midi/ParameterStore.cpp
     midi/MixerParameterBridge.h
     midi/MixerParameterBridge.cpp
+    midi/AlsaMidiInput.h
+    midi/AlsaMidiInput.cpp
     midi/AlsaMidiOutput.h
     midi/AlsaMidiOutput.cpp
     midi/feedback/MidiFeedbackController.h

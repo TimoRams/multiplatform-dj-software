@@ -3,6 +3,7 @@
 #include <QtGlobal>
 
 #if defined(Q_OS_LINUX)
+#include "AlsaMidiInput.h"
 #include "AlsaMidiOutput.h"
 #endif
 
@@ -100,7 +101,8 @@ public:
 
     Q_INVOKABLE void refreshMidiAndMappings();
 
-    void connectDecks(DjEngine* deckA, DjEngine* deckB);
+    void connectDecks(DjEngine* deckA, DjEngine* deckB,
+                      DjEngine* deckC, DjEngine* deckD);
     void connectFxManager(FxManager* fxManager);
 
     // Stop MIDI I/O and disconnect callbacks before QML/engine teardown.
@@ -165,6 +167,8 @@ private:
     ParameterStore* m_parameterStore = nullptr;
     DjEngine* m_deckA = nullptr;
     DjEngine* m_deckB = nullptr;
+    DjEngine* m_deckC = nullptr;
+    DjEngine* m_deckD = nullptr;
     QPointer<FxManager> m_fxManager;
     bool m_cueAHeld = false;
     bool m_cueBHeld = false;
@@ -270,6 +274,7 @@ private:
 
 #if defined(Q_OS_LINUX)
     std::vector<std::unique_ptr<QProcess>> m_alsaInputMonitors;
+    std::vector<std::unique_ptr<AlsaMidiInput>> m_alsaDirectInputs;
     std::unique_ptr<AlsaMidiOutput> m_alsaMidiOutput;
     std::map<QProcess*, QString> m_alsaMonitorBuffers;
     std::map<QString, int> m_alsaFaderSourceLogCounts;

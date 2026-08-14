@@ -34,12 +34,13 @@ void MidiFeedbackController::setMidiSender(MidiSender sender)
     m_sender = std::move(sender);
 }
 
-void MidiFeedbackController::setDecks(DjEngine* deckA, DjEngine* deckB)
+void MidiFeedbackController::setDecks(DjEngine* deckA, DjEngine* deckB,
+                                      DjEngine* deckC, DjEngine* deckD)
 {
     m_decks[0] = deckA;
     m_decks[1] = deckB;
-    m_decks[2] = nullptr;
-    m_decks[3] = nullptr;
+    m_decks[2] = deckC;
+    m_decks[3] = deckD;
 }
 
 void MidiFeedbackController::setMapping(const MidiFeedbackMapping& mapping)
@@ -99,6 +100,7 @@ void MidiFeedbackController::clearAll()
     for (int deck = 1; deck <= 4; ++deck) {
         sendDeckLed(deck, m_mapping.playNote, false);
         sendDeckLed(deck, m_mapping.cueNote, false);
+        sendDeckLed(deck, m_mapping.headphoneCueNote, false);
         sendDeckLed(deck, m_mapping.loopInNote, false);
         sendDeckLed(deck, m_mapping.loopOutNote, false);
         sendDeckLed(deck, m_mapping.loop4BeatNote, false);
@@ -145,6 +147,7 @@ void MidiFeedbackController::refreshDeckLeds(int deck)
     if (!engine) {
         sendDeckLed(deck, m_mapping.playNote, false);
         sendDeckLed(deck, m_mapping.cueNote, false);
+        sendDeckLed(deck, m_mapping.headphoneCueNote, false);
         sendDeckLed(deck, m_mapping.loopInNote, false);
         sendDeckLed(deck, m_mapping.loopOutNote, false);
         sendDeckLed(deck, m_mapping.loop4BeatNote, false);
@@ -160,6 +163,7 @@ void MidiFeedbackController::refreshDeckLeds(int deck)
     sendDeckLed(deck, m_mapping.playNote, engine->isPlaying());
     sendDeckLed(deck, m_mapping.cueNote,
                 engine->mainCueSec() >= -DjEngine::PRE_ROLL_SECONDS);
+    sendDeckLed(deck, m_mapping.headphoneCueNote, engine->cueEnabled());
     const bool loopOutSet = engine->loopOutPosition() > engine->loopInPosition() + 0.001;
     const bool isFourBeatLoop = engine->loopActive() && std::abs(engine->loopLengthBeats() - 4.0) < 0.1;
     sendDeckLed(deck, m_mapping.loopInNote, engine->loopInSet());

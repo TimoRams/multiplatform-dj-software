@@ -24,6 +24,10 @@ int main()
     ok &= require(store.getParameter(QStringLiteral("deckA_eqHigh")) == 0.5f
                   && store.getParameter(QStringLiteral("deckB_eqLow")) == 0.5f,
                   "bipolar mixer controls default to their normalized centre");
+    ok &= require(store.getParameter(QStringLiteral("master_level")) == 1.0f
+                  && store.getParameter(QStringLiteral("headphone_mix")) == 0.5f
+                  && store.getParameter(QStringLiteral("headphone_level")) == 0.5f,
+                  "monitoring controls start at master max, cue mix centre and headphone unity");
 
     int changes = 0;
     QString changedId;

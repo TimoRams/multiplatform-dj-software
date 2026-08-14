@@ -56,6 +56,7 @@ private slots:
     void sendStateTick();
     void sendWaveformTick();
     void sendUploadChunk();
+    void flushTempoWaveformRefresh();
 
 private:
     void setStatus(const QString& status);
@@ -149,6 +150,8 @@ private:
     void connectDeckSignals();
     void disconnectDeckSignals();
     void refreshDeckFromEngine(int deck);
+    void scheduleTempoWaveformRefresh(int deck);
+    void beginWaveformSweep(int deck);
     void resetDeckWaveformOutput(int deck);
     void invalidateDeckSnapshot(int deck, const QString& trackPath, bool clearDevice);
 
@@ -162,19 +165,25 @@ private:
     QTimer m_uploadTimer;
     QTimer m_keepAliveTimer;
     QTimer m_stateTimer;
+    QTimer m_tempoWaveformRefreshTimer;
     bool m_keepAliveEnabled = false;
     std::array<QByteArray, 5> m_waveforms;
     std::array<double, 5> m_waveformDurations = {0.0, 30.0, 30.0, 30.0, 30.0};
     // Number of 19-entry xx36 windows already pushed for this deck's bulk
-    // upload. The window actually sent is derived from this plus the playhead,
-    // so filling always starts at what is about to be played.
+    // upload. The playhead selects the origin once when the sweep begins; that
+    // origin then stays fixed until all indexed windows have been transferred.
     std::array<int, 5> m_uploadWindowsSent = {0, 0, 0, 0, 0};
+    // A sweep is an indexed transfer. Its origin must not follow the moving
+    // playhead between packets or entries are skipped and the firmware shows
+    // blank waveform regions after the cursor.
+    std::array<int, 5> m_uploadStartWindows = {0, 0, 0, 0, 0};
     std::array<bool, 5> m_uploadActive = {false, false, false, false, false};
     // Set when better waveform data arrived while a transfer was already in
     // flight. Windows sent before that point still carry the old samples, so
     // the sweep is repeated once it reaches the end instead of being rewound
     // mid-flight.
     std::array<bool, 5> m_uploadResweepPending = {false, false, false, false, false};
+    std::uint8_t m_pendingTempoWaveformDeckMask = 0;
     std::array<QMetaObject::Connection, 5> m_trackLoadedConnections;
     std::array<QMetaObject::Connection, 5> m_trackEjectedConnections;
     std::array<QMetaObject::Connection, 5> m_rgbWaveformConnections;
@@ -201,7 +210,11 @@ private:
     std::array<qint64, 5> m_lastXx27SentMs = {-100, -100, -100, -100, -100};
     qint64 m_lastXx36SentMs = -100;
     std::array<QByteArray, 5> m_lastXx27Packet;
-    std::array<std::uint64_t, 5> m_displaySnapshotSequence {0, 0, 0, 0, 0};
+    // Avoid reading TrackData (and taking its locks) on every 5 ms display
+    // tick. Key changes are signal-driven and update this cache immediately.
+    std::array<std::uint8_t, 5> m_cachedDeckKeyBytes = {
+        0x80, 0x80, 0x80, 0x80, 0x80
+    };
     int m_nextWaveformDeck = 1;
     int m_nextUploadDeck = 1;
     std::atomic<bool> m_shuttingDown { false };

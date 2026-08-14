@@ -944,9 +944,10 @@ void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& buf
         // read head to the hand target. Exact tracking for slow/precise moves,
         // momentum across sparse UI events, no overshoot/snap-back warble.
         const double target = m_platter.targetSamplePosition();
+        const double commandedRate = m_controller.commandedHandSpeed() * oneX;
         const double maxAbsRate = 8.0 * oneX;
         const double usedRate = m_scratchResampler.processScratchTracking(
-            target, maxAbsRate, bufferToFill);
+            target, commandedRate, maxAbsRate, bufferToFill);
         const double readPositionSamples = m_scratchResampler.readPosition();
         const bool staleReleaseBlock = m_audioReleaseCommand.generation != 0
             && m_audioReleaseCommand.generation

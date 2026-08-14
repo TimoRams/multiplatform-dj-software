@@ -149,11 +149,25 @@ bool DDJFLX10Controller::uploadDeck(int deck, bool startWindowSweep)
     if (!startWindowSweep)
         return ok;
 
-    m_uploadWindowsSent[deck] = 0;
-    m_uploadActive[deck] = true;
+    beginWaveformSweep(deck);
     if (!m_uploadTimer.isActive())
         m_uploadTimer.start(kUploadTickIntervalMs);
     return ok;
+}
+
+void DDJFLX10Controller::beginWaveformSweep(int deck)
+{
+    if (deck < 1 || deck > 2 || m_waveforms[deck].isEmpty())
+        return;
+
+    const int entries = m_waveforms[deck].size() / 2;
+    const int totalWindows = (entries + kXx36EntriesPerWindow - 1)
+        / kXx36EntriesPerWindow;
+    m_uploadWindowsSent[deck] = 0;
+    m_uploadStartWindows[deck] = totalWindows > 0
+        ? (currentWaveformEntry(deck) / kXx36EntriesPerWindow) % totalWindows
+        : 0;
+    m_uploadActive[deck] = totalWindows > 0;
 }
 bool DDJFLX10Controller::sendXx30(int deck)
 {
@@ -334,6 +348,7 @@ bool DDJFLX10Controller::clearDeckDisplay(int deck)
 {
     m_uploadActive[deck] = false;
     m_uploadWindowsSent[deck] = 0;
+    m_uploadStartWindows[deck] = 0;
 
     bool ok = true;
     for (int command : {0x27, 0x30, 0x33, 0x35, 0x36, 0x2F}) {
@@ -532,7 +547,6 @@ DeckDisplaySnapshot DDJFLX10Controller::captureDeckDisplaySnapshot(int deck)
     if (deck < 1 || deck > 2)
         return snapshot;
 
-    snapshot.generation = ++m_displaySnapshotSequence[deck];
     const DjEngine* engine = deckEngine(deck);
     snapshot.trackDurationSec = deckDisplayDuration(deck);
     if (!engine) {
@@ -549,9 +563,7 @@ DeckDisplaySnapshot DDJFLX10Controller::captureDeckDisplaySnapshot(int deck)
     snapshot.playing = engine->isPlaying();
     snapshot.scratching = engine->isScratchVisualActive();
     snapshot.reverse = engine->isReverse();
-    snapshot.title = engine->trackTitle();
-    snapshot.artist = engine->trackArtist();
-    snapshot.keyByte = deckKeyByte(deck);
+    snapshot.keyByte = m_cachedDeckKeyBytes[deck];
     return snapshot;
 }
 double DDJFLX10Controller::deckTempoRangePercent(int deck) const

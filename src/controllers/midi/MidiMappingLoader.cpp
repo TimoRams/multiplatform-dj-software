@@ -488,6 +488,8 @@ void MidiControllerManager::applyMidiFeedbackMappingElement(const QString& eleme
             mapping.playNote = control;
         else if (name == QStringLiteral("cue"))
             mapping.cueNote = control;
+        else if (name == QStringLiteral("headphone_cue"))
+            mapping.headphoneCueNote = control;
         else if (name == QStringLiteral("loop_in"))
             mapping.loopInNote = control;
         else if (name == QStringLiteral("loop_out"))

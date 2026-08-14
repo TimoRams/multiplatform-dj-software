@@ -16,6 +16,8 @@ struct ScratchControllerConfig {
     double fastVelocitySmoothingOld = 0.35;
     double noMoveDecayMs = 55.0;
     double noMoveDecayTauSec = 0.030;
+    double commandVelocityHoldMs = 8.0;
+    double commandVelocityDecayTauMs = 7.0;
     double releaseReturnTauSec = 0.220;
     double inertiaStopThreshold = 0.02;
 };
@@ -154,6 +156,10 @@ public:
     [[nodiscard]] double smoothedSpeed() const noexcept {
         return m_smoothedSpeed.load(std::memory_order_relaxed);
     }
+    // Latest hand-command velocity, decayed quickly when the controller stops
+    // producing ticks. Unlike smoothedSpeed(), audio feedback never overwrites
+    // this value, so the position tracker can interpolate sparse MIDI events.
+    [[nodiscard]] double commandedHandSpeed() const noexcept;
     [[nodiscard]] double readPositionSamples() const noexcept {
         return m_readPosition.load(std::memory_order_relaxed);
     }
@@ -178,6 +184,7 @@ private:
     std::atomic<double> m_handPositionSec { 0.0 };
     std::atomic<double> m_rawSpeed { 0.0 };
     std::atomic<double> m_smoothedSpeed { 0.0 };
+    std::atomic<double> m_commandedHandSpeed { 0.0 };
     std::atomic<double> m_inertiaSpeed { 0.0 };
     std::atomic<double> m_releaseTargetSpeed { 0.0 };
     std::atomic<double> m_readPosition { 0.0 };

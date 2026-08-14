@@ -46,6 +46,7 @@ void ScratchController::startScratch(double audioSamplePos,
     m_handPositionSec.store(startSec, std::memory_order_relaxed);
     m_rawSpeed.store(0.0, std::memory_order_relaxed);
     m_smoothedSpeed.store(0.0, std::memory_order_relaxed);
+    m_commandedHandSpeed.store(0.0, std::memory_order_relaxed);
     m_inertiaSpeed.store(0.0, std::memory_order_relaxed);
     m_releaseTargetSpeed.store(0.0, std::memory_order_relaxed);
     m_readPosition.store(audioSamplePos, std::memory_order_relaxed);
@@ -63,6 +64,7 @@ void ScratchController::stopScratch() noexcept
 {
     m_rawSpeed.store(0.0, std::memory_order_relaxed);
     m_smoothedSpeed.store(0.0, std::memory_order_relaxed);
+    m_commandedHandSpeed.store(0.0, std::memory_order_relaxed);
     m_inertiaSpeed.store(0.0, std::memory_order_relaxed);
     m_releaseTargetSpeed.store(0.0, std::memory_order_relaxed);
     m_phase.store(ScratchPhase::Idle, std::memory_order_release);
@@ -215,7 +217,21 @@ void ScratchController::submitHandDelta(double deltaTrackSec, double dtSec) noex
     m_handPositionSec.store(target, std::memory_order_relaxed);
     m_rawSpeed.store(raw, std::memory_order_relaxed);
     m_smoothedSpeed.store(velocity, std::memory_order_relaxed);
+    m_commandedHandSpeed.store(velocity, std::memory_order_relaxed);
     m_lastMoveNs.store(nowNs(), std::memory_order_relaxed);
+}
+
+double ScratchController::commandedHandSpeed() const noexcept
+{
+    const double commanded = m_commandedHandSpeed.load(std::memory_order_relaxed);
+    const double idleMs = timeSinceLastMoveMs();
+    if (idleMs <= m_config.commandVelocityHoldMs)
+        return commanded;
+
+    const double tauMs = std::max(1.0, m_config.commandVelocityDecayTauMs);
+    const double gain = std::exp(-(idleMs - m_config.commandVelocityHoldMs) / tauMs);
+    const double decayed = commanded * gain;
+    return std::abs(decayed) < m_config.minScratchSpeed ? 0.0 : decayed;
 }
 
 void ScratchController::submitReleaseDelta(double deltaTrackSec, double dtSec) noexcept

@@ -47,6 +47,7 @@ public:
     // track exactly with no overshoot; momentum carries playback smoothly across
     // sparse UI events. Returns the rate used (track samples per output sample).
     double processScratchTracking(double targetPosSamples,
+                                  double commandedRate,
                                   double maxAbsRate,
                                   const juce::AudioSourceChannelInfo& output) noexcept;
 

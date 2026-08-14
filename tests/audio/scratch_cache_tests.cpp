@@ -127,8 +127,32 @@ int main(int argc, char** argv)
     cache.releaseTrack(monoHandle);
     scratch.setTrackCacheSource(&cache, handle);
     scratch.reset(1000);
-    scratch.processScratchTracking(2000, 8.0, {&loopOut, 0, 512});
+    scratch.processScratchTracking(2000, 0.0, 8.0, {&loopOut, 0, 512});
     ok &= require(finiteBlock(loopOut), "position tracker remains finite after generation switch");
+
+    // Sparse jog ticks describe a moving platter, not a sequence of stops.
+    // Velocity feed-forward may bridge one callback, but the absolute target
+    // must pull the reader back immediately when that command goes stale.
+    scratch.reset(10'000);
+    scratch.processScratchTracking(10'512, 1.0, 8.0, {&loopOut, 0, 512});
+    ok &= require(scratch.readPosition() > 10'512,
+                  "moving-reference tracker bridges a sparse forward jog tick");
+    ok &= require(scratch.readPosition() <= 10'800.01,
+                  "forward jog prediction remains bounded to six milliseconds");
+    scratch.processScratchTracking(10'512, 0.0, 8.0, {&loopOut, 0, 512});
+    ok &= require(std::abs(scratch.readPosition() - 10'512) < 1.0,
+                  "stale forward velocity cannot drift beyond the hand target");
+
+    scratch.reset(20'000);
+    scratch.processScratchTracking(19'488, -1.0, 8.0, {&loopOut, 0, 512});
+    ok &= require(scratch.readPosition() < 19'488,
+                  "moving-reference tracker bridges a sparse reverse jog tick");
+    ok &= require(scratch.readPosition() >= 19'199.99,
+                  "reverse jog prediction remains bounded to six milliseconds");
+    scratch.processScratchTracking(19'488, 0.0, 8.0, {&loopOut, 0, 512});
+    ok &= require(std::abs(scratch.readPosition() - 19'488) < 1.0,
+                  "stale reverse velocity cannot drift beyond the hand target");
+
     const auto stats = scratch.cacheStats();
     ok &= require(stats.diskReadsFromAudioThread == 0, "diskReadsFromAudioThread must remain zero");
 

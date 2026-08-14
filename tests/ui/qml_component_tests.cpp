@@ -166,10 +166,25 @@ int main()
                   && has14BitPair("deckA_vol", "0xB0", "0x13", "0x33")
                   && has14BitPair("deckB_vol", "0xB1", "0x13", "0x33")
                   && has14BitPair("crossfader", "0xB6", "0x1F", "0x3F")
+                  && has14BitPair("master_level", "0xB6", "0x08", "0x28")
                   && has14BitPair("headphone_mix", "0xB6", "0x0C", "0x2C")
+                  && has14BitPair("headphone_level", "0xB6", "0x0D", "0x2D")
                   && has14BitPair("deckA_sound_color", "0xB6", "0x17", "0x37")
                   && has14BitPair("deckB_sound_color", "0xB6", "0x18", "0x38"),
                   "FLX10 mixer faders and knobs map complete coherent 14-bit pairs");
+    ok &= require(flx10Mapping.find("paramId=\"master_cue\" status=\"0x96\" control=\"0x63\"")
+                      != std::string::npos
+                  && flx10Mapping.find("paramId=\"deckA_headphone_cue\" status=\"0x90\" control=\"0x54\"")
+                      != std::string::npos
+                  && flx10Mapping.find("paramId=\"deckB_headphone_cue\" status=\"0x91\" control=\"0x54\"")
+                      != std::string::npos
+                  && flx10Mapping.find("paramId=\"deckC_headphone_cue\" status=\"0x92\" control=\"0x54\"")
+                      != std::string::npos
+                  && flx10Mapping.find("paramId=\"deckD_headphone_cue\" status=\"0x93\" control=\"0x54\"")
+                      != std::string::npos
+                  && flx10Mapping.find("<DeckLed name=\"headphone_cue\" control=\"0x54\"/>")
+                      != std::string::npos,
+                  "FLX10 master and all four channel headphone CUE controls use the documented notes");
     ok &= require(flx10Mapping.find("paramId=\"beat_fx_channel_deck_a\" status=\"0x94\" control=\"0x10\"")
                       != std::string::npos
                   && flx10Mapping.find("paramId=\"beat_fx_channel_deck_b\" status=\"0x94\" control=\"0x11\"")

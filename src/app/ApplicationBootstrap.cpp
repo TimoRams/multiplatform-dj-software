@@ -469,7 +469,9 @@ int runApplication(int argc, char *argv[])
                                                    *runtime.controlClock, &app);
             QQmlEngine::setObjectOwnership(midi, QQmlEngine::CppOwnership);
             runtime.midiManager = midi;
-            runtime.midiManager->connectDecks(runtime.deckA.get(), runtime.deckB.get());
+            runtime.midiManager->connectDecks(
+                runtime.deckA.get(), runtime.deckB.get(),
+                runtime.deckC.get(), runtime.deckD.get());
             engine.rootContext()->setContextProperty("midiManager", runtime.midiManager.data());
 
             runtime.controllerManager = std::make_unique<ControllerIntegrationManager>(

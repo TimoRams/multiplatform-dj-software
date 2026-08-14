@@ -100,7 +100,6 @@ struct JogPhaseBytes
 // individual bytes while MIDI/transport state may be changing.
 struct DeckDisplaySnapshot
 {
-    std::uint64_t generation = 0;
     double sourcePositionSec = 0.0;
     double trackDurationSec = 0.0;
     double bpm = 0.0;
@@ -108,8 +107,6 @@ struct DeckDisplaySnapshot
     bool playing = false;
     bool scratching = false;
     bool reverse = false;
-    QString title;
-    QString artist;
     uint8_t keyByte = 0x80;
 };
 
@@ -172,6 +169,20 @@ inline bool xx2fSampleForMilliseconds(double milliseconds, uint32_t& sample) noe
         return false;
     sample = static_cast<uint32_t>(std::llround(sampleValue));
     return sample <= kXx2fMaximumSample;
+}
+
+// Resolve one indexed xx36 window inside a sweep whose origin was captured
+// once at start. Re-evaluating the origin from a moving playhead between
+// packets skips windows and leaves a blank region on the jog display.
+inline int waveformSweepWindow(int startWindow, int windowsSent,
+                               int totalWindows) noexcept
+{
+    if (totalWindows <= 0)
+        return 0;
+    const int normalizedStart = ((startWindow % totalWindows) + totalWindows)
+        % totalWindows;
+    const int normalizedOffset = std::max(0, windowsSent) % totalWindows;
+    return (normalizedStart + normalizedOffset) % totalWindows;
 }
 
 constexpr VendorUnlockCommand kVendorUnlockCommands[] = {

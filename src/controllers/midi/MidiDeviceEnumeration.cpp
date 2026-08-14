@@ -218,6 +218,55 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
     }
 
     const QString port = parts.at(1) + ":" + parts.at(2);
+    auto directInput = std::make_unique<AlsaMidiInput>();
+    QString directError;
+    const bool primaryFaderSource = m_primaryAlsaInputPort.isEmpty()
+        || port == m_primaryAlsaInputPort;
+    if (directInput->open(
+            id,
+            [this, primaryFaderSource](const AlsaMidiInputEvent& event)
+            {
+                if (m_shutdownComplete.load(std::memory_order_acquire))
+                    return;
+
+                const int type = event.status & 0xF0;
+                const int channel = event.status & 0x0F;
+                int msgId = -1;
+                float rawValue = 0.0f;
+                bool noteOff = false;
+                if (type == 0xB0) {
+                    const int control = event.data1;
+                    if ((control == 0x13 || control == 0x33)
+                        && !primaryFaderSource) {
+                        return;
+                    }
+                    msgId = 10000 + channel * 2000 + 1000 + control;
+                    rawValue = static_cast<float>(event.data2);
+                } else if (type == 0x90 || type == 0x80) {
+                    msgId = 10000 + channel * 2000 + event.data1;
+                    noteOff = type == 0x80 || event.data2 == 0;
+                    rawValue = noteOff
+                        ? 0.0f : static_cast<float>(event.data2) / 127.0f;
+                } else if (type == 0xE0) {
+                    msgId = 10000 + channel * 2000 + 1500;
+                    rawValue = static_cast<float>(
+                        static_cast<int>(event.data1)
+                        | (static_cast<int>(event.data2) << 7));
+                }
+
+                if (msgId >= 0) {
+                    enqueueRawMidiEvent(msgId, rawValue, noteOff,
+                                        event.timestampSeconds);
+                }
+            },
+            &directError)) {
+        qInfo() << "[MIDI] Direct ALSA input active on" << port;
+        m_alsaDirectInputs.push_back(std::move(directInput));
+        return;
+    }
+
+    qWarning() << "[MIDI] Direct ALSA input failed on" << port
+               << directError << "— using aseqdump fallback";
     auto monitor = std::make_unique<QProcess>(this);
     QProcess* process = monitor.get();
     m_alsaMonitorBuffers[process].clear();
@@ -457,8 +506,11 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
 void MidiControllerManager::stopAlsaInputMonitor()
 {
 #if defined(Q_OS_LINUX)
-    if (m_alsaInputMonitors.empty())
-        return;
+    for (auto& input : m_alsaDirectInputs) {
+        if (input)
+            input->close();
+    }
+    m_alsaDirectInputs.clear();
 
     for (auto& monitor : m_alsaInputMonitors) {
         if (!monitor)
@@ -589,9 +641,15 @@ bool MidiControllerManager::hasActiveMidiInput() const
         {
             return monitor && monitor->state() != QProcess::NotRunning;
         });
+    const bool directAlsaInputActive = std::any_of(
+        m_alsaDirectInputs.begin(), m_alsaDirectInputs.end(),
+        [](const std::unique_ptr<AlsaMidiInput>& input)
+        {
+            return input && input->isOpen();
+        });
     if (flx10Context && flx10AlsaAvailable)
-        return alsaMonitorActive;
-    if (alsaMonitorActive)
+        return directAlsaInputActive || alsaMonitorActive;
+    if (directAlsaInputActive || alsaMonitorActive)
         return true;
 #endif
 

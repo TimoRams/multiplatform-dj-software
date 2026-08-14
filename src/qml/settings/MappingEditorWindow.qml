@@ -379,16 +379,20 @@ Window {
                     // ── HEADPHONES ──────────────────────────────────────────
                     Item {
                         width: parent.width; height: visible ? 30 : 0
-                        visible: mappingEditorWindow.catVisible([["Cue A","deckA_headphone_cue"],["Cue B","deckB_headphone_cue"],["Master Cue","master_cue"],["Cue Mix","headphone_mix"]])
+                        visible: mappingEditorWindow.catVisible([["Cue A","deckA_headphone_cue"],["Cue B","deckB_headphone_cue"],["Cue C","deckC_headphone_cue"],["Cue D","deckD_headphone_cue"],["Master Cue","master_cue"],["Cue Mix","headphone_mix"],["Headphone Level","headphone_level"],["Master Level","master_level"]])
                         Text { anchors.verticalCenter: parent.verticalCenter; text: "HEADPHONES"; color: "#3d3d3d"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.5 }
                     }
                     MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Cue A","deckA_headphone_cue");    labelStr: "Cue A";      paramId: "deckA_headphone_cue" }
                     MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Cue B","deckB_headphone_cue");    labelStr: "Cue B";      paramId: "deckB_headphone_cue" }
+                    MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Cue C","deckC_headphone_cue");    labelStr: "Cue C";      paramId: "deckC_headphone_cue" }
+                    MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Cue D","deckD_headphone_cue");    labelStr: "Cue D";      paramId: "deckD_headphone_cue" }
                     MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Master Cue","master_cue");        labelStr: "Master Cue"; paramId: "master_cue" }
                     MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Cue Mix","headphone_mix");        labelStr: "Cue Mix";    paramId: "headphone_mix" }
+                    MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Headphone Level","headphone_level"); labelStr: "Headphone Level"; paramId: "headphone_level" }
+                    MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Master Level","master_level");    labelStr: "Master Level"; paramId: "master_level" }
 
                     Item { width: parent.width; height: visible ? 8 : 0
-                        visible: mappingEditorWindow.catVisible([["Cue A","deckA_headphone_cue"],["Cue B","deckB_headphone_cue"],["Master Cue","master_cue"],["Cue Mix","headphone_mix"]]) }
+                        visible: mappingEditorWindow.catVisible([["Cue A","deckA_headphone_cue"],["Cue B","deckB_headphone_cue"],["Cue C","deckC_headphone_cue"],["Cue D","deckD_headphone_cue"],["Master Cue","master_cue"],["Cue Mix","headphone_mix"],["Headphone Level","headphone_level"],["Master Level","master_level"]]) }
 
                     // ── MIXER ───────────────────────────────────────────────
                     Item {

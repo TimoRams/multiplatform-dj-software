@@ -125,6 +125,24 @@ void latestDisplayStateWinsWithoutBacklog()
     assert(pendingDisplay.empty());
 }
 
+void waveformSweepKeepsItsOriginAndCoversEveryWindow()
+{
+    constexpr int totalWindows = 37;
+    constexpr int capturedStartWindow = 19;
+    std::array<bool, totalWindows> seen {};
+    for (int sent = 0; sent < totalWindows; ++sent) {
+        const int window = flx10_protocol::waveformSweepWindow(
+            capturedStartWindow, sent, totalWindows);
+        assert(window >= 0 && window < totalWindows);
+        assert(!seen[static_cast<std::size_t>(window)]);
+        seen[static_cast<std::size_t>(window)] = true;
+    }
+    assert(std::all_of(seen.begin(), seen.end(), [](bool value) { return value; }));
+    assert(flx10_protocol::waveformSweepWindow(-1, 0, totalWindows)
+           == totalWindows - 1);
+    assert(flx10_protocol::waveformSweepWindow(8, 123, 0) == 0);
+}
+
 } // namespace
 
 int main()
@@ -136,5 +154,6 @@ int main()
     beatgridRangeDoesNotWrap();
     tempoDoesNotMoveAbsoluteProgress();
     latestDisplayStateWinsWithoutBacklog();
+    waveformSweepKeepsItsOriginAndCoversEveryWindow();
     return 0;
 }

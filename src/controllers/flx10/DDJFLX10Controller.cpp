@@ -31,10 +31,15 @@ DDJFLX10Controller::DDJFLX10Controller(ControlClock& controlClock, QObject* pare
     m_keepAliveTimer.setInterval(kKeepAliveIntervalMs);
     m_stateTimer.setTimerType(Qt::PreciseTimer);
     m_stateTimer.setInterval(kJogStateIntervalMs);
+    m_tempoWaveformRefreshTimer.setSingleShot(true);
+    m_tempoWaveformRefreshTimer.setTimerType(Qt::PreciseTimer);
+    m_tempoWaveformRefreshTimer.setInterval(140);
 
     connect(&m_uploadTimer, &QTimer::timeout, this, &DDJFLX10Controller::sendUploadChunk);
     connect(&m_keepAliveTimer, &QTimer::timeout, this, &DDJFLX10Controller::sendKeepAlive);
     connect(&m_stateTimer, &QTimer::timeout, this, &DDJFLX10Controller::sendStateTick);
+    connect(&m_tempoWaveformRefreshTimer, &QTimer::timeout,
+            this, &DDJFLX10Controller::flushTempoWaveformRefresh);
     ControlClock::Callbacks callbacks;
     callbacks.display = [this](const ControlTickContext&) {
         sendWaveformTick();
@@ -134,6 +139,8 @@ void DDJFLX10Controller::prepareForShutdown() noexcept
     m_uploadTimer.stop();
     m_keepAliveTimer.stop();
     m_stateTimer.stop();
+    m_tempoWaveformRefreshTimer.stop();
+    m_pendingTempoWaveformDeckMask = 0;
     m_keepAliveEnabled = false;
     stopWaveformWorker();
 #if defined(Q_OS_LINUX)
@@ -152,6 +159,8 @@ void DDJFLX10Controller::stop()
     m_uploadTimer.stop();
     m_keepAliveTimer.stop();
     m_stateTimer.stop();
+    m_tempoWaveformRefreshTimer.stop();
+    m_pendingTempoWaveformDeckMask = 0;
     m_keepAliveEnabled = false;
 #if defined(Q_OS_LINUX)
     if (m_keepAliveProcess && m_keepAliveProcess->state() != QProcess::NotRunning) {
@@ -162,6 +171,7 @@ void DDJFLX10Controller::stop()
 #endif
     m_uploadActive.fill(false);
     m_uploadWindowsSent.fill(0);
+    m_uploadStartWindows.fill(0);
     m_uploadResweepPending.fill(false);
     // Hand the device back in a defined state. Closing the endpoint without
     // this leaves the last pushed waveform, cover art and platter position
@@ -287,6 +297,7 @@ void DDJFLX10Controller::connectDeckSignals()
         DjEngine* engine = deckEngine(deck);
         if (!engine)
             continue;
+        m_cachedDeckKeyBytes[deck] = deckKeyByte(deck);
 
         m_trackLoadedConnections[deck] = connect(engine, &DjEngine::trackLoaded, this, [this, deck] {
             if (m_shuttingDown.load(std::memory_order_acquire))
@@ -309,6 +320,7 @@ void DDJFLX10Controller::connectDeckSignals()
             DjEngine* engine = deckEngine(deck);
             if (!engine)
                 return;
+            m_cachedDeckKeyBytes[deck] = deckKeyByte(deck);
 
             // Cover art does not depend on the waveform, but this handler used
             // to bail out when the deck had no FLX10 preview yet. Metadata
@@ -333,8 +345,15 @@ void DDJFLX10Controller::connectDeckSignals()
             if (!m_waveforms[deck].isEmpty())
                 sendXx39(deck);
         });
-        // Tempo bytes in 0x27 are refreshed by sendStateTick(); avoid an extra
-        // immediate packet here — it used to make the platter cursor jump wildly.
+        // xx27 changes the FLX10's waveform time scale. The firmware can drop
+        // the not-yet-played side of its xx36 buffer while that scale moves, so
+        // refresh the waveform once the physical tempo fader has settled.
+        m_tempoConnections[deck] = connect(
+            engine, &DjEngine::tempoChanged, this,
+            [this, deck] { scheduleTempoWaveformRefresh(deck); });
+        m_tempoRangeConnections[deck] = connect(
+            engine, &DjEngine::tempoRangeChanged, this,
+            [this, deck] { scheduleTempoWaveformRefresh(deck); });
 
         if (TrackData* trackData = engine->getTrackData()) {
             m_rgbWaveformConnections[deck] = connect(trackData, &TrackData::rgbWaveformUpdated, this, [this, deck] {
@@ -373,6 +392,7 @@ void DDJFLX10Controller::connectDeckSignals()
             m_keyAnalyzedConnections[deck] = connect(trackData, &TrackData::keyAnalyzed, this, [this, deck] {
                 if (m_shuttingDown.load(std::memory_order_acquire))
                     return;
+                m_cachedDeckKeyBytes[deck] = deckKeyByte(deck);
                 if (!m_connected || m_waveforms[deck].isEmpty())
                     return;
                 sendXx39(deck);
@@ -434,11 +454,14 @@ void DDJFLX10Controller::invalidateDeckSnapshot(int deck, const QString& trackPa
     m_waveformDurations[deck] = kPreviewDurationSeconds;
     m_uploadActive[deck] = false;
     m_uploadWindowsSent[deck] = 0;
+    m_uploadStartWindows[deck] = 0;
     m_uploadResweepPending[deck] = false;
+    m_pendingTempoWaveformDeckMask &= static_cast<std::uint8_t>(~(1u << deck));
     m_lastWaveformRefreshMs[deck] = 0;
     m_lastWaveformUploadMs[deck] = 0;
     m_waveformUploadTrackGenerations[deck] = 0;
     m_waveformUploadQualityPermille[deck] = 0;
+    m_cachedDeckKeyBytes[deck] = 0x80;
     m_lastCoverUrls[deck].clear();
     resetDisplayPacketState(deck);
 
@@ -544,12 +567,53 @@ void DDJFLX10Controller::refreshDeckFromEngine(int deck)
     const QString trackPath = engine->trackFilePath();
     if (trackPath != m_waveformTrackPaths[deck])
         invalidateDeckSnapshot(deck, trackPath, true);
+    m_cachedDeckKeyBytes[deck] = deckKeyByte(deck);
 
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     if (m_lastWaveformRefreshMs[deck] > 0 && now - m_lastWaveformRefreshMs[deck] < 250)
         return;
     m_lastWaveformRefreshMs[deck] = now;
     requestPreviewWaveform(deck);
+}
+
+void DDJFLX10Controller::scheduleTempoWaveformRefresh(int deck)
+{
+    if (deck < 1 || deck > 2 || m_shuttingDown.load(std::memory_order_acquire)
+        || !m_connected || m_waveforms[deck].isEmpty()) {
+        return;
+    }
+
+    m_pendingTempoWaveformDeckMask |= static_cast<std::uint8_t>(1u << deck);
+    // Tempo faders publish many 14-bit values while moving. Restarting here
+    // coalesces that gesture into one repair instead of continuously rewinding
+    // the same waveform transfer.
+    m_tempoWaveformRefreshTimer.start();
+}
+
+void DDJFLX10Controller::flushTempoWaveformRefresh()
+{
+    const std::uint8_t pending = std::exchange(m_pendingTempoWaveformDeckMask, 0);
+    if (m_shuttingDown.load(std::memory_order_acquire) || !m_connected)
+        return;
+
+    for (int deck = 1; deck <= 2; ++deck) {
+        if ((pending & static_cast<std::uint8_t>(1u << deck)) == 0
+            || m_waveforms[deck].isEmpty()) {
+            continue;
+        }
+
+#if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
+        // Drop old-scale xx36 packets that have not reached the device yet.
+        // The priority xx27 slot is republished immediately below.
+        discardQueuedDeckPackets(deck);
+#endif
+        m_uploadResweepPending[deck] = false;
+        beginWaveformSweep(deck);
+        resetDisplayPacketState(deck);
+        pushDeckJogDisplay(deck);
+        if (m_uploadActive[deck] && !m_uploadTimer.isActive())
+            m_uploadTimer.start(kUploadTickIntervalMs);
+    }
 }
 
 void DDJFLX10Controller::requestPreviewWaveform(int deck)
@@ -665,8 +729,7 @@ void DDJFLX10Controller::onPreviewWaveformReady(
             // finished analysis instead of freezing an early snapshot.
             m_uploadResweepPending[deck] = true;
         } else {
-            m_uploadWindowsSent[deck] = 0;
-            m_uploadActive[deck] = true;
+            beginWaveformSweep(deck);
             if (!m_uploadTimer.isActive())
                 m_uploadTimer.start(kUploadTickIntervalMs);
         }
@@ -991,7 +1054,7 @@ void DDJFLX10Controller::sendUploadChunk()
         // actually being played stayed empty for the entire upload, which is
         // why no waveform appeared on the screens.
         const int startWindow = totalWindows > 0
-            ? (currentWaveformEntry(deck) / kXx36EntriesPerWindow) % totalWindows
+            ? std::clamp(m_uploadStartWindows[deck], 0, totalWindows - 1)
             : 0;
         // kUploadWindowsPerTick existed but was never read: exactly one window
         // went out per 10 ms tick, so a five-minute track needed ~3300 ticks,
@@ -1002,7 +1065,8 @@ void DDJFLX10Controller::sendUploadChunk()
         for (int sent = 0;
              sent < windowsThisTick && m_uploadWindowsSent[deck] < totalWindows;
              ++sent) {
-            const int window = (startWindow + m_uploadWindowsSent[deck]) % totalWindows;
+            const int window = waveformSweepWindow(
+                startWindow, m_uploadWindowsSent[deck], totalWindows);
             if (!sendXx36Window(deck, m_waveforms[deck], window * kXx36EntriesPerWindow))
                 break;
             ++m_uploadWindowsSent[deck];
@@ -1014,7 +1078,7 @@ void DDJFLX10Controller::sendUploadChunk()
                 // whole waveform once more so the windows that went out with
                 // incomplete data are replaced.
                 m_uploadResweepPending[deck] = false;
-                m_uploadWindowsSent[deck] = 0;
+                beginWaveformSweep(deck);
                 qInfo() << "[DDJ-FLX10] Deck" << deck
                         << "repeating waveform sweep with improved analysis data";
             } else {

@@ -329,6 +329,7 @@ void ScratchResampler::processBlock(double rate,
 }
 
 double ScratchResampler::processScratchTracking(double targetPosSamples,
+                                                double commandedRate,
                                                 double maxAbsRate,
                                                 const juce::AudioSourceChannelInfo& output) noexcept
 {
@@ -352,10 +353,17 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
     const double outSr = std::max(1.0, m_outputSampleRate);
     const double dt = 1.0 / outSr;
     const double absMaxRate = std::abs(maxAbsRate);
+    const double referenceRate = std::clamp(
+        std::isfinite(commandedRate) ? commandedRate : 0.0,
+        -absMaxRate,
+        absMaxRate);
+    const double referenceVelocity = referenceRate * outSr;
 
-    // Critically-damped (zeta = 1) second-order position tracker. The bandwidth
-    // sets responsiveness: high enough to feel precise, low enough to reject the
-    // step-jitter of discrete UI events. Explicit Euler is stable since w*dt << 1.
+    // Critically-damped position + velocity tracker. A position-only tracker
+    // assumes the hand stops at every MIDI tick, creating a repeated accelerate /
+    // brake sound when USB delivers discrete or batched jog events. The measured
+    // hand velocity supplies the moving-reference term while the position error
+    // remains authoritative, so no long-term drift is possible.
     constexpr double kTrackHz = 52.0;
     constexpr double kTwoPi = 6.28318530717958647692;
     const double omega = kTwoPi * kTrackHz;
@@ -364,7 +372,7 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
     // Window must span the path the read head will travel this block.
     const double estRate = std::clamp(
         std::max(std::abs((target - m_readPos) / static_cast<double>(std::max(1, numSamples))),
-                 std::abs(m_trackVel) * dt) * 1.5,
+                 std::max(std::abs(m_trackVel) * dt, std::abs(referenceRate))) * 1.5,
         0.0, absMaxRate);
     const bool windowReady = ensureWindow(estRate, numSamples);
     if (!windowReady) m_starvationBlocks.fetch_add(1, std::memory_order_relaxed);
@@ -373,9 +381,20 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
     float* out0 = outChannels > 0 ? output.buffer->getWritePointer(0, start) : nullptr;
     float* out1 = outChannels > 1 ? output.buffer->getWritePointer(1, start) : nullptr;
 
+    // Feed-forward may lead the last received target by only a few milliseconds.
+    // This bridges USB/audio callback cadence without allowing a stale velocity
+    // to run the read head away after the platter stops.
+    constexpr double kMaximumPredictionSeconds = 0.006;
+    const double predictionSamples = std::abs(referenceVelocity)
+        * std::min(kMaximumPredictionSeconds,
+                   static_cast<double>(numSamples) / outSr);
+    const double corridorLow = target - predictionSamples;
+    const double corridorHigh = target + predictionSamples;
+
     for (int i = 0; i < numSamples; ++i) {
         const double err = target - m_readPos;
-        const double accel = omega * omega * err - 2.0 * omega * m_trackVel;
+        const double accel = omega * omega * err
+            + 2.0 * omega * (referenceVelocity - m_trackVel);
         m_trackVel = std::clamp(m_trackVel + accel * dt, -maxVel, maxVel);
 
         const double rate = std::clamp(m_trackVel * dt, -absMaxRate, absMaxRate);
@@ -383,6 +402,15 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
         m_readPos = wrapPosition(m_readPos);
         writeScratchOutput(out0, out1, i, windowReady && positionInWindow(m_readPos));
         m_readPos += rate;
+        if (!m_loopActive) {
+            if (m_readPos > corridorHigh && m_trackVel > 0.0) {
+                m_readPos = corridorHigh;
+                m_trackVel = 0.0;
+            } else if (m_readPos < corridorLow && m_trackVel < 0.0) {
+                m_readPos = corridorLow;
+                m_trackVel = 0.0;
+            }
+        }
     }
 
     m_smoothedRate = m_trackVel * dt;

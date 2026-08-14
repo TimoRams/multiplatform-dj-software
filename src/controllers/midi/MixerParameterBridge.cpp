@@ -2,8 +2,11 @@
 
 #include "app/DeckChannels.h"
 #include "app/MixerControl.h"
+#include "audio/AudioEngine.h"
 #include "ParameterStore.h"
 #include "deck/DjEngine.h"
+
+#include <algorithm>
 
 MixerParameterBridge::MixerParameterBridge(ParameterStore* store, QObject* parent)
     : QObject(parent)
@@ -31,6 +34,30 @@ DjEngine* MixerParameterBridge::deckForChannelId(const QString& channelId) const
 
 void MixerParameterBridge::onParameterChanged(const QString& id, float value)
 {
+    // Monitoring controls have one owner here. Routing them through both this
+    // bridge and MidiControllerManager used to toggle channel CUE twice, making
+    // a correct hardware press appear to do nothing.
+    if (id == QLatin1String("master_cue")) {
+        if (value >= 0.5f && m_decks[0])
+            m_decks[0]->setMasterCueEnabled(!m_decks[0]->masterCueEnabled());
+        return;
+    }
+    if (id == QLatin1String("headphone_mix")) {
+        if (m_decks[0])
+            m_decks[0]->setHeadphoneMix(static_cast<double>(value));
+        else
+            AudioEngine::setHeadphoneMix(value);
+        return;
+    }
+    if (id == QLatin1String("headphone_level")) {
+        AudioEngine::setHeadphoneGain(std::clamp(value, 0.0f, 1.0f) * 2.0f);
+        return;
+    }
+    if (id == QLatin1String("master_level")) {
+        AudioEngine::setMasterVolume(std::clamp(value, 0.0f, 1.0f));
+        return;
+    }
+
     if (id == QLatin1String("crossfader")) {
         if (m_mixerControl)
             m_mixerControl->setCrossfaderPosition(value * 2.0f - 1.0f);

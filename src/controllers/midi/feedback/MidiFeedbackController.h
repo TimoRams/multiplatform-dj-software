@@ -17,6 +17,7 @@ struct MidiFeedbackMapping
 
     uint8_t playNote = 0x0B;
     uint8_t cueNote = 0x0C;
+    uint8_t headphoneCueNote = 0x54;
     uint8_t loopInNote = 0x10;
     uint8_t loopOutNote = 0x11;
     uint8_t loop4BeatNote = 0x12;
@@ -50,7 +51,8 @@ public:
     explicit MidiFeedbackController(QObject* parent = nullptr);
 
     void setMidiSender(MidiSender sender);
-    void setDecks(DjEngine* deckA, DjEngine* deckB);
+    void setDecks(DjEngine* deckA, DjEngine* deckB,
+                  DjEngine* deckC, DjEngine* deckD);
     void setMapping(const MidiFeedbackMapping& mapping);
     void setEnabled(bool enabled);
     bool isEnabled() const { return m_enabled; }

@@ -379,6 +379,8 @@ inline MidiInteractionType defaultInteractionTypeForParam(const QString& paramId
         || paramId.startsWith(QStringLiteral("beat_fx_"))
         || paramId == QStringLiteral("deckA_headphone_cue")
         || paramId == QStringLiteral("deckB_headphone_cue")
+        || paramId == QStringLiteral("deckC_headphone_cue")
+        || paramId == QStringLiteral("deckD_headphone_cue")
         || paramId == QStringLiteral("master_cue")
         || paramId.startsWith(QStringLiteral("library_load_"))
         || paramId == QStringLiteral("library_back")
@@ -401,7 +403,9 @@ inline MidiInteractionType defaultInteractionTypeForParam(const QString& paramId
     if (paramId == QStringLiteral("deckA_vol")
         || paramId == QStringLiteral("deckB_vol")
         || paramId == QStringLiteral("crossfader")
+        || paramId == QStringLiteral("master_level")
         || paramId == QStringLiteral("headphone_mix")
+        || paramId == QStringLiteral("headphone_level")
         || paramId == QStringLiteral("deckA_tempo")
         || paramId == QStringLiteral("deckB_tempo")) {
         return MidiInteractionType::Fader;

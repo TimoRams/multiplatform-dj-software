@@ -128,8 +128,14 @@ void MidiControllerManager::shutdown()
         QObject::disconnect(m_deckA, nullptr, this, nullptr);
     if (m_deckB && m_deckB != m_deckA)
         QObject::disconnect(m_deckB, nullptr, this, nullptr);
+    if (m_deckC && m_deckC != m_deckA && m_deckC != m_deckB)
+        QObject::disconnect(m_deckC, nullptr, this, nullptr);
+    if (m_deckD && m_deckD != m_deckA && m_deckD != m_deckB && m_deckD != m_deckC)
+        QObject::disconnect(m_deckD, nullptr, this, nullptr);
     m_deckA = nullptr;
     m_deckB = nullptr;
+    m_deckC = nullptr;
+    m_deckD = nullptr;
 
     m_midiDeviceListConnection = juce::MidiDeviceListConnection{};
 

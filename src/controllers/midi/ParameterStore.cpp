@@ -18,7 +18,10 @@ ParameterStore::ParameterStore(QObject* parent)
     m_parameters.emplace(QStringLiteral("deckA_sound_color"), 0.5f);
     m_parameters.emplace(QStringLiteral("deckB_sound_color"), 0.5f);
     m_parameters.emplace(QStringLiteral("crossfader"), 0.5f);
+    m_parameters.emplace(QStringLiteral("master_level"), 1.0f);
     m_parameters.emplace(QStringLiteral("headphone_mix"), 0.5f);
+    // Normalized 0.5 maps to unity in AudioEngine's 0..2 headphone range.
+    m_parameters.emplace(QStringLiteral("headphone_level"), 0.5f);
 }
 
 void ParameterStore::setParameter(const QString& id, float value)
