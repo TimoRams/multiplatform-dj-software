@@ -1,4 +1,5 @@
 #include "analysis/AnalysisJobQueue.h"
+#include "analysis/AnalysisProgress.h"
 
 #include <iostream>
 #include <chrono>
@@ -24,6 +25,14 @@ int main()
 {
     using analysis::AnalysisPriority;
     bool ok = true;
+    ok &= require(analysis::aggregateProgress(0, 4, 0.0) == 0.0,
+                  "empty aggregate progress failed");
+    ok &= require(analysis::aggregateProgress(1, 4, 0.5) == 0.375,
+                  "current-track aggregate progress failed");
+    ok &= require(analysis::aggregateProgress(4, 4, 0.0) == 1.0,
+                  "completed aggregate progress failed");
+    ok &= require(analysis::aggregateProgress(10, 4, 2.0) == 1.0,
+                  "aggregate progress must be clamped");
     analysis::AnalysisJobQueue queue(3, 2);
     ok &= require(queue.push(job("b1", AnalysisPriority::BackgroundLibrary)), "enqueue b1");
     ok &= require(queue.push(job("b2", AnalysisPriority::BackgroundLibrary)), "enqueue b2");

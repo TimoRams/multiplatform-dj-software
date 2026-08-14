@@ -1,6 +1,7 @@
 #include "LibraryAnalysisManager.h"
 
 #include "LibraryDatabase.h"
+#include "analysis/AnalysisProgress.h"
 
 #include <QDebug>
 #include <QFileInfo>
@@ -28,7 +29,7 @@ void LibraryAnalysisManager::setLibraryDatabase(LibraryDatabase* db)
 
 double LibraryAnalysisManager::progress() const
 {
-    return m_total > 0 ? static_cast<double>(m_completed) / static_cast<double>(m_total) : 0.0;
+    return analysis::aggregateProgress(m_completed, m_total, m_currentProgress);
 }
 
 void LibraryAnalysisManager::analyzeAll(bool includeAnalyzed)
@@ -65,6 +66,9 @@ void LibraryAnalysisManager::analyzeTrack(const QString& trackId,
 
 void LibraryAnalysisManager::cancel()
 {
+    const bool wasRunning = m_running;
+    const bool hadProgress = m_total != 0 || m_completed != 0 || m_failed != 0
+        || m_currentProgress != 0.0 || !m_currentTitle.isEmpty();
     ++m_jobGeneration;
     m_cancelRequested = true;
     m_queue.clear();
@@ -80,12 +84,16 @@ void LibraryAnalysisManager::cancel()
     m_resultDrainTimer.stop();
     m_analysisMailbox.reset();
 
-    if (m_running) {
-        m_running = false;
-        m_currentTitle.clear();
+    m_running = false;
+    m_total = 0;
+    m_completed = 0;
+    m_failed = 0;
+    m_currentProgress = 0.0;
+    m_currentTitle.clear();
+    if (wasRunning)
         emit stateChanged();
+    if (hadProgress)
         emit progressChanged();
-    }
 }
 
 void LibraryAnalysisManager::enqueue(const QVariantList& items, analysis::AnalysisPriority priority)
@@ -109,6 +117,8 @@ void LibraryAnalysisManager::enqueue(const QVariantList& items, analysis::Analys
 
     m_total = static_cast<int>(m_queue.size());
     m_completed = 0;
+    m_failed = 0;
+    m_currentProgress = 0.0;
     m_currentTitle.clear();
     m_running = m_total > 0;
     emit stateChanged();
@@ -138,6 +148,7 @@ void LibraryAnalysisManager::startNext()
     const auto next = m_queue.pop();
     if (!next) return;
     m_current = *next;
+    m_currentProgress = 0.0;
     m_currentTitle = !m_current.title.isEmpty()
         ? m_current.title
         : QFileInfo(m_current.filePath).completeBaseName();
@@ -169,16 +180,36 @@ void LibraryAnalysisManager::startNext()
 void LibraryAnalysisManager::drainAnalysisMailbox()
 {
     if (!m_analysisMailbox) return;
+
+    double currentProgress = 0.0;
+    bool active = false;
+    WaveformAnalyzer::AnalysisGeneration progressGeneration = 0;
+    if (m_analysisMailbox->takeProgress(currentProgress, active, progressGeneration)
+        && progressGeneration == m_currentGeneration) {
+        const double nextProgress = std::clamp(currentProgress, 0.0, 1.0);
+        if (!qFuzzyCompare(m_currentProgress + 1.0, nextProgress + 1.0)) {
+            m_currentProgress = nextProgress;
+            emit progressChanged();
+        }
+    }
+
     const auto completion = m_analysisMailbox->take();
-    if (!completion) return;
-    if (completion->generation != m_currentGeneration
-        || completion->filePath != m_current.filePath)
+    if (completion) {
+        if (completion->generation != m_currentGeneration
+            || completion->filePath != m_current.filePath)
+            return;
+        if (completion->completed && completion->result && m_trackData)
+            m_trackData->applyAnalysisResult(*completion->result);
+        if (completion->completed && completion->result && m_db)
+            (void)m_db->requestAnalysisPersistence(m_current.trackId, *completion->result);
+        finishCurrent(completion->completed);
         return;
-    if (completion->completed && completion->result && m_trackData)
-        m_trackData->applyAnalysisResult(*completion->result);
-    if (completion->completed && completion->result && m_db)
-        (void)m_db->requestAnalysisPersistence(m_current.trackId, *completion->result);
-    finishCurrent(completion->completed);
+    }
+
+    // A failed reader/validator normally publishes a negative completion. If a
+    // callback is ever lost, still advance the queue once the worker stopped.
+    if (m_analyzer && !m_analyzer->isThreadRunning())
+        finishCurrent(false);
 }
 
 void LibraryAnalysisManager::finishCurrent(bool completed)
@@ -187,9 +218,11 @@ void LibraryAnalysisManager::finishCurrent(bool completed)
         return;
 
     if (!completed) {
+        ++m_failed;
         qWarning() << "[LibraryAnalysisManager] Analysis did not finish:" << m_current.filePath;
     }
 
+    m_currentProgress = 1.0;
     ++m_completed;
     emit progressChanged();
 

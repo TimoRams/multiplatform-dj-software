@@ -1174,9 +1174,9 @@ Rectangle {
     function startAnalyzeCurrentView() {
         if (!libraryAnalyzer) return
         if (activeTab === "playlist" && currentPlaylistId)
-            libraryAnalyzer.analyzePlaylist(currentPlaylistId, true)
+            libraryAnalyzer.analyzePlaylist(currentPlaylistId, false)
         else
-            libraryAnalyzer.analyzeAll(true)
+            libraryAnalyzer.analyzeAll(false)
     }
 
     // ── Cursor navigation ──────────────────────────────────────────────────
@@ -3878,7 +3878,7 @@ Rectangle {
                     // ── Analyse button (combined with progress fill) ────────
                     Rectangle {
                         id: analyzeBtn
-                        Layout.preferredWidth: libraryRoot.touchMode ? 120 : 148
+                        Layout.preferredWidth: libraryRoot.touchMode ? 148 : 176
                         Layout.preferredHeight: libraryRoot.touchMode ? 40 : 26
                         Layout.alignment: Qt.AlignVCenter
                         radius: 4; clip: true
@@ -3890,13 +3890,30 @@ Rectangle {
 
                         Behavior on border.color { ColorAnimation { duration: 200 } }
 
-                        // Progress fill
+                        // Determinate progress fill for the complete queue,
+                        // including the live percentage of the current track.
                         Rectangle {
                             anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
                             width: parent.width * (libraryAnalyzer ? libraryAnalyzer.progress : 0)
                             color: "#0d2840"
                             visible: libraryAnalyzer && libraryAnalyzer.running
                             Behavior on width { NumberAnimation { duration: 180; easing.type: Easing.OutQuad } }
+                        }
+
+                        Rectangle {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            height: 3
+                            color: "#263442"
+                            visible: libraryAnalyzer && libraryAnalyzer.running
+
+                            Rectangle {
+                                height: parent.height
+                                width: parent.width * (libraryAnalyzer ? libraryAnalyzer.progress : 0)
+                                color: libraryRoot.accentBlueLt
+                                Behavior on width { NumberAnimation { duration: 120; easing.type: Easing.OutQuad } }
+                            }
                         }
 
                         Row {
@@ -3919,7 +3936,9 @@ Rectangle {
                             Text {
                                 visible: libraryAnalyzer !== null && libraryAnalyzer !== undefined
                                          && libraryAnalyzer.running && libraryAnalyzer.total > 0
-                                text: (libraryAnalyzer ? libraryAnalyzer.completed : 0)
+                                text: Math.round((libraryAnalyzer ? libraryAnalyzer.progress : 0) * 100)
+                                      + "%  " + Math.min(libraryAnalyzer ? libraryAnalyzer.total : 0,
+                                                           (libraryAnalyzer ? libraryAnalyzer.completed : 0) + 1)
                                       + "/" + (libraryAnalyzer ? libraryAnalyzer.total : 0)
                                 color: libraryRoot.textSecond
                                 font.pixelSize: window.sp(9); font.family: "monospace"

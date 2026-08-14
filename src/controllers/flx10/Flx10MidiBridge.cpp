@@ -123,7 +123,6 @@ void cycleFlx10TempoRange(DjEngine* engine)
     });
     const auto next = std::next(nearest) == ranges.end() ? ranges.begin() : std::next(nearest);
     engine->setTempoRangePercent(*next);
-    qInfo() << "[MIDI ACTION] action=TempoRange" << "range:" << *next;
 }
 
 } // namespace
@@ -361,9 +360,10 @@ bool MidiControllerManager::sendMidiMessageWithDebug(const juce::MidiMessage& me
     const QString rawBytes = size == 3
         ? QStringLiteral("%1 %2 %3").arg(midi_internal::hexByte(status), midi_internal::hexByte(data1), midi_internal::hexByte(data2))
         : QString::fromLatin1(QByteArray(reinterpret_cast<const char*>(raw), size).toHex(' ')).toUpper();
-    const bool verboseMidiOut = qEnvironmentVariableIntValue("BROCKDJ_MIDI_OUT_LOG") > 0;
-    const bool noisySuccess = type == QStringLiteral("vu-meter") || type == QStringLiteral("pad-led");
-    const bool logSuccess = verboseMidiOut || !noisySuccess;
+    // Controller feedback can produce thousands of successful packets per
+    // second. Keep failures visible and make success traces explicitly opt-in.
+    const bool logSuccess = m_midiTraceEnabled
+        || qEnvironmentVariableIntValue("BROCKDJ_MIDI_OUT_LOG") > 0;
 
     try {
 #if defined(Q_OS_LINUX)
@@ -860,11 +860,6 @@ void MidiControllerManager::applyBeatFxState()
     }
 
     refreshFxLeds();
-    qDebug() << "[MIDI ACTION] action=BeatFx"
-             << "position:" << m_beatFxPosition
-             << "target:" << midi_internal::beatFxTargetName(m_beatFxTarget)
-             << "active:" << m_beatFxActive
-             << "dispatch=applyBeatFxSlot1";
 }
 
 void MidiControllerManager::refreshFxLeds()
@@ -1332,11 +1327,6 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
             engine->setFxSlotEffectType(slot, enabled ? kSlotTypes[index] : EffectType::None);
             engine->setFxSlotWetDry(slot, enabled ? 1.0f : 0.0f);
 
-            qDebug() << "[MIDI ACTION] action=FxSlot"
-                     << "deck:" << deck
-                     << "slot:" << slot
-                     << "enabled:" << enabled
-                     << "dispatch=toggleFxSlot";
         };
 
         auto handleBeatJumpParam = [&engineForDeck](const QString& paramId) -> bool
@@ -1359,10 +1349,6 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
 
             if (DjEngine* const engine = engineForDeck(deck))
                 engine->beatJump(beats);
-            qDebug() << "[MIDI ACTION] action=BeatJump"
-                     << "deck:" << deck
-                     << "beats:" << beats
-                     << "dispatch=beatJump";
             return true;
         };
 
@@ -1393,23 +1379,10 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
             if (currentHeld) {
                 if (!previousHeld && a) {
                     m_cueAHeld = true;
-                    qDebug() << "[MIDI ACTION] action=TransportCue deck=A"
-                             << "previous:" << previousHeld
-                             << "current:" << currentHeld
-                             << "dispatch=cueButtonPress";
                     a->cueButtonPress();
-                } else {
-                    qDebug() << "[MIDI ACTION] action=TransportCue deck=A"
-                             << "previous:" << previousHeld
-                             << "current:" << currentHeld
-                             << "dispatch=ignored-repeat-press";
                 }
             } else {
                 m_cueAHeld = false;
-                qDebug() << "[MIDI ACTION] action=TransportCue deck=A"
-                         << "previous:" << previousHeld
-                         << "current:" << currentHeld
-                         << "dispatch=cueButtonRelease";
                 if (a)
                     a->cueButtonRelease();
             }
@@ -1420,23 +1393,10 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
             if (currentHeld) {
                 if (!previousHeld && b) {
                     m_cueBHeld = true;
-                    qDebug() << "[MIDI ACTION] action=TransportCue deck=B"
-                             << "previous:" << previousHeld
-                             << "current:" << currentHeld
-                             << "dispatch=cueButtonPress";
                     b->cueButtonPress();
-                } else {
-                    qDebug() << "[MIDI ACTION] action=TransportCue deck=B"
-                             << "previous:" << previousHeld
-                             << "current:" << currentHeld
-                             << "dispatch=ignored-repeat-press";
                 }
             } else {
                 m_cueBHeld = false;
-                qDebug() << "[MIDI ACTION] action=TransportCue deck=B"
-                         << "previous:" << previousHeld
-                         << "current:" << currentHeld
-                         << "dispatch=cueButtonRelease";
                 if (b)
                     b->cueButtonRelease();
             }
@@ -1479,10 +1439,6 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
                     releaseHeldHotCue(deck, deckEngine);
                 }
                 setPadModeForDeck(deck, mode);
-                qDebug() << "[MIDI ACTION] action=PadMode"
-                         << "deck:" << deck
-                         << "mode:" << id
-                         << "dispatch=setPadMode";
                 return;
             }
 
@@ -1756,8 +1712,9 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
                 const double percent = static_cast<double>(value) * 2.0 * range - range;
                 if (!m_tempoInputSeen[0]) {
                     m_tempoInputSeen[0] = true;
-                    qInfo() << "[MIDI IN] FLX10 tempo fader deck A detected"
-                            << "normalized:" << value << "tempo:" << percent;
+                    if (m_midiTraceEnabled)
+                        qInfo() << "[MIDI IN] FLX10 tempo fader deck A detected"
+                                << "normalized:" << value << "tempo:" << percent;
                 }
                 a->setTempoPercent(percent);
             }
@@ -1768,8 +1725,9 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
                 const double percent = static_cast<double>(value) * 2.0 * range - range;
                 if (!m_tempoInputSeen[1]) {
                     m_tempoInputSeen[1] = true;
-                    qInfo() << "[MIDI IN] FLX10 tempo fader deck B detected"
-                            << "normalized:" << value << "tempo:" << percent;
+                    if (m_midiTraceEnabled)
+                        qInfo() << "[MIDI IN] FLX10 tempo fader deck B detected"
+                                << "normalized:" << value << "tempo:" << percent;
                 }
                 b->setTempoPercent(percent);
             }

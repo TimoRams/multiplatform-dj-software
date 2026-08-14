@@ -21,7 +21,9 @@ class LibraryAnalysisManager : public QObject
     Q_PROPERTY(bool running READ running NOTIFY stateChanged)
     Q_PROPERTY(int total READ total NOTIFY progressChanged)
     Q_PROPERTY(int completed READ completed NOTIFY progressChanged)
+    Q_PROPERTY(int failed READ failed NOTIFY progressChanged)
     Q_PROPERTY(double progress READ progress NOTIFY progressChanged)
+    Q_PROPERTY(double currentProgress READ currentProgress NOTIFY progressChanged)
     Q_PROPERTY(QString currentTitle READ currentTitle NOTIFY progressChanged)
 
 public:
@@ -33,11 +35,13 @@ public:
     [[nodiscard]] bool running() const { return m_running; }
     [[nodiscard]] int total() const { return m_total; }
     [[nodiscard]] int completed() const { return m_completed; }
+    [[nodiscard]] int failed() const { return m_failed; }
     [[nodiscard]] double progress() const;
+    [[nodiscard]] double currentProgress() const { return m_currentProgress; }
     [[nodiscard]] QString currentTitle() const { return m_currentTitle; }
 
-    Q_INVOKABLE void analyzeAll(bool includeAnalyzed = true);
-    Q_INVOKABLE void analyzePlaylist(const QString& playlistId, bool includeAnalyzed = true);
+    Q_INVOKABLE void analyzeAll(bool includeAnalyzed = false);
+    Q_INVOKABLE void analyzePlaylist(const QString& playlistId, bool includeAnalyzed = false);
     Q_INVOKABLE void analyzeTrack(const QString& trackId,
                                   const QString& filePath,
                                   const QString& title = QString());
@@ -63,6 +67,8 @@ private:
     QueueItem m_current;
     int m_total = 0;
     int m_completed = 0;
+    int m_failed = 0;
+    double m_currentProgress = 0.0;
     bool m_running = false;
     bool m_cancelRequested = false;
     QString m_currentTitle;

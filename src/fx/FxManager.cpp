@@ -140,9 +140,6 @@ void FxManager::setDeckAssignment(int unitId, int deck, bool active)
     if (unitId < 1 || unitId > 2 || deck < 1 || deck > 4)
         return;
 
-    qDebug() << "[FxManager] FX" << unitId << "deck" << deck
-             << (active ? "ASSIGNED" : "REMOVED");
-
     if (unitId == 1) {
         switch (deck) {
         case 1: setDeck1A(active); break;
@@ -404,7 +401,6 @@ void FxManager::setEffectType1(const QString& type)
     m_effectType1 = type;
     emit effectType1Changed();
     routeToEngines(1, effectTypeFromString(type), m_wetDry1);
-    qDebug() << "[FxManager] FX1 effect ->" << type;
 }
 
 void FxManager::setWetDry1(float amount)
@@ -451,7 +447,6 @@ void FxManager::setEffectType2(const QString& type)
     m_effectType2 = type;
     emit effectType2Changed();
     routeToEngines(2, effectTypeFromString(type), m_wetDry2);
-    qDebug() << "[FxManager] FX2 effect ->" << type;
 }
 
 void FxManager::setWetDry2(float amount)

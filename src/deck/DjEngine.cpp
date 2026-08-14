@@ -1012,11 +1012,13 @@ void DjEngine::refreshHardwareLatency()
                           || m_latencyLoggedNoDevice;
 
         if (changed) {
-            qInfo() << "[DjEngine] Backend output latency:" << latency.backendOutputSamples
-                    << "smp" << "(" << m_latencySeconds.load(std::memory_order_relaxed) << "s)"
-                    << "raw:" << latency.outputRawSamples
-                    << "buf:" << latency.callbackBufferSamples
-                    << "sr:" << latency.roundedSampleRate();
+            if (qEnvironmentVariableIntValue("BROCKDJ_AUDIO_TRACE") > 0) {
+                qInfo() << "[DjEngine] Backend output latency:" << latency.backendOutputSamples
+                        << "smp" << "(" << m_latencySeconds.load(std::memory_order_relaxed) << "s)"
+                        << "raw:" << latency.outputRawSamples
+                        << "buf:" << latency.callbackBufferSamples
+                        << "sr:" << latency.roundedSampleRate();
+            }
             m_lastLoggedEffectiveSamples  = latency.backendOutputSamples;
             m_lastLoggedOutputRawSamples  = latency.outputRawSamples;
             m_lastLoggedBufferSamples     = latency.callbackBufferSamples;
@@ -1026,7 +1028,8 @@ void DjEngine::refreshHardwareLatency()
     } else {
         m_visualLatencyCompensationSeconds.store(0.0f, std::memory_order_relaxed);
         if (!m_latencyLoggedNoDevice) {
-            qInfo() << "[DjEngine] No audio device yet; keeping last known latency";
+            if (qEnvironmentVariableIntValue("BROCKDJ_AUDIO_TRACE") > 0)
+                qInfo() << "[DjEngine] No audio device yet; keeping last known latency";
             m_latencyLoggedNoDevice = true;
         }
     }

@@ -336,7 +336,7 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                         const QString sourceKey = QStringLiteral("%1/ch%2/cc%3")
                             .arg(port).arg(chClamped + 1).arg(cc);
                         int& logged = m_alsaFaderSourceLogCounts[sourceKey];
-                        if (logged < 4) {
+                        if (m_midiTraceEnabled && logged < 4) {
                             ++logged;
                             qInfo().noquote()
                                 << QStringLiteral("[MIDI ALSA] FLX10 channel fader port=%1 channel=%2 cc=%3 value=%4 mapped=%5 source=%6")
@@ -430,10 +430,12 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                         // so notes must be exact or legacy only.
                         const int msgId             = resolveMsgId(channelAwareMsgId, note);
                         const bool zeroVelocity     = isOff || (vel == 0);
-                        qDebug() << "[MIDI ALSA]" << (isOff ? "NoteOff" : "NoteOn")
-                                 << "ch0:" << ch0 << "note:" << note << "vel:" << vel
-                                 << "msgId:" << msgId
-                                 << "raw:" << line;
+                        if (m_midiTraceEnabled) {
+                            qDebug() << "[MIDI ALSA]" << (isOff ? "NoteOff" : "NoteOn")
+                                     << "ch0:" << ch0 << "note:" << note << "vel:" << vel
+                                     << "msgId:" << msgId
+                                     << "raw:" << line;
+                        }
                         processDecodedMidiEvent(
                             msgId, zeroVelocity ? 0.0f : vel / 127.0f, zeroVelocity,
                             juce::Time::getMillisecondCounterHiRes() * 0.001);
@@ -799,6 +801,9 @@ int MidiControllerManager::findMidiOutputIndexByName(const QString& nameOrIdenti
 
 void MidiControllerManager::logAvailableMidiPorts() const
 {
+    if (!m_midiTraceEnabled)
+        return;
+
     qInfo() << "Available MIDI INPUT ports:";
     for (int i = 0; i < m_availableInputDeviceNames.size(); ++i) {
         const QString id = (i >= 0 && i < static_cast<int>(m_availableInputDeviceIdentifiers.size()))

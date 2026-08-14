@@ -33,10 +33,6 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
         if (channel >= 0 && channel < 2 && (sub == 1000 || sub == 1032)
             && !m_tempoRawInputSeen[static_cast<size_t>(channel)]) {
             m_tempoRawInputSeen[static_cast<size_t>(channel)] = true;
-            qInfo() << "[MIDI RAW] FLX10 tempo bytes reached BrockDJ"
-                    << "deck:" << (channel == 0 ? 'A' : 'B')
-                    << "cc:" << (sub - 1000)
-                    << "value:" << static_cast<int>(std::lround(value * 127.0f));
         }
     }
 
