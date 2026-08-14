@@ -91,8 +91,9 @@ EffectType FxManager::effectTypeFromString(const QString& name)
     if (name == "Slip Roll")                     return EffectType::SlipRoll;
     if (name == "Roll")                          return EffectType::Roll;
     if (name == "Roll Out")                      return EffectType::RollOut;
-    if (name == "Nobius")                        return EffectType::Nobius;
-    if (name == "Mobius")                        return EffectType::Mobius;
+    // "Nobius"/"Mobius" are the previous names, kept so saved sessions load.
+    if (name == "Mobius Saw" || name == "Nobius") return EffectType::MobiusSaw;
+    if (name == "Mobius Tri" || name == "Mobius") return EffectType::MobiusTri;
     // ── SoundColor mode aliases ──────────────────────────────────────────────
     if (name == "Space")         return EffectType::SoundColorSpace;
     if (name == "D.Echo")        return EffectType::SoundColorDubEcho;

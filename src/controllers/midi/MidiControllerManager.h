@@ -209,7 +209,10 @@ private:
     MidiBeatFxTarget m_beatFxTarget = MidiBeatFxTarget::DeckA;
     bool m_applyingBeatFxRouting = false;
     bool m_applyingBeatFxWet = false;
-    
+    float m_beatFxDivision = 0.25f;   // 1/4 beat, the usual power-up default
+    QTimer m_beatFxBlinkTimer;
+    bool m_beatFxBlinkOn = false;
+
     std::vector<std::unique_ptr<juce::MidiInput>> m_midiInputs;
     std::unique_ptr<juce::MidiOutput> m_midiOutput;
 
@@ -340,8 +343,19 @@ private:
     void refreshHotCueLeds(QChar deck, DjEngine* engine);
     void refreshPadModeLeds(QChar deck);
     void refreshPerformancePadLeds(QChar deck, DjEngine* engine);
+    // Monitoring LEDs (MASTER CUE) mirror the engine, which may already have
+    // been switched on from the UI before the controller was plugged in.
+    void refreshMixerLeds();
     void applyBeatFxState();
     void refreshFxLeds();
+    // Beat-synced timing for the hardware FX unit: turns the current beat
+    // division into an echo/delay length and pushes it to whatever the unit is
+    // routed to (an individual channel or the master bus).
+    void pushBeatFxTiming();
+    void stepBeatFxDivision(int direction);
+    // Professional DJ hardware pulses the FX ON button while the effect is
+    // engaged; the LED itself has no blink mode, so we drive it from a timer.
+    void updateBeatFxBlink();
     bool sendMidiShort(int statusNo, int controlNo, int value, const QString& messageType = QStringLiteral("raw"));
     bool sendMidiMessageWithDebug(const juce::MidiMessage& message, const QString& messageType);
     void sendMidiNoteLed(int statusNo, int noteNo, int value);

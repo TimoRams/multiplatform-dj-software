@@ -647,16 +647,28 @@ void MidiControllerManager::refreshDeckLeds(QChar deck, DjEngine* engine)
     refreshPerformancePadLeds(deck, engine);
 }
 
+void MidiControllerManager::refreshMixerLeds()
+{
+    // MASTER CUE is owned by the engine, not by the button. It can already be
+    // engaged from the UI before the controller is connected, so the LED is
+    // always driven from the engine's state rather than from a local latch.
+    if (!m_deckA)
+        return;
+    sendMappedNoteLed(QStringLiteral("master_cue"), m_deckA->masterCueEnabled());
+}
+
 void MidiControllerManager::refreshAllDeckLeds()
 {
     if (shouldUseFlx10Feedback()) {
         m_midiFeedback.refreshAll();
         refreshFxLeds();
+        refreshMixerLeds();
         return;
     }
     refreshDeckLeds(QLatin1Char('A'), m_deckA);
     refreshDeckLeds(QLatin1Char('B'), m_deckB);
     refreshFxLeds();
+    refreshMixerLeds();
 }
 
 MidiPadMode MidiControllerManager::padModeForDeck(QChar deck) const
@@ -819,8 +831,20 @@ void MidiControllerManager::connectFxManager(FxManager* fxManager)
     QObject::connect(m_fxManager, &FxManager::deck1DChanged, this, syncBeatFxDeck);
     QObject::connect(m_fxManager, &FxManager::soundColorModeChanged,
                      this, &MidiControllerManager::refreshFxLeds);
+    // Keep the hardware's beat division in step with the on-screen unit, and
+    // re-derive the echo length whenever the assigned deck's tempo moves.
+    QObject::connect(m_fxManager, &FxManager::beatDiv1Changed, this, [this]
+    {
+        if (!m_fxManager)
+            return;
+        m_beatFxDivision = m_fxManager->beatDiv1();
+        pushBeatFxTiming();
+    });
+    QObject::connect(m_fxManager, &FxManager::displayBpm1Changed,
+                     this, &MidiControllerManager::pushBeatFxTiming);
     syncBeatFxState();
     syncBeatFxDeck();
+    pushBeatFxTiming();
 }
 
 void MidiControllerManager::applyBeatFxState()
@@ -843,6 +867,10 @@ void MidiControllerManager::applyBeatFxState()
         m_applyingBeatFxWet = false;
         AudioEngine::setMasterFx(target == MidiBeatFxTarget::Master ? type : EffectType::None,
                                  target == MidiBeatFxTarget::Master ? wet : 0.0f);
+        m_fxManager->setPrimaryParam(1, m_beatFxLevelDepth);
+        // The hardware FX unit is beat-locked: BEAT ◄ / ► picks a division and
+        // the echo/delay length follows the assigned channel's tempo.
+        m_fxManager->setSyncEnabled(1, true);
     } else {
         AudioEngine::setMasterFx(m_beatFxTarget == MidiBeatFxTarget::Master
                                      ? type : EffectType::None,
@@ -859,12 +887,65 @@ void MidiControllerManager::applyBeatFxState()
         }
     }
 
+    pushBeatFxTiming();
     refreshFxLeds();
+}
+
+void MidiControllerManager::pushBeatFxTiming()
+{
+    // Without an FX manager there is no tempo to derive from, so the effects
+    // keep their own default times.
+    float seconds = -1.0f;
+    if (m_fxManager) {
+        m_fxManager->setBeatDivision(1, m_beatFxDivision);
+        const double bpm = m_fxManager->displayBpm1();
+        if (m_fxManager->syncEnabled1() && bpm > 0.0)
+            seconds = static_cast<float>((60.0 / bpm) * static_cast<double>(m_beatFxDivision));
+    }
+
+    // The master bus keeps its own copy of the timing — pushSyncedDelay only
+    // reaches the per-channel FX slots.
+    AudioEngine::setMasterFxTiming(seconds, m_beatFxLevelDepth);
+}
+
+void MidiControllerManager::stepBeatFxDivision(int direction)
+{
+    // Reaching for BEAT ◄ / ► is a request for a beat-locked effect length.
+    if (m_fxManager)
+        m_fxManager->setSyncEnabled(1, true);
+
+    static constexpr std::array<float, 7> kDivisions {
+        0.0625f, 0.125f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f
+    };
+    const float current = m_beatFxDivision;
+    const auto nearest = std::min_element(
+        kDivisions.begin(), kDivisions.end(), [current](float a, float b) {
+            return std::abs(a - current) < std::abs(b - current);
+        });
+    int index = static_cast<int>(std::distance(kDivisions.begin(), nearest)) + direction;
+    index = std::clamp(index, 0, static_cast<int>(kDivisions.size()) - 1);
+    m_beatFxDivision = kDivisions[static_cast<std::size_t>(index)];
+    pushBeatFxTiming();
+}
+
+void MidiControllerManager::updateBeatFxBlink()
+{
+    if (m_beatFxActive) {
+        if (!m_beatFxBlinkTimer.isActive()) {
+            m_beatFxBlinkOn = true;
+            m_beatFxBlinkTimer.start();
+        }
+        sendMappedNoteLed(QStringLiteral("beat_fx_on"), m_beatFxBlinkOn);
+    } else {
+        m_beatFxBlinkTimer.stop();
+        m_beatFxBlinkOn = false;
+        sendMappedNoteLed(QStringLiteral("beat_fx_on"), false);
+    }
 }
 
 void MidiControllerManager::refreshFxLeds()
 {
-    sendMappedNoteLed(QStringLiteral("beat_fx_on"), m_beatFxActive);
+    updateBeatFxBlink();
     for (const auto& [paramId, target] : midi_internal::kBeatFxChannels)
         sendMappedNoteLed(QString::fromLatin1(paramId), m_beatFxTarget == target);
     for (int position = 1; position <= 14; ++position) {
@@ -1257,6 +1338,10 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
     };
     wireMixerCueLed(3, m_deckC);
     wireMixerCueLed(4, m_deckD);
+    // MASTER CUE lives on deck A's engine and can be switched from the UI too.
+    if (m_deckA)
+        QObject::connect(m_deckA, &DjEngine::masterCueEnabledChanged,
+                         this, [this] { refreshMixerLeds(); });
     refreshAllDeckLeds();
 
     if (!m_parameterStore)
@@ -1527,28 +1612,19 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
         }
         if (id == QStringLiteral("beat_fx_beat_minus")
             || id == QStringLiteral("beat_fx_beat_plus")) {
-            if (value >= 0.5f && m_fxManager) {
-                static constexpr std::array<float, 7> divisions {
-                    0.0625f, 0.125f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f
-                };
-                const float current = m_fxManager->beatDiv1();
-                auto nearest = std::min_element(
-                    divisions.begin(), divisions.end(), [current](float a, float b) {
-                        return std::abs(a - current) < std::abs(b - current);
-                    });
-                int index = static_cast<int>(std::distance(divisions.begin(), nearest));
-                index += id.endsWith(QStringLiteral("plus")) ? 1 : -1;
-                index = std::clamp(index, 0, static_cast<int>(divisions.size()) - 1);
-                m_fxManager->setBeatDivision(1, divisions[static_cast<std::size_t>(index)]);
-            }
+            if (value >= 0.5f)
+                stepBeatFxDivision(id.endsWith(QStringLiteral("plus")) ? 1 : -1);
             return;
         }
         if (id == QStringLiteral("beat_fx_on")) {
-            const bool active = value >= 0.5f;
-            if (m_beatFxActive != active) {
-                m_beatFxActive = active;
-                emit beatFxActiveChanged();
-            }
+            // The button is momentary: 127 on press, 0 on release. The effect
+            // has to stay engaged after the finger leaves the button, so the
+            // state latches here and only the press edge flips it. Adopting the
+            // value directly would switch the effect off on release.
+            if (value < 0.5f)
+                return;
+            m_beatFxActive = !m_beatFxActive;
+            emit beatFxActiveChanged();
             applyBeatFxState();
             return;
         }

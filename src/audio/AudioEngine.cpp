@@ -331,8 +331,10 @@ void AudioEngine::processChunk(
     if (aux)
         aux->mixAuxAudio(m_masterBuf, m_previewScratch, samples);
     sanitizeStereo(m_masterBuf, samples);
-    m_masterMixer.finalize(parameters, m_masterBuf, samples,
-                           parameters.masterCueEnabled ? &m_masterCueTap : nullptr);
+    // The master cue tap is refreshed unconditionally: the headphone bus fades
+    // it in and out across a block, and fading through a buffer that stopped
+    // being written the moment MASTER CUE was switched off would click.
+    m_masterMixer.finalize(parameters, m_masterBuf, samples, &m_masterCueTap);
     const auto& meter = m_masterMixer.meter();
     peakL = std::max(peakL, meter.finalPeakL);
     peakR = std::max(peakR, meter.finalPeakR);

@@ -145,7 +145,9 @@ int main()
                   && flx10Mapping.find("paramId=\"library_view_toggle\" status=\"0x96\" control=\"0x7A\"")
                       != std::string::npos,
                   "FLX10 Slip Reverse and View controls use the documented notes");
-    ok &= require(flx10Mapping.find("paramId=\"beat_fx_on\" status=\"0x94\" control=\"0x47\" type=\"momentary\"")
+    // Note 0x46, confirmed against the hardware: the switch sends 127 when it
+    // latches on and 0 when it releases, so both edges must be dispatched.
+    ok &= require(flx10Mapping.find("paramId=\"beat_fx_on\" status=\"0x94\" control=\"0x46\" type=\"momentary\"")
                       != std::string::npos
                   && flx10Mapping.find("paramId=\"beat_fx_beat_minus\" status=\"0x94\" control=\"0x4A\"")
                       != std::string::npos

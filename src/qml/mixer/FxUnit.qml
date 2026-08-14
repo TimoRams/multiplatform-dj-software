@@ -41,8 +41,8 @@ Rectangle {
         { name: "Roll",            paramType: "beatDiv", knobLabel: "MIX",   bpmSync: true,  wip: false },
         { name: "Roll Out",        paramType: "beatDiv", knobLabel: "MIX",   bpmSync: true,  wip: false },
         { name: "Slip Roll",       paramType: "beatDiv", knobLabel: "MIX",   bpmSync: true,  wip: false },
-        { name: "Mobius",          paramType: "beatDiv", knobLabel: "MIX",   bpmSync: true,  wip: false },
-        { name: "Nobius",          paramType: "beatDiv", knobLabel: "MIX",   bpmSync: true,  wip: false },
+        { name: "Mobius Saw",      paramType: "beatDiv", knobLabel: "MIX",   bpmSync: true,  wip: false },
+        { name: "Mobius Tri",      paramType: "beatDiv", knobLabel: "MIX",   bpmSync: true,  wip: false },
         // ── LFO-rate (BPM-sync sets sweep rate) ──────────────────────────
         { name: "Tremolo",         paramType: "beatDiv", knobLabel: "DEPTH", bpmSync: true,  wip: false },
         { name: "Flanger",         paramType: "beatDiv", knobLabel: "DEPTH", bpmSync: true,  wip: false },

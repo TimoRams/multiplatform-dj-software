@@ -338,8 +338,8 @@ const char* FxProcessor::effectTypeName(EffectType type) noexcept
         case EffectType::Stretch: return "Stretch";
         case EffectType::SlipRoll: return "SlipRoll";
         case EffectType::Roll: return "Roll";
-        case EffectType::Nobius: return "Nobius";
-        case EffectType::Mobius: return "Mobius";
+        case EffectType::MobiusSaw: return "MobiusSaw";
+        case EffectType::MobiusTri: return "MobiusTri";
         case EffectType::SoundColorFilter: return "SoundColorFilter";
         case EffectType::SoundColorDubEcho: return "SoundColorDubEcho";
         case EffectType::SoundColorCrush: return "SoundColorCrush";
@@ -411,10 +411,10 @@ void FxProcessor::processWetEffect(EffectType type,
         case EffectType::RollOut:
             processRollOut(wetBuf, 0, n, amount);
             break;
-        case EffectType::Nobius:
+        case EffectType::MobiusSaw:
             processMobius(wetBuf, 0, n, amount, true);
             break;
-        case EffectType::Mobius:
+        case EffectType::MobiusTri:
             processMobius(wetBuf, 0, n, amount, false);
             break;
         case EffectType::None:
@@ -653,42 +653,67 @@ void FxProcessor::processReverb(juce::AudioBuffer<float>& wet, int start, int n)
 // Bitcrusher
 // ─────────────────────────────────────────────────────────────────────────────
 
-void FxProcessor::processBitcrusher(juce::AudioBuffer<float>& wet,
-                                    int start, int n, float amount)
+// Shared soft limiter. Quantisation adds level and hot input used to be
+// hard-clamped to ±1 — a second, much harsher distortion on top of the intended
+// one. Below the knee the signal passes through untouched.
+static inline float fxSoftClip(float x) noexcept
 {
-    // ── Bit depth reduction ───────────────────────────────────────────────────
-    // Steeper exponential so the effect becomes audible from early knob positions.
-    // amount 0.0 → 16 bit (clean), amount 0.4 → ~5 bit (gritty), amount 1.0 → 2 bit
-    const float bitDepth  = std::max(2.0f,
-        16.0f * std::pow(2.0f / 16.0f, amount * 1.6f));
-    const float steps     = std::pow(2.0f, bitDepth);
-    const float invSteps  = 1.0f / steps;
+    constexpr float knee = 0.8f;
+    const float a = std::abs(x);
+    if (a <= knee) return x;
+    return std::copysign(knee + (1.0f - knee) * std::tanh((a - knee) / (1.0f - knee)), x);
+}
 
-    // ── Sample-rate reduction (Sample-and-Hold) ───────────────────────────────
-    // Concave mapping: effect kicks in sooner than a linear ramp
-    // amount 0.0 → 1 sample, amount 0.3 → ~10 samples, amount 1.0 → 48 samples
-    const int holdLen = 1 + static_cast<int>(std::pow(amount, 0.65f) * 47.0f);
+void FxProcessor::crushBlock(juce::AudioBuffer<float>& buf, int start, int n, int numChannels,
+                             std::vector<BitcrusherState>& state, float rateRatio, float levels)
+{
+    rateRatio = std::clamp(rateRatio, 0.001f, 1.0f);
+    levels    = std::max(1.0f, levels);
+    const float invLevels = 1.0f / levels;
+    const int numCh = std::min({ buf.getNumChannels(), numChannels,
+                                 static_cast<int>(state.size()) });
 
-    for (int ch = 0; ch < wet.getNumChannels() && ch < (int)m_bcState.size(); ++ch)
+    for (int ch = 0; ch < numCh; ++ch)
     {
-        float* data = wet.getWritePointer(ch) + start;
-        auto&  st   = m_bcState[static_cast<size_t>(ch)];
+        float* data = buf.getWritePointer(ch) + start;
+        auto&  st   = state[static_cast<size_t>(ch)];
 
         for (int i = 0; i < n; ++i)
         {
-            // Sample-and-hold
-            if (st.holdCounter <= 0)
+            st.phase += rateRatio;
+            if (st.phase >= 1.0f)
             {
-                // Quantise to `steps` levels, symmetric around 0
-                float q = std::floor(data[i] * steps * 0.5f + 0.5f) * invSteps * 2.0f;
-                q = std::clamp(q, -1.0f, 1.0f);
-                st.holdSample  = q;
-                st.holdCounter = holdLen;
+                // Fractional carry keeps the average decimation rate exact, so
+                // the rate sweeps smoothly instead of stepping sr/1, sr/2, sr/3…
+                // The sample is taken instantaneously — the aliasing that comes
+                // with that is the whole point of the effect.
+                st.phase -= 1.0f;
+                st.holdSample = fxSoftClip(std::round(data[i] * levels) * invLevels);
             }
             data[i] = st.holdSample;
-            --st.holdCounter;
         }
     }
+}
+
+void FxProcessor::processBitcrusher(juce::AudioBuffer<float>& wet,
+                                    int start, int n, float amount)
+{
+    amount = std::clamp(amount, 0.0f, 1.0f);
+
+    // ── Bit depth reduction ───────────────────────────────────────────────────
+    // Bit reduction only becomes audible below ~10 bit, so the curve spends most
+    // of the travel there: 0.0 → 16 bit (clean), 0.25 → ~10 bit, 0.5 → ~6 bit,
+    // 1.0 → 2 bit.
+    const float bitDepth = 2.0f + 14.0f * std::pow(1.0f - amount, 1.8f);
+    const float levels   = std::pow(2.0f, bitDepth - 1.0f);
+
+    // ── Sample-rate reduction ─────────────────────────────────────────────────
+    // Exponential in frequency (one octave down per equal knob step), from the
+    // full sample rate down to ~600 Hz.
+    const float minRatio = std::clamp(600.0f / static_cast<float>(m_sampleRate), 0.001f, 1.0f);
+    const float rateRatio = std::pow(minRatio, amount);
+
+    crushBlock(wet, start, n, m_numChannels, m_bcState, rateRatio, levels);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1311,83 +1336,100 @@ void FxProcessor::processRollOut(juce::AudioBuffer<float>& wet,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Mobius / Nobius (forward + reverse bidir loop)
-// Mobius:  continuous forward+reverse ping-pong loop
-// Nobius:  like Mobius but with a slightly shifted (half-loop-offset) phase,
-//          creating a phase-cancellation / notch-style wash effect
+// Mobius Saw / Mobius Tri — endlessly gliding synth tone (Shepard glissando).
+//
+// kMobiusVoices oscillators sit an octave apart and all glide upward at the same
+// rate. A raised-cosine window over the octave stack fades the top voice out as
+// a fresh one fades in at the bottom, so the tone rises without bound while its
+// spectrum stays put — it sounds like it climbs forever.
+//   Saw: sawtooth oscillators, bright and buzzy (polyBLEP keeps the reset from
+//        aliasing across the whole glide range).
+//   Tri: triangle oscillators, soft and hollow.
+// The glide period follows the beat division; the knob sets how loud the tone
+// sits over the music.
 // ─────────────────────────────────────────────────────────────────────────────
 
 void FxProcessor::processMobius(juce::AudioBuffer<float>& wet,
-                                 int start, int n, float amount, bool nobius)
+                                 int start, int n, float amount, bool sawtooth)
 {
-    const float extSec    = m_externalDelaySeconds.load(std::memory_order_relaxed);
-    const int loopLen     = (extSec >= 0.f)
-        ? std::max(512, static_cast<int>(extSec * static_cast<float>(m_sampleRate)))
-        : std::max(512, static_cast<int>(m_sampleRate * (0.15f + amount * 1.05f)));
-    const int clampedLen  = std::min(loopLen, kMobiusBuf);
+    const float extSec = m_externalDelaySeconds.load(std::memory_order_relaxed);
+    // One full trip through the octave stack per glide cycle. Beat-synced when
+    // a length is supplied, otherwise the knob picks something musical.
+    const double cycleSeconds = (extSec > 0.f)
+        ? std::max(0.05, static_cast<double>(extSec) * 4.0)
+        : (4.0 - 3.5 * static_cast<double>(amount));
+    const double sweepPerSample =
+        static_cast<double>(kMobiusVoices) / (cycleSeconds * m_sampleRate);
+
+    // The tone rides on top of the incoming signal; the effect's wet/dry mix
+    // then decides how far it comes forward.
+    const float level = 0.12f + 0.5f * amount;
 
     auto& st = m_mobiusState;
-    if (st.loopLen != clampedLen)
-    {
-        st.loopLen = clampedLen;
-        // Reuse current readPos if it fits the new length to avoid a hard click.
-        // Only reset to 0 if the old read position would be out of range.
-        if (static_cast<int>(st.readPos) >= clampedLen)
-        {
-            st.readPos = static_cast<double>(st.writePos % clampedLen);
-            st.forward = true;
-        }
-    }
+    const int channels = std::min(2, wet.getNumChannels());
+
+    // A polyBLEP step correction removes the alias burst a naive sawtooth
+    // produces at its wrap; without it the upper voices buzz.
+    const auto polyBlep = [](double t, double dt) noexcept -> double {
+        if (t < dt)          { const double x = t / dt;       return x + x - x * x - 1.0; }
+        if (t > 1.0 - dt)    { const double x = (t - 1.0) / dt; return x * x + x + x + 1.0; }
+        return 0.0;
+    };
 
     for (int i = 0; i < n; ++i)
     {
-        // Record
-        for (int ch = 0; ch < wet.getNumChannels() && ch < 2; ++ch)
-            st.buf[ch][st.writePos % kMobiusBuf] = wet.getReadPointer(ch)[start + i];
-
-        // Read position for forward/reverse
-        int rp0 = static_cast<int>(st.readPos) % kMobiusBuf;
-        int rp1 = (rp0 + 1) % kMobiusBuf;
-        float frac = static_cast<float>(st.readPos - std::floor(st.readPos));
-
-        for (int ch = 0; ch < wet.getNumChannels() && ch < 2; ++ch)
+        for (int ch = 0; ch < channels; ++ch)
         {
-            float s0 = st.buf[ch][rp0];
-            float s1 = st.buf[ch][rp1];
-            float sample = s0 + frac * (s1 - s0);
+            // Half a voice of offset between the channels widens the stack
+            // without detuning it.
+            const double sweep = st.sweep + (ch == 1 ? 0.5 : 0.0);
+            double tone = 0.0;
+            double norm = 0.0;
 
-            if (nobius)
+            for (int v = 0; v < kMobiusVoices; ++v)
             {
-                // Nobius: blend in a half-loop-offset read for phasing effect
-                int rpN = (rp0 + clampedLen / 2) % kMobiusBuf;
-                sample  = sample * 0.5f + st.buf[ch][rpN] * 0.5f;
+                double octave = sweep + static_cast<double>(v);
+                if (octave >= kMobiusVoices)
+                    octave -= kMobiusVoices;
+
+                const double freq = kMobiusBaseHz * std::pow(2.0, octave);
+                const double dt   = freq / m_sampleRate;
+                if (dt >= 0.5)      // above Nyquist, nothing useful left to add
+                    continue;
+
+                double& phase = st.phase[ch][v];
+                phase += dt;
+                if (phase >= 1.0)
+                    phase -= 1.0;
+
+                double value;
+                if (sawtooth)
+                    value = 2.0 * phase - 1.0 - polyBlep(phase, dt);
+                else
+                    value = 4.0 * std::abs(phase - 0.5) - 1.0;
+
+                // Raised cosine over the stack: silent at both ends, so voices
+                // enter and leave without a step.
+                const double window = 0.5 - 0.5 * std::cos(
+                    2.0 * juce::MathConstants<double>::pi
+                        * octave / static_cast<double>(kMobiusVoices));
+                tone += value * window;
+                norm += window;
             }
-            wet.getWritePointer(ch)[start + i] = sample;
+
+            if (norm > 1.0e-6)
+                tone /= norm;
+
+            float* const out = wet.getWritePointer(ch);
+            out[start + i] += static_cast<float>(tone) * level;
         }
 
-        st.writePos = (st.writePos + 1) % kMobiusBuf;
-
-        // Ping-pong read direction
-        if (st.forward)
-        {
-            st.readPos += 1.0;
-            if (static_cast<int>(st.readPos) >= clampedLen)
-            {
-                st.readPos = clampedLen - 1.0;
-                st.forward = false;
-            }
-        }
-        else
-        {
-            st.readPos -= 1.0;
-            if (st.readPos < 0.0)
-            {
-                st.readPos = 0.0;
-                st.forward = true;
-            }
-        }
+        st.sweep += sweepPerSample;
+        if (st.sweep >= kMobiusVoices)
+            st.sweep -= kMobiusVoices;
     }
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sound Color FX — Pioneer DDJ-FLX10 style
@@ -1415,22 +1457,12 @@ void FxProcessor::prepareSCDelays()
     m_scFilterState.svfB.prepare(m_sampleRate);
     m_scSpaceState.svf  .prepare(m_sampleRate);
     m_scNoiseState.svf  .prepare(m_sampleRate);
-    m_scNoiseState.seed  = 12345u;
+    m_scNoiseState.seed  = { 12345u, 987654321u };
     m_scCrushState.svf  .prepare(m_sampleRate);
-
-    // Reset Sweep filter state without destroying the SmoothedValue members
-    m_scSweepState.lp1[0] = m_scSweepState.lp1[1] = 0.f;
-    m_scSweepState.bp1[0] = m_scSweepState.bp1[1] = 0.f;
-    m_scSweepState.lp2[0] = m_scSweepState.lp2[1] = 0.f;
-    m_scSweepState.bp2[0] = m_scSweepState.bp2[1] = 0.f;
+    m_scSweepState.svfA .prepare(m_sampleRate);
+    m_scSweepState.svfB .prepare(m_sampleRate);
 
     const float sr = static_cast<float>(m_sampleRate);
-
-    // Sweep per-sample coefficient smoothers: 10 ms ramp removes zipper noise
-    m_scSweepState.fcSmooth.reset(sr, 0.010f);
-    m_scSweepState.fcSmooth.setCurrentAndTargetValue(5000.f);
-    m_scSweepState.rSmooth .reset(sr, 0.010f);
-    m_scSweepState.rSmooth .setCurrentAndTargetValue(0.5f);
 
     // Shared wet/dry smoother for all SC effects: 15 ms ramp
     m_scAbsKSmooth.reset(sr, 0.015f);
@@ -1471,6 +1503,11 @@ void FxProcessor::mixSCSmoothed(juce::AudioBuffer<float>& dst,
 // t ∈ [0,1] → [0,1]. Applied to |knob| before DSP so the perceptual response
 // matches professional DJ mixer behavior — most control in the musically useful range.
 static float scMapSCurve(float t)    { return t * t * (3.f - 2.f * t); }
+// Cutoff travel for the filter-style modes. An S-curve races through the ends
+// of the sweep, so three quarters of the knob already sat below 100 Hz; this
+// keeps a small dead zone at the detent and spends the rest of the travel in
+// the range that is actually musical (half travel ≈ 1.2 kHz).
+static float scMapFilterTravel(float t) { return std::pow(t, 1.35f); }
 static float scMapExpRamp(float t)   { return std::pow(t, 1.5f); }
 static float scMapFastOnset(float t) { return 1.f - (1.f - t) * (1.f - t); }
 
@@ -1509,37 +1546,48 @@ void FxProcessor::processSC_Filter(juce::AudioBuffer<float>& buffer,
                                     int start, int n, float knob)
 {
     const float absK   = std::abs(knob);
-    const float mapped = scMapSCurve(absK);
-    m_scAbsKSmooth.setTargetValue(mapped < 0.005f ? 0.f : mapped);
-    if (!m_scAbsKSmooth.isSmoothing() && mapped < 0.005f) return;
+    const float mapped = scMapFilterTravel(absK);
+    // A filter is a series element, not a parallel one: it goes fully wet as
+    // soon as the knob leaves the detent (where the cutoff sits at the end of
+    // its range and is inaudible anyway). Blending dry signal back in across the
+    // whole travel is what made the filter sound half-engaged in mid positions.
+    const float wet = std::min(1.f, absK * 10.f);
+    m_scAbsKSmooth.setTargetValue(wet);
+    if (!m_scAbsKSmooth.isSmoothing() && wet < 0.005f) return;
 
     const float param = m_scParamAtomic.load(std::memory_order_relaxed);
-    const float q     = std::max(0.2f, 0.70f + param * 15.30f);
+    const float q     = std::max(0.2f, 0.70f + param * 9.30f);
 
-    float fc;
-    if (knob < 0.f)
-        fc = 20000.f * std::pow(20.f / 20000.f, mapped);
-    else
-        fc = 20.f * std::pow(20000.f / 20.f, mapped);
-    fc = std::clamp(fc, 20.f, 20000.f);
+    // Cutoff travel stops just short of the audible edges: full left is a deep
+    // rumble rather than digital silence, full right keeps a trace of air.
+    constexpr float kFcLow = 25.f, kFcHigh = 15000.f;
+    const float fc = (knob < 0.f)
+        ? kFcHigh * std::pow(kFcLow / kFcHigh, mapped)
+        : kFcLow  * std::pow(kFcHigh / kFcLow, mapped);
 
     auto& wetBuf = m_wetScratch;
     copyToWet(buffer, wetBuf, start, n);
 
-    // 24 dB/oct: cascade two SvfSmoothed stages with shared smoothed targets.
+    // 24 dB/oct: two cascaded stages. Only the second one carries the resonance
+    // — stacking two resonant stages multiplies the peak into a +20 dB spike.
     const bool lp = (knob < 0.f);
-    m_scFilterState.svfA.setTargets(fc, q);
+    m_scFilterState.svfA.setTargets(fc, 0.707f);
     m_scFilterState.svfB.setTargets(fc, q);
     m_scFilterState.svfA.process(wetBuf, 0, n, lp);
     m_scFilterState.svfB.process(wetBuf, 0, n, lp);
 
-    // Soft saturation for resonance edge emphasis — tanh keeps signal bounded
+    // Soft saturation for resonance edge emphasis. Normalised by tanh(gain) so
+    // it colours the signal without pulling the overall level down, and skipped
+    // entirely at low resonance where it would only cost headroom.
     const float edgeGain = 1.0f + param * 0.9f;
-    const int numChEdge = std::min(wetBuf.getNumChannels(), m_numChannels);
-    for (int ch = 0; ch < numChEdge; ++ch) {
-        float* d = wetBuf.getWritePointer(ch);
-        for (int i = 0; i < n; ++i)
-            d[i] = std::tanh(d[i] * edgeGain);
+    if (edgeGain > 1.01f) {
+        const float norm = 1.0f / edgeGain;   // unity for small signals
+        const int numChEdge = std::min(wetBuf.getNumChannels(), m_numChannels);
+        for (int ch = 0; ch < numChEdge; ++ch) {
+            float* d = wetBuf.getWritePointer(ch);
+            for (int i = 0; i < n; ++i)
+                d[i] = std::tanh(d[i] * edgeGain) * norm;
+        }
     }
 
     mixSCSmoothed(buffer, wetBuf, start, n);
@@ -1555,8 +1603,12 @@ void FxProcessor::processSC_DubEcho(juce::AudioBuffer<float>& buffer,
 {
     const float absK   = std::abs(knob);
     const float mapped = scMapSCurve(absK);
-    m_scAbsKSmooth.setTargetValue(mapped < 0.005f ? 0.f : mapped);
-    if (!m_scAbsKSmooth.isSmoothing() && mapped < 0.005f) return;
+    // The wet buffer carries the echo tail alone, so the blend has to leave dry
+    // signal in the mix — at 100 % wet with the tail filtered to the edge of the
+    // spectrum the channel used to disappear completely at the knob extremes.
+    const float wet = mapped * 0.70f;
+    m_scAbsKSmooth.setTargetValue(wet < 0.005f ? 0.f : wet);
+    if (!m_scAbsKSmooth.isSmoothing() && wet < 0.005f) return;
 
     const float param = m_scParamAtomic.load(std::memory_order_relaxed);
 
@@ -1607,7 +1659,8 @@ void FxProcessor::processSC_DubEcho(juce::AudioBuffer<float>& buffer,
         }
     }
 
-    applySCFilter(wetBuf, 0, n, (knob < 0.f ? -1.f : 1.f) * mapped, m_scDubEchoState.svf);
+    // Partial filter travel keeps the tail dark/bright rather than silent.
+    applySCFilter(wetBuf, 0, n, (knob < 0.f ? -1.f : 1.f) * mapped * 0.55f, m_scDubEchoState.svf);
     mixSCSmoothed(buffer, wetBuf, start, n);
 }
 
@@ -1630,34 +1683,23 @@ void FxProcessor::processSC_Crush(juce::AudioBuffer<float>& buffer,
     auto& wetBuf = m_wetScratch;
     copyToWet(buffer, wetBuf, start, n);
 
-    const float bitDepth = 16.f * std::pow(2.f / 16.f, intensity);
-    const float steps    = std::pow(2.f, bitDepth);
-    const float invSteps = 1.f / steps;
-    const int   holdLen  = 1 + static_cast<int>(intensity * 95.f);
+    // Same curves as the Beat FX crusher: 16 → 2 bit, full rate → ~600 Hz.
+    const float bitDepth  = 2.f + 14.f * std::pow(1.f - intensity, 1.8f);
+    const float levels    = std::pow(2.f, bitDepth - 1.f);
+    const float minRatio  = std::clamp(600.f / static_cast<float>(m_sampleRate), 0.001f, 1.f);
+    const float rateRatio = std::pow(minRatio, intensity);
 
     jassert(m_scCrushState.bc.size() >= static_cast<size_t>(m_numChannels));
     if (m_scCrushState.bc.size() < static_cast<size_t>(m_numChannels))
         return;
 
-    const int numCh = std::min(wetBuf.getNumChannels(), m_numChannels);
-    for (int ch = 0; ch < numCh; ++ch)
-    {
-        float* data = wetBuf.getWritePointer(ch);
-        auto&  st   = m_scCrushState.bc[static_cast<size_t>(ch)];
-        for (int i = 0; i < n; ++i)
-        {
-            if (st.holdCounter <= 0)
-            {
-                float q = std::floor(data[i] * steps * 0.5f + 0.5f) * invSteps * 2.f;
-                st.holdSample  = std::clamp(q, -1.f, 1.f);
-                st.holdCounter = holdLen;
-            }
-            data[i] = st.holdSample;
-            --st.holdCounter;
-        }
-    }
+    crushBlock(wetBuf, 0, n, m_numChannels, m_scCrushState.bc, rateRatio, levels);
 
-    applySCFilter(wetBuf, 0, n, (knob < 0.f ? -1.f : 1.f) * mapped, m_scCrushState.svf);
+    // Tone shaping: only the outer half of the knob travel engages the filter,
+    // and only over a limited range — the first half stays pure crush, and the
+    // end of the travel darkens/thins the sound instead of filtering it away.
+    const float toneAmount = std::max(0.f, (mapped - 0.5f) * 2.f) * 0.6f;
+    applySCFilter(wetBuf, 0, n, (knob < 0.f ? -1.f : 1.f) * toneAmount, m_scCrushState.svf);
     mixSCSmoothed(buffer, wetBuf, start, n);
 }
 
@@ -1671,8 +1713,10 @@ void FxProcessor::processSC_Space(juce::AudioBuffer<float>& buffer,
 {
     const float absK   = std::abs(knob);
     const float mapped = scMapSCurve(absK);
-    m_scAbsKSmooth.setTargetValue(mapped < 0.005f ? 0.f : mapped);
-    if (!m_scAbsKSmooth.isSmoothing() && mapped < 0.005f) return;
+    // Reverb-only wet buffer — keep dry in the mix (see processSC_DubEcho).
+    const float wet = mapped * 0.65f;
+    m_scAbsKSmooth.setTargetValue(wet < 0.005f ? 0.f : wet);
+    if (!m_scAbsKSmooth.isSmoothing() && wet < 0.005f) return;
 
     const float param = m_scParamAtomic.load(std::memory_order_relaxed);
 
@@ -1689,7 +1733,7 @@ void FxProcessor::processSC_Space(juce::AudioBuffer<float>& buffer,
     m_reverb.setParameters(p);
 
     processReverb(wetBuf, 0, n);
-    applySCFilter(wetBuf, 0, n, (knob < 0.f ? -1.f : 1.f) * mapped, m_scSpaceState.svf);
+    applySCFilter(wetBuf, 0, n, (knob < 0.f ? -1.f : 1.f) * mapped * 0.55f, m_scSpaceState.svf);
     mixSCSmoothed(buffer, wetBuf, start, n);
 }
 
@@ -1732,9 +1776,30 @@ void FxProcessor::processSC_Noise(juce::AudioBuffer<float>& buffer,
     const float mapped = scMapExpRamp(absK);
     const float param  = m_scParamAtomic.load(std::memory_order_relaxed);
 
-    // Conservative gain range: max 0.35 at full knob + full param
-    // Stays well within safe level even with a hot input signal
-    const float targetGain = mapped * (0.05f + param * 0.30f);
+    // Cutoff sweep. The band edges stay inside the audible range: sweeping a
+    // high-pass all the way to 20 kHz (or a low-pass to 20 Hz) filtered the
+    // noise away exactly where the knob asks for the most of it, which is why
+    // the mode was inaudible at its extremes.
+    constexpr float kNoiseFcMin = 120.f;
+    constexpr float kNoiseFcMax = 14000.f;
+    const float fc = (knob < 0.f)
+        ? kNoiseFcMax * std::pow(kNoiseFcMin / kNoiseFcMax, mapped)   // LP: rumble
+        : kNoiseFcMin * std::pow(kNoiseFcMax / kNoiseFcMin, mapped);  // HP: hiss
+
+    // Bandwidth compensation: a narrow band passes proportionally less noise
+    // power, so make up the level (√ of the bandwidth ratio) to keep the
+    // perceived loudness constant across the whole sweep.
+    const float nyquist = static_cast<float>(m_sampleRate) * 0.5f;
+    const float band = (knob < 0.f) ? fc / nyquist : (nyquist - fc) / nyquist;
+    const float comp = std::min(10.0f, 1.0f / std::sqrt(std::clamp(band, 0.01f, 1.0f)));
+
+    // The gain multiplies the *filtered* noise, whose amplitude already shrank
+    // by ≈√band — so gain·comp lands at a near-constant loudness across the
+    // sweep. Peaks are caught by the soft limiter below, not by a hard cap.
+    // Level uses a gentler curve than the cutoff sweep so the noise is already
+    // usable at half travel instead of only appearing at the very end.
+    const float level = std::pow(absK, 0.7f);
+    const float targetGain = level * (0.10f + param * 0.40f) * comp;
     m_scAbsKSmooth.setTargetValue(targetGain);
     if (!m_scAbsKSmooth.isSmoothing() && targetGain < 0.001f) return;
 
@@ -1745,14 +1810,19 @@ void FxProcessor::processSC_Noise(juce::AudioBuffer<float>& buffer,
     const int numCh = std::min(buffer.getNumChannels(), m_numChannels);
     for (int i = 0; i < n; ++i)
     {
-        m_scNoiseState.seed = m_scNoiseState.seed * 1664525u + 1013904223u;
-        const float white = static_cast<float>(static_cast<int32_t>(m_scNoiseState.seed))
-                            / static_cast<float>(0x7fffffff);
         for (int ch = 0; ch < numCh; ++ch)
-            noiseBuf.getWritePointer(ch)[i] = white;
+        {
+            // Independent stream per channel — decorrelated noise is wide and
+            // sits around the track instead of collapsing into the centre.
+            auto& seed = m_scNoiseState.seed[static_cast<size_t>(std::min(ch, 1))];
+            seed = seed * 1664525u + 1013904223u;
+            noiseBuf.getWritePointer(ch)[i] =
+                static_cast<float>(static_cast<int32_t>(seed)) / static_cast<float>(0x7fffffff);
+        }
     }
 
-    applySCFilter(noiseBuf, 0, n, (knob < 0.f ? -1.f : 1.f) * mapped, m_scNoiseState.svf);
+    m_scNoiseState.svf.setTargets(fc, 0.8f);
+    m_scNoiseState.svf.process(noiseBuf, 0, n, knob < 0.f);
 
     // Additive blend: dry is preserved 100%, noise ramps in/out via m_scAbsKSmooth
     const float* srcs[2] = {
@@ -1766,7 +1836,7 @@ void FxProcessor::processSC_Noise(juce::AudioBuffer<float>& buffer,
     for (int i = 0; i < n; ++i) {
         const float ng = m_scAbsKSmooth.getNextValue();
         for (int ch = 0; ch < numCh; ++ch)
-            dsts[ch][i] += srcs[ch][i] * ng;
+            dsts[ch][i] += fxSoftClip(srcs[ch][i] * ng);
     }
 }
 
@@ -1780,55 +1850,30 @@ void FxProcessor::processSC_Sweep(juce::AudioBuffer<float>& buffer,
                                    int start, int n, float knob, float param)
 {
     const float absK   = std::abs(knob);
-    const float mapped = scMapSCurve(absK);
-    m_scAbsKSmooth.setTargetValue(mapped < 0.005f ? 0.f : mapped);
-    if (!m_scAbsKSmooth.isSmoothing() && mapped < 0.005f) return;
+    const float mapped = scMapFilterTravel(absK);
+    // Series filter — fully wet just off the detent (see processSC_Filter).
+    const float wet = std::min(1.f, absK * 10.f);
+    m_scAbsKSmooth.setTargetValue(wet);
+    if (!m_scAbsKSmooth.isSmoothing() && wet < 0.005f) return;
 
     auto& wetBuf = m_wetScratch;
     copyToWet(buffer, wetBuf, start, n);
 
-    const float sr = static_cast<float>(m_sampleRate);
-    const float pi = juce::MathConstants<float>::pi;
-    const float q  = 0.7f + param * 19.3f;
+    // Resonance stays inside the SVF's stable range; the previous topology
+    // self-oscillated into garbage above roughly a quarter of the sample rate,
+    // so the upper half of the sweep never produced a usable sound.
+    const float q = 0.7f + param * 9.3f;
 
-    float fc;
-    if (knob < 0.f)
-        fc = 18000.f * std::pow(80.f / 18000.f, mapped);
-    else
-        fc = 80.f * std::pow(18000.f / 80.f, mapped);
-    fc = std::clamp(fc, 20.f, 20000.f);
+    constexpr float kSweepLow = 80.f, kSweepHigh = 15000.f;
+    const float fc = (knob < 0.f)
+        ? kSweepHigh * std::pow(kSweepLow / kSweepHigh, mapped)
+        : kSweepLow  * std::pow(kSweepHigh / kSweepLow, mapped);
 
-    // Push targets to per-sample smoothers — eliminates zipper noise on knob movement
-    m_scSweepState.fcSmooth.setTargetValue(fc);
-    m_scSweepState.rSmooth .setTargetValue(1.f / std::max(0.2f, q));
-
-    const float hpScale = std::clamp(1.0f + param * 0.35f, 1.0f, 1.35f);
-    const int   numCh   = std::min(wetBuf.getNumChannels(), 2);
-
-    // Samples outer, channels inner so smoothers advance exactly n times
-    for (int i = 0; i < n; ++i) {
-        const float fcS = m_scSweepState.fcSmooth.getNextValue();
-        const float rS  = m_scSweepState.rSmooth .getNextValue();
-        const float wS  = 2.f * std::tan(pi * fcS / sr);
-
-        for (int ch = 0; ch < numCh; ++ch) {
-            float* data = wetBuf.getWritePointer(ch);
-            const float x = data[i];
-
-            float hp1 = x - m_scSweepState.lp1[ch] - rS * m_scSweepState.bp1[ch];
-            m_scSweepState.bp1[ch] += wS * hp1;
-            m_scSweepState.lp1[ch] += wS * m_scSweepState.bp1[ch];
-
-            float hp2 = x - m_scSweepState.lp2[ch] - rS * m_scSweepState.bp2[ch];
-            m_scSweepState.bp2[ch] += wS * hp2;
-            m_scSweepState.lp2[ch] += wS * m_scSweepState.bp2[ch];
-
-            const float notch = 0.5f * ((m_scSweepState.lp1[ch] + hp1) + (m_scSweepState.lp2[ch] + hp2));
-            const float hpOut = 0.5f * (hp1 + hp2) * hpScale;
-
-            data[i] = (knob < 0.f) ? notch : hpOut;
-        }
-    }
+    const auto mode = (knob < 0.f) ? SVFState::Mode::Notch : SVFState::Mode::HighPass;
+    m_scSweepState.svfA.setTargets(fc, 0.707f);
+    m_scSweepState.svfB.setTargets(fc, q);
+    m_scSweepState.svfA.process(wetBuf, 0, n, mode);
+    m_scSweepState.svfB.process(wetBuf, 0, n, mode);
 
     mixSCSmoothed(buffer, wetBuf, start, n);
 }

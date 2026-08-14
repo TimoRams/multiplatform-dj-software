@@ -229,21 +229,22 @@ inline bool parseBeatFxSelectParam(const QString& paramId, int& position)
 
 inline EffectType beatFxTypeForPosition(int position)
 {
+    // Order of the BEAT FX selector on the hardware panel, top to bottom.
     static constexpr EffectType kTypes[14] = {
-        EffectType::Echo,
         EffectType::LowCutEcho,
+        EffectType::Echo,
         EffectType::MtDelay,
         EffectType::Spiral,
         EffectType::Reverb,
         EffectType::Trans,
+        EffectType::EnigmaJet,
         EffectType::Flanger,
         EffectType::Phaser,
-        EffectType::Bitcrusher,
-        EffectType::PitchShifter,
         EffectType::Stretch,
-        EffectType::EnigmaJet,
+        EffectType::SlipRoll,
         EffectType::Roll,
-        EffectType::SlipRoll
+        EffectType::MobiusSaw,
+        EffectType::MobiusTri
     };
 
     return kTypes[static_cast<size_t>(std::clamp(position, 1, 14) - 1)];
@@ -251,21 +252,23 @@ inline EffectType beatFxTypeForPosition(int position)
 
 inline QString beatFxNameForPosition(int position)
 {
+    // Must stay in step with beatFxTypeForPosition() and use the exact strings
+    // FxManager::effectTypeFromString() understands.
     static const std::array<QString, 14> kNames = {
-        QStringLiteral("Echo"),
         QStringLiteral("Low Cut Echo"),
+        QStringLiteral("Echo"),
         QStringLiteral("MT Delay"),
         QStringLiteral("Spiral"),
         QStringLiteral("Reverb"),
         QStringLiteral("Trans"),
+        QStringLiteral("Enigma Jet"),
         QStringLiteral("Flanger"),
         QStringLiteral("Phaser"),
-        QStringLiteral("Bitcrusher"),
-        QStringLiteral("Pitch Shifter"),
         QStringLiteral("Stretch"),
-        QStringLiteral("Enigma Jet"),
+        QStringLiteral("Slip Roll"),
         QStringLiteral("Roll"),
-        QStringLiteral("Slip Roll")
+        QStringLiteral("Mobius Saw"),
+        QStringLiteral("Mobius Tri")
     };
     return kNames[static_cast<size_t>(std::clamp(position, 1, 14) - 1)];
 }

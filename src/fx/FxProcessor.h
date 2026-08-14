@@ -45,8 +45,8 @@ enum class EffectType : int {
     Stretch     = 12,
     SlipRoll    = 13,
     Roll        = 14,
-    Nobius      = 15,
-    Mobius      = 16,
+    MobiusSaw   = 15,   // endlessly rising synth tone, sawtooth oscillators
+    MobiusTri   = 16,   // endlessly rising synth tone, triangle oscillators
     // ── Sound Color FX (bipolar knob -1..+1) ─────────────────────────────────
     SoundColorFilter = 17,   // dual LPF/HPF with resonance
     SoundColorDubEcho= 18,   // echo + bipolar LPF/HPF on wet tail
@@ -155,12 +155,21 @@ private:
     void updateReverbParams(); // uses m_primaryParamAtomic for room character
 
     // ── Bitcrusher ────────────────────────────────────────────────────────────
-    // Per-channel sample-and-hold state
+    // Per-channel sample-and-hold state. `phase` accumulates the (fractional)
+    // decimation rate so the sample-rate sweep is continuous instead of jumping
+    // between integer divisors (sr/1, sr/2, sr/3 …), which is what made the
+    // knob feel like it was stepping between unrelated sounds.
     struct BitcrusherState {
-        float holdSample   = 0.0f;
-        int   holdCounter  = 0;
+        float holdSample = 0.0f;
+        float phase      = 1.0f;
     };
     std::vector<BitcrusherState> m_bcState;
+
+    // Shared crusher core used by the Beat FX bitcrusher and SC Crush.
+    //   rateRatio: decimated rate / sample rate, in (0,1]  (1 = no decimation)
+    //   levels:    quantisation levels per polarity (2^(bits-1))
+    static void crushBlock(juce::AudioBuffer<float>& buf, int start, int n, int numChannels,
+                           std::vector<BitcrusherState>& state, float rateRatio, float levels);
 
     void processBitcrusher(juce::AudioBuffer<float>& wet, int start, int n, float amount);
 
@@ -276,18 +285,23 @@ private:
                      float amount, bool slip);
     void processRollOut(juce::AudioBuffer<float>& wet, int start, int n, float amount);
 
-    // ── Nobius / Mobius (forward+reverse loop) ────────────────────────────────
-    static constexpr int kMobiusBuf = 65536;
+    // ── Mobius Saw / Mobius Tri (endlessly gliding oscillator bank) ───────────
+    // A stack of octave-spaced oscillators all gliding upward together. As the
+    // top voice fades out a new one fades in at the bottom, so the tone seems
+    // to rise forever without ever getting higher — the classic endless-glissando
+    // synth sound. Saw and Tri select the oscillator waveform.
+    static constexpr int   kMobiusVoices  = 7;
+    static constexpr float kMobiusBaseHz  = 27.5f;   // A0, bottom of the stack
     struct MobiusState {
-        float  buf[2][kMobiusBuf] = {};
-        int    writePos  = 0;
-        double readPos   = 0.0;
-        bool   forward   = true;
-        int    loopLen   = 0;
+        // Glide position in octaves, wrapped to [0, kMobiusVoices).
+        double sweep = 0.0;
+        // One running phase per voice and channel so the waveform stays
+        // continuous while its frequency glides.
+        double phase[2][kMobiusVoices] = {};
     };
     MobiusState m_mobiusState;
     void processMobius(juce::AudioBuffer<float>& wet, int start, int n,
-                       float amount, bool nobius);
+                       float amount, bool sawtooth);
 
     // ── Sound Color: shared bipolar biquad filter helper ─────────────────────
     // A 2-pole State Variable Filter with per-sample parameter smoothing.
@@ -312,18 +326,13 @@ private:
     struct SCCrushState   { SVFState svf; std::vector<BitcrusherState> bc; };
     struct SCSpaceState   { SVFState svf; };
     struct SCNoiseState   {
-        uint32_t seed = 12345u;
+        // One generator per channel so left and right are decorrelated.
+        std::array<uint32_t,2> seed { 12345u, 987654321u };
         SVFState svf;
     };
-    struct SCSweepState {
-        float lp1[2] = {};
-        float bp1[2] = {};
-        float lp2[2] = {};
-        float bp2[2] = {};
-        // Per-sample smoothers — eliminate zipper noise when knob is swept
-        juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> fcSmooth;
-        juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>         rSmooth;
-    };
+    // Two cascaded SVF stages — a 4-pole sweep with a stable topology at any
+    // cutoff/resonance combination.
+    struct SCSweepState { SVFState svfA; SVFState svfB; };
 
     SCFilterState  m_scFilterState;
     SCDubEchoState m_scDubEchoState;

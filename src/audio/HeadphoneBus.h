@@ -20,5 +20,11 @@ public:
 
 private:
     BrickwallLimiter m_limiter;
+    double m_sampleRate = 48'000.0;
     float m_gain = 1.0f;
+    // Every contribution to the cue bus is ramped across the block. Switching a
+    // channel's CUE button or moving the CUE MIX knob otherwise steps the gain
+    // at the block boundary, which is audible as a click in the headphones.
+    std::array<float, kDeckCount> m_deckGain {};
+    float m_masterTapGain = 0.0f;
 };

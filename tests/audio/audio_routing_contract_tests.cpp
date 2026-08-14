@@ -182,6 +182,49 @@ int main()
     fixture.parameters.masterFxType = static_cast<int>(EffectType::None);
     fixture.parameters.masterFxAmount = 0.0f;
 
+    // Switching a channel CUE button or MASTER CUE must not put a step into the
+    // headphone feed — that discontinuity is what is heard as a click.
+    {
+        RoutingFixture cue;
+        cue.parameters.masterFirstChannel = 1;
+        cue.parameters.headphonesFirstChannel = 5;
+        cue.parameters.crossfaderAssignments.fill(CrossfaderAssignment::Thru);
+        cue.parameters.headphoneMix = 0.5f;
+        cue.parameters.limiterEnabled = false;
+        fill(cue.deck0, 0.4f);
+        fill(cue.pfl0, 0.6f);
+
+        const auto largestJump = [](const juce::AudioBuffer<float>& buffer, int channel) {
+            float worst = 0.0f;
+            for (int sample = 1; sample < buffer.getNumSamples(); ++sample)
+                worst = std::max(worst, std::abs(buffer.getSample(channel, sample)
+                                                 - buffer.getSample(channel, sample - 1)));
+            return worst;
+        };
+
+        cue.render();
+        cue.parameters.pflEnabled[0] = true;
+        cue.render();
+        ok &= require(largestJump(cue.headphones, 0) < 0.02f,
+                      "engaging channel CUE fades in without a step");
+        cue.render();
+        cue.parameters.pflEnabled[0] = false;
+        cue.render();
+        ok &= require(largestJump(cue.headphones, 0) < 0.02f,
+                      "releasing channel CUE fades out without a step");
+
+        cue.render();
+        cue.parameters.masterCueEnabled = true;
+        cue.render();
+        ok &= require(largestJump(cue.headphones, 0) < 0.02f,
+                      "engaging MASTER CUE fades in without a step");
+        cue.render();
+        cue.parameters.masterCueEnabled = false;
+        cue.render();
+        ok &= require(largestJump(cue.headphones, 0) < 0.02f,
+                      "releasing MASTER CUE fades out without a step");
+    }
+
     fixture.parameters.masterFirstChannel = -1;
     fixture.parameters.boothFirstChannel = 99;
     fixture.parameters.headphonesFirstChannel = -1;

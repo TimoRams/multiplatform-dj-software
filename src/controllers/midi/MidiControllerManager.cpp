@@ -77,6 +77,16 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, ControlClock
 
     autoOpenFlx10MidiOutputIfNeeded();
 
+    // ~2.8 Hz pulse for the FX ON button while the effect is engaged.
+    m_beatFxBlinkTimer.setInterval(180);
+    connect(&m_beatFxBlinkTimer, &QTimer::timeout, this, [this]()
+    {
+        if (m_shutdownComplete.load(std::memory_order_acquire))
+            return;
+        m_beatFxBlinkOn = !m_beatFxBlinkOn;
+        sendMappedNoteLed(QStringLiteral("beat_fx_on"), m_beatFxBlinkOn);
+    });
+
     m_startupRefreshTimer.setSingleShot(true);
     connect(&m_startupRefreshTimer, &QTimer::timeout, this, [this]()
     {
@@ -109,6 +119,8 @@ void MidiControllerManager::shutdown()
     QCoreApplication::removePostedEvents(&m_midiFeedback);
 
     QObject::disconnect(&m_startupRefreshTimer, nullptr, this, nullptr);
+    m_beatFxBlinkTimer.stop();
+    QObject::disconnect(&m_beatFxBlinkTimer, nullptr, this, nullptr);
     m_14BitFallbackTimer.stop();
     QObject::disconnect(&m_14BitFallbackTimer, nullptr, this, nullptr);
     resetHighResolutionControlState();

@@ -189,8 +189,10 @@
     <!-- LEVEL/DEPTH is the documented 14-bit CC pair (MSB 02, LSB 22). -->
     <Entry paramId="beat_fx_level_depth" status="0xB4" control="0x02" type="encoder-absolute"/>
     <Entry paramId="beat_fx_level_depth" status="0xB4" control="0x22" type="encoder-absolute"/>
-    <!-- The hardware ON/OFF switch publishes its latched 0/127 state. -->
-    <Entry paramId="beat_fx_on" status="0x94" control="0x47" type="momentary"/>
+    <!-- Note 0x46, verified against the hardware. The ON/OFF button is
+         momentary (127 press, 0 release); the engaged state is latched in the
+         handler so the effect stays on after the button is let go. -->
+    <Entry paramId="beat_fx_on" status="0x94" control="0x46" type="momentary"/>
 
     <!-- Sound Color FX selector and per-channel 14-bit color knobs. -->
     <Entry paramId="sound_color_fx_space" status="0x96" control="0x00" type="toggle"/>

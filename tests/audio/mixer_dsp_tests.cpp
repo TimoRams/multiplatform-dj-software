@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <numbers>
 #include <random>
 #include <atomic>
 #include <thread>
@@ -34,9 +35,32 @@ private:
 };
 bool finite(const juce::AudioBuffer<float>&b){for(int c=0;c<b.getNumChannels();++c)for(int i=0;i<b.getNumSamples();++i)if(!std::isfinite(b.getSample(c,i)))return false;return true;}
 float render(DeckChannelProcessor&m,int size){juce::AudioBuffer<float>b(2,size);m.getNextAudioBlock({&b,0,size});return b.getMagnitude(0,0,size);}
+// Steady-state gain of the EQ at one frequency, in dB relative to the input.
+double eqResponseDb(MixerFilterTargets t,double hz,double sr=48000.0){
+ auto s=buildMixerCoefficientSnapshot(t,sr,1,1);MixerFilterBank bank;bank.setSnapshot(s);bank.clearState();
+ // RMS rather than peak: a few samples per cycle at high frequencies never
+ // land on the crest of the wave, which would read as several dB of loss.
+ const int warm=static_cast<int>(sr),n=static_cast<int>(sr);double phase=0,sum=0;
+ for(int i=0;i<warm+n;++i){const float x=static_cast<float>(std::sin(phase));phase+=juce::MathConstants<double>::twoPi*hz/sr;const float y=bank.process(0,x);if(i>=warm)sum+=static_cast<double>(y)*y;}
+ return 20.0*std::log10(std::max(std::sqrt(sum/n)*std::numbers::sqrt2,1e-9));}
 }
 int main(){bool ok=true;
  for(double sr:{44100.0,48000.0,96000.0,192000.0})for(auto t:{MixerFilterTargets{},MixerFilterTargets{-1,0,0,-1},MixerFilterTargets{0,-1,0,1},MixerFilterTargets{1,1,1,0}}){auto s=buildMixerCoefficientSnapshot(t,sr,1,1);ok&=require(s.valid(),"finite stable coefficients");}
+ // 3-band split: bands sum flat at unity, each knob owns its own frequency
+ // range, and full cut is a real kill rather than a deep dip.
+ {const MixerFilterTargets cut{-0.5f,-0.5f,-0.5f,0};
+  for(double hz:{50.0,300.0,1000.0,4000.0,12000.0}){const double db=eqResponseDb(cut,hz);ok&=require(std::abs(db+13.0)<1.0,"3-band split reconstructs flat");}
+  ok&=require(std::abs(eqResponseDb({-1,0,0,0},kEqCrossoverLowHz)+6.0)<1.0,"low band is -6 dB at the low crossover");
+  ok&=require(std::abs(eqResponseDb({0,0,-1,0},kEqCrossoverHighHz)+6.0)<1.0,"high band is -6 dB at the high crossover");
+  ok&=require(eqResponseDb({-1,0,0,0},50.0)<-40.0,"low kill removes the bass");
+  ok&=require(eqResponseDb({-1,0,0,0},2000.0)>-1.0,"low kill leaves the midrange");
+  ok&=require(eqResponseDb({0,-1,0,0},1000.0)<-30.0,"mid kill removes the midrange");
+  ok&=require(eqResponseDb({0,-1,0,0},50.0)>-1.0&&eqResponseDb({0,-1,0,0},12000.0)>-1.0,"mid kill leaves bass and treble");
+  ok&=require(eqResponseDb({0,0,-1,0},12000.0)<-40.0,"high kill removes the treble");
+  ok&=require(eqResponseDb({0,0,-1,0},500.0)>-1.0,"high kill leaves the midrange");
+  ok&=require(std::abs(eqResponseDb({1,1,1,0},1000.0)-6.0)<0.5,"full boost is +6 dB");
+  ok&=require(mixerEqGainFromKnob(-1.f)==0.0,"knob at -1 is a full kill");
+  ok&=require(std::abs(20.0*std::log10(mixerEqGainFromKnob(-0.5f))+13.0)<0.5,"half cut follows the -26 dB taper");}
  Sine sine(8000);auto mixer=std::make_unique<DeckChannelProcessor>(&sine);mixer->prepareToPlay(8192,48000);
  for(int size:{64,128,256,512,1024,2048,4096,8192}){const float p=render(*mixer,size);ok&=require(std::isfinite(p)&&p>0,"all block sizes audible finite");}
  const float flat=render(*mixer,2048);mixer->setFilterVal(-1);for(int i=0;i<4;++i)render(*mixer,2048);const float lowPass=render(*mixer,2048);ok&=require(lowPass<flat*0.7f,"low pass attenuates high tone");
