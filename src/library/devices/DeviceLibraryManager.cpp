@@ -3,6 +3,7 @@
 #include "library/devices/rekordbox/RekordboxDeviceSource.h"
 
 #include <QCryptographicHash>
+#include <QDebug>
 #include <QDir>
 #include <QFileInfo>
 #include <QMetaObject>
@@ -828,6 +829,8 @@ void DeviceLibraryManager::finishDeviceOperation(const QStringList& deviceIds,
                                                   bool success,
                                                   const QString& message)
 {
+    if (!success)
+        qWarning().noquote() << "[USB]" << message;
     for (const QString& id : deviceIds) {
         auto found = m_devices.find(id);
         if (found == m_devices.end())

@@ -517,6 +517,12 @@ int runApplication(int argc, char *argv[])
 
             runtime.libraryPreviewPlayer = std::make_unique<LibraryPreviewPlayer>(
                 *runtime.controlClock, *runtime.audioPageCache, &app);
+            QObject::connect(runtime.deviceLibraryManager.get(),
+                             &DeviceLibraryManager::deviceEjectRequested,
+                             runtime.libraryPreviewPlayer.get(),
+                             [preview = runtime.libraryPreviewPlayer.get()](const QString&) {
+                                 preview->stop();
+                             });
             runtime.previewRegistration = runtime.audioEngine->registerAuxEndpoint(
                 *runtime.libraryPreviewPlayer);
             engine.rootContext()->setContextProperty("libraryPreview",

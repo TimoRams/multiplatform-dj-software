@@ -1,7 +1,9 @@
 #include "audio/cache/AudioPageCache.h"
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QTemporaryDir>
 #include <QProcessEnvironment>
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -47,6 +49,22 @@ AudioPageReadGuard waitPage(AudioPageCache& cache, const AudioCacheHandle& handl
     }
     return cache.tryGetPage(handle, page);
 }
+
+#ifdef Q_OS_LINUX
+bool processHasOpenFile(const QString& path)
+{
+    const QString canonical = QFileInfo(path).canonicalFilePath();
+    const QDir descriptors(QStringLiteral("/proc/self/fd"));
+    for (const QString& name : descriptors.entryList(QDir::Files | QDir::System
+                                                      | QDir::NoDotAndDotDot)) {
+        QString target = QFileInfo(descriptors.filePath(name)).symLinkTarget();
+        target.remove(QStringLiteral(" (deleted)"));
+        if (target == canonical)
+            return true;
+    }
+    return false;
+}
+#endif
 }
 
 static_assert(noexcept(std::declval<const AudioPageCache&>().tryGetPage({}, 0)));
@@ -143,6 +161,10 @@ int main(int argc, char** argv)
     }
     const auto oldGeneration = sharedB.generation();
     cache.releaseTrack(sharedB);
+#ifdef Q_OS_LINUX
+    ok &= require(!processHasOpenFile(stereo),
+                  "last cache release closes the removable-media file handle");
+#endif
     cache.releaseTrack(longHandle);
     ok &= require(!cache.requestPage(sharedB, 0, AudioCachePriority::RealtimeCritical),
                   "released final handle is rejected");

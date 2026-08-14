@@ -108,6 +108,10 @@ struct AudioPageCache::Impl {
         double sampleRate = 0.0;
         std::int64_t length = 0;
         int channels = 0;
+        // AudioFormatReader owns the backing file handle. Explicit device eject
+        // must be able to close it after the last cache user leaves, while a
+        // decoder request may still be finishing on the worker thread.
+        std::mutex readerMutex;
         std::unique_ptr<juce::AudioFormatReader> reader;
         std::unique_ptr<PageSlot[]> pageSlots;
         std::int64_t pageCount = 0;
@@ -231,6 +235,13 @@ void AudioPageCache::releaseTrack(const AudioCacheHandle& handle)
     entry->generation.fetch_add(1, std::memory_order_acq_rel);
     m_impl->activeEntries.erase(mapKey(entry->key));
     m_impl->open.fetch_sub(1);
+    {
+        // The cache keeps Entry addresses stable, but an inactive entry must
+        // not keep removable media mounted. The decoder takes the same lock
+        // around its only AudioFormatReader access and rechecks generation.
+        std::lock_guard readerLock(entry->readerMutex);
+        entry->reader.reset();
+    }
     notifyWorker();
 }
 
@@ -485,8 +496,17 @@ void AudioPageCache::workerRun(const std::atomic<bool>& shutdown)
         juce::AudioBuffer<float> buffer(entry->channels, static_cast<int>(AudioPage::kSamplesPerChannel));
         buffer.clear();
         const auto decodeStartedAt = steadyMicros();
-        const bool ok = entry->reader->read(&buffer, 0, static_cast<int>(page->validSampleCount),
-                                             page->firstSample, true, true);
+        bool ok = false;
+        {
+            std::lock_guard readerLock(entry->readerMutex);
+            if (entry->active.load(std::memory_order_acquire)
+                && entry->generation.load(std::memory_order_acquire) == request.generation
+                && entry->reader) {
+                ok = entry->reader->read(
+                    &buffer, 0, static_cast<int>(page->validSampleCount),
+                    page->firstSample, true, true);
+            }
+        }
         const auto decodeElapsed = steadyMicros() - decodeStartedAt;
         m_impl->decodeMicros.fetch_add(decodeElapsed, std::memory_order_relaxed);
         updateMaximum(m_impl->worstDecodeMicros, decodeElapsed);
