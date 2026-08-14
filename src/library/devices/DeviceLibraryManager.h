@@ -5,6 +5,7 @@
 #include <QObject>
 #include <QTimer>
 #include <QVariantList>
+#include <QVector>
 
 #include <condition_variable>
 #include <deque>
@@ -27,6 +28,7 @@ class DeviceLibraryManager final : public QObject
     Q_PROPERTY(QVariantList currentFolders READ currentFolders NOTIFY currentNavigationChanged)
     Q_PROPERTY(QString selectedDeviceId READ selectedDeviceId NOTIFY selectedDeviceChanged)
     Q_PROPERTY(QString selectedDeviceName READ selectedDeviceName NOTIFY selectedDeviceChanged)
+    Q_PROPERTY(bool selectedDeviceReady READ selectedDeviceReady NOTIFY selectedDeviceChanged)
     Q_PROPERTY(QString selectedViewName READ selectedViewName NOTIFY currentNavigationChanged)
     Q_PROPERTY(QString filterText READ filterText WRITE setFilterText NOTIFY filterTextChanged)
     Q_PROPERTY(QString sortField READ sortField NOTIFY sortChanged)
@@ -51,6 +53,7 @@ public:
     [[nodiscard]] QVariantList currentFolders() const;
     [[nodiscard]] QString selectedDeviceId() const { return m_selectedDeviceId; }
     [[nodiscard]] QString selectedDeviceName() const;
+    [[nodiscard]] bool selectedDeviceReady() const;
     [[nodiscard]] QString selectedViewName() const { return m_selectedViewName; }
     [[nodiscard]] QString filterText() const { return m_filterText; }
     [[nodiscard]] QString sortField() const { return m_sortField; }
@@ -59,6 +62,8 @@ public:
     [[nodiscard]] QString statusMessage() const { return m_statusMessage; }
 
     Q_INVOKABLE void rescanNow();
+    Q_INVOKABLE void mountDevice(const QString& deviceId);
+    Q_INVOKABLE void ejectDevice(const QString& deviceId);
     Q_INVOKABLE void chooseDevice(const QString& deviceId);
     Q_INVOKABLE void chooseTracks();
     Q_INVOKABLE void choosePlaylists();
@@ -73,6 +78,7 @@ public:
     // Deterministic volume snapshots for lifecycle tests. These paths are only
     // inspected; the method performs no filesystem mutations.
     void inspectTestMounts(const QStringList& mountPaths);
+    void inspectTestSystemDevices(const QVariantList& devices);
 
 signals:
     void devicesChanged();
@@ -84,15 +90,23 @@ signals:
     void busyChanged();
     void statusMessageChanged();
     void deviceRemoved(const QString& deviceId);
+    void deviceEjectRequested(const QString& deviceId);
     void deckLoadReady(const QString& deckLetter, const QVariantMap& request);
     void deckLoadFailed(const QString& deckLetter, const QString& message);
 
 private:
     struct DeviceState;
+    struct SystemVolume;
+    struct EjectOperation;
     struct WorkerTask;
 
     void inspectStorageVolumes(const QList<QStorageInfo>& volumes);
     void inspectMountPaths(const QStringList& paths);
+    void refreshSystemVolumes();
+    void applySystemVolumes(QVector<SystemVolume> volumes);
+    void continueEject(const std::shared_ptr<EjectOperation>& operation);
+    void finishDeviceOperation(const QStringList& deviceIds, bool success,
+                               const QString& message);
     void publishDevices();
     void queueIndex(const QString& deviceId);
     void workerLoop();
@@ -123,6 +137,8 @@ private:
     bool m_preservePlaylistOrder = false;
     quint64 m_generation = 0;
     QTimer m_pollTimer;
+    bool m_systemRefreshPending = false;
+    bool m_systemRefreshAgain = false;
 
     std::mutex m_workerMutex;
     std::condition_variable m_workerCondition;

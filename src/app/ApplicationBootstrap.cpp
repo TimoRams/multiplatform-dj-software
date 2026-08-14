@@ -506,6 +506,9 @@ int runApplication(int argc, char *argv[])
                 QObject::connect(runtime.deviceLibraryManager.get(),
                                  &DeviceLibraryManager::deviceRemoved,
                                  deck, &DjEngine::externalSourceUnavailable);
+                QObject::connect(runtime.deviceLibraryManager.get(),
+                                 &DeviceLibraryManager::deviceEjectRequested,
+                                 deck, &DjEngine::ejectExternalSource);
             }
 
             runtime.fxManager->registerEngines(runtime.deckA.get(), runtime.deckB.get(),

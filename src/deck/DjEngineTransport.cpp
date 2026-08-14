@@ -643,6 +643,12 @@ void DjEngine::externalSourceUnavailable(const QString& sourceId)
     }
 }
 
+void DjEngine::ejectExternalSource(const QString& sourceId)
+{
+    if (m_readOnlyExternalTrack && sourceId == m_externalSourceId)
+        ejectTrack();
+}
+
 void DjEngine::beginTrackLoad(
     QString rawPath, std::optional<ExternalTrackLoadSnapshot> external)
 {

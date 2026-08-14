@@ -33,6 +33,9 @@ endif()
 
 # Qt setup
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Sql Concurrent)
+if(UNIX AND NOT APPLE)
+    find_package(Qt6 REQUIRED COMPONENTS DBus)
+endif()
 find_package(Threads REQUIRED)
 if(COMMAND qt_policy)
     qt_policy(SET QTP0001 NEW)
@@ -365,7 +368,10 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 if(UNIX AND NOT APPLE)
     target_link_libraries(${PROJECT_NAME} PRIVATE
         ThirdParty::ALSA
+        Qt6::DBus
     )
+
+    target_compile_definitions(${PROJECT_NAME} PRIVATE BROCKDJ_HAS_QT_DBUS=1)
 
     if(TARGET PkgConfig::JACK)
         target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -741,6 +747,11 @@ target_compile_definitions(BrockDJ_rekordbox_read_only_tests PRIVATE
     SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_include_directories(BrockDJ_rekordbox_read_only_tests PRIVATE src)
 target_link_libraries(BrockDJ_rekordbox_read_only_tests PRIVATE Qt6::Core)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(BrockDJ_rekordbox_read_only_tests PRIVATE Qt6::DBus)
+    target_compile_definitions(BrockDJ_rekordbox_read_only_tests PRIVATE
+        BROCKDJ_HAS_QT_DBUS=1)
+endif()
 target_compile_features(BrockDJ_rekordbox_read_only_tests PRIVATE cxx_std_23)
 add_test(NAME rekordbox_read_only COMMAND BrockDJ_rekordbox_read_only_tests)
 

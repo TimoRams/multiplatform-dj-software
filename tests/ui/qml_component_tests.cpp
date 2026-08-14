@@ -117,6 +117,15 @@ int main()
                       && library.find("onClicked: libraryRoot.aioActivateBrowsePickerEntry(index)")
                           != std::string::npos,
                   "AIO Source rows drill into USB/Files/Stream views on the first tap");
+    ok &= require(library.find("deviceLibraryManager.mountDevice(modelData.id)")
+                          != std::string::npos
+                      && library.find("deviceLibraryManager.ejectDevice(modelData.id)")
+                          != std::string::npos
+                      && library.find("modelData.operationPending ? \"…\"")
+                          != std::string::npos
+                      && library.find("deviceLibraryManager.selectedDeviceReady")
+                          != std::string::npos,
+                  "USB device rows expose guarded mount/eject actions and mounted-only navigation");
     ok &= require(main.find("function closeTopBarPullDown()") != std::string::npos
                   && main.find("function openTopBarPullDown()") != std::string::npos
                   && main.find("function toggleTopBarPullDown()") != std::string::npos,

@@ -5380,7 +5380,8 @@ Rectangle {
                                         }
                                         Column {
                                             anchors.left: parent.left; anchors.leftMargin: 13
-                                            anchors.right: parent.right; anchors.rightMargin: 8
+                                            anchors.right: usbDeviceAction.visible ? usbDeviceAction.left : parent.right
+                                            anchors.rightMargin: 8
                                             anchors.verticalCenter: parent.verticalCenter; spacing: 3
                                             Text { text: modelData.name; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); elide: Text.ElideRight; width: parent.width }
                                             Row {
@@ -5391,12 +5392,47 @@ Rectangle {
                                                     border.color: modelData.badge === "REKORDBOX" ? libraryRoot.accentBlue : libraryRoot.borderHigh
                                                     Text { id: usbBadge; anchors.centerIn: parent; text: modelData.badge; color: modelData.badge === "REKORDBOX" ? libraryRoot.accentBlueLt : libraryRoot.textMeta; font.pixelSize: window.sp(8); font.bold: true }
                                                 }
-                                                Text { text: modelData.scanning ? "Scanning library…" : (modelData.trackCount > 0 ? modelData.trackCount + " tracks" : modelData.status); color: libraryRoot.textDim; font.pixelSize: window.sp(8); elide: Text.ElideRight; width: 112 }
+                                                Text { text: modelData.scanning ? "Scanning library…" : (modelData.trackCount > 0 ? modelData.trackCount + " tracks" : modelData.status); color: libraryRoot.textDim; font.pixelSize: window.sp(8); elide: Text.ElideRight; width: 94 }
+                                            }
+                                        }
+                                        Rectangle {
+                                            id: usbDeviceAction
+                                            anchors.right: parent.right; anchors.rightMargin: 8
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            width: 54; height: 24; radius: 4
+                                            visible: modelData.canMount || modelData.canEject || modelData.operationPending
+                                            color: usbDeviceActionMouse.containsMouse
+                                                   && !modelData.operationPending
+                                                   ? libraryRoot.bgRowHover : libraryRoot.bgRowEven
+                                            border.color: modelData.canEject
+                                                          ? libraryRoot.borderHigh : libraryRoot.accentBlue
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: modelData.operationPending ? "…" : modelData.actionLabel
+                                                color: modelData.operationPending
+                                                       ? libraryRoot.textDim : libraryRoot.textSecond
+                                                font.pixelSize: window.sp(8); font.bold: true
+                                            }
+                                            MouseArea {
+                                                id: usbDeviceActionMouse
+                                                anchors.fill: parent
+                                                enabled: !modelData.operationPending
+                                                         && (modelData.canMount || modelData.canEject)
+                                                hoverEnabled: true
+                                                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                                onClicked: {
+                                                    if (modelData.canMount)
+                                                        deviceLibraryManager.mountDevice(modelData.id)
+                                                    else if (modelData.canEject)
+                                                        deviceLibraryManager.ejectDevice(modelData.id)
+                                                }
                                             }
                                         }
                                         MouseArea {
                                             id: usbDeviceMouse
-                                            anchors.fill: parent
+                                            anchors.left: parent.left; anchors.top: parent.top
+                                            anchors.bottom: parent.bottom
+                                            anchors.right: usbDeviceAction.visible ? usbDeviceAction.left : parent.right
                                             hoverEnabled: true
                                             cursorShape: Qt.PointingHandCursor
                                             onClicked: {
@@ -5412,7 +5448,7 @@ Rectangle {
                                 Rectangle {
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 38
-                                    visible: deviceLibraryManager && deviceLibraryManager.selectedDeviceId !== ""
+                                    visible: deviceLibraryManager && deviceLibraryManager.selectedDeviceReady
                                     color: deviceLibraryManager && deviceLibraryManager.selectedViewName === "All Tracks"
                                            ? libraryRoot.sidebarSel
                                            : (usbAllTracksMouse.containsMouse ? libraryRoot.bgSidebarHv : "transparent")
@@ -5444,7 +5480,7 @@ Rectangle {
                                 Rectangle {
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 38
-                                    visible: deviceLibraryManager && deviceLibraryManager.selectedDeviceId !== ""
+                                    visible: deviceLibraryManager && deviceLibraryManager.selectedDeviceReady
                                     color: deviceLibraryManager && deviceLibraryManager.selectedViewName === "Playlists"
                                            ? libraryRoot.sidebarSel
                                            : (usbPlaylistRootMouse.containsMouse ? libraryRoot.bgSidebarHv : "transparent")

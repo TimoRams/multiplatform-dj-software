@@ -607,6 +607,43 @@ int main(int argc, char** argv)
                            QByteArray("read-only detection fixture")),
                   "write Device Library Plus signature fixture");
     {
+        DeviceLibraryManager systemDeviceManager(false, nullptr);
+        QVariantMap systemVolume {
+            {QStringLiteral("device"), QStringLiteral("/dev/brockdj-test1")},
+            {QStringLiteral("name"), QStringLiteral("TEST USB")},
+            {QStringLiteral("fileSystemType"), QStringLiteral("vfat")},
+            {QStringLiteral("objectPath"),
+             QStringLiteral("/org/freedesktop/UDisks2/block_devices/brockdj_test1")},
+            {QStringLiteral("driveObjectPath"),
+             QStringLiteral("/org/freedesktop/UDisks2/drives/brockdj_test")},
+            {QStringLiteral("canPowerOff"), true},
+            {QStringLiteral("ejectable"), true}
+        };
+        systemDeviceManager.inspectTestSystemDevices(QVariantList {systemVolume});
+        const QVariantMap unmounted = systemDeviceManager.devices().front().toMap();
+        const QString systemDeviceId = unmounted.value(QStringLiteral("id")).toString();
+        systemDeviceManager.chooseDevice(systemDeviceId);
+        ok &= require(!unmounted.value(QStringLiteral("mounted")).toBool()
+                          && unmounted.value(QStringLiteral("canMount")).toBool()
+                          && !unmounted.value(QStringLiteral("canEject")).toBool()
+                          && unmounted.value(QStringLiteral("actionLabel"))
+                                 == QStringLiteral("MOUNT")
+                          && !systemDeviceManager.selectedDeviceReady(),
+                      "unmounted USB is visible with a mount action");
+
+        systemVolume.insert(QStringLiteral("mountPath"), genericMount);
+        systemDeviceManager.inspectTestSystemDevices(QVariantList {systemVolume});
+        const QVariantMap mounted = systemDeviceManager.devices().front().toMap();
+        ok &= require(mounted.value(QStringLiteral("id")).toString() == systemDeviceId
+                          && mounted.value(QStringLiteral("mounted")).toBool()
+                          && !mounted.value(QStringLiteral("canMount")).toBool()
+                          && mounted.value(QStringLiteral("canEject")).toBool()
+                          && mounted.value(QStringLiteral("actionLabel"))
+                                 == QStringLiteral("EJECT")
+                          && systemDeviceManager.selectedDeviceReady(),
+                      "mounted USB keeps its stable identity and exposes eject");
+    }
+    {
         DeviceLibraryManager classificationManager(false, nullptr);
         classificationManager.inspectTestMounts({genericMount, plusMount});
         bool foundGeneric = false;

@@ -331,6 +331,7 @@ public slots:
     void loadTrack(const QString& rawPath);
     Q_INVOKABLE void loadExternalTrack(const QVariantMap& request);
     Q_INVOKABLE void externalSourceUnavailable(const QString& sourceId);
+    Q_INVOKABLE void ejectExternalSource(const QString& sourceId);
     void togglePlay();
     void setPosition(float progress);
     void setTempoPercent(double percent);
