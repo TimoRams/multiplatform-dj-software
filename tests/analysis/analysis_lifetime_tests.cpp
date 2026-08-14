@@ -1,4 +1,5 @@
 #include "TrackData.h"
+#include "analysis/internal/PhraseAnalyzer.h"
 #include "waveform/WaveformAnalyzer.h"
 #include "waveform/WaveformLineStore.h"
 
@@ -79,6 +80,29 @@ int main(int argc, char** argv)
     formats.registerBasicFormats();
 
     bool ok = true;
+    {
+        analysis::AnalysisFeatures features;
+        features.sampleRate = 100.0;
+        features.hopSize = 1;
+        features.durationSec = 16.0;
+        constexpr std::size_t featureFrames = 1'700;
+        features.rms.assign(featureFrames, 0.5f);
+        features.lowEnergy.assign(featureFrames, 0.4f);
+        features.onsetStrength.assign(featureFrames, 0.3f);
+
+        // 32 markers used to make buildBlocks accept i == 16 and then read
+        // marker 32 (one past the end). This is the exact boundary from the
+        // production crash captured in the WaveformAnalyzer worker thread.
+        std::vector<TrackData::BeatMarker> beats(32);
+        for (std::size_t i = 0; i < beats.size(); ++i) {
+            beats[i].positionSec = static_cast<double>(i) * 0.5;
+            beats[i].isDownbeat = (i % 4) == 0;
+        }
+        PhraseAnalyzer phraseAnalyzer;
+        const auto segments = phraseAnalyzer.analyze(features, beats, 16.0);
+        ok &= require(!segments.empty(),
+                      "exact 16-beat phrase boundary must stay in range");
+    }
     {
         AnalyzerResultMailbox mailbox;
         const auto emptyWaveform = std::make_shared<const QVector<TrackData::WaveformBin>>();

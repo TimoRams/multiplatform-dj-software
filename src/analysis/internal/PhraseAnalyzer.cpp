@@ -111,13 +111,19 @@ std::vector<PhraseBlock> PhraseAnalyzer::buildBlocks(const std::vector<double>& 
     if (beatTimestamps.size() <= static_cast<size_t>(kPhraseBeats) || durationSec <= 0.0)
         return blocks;
 
-    const size_t maxStart = beatTimestamps.size() - static_cast<size_t>(kPhraseBeats);
-    blocks.reserve(maxStart / static_cast<size_t>(kPhraseBeats) + 1);
+    const size_t phraseBeats = static_cast<size_t>(kPhraseBeats);
+    blocks.reserve((beatTimestamps.size() - 1) / phraseBeats);
 
-    for (size_t i = 0; i <= maxStart; i += static_cast<size_t>(kPhraseBeats)) {
+    // A block needs both its start marker and the marker kPhraseBeats later.
+    // Checking the end index directly avoids accepting index size() when the
+    // number of supplied beat markers is an exact multiple of kPhraseBeats.
+    for (size_t i = 0; i < beatTimestamps.size()
+         && phraseBeats < beatTimestamps.size() - i;
+         i += phraseBeats) {
         const float start = static_cast<float>(beatTimestamps[i]);
-        const float end = static_cast<float>(beatTimestamps[i + static_cast<size_t>(kPhraseBeats)]);
-        if (end <= start + 0.01f)
+        const float end = static_cast<float>(beatTimestamps[i + phraseBeats]);
+        if (!std::isfinite(start) || !std::isfinite(end)
+            || end <= start + 0.01f)
             continue;
 
         PhraseBlock block;
