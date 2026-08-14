@@ -1,9 +1,11 @@
 #include "DeckTrackLoader.h"
 
 #include "audio/cache/AudioPageCache.h"
+#include "library/CoverArtExtractor.h"
 #include "MetadataUtils.h"
 
 #include <QFileInfo>
+#include <QImage>
 #include <QSemaphore>
 
 #include <algorithm>
@@ -261,6 +263,24 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
         return fail(TrackLoadError::UnsupportedFormat, QStringLiteral("Unsupported or damaged audio file"));
 
     result.metadata = readMetadata(*reader, result.canonicalPath, file);
+    if (!isCurrent(request.generation))
+        return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
+
+    // TrackLoadResult has always carried coverBytes/coverImage and the deck
+    // publishes them to the cover provider, but nothing ever filled them in:
+    // the extractor was only wired into the library, never into the deck load.
+    // hasCoverArt() was therefore false for every track, so neither the deck
+    // nor the controller jog screens could show artwork. Decoding here keeps
+    // it off the GUI thread, where this load already runs.
+    auto [coverBytes, coverFormat] =
+        CoverArtExtractor::extractCoverArt(result.canonicalPath);
+    if (!coverBytes.isEmpty()) {
+        QImage cover;
+        if (cover.loadFromData(coverBytes)) {
+            result.coverBytes = std::move(coverBytes);
+            result.coverImage = std::move(cover);
+        }
+    }
     if (!isCurrent(request.generation))
         return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
 

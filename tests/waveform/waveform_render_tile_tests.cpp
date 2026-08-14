@@ -241,6 +241,8 @@ int main(int argc, char** argv)
                       && !waveform_render::detailTileMayBeDisplayed(true, false),
                   "a tile with real audio must display once its key is current");
 
+
+
     // Regression: a tile whose source lines are all present must be publishable
     // as complete detail immediately — detail that is READY is never withheld
     // waiting for some later analysis milestone. Holding ready detail back

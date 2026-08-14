@@ -132,16 +132,22 @@ void DDJFLX10Controller::pushDeckJogDisplay(int deck)
                          snapshot.trackDurationSec,
                          snapshot.playing);
 }
-bool DDJFLX10Controller::uploadDeck(int deck)
+bool DDJFLX10Controller::uploadDeck(int deck, bool startWindowSweep)
 {
     if (m_waveforms[deck].isEmpty())
         return true;
 
+    // The init sequence is what takes the screen out of its "not loaded" state,
+    // so it always goes out as soon as a track exists. Only the window sweep is
+    // allowed to wait for the analysis to produce something worth sending.
     bool ok = true;
     ok = sendXx30(deck) && ok;
     ok = sendXx39(deck) && ok;
     ok = uploadCoverArt(deck) && ok;
     ok = sendXx35(deck) && ok;
+
+    if (!startWindowSweep)
+        return ok;
 
     m_uploadWindowsSent[deck] = 0;
     m_uploadActive[deck] = true;
@@ -374,8 +380,16 @@ bool DDJFLX10Controller::sendXx27(int deck, const DeckDisplaySnapshot& snapshot)
 QByteArray DDJFLX10Controller::generateCoverJpeg(int deck) const
 {
     const DjEngine* engine = deckEngine(deck);
-    if (!engine || !engine->hasTrack() || !engine->hasCoverArt())
+    if (!engine || !engine->hasTrack())
         return {};
+    if (!engine->hasCoverArt()) {
+        // The deck never reported artwork for this track. Distinguish that from
+        // "artwork present but unusable" so the log names the actual stage that
+        // dropped the picture instead of leaving the whole path silent.
+        qInfo() << "[DDJ-FLX10] Deck" << deck
+                << "reports no cover art for" << engine->trackTitle();
+        return {};
+    }
 
     const QImage cover = engine->currentCoverImage();
     if (cover.isNull())
@@ -387,16 +401,32 @@ QByteArray DDJFLX10Controller::generateCoverJpeg(int deck) const
             return jpeg;
     }
 
+    // Every attempt produced nothing or something too large for the xx33
+    // segment stream. Say so rather than failing silently: a bail-out here is
+    // indistinguishable from "this track has no artwork" in the log.
+    qWarning() << "[DDJ-FLX10] Deck" << deck
+               << "has cover art" << cover.size()
+               << "but no encoding fit the" << kAlbumArtMaxBytes
+               << "byte album-art budget";
     return {};
 }
 bool DDJFLX10Controller::uploadCoverArt(int deck)
 {
     const QByteArray jpeg = generateCoverJpeg(deck);
-    if (jpeg.isEmpty())
+    if (jpeg.isEmpty()) {
+        // No artwork yet — either the file carries none, or extraction has not
+        // finished. Leave the remembered URL empty so the metadata handler
+        // retries once a picture becomes available.
         return true;
+    }
 
     qInfo() << "[DDJ-FLX10] Deck" << deck << "uploading cover art bytes" << jpeg.size();
-    return sendXx33Album(deck, jpeg);
+    if (!sendXx33Album(deck, jpeg))
+        return false;
+
+    if (const DjEngine* engine = deckEngine(deck))
+        m_lastCoverUrls[deck] = engine->coverArtUrl();
+    return true;
 }
 QByteArray DDJFLX10Controller::generatePreviewWaveform(
     int deck, WaveformPreviewRenderInfo* outInfo) const

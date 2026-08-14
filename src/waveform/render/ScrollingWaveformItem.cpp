@@ -583,17 +583,34 @@ void positionWaveformTile(QSGSimpleTextureNode* node,
                           const waveform_render::RenderTileSpan& span,
                           double renderOriginLine,
                           double pixelsPerLine,
+                          double rasterPhysicalPixelsPerLine,
                           double devicePixelRatio,
                           float height)
 {
     if (!node)
         return;
     const double dpr = std::max(1.0, devicePixelRatio);
-    const auto originPhysical = static_cast<std::int64_t>(std::llround(
-        renderOriginLine * pixelsPerLine * dpr));
-    const double left = static_cast<double>(span.physicalBegin - originPhysical) / dpr;
-    const double logicalWidth = static_cast<double>(span.physicalWidth()) / dpr;
-    node->setRect(QRectF(left, 0.0, logicalWidth, height));
+    const double displayScale = std::max(pixelsPerLine * dpr, 1.0e-9);
+    const double rasterScale = rasterPhysicalPixelsPerLine > 0.0
+        ? rasterPhysicalPixelsPerLine
+        : displayScale;
+    // The texture sits on the ladder grid, so translate its physical bounds
+    // back into line coordinates before laying it out at the exact on-screen
+    // scale. Neighbouring tiles share a boundary value, so rounding both edges
+    // keeps them seamless while preserving pixel-crisp strokes.
+    const double lineBegin = static_cast<double>(span.physicalBegin) / rasterScale;
+    const double lineEnd = static_cast<double>(span.physicalEnd) / rasterScale;
+    const double originPhysical = std::round(renderOriginLine * displayScale);
+    const double left = (std::round(lineBegin * displayScale) - originPhysical) / dpr;
+    const double right = (std::round(lineEnd * displayScale) - originPhysical) / dpr;
+    node->setRect(QRectF(left, 0.0, std::max(0.0, right - left), height));
+    // Nearest keeps the strokes hard at the natural size; while a tempo sweep
+    // is between ladder steps the texture is stretched a few percent, where
+    // nearest would drop or double individual strokes.
+    node->setFiltering(
+        waveform_render::rasterScaleMatchesDisplay(rasterScale, displayScale)
+            ? QSGTexture::Nearest
+            : QSGTexture::Linear);
 }
 
 struct TextureUpload final {
@@ -607,6 +624,7 @@ std::optional<TextureUpload> uploadWaveformTile(
     const waveform_render::RasterizedRenderTile& tile,
     double renderOriginLine,
     double pixelsPerLine,
+    double rasterPhysicalPixelsPerLine,
     double devicePixelRatio,
     float height,
     QQuickWindow* window,
@@ -626,9 +644,9 @@ std::optional<TextureUpload> uploadWaveformTile(
     texture->setFiltering(QSGTexture::Nearest);
     auto* textureNode = assignTextureNode(node, texture, parent, insertBefore);
     textureNode->setOwnsTexture(true);
-    textureNode->setFiltering(QSGTexture::Nearest);
     positionWaveformTile(textureNode, tile.span, renderOriginLine,
-                         pixelsPerLine, devicePixelRatio, height);
+                         pixelsPerLine, rasterPhysicalPixelsPerLine,
+                         devicePixelRatio, height);
     return TextureUpload{
         tile.renderedColumns,
         static_cast<std::uint64_t>(tile.image.sizeInBytes()),
@@ -1081,6 +1099,11 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     const double playheadSec = engine->getVisualPosition();
     const double playheadLine = playheadSec * static_cast<double>(snapshot->linesPerSecond);
     const double dpr = window() ? std::max(1.0, window()->effectiveDevicePixelRatio()) : 1.0;
+    // Tiles are cut and cached on the ladder grid; only their placement follows
+    // the exact scale, so a tempo sweep repositions textures instead of
+    // discarding them.
+    const double rasterScale = waveform_render::quantizedRasterScale(
+        pixelsPerLine * dpr);
 
     m_lastPlayheadSec.store(playheadSec, std::memory_order_relaxed);
     m_lastPixelsPerSecond.store(
@@ -1253,13 +1276,12 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         std::vector<PreparedTileSlot> preparedTiles;
         preparedTiles.reserve(scene->waveformNodes.size());
         const auto selectedLodLevel
-            = WaveformZoomController::lodLevelForPhysicalPixels(
-                pixelsPerLine * dpr);
+            = WaveformZoomController::lodLevelForPhysicalPixels(rasterScale);
         if (sourceBegin < sourceEnd) {
-            const auto physicalBegin = waveform_render::timelinePhysicalFloor(
-                static_cast<double>(sourceBegin), pixelsPerLine, dpr);
-            const auto physicalEnd = waveform_render::timelinePhysicalCeil(
-                static_cast<double>(sourceEnd), pixelsPerLine, dpr);
+            const auto physicalBegin = static_cast<std::int64_t>(std::floor(
+                static_cast<double>(sourceBegin) * rasterScale));
+            const auto physicalEnd = static_cast<std::int64_t>(std::ceil(
+                static_cast<double>(sourceEnd) * rasterScale));
             const auto firstTile = waveform_render::firstRenderTile(physicalBegin);
             const auto lastTile = waveform_render::lastRenderTile(physicalEnd);
             for (auto tileIndex = firstTile;
@@ -1267,7 +1289,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                  ++tileIndex) {
                 const std::size_t poolIndex = usedPoolSlots++;
                 const auto tileSpan = waveform_render::renderTileSpan(
-                    tileIndex, pixelsPerLine * dpr, snapshot->totalLineCount);
+                    tileIndex, rasterScale, snapshot->totalLineCount);
                 if (!tileSpan.hasSource()) {
                     clearWaveformTexture(scene->waveformNodes[poolIndex]);
                     scene->waveformTileKeys[poolIndex].reset();
@@ -1278,7 +1300,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                 const int imageHeight = std::max(
                     1, static_cast<int>(std::ceil(bounds.height() * dpr)));
                 const auto key = waveform_render::WaveformTileRasterizer::makeKey(
-                    *snapshot, tileIndex, tileSpan, pixelsPerLine * dpr,
+                    *snapshot, tileIndex, tileSpan, rasterScale,
                     imageHeight, dpr, selectedLodLevel,
                     static_cast<std::uint32_t>(m_backgroundColor.rgba()));
                 const auto requiredViewKey = waveform_render::viewKeyFor(key);
@@ -1310,12 +1332,12 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                 if (!prepared.alreadyDisplayed && !prepared.ready) {
                     const double tileCentre = static_cast<double>(
                         tileSpan.physicalBegin + tileSpan.physicalEnd) * 0.5;
-                    const double playheadPhysical = playheadLine * pixelsPerLine * dpr;
+                    const double playheadPhysical = playheadLine * rasterScale;
                     m_tileRasterizer->request({
                         key,
                         tileSpan,
                         snapshot,
-                        pixelsPerLine * dpr,
+                        rasterScale,
                         bounds.height(),
                         dpr,
                         std::abs(tileCentre - playheadPhysical)
@@ -1338,8 +1360,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                 if (renderOriginChanged) {
                     positionWaveformTile(
                         scene->waveformNodes[poolIndex], prepared.span,
-                        scene->renderOriginLine, pixelsPerLine, dpr,
-                        static_cast<float>(bounds.height()));
+                        scene->renderOriginLine, pixelsPerLine, rasterScale,
+                        dpr, static_cast<float>(bounds.height()));
                 }
             } else if (prepared.ready
                        && waveform_render::detailTileMayBeDisplayed(
@@ -1347,7 +1369,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                            prepared.ready->hasAnySourceData)) {
                 const auto upload = uploadWaveformTile(
                     scene->waveformNodes[poolIndex], *prepared.ready,
-                    scene->renderOriginLine, pixelsPerLine, dpr,
+                    scene->renderOriginLine, pixelsPerLine, rasterScale, dpr,
                     static_cast<float>(bounds.height()), window(),
                     scene->timeline, scene->loopFill);
                 if (upload) {

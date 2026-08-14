@@ -774,6 +774,7 @@ add_executable(BrockDJ_track_loader_tests
     src/audio/cache/AudioPageCache.cpp
     src/audio/cache/AudioCacheWorker.cpp
     src/deck/MetadataUtils.cpp
+    src/library/CoverArtExtractor.cpp
     src/waveform/WaveformCache.cpp
     src/domain/TrackData.cpp
     src/waveform/WaveformLineStore.cpp
@@ -785,6 +786,7 @@ target_link_libraries(BrockDJ_track_loader_tests PRIVATE
     Qt6::Core Qt6::Gui
     juce::juce_core juce::juce_data_structures juce::juce_audio_basics
     juce::juce_audio_formats juce::juce_dsp juce::juce_events
+    ThirdParty::TagLib
 )
 target_compile_definitions(BrockDJ_track_loader_tests PRIVATE
     JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1

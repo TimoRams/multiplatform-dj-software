@@ -84,6 +84,40 @@ inline double smoothTimelineTranslation(double width,
 // is deliberately independent of analysis chunk boundaries, zoom and DPR.
 inline constexpr std::int64_t kRenderTilePhysicalWidth = 1024;
 
+// Rasterizing at exactly the on-screen scale is correct but brittle: moving the
+// tempo fader retunes pixels-per-line on every frame, and because the scale is
+// part of every tile key, the whole tile cache is invalidated at frame rate --
+// the waveform blanks for as long as the fader moves. The beatgrid stays smooth
+// through the same gesture only because it is pure geometry, with no cached
+// pixels keyed on scale.
+//
+// So snap the *rasterization* scale to a geometric ladder and let the
+// destination rectangle carry the exact scale instead. Tiles then survive an
+// entire tempo sweep and are merely repositioned each frame, exactly like the
+// grid, while a replacement is rasterized in the background only when a ladder
+// step is actually crossed. A sixteenth-octave ladder keeps a texture within
+// 4.5% of its natural size, which is below the threshold where the stretch
+// reads as blur.
+inline constexpr double kRasterScaleLadderStepsPerOctave = 16.0;
+
+inline double quantizedRasterScale(double physicalPixelsPerLine) noexcept
+{
+    if (!(physicalPixelsPerLine > 0.0)
+        || !std::isfinite(physicalPixelsPerLine)) {
+        return physicalPixelsPerLine;
+    }
+    const double step = std::round(std::log2(physicalPixelsPerLine)
+                                   * kRasterScaleLadderStepsPerOctave);
+    return std::exp2(step / kRasterScaleLadderStepsPerOctave);
+}
+
+inline bool rasterScaleMatchesDisplay(double rasterScale,
+                                      double displayScale) noexcept
+{
+    return std::abs(rasterScale - displayScale)
+        <= std::max(displayScale, 1.0e-9) * 1.0e-6;
+}
+
 // The coarse whole-track fallback overview is rasterized once at a fixed texel
 // count for the entire track, so one texel already aggregates many canonical
 // lines. Drawing it underneath the detail tiles is only honest while each of
@@ -150,6 +184,7 @@ inline bool detailTileMayBeDisplayed(bool keyIsCurrent,
 {
     return keyIsCurrent && hasAnySourceData;
 }
+
 
 struct RenderTileSpan final {
     std::int64_t tileIndex = 0;

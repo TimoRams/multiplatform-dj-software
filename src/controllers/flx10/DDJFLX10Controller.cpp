@@ -29,12 +29,14 @@ DDJFLX10Controller::DDJFLX10Controller(ControlClock& controlClock, QObject* pare
     m_uploadTimer.setTimerType(Qt::PreciseTimer);
     m_keepAliveTimer.setTimerType(Qt::PreciseTimer);
     m_keepAliveTimer.setInterval(kKeepAliveIntervalMs);
+    m_stateTimer.setTimerType(Qt::PreciseTimer);
+    m_stateTimer.setInterval(kJogStateIntervalMs);
 
     connect(&m_uploadTimer, &QTimer::timeout, this, &DDJFLX10Controller::sendUploadChunk);
     connect(&m_keepAliveTimer, &QTimer::timeout, this, &DDJFLX10Controller::sendKeepAlive);
+    connect(&m_stateTimer, &QTimer::timeout, this, &DDJFLX10Controller::sendStateTick);
     ControlClock::Callbacks callbacks;
     callbacks.display = [this](const ControlTickContext&) {
-        sendStateTick();
         sendWaveformTick();
     };
     m_clockRegistration = controlClock.registerCallbacks(std::move(callbacks));
@@ -101,6 +103,11 @@ bool DDJFLX10Controller::start()
             refreshDeckFromEngine(deck);
         }
     }
+    // xx27 owns the time/playhead and spinning marker. It deliberately has a
+    // dedicated 200 Hz clock instead of sharing the 60 Hz UI display callback;
+    // writePacket() coalesces these updates per deck if USB is temporarily busy.
+    sendStateTick();
+    m_stateTimer.start();
     m_keepAliveEnabled = sequencerMidiReady || !m_midiPort.isEmpty();
     if (m_keepAliveEnabled) {
         sendKeepAlive();
@@ -126,6 +133,7 @@ void DDJFLX10Controller::prepareForShutdown() noexcept
     disconnectDeckSignals();
     m_uploadTimer.stop();
     m_keepAliveTimer.stop();
+    m_stateTimer.stop();
     m_keepAliveEnabled = false;
     stopWaveformWorker();
 #if defined(Q_OS_LINUX)
@@ -143,6 +151,7 @@ void DDJFLX10Controller::stop()
     disconnectDeckSignals();
     m_uploadTimer.stop();
     m_keepAliveTimer.stop();
+    m_stateTimer.stop();
     m_keepAliveEnabled = false;
 #if defined(Q_OS_LINUX)
     if (m_keepAliveProcess && m_keepAliveProcess->state() != QProcess::NotRunning) {
@@ -153,6 +162,18 @@ void DDJFLX10Controller::stop()
 #endif
     m_uploadActive.fill(false);
     m_uploadWindowsSent.fill(0);
+    m_uploadResweepPending.fill(false);
+    // Hand the device back in a defined state. Closing the endpoint without
+    // this leaves the last pushed waveform, cover art and platter position
+    // frozen on the jog screens until something else drives them, which looks
+    // like the controller is still running a track that is long gone.
+    if (m_connected) {
+        for (int deck = controllers::kFlx10FirstDeckIndex;
+             deck <= controllers::kFlx10LastDeckIndex; ++deck) {
+            clearDeckDisplay(deck);
+            resetDisplayPacketState(deck);
+        }
+    }
     for (int deck = controllers::kFlx10FirstDeckIndex; deck <= controllers::kFlx10LastDeckIndex; ++deck) {
         if (m_jogRingWarningActive[deck] || !m_jogRingLit[deck])
             sendJogRingIllumination(deck, true);
@@ -282,18 +303,35 @@ void DDJFLX10Controller::connectDeckSignals()
         m_metadataConnections[deck] = connect(engine, &DjEngine::trackMetadataChanged, this, [this, deck] {
             if (m_shuttingDown.load(std::memory_order_acquire))
                 return;
-            if (!m_connected || m_waveforms[deck].isEmpty())
+            if (!m_connected)
                 return;
 
-            if (DjEngine* engine = deckEngine(deck)) {
-                const QString coverUrl = engine->coverArtUrl();
-                if (!coverUrl.isEmpty() && coverUrl != m_lastCoverUrls[deck]) {
-                    m_lastCoverUrls[deck] = coverUrl;
-                    uploadCoverArt(deck);
-                }
+            DjEngine* engine = deckEngine(deck);
+            if (!engine)
+                return;
 
-                sendXx39(deck);
+            // Cover art does not depend on the waveform, but this handler used
+            // to bail out when the deck had no FLX10 preview yet. Metadata
+            // arrives at load time, long before the preview worker has produced
+            // anything, so the one notification that carries a fresh picture was
+            // always skipped. Marking the URL as done before the upload had
+            // actually produced bytes then prevented any later retry.
+            const QString coverUrl = engine->coverArtUrl();
+            if (coverUrl != m_lastCoverUrls[deck]) {
+                if (coverUrl.isEmpty()) {
+                    m_lastCoverUrls[deck].clear();
+                } else if (const QByteArray jpeg = generateCoverJpeg(deck);
+                           !jpeg.isEmpty() && sendXx33Album(deck, jpeg)) {
+                    qInfo() << "[DDJ-FLX10] Deck" << deck
+                            << "uploading cover art bytes" << jpeg.size();
+                    m_lastCoverUrls[deck] = coverUrl;
+                }
             }
+
+            // Pad labels carry track text, which is only meaningful once the
+            // deck actually has a waveform on screen.
+            if (!m_waveforms[deck].isEmpty())
+                sendXx39(deck);
         });
         // Tempo bytes in 0x27 are refreshed by sendStateTick(); avoid an extra
         // immediate packet here — it used to make the platter cursor jump wildly.
@@ -396,6 +434,7 @@ void DDJFLX10Controller::invalidateDeckSnapshot(int deck, const QString& trackPa
     m_waveformDurations[deck] = kPreviewDurationSeconds;
     m_uploadActive[deck] = false;
     m_uploadWindowsSent[deck] = 0;
+    m_uploadResweepPending[deck] = false;
     m_lastWaveformRefreshMs[deck] = 0;
     m_lastWaveformUploadMs[deck] = 0;
     m_waveformUploadTrackGenerations[deck] = 0;
@@ -599,10 +638,33 @@ void DDJFLX10Controller::onPreviewWaveformReady(
     if (!m_connected)
         return;
 
+    // A sweep of a waveform that carries nothing yet costs the full transfer
+    // (a five-minute track is ~3300 windows) and puts an empty picture on the
+    // screen, while saturating the endpoint that also carries the platter
+    // position. Hold the sweep back until the analysis has produced something
+    // — but still send the init, otherwise the screen sits on "not loaded"
+    // until the analysis finishes.
+    const bool waveformHasContent = qualityPermille > 0;
+    if (!waveformHasContent && !m_uploadActive[deck]) {
+        qInfo() << "[DDJ-FLX10] Deck" << deck
+                << "waveform has no analysed columns yet; sending init only";
+        uploadDeck(deck, false);
+        return;
+    }
+
     if (sameTrackRefresh) {
         // Same track, better data: never re-send the init sequence
         // (xx30/xx39/cover art/xx35) and never rewind an in-flight transfer.
-        if (!m_uploadActive[deck]) {
+        if (m_uploadActive[deck]) {
+            // Windows already on the wire carry whatever the waveform held when
+            // they were sent. A transfer that starts while analysis is still
+            // running therefore leaves permanently blank or coarse regions on
+            // the screen, which is the "no waveform / stops loading" case.
+            // Repeat the sweep once this one reaches the end; each repetition
+            // reads the current, better samples, so it converges on the
+            // finished analysis instead of freezing an early snapshot.
+            m_uploadResweepPending[deck] = true;
+        } else {
             m_uploadWindowsSent[deck] = 0;
             m_uploadActive[deck] = true;
             if (!m_uploadTimer.isActive())
@@ -903,16 +965,22 @@ void DDJFLX10Controller::sendUploadChunk()
         return;
     }
 
-    // Background upload is intentionally opportunistic: keep active playback
-    // smooth first, then fill the rest when the deck is idle.
+    // The transfer used to be skipped outright while a deck was playing or
+    // being scratched, on the theory that the endpoint should stay clear for
+    // the platter. In practice a deck spends almost all of its time playing,
+    // so the sweep never advanced and the jog screen simply never filled in —
+    // which is the "still no waveform" report. The platter state travels in
+    // its own priority slot ahead of this queue, so it cannot be starved by
+    // the sweep; throttle the burst during playback instead of stopping it.
     for (int offset = 0; offset < 2; ++offset) {
         const int deck = 1 + ((m_nextUploadDeck - 1 + offset) % 2);
         if (!m_uploadActive[deck] || m_waveforms[deck].isEmpty())
             continue;
-        if (const DjEngine* engine = deckEngine(deck);
-            engine && (engine->isPlaying() || engine->isScratchVisualActive())) {
-            continue;
-        }
+        const DjEngine* deckEngineForRate = deckEngine(deck);
+        const bool deckIsBusy = deckEngineForRate
+            && (deckEngineForRate->isPlaying()
+                || deckEngineForRate->isScratchVisualActive());
+        const int windowsThisTick = deckIsBusy ? 1 : kUploadWindowsPerTick;
         const int entries = m_waveforms[deck].size() / 2;
         const int totalWindows = (entries + kXx36EntriesPerWindow - 1)
             / kXx36EntriesPerWindow;
@@ -925,19 +993,35 @@ void DDJFLX10Controller::sendUploadChunk()
         const int startWindow = totalWindows > 0
             ? (currentWaveformEntry(deck) / kXx36EntriesPerWindow) % totalWindows
             : 0;
-        if (m_uploadWindowsSent[deck] < totalWindows) {
+        // kUploadWindowsPerTick existed but was never read: exactly one window
+        // went out per 10 ms tick, so a five-minute track needed ~3300 ticks,
+        // i.e. over half a minute before the jog screen was complete. That is
+        // the "it keeps loading forever" part. The state packets that drive the
+        // platter are published into their own priority slot, so they are not
+        // queued behind this burst.
+        for (int sent = 0;
+             sent < windowsThisTick && m_uploadWindowsSent[deck] < totalWindows;
+             ++sent) {
             const int window = (startWindow + m_uploadWindowsSent[deck]) % totalWindows;
-            if (sendXx36Window(deck, m_waveforms[deck], window * kXx36EntriesPerWindow)) {
-                ++m_uploadWindowsSent[deck];
-            } else {
+            if (!sendXx36Window(deck, m_waveforms[deck], window * kXx36EntriesPerWindow))
                 break;
-            }
+            ++m_uploadWindowsSent[deck];
         }
 
         if (m_uploadWindowsSent[deck] >= totalWindows) {
-            sendXx2f(deck);
-            m_uploadActive[deck] = false;
-            qInfo() << "[DDJ-FLX10] Deck" << deck << "waveform upload finished entries" << entries;
+            if (m_uploadResweepPending[deck]) {
+                // Better samples landed while this sweep was running. Send the
+                // whole waveform once more so the windows that went out with
+                // incomplete data are replaced.
+                m_uploadResweepPending[deck] = false;
+                m_uploadWindowsSent[deck] = 0;
+                qInfo() << "[DDJ-FLX10] Deck" << deck
+                        << "repeating waveform sweep with improved analysis data";
+            } else {
+                sendXx2f(deck);
+                m_uploadActive[deck] = false;
+                qInfo() << "[DDJ-FLX10] Deck" << deck << "waveform upload finished entries" << entries;
+            }
         }
         m_nextUploadDeck = deck == 1 ? 2 : 1;
         break;

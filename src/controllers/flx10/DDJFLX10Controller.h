@@ -80,7 +80,7 @@ private:
     void updateJogRingWarning(int deck, double elapsedSeconds, double durationSeconds, bool playing);
     bool sendJogRingIllumination(int deck, bool on);
 
-    bool uploadDeck(int deck);
+    bool uploadDeck(int deck, bool startWindowSweep = true);
     bool sendXx30(int deck);
     bool sendXx39(int deck);
     bool sendXx33Album(int deck, const QByteArray& jpeg);
@@ -161,6 +161,7 @@ private:
     ControlClock::Registration m_clockRegistration;
     QTimer m_uploadTimer;
     QTimer m_keepAliveTimer;
+    QTimer m_stateTimer;
     bool m_keepAliveEnabled = false;
     std::array<QByteArray, 5> m_waveforms;
     std::array<double, 5> m_waveformDurations = {0.0, 30.0, 30.0, 30.0, 30.0};
@@ -169,6 +170,11 @@ private:
     // so filling always starts at what is about to be played.
     std::array<int, 5> m_uploadWindowsSent = {0, 0, 0, 0, 0};
     std::array<bool, 5> m_uploadActive = {false, false, false, false, false};
+    // Set when better waveform data arrived while a transfer was already in
+    // flight. Windows sent before that point still carry the old samples, so
+    // the sweep is repeated once it reaches the end instead of being rewound
+    // mid-flight.
+    std::array<bool, 5> m_uploadResweepPending = {false, false, false, false, false};
     std::array<QMetaObject::Connection, 5> m_trackLoadedConnections;
     std::array<QMetaObject::Connection, 5> m_trackEjectedConnections;
     std::array<QMetaObject::Connection, 5> m_rgbWaveformConnections;

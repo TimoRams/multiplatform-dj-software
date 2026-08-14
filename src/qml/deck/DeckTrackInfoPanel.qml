@@ -34,9 +34,19 @@ Item {
     readonly property real playheadNormalized: duration > 0
                                                    ? Math.max(0, Math.min(1, displayedPlaybackSeconds / duration))
                                                    : 0
-    readonly property real displayedTimeSeconds: showRemainingTime
-                                                 ? Math.max(0, duration - displayedPlaybackSeconds)
-                                                 : displayedPlaybackSeconds
+    // Positions and the duration are measured in the track's own timeline, so
+    // they say nothing about how long playback actually takes. At +8 % the
+    // track ends noticeably earlier than an unscaled readout claims, which is
+    // exactly the number a DJ is reading when deciding when to mix. Scale the
+    // clock by the current tempo so it reports real seconds; the playhead
+    // fraction below is a ratio and stays untouched.
+    readonly property real tempoTimeScale: {
+        var ratio = engine ? Number(engine.tempoRatio) : 1
+        return (isFinite(ratio) && ratio > 0.01) ? 1 / ratio : 1
+    }
+    readonly property real displayedTimeSeconds: (showRemainingTime
+                                                  ? Math.max(0, duration - displayedPlaybackSeconds)
+                                                  : displayedPlaybackSeconds) * tempoTimeScale
     readonly property int displayedWholeSeconds: Math.floor(displayedTimeSeconds)
     readonly property int displayedMilliseconds: Math.floor((displayedTimeSeconds - displayedWholeSeconds) * 1000 + 0.00001)
     readonly property string displayedTimeMain: !hasTrack || duration <= 0 ? "--:--"
@@ -114,7 +124,9 @@ Item {
         var interval = duration <= 180 ? 30 : (duration <= 600 ? 60 : (duration <= 1800 ? 120 : 300))
         var marks = []
         for (var second = interval; second < duration; second += interval) {
-            var remaining = Math.max(0, Math.round(duration - second))
+            // Same reasoning as displayedTimeSeconds: the mark sits at a fixed
+            // point in the track, but its label is a countdown in real seconds.
+            var remaining = Math.max(0, Math.round((duration - second) * tempoTimeScale))
             var minutes = Math.floor(remaining / 60)
             var secs = remaining % 60
             marks.push({ position: second / duration,

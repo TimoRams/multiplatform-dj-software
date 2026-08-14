@@ -40,7 +40,11 @@ constexpr int kXx36EntriesPerWindow = 19;
 // show Serato pushing its ~420-490 xx36 packets per deck in a burst at
 // roughly 1 ms spacing, so 10 ms per window remains well inside what the
 // endpoint sustains while still leaving room for xx27 state packets.
-constexpr int kUploadWindowsPerTick = 1;
+// Windows pushed per upload tick. At one window per 10 ms tick a five-minute
+// track took over half a minute to reach the screen; four keeps the transfer
+// under ten seconds while staying far below what the interrupt endpoint can
+// carry, and the platter state has its own priority slot ahead of this queue.
+constexpr int kUploadWindowsPerTick = 4;
 constexpr int kUploadTickIntervalMs = 10;
 constexpr int kKeepAliveIntervalMs = 250;
 constexpr std::size_t kHidWriteQueueCapacity = 1024;
@@ -53,11 +57,12 @@ constexpr int kJogRingOnValue = 0x7F;
 constexpr int kXx2fSampleRate = 22050;
 constexpr int kXx2fRecordsPerPacket = 30;
 constexpr uint32_t kXx2fMaximumSample = 0x00FFFFFFu;
-// The displays remain smooth at these rates, while leaving ample interrupt-endpoint
-// headroom for controller input and MIDI feedback.  In particular, do not send a
-// new full HID report for every UI/control-clock tick.
-// The reference protocol runs xx27 state at ~50 Hz continuously, even idle.
-constexpr int kJogStateIntervalMs = 20;
+// The working FLX10 path drives xx27 at 200 Hz. Keeping this independent from
+// the 60 Hz UI/display clock is important: applying a 20 ms limiter to a 16.7 ms
+// display callback discarded every second callback, so normal playback only
+// reached the jog marker at about 30 Hz. Scratch progress signals happened
+// between display ticks and masked that scheduling alias.
+constexpr int kJogStateIntervalMs = 5;
 // Even when the encoded state has not changed, resend it at least this often.
 // The firmware needs a continuous stream; permanent dedup on an idle or paused
 // deck stops the display updating entirely until something moves again.

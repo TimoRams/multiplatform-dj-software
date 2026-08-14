@@ -41,6 +41,12 @@ void continuousAtDisplayRate()
     }
 }
 
+void jogStateUsesProtocolCadence()
+{
+    static_assert(flx10_protocol::kJogStateIntervalMs == 5,
+                  "FLX10 xx27 state must remain on its 200 Hz protocol clock");
+}
+
 void longPositionDoesNotOverflow()
 {
     for (double seconds : {60.0, 3600.0, 86400.0, 1.0e6, 1.0e9}) {
@@ -125,6 +131,7 @@ int main()
 {
     basicEncoding();
     continuousAtDisplayRate();
+    jogStateUsesProtocolCadence();
     longPositionDoesNotOverflow();
     beatgridRangeDoesNotWrap();
     tempoDoesNotMoveAbsoluteProgress();
