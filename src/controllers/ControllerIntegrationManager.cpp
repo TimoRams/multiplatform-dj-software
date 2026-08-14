@@ -6,6 +6,10 @@ ControllerIntegrationManager::ControllerIntegrationManager(ControlClock& control
     : QObject(parent)
     , m_flx10(controlClock)
 {
+    m_flx10HotplugTimer.setInterval(5000);
+    m_flx10HotplugTimer.setTimerType(Qt::CoarseTimer);
+    connect(&m_flx10HotplugTimer, &QTimer::timeout,
+            this, &ControllerIntegrationManager::retryFlx10Connection);
     connect(&m_flx10, &DDJFLX10Controller::statusChanged,
             this, &ControllerIntegrationManager::flx10StatusChanged);
     connect(&m_flx10, &DDJFLX10Controller::connectedChanged,
@@ -14,6 +18,7 @@ ControllerIntegrationManager::ControllerIntegrationManager(ControlClock& control
 
 ControllerIntegrationManager::~ControllerIntegrationManager()
 {
+    m_flx10HotplugTimer.stop();
     m_flx10.stop();
 }
 
@@ -26,6 +31,8 @@ void ControllerIntegrationManager::setDecks(DjEngine* deckA, DjEngine* deckB)
 
 void ControllerIntegrationManager::prepareForShutdown() noexcept
 {
+    m_shuttingDown = true;
+    m_flx10HotplugTimer.stop();
     m_flx10.prepareForShutdown();
     m_deckA = nullptr;
     m_deckB = nullptr;
@@ -42,8 +49,11 @@ void ControllerIntegrationManager::setFlx10Enabled(bool enabled)
     if (m_flx10Enabled) {
         qInfo() << "[Controller] DDJ-FLX10 support enabled";
         m_flx10.start();
+        if (!m_shuttingDown)
+            m_flx10HotplugTimer.start();
     } else {
         qInfo() << "[Controller] DDJ-FLX10 support disabled";
+        m_flx10HotplugTimer.stop();
         m_flx10.stop();
     }
 
@@ -56,6 +66,16 @@ void ControllerIntegrationManager::refreshFlx10()
         return;
 
     m_flx10.stop();
+    m_flx10.start();
+    emit flx10StatusChanged();
+}
+
+void ControllerIntegrationManager::retryFlx10Connection()
+{
+    if (m_shuttingDown || !m_flx10Enabled || m_flx10.isConnected())
+        return;
+
+    qInfo() << "[Controller] DDJ-FLX10 hotplug scan: reconnecting";
     m_flx10.start();
     emit flx10StatusChanged();
 }

@@ -284,7 +284,7 @@ private:
 #endif
 
     bool refreshMidiDeviceCache();
-    void refreshMidiDevices(bool notifyMappingList);
+    bool refreshMidiDevices(bool notifyMappingList);
     void populateFromAlsaFallback();
     void rebuildControllerDeviceCache();
     bool isPseudoAlsaIdentifier(const juce::String& identifier) const;

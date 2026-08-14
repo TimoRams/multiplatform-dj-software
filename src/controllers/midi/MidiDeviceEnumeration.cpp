@@ -866,6 +866,15 @@ void MidiControllerManager::restoreSavedDeviceSelections()
     else
         openMidiInputByIdentifier(kAllMidiInputsIdentifier);
 
+    // ALSA keeps our local sequencer client alive when the USB endpoint goes
+    // away. Drop that stale output before attempting to restore or auto-select
+    // the newly enumerated FLX10 port (whose ALSA client id may have changed).
+    if (!m_selectedMidiOutputIdentifier.isEmpty()
+        && !midi_internal::containsIdentifier(
+            m_availableOutputDeviceIdentifiers, m_selectedMidiOutputIdentifier)) {
+        openMidiOutputByIdentifier({});
+    }
+
     const auto outputId = SettingsManager::getInstance().getMidiOutputIdentifier();
     const QByteArray envOutputName = qgetenv("BROCKDJ_MIDI_OUT");
     if (!envOutputName.isEmpty()) {

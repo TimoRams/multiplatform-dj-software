@@ -360,7 +360,8 @@ void DDJFLX10Controller::reportHidWriteFailure()
     const int result = m_hidWriteError.load(std::memory_order_acquire);
     const int transferred = m_hidWriteTransferred.load(std::memory_order_acquire);
     qWarning() << "[DDJ-FLX10] HID writer stopped after transfer failure" << result << transferred;
-    setStatus(QStringLiteral("DDJ-FLX10: HID transfer failed (%1, %2 bytes); disable and re-enable display support to reconnect")
+    setConnected(false);
+    setStatus(QStringLiteral("DDJ-FLX10: disconnected (%1, %2 bytes); waiting for hotplug reconnect")
                   .arg(result)
                   .arg(transferred));
 }

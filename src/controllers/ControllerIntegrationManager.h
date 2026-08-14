@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QString>
+#include <QTimer>
 
 #include "flx10/DDJFLX10Controller.h"
 #include "deck/DjEngine.h"
@@ -34,8 +35,12 @@ signals:
     void flx10StatusChanged();
 
 private:
+    void retryFlx10Connection();
+
     bool m_flx10Enabled = false;
+    bool m_shuttingDown = false;
     QPointer<DjEngine> m_deckA;
     QPointer<DjEngine> m_deckB;
     DDJFLX10Controller m_flx10;
+    QTimer m_flx10HotplugTimer;
 };
