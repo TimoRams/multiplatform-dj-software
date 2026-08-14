@@ -425,13 +425,12 @@ int main(int argc, char** argv)
                       && !graph.transportSnapshot().running,
                   "scratch release after Pause leaves normal transport paused");
 
-    // Regression: Pause after a coast has already begun invalidates that
-    // callback-owned generation. The explicit handoff wins at the next audio
-    // block and stale inertia cannot restart or move the normal transport.
+    // Pause during a running throw changes the coast target to zero. It must
+    // preserve momentum instead of cancelling the callback-owned release.
     graph.setTransportRunning(true);
     graph.renderModeRouter().beginScratch(0.35, 44'100.0, 1.0, true, 1.0);
     graph.renderModeRouter().submitHandDeltaSeconds(0.025, 0.004);
-    const auto cancelledByPauseRelease =
+    const auto retargetedByPauseRelease =
         graph.renderModeRouter().requestScratchRelease(1.5, true, true);
     graph.getNextAudioBlock({&pausedReleaseOutput, 0, 64});
     ok &= require(graph.renderModeRouter().scratchReleaseSnapshot().phase
@@ -439,12 +438,52 @@ int main(int argc, char** argv)
                   "playing scratch release enters coast before Pause");
     const double pausedCursor = graph.renderModeRouter().readPositionSeconds(44'100.0);
     graph.setTransportRunning(false);
-    graph.renderModeRouter().exitScratchMode(pausedCursor, 44'100.0);
     graph.getNextAudioBlock({&pausedReleaseOutput, 0, 64});
-    ok &= require(graph.renderModeRouter().scratchReleaseComplete(cancelledByPauseRelease)
+    const auto pauseRetarget = graph.renderModeRouter().scratchReleaseSnapshot();
+    ok &= require(pauseRetarget.phase
+                      == engine::audio::ScratchReleasePhase::CoastToStop
+                      && graph.renderModeRouter().isInertiaActive(),
+                  "Pause retargets active release inertia toward zero");
+    ok &= require(graph.renderModeRouter().readPositionSeconds(44'100.0) > pausedCursor,
+                  "Pause preserves forward platter momentum after the command");
+    for (int block = 0;
+         block < 4000
+             && !graph.renderModeRouter().scratchReleaseComplete(retargetedByPauseRelease);
+         ++block) {
+        graph.getNextAudioBlock({&pausedReleaseOutput, 0, 64});
+    }
+    ok &= require(graph.renderModeRouter().scratchReleaseComplete(retargetedByPauseRelease)
                       && !graph.renderModeRouter().isInertiaActive()
                       && !graph.transportSnapshot().running,
-                  "Pause cancels active release inertia and keeps transport stopped");
+                  "Pause lets active release coast fully to zero and remain stopped");
+
+    // Starting from a paused deck, Play during the spin must update the active
+    // coast and hand off at deck rate without restarting from the grab cursor.
+    graph.setTransportRunning(false);
+    graph.renderModeRouter().beginScratch(0.25, 44'100.0, 1.0, false, 1.0);
+    graph.renderModeRouter().submitHandDeltaSeconds(0.025, 0.004);
+    const auto retargetedByPlayRelease =
+        graph.renderModeRouter().requestScratchRelease(1.5, true, false);
+    graph.getNextAudioBlock({&pausedReleaseOutput, 0, 64});
+    ok &= require(graph.renderModeRouter().scratchReleaseSnapshot().phase
+                      == engine::audio::ScratchReleasePhase::CoastToStop,
+                  "paused platter spin initially coasts toward zero");
+    const double playCursor = graph.renderModeRouter().readPositionSeconds(44'100.0);
+    graph.setTransportRunning(true);
+    graph.getNextAudioBlock({&pausedReleaseOutput, 0, 64});
+    ok &= require(graph.renderModeRouter().scratchReleaseSnapshot().phase
+                      == engine::audio::ScratchReleasePhase::CoastToDeck,
+                  "Play retargets a same-direction spin toward live deck rate");
+    for (int block = 0;
+         block < 4000
+             && !graph.renderModeRouter().scratchReleaseComplete(retargetedByPlayRelease);
+         ++block) {
+        graph.getNextAudioBlock({&pausedReleaseOutput, 0, 64});
+    }
+    ok &= require(graph.renderModeRouter().scratchReleaseComplete(retargetedByPlayRelease)
+                      && graph.transportSnapshot().running
+                      && graph.renderModeRouter().readPositionSeconds(44'100.0) > playCursor,
+                  "Play completes the moving handoff without rewinding the spin");
 
     graph.renderModeRouter().beginScratch(0.3, 44'100.0, 1.0, true, 1.0);
     const auto cancelledRelease = graph.renderModeRouter().requestScratchRelease(

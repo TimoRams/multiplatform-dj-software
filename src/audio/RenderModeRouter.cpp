@@ -298,6 +298,7 @@ void RenderModeRouter::setDeckTempoRatio(double ratio) noexcept
     m_deckTempoRatio.store(clamped, std::memory_order_relaxed);
     m_controller.setNormalPlaybackSpeed(signedDeckTempoRatio());
     applyDeckTempoToHermite();
+    m_transportIntentGeneration.fetch_add(1, std::memory_order_release);
 }
 
 void RenderModeRouter::setJogNudgeRatio(double ratio) noexcept
@@ -305,6 +306,7 @@ void RenderModeRouter::setJogNudgeRatio(double ratio) noexcept
     m_jogNudgeRatio.store(std::clamp(ratio, 0.94, 1.06), std::memory_order_relaxed);
     m_controller.setNormalPlaybackSpeed(signedDeckTempoRatio());
     applyDeckTempoToHermite();
+    m_transportIntentGeneration.fetch_add(1, std::memory_order_release);
 }
 
 void RenderModeRouter::setReverse(bool reverse) noexcept
@@ -312,6 +314,13 @@ void RenderModeRouter::setReverse(bool reverse) noexcept
     m_reverse.store(reverse, std::memory_order_relaxed);
     m_controller.setNormalPlaybackSpeed(signedDeckTempoRatio());
     applyDeckTempoToHermite();
+    m_transportIntentGeneration.fetch_add(1, std::memory_order_release);
+}
+
+void RenderModeRouter::setNormalPlaybackEnabled(bool enabled) noexcept
+{
+    m_normalPlaybackEnabled.store(enabled, std::memory_order_release);
+    m_transportIntentGeneration.fetch_add(1, std::memory_order_release);
 }
 
 void RenderModeRouter::setLoopRangeSeconds(double loopInSec, double loopOutSec, bool active,
@@ -628,7 +637,8 @@ void RenderModeRouter::finishReleaseDecisionAfterTrackingBlock() noexcept
 void RenderModeRouter::finishCoastHandoffAfterScratchBlock(double trackSampleRate) noexcept
 {
     if (m_audioReleasePhase != ScratchReleasePhase::CoastToDeck
-        && m_audioReleasePhase != ScratchReleasePhase::CoastToStop) {
+        && m_audioReleasePhase != ScratchReleasePhase::CoastToStop
+        && m_audioReleasePhase != ScratchReleasePhase::HandoffPending) {
         return;
     }
 
@@ -668,9 +678,41 @@ void RenderModeRouter::consumePendingAudioCommands() noexcept
 
     consumeScratchReleaseCommand();
 
-    // Pause or track replacement can cancel a release after the callback has
-    // already accepted it. Complete that generation before consuming the
-    // explicit reader handoff so no stale inertia state survives the command.
+    const auto transportIntentGeneration =
+        m_transportIntentGeneration.load(std::memory_order_acquire);
+    if (transportIntentGeneration != m_appliedTransportIntentGeneration) {
+        const bool playbackIntent =
+            m_normalPlaybackEnabled.load(std::memory_order_acquire);
+        m_audioReleaseCommand.playbackIntent = playbackIntent;
+        m_audioReleaseCommand.deckRate = signedDeckTempoRatio();
+
+        if (m_audioReleasePhase == ScratchReleasePhase::CoastToDeck
+            || m_audioReleasePhase == ScratchReleasePhase::CoastToStop
+            || m_audioReleasePhase == ScratchReleasePhase::HandoffPending) {
+            m_audioReleaseDisposition = m_controller.retargetRelease(
+                playbackIntent, m_audioReleaseCommand.deckRate);
+            switch (m_audioReleaseDisposition) {
+            case engine::scratch::ScratchReleaseDisposition::CoastToDeckRate:
+                m_audioReleasePhase = ScratchReleasePhase::CoastToDeck;
+                break;
+            case engine::scratch::ScratchReleaseDisposition::CoastToStop:
+                m_audioReleasePhase = ScratchReleasePhase::CoastToStop;
+                break;
+            case engine::scratch::ScratchReleaseDisposition::HandoffNow:
+                m_audioReleasePhase = ScratchReleasePhase::HandoffPending;
+                break;
+            }
+            publishReleaseSnapshot(m_audioReleaseCommand.generation,
+                                   m_audioReleasePhase,
+                                   m_audioReleaseDisposition,
+                                   readPositionSeconds(m_audioReleaseCommand.sampleRate));
+        }
+        m_appliedTransportIntentGeneration = transportIntentGeneration;
+    }
+
+    // Track replacement or an explicit scratch teardown can cancel a release
+    // after the callback has already accepted it. Complete that generation
+    // before consuming the reader handoff so no stale inertia state survives.
     const auto activeReleaseGeneration = m_audioReleaseCommand.generation;
     if (activeReleaseGeneration != 0
         && activeReleaseGeneration

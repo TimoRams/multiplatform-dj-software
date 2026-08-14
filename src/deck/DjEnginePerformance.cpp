@@ -72,7 +72,10 @@ void DjEngine::tickScratchPhysics()
     const double absRate = std::abs(scratchRate);
 
     if (m_audioPipeline->mixerPtr()) {
-        const double timbreSignal = std::clamp(std::sqrt(std::max(absRate, 0.08)), 0.18, 1.0);
+        // Preserve the real crawl speed. The previous sqrt/minimum transform
+        // made every micro-scratch look like ~0.28x to the post-filter, causing
+        // a narrow, boosted "digital" tone even for tiny precise movements.
+        const double timbreSignal = std::clamp(absRate, 0.0, 1.0);
         m_audioPipeline->mixer().setScratchTimbre(static_cast<float>(timbreSignal));
     }
 

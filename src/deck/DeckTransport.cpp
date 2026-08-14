@@ -93,6 +93,22 @@ bool DeckTransport::setPlaying(bool playing) noexcept
     return true;
 }
 
+bool DeckTransport::setPlayingDuringScratch(bool playing) noexcept
+{
+    if (m_playRequested == playing)
+        return false;
+
+    m_playRequested = playing;
+    m_preRollActive = false;
+
+    // The scratch reader remains authoritative. This command only publishes
+    // the target for an in-flight release: Pause coasts to zero, Play coasts to
+    // deck rate (or crosses zero before handing off when directions differ).
+    m_audioPipeline.setTransportRunning(playing);
+    publishSnapshot();
+    return true;
+}
+
 bool DeckTransport::setReverse(bool enabled) noexcept
 {
     if (m_reverse == enabled)

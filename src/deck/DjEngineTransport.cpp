@@ -243,7 +243,10 @@ void DjEngine::togglePlay()
 
 void DjEngine::play()
 {
-    const bool changed = m_transport->setPlaying(true);
+    const bool scratchActive = m_scratch.scrubbing() || m_scratch.releaseGlide();
+    const bool changed = scratchActive
+        ? m_transport->setPlayingDuringScratch(true)
+        : m_transport->setPlaying(true);
     ensureTransportRunningForPlayIntent();
     alignToSyncMasterOnPlay();
     if (changed)
@@ -263,30 +266,13 @@ void DjEngine::pause()
         m_audioPipeline->mixer().armClickFreeTransition();
     resetMainCueButtonState();
 
-    if (scratchActive) {
-        const double finalCursor = std::clamp(
-            m_transport->playheadPositionAtomic(),
-            0.0,
-            std::max(0.0, m_transport->trackLengthSeconds()));
-
-        // EndScratch is only a render-mode transition. Explicit Pause remains
-        // authoritative: cancel the release generation, hand both readers to
-        // the current cursor and only then freeze the normal transport.
-        terminateScratchSession(finalCursor);
-        m_transport->adoptScratchHandoffPosition(finalCursor);
-        m_transport->setAudioReverseOverride(m_transport->reverse());
-        if (m_audioPipeline->mixerPtr())
-            m_audioPipeline->mixer().setScratchTimbre(0.0f);
-        updateSpeedAndPitch();
-        if (m_audioPipeline->timeStretchPtr())
-            m_audioPipeline->timeStretch().endScratchBypass();
-        m_transport->setVisualAnchor(finalCursor, true);
-        emit scrubbingChanged();
-    }
-
-    const bool playingChangedNow = m_transport->setPlaying(false);
-    if (scratchActive)
-        m_transport->stopAudio();
+    // During scratch/release the platter reader owns the cursor. Pause changes
+    // its destination to 0 instead of cancelling the session and cutting the
+    // sound at the current sample. The eventual callback-owned handoff freezes
+    // the normal reader at the exact coast endpoint.
+    const bool playingChangedNow = scratchActive
+        ? m_transport->setPlayingDuringScratch(false)
+        : m_transport->setPlaying(false);
     if (playingChangedNow)
         emit playingChanged();
 }

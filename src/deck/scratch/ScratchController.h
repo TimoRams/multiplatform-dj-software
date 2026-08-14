@@ -77,6 +77,10 @@ public:
         bool allowInertia,
         double signedDeckSpeed,
         bool wasPlaying) noexcept;
+    // Audio thread: retarget an already-running coast after Play/Pause changes.
+    [[nodiscard]] ScratchReleaseDisposition retargetRelease(
+        bool playbackIntent,
+        double signedDeckSpeed) noexcept;
     // Audio thread: acknowledge only the release that still owns the phase.
     // A concurrent re-grab has already changed the phase and makes this fail.
     [[nodiscard]] bool completeHandoff() noexcept;
@@ -103,7 +107,6 @@ public:
         const double s = std::clamp(normalized, -m_config.maxScratchSpeed, m_config.maxScratchSpeed);
         m_smoothedSpeed.store(s, std::memory_order_relaxed);
         m_rawSpeed.store(s, std::memory_order_relaxed);
-        m_lastMoveNs.store(nowNs(), std::memory_order_relaxed);
     }
 
     // Audio thread — once per output block. Returns resampler rate (track samples / output sample).

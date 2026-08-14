@@ -168,7 +168,7 @@ void DeckChannelProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
 
         activateFilterSnapshot();
 
-        // Rate-proportional 4-pole anti-alias LP + gentle soft-clip during scratch.
+        // Rate-proportional anti-imaging LP during scratch.
         // scratchTimbre carries absRate (0–1); cutoff at rate × sr × 0.25 places
         // the first linear-interp alias image at 4× cutoff → ~48 dB rejection.
         const float scratchRate = scratchTimbre.load(std::memory_order_relaxed);
@@ -188,16 +188,17 @@ void DeckChannelProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
                 }
             }
 
-            // Keep slow micro-scratches bright and audible — a fixed minimum cutoff
-            // prevents the "underwater digital" tone at low platter speeds.
-            const float rateHz = scratchRate * static_cast<float>(m_sampleRate) * 0.32f;
-            const float cutoffHz = std::max(2600.0f, rateHz);
+            // A two-pole response and a 7 kHz floor keep short micro-scratches
+            // articulate. Four poles at 2.6 kHz plus level compensation made
+            // crawl-speed motion sound narrow, boosted and overly synthetic.
+            const float rateHz = scratchRate * static_cast<float>(m_sampleRate) * 0.42f;
+            const float maximumCutoff = std::min(
+                18'000.0f, static_cast<float>(m_sampleRate) * 0.45f);
+            const float cutoffHz = std::min(
+                maximumCutoff, std::max(7000.0f, rateHz));
             const float pole = std::exp(-2.0f * juce::MathConstants<float>::pi * cutoffHz
                                         / static_cast<float>(m_sampleRate));
             const float alpha = 1.0f - std::clamp(pole, 0.0f, 0.9999f);
-            // Very gentle saturation only at crawl speeds; preserve linearity for nuance.
-            const float satK = std::max(0.0f, (0.22f - scratchRate) / 0.22f) * 0.14f;
-            const float gainBoost = 1.0f + std::max(0.0f, (0.50f - std::min(scratchRate, 0.50f)) * 1.35f);
 
             const int ns = bufferToFill.numSamples;
             for (int ch = 0; ch < numChannels; ++ch) {
@@ -206,24 +207,15 @@ void DeckChannelProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
                 float s3 = m_scratchWarmLpState[ch + 4];
                 float s4 = m_scratchWarmLpState[ch + 6];
                 float* w = bufferToFill.buffer->getWritePointer(ch, bufferToFill.startSample);
-                // satK is constant within the block; hoist the branch outside the sample loop.
-                if (satK > 0.001f) {
-                    for (int i = 0; i < ns; ++i) {
-                        s1 += alpha * (w[i] - s1);
-                        s2 += alpha * (s1   - s2);
-                        s3 += alpha * (s2   - s3);
-                        s4 += alpha * (s3   - s4);
-                        w[i] = (s4 / (1.0f + std::abs(s4) * satK)) * gainBoost;
-                    }
-                } else {
-                    for (int i = 0; i < ns; ++i) {
-                        s1 += alpha * (w[i] - s1);
-                        s2 += alpha * (s1   - s2);
-                        s3 += alpha * (s2   - s3);
-                        s4 += alpha * (s3   - s4);
-                        w[i] = s4 * gainBoost;
-                    }
+                for (int i = 0; i < ns; ++i) {
+                    s1 += alpha * (w[i] - s1);
+                    s2 += alpha * (s1   - s2);
+                    w[i] = s2;
                 }
+                // Keep the unused legacy pole state warm so future response
+                // changes cannot reintroduce an activation transient.
+                s3 = s2;
+                s4 = s2;
                 m_scratchWarmLpState[ch]     = s1;
                 m_scratchWarmLpState[ch + 2] = s2;
                 m_scratchWarmLpState[ch + 4] = s3;

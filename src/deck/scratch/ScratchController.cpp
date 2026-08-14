@@ -180,6 +180,55 @@ ScratchReleaseDisposition ScratchController::releaseScratchWithSpeed(
     return disposition;
 }
 
+ScratchReleaseDisposition ScratchController::retargetRelease(
+    bool playbackIntent,
+    double signedDeckSpeed) noexcept
+{
+    auto current = phase();
+    if (current != ScratchPhase::CoastToDeckRate
+        && current != ScratchPhase::CoastToStop
+        && current != ScratchPhase::HandoffPending)
+        return ScratchReleaseDisposition::CoastToStop;
+
+    const double threshold = std::max(m_config.inertiaStopThreshold,
+                                      m_config.minScratchSpeed);
+    const double inertia = m_inertiaSpeed.load(std::memory_order_relaxed);
+    const double deckSpeed = playbackIntent
+        ? std::clamp(signedDeckSpeed, -m_config.maxScratchSpeed,
+                     m_config.maxScratchSpeed)
+        : 0.0;
+    const bool sameDirection = std::abs(deckSpeed) > threshold
+        && inertia * deckSpeed > 0.0;
+
+    ScratchPhase next = ScratchPhase::CoastToStop;
+    ScratchReleaseDisposition disposition = ScratchReleaseDisposition::CoastToStop;
+    double target = 0.0;
+
+    if (playbackIntent && sameDirection) {
+        target = deckSpeed;
+        if (std::abs(inertia) <= std::abs(deckSpeed) + threshold) {
+            next = ScratchPhase::HandoffPending;
+            disposition = ScratchReleaseDisposition::HandoffNow;
+        } else {
+            next = ScratchPhase::CoastToDeckRate;
+            disposition = ScratchReleaseDisposition::CoastToDeckRate;
+        }
+    } else if (std::abs(inertia) <= threshold) {
+        next = ScratchPhase::HandoffPending;
+        disposition = ScratchReleaseDisposition::HandoffNow;
+    }
+
+    m_releaseTargetSpeed.store(target, std::memory_order_relaxed);
+    auto expected = current;
+    if (!m_phase.compare_exchange_strong(expected, next,
+                                         std::memory_order_acq_rel,
+                                         std::memory_order_acquire)) {
+        // A fresh platter grab supersedes this transport-intent change.
+        return ScratchReleaseDisposition::HandoffNow;
+    }
+    return disposition;
+}
+
 bool ScratchController::completeHandoff() noexcept
 {
     auto expected = ScratchPhase::HandoffPending;

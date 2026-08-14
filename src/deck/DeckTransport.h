@@ -58,6 +58,9 @@ public:
     void clearTrack(std::uint64_t invalidThroughGeneration) noexcept;
 
     bool setPlaying(bool playing) noexcept;
+    // Changes transport intent without seeking/freezing the scratch-owned
+    // reader. Used while a platter grab or release coast is active.
+    bool setPlayingDuringScratch(bool playing) noexcept;
     bool setReverse(bool enabled) noexcept;
     bool setSlipEnabled(bool enabled) noexcept;
     void returnToSlipPosition() noexcept;

@@ -384,9 +384,14 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
     // Feed-forward may lead the last received target by only a few milliseconds.
     // This bridges USB/audio callback cadence without allowing a stale velocity
     // to run the read head away after the platter stops.
-    constexpr double kMaximumPredictionSeconds = 0.006;
+    // Short, slow movements should stop almost exactly under the hand. Faster
+    // throws get a longer bridge across USB packet gaps, while micro-scratches
+    // use only ~2.5 ms of look-ahead and therefore avoid a digital-sounding
+    // overshoot/correction cycle.
+    const double speedBlend = std::clamp(std::abs(referenceRate) / 1.5, 0.0, 1.0);
+    const double maximumPredictionSeconds = 0.0025 + 0.0035 * speedBlend;
     const double predictionSamples = std::abs(referenceVelocity)
-        * std::min(kMaximumPredictionSeconds,
+        * std::min(maximumPredictionSeconds,
                    static_cast<double>(numSamples) / outSr);
     const double corridorLow = target - predictionSamples;
     const double corridorHigh = target + predictionSamples;

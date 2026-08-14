@@ -75,9 +75,7 @@ public:
 
     void setDeckTempoRatio(double ratio) noexcept;
     void setJogNudgeRatio(double ratio) noexcept;
-    void setNormalPlaybackEnabled(bool enabled) noexcept {
-        m_normalPlaybackEnabled.store(enabled, std::memory_order_release);
-    }
+    void setNormalPlaybackEnabled(bool enabled) noexcept;
     void setKeylockEnabled(bool enabled) noexcept {
         m_keylockPassthrough.store(enabled, std::memory_order_relaxed);
     }
@@ -159,6 +157,8 @@ private:
     std::atomic<double> m_deckTempoRatio { 1.0 };
     std::atomic<double> m_jogNudgeRatio { 1.0 };
     std::atomic<bool> m_normalPlaybackEnabled { false };
+    std::atomic<std::uint64_t> m_transportIntentGeneration { 0 };
+    std::uint64_t m_appliedTransportIntentGeneration = 0;
     std::atomic<bool> m_keylockPassthrough { false };
     std::atomic<RenderMode> m_activeRenderMode { RenderMode::Direct };
     std::atomic<bool> m_reverse { false };
