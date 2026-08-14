@@ -1608,10 +1608,21 @@ Rectangle {
         function onParameterChanged(id, value) {
             if (id === "library_browse") {
                 if (value !== 0) {
-                    if (libraryRoot.touchMode)
+                    if (!libraryRoot.visible) {
+                        if (!waveformZoomController)
+                            return
+                        var steps = Math.max(1, Math.round(Math.abs(value)))
+                        for (var step = 0; step < steps; ++step) {
+                            if (value > 0)
+                                waveformZoomController.zoomIn()
+                            else
+                                waveformZoomController.zoomOut()
+                        }
+                    } else if (libraryRoot.touchMode) {
                         libraryRoot.aioMoveBrowseVertical(value)
-                    else
+                    } else {
                         libraryRoot.moveCursor(value)
+                    }
                 }
             } else if (id === "library_load_deck_a") {
                 if (value > 0) libraryRoot.loadTrackToDeck("A", libraryRoot.getCursorFilePath())

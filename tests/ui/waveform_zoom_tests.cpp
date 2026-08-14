@@ -27,9 +27,15 @@ int main()
     ok &= require(near(WaveformZoomController::decreasedZoom(WaveformZoomController::kMinimum),
                        WaveformZoomController::kMinimum),
                   "minimum is stable");
+    ok &= require(WaveformZoomController::kMinimum < 0.006,
+                  "CDJ-style long overview remains available");
     double value = WaveformZoomController::kDefault;
     for (int i = 0; i < 100; ++i) value = WaveformZoomController::increasedZoom(value);
     ok &= require(near(value, WaveformZoomController::kMaximum), "repeated shortcut reaches maximum");
+    value = WaveformZoomController::kDefault;
+    for (int i = 0; i < 100; ++i) value = WaveformZoomController::decreasedZoom(value);
+    ok &= require(near(value, WaveformZoomController::kMinimum),
+                  "repeated controller turns reach the extended overview minimum");
     ok &= require(WaveformZoomController::lodLevelForPhysicalPixels(
                       WaveformZoomController::kMinimum) == 4,
                   "minimum zoom selects 75-lines-per-second LOD");

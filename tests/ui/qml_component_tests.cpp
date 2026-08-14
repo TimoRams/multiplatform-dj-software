@@ -44,6 +44,7 @@ int main()
     const auto settingsWindow = read("src/qml/settings/SettingsWindow.qml");
     const auto applicationBootstrap = read("src/app/ApplicationBootstrap.cpp");
     const auto performancePads = read("src/qml/performance/PerformancePads.qml");
+    const auto library = read("src/qml/library/Library.qml");
     const auto waveformScreen = read("src/qml/performance/PerformanceWaveformScreen.qml");
     const auto beatFxPanel = read("src/qml/performance/PerformanceBeatFxPanel.qml");
     const auto deckQuickPanel = read("src/qml/deck/PerformanceDeckQuickPanel.qml");
@@ -104,6 +105,10 @@ int main()
                   "touch and FLX10 pads share one controller state path");
     ok &= require(main.find("onLibraryViewToggleRequested") != std::string::npos,
                   "FLX10 View action toggles the visible library surface");
+    ok &= require(library.find("if (!libraryRoot.visible)") != std::string::npos
+                  && library.find("waveformZoomController.zoomIn()") != std::string::npos
+                  && library.find("waveformZoomController.zoomOut()") != std::string::npos,
+                  "FLX10 browse encoder controls waveform zoom while the library is hidden");
     ok &= require(main.find("function closeTopBarPullDown()") != std::string::npos
                   && main.find("function openTopBarPullDown()") != std::string::npos
                   && main.find("function toggleTopBarPullDown()") != std::string::npos,

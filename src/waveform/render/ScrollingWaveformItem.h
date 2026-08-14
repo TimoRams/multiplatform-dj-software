@@ -126,8 +126,8 @@ private:
     std::atomic<std::uint64_t> m_worstPaintNodeUsec{0};
     std::atomic<std::uint64_t> m_worstSnapshotAcquireUsec{0};
 
-    // Three more zoomOut() steps below the previous 0.08f floor (0.08 / 1.15^3).
-    static constexpr float kMinimumZoom = 0.0526f;
+    // Keep the item clamp identical to WaveformZoomController::kMinimum.
+    static constexpr float kMinimumZoom = 0.0056f;
     static constexpr float kMaximumZoom = 10.0f;
     static constexpr float kZoomFactor = 1.15f;
 };
