@@ -9,11 +9,24 @@ namespace {
 
 void normalize(std::vector<float>& values)
 {
-    const auto maxIt = std::max_element(values.begin(), values.end());
-    const float maxValue = (maxIt != values.end()) ? *maxIt : 0.0f;
-    if (maxValue <= 1.0e-8f)
+    if (values.empty())
         return;
-    const float inv = 1.0f / maxValue;
+
+    // A single drop, clipping transient or decoder discontinuity must not
+    // shrink the onset curve for the remaining track. Scale against a robust
+    // high percentile and merely saturate the few louder frames.
+    std::vector<float> ordered = values;
+    const std::size_t percentileIndex = std::min(
+        ordered.size() - 1,
+        static_cast<std::size_t>(std::floor(
+            static_cast<double>(ordered.size() - 1) * 0.98)));
+    std::nth_element(ordered.begin(),
+                     ordered.begin() + static_cast<std::ptrdiff_t>(percentileIndex),
+                     ordered.end());
+    const float scale = ordered[percentileIndex];
+    if (scale <= 1.0e-8f)
+        return;
+    const float inv = 1.0f / scale;
     for (float& v : values)
         v = std::clamp(v * inv, 0.0f, 1.0f);
 }
@@ -172,7 +185,10 @@ AnalysisFeatures AnalysisFeatureExtractor::extract(juce::AudioFormatReader& read
         for (int b = 1; b <= bins; ++b) {
             const float re = fftData[static_cast<size_t>(2 * b)];
             const float im = fftData[static_cast<size_t>(2 * b + 1)];
-            magnitudes[static_cast<size_t>(b)] = std::sqrt(re * re + im * im);
+            // Log compression makes spectral flux respond to musical changes
+            // instead of being dominated by the loudest kick in the file.
+            magnitudes[static_cast<size_t>(b)] = std::log1p(
+                std::sqrt(re * re + im * im));
         }
 
         auto bandEnergy = [&](int lo, int hi) {

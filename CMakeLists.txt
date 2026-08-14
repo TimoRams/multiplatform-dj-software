@@ -697,6 +697,18 @@ target_compile_definitions(BrockDJ_analysis_lifetime_tests PRIVATE
 target_compile_features(BrockDJ_analysis_lifetime_tests PRIVATE cxx_std_23)
 add_test(NAME analysis_lifetime COMMAND BrockDJ_analysis_lifetime_tests)
 
+add_executable(BrockDJ_beat_analysis_tests
+    tests/analysis/beat_analysis_tests.cpp
+    src/analysis/internal/BeatAnalysis.cpp
+    src/analysis/AnalysisValidation.cpp
+)
+target_include_directories(BrockDJ_beat_analysis_tests PRIVATE
+    src src/analysis src/domain
+)
+target_link_libraries(BrockDJ_beat_analysis_tests PRIVATE Qt6::Core Qt6::Gui)
+target_compile_features(BrockDJ_beat_analysis_tests PRIVATE cxx_std_23)
+add_test(NAME beat_analysis COMMAND BrockDJ_beat_analysis_tests)
+
 add_executable(BrockDJ_analysis_snapshot_tests
     tests/analysis/analysis_snapshot_tests.cpp
     src/domain/TrackData.cpp

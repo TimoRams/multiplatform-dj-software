@@ -688,8 +688,17 @@ bool DjEngine::hydrateLibraryStateForTrack(const QString& rawPath, double durati
 
     bool hasDatabaseAnalysis = false;
     LibraryDatabase::AnalysisSnapshot cachedAnalysis;
-    if (m_libraryDb->tryGetAnalysisData(m_currentTrackId, &cachedAnalysis)
-        && cachedAnalysis.isAnalyzed) {
+    const bool foundDatabaseAnalysis =
+        m_libraryDb->tryGetAnalysisData(m_currentTrackId, &cachedAnalysis)
+        && cachedAnalysis.isAnalyzed;
+    const bool userGridMustBePreserved = foundDatabaseAnalysis
+        && (cachedAnalysis.beatGridInfo.userModified
+            || cachedAnalysis.beatGridInfo.lockedByUser);
+    const bool analysisVersionIsCurrent = foundDatabaseAnalysis
+        && cachedAnalysis.analysisVersion
+            >= static_cast<int>(analysis::kCurrentAnalysisVersion);
+    if (foundDatabaseAnalysis
+        && (analysisVersionIsCurrent || userGridMustBePreserved)) {
         hasDatabaseAnalysis = true;
         m_currentSegments = m_libraryDb->trackSegmentsForTrack(m_currentTrackId);
         emit segmentsChanged();
@@ -725,6 +734,12 @@ bool DjEngine::hydrateLibraryStateForTrack(const QString& rawPath, double durati
         if (!cachedSegments.empty())
             m_trackData->setSegmentsData(std::move(cachedSegments));
     } else {
+        if (foundDatabaseAnalysis) {
+            qDebug() << "[DjEngine] Ignoring stale automatic analysis"
+                     << cachedAnalysis.analysisVersion << "for"
+                     << m_currentTrackId.left(12)
+                     << "current=" << analysis::kCurrentAnalysisVersion;
+        }
         m_currentSegments = QVariantList();
         emit segmentsChanged();
     }

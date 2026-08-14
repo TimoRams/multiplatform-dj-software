@@ -55,7 +55,12 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
         analysis::BeatTrackingResult tracked;
         analysis::BeatGridFitResult fitted;
         double bestCombinedGridScore = -1.0;
-        const int candidateCount = std::max(1, std::min<int>(2, tempo.candidates.size()));
+        double selectedTempoPrior = tempo.candidates.empty() ? 1.0 : 0.0;
+        // Half/double-time alternatives are often only the third or fourth
+        // raw tempo candidate. Evaluate enough candidates against actual grid
+        // coverage instead of accepting whichever autocorrelation peak won by
+        // a tiny margin.
+        const int candidateCount = std::max(1, std::min<int>(6, tempo.candidates.size()));
         for (int candidateIndex = 0; candidateIndex < candidateCount; ++candidateIndex) {
             m_trackData->reportAnalysisProgress(
                 0.79 + (static_cast<double>(candidateIndex) / static_cast<double>(candidateCount)) * 0.09,
@@ -84,11 +89,13 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
                 ? 1.0
                 : std::clamp(tempo.candidates[static_cast<size_t>(candidateIndex)].score
                              / std::max(0.001, tempo.candidates.front().score), 0.0, 1.0);
-            const double combined = 0.76 * candidateFit.confidence
-                                  + 0.18 * candidateFit.phaseScore
-                                  + 0.06 * tempoPrior;
+            const double combined = 0.68 * candidateFit.confidence
+                                  + 0.12 * candidateFit.phaseScore
+                                  + 0.12 * candidateTracked.confidence
+                                  + 0.08 * tempoPrior;
             if (combined > bestCombinedGridScore) {
                 bestCombinedGridScore = combined;
+                selectedTempoPrior = tempoPrior;
                 tracked = std::move(candidateTracked);
                 fitted = std::move(candidateFit);
             }
@@ -99,8 +106,25 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
         if (!validation.ok)
             qWarning() << "[WaveformAnalyzer] Beatgrid validation:" << validation.message;
 
+        const bool gridPublishable = validation.ok
+            && fitted.confidence >= 0.18f
+            && tracked.confidence >= 0.10f
+            && bestCombinedGridScore >= 0.16;
+        if (!gridPublishable) {
+            qWarning() << "[WaveformAnalyzer] Suppressing low-confidence beatgrid"
+                       << "fit=" << fitted.confidence
+                       << "tracked=" << tracked.confidence
+                       << "combined=" << bestCombinedGridScore;
+            fitted.beats.clear();
+            fitted.grid = {};
+            fitted.firstBeatSample = 0;
+        }
+
         TrackData::ConfidenceInfo confidence;
-        confidence.bpmConfidence = tempo.confidence;
+        confidence.bpmConfidence = static_cast<float>(std::clamp(
+            0.45 * static_cast<double>(tempo.confidence) * selectedTempoPrior
+                + 0.55 * static_cast<double>(fitted.confidence),
+            0.0, 1.0));
         confidence.beatConfidence = tracked.confidence;
         confidence.downbeatConfidence = downbeat.confidence;
         confidence.gridConfidence = fitted.confidence;

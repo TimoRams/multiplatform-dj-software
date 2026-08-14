@@ -8,13 +8,15 @@
 #include <limits>
 #include <vector>
 
+#include "analysis/AnalysisCacheVersion.h"
 #include "domain/TrackData.h"
 #include "domain/DomainTypes.h"
 #include "waveform/WaveformLineBuilder.h"
 
 namespace analysis {
 
-inline constexpr std::uint32_t kCurrentAnalysisVersion = 1;
+inline constexpr std::uint32_t kCurrentAnalysisVersion =
+    static_cast<std::uint32_t>(kAnalysisVersion);
 
 struct AnalysisIdentity {
     QString canonicalFilePath;

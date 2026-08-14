@@ -1,6 +1,7 @@
 #include "BeatAnalysis.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <map>
 #include <numeric>
@@ -13,12 +14,22 @@ double autocorrScore(const std::vector<float>& curve, int lag)
     if (lag <= 0 || curve.size() <= static_cast<size_t>(lag + 8))
         return 0.0;
 
+    double meanA = 0.0;
+    double meanB = 0.0;
+    const std::size_t count = curve.size() - static_cast<std::size_t>(lag);
+    for (size_t i = static_cast<size_t>(lag); i < curve.size(); ++i) {
+        meanA += curve[i];
+        meanB += curve[i - static_cast<size_t>(lag)];
+    }
+    meanA /= static_cast<double>(count);
+    meanB /= static_cast<double>(count);
+
     double sum = 0.0;
     double normA = 0.0;
     double normB = 0.0;
     for (size_t i = static_cast<size_t>(lag); i < curve.size(); ++i) {
-        const double a = curve[i];
-        const double b = curve[i - static_cast<size_t>(lag)];
+        const double a = static_cast<double>(curve[i]) - meanA;
+        const double b = static_cast<double>(curve[i - static_cast<size_t>(lag)]) - meanB;
         sum += a * b;
         normA += a * a;
         normB += b * b;
@@ -32,8 +43,18 @@ double combScore(const std::vector<float>& curve, int lag)
     if (lag <= 1 || curve.empty())
         return 0.0;
 
+    const double globalMean = std::accumulate(curve.begin(), curve.end(), 0.0)
+        / static_cast<double>(curve.size());
+    double variance = 0.0;
+    for (float value : curve) {
+        const double centered = static_cast<double>(value) - globalMean;
+        variance += centered * centered;
+    }
+    const double globalStdDev = std::sqrt(
+        variance / static_cast<double>(curve.size()));
+
     const int maxPhase = std::min(lag, static_cast<int>(curve.size()));
-    double best = 0.0;
+    double bestMean = globalMean;
     for (int phase = 0; phase < maxPhase; ++phase) {
         double score = 0.0;
         int count = 0;
@@ -42,9 +63,12 @@ double combScore(const std::vector<float>& curve, int lag)
             ++count;
         }
         if (count > 4)
-            best = std::max(best, score / std::sqrt(static_cast<double>(count)));
+            bestMean = std::max(bestMean, score / static_cast<double>(count));
     }
-    return best;
+    if (globalStdDev <= 1.0e-9)
+        return 0.0;
+    const double contrast = (bestMean - globalMean) / globalStdDev;
+    return std::clamp(contrast / 3.0, 0.0, 1.0);
 }
 
 std::vector<size_t> pickOnsets(const std::vector<float>& curve)
@@ -60,6 +84,42 @@ std::vector<size_t> pickOnsets(const std::vector<float>& curve)
             peaks.push_back(i);
     }
     return peaks;
+}
+
+double peakCoverageScore(const std::vector<float>& curve,
+                         const std::vector<size_t>& peaks,
+                         int lag)
+{
+    if (lag <= 1 || peaks.empty() || curve.empty())
+        return 0.0;
+
+    int bestPhase = 0;
+    double bestMean = -1.0;
+    for (int phase = 0; phase < std::min(lag, static_cast<int>(curve.size())); ++phase) {
+        double sum = 0.0;
+        int count = 0;
+        for (std::size_t frame = static_cast<std::size_t>(phase);
+             frame < curve.size(); frame += static_cast<std::size_t>(lag)) {
+            sum += curve[frame];
+            ++count;
+        }
+        const double mean = count > 0 ? sum / static_cast<double>(count) : 0.0;
+        if (mean > bestMean) {
+            bestMean = mean;
+            bestPhase = phase;
+        }
+    }
+
+    const int tolerance = std::max(1, static_cast<int>(std::lround(lag * 0.10)));
+    int captured = 0;
+    for (std::size_t peak : peaks) {
+        const int relative = static_cast<int>(peak) - bestPhase;
+        const int modulo = ((relative % lag) + lag) % lag;
+        const int distance = std::min(modulo, lag - modulo);
+        if (distance <= tolerance)
+            ++captured;
+    }
+    return static_cast<double>(captured) / static_cast<double>(peaks.size());
 }
 
 double foldToDjRange(double bpm, double preferredMin, double preferredMax)
@@ -94,18 +154,42 @@ TempoEstimate TempoEstimator::estimate(const AnalysisFeatures& features) const
     const int minLag = std::max(1, static_cast<int>(std::floor((framesPerSecond * 60.0) / m_options.maxBpm)));
     const int maxLag = std::max(minLag + 1, static_cast<int>(std::ceil((framesPerSecond * 60.0) / m_options.minBpm)));
 
+    const auto peaks = pickOnsets(features.onsetStrength);
+    std::vector<double> lagScores(static_cast<std::size_t>(maxLag - minLag + 1), 0.0);
     for (int lag = minLag; lag <= maxLag; ++lag) {
-        const double bpm = (framesPerSecond * 60.0) / static_cast<double>(lag);
         const double onsetAuto = autocorrScore(features.onsetStrength, lag);
         const double lowAuto = autocorrScore(features.lowEnergy, lag);
         const double onsetComb = combScore(features.onsetStrength, lag);
         const double lowComb = combScore(features.lowSpectralFlux, lag);
-        const double score = 0.38 * onsetAuto + 0.22 * lowAuto + 0.28 * onsetComb + 0.12 * lowComb;
-        if (score > 0.01)
-            raw.push_back({bpm, score, QStringLiteral("autocorr+comb")});
+        const double coverage = peakCoverageScore(features.onsetStrength, peaks, lag);
+        lagScores[static_cast<std::size_t>(lag - minLag)] =
+            0.28 * std::max(0.0, onsetAuto)
+            + 0.16 * std::max(0.0, lowAuto)
+            + 0.22 * onsetComb + 0.10 * lowComb + 0.24 * coverage;
     }
 
-    const auto peaks = pickOnsets(features.onsetStrength);
+    // Keep local tempo peaks and refine their integer autocorrelation lags
+    // parabolically. Integer lags alone quantise 174 BPM to 171.4 or 176.5 at
+    // a 100 Hz feature rate and cause visible drift over a full track.
+    for (int lag = minLag; lag <= maxLag; ++lag) {
+        const std::size_t index = static_cast<std::size_t>(lag - minLag);
+        const double score = lagScores[index];
+        const double previous = index > 0 ? lagScores[index - 1] : -1.0;
+        const double next = index + 1 < lagScores.size() ? lagScores[index + 1] : -1.0;
+        if (score <= 0.01 || score < previous || score < next)
+            continue;
+        double lagDelta = 0.0;
+        const double curvature = previous - 2.0 * score + next;
+        if (index > 0 && index + 1 < lagScores.size()
+            && std::abs(curvature) > 1.0e-9) {
+            lagDelta = std::clamp(
+                0.5 * (previous - next) / curvature, -0.5, 0.5);
+        }
+        const double refinedLag = static_cast<double>(lag) + lagDelta;
+        const double bpm = (framesPerSecond * 60.0) / refinedLag;
+        raw.push_back({bpm, score, QStringLiteral("autocorr+comb+coverage")});
+    }
+
     std::map<int, double> ioiBins;
     for (size_t i = 0; i < peaks.size(); ++i) {
         for (size_t j = i + 1; j < std::min(peaks.size(), i + 9); ++j) {
@@ -120,42 +204,52 @@ TempoEstimate TempoEstimator::estimate(const AnalysisFeatures& features) const
             ioiBins[bin] += 1.0 / static_cast<double>(j - i);
         }
     }
-    for (const auto& [bin, score] : ioiBins)
-        raw.push_back({static_cast<double>(bin) * 0.5, score * 0.08, QStringLiteral("ioi")});
+    double maximumIoiScore = 0.0;
+    for (const auto& [bin, score] : ioiBins) {
+        Q_UNUSED(bin)
+        maximumIoiScore = std::max(maximumIoiScore, score);
+    }
+    if (maximumIoiScore > 0.0) {
+        for (const auto& [bin, score] : ioiBins) {
+            raw.push_back({static_cast<double>(bin) * 0.5,
+                           0.45 * score / maximumIoiScore,
+                           QStringLiteral("ioi")});
+        }
+    }
 
     std::vector<TempoCandidate> merged;
     for (const auto& candidate : raw) {
-        const double variants[] = {
-            candidate.bpm,
-            candidate.bpm * 0.5,
-            candidate.bpm * 2.0
-        };
-        const double weights[] = {1.0, 0.88, 0.82};
-        for (int v = 0; v < 3; ++v) {
-            double bpm = foldToDjRange(variants[v], m_options.preferredMinBpm, m_options.preferredMaxBpm);
-            if (bpm < m_options.minBpm || bpm > m_options.maxBpm)
-                continue;
-            auto it = std::find_if(merged.begin(), merged.end(), [&](const TempoCandidate& existing) {
-                return std::abs(existing.bpm - bpm) <= 0.75;
-            });
-            const double score = candidate.score * weights[v];
-            if (it == merged.end()) {
-                merged.push_back({bpm, score, candidate.source});
-            } else {
-                const double totalScore = it->score + score;
-                it->bpm = (it->bpm * it->score + bpm * score) / totalScore;
-                it->score = totalScore;
-                if (!it->source.contains(candidate.source))
-                    it->source += QStringLiteral("+") + candidate.source;
-            }
+        const double bpm = candidate.bpm;
+        if (bpm < m_options.minBpm || bpm > m_options.maxBpm)
+            continue;
+        // Do not fold every half/double variant back into the same DJ range:
+        // that used to count one observation up to three times and strongly
+        // biased the result toward an arbitrary metrical level. All lags are
+        // already evaluated above; keep their evidence independent.
+        const double rangePrior = bpm >= m_options.preferredMinBpm
+                && bpm <= m_options.preferredMaxBpm
+            ? 1.0
+            : 0.90;
+        const double score = candidate.score * rangePrior;
+        auto it = std::find_if(merged.begin(), merged.end(), [&](const TempoCandidate& existing) {
+            return std::abs(existing.bpm - bpm) <= 0.75;
+        });
+        if (it == merged.end()) {
+            merged.push_back({bpm, score, candidate.source});
+        } else {
+            const double totalScore = it->score + score;
+            it->bpm = (it->bpm * it->score + bpm * score) / totalScore;
+            it->score = totalScore;
+            if (!it->source.contains(candidate.source))
+                it->source += QStringLiteral("+") + candidate.source;
         }
     }
 
     std::sort(merged.begin(), merged.end(), [](const auto& a, const auto& b) {
         return a.score > b.score;
     });
-    if (merged.size() > 8)
-        merged.resize(8);
+    if (merged.size() > 12)
+        merged.resize(12);
 
     result.candidates = merged;
     if (merged.empty())
@@ -165,8 +259,9 @@ TempoEstimate TempoEstimator::estimate(const AnalysisFeatures& features) const
     const double top = merged.front().score;
     const double second = merged.size() > 1 ? merged[1].score : 0.0;
     const double dominance = top > 1.0e-9 ? (top - second) / top : 0.0;
-    const double absolute = std::min(1.0, top / 14.0);
-    result.confidence = static_cast<float>(std::clamp(0.35 * absolute + 0.65 * dominance, 0.05, 1.0));
+    const double absolute = std::min(1.0, top / 1.5);
+    result.confidence = static_cast<float>(
+        std::clamp(0.50 * absolute + 0.50 * dominance, 0.03, 1.0));
     return result;
 }
 
@@ -220,17 +315,26 @@ BeatTrackingResult BeatTracker::track(const AnalysisFeatures& features,
     if (framesPerBeat < 2.0)
         return result;
 
-    const int period = std::max(1, static_cast<int>(std::round(framesPerBeat)));
-    const int phaseLimit = std::min(period, static_cast<int>(features.onsetStrength.size()));
-    const int localRadius = std::max(1, static_cast<int>(std::round(framesPerBeat * 0.12)));
+    const int phaseLimit = std::min(
+        std::max(1, static_cast<int>(std::ceil(framesPerBeat))),
+        static_cast<int>(features.onsetStrength.size()));
+    // Tempo candidates are quantised by the feature hop and can accumulate a
+    // few frames of drift over a long track before the regression refines
+    // them. A slightly wider first-pass window keeps the real beat train
+    // locked long enough to estimate that correction; the grid fitter still
+    // applies the stricter 5.5% phase tolerance afterwards.
+    const int localRadius = std::max(1, static_cast<int>(std::round(framesPerBeat * 0.18)));
 
     int bestPhase = 0;
     double bestPhaseScore = -1.0;
     for (int phase = 0; phase < phaseLimit; ++phase) {
         double score = 0.0;
         int count = 0;
-        for (int frame = phase; frame < static_cast<int>(features.onsetStrength.size()); frame += period) {
-            score += localEvidence(features, bestLocalFrame(features, frame, localRadius));
+        for (double predicted = static_cast<double>(phase);
+             predicted < static_cast<double>(features.onsetStrength.size());
+             predicted += framesPerBeat) {
+            score += localEvidence(features, bestLocalFrame(
+                features, static_cast<int>(std::lround(predicted)), localRadius));
             ++count;
         }
         if (count > 4)
@@ -534,6 +638,34 @@ BeatGridFitResult BeatGridFitter::fit(const AnalysisFeatures& features,
         }
     }
 
+    // Refine the winning integer-frame phase with the average residual of
+    // strong nearby onsets. This keeps sub-hop tempo phase accurate without
+    // moving every beat independently and turning a constant grid into a
+    // collection of unrelated transient snaps.
+    double residualSum = 0.0;
+    double residualWeight = 0.0;
+    const int firstRefineBeat = static_cast<int>(std::ceil(
+        (region.startFrame - bestOffsetFrame) / periodFrames));
+    const int lastRefineBeat = static_cast<int>(std::floor(
+        (region.endFrame - bestOffsetFrame) / periodFrames));
+    for (int beat = firstRefineBeat; beat <= lastRefineBeat; ++beat) {
+        const double predicted = bestOffsetFrame
+            + static_cast<double>(beat) * periodFrames;
+        const int local = strongestLocalBeatFrame(
+            features, predicted, toleranceFrames);
+        const double weight = beatEvidenceAt(features, local);
+        if (weight < 0.12)
+            continue;
+        residualSum += (static_cast<double>(local) - predicted) * weight;
+        residualWeight += weight;
+    }
+    if (residualWeight > 0.0) {
+        bestOffsetFrame += std::clamp(
+            residualSum / residualWeight,
+            -static_cast<double>(toleranceFrames),
+            static_cast<double>(toleranceFrames));
+    }
+
     const double firstVisibleBeatIndex = std::ceil(-bestOffsetFrame / periodFrames);
     const double anchorFrame = bestOffsetFrame + firstVisibleBeatIndex * periodFrames;
     const double secondsPerFrame = static_cast<double>(features.hopSize) / features.sampleRate;
@@ -548,22 +680,22 @@ BeatGridFitResult BeatGridFitter::fit(const AnalysisFeatures& features,
     result.beats.reserve(static_cast<size_t>(features.durationSec / period) + 4);
     for (int n = 0; ; ++n) {
         const double sec = anchorSec + static_cast<double>(n) * period;
-        if (sec > features.durationSec + period * 0.5)
+        if (sec > features.durationSec + 1.0e-9)
             break;
         BeatMarker marker;
-        // Keep the global tempo grid stable, but align every visible grid line
-        // to the strongest nearby transient.  The bounded search prevents one
-        // missing kick from pulling a beat into its neighbour.
+        // A constant-tempo grid must be mathematically constant. Local audio
+        // evidence determines confidence, never the position of an individual
+        // line; otherwise alternating kicks/hi-hats make the grid visibly
+        // wobble and destroy phase sync over long tracks.
         const int predictedFrame = features.secondsToFrame(sec);
-        const int snappedFrame = strongestLocalBeatFrame(features, predictedFrame,
-                                                         toleranceFrames);
-        marker.positionSec = std::min(features.durationSec,
-                                      features.frameToSeconds(static_cast<size_t>(snappedFrame)));
+        marker.positionSec = sec;
         marker.isBeat = true;
-        marker.confidence = localBeatEvidence(features, snappedFrame, toleranceFrames);
-        if (!result.beats.empty() && marker.positionSec <= result.beats.back().positionSec)
-            marker.positionSec = std::min(features.durationSec,
-                                          result.beats.back().positionSec + secondsPerFrame * 0.25);
+        marker.confidence = localBeatEvidence(
+            features, predictedFrame, toleranceFrames);
+        if (!result.beats.empty()
+            && marker.positionSec <= result.beats.back().positionSec) {
+            break;
+        }
         result.beats.push_back(marker);
     }
 
@@ -627,24 +759,39 @@ DownbeatResult DownbeatDetector::detectAndAnnotate(const AnalysisFeatures& featu
     if (beats.empty())
         return result;
 
-    double phaseScore[4] = {0.0, 0.0, 0.0, 0.0};
-    int phaseCount[4] = {0, 0, 0, 0};
+    std::array<std::vector<double>, 4> phaseAccents;
     for (size_t i = 0; i < beats.size(); ++i) {
         const size_t frame = features.secondsToFrame(beats[i].positionSec);
-        if (frame >= features.lowEnergy.size())
+        if (frame >= features.lowEnergy.size()
+            || frame >= features.lowSpectralFlux.size()
+            || frame >= features.energyNovelty.size()
+            || frame >= features.onsetStrength.size()) {
             continue;
+        }
 
         const double beatStrength = beats[i].confidence;
         const double lowAccent = features.lowEnergy[frame];
+        const double lowAttack = features.lowSpectralFlux[frame];
         const double novelty = features.energyNovelty[frame];
         const double onset = features.onsetStrength[frame];
-        phaseScore[i % 4] += 0.36 * beatStrength + 0.34 * lowAccent + 0.20 * novelty + 0.10 * onset;
-        ++phaseCount[i % 4];
+        phaseAccents[i % 4].push_back(
+            0.20 * beatStrength + 0.34 * lowAttack + 0.22 * lowAccent
+            + 0.16 * novelty + 0.08 * onset);
     }
 
+    double phaseScore[4] = {0.0, 0.0, 0.0, 0.0};
     for (int p = 0; p < 4; ++p) {
-        if (phaseCount[p] > 0)
-            phaseScore[p] /= static_cast<double>(phaseCount[p]);
+        auto& accents = phaseAccents[static_cast<std::size_t>(p)];
+        if (accents.empty())
+            continue;
+        std::sort(accents.begin(), accents.end());
+        // Trim isolated fills and breakdown impacts. Downbeat phase should be
+        // supported across bars, not decided by the single loudest transient.
+        const std::size_t trim = accents.size() >= 10 ? accents.size() / 10 : 0;
+        const auto begin = accents.begin() + static_cast<std::ptrdiff_t>(trim);
+        const auto end = accents.end() - static_cast<std::ptrdiff_t>(trim);
+        phaseScore[p] = std::accumulate(begin, end, 0.0)
+            / static_cast<double>(std::distance(begin, end));
     }
 
     int bestPhase = 0;
@@ -660,7 +807,10 @@ DownbeatResult DownbeatDetector::detectAndAnnotate(const AnalysisFeatures& featu
     }
     result.phase = bestPhase;
     result.confidence = static_cast<float>(std::clamp((phaseScore[bestPhase] - second) / std::max(0.001, phaseScore[bestPhase]), 0.0, 1.0));
-    const int annotationPhase = result.confidence >= 0.42f ? bestPhase : 0;
+    // Even at low confidence the evidence-selected phase is preferable to the
+    // former hard-coded phase zero. Confidence remains available to callers
+    // that want to suppress bar-level UI for genuinely ambiguous material.
+    const int annotationPhase = bestPhase;
 
     for (size_t i = 0; i < beats.size(); ++i) {
         const int rel = static_cast<int>(i) - annotationPhase;
