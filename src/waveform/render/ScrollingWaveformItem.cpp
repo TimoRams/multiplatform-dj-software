@@ -818,6 +818,11 @@ void ScrollingWaveformItem::setEngine(DjEngine* engine)
         disconnect(m_engine, nullptr, this, nullptr);
 
     m_engine = engine;
+    const double previousTempoRatio = m_tempoRatio.load(std::memory_order_relaxed);
+    const double engineTempoRatio = m_engine ? m_engine->getTempoRatio() : 1.0;
+    const double nextTempoRatio = std::isfinite(engineTempoRatio)
+        ? engineTempoRatio : 1.0;
+    m_tempoRatio.store(nextTempoRatio, std::memory_order_relaxed);
     if (m_engine) {
         connect(m_engine, &DjEngine::trackLoaded,
                 this, &ScrollingWaveformItem::onTrackLoaded, Qt::UniqueConnection);
@@ -842,6 +847,8 @@ void ScrollingWaveformItem::setEngine(DjEngine* engine)
     }
 
     emit engineChanged();
+    if (!qFuzzyCompare(previousTempoRatio, nextTempoRatio))
+        emit tempoRatioChanged();
     emit effectivePixelsPerSecondChanged();
     invalidateGeometry();
 }
@@ -875,7 +882,7 @@ double ScrollingWaveformItem::effectivePixelsPerSecond() const noexcept
     return currentEngine
         ? waveform_render::timelinePixelsPerSecond(
               m_pixelsPerPoint, currentEngine->waveformPointsPerSecond(),
-              currentEngine->getTempoRatio())
+              tempoRatio())
         : 0.0;
 }
 
@@ -1032,6 +1039,13 @@ void ScrollingWaveformItem::onOverlayUpdated()
 
 void ScrollingWaveformItem::onTimelineScaleChanged()
 {
+    const double engineTempoRatio = m_engine ? m_engine->getTempoRatio() : 1.0;
+    const double nextTempoRatio = std::isfinite(engineTempoRatio)
+        ? engineTempoRatio : 1.0;
+    const double previousTempoRatio = m_tempoRatio.exchange(
+        nextTempoRatio, std::memory_order_relaxed);
+    if (!qFuzzyCompare(previousTempoRatio, nextTempoRatio))
+        emit tempoRatioChanged();
     emit effectivePixelsPerSecondChanged();
     publishViewportDemand();
     invalidateGeometry();
@@ -1093,7 +1107,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
 
     const double pixelsPerSecond = waveform_render::timelinePixelsPerSecond(
         m_pixelsPerPoint, engine->waveformPointsPerSecond(),
-        engine->getTempoRatio());
+        tempoRatio());
     const double pixelsPerLine = pixelsPerSecond
         / static_cast<double>(snapshot->linesPerSecond);
     const double playheadSec = engine->getVisualPosition();

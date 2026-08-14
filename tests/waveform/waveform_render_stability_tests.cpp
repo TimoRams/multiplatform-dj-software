@@ -332,6 +332,36 @@ int main()
                       "rapid zoom produced NaN, infinity or non-positive scale");
     }
 
+    // Each deck owns its tempo ratio. Moving deck A's pitch fader must change
+    // only A's timeline scale; B stays unchanged until B's own ratio changes.
+    constexpr double deckZoom = 0.22;
+    constexpr double canonicalRate = 1200.0;
+    const double deckBBefore = waveform_render::timelinePixelsPerSecond(
+        deckZoom, canonicalRate, 1.0);
+    const double deckAAfter = waveform_render::timelinePixelsPerSecond(
+        deckZoom, canonicalRate, 1.1);
+    const double deckBAfter = waveform_render::timelinePixelsPerSecond(
+        deckZoom, canonicalRate, 1.0);
+    ok &= require(std::abs(deckBBefore - deckBAfter) < 1.0e-12,
+                  "deck A tempo change altered deck B waveform scale");
+    ok &= require(std::abs(deckAAfter - deckBAfter) > 1.0e-6,
+                  "independent deck tempo ratios collapsed to one shared scale");
+
+    // Different source BPM/rate pairs with the same effective BPM must still
+    // produce identical on-screen beat spacing, so the two beatgrids align.
+    constexpr double deckASourceBpm = 120.0;
+    constexpr double deckATempoRatio = 1.1;
+    constexpr double deckBSourceBpm = 110.0;
+    constexpr double deckBTempoRatio = 1.2;
+    const double deckABeatSpacing = (60.0 / deckASourceBpm)
+        * waveform_render::timelinePixelsPerSecond(
+            deckZoom, canonicalRate, deckATempoRatio);
+    const double deckBBeatSpacing = (60.0 / deckBSourceBpm)
+        * waveform_render::timelinePixelsPerSecond(
+            deckZoom, canonicalRate, deckBTempoRatio);
+    ok &= require(std::abs(deckABeatSpacing - deckBBeatSpacing) < 1.0e-12,
+                  "equal effective BPM did not align deck beatgrids");
+
     // Cross every LOD boundary from both sides. LOD selection is allowed to
     // change, but neither the world-to-screen mapping nor the track-wide
     // physical tile grid may inherit any scale from the previous view.

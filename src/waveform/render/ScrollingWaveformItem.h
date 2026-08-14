@@ -24,6 +24,7 @@ class ScrollingWaveformItem : public QQuickItem
     Q_OBJECT
     Q_PROPERTY(DjEngine* engine READ engine WRITE setEngine NOTIFY engineChanged)
     Q_PROPERTY(float pixelsPerPoint READ pixelsPerPoint WRITE setPixelsPerPoint NOTIFY pixelsPerPointChanged)
+    Q_PROPERTY(double tempoRatio READ tempoRatio NOTIFY tempoRatioChanged)
     Q_PROPERTY(double effectivePixelsPerSecond READ effectivePixelsPerSecond
                NOTIFY effectivePixelsPerSecondChanged)
     Q_PROPERTY(QColor backgroundColor READ backgroundColor WRITE setBackgroundColor
@@ -39,6 +40,10 @@ public:
 
     [[nodiscard]] float pixelsPerPoint() const noexcept { return m_pixelsPerPoint; }
     void setPixelsPerPoint(float pixelsPerPoint);
+    [[nodiscard]] double tempoRatio() const noexcept
+    {
+        return m_tempoRatio.load(std::memory_order_relaxed);
+    }
     [[nodiscard]] double effectivePixelsPerSecond() const noexcept;
     [[nodiscard]] QColor backgroundColor() const noexcept { return m_backgroundColor; }
     void setBackgroundColor(const QColor& color);
@@ -60,6 +65,7 @@ public:
 signals:
     void engineChanged();
     void pixelsPerPointChanged();
+    void tempoRatioChanged();
     void effectivePixelsPerSecondChanged();
     void backgroundColorChanged();
 
@@ -87,6 +93,10 @@ private:
     std::atomic<bool> m_tilesReady{false};
     bool m_forceRebuild = true;
     float m_pixelsPerPoint = 0.22f;
+    // Scene-graph scale belongs to this waveform instance. Keeping a local
+    // snapshot prevents another deck's engine state (or a render-thread read
+    // during its update) from leaking into this item's horizontal scale.
+    std::atomic<double> m_tempoRatio{1.0};
     QColor m_backgroundColor{16, 17, 20};
     std::optional<waveform::WaveformDemand> m_lastPublishedDemand;
 
