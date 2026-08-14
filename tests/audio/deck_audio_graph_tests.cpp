@@ -536,6 +536,27 @@ int main(int argc, char** argv)
         controller.setMeasuredNormalizedSpeed(-0.8);
         ok &= require(controller.releaseScratch() == ScratchReleaseDisposition::CoastToStop,
                       "reverse release coasts to a stop before normal playback");
+        double lastBackspinRate = 0.0;
+        for (int block = 0; block < 2000
+             && controller.phase() != ScratchPhase::HandoffPending; ++block) {
+            lastBackspinRate = controller.processAudioBlock(64, 48'000.0, 44'100.0);
+        }
+        ok &= require(controller.phase() == ScratchPhase::HandoffPending
+                          && lastBackspinRate < -0.04,
+                      "playing backspin hands off with reverse momentum instead of a zero-speed gap");
+
+        controller.startScratch(0.0, false, 1.0);
+        controller.setMeasuredNormalizedSpeed(-0.8);
+        ok &= require(controller.releaseScratch() == ScratchReleaseDisposition::CoastToStop,
+                      "paused reverse throw still coasts toward a true stop");
+        double pausedBackspinRate = -1.0;
+        for (int block = 0; block < 2000
+             && controller.phase() != ScratchPhase::HandoffPending; ++block) {
+            pausedBackspinRate = controller.processAudioBlock(64, 48'000.0, 44'100.0);
+        }
+        ok &= require(controller.phase() == ScratchPhase::HandoffPending
+                          && std::abs(pausedBackspinRate) < 1.0e-9,
+                      "paused backspin keeps the full coast-to-zero behaviour");
 
         controller.startScratch(0.0, true, 1.0);
         controller.setMeasuredNormalizedSpeed(1.5);

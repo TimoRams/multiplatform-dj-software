@@ -47,6 +47,33 @@ void jogStateUsesProtocolCadence()
                   "FLX10 xx27 state must remain on its 200 Hz protocol clock");
 }
 
+void waveformMarkersUseTheVisiblePwv5Path()
+{
+    QByteArray waveform;
+    for (int index = 0; index < 300; ++index)
+        waveform += flx10_protocol::encodePwv5Entry(4, 1, 2, 3);
+
+    assert(flx10_protocol::overlayPwv5Marker(
+        waveform, 1.0, 2.0, 1, 31, 7, 4, 0));
+    const QByteArray amber = flx10_protocol::encodePwv5Entry(31, 7, 4, 0);
+    for (int entry = 149; entry <= 151; ++entry)
+        assert(waveform.mid(entry * 2, 2) == amber);
+    assert(!flx10_protocol::overlayPwv5Marker(
+        waveform, -1.0, 2.0, 1, 31, 7, 7, 7));
+    assert(!flx10_protocol::overlayPwv5Marker(
+        waveform, 20.0, 2.0, 1, 31, 7, 7, 7));
+
+    assert(flx10_protocol::waveformEntryForTimeline(60.0, 120.0, 301) == 150);
+    assert(flx10_protocol::waveformEntryForTimeline(120.0, 120.0, 301) == 300);
+    assert(flx10_protocol::waveformEntryForTimeline(1.0, 0.0, 301) == -1);
+
+    static_assert(flx10_protocol::kUploadWindowsPerTick == 2);
+    static_assert(flx10_protocol::kHidTransferTimeoutMs <= 8);
+    static_assert(flx10_protocol::kHidTransientRetries == 1);
+    static_assert(flx10_protocol::kXx36TrickleIntervalMs == 50,
+                  "each loaded FLX10 deck needs its own 20 Hz waveform keepalive");
+}
+
 void longPositionDoesNotOverflow()
 {
     for (double seconds : {60.0, 3600.0, 86400.0, 1.0e6, 1.0e9}) {
@@ -54,20 +81,6 @@ void longPositionDoesNotOverflow()
         assert(phase.value() < kJogPhaseTicksPerRevolution);
         assert(phase.high <= 0x0E);
     }
-}
-
-void beatgridRangeDoesNotWrap()
-{
-    std::uint32_t sample = 0;
-    assert(flx10_protocol::xx2fSampleForMilliseconds(0.0, sample));
-    assert(sample == 0);
-
-    const double maximumMs = static_cast<double>(flx10_protocol::kXx2fMaximumSample)
-        * 1000.0 / static_cast<double>(flx10_protocol::kXx2fSampleRate);
-    assert(flx10_protocol::xx2fSampleForMilliseconds(maximumMs - 0.01, sample));
-    assert(sample <= flx10_protocol::kXx2fMaximumSample);
-    assert(!flx10_protocol::xx2fSampleForMilliseconds(maximumMs + 1.0, sample));
-    assert(!flx10_protocol::xx2fSampleForMilliseconds(13.0 * 60.0 * 1000.0, sample));
 }
 
 void tempoDoesNotMoveAbsoluteProgress()
@@ -150,8 +163,8 @@ int main()
     basicEncoding();
     continuousAtDisplayRate();
     jogStateUsesProtocolCadence();
+    waveformMarkersUseTheVisiblePwv5Path();
     longPositionDoesNotOverflow();
-    beatgridRangeDoesNotWrap();
     tempoDoesNotMoveAbsoluteProgress();
     latestDisplayStateWinsWithoutBacklog();
     waveformSweepKeepsItsOriginAndCoversEveryWindow();

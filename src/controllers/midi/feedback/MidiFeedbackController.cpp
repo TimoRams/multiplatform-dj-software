@@ -175,7 +175,10 @@ void MidiFeedbackController::refreshDeckLeds(int deck)
         sendDeckLed(deck, m_mapping.loopReloopNote, engine->loopActive());
     }
     sendDeckLed(deck, m_mapping.tempoResetNote, qFuzzyIsNull(engine->getTempoPercent()));
-    sendDeckLed(deck, m_mapping.beatSyncNote, engine->syncEnabled());
+    // FLX10 uses the BEAT SYNC lamp for both follower and master state. A
+    // master deck is not necessarily syncEnabled(), so include it explicitly.
+    sendDeckLed(deck, m_mapping.beatSyncNote,
+                engine->syncEnabled() || engine->isSyncMaster());
     sendDeckLed(deck, m_mapping.keySyncNote, engine->keylock());
     sendDeckLed(deck, m_mapping.quantizeNote, engine->quantizeEnabled());
     sendDeckLed(deck, m_mapping.slipReverseNote, engine->isReverse());

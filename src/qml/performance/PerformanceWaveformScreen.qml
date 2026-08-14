@@ -10,12 +10,11 @@ Item {
     property var fx: null
     property real waveformZoom: 0.22
     property string selectedDeck: "A"
-    property string leftPanel: "closed" // closed | deck | grid
+    property string leftPanel: "deck" // closed | deck | grid
     property bool rightPanelOpen: false
 
-    readonly property real panelWidth: Math.min(310, Math.max(240, width * 0.21))
-    // The visual grip stays narrow, while the hit target is touch-safe.
-    readonly property real handleWidth: 44
+    readonly property real panelWidth: Math.min(230, Math.max(176, width * 0.155))
+    readonly property real handleWidth: 22
     readonly property var selectedEngine: selectedDeck === "A" ? deckAEngine : deckBEngine
     readonly property real renderDpr: {
         var value = Screen.devicePixelRatio
@@ -112,8 +111,8 @@ Item {
         Rectangle {
             anchors.fill: parent
             visible: root.leftPanel === "deck"
-            color: "#252A2E"
-            border.color: "#555C62"; border.width: 1
+            color: "#171A1D"
+            border.color: "#343B40"; border.width: 1
             ColumnLayout {
                 anchors.fill: parent; spacing: 1
                 PerformanceDeckQuickPanel {
@@ -122,7 +121,7 @@ Item {
                     onSelectedRequested: root.selectedDeck = "A"
                     onGridRequested: root.openGrid()
                 }
-                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#555C62" }
+                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#343B40" }
                 PerformanceDeckQuickPanel {
                     Layout.fillWidth: true; Layout.fillHeight: true
                     engine: root.deckBEngine; deckName: "B"; selected: root.selectedDeck === "B"
@@ -135,11 +134,11 @@ Item {
 
     Rectangle {
         id: leftHandle
-        width: root.handleWidth; height: 64
+        width: root.handleWidth; height: 42
         anchors.left: root.leftPanel === "closed" ? parent.left : leftHost.right
         anchors.verticalCenter: parent.verticalCenter
-        color: "#31363A"; border.color: "#555C62"; border.width: 1; radius: 0; z: 32
-        Text { anchors.centerIn: parent; text: root.leftPanel === "closed" ? "›" : "‹"; color: "#F2F0D7"; font.pixelSize: 25 }
+        color: "#24292D"; border.color: "#3D454B"; border.width: 1; radius: 2; z: 32
+        Text { anchors.centerIn: parent; text: root.leftPanel === "closed" ? "›" : "‹"; color: "#D8DCDF"; font.pixelSize: 15 }
         MouseArea { anchors.fill: parent; onClicked: root.toggleDeckPanel() }
     }
 
@@ -155,11 +154,11 @@ Item {
 
     Rectangle {
         id: rightHandle
-        width: root.handleWidth; height: 64
+        width: root.handleWidth; height: 42
         anchors.right: root.rightPanelOpen ? rightHost.left : parent.right
         anchors.verticalCenter: parent.verticalCenter
-        color: "#31363A"; border.color: "#555C62"; border.width: 1; radius: 0; z: 32
-        Text { anchors.centerIn: parent; text: root.rightPanelOpen ? "›" : "‹"; color: "#F2F0D7"; font.pixelSize: 25 }
+        color: "#24292D"; border.color: "#3D454B"; border.width: 1; radius: 2; z: 32
+        Text { anchors.centerIn: parent; text: root.rightPanelOpen ? "›" : "‹"; color: "#D8DCDF"; font.pixelSize: 15 }
         MouseArea { anchors.fill: parent; onClicked: root.rightPanelOpen = !root.rightPanelOpen }
     }
 }

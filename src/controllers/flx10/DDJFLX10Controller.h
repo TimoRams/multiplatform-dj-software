@@ -145,12 +145,13 @@ private:
     double deckTempoRangePercent(int deck) const;
     QString deckKey(int deck) const;
     uint8_t deckKeyByte(int deck) const;
-    std::vector<double> deckBeatTimesMs(int deck) const;
     DjEngine* deckEngine(int deck) const;
     void connectDeckSignals();
     void disconnectDeckSignals();
     void refreshDeckFromEngine(int deck);
     void scheduleTempoWaveformRefresh(int deck);
+    void refreshWaveformMarkersAndUpload(int deck);
+    void decorateWaveformMarkers(int deck, QByteArray& waveform) const;
     void beginWaveformSweep(int deck);
     void resetDeckWaveformOutput(int deck);
     void invalidateDeckSnapshot(int deck, const QString& trackPath, bool clearDevice);
@@ -168,6 +169,9 @@ private:
     QTimer m_tempoWaveformRefreshTimer;
     bool m_keepAliveEnabled = false;
     std::array<QByteArray, 5> m_waveforms;
+    // Marker-free worker output. Hot-cue/loop changes rebuild the decorated
+    // waveform from this copy so deleting a marker cannot leave a stale stripe.
+    std::array<QByteArray, 5> m_baseWaveforms;
     std::array<double, 5> m_waveformDurations = {0.0, 30.0, 30.0, 30.0, 30.0};
     // Number of 19-entry xx36 windows already pushed for this deck's bulk
     // upload. The playhead selects the origin once when the sweep begins; that
@@ -191,8 +195,9 @@ private:
     std::array<QMetaObject::Connection, 5> m_dataClearedConnections;
     std::array<QMetaObject::Connection, 5> m_metadataConnections;
     std::array<QMetaObject::Connection, 5> m_keyAnalyzedConnections;
-    std::array<QMetaObject::Connection, 5> m_beatgridConnections;
     std::array<QMetaObject::Connection, 5> m_hotCueConnections;
+    std::array<QMetaObject::Connection, 5> m_loopConnections;
+    std::array<QMetaObject::Connection, 5> m_savedLoopConnections;
     std::array<QMetaObject::Connection, 5> m_tempoConnections;
     std::array<QMetaObject::Connection, 5> m_tempoRangeConnections;
     std::array<QMetaObject::Connection, 5> m_scrubbingConnections;
@@ -208,14 +213,13 @@ private:
     qint64 m_clockStartMs = 0;
     QElapsedTimer m_hidTrafficClock;
     std::array<qint64, 5> m_lastXx27SentMs = {-100, -100, -100, -100, -100};
-    qint64 m_lastXx36SentMs = -100;
+    std::array<qint64, 5> m_lastXx36SentMs = {-100, -100, -100, -100, -100};
     std::array<QByteArray, 5> m_lastXx27Packet;
     // Avoid reading TrackData (and taking its locks) on every 5 ms display
     // tick. Key changes are signal-driven and update this cache immediately.
     std::array<std::uint8_t, 5> m_cachedDeckKeyBytes = {
         0x80, 0x80, 0x80, 0x80, 0x80
     };
-    int m_nextWaveformDeck = 1;
     int m_nextUploadDeck = 1;
     std::atomic<bool> m_shuttingDown { false };
     bool m_connected = false;

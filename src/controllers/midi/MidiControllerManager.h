@@ -204,9 +204,11 @@ private:
     std::array<bool, 3> m_deckAFxSlotsEnabled = { false, false, false };
     std::array<bool, 3> m_deckBFxSlotsEnabled = { false, false, false };
     bool m_beatFxActive = false;
+    float m_beatFxLevelDepth = 0.5f;
     int m_beatFxPosition = 1;
     MidiBeatFxTarget m_beatFxTarget = MidiBeatFxTarget::DeckA;
     bool m_applyingBeatFxRouting = false;
+    bool m_applyingBeatFxWet = false;
     
     std::vector<std::unique_ptr<juce::MidiInput>> m_midiInputs;
     std::unique_ptr<juce::MidiOutput> m_midiOutput;

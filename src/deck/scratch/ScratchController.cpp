@@ -49,6 +49,9 @@ void ScratchController::startScratch(double audioSamplePos,
     m_commandedHandSpeed.store(0.0, std::memory_order_relaxed);
     m_inertiaSpeed.store(0.0, std::memory_order_relaxed);
     m_releaseTargetSpeed.store(0.0, std::memory_order_relaxed);
+    m_releaseHandoffThreshold.store(m_config.inertiaStopThreshold,
+                                    std::memory_order_relaxed);
+    m_preserveMomentumAtHandoff.store(false, std::memory_order_relaxed);
     m_readPosition.store(audioSamplePos, std::memory_order_relaxed);
     m_lastMoveNs.store(nowNs(), std::memory_order_relaxed);
     m_releaseEpoch.fetch_add(1, std::memory_order_acq_rel);
@@ -67,6 +70,9 @@ void ScratchController::stopScratch() noexcept
     m_commandedHandSpeed.store(0.0, std::memory_order_relaxed);
     m_inertiaSpeed.store(0.0, std::memory_order_relaxed);
     m_releaseTargetSpeed.store(0.0, std::memory_order_relaxed);
+    m_releaseHandoffThreshold.store(m_config.inertiaStopThreshold,
+                                    std::memory_order_relaxed);
+    m_preserveMomentumAtHandoff.store(false, std::memory_order_relaxed);
     m_phase.store(ScratchPhase::Idle, std::memory_order_release);
 }
 
@@ -143,8 +149,18 @@ ScratchReleaseDisposition ScratchController::releaseScratchWithSpeed(
     const double threshold = std::max(m_config.inertiaStopThreshold, m_config.minScratchSpeed);
     const bool deckMoving = std::abs(deckSpeed) > threshold;
     const bool sameDirection = deckMoving && speed * deckSpeed > 0.0;
+    const bool oppositePlaybackDirection = deckMoving && speed * deckSpeed < 0.0;
     const bool inertiaAllowed = allowInertia
         && m_inertiaEnabled.load(std::memory_order_relaxed);
+    const bool directDirectionHandoff = inertiaAllowed && wasPlaying
+        && oppositePlaybackDirection;
+    m_releaseHandoffThreshold.store(
+        directDirectionHandoff
+            ? std::max(m_config.crossDirectionHandoffThreshold, threshold)
+            : threshold,
+        std::memory_order_relaxed);
+    m_preserveMomentumAtHandoff.store(directDirectionHandoff,
+                                      std::memory_order_relaxed);
 
     ScratchPhase nextPhase = ScratchPhase::HandoffPending;
     ScratchReleaseDisposition disposition = ScratchReleaseDisposition::HandoffNow;
@@ -199,6 +215,16 @@ ScratchReleaseDisposition ScratchController::retargetRelease(
         : 0.0;
     const bool sameDirection = std::abs(deckSpeed) > threshold
         && inertia * deckSpeed > 0.0;
+    const bool oppositePlaybackDirection = std::abs(deckSpeed) > threshold
+        && inertia * deckSpeed < 0.0;
+    const bool directDirectionHandoff = playbackIntent
+        && oppositePlaybackDirection;
+    const double handoffThreshold = directDirectionHandoff
+        ? std::max(m_config.crossDirectionHandoffThreshold, threshold)
+        : threshold;
+    m_releaseHandoffThreshold.store(handoffThreshold, std::memory_order_relaxed);
+    m_preserveMomentumAtHandoff.store(directDirectionHandoff,
+                                      std::memory_order_relaxed);
 
     ScratchPhase next = ScratchPhase::CoastToStop;
     ScratchReleaseDisposition disposition = ScratchReleaseDisposition::CoastToStop;
@@ -213,7 +239,7 @@ ScratchReleaseDisposition ScratchController::retargetRelease(
             next = ScratchPhase::CoastToDeckRate;
             disposition = ScratchReleaseDisposition::CoastToDeckRate;
         }
-    } else if (std::abs(inertia) <= threshold) {
+    } else if (std::abs(inertia) <= handoffThreshold) {
         next = ScratchPhase::HandoffPending;
         disposition = ScratchReleaseDisposition::HandoffNow;
     }
@@ -338,8 +364,11 @@ double ScratchController::processAudioBlock(int bufferSize,
                || currentPhase == ScratchPhase::CoastToStop) {
         double inertia = m_inertiaSpeed.load(std::memory_order_relaxed);
         const double target = m_releaseTargetSpeed.load(std::memory_order_relaxed);
-        const double threshold = std::max(m_config.inertiaStopThreshold,
-                                          m_config.minScratchSpeed);
+        const double threshold = std::max(
+            m_releaseHandoffThreshold.load(std::memory_order_relaxed),
+            m_config.minScratchSpeed);
+        const bool preserveMomentum =
+            m_preserveMomentumAtHandoff.load(std::memory_order_relaxed);
 
         const auto speedGeneration = m_releaseSpeedGeneration.load(std::memory_order_acquire);
         const auto appliedGeneration = m_appliedReleaseSpeedGeneration.load(
@@ -361,7 +390,8 @@ double ScratchController::processAudioBlock(int bufferSize,
                             ScratchPhase::HandoffPending,
                             std::memory_order_acq_rel,
                             std::memory_order_acquire)) {
-                        inertia = target;
+                        if (!preserveMomentum)
+                            inertia = target;
                         currentPhase = ScratchPhase::HandoffPending;
                     } else {
                         currentPhase = expected;
@@ -391,7 +421,8 @@ double ScratchController::processAudioBlock(int bufferSize,
                         ScratchPhase::HandoffPending,
                         std::memory_order_acq_rel,
                         std::memory_order_acquire)) {
-                    inertia = target;
+                    if (!preserveMomentum)
+                        inertia = target;
                     currentPhase = ScratchPhase::HandoffPending;
                 } else {
                     currentPhase = expected;
@@ -405,7 +436,9 @@ double ScratchController::processAudioBlock(int bufferSize,
             }
         }
     } else if (currentPhase == ScratchPhase::HandoffPending) {
-        finalNormalized = m_releaseTargetSpeed.load(std::memory_order_relaxed);
+        finalNormalized = m_preserveMomentumAtHandoff.load(std::memory_order_relaxed)
+            ? m_inertiaSpeed.load(std::memory_order_relaxed)
+            : m_releaseTargetSpeed.load(std::memory_order_relaxed);
     }
 
     const double finalRate = finalNormalized * oneX;

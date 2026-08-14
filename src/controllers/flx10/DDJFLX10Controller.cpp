@@ -88,7 +88,7 @@ bool DDJFLX10Controller::start()
     m_clockStartMs = QDateTime::currentMSecsSinceEpoch();
     m_hidTrafficClock.restart();
     m_lastXx27SentMs.fill(-kJogStateIntervalMs);
-    m_lastXx36SentMs = -kXx36TrickleIntervalMs;
+    m_lastXx36SentMs.fill(-kXx36TrickleIntervalMs);
     for (int deck = controllers::kFlx10FirstDeckIndex;
          deck <= controllers::kFlx10LastDeckIndex; ++deck) {
         m_uploadActive[deck] = false;
@@ -249,9 +249,11 @@ void DDJFLX10Controller::disconnectDeckSignals()
         QObject::disconnect(connection);
     for (auto& connection : m_keyAnalyzedConnections)
         QObject::disconnect(connection);
-    for (auto& connection : m_beatgridConnections)
-        QObject::disconnect(connection);
     for (auto& connection : m_hotCueConnections)
+        QObject::disconnect(connection);
+    for (auto& connection : m_loopConnections)
+        QObject::disconnect(connection);
+    for (auto& connection : m_savedLoopConnections)
         QObject::disconnect(connection);
     for (auto& connection : m_tempoConnections)
         QObject::disconnect(connection);
@@ -269,8 +271,9 @@ void DDJFLX10Controller::disconnectDeckSignals()
     m_dataClearedConnections.fill({});
     m_metadataConnections.fill({});
     m_keyAnalyzedConnections.fill({});
-    m_beatgridConnections.fill({});
     m_hotCueConnections.fill({});
+    m_loopConnections.fill({});
+    m_savedLoopConnections.fill({});
     m_tempoConnections.fill({});
     m_tempoRangeConnections.fill({});
     m_scrubbingConnections.fill({});
@@ -397,22 +400,22 @@ void DDJFLX10Controller::connectDeckSignals()
                     return;
                 sendXx39(deck);
             });
-            m_beatgridConnections[deck] = connect(trackData, &TrackData::beatgridChanged, this, [this, deck] {
-                if (m_shuttingDown.load(std::memory_order_acquire))
-                    return;
-                if (!m_connected || m_waveforms[deck].isEmpty() || m_uploadActive[deck])
-                    return;
-                sendXx2f(deck);
-            });
         }
 
         m_hotCueConnections[deck] = connect(engine, &DjEngine::hotCuesChanged, this, [this, deck] {
             if (m_shuttingDown.load(std::memory_order_acquire))
                 return;
-            if (!m_connected || m_waveforms[deck].isEmpty())
-                return;
-            sendXx39(deck);
+            refreshWaveformMarkersAndUpload(deck);
         });
+        m_loopConnections[deck] = connect(engine, &DjEngine::loopChanged, this, [this, deck] {
+            if (!m_shuttingDown.load(std::memory_order_acquire))
+                refreshWaveformMarkersAndUpload(deck);
+        });
+        m_savedLoopConnections[deck] = connect(
+            engine, &DjEngine::savedLoopsChanged, this, [this, deck] {
+                if (!m_shuttingDown.load(std::memory_order_acquire))
+                    refreshWaveformMarkersAndUpload(deck);
+            });
         m_scrubbingConnections[deck] = connect(engine, &DjEngine::scrubbingChanged, this, [this, deck] {
             if (m_shuttingDown.load(std::memory_order_acquire))
                 return;
@@ -450,6 +453,7 @@ void DDJFLX10Controller::invalidateDeckSnapshot(int deck, const QString& trackPa
         return;
 
     m_waveforms[deck].clear();
+    m_baseWaveforms[deck].clear();
     m_waveformTrackPaths[deck] = trackPath;
     m_waveformDurations[deck] = kPreviewDurationSeconds;
     m_uploadActive[deck] = false;
@@ -462,6 +466,7 @@ void DDJFLX10Controller::invalidateDeckSnapshot(int deck, const QString& trackPa
     m_waveformUploadTrackGenerations[deck] = 0;
     m_waveformUploadQualityPermille[deck] = 0;
     m_cachedDeckKeyBytes[deck] = 0x80;
+    m_lastXx36SentMs[deck] = -kXx36TrickleIntervalMs;
     m_lastCoverUrls[deck].clear();
     resetDisplayPacketState(deck);
 
@@ -689,9 +694,11 @@ void DDJFLX10Controller::onPreviewWaveformReady(
     // pick up the improved samples, because they are read out of
     // m_waveforms[deck] at send time.
     const bool sameTrackRefresh = !firstUploadForTrack
-        && m_waveforms[deck].size() == waveform.size();
+        && m_baseWaveforms[deck].size() == waveform.size();
 
-    m_waveforms[deck] = std::move(waveform);
+    m_baseWaveforms[deck] = std::move(waveform);
+    m_waveforms[deck] = m_baseWaveforms[deck];
+    decorateWaveformMarkers(deck, m_waveforms[deck]);
     m_waveformDurations[deck] = deckDisplayDuration(deck);
     m_waveformUploadTrackGenerations[deck] = renderInfo.trackGeneration;
     m_waveformUploadQualityPermille[deck] = std::max(
@@ -995,22 +1002,17 @@ void DDJFLX10Controller::sendWaveformTick()
         return;
 
     const qint64 nowMs = m_hidTrafficClock.isValid() ? m_hidTrafficClock.elapsed() : 0;
-    if (nowMs - m_lastXx36SentMs < kXx36TrickleIntervalMs)
-        return;
-
-    // Send at most one playhead window per tick and only while the deck is
-    // moving, otherwise endpoint pressure can starve state/jog updates.
-    for (int offset = 0; offset < 2; ++offset) {
-        const int deck = 1 + ((m_nextWaveformDeck - 1 + offset) % 2);
+    // The firmware expires the waveform buffer even on an idle/paused deck.
+    // Keep every loaded deck alive independently at 20 Hz; one global timer
+    // previously divided that rate between two decks, and the moving-only gate
+    // made a cached waveform disappear shortly after it was first displayed.
+    for (int deck = 1; deck <= 2; ++deck) {
         if (m_waveforms[deck].isEmpty())
             continue;
-        const DjEngine* engine = deckEngine(deck);
-        if (!engine || (!engine->isPlaying() && !engine->isScratchVisualActive()))
+        if (nowMs - m_lastXx36SentMs[deck] < kXx36TrickleIntervalMs)
             continue;
         if (sendXx36Window(deck, m_waveforms[deck], currentWaveformEntry(deck))) {
-            m_lastXx36SentMs = nowMs;
-            m_nextWaveformDeck = deck == 1 ? 2 : 1;
-            break;
+            m_lastXx36SentMs[deck] = nowMs;
         }
     }
 }

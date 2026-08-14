@@ -184,8 +184,13 @@
     <Entry paramId="beat_fx_channel_master" status="0x94" control="0x14" type="toggle"/>
     <Entry paramId="beat_fx_channel_mic" status="0x94" control="0x15" type="toggle"/>
     <Entry paramId="beat_fx_channel_sampler" status="0x94" control="0x16" type="toggle"/>
+    <Entry paramId="beat_fx_beat_minus" status="0x94" control="0x4A" type="momentary"/>
+    <Entry paramId="beat_fx_beat_plus" status="0x94" control="0x4B" type="momentary"/>
+    <!-- LEVEL/DEPTH is the documented 14-bit CC pair (MSB 02, LSB 22). -->
+    <Entry paramId="beat_fx_level_depth" status="0xB4" control="0x02" type="encoder-absolute"/>
+    <Entry paramId="beat_fx_level_depth" status="0xB4" control="0x22" type="encoder-absolute"/>
     <!-- The hardware ON/OFF switch publishes its latched 0/127 state. -->
-    <Entry paramId="beat_fx_on" status="0x94" control="0x46" type="momentary"/>
+    <Entry paramId="beat_fx_on" status="0x94" control="0x47" type="momentary"/>
 
     <!-- Sound Color FX selector and per-channel 14-bit color knobs. -->
     <Entry paramId="sound_color_fx_space" status="0x96" control="0x00" type="toggle"/>

@@ -285,6 +285,15 @@ void DDJFLX10Controller::hidWriterLoop()
                 || (result == 0 && transferred != packetBytes.size());
             if (!transient || attempt == kHidTransientRetries)
                 break;
+
+            // Do not let a retry of cover/waveform data hold a newer platter
+            // position. The FIFO packet is expendable (sweeps repeat); xx27 is
+            // real-time state and must win at the next USB opportunity.
+            if (displaySequence == 0) {
+                std::lock_guard lock(m_hidWriteMutex);
+                if (!m_latestHidDisplayPackets.empty())
+                    break;
+            }
             if (result == LIBUSB_ERROR_PIPE)
                 libusb_clear_halt(m_handle, m_outEndpoint);
             std::this_thread::sleep_for(std::chrono::milliseconds(2 << attempt));

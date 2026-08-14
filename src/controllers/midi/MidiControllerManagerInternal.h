@@ -334,6 +334,8 @@ inline MidiInteractionType defaultInteractionTypeForParam(const QString& paramId
         || paramId == QStringLiteral("deckA_slip_reverse")
         || paramId == QStringLiteral("deckB_slip_reverse")
         || paramId == QStringLiteral("beat_fx_on")
+        || paramId == QStringLiteral("beat_fx_beat_minus")
+        || paramId == QStringLiteral("beat_fx_beat_plus")
         || paramId.startsWith(QStringLiteral("deckA_sampler_pad"))
         || paramId.startsWith(QStringLiteral("deckB_sampler_pad"))
         || (isPerformancePadParam(paramId)

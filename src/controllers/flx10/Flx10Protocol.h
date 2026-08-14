@@ -44,19 +44,23 @@ constexpr int kXx36EntriesPerWindow = 19;
 // track took over half a minute to reach the screen; four keeps the transfer
 // under ten seconds while staying far below what the interrupt endpoint can
 // carry, and the platter state has its own priority slot ahead of this queue.
-constexpr int kUploadWindowsPerTick = 4;
+// Keep enough endpoint headroom for the two 200 Hz xx27 streams. Two windows
+// per tick still fills a five-minute waveform in about 17 seconds while idle,
+// without pushing total traffic close to the one-report-per-USB-frame ceiling.
+constexpr int kUploadWindowsPerTick = 2;
 constexpr int kUploadTickIntervalMs = 10;
 constexpr int kKeepAliveIntervalMs = 250;
 constexpr std::size_t kHidWriteQueueCapacity = 1024;
-constexpr int kHidTransferTimeoutMs = 250;
-constexpr int kHidTransientRetries = 3;
+// A screen report normally completes in one USB frame. The previous 250 ms x
+// four-attempt policy let one stuck bulk packet freeze the priority platter
+// stream for over a second. Eight frames plus one retry tolerate a transient
+// miss while bounding a stall to a duration the jog LCD cannot visibly hold.
+constexpr int kHidTransferTimeoutMs = 8;
+constexpr int kHidTransientRetries = 1;
 constexpr int kAlbumArtMaxBytes = 119 + 122 * 254;
 constexpr double kJogRingWarningSeconds = 30.0;
 constexpr qint64 kJogRingBlinkIntervalMs = 500;
 constexpr int kJogRingOnValue = 0x7F;
-constexpr int kXx2fSampleRate = 22050;
-constexpr int kXx2fRecordsPerPacket = 30;
-constexpr uint32_t kXx2fMaximumSample = 0x00FFFFFFu;
 // The working FLX10 path drives xx27 at 200 Hz. Keeping this independent from
 // the 60 Hz UI/display clock is important: applying a 20 ms limiter to a 16.7 ms
 // display callback discarded every second callback, so normal playback only
@@ -74,8 +78,6 @@ constexpr double kJogRevolutionSeconds = 1.8;
 constexpr int kJogPhaseTicksPerSecond = 2000;
 constexpr int kJogPhaseTicksPerRevolution = 3600;
 constexpr int kMaximumDisplayMinutes = 255;
-constexpr std::array<uint8_t, 4> kXx2fBeatTypes = {0x03, 0x04, 0x00, 0x02};
-constexpr std::array<uint8_t, 4> kXx2fStartMarker = {0x80, 0x02, 0x01, 0x00};
 
 struct VendorUnlockCommand
 {
@@ -158,17 +160,6 @@ inline Xx27TimelineEncoding xx27TimelineEncoding(double sourcePositionSeconds,
         std::min(static_cast<qint64>(std::floor(position * 1000.0)), maximumDisplayMs),
         std::min(static_cast<qint64>(std::floor(duration * 1000.0)), maximumDisplayMs)
     };
-}
-
-inline bool xx2fSampleForMilliseconds(double milliseconds, uint32_t& sample) noexcept
-{
-    if (!std::isfinite(milliseconds) || milliseconds < 0.0)
-        return false;
-    const double sampleValue = milliseconds * static_cast<double>(kXx2fSampleRate) / 1000.0;
-    if (sampleValue > static_cast<double>(kXx2fMaximumSample))
-        return false;
-    sample = static_cast<uint32_t>(std::llround(sampleValue));
-    return sample <= kXx2fMaximumSample;
 }
 
 // Resolve one indexed xx36 window inside a sweep whose origin was captured
@@ -463,6 +454,50 @@ inline QByteArray encodePwv5Entry(int height, int red, int green, int blue)
     out.append(static_cast<char>(value & 0xFF));
     out.append(static_cast<char>((value >> 8) & 0xFF));
     return out;
+}
+
+// Draw a marker into the waveform data itself. The FLX10's native cue/beat
+// overlay commands are not active in the Serato HID waveform mode used here,
+// but PWV5 is. Encoding the markers as bright waveform columns therefore uses
+// the one rendering path known to be visible on the hardware.
+inline int waveformEntryForTimeline(double positionSeconds,
+                                    double durationSeconds,
+                                    int entryCount) noexcept
+{
+    if (entryCount <= 0 || !std::isfinite(positionSeconds)
+        || !std::isfinite(durationSeconds) || durationSeconds <= 0.0
+        || positionSeconds < 0.0 || positionSeconds > durationSeconds) {
+        return -1;
+    }
+
+    if (entryCount == 1)
+        return 0;
+    const double progress = std::clamp(positionSeconds / durationSeconds, 0.0, 1.0);
+    return std::clamp(static_cast<int>(std::llround(progress * (entryCount - 1))),
+                      0, entryCount - 1);
+}
+
+inline bool overlayPwv5Marker(QByteArray& waveform, double positionSeconds,
+                              double durationSeconds,
+                              int radiusEntries, int height,
+                              int red, int green, int blue) noexcept
+{
+    const int entryCount = waveform.size() / 2;
+    const int marker = waveformEntryForTimeline(
+        positionSeconds, durationSeconds, entryCount);
+    if (marker < 0) {
+        return false;
+    }
+
+    const QByteArray encoded = encodePwv5Entry(height, red, green, blue);
+    const int radius = std::max(0, radiusEntries);
+    const int first = std::max(0, marker - radius);
+    const int last = std::min(entryCount - 1, marker + radius);
+    for (int entry = first; entry <= last; ++entry) {
+        waveform[entry * 2] = encoded[0];
+        waveform[entry * 2 + 1] = encoded[1];
+    }
+    return true;
 }
 
 // Adapter only: quantises one shared WaveformColumn into a PWV5 entry. It

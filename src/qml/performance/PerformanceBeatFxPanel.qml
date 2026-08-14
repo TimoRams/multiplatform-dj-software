@@ -7,13 +7,13 @@ Rectangle {
     property var fx: null
     signal closeRequested()
 
-    readonly property int headerHeight: 48
-    readonly property int rowHeight: 48
-    readonly property int panelMargin: 10
-    readonly property color panelText: "#F2F0D7"
-    readonly property color mutedText: "#C5C9C2"
-    readonly property color lineColor: "#555C62"
-    readonly property color controlColor: "#31363A"
+    readonly property int headerHeight: 36
+    readonly property int rowHeight: 40
+    readonly property int panelMargin: 7
+    readonly property color panelText: "#E7EAEC"
+    readonly property color mutedText: "#9DA5AA"
+    readonly property color lineColor: "#343B40"
+    readonly property color controlColor: "#20252A"
     readonly property var divisions: [
         { label: "1/16", value: 0.0625 }, { label: "1/8", value: 0.125 },
         { label: "1/4", value: 0.25 }, { label: "1/2", value: 0.5 },
@@ -33,7 +33,7 @@ Rectangle {
     readonly property bool routedB: fx ? fx.deck1B : false
     readonly property bool effectOn: fx && fx.effectType1 !== "---" && fx.wetDry1 > 0.001
 
-    color: "#252A2E"
+    color: "#171A1D"
     border.color: lineColor
     border.width: 1
     radius: 0
@@ -45,15 +45,27 @@ Rectangle {
         fx.setEffectType(1, options[(index + 1) % options.length])
     }
 
+    function stepBeatDivision(direction) {
+        if (!fx) return
+        var index = 0
+        var nearest = Number.MAX_VALUE
+        for (var i = 0; i < divisions.length; ++i) {
+            var distance = Math.abs(currentDiv - divisions[i].value)
+            if (distance < nearest) { nearest = distance; index = i }
+        }
+        index = Math.max(0, Math.min(divisions.length - 1, index + direction))
+        fx.setBeatDivision(1, divisions[index].value)
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
         Rectangle {
             Layout.fillWidth: true; Layout.preferredHeight: root.headerHeight
-            color: "#555952"
-            Text { anchors.centerIn: parent; text: "BEAT FX"; color: root.panelText; font.pixelSize: 14; font.weight: Font.DemiBold; font.letterSpacing: 1.0 }
-            Text { anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: "×"; color: root.panelText; font.pixelSize: 22 }
+            color: "#24292D"
+            Text { anchors.centerIn: parent; text: "BEAT FX"; color: root.panelText; font.pixelSize: 12; font.weight: Font.DemiBold; font.letterSpacing: 0.8 }
+            Text { anchors.right: parent.right; anchors.rightMargin: 9; anchors.verticalCenter: parent.verticalCenter; text: "×"; color: root.mutedText; font.pixelSize: 17 }
             MouseArea { anchors.fill: parent; onClicked: root.closeRequested() }
         }
 
@@ -77,26 +89,31 @@ Rectangle {
         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.lineColor }
 
         Rectangle {
-            Layout.fillWidth: true; Layout.preferredHeight: 54; Layout.leftMargin: root.panelMargin; Layout.rightMargin: root.panelMargin
+            Layout.fillWidth: true; Layout.preferredHeight: 44; Layout.leftMargin: root.panelMargin; Layout.rightMargin: root.panelMargin
             color: root.controlColor; border.color: root.lineColor; border.width: 1
-            Text { anchors.centerIn: parent; text: root.fx ? root.fx.effectType1.toUpperCase() : "---"; color: root.panelText; font.pixelSize: 22; font.weight: Font.DemiBold; font.letterSpacing: 0.5 }
+            Text { anchors.centerIn: parent; text: root.fx ? root.fx.effectType1.toUpperCase() : "---"; color: root.panelText; font.pixelSize: 16; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
             MouseArea { anchors.fill: parent; onClicked: root.selectNextEffect() }
         }
 
         RowLayout {
             Layout.fillWidth: true; Layout.preferredHeight: root.rowHeight
             Layout.leftMargin: root.panelMargin; Layout.rightMargin: root.panelMargin; spacing: 4
-            Repeater {
-                model: root.nearbyDivisions
-                Rectangle {
-                    required property var modelData
-                    Layout.fillWidth: true; Layout.fillHeight: true
-                    readonly property bool active: Math.abs(root.currentDiv - modelData.value) < 0.001
-                    color: active ? "#4A3A23" : root.controlColor
-                    border.color: active ? "#E99128" : root.lineColor; border.width: 1
-                    Text { anchors.centerIn: parent; text: modelData.label; color: active ? root.panelText : root.mutedText; font.pixelSize: 12; font.weight: active ? Font.DemiBold : Font.Normal }
-                    MouseArea { anchors.fill: parent; onClicked: if (root.fx) root.fx.setBeatDivision(1, modelData.value) }
-                }
+            Rectangle {
+                Layout.preferredWidth: 34; Layout.fillHeight: true
+                color: root.controlColor; border.color: root.lineColor; border.width: 1
+                Text { anchors.centerIn: parent; text: "−"; color: root.panelText; font.pixelSize: 15 }
+                MouseArea { anchors.fill: parent; onClicked: root.stepBeatDivision(-1) }
+            }
+            Rectangle {
+                Layout.fillWidth: true; Layout.fillHeight: true
+                color: "#3B3022"; border.color: "#D88B2C"; border.width: 1
+                Text { anchors.centerIn: parent; text: root.nearbyDivisions[1].label; color: root.panelText; font.pixelSize: 12; font.weight: Font.DemiBold }
+            }
+            Rectangle {
+                Layout.preferredWidth: 34; Layout.fillHeight: true
+                color: root.controlColor; border.color: root.lineColor; border.width: 1
+                Text { anchors.centerIn: parent; text: "+"; color: root.panelText; font.pixelSize: 15 }
+                MouseArea { anchors.fill: parent; onClicked: root.stepBeatDivision(1) }
             }
         }
 
@@ -110,7 +127,7 @@ Rectangle {
 
         Rectangle {
             id: xPad
-            Layout.fillWidth: true; Layout.preferredHeight: 62; Layout.leftMargin: root.panelMargin; Layout.rightMargin: root.panelMargin
+            Layout.fillWidth: true; Layout.preferredHeight: 46; Layout.leftMargin: root.panelMargin; Layout.rightMargin: root.panelMargin
             color: "#181B1E"; border.color: root.lineColor; border.width: 1
             Rectangle { width: Math.max(3, parent.width * (root.fx ? root.fx.wetDry1 : 0)); anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; color: "#168FC4" }
             Text { anchors.horizontalCenter: parent.horizontalCenter; anchors.top: parent.top; anchors.topMargin: 6; text: "DRY                         WET"; color: root.mutedText; font.pixelSize: 9; font.family: "monospace" }

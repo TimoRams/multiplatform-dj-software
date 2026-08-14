@@ -8,6 +8,7 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QBuffer>
+#include <QColor>
 #include <QImage>
 #include <QPainter>
 
@@ -15,7 +16,6 @@
 #include <array>
 #include <cmath>
 #include <utility>
-#include <vector>
 
 #include "Flx10Protocol.h"
 
@@ -131,6 +131,81 @@ void DDJFLX10Controller::pushDeckJogDisplay(int deck)
                          snapshot.sourcePositionSec,
                          snapshot.trackDurationSec,
                          snapshot.playing);
+}
+
+void DDJFLX10Controller::decorateWaveformMarkers(
+    int deck, QByteArray& waveform) const
+{
+    if (deck < 1 || deck > 2 || waveform.isEmpty())
+        return;
+
+    const DjEngine* engine = deckEngine(deck);
+    const double duration = deckDisplayDuration(deck);
+    if (!engine)
+        return;
+
+    // PWV5 contains waveform amplitude and colour, not native beatgrid
+    // overlay geometry. Replacing audio columns with full-height beat spikes
+    // creates fake transients and a misleading grid. Keep the audio waveform
+    // intact until the real FLX10 overlay command is capture-proven.
+
+    // The Serato HID mode does not expose a separate loop overlay command.
+    // Put loop boundaries into the proven PWV5 render path: saved loops are
+    // cyan, while an active loop gets distinct green IN and amber OUT lines.
+    const QVariantList savedLoops = engine->savedLoops();
+    for (const QVariant& value : savedLoops) {
+        const QVariantMap loop = value.toMap();
+        if (!loop.value(QStringLiteral("set")).toBool())
+            continue;
+        overlayPwv5Marker(waveform, loop.value(QStringLiteral("inSec")).toDouble(),
+                          duration, 2, 31, 0, 7, 7);
+        overlayPwv5Marker(waveform, loop.value(QStringLiteral("outSec")).toDouble(),
+                          duration, 2, 31, 0, 7, 7);
+    }
+    if (engine->loopActive()) {
+        overlayPwv5Marker(waveform, engine->loopInPosition(), duration,
+                          3, 31, 0, 7, 1);
+        overlayPwv5Marker(waveform, engine->loopOutPosition(), duration,
+                          3, 31, 7, 4, 0);
+    }
+
+    const QVariantList hotCues = engine->hotCues();
+    for (const QVariant& value : hotCues) {
+        const QVariantMap cue = value.toMap();
+        if (!cue.value(QStringLiteral("set")).toBool())
+            continue;
+        const double positionSec = cue.value(QStringLiteral("positionSec")).toDouble();
+        QColor color(cue.value(QStringLiteral("color")).toString());
+        if (!color.isValid())
+            color = QColor(224, 64, 64);
+        const auto to3Bit = [](int channel) {
+            return std::clamp((channel + 15) / 32, 0, 7);
+        };
+        overlayPwv5Marker(waveform, positionSec, duration, 3, 31,
+                          to3Bit(color.red()), to3Bit(color.green()),
+                          to3Bit(color.blue()));
+    }
+}
+
+void DDJFLX10Controller::refreshWaveformMarkersAndUpload(int deck)
+{
+    if (deck < 1 || deck > 2 || m_baseWaveforms[deck].isEmpty())
+        return;
+
+    m_waveforms[deck] = m_baseWaveforms[deck];
+    decorateWaveformMarkers(deck, m_waveforms[deck]);
+    if (!m_connected || m_shuttingDown.load(std::memory_order_acquire))
+        return;
+
+    // Never rewind the indexed transfer halfway through. The next sweep reads
+    // the decorated bytes and replaces both newly added and deleted markers.
+    if (m_uploadActive[deck]) {
+        m_uploadResweepPending[deck] = true;
+    } else {
+        beginWaveformSweep(deck);
+        if (!m_uploadTimer.isActive())
+            m_uploadTimer.start(kUploadTickIntervalMs);
+    }
 }
 bool DDJFLX10Controller::uploadDeck(int deck, bool startWindowSweep)
 {
@@ -288,61 +363,15 @@ bool DDJFLX10Controller::sendXx36Window(int deck, const QByteArray& waveform, in
 }
 bool DDJFLX10Controller::sendXx2f(int deck)
 {
-    struct Xx2fRecord {
-        uint8_t type = 0;
-        uint32_t samples = 0;
-    };
-
-    std::vector<Xx2fRecord> records;
-    records.reserve(1 + 512);
-    records.push_back({kXx2fStartMarker[0],
-                       static_cast<uint32_t>(kXx2fStartMarker[1]
-                                             | (kXx2fStartMarker[2] << 8)
-                                             | (kXx2fStartMarker[3] << 16))});
-
-    const std::vector<double> beatTimesMs = deckBeatTimesMs(deck);
-    for (size_t i = 0; i < beatTimesMs.size(); ++i) {
-        uint32_t samples = 0;
-        if (!xx2fSampleForMilliseconds(beatTimesMs[i], samples))
-            continue;
-        records.push_back({kXx2fBeatTypes[i % kXx2fBeatTypes.size()], samples});
-    }
-
-    const int totalPackets = std::max(1, static_cast<int>(
-        (records.size() + kXx2fRecordsPerPacket - 1) / kXx2fRecordsPerPacket));
-    const int packetsToSend = std::min(totalPackets, 255);
-
-    bool ok = true;
-    for (int packetIndex = 0; packetIndex < packetsToSend; ++packetIndex) {
-        QByteArray p = packet();
-        put8(p, 0, deckByte(deck));
-        put8(p, 1, 0x2F);
-        put8(p, 2, packetIndex + 1);
-        put8(p, 3, 0x00);
-        put8(p, 4, 0x15);
-        put8(p, 5, 0x00);
-
-        int offset = 6;
-        const size_t firstRecord = static_cast<size_t>(packetIndex * kXx2fRecordsPerPacket);
-        const size_t endRecord = std::min(records.size(), firstRecord + kXx2fRecordsPerPacket);
-        for (size_t recordIndex = firstRecord; recordIndex < endRecord; ++recordIndex) {
-            if (offset + 3 >= kHidPacketSize)
-                break;
-            const Xx2fRecord& record = records[recordIndex];
-            put8(p, offset, record.type);
-            put8(p, offset + 1, record.samples & 0xFF);
-            put8(p, offset + 2, (record.samples >> 8) & 0xFF);
-            put8(p, offset + 3, (record.samples >> 16) & 0xFF);
-            offset += 4;
-        }
-
-        ok = writePacket(p) && ok;
-    }
-
-    qInfo() << "[DDJ-FLX10] Deck" << deck
-            << "sent xx2F beatgrid records" << static_cast<int>(records.size() - 1)
-            << "packets" << packetsToSend;
-    return ok;
+    // Serato sends one small cue-data terminator after xx36. Treating its
+    // unknown payload as a beatgrid and expanding it to hundreds of packets
+    // produced no visible markers on real hardware and needlessly loaded EP5.
+    QByteArray p = packet();
+    put8(p, 0, deckByte(deck));
+    put8(p, 1, 0x2F);
+    put8(p, 2, 0x01);
+    put8(p, 4, 0x01);
+    return writePacket(p);
 }
 bool DDJFLX10Controller::clearDeckDisplay(int deck)
 {
@@ -589,47 +618,6 @@ uint8_t DDJFLX10Controller::deckKeyByte(int deck) const
 {
     return musicalKeyByte(deckKey(deck));
 }
-std::vector<double> DDJFLX10Controller::deckBeatTimesMs(int deck) const
-{
-    const DjEngine* engine = deckEngine(deck);
-    const TrackData* trackData = engine ? engine->getTrackData() : nullptr;
-    const double duration = deckDisplayDuration(deck);
-    std::vector<double> timesMs;
-
-    if (trackData) {
-        const std::vector<TrackData::BeatMarker> grid = trackData->getBeatGrid();
-        timesMs.reserve(grid.size());
-        for (const TrackData::BeatMarker& marker : grid) {
-            if (!marker.isBeat || marker.positionSec < 0.0 || marker.positionSec > duration)
-                continue;
-            timesMs.push_back(marker.positionSec * 1000.0);
-        }
-
-        if (!timesMs.empty())
-            return timesMs;
-
-        const double bpm = trackData->getBpm();
-        if (bpm > 0.0 && duration > 0.0) {
-            const double sampleRate = trackData->getSampleRate();
-            const double firstBeatSec = sampleRate > 0.0
-                                            ? static_cast<double>(trackData->getFirstBeatSample()) / sampleRate
-                                            : 0.0;
-            const double beatLengthSec = 60.0 / bpm;
-            if (beatLengthSec > 0.001) {
-                double firstVisibleBeat = firstBeatSec;
-                while (firstVisibleBeat > 0.0)
-                    firstVisibleBeat -= beatLengthSec;
-                while (firstVisibleBeat < 0.0)
-                    firstVisibleBeat += beatLengthSec;
-
-                for (double sec = firstVisibleBeat; sec <= duration; sec += beatLengthSec)
-                    timesMs.push_back(sec * 1000.0);
-            }
-        }
-    }
-
-    return timesMs;
-}
 int DDJFLX10Controller::currentWaveformEntry(int deck) const
 {
     const QByteArray& waveform = m_waveforms[deck];
@@ -641,8 +629,8 @@ int DDJFLX10Controller::currentWaveformEntry(int deck) const
     if (engine && engine->getDuration() > 0.0f) {
         const double duration = validTrackDuration(engine);
         const double position = validTrackPosition(engine, duration);
-        const double fraction = duration > 0.0 ? std::clamp(position / duration, 0.0, 1.0) : 0.0;
-        return std::clamp(static_cast<int>(fraction * entries), 0, entries - 19);
+        const int entry = waveformEntryForTimeline(position, duration, entries);
+        return std::clamp(entry, 0, entries - 19);
     }
 
     const double elapsed = (QDateTime::currentMSecsSinceEpoch() - m_clockStartMs) / 1000.0;

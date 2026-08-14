@@ -20,6 +20,10 @@ struct ScratchControllerConfig {
     double commandVelocityDecayTauMs = 7.0;
     double releaseReturnTauSec = 0.220;
     double inertiaStopThreshold = 0.02;
+    // When normal playback is waiting in the opposite direction, hand off
+    // before the backspin becomes an audible near-zero hold. Pause releases
+    // continue to use inertiaStopThreshold and therefore still coast to zero.
+    double crossDirectionHandoffThreshold = 0.10;
 };
 
 enum class ScratchReleaseDisposition : std::uint8_t {
@@ -190,6 +194,8 @@ private:
     std::atomic<double> m_commandedHandSpeed { 0.0 };
     std::atomic<double> m_inertiaSpeed { 0.0 };
     std::atomic<double> m_releaseTargetSpeed { 0.0 };
+    std::atomic<double> m_releaseHandoffThreshold { 0.02 };
+    std::atomic<bool> m_preserveMomentumAtHandoff { false };
     std::atomic<double> m_readPosition { 0.0 };
     std::atomic<double> m_trackSampleRate { 44100.0 };
     std::atomic<uint64_t> m_lastMoveNs { 0 };

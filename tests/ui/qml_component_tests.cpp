@@ -44,6 +44,9 @@ int main()
     const auto settingsWindow = read("src/qml/settings/SettingsWindow.qml");
     const auto applicationBootstrap = read("src/app/ApplicationBootstrap.cpp");
     const auto performancePads = read("src/qml/performance/PerformancePads.qml");
+    const auto waveformScreen = read("src/qml/performance/PerformanceWaveformScreen.qml");
+    const auto beatFxPanel = read("src/qml/performance/PerformanceBeatFxPanel.qml");
+    const auto deckQuickPanel = read("src/qml/deck/PerformanceDeckQuickPanel.qml");
     const auto flx10Mapping = read("src/controllers/mappings/midi/DDJ-FLX10.brockdj.xml");
     const auto engineHeader = read("src/deck/DjEngine.h");
     const auto midiManagerHeader = read("src/controllers/midi/MidiControllerManager.h");
@@ -120,7 +123,11 @@ int main()
                   && flx10Mapping.find("paramId=\"library_view_toggle\" status=\"0x96\" control=\"0x7A\"")
                       != std::string::npos,
                   "FLX10 Slip Reverse and View controls use the documented notes");
-    ok &= require(flx10Mapping.find("paramId=\"beat_fx_on\" status=\"0x94\" control=\"0x46\" type=\"momentary\"")
+    ok &= require(flx10Mapping.find("paramId=\"beat_fx_on\" status=\"0x94\" control=\"0x47\" type=\"momentary\"")
+                      != std::string::npos
+                  && flx10Mapping.find("paramId=\"beat_fx_beat_minus\" status=\"0x94\" control=\"0x4A\"")
+                      != std::string::npos
+                  && flx10Mapping.find("paramId=\"beat_fx_beat_plus\" status=\"0x94\" control=\"0x4B\"")
                       != std::string::npos
                   && flx10Mapping.find("paramId=\"sound_color_fx_filter\" status=\"0x96\" control=\"0x05\"")
                       != std::string::npos
@@ -155,6 +162,8 @@ int main()
         return flx10Mapping.find(prefix + msb + "\"") != std::string::npos
             && flx10Mapping.find(prefix + lsb + "\"") != std::string::npos;
     };
+    ok &= require(has14BitPair("beat_fx_level_depth", "0xB4", "0x02", "0x22"),
+                  "FLX10 Beat FX LEVEL/DEPTH maps its complete documented 14-bit pair");
     ok &= require(has14BitPair("deckA_gain", "0xB0", "0x04", "0x24")
                   && has14BitPair("deckB_gain", "0xB1", "0x04", "0x24")
                   && has14BitPair("deckA_eqHigh", "0xB0", "0x07", "0x27")
@@ -192,5 +201,19 @@ int main()
                   && flx10Mapping.find("paramId=\"beat_fx_channel_master\" status=\"0x94\" control=\"0x14\"")
                       != std::string::npos,
                   "FLX10 Beat FX channel selector follows CH1, CH2 and Master notes");
+    ok &= require(waveformScreen.find("property string leftPanel: \"deck\"")
+                      != std::string::npos
+                  && waveformScreen.find("Math.min(230, Math.max(176, width * 0.155))")
+                      != std::string::npos
+                  && waveformScreen.find("readonly property real handleWidth: 22")
+                      != std::string::npos,
+                  "performance song information is open by default with compact side handles");
+    ok &= require(deckQuickPanel.find("root.engine.trackTitle") != std::string::npos
+                  && deckQuickPanel.find("root.engine.trackArtist") != std::string::npos,
+                  "compact deck side panel shows real song information");
+    ok &= require(beatFxPanel.find("function stepBeatDivision(direction)") != std::string::npos
+                  && beatFxPanel.find("fx.setBeatDivision(1, divisions[index].value)")
+                      != std::string::npos,
+                  "compact Beat FX panel exposes explicit beat length arrows");
     return ok ? 0 : 1;
 }

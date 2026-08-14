@@ -563,7 +563,8 @@ void MidiControllerManager::refreshTransportAndLoopLeds(QChar deck, DjEngine* en
     sendMappedNoteLed(prefix + QStringLiteral("loop_out"), loopOutSet);
     sendMappedNoteLed(prefix + QStringLiteral("loop_4beat"), engine->loopActive());
     sendMappedNoteLed(prefix + QStringLiteral("loop_reloop"), engine->loopActive());
-    sendMappedNoteLed(prefix + QStringLiteral("beat_sync"), engine->syncEnabled());
+    sendMappedNoteLed(prefix + QStringLiteral("beat_sync"),
+                      engine->syncEnabled() || engine->isSyncMaster());
     sendMappedNoteLed(prefix + QStringLiteral("key_sync"), engine->keylock());
     sendMappedNoteLed(prefix + QStringLiteral("keylock"), engine->keylock());
     sendMappedNoteLed(prefix + QStringLiteral("quantize"), engine->quantizeEnabled());
@@ -769,7 +770,14 @@ void MidiControllerManager::connectFxManager(FxManager* fxManager)
     {
         if (!m_fxManager)
             return;
-        const bool active = m_fxManager->wetDry1() > 0.001f;
+        const float currentWet = std::clamp(m_fxManager->wetDry1(), 0.0f, 1.0f);
+        if (currentWet > 0.001f)
+            m_beatFxLevelDepth = currentWet;
+        if (m_applyingBeatFxWet) {
+            refreshFxLeds();
+            return;
+        }
+        const bool active = currentWet > 0.001f;
         if (m_beatFxActive != active) {
             m_beatFxActive = active;
             emit beatFxActiveChanged();
@@ -818,7 +826,7 @@ void MidiControllerManager::connectFxManager(FxManager* fxManager)
 void MidiControllerManager::applyBeatFxState()
 {
     const EffectType type = midi_internal::beatFxTypeForPosition(m_beatFxPosition);
-    const float wet = m_beatFxActive ? 1.0f : 0.0f;
+    const float wet = m_beatFxActive ? m_beatFxLevelDepth : 0.0f;
 
     if (m_fxManager) {
         const MidiBeatFxTarget target = m_beatFxTarget;
@@ -830,7 +838,9 @@ void MidiControllerManager::applyBeatFxState()
                 targetDeck == deck);
         }
         m_applyingBeatFxRouting = false;
+        m_applyingBeatFxWet = true;
         m_fxManager->setWetDry1(wet);
+        m_applyingBeatFxWet = false;
         AudioEngine::setMasterFx(target == MidiBeatFxTarget::Master ? type : EffectType::None,
                                  target == MidiBeatFxTarget::Master ? wet : 0.0f);
     } else {
@@ -1552,6 +1562,30 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
                 }
                 return;
             }
+        }
+        if (id == QStringLiteral("beat_fx_level_depth")) {
+            m_beatFxLevelDepth = std::clamp(value, 0.0f, 1.0f);
+            if (m_beatFxActive)
+                applyBeatFxState();
+            return;
+        }
+        if (id == QStringLiteral("beat_fx_beat_minus")
+            || id == QStringLiteral("beat_fx_beat_plus")) {
+            if (value >= 0.5f && m_fxManager) {
+                static constexpr std::array<float, 7> divisions {
+                    0.0625f, 0.125f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f
+                };
+                const float current = m_fxManager->beatDiv1();
+                auto nearest = std::min_element(
+                    divisions.begin(), divisions.end(), [current](float a, float b) {
+                        return std::abs(a - current) < std::abs(b - current);
+                    });
+                int index = static_cast<int>(std::distance(divisions.begin(), nearest));
+                index += id.endsWith(QStringLiteral("plus")) ? 1 : -1;
+                index = std::clamp(index, 0, static_cast<int>(divisions.size()) - 1);
+                m_fxManager->setBeatDivision(1, divisions[static_cast<std::size_t>(index)]);
+            }
+            return;
         }
         if (id == QStringLiteral("beat_fx_on")) {
             const bool active = value >= 0.5f;
