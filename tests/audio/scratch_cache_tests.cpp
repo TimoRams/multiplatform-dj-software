@@ -130,28 +130,44 @@ int main(int argc, char** argv)
     scratch.processScratchTracking(2000, 0.0, 8.0, {&loopOut, 0, 512});
     ok &= require(finiteBlock(loopOut), "position tracker remains finite after generation switch");
 
-    // Sparse jog ticks describe a moving platter, not a sequence of stops.
-    // Velocity feed-forward may bridge one callback, but the absolute target
-    // must pull the reader back immediately when that command goes stale.
+    // Sparse jog ticks describe a moving platter, not a sequence of stops. The
+    // target given to a callback is a snapshot from before it started, so the
+    // hand keeps moving for the whole block it renders: the reader is allowed
+    // to lead by that block plus the age the event already had, and no further.
+    // Once the command goes stale the absolute target pulls it back.
+    constexpr double kBlockLeadSamples = 512.0 + 0.002 * 48'000.0;  // block + input lead
     scratch.reset(10'000);
     scratch.processScratchTracking(10'512, 1.0, 8.0, {&loopOut, 0, 512});
-    ok &= require(scratch.readPosition() > 10'512,
+    const double forwardLead = scratch.readPosition() - 10'512;
+    ok &= require(forwardLead > 0.0,
                   "moving-reference tracker bridges a sparse forward jog tick");
-    ok &= require(scratch.readPosition() <= 10'800.01,
-                  "forward jog prediction remains bounded to six milliseconds");
+    ok &= require(forwardLead <= kBlockLeadSamples + 1.0,
+                  "forward jog prediction stays within one callback of the hand");
+    // The hand estimate is carried across blocks and corrected rather than
+    // rebuilt, so a command that goes stale is walked back over the next couple
+    // of blocks instead of snapping. It must still converge, and monotonically.
     scratch.processScratchTracking(10'512, 0.0, 8.0, {&loopOut, 0, 512});
-    ok &= require(std::abs(scratch.readPosition() - 10'512) < 1.0,
-                  "stale forward velocity cannot drift beyond the hand target");
+    const double forwardAfterOne = scratch.readPosition() - 10'512;
+    ok &= require(forwardAfterOne < forwardLead,
+                  "stale forward velocity is pulled back toward the hand target");
+    scratch.processScratchTracking(10'512, 0.0, 8.0, {&loopOut, 0, 512});
+    ok &= require(scratch.readPosition() - 10'512 < forwardAfterOne * 0.5,
+                  "stale forward command keeps converging on the hand target");
 
     scratch.reset(20'000);
     scratch.processScratchTracking(19'488, -1.0, 8.0, {&loopOut, 0, 512});
-    ok &= require(scratch.readPosition() < 19'488,
+    const double reverseLead = 19'488 - scratch.readPosition();
+    ok &= require(reverseLead > 0.0,
                   "moving-reference tracker bridges a sparse reverse jog tick");
-    ok &= require(scratch.readPosition() >= 19'199.99,
-                  "reverse jog prediction remains bounded to six milliseconds");
+    ok &= require(reverseLead <= kBlockLeadSamples + 1.0,
+                  "reverse jog prediction stays within one callback of the hand");
     scratch.processScratchTracking(19'488, 0.0, 8.0, {&loopOut, 0, 512});
-    ok &= require(std::abs(scratch.readPosition() - 19'488) < 1.0,
-                  "stale reverse velocity cannot drift beyond the hand target");
+    const double reverseAfterOne = 19'488 - scratch.readPosition();
+    ok &= require(reverseAfterOne < reverseLead,
+                  "stale reverse velocity is pulled back toward the hand target");
+    scratch.processScratchTracking(19'488, 0.0, 8.0, {&loopOut, 0, 512});
+    ok &= require(19'488 - scratch.readPosition() < reverseAfterOne * 0.5,
+                  "stale reverse command keeps converging on the hand target");
 
     const auto stats = scratch.cacheStats();
     ok &= require(stats.diskReadsFromAudioThread == 0, "diskReadsFromAudioThread must remain zero");

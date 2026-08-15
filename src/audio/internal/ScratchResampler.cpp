@@ -43,6 +43,7 @@ void ScratchResampler::reset(double readPositionSamples) noexcept
     m_lastRate = 0.0;
     m_smoothedRate = 0.0;
     m_trackVel = 0.0;
+    m_referenceValid = false;
 }
 
 void ScratchResampler::setReadPositionSamples(double readPositionSamples) noexcept
@@ -77,6 +78,16 @@ void ScratchResampler::setTrackCacheSource(AudioPageCache* cache, AudioCacheHand
     m_sourceSize = 0;
     m_bufferOriginSample = m_readPos;
     m_starvationGain = 0.0f;
+}
+
+ScratchMotionStats ScratchResampler::motionStats() const noexcept
+{
+    return {m_statMinRate.load(std::memory_order_relaxed),
+            m_statMaxRate.load(std::memory_order_relaxed),
+            m_statMaxRateStep.load(std::memory_order_relaxed),
+            m_statTrackingError.load(std::memory_order_relaxed),
+            m_statLead.load(std::memory_order_relaxed),
+            m_statLeadLimitedBlocks.load(std::memory_order_relaxed)};
 }
 
 ScratchCacheStats ScratchResampler::cacheStats() const noexcept
@@ -331,7 +342,8 @@ void ScratchResampler::processBlock(double rate,
 double ScratchResampler::processScratchTracking(double targetPosSamples,
                                                 double commandedRate,
                                                 double maxAbsRate,
-                                                const juce::AudioSourceChannelInfo& output) noexcept
+                                                const juce::AudioSourceChannelInfo& output,
+                                                double inputLeadSeconds) noexcept
 {
     if (!output.buffer || output.numSamples <= 0) {
         if (output.buffer)
@@ -364,6 +376,14 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
     // brake sound when USB delivers discrete or batched jog events. The measured
     // hand velocity supplies the moving-reference term while the position error
     // remains authoritative, so no long-term drift is possible.
+    //
+    // The bandwidth is deliberately a constant. Making it follow the error size
+    // was tried and measured worse: the staleness of the last controller event
+    // varies by up to a couple of milliseconds of travel from block to block,
+    // which is the same error magnitude a real hand reversal produces, so an
+    // error-driven bandwidth cannot tell them apart and simply lets the event
+    // quantisation through as rate modulation. Per-sample rate continuity at 1x
+    // degraded roughly six-fold for no meaningful gain in reversal tracking.
     constexpr double kTrackHz = 52.0;
     constexpr double kTwoPi = 6.28318530717958647692;
     const double omega = kTwoPi * kTrackHz;
@@ -381,42 +401,133 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
     float* out0 = outChannels > 0 ? output.buffer->getWritePointer(0, start) : nullptr;
     float* out1 = outChannels > 1 ? output.buffer->getWritePointer(1, start) : nullptr;
 
-    // Feed-forward may lead the last received target by only a few milliseconds.
-    // This bridges USB/audio callback cadence without allowing a stale velocity
-    // to run the read head away after the platter stops.
-    // Short, slow movements should stop almost exactly under the hand. Faster
-    // throws get a longer bridge across USB packet gaps, while micro-scratches
-    // use only ~2.5 ms of look-ahead and therefore avoid a digital-sounding
-    // overshoot/correction cycle.
-    const double speedBlend = std::clamp(std::abs(referenceRate) / 1.5, 0.0, 1.0);
-    const double maximumPredictionSeconds = 0.0025 + 0.0035 * speedBlend;
-    const double predictionSamples = std::abs(referenceVelocity)
-        * std::min(maximumPredictionSeconds,
-                   static_cast<double>(numSamples) / outSr);
-    const double corridorLow = target - predictionSamples;
-    const double corridorHigh = target + predictionSamples;
+    // `target` is where the hand was when the last controller event arrived, and
+    // the audio produced here is played out over the whole block. Holding that
+    // snapshot still for every sample asks the read head to stop while the
+    // platter is in fact still turning: it runs into the lead limit part-way
+    // through the block, freezes, then lurches when the next target arrives.
+    // That cycle is what makes slow drags sound digital and fast drags chop.
+    //
+    // Advance the target with the measured hand velocity instead. Sample i is
+    // heard dt later than sample 0, so the hand has moved that much further by
+    // then, and a fixed input lead absorbs the age the event already had.
+    //
+    // Shortening this horizon when the reported velocity is changing fast — so
+    // that a reversal predicts less far past the turn — was tried and measured
+    // worse: the overshoot barely moved while per-sample rate continuity through
+    // an alternating scratch degraded by a factor of twenty, because the horizon
+    // also sets the runaway bound below and collapsing both together makes the
+    // guard fire during ordinary movement.
+    // The lead is supplied by the caller because it depends on which input is
+    // driving: a jog ring's target is a couple of milliseconds old, an on-screen
+    // drag's is most of a UI frame old. Assuming the former for the latter
+    // leaves the head permanently trailing, and every arriving event then lands
+    // as a position correction — which is heard as a shake on slow drags.
+    const double kInputLeadSeconds =
+        std::clamp(std::isfinite(inputLeadSeconds) ? inputLeadSeconds : 0.002,
+                   0.002, 0.030);
+    const double blockSeconds = static_cast<double>(numSamples) / outSr;
+    const double maxLeadSeconds = kInputLeadSeconds + blockSeconds;
+    // Runaway guard only. The bound follows whichever of the commanded and the
+    // actual tracker velocity is larger, so it stays clear of the head both
+    // while it is catching up and while it is coasting out a movement whose
+    // command has already decayed — in neither case may it snap the position.
+    // A stale command is handled by the tracker itself: the controller decays
+    // the reference velocity to zero within a few milliseconds and the position
+    // term then glides the head onto the target with no jump.
+    // The moving target is itself hard-clamped below, so the head can only
+    // overshoot it transiently — the guard therefore needs real headroom above
+    // the extrapolation horizon, or it fires during ordinary steady motion and
+    // collapses onto the slack term at every direction change, snapping the
+    // position exactly where the scratch is most sensitive.
+    constexpr double kRunawayHorizonFactor = 4.0;
+    constexpr double kRunawaySlackSamples = 256.0;
+    const double targetStep = referenceVelocity * dt;
+    const double movingTargetLimit = target + referenceVelocity * maxLeadSeconds;
+
+    // Where the hand is estimated to be right now, given the event we have and
+    // how old it already is.
+    const double handNow = target + referenceVelocity * kInputLeadSeconds;
+
+    // Rebuilding this estimate from the newly arrived event at every block would
+    // step it by however far the hand moved since the last one — negligible at a
+    // two millisecond jog cadence, but a sixth of a frame's travel for a drag
+    // reporting once per UI frame, and a step in the reference is a step in the
+    // output rate. So the estimate persists across blocks and the new event only
+    // corrects it, spread evenly over the block. The reference stays continuous
+    // while position authority is unchanged: every block still ends up at the
+    // hand's real position, it just gets there without a discontinuity.
+    if (!m_referenceValid) {
+        m_referencePos = handNow;
+        m_referenceValid = true;
+    }
+    const double referenceCorrection = (handNow - m_referencePos)
+        / static_cast<double>(numSamples);
+    double movingTarget = m_referencePos;
+
+    double statMinRate = 0.0;
+    double statMaxRate = 0.0;
+    double statMaxRateStep = 0.0;
+    double previousRate = m_smoothedRate;
+    bool leadLimited = false;
 
     for (int i = 0; i < numSamples; ++i) {
-        const double err = target - m_readPos;
+        const double err = movingTarget - m_readPos;
         const double accel = omega * omega * err
             + 2.0 * omega * (referenceVelocity - m_trackVel);
         m_trackVel = std::clamp(m_trackVel + accel * dt, -maxVel, maxVel);
 
         const double rate = std::clamp(m_trackVel * dt, -absMaxRate, absMaxRate);
 
+        if (i == 0) {
+            statMinRate = statMaxRate = rate;
+        } else {
+            statMinRate = std::min(statMinRate, rate);
+            statMaxRate = std::max(statMaxRate, rate);
+        }
+        statMaxRateStep = std::max(statMaxRateStep, std::abs(rate - previousRate));
+        previousRate = rate;
+
         m_readPos = wrapPosition(m_readPos);
         writeScratchOutput(out0, out1, i, windowReady && positionInWindow(m_readPos));
         m_readPos += rate;
+
+        movingTarget += targetStep + referenceCorrection;
+        movingTarget = referenceVelocity >= 0.0
+            ? std::min(movingTarget, movingTargetLimit)
+            : std::max(movingTarget, movingTargetLimit);
+
         if (!m_loopActive) {
-            if (m_readPos > corridorHigh && m_trackVel > 0.0) {
-                m_readPos = corridorHigh;
-                m_trackVel = 0.0;
-            } else if (m_readPos < corridorLow && m_trackVel < 0.0) {
-                m_readPos = corridorLow;
-                m_trackVel = 0.0;
+            // The bound scales with whichever velocity is currently larger, the
+            // commanded one or the head's own. Closing a gap and coasting a
+            // decayed command both stay inside it, so the guard only engages on
+            // a genuinely runaway position and never snaps ordinary movement.
+            const double maxLeadSamples =
+                std::max(std::abs(referenceVelocity), std::abs(m_trackVel))
+                    * maxLeadSeconds * kRunawayHorizonFactor
+                + kRunawaySlackSamples;
+            const double lead = m_readPos - target;
+            if (lead > maxLeadSamples) {
+                m_readPos = target + maxLeadSamples;
+                m_trackVel = std::min(m_trackVel, referenceVelocity);
+                leadLimited = true;
+            } else if (lead < -maxLeadSamples) {
+                m_readPos = target - maxLeadSamples;
+                m_trackVel = std::max(m_trackVel, referenceVelocity);
+                leadLimited = true;
             }
         }
     }
+
+    m_referencePos = movingTarget;
+
+    m_statMinRate.store(statMinRate, std::memory_order_relaxed);
+    m_statMaxRate.store(statMaxRate, std::memory_order_relaxed);
+    m_statMaxRateStep.store(statMaxRateStep, std::memory_order_relaxed);
+    m_statTrackingError.store(target - m_readPos, std::memory_order_relaxed);
+    m_statLead.store(m_readPos - target, std::memory_order_relaxed);
+    if (leadLimited)
+        m_statLeadLimitedBlocks.fetch_add(1, std::memory_order_relaxed);
 
     m_smoothedRate = m_trackVel * dt;
     m_lastRate = m_smoothedRate;

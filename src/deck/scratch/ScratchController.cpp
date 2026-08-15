@@ -54,6 +54,9 @@ void ScratchController::startScratch(double audioSamplePos,
     m_preserveMomentumAtHandoff.store(false, std::memory_order_relaxed);
     m_readPosition.store(audioSamplePos, std::memory_order_relaxed);
     m_lastMoveNs.store(nowNs(), std::memory_order_relaxed);
+    // A new grab may come from a different input than the last one, so the
+    // cadence is re-learned from its first event rather than inherited.
+    m_eventIntervalMs.store(0.0, std::memory_order_relaxed);
     m_releaseEpoch.fetch_add(1, std::memory_order_acq_rel);
     m_appliedReleaseSpeedGeneration.store(
         m_releaseSpeedGeneration.load(std::memory_order_acquire),
@@ -294,17 +297,38 @@ void ScratchController::submitHandDelta(double deltaTrackSec, double dtSec) noex
     m_smoothedSpeed.store(velocity, std::memory_order_relaxed);
     m_commandedHandSpeed.store(velocity, std::memory_order_relaxed);
     m_lastMoveNs.store(nowNs(), std::memory_order_relaxed);
+
+    // Track how often this input actually reports. Smoothed so one late frame
+    // does not stretch the hold, and clamped so a stall cannot make a lifted
+    // hand coast on. The first event adopts its interval outright, otherwise a
+    // drag would spend its opening frames behaving as if it were a jog ring.
+    const double intervalMs = std::clamp(dtSec * 1000.0, 0.0, 40.0);
+    const double previous = m_eventIntervalMs.load(std::memory_order_relaxed);
+    m_eventIntervalMs.store(previous <= 0.0 ? intervalMs
+                                            : previous + (intervalMs - previous) * 0.25,
+                            std::memory_order_relaxed);
 }
 
 double ScratchController::commandedHandSpeed() const noexcept
 {
     const double commanded = m_commandedHandSpeed.load(std::memory_order_relaxed);
     const double idleMs = timeSinceLastMoveMs();
-    if (idleMs <= m_config.commandVelocityHoldMs)
+
+    // The configured hold and decay are sized for a jog ring reporting every
+    // couple of milliseconds. Applied unchanged to an on-screen drag, which can
+    // only report once per UI frame, the command collapses to a fraction of
+    // itself between frames and snaps back on the next one — a velocity pulse at
+    // the frame rate, felt as shaking on slow drags and as lag on fast ones. So
+    // both stretch with the observed cadence, with the configured values as
+    // floors: a jog ring sees exactly the behaviour it always did.
+    const double intervalMs = m_eventIntervalMs.load(std::memory_order_relaxed);
+    const double holdMs = std::max(m_config.commandVelocityHoldMs, intervalMs * 1.25);
+    if (idleMs <= holdMs)
         return commanded;
 
-    const double tauMs = std::max(1.0, m_config.commandVelocityDecayTauMs);
-    const double gain = std::exp(-(idleMs - m_config.commandVelocityHoldMs) / tauMs);
+    const double tauMs = std::max({1.0, m_config.commandVelocityDecayTauMs,
+                                   intervalMs * 0.5});
+    const double gain = std::exp(-(idleMs - holdMs) / tauMs);
     const double decayed = commanded * gain;
     return std::abs(decayed) < m_config.minScratchSpeed ? 0.0 : decayed;
 }

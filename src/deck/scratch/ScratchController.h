@@ -167,6 +167,13 @@ public:
     // producing ticks. Unlike smoothedSpeed(), audio feedback never overwrites
     // this value, so the position tracker can interpolate sparse MIDI events.
     [[nodiscard]] double commandedHandSpeed() const noexcept;
+
+    // Observed interval between input events, in seconds. The audio thread uses
+    // it to know how stale the hand target it was handed already is.
+    [[nodiscard]] double eventIntervalSeconds() const noexcept
+    {
+        return m_eventIntervalMs.load(std::memory_order_relaxed) * 0.001;
+    }
     [[nodiscard]] double readPositionSamples() const noexcept {
         return m_readPosition.load(std::memory_order_relaxed);
     }
@@ -199,6 +206,11 @@ private:
     std::atomic<double> m_readPosition { 0.0 };
     std::atomic<double> m_trackSampleRate { 44100.0 };
     std::atomic<uint64_t> m_lastMoveNs { 0 };
+    // Smoothed interval between input events. A jog ring reports every couple of
+    // milliseconds; an on-screen drag can only report once per UI frame. The
+    // command hold and decay below are stretched to match, so the same movement
+    // tracks the same way whichever device is driving it.
+    std::atomic<double> m_eventIntervalMs { 0.0 };
     std::atomic<double> m_submittedReleaseSpeed { 0.0 };
     std::atomic<uint64_t> m_submittedReleaseEpoch { 0 };
     std::atomic<uint64_t> m_releaseSpeedGeneration { 0 };

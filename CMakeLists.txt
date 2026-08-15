@@ -974,6 +974,22 @@ target_compile_definitions(BrockDJ_scratch_cache_tests PRIVATE
 target_compile_features(BrockDJ_scratch_cache_tests PRIVATE cxx_std_23)
 add_test(NAME scratch_cache COMMAND BrockDJ_scratch_cache_tests)
 
+add_executable(BrockDJ_scratch_motion_tests
+    tests/audio/scratch_motion_tests.cpp
+    src/audio/cache/AudioPageCache.cpp
+    src/audio/cache/AudioCacheWorker.cpp
+    src/audio/internal/ScratchResampler.cpp
+)
+target_include_directories(BrockDJ_scratch_motion_tests PRIVATE src src/deck)
+target_link_libraries(BrockDJ_scratch_motion_tests PRIVATE
+    Qt6::Core juce::juce_core juce::juce_audio_basics juce::juce_audio_formats
+)
+target_compile_definitions(BrockDJ_scratch_motion_tests PRIVATE
+    JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1
+)
+target_compile_features(BrockDJ_scratch_motion_tests PRIVATE cxx_std_23)
+add_test(NAME scratch_motion COMMAND BrockDJ_scratch_motion_tests)
+
 add_executable(BrockDJ_cached_playback_tests
     tests/audio/cached_playback_tests.cpp
     src/audio/cache/AudioPageCache.cpp
@@ -1055,6 +1071,7 @@ set(_brockdj_executable_targets
     BrockDJ_waveform_line_render_tests
     BrockDJ_audio_page_cache_tests
     BrockDJ_scratch_cache_tests
+    BrockDJ_scratch_motion_tests
     BrockDJ_cached_playback_tests
     BrockDJ_time_stretch_tests
     BrockDJ_database_worker_tests
