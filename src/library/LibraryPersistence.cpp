@@ -1,5 +1,5 @@
 #include "LibraryDatabase.h"
-#include "AnalysisCacheVersion.h"
+#include "analysis/AnalysisTypes.h"
 #include "LibraryTableModel.h"
 #include "waveform/WaveformCache.h"
 
@@ -225,7 +225,7 @@ void LibraryDatabase::updateAnalysisData(const QString& trackId,
     q.bindValue(":key", newKey);
     q.bindValue(":firstBeatSample", firstBeatSample);
     q.bindValue(":sampleRate", sampleRate);
-    q.bindValue(":analysisVersion", analysis::kAnalysisVersion);
+    q.bindValue(":analysisVersion", analysis::kCurrentAnalysisVersion);
     q.bindValue(":bpmConfidence", confidence.bpmConfidence);
     q.bindValue(":beatConfidence", confidence.beatConfidence);
     q.bindValue(":downbeatConfidence", confidence.downbeatConfidence);

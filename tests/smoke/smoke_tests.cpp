@@ -1,4 +1,5 @@
-#include "controllers/DeckIndex.h"
+#include "controllers/flx10/Flx10ControllerIdentity.h"
+#include "domain/DeckId.h"
 #include "analysis/AnalysisValidation.h"
 #include "analysis/AnalysisTypes.h"
 #include "audio/internal/HermiteKernel.h"
@@ -26,11 +27,17 @@ void expect(bool condition, const char* message)
 
 void testDeckIndex()
 {
-    expect(controllers::isValidDeckIndex(1), "deck 1 valid");
-    expect(controllers::isValidDeckIndex(4), "deck 4 valid");
-    expect(!controllers::isValidDeckIndex(0), "deck 0 invalid");
-    expect(controllers::isFlx10NativeDeck(2), "FLX10 deck 2 native");
-    expect(!controllers::isFlx10NativeDeck(3), "FLX10 deck 3 not native");
+    expect(domain::deckFromHardwareNumber(1) == domain::DeckId::A, "deck 1 is deck A");
+    expect(domain::deckFromHardwareNumber(4) == domain::DeckId::D, "deck 4 is deck D");
+    expect(!domain::deckFromHardwareNumber(0).has_value(), "deck 0 invalid");
+    expect(!domain::deckFromHardwareNumber(5).has_value(), "deck 5 invalid");
+    expect(domain::toHardwareNumber(domain::DeckId::C) == 3, "deck C is hardware deck 3");
+    expect(domain::deckFromChannelId(QStringLiteral("deckB")) == domain::DeckId::B, "deckB parses");
+    expect(!domain::deckFromChannelId(QStringLiteral("deckE")).has_value(), "deckE rejected");
+    expect(!domain::deckFromChannelId(QStringLiteral("deck")).has_value(), "bare deck rejected");
+    expect(domain::toChannelId(domain::DeckId::D) == QLatin1String("deckD"), "deck D channel id");
+    expect(flx10::isNativeDeckNumber(2), "controller deck 2 native");
+    expect(!flx10::isNativeDeckNumber(3), "controller deck 3 not native");
 }
 
 void testHermiteSampleAt()

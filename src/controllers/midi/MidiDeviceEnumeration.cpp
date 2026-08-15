@@ -1,8 +1,37 @@
 #include "MidiControllerManager.h"
-#include "MidiControllerManagerInternal.h"
+#include "MidiParameterDispatch.h"
 #include "AlsaMidiLineParser.h"
+#include "controllers/flx10/Flx10ControllerIdentity.h"
 
-using namespace midi_internal;
+using namespace midi;
+
+namespace {
+
+// Small adapters over the juce device lists this file walks. Nothing outside
+// enumeration needs them.
+QString toQString(const juce::String& value)
+{
+    return QString::fromStdString(value.toStdString());
+}
+
+bool containsIdentifier(const std::vector<juce::String>& ids, const juce::String& needle)
+{
+    return std::ranges::find(ids, needle) != ids.end();
+}
+
+template <typename DeviceList>
+void appendMidiDeviceNames(const DeviceList& devices,
+                           std::vector<juce::String>& outIdentifiers,
+                           QStringList& outNames)
+{
+    outIdentifiers.reserve(outIdentifiers.size() + devices.size());
+    for (const auto& dev : devices) {
+        outIdentifiers.push_back(dev.identifier);
+        outNames.push_back(toQString(dev.name));
+    }
+}
+
+} // namespace
 
 #include "app/SettingsManager.h"
 
@@ -11,6 +40,9 @@ using namespace midi_internal;
 #include <QProcess>
 #include <QRegularExpression>
 #include <QtGlobal>
+
+#include <algorithm>
+#include <ranges>
 
 #if defined(Q_OS_LINUX)
 #include <alsa/asoundlib.h>
@@ -37,7 +69,7 @@ bool MidiControllerManager::refreshMidiDeviceCache()
         QStringList result;
         result.reserve(static_cast<qsizetype>(identifiers.size()));
         for (const auto& identifier : identifiers)
-            result.push_back(midi_internal::toQString(identifier));
+            result.push_back(toQString(identifier));
         return result;
     };
     const QStringList previousInputIdentifiers = identifiersAsStrings(m_availableInputDeviceIdentifiers);
@@ -51,14 +83,14 @@ bool MidiControllerManager::refreshMidiDeviceCache()
     m_availableInputDeviceIdentifiers.push_back(kAllMidiInputsIdentifier);
     m_availableInputDeviceNames.push_back(QStringLiteral("All MIDI Inputs"));
 
-    midi_internal::appendMidiDeviceNames(juce::MidiInput::getAvailableDevices(),
+    appendMidiDeviceNames(juce::MidiInput::getAvailableDevices(),
                           m_availableInputDeviceIdentifiers,
                           m_availableInputDeviceNames);
 
     m_availableOutputDeviceIdentifiers.clear();
     m_availableOutputDeviceNames.clear();
 
-    midi_internal::appendMidiDeviceNames(juce::MidiOutput::getAvailableDevices(),
+    appendMidiDeviceNames(juce::MidiOutput::getAvailableDevices(),
                           m_availableOutputDeviceIdentifiers,
                           m_availableOutputDeviceNames);
 
@@ -95,14 +127,14 @@ void MidiControllerManager::rebuildControllerDeviceCache()
             continue;
 
         const QString name = m_availableInputDeviceNames.value(i);
-        if (midi_internal::looksLikeFlx10Name(name)) {
+        if (flx10::looksLikeControllerName(name)) {
             if (flx10Added)
                 continue;
 
             int preferredInput = i;
             for (int candidate = 0; candidate < static_cast<int>(m_availableInputDeviceIdentifiers.size()); ++candidate) {
                 if (isPseudoAlsaIdentifier(m_availableInputDeviceIdentifiers[static_cast<size_t>(candidate)])
-                        && midi_internal::looksLikeFlx10Name(m_availableInputDeviceNames.value(candidate))) {
+                        && flx10::looksLikeControllerName(m_availableInputDeviceNames.value(candidate))) {
                     preferredInput = candidate;
                     break;
                 }
@@ -210,7 +242,7 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
     if (!isPseudoAlsaIdentifier(pseudoIdentifier))
         return;
 
-    const QString id = midi_internal::toQString(pseudoIdentifier);
+    const QString id = toQString(pseudoIdentifier);
     const QStringList parts = id.split(':');
     if (parts.size() != 3) {
         qWarning() << "[MIDI] Invalid ALSA pseudo identifier:" << id;
@@ -324,7 +356,7 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                     ch = controlChange.channel;
                     a = controlChange.control;
                     b = controlChange.value;
-                    const int cc              = midi_internal::clampMidi7bit(a);
+                    const int cc              = midi::clampMidi7bit(a);
                     const int chClamped       = std::max(0, std::min(15, ch));
                     const int channelAwareMsgId = 10000 + chClamped * 2000 + 1000 + cc;
                     const int legacyMsgId       = cc + 1000;
@@ -349,10 +381,10 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                     }
                     if (acceptSource) {
                         float value;
-                        if (it != m_midiToParam.end() && midi_internal::isRelativeInteraction(it->second.interactionType)) {
-                            value = midi_internal::decodeRelativeCcValue(b, it->second.paramId);
+                        if (it != m_midiToParam.end() && midi::isRelativeInteraction(it->second.interactionType)) {
+                            value = midi::decodeRelativeCcValue(b, it->second.paramId);
                         } else {
-                            value = midi_internal::clampMidi7bit(b) / 127.0f;
+                            value = midi::clampMidi7bit(b) / 127.0f;
                         }
                         processDecodedMidiEvent(
                             msgId, value, false,
@@ -390,14 +422,14 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                     const auto nmText = noteTextRx.match(line);
                     if (nmText.hasMatch()) {
                         ch0  = std::max(0, std::min(15, nmText.captured(1).toInt()));
-                        note = midi_internal::clampMidi7bit(nmText.captured(2).toInt());
-                        vel  = nmText.captured(3).isEmpty() ? 0 : midi_internal::clampMidi7bit(nmText.captured(3).toInt());
+                        note = midi::clampMidi7bit(nmText.captured(2).toInt());
+                        vel  = nmText.captured(3).isEmpty() ? 0 : midi::clampMidi7bit(nmText.captured(3).toInt());
                     } else {
                         const auto nmA = noteParenRx.match(line);
                         if (nmA.hasMatch()) {
                             ch0  = std::max(0, std::min(15, nmA.captured(1).toInt() - 1));
-                            note = midi_internal::clampMidi7bit(nmA.captured(3).toInt());
-                            vel  = midi_internal::clampMidi7bit(nmA.captured(4).toInt());
+                            note = midi::clampMidi7bit(nmA.captured(3).toInt());
+                            vel  = midi::clampMidi7bit(nmA.captured(4).toInt());
                         } else {
                             // Format C: get note from note-name number or last available digit,
                             // velocity from "velocity N" or "vel N" suffix.
@@ -411,14 +443,14 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                             const auto nmB = noteVerboseRx.match(line);
                             if (nmB.hasMatch()) {
                                 ch0 = std::max(0, std::min(15, nmB.captured(1).toInt() - 1));
-                                note = midi_internal::clampMidi7bit(nmB.captured(2).toInt());
-                                vel = nmB.captured(3).isEmpty() ? 0 : midi_internal::clampMidi7bit(nmB.captured(3).toInt());
+                                note = midi::clampMidi7bit(nmB.captured(2).toInt());
+                                vel = nmB.captured(3).isEmpty() ? 0 : midi::clampMidi7bit(nmB.captured(3).toInt());
                             } else if (decodeTriple(ch, a, b)) {
                                 // Last resort only. It can be wrong for some aseqdump NoteOff
                                 // lines because the source port prefix contributes numbers.
                                 ch0  = std::max(0, std::min(15, ch));
-                                note = midi_internal::clampMidi7bit(a);
-                                vel  = midi_internal::clampMidi7bit(b);
+                                note = midi::clampMidi7bit(a);
+                                vel  = midi::clampMidi7bit(b);
                             }
                         }
                     }
@@ -552,13 +584,13 @@ void MidiControllerManager::openMidiInputByIdentifier(const juce::String& identi
         for (const auto& dev : devices) {
             auto input = juce::MidiInput::openDevice(dev.identifier, this);
             if (!input) {
-                qWarning() << "[MIDI] Failed to open input:" << midi_internal::toQString(dev.identifier);
+                qWarning() << "[MIDI] Failed to open input:" << toQString(dev.identifier);
                 continue;
             }
 
             input->start();
-            qDebug() << "[MIDI] Opened input:" << midi_internal::toQString(dev.name)
-                     << "id:" << midi_internal::toQString(dev.identifier);
+            qDebug() << "[MIDI] Opened input:" << toQString(dev.name)
+                     << "id:" << toQString(dev.identifier);
             m_midiInputs.push_back(std::move(input));
         }
 
@@ -569,31 +601,31 @@ void MidiControllerManager::openMidiInputByIdentifier(const juce::String& identi
 
     if (isPseudoAlsaIdentifier(identifier)) {
 #if defined(Q_OS_LINUX)
-        const QString selectedAlsaId = midi_internal::toQString(identifier);
+        const QString selectedAlsaId = toQString(identifier);
         const QStringList selectedAlsaParts = selectedAlsaId.split(':');
         if (selectedAlsaParts.size() == 3)
             m_primaryAlsaInputPort = selectedAlsaParts.at(1) + ":" + selectedAlsaParts.at(2);
 #endif
-        const int selectedIndex = midi_internal::indexOfIdentifier(m_availableInputDeviceIdentifiers, identifier);
+        const int selectedIndex = indexOfIdentifier(m_availableInputDeviceIdentifiers, identifier);
         const QString selectedName = (selectedIndex >= 0 && selectedIndex < m_availableInputDeviceNames.size())
             ? m_availableInputDeviceNames.at(selectedIndex)
             : QString();
-        const bool flx10Context = midi_internal::looksLikeFlx10Name(selectedName)
-            || normalizeControllerKeyFromXmlBase(getSelectedController()) == normalizeControllerKeyFromXmlBase(kBuiltInFlx10ControllerName)
-            || midi_internal::isBuiltInFlx10Mapping(getSelectedMapping());
+        const bool flx10Context = flx10::looksLikeControllerName(selectedName)
+            || normalizeControllerKeyFromXmlBase(getSelectedController()) == normalizeControllerKeyFromXmlBase(flx10::kControllerName)
+            || flx10::isBuiltInMapping(getSelectedMapping());
 
         if (flx10Context) {
-            const QString selectedClient = midi_internal::toQString(identifier).section(':', 1, 1);
+            const QString selectedClient = toQString(identifier).section(':', 1, 1);
             int started = 0;
             for (int i = 0; i < static_cast<int>(m_availableInputDeviceIdentifiers.size()); ++i) {
                 const auto& candidateId = m_availableInputDeviceIdentifiers[static_cast<size_t>(i)];
                 if (!isPseudoAlsaIdentifier(candidateId))
                     continue;
-                const QString candidateClient = midi_internal::toQString(candidateId).section(':', 1, 1);
+                const QString candidateClient = toQString(candidateId).section(':', 1, 1);
                 const bool sameAlsaClient = !selectedClient.isEmpty()
                     && candidateClient == selectedClient;
                 if (!sameAlsaClient
-                    && !midi_internal::looksLikeFlx10Name(m_availableInputDeviceNames.at(i))) {
+                    && !flx10::looksLikeControllerName(m_availableInputDeviceNames.at(i))) {
                     continue;
                 }
 
@@ -613,7 +645,7 @@ void MidiControllerManager::openMidiInputByIdentifier(const juce::String& identi
 
     auto input = juce::MidiInput::openDevice(identifier, this);
     if (!input) {
-        qWarning() << "[MIDI] Failed to open input:" << midi_internal::toQString(identifier);
+        qWarning() << "[MIDI] Failed to open input:" << toQString(identifier);
         return;
     }
 
@@ -625,13 +657,13 @@ bool MidiControllerManager::hasActiveMidiInput() const
 {
 #if defined(Q_OS_LINUX)
     const bool flx10Context = normalizeControllerKeyFromXmlBase(getSelectedController())
-            == normalizeControllerKeyFromXmlBase(kBuiltInFlx10ControllerName)
-        || midi_internal::isBuiltInFlx10Mapping(getSelectedMapping());
+            == normalizeControllerKeyFromXmlBase(flx10::kControllerName)
+        || flx10::isBuiltInMapping(getSelectedMapping());
     bool flx10AlsaAvailable = false;
     for (std::size_t index = 0; index < m_availableInputDeviceIdentifiers.size(); ++index) {
         if (isPseudoAlsaIdentifier(m_availableInputDeviceIdentifiers[index])
             && index < static_cast<std::size_t>(m_availableInputDeviceNames.size())
-            && midi_internal::looksLikeFlx10Name(
+            && flx10::looksLikeControllerName(
                 m_availableInputDeviceNames.at(static_cast<int>(index)))) {
             flx10AlsaAvailable = true;
             break;
@@ -678,18 +710,18 @@ void MidiControllerManager::openMidiOutputByIdentifier(const juce::String& ident
     if (identifier.isEmpty() || isPseudoAlsaIdentifier(identifier))
         return;
 
-    const int outputIndex = midi_internal::indexOfIdentifier(m_availableOutputDeviceIdentifiers, identifier);
+    const int outputIndex = indexOfIdentifier(m_availableOutputDeviceIdentifiers, identifier);
     const QString outputName = (outputIndex >= 0 && outputIndex < m_availableOutputDeviceNames.size())
         ? m_availableOutputDeviceNames.at(outputIndex)
-        : midi_internal::toQString(identifier);
+        : toQString(identifier);
 
 #if defined(Q_OS_LINUX)
     if (isPseudoAlsaOutputIdentifier(identifier)) {
         auto output = std::make_unique<AlsaMidiOutput>();
         QString errorMessage;
-        if (!output->open(midi_internal::toQString(identifier), &errorMessage)) {
+        if (!output->open(toQString(identifier), &errorMessage)) {
             qWarning() << "[MIDI OUT] Failed to open ALSA output:" << outputName
-                       << "id:" << midi_internal::toQString(identifier)
+                       << "id:" << toQString(identifier)
                        << "index:" << outputIndex
                        << "error:" << errorMessage;
             return;
@@ -711,7 +743,7 @@ void MidiControllerManager::openMidiOutputByIdentifier(const juce::String& ident
     auto output = juce::MidiOutput::openDevice(identifier);
     if (!output) {
         qWarning() << "[MIDI OUT] Failed to open output:" << outputName
-                   << "id:" << midi_internal::toQString(identifier)
+                   << "id:" << toQString(identifier)
                    << "index:" << outputIndex;
         return;
     }
@@ -733,29 +765,29 @@ int MidiControllerManager::findMatchingMidiOutputIndexForInput(int inputIndex) c
         return -1;
 
     const bool flx10Context = normalizeControllerKeyFromXmlBase(getSelectedController())
-            == normalizeControllerKeyFromXmlBase(kBuiltInFlx10ControllerName)
-        || midi_internal::isBuiltInFlx10Mapping(getSelectedMapping());
+            == normalizeControllerKeyFromXmlBase(flx10::kControllerName)
+        || flx10::isBuiltInMapping(getSelectedMapping());
     const QString inputName = (inputIndex >= 0 && inputIndex < m_availableInputDeviceNames.size())
         ? m_availableInputDeviceNames.at(inputIndex)
         : QString();
-    const QString inputKey = midi_internal::midiMatchKey(inputName);
+    const QString inputKey = flx10::matchKey(inputName);
 
-    if (flx10Context || midi_internal::looksLikeFlx10Name(inputName)) {
+    if (flx10Context || flx10::looksLikeControllerName(inputName)) {
         for (int i = 0; i < m_availableOutputDeviceNames.size(); ++i) {
-            if (midi_internal::looksLikeFlx10Name(m_availableOutputDeviceNames.at(i))
+            if (flx10::looksLikeControllerName(m_availableOutputDeviceNames.at(i))
                     && isPseudoAlsaOutputIdentifier(m_availableOutputDeviceIdentifiers[static_cast<size_t>(i)]))
                 return i;
         }
 
         for (int i = 0; i < m_availableOutputDeviceNames.size(); ++i) {
-            if (midi_internal::looksLikeFlx10Name(m_availableOutputDeviceNames.at(i)))
+            if (flx10::looksLikeControllerName(m_availableOutputDeviceNames.at(i)))
                 return i;
         }
     }
 
     if (!inputKey.isEmpty()) {
         for (int i = 0; i < m_availableOutputDeviceNames.size(); ++i) {
-            const QString outputKey = midi_internal::midiMatchKey(m_availableOutputDeviceNames.at(i));
+            const QString outputKey = flx10::matchKey(m_availableOutputDeviceNames.at(i));
             if (!outputKey.isEmpty()
                     && (outputKey.contains(inputKey) || inputKey.contains(outputKey)))
                 return i;
@@ -782,16 +814,16 @@ int MidiControllerManager::findMidiOutputIndexByName(const QString& nameOrIdenti
     }
 
     for (int i = 0; i < static_cast<int>(m_availableOutputDeviceIdentifiers.size()); ++i) {
-        if (midi_internal::toQString(m_availableOutputDeviceIdentifiers[static_cast<size_t>(i)]).compare(needle, Qt::CaseInsensitive) == 0)
+        if (toQString(m_availableOutputDeviceIdentifiers[static_cast<size_t>(i)]).compare(needle, Qt::CaseInsensitive) == 0)
             return i;
     }
 
-    const QString needleKey = midi_internal::midiMatchKey(needle);
+    const QString needleKey = flx10::matchKey(needle);
     if (needleKey.isEmpty())
         return -1;
 
     for (int i = 0; i < m_availableOutputDeviceNames.size(); ++i) {
-        const QString outputKey = midi_internal::midiMatchKey(m_availableOutputDeviceNames.at(i));
+        const QString outputKey = flx10::matchKey(m_availableOutputDeviceNames.at(i));
         if (outputKey.contains(needleKey) || needleKey.contains(outputKey))
             return i;
     }
@@ -807,7 +839,7 @@ void MidiControllerManager::logAvailableMidiPorts() const
     qInfo() << "Available MIDI INPUT ports:";
     for (int i = 0; i < m_availableInputDeviceNames.size(); ++i) {
         const QString id = (i >= 0 && i < static_cast<int>(m_availableInputDeviceIdentifiers.size()))
-            ? midi_internal::toQString(m_availableInputDeviceIdentifiers[static_cast<size_t>(i)])
+            ? toQString(m_availableInputDeviceIdentifiers[static_cast<size_t>(i)])
             : QString();
         qInfo().noquote() << QString("[%1] %2  id=\"%3\"")
                                  .arg(i)
@@ -818,7 +850,7 @@ void MidiControllerManager::logAvailableMidiPorts() const
     qInfo() << "Available MIDI OUTPUT ports:";
     for (int i = 0; i < m_availableOutputDeviceNames.size(); ++i) {
         const QString id = (i >= 0 && i < static_cast<int>(m_availableOutputDeviceIdentifiers.size()))
-            ? midi_internal::toQString(m_availableOutputDeviceIdentifiers[static_cast<size_t>(i)])
+            ? toQString(m_availableOutputDeviceIdentifiers[static_cast<size_t>(i)])
             : QString();
         qInfo().noquote() << QString("[%1] %2  id=\"%3\"")
                                  .arg(i)
@@ -830,19 +862,19 @@ void MidiControllerManager::logAvailableMidiPorts() const
 void MidiControllerManager::restoreSavedDeviceSelections()
 {
     const bool flx10Context = normalizeControllerKeyFromXmlBase(getSelectedController())
-            == normalizeControllerKeyFromXmlBase(kBuiltInFlx10ControllerName)
-        || midi_internal::isBuiltInFlx10Mapping(getSelectedMapping());
+            == normalizeControllerKeyFromXmlBase(flx10::kControllerName)
+        || flx10::isBuiltInMapping(getSelectedMapping());
     const auto inputId = SettingsManager::getInstance().getMidiInputIdentifier();
     juce::String savedInput = inputId.isEmpty()
         ? kAllMidiInputsIdentifier
         : juce::String::fromUTF8(inputId.toUtf8().constData());
 
-    const int savedInputIndex = midi_internal::indexOfIdentifier(
+    const int savedInputIndex = indexOfIdentifier(
         m_availableInputDeviceIdentifiers, savedInput);
     const bool savedInputAvailable = savedInputIndex >= 0;
     const bool savedInputIsFlx10Alsa = savedInputAvailable
         && isPseudoAlsaIdentifier(savedInput)
-        && midi_internal::looksLikeFlx10Name(m_availableInputDeviceNames.value(savedInputIndex));
+        && flx10::looksLikeControllerName(m_availableInputDeviceNames.value(savedInputIndex));
     if (flx10Context
         && (inputId.isEmpty()
             || savedInput == kAllMidiInputsIdentifier
@@ -850,9 +882,9 @@ void MidiControllerManager::restoreSavedDeviceSelections()
             || !savedInputIsFlx10Alsa)) {
         for (int i = 0; i < static_cast<int>(m_availableInputDeviceIdentifiers.size()); ++i) {
             const auto& identifier = m_availableInputDeviceIdentifiers[static_cast<size_t>(i)];
-            if (isPseudoAlsaIdentifier(identifier) && midi_internal::looksLikeFlx10Name(m_availableInputDeviceNames.at(i))) {
+            if (isPseudoAlsaIdentifier(identifier) && flx10::looksLikeControllerName(m_availableInputDeviceNames.at(i))) {
                 savedInput = identifier;
-                SettingsManager::getInstance().setMidiInputIdentifier(midi_internal::toQString(identifier));
+                SettingsManager::getInstance().setMidiInputIdentifier(toQString(identifier));
                 qInfo() << "[MIDI] Auto-selected FLX10 ALSA input"
                         << m_availableInputDeviceNames.at(i)
                         << "index:" << i;
@@ -861,7 +893,7 @@ void MidiControllerManager::restoreSavedDeviceSelections()
         }
     }
 
-    if (midi_internal::containsIdentifier(m_availableInputDeviceIdentifiers, savedInput))
+    if (containsIdentifier(m_availableInputDeviceIdentifiers, savedInput))
         openMidiInputByIdentifier(savedInput);
     else
         openMidiInputByIdentifier(kAllMidiInputsIdentifier);
@@ -870,7 +902,7 @@ void MidiControllerManager::restoreSavedDeviceSelections()
     // away. Drop that stale output before attempting to restore or auto-select
     // the newly enumerated FLX10 port (whose ALSA client id may have changed).
     if (!m_selectedMidiOutputIdentifier.isEmpty()
-        && !midi_internal::containsIdentifier(
+        && !containsIdentifier(
             m_availableOutputDeviceIdentifiers, m_selectedMidiOutputIdentifier)) {
         openMidiOutputByIdentifier({});
     }
@@ -882,7 +914,7 @@ void MidiControllerManager::restoreSavedDeviceSelections()
         const int outputIndex = findMidiOutputIndexByName(requestedOutput);
         if (outputIndex >= 0 && outputIndex < static_cast<int>(m_availableOutputDeviceIdentifiers.size())) {
             const juce::String identifier = m_availableOutputDeviceIdentifiers[static_cast<size_t>(outputIndex)];
-            SettingsManager::getInstance().setMidiOutputIdentifier(midi_internal::toQString(identifier));
+            SettingsManager::getInstance().setMidiOutputIdentifier(toQString(identifier));
             qInfo() << "[MIDI OUT] BROCKDJ_MIDI_OUT selected output" << requestedOutput
                     << "->" << m_availableOutputDeviceNames.at(outputIndex)
                     << "index:" << outputIndex;
@@ -895,7 +927,7 @@ void MidiControllerManager::restoreSavedDeviceSelections()
 
     if (!outputId.isEmpty()) {
         const juce::String savedOutput = juce::String::fromUTF8(outputId.toUtf8().constData());
-        if (midi_internal::containsIdentifier(m_availableOutputDeviceIdentifiers, savedOutput))
+        if (containsIdentifier(m_availableOutputDeviceIdentifiers, savedOutput))
             openMidiOutputByIdentifier(savedOutput);
     }
 
@@ -915,13 +947,13 @@ bool MidiControllerManager::autoOpenFlx10MidiOutputIfNeeded()
         return false;
 
     const bool flx10Context = normalizeControllerKeyFromXmlBase(getSelectedController())
-            == normalizeControllerKeyFromXmlBase(kBuiltInFlx10ControllerName)
-        || midi_internal::isBuiltInFlx10Mapping(getSelectedMapping());
+            == normalizeControllerKeyFromXmlBase(flx10::kControllerName)
+        || flx10::isBuiltInMapping(getSelectedMapping());
 
     int outputIndex = -1;
     if (flx10Context) {
         for (int i = 0; i < m_availableOutputDeviceNames.size(); ++i) {
-            if (midi_internal::looksLikeFlx10Name(m_availableOutputDeviceNames.at(i))
+            if (flx10::looksLikeControllerName(m_availableOutputDeviceNames.at(i))
                     && isPseudoAlsaOutputIdentifier(m_availableOutputDeviceIdentifiers[static_cast<size_t>(i)])) {
                 outputIndex = i;
                 break;
@@ -930,7 +962,7 @@ bool MidiControllerManager::autoOpenFlx10MidiOutputIfNeeded()
 
         if (outputIndex < 0) {
             for (int i = 0; i < m_availableOutputDeviceNames.size(); ++i) {
-                if (midi_internal::looksLikeFlx10Name(m_availableOutputDeviceNames.at(i))) {
+                if (flx10::looksLikeControllerName(m_availableOutputDeviceNames.at(i))) {
                     outputIndex = i;
                     break;
                 }
@@ -942,7 +974,7 @@ bool MidiControllerManager::autoOpenFlx10MidiOutputIfNeeded()
         return false;
 
     const juce::String identifier = m_availableOutputDeviceIdentifiers[static_cast<size_t>(outputIndex)];
-    SettingsManager::getInstance().setMidiOutputIdentifier(midi_internal::toQString(identifier));
+    SettingsManager::getInstance().setMidiOutputIdentifier(toQString(identifier));
     qInfo() << "[MIDI OUT] Auto-selected FLX10 output"
             << m_availableOutputDeviceNames.at(outputIndex)
             << "index:" << outputIndex;
@@ -957,7 +989,7 @@ void MidiControllerManager::selectMidiInputDevice(int index)
 
     const auto identifier = m_availableInputDeviceIdentifiers[static_cast<size_t>(index)];
     openMidiInputByIdentifier(identifier);
-    SettingsManager::getInstance().setMidiInputIdentifier(midi_internal::toQString(identifier));
+    SettingsManager::getInstance().setMidiInputIdentifier(toQString(identifier));
 }
 
 void MidiControllerManager::selectMidiOutputDevice(int index)
@@ -966,7 +998,7 @@ void MidiControllerManager::selectMidiOutputDevice(int index)
         return;
 
     const auto identifier = m_availableOutputDeviceIdentifiers[static_cast<size_t>(index)];
-    SettingsManager::getInstance().setMidiOutputIdentifier(midi_internal::toQString(identifier));
+    SettingsManager::getInstance().setMidiOutputIdentifier(toQString(identifier));
     openMidiOutputByIdentifier(identifier);
 }
 
@@ -992,7 +1024,7 @@ int MidiControllerManager::getSelectedMidiInputIndex() const
         return 0;
 
     const juce::String selectedId = juce::String::fromUTF8(selected.toUtf8().constData());
-    return midi_internal::indexOfIdentifier(m_availableInputDeviceIdentifiers, selectedId);
+    return indexOfIdentifier(m_availableInputDeviceIdentifiers, selectedId);
 }
 
 int MidiControllerManager::getSelectedMidiOutputIndex() const
@@ -1002,7 +1034,7 @@ int MidiControllerManager::getSelectedMidiOutputIndex() const
         return -1;
 
     const juce::String selectedId = juce::String::fromUTF8(selected.toUtf8().constData());
-    return midi_internal::indexOfIdentifier(m_availableOutputDeviceIdentifiers, selectedId);
+    return indexOfIdentifier(m_availableOutputDeviceIdentifiers, selectedId);
 }
 
 int MidiControllerManager::getSelectedMidiDeviceIndex() const
@@ -1017,9 +1049,9 @@ int MidiControllerManager::getSelectedMidiDeviceIndex() const
     }
 
     const QString selectedInputName = m_availableInputDeviceNames.value(selectedInputIndex);
-    if (midi_internal::looksLikeFlx10Name(selectedInputName)) {
+    if (flx10::looksLikeControllerName(selectedInputName)) {
         for (int i = 0; i < m_availableControllerDeviceNames.size(); ++i) {
-            if (midi_internal::looksLikeFlx10Name(m_availableControllerDeviceNames.at(i)))
+            if (flx10::looksLikeControllerName(m_availableControllerDeviceNames.at(i)))
                 return i;
         }
     }

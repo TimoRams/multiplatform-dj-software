@@ -1,7 +1,7 @@
 #include "MidiControllerManager.h"
-#include "MidiControllerManagerInternal.h"
+#include "MidiParameterDispatch.h"
 
-using namespace midi_internal;
+using namespace midi;
 
 #include "ParameterStore.h"
 
@@ -12,6 +12,29 @@ using namespace midi_internal;
 #include <cmath>
 
 namespace {
+
+// Human-readable label for the raw message id this file encodes controls into.
+// Ids below 10000 are channel-agnostic; above that the channel is folded in.
+QString midiControlLabel(int msgId)
+{
+    if (msgId >= 10000) {
+        const int remainder = msgId - 10000;
+        const int channel = remainder / 2000;
+        const int sub = remainder % 2000;
+        if (sub == 1500)
+            return QStringLiteral("Ch%1 Pitch").arg(channel + 1);
+        if (sub >= 1000)
+            return QStringLiteral("Ch%1 CC %2").arg(channel + 1).arg(sub - 1000);
+        return QStringLiteral("Ch%1 Note %2").arg(channel + 1).arg(sub);
+    }
+
+    if (msgId == 1500)
+        return QStringLiteral("Pitch");
+    if (msgId >= 1000)
+        return QStringLiteral("CC %1").arg(msgId - 1000);
+    return QStringLiteral("Note %1").arg(msgId);
+}
+
 
 bool isChannelFaderParameter(const QString& paramId)
 {
@@ -49,7 +72,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
         else if (sub >= 1000) {
             const auto mappingIt = m_midiToParam.find(msgId);
             const bool relative = mappingIt != m_midiToParam.end()
-                && midi_internal::isRelativeInteraction(mappingIt->second.interactionType);
+                && midi::isRelativeInteraction(mappingIt->second.interactionType);
             if (relative) {
                 const int ticks = static_cast<int>(std::lround(value));
                 const QString tickText = ticks > 0
@@ -125,12 +148,12 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
             ? QStringLiteral("deckA_jog_scratch")
             : QStringLiteral("deckB_jog_scratch");
 
-        const int raw = midi_internal::clampMidi7bit(static_cast<int>(std::round(value * 127.0f)));
+        const int raw = midi::clampMidi7bit(static_cast<int>(std::round(value * 127.0f)));
         const auto previousIt = m_scratchAbsoluteLastByMsgId.find(msgId);
 
         if (previousIt == m_scratchAbsoluteLastByMsgId.end()) {
             m_scratchAbsoluteLastByMsgId[msgId] = raw;
-            if (m_midiTraceEnabled) qDebug() << "[MIDI MAP]" << midi_internal::midiControlLabel(msgId)
+            if (m_midiTraceEnabled) qDebug() << "[MIDI MAP]" << midiControlLabel(msgId)
                      << "value:" << raw
                      << "mappedAction:" << scratchParamId
                      << "interactionType:touched-absolute-jog"
@@ -141,12 +164,12 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
         const int previousRaw = previousIt->second;
         m_scratchAbsoluteLastByMsgId[msgId] = raw;
 
-        float delta = midi_internal::decodeWrappedAbsoluteDelta(previousRaw, raw);
+        float delta = midi::decodeWrappedAbsoluteDelta(previousRaw, raw);
         const auto invIt = m_paramInverted.find(pairedParamId);
         if (invIt != m_paramInverted.end() && invIt->second)
             delta = -delta;
 
-        if (m_midiTraceEnabled) qDebug() << "[MIDI MAP]" << midi_internal::midiControlLabel(msgId)
+        if (m_midiTraceEnabled) qDebug() << "[MIDI MAP]" << midiControlLabel(msgId)
                  << "value:" << raw
                  << "previous:" << previousRaw
                  << "deltaTicks:" << delta
@@ -182,7 +205,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
             if (msbIt != m_midiToParam.end()) {
                 const QString& paramId = msbIt->second.paramId;
                 auto& accumulator = m_14BitAccumulators[paramId];
-                const int rawMsb = midi_internal::clampMidi7bit(
+                const int rawMsb = midi::clampMidi7bit(
                     static_cast<int>(std::lround(value * 127.0f)));
                 accumulator.pushMsb(rawMsb);
                 if (const auto value14 = accumulator.takeValue()) {
@@ -193,7 +216,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
                 const auto lsbIt = m_midiToParam.find(msgId + 32);
                 if (lsbIt != m_midiToParam.end()
                     && lsbIt->second.paramId == paramId
-                    && !midi_internal::shouldAlwaysDispatch(msbIt->second.interactionType)) {
+                    && !midi::shouldAlwaysDispatch(msbIt->second.interactionType)) {
                     // A lone startup MSB from an FLX10 mixer port is not a
                     // trustworthy channel-fader snapshot. A complete pair is
                     // still accepted above; coarse fallback begins as soon as
@@ -217,12 +240,12 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
         } else if (!isNoteOff && sub >= 1032 && sub < 1064) {
             const auto currentIt = m_midiToParam.find(msgId);
             const bool currentIsDiscrete = currentIt != m_midiToParam.end()
-                && midi_internal::shouldAlwaysDispatch(currentIt->second.interactionType);
+                && midi::shouldAlwaysDispatch(currentIt->second.interactionType);
             const int msbMsgId = msgId - 32; // paired MSB is always 32 less
             const auto msbIt = m_midiToParam.find(msbMsgId);
             if (!currentIsDiscrete
                 && msbIt != m_midiToParam.end()
-                && !midi_internal::shouldAlwaysDispatch(msbIt->second.interactionType)) {
+                && !midi::shouldAlwaysDispatch(msbIt->second.interactionType)) {
                 const QString& paramId = msbIt->second.paramId;
                 auto& accumulator = m_14BitAccumulators[paramId];
                 accumulator.pushLsb(static_cast<int>(std::lround(value * 127.0f)));
@@ -239,7 +262,7 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
         if (dispatchTouchedAbsoluteJogFallback())
             return;
 
-        if (m_midiTraceEnabled) qDebug() << "[MIDI MAP]" << midi_internal::midiControlLabel(msgId)
+        if (m_midiTraceEnabled) qDebug() << "[MIDI MAP]" << midiControlLabel(msgId)
                  << "value:" << static_cast<int>(std::round(value * 127.0f))
                  << "mapping:not-found";
         return;
@@ -251,22 +274,22 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
     {
         const auto invIt = m_paramInverted.find(paramId);
         if (invIt != m_paramInverted.end() && invIt->second) {
-            if (midi_internal::isRelativeInteraction(interactionType))
+            if (midi::isRelativeInteraction(interactionType))
                 dispatchValue = -dispatchValue;
-            else if (!isNoteOff && !midi_internal::isButtonInteraction(interactionType))
+            else if (!isNoteOff && !midi::isButtonInteraction(interactionType))
                 dispatchValue = 1.0f - dispatchValue;
         }
     }
     const bool pressed = dispatchValue > 0.0f;
-    if (midi_internal::isButtonInteraction(interactionType)) {
+    if (midi::isButtonInteraction(interactionType)) {
         const int rawMidiValue = static_cast<int>(std::round(value * 127.0f));
 
         if (interactionType == MidiInteractionType::Toggle && !pressed) {
-            if (m_midiTraceEnabled) qDebug() << "[MIDI MAP]" << midi_internal::midiControlLabel(msgId)
+            if (m_midiTraceEnabled) qDebug() << "[MIDI MAP]" << midiControlLabel(msgId)
                      << "value:" << rawMidiValue
                      << "interpreted:released"
                      << "mappedAction:" << paramId
-                     << "interactionType:" << midi_internal::interactionTypeToString(interactionType)
+                     << "interactionType:" << midi::interactionTypeToString(interactionType)
                      << "previous:n/a"
                      << "current:n/a"
                      << "dispatch:ignored-toggle-release";
@@ -286,11 +309,11 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
                 ? (changed ? "press" : "ignored-repeat-press")
                 : (changed ? "release" : "force-release");
 
-            if (m_midiTraceEnabled) qDebug() << "[MIDI MAP]" << midi_internal::midiControlLabel(msgId)
+            if (m_midiTraceEnabled) qDebug() << "[MIDI MAP]" << midiControlLabel(msgId)
                      << "value:" << rawMidiValue
                      << "interpreted:" << (currentHeld ? "pressed" : "released")
                      << "mappedAction:" << paramId
-                     << "interactionType:" << midi_internal::interactionTypeToString(interactionType)
+                     << "interactionType:" << midi::interactionTypeToString(interactionType)
                      << "previous:" << previousHeld
                      << "current:" << currentHeld
                      << "dispatch:" << dispatchName;
@@ -298,11 +321,11 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
             if (!changed && !forceRelease)
                 return;
         } else {
-            if (m_midiTraceEnabled) qDebug() << "[MIDI MAP]" << midi_internal::midiControlLabel(msgId)
+            if (m_midiTraceEnabled) qDebug() << "[MIDI MAP]" << midiControlLabel(msgId)
                      << "value:" << rawMidiValue
                      << "interpreted:" << (pressed ? "pressed" : "released")
                      << "mappedAction:" << paramId
-                     << "interactionType:" << midi_internal::interactionTypeToString(interactionType)
+                     << "interactionType:" << midi::interactionTypeToString(interactionType)
                      << "previous:n/a"
                      << "current:n/a"
                      << "dispatch:press";
@@ -314,12 +337,12 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
     // Relative encoders and buttons can produce repeated identical values that
     // are semantically distinct events, so always emit them. Analog controls
     // use deduplication to avoid MIDI feedback echo loops.
-    if (midi_internal::isFlx10JogInputParam(paramId)
+    if (midi::isFlx10JogInputParam(paramId)
         && dispatchFlx10JogAction(paramId, dispatchValue, eventTimestampSeconds)) {
         return;
     }
 
-    if (midi_internal::shouldAlwaysDispatch(interactionType)) {
+    if (midi::shouldAlwaysDispatch(interactionType)) {
         dispatchToStore(paramId, dispatchValue, ParameterStoreDispatch::Midi);
     } else {
         dispatchToStore(paramId, dispatchValue, ParameterStoreDispatch::Standard);
@@ -440,11 +463,11 @@ void MidiControllerManager::processRawMidiEvent(int msgId,
 
             const auto it = m_midiToParam.find(resolvedId);
             if (it != m_midiToParam.end()
-                && midi_internal::isRelativeInteraction(it->second.interactionType)) {
-                resolvedValue = midi_internal::decodeRelativeCcValue(
+                && midi::isRelativeInteraction(it->second.interactionType)) {
+                resolvedValue = midi::decodeRelativeCcValue(
                     static_cast<int>(rawEncodedValue), it->second.paramId);
             } else {
-                resolvedValue = midi_internal::clampMidi7bit(
+                resolvedValue = midi::clampMidi7bit(
                     static_cast<int>(rawEncodedValue)) / 127.0f;
             }
         } else if (sub == 1500) {

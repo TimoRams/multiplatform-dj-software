@@ -1,5 +1,4 @@
 #include "WaveformCache.h"
-#include "analysis/AnalysisCacheVersion.h"
 #include "waveform/WaveformLodPyramid.h"
 
 #include <QByteArray>
@@ -23,7 +22,7 @@ namespace {
 constexpr quint32 kMagic = 0x52574631; // RWF1
 constexpr qint32 kVersion = 6;         // v6: analysis pipeline version bumped; binary payload stays v5-compatible.
 constexpr quint32 kRenderMagic = 0x52574c31; // RWL1
-constexpr qint32 kRenderVersion = analysis::kWaveformRenderCacheVersion;
+constexpr qint32 kRenderVersion = WaveformCache::kRenderCacheVersion;
 constexpr qint32 kLegacyRenderVersion = 1;
 constexpr quint32 kLodMagic = 0x4c4f4432; // LOD2
 constexpr int kBlockSize = 4096;

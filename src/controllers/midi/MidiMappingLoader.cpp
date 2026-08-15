@@ -1,7 +1,9 @@
 #include "MidiControllerManager.h"
-#include "MidiControllerManagerInternal.h"
+#include "MidiParameterDispatch.h"
+#include "controllers/flx10/Flx10ControllerIdentity.h"
+#include "platform/FileManagerLaunch.h"
 
-using namespace midi_internal;
+using namespace midi;
 
 #include "app/SettingsManager.h"
 
@@ -22,7 +24,7 @@ QString MidiControllerManager::getMappingsDirectoryPath() const
 
 QStringList MidiControllerManager::getAvailableMappingFiles()
 {
-    QStringList mappings { kBuiltInFlx10MappingLabel };
+    QStringList mappings { flx10::kMappingLabel };
 
     QDir dir(getMappingsDirectoryPath());
     if (!dir.exists())
@@ -40,12 +42,12 @@ QString MidiControllerManager::getSettingsDirectoryPath() const
 
 bool MidiControllerManager::openSettingsDirectory() const
 {
-    return midi_internal::openDirectoryInFileManager(getSettingsDirectoryPath());
+    return platform::openDirectoryInFileManager(getSettingsDirectoryPath());
 }
 
 bool MidiControllerManager::openMappingsDirectory() const
 {
-    return midi_internal::openDirectoryInFileManager(getMappingsDirectoryPath());
+    return platform::openDirectoryInFileManager(getMappingsDirectoryPath());
 }
 
 QString MidiControllerManager::normalizeControllerKeyFromXmlBase(const QString& baseName) const
@@ -69,7 +71,7 @@ QString MidiControllerManager::normalizeControllerKeyFromJsBase(const QString& b
 QStringList MidiControllerManager::getAvailableControllers()
 {
     QMap<QString, QString> dedup;
-    dedup.insert(normalizeControllerKeyFromXmlBase(kBuiltInFlx10ControllerName), kBuiltInFlx10ControllerName);
+    dedup.insert(normalizeControllerKeyFromXmlBase(flx10::kControllerName), flx10::kControllerName);
 
     QDir dir(getMappingsDirectoryPath());
     if (!dir.exists())
@@ -123,8 +125,8 @@ QStringList MidiControllerManager::getAvailableXmlMappingFilesForController(cons
         return {};
 
     QStringList filtered;
-    if (normalizedTarget == normalizeControllerKeyFromXmlBase(kBuiltInFlx10ControllerName))
-        filtered.push_back(kBuiltInFlx10MappingLabel);
+    if (normalizedTarget == normalizeControllerKeyFromXmlBase(flx10::kControllerName))
+        filtered.push_back(flx10::kMappingLabel);
 
     QDir dir(getMappingsDirectoryPath());
     if (!dir.exists())
@@ -200,10 +202,10 @@ int MidiControllerManager::midiMessageIdFromStatusAndControl(int statusNo, int c
 
     const int statusHi = statusNo & 0xF0;
     const int midiCh = statusNo & 0x0F;
-    int subId = midi_internal::clampMidi7bit(controlNo);
+    int subId = midi::clampMidi7bit(controlNo);
 
     if (statusHi == 0xB0)
-        subId = 1000 + midi_internal::clampMidi7bit(controlNo);
+        subId = 1000 + midi::clampMidi7bit(controlNo);
     else if (statusHi == 0xE0)
         subId = 1500;
     else if (statusHi != 0x80 && statusHi != 0x90)
@@ -292,7 +294,7 @@ void MidiControllerManager::saveNativeMapping()
         xml.writeStartElement("Entry");
         xml.writeAttribute("paramId", entry.paramId);
         xml.writeAttribute("msgId", QString::number(msgId));
-        xml.writeAttribute("interactionType", midi_internal::interactionTypeToString(entry.interactionType));
+        xml.writeAttribute("interactionType", midi::interactionTypeToString(entry.interactionType));
         const auto invIt = m_paramInverted.find(entry.paramId);
         if (invIt != m_paramInverted.end() && invIt->second)
             xml.writeAttribute("inverted", "1");
@@ -328,10 +330,10 @@ void MidiControllerManager::loadNativeMappingIfExists()
         bool ok = false;
         const int msgId = xml.attributes().value("msgId").toString().toInt(&ok);
         const MidiInteractionType interactionType =
-            midi_internal::interactionTypeFromString(xml.attributes().value("interactionType").toString(), paramId);
+            midi::interactionTypeFromString(xml.attributes().value("interactionType").toString(), paramId);
         const bool inverted = xml.attributes().value("inverted").toString() == QStringLiteral("1");
         if (ok && !paramId.isEmpty()) {
-            m_midiToParam[msgId] = midi_internal::makeMappingEntry(paramId, interactionType);
+            m_midiToParam[msgId] = midi::makeMappingEntry(paramId, interactionType);
             if (interactionType == MidiInteractionType::Momentary)
                 m_momentaryHeldByMsgId[msgId] = false;
             else
@@ -361,9 +363,9 @@ void MidiControllerManager::loadNativeMappingIfExists()
 
 bool MidiControllerManager::loadBrockDjXmlMapping(const QString& mappingFileName)
 {
-    const bool builtInMapping = midi_internal::isBuiltInFlx10Mapping(mappingFileName);
+    const bool builtInMapping = flx10::isBuiltInMapping(mappingFileName);
     const QString filePath = builtInMapping
-        ? kBuiltInFlx10MappingResource
+        ? flx10::kMappingResource
         : QDir(getMappingsDirectoryPath()).filePath(mappingFileName);
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -412,13 +414,13 @@ bool MidiControllerManager::loadBrockDjXmlMapping(const QString& mappingFileName
         const QString typeRaw = attrs.hasAttribute(QStringLiteral("type"))
             ? attrs.value("type").toString()
             : attrs.value("interactionType").toString();
-        const MidiInteractionType interactionType = midi_internal::interactionTypeFromString(typeRaw, paramId);
+        const MidiInteractionType interactionType = midi::interactionTypeFromString(typeRaw, paramId);
         const QString invertedRaw = attrs.value("inverted").toString().trimmed().toLower();
         const bool inverted = invertedRaw == QStringLiteral("1")
             || invertedRaw == QStringLiteral("true")
             || invertedRaw == QStringLiteral("yes");
 
-        nextMidiToParam[msgId] = midi_internal::makeMappingEntry(paramId, interactionType);
+        nextMidiToParam[msgId] = midi::makeMappingEntry(paramId, interactionType);
         // A high-resolution control has two entries for the same parameter.
         // Keep the first (MSB) as its display/feedback identity while both
         // message IDs remain available to the input dispatcher.
@@ -601,7 +603,7 @@ void MidiControllerManager::learnMapping(int msgId)
     }
 
     const QString learnedParamId = m_learnParameterId;
-    const MidiMappingEntry learnedEntry = midi_internal::makeMappingEntry(learnedParamId);
+    const MidiMappingEntry learnedEntry = midi::makeMappingEntry(learnedParamId);
     m_midiToParam[msgId] = learnedEntry;
     if (learnedEntry.interactionType == MidiInteractionType::Momentary)
         m_momentaryHeldByMsgId[msgId] = false;

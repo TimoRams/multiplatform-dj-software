@@ -1,9 +1,10 @@
 #include "controllers/midi/MidiControllerManager.h"
-#include "controllers/midi/MidiControllerManagerInternal.h"
+#include "controllers/midi/MidiParameterDispatch.h"
+#include "controllers/flx10/Flx10ControllerIdentity.h"
 #include "audio/AudioEngine.h"
 #include "fx/FxManager.h"
 
-using namespace midi_internal;
+using namespace midi;
 
 #include "deck/DjEngine.h"
 #include "controllers/midi/ParameterStore.h"
@@ -16,8 +17,199 @@ using namespace midi_internal;
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <array>
+#include <ranges>
 
 namespace {
+
+// Hardware-panel tables and the parameter-id shapes this controller emits.
+// Only this bridge speaks them, so they stay private to it.
+
+struct SoundColorModeMapping {
+    const char* paramId;
+    const char* mode;
+};
+constexpr std::array<SoundColorModeMapping, 6> kSoundColorModes {{
+    { "sound_color_fx_space", "Space" },
+    { "sound_color_fx_dub_echo", "D.Echo" },
+    { "sound_color_fx_crush", "Crush" },
+    { "sound_color_fx_pitch", "Pitch" },
+    { "sound_color_fx_noise", "Noise" },
+    { "sound_color_fx_filter", "Filter" }
+}};
+
+struct BeatFxChannelMapping {
+    const char* paramId;
+    MidiBeatFxTarget target;
+};
+constexpr std::array<BeatFxChannelMapping, 7> kBeatFxChannels {{
+    { "beat_fx_channel_deck_a", MidiBeatFxTarget::DeckA },
+    { "beat_fx_channel_deck_b", MidiBeatFxTarget::DeckB },
+    { "beat_fx_channel_deck_c", MidiBeatFxTarget::DeckC },
+    { "beat_fx_channel_deck_d", MidiBeatFxTarget::DeckD },
+    { "beat_fx_channel_master", MidiBeatFxTarget::Master },
+    { "beat_fx_channel_mic", MidiBeatFxTarget::Mic },
+    { "beat_fx_channel_sampler", MidiBeatFxTarget::Sampler }
+}};
+
+constexpr int beatFxDeckNumber(MidiBeatFxTarget target) noexcept
+{
+    switch (target) {
+    case MidiBeatFxTarget::DeckA: return 1;
+    case MidiBeatFxTarget::DeckB: return 2;
+    case MidiBeatFxTarget::DeckC: return 3;
+    case MidiBeatFxTarget::DeckD: return 4;
+    default: return 0;
+    }
+}
+
+// Order of the BEAT FX selector on the hardware panel, top to bottom. The two
+// tables are indexed together, and the names must match exactly what
+// FxManager::effectTypeFromString() understands.
+constexpr std::array<EffectType, 14> kBeatFxTypes {{
+    EffectType::LowCutEcho, EffectType::Echo,      EffectType::MtDelay,
+    EffectType::Spiral,     EffectType::Reverb,    EffectType::Trans,
+    EffectType::EnigmaJet,  EffectType::Flanger,   EffectType::Phaser,
+    EffectType::Stretch,    EffectType::SlipRoll,  EffectType::Roll,
+    EffectType::MobiusSaw,  EffectType::MobiusTri
+}};
+
+const std::array<QString, 14>& beatFxNames()
+{
+    static const std::array<QString, 14> names = {
+        QStringLiteral("Low Cut Echo"), QStringLiteral("Echo"),
+        QStringLiteral("MT Delay"),     QStringLiteral("Spiral"),
+        QStringLiteral("Reverb"),       QStringLiteral("Trans"),
+        QStringLiteral("Enigma Jet"),   QStringLiteral("Flanger"),
+        QStringLiteral("Phaser"),       QStringLiteral("Stretch"),
+        QStringLiteral("Slip Roll"),    QStringLiteral("Roll"),
+        QStringLiteral("Mobius Saw"),   QStringLiteral("Mobius Tri")
+    };
+    return names;
+}
+
+constexpr size_t beatFxIndex(int position) noexcept
+{
+    return static_cast<size_t>(std::clamp(position, 1, 14) - 1);
+}
+
+constexpr EffectType beatFxTypeForPosition(int position) noexcept
+{
+    return kBeatFxTypes[beatFxIndex(position)];
+}
+
+QString beatFxNameForPosition(int position)
+{
+    return beatFxNames()[beatFxIndex(position)];
+}
+
+int beatFxPositionForName(const QString& name)
+{
+    const auto& names = beatFxNames();
+    const auto it = std::ranges::find(names, name);
+    return it == names.end() ? -1 : static_cast<int>(std::distance(names.begin(), it)) + 1;
+}
+
+QString hexByte(int value)
+{
+    return QStringLiteral("%1").arg(value & 0xff, 2, 16, QLatin1Char('0')).toUpper();
+}
+
+// Splits "deck<A|B><stem><n>" style parameter ids. Returns false unless the
+// deck prefix matches and the trailing number is a valid 1-based pad index.
+bool splitDeckIndexParam(const QString& paramId, const QString& stem,
+                         QChar& deck, QString& suffix)
+{
+    const QString deckA = QStringLiteral("deckA_") + stem;
+    const QString deckB = QStringLiteral("deckB_") + stem;
+    if (paramId.startsWith(deckA)) {
+        deck = QLatin1Char('A');
+        suffix = paramId.mid(deckA.size());
+        return true;
+    }
+    if (paramId.startsWith(deckB)) {
+        deck = QLatin1Char('B');
+        suffix = paramId.mid(deckB.size());
+        return true;
+    }
+    return false;
+}
+
+bool parsePadIndexParam(const QString& paramId, const QString& stem,
+                        QChar& deck, int& index, bool* clear)
+{
+    QString suffix;
+    if (!splitDeckIndexParam(paramId, stem, deck, suffix))
+        return false;
+
+    if (clear) {
+        *clear = suffix.endsWith(QStringLiteral("_clear"));
+        if (*clear)
+            suffix.chop(QStringLiteral("_clear").size());
+    }
+
+    bool ok = false;
+    index = suffix.toInt(&ok) - 1;
+    return ok && index >= 0 && index < 8;
+}
+
+bool parsePerformancePadParam(const QString& paramId, QChar& deck, int& index, bool& clear)
+{
+    return parsePadIndexParam(paramId, QStringLiteral("pad"), deck, index, &clear);
+}
+
+bool parseHotCueParam(const QString& paramId, QChar& deck, int& index, bool& clear)
+{
+    return parsePadIndexParam(paramId, QStringLiteral("hotcue"), deck, index, &clear);
+}
+
+bool parseDirectPadParam(const QString& paramId, const QString& stem, QChar& deck, int& index)
+{
+    return parsePadIndexParam(paramId, stem, deck, index, nullptr);
+}
+
+bool parsePadModeParam(const QString& paramId, QChar& deck, MidiPadMode& mode)
+{
+    QString suffix;
+    if (!splitDeckIndexParam(paramId, QStringLiteral("pad_mode_"), deck, suffix))
+        return false;
+
+    if (suffix == QStringLiteral("hotcue"))   { mode = MidiPadMode::HotCue;   return true; }
+    if (suffix == QStringLiteral("padfx"))    { mode = MidiPadMode::PadFx;    return true; }
+    if (suffix == QStringLiteral("beatjump")) { mode = MidiPadMode::BeatJump; return true; }
+    if (suffix == QStringLiteral("sampler"))  { mode = MidiPadMode::Sampler;  return true; }
+    return false;
+}
+
+bool parseDeckButtonParam(const QString& paramId, const QString& suffix, QChar& deck)
+{
+    if (paramId == QStringLiteral("deckA_") + suffix) { deck = QLatin1Char('A'); return true; }
+    if (paramId == QStringLiteral("deckB_") + suffix) { deck = QLatin1Char('B'); return true; }
+    return false;
+}
+
+bool parseDeckFxSlotParam(const QString& paramId, QChar& deck, int& slot)
+{
+    QString suffix;
+    if (!splitDeckIndexParam(paramId, QStringLiteral("fx_slot"), deck, suffix))
+        return false;
+
+    bool ok = false;
+    slot = suffix.toInt(&ok);
+    return ok && slot >= 1 && slot <= 3;
+}
+
+bool parseBeatFxSelectParam(const QString& paramId, int& position)
+{
+    static const QString prefix = QStringLiteral("beat_fx_select_");
+    if (!paramId.startsWith(prefix))
+        return false;
+
+    bool ok = false;
+    position = paramId.mid(prefix.size()).toInt(&ok);
+    return ok && position >= 1 && position <= 14;
+}
+
 
 const char* jogEventName(flx10::JogEventType type) noexcept
 {
@@ -167,18 +359,18 @@ void MidiControllerManager::testFlx10LedOutput()
 bool MidiControllerManager::shouldUseFlx10Feedback() const
 {
     if (normalizeControllerKeyFromXmlBase(getSelectedController())
-            == normalizeControllerKeyFromXmlBase(kBuiltInFlx10ControllerName)
-        || midi_internal::isBuiltInFlx10Mapping(getSelectedMapping())) {
+            == normalizeControllerKeyFromXmlBase(flx10::kControllerName)
+        || flx10::isBuiltInMapping(getSelectedMapping())) {
         return true;
     }
 
     const QString selectedOutput = SettingsManager::getInstance().getMidiOutputIdentifier();
     const juce::String selectedId = juce::String::fromUTF8(selectedOutput.toUtf8().constData());
-    const int index = midi_internal::indexOfIdentifier(m_availableOutputDeviceIdentifiers, selectedId);
+    const int index = indexOfIdentifier(m_availableOutputDeviceIdentifiers, selectedId);
     if (index >= 0 && index < m_availableOutputDeviceNames.size())
-        return midi_internal::looksLikeFlx10Name(m_availableOutputDeviceNames.at(index));
+        return flx10::looksLikeControllerName(m_availableOutputDeviceNames.at(index));
 
-    return midi_internal::looksLikeFlx10Name(selectedOutput);
+    return flx10::looksLikeControllerName(selectedOutput);
 }
 
 void MidiControllerManager::startFlx10OutputSession()
@@ -241,9 +433,9 @@ void MidiControllerManager::onParameterChanged(const QString& id, float value)
     // Jog and button actions are input-only here. Echoing them as
     // LED feedback can come back through ALSA/PipeWire as a fresh input event
     // and toggle Play/Cue twice.
-    const MidiInteractionType interactionType = midi_internal::defaultInteractionTypeForParam(id);
-    if (midi_internal::isRelativeInteraction(interactionType)
-        || midi_internal::isButtonInteraction(interactionType)
+    const MidiInteractionType interactionType = midi::defaultInteractionTypeForParam(id);
+    if (midi::isRelativeInteraction(interactionType)
+        || midi::isButtonInteraction(interactionType)
         || interactionType == MidiInteractionType::Fader
         || (shouldUseFlx10Feedback()
             && interactionType == MidiInteractionType::EncoderAbsolute))
@@ -270,12 +462,12 @@ void MidiControllerManager::onParameterChanged(const QString& id, float value)
         msg = juce::MidiMessage::pitchWheel(channel, pitch);
     } else if (subId >= 1000 && subId < 1500) {
         msg = juce::MidiMessage::controllerEvent(channel, subId - 1000,
-                                                  midi_internal::clampMidi7bit(static_cast<int>(value * 127.0f)));
+                                                  midi::clampMidi7bit(static_cast<int>(value * 127.0f)));
     } else {
         if (value > 0.0f)
-            msg = juce::MidiMessage::noteOn(channel, midi_internal::clampMidi7bit(subId), value);
+            msg = juce::MidiMessage::noteOn(channel, midi::clampMidi7bit(subId), value);
         else
-            msg = juce::MidiMessage::noteOff(channel, midi_internal::clampMidi7bit(subId), 0.0f);
+            msg = juce::MidiMessage::noteOff(channel, midi::clampMidi7bit(subId), 0.0f);
     }
 
     sendMidiMessageWithDebug(msg, QStringLiteral("mapped-feedback"));
@@ -300,8 +492,8 @@ int MidiControllerManager::hotCueStatusForDeck(QChar deck) const
 bool MidiControllerManager::sendMidiShort(int statusNo, int controlNo, int value, const QString& messageType)
 {
     const int status = statusNo & 0xff;
-    const int control = midi_internal::clampMidi7bit(controlNo);
-    const int dataValue = midi_internal::clampMidi7bit(value);
+    const int control = midi::clampMidi7bit(controlNo);
+    const int dataValue = midi::clampMidi7bit(value);
     const bool cacheable = messageType != QStringLiteral("raw-test")
         && messageType != QStringLiteral("pad-palette-test");
     const int cacheKey = (status << 8) | control;
@@ -358,7 +550,7 @@ bool MidiControllerManager::sendMidiMessageWithDebug(const juce::MidiMessage& me
     }
 
     const QString rawBytes = size == 3
-        ? QStringLiteral("%1 %2 %3").arg(midi_internal::hexByte(status), midi_internal::hexByte(data1), midi_internal::hexByte(data2))
+        ? QStringLiteral("%1 %2 %3").arg(hexByte(status), hexByte(data1), hexByte(data2))
         : QString::fromLatin1(QByteArray(reinterpret_cast<const char*>(raw), size).toHex(' ')).toUpper();
     // Controller feedback can produce thousands of successful packets per
     // second. Keep failures visible and make success traces explicitly opt-in.
@@ -802,7 +994,7 @@ void MidiControllerManager::connectFxManager(FxManager* fxManager)
     {
         if (!m_fxManager)
             return;
-        const int position = midi_internal::beatFxPositionForName(m_fxManager->effectType1());
+        const int position = beatFxPositionForName(m_fxManager->effectType1());
         if (position > 0)
             m_beatFxPosition = position;
         refreshFxLeds();
@@ -849,13 +1041,13 @@ void MidiControllerManager::connectFxManager(FxManager* fxManager)
 
 void MidiControllerManager::applyBeatFxState()
 {
-    const EffectType type = midi_internal::beatFxTypeForPosition(m_beatFxPosition);
+    const EffectType type = beatFxTypeForPosition(m_beatFxPosition);
     const float wet = m_beatFxActive ? m_beatFxLevelDepth : 0.0f;
 
     if (m_fxManager) {
         const MidiBeatFxTarget target = m_beatFxTarget;
-        const int targetDeck = midi_internal::beatFxDeckNumber(target);
-        m_fxManager->setEffectType1(midi_internal::beatFxNameForPosition(m_beatFxPosition));
+        const int targetDeck = beatFxDeckNumber(target);
+        m_fxManager->setEffectType1(beatFxNameForPosition(m_beatFxPosition));
         m_applyingBeatFxRouting = true;
         for (int deck = 1; deck <= 4; ++deck) {
             m_fxManager->setDeckAssignment(1, deck,
@@ -946,7 +1138,7 @@ void MidiControllerManager::updateBeatFxBlink()
 void MidiControllerManager::refreshFxLeds()
 {
     updateBeatFxBlink();
-    for (const auto& [paramId, target] : midi_internal::kBeatFxChannels)
+    for (const auto& [paramId, target] : kBeatFxChannels)
         sendMappedNoteLed(QString::fromLatin1(paramId), m_beatFxTarget == target);
     for (int position = 1; position <= 14; ++position) {
         sendMappedNoteLed(QStringLiteral("beat_fx_select_%1").arg(position),
@@ -956,7 +1148,7 @@ void MidiControllerManager::refreshFxLeds()
     const QString soundColorMode = m_fxManager
         ? m_fxManager->soundColorMode()
         : QStringLiteral("Filter");
-    for (const auto& [paramId, mode] : midi_internal::kSoundColorModes) {
+    for (const auto& [paramId, mode] : kSoundColorModes) {
         sendMappedNoteLed(QString::fromLatin1(paramId),
                           soundColorMode == QLatin1String(mode));
     }
@@ -1351,7 +1543,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
         QObject::disconnect(m_deckActionsConnection);
 
     // Route ParameterStore events to deck actions.
-    // Volume/crossfader/mixer EQ: MixerParameterBridge + MixerControl (C++).
+    // Volume/crossfader/mixer EQ: MixerControl (C++) owns these.
     // Button convention: 127/1.0 = press/on, 0 = release/off.
     m_deckActionsConnection = QObject::connect(m_parameterStore, &ParameterStore::parameterChanged,
         this, [this](const QString& id, float value)
@@ -1383,7 +1575,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
             return;
         }
 
-        for (const auto& [paramId, mode] : midi_internal::kSoundColorModes) {
+        for (const auto& [paramId, mode] : kSoundColorModes) {
             if (id == QLatin1String(paramId)) {
                 if (value >= 0.5f && m_fxManager)
                     m_fxManager->setSoundColorMode(QString::fromLatin1(mode));
@@ -1418,15 +1610,15 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
         {
             QChar deck;
             double beats = 0.0;
-            if (midi_internal::parseDeckButtonParam(paramId, QStringLiteral("beatjump_backward"), deck)
-                || midi_internal::parseDeckButtonParam(paramId, QStringLiteral("beatjump_4_backward"), deck)) {
+            if (parseDeckButtonParam(paramId, QStringLiteral("beatjump_backward"), deck)
+                || parseDeckButtonParam(paramId, QStringLiteral("beatjump_4_backward"), deck)) {
                 beats = -4.0;
-            } else if (midi_internal::parseDeckButtonParam(paramId, QStringLiteral("beatjump_forward"), deck)
-                       || midi_internal::parseDeckButtonParam(paramId, QStringLiteral("beatjump_4_forward"), deck)) {
+            } else if (parseDeckButtonParam(paramId, QStringLiteral("beatjump_forward"), deck)
+                       || parseDeckButtonParam(paramId, QStringLiteral("beatjump_4_forward"), deck)) {
                 beats = 4.0;
-            } else if (midi_internal::parseDeckButtonParam(paramId, QStringLiteral("beatjump_16_backward"), deck)) {
+            } else if (parseDeckButtonParam(paramId, QStringLiteral("beatjump_16_backward"), deck)) {
                 beats = -16.0;
-            } else if (midi_internal::parseDeckButtonParam(paramId, QStringLiteral("beatjump_16_forward"), deck)) {
+            } else if (parseDeckButtonParam(paramId, QStringLiteral("beatjump_16_forward"), deck)) {
                 beats = 16.0;
             } else {
                 return false;
@@ -1486,14 +1678,14 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
                     b->cueButtonRelease();
             }
         }
-        else if (midi_internal::isHotCueParam(id)) {
+        else if (midi::isHotCueParam(id)) {
             if (value < 0.5f)
                 return;
 
             QChar deck;
             int hotCueIndex = -1;
             bool clear = false;
-            if (!midi_internal::parseHotCueParam(id, deck, hotCueIndex, clear))
+            if (!parseHotCueParam(id, deck, hotCueIndex, clear))
                 return;
 
             DjEngine* const deckEngine = deck == QLatin1Char('A') ? a : b;
@@ -1511,7 +1703,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
             int padIndex = -1;
             bool clearPad = false;
 
-            if (midi_internal::parsePadModeParam(id, deck, mode)) {
+            if (parsePadModeParam(id, deck, mode)) {
                 if (value < 0.5f)
                     return;
 
@@ -1527,7 +1719,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
                 return;
             }
 
-            if (midi_internal::parsePerformancePadParam(id, deck, padIndex, clearPad)) {
+            if (parsePerformancePadParam(id, deck, padIndex, clearPad)) {
                 DjEngine* const deckEngine = deck == QLatin1Char('A') ? a : b;
                 if (value >= 0.5f && padModeForDeck(deck) != MidiPadMode::HotCue) {
                     if (padModeForDeck(deck) == MidiPadMode::PadFx)
@@ -1540,7 +1732,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
                 return;
             }
 
-            if (midi_internal::parseDirectPadParam(id, QStringLiteral("padfx_pad"), deck, padIndex)) {
+            if (parseDirectPadParam(id, QStringLiteral("padfx_pad"), deck, padIndex)) {
                 DjEngine* const deckEngine = deck == QLatin1Char('A') ? a : b;
                 if (value >= 0.5f && padModeForDeck(deck) != MidiPadMode::PadFx) {
                     releaseHeldHotCue(deck, deckEngine);
@@ -1551,7 +1743,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
                 return;
             }
 
-            if (midi_internal::parseDirectPadParam(id, QStringLiteral("beatjump_pad"), deck, padIndex)) {
+            if (parseDirectPadParam(id, QStringLiteral("beatjump_pad"), deck, padIndex)) {
                 DjEngine* const deckEngine = deck == QLatin1Char('A') ? a : b;
                 if (value >= 0.5f && padModeForDeck(deck) != MidiPadMode::BeatJump) {
                     if (padModeForDeck(deck) == MidiPadMode::PadFx)
@@ -1564,7 +1756,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
                 return;
             }
 
-            if (midi_internal::parseDirectPadParam(id, QStringLiteral("sampler_pad"), deck, padIndex)) {
+            if (parseDirectPadParam(id, QStringLiteral("sampler_pad"), deck, padIndex)) {
                 DjEngine* const deckEngine = deck == QLatin1Char('A') ? a : b;
                 if (value >= 0.5f && padModeForDeck(deck) != MidiPadMode::Sampler) {
                     if (padModeForDeck(deck) == MidiPadMode::PadFx)
@@ -1578,7 +1770,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
             }
 
             int fxSlot = -1;
-            if (midi_internal::parseDeckFxSlotParam(id, deck, fxSlot)) {
+            if (parseDeckFxSlotParam(id, deck, fxSlot)) {
                 if (value >= 0.5f)
                     toggleFxSlot(deck, fxSlot);
                 return;
@@ -1588,14 +1780,14 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
         if (value >= 0.5f && handleBeatJumpParam(id))
             return;
         int beatFxPosition = -1;
-        if (midi_internal::parseBeatFxSelectParam(id, beatFxPosition)) {
+        if (parseBeatFxSelectParam(id, beatFxPosition)) {
             if (value >= 0.5f) {
                 m_beatFxPosition = beatFxPosition;
                 applyBeatFxState();
             }
             return;
         }
-        for (const auto& [paramId, target] : midi_internal::kBeatFxChannels) {
+        for (const auto& [paramId, target] : kBeatFxChannels) {
             if (id == QLatin1String(paramId)) {
                 if (value >= 0.5f) {
                     m_beatFxTarget = target;
@@ -1628,14 +1820,14 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
             applyBeatFxState();
             return;
         }
-        if (midi_internal::parseDeckButtonParam(id, QStringLiteral("beat_sync"), directDeck)) {
+        if (parseDeckButtonParam(id, QStringLiteral("beat_sync"), directDeck)) {
             if (value >= 0.5f) {
                 if (DjEngine* const engine = engineForDeck(directDeck))
                     engine->setSyncEnabled(!engine->syncEnabled());
             }
             return;
         }
-        if (midi_internal::parseDeckButtonParam(id, QStringLiteral("beatsync"), directDeck)) {
+        if (parseDeckButtonParam(id, QStringLiteral("beatsync"), directDeck)) {
             if (value >= 0.5f) {
                 if (DjEngine* const engine = engineForDeck(directDeck)) {
                     if (engine->syncEnabled())
@@ -1646,29 +1838,29 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
             }
             return;
         }
-        if (midi_internal::parseDeckButtonParam(id, QStringLiteral("key_sync"), directDeck)
-            || midi_internal::parseDeckButtonParam(id, QStringLiteral("keylock"), directDeck)) {
+        if (parseDeckButtonParam(id, QStringLiteral("key_sync"), directDeck)
+            || parseDeckButtonParam(id, QStringLiteral("keylock"), directDeck)) {
             if (value >= 0.5f) {
                 if (DjEngine* const engine = engineForDeck(directDeck))
                     engine->setKeylock(!engine->keylock());
             }
             return;
         }
-        if (midi_internal::parseDeckButtonParam(id, QStringLiteral("slip"), directDeck)) {
+        if (parseDeckButtonParam(id, QStringLiteral("slip"), directDeck)) {
             if (value >= 0.5f) {
                 if (DjEngine* const engine = engineForDeck(directDeck))
                     engine->setSlip(!engine->slipActive());
             }
             return;
         }
-        if (midi_internal::parseDeckButtonParam(id, QStringLiteral("quantize"), directDeck)) {
+        if (parseDeckButtonParam(id, QStringLiteral("quantize"), directDeck)) {
             if (value >= 0.5f) {
                 if (DjEngine* const engine = engineForDeck(directDeck))
                     engine->setQuantizeEnabled(!engine->quantizeEnabled());
             }
             return;
         }
-        if (midi_internal::parseDeckButtonParam(id, QStringLiteral("slip_reverse"), directDeck)) {
+        if (parseDeckButtonParam(id, QStringLiteral("slip_reverse"), directDeck)) {
             DjEngine* const engine = engineForDeck(directDeck);
             bool& held = directDeck == QLatin1Char('A')
                 ? m_deckASlipReverseHeld
@@ -1699,13 +1891,13 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
             }
             return;
         }
-        if (midi_internal::parseDeckButtonParam(id, QStringLiteral("tempo_range_cycle"), directDeck)) {
+        if (parseDeckButtonParam(id, QStringLiteral("tempo_range_cycle"), directDeck)) {
             if (value >= 0.5f)
                 cycleFlx10TempoRange(engineForDeck(directDeck));
             return;
         }
-        if (midi_internal::parseDeckButtonParam(id, QStringLiteral("tempo_reset"), directDeck)
-            || midi_internal::parseDeckButtonParam(id, QStringLiteral("rate_reset"), directDeck)) {
+        if (parseDeckButtonParam(id, QStringLiteral("tempo_reset"), directDeck)
+            || parseDeckButtonParam(id, QStringLiteral("rate_reset"), directDeck)) {
             if (value >= 0.5f) {
                 DjEngine* const engine = engineForDeck(directDeck);
                 const bool shiftHeld = directDeck == QLatin1Char('A')
@@ -1780,7 +1972,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
             if (value >= 0.5f)
                 handleFourBeatExit(b, m_deckBShiftHeld);
         }
-        // Trim/EQ/filter: MixerParameterBridge applies these for all four decks.
+        // Trim/EQ/filter: MixerControl applies these for all four decks.
         // Tempo fader: MIDI 0-1 -> current deck tempo range.
         else if (id == "deckA_tempo")  {
             if (a) {

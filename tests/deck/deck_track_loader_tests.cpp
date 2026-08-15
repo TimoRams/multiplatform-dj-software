@@ -1,7 +1,7 @@
 #include "deck/DeckTrackLoader.h"
 #include "audio/cache/AudioPageCache.h"
 #include "waveform/WaveformCache.h"
-#include "analysis/AnalysisCacheVersion.h"
+#include "waveform/WaveformCache.h"
 
 #include <QCoreApplication>
 #include <QDataStream>
@@ -210,7 +210,7 @@ int main(int argc, char** argv)
         ok &= require(info.totalLines == payload.totalExpected
                           && !info.overview.isEmpty(),
                       "render cache must retain timeline and instant overview");
-        ok &= require(info.cacheVersion == analysis::kWaveformRenderCacheVersion
+        ok &= require(info.cacheVersion == WaveformCache::kRenderCacheVersion
                           && info.lodLevelCount == 4,
                       "render cache V2 must advertise its complete LOD pyramid");
 

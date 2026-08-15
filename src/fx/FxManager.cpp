@@ -1,5 +1,5 @@
 #include "FxManager.h"
-#include "DeckChannels.h"
+#include "domain/DeckId.h"
 #include "deck/DjEngine.h"
 #include <cmath>
 #include <algorithm>
@@ -273,7 +273,9 @@ void FxManager::setSoundColorChannel(const QString& channelId, float value)
 
 DjEngine* FxManager::engineForChannelId(const QString& channelId) const
 {
-    return ::deckForChannelId(channelId, m_engineA, m_engineB, m_engineC, m_engineD);
+    const auto deck = domain::deckFromChannelId(channelId);
+    return deck ? domain::selectDeck(*deck, m_engineA, m_engineB, m_engineC, m_engineD)
+                : nullptr;
 }
 
 void FxManager::applySoundColorToEngine(DjEngine* engine, const QString& mode, float value)

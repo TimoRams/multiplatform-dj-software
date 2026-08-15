@@ -1,7 +1,4 @@
 #include "MidiControllerManager.h"
-#include "MidiControllerManagerInternal.h"
-
-using namespace midi_internal;
 
 #include "ParameterStore.h"
 #include "app/SettingsManager.h"
@@ -11,6 +8,18 @@ using namespace midi_internal;
 #include <QDebug>
 #include <QMetaObject>
 #include <QtGlobal>
+
+#include <algorithm>
+#include <iterator>
+
+const juce::String MidiControllerManager::kAllMidiInputsIdentifier { "__all_midi_inputs__" };
+
+int MidiControllerManager::indexOfIdentifier(const std::vector<juce::String>& identifiers,
+                                             const juce::String& needle) noexcept
+{
+    const auto it = std::ranges::find(identifiers, needle);
+    return it == identifiers.end() ? -1 : static_cast<int>(std::distance(identifiers.begin(), it));
+}
 
 
 MidiControllerManager::MidiControllerManager(ParameterStore* store, ControlClock& controlClock,

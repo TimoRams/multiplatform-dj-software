@@ -1,6 +1,6 @@
 #include "WaveformAnalysisOrchestrator.h"
 #include "analysis/internal/PhraseAnalyzer.h"
-#include "analysis/AnalysisCacheVersion.h"
+#include "analysis/AnalysisTypes.h"
 #include "analysis/internal/AnalysisFeatureExtractor.h"
 #include "analysis/internal/BeatAnalysis.h"
 #include "analysis/AnalysisValidation.h"
@@ -167,7 +167,7 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
 
             const bool downbeatTrusted = downbeat.confidence >= 0.42f;
             qDebug() << "[WaveformAnalyzer] Internal rhythm analysis"
-                     << "version=" << analysis::kAnalysisVersion
+                     << "version=" << analysis::kCurrentAnalysisVersion
                      << "bpm=" << finalBpm
                      << "selectedOffsetSec=" << fitted.selectedOffsetSec
                      << "stableRegion=" << fitted.stableRegionStartSec << "->" << fitted.stableRegionEndSec

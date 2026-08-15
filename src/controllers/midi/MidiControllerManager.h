@@ -154,6 +154,14 @@ public slots:
     void onParameterChanged(const QString& id, float value);
 
 private:
+    // Sentinel identifier for "listen on every input at once" rather than one
+    // named device. Lives here because this class owns the device lists it is
+    // stored in, and enumeration, mapping and the FLX10 bridge all compare
+    // against it.
+    static const juce::String kAllMidiInputsIdentifier;
+    [[nodiscard]] static int indexOfIdentifier(const std::vector<juce::String>& identifiers,
+                                               const juce::String& needle) noexcept;
+
     // juce::MidiInputCallback overrides
     void handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& message) override;
     enum class ParameterStoreDispatch {

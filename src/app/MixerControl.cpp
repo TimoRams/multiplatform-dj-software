@@ -1,11 +1,13 @@
 #include "MixerControl.h"
 
-#include "DeckChannels.h"
-#include "deck/DjEngine.h"
 #include "audio/AudioEngine.h"
+#include "controllers/midi/ParameterStore.h"
+#include "deck/DjEngine.h"
 
 #include <algorithm>
 #include <cmath>
+
+using domain::DeckId;
 
 namespace {
 
@@ -26,6 +28,17 @@ CrossfaderCurve curveFromState(const QString& mode, float sharpness)
                              : CrossfaderCurve::ConstantPower;
 }
 
+// ParameterStore / MIDI normalized 0–1 → engine mixer ranges.
+[[nodiscard]] constexpr double trimFromNormalized(float normalized) noexcept
+{
+    return static_cast<double>(normalized) * 2.0;
+}
+
+[[nodiscard]] constexpr double bipolarFromNormalized(float normalized) noexcept
+{
+    return static_cast<double>(normalized) * 2.0 - 1.0;
+}
+
 } // namespace
 
 MixerControl::MixerControl(QObject* parent)
@@ -35,132 +48,122 @@ MixerControl::MixerControl(QObject* parent)
 
 void MixerControl::setDecks(DjEngine* deckA, DjEngine* deckB, DjEngine* deckC, DjEngine* deckD)
 {
-    m_deckA = deckA;
-    m_deckB = deckB;
-    m_deckC = deckC;
-    m_deckD = deckD;
+    m_decks = { deckA, deckB, deckC, deckD };
 
     applyAllMixState();
     applyAllVolumes();
 }
 
-DjEngine* MixerControl::deckForChannelId(const QString& channelId) const
+void MixerControl::attachParameterStore(ParameterStore* store)
 {
-    return ::deckForChannelId(channelId, m_deckA, m_deckB, m_deckC, m_deckD);
+    if (!store)
+        return;
+    connect(store, &ParameterStore::parameterChanged,
+            this, &MixerControl::onParameterChanged);
 }
 
-MixerControl::ChannelMixState* MixerControl::mixStateForChannel(const QString& channelId)
+DjEngine* MixerControl::deck(DeckId id) const
 {
-    if (channelId == QLatin1String("deckA")) return &m_mixA;
-    if (channelId == QLatin1String("deckB")) return &m_mixB;
-    if (channelId == QLatin1String("deckC")) return &m_mixC;
-    if (channelId == QLatin1String("deckD")) return &m_mixD;
-    return nullptr;
+    return m_decks[domain::toIndex(id)];
 }
 
-const MixerControl::ChannelMixState* MixerControl::mixStateForChannel(const QString& channelId) const
+void MixerControl::applyChannelVolume(DeckId id)
 {
-    if (channelId == QLatin1String("deckA")) return &m_mixA;
-    if (channelId == QLatin1String("deckB")) return &m_mixB;
-    if (channelId == QLatin1String("deckC")) return &m_mixC;
-    if (channelId == QLatin1String("deckD")) return &m_mixD;
-    return nullptr;
+    if (DjEngine* const engine = deck(id))
+        engine->applyVolume(static_cast<double>(m_mix[domain::toIndex(id)].fader));
 }
 
-void MixerControl::applyChannelVolume(const QString& channelId)
+void MixerControl::applyChannelMixState(DeckId id)
 {
-    DjEngine* const deck = deckForChannelId(channelId);
-    if (!deck)
+    DjEngine* const engine = deck(id);
+    if (!engine)
         return;
 
-    float fader = 1.0f;
-    if (channelId == QLatin1String("deckA")) fader = m_faderA;
-    else if (channelId == QLatin1String("deckB")) fader = m_faderB;
-    else if (channelId == QLatin1String("deckC")) fader = m_faderC;
-    else if (channelId == QLatin1String("deckD")) fader = m_faderD;
-
-    deck->applyVolume(static_cast<double>(fader));
-}
-
-void MixerControl::applyChannelMixState(const QString& channelId)
-{
-    DjEngine* const deck = deckForChannelId(channelId);
-    const ChannelMixState* const state = mixStateForChannel(channelId);
-    if (!deck || !state)
-        return;
-
-    deck->applyTrim(state->trim);
-    deck->applyEqHigh(state->eqHigh);
-    deck->applyEqMid(state->eqMid);
-    deck->applyEqLow(state->eqLow);
-    deck->applyFilter(state->filter);
-    deck->applyPolarityInverted(state->polarityInverted);
+    const ChannelMixState& state = m_mix[domain::toIndex(id)];
+    engine->applyTrim(state.trim);
+    engine->applyEqHigh(state.eqHigh);
+    engine->applyEqMid(state.eqMid);
+    engine->applyEqLow(state.eqLow);
+    engine->applyFilter(state.filter);
+    engine->applyPolarityInverted(state.polarityInverted);
 }
 
 void MixerControl::setTrim(const QString& channelId, double value)
 {
-    if (ChannelMixState* const state = mixStateForChannel(channelId))
-        state->trim = value;
-    if (DjEngine* const deck = deckForChannelId(channelId))
-        deck->applyTrim(value);
+    const auto id = domain::deckFromChannelId(channelId);
+    if (!id)
+        return;
+    m_mix[domain::toIndex(*id)].trim = value;
+    if (DjEngine* const engine = deck(*id))
+        engine->applyTrim(value);
 }
 
 void MixerControl::setEqHigh(const QString& channelId, double value)
 {
-    if (ChannelMixState* const state = mixStateForChannel(channelId))
-        state->eqHigh = value;
-    if (DjEngine* const deck = deckForChannelId(channelId))
-        deck->applyEqHigh(value);
+    const auto id = domain::deckFromChannelId(channelId);
+    if (!id)
+        return;
+    m_mix[domain::toIndex(*id)].eqHigh = value;
+    if (DjEngine* const engine = deck(*id))
+        engine->applyEqHigh(value);
 }
 
 void MixerControl::setEqMid(const QString& channelId, double value)
 {
-    if (ChannelMixState* const state = mixStateForChannel(channelId))
-        state->eqMid = value;
-    if (DjEngine* const deck = deckForChannelId(channelId))
-        deck->applyEqMid(value);
+    const auto id = domain::deckFromChannelId(channelId);
+    if (!id)
+        return;
+    m_mix[domain::toIndex(*id)].eqMid = value;
+    if (DjEngine* const engine = deck(*id))
+        engine->applyEqMid(value);
 }
 
 void MixerControl::setEqLow(const QString& channelId, double value)
 {
-    if (ChannelMixState* const state = mixStateForChannel(channelId))
-        state->eqLow = value;
-    if (DjEngine* const deck = deckForChannelId(channelId))
-        deck->applyEqLow(value);
+    const auto id = domain::deckFromChannelId(channelId);
+    if (!id)
+        return;
+    m_mix[domain::toIndex(*id)].eqLow = value;
+    if (DjEngine* const engine = deck(*id))
+        engine->applyEqLow(value);
 }
 
 void MixerControl::setFilter(const QString& channelId, double value)
 {
-    if (ChannelMixState* const state = mixStateForChannel(channelId))
-        state->filter = value;
-    if (DjEngine* const deck = deckForChannelId(channelId))
-        deck->applyFilter(value);
+    const auto id = domain::deckFromChannelId(channelId);
+    if (!id)
+        return;
+    m_mix[domain::toIndex(*id)].filter = value;
+    if (DjEngine* const engine = deck(*id))
+        engine->applyFilter(value);
 }
 
 void MixerControl::setPolarityInverted(const QString& channelId, bool inverted)
 {
-    if (ChannelMixState* const state = mixStateForChannel(channelId))
-        state->polarityInverted = inverted;
-    if (DjEngine* const deck = deckForChannelId(channelId))
-        deck->applyPolarityInverted(inverted);
+    const auto id = domain::deckFromChannelId(channelId);
+    if (!id)
+        return;
+    m_mix[domain::toIndex(*id)].polarityInverted = inverted;
+    if (DjEngine* const engine = deck(*id))
+        engine->applyPolarityInverted(inverted);
 }
 
 void MixerControl::toggleCue(const QString& channelId)
 {
-    if (DjEngine* const deck = deckForChannelId(channelId))
-        deck->setCueEnabled(!deck->cueEnabled());
+    const auto id = domain::deckFromChannelId(channelId);
+    if (!id)
+        return;
+    if (DjEngine* const engine = deck(*id))
+        engine->setCueEnabled(!engine->cueEnabled());
 }
 
 void MixerControl::setChannelFader(const QString& channelId, double level)
 {
-    const float clamped = std::clamp(static_cast<float>(level), 0.0f, 1.0f);
-    if (channelId == QLatin1String("deckA")) m_faderA = clamped;
-    else if (channelId == QLatin1String("deckB")) m_faderB = clamped;
-    else if (channelId == QLatin1String("deckC")) m_faderC = clamped;
-    else if (channelId == QLatin1String("deckD")) m_faderD = clamped;
-    else return;
-
-    applyChannelVolume(channelId);
+    const auto id = domain::deckFromChannelId(channelId);
+    if (!id)
+        return;
+    m_mix[domain::toIndex(*id)].fader = std::clamp(static_cast<float>(level), 0.0f, 1.0f);
+    applyChannelVolume(*id);
 }
 
 void MixerControl::setCrossfaderPosition(float cfPos)
@@ -194,45 +197,78 @@ void MixerControl::syncCrossfaderState(float cfPos,
 
 void MixerControl::applyAllVolumes()
 {
-    applyChannelVolume(QStringLiteral("deckA"));
-    applyChannelVolume(QStringLiteral("deckB"));
-    applyChannelVolume(QStringLiteral("deckC"));
-    applyChannelVolume(QStringLiteral("deckD"));
+    for (const DeckId id : domain::kAllDecks)
+        applyChannelVolume(id);
 }
 
 void MixerControl::applyAllMixState()
 {
-    applyChannelMixState(QStringLiteral("deckA"));
-    applyChannelMixState(QStringLiteral("deckB"));
-    applyChannelMixState(QStringLiteral("deckC"));
-    applyChannelMixState(QStringLiteral("deckD"));
+    for (const DeckId id : domain::kAllDecks)
+        applyChannelMixState(id);
 }
 
 double MixerControl::faderLevel(const QString& channelId) const
 {
-    if (channelId == QLatin1String("deckA")) return m_faderA;
-    if (channelId == QLatin1String("deckB")) return m_faderB;
-    if (channelId == QLatin1String("deckC")) return m_faderC;
-    if (channelId == QLatin1String("deckD")) return m_faderD;
-    return 1.0;
+    const auto id = domain::deckFromChannelId(channelId);
+    return id ? m_mix[domain::toIndex(*id)].fader : 1.0;
 }
 
-void MixerControl::syncMixFromNormalized(const QString& channelId,
-                                         const QString& suffix,
-                                         float normalized)
+void MixerControl::onParameterChanged(const QString& id, float value)
 {
-    ChannelMixState* const state = mixStateForChannel(channelId);
-    if (!state)
+    // Monitoring controls have one owner here. Routing them through both this
+    // class and MidiControllerManager used to toggle channel CUE twice, making
+    // a correct hardware press appear to do nothing.
+    if (id == QLatin1String("master_cue")) {
+        if (value >= 0.5f) {
+            if (DjEngine* const engine = deck(DeckId::A))
+                engine->setMasterCueEnabled(!engine->masterCueEnabled());
+        }
+        return;
+    }
+    if (id == QLatin1String("headphone_mix")) {
+        if (DjEngine* const engine = deck(DeckId::A))
+            engine->setHeadphoneMix(static_cast<double>(value));
+        else
+            AudioEngine::setHeadphoneMix(value);
+        return;
+    }
+    if (id == QLatin1String("headphone_level")) {
+        AudioEngine::setHeadphoneGain(std::clamp(value, 0.0f, 1.0f) * 2.0f);
+        return;
+    }
+    if (id == QLatin1String("master_level")) {
+        AudioEngine::setMasterVolume(std::clamp(value, 0.0f, 1.0f));
+        return;
+    }
+    if (id == QLatin1String("crossfader")) {
+        setCrossfaderPosition(value * 2.0f - 1.0f);
+        return;
+    }
+
+    const int sep = id.indexOf(QLatin1Char('_'));
+    if (sep <= 4)
         return;
 
+    const QString channelId = id.left(sep);
+    const auto deckId = domain::deckFromChannelId(channelId);
+    if (!deckId)
+        return;
+
+    // The setters below are plain functions, not property writers, so feeding
+    // store updates through them cannot bounce back out as a QML binding change.
+    const QStringView suffix = QStringView(id).mid(sep + 1);
     if (suffix == QLatin1String("gain"))
-        state->trim = mixerTrimFromNormalized(normalized);
+        setTrim(channelId, trimFromNormalized(value));
     else if (suffix == QLatin1String("eqHigh"))
-        state->eqHigh = mixerBipolarFromNormalized(normalized);
+        setEqHigh(channelId, bipolarFromNormalized(value));
     else if (suffix == QLatin1String("eqMid"))
-        state->eqMid = mixerBipolarFromNormalized(normalized);
+        setEqMid(channelId, bipolarFromNormalized(value));
     else if (suffix == QLatin1String("eqLow"))
-        state->eqLow = mixerBipolarFromNormalized(normalized);
+        setEqLow(channelId, bipolarFromNormalized(value));
     else if (suffix == QLatin1String("filter"))
-        state->filter = mixerBipolarFromNormalized(normalized);
+        setFilter(channelId, bipolarFromNormalized(value));
+    else if (suffix == QLatin1String("vol"))
+        setChannelFader(channelId, static_cast<double>(value));
+    else if (suffix == QLatin1String("headphone_cue") && value >= 0.5f)
+        toggleCue(channelId);
 }

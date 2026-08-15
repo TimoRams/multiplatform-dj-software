@@ -162,13 +162,13 @@ Rectangle {
     Connections {
         target: parameterStore
         function onParameterChanged(id, value) {
-            // Audio + MixerControl fader state: MixerParameterBridge (C++).
+            // Audio + MixerControl fader state: MixerControl (C++).
             if      (id === "deckA_vol") cfBar.volA = value
             else if (id === "deckB_vol") cfBar.volB = value
             else if (id === "deckC_vol") cfBar.volC = value
             else if (id === "deckD_vol") cfBar.volD = value
             else if (id === "crossfader") {
-                // Audio: MixerParameterBridge → MixerControl; mirror slider only.
+                // Audio: parameterStore → MixerControl; mirror slider only.
                 _restoringSettings = true
                 cfSlider.value = value * 2.0 - 1.0
                 _restoringSettings = false

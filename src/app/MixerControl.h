@@ -1,17 +1,29 @@
 #pragma once
 
+#include "domain/DeckId.h"
+
 #include <QObject>
 #include <QString>
 
-class DjEngine;
+#include <array>
 
-// C++ mixer facade — direct deck access for QML (same path as CrossfaderBar).
+class DjEngine;
+class ParameterStore;
+
+// The mixer's state owner. Everything that can move a channel strip — QML
+// directly, or MIDI/UI by way of ParameterStore — arrives here, updates the one
+// copy of the channel state and forwards it to the deck. Nothing else keeps a
+// second copy, so the hardware and the on-screen strip cannot drift apart.
 class MixerControl : public QObject {
     Q_OBJECT
 public:
     explicit MixerControl(QObject* parent = nullptr);
 
     void setDecks(DjEngine* deckA, DjEngine* deckB, DjEngine* deckC, DjEngine* deckD);
+
+    // Normalized 0–1 parameters (MIDI, UI knobs) enter through the store; this
+    // class converts them to engine ranges and applies them like any other move.
+    void attachParameterStore(ParameterStore* store);
 
     Q_INVOKABLE void setTrim(const QString& channelId, double value);
     Q_INVOKABLE void setEqHigh(const QString& channelId, double value);
@@ -35,9 +47,6 @@ public:
     Q_INVOKABLE void applyAllMixState();
     Q_INVOKABLE double faderLevel(const QString& channelId) const;
 
-    // State-only sync when MixerParameterBridge applies MIDI/store moves (no deck apply).
-    void syncMixFromNormalized(const QString& channelId, const QString& suffix, float normalized);
-
 private:
     struct ChannelMixState {
         double trim = 1.0;
@@ -46,18 +55,17 @@ private:
         double eqLow = 0.0;
         double filter = 0.0;
         bool polarityInverted = false;
+        float fader = 1.0f;
     };
 
-    [[nodiscard]] DjEngine* deckForChannelId(const QString& channelId) const;
-    [[nodiscard]] ChannelMixState* mixStateForChannel(const QString& channelId);
-    [[nodiscard]] const ChannelMixState* mixStateForChannel(const QString& channelId) const;
-    void applyChannelVolume(const QString& channelId);
-    void applyChannelMixState(const QString& channelId);
+    void onParameterChanged(const QString& id, float value);
 
-    DjEngine* m_deckA = nullptr;
-    DjEngine* m_deckB = nullptr;
-    DjEngine* m_deckC = nullptr;
-    DjEngine* m_deckD = nullptr;
+    [[nodiscard]] DjEngine* deck(domain::DeckId id) const;
+    void applyChannelVolume(domain::DeckId id);
+    void applyChannelMixState(domain::DeckId id);
+
+    std::array<DjEngine*, domain::kDeckCount> m_decks {};
+    std::array<ChannelMixState, domain::kDeckCount> m_mix {};
 
     float m_cfPos = 0.0f;
     float m_cfSharpness = 0.0f;
@@ -66,14 +74,4 @@ private:
     QString m_assignB = QStringLiteral("B");
     QString m_assignC = QStringLiteral("A");
     QString m_assignD = QStringLiteral("B");
-
-    float m_faderA = 1.0f;
-    float m_faderB = 1.0f;
-    float m_faderC = 1.0f;
-    float m_faderD = 1.0f;
-
-    ChannelMixState m_mixA {};
-    ChannelMixState m_mixB {};
-    ChannelMixState m_mixC {};
-    ChannelMixState m_mixD {};
 };

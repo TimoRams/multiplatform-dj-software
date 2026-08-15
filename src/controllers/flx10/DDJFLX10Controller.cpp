@@ -1,6 +1,6 @@
 #include "DDJFLX10Controller.h"
 
-#include "controllers/DeckIndex.h"
+#include "controllers/flx10/Flx10ControllerIdentity.h"
 #include "deck/DjEngine.h"
 #include "Flx10Protocol.h"
 #include "domain/TrackData.h"
@@ -89,8 +89,8 @@ bool DDJFLX10Controller::start()
     m_hidTrafficClock.restart();
     m_lastXx27SentMs.fill(-kJogStateIntervalMs);
     m_lastXx36SentMs.fill(-kXx36TrickleIntervalMs);
-    for (int deck = controllers::kFlx10FirstDeckIndex;
-         deck <= controllers::kFlx10LastDeckIndex; ++deck) {
+    for (int deck = flx10::kFirstNativeDeckNumber;
+         deck <= flx10::kLastNativeDeckNumber; ++deck) {
         m_uploadActive[deck] = false;
         m_uploadWindowsSent[deck] = 0;
         resetDisplayPacketState(deck);
@@ -178,13 +178,13 @@ void DDJFLX10Controller::stop()
     // frozen on the jog screens until something else drives them, which looks
     // like the controller is still running a track that is long gone.
     if (m_connected) {
-        for (int deck = controllers::kFlx10FirstDeckIndex;
-             deck <= controllers::kFlx10LastDeckIndex; ++deck) {
+        for (int deck = flx10::kFirstNativeDeckNumber;
+             deck <= flx10::kLastNativeDeckNumber; ++deck) {
             clearDeckDisplay(deck);
             resetDisplayPacketState(deck);
         }
     }
-    for (int deck = controllers::kFlx10FirstDeckIndex; deck <= controllers::kFlx10LastDeckIndex; ++deck) {
+    for (int deck = flx10::kFirstNativeDeckNumber; deck <= flx10::kLastNativeDeckNumber; ++deck) {
         if (m_jogRingWarningActive[deck] || !m_jogRingLit[deck])
             sendJogRingIllumination(deck, true);
     }

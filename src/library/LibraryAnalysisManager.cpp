@@ -1,12 +1,30 @@
 #include "LibraryAnalysisManager.h"
 
 #include "LibraryDatabase.h"
-#include "analysis/AnalysisProgress.h"
 
 #include <QDebug>
 #include <QFileInfo>
 #include <QMetaObject>
 #include <QPointer>
+
+#include <algorithm>
+
+namespace {
+
+// Blends the finished-job count with how far the running job has got, so the
+// bar advances smoothly instead of stepping once per track. Clamped on both
+// ends because callers report progress from a worker and may overshoot.
+double aggregateProgress(int completed, int total, double currentProgress)
+{
+    if (total <= 0)
+        return 0.0;
+
+    const int finished = std::clamp(completed, 0, total);
+    const double current = finished < total ? std::clamp(currentProgress, 0.0, 1.0) : 0.0;
+    return std::clamp((finished + current) / static_cast<double>(total), 0.0, 1.0);
+}
+
+} // namespace
 
 LibraryAnalysisManager::LibraryAnalysisManager(QObject* parent)
     : QObject(parent)
@@ -29,7 +47,7 @@ void LibraryAnalysisManager::setLibraryDatabase(LibraryDatabase* db)
 
 double LibraryAnalysisManager::progress() const
 {
-    return analysis::aggregateProgress(m_completed, m_total, m_currentProgress);
+    return aggregateProgress(m_completed, m_total, m_currentProgress);
 }
 
 void LibraryAnalysisManager::analyzeAll(bool includeAnalyzed)

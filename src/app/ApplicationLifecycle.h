@@ -29,7 +29,6 @@ class LibraryCoverService;
 class LibraryPreviewPlayer;
 class SettingsManager;
 class AppConfig;
-class MixerParameterBridge;
 class MixerControl;
 class AudioDeviceService;
 class AudioPageCache;
@@ -80,7 +79,6 @@ struct ApplicationRuntime {
 
     std::unique_ptr<ParameterStore> parameterStore;
     std::unique_ptr<MediaIoScheduler> mediaIoScheduler;
-    std::unique_ptr<MixerParameterBridge> mixerParameterBridge;
     std::unique_ptr<MixerControl> mixerControl;
     QPointer<MidiControllerManager> midiManager;
     std::unique_ptr<ControllerIntegrationManager> controllerManager;

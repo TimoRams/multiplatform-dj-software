@@ -8,15 +8,15 @@
 #include <limits>
 #include <vector>
 
-#include "analysis/AnalysisCacheVersion.h"
 #include "domain/TrackData.h"
 #include "domain/DomainTypes.h"
 #include "waveform/WaveformLineBuilder.h"
 
 namespace analysis {
 
-inline constexpr std::uint32_t kCurrentAnalysisVersion =
-    static_cast<std::uint32_t>(kAnalysisVersion);
+// Bumped whenever a change makes previously stored analysis results unusable,
+// which forces every cached track to be analysed again.
+inline constexpr std::uint32_t kCurrentAnalysisVersion = 2;
 
 struct AnalysisIdentity {
     QString canonicalFilePath;

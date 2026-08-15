@@ -16,6 +16,11 @@
 class WaveformCache
 {
 public:
+    // Version of the rendered-line cache this build writes and accepts. Owned
+    // here because this class is the only thing that reads or writes those
+    // files; a bump invalidates them without touching the analysis results.
+    static constexpr int kRenderCacheVersion = 2;
+
     struct Payload {
         int pointsPerSecond = 0;
         int totalExpected = 0;

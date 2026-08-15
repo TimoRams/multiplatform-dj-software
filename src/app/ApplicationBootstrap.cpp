@@ -45,7 +45,6 @@
 #include "link/LinkManager.h"
 #include "SystemMonitor.h"
 #include "controllers/midi/ParameterStore.h"
-#include "controllers/midi/MixerParameterBridge.h"
 #include "MixerControl.h"
 #include "controllers/midi/MidiControllerManager.h"
 #include "controllers/ControllerIntegrationManager.h"
@@ -527,12 +526,7 @@ int runApplication(int argc, char *argv[])
                 *runtime.libraryPreviewPlayer);
             engine.rootContext()->setContextProperty("libraryPreview",
                                                      runtime.libraryPreviewPlayer.get());
-            runtime.mixerParameterBridge = std::make_unique<MixerParameterBridge>(
-                runtime.parameterStore.get());
-            runtime.mixerParameterBridge->setDecks(runtime.deckA.get(), runtime.deckB.get(),
-                                                   runtime.deckC.get(), runtime.deckD.get());
-            runtime.mixerParameterBridge->setMixerControl(runtime.mixerControl.get());
-
+            runtime.mixerControl->attachParameterStore(runtime.parameterStore.get());
             runtime.mixerControl->setDecks(runtime.deckA.get(), runtime.deckB.get(),
                                            runtime.deckC.get(), runtime.deckD.get());
 
