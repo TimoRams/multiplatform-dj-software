@@ -188,6 +188,11 @@ struct DeviceLibraryManager::DeviceState {
     // software. Empty when the device was never given an identity.
     QString libraryName;
     QString colorHex;
+    // Mount path the identity above was read for. Reading it means decrypting a
+    // database on the connected medium, which is far too expensive to repeat on
+    // every discovery pass — and pointless, because the identity cannot change
+    // while the device stays mounted.
+    QString identityMountPath;
     QString mountPath;
     QString fileSystemType;
     QString systemObjectPath;
@@ -436,15 +441,18 @@ void DeviceLibraryManager::applySystemVolumes(QVector<SystemVolume> volumes)
         }
 
         if (mounted) {
-            // The identity is a single row, so it is read on the discovery pass
-            // rather than deferred to the index worker — the device list needs
-            // the name and colour right away. It is read independently of which
-            // library format is used for tracks below: a device can carry both,
-            // and only the newer one holds the name.
-            const rekordbox::DeviceIdentity identity =
-                rekordbox::DeviceIdentityReader{}.readReadOnly(volume.mountPath);
-            state.libraryName = identity.name;
-            state.colorHex = rekordbox::DeviceIdentityReader::colorHex(identity.color);
+            // Read once per mount, not once per poll: opening the identity
+            // database derives a key, which costs far more than the two-second
+            // discovery interval can afford on the GUI thread. It is read
+            // independently of which library format is used for tracks below: a
+            // device can carry both, and only the newer one holds the name.
+            if (state.identityMountPath != volume.mountPath) {
+                const rekordbox::DeviceIdentity identity =
+                    rekordbox::DeviceIdentityReader{}.readReadOnly(volume.mountPath);
+                state.libraryName = identity.name;
+                state.colorHex = rekordbox::DeviceIdentityReader::colorHex(identity.color);
+                state.identityMountPath = volume.mountPath;
+            }
             const bool legacy = hasFile(volume.mountPath,
                                         QStringLiteral("PIONEER/rekordbox/export.pdb"));
             const bool plus = hasFile(volume.mountPath,
@@ -467,6 +475,7 @@ void DeviceLibraryManager::applySystemVolumes(QVector<SystemVolume> volumes)
             state.scanning = false;
             state.libraryName.clear();
             state.colorHex.clear();
+            state.identityMountPath.clear();
             if (!state.operationPending)
                 state.status = QStringLiteral("Not mounted");
         }
@@ -642,10 +651,13 @@ void DeviceLibraryManager::inspectMountPaths(const QStringList& paths)
             state = m_devices.value(id);
         state.id = id;
         state.volumeLabel = name;
-        const rekordbox::DeviceIdentity identity =
-            rekordbox::DeviceIdentityReader{}.readReadOnly(root);
-        state.libraryName = identity.name;
-        state.colorHex = rekordbox::DeviceIdentityReader::colorHex(identity.color);
+        if (state.identityMountPath != root) {
+            const rekordbox::DeviceIdentity identity =
+                rekordbox::DeviceIdentityReader{}.readReadOnly(root);
+            state.libraryName = identity.name;
+            state.colorHex = rekordbox::DeviceIdentityReader::colorHex(identity.color);
+            state.identityMountPath = root;
+        }
         state.name = state.libraryName.isEmpty() ? name : state.libraryName;
         state.mountPath = root;
         state.fileSystemType = QStringLiteral("test");

@@ -297,6 +297,9 @@ DeckAudioPipeline::RealtimeStats DeckAudioPipeline::realtimeStats() const noexce
         const auto playback = m_impl->playback->cacheStats();
         result.diskReadsFromAudioThread += playback.diskReadsFromAudioThread;
         result.decoderCallsFromAudioThread += playback.decoderCallsFromAudioThread;
+        result.playbackPageMisses = playback.pageMisses;
+        result.playbackStarvationBlocks = playback.starvationBlocks;
+        result.playbackDroppedRequests = playback.droppedRequests;
     }
     result.diskReadsFromAudioThread += m_impl->renderModeRouter->scratchCacheStats().diskReadsFromAudioThread;
 

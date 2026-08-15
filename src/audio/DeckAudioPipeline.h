@@ -30,6 +30,12 @@ public:
         std::uint64_t objectConstructionsFromAudioThread = 0;
         std::uint64_t droppedCommands = 0;
         std::uint64_t trackGeneration = 0;
+        // Playback cache health. A starved block means the page the playhead
+        // needed was not resident, so the deck held its last sample instead of
+        // reading audio — the audible symptom is a click or a short stutter.
+        std::uint64_t playbackPageMisses = 0;
+        std::uint64_t playbackStarvationBlocks = 0;
+        std::uint64_t playbackDroppedRequests = 0;
     };
 
     struct PreparedTrack {

@@ -38,11 +38,26 @@ Rectangle {
     border.width: 1
     radius: 0
 
+    readonly property var effectOptions: ["Echo", "Reverb", "Flanger", "Roll", "Phaser", "---"]
+
     function selectNextEffect() {
         if (!fx) return
-        var options = ["Echo", "Reverb", "Flanger", "Roll", "Phaser", "---"]
-        var index = options.indexOf(fx.effectType1)
-        fx.setEffectType(1, options[(index + 1) % options.length])
+        var index = effectOptions.indexOf(fx.effectType1)
+        fx.setEffectType(1, effectOptions[(index + 1) % effectOptions.length])
+    }
+
+    // ON needs both a selected effect and a non-zero wet amount. Raising the wet
+    // amount alone leaves the slot on "---", which is silent — the button then
+    // looks dead because it never reports ON back.
+    function toggleEffect() {
+        if (!fx) return
+        if (effectOn) {
+            fx.setWetDry(1, 0)
+            return
+        }
+        if (fx.effectType1 === "---")
+            fx.setEffectType(1, effectOptions[0])
+        fx.setWetDry(1, 0.5)
     }
 
     function stepBeatDivision(direction) {
@@ -147,7 +162,7 @@ Rectangle {
             Rectangle {
                 Layout.fillWidth: true; Layout.fillHeight: true; color: root.effectOn ? "#5B351D" : root.controlColor; border.color: "#E99128"; border.width: 1
                 Text { anchors.centerIn: parent; text: "FX " + (root.effectOn ? "ON" : "OFF"); color: root.panelText; font.pixelSize: 12; font.weight: Font.DemiBold }
-                MouseArea { anchors.fill: parent; onClicked: if (root.fx) root.fx.setWetDry(1, root.effectOn ? 0 : 0.5) }
+                MouseArea { anchors.fill: parent; onClicked: root.toggleEffect() }
             }
             Rectangle {
                 Layout.preferredWidth: 54; Layout.fillHeight: true; color: root.routedA ? "#244153" : root.controlColor; border.color: root.lineColor; border.width: 1

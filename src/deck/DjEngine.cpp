@@ -155,6 +155,34 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
         persistCurrentAnalysisToLibrary();
     });
 
+    // Opt-in playback health log. Set BROCKDJ_AUDIO_DIAGNOSTICS=1 to find out
+    // whether audible clicks come from the page cache failing to keep up: a
+    // rising starvation count means the deck ran out of resident audio and held
+    // its last sample. Off by default, so a normal run pays nothing for it.
+    if (!qEnvironmentVariableIsEmpty("BROCKDJ_AUDIO_DIAGNOSTICS")) {
+        auto* diagnostics = new QTimer(this);
+        diagnostics->setInterval(1000);
+        diagnostics->setTimerType(Qt::CoarseTimer);
+        connect(diagnostics, &QTimer::timeout, this, [this] {
+            if (!m_audioPipeline)
+                return;
+            const auto stats = m_audioPipeline->realtimeStats();
+            if (stats.playbackStarvationBlocks == m_lastStarvationBlocks
+                && stats.playbackDroppedRequests == m_lastDroppedRequests)
+                return;
+            qInfo().nospace()
+                << "[AudioDiag] deck=" << m_deckId
+                << " starvation+=" << (stats.playbackStarvationBlocks - m_lastStarvationBlocks)
+                << " dropped+=" << (stats.playbackDroppedRequests - m_lastDroppedRequests)
+                << " misses=" << stats.playbackPageMisses
+                << " diskReadsOnAudioThread=" << stats.diskReadsFromAudioThread
+                << " blockingLocks=" << stats.blockingLockAttempts;
+            m_lastStarvationBlocks = stats.playbackStarvationBlocks;
+            m_lastDroppedRequests = stats.playbackDroppedRequests;
+        });
+        diagnostics->start();
+    }
+
     connect(m_trackData, &TrackData::keyAnalyzed, this, [this]() {
         QString analysedKey = m_trackData->getDetectedKey();
         if (!analysedKey.isEmpty()) {

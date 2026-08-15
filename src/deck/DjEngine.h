@@ -546,6 +546,10 @@ private:
     LibraryCoverService*  m_libraryCoverService = nullptr;
     LibraryDatabase*      m_libraryDb         = nullptr;
     QString m_deckId;
+    // Last values reported by the opt-in playback health log, so it can print
+    // the increase per second instead of an ever-growing total.
+    std::uint64_t m_lastStarvationBlocks = 0;
+    std::uint64_t m_lastDroppedRequests = 0;
     QString m_currentTrackId;
     QString m_trackFilePath;
     QString m_coverArtUrl;

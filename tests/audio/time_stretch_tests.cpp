@@ -97,6 +97,39 @@ int main(){
         ok&=require(stats.blockingLockAttempts==0,"no callback locks");
         source.releaseResources();
     }
+    {   // Turning keylock on must not punch a hole in the output. A freshly
+        // built stretcher runs silent for its own latency — over 30 ms — unless
+        // it is handed the audio that was just playing as pre-roll, and that
+        // dropout is audible as a click on every toggle.
+        ToneSource tone; TimeStretchProcessor source(&tone); source.prepareToPlay(512,48000.0);
+        juce::AudioBuffer<float> warm(2,512);
+        for(int i=0;i<8;++i) source.getNextAudioBlock({&warm,0,512});
+        const auto generation=source.activeConfigurationGeneration();
+        source.setPitchLockEnabled(true); source.setTempoRatio(0.9);
+        ok&=require(waitForGeneration(source,generation),"keylock pipeline activates for the gap check");
+        // Only the stretcher's own latency window matters here: that is exactly
+        // the stretch that used to come out silent, and it is short enough that
+        // later real audio cannot average the hole away.
+        const int latencyWindow=source.getLatencySamples();
+        ok&=require(latencyWindow>0,"keylock reports a latency to check against");
+        double sumOfSquares=0.0; int counted=0; float peak=0.0f;
+        while(counted<latencyWindow){
+            juce::AudioBuffer<float> b(2,256);
+            source.getNextAudioBlock({&b,0,256});
+            ok&=require(finite(b),"keylock enable output finite");
+            for(int i=0;i<256&&counted<latencyWindow;++i){
+                const float value=b.getSample(0,i);
+                sumOfSquares+=static_cast<double>(value)*value; ++counted;
+                peak=std::max(peak,std::abs(value));
+            }
+        }
+        // The tone sits at 0.2 amplitude, so continuous audio lands near 0.141
+        // RMS. Half of that leaves room for the crossfade and the stretcher's
+        // ripple; an unseeded pipeline reports 0 here.
+        const double rms=std::sqrt(sumOfSquares/counted);
+        ok&=require(rms>0.07,"enabling keylock does not silence the output");
+        ok&=require(peak<1.0f,"enabling keylock does not overshoot");
+    }
     std::mt19937 rng(0xB40CD5u); ToneSource tone; TimeStretchProcessor stress(&tone);stress.prepareToPlay(8192,48000);
     for(int i=0;i<1000;++i){if(i%7==0)stress.setPitchLockEnabled((i/7)%2);stress.setTempoRatio(0.25+(rng()%700)/100.0);if(i%31==0)stress.enterScratchBypass();if(i%31==2)stress.endScratchBypass();const int sizes[]={64,128,256,512,1024,2048,4096,8192};juce::AudioBuffer<float>b(2,sizes[rng()%8]);stress.getNextAudioBlock({&b,0,b.getNumSamples()});ok&=require(finite(b),"stress finite");}
     const auto stats=stress.realtimeStats();ok&=require(stats.prepareCallsFromAudioThread+stats.resetCallsFromAudioThread+stats.prewarmCallsFromAudioThread+stats.bufferGrowthsFromAudioThread+stats.blockingLockAttempts==0,"all realtime counters zero");

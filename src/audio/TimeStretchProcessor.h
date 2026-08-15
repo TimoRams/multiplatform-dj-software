@@ -64,6 +64,10 @@ public:
     // artificial. Limiting the map keeps that timbre in place and costs no
     // latency at all — this is the main quality win at large shifts.
     static constexpr double kKeylockTonalityLimitHz = 8000.0;
+    // How much already-played audio is kept around so a freshly activated
+    // pipeline can be seeded with what the listener just heard. Big enough for
+    // the longest pre-roll any supported sample rate asks for.
+    static constexpr int kOutputHistorySamples = 16384;
 
     explicit TimeStretchProcessor(juce::AudioSource* inSource);
     ~TimeStretchProcessor() override;
@@ -115,7 +119,9 @@ private:
     void activatePreparedPipelineAtBlockBoundary() noexcept;
     void processPipeline(Pipeline& pipeline, const juce::AudioSourceChannelInfo& info) noexcept;
     void applySwitchFade(const juce::AudioSourceChannelInfo& info) noexcept;
-    void captureOutputTail(const juce::AudioSourceChannelInfo& info) noexcept;
+    void appendOutputHistory(const juce::AudioSourceChannelInfo& info) noexcept;
+    void readOutputHistory(juce::AudioBuffer<float>& destination, int count) const noexcept;
+    void seedPipelineFromHistory(Pipeline& pipeline) noexcept;
     static bool validConfiguration(const TimeStretchConfiguration& config) noexcept;
     void resizeBuffer(juce::AudioBuffer<float>& buffer, int channels, int samples);
 
@@ -138,6 +144,11 @@ private:
     std::atomic<int> m_reportedLatencySamples { 0 };
     std::atomic<int> m_switchFadeRemaining { 0 };
     juce::AudioBuffer<float> m_previousTail;
+    // Ring of everything this processor has emitted, plus a linear scratch the
+    // ring is unwrapped into. Only ever touched from the audio thread.
+    juce::AudioBuffer<float> m_outputHistory;
+    juce::AudioBuffer<float> m_historyScratch;
+    int m_historyWrite = 0;
     std::atomic<bool> m_accepting { false };
     std::atomic<bool> m_prepared { false };
     std::atomic<bool> m_stopRequested { false };

@@ -134,6 +134,11 @@ void TimeStretchProcessor::prepareToPlay(int blockSize, double sr)
     m_stopRequested.store(false, std::memory_order_release);
     resizeBuffer(m_previousTail, 2, kSwitchFadeSamples);
     m_previousTail.clear();
+    resizeBuffer(m_outputHistory, 2, kOutputHistorySamples);
+    resizeBuffer(m_historyScratch, 2, kOutputHistorySamples);
+    m_outputHistory.clear();
+    m_historyScratch.clear();
+    m_historyWrite = 0;
 
     auto initial = desiredConfiguration();
     initial.configurationGeneration = 1;
@@ -201,9 +206,11 @@ bool TimeStretchProcessor::preparePipeline(Pipeline& p, const TimeStretchConfigu
         const int blockSamples = std::clamp(
             static_cast<int>(std::lround(c.sampleRate * kKeylockWindowSeconds)), 512, 8192);
         const int intervalSamples = std::clamp(blockSamples / kKeylockOverlap, 64, 2048);
-        // Split the FFT work across calls so no single audio callback pays for
-        // a whole transform. Costs one hop of extra output latency.
-        p.signalsmith->configure(c.channelCount, blockSamples, intervalSamples, true);
+        // Spreading the FFT work across calls would buy a flatter CPU profile,
+        // but it charges a whole extra hop of output latency for it. At this
+        // window one transform is well under a block's worth of time, so the
+        // insurance is not worth 8 ms of delay — do the transform in one go.
+        p.signalsmith->configure(c.channelCount, blockSamples, intervalSamples, false);
         p.tonalityLimit = kKeylockTonalityLimitHz / c.sampleRate;
         p.signalsmith->setTransposeFactor(static_cast<float>(p.appliedPitchScale),
                                           static_cast<float>(p.tonalityLimit));
@@ -211,7 +218,9 @@ bool TimeStretchProcessor::preparePipeline(Pipeline& p, const TimeStretchConfigu
     resizeBuffer(p.input, 2, std::max(4096, c.maximumBlockSize));
     resizeBuffer(p.output, 2, kFifoCapacity);
     resizeBuffer(p.trim, 2, 4096);
-    resizeBuffer(p.zeros, 2, 4096);
+    resizeBuffer(p.zeros, 2, p.signalsmith
+                                 ? std::max(4096, p.signalsmith->outputSeekLength(1.0f))
+                                 : 4096);
     p.zeros.clear();
     p.fifo = std::make_unique<juce::AbstractFifo>(kFifoCapacity);
     p.config = c;
@@ -233,12 +242,16 @@ void TimeStretchProcessor::prewarmPipeline(Pipeline& p)
 {
     if (g_inTimeStretchAudioCallback) m_prewarmFromAudio.fetch_add(1, std::memory_order_relaxed);
     if (p.signalsmith) {
-        const int warmup = std::min(p.zeros.getNumSamples(), p.signalsmith->inputLatency());
-        if (warmup > 0) {
-            const float* in[2] { p.zeros.getReadPointer(0), p.zeros.getReadPointer(1) };
-            float* out[2] { p.trim.getWritePointer(0), p.trim.getWritePointer(1) };
-            p.signalsmith->process(in, warmup, out, warmup);
-        }
+        // Running silence through the stretcher does not shorten its startup
+        // gap by a single sample — the delay is inherent, so all it would do is
+        // burn input. What this pass is actually for is the allocations inside
+        // outputSeek(): doing one here, on the worker thread, leaves the vectors
+        // at full capacity so the real seed at activation time can run on the
+        // audio thread without touching the allocator.
+        const int seedLength = std::min(p.zeros.getNumSamples(),
+                                        p.signalsmith->outputSeekLength(1.0f));
+        if (seedLength > 0)
+            p.signalsmith->outputSeek(p.zeros.getArrayOfReadPointers(), seedLength);
         return;
     }
     if (!p.rubberBand) return;
@@ -322,6 +335,8 @@ void TimeStretchProcessor::activatePreparedPipelineAtBlockBoundary() noexcept
         m_activeBackend.store(next.config.backend, std::memory_order_release);
         m_scratchRefreshInFlight.store(false, std::memory_order_release);
         m_reportedLatencySamples.store(next.config.keylockEnabled ? next.latency : 0, std::memory_order_relaxed);
+        seedPipelineFromHistory(next);
+        readOutputHistory(m_previousTail, kSwitchFadeSamples);
         m_switchFadeRemaining.store(kSwitchFadeSamples, std::memory_order_relaxed);
         m_switches.fetch_add(1, std::memory_order_relaxed);
         if (old >= 0 && old != i) m_pipelines[old].state.store(SlotState::Empty, std::memory_order_release);
@@ -345,8 +360,10 @@ void TimeStretchProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
             m_scratchExitFadePending.store(true, std::memory_order_release);
         }
     }
-    if (m_scratchExitFadePending.exchange(false, std::memory_order_acq_rel))
+    if (m_scratchExitFadePending.exchange(false, std::memory_order_acq_rel)) {
+        readOutputHistory(m_previousTail, kSwitchFadeSamples);
         m_switchFadeRemaining.store(kSwitchFadeSamples, std::memory_order_relaxed);
+    }
     const int active = m_activeSlot.load(std::memory_order_acquire);
     if (m_scratchBypass.load(std::memory_order_acquire) || active < 0
         || m_pipelines[active].config.trackGeneration != m_trackGeneration.load(std::memory_order_acquire)
@@ -354,12 +371,12 @@ void TimeStretchProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
         m_reportedLatencySamples.store(0, std::memory_order_relaxed);
         source->getNextAudioBlock(info);
         applySwitchFade(info);
-        captureOutputTail(info);
+        appendOutputHistory(info);
         return;
     }
     processPipeline(m_pipelines[active], info);
     applySwitchFade(info);
-    captureOutputTail(info);
+    appendOutputHistory(info);
 }
 
 void TimeStretchProcessor::processPipeline(Pipeline& p, const juce::AudioSourceChannelInfo& info) noexcept
@@ -449,15 +466,56 @@ void TimeStretchProcessor::applySwitchFade(const juce::AudioSourceChannelInfo& i
     m_switchFadeRemaining.store(remaining-count,std::memory_order_relaxed);
 }
 
-void TimeStretchProcessor::captureOutputTail(const juce::AudioSourceChannelInfo& info) noexcept
+void TimeStretchProcessor::appendOutputHistory(const juce::AudioSourceChannelInfo& info) noexcept
 {
-    if (m_previousTail.getNumSamples() != kSwitchFadeSamples) return;
-    const int count = std::min(kSwitchFadeSamples, info.numSamples);
+    const int capacity = m_outputHistory.getNumSamples();
+    if (capacity <= 0) return;
+    const int count = std::min(info.numSamples, capacity);
     const int sourceStart = info.startSample + info.numSamples - count;
-    for (int ch=0; ch<std::min(2,info.buffer->getNumChannels()); ++ch) {
-        if (count < kSwitchFadeSamples) m_previousTail.clear(ch,0,kSwitchFadeSamples-count);
-        m_previousTail.copyFrom(ch,kSwitchFadeSamples-count,*info.buffer,ch,sourceStart,count);
+    const int first = std::min(count, capacity - m_historyWrite);
+    const int second = count - first;
+    for (int ch = 0; ch < 2; ++ch) {
+        const int sourceChannel = std::min(ch, info.buffer->getNumChannels() - 1);
+        if (sourceChannel < 0) break;
+        if (first > 0)
+            m_outputHistory.copyFrom(ch, m_historyWrite, *info.buffer, sourceChannel, sourceStart, first);
+        if (second > 0)
+            m_outputHistory.copyFrom(ch, 0, *info.buffer, sourceChannel, sourceStart + first, second);
     }
+    m_historyWrite = (m_historyWrite + count) % capacity;
+}
+
+void TimeStretchProcessor::readOutputHistory(juce::AudioBuffer<float>& destination, int count) const noexcept
+{
+    const int capacity = m_outputHistory.getNumSamples();
+    if (capacity <= 0 || count <= 0 || destination.getNumSamples() < count) return;
+    // Unwrap the newest `count` samples so they end up chronological, oldest
+    // first, which is the order both the crossfade and the stretcher expect.
+    const int start = ((m_historyWrite - count) % capacity + capacity) % capacity;
+    const int first = std::min(count, capacity - start);
+    const int second = count - first;
+    for (int ch = 0; ch < std::min(2, destination.getNumChannels()); ++ch) {
+        destination.copyFrom(ch, 0, m_outputHistory, ch, start, first);
+        if (second > 0)
+            destination.copyFrom(ch, first, m_outputHistory, ch, 0, second);
+    }
+}
+
+void TimeStretchProcessor::seedPipelineFromHistory(Pipeline& p) noexcept
+{
+    if (!p.signalsmith || !p.config.keylockEnabled) return;
+    // A stretcher that has just been built outputs its own latency worth of
+    // silence before the first real sample arrives — at this window that is
+    // over 30 ms of dropout every time keylock is switched on, which is exactly
+    // the click. Handing it the audio the listener just heard as pre-roll lets
+    // it carry that on seamlessly while the new input works its way through.
+    const int seedLength = std::min({ p.signalsmith->outputSeekLength(1.0f),
+                                      m_historyScratch.getNumSamples(),
+                                      m_outputHistory.getNumSamples() });
+    if (seedLength <= 0) return;
+    readOutputHistory(m_historyScratch, seedLength);
+    p.signalsmith->outputSeek(m_historyScratch.getArrayOfReadPointers(), seedLength);
+    p.fifo->reset();
 }
 
 int TimeStretchProcessor::getLatencySamples() const noexcept { return m_reportedLatencySamples.load(std::memory_order_relaxed); }
