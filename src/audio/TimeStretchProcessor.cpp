@@ -196,12 +196,17 @@ bool TimeStretchProcessor::preparePipeline(Pipeline& p, const TimeStretchConfigu
         p.rubberBand->setPitchScale(p.appliedPitchScale);
     } else {
         p.signalsmith = std::make_unique<signalsmith::stretch::SignalsmithStretch<float>>();
-        // A shorter custom window keeps keylock responsive enough for live DJ use
-        // while still using Signalsmith's phase-coherent pitch mapping.
-        const int blockSamples = std::clamp(static_cast<int>(std::lround(c.sampleRate * 0.05)), 1024, 8192);
-        const int intervalSamples = std::clamp(blockSamples / 8, 128, 1024);
+        // A shorter window than the library default keeps keylock responsive
+        // enough for live use; see kKeylockWindowSeconds for the trade-off.
+        const int blockSamples = std::clamp(
+            static_cast<int>(std::lround(c.sampleRate * kKeylockWindowSeconds)), 512, 8192);
+        const int intervalSamples = std::clamp(blockSamples / kKeylockOverlap, 64, 2048);
+        // Split the FFT work across calls so no single audio callback pays for
+        // a whole transform. Costs one hop of extra output latency.
         p.signalsmith->configure(c.channelCount, blockSamples, intervalSamples, true);
-        p.signalsmith->setTransposeFactor(static_cast<float>(p.appliedPitchScale));
+        p.tonalityLimit = kKeylockTonalityLimitHz / c.sampleRate;
+        p.signalsmith->setTransposeFactor(static_cast<float>(p.appliedPitchScale),
+                                          static_cast<float>(p.tonalityLimit));
     }
     resizeBuffer(p.input, 2, std::max(4096, c.maximumBlockSize));
     resizeBuffer(p.output, 2, kFifoCapacity);
@@ -365,15 +370,32 @@ void TimeStretchProcessor::processPipeline(Pipeline& p, const juce::AudioSourceC
         if (p.rubberBand)
             p.rubberBand->setPitchScale(pitchScale);
         else if (p.signalsmith)
-            p.signalsmith->setTransposeFactor(static_cast<float>(pitchScale));
+            // The limit has to be repeated on every update: passing a factor on
+            // its own resets the pitch map back to transposing the full band.
+            p.signalsmith->setTransposeFactor(static_cast<float>(pitchScale),
+                                              static_cast<float>(p.tonalityLimit));
         p.appliedPitchScale = pitchScale;
     }
     const int needed = info.numSamples;
     int loops = kPullLoopLimit;
     while (p.fifo->getNumReady() < needed && loops-- > 0) {
-        int pull = p.rubberBand ? p.rubberBand->getSamplesRequired() : kMaxPullSize;
-        pull = std::clamp(pull > 0 ? pull : kMinPullSize, kMinPullSize,
-                          std::min(kMaxPullSize, p.input.getNumSamples()));
+        int pull = 0;
+        if (p.rubberBand) {
+            const int required = p.rubberBand->getSamplesRequired();
+            pull = std::clamp(required > 0 ? required : kMinPullSize, kMinPullSize,
+                              std::min(kMaxPullSize, p.input.getNumSamples()));
+        } else {
+            // Signalsmith is sample-for-sample here, so ask for exactly what is
+            // still missing. Pulling a fixed chunk instead would leave a partial
+            // block sitting in the FIFO, and that leftover is thrown away when
+            // the pipeline is bypassed for a platter grab or a keylock toggle —
+            // audible as a small position jump every time.
+            pull = std::min({ needed - p.fifo->getNumReady(), kMaxPullSize,
+                              p.input.getNumSamples(), p.trim.getNumSamples(),
+                              p.fifo->getFreeSpace() });
+            if (pull <= 0)
+                break;
+        }
         p.input.clear(0, pull);
         source->getNextAudioBlock({&p.input, 0, pull});
         const float* in[2] { p.input.getReadPointer(0), p.input.getReadPointer(1) };
@@ -382,7 +404,9 @@ void TimeStretchProcessor::processPipeline(Pipeline& p, const juce::AudioSourceC
             p.rubberBand->process(in, pull, false);
             available = std::min(p.rubberBand->available(), p.fifo->getFreeSpace());
         } else if (p.signalsmith) {
-            available = std::min(pull, p.fifo->getFreeSpace());
+            // `pull` was already capped to the free space, so every sample the
+            // stretcher produces has somewhere to go — nothing is dropped.
+            available = pull;
         }
         int s1, n1, s2, n2;
         p.fifo->prepareToWrite(std::max(0, available), s1, n1, s2, n2);

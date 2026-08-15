@@ -47,6 +47,24 @@ public:
     static constexpr int kPullLoopLimit = 24;
     static constexpr int kSwitchFadeSamples = 256;
 
+    // ── Keylock analysis settings ────────────────────────────────────────────
+    // A phase vocoder's added delay is essentially its analysis window, so the
+    // window length is the one knob that trades latency against how cleanly low
+    // frequencies are resolved. 32 ms resolves down to roughly 30 Hz and adds
+    // about 40 ms in total at 44.1 kHz — noticeably less than the 56 ms the
+    // previous 50 ms window cost, and short enough to stay out of the way when
+    // riding the tempo fader.
+    static constexpr double kKeylockWindowSeconds = 0.032;
+    // Hops per window. Four is the library's own default ratio; the previous
+    // eight doubled the CPU cost for no audible gain at keylock-sized shifts.
+    static constexpr int kKeylockOverlap = 4;
+    // Above this frequency the pitch map rolls off instead of transposing
+    // linearly. Cymbals, breath and hiss are noise rather than pitch, so
+    // dragging them along with the shift is what makes wide pitch ranges sound
+    // artificial. Limiting the map keeps that timbre in place and costs no
+    // latency at all — this is the main quality win at large shifts.
+    static constexpr double kKeylockTonalityLimitHz = 8000.0;
+
     explicit TimeStretchProcessor(juce::AudioSource* inSource);
     ~TimeStretchProcessor() override;
 
@@ -82,6 +100,10 @@ private:
         int prefill = 0;
         int latency = 0;
         double appliedPitchScale = 1.0;
+        // Normalised tonality limit for this pipeline's sample rate. Kept here
+        // because setTransposeFactor() resets the limit whenever it is called
+        // without one, so every later pitch update has to pass it again.
+        double tonalityLimit = 0.0;
     };
 
     void publishDesiredConfiguration() noexcept;
