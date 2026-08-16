@@ -3,6 +3,7 @@
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
+#include <array>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
@@ -156,6 +157,49 @@ void waveformSweepKeepsItsOriginAndCoversEveryWindow()
     assert(flx10_protocol::waveformSweepWindow(8, 123, 0) == 0);
 }
 
+// The grid is drawn by recolouring, so it must never change what the waveform
+// says about loudness. A marker overlay does change it, which is exactly why
+// the grid cannot reuse that path.
+void beatgridTintsWithoutInventingTransients()
+{
+    QByteArray waveform;
+    for (int index = 0; index < 300; ++index)
+        waveform += flx10_protocol::encodePwv5Entry(index % 32, 1, 2, 3);
+
+    const auto heightAt = [&waveform](int entry) {
+        const int value = static_cast<unsigned char>(waveform[entry * 2])
+            | (static_cast<unsigned char>(waveform[entry * 2 + 1]) << 8);
+        return (value >> 2) & 0x1F;
+    };
+    const auto colourAt = [&waveform](int entry) {
+        const int value = static_cast<unsigned char>(waveform[entry * 2])
+            | (static_cast<unsigned char>(waveform[entry * 2 + 1]) << 8);
+        return std::array<int, 3> {(value >> 13) & 0x7, (value >> 10) & 0x7,
+                                   (value >> 7) & 0x7};
+    };
+
+    // A loud column keeps its height and only changes colour.
+    const int loud = 31;   // height 31 % 32 == 31
+    assert(heightAt(loud) == 31);
+    assert(flx10_protocol::tintPwv5Entry(waveform, loud, 7, 7, 7, 8));
+    assert(heightAt(loud) == 31);
+    assert((colourAt(loud) == std::array<int, 3> {7, 7, 7}));
+
+    // A near-silent column is lifted to the floor, never above it.
+    const int quiet = 32;   // height 32 % 32 == 0
+    assert(flx10_protocol::tintPwv5Entry(waveform, quiet, 4, 4, 4, 5));
+    assert(heightAt(quiet) == 5);
+
+    // A column already louder than the floor is not pulled down to it.
+    const int medium = 20;
+    assert(heightAt(medium) == 20);
+    assert(flx10_protocol::tintPwv5Entry(waveform, medium, 4, 4, 4, 5));
+    assert(heightAt(medium) == 20);
+
+    assert(!flx10_protocol::tintPwv5Entry(waveform, -1, 7, 7, 7, 8));
+    assert(!flx10_protocol::tintPwv5Entry(waveform, 300, 7, 7, 7, 8));
+}
+
 } // namespace
 
 int main()
@@ -168,5 +212,6 @@ int main()
     tempoDoesNotMoveAbsoluteProgress();
     latestDisplayStateWinsWithoutBacklog();
     waveformSweepKeepsItsOriginAndCoversEveryWindow();
+    beatgridTintsWithoutInventingTransients();
     return 0;
 }

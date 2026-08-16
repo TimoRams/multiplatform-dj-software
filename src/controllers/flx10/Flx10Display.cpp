@@ -14,7 +14,10 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
+#include <mutex>
+#include <thread>
 #include <utility>
 
 #include "Flx10Protocol.h"
@@ -113,10 +116,12 @@ void logFlx10WaveformComparison(int deck,
 
 void DDJFLX10Controller::resetDisplayPacketState(int deck)
 {
-    if (deck < 0 || deck >= static_cast<int>(m_lastXx27Packet.size()))
+    if (deck < 0 || deck >= static_cast<int>(m_deckStateCells.size()))
         return;
-    m_lastXx27Packet[deck].clear();
-    m_lastXx27SentMs[deck] = -kJogStateIntervalMs;
+    // The dedup state now lives on the display thread, so this can only ask it
+    // to stop suppressing. The flag is consumed by the next tick there.
+    m_deckStateCells[static_cast<std::size_t>(deck)].forceResend.store(
+        true, std::memory_order_release);
 }
 void DDJFLX10Controller::pushDeckJogDisplay(int deck)
 {
@@ -125,12 +130,15 @@ void DDJFLX10Controller::pushDeckJogDisplay(int deck)
     if (m_shuttingDown.load(std::memory_order_acquire) || !m_connected)
         return;
 
-    const DeckDisplaySnapshot snapshot = captureDeckDisplaySnapshot(deck);
-    sendXx27(deck, snapshot);
+    // Owner thread side: publish the state and drive the jog ring. The xx27
+    // packet itself is produced by the display thread, which is why a stall
+    // here no longer stops the stream.
+    publishDeckState(deck);
+    const DeckStateFeed feed = readDeckState(deck);
     updateJogRingWarning(deck,
-                         snapshot.sourcePositionSec,
-                         snapshot.trackDurationSec,
-                         snapshot.playing);
+                         deckDisplayPosition(deck),
+                         feed.trackDurationSec,
+                         feed.playing);
 }
 
 void DDJFLX10Controller::decorateWaveformMarkers(
@@ -144,10 +152,35 @@ void DDJFLX10Controller::decorateWaveformMarkers(
     if (!engine)
         return;
 
-    // PWV5 contains waveform amplitude and colour, not native beatgrid
-    // overlay geometry. Replacing audio columns with full-height beat spikes
-    // creates fake transients and a misleading grid. Keep the audio waveform
-    // intact until the real FLX10 overlay command is capture-proven.
+    // PWV5 carries waveform amplitude and colour, not native beatgrid overlay
+    // geometry, and this HID mode exposes no separate grid command. An earlier
+    // pass therefore dropped the grid entirely, because the only way to draw it
+    // was to replace audio columns with full-height spikes — which invents
+    // transients the track does not have. Tinting solves that: the column keeps
+    // its measured height and only changes colour, so the grid sits behind the
+    // audio. It is drawn first so cues and loops overwrite it, not the reverse.
+    if (const TrackData* trackData = engine->getTrackData()) {
+        const auto beats = trackData->getBeatGridSnapshot();
+        const int entryCount = waveform.size() / 2;
+        if (beats && !beats->empty() && entryCount > 0 && duration > 0.0) {
+            // One entry is ~6.7 ms at the 150 entries/s the jog screen uses, so
+            // a beat is a single column and a downbeat is three — wide enough
+            // to pick the "1" out of the bar at a glance while scratching.
+            for (const auto& beat : *beats) {
+                if (!beat.isBeat)
+                    continue;
+                const int centre = waveformEntryForTimeline(
+                    beat.positionSec, duration, entryCount);
+                if (centre < 0)
+                    continue;
+                const int radius = beat.isDownbeat ? 1 : 0;
+                const int level = beat.isDownbeat ? 7 : 4;
+                const int floorHeight = beat.isDownbeat ? 8 : 5;
+                for (int entry = centre - radius; entry <= centre + radius; ++entry)
+                    tintPwv5Entry(waveform, entry, level, level, level, floorHeight);
+            }
+        }
+    }
 
     // The Serato HID mode does not expose a separate loop overlay command.
     // Put loop boundaries into the proven PWV5 render path: saved loops are
@@ -388,10 +421,10 @@ bool DDJFLX10Controller::clearDeckDisplay(int deck)
     }
     return ok;
 }
-bool DDJFLX10Controller::sendXx27(int deck, const DeckDisplaySnapshot& snapshot)
+bool DDJFLX10Controller::sendXx27(int deck, const DeckDisplaySnapshot& snapshot,
+                                  qint64 nowMs)
 {
     const QByteArray p = encodeXx27Packet(deck, snapshot);
-    const qint64 nowMs = m_hidTrafficClock.isValid() ? m_hidTrafficClock.elapsed() : 0;
 
     // Suppressing byte-identical packets indefinitely made the firmware treat
     // the state stream as stopped: while scratching the position changes every
@@ -399,25 +432,23 @@ bool DDJFLX10Controller::sendXx27(int deck, const DeckDisplaySnapshot& snapshot)
     // is identical forever and nothing was sent at all. That is exactly the
     // "display only updates while I scratch" behaviour. Dedup still bounds the
     // rate, but an unchanged state is refreshed as a heartbeat.
-    if (deck >= 0 && deck < static_cast<int>(m_lastXx27Packet.size())
-        && m_lastXx27Packet[deck] == p
-        && deck < static_cast<int>(m_lastXx27SentMs.size())
-        && nowMs - m_lastXx27SentMs[deck] < kXx27HeartbeatIntervalMs) {
+    if (deck < 0 || deck >= static_cast<int>(m_displayLastPacket.size()))
+        return false;
+
+    if (m_displayLastPacket[deck] == p
+        && nowMs - m_displayLastSentMs[deck] < kXx27HeartbeatIntervalMs) {
         return true;
     }
 
-    // ProgressChanged can fire much faster than the display clock while
-    // scratching.  Keep the latest position, but never turn that burst into an
-    // unbounded stream of USB interrupt reports.
-    if (deck >= 0 && deck < static_cast<int>(m_lastXx27SentMs.size())
-        && nowMs - m_lastXx27SentMs[deck] < kJogStateIntervalMs) {
+    // Keep the latest position, but never turn a burst into an unbounded
+    // stream of USB interrupt reports.
+    if (nowMs - m_displayLastSentMs[deck] < kJogStateIntervalMs)
         return true;
-    }
 
     const bool ok = writePacket(p);
-    if (ok && deck >= 0 && deck < static_cast<int>(m_lastXx27Packet.size())) {
-        m_lastXx27Packet[deck] = p;
-        m_lastXx27SentMs[deck] = nowMs;
+    if (ok) {
+        m_displayLastPacket[deck] = p;
+        m_displayLastSentMs[deck] = nowMs;
     }
     return ok;
 }
@@ -570,31 +601,145 @@ double DDJFLX10Controller::deckDisplayPosition(int deck) const
 {
     return validTrackPosition(deckEngine(deck), deckDisplayDuration(deck));
 }
-DeckDisplaySnapshot DDJFLX10Controller::captureDeckDisplaySnapshot(int deck)
+DDJFLX10Controller::DeckStateFeed
+DDJFLX10Controller::captureDeckStateFeed(int deck) const
 {
-    DeckDisplaySnapshot snapshot;
+    DeckStateFeed feed;
     if (deck < 1 || deck > 2)
-        return snapshot;
+        return feed;
 
     const DjEngine* engine = deckEngine(deck);
-    snapshot.trackDurationSec = deckDisplayDuration(deck);
-    if (!engine) {
-        snapshot.sourcePositionSec = std::fmod(
-            (QDateTime::currentMSecsSinceEpoch() - m_clockStartMs) / 1000.0,
-            snapshot.trackDurationSec);
-        snapshot.playing = true;
-        return snapshot;
-    }
+    feed.trackDurationSec = deckDisplayDuration(deck);
+    if (!engine)
+        return feed;
 
-    snapshot.sourcePositionSec = validTrackPosition(engine, snapshot.trackDurationSec);
-    snapshot.bpm = std::max(0.0, engine->getCurrentBpm());
-    snapshot.tempoPercent = engine->getTempoPercent();
-    snapshot.playing = engine->isPlaying();
-    snapshot.scratching = engine->isScratchVisualActive();
-    snapshot.reverse = engine->isReverse();
-    snapshot.keyByte = m_cachedDeckKeyBytes[deck];
-    return snapshot;
+    feed.hasEngine = true;
+    feed.bpm = std::max(0.0, engine->getCurrentBpm());
+    feed.tempoPercent = engine->getTempoPercent();
+    feed.playing = engine->isPlaying();
+    feed.scratching = engine->isScratchVisualActive();
+    feed.reverse = engine->isReverse();
+    feed.latencyCompensationSec = engine->visualLatencyCompensationSeconds();
+    feed.keyByte = m_cachedDeckKeyBytes[deck];
+    return feed;
 }
+
+void DDJFLX10Controller::publishDeckState(int deck)
+{
+    if (deck < 1 || deck > 2)
+        return;
+    const DeckStateFeed feed = captureDeckStateFeed(deck);
+    auto& cell = m_deckStateCells[static_cast<std::size_t>(deck)];
+    const std::lock_guard lock(cell.mutex);
+    cell.value = feed;
+}
+
+DDJFLX10Controller::DeckStateFeed DDJFLX10Controller::readDeckState(int deck) const
+{
+    if (deck < 0 || deck >= static_cast<int>(m_deckStateCells.size()))
+        return {};
+    const auto& cell = m_deckStateCells[static_cast<std::size_t>(deck)];
+    const std::lock_guard lock(cell.mutex);
+    return cell.value;
+}
+
+void DDJFLX10Controller::startDisplayThread()
+{
+    stopDisplayThread();
+    m_displayThreadStopping.store(false, std::memory_order_release);
+    m_displayLastPacket.fill({});
+    m_displayLastSentMs.fill(-kJogStateIntervalMs);
+    m_displayThread = std::thread([this] { displayThreadLoop(); });
+}
+
+void DDJFLX10Controller::stopDisplayThread() noexcept
+{
+    m_displayThreadStopping.store(true, std::memory_order_release);
+    if (m_displayThread.joinable())
+        m_displayThread.join();
+}
+
+void DDJFLX10Controller::displayThreadLoop()
+{
+    // A fixed wake-up grid rather than "sleep 5 ms after the work": the period
+    // is what the firmware watches, and letting it drift with the cost of a
+    // packet is what turns a busy moment into a visible stutter. A tick that
+    // arrives after its slot is counted and the grid is re-based, so the loop
+    // never tries to catch up by sending a burst.
+    using clock = std::chrono::steady_clock;
+    const auto period = std::chrono::milliseconds(kJogStateIntervalMs);
+    const auto epoch = clock::now();
+    auto next = epoch + period;
+
+    while (!m_displayThreadStopping.load(std::memory_order_acquire)) {
+        std::this_thread::sleep_until(next);
+        const auto now = clock::now();
+        if (now >= next + period) {
+            m_displayTicksLate.fetch_add(1, std::memory_order_relaxed);
+            next = now + period;
+        } else {
+            next += period;
+        }
+        if (m_displayThreadStopping.load(std::memory_order_acquire))
+            break;
+        if (!m_displayFeedActive.load(std::memory_order_acquire))
+            continue;
+
+        m_displayTicks.fetch_add(1, std::memory_order_relaxed);
+        const auto nowMs = static_cast<qint64>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - epoch)
+                .count());
+
+        for (int deck = 1; deck <= 2; ++deck) {
+            auto& cell = m_deckStateCells[static_cast<std::size_t>(deck)];
+            if (cell.forceResend.exchange(false, std::memory_order_acq_rel))
+                m_displayLastPacket[deck].clear();
+
+            const DeckStateFeed feed = readDeckState(deck);
+            DeckDisplaySnapshot snapshot;
+            snapshot.trackDurationSec = feed.trackDurationSec;
+            snapshot.bpm = feed.bpm;
+            snapshot.tempoPercent = feed.tempoPercent;
+            snapshot.playing = feed.playing;
+            snapshot.scratching = feed.scratching;
+            snapshot.reverse = feed.reverse;
+            snapshot.keyByte = feed.keyByte;
+
+            const std::atomic<double>* sink =
+                m_deckPlayheadSinks[static_cast<std::size_t>(deck)].load(
+                    std::memory_order_acquire);
+            if (!feed.hasEngine || sink == nullptr) {
+                // No deck attached, so there is no position to show. An earlier
+                // pass free-ran a synthetic sweep here to keep an unbound screen
+                // looking alive; that turned a wiring fault into a platter that
+                // spun smoothly and meant nothing, which is far harder to spot
+                // than a platter that stands still. Stand still.
+                snapshot.sourcePositionSec = 0.0;
+                snapshot.playing = false;
+            } else {
+                // The audio playhead, not the interpolated visual one. It is
+                // the position the deck is actually rendering, it is written
+                // by the audio thread every block, and reading it needs
+                // nothing from the engine that could be mid-update.
+                double position = sink->load(std::memory_order_acquire);
+                if (!std::isfinite(position)) {
+                    position = 0.0;
+                } else if (feed.playing && !feed.scratching) {
+                    // That cursor is one output buffer ahead of the ear. The
+                    // desktop waveform subtracts the same term; a jog ring that
+                    // did not would sit visibly ahead of the beat it marks.
+                    position += feed.reverse ? feed.latencyCompensationSec
+                                             : -feed.latencyCompensationSec;
+                }
+                snapshot.sourcePositionSec =
+                    std::clamp(position, 0.0, snapshot.trackDurationSec);
+            }
+
+            sendXx27(deck, snapshot, nowMs);
+        }
+    }
+}
+
 double DDJFLX10Controller::deckTempoRangePercent(int deck) const
 {
     const DjEngine* engine = deckEngine(deck);

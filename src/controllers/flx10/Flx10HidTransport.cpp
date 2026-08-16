@@ -228,7 +228,14 @@ void DDJFLX10Controller::stopHidWriter() noexcept
                 << "timeouts=" << m_displayWriteTimeouts.load(std::memory_order_relaxed)
                 << "maxQueueDepth=" << m_maximumDisplayQueueDepth.load(std::memory_order_relaxed)
                 << "lastSequence=" << m_lastDisplaySequence.load(std::memory_order_relaxed)
-                << "worstWriteUsec=" << m_worstDisplayWriteUsec.load(std::memory_order_relaxed);
+                << "worstWriteUsec=" << m_worstDisplayWriteUsec.load(std::memory_order_relaxed)
+                // The two numbers that say whether the state stream actually
+                // kept its cadence. lateTicks counts wake-ups that missed their
+                // slot by a whole period; on a healthy run it stays near zero
+                // however busy the UI gets, because the producer no longer
+                // shares a thread with it.
+                << "displayTicks=" << m_displayTicks.load(std::memory_order_relaxed)
+                << "lateTicks=" << m_displayTicksLate.load(std::memory_order_relaxed);
     }
 }
 

@@ -143,6 +143,19 @@ public:
     // Lock-free atomic read of the playhead position (seconds).
     // Called from QML FrameAnimation every VSync frame — must be wait-free.
     [[nodiscard]] Q_INVOKABLE double getPlayheadPositionAtomic() const;
+    // Address of that same atomic. A consumer running on its own thread — the
+    // controller display feed — reads the position through this rather than
+    // calling into the engine, so it depends on no engine invariant and on no
+    // Qt thread affinity. The cell lives as long as the deck does.
+    [[nodiscard]] const std::atomic<double>* audioPlayheadSink() const noexcept;
+    // Seconds by which the rendered playhead runs ahead of what is audible.
+    // Anything showing a position to a person has to subtract it; the atomic
+    // above is the render cursor, not the ear's.
+    [[nodiscard]] double visualLatencyCompensationSeconds() const noexcept
+    {
+        return static_cast<double>(
+            m_visualLatencyCompensationSeconds.load(std::memory_order_relaxed));
+    }
     [[nodiscard]] bool isPlaying() const;
     [[nodiscard]] bool isScrubbing() const { return m_scratch.scrubbing(); }
     [[nodiscard]] bool isScratchReleaseActive() const { return m_scratch.releaseGlide(); }

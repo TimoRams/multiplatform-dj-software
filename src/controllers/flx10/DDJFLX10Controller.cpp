@@ -26,6 +26,9 @@ using namespace flx10_protocol;
 DDJFLX10Controller::DDJFLX10Controller(ControlClock& controlClock, QObject* parent)
     : QObject(parent)
 {
+    for (auto& sink : m_deckPlayheadSinks)
+        sink.store(nullptr, std::memory_order_relaxed);
+
     m_uploadTimer.setTimerType(Qt::PreciseTimer);
     m_keepAliveTimer.setTimerType(Qt::PreciseTimer);
     m_keepAliveTimer.setInterval(kKeepAliveIntervalMs);
@@ -84,10 +87,15 @@ bool DDJFLX10Controller::start()
 
     startHidWriter();
     startWaveformWorker();
+    // Re-capture before the thread runs. setDecks() happens once when the app
+    // is wired up, long before this, and start() begins with a stop() — so
+    // anything cleared on the way out would never be restored, and the display
+    // thread would run for the whole session without a position source.
+    captureDeckPlayheadSinks();
+    startDisplayThread();
     setConnected(true);
     m_clockStartMs = QDateTime::currentMSecsSinceEpoch();
     m_hidTrafficClock.restart();
-    m_lastXx27SentMs.fill(-kJogStateIntervalMs);
     m_lastXx36SentMs.fill(-kXx36TrickleIntervalMs);
     for (int deck = flx10::kFirstNativeDeckNumber;
          deck <= flx10::kLastNativeDeckNumber; ++deck) {
@@ -108,10 +116,11 @@ bool DDJFLX10Controller::start()
             refreshDeckFromEngine(deck);
         }
     }
-    // xx27 owns the time/playhead and spinning marker. It deliberately has a
-    // dedicated 200 Hz clock instead of sharing the 60 Hz UI display callback;
-    // writePacket() coalesces these updates per deck if USB is temporarily busy.
+    // xx27 owns the time/playhead and spinning marker, and it is produced on
+    // its own 200 Hz thread rather than on any Qt timer. This tick only feeds
+    // that thread the slow-changing half of the state and drives the jog ring.
     sendStateTick();
+    m_displayFeedActive.store(true, std::memory_order_release);
     m_stateTimer.start();
     m_keepAliveEnabled = sequencerMidiReady || !m_midiPort.isEmpty();
     if (m_keepAliveEnabled) {
@@ -143,6 +152,12 @@ void DDJFLX10Controller::prepareForShutdown() noexcept
     m_pendingTempoWaveformDeckMask = 0;
     m_keepAliveEnabled = false;
     stopWaveformWorker();
+    // Join before the deck pointers go: the display thread reads a playhead
+    // cell that belongs to the deck, so it must be gone first, not after.
+    m_displayFeedActive.store(false, std::memory_order_release);
+    stopDisplayThread();
+    for (auto& sink : m_deckPlayheadSinks)
+        sink.store(nullptr, std::memory_order_release);
 #if defined(Q_OS_LINUX)
     if (m_keepAliveProcess && m_keepAliveProcess->state() != QProcess::NotRunning)
         m_keepAliveProcess->kill();
@@ -162,6 +177,10 @@ void DDJFLX10Controller::stop()
     m_tempoWaveformRefreshTimer.stop();
     m_pendingTempoWaveformDeckMask = 0;
     m_keepAliveEnabled = false;
+    // Stop feeding first, then join, so the shutdown packets below are the last
+    // thing on the wire rather than racing a state tick.
+    m_displayFeedActive.store(false, std::memory_order_release);
+    stopDisplayThread();
 #if defined(Q_OS_LINUX)
     if (m_keepAliveProcess && m_keepAliveProcess->state() != QProcess::NotRunning) {
         m_keepAliveProcess->kill();
@@ -229,8 +248,21 @@ void DDJFLX10Controller::setDecks(DjEngine* deckA, DjEngine* deckB)
     disconnectDeckSignals();
     m_deckA = deckA;
     m_deckB = deckB;
+    captureDeckPlayheadSinks();
     if (m_connected && !m_shuttingDown.load(std::memory_order_acquire))
         connectDeckSignals();
+}
+
+void DDJFLX10Controller::captureDeckPlayheadSinks()
+{
+    // The display thread must never follow a QPointer, so the addresses are
+    // taken here. They are fixed for the life of the deck.
+    const DjEngine* deckA = m_deckA.data();
+    const DjEngine* deckB = m_deckB.data();
+    m_deckPlayheadSinks[1].store(deckA ? deckA->audioPlayheadSink() : nullptr,
+                                 std::memory_order_release);
+    m_deckPlayheadSinks[2].store(deckB ? deckB->audioPlayheadSink() : nullptr,
+                                 std::memory_order_release);
 }
 
 void DDJFLX10Controller::disconnectDeckSignals()
@@ -248,6 +280,10 @@ void DDJFLX10Controller::disconnectDeckSignals()
     for (auto& connection : m_metadataConnections)
         QObject::disconnect(connection);
     for (auto& connection : m_keyAnalyzedConnections)
+        QObject::disconnect(connection);
+    for (auto& connection : m_bpmAnalyzedConnections)
+        QObject::disconnect(connection);
+    for (auto& connection : m_beatgridConnections)
         QObject::disconnect(connection);
     for (auto& connection : m_hotCueConnections)
         QObject::disconnect(connection);
@@ -400,6 +436,21 @@ void DDJFLX10Controller::connectDeckSignals()
                     return;
                 sendXx39(deck);
             });
+            // The grid is drawn into the PWV5 bytes, so it has to be redrawn
+            // when it arrives or moves. Without this the only triggers were
+            // hot-cue and loop edits: a track whose beatgrid was already
+            // cached publishes it once, before or after the waveform, and
+            // never again — so the grid was simply missing until something
+            // unrelated happened to rebuild the markers.
+            const auto redrawGrid = [this, deck] {
+                if (m_shuttingDown.load(std::memory_order_acquire))
+                    return;
+                refreshWaveformMarkersAndUpload(deck);
+            };
+            m_bpmAnalyzedConnections[deck] = connect(
+                trackData, &TrackData::bpmAnalyzed, this, redrawGrid);
+            m_beatgridConnections[deck] = connect(
+                trackData, &TrackData::beatgridChanged, this, redrawGrid);
         }
 
         m_hotCueConnections[deck] = connect(engine, &DjEngine::hotCuesChanged, this, [this, deck] {
@@ -988,7 +1039,7 @@ void DDJFLX10Controller::sendStateTick()
         return;
     if (m_hidStateRefreshPending.exchange(false, std::memory_order_acq_rel)) {
         for (int deck = 1; deck <= 2; ++deck)
-            m_lastXx27Packet[deck].clear();
+            resetDisplayPacketState(deck);
     }
 #endif
 

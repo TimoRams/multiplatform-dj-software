@@ -500,6 +500,31 @@ inline bool overlayPwv5Marker(QByteArray& waveform, double positionSeconds,
     return true;
 }
 
+// Recolour an entry without touching its height. A beat line drawn with
+// overlayPwv5Marker() would replace the audio column with a flat bar, which
+// invents a transient where the track has none and makes the grid read as part
+// of the waveform. Keeping the measured height and changing only the colour
+// puts the grid behind the audio instead of on top of it. minimumHeight lifts
+// a beat that falls in near-silence just far enough to stay legible; it never
+// lowers a loud column.
+inline bool tintPwv5Entry(QByteArray& waveform, int entry,
+                          int red, int green, int blue,
+                          int minimumHeight) noexcept
+{
+    const int entryCount = waveform.size() / 2;
+    if (entry < 0 || entry >= entryCount)
+        return false;
+
+    const int value = (static_cast<unsigned char>(waveform[entry * 2]))
+        | (static_cast<unsigned char>(waveform[entry * 2 + 1]) << 8);
+    const int height = std::max((value >> 2) & 0x1F,
+                                std::clamp(minimumHeight, 0, 31));
+    const QByteArray encoded = encodePwv5Entry(height, red, green, blue);
+    waveform[entry * 2] = encoded[0];
+    waveform[entry * 2 + 1] = encoded[1];
+    return true;
+}
+
 // Adapter only: quantises one shared WaveformColumn into a PWV5 entry. It
 // performs no aggregation, no LOD selection and no colour analysis of its own
 // — every one of those decisions was already made by

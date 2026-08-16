@@ -88,7 +88,10 @@ private:
     bool sendXx35(int deck);
     bool sendXx36Window(int deck, const QByteArray& waveform, int entry);
     bool sendXx2f(int deck);
-    bool sendXx27(int deck, const flx10_protocol::DeckDisplaySnapshot& snapshot);
+    // Display thread only. nowMs comes from that thread's own clock so the
+    // rate limiter never has to read a timer the owner thread restarts.
+    bool sendXx27(int deck, const flx10_protocol::DeckDisplaySnapshot& snapshot,
+                  qint64 nowMs);
     void resetDisplayPacketState(int deck);
     void pushDeckJogDisplay(int deck);
     bool clearDeckDisplay(int deck);
@@ -139,7 +142,61 @@ private:
     std::thread m_waveformWorker;
     bool m_waveformWorkerStopping = false;
     int currentWaveformEntry(int deck) const;
-    flx10_protocol::DeckDisplaySnapshot captureDeckDisplaySnapshot(int deck);
+
+    // Slow-changing half of the jog-screen state: everything that only moves on
+    // a user action or a track load. The playhead is deliberately absent —
+    // the display thread reads that straight out of the deck's atomic, so the
+    // screens keep moving even while the owner thread is stalled.
+    struct DeckStateFeed final {
+        double trackDurationSec = flx10_protocol::kPreviewDurationSeconds;
+        double bpm = 0.0;
+        double tempoPercent = 0.0;
+        double latencyCompensationSec = 0.0;
+        bool playing = false;
+        bool scratching = false;
+        bool reverse = false;
+        bool hasEngine = false;
+        std::uint8_t keyByte = 0x80;
+    };
+    // Published by the owner thread, consumed by the display thread. The lock is
+    // held only across a copy of the struct above, so neither side can be made
+    // to wait on the other doing anything else.
+    struct DeckStateCell final {
+        mutable std::mutex mutex;
+        DeckStateFeed value;
+        // Set when something invalidated the device's idea of this deck, so the
+        // display thread re-sends even a byte-identical packet.
+        std::atomic<bool> forceResend {false};
+    };
+    std::array<DeckStateCell, 5> m_deckStateCells;
+    [[nodiscard]] DeckStateFeed captureDeckStateFeed(int deck) const;
+    void publishDeckState(int deck);
+    [[nodiscard]] DeckStateFeed readDeckState(int deck) const;
+
+    // xx27 production used to run on the owner thread's 5 ms timer. Any stall
+    // there — a QML frame, a library scroll, a waveform repaint — stopped the
+    // state stream, the HID writer ran out of new packets and the jog screens
+    // froze. Production now runs here instead, on a thread that touches no Qt
+    // object and no engine state beyond one atomic load per deck.
+    void startDisplayThread();
+    void stopDisplayThread() noexcept;
+    void displayThreadLoop();
+    std::thread m_displayThread;
+    std::atomic<bool> m_displayThreadStopping {true};
+    std::atomic<bool> m_displayFeedActive {false};
+    // Captured from the decks so the display thread never dereferences a
+    // QPointer. Cleared only once the thread has been joined, never while it
+    // may still be running.
+    std::array<std::atomic<const std::atomic<double>*>, 5> m_deckPlayheadSinks;
+    void captureDeckPlayheadSinks();
+    // Owned exclusively by the display thread.
+    std::array<QByteArray, 5> m_displayLastPacket;
+    std::array<qint64, 5> m_displayLastSentMs = {-100, -100, -100, -100, -100};
+    // Telemetry: ticks the display thread ran, and ticks that arrived late
+    // enough to have missed a slot. Counters only; never logged from the loop.
+    std::atomic<std::uint64_t> m_displayTicks {0};
+    std::atomic<std::uint64_t> m_displayTicksLate {0};
+
     double deckDisplayDuration(int deck) const;
     double deckDisplayPosition(int deck) const;
     double deckTempoRangePercent(int deck) const;
@@ -195,6 +252,8 @@ private:
     std::array<QMetaObject::Connection, 5> m_dataClearedConnections;
     std::array<QMetaObject::Connection, 5> m_metadataConnections;
     std::array<QMetaObject::Connection, 5> m_keyAnalyzedConnections;
+    std::array<QMetaObject::Connection, 5> m_bpmAnalyzedConnections;
+    std::array<QMetaObject::Connection, 5> m_beatgridConnections;
     std::array<QMetaObject::Connection, 5> m_hotCueConnections;
     std::array<QMetaObject::Connection, 5> m_loopConnections;
     std::array<QMetaObject::Connection, 5> m_savedLoopConnections;
@@ -212,9 +271,7 @@ private:
     std::array<bool, 5> m_jogRingLit = {true, true, true, true, true};
     qint64 m_clockStartMs = 0;
     QElapsedTimer m_hidTrafficClock;
-    std::array<qint64, 5> m_lastXx27SentMs = {-100, -100, -100, -100, -100};
     std::array<qint64, 5> m_lastXx36SentMs = {-100, -100, -100, -100, -100};
-    std::array<QByteArray, 5> m_lastXx27Packet;
     // Avoid reading TrackData (and taking its locks) on every 5 ms display
     // tick. Key changes are signal-driven and update this cache immediately.
     std::array<std::uint8_t, 5> m_cachedDeckKeyBytes = {

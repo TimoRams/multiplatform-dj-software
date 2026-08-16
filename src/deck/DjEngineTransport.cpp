@@ -128,6 +128,12 @@ double DjEngine::getPlayheadPositionAtomic() const
 }
 
 
+const std::atomic<double>* DjEngine::audioPlayheadSink() const noexcept
+{
+    return m_transport ? &m_transport->audioPlayheadSink() : nullptr;
+}
+
+
 QImage DjEngine::currentCoverImage() const
 {
     if (!m_coverProvider || m_deckId.isEmpty())
