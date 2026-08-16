@@ -6,7 +6,7 @@
 #include "app/ControlClock.h"
 #include "sync/DeckSyncController.h"
 #include "scratch/ScratchSession.h"
-#include "fx/FxProcessor.h" // EffectType is part of the public controller facade contract.
+#include "fx/FxTypes.h"
 
 #include <QObject>
 #include <QImage>

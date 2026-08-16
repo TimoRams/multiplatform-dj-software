@@ -126,6 +126,22 @@ int main()
                       && library.find("deviceLibraryManager.selectedDeviceReady")
                           != std::string::npos,
                   "USB device rows expose guarded mount/eject actions and mounted-only navigation");
+    ok &= require(occurrences(library, "component SortHeader: Rectangle") == 1
+                      && library.find("component PlSortHeader:") == std::string::npos,
+                  "library and playlist tables share one sortable header component");
+    ok &= require(library.find("readonly property string activeSortField")
+                          != std::string::npos
+                      && library.find("readonly property bool activeSortAscending")
+                          != std::string::npos
+                      && library.find("libraryRoot.togglePlaylistSort(sh.field)")
+                          != std::string::npos
+                      && library.find("libraryModel.toggleSort(sh.field)")
+                          != std::string::npos,
+                  "shared sort headers preserve both library and playlist dispatch paths");
+    ok &= require(occurrences(library, "playlistMode: true") == 6,
+                  "all six playlist columns opt into playlist sorting");
+    ok &= require(library.find("component AioQuickBtn:") == std::string::npos,
+                  "unused AIO quick-button component stays removed");
     ok &= require(main.find("function closeTopBarPullDown()") != std::string::npos
                   && main.find("function openTopBarPullDown()") != std::string::npos
                   && main.find("function toggleTopBarPullDown()") != std::string::npos,

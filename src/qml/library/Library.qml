@@ -1818,6 +1818,14 @@ Rectangle {
         required property string label
         property bool centerAlign: false
         property bool isLast: false
+        property bool playlistMode: false
+
+        readonly property string activeSortField: playlistMode
+            ? libraryRoot.playlistSortField
+            : (libraryModel ? libraryModel.sortField : "")
+        readonly property bool activeSortAscending: playlistMode
+            ? libraryRoot.playlistSortAscending
+            : (libraryModel ? libraryModel.sortAscending : true)
 
         height: parent.height
         color: "transparent"
@@ -1829,14 +1837,14 @@ Rectangle {
             spacing: 4
             Text {
                 text: sh.label
-                color: libraryModel && libraryModel.sortField === sh.field
+                color: sh.activeSortField === sh.field
                        ? libraryRoot.textPrimary : libraryRoot.textSecond
                 font.pixelSize: window.sp(10); font.bold: true
                 anchors.verticalCenter: parent.verticalCenter
             }
             Text {
-                visible: libraryModel && libraryModel.sortField === sh.field
-                text: (libraryModel && libraryModel.sortAscending) ? "▲" : "▼"
+                visible: sh.activeSortField === sh.field
+                text: sh.activeSortAscending ? "▲" : "▼"
                 color: libraryRoot.accentBlue
                 font.pixelSize: window.sp(8)
                 anchors.verticalCenter: parent.verticalCenter
@@ -1846,54 +1854,16 @@ Rectangle {
             anchors.bottom: parent.bottom; anchors.left: parent.left
             width: sh.isLast ? parent.width : parent.width - 2
             height: 2; color: libraryRoot.accentBlue
-            visible: libraryModel && libraryModel.sortField === sh.field
+            visible: sh.activeSortField === sh.field
         }
         MouseArea {
             anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-            onClicked: if (libraryModel) libraryModel.toggleSort(sh.field)
-        }
-    }
-
-    // ── Inline component: sortable playlist column header cell ───────────────
-    component PlSortHeader: Rectangle {
-        id: psh
-        required property string field
-        required property string label
-        property bool centerAlign: false
-        property bool isLast: false
-
-        height: parent.height
-        color: "transparent"
-
-        Row {
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.horizontalCenter: psh.centerAlign ? parent.horizontalCenter : undefined
-            anchors.left: psh.centerAlign ? undefined : parent.left
-            spacing: 4
-            Text {
-                text: psh.label
-                color: libraryRoot.playlistSortField === psh.field
-                       ? libraryRoot.textPrimary : libraryRoot.textSecond
-                font.pixelSize: window.sp(10); font.bold: true
-                anchors.verticalCenter: parent.verticalCenter
+            onClicked: {
+                if (sh.playlistMode)
+                    libraryRoot.togglePlaylistSort(sh.field)
+                else if (libraryModel)
+                    libraryModel.toggleSort(sh.field)
             }
-            Text {
-                visible: libraryRoot.playlistSortField === psh.field
-                text: libraryRoot.playlistSortAscending ? "▲" : "▼"
-                color: libraryRoot.accentBlue
-                font.pixelSize: window.sp(8)
-                anchors.verticalCenter: parent.verticalCenter
-            }
-        }
-        Rectangle {
-            anchors.bottom: parent.bottom; anchors.left: parent.left
-            width: psh.isLast ? parent.width : parent.width - 2
-            height: 2; color: libraryRoot.accentBlue
-            visible: libraryRoot.playlistSortField === psh.field
-        }
-        MouseArea {
-            anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-            onClicked: libraryRoot.togglePlaylistSort(psh.field)
         }
     }
 
@@ -2312,46 +2282,6 @@ Rectangle {
                     onClicked: libraryRoot.aioActivateBrowsePickerEntry(index)
                 }
             }
-        }
-    }
-
-    component AioQuickBtn: Rectangle {
-        id: qbtn
-        required property string btnIcon
-        required property string btnLabel
-        property color btnColor: libraryRoot.accentBlueLt
-        signal tapped()
-
-        width: 46
-        height: parent ? parent.height - 8 : 52
-        radius: 4
-        color: qMa.pressed ? "#1a3048" : "#121820"
-        border.color: qbtn.btnColor
-        border.width: 1
-
-        Column {
-            anchors.centerIn: parent
-            spacing: 2
-            Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                text: qbtn.btnIcon
-                color: qbtn.btnColor
-                font.pixelSize: window.sp(14)
-                font.bold: true
-            }
-            Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                text: qbtn.btnLabel
-                color: libraryRoot.textSecond
-                font.pixelSize: window.sp(7)
-                font.bold: true
-                font.letterSpacing: 0.4
-            }
-        }
-        MouseArea {
-            id: qMa
-            anchors.fill: parent
-            onClicked: qbtn.tapped()
         }
     }
 
@@ -4777,7 +4707,7 @@ Rectangle {
 
                             Item {
                                 width: libraryRoot.colTitle(playlistView.width); height: parent.height
-                                PlSortHeader { width: parent.width; height: parent.height; field: "title"; label: "TITEL" }
+                                SortHeader { width: parent.width; height: parent.height; field: "title"; label: "TITEL"; playlistMode: true }
                                 Rectangle {
                                     anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom
                                     width: 6; color: "transparent"
@@ -4801,11 +4731,11 @@ Rectangle {
                                 }
                             }
 
-                            PlSortHeader { width: libraryRoot.colArtist(playlistView.width); height: parent.height; field: "artist";      label: "KÜNSTLER" }
-                            PlSortHeader { width: libraryRoot.colTime;  height: parent.height; field: "durationSec"; label: "ZEIT";       centerAlign: true }
-                            PlSortHeader { width: libraryRoot.colBpm;   height: parent.height; field: "bpm";         label: "BPM";        centerAlign: true }
-                            PlSortHeader { width: libraryRoot.colKey;   height: parent.height; field: "key";         label: "KEY";        centerAlign: true }
-                            PlSortHeader { width: libraryRoot.colKbps;  height: parent.height; field: "bitrateKbps"; label: "KBPS";       centerAlign: true; isLast: true }
+                            SortHeader { width: libraryRoot.colArtist(playlistView.width); height: parent.height; field: "artist";      label: "KÜNSTLER"; playlistMode: true }
+                            SortHeader { width: libraryRoot.colTime;  height: parent.height; field: "durationSec"; label: "ZEIT";       centerAlign: true; playlistMode: true }
+                            SortHeader { width: libraryRoot.colBpm;   height: parent.height; field: "bpm";         label: "BPM";        centerAlign: true; playlistMode: true }
+                            SortHeader { width: libraryRoot.colKey;   height: parent.height; field: "key";         label: "KEY";        centerAlign: true; playlistMode: true }
+                            SortHeader { width: libraryRoot.colKbps;  height: parent.height; field: "bitrateKbps"; label: "KBPS";       centerAlign: true; isLast: true; playlistMode: true }
                         }
                     }
 

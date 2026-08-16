@@ -1,6 +1,6 @@
 #pragma once
 
-#include "audio/AudioRouting.h"
+#include "fx/FxTypes.h"
 #include <juce_dsp/juce_dsp.h>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <array>
@@ -28,35 +28,6 @@
 //   Control-thread setters publish atomics only. Effect changes are consumed at
 //   an audio-block boundary; all DSP resources are allocated by prepare().
 // ─────────────────────────────────────────────────────────────────────────────
-
-enum class EffectType : int {
-    None        = 0,
-    Reverb      = 1,
-    Bitcrusher  = 2,
-    PitchShifter= 3,
-    Echo        = 4,
-    LowCutEcho  = 5,
-    MtDelay     = 6,
-    Spiral      = 7,
-    Flanger     = 8,
-    Phaser      = 9,
-    Trans       = 10,
-    EnigmaJet   = 11,
-    Stretch     = 12,
-    SlipRoll    = 13,
-    Roll        = 14,
-    MobiusSaw   = 15,   // endlessly rising synth tone, sawtooth oscillators
-    MobiusTri   = 16,   // endlessly rising synth tone, triangle oscillators
-    // ── Sound Color FX (bipolar knob -1..+1) ─────────────────────────────────
-    SoundColorFilter = 17,   // dual LPF/HPF with resonance
-    SoundColorDubEcho= 18,   // echo + bipolar LPF/HPF on wet tail
-    SoundColorCrush  = 19,   // bitcrusher + bipolar filter
-    SoundColorSpace  = 20,   // reverb + bipolar filter on wet
-    SoundColorPitch  = 21,   // pure pitch shift ±12 semitones
-    SoundColorNoise  = 22,   // white noise through bipolar filter
-    SoundColorSweep  = 23,   // animated bipolar filter sweep (rate/depth via SC param)
-    RollOut          = 24    // roll that doubles loop length every repetition
-};
 
 class FxProcessor
 {

@@ -5,6 +5,7 @@
 #include "audio/DeckAudioPipeline.h"
 #include "audio/HeadphoneBus.h"
 #include "audio/MasterMixer.h"
+#include "fx/FxTypes.h"
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
@@ -14,8 +15,6 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
-
-enum class EffectType;
 
 struct AudioEngineRealtimeStats {
     std::uint64_t allocationsFromAudioThread = 0;

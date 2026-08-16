@@ -2,6 +2,7 @@
 
 #include "ParameterStore.h"
 #include "app/SettingsManager.h"
+#include "deck/DjEngine.h"
 #include "fx/FxManager.h"
 
 #include <QCoreApplication>

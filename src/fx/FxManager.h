@@ -1,12 +1,12 @@
 #pragma once
 
-#include <QObject>
-#include <QString>
-#include <QDebug>
-#include "FxProcessor.h"
-#include "deck/DjEngine.h"
+#include "fx/FxTypes.h"
 
+#include <QObject>
 #include <QPointer>
+#include <QString>
+
+class DjEngine;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FxManager  –  bridges the QML FX-UI to the JUCE audio engines.

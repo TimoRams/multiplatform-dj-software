@@ -1,6 +1,9 @@
 #include "FxManager.h"
 #include "domain/DeckId.h"
 #include "deck/DjEngine.h"
+
+#include <QDebug>
+
 #include <cmath>
 #include <algorithm>
 

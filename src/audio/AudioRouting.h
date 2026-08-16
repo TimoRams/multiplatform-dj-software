@@ -13,12 +13,6 @@ enum class LogicalBus {
     DeckD
 };
 
-enum class FxPlacement {
-    PreFaderInsert,
-    PostFaderTail,
-    Master
-};
-
 enum class CrossfaderAssignment {
     A,
     Thru,

@@ -28,7 +28,13 @@ int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
     const QString header = readFile(QStringLiteral(SOURCE_DIR "/src/deck/DjEngine.h"));
+    const QString fxManagerHeader = readFile(
+        QStringLiteral(SOURCE_DIR "/src/fx/FxManager.h"));
+    const QString fxTypesHeader = readFile(
+        QStringLiteral(SOURCE_DIR "/src/fx/FxTypes.h"));
     bool ok = require(!header.isEmpty(), "DjEngine public contract header is readable");
+    ok &= require(!fxManagerHeader.isEmpty(), "FxManager public header is readable");
+    ok &= require(!fxTypesHeader.isEmpty(), "FX type contract header is readable");
 
     // Public QML/controller contract: keep these stable unless all consumers are
     // intentionally migrated in the same change.
@@ -47,8 +53,22 @@ int main(int argc, char** argv)
     // the facade .cpp files or the owning component, not in the public QML type.
     for (const char* forbidden : std::array {
              "audio/cache/AudioPageCache.h", "MasterBusAudioEndpoint.h", "TrackData.h",
-             "WaveformAnalyzer.h", "juce_audio_devices/juce_audio_devices.h" })
+             "WaveformAnalyzer.h", "juce_audio_devices/juce_audio_devices.h",
+             "fx/FxProcessor.h" })
         ok &= require(!header.contains(QString::fromUtf8(forbidden)), forbidden);
+
+    ok &= require(header.contains(QStringLiteral("#include \"fx/FxTypes.h\"")),
+                  "DjEngine exposes the lightweight FX command types");
+    ok &= require(fxManagerHeader.contains(QStringLiteral("#include \"fx/FxTypes.h\""))
+                      && fxManagerHeader.contains(QStringLiteral("class DjEngine;")),
+                  "FxManager uses the lightweight FX contract and a deck forward declaration");
+    ok &= require(!fxManagerHeader.contains(QStringLiteral("FxProcessor.h"))
+                      && !fxManagerHeader.contains(QStringLiteral("deck/DjEngine.h")),
+                  "FxManager does not pull DSP or the complete deck facade into consumers");
+    ok &= require(!fxTypesHeader.contains(QStringLiteral("juce_"))
+                      && !fxTypesHeader.contains(QStringLiteral("FxProcessor.h"))
+                      && !fxTypesHeader.contains(QStringLiteral("audio/")),
+                  "FX command types remain processor- and audio-independent");
 
     return ok ? 0 : 1;
 }

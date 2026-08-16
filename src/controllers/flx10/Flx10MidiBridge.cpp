@@ -3,6 +3,7 @@
 #include "controllers/flx10/Flx10ControllerIdentity.h"
 #include "audio/AudioEngine.h"
 #include "fx/FxManager.h"
+#include "fx/FxTypes.h"
 
 using namespace midi;
 

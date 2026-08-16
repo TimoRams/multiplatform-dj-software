@@ -7,7 +7,6 @@
 #include "audio/cache/CachedPlaybackAudioSource.h"
 #include "deck/DeckTransport.h"
 #include "deck/MetadataUtils.h"
-#include "fx/FxProcessor.h"
 #include "library/CoverArtExtractor.h"
 #include "library/CoverArtProvider.h"
 #include "library/LibraryCoverService.h"
@@ -457,50 +456,6 @@ void DjEngine::clearLoopRangeOnAudioSource()
     m_transport->setLoopRegion({});
 }
 
-
-
-namespace {
-
-constexpr double kVolumeMin = 0.0;
-constexpr double kVolumeMax = 1.0;
-constexpr double kTrimMin = 0.0;
-constexpr double kTrimMax = 2.0;
-constexpr double kEqMin = -1.0;
-constexpr double kEqMax = 1.0;
-constexpr double kFilterMin = -1.0;
-constexpr double kFilterMax = 1.0;
-
-double playHistoryThresholdSeconds(double durationSec)
-{
-    if (durationSec <= 0.0)
-        return 12.0;
-
-    if (durationSec <= 45.0)
-        return std::clamp(durationSec * 0.35, 5.0, 12.0);
-
-    return std::clamp(durationSec * 0.12, 10.0, 20.0);
-}
-
-QString defaultHotCueColor(int index)
-{
-    static const char* kColors[] = {
-        "#e04040", "#e08030", "#e0c030", "#40c040",
-        "#3080e0", "#8040e0", "#e040a0", "#40c0c0",
-    };
-    return QString::fromUtf8(kColors[static_cast<size_t>(index) % 8]);
-}
-
-QString defaultSavedLoopColor(int index)
-{
-    static const char* kColors[] = {
-        "#30b050", "#3080e0", "#e08030", "#8040e0",
-        "#e04040", "#40c0c0", "#e0c030", "#e040a0",
-    };
-    return QString::fromUtf8(kColors[static_cast<size_t>(index) % 8]);
-}
-
-} // namespace
-
 QVariantList DjEngine::hotCues() const
 {
     QVariantList out;
@@ -543,7 +498,7 @@ void DjEngine::installExternalCues(const ExternalTrackLoadSnapshot& external)
         slot.positionSec = cue.positionSec;
         slot.label = cue.label;
         slot.color = cue.color.isEmpty()
-            ? defaultHotCueColor(index) : cue.color;
+            ? DeckCueLoopController::defaultHotCueColor(index) : cue.color;
     }
 
     int loopIndex = 0;
@@ -561,7 +516,7 @@ void DjEngine::installExternalCues(const ExternalTrackLoadSnapshot& external)
             ? (slot.outSec - slot.inSec) / beatDuration : 0.0;
         slot.label = cue.label;
         slot.color = cue.color.isEmpty()
-            ? defaultSavedLoopColor(loopIndex) : cue.color;
+            ? DeckCueLoopController::defaultSavedLoopColor(loopIndex) : cue.color;
         ++loopIndex;
     }
 
@@ -584,19 +539,13 @@ void DjEngine::installExternalCues(const ExternalTrackLoadSnapshot& external)
 
 bool DjEngine::isValidHotCueIndex(int index) const
 {
-    return index >= 0 && index < static_cast<int>(m_cueLoopController.hotCues().size());
+    return m_cueLoopController.validIndex(index);
 }
 
 
 void DjEngine::clearHotCueState()
 {
-    for (size_t i = 0; i < m_cueLoopController.hotCues().size(); ++i) {
-        auto& slot = m_cueLoopController.hotCues()[i];
-        slot.set = false;
-        slot.positionSec = 0.0;
-        slot.label.clear();
-        slot.color = defaultHotCueColor(static_cast<int>(i));
-    }
+    m_cueLoopController.clearHotCues();
 }
 
 
@@ -621,7 +570,8 @@ void DjEngine::loadHotCuesForCurrentTrack()
         slot.positionSec = std::max(-PRE_ROLL_SECONDS, m.value("positionSec").toDouble());
         slot.label = m.value("label").toString();
         const QString color = m.value("color").toString().trimmed();
-        slot.color = color.isEmpty() ? defaultHotCueColor(index) : color;
+        slot.color = color.isEmpty()
+            ? DeckCueLoopController::defaultHotCueColor(index) : color;
     }
 
     emit hotCuesChanged();
@@ -689,7 +639,7 @@ void DjEngine::storeHotCue(int index)
     slot.set = true;
     slot.positionSec = cuePos;
     if (slot.color.isEmpty())
-        slot.color = defaultHotCueColor(index);
+        slot.color = DeckCueLoopController::defaultHotCueColor(index);
     if (slot.label.isEmpty())
         slot.label = QStringLiteral("HOT CUE %1").arg(index + 1);
 
@@ -830,7 +780,7 @@ void DjEngine::clearHotCue(int index)
     slot.positionSec = 0.0;
     slot.label.clear();
     if (slot.color.isEmpty())
-        slot.color = defaultHotCueColor(index);
+        slot.color = DeckCueLoopController::defaultHotCueColor(index);
 
     persistHotCueSlot(index);
     emit hotCuesChanged();
@@ -844,7 +794,7 @@ void DjEngine::setHotCueColor(int index, const QString& colorHex)
 
     QString color = colorHex.trimmed();
     if (color.isEmpty())
-        color = defaultHotCueColor(index);
+        color = DeckCueLoopController::defaultHotCueColor(index);
 
     auto& slot = slotAt(index);
     slot.color = color;
@@ -1074,21 +1024,13 @@ QVariantList DjEngine::savedLoops() const
 
 bool DjEngine::isValidSavedLoopIndex(int index) const
 {
-    return index >= 0 && index < static_cast<int>(m_cueLoopController.savedLoops().size());
+    return m_cueLoopController.validIndex(index);
 }
 
 
 void DjEngine::clearSavedLoopState()
 {
-    for (size_t i = 0; i < m_cueLoopController.savedLoops().size(); ++i) {
-        auto& slot = m_cueLoopController.savedLoops()[i];
-        slot.set = false;
-        slot.inSec = 0.0;
-        slot.outSec = 0.0;
-        slot.lengthBeats = 0.0;
-        slot.label.clear();
-        slot.color = defaultSavedLoopColor(static_cast<int>(i));
-    }
+    m_cueLoopController.clearSavedLoops();
 }
 
 
@@ -1114,7 +1056,8 @@ void DjEngine::loadSavedLoopsForCurrentTrack()
         slot.outSec = m.value("outSec").toDouble();
         slot.label = m.value("label").toString();
         const QString color = m.value("color").toString().trimmed();
-        slot.color = color.isEmpty() ? defaultSavedLoopColor(index) : color;
+        slot.color = color.isEmpty()
+            ? DeckCueLoopController::defaultSavedLoopColor(index) : color;
 
         const double beatDur = beatDurationAround(slot.inSec);
         if (beatDur > 1e-4)
@@ -1187,7 +1130,7 @@ void DjEngine::storeSavedLoop(int index)
     const double beatDur = beatDurationAround(inSec);
     slot.lengthBeats = beatDur > 1e-4 ? (outSec - inSec) / beatDur : 4.0;
     if (slot.color.isEmpty())
-        slot.color = defaultSavedLoopColor(index);
+        slot.color = DeckCueLoopController::defaultSavedLoopColor(index);
     if (slot.label.isEmpty())
         slot.label = QStringLiteral("LOOP %1").arg(index + 1);
 
@@ -1223,7 +1166,7 @@ void DjEngine::clearSavedLoop(int index)
     slot.outSec = 0.0;
     slot.lengthBeats = 0.0;
     slot.label.clear();
-    slot.color = defaultSavedLoopColor(index);
+    slot.color = DeckCueLoopController::defaultSavedLoopColor(index);
 
     persistSavedLoopSlot(index);
     emit savedLoopsChanged();

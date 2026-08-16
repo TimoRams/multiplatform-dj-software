@@ -72,24 +72,6 @@ double playHistoryThresholdSeconds(double durationSec)
     return std::clamp(durationSec * 0.12, 10.0, 20.0);
 }
 
-QString defaultHotCueColor(int index)
-{
-    static const char* kColors[] = {
-        "#e04040", "#e08030", "#e0c030", "#40c040",
-        "#3080e0", "#8040e0", "#e040a0", "#40c0c0",
-    };
-    return QString::fromUtf8(kColors[static_cast<size_t>(index) % 8]);
-}
-
-QString defaultSavedLoopColor(int index)
-{
-    static const char* kColors[] = {
-        "#30b050", "#3080e0", "#e08030", "#8040e0",
-        "#e04040", "#40c0c0", "#e0c030", "#e040a0",
-    };
-    return QString::fromUtf8(kColors[static_cast<size_t>(index) % 8]);
-}
-
 } // namespace
 
 DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audioPageCache,
