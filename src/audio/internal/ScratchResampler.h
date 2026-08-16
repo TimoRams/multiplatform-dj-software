@@ -31,6 +31,21 @@ struct ScratchMotionStats {
     std::uint64_t leadLimitedBlocks = 0;
 };
 
+// How the read head is driven from the hand target. Both modes get the same
+// target, the same commanded velocity and the same extrapolated reference; they
+// differ only in what moves the head, so they can be measured against each other
+// on an identical motion trace.
+enum class ScratchTrackerMode : std::uint8_t {
+    // A critically damped servo pulls the head onto the hand position, with the
+    // hand velocity as the moving reference. Position leads, velocity assists.
+    PositionServo,
+    // Velocity leads: the head runs at the commanded hand speed directly, ramped
+    // continuously across the block, and the position error is only trimmed away
+    // by a slow term underneath. Position stays authoritative in the long run
+    // without the head being pulled at it every sample.
+    VelocityLed
+};
+
 // RT-safe Hermite scratch reader with true bidirectional playback.
 // Window sizing follows the device buffer size from audio settings.
 class ScratchResampler {
@@ -42,6 +57,12 @@ public:
     void snapSmoothedRate(double rate) noexcept;
     void primeTrackerVelocity(double ratePerOutputSample) noexcept;
     void invalidatePrefetch() noexcept { m_sourceSize = 0; }
+    void setTrackerMode(ScratchTrackerMode mode) noexcept { m_trackerMode = mode; }
+    // Bandwidth of the position trim in VelocityLed mode, in Hz.
+    void setVelocityLedCorrectionHz(double hz) noexcept {
+        m_velocityLedCorrectionHz = std::clamp(hz, 1.0, 200.0);
+    }
+    [[nodiscard]] ScratchTrackerMode trackerMode() const noexcept { return m_trackerMode; }
     void setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle) noexcept;
     void prefetchAround(double readPositionSamples) noexcept;
 
@@ -107,6 +128,12 @@ private:
     // blocks so a newly arrived event corrects it rather than replaces it.
     double m_referencePos = 0.0;
     bool m_referenceValid = false;
+    ScratchTrackerMode m_trackerMode = ScratchTrackerMode::PositionServo;
+    double m_velocityLedCorrectionHz = 6.0;
+    // Decaying envelope of recent hand speed, track samples/second. The runaway
+    // guard sizes itself from this rather than the instantaneous speed, which
+    // passes through zero at every direction change.
+    double m_leadSpeedEnvelope = 0.0;
     float m_starvationGain = 0.0f;
     float m_lastOutputL = 0.0f;
     float m_lastOutputR = 0.0f;

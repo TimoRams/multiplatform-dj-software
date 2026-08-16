@@ -194,10 +194,12 @@ void RenderModeRouter::addTargetDeltaSeconds(double deltaSeconds, double trackSa
     juce::ignoreUnused(trackSampleRate);
 }
 
-void RenderModeRouter::submitHandDeltaSeconds(double deltaSeconds, double dtSeconds) noexcept
+void RenderModeRouter::submitHandDeltaSeconds(double deltaSeconds,
+                                              double dtSeconds,
+                                              double measuredRate) noexcept
 {
     m_platter.addTimeDeltaSeconds(deltaSeconds);
-    m_controller.submitHandDelta(deltaSeconds, dtSeconds);
+    m_controller.submitHandDelta(deltaSeconds, dtSeconds, measuredRate);
 }
 
 void RenderModeRouter::submitReleaseDeltaSeconds(double deltaSeconds, double dtSeconds) noexcept

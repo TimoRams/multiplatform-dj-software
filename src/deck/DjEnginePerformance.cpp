@@ -300,7 +300,9 @@ void DjEngine::scratchBySeconds(double deltaSeconds, bool vinylOneToOnePosition)
 }
 
 
-void DjEngine::scratchBySecondsTimed(double deltaSeconds, double eventIntervalSeconds)
+void DjEngine::scratchBySecondsTimed(double deltaSeconds,
+                                     double eventIntervalSeconds,
+                                     double measuredRate)
 {
     if (deltaSeconds == 0.0)
         return;
@@ -316,7 +318,8 @@ void DjEngine::scratchBySecondsTimed(double deltaSeconds, double eventIntervalSe
         m_audioPipeline->renderModeRouterPtr(),
         deltaSeconds,
         m_transport->sourceSampleRate(),
-        interval);
+        interval,
+        measuredRate);
 }
 
 

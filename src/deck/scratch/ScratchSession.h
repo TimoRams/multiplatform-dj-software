@@ -1,5 +1,6 @@
 #pragma once
 
+#include <limits>
 #include "ScratchController.h"
 
 #include <QElapsedTimer>
@@ -59,7 +60,9 @@ public:
     bool submitRelativeAtInterval(engine::audio::RenderModeRouter* bridge,
                                   double deltaSec,
                                   double sampleRate,
-                                  double eventIntervalSeconds) noexcept;
+                                  double eventIntervalSeconds,
+                                  double measuredRate
+                                      = std::numeric_limits<double>::quiet_NaN()) noexcept;
 
     bool submitReleaseRelative(engine::audio::RenderModeRouter* bridge,
                                double deltaSec) noexcept;

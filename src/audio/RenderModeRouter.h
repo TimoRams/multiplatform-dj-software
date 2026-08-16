@@ -1,5 +1,6 @@
 #pragma once
 
+#include <limits>
 #include "audio/AudioRouting.h"
 #include "audio/internal/ScratchResampler.h"
 #include "deck/scratch/ScratchController.h"
@@ -62,7 +63,13 @@ public:
     void submitScratchReleaseSpeed(double normalizedReleaseSpeed) noexcept;
     void engageScratchDuringInertia() noexcept;
     void addTargetDeltaSeconds(double deltaSeconds, double trackSampleRate) noexcept;
-    void submitHandDeltaSeconds(double deltaSeconds, double dtSeconds) noexcept;
+    // measuredRate: hand speed in playback rates as measured by the input, or
+    // a non-finite value when the input cannot measure it better than the
+    // per-event quotient. See ScratchController::submitHandDelta.
+    void submitHandDeltaSeconds(double deltaSeconds,
+                                double dtSeconds,
+                                double measuredRate
+                                    = std::numeric_limits<double>::quiet_NaN()) noexcept;
     void submitReleaseDeltaSeconds(double deltaSeconds, double dtSeconds) noexcept;
     void syncScratchReadPosition(double displaySec, double trackSampleRate) noexcept;
     void publishScratchDisplay(double displaySec) noexcept;

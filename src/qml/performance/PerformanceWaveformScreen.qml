@@ -88,7 +88,47 @@ Item {
         }
         Rectangle {
             width: 54; height: 34; radius: 0; color: "#31363A"; border.color: "#555C62"; border.width: 1
-            Text { anchors.centerIn: parent; text: "ZOOM"; color: "#F2F0D7"; font.pixelSize: 10; font.weight: Font.DemiBold }
+
+            // Where the current zoom sits in the whole range, so the level is
+            // readable at a glance without parsing the number.
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.margins: 1
+                height: 2
+                color: "#2A2E31"
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    width: parent.width * (waveformZoomController
+                                           ? waveformZoomController.zoomFraction : 0)
+                    color: "#E99128"
+                }
+            }
+
+            // A positioner ignores anchors on its children, so the two lines are
+            // centred by filling the column width instead.
+            Column {
+                anchors.centerIn: parent
+                anchors.verticalCenterOffset: -1
+                width: parent.width
+                spacing: 0
+                Text {
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                    text: "ZOOM"; color: "#9AA0A6"
+                    font.pixelSize: 8; font.weight: Font.DemiBold
+                }
+                Text {
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                    text: waveformZoomController ? waveformZoomController.zoomLabel : "–"
+                    color: "#F2F0D7"
+                    font.pixelSize: 11; font.weight: Font.DemiBold
+                }
+            }
         }
         Rectangle {
             width: 42; height: 34; radius: 0; color: "#31363A"; border.color: "#555C62"; border.width: 1

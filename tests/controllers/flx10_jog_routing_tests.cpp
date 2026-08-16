@@ -279,6 +279,46 @@ bool testReleaseCompletionAfterWheelSilence()
     return ok;
 }
 
+// A slow, deliberate movement is the hardest case to measure: single ticks
+// arrive far apart and their timestamps are quantised by the USB frame the
+// packet happened to land in. A window of fixed duration then holds one or two
+// ticks and the rate swings with that quantisation — which is heard directly,
+// because the audio read head is driven by it.
+bool testSlowSpeedRateResolution()
+{
+    using enum flx10::JogEventType;
+    bool ok = true;
+    flx10::Flx10JogRouter router;
+    route(router, TouchDown, 0.0);
+
+    constexpr double kRate = 0.05;
+    constexpr double kFrameSec = 0.001;   // USB frame granularity
+    // One tick at a time, each timestamp snapped to the frame it arrived in.
+    const double tickSeconds = std::abs(flx10::scratchDeltaSeconds(1.0) / kRate);
+
+    double worst = 0.0;
+    double best = 1.0e9;
+    double exact = 0.0;
+    for (int i = 1; i <= 400; ++i) {
+        exact += tickSeconds;
+        const double stamped = std::floor(exact / kFrameSec) * kFrameSec;
+        const auto result = route(router, Platter, stamped, 1.0);
+        if (i < 40)   // let the window fill
+            continue;
+        worst = std::max(worst, result.estimatedRate);
+        best = std::min(best, result.estimatedRate);
+    }
+
+    // Spread of the measured rate around the true one. Deriving the rate from a
+    // single tick over a single frame-quantised gap gives well over 50% here.
+    const double spread = (worst - best) / kRate;
+    ok &= require(spread < 0.15,
+                  "slow platter speed resolves without frame-quantisation swing");
+    ok &= require(best > kRate * 0.85 && worst < kRate * 1.15,
+                  "slow platter speed stays centred on the true rate");
+    return ok;
+}
+
 } // namespace
 
 int main()
@@ -291,5 +331,6 @@ int main()
     ok &= testSlowReleaseTailSuppression();
     ok &= testDuplicateTouchAndRegrab();
     ok &= testReleaseCompletionAfterWheelSilence();
+    ok &= testSlowSpeedRateResolution();
     return ok ? 0 : 1;
 }

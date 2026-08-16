@@ -44,6 +44,7 @@ void ScratchResampler::reset(double readPositionSamples) noexcept
     m_smoothedRate = 0.0;
     m_trackVel = 0.0;
     m_referenceValid = false;
+    m_leadSpeedEnvelope = 0.0;
 }
 
 void ScratchResampler::setReadPositionSamples(double readPositionSamples) noexcept
@@ -442,6 +443,19 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
     // position exactly where the scratch is most sensitive.
     constexpr double kRunawayHorizonFactor = 4.0;
     constexpr double kRunawaySlackSamples = 256.0;
+
+    // Sizing the bound from the instantaneous speed makes it collapse to the
+    // slack term exactly at a direction change, because both the commanded and
+    // the tracked velocity pass through zero there — while the position error
+    // carried in from the preceding fast motion does not vanish with them. The
+    // guard then fires mid-reversal, snaps the read head and clamps the tracker
+    // velocity, which is heard as a click at the turn: measured up to a 0.75x
+    // rate step on a 6x reversal. So the bound follows an envelope that rises
+    // instantly and decays over a quarter second. A genuine runaway is still
+    // caught, just not within the few milliseconds a hand spends at zero.
+    const double instantSpeed = std::max(std::abs(referenceVelocity), std::abs(m_trackVel));
+    m_leadSpeedEnvelope = std::max(instantSpeed,
+                                   m_leadSpeedEnvelope * std::exp(-blockSeconds / 0.25));
     const double targetStep = referenceVelocity * dt;
     const double movingTargetLimit = target + referenceVelocity * maxLeadSeconds;
 
@@ -465,6 +479,35 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
         / static_cast<double>(numSamples);
     double movingTarget = m_referencePos;
 
+    // Velocity-led alternative. The head is moved by the hand speed itself,
+    // ramped linearly from the rate the previous block ended on to the newly
+    // commanded one, so a block boundary — including a sign change — can never
+    // produce a rate step. The position error is trimmed underneath by a term
+    // an order of magnitude slower than the servo above, which keeps position
+    // authoritative over a scratch without the head being dragged at the target
+    // every sample.
+    //
+    // Measured against the servo on identical traces (see scratch_motion tests):
+    // a tie on steady motion, and five to thirty times worse per-sample rate
+    // continuity through every direction change, at every trim bandwidth from 6
+    // to 60 Hz. The cause is structural rather than a tuning miss — the trim
+    // acts on the rate directly, so any jump in the position error is a jump in
+    // the rate, and a reversal is exactly where that error jumps. The servo
+    // routes the same error through acceleration, so the rate comes out as an
+    // integral and cannot step. Kept selectable as the A/B apparatus; it is not
+    // the default and enabling it will sound rougher on reversals.
+    const bool velocityLed = m_trackerMode == ScratchTrackerMode::VelocityLed;
+    const double correctionGain = kTwoPi * m_velocityLedCorrectionHz;
+    // The trim may never dominate the hand, but a fixed cap would leave a fast
+    // throw permanently behind: at 4x the startup deficit needs more than half a
+    // playback speed to close. So it scales with the hand speed, with half a
+    // nominal speed as the floor for slow movement.
+    const double maxCorrectionVel = 0.5 * outSr
+        + 0.25 * std::abs(referenceVelocity);
+    const double velocityRamp = velocityLed
+        ? (referenceVelocity - m_trackVel) / static_cast<double>(numSamples)
+        : 0.0;
+
     double statMinRate = 0.0;
     double statMaxRate = 0.0;
     double statMaxRateStep = 0.0;
@@ -473,11 +516,18 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
 
     for (int i = 0; i < numSamples; ++i) {
         const double err = movingTarget - m_readPos;
-        const double accel = omega * omega * err
-            + 2.0 * omega * (referenceVelocity - m_trackVel);
-        m_trackVel = std::clamp(m_trackVel + accel * dt, -maxVel, maxVel);
-
-        const double rate = std::clamp(m_trackVel * dt, -absMaxRate, absMaxRate);
+        double rate = 0.0;
+        if (velocityLed) {
+            m_trackVel = std::clamp(m_trackVel + velocityRamp, -maxVel, maxVel);
+            const double correction = std::clamp(correctionGain * err,
+                                                 -maxCorrectionVel, maxCorrectionVel);
+            rate = std::clamp((m_trackVel + correction) * dt, -absMaxRate, absMaxRate);
+        } else {
+            const double accel = omega * omega * err
+                + 2.0 * omega * (referenceVelocity - m_trackVel);
+            m_trackVel = std::clamp(m_trackVel + accel * dt, -maxVel, maxVel);
+            rate = std::clamp(m_trackVel * dt, -absMaxRate, absMaxRate);
+        }
 
         if (i == 0) {
             statMinRate = statMaxRate = rate;
@@ -503,7 +553,8 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
             // decayed command both stay inside it, so the guard only engages on
             // a genuinely runaway position and never snaps ordinary movement.
             const double maxLeadSamples =
-                std::max(std::abs(referenceVelocity), std::abs(m_trackVel))
+                std::max({std::abs(referenceVelocity), std::abs(m_trackVel),
+                          m_leadSpeedEnvelope})
                     * maxLeadSeconds * kRunawayHorizonFactor
                 + kRunawaySlackSamples;
             const double lead = m_readPos - target;
@@ -529,7 +580,10 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
     if (leadLimited)
         m_statLeadLimitedBlocks.fetch_add(1, std::memory_order_relaxed);
 
-    m_smoothedRate = m_trackVel * dt;
+    // In the velocity-led mode the rate carries the position trim as well, so
+    // the handoff must inherit the rate that was actually rendered, not the bare
+    // tracker velocity.
+    m_smoothedRate = velocityLed ? previousRate : m_trackVel * dt;
     m_lastRate = m_smoothedRate;
     m_readPos = wrapPosition(m_readPos);
     return m_smoothedRate;

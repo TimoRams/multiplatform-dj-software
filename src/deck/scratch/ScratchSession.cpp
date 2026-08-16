@@ -82,7 +82,8 @@ bool ScratchSession::submitRelative(engine::audio::RenderModeRouter* bridge,
 bool ScratchSession::submitRelativeAtInterval(engine::audio::RenderModeRouter* bridge,
                                               double deltaSec,
                                               double sampleRate,
-                                              double eventIntervalSeconds) noexcept
+                                              double eventIntervalSeconds,
+                                              double measuredRate) noexcept
 {
     if (!bridge || deltaSec == 0.0)
         return false;
@@ -94,7 +95,7 @@ bool ScratchSession::submitRelativeAtInterval(engine::audio::RenderModeRouter* b
         0.120);
     m_lastMoveClock.restart();
 
-    bridge->submitHandDeltaSeconds(clamped, dtSec);
+    bridge->submitHandDeltaSeconds(clamped, dtSec, measuredRate);
     m_lastRawSec += clamped;
     // Audio position is owned by the tracker on the audio thread (driven by the
     // platter target updated in submitHandDeltaSeconds). Only publish the display.

@@ -271,12 +271,17 @@ bool ScratchController::completeHandoff() noexcept
                                            std::memory_order_acquire);
 }
 
-void ScratchController::submitHandDelta(double deltaTrackSec, double dtSec) noexcept
+void ScratchController::submitHandDelta(double deltaTrackSec,
+                                        double dtSec,
+                                        double measuredRate) noexcept
 {
     if (dtSec < 1e-6 || phase() != ScratchPhase::TouchTracking)
         return;
 
-    double raw = deltaTrackSec / dtSec;
+    // The input's own measurement wins when it has one. Position stays with the
+    // per-event delta either way, so the two cannot disagree for long.
+    const bool inputMeasuredRate = std::isfinite(measuredRate);
+    double raw = inputMeasuredRate ? measuredRate : deltaTrackSec / dtSec;
     raw = std::clamp(raw, -m_config.maxScratchSpeed, m_config.maxScratchSpeed);
 
     const double target = m_handPositionSec.load(std::memory_order_relaxed) + deltaTrackSec;
@@ -285,10 +290,16 @@ void ScratchController::submitHandDelta(double deltaTrackSec, double dtSec) noex
     // UI/MIDI deltas are already integrated into position — keep rate close to
     // the instantaneous delta/dt so audio integration does not drift far ahead
     // of the hand and snap back on the next drag event.
+    //
+    // The slow-speed blend below exists only to hide the quantisation noise of
+    // that quotient. When the input measured the speed properly there is no
+    // such noise to hide, and smoothing again would add lag to a signal that is
+    // already clean — a second filter on the same quantity is what makes slow,
+    // deliberate movement feel rubbery rather than precise.
     double velocity = raw;
     if ((oldVelocity * raw) < 0.0 && std::abs(raw) > 0.04)
         velocity = oldVelocity + (raw - oldVelocity) * 0.45;
-    else if (std::abs(raw) < m_config.slowSpeedThreshold)
+    else if (!inputMeasuredRate && std::abs(raw) < m_config.slowSpeedThreshold)
         velocity = oldVelocity + (raw - oldVelocity) * 0.72;
     velocity = std::clamp(velocity, -m_config.maxScratchSpeed, m_config.maxScratchSpeed);
 

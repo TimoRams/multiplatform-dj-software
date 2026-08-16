@@ -27,6 +27,9 @@ namespace {
 using engine::audio::ScratchResampler;
 
 bool g_verbose = false;
+// Position-trim bandwidth used for the velocity-led arm of the A/B. Overridable
+// so the trade-off can be swept without a rebuild.
+double g_correctionHz = 6.0;
 int g_failures = 0;
 
 bool require(bool value, const char* message)
@@ -117,9 +120,14 @@ MotionResult runMotion(AudioPageCache& cache,
                        double startSample,
                        double durationSec,
                        const std::function<double(double)>& velocityAt,
-                       double eventIntervalSec = kEventIntervalSec)
+                       double eventIntervalSec = kEventIntervalSec,
+                       engine::audio::ScratchTrackerMode mode =
+                           engine::audio::ScratchTrackerMode::PositionServo,
+                       double correctionHz = 6.0)
 {
     ScratchResampler scratch;
+    scratch.setTrackerMode(mode);
+    scratch.setVelocityLedCorrectionHz(correctionHz);
     scratch.prepare(2, kBlockSize, kSampleRate);
     scratch.setTrackLengthSamples(static_cast<double>(kFixtureSamples));
     scratch.setTrackCacheSource(&cache, handle);
@@ -270,6 +278,11 @@ int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
     g_verbose = qEnvironmentVariableIsSet("BROCKDJ_SCRATCH_VERBOSE");
+    if (qEnvironmentVariableIsSet("BROCKDJ_SCRATCH_CORRECTION_HZ")) {
+        bool okHz = false;
+        const double hz = qEnvironmentVariable("BROCKDJ_SCRATCH_CORRECTION_HZ").toDouble(&okHz);
+        if (okHz && hz > 0.0) g_correctionHz = hz;
+    }
 
     QTemporaryDir dir;
     const QString fixture = dir.filePath("scratch-motion.wav");
@@ -300,6 +313,9 @@ int main(int argc, char** argv)
         bool needsHighInputRate = false;
         // Worst tolerated position error, as time at the peak hand speed.
         double lagBudgetMs = 12.0;
+        // The movement actually turns around. A backspin decays to rest without
+        // ever changing sign, so it is not a reversal case however slow it ends.
+        bool reverses = false;
     };
 
     const std::vector<Scenario> scenarios {
@@ -311,7 +327,8 @@ int main(int argc, char** argv)
         {"fast reverse throw 4x", 0.4, [](double) { return -4.0; }, -4.0, 0.45},
         // A baby scratch: back and forth at roughly 5 Hz.
         {"baby scratch", 0.8,
-         [](double t) { return 1.6 * std::sin(2.0 * M_PI * 5.0 * t); }, 0.0, 0.25},
+         [](double t) { return 1.6 * std::sin(2.0 * M_PI * 5.0 * t); }, 0.0, 0.25,
+         false, 12.0, true},
         // Alternating ±1x every 60 ms — the direction-change stress case. The
         // reversal is shaped over a few milliseconds because a hand cannot flip
         // a platter instantaneously; a true step would only measure how fast the
@@ -322,7 +339,7 @@ int main(int argc, char** argv)
          // roughly 19 ms while a hand turns a platter in about 6 ms, so it
          // rounds the corner rather than following it. This is the engine's
          // known residual, held here so it cannot quietly grow.
-         0.0, 0.25, true, 15.0},
+         0.0, 0.25, true, 15.0, true},
         // Backspin: a hard reverse throw decaying back to rest.
         {"backspin", 0.6,
          [](double t) { return -6.0 * std::exp(-t / 0.25); }, 0.0, 3.0},
@@ -398,6 +415,90 @@ int main(int argc, char** argv)
                                        0.4, [rate](double) { return -rate; });
         require(reverse.leadLimitedBlocks == 0,
                 "steady reverse drag never hits the lead limiter");
+    }
+
+    // A sign change must never arrive as a rate step. These traces cross zero at
+    // a range of speeds, including one that crosses inside a single block, so
+    // the crossing cannot hide in a block boundary.
+    for (const double peak : {0.5, 2.0, 6.0}) {
+        for (const double turnSec : {0.20, 0.05, 0.008}) {
+            const std::string name = "sign change +-" + std::to_string(peak).substr(0, 3)
+                + "x over " + std::to_string(turnSec).substr(0, 5) + "s";
+            const auto result = runMotion(cache, handle, name.c_str(), start, 0.4,
+                                          [peak, turnSec](double t) {
+                                              // Linear sweep down through zero,
+                                              // held either side of the turn.
+                                              const double turnStart = 0.2 - turnSec * 0.5;
+                                              if (t <= turnStart) return peak;
+                                              if (t >= turnStart + turnSec) return -peak;
+                                              return peak * (1.0 - 2.0 * (t - turnStart) / turnSec);
+                                          });
+            require(result.finite, (name + ": output finite").c_str());
+            // The turn is a real acceleration, so the rate must change — the
+            // question is whether it changes by more than the hand asked for.
+            // The budget is what the hand itself sweeps through in one sample,
+            // with headroom for the tracker's own settling. A snap shows as a
+            // step far above this; the 6x-in-8ms case is already past what a
+            // hand can do to a platter and is included as a stress bound.
+            const double handStepPerSample = 2.0 * peak / turnSec / kSampleRate;
+            require(result.maxRateStepX < 0.05 + 4.0 * handStepPerSample,
+                    (name + ": rate crosses zero without a step").c_str());
+            require(result.leadLimitedBlocks == 0,
+                    (name + ": zero crossing never snaps the read head").c_str());
+        }
+    }
+
+    // A/B: position servo vs velocity-led tracker on identical motion traces,
+    // identical cache and identical event cadence. The point is to decide with
+    // numbers whether pulling the head at the hand position every sample buys
+    // anything over letting the hand speed drive it with a slow position trim.
+    {
+        using engine::audio::ScratchTrackerMode;
+        if (g_verbose)
+            std::cout << "tracker A/B (servo -> velocity-led):\n";
+
+        for (const double cadence : {kEventIntervalSec, kUiFrameSec}) {
+            const bool drag = cadence > kEventIntervalSec;
+            for (const auto& scenario : scenarios) {
+                const auto servo = runMotion(cache, handle, "", start,
+                                             scenario.durationSec, scenario.velocity,
+                                             cadence, ScratchTrackerMode::PositionServo);
+                const auto led = runMotion(cache, handle, "", start,
+                                           scenario.durationSec, scenario.velocity,
+                                           cadence, ScratchTrackerMode::VelocityLed,
+                                           g_correctionHz);
+
+                require(led.finite,
+                        (std::string(scenario.name) + ": velocity-led output finite").c_str());
+
+                // The measured verdict, pinned so it cannot invert unnoticed.
+                // Feeding the position error straight into the rate makes every
+                // jump in that error a jump in the rate, which is precisely a
+                // direction change. The servo feeds it into acceleration, so the
+                // rate is an integral and stays continuous by construction. If
+                // this ever fails the velocity-led arm has genuinely improved
+                // and the choice of default is worth revisiting — it is not a
+                // bug to be silenced.
+                if (!drag && scenario.reverses) {
+                    require(servo.maxRateStepX <= led.maxRateStepX,
+                            (std::string(scenario.name)
+                             + ": servo keeps rate more continuous through reversals"
+                               " than the velocity-led tracker").c_str());
+                }
+
+                if (g_verbose) {
+                    std::cout << "  " << scenario.name << (drag ? " [screen drag]" : "")
+                              << "  rateStep " << servo.maxRateStepX << " -> "
+                              << led.maxRateStepX
+                              << "  lag " << servo.maxLagMs << "ms -> "
+                              << led.maxLagMs << "ms"
+                              << "  travel " << servo.travelRatio << " -> "
+                              << led.travelRatio
+                              << "  leadLimited " << servo.leadLimitedBlocks << " -> "
+                              << led.leadLimitedBlocks << '\n';
+                }
+            }
+        }
     }
 
     cache.releaseTrack(handle);

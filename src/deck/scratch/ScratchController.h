@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 namespace engine::scratch {
 
@@ -92,7 +93,16 @@ public:
     void setTouching(bool touching) noexcept;
 
     // Control thread: deltaTrackSec / dtSec → normalized speed (1.0 = 1× track speed).
-    void submitHandDelta(double deltaTrackSec, double dtSec) noexcept;
+    // measuredRate is the hand speed in playback rates as measured by the input
+    // itself, when the input can measure it better than this can. A jog ring
+    // knows its own tick geometry and can average over a constant number of
+    // ticks; deriving the speed here from one delta and one interval instead is
+    // the noisiest possible estimator at low speed. Pass a non-finite value when
+    // the input has nothing better to offer (an on-screen drag does not).
+    void submitHandDelta(double deltaTrackSec,
+                         double dtSec,
+                         double measuredRate
+                             = std::numeric_limits<double>::quiet_NaN()) noexcept;
     // Control thread: physical top-platter motion that arrives after touch-up.
     // It may refine an existing coast but cannot restart a completed scratch.
     void submitReleaseDelta(double deltaTrackSec, double dtSec) noexcept;

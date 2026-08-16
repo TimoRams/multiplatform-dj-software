@@ -1,5 +1,6 @@
 #pragma once
 
+#include <limits>
 #include "deck/DeckCueLoopController.h"
 #include "deck/DeckTrackLoader.h"
 #include "audio/cache/AudioCacheTypes.h"
@@ -155,7 +156,10 @@ public:
     // Scratch: bridge PD physics + Hermite pull. Waveform/turntable → setScrubPosition; MIDI → scratchBySeconds.
     Q_INVOKABLE void pauseForScrub(double anchorPositionSec = -1.0);
     Q_INVOKABLE void scratchBySeconds(double deltaSeconds, bool vinylOneToOnePosition = false);
-    void scratchBySecondsTimed(double deltaSeconds, double eventIntervalSeconds);
+    void scratchBySecondsTimed(double deltaSeconds,
+                               double eventIntervalSeconds,
+                               double measuredRate
+                                   = std::numeric_limits<double>::quiet_NaN());
     Q_INVOKABLE void setScrubPosition(double positionSeconds);
     [[nodiscard]] Q_INVOKABLE double platterAngleDegrees() const;
     Q_INVOKABLE void resumeAfterScrub();

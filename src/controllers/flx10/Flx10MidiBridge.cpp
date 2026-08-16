@@ -1413,7 +1413,11 @@ bool MidiControllerManager::dispatchFlx10JogAction(const QString& paramId,
             // a fast first tick look like the 16 ms compatibility fallback.
             trackingInterval = std::abs(route.deltaSeconds / route.estimatedRate);
         }
-        engine->scratchBySecondsTimed(route.deltaSeconds, trackingInterval);
+        // The router measured the platter speed over a constant number of
+        // ticks, which resolves a slow crawl far better than this single
+        // delta divided by this single interval ever could.
+        engine->scratchBySecondsTimed(route.deltaSeconds, trackingInterval,
+                                      route.estimatedRate);
         break;
     }
     case flx10::JogRouteAction::ReleaseDelta:
