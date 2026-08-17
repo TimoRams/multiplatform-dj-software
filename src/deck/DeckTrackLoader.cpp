@@ -48,6 +48,12 @@ QSemaphore& loadGate()
 // playback is already ready. At 600 pps this keeps ordinary tracks on the fast
 // cached path while hour-long timelines never gate transport startup.
 constexpr qint64 kImmediateWaveformCacheBudgetBytes = 8 * 1024 * 1024;
+// Even compact cache files can describe very long timelines where restoring
+// every detail before publishing would still delay deck readiness.
+constexpr double kImmediateWaveformCacheMaxDurationSeconds = 15.0 * 60.0;
+// Cover extraction may require scanning large files; keep the critical load
+// path bounded for oversized recordings and leave artwork empty in that case.
+constexpr qint64 kInlineCoverExtractionMaxFileBytes = 256ll * 1024ll * 1024ll;
 
 TrackMetadataSnapshot readMetadata(const juce::AudioFormatReader& reader,
                                    const QString& path,
@@ -297,32 +303,6 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
     if (!isCurrent(request.generation))
         return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
 
-    // TrackLoadResult has always carried coverBytes/coverImage and the deck
-    // publishes them to the cover provider, but nothing ever filled them in:
-    // the extractor was only wired into the library, never into the deck load.
-    // hasCoverArt() was therefore false for every track, so neither the deck
-    // nor the controller jog screens could show artwork. Decoding here keeps
-    // it off the GUI thread, where this load already runs.
-    QByteArray coverBytes;
-    if (request.external && !request.external->artworkPath.isEmpty()) {
-        QFile artwork(request.external->artworkPath);
-        if (artwork.open(QIODevice::ReadOnly))
-            coverBytes = artwork.readAll();
-    }
-    if (coverBytes.isEmpty()) {
-        auto extracted = CoverArtExtractor::extractCoverArt(result.canonicalPath);
-        coverBytes = std::move(extracted.first);
-    }
-    if (!coverBytes.isEmpty()) {
-        QImage cover;
-        if (cover.loadFromData(coverBytes)) {
-            result.coverBytes = std::move(coverBytes);
-            result.coverImage = std::move(cover);
-        }
-    }
-    if (!isCurrent(request.generation))
-        return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
-
     // Transfer the metadata reader into the playback cache. Opening a long
     // compressed file twice can scan its headers/index twice and used to make
     // long mixes wait before they could even publish an audio handle.
@@ -351,6 +331,35 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
                 return !isCurrent(generation);
             });
     }
+    if (!isCurrent(request.generation))
+        return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
+
+    // TrackLoadResult has always carried coverBytes/coverImage and the deck
+    // publishes them to the cover provider, but nothing ever filled them in:
+    // the extractor was only wired into the library, never into the deck load.
+    // hasCoverArt() was therefore false for every track, so neither the deck
+    // nor the controller jog screens could show artwork. Decoding here keeps
+    // it off the GUI thread, where this load already runs.
+    QByteArray coverBytes;
+    if (request.external && !request.external->artworkPath.isEmpty()) {
+        QFile artwork(request.external->artworkPath);
+        if (artwork.open(QIODevice::ReadOnly))
+            coverBytes = artwork.readAll();
+    }
+    const bool inlineCoverExtractionAllowed = result.metadata.fileSize <= kInlineCoverExtractionMaxFileBytes;
+    if (coverBytes.isEmpty() && inlineCoverExtractionAllowed) {
+        auto extracted = CoverArtExtractor::extractCoverArt(result.canonicalPath);
+        coverBytes = std::move(extracted.first);
+    }
+    if (!coverBytes.isEmpty()) {
+        QImage cover;
+        if (cover.loadFromData(coverBytes)) {
+            result.coverBytes = std::move(coverBytes);
+            result.coverImage = std::move(cover);
+        }
+    }
+    if (!isCurrent(request.generation))
+        return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
 
     // Small immutable waveforms can be restored before publishing without a
     // visible delay. Large caches must never gate audio readiness: the analyzer
@@ -360,8 +369,11 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
         return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
     const QFileInfo waveformCacheInfo(
         WaveformCache::cachePathFor(result.canonicalPath, m_waveformPointsPerSecond));
-    const bool cacheFitsImmediateBudget = !waveformCacheInfo.exists()
-        || waveformCacheInfo.size() <= kImmediateWaveformCacheBudgetBytes;
+    const bool timelineFitsImmediateBudget = result.metadata.durationSec <= 0.0
+        || result.metadata.durationSec <= kImmediateWaveformCacheMaxDurationSeconds;
+    const bool cacheFitsImmediateBudget = timelineFitsImmediateBudget
+        && (!waveformCacheInfo.exists()
+            || waveformCacheInfo.size() <= kImmediateWaveformCacheBudgetBytes);
     result.waveformCacheLoaded = cacheFitsImmediateBudget
         && WaveformCache::loadForFile(
             result.canonicalPath, m_waveformPointsPerSecond, &result.waveformCache);

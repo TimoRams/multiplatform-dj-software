@@ -64,6 +64,22 @@
 using namespace Qt::StringLiterals;
 
 namespace {
+std::uint64_t audioCacheBudgetBytesFromEnv()
+{
+    constexpr std::uint64_t kDefaultMb = 256;
+    constexpr std::uint64_t kMinMb = 64;
+    constexpr std::uint64_t kMaxMb = 2048;
+
+    bool ok = false;
+    const int configuredMb = qEnvironmentVariableIntValue("BROCKDJ_AUDIO_CACHE_MB", &ok);
+    if (!ok || configuredMb <= 0)
+        return kDefaultMb * 1024ull * 1024ull;
+
+    const auto boundedMb = std::clamp<std::uint64_t>(
+        static_cast<std::uint64_t>(configuredMb), kMinMb, kMaxMb);
+    return boundedMb * 1024ull * 1024ull;
+}
+
 TimeStretchBackend timeStretchBackendForSetting(const QString& backend)
 {
     return backend.compare(QLatin1String("rubberband"), Qt::CaseInsensitive) == 0
@@ -327,7 +343,10 @@ int runApplication(int argc, char *argv[])
         runtime.coverProviderPtr, *runtime.mediaIoScheduler);
     runtime.mixerControl = std::make_unique<MixerControl>();
     runtime.audioDeviceService = std::make_unique<AudioDeviceService>();
-    runtime.audioPageCache = std::make_unique<AudioPageCache>();
+    const auto audioCacheBudgetBytes = audioCacheBudgetBytesFromEnv();
+    runtime.audioPageCache = std::make_unique<AudioPageCache>(audioCacheBudgetBytes);
+    qInfo() << "[startup] Audio page cache budget:" << (audioCacheBudgetBytes / (1024ull * 1024ull))
+            << "MB";
     settingsManager.setAudioDeviceService(runtime.audioDeviceService.get());
     QObject::connect(runtime.audioDeviceService.get(), &AudioDeviceService::configurationChanged,
                      &settingsManager, [&settingsManager, &runtime]() {

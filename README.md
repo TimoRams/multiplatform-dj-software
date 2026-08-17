@@ -113,6 +113,12 @@ cd multiplatform-dj-software
 
 `./build-fast` configures the app-only `build/` directory (RelWithDebInfo, QML cachegen off) and rebuilds only `BrockDJ` incrementally. `./test-fast` uses the separate `build-tests/` directory for the full CTest suite, so test rebuilds never invalidate the running-app build.
 
+For playback cache sizing on machines with more/less RAM, set `BROCKDJ_AUDIO_CACHE_MB` (clamped to `64..2048`, default `256`) before launch, e.g.:
+
+```bash
+BROCKDJ_AUDIO_CACHE_MB=512 ./build/bin/BrockDJ
+```
+
 For an existing checkout, initialize the exact pinned submodule revisions before building:
 
 ```bash
