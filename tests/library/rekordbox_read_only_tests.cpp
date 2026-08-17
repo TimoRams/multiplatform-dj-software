@@ -823,6 +823,23 @@ int main(int argc, char** argv)
                       && manager.selectedViewName() == manager.selectedDeviceName()
                       && manager.currentPlaylists().size() == 2,
                   "device root exposes All Tracks and Playlists navigation");
+    const QVariantList playlistNavigation = manager.currentPlaylists();
+    QVariantMap rootFolder;
+    QVariantMap childPlaylist;
+    for (const QVariant& playlistValue : playlistNavigation) {
+        const QVariantMap playlist = playlistValue.toMap();
+        if (playlist.value(QStringLiteral("id")) == QStringLiteral("500"))
+            rootFolder = playlist;
+        else if (playlist.value(QStringLiteral("id")) == QStringLiteral("501"))
+            childPlaylist = playlist;
+    }
+    ok &= require(rootFolder.value(QStringLiteral("folder")).toBool()
+                      && rootFolder.value(QStringLiteral("parentId")).toString().isEmpty()
+                      && childPlaylist.value(QStringLiteral("parentId"))
+                             == QStringLiteral("500")
+                      && !childPlaylist.value(QStringLiteral("folder")).toBool()
+                      && childPlaylist.value(QStringLiteral("sortOrder")).toInt() == 1,
+                  "device playlists expose ordered parent-child navigation");
     manager.chooseTracks();
     ok &= require(manager.currentTracks().size() == 2
                       && manager.selectedViewName() == QStringLiteral("All Tracks"),

@@ -671,6 +671,35 @@ Rectangle {
         // ── Separator ────────────────────────────────────────────────────────
         Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
 
+        Rectangle {
+            id: sourceButton
+            Layout.preferredWidth: 72
+            Layout.fillHeight: true
+            readonly property bool active: root.Window.window
+                                           ? root.Window.window.sourcePanelActive
+                                           : false
+            color: sourceMouse.pressed ? "#203446"
+                 : active ? "#162b3b"
+                 : (sourceMouse.containsMouse ? "#1a2025" : "#121212")
+            Row {
+                anchors.centerIn: parent
+                spacing: 5
+                Text { text: "⊙"; color: sourceButton.active ? "#a9d4ff" : "#788692"; font.pixelSize: root.sp(14); anchors.verticalCenter: parent.verticalCenter }
+                Text { text: "SOURCE"; color: sourceButton.active ? "#dceeff" : "#aab2b8"; font.pixelSize: root.sp(8); font.bold: true; font.letterSpacing: 0.5; anchors.verticalCenter: parent.verticalCenter }
+            }
+            Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 2; visible: sourceButton.active; color: root.accentBlue }
+            MouseArea {
+                id: sourceMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: if (root.Window.window && root.Window.window.openLibrarySourceView)
+                               root.Window.window.openLibrarySourceView()
+            }
+        }
+
+        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
+
         // ── Primary navigation ───────────────────────────────────────────────
         Rectangle {
             id: libraryButton
@@ -1313,6 +1342,25 @@ Rectangle {
                     id: quickLibraryMouse; anchors.fill: parent
                     onClicked: if (root.Window.window) {
                                    root.Window.window.toggleAllInOneLibrary()
+                                   root.Window.window.closeTopBarPullDown()
+                               }
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                radius: 5
+                color: quickSourceMouse.pressed ? "#1f3345" : "#181b1e"
+                Text {
+                    anchors.centerIn: parent
+                    text: "SOURCE"
+                    color: "#d5dce2"; font.pixelSize: root.sp(10); font.bold: true
+                }
+                MouseArea {
+                    id: quickSourceMouse; anchors.fill: parent
+                    onClicked: if (root.Window.window && root.Window.window.openLibrarySourceView) {
+                                   root.Window.window.openLibrarySourceView()
                                    root.Window.window.closeTopBarPullDown()
                                }
                 }

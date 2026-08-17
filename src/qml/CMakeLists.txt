@@ -24,6 +24,7 @@ set(BROCKDJ_QML_FILES
     src/qml/performance/PerformanceBeatFxPanel.qml
     src/qml/performance/PerformancePads.qml
     src/qml/library/Library.qml
+    src/qml/library/SourcePage.qml
     src/qml/settings/SettingsPanel.qml
     src/qml/settings/SettingsWindow.qml
     src/qml/settings/MappingEditorWindow.qml

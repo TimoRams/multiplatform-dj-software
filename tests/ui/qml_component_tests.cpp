@@ -45,6 +45,7 @@ int main()
     const auto applicationBootstrap = read("src/app/ApplicationBootstrap.cpp");
     const auto performancePads = read("src/qml/performance/PerformancePads.qml");
     const auto library = read("src/qml/library/Library.qml");
+    const auto sourcePage = read("src/qml/library/SourcePage.qml");
     const auto waveformScreen = read("src/qml/performance/PerformanceWaveformScreen.qml");
     const auto beatFxPanel = read("src/qml/performance/PerformanceBeatFxPanel.qml");
     const auto deckQuickPanel = read("src/qml/deck/PerformanceDeckQuickPanel.qml");
@@ -109,14 +110,29 @@ int main()
                   && library.find("waveformZoomController.zoomIn()") != std::string::npos
                   && library.find("waveformZoomController.zoomOut()") != std::string::npos,
                   "FLX10 browse encoder controls waveform zoom while the library is hidden");
-    ok &= require(library.find("function aioActivateBrowsePickerEntry(index)")
+    ok &= require(library.find("tileLabel: \"SOURCE\"") == std::string::npos
+                      && workspace.find("librarySection.activeTab = \"library\"")
                           != std::string::npos
-                      && library.find("if (aioBrowseScreen === \"source\") {\n"
-                                      "            aioDrillBrowseEntryByIndex(index)")
+                      && sourcePage.find("function syncCursorToActiveSource()")
                           != std::string::npos
-                      && library.find("onClicked: libraryRoot.aioActivateBrowsePickerEntry(index)")
+                      && sourcePage.find("color: active ? \"#40d84b\" : \"#d6d8df\"")
                           != std::string::npos,
-                  "AIO Source rows drill into USB/Files/Stream views on the first tap");
+                  "standalone Source reflects the active Local or USB library");
+    ok &= require(library.find("readonly property bool usbTrackViewVisible")
+                          != std::string::npos
+                      && occurrences(library, "visible: libraryRoot.usbTrackViewVisible") == 3,
+                  "USB track chrome cannot reserve space above the playlist browser");
+    ok &= require(library.find("function enterUsbPlaylistFolder(folder)")
+                          != std::string::npos
+                      && library.find("function updateUsbPlaylistPreview()")
+                          != std::string::npos
+                      && library.find("id: usbPlaylistFolderPreview")
+                          != std::string::npos
+                      && library.find("id: usbPlaylistPreviewTracks")
+                          != std::string::npos
+                      && library.find("fullTrackView: libraryRoot.usbTrackViewVisible")
+                          != std::string::npos,
+                  "USB playlists drill through the left pane, preview tracks on the right, and show loads only in full track views");
     ok &= require(library.find("deviceLibraryManager.mountDevice(modelData.id)")
                           != std::string::npos
                       && library.find("deviceLibraryManager.ejectDevice(modelData.id)")

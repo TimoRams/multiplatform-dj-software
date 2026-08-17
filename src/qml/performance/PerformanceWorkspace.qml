@@ -23,10 +23,10 @@ Item {
         Item {
             id: waveformViewport
             Layout.fillWidth: true
-            Layout.minimumHeight: window.showWaveforms && !window.allInOnePanelActive ? window.waveformMinimumHeight : 0
-            Layout.preferredHeight: window.showWaveforms && !window.allInOnePanelActive ? window.adaptiveWaveformHeight : 0
-            Layout.maximumHeight: window.showWaveforms && !window.allInOnePanelActive ? window.adaptiveWaveformHeight : 0
-            visible: window.showWaveforms && !window.allInOnePanelActive
+            Layout.minimumHeight: window.showWaveforms && !window.allInOnePanelActive && !window.sourcePageActive ? window.waveformMinimumHeight : 0
+            Layout.preferredHeight: window.showWaveforms && !window.allInOnePanelActive && !window.sourcePageActive ? window.adaptiveWaveformHeight : 0
+            Layout.maximumHeight: window.showWaveforms && !window.allInOnePanelActive && !window.sourcePageActive ? window.adaptiveWaveformHeight : 0
+            visible: window.showWaveforms && !window.allInOnePanelActive && !window.sourcePageActive
             clip: true
 
             Item {
@@ -107,7 +107,7 @@ Item {
         }
 
         Rectangle {
-            visible: window.showWaveforms && !window.allInOnePanelActive && (window.primaryDeckRowVisible || window.secondaryDeckRowVisible || window.crossfaderVisible || window.fxVisible || window.effectiveLibraryVisible)
+            visible: window.showWaveforms && !window.allInOnePanelActive && !window.sourcePageActive && (window.primaryDeckRowVisible || window.secondaryDeckRowVisible || window.crossfaderVisible || window.fxVisible || window.effectiveLibraryVisible)
             Layout.fillWidth: true
             Layout.minimumHeight: visible ? 1 : 0
             Layout.preferredHeight: visible ? 1 : 0
@@ -307,14 +307,41 @@ Item {
             visible: window.settingsPanelActive
         }
 
+        SourcePage {
+            id: sourcePage
+            Layout.fillWidth: true
+            Layout.fillHeight: window.sourcePageActive
+            Layout.minimumHeight: window.sourcePageActive ? 1 : 0
+            Layout.preferredHeight: 0
+            Layout.maximumHeight: window.sourcePageActive ? window.height : 0
+            visible: window.sourcePageActive
+            appWindow: window
+            activeSourceType: librarySection.activeTab === "usb" ? "usb" : "local"
+            activeDeviceId: deviceLibraryManager ? deviceLibraryManager.selectedDeviceId : ""
+            onLibraryRequested: {
+                librarySection.activeTab = "library"
+                window.activeMainTab = "library"
+                window.showLibrary = true
+            }
+            onUsbLibraryRequested: {
+                librarySection.resetUsbNavigation()
+                librarySection.activeTab = "usb"
+                window.activeMainTab = "library"
+                window.showLibrary = true
+            }
+            onSourceBackRequested: {
+                window.activeMainTab = "performance"
+            }
+        }
+
         Library {
             id: librarySection
             Layout.fillWidth: true
-            Layout.fillHeight: window.effectiveLibraryVisible
-            Layout.minimumHeight: window.effectiveLibraryVisible ? 1 : 0
+            Layout.fillHeight: window.effectiveLibraryVisible && !window.sourcePageActive
+            Layout.minimumHeight: window.effectiveLibraryVisible && !window.sourcePageActive ? 1 : 0
             Layout.preferredHeight: 0
-            Layout.maximumHeight: window.effectiveLibraryVisible ? window.height : 0
-            visible: window.effectiveLibraryVisible
+            Layout.maximumHeight: window.effectiveLibraryVisible && !window.sourcePageActive ? window.height : 0
+            visible: window.effectiveLibraryVisible && !window.sourcePageActive
         }
     }
 }

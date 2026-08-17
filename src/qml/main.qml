@@ -47,7 +47,9 @@ ApplicationWindow {
     readonly property bool allInOnePanelActive: window.allInOneMode && window.activeMainTab !== "performance"
     readonly property bool libraryPanelActive: window.allInOneMode && window.activeMainTab === "library"
     readonly property bool settingsPanelActive: window.allInOneMode && window.activeMainTab === "settings"
+    readonly property bool sourcePageActive: window.activeMainTab === "source"
     readonly property bool effectiveLibraryVisible: window.allInOneMode ? window.libraryPanelActive : window.showLibrary
+    readonly property bool sourcePanelActive: window.sourcePageActive
     readonly property bool aioTwoDeckWaveformSlots:
         window.allInOneMode && !window.fourDeckMode && !window.allInOnePanelActive
 
@@ -111,10 +113,17 @@ ApplicationWindow {
 
     function toggleAllInOneLibrary() {
         if (!allInOneMode) {
-            showLibrary = !showLibrary
+            showLibrary = activeMainTab === "library" ? !showLibrary : true
+            activeMainTab = showLibrary ? "library" : "performance"
             return
         }
         activeMainTab = libraryPanelActive ? "performance" : "library"
+        libraryExpanded = false
+        closeTopBarPullDown()
+    }
+
+    function openLibrarySourceView() {
+        activeMainTab = "source"
         libraryExpanded = false
         closeTopBarPullDown()
     }
@@ -168,7 +177,7 @@ ApplicationWindow {
             // Stashes the desktop mixer/FX prefs set above, then enters AIO.
             window.setAllInOneMode(true)
             var tab = settingsManager.getUiState("activeMainTab", "performance")
-            if (tab === "library" || tab === "settings" || tab === "performance")
+            if (tab === "library" || tab === "settings" || tab === "source" || tab === "performance")
                 window.activeMainTab = tab
         }
         _uiStateRestoring = false
@@ -494,8 +503,9 @@ ApplicationWindow {
     // transport controls are intentionally kept out of it during development.
     readonly property bool primaryDeckRowVisible: !window.libraryExpanded
                                                    && !window.allInOnePanelActive
+                                                   && !window.sourcePageActive
                                                    && (window.showDeckA || window.showDeckB)
-    readonly property bool secondaryDeckRowVisible: window.fourDeckMode && !window.libraryExpanded && !window.allInOnePanelActive
+    readonly property bool secondaryDeckRowVisible: window.fourDeckMode && !window.libraryExpanded && !window.allInOnePanelActive && !window.sourcePageActive
     readonly property bool crossfaderVisible: false
     readonly property bool fxVisible: false
     readonly property real waveformMinimumHeight: window.scaledWaveformHeight

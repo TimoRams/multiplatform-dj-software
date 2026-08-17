@@ -243,9 +243,12 @@
     <Entry paramId="deckC_headphone_cue" status="0x92" control="0x54" type="toggle"/>
     <Entry paramId="deckD_headphone_cue" status="0x93" control="0x54" type="toggle"/>
     <Entry paramId="library_browse" status="0xB6" control="0x40" type="encoder-relative"/>
+    <Entry paramId="library_back" status="0x96" control="0x65" type="toggle"/>
     <Entry paramId="library_view_toggle" status="0x96" control="0x7A" type="toggle"/>
     <Entry paramId="library_load_deck_a" status="0x96" control="0x46" type="toggle"/>
     <Entry paramId="library_load_deck_b" status="0x96" control="0x47" type="toggle"/>
+    <Entry paramId="library_load_deck_c" status="0x96" control="0x48" type="toggle"/>
+    <Entry paramId="library_load_deck_d" status="0x96" control="0x49" type="toggle"/>
   </Mappings>
 
   <Feedback protocol="midi">
