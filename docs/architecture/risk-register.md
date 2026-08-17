@@ -30,6 +30,12 @@ active register.
 - Scratch and normal playback have no synchronous reader/decoder fallback.
 - Time-stretch slots are atomically claimed before non-atomic configuration is
   read; preparation and destruction remain off the callback.
+- Keylock is a per-block routing decision, never part of the pipeline identity:
+  toggling it, entering or leaving scratch, and loading a track must not queue a
+  pipeline rebuild.
+- The stretcher is seeded either by the pipeline worker, which owns it
+  exclusively for the duration, or by the callback when the block budget can
+  absorb it — never by both.
 - Filter coefficients are prepared as complete finite snapshots and activated
   in preallocated banks.
 - Analyzer and loader workers are never detached; cancellation invalidates

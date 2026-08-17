@@ -154,18 +154,41 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
             if (!m_audioPipeline)
                 return;
             const auto stats = m_audioPipeline->realtimeStats();
+            const auto delta = [](std::uint64_t current, std::uint64_t previous) {
+                return current >= previous ? current - previous : current;
+            };
             if (stats.playbackStarvationBlocks == m_lastStarvationBlocks
-                && stats.playbackDroppedRequests == m_lastDroppedRequests)
+                && stats.playbackDroppedRequests == m_lastDroppedRequests
+                && stats.scratchStarvationBlocks == m_lastScratchStarvationBlocks
+                && stats.scratchDroppedRequests == m_lastScratchDroppedRequests
+                && stats.keylockSeedsOnAudioThread == m_lastKeylockSeedsOnAudioThread)
                 return;
             qInfo().nospace()
                 << "[AudioDiag] deck=" << m_deckId
-                << " starvation+=" << (stats.playbackStarvationBlocks - m_lastStarvationBlocks)
-                << " dropped+=" << (stats.playbackDroppedRequests - m_lastDroppedRequests)
-                << " misses=" << stats.playbackPageMisses
+                << " playbackStarvation+="
+                << delta(stats.playbackStarvationBlocks, m_lastStarvationBlocks)
+                << " playbackDropped+="
+                << delta(stats.playbackDroppedRequests, m_lastDroppedRequests)
+                << " playbackMisses=" << stats.playbackPageMisses
+                << " scratchStarvation+="
+                << delta(stats.scratchStarvationBlocks, m_lastScratchStarvationBlocks)
+                << " scratchDropped+="
+                << delta(stats.scratchDroppedRequests, m_lastScratchDroppedRequests)
+                << " scratchMisses=" << stats.scratchPageMisses
+                << " scratchRecoveries=" << stats.scratchRecoveryEvents
+                << " scratchGenerationMismatches=" << stats.scratchGenerationMismatches
                 << " diskReadsOnAudioThread=" << stats.diskReadsFromAudioThread
-                << " blockingLocks=" << stats.blockingLockAttempts;
+                << " blockingLocks=" << stats.blockingLockAttempts
+                << " keylockSeeds=" << stats.keylockSeeds
+                << " keylockSeedsInCallback+="
+                << delta(stats.keylockSeedsOnAudioThread, m_lastKeylockSeedsOnAudioThread)
+                << " keylockBridgeBlocks=" << stats.keylockSeedBridgeBlocks
+                << " worstKeylockSeedUs=" << stats.worstKeylockSeedMicros;
             m_lastStarvationBlocks = stats.playbackStarvationBlocks;
             m_lastDroppedRequests = stats.playbackDroppedRequests;
+            m_lastScratchStarvationBlocks = stats.scratchStarvationBlocks;
+            m_lastScratchDroppedRequests = stats.scratchDroppedRequests;
+            m_lastKeylockSeedsOnAudioThread = stats.keylockSeedsOnAudioThread;
         });
         diagnostics->start();
     }
@@ -1298,6 +1321,12 @@ QVariantMap DjEngine::audioPerformanceStats() const
                  QVariant::fromValue<qulonglong>(AudioEngine::callbackOverrunCount()));
     stats.insert(QStringLiteral("hardwareXruns"),
                  QVariant::fromValue<qulonglong>(m_audioDeviceService.hardwareXRunCount()));
+    const auto scheduling = AudioEngine::realtimeThreadSchedulingStatus();
+    stats.insert(QStringLiteral("realtimeScheduling"),
+                 QString::fromLatin1(platform::audioThreadSchedulingStateName(
+                     scheduling.state)));
+    stats.insert(QStringLiteral("realtimeSchedulingPriority"), scheduling.priority);
+    stats.insert(QStringLiteral("realtimeSchedulingError"), scheduling.nativeError);
     stats.insert(QStringLiteral("sampleRate"), snapshot.sampleRate);
     stats.insert(QStringLiteral("bufferSamples"), snapshot.bufferSamples);
 

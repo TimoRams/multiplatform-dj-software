@@ -580,6 +580,9 @@ private:
     // the increase per second instead of an ever-growing total.
     std::uint64_t m_lastStarvationBlocks = 0;
     std::uint64_t m_lastDroppedRequests = 0;
+    std::uint64_t m_lastScratchStarvationBlocks = 0;
+    std::uint64_t m_lastScratchDroppedRequests = 0;
+    std::uint64_t m_lastKeylockSeedsOnAudioThread = 0;
     QString m_currentTrackId;
     QString m_trackFilePath;
     QString m_coverArtUrl;

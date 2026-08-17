@@ -158,8 +158,16 @@ Item {
             }
         }
 
-        FrameAnimation {
-            id: waveFrameAnim
+        Timer {
+            id: waveUpdateTimer
+            interval: {
+                if (typeof renderPressurePolicy === "undefined" || !renderPressurePolicy)
+                    return 16
+                return root.engine && root.engine.scratchVisualActive
+                    ? renderPressurePolicy.interactiveWaveformUpdateIntervalMs
+                    : renderPressurePolicy.waveformUpdateIntervalMs
+            }
+            repeat: true
             running: root.engine !== null
                      && (root.engine.isPlaying || root.engine.scratchVisualActive)
             onTriggered: waveItem.requestUpdate()
@@ -182,7 +190,7 @@ Item {
                 if (!root.engine.isPlaying) waveItem.requestUpdate()
             }
             function onProgressChanged() {
-                // FrameAnimation repaints during play/scratch; only refresh when paused idle.
+                // The adaptive timer repaints during play/scratch; only refresh when paused idle.
                 if (root.engine && !root.engine.isPlaying && !root.engine.scratchVisualActive)
                     waveItem.requestUpdate()
             }

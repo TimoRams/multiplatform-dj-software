@@ -301,7 +301,13 @@ DeckAudioPipeline::RealtimeStats DeckAudioPipeline::realtimeStats() const noexce
         result.playbackStarvationBlocks = playback.starvationBlocks;
         result.playbackDroppedRequests = playback.droppedRequests;
     }
-    result.diskReadsFromAudioThread += m_impl->renderModeRouter->scratchCacheStats().diskReadsFromAudioThread;
+    const auto scratch = m_impl->renderModeRouter->scratchCacheStats();
+    result.diskReadsFromAudioThread += scratch.diskReadsFromAudioThread;
+    result.scratchPageMisses = scratch.pageMisses;
+    result.scratchStarvationBlocks = scratch.starvationBlocks;
+    result.scratchDroppedRequests = scratch.droppedRequests;
+    result.scratchRecoveryEvents = scratch.recoveryEvents;
+    result.scratchGenerationMismatches = scratch.generationMismatches;
 
     const auto stretch = m_impl->timeStretch->realtimeStats();
     result.prepareCallsFromAudioThread = stretch.prepareCallsFromAudioThread;
@@ -309,6 +315,10 @@ DeckAudioPipeline::RealtimeStats DeckAudioPipeline::realtimeStats() const noexce
     result.prewarmCallsFromAudioThread = stretch.prewarmCallsFromAudioThread;
     result.bufferGrowthsFromAudioThread = stretch.bufferGrowthsFromAudioThread;
     result.blockingLockAttempts = stretch.blockingLockAttempts;
+    result.keylockSeeds = stretch.keylockSeeds;
+    result.keylockSeedsOnAudioThread = stretch.keylockSeedsOnAudioThread;
+    result.keylockSeedBridgeBlocks = stretch.keylockSeedBridgeBlocks;
+    result.worstKeylockSeedMicros = stretch.worstKeylockSeedMicros;
 
     const auto mixer = m_impl->mixer->realtimeStats();
     result.coefficientBuildsFromAudioThread = mixer.coefficientBuildsFromAudioThread;

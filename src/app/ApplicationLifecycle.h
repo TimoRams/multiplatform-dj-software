@@ -35,6 +35,7 @@ class AudioPageCache;
 class MediaIoScheduler;
 class UiScaleController;
 class WaveformZoomController;
+class RenderPressurePolicy;
 namespace engine::sync { class SyncCoordinator; }
 
 // QML entry point for ordered app teardown before Qt.quit().
@@ -97,6 +98,7 @@ struct ApplicationRuntime {
     std::unique_ptr<CursorControl> cursorControl;
     std::unique_ptr<UiScaleController> uiScaleController;
     std::unique_ptr<WaveformZoomController> waveformZoomController;
+    std::unique_ptr<RenderPressurePolicy> renderPressurePolicy;
     std::unique_ptr<CoverArtProvider> coverProvider;
     std::unique_ptr<LibraryCoverService> libraryCoverService;
 

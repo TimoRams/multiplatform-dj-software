@@ -113,11 +113,13 @@ cd multiplatform-dj-software
 
 `./build-fast` configures the app-only `build/` directory (RelWithDebInfo, QML cachegen off) and rebuilds only `BrockDJ` incrementally. `./test-fast` uses the separate `build-tests/` directory for the full CTest suite, so test rebuilds never invalidate the running-app build.
 
-For playback cache sizing on machines with more/less RAM, set `BROCKDJ_AUDIO_CACHE_MB` (clamped to `64..2048`, default `256`) before launch, e.g.:
+The playback cache uses `512` MiB by default on systems with at least 16 GiB RAM (`256` MiB otherwise). Override it with `BROCKDJ_AUDIO_CACHE_MB` (clamped to `64..2048`) before launch, e.g.:
 
 ```bash
 BROCKDJ_AUDIO_CACHE_MB=512 ./build/bin/BrockDJ
 ```
+
+Detailed waveform rasterization uses a process-wide CPU budget that reserves cores for audio, Qt, and the GPU driver. On a high-core system it scales one active deck to up to eight workers and all decks to twelve concurrent workers. Use `BROCKDJ_WAVEFORM_RASTER_WORKERS=1..12` only to override that global limit for profiling.
 
 For an existing checkout, initialize the exact pinned submodule revisions before building:
 
@@ -180,6 +182,45 @@ ctest --preset ci-windows-x64
 
 CMake provides local development presets plus CI presets for Linux x86_64,
 Linux ARM64, macOS arm64, macOS x86_64 and Windows x64.
+
+### Linux real-time audio
+
+After an audio device starts, BrockDJ requests `SCHED_FIFO` priority 20 for
+the device callback thread. The request happens on the control thread, never
+inside the callback. The **RT SCHEDULER** field in the audio performance popup
+reports whether it is active, already managed by JACK/PipeWire, or denied.
+
+For a native ALSA callback, grant the live-performance user an RT priority
+limit through the distribution's PAM limits configuration, then log out and
+back in:
+
+```text
+@audio - rtprio 40
+```
+
+The default request is deliberately capped at 40. Set
+`BROCKDJ_AUDIO_RT_PRIORITY` to choose a value from `1..40` when the installed
+audio policy requires a lower value.
+
+### Render-pressure policy
+
+The UI monitors recent audio-callback budget use and device/DSP XRun deltas on
+the control thread. During pressure it drops nonessential waveform updates from
+60 Hz to 30 Hz and then 15 Hz; active scratching remains at least 30 Hz. The
+**UI RENDER** field in the audio performance popup shows the active tier.
+Minimized or inactive windows use a 250 ms update interval, while transport and
+audio processing remain unaffected. Waveform and overview raster work is also
+coalesced until a live window resize has been idle for 120 ms.
+
+### Intel Arc and integrated GPUs
+
+Linux defaults to Qt Quick's Vulkan RHI, so the Vulkan loader selects the
+available Intel Arc/integrated GPU without a second graphics-device lifecycle.
+The 2D-only scene graph disables its unused depth attachment and the overview
+uses Qt's fast FBO-resize path; both reduce shared-memory bandwidth and
+render-target churn. Leave `BROCKDJ_RHI_BACKEND` at its `vulkan` default for
+Intel Arc. `opengl` and `auto` are comparison/fallback modes, not performance
+defaults.
 
 ---
 

@@ -9,12 +9,23 @@
 #include <QElapsedTimer>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <limits>
+#include <semaphore>
 #include <utility>
+
+#ifdef __linux__
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 namespace waveform_render {
 namespace {
+
+constexpr std::ptrdiff_t kMaximumGlobalRasterWorkers = 12;
 
 void updateWorst(std::atomic<std::uint64_t>& target, std::uint64_t value)
 {
@@ -25,12 +36,54 @@ void updateWorst(std::atomic<std::uint64_t>& target, std::uint64_t value)
     }
 }
 
+std::size_t globalRasterWorkerLimit() noexcept
+{
+    const bool environmentLimitValid = qEnvironmentVariableIsSet(
+        "BROCKDJ_WAVEFORM_RASTER_WORKERS");
+    bool parsedLimit = false;
+    const int environmentLimit = qEnvironmentVariableIntValue(
+        "BROCKDJ_WAVEFORM_RASTER_WORKERS", &parsedLimit);
+    if (environmentLimitValid && parsedLimit && environmentLimit > 0) {
+        return std::clamp<std::size_t>(
+            static_cast<std::size_t>(environmentLimit), 1,
+            static_cast<std::size_t>(kMaximumGlobalRasterWorkers));
+    }
+
+    const auto hardwareThreads = std::thread::hardware_concurrency();
+    if (hardwareThreads <= 2)
+        return 1;
+
+    // Reserve cores for the realtime callback, Qt's GUI/render threads, and
+    // the GPU driver. The slots are process-wide so several deck rasterizers
+    // cannot overcommit the host while a single active deck can still scale.
+    const auto reservedThreads = hardwareThreads <= 6 ? 2u : 3u;
+    return std::clamp<std::size_t>(
+        static_cast<std::size_t>(hardwareThreads - reservedThreads), 2,
+        static_cast<std::size_t>(kMaximumGlobalRasterWorkers));
+}
+
+std::counting_semaphore<kMaximumGlobalRasterWorkers>& rasterWorkPermits()
+{
+    static std::counting_semaphore<kMaximumGlobalRasterWorkers> permits(
+        static_cast<std::ptrdiff_t>(globalRasterWorkerLimit()));
+    return permits;
+}
+
 std::size_t rasterWorkerCount() noexcept
 {
     const auto hardwareThreads = std::thread::hardware_concurrency();
     if (hardwareThreads <= 2)
         return 1;
-    return std::clamp<std::size_t>(hardwareThreads / 2, 2, 4);
+    return std::min(globalRasterWorkerLimit(),
+                    std::clamp<std::size_t>(hardwareThreads / 2, 2, 8));
+}
+
+void lowerCurrentThreadPriority()
+{
+#ifdef __linux__
+    const pid_t tid = static_cast<pid_t>(syscall(SYS_gettid));
+    (void)setpriority(PRIO_PROCESS, static_cast<id_t>(tid), 10);
+#endif
 }
 
 std::size_t hashCombine(std::size_t seed, std::size_t value) noexcept
@@ -284,6 +337,7 @@ void WaveformTileRasterizer::resetStats()
 
 void WaveformTileRasterizer::run(std::stop_token stopToken)
 {
+    lowerCurrentThreadPriority();
     while (!stopToken.stop_requested()) {
         std::optional<RenderTileRequest> request;
         std::optional<OverviewRenderRequest> overviewRequest;
@@ -312,6 +366,18 @@ void WaveformTileRasterizer::run(std::stop_token stopToken)
             }
         }
 
+        auto& permits = rasterWorkPermits();
+        bool acquiredSlot = false;
+        while (!stopToken.stop_requested() && !acquiredSlot) {
+            acquiredSlot = permits.try_acquire_for(std::chrono::milliseconds(20));
+        }
+        if (!acquiredSlot)
+            break;
+        if (stopToken.stop_requested()) {
+            permits.release();
+            break;
+        }
+
         const auto concurrent = m_activeWorkers.fetch_add(
             1, std::memory_order_relaxed) + 1;
         updateWorst(m_maximumConcurrentWorkers, concurrent);
@@ -334,6 +400,7 @@ void WaveformTileRasterizer::run(std::stop_token stopToken)
                 }
             }
             m_activeWorkers.fetch_sub(1, std::memory_order_relaxed);
+            permits.release();
             m_condition.notify_one();
             if (accepted)
                 notifyTileReady();
@@ -348,6 +415,7 @@ void WaveformTileRasterizer::run(std::stop_token stopToken)
         m_rasterizedTiles.fetch_add(1, std::memory_order_relaxed);
         insert(std::move(tile));
         m_activeWorkers.fetch_sub(1, std::memory_order_relaxed);
+        permits.release();
     }
 }
 

@@ -36,6 +36,21 @@ public:
         std::uint64_t playbackPageMisses = 0;
         std::uint64_t playbackStarvationBlocks = 0;
         std::uint64_t playbackDroppedRequests = 0;
+        // Scratch cache health is kept separately: a scratch miss can otherwise
+        // be mistaken for a normal transport-read problem in field diagnostics.
+        std::uint64_t scratchPageMisses = 0;
+        std::uint64_t scratchStarvationBlocks = 0;
+        std::uint64_t scratchDroppedRequests = 0;
+        std::uint64_t scratchRecoveryEvents = 0;
+        std::uint64_t scratchGenerationMismatches = 0;
+        // Keylock re-entry. Seeding the stretcher costs several FFT frames, so
+        // it normally runs on the pipeline worker while the deck bridges on the
+        // direct path. A rising keylockSeedsOnAudioThread means seeds are
+        // landing in the callback, which is what makes transitions crackle.
+        std::uint64_t keylockSeeds = 0;
+        std::uint64_t keylockSeedsOnAudioThread = 0;
+        std::uint64_t keylockSeedBridgeBlocks = 0;
+        std::uint64_t worstKeylockSeedMicros = 0;
     };
 
     struct PreparedTrack {

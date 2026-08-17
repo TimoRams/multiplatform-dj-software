@@ -13,6 +13,7 @@ std::atomic<uint64_t> AudioEngine::s_callbackTotalUsec { 0 };
 std::atomic<uint64_t> AudioEngine::s_callbackWorstUsec { 0 };
 std::atomic<uint64_t> AudioEngine::s_callbackOverruns { 0 };
 std::atomic<bool> AudioEngine::s_masterClipDetected { false };
+platform::AudioThreadScheduling AudioEngine::s_audioThreadScheduling;
 
 namespace {
 
@@ -190,6 +191,7 @@ void AudioEngine::unregisterCallback(juce::AudioDeviceManager& adm)
 
 void AudioEngine::prepareToPlay(int, double sampleRate)
 {
+    s_audioThreadScheduling.reset();
     const double validRate = std::isfinite(sampleRate) && sampleRate > 0.0 ? sampleRate : 44100.0;
     m_sampleRate.store(validRate, std::memory_order_release);
 
@@ -225,6 +227,7 @@ void AudioEngine::releaseResources()
 void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill)
 {
     const juce::ScopedNoDenormals noDenormals;
+    s_audioThreadScheduling.observeCallbackThread();
     const auto callbackStartTicks = juce::Time::getHighResolutionTicks();
     auto* output = bufferToFill.buffer;
     const int start = bufferToFill.startSample;
@@ -391,9 +394,24 @@ uint64_t AudioEngine::callbackCount()
     return s_callbackCount.load(std::memory_order_relaxed);
 }
 
+uint64_t AudioEngine::callbackTotalUsec()
+{
+    return s_callbackTotalUsec.load(std::memory_order_relaxed);
+}
+
 uint64_t AudioEngine::callbackOverrunCount()
 {
     return s_callbackOverruns.load(std::memory_order_relaxed);
+}
+
+void AudioEngine::requestRealtimeThreadScheduling(int priority) noexcept
+{
+    s_audioThreadScheduling.requestRealtimePriority(priority);
+}
+
+platform::AudioThreadSchedulingStatus AudioEngine::realtimeThreadSchedulingStatus() noexcept
+{
+    return s_audioThreadScheduling.status();
 }
 
 void AudioEngine::resetCallbackStats()

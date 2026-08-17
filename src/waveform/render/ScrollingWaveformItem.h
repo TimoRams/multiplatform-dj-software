@@ -86,9 +86,11 @@ private:
 
     QPointer<DjEngine> m_engine;
     QTimer* m_dataUpdateThrottle = nullptr;
+    QTimer* m_resizeThrottle = nullptr;
     // Set when a progressive publication arrived while the throttle window was
     // still open, so the trailing edge knows it has work to repaint.
     bool m_pendingDataUpdate = false;
+    bool m_resizeDeferred = false;
     std::unique_ptr<waveform_render::WaveformTileRasterizer> m_tileRasterizer;
     std::atomic<bool> m_tilesReady{false};
     bool m_forceRebuild = true;
@@ -135,6 +137,8 @@ private:
     // coarse TrackData mutex, which is what stalled the UI while scratching.
     std::atomic<std::uint64_t> m_worstPaintNodeUsec{0};
     std::atomic<std::uint64_t> m_worstSnapshotAcquireUsec{0};
+    std::atomic<std::uint64_t> m_deferredResizeFrameCount{0};
+    std::atomic<std::uint64_t> m_deferredTextureUploadCount{0};
 
     // Keep the item clamp identical to WaveformZoomController::kMinimum.
     static constexpr float kMinimumZoom = 0.0056f;

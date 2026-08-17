@@ -39,6 +39,7 @@ alive until the device callback is unregistered and closed.
 | Cue/loop state | `DeckCueLoopController` | Qt/QML/MIDI/controller | persistence and transport commands remain outside callback |
 | Scratch session policy | `ScratchSession`/`ScratchController` | control-to-audio atomic commands | `RenderModeRouter` owns callback rendering state |
 | Time-stretch pipelines | `TimeStretchProcessor` | preparation worker publishes; callback claims active slot | worker joined and slots destroyed outside callback |
+| Stretcher seeding | `TimeStretchProcessor` seed handshake | callback publishes an output snapshot, worker performs the seek, callback consumes it | exactly one of the two owns the stretcher at a time; the callback bridges on the Direct path meanwhile |
 | Channel EQ/filter/FX state | `DeckChannelProcessor` | controls publish commands/snapshots; callback consumes | filter histories remain audio-thread-only |
 | Cached pages | `AudioPageCache`/`AudioCacheWorker` | worker publishes immutable pages; callback holds guards | unpublish, drain readers, then free |
 | Deck facade | `DjEngine` | Qt/QML/control unless explicitly atomic | facade borrows services/pipeline; owns deck controllers/loaders |

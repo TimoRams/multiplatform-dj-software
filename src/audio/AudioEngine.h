@@ -6,6 +6,7 @@
 #include "audio/HeadphoneBus.h"
 #include "audio/MasterMixer.h"
 #include "fx/FxTypes.h"
+#include "platform/AudioThreadScheduling.h"
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
@@ -87,8 +88,13 @@ public:
     static double callbackAverageUsec();
     static double callbackWorstUsec();
     static uint64_t callbackCount();
+    static uint64_t callbackTotalUsec();
     static uint64_t callbackOverrunCount();
     static void resetCallbackStats();
+    static void requestRealtimeThreadScheduling(
+        int priority = platform::AudioThreadScheduling::kDefaultRealtimePriority) noexcept;
+    [[nodiscard]] static platform::AudioThreadSchedulingStatus
+        realtimeThreadSchedulingStatus() noexcept;
 
     static void setOutputRouting(int masterFirstCh, int boothFirstCh, int headphonesFirstCh);
     static int masterFirstChannel();
@@ -172,4 +178,5 @@ private:
     static std::atomic<uint64_t> s_callbackWorstUsec;
     static std::atomic<uint64_t> s_callbackOverruns;
     static std::atomic<bool> s_masterClipDetected;
+    static platform::AudioThreadScheduling s_audioThreadScheduling;
 };

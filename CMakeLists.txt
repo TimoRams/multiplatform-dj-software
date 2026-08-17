@@ -563,6 +563,7 @@ add_test(NAME mixer_dsp COMMAND BrockDJ_mixer_dsp_tests)
 add_executable(BrockDJ_deck_audio_graph_tests
     tests/audio/deck_audio_graph_tests.cpp
     src/audio/AudioEngine.cpp
+    src/platform/AudioThreadScheduling.cpp
     src/audio/MasterMixer.cpp
     src/audio/HeadphoneBus.cpp
     src/audio/AudioOutputRouter.cpp
@@ -646,6 +647,14 @@ target_include_directories(BrockDJ_control_clock_tests PRIVATE src)
 target_link_libraries(BrockDJ_control_clock_tests PRIVATE Qt6::Core)
 target_compile_features(BrockDJ_control_clock_tests PRIVATE cxx_std_23)
 add_test(NAME control_clock COMMAND BrockDJ_control_clock_tests)
+
+add_executable(BrockDJ_render_pressure_policy_tests
+    tests/app/render_pressure_policy_tests.cpp
+)
+target_include_directories(BrockDJ_render_pressure_policy_tests PRIVATE src)
+target_link_libraries(BrockDJ_render_pressure_policy_tests PRIVATE Qt6::Core)
+target_compile_features(BrockDJ_render_pressure_policy_tests PRIVATE cxx_std_23)
+add_test(NAME render_pressure_policy COMMAND BrockDJ_render_pressure_policy_tests)
 
 add_executable(BrockDJ_master_bus_tests
     tests/audio/master_bus_tests.cpp
@@ -1036,6 +1045,13 @@ target_link_libraries(BrockDJ_media_io_scheduler_tests PRIVATE
 target_compile_features(BrockDJ_media_io_scheduler_tests PRIVATE cxx_std_23)
 add_test(NAME media_io_scheduler COMMAND BrockDJ_media_io_scheduler_tests)
 
+add_executable(BrockDJ_audio_thread_scheduling_tests
+    tests/platform/audio_thread_scheduling_tests.cpp
+    src/platform/AudioThreadScheduling.cpp)
+target_include_directories(BrockDJ_audio_thread_scheduling_tests PRIVATE src)
+target_compile_features(BrockDJ_audio_thread_scheduling_tests PRIVATE cxx_std_23)
+add_test(NAME audio_thread_scheduling COMMAND BrockDJ_audio_thread_scheduling_tests)
+
 # Every BrockDJ executable uses the same portable language baseline and an
 # explicit native thread dependency. This avoids relying on Qt/JUCE to provide
 # pthread flags transitively and keeps MSVC, AppleClang, GCC and Clang aligned.
@@ -1076,6 +1092,7 @@ set(_brockdj_executable_targets
     BrockDJ_time_stretch_tests
     BrockDJ_database_worker_tests
     BrockDJ_media_io_scheduler_tests
+    BrockDJ_audio_thread_scheduling_tests
 )
 if(TARGET BrockDJ_posix_signal_tests)
     list(APPEND _brockdj_executable_targets BrockDJ_posix_signal_tests)

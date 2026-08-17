@@ -3,6 +3,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     CiSmokeTest.cpp
     ApplicationLifecycle.cpp
     ControlClock.cpp
+    RenderPressurePolicy.h
+    RenderPressurePolicy.cpp
     UiScaleController.h
     UiScaleController.cpp
     WaveformZoomController.h

@@ -14,11 +14,25 @@
 #include <functional>
 #include <utility>
 
+#if defined(__linux__)
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
+
 namespace {
 
 std::uint64_t currentThreadHash() noexcept
 {
     return static_cast<std::uint64_t>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
+}
+
+void lowerWorkerPriority() noexcept
+{
+#if defined(__linux__)
+    const auto threadId = static_cast<pid_t>(syscall(SYS_gettid));
+    static_cast<void>(setpriority(PRIO_PROCESS, static_cast<id_t>(threadId), 10));
+#endif
 }
 
 QString escapedSqlitePath(QString path)
@@ -219,6 +233,7 @@ DatabaseWorkerStats DatabaseWorker::stats() const noexcept
 
 void DatabaseWorker::workerLoop()
 {
+    lowerWorkerPriority();
     const auto threadHash = currentThreadHash();
     m_workerThreadHash.store(threadHash, std::memory_order_relaxed);
     const QString connectionName = QStringLiteral("%1_%2")

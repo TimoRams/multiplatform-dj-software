@@ -104,6 +104,7 @@ void logDesktopWaveformComparison(const WaveformLineStoreSnapshot& snapshot,
 constexpr std::size_t kWaveformNodePoolSize = 24;
 constexpr std::size_t kCueLabelNodePoolSize = 9;
 constexpr std::size_t kDownbeatLabelNodePoolSize = 48;
+constexpr std::uint64_t kMaximumTextureUploadBytesPerFrame = 2ull * 1024ull * 1024ull;
 constexpr int kVerticesPerFeatheredLine = 18;
 
 QSGGeometryNode* makeLineNode(QSGNode* parent)
@@ -796,6 +797,16 @@ ScrollingWaveformItem::ScrollingWaveformItem(QQuickItem* parent)
         // Keep coalescing for as long as chunks keep streaming in.
         m_dataUpdateThrottle->start();
     });
+    m_resizeThrottle = new QTimer(this);
+    m_resizeThrottle->setSingleShot(true);
+    m_resizeThrottle->setInterval(120);
+    connect(m_resizeThrottle, &QTimer::timeout, this, [this] {
+        if (!m_resizeDeferred)
+            return;
+        m_resizeDeferred = false;
+        publishViewportDemand();
+        invalidateGeometry();
+    });
 }
 
 ScrollingWaveformItem::~ScrollingWaveformItem()
@@ -970,8 +981,8 @@ void ScrollingWaveformItem::geometryChange(const QRectF& newGeometry,
 {
     QQuickItem::geometryChange(newGeometry, oldGeometry);
     if (newGeometry.size() != oldGeometry.size()) {
-        publishViewportDemand();
-        invalidateGeometry();
+        m_resizeDeferred = true;
+        m_resizeThrottle->start();
     }
 }
 
@@ -1084,6 +1095,14 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     }
     m_frameCount.fetch_add(1, std::memory_order_relaxed);
 
+    // Qt reports every drag step as a size change. Rebuilding tile geometry at
+    // that cadence can consume the audio callback's CPU budget, so preserve the
+    // last valid scene until the resize has been quiet for a short interval.
+    if (m_resizeDeferred && scene->hasWindow) {
+        m_deferredResizeFrameCount.fetch_add(1, std::memory_order_relaxed);
+        return scene;
+    }
+
     DjEngine* engine = m_engine.data();
     TrackData* trackData = engine ? engine->getTrackData() : nullptr;
     QElapsedTimer snapshotTimer;
@@ -1185,6 +1204,16 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         std::uint64_t renderedLineCount = 0;
         std::uint64_t visibleTileCount = 0;
         std::size_t usedPoolSlots = 0;
+        std::uint64_t textureUploadBytesThisFrame = 0;
+        bool textureUploadDeferred = false;
+        const auto canUploadTexture = [&](std::uint64_t bytes) {
+            // Always permit the first texture so an unusually large fallback
+            // image cannot remain permanently deferred on a high-DPI display.
+            return textureUploadBytesThisFrame == 0
+                || bytes <= kMaximumTextureUploadBytesPerFrame
+                    - std::min(textureUploadBytesThisFrame,
+                               kMaximumTextureUploadBytesPerFrame);
+        };
 
         const auto overviewSnapshot = trackData->getOverviewRgbSnapshot();
         constexpr std::uint32_t fallbackWidth = 2048;
@@ -1239,26 +1268,33 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             };
             if (const auto ready = m_tileRasterizer->findOverview(fallbackKey)) {
                 if (!scene->fallbackKey || *scene->fallbackKey != fallbackKey) {
-                    const auto upload = uploadFallbackOverview(
-                        scene->fallbackNode, *ready,
-                        scene->renderOriginLine, pixelsPerLine,
-                        static_cast<float>(bounds.height()), window(),
-                        scene->timeline, firstHighResolutionNode());
-                    if (upload) {
-                        scene->fallbackKey = fallbackKey;
-                        scene->fallbackVisible = true;
-                        scene->fallbackTextureBytes = upload->bytes;
-                        m_textureUploadCount.fetch_add(1, std::memory_order_relaxed);
-                        m_textureUploadBytes.fetch_add(upload->bytes,
-                                                       std::memory_order_relaxed);
-                        if (upload->replaced) {
-                            m_textureReplacementCount.fetch_add(
-                                1, std::memory_order_relaxed);
+                    const auto bytes = static_cast<std::uint64_t>(
+                        ready->image.sizeInBytes());
+                    if (canUploadTexture(bytes)) {
+                        const auto upload = uploadFallbackOverview(
+                            scene->fallbackNode, *ready,
+                            scene->renderOriginLine, pixelsPerLine,
+                            static_cast<float>(bounds.height()), window(),
+                            scene->timeline, firstHighResolutionNode());
+                        if (upload) {
+                            scene->fallbackKey = fallbackKey;
+                            scene->fallbackVisible = true;
+                            scene->fallbackTextureBytes = upload->bytes;
+                            textureUploadBytesThisFrame += upload->bytes;
+                            m_textureUploadCount.fetch_add(1, std::memory_order_relaxed);
+                            m_textureUploadBytes.fetch_add(upload->bytes,
+                                                           std::memory_order_relaxed);
+                            if (upload->replaced) {
+                                m_textureReplacementCount.fetch_add(
+                                    1, std::memory_order_relaxed);
+                            }
+                        } else {
+                            scene->fallbackKey.reset();
+                            scene->fallbackVisible = false;
+                            scene->fallbackTextureBytes = 0;
                         }
                     } else {
-                        scene->fallbackKey.reset();
-                        scene->fallbackVisible = false;
-                        scene->fallbackTextureBytes = 0;
+                        textureUploadDeferred = true;
                     }
                 } else if (renderOriginChanged || !scene->fallbackVisible) {
                     // Also covers coming back from a suppressed zoom level:
@@ -1380,7 +1416,9 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             } else if (prepared.ready
                        && waveform_render::detailTileMayBeDisplayed(
                            prepared.ready->key == prepared.key,
-                           prepared.ready->hasAnySourceData)) {
+                           prepared.ready->hasAnySourceData)
+                       && canUploadTexture(static_cast<std::uint64_t>(
+                           prepared.ready->image.sizeInBytes()))) {
                 const auto upload = uploadWaveformTile(
                     scene->waveformNodes[poolIndex], *prepared.ready,
                     scene->renderOriginLine, pixelsPerLine, rasterScale, dpr,
@@ -1392,6 +1430,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                     scene->waveformTextureBytes[poolIndex] = upload->bytes;
                     scene->waveformTileKeys[poolIndex] = prepared.key;
                     ++readyVisibleTiles;
+                    textureUploadBytesThisFrame += upload->bytes;
                     m_textureUploadCount.fetch_add(1, std::memory_order_relaxed);
                     m_textureUploadBytes.fetch_add(upload->bytes,
                                                    std::memory_order_relaxed);
@@ -1406,6 +1445,11 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                     ++missingVisibleTiles;
                 }
             } else {
+                const bool uploadReadyButDeferred = prepared.ready
+                    && waveform_render::detailTileMayBeDisplayed(
+                        prepared.ready->key == prepared.key,
+                        prepared.ready->hasAnySourceData);
+                textureUploadDeferred = textureUploadDeferred || uploadReadyButDeferred;
                 // The replacement tile isn't rasterised yet (zoom change,
                 // live analysis still settling, or freshly scrolled-into
                 // territory). Earlier this held the previous tile on screen,
@@ -1416,7 +1460,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                 // brief, uniform flash to the coarse whole-track fallback.
                 // Clearing here lets that single coherent fallback texture
                 // cover the whole gap instead.
-                if (scene->waveformTileKeys[poolIndex]) {
+                if (!uploadReadyButDeferred && scene->waveformTileKeys[poolIndex]) {
                     m_staleZoomTilesRejected.fetch_add(
                         1, std::memory_order_relaxed);
                 }
@@ -1464,6 +1508,12 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             scene->fallbackTextureBytes);
         m_estimatedGpuTextureBytes.store(gpuTextureBytes,
                                          std::memory_order_relaxed);
+        if (textureUploadDeferred) {
+            m_deferredTextureUploadCount.fetch_add(1, std::memory_order_relaxed);
+            m_tilesReady.store(true, std::memory_order_release);
+            QMetaObject::invokeMethod(this, [this] { update(); },
+                                      Qt::QueuedConnection);
+        }
 
         // Every timeline layer uses the same persistent origin. Replacing an
         // off-screen waveform chunk therefore cannot change the pixel phase of
@@ -1794,6 +1844,12 @@ QVariantMap ScrollingWaveformItem::renderStats() const
                  QVariant::fromValue<qulonglong>(m_worstPaintNodeUsec.load(std::memory_order_relaxed)));
     stats.insert(QStringLiteral("worstSnapshotAcquireUsec"),
                  QVariant::fromValue<qulonglong>(m_worstSnapshotAcquireUsec.load(std::memory_order_relaxed)));
+    stats.insert(QStringLiteral("deferredResizeFrames"),
+                 QVariant::fromValue<qulonglong>(
+                     m_deferredResizeFrameCount.load(std::memory_order_relaxed)));
+    stats.insert(QStringLiteral("deferredTextureUploads"),
+                 QVariant::fromValue<qulonglong>(
+                     m_deferredTextureUploadCount.load(std::memory_order_relaxed)));
     return stats;
 }
 
@@ -1823,4 +1879,6 @@ void ScrollingWaveformItem::resetRenderStats()
     m_worstGeometryBuildUsec.store(0, std::memory_order_relaxed);
     m_worstPaintNodeUsec.store(0, std::memory_order_relaxed);
     m_worstSnapshotAcquireUsec.store(0, std::memory_order_relaxed);
+    m_deferredResizeFrameCount.store(0, std::memory_order_relaxed);
+    m_deferredTextureUploadCount.store(0, std::memory_order_relaxed);
 }

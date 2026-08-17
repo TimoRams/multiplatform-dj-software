@@ -40,11 +40,25 @@ OverviewWaveformItem::OverviewWaveformItem(QQuickItem* parent)
     setAntialiasing(true);
     setOpaquePainting(false);
     setRenderTarget(QQuickPaintedItem::FramebufferObject);
+    // The live-resize policy temporarily hides this item until its dimensions
+    // settle. Prefer the cheap FBO resize path for the final transition rather
+    // than preserving pixels that will be repainted immediately afterwards.
+    setPerformanceHint(QQuickPaintedItem::FastFBOResizing, true);
 
     m_updateThrottle = new QTimer(this);
     m_updateThrottle->setSingleShot(true);
-    m_updateThrottle->setInterval(100);  // fallback path only — overview preview is instant
+    m_updateThrottle->setInterval(m_updateIntervalMs);
     connect(m_updateThrottle, &QTimer::timeout, this, [this]() { update(); });
+    m_resizeThrottle = new QTimer(this);
+    m_resizeThrottle->setSingleShot(true);
+    m_resizeThrottle->setInterval(120);
+    connect(m_resizeThrottle, &QTimer::timeout, this, [this]() {
+        if (!m_resizeDeferred)
+            return;
+        m_resizeDeferred = false;
+        emit resizeDeferredChanged();
+        update();
+    });
 }
 
 void OverviewWaveformItem::setEngine(DjEngine* engine)
@@ -75,6 +89,30 @@ void OverviewWaveformItem::setRectified(bool v)
     m_rectified = v;
     emit rectifiedChanged();
     update();
+}
+
+void OverviewWaveformItem::setUpdateIntervalMs(int intervalMs)
+{
+    const int bounded = std::clamp(intervalMs, 16, 2000);
+    if (m_updateIntervalMs == bounded)
+        return;
+    m_updateIntervalMs = bounded;
+    m_updateThrottle->setInterval(m_updateIntervalMs);
+    emit updateIntervalMsChanged();
+}
+
+void OverviewWaveformItem::geometryChange(const QRectF& newGeometry,
+                                          const QRectF& oldGeometry)
+{
+    QQuickPaintedItem::geometryChange(newGeometry, oldGeometry);
+    if (newGeometry.size() == oldGeometry.size())
+        return;
+
+    if (!m_resizeDeferred) {
+        m_resizeDeferred = true;
+        emit resizeDeferredChanged();
+    }
+    m_resizeThrottle->start();
 }
 
 void OverviewWaveformItem::onTrackEjected()

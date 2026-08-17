@@ -19,12 +19,26 @@
 #include <functional>
 #include <utility>
 
+#if defined(__linux__)
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
+
 namespace {
 
 bool cancelled(const MediaIoRequest& request) noexcept
 {
     return request.cancellation
         && request.cancellation->load(std::memory_order_acquire);
+}
+
+void lowerWorkerPriority() noexcept
+{
+#if defined(__linux__)
+    const auto threadId = static_cast<pid_t>(syscall(SYS_gettid));
+    static_cast<void>(setpriority(PRIO_PROCESS, static_cast<id_t>(threadId), 10));
+#endif
 }
 
 QByteArray readBoundedFile(const QString& path, std::size_t maximumBytes, QString* error)
@@ -234,6 +248,7 @@ MediaIoSchedulerStats MediaIoScheduler::stats() const noexcept
 
 void MediaIoScheduler::workerLoop()
 {
+    lowerWorkerPriority();
     m_workerThreadHash.store(
         static_cast<std::uint64_t>(std::hash<std::thread::id>{}(std::this_thread::get_id())),
         std::memory_order_relaxed);

@@ -145,8 +145,15 @@ Item {
         }
     }
 
-    FrameAnimation {
+    Timer {
+        interval: (typeof renderPressurePolicy !== "undefined"
+                   && renderPressurePolicy)
+                  ? renderPressurePolicy.interactiveWaveformUpdateIntervalMs
+                  : 16
+        repeat: true
         running: root.animationEnabled && root.visible && root.engine !== null
+                 && (root.engine.isPlaying || root.engine.scratchVisualActive
+                     || root.dragActive)
         onTriggered: root.updateRotation()
     }
 

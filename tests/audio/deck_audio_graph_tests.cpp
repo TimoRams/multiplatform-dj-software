@@ -176,19 +176,6 @@ Timing measureDirectMixer(DeckAudioPipeline& graph, int blockSize, int iteration
     return {totalUs / iterations, worstUs};
 }
 
-bool waitForTimeStretchGeneration(DeckAudioPipeline& graph, std::uint64_t oldGeneration)
-{
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    juce::AudioBuffer<float> output(2, 256);
-    while (std::chrono::steady_clock::now() < deadline) {
-        graph.getNextAudioBlock({&output, 0, 256});
-        if (graph.timeStretch().activeConfigurationGeneration() > oldGeneration)
-            return true;
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    return false;
-}
-
 } // namespace
 
 int main(int argc, char** argv)
@@ -707,22 +694,19 @@ int main(int argc, char** argv)
     auto configurationGeneration = graph.timeStretch().activeConfigurationGeneration();
     graph.timeStretch().setPitchLockEnabled(false);
     graph.timeStretch().setTempoRatio(1.0);
-    ok &= require(waitForTimeStretchGeneration(graph, configurationGeneration),
-                  "neutral time-stretch pipeline prepared");
     graph.mixer().setEq(0.0f, 0.0f, 0.0f);
     graph.mixer().setFilterVal(0.0f);
     const auto directMixer512 = measureDirectMixer(graph, 512, 300);
     const auto neutral512 = measure(graph, 512, 300);
-    configurationGeneration = graph.timeStretch().activeConfigurationGeneration();
     graph.timeStretch().setPitchLockEnabled(true);
     graph.timeStretch().setTempoRatio(0.8);
-    ok &= require(waitForTimeStretchGeneration(graph, configurationGeneration),
-                  "keylock pipeline prepared");
     const auto keylock512 = measure(graph, 512, 100);
-    configurationGeneration = graph.timeStretch().activeConfigurationGeneration();
     graph.timeStretch().setPitchLockEnabled(false);
-    ok &= require(waitForTimeStretchGeneration(graph, configurationGeneration),
-                  "post-keylock bypass prepared");
+    // Keylock is a per-block routing decision, not a pipeline identity, so none
+    // of these toggles may cost a rebuild — that wait used to be exactly the
+    // stretch where the deck played back unlocked and jumped when it ended.
+    ok &= require(graph.timeStretch().activeConfigurationGeneration() == configurationGeneration,
+                  "toggling keylock never rebuilds the time-stretch pipeline");
     graph.mixer().setEq(-1.0f, 0.5f, 1.0f);
     graph.mixer().setFilterVal(-0.5f);
     const auto eqFilter8192 = measure(graph, 8192, 100);

@@ -146,9 +146,17 @@ The `RenderModeRouter` owns exactly one active mode:
 
 Entering Scratch positions the scratch processor at the audible cursor and crossfades to
 Scratch over 32 to 128 samples. Leaving Scratch transfers the final scratch cursor to
-Transport, resets and prefills the stretcher when Keylock is the destination, and
+Transport, reseeds the stretcher when Keylock is the destination, and
 crossfades to Direct or Keylock over 32 to 128 samples. Cursor transfer, processor reset,
 mode switch, and crossfade arming happen at one audio-block boundary.
+
+Reseeding hands the stretcher the audio the listener just heard so it does not start from
+its own latency worth of silence. It costs several FFT frames, so it runs on the
+`TimeStretchProcessor` worker while the deck keeps playing on the Direct path; the
+callback only takes the seed itself when the block is long enough to absorb it with room
+to spare. Neither a keylock toggle, a scratch release, nor a track load rebuilds a
+pipeline — keylock is decided per block, so there is never a stretch where the deck plays
+unlocked while waiting for a worker.
 
 Reverse is a Transport direction, not a fourth render engine. Keylock activation belongs
 to the router; its tempo value belongs to deck playback.

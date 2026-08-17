@@ -27,7 +27,15 @@ Item {
 
     onEngineChanged: updatePlayheadNorm()
 
-    FrameAnimation {
+    Timer {
+        interval: {
+            if (typeof renderPressurePolicy === "undefined" || !renderPressurePolicy)
+                return 16
+            return root.engine && root.engine.scratchVisualActive
+                ? renderPressurePolicy.interactiveWaveformUpdateIntervalMs
+                : renderPressurePolicy.waveformUpdateIntervalMs
+        }
+        repeat: true
         running: root.engine !== null
                  && (root.engine.isPlaying || root.engine.scratchVisualActive)
         onTriggered: root.updatePlayheadNorm()
@@ -69,6 +77,10 @@ Item {
                 anchors.fill: parent
                 engine: root.engine
                 rectified: true
+                updateIntervalMs: (typeof renderPressurePolicy !== "undefined"
+                                   && renderPressurePolicy)
+                    ? renderPressurePolicy.overviewUpdateIntervalMs : 100
+                visible: !resizeDeferred
             }
         }
 

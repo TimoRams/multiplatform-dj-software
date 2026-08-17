@@ -72,6 +72,7 @@ void clearQmlContextProperties(QQmlApplicationEngine& engine)
     engine.rootContext()->setContextProperty("cursorControl", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("uiScaleController", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("waveformZoomController", static_cast<QObject*>(nullptr));
+    engine.rootContext()->setContextProperty("renderPressurePolicy", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("mixerControl", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("controlClock", static_cast<QObject*>(nullptr));
 }

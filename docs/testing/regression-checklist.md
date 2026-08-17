@@ -15,18 +15,17 @@ cmake --build build -j
 ./test-fast
 ```
 
-The complete suite currently covers 39 CTest cases. Relevant focused groups
-include:
+The complete CTest suite covers the following relevant focused groups:
 
 | Area | Tests |
 | --- | --- |
 | UI/QML | `ui_scale`, `waveform_zoom`, `ui_layout`, `qml_component`, `waveform_render_stability` |
 | Mixer/audio graph | `smoke`, `mixer_dsp`, `deck_audio_graph`, `master_bus`, `audio_routing_contract` |
-| Transport/sync | `deck_transport`, `sync_coordinator`, `control_clock`, `cue_loop_controller` |
+| Transport/sync | `deck_transport`, `sync_coordinator`, `control_clock`, `render_pressure_policy`, `cue_loop_controller` |
 | Cache/stretch | `audio_page_cache`, `scratch_cache`, `cached_playback`, `time_stretch` |
 | Analysis/waveform | `analysis_lifetime`, `analysis_snapshot`, `library_analysis_manager`, `progressive_waveform_publication`, `waveform_motion`, `waveform_line_*` |
 | Devices/controllers | `audio_device_service`, `alsa_midi_line_parser`, `midi_14bit_accumulator`, `flx10_jog_routing`, `flx10_display_protocol`, `parameter_store` |
-| Workers/lifecycle | `posix_signal_handler`, `database_worker`, `media_io_scheduler`, `track_loader`, `dj_engine_api_contract` |
+| Workers/lifecycle | `posix_signal_handler`, `audio_thread_scheduling`, `database_worker`, `media_io_scheduler`, `track_loader`, `dj_engine_api_contract` |
 
 Callback-related changes must also confirm that `AudioEngineRealtimeStats`,
 `DeckAudioPipeline::RealtimeStats`, `PlaybackCacheStats`, `ScratchCacheStats`,
@@ -64,6 +63,13 @@ zero violation counters.
   changes, including rapid backend or keylock toggles.
 - Verify finite audio, plausible reported latency, bounded transition time,
   and no hard click or long dropout when a prepared pipeline activates.
+- Keylock is a per-block routing decision, not part of the pipeline identity:
+  toggling it, entering or leaving scratch, and loading a track must never
+  rebuild a stretch pipeline, so none of them may stall or shift pitch.
+- Toggle keylock, release a scratch, and load-then-play a track at every buffer
+  size. With `BROCKDJ_AUDIO_DIAGNOSTICS=1`, `keylockSeedsInCallback` should stay
+  at zero on small buffers; if it rises, the seed is landing in the callback and
+  transitions will crackle.
 
 ### Scratch and cache recovery
 
@@ -72,6 +78,9 @@ zero violation counters.
 - Repeat while analysis runs and with several decks active.
 - Verify immediate visual response, plausible playhead, faded cache starvation
   rather than a callback stall, and zero callback disk/decoder counters.
+- With `BROCKDJ_AUDIO_DIAGNOSTICS=1`, confirm whether a click coincides with
+  `scratchStarvation`, `scratchDropped`, or callback/device XRun growth before
+  changing DSP or handoff behavior.
 
 ### FX and mixer controls
 
@@ -99,6 +108,9 @@ zero violation counters.
   playback. Hot-unplug/reconnect an external device.
 - Verify controlled fallback/error reporting, no stale routing, no callback
   after endpoint destruction, and clean shutdown.
+- On Linux, verify **RT SCHEDULER** reports `sched-fifo-active` or
+  `already-realtime`; if it reports `permission-denied`, correct the installed
+  PAM `rtprio` policy before using the system for a live set.
 
 ### FLX10, MIDI, and Link
 
@@ -138,6 +150,10 @@ zero violation counters.
 
 - Run desktop and AIO layouts at 1280x800 and 1024x600, plus scale 80–140%
   and minimum/maximum waveform zoom.
+- Play and scratch while continuously resizing, minimizing, and restoring the
+  window. Verify **UI RENDER** steps through `reduced`/`audio-first` under
+  pressure, resize work settles after 120 ms, and callback/device XRun counts
+  do not increase.
 - Open/close settings, mapping editor, library, development controls, startup,
   status, and exit overlays. Check keyboard and touch input.
 - Close normally, during load/analysis/database work, and via SIGINT/SIGTERM on

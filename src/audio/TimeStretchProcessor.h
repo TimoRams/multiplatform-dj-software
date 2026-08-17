@@ -2,10 +2,9 @@
 
 #include <array>
 #include <atomic>
-#include <condition_variable>
+#include <chrono>
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <thread>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <rubberband/RubberBandStretcher.h>
@@ -25,6 +24,16 @@ struct TimeStretchRealtimeStats {
     std::uint64_t successfulPipelineSwitches = 0;
     std::uint64_t stalePreparedPipelines = 0;
     std::uint64_t preparationFailures = 0;
+    // Keylock re-entry work. A seed only happens on a real transition, so a
+    // rising count during steady playback means something keeps knocking the
+    // stretcher out of its continuous state.
+    std::uint64_t keylockSeeds = 0;
+    std::uint64_t worstKeylockSeedMicros = 0;
+    // Blocks spent on the direct path while the worker seeded the stretcher,
+    // and seeds that had to run inline because the worker did not answer in
+    // time. Inline seeds are the only ones that can overrun a callback.
+    std::uint64_t keylockSeedBridgeBlocks = 0;
+    std::uint64_t keylockSeedsOnAudioThread = 0;
 };
 
 struct TimeStretchConfiguration {
@@ -51,9 +60,9 @@ public:
     // A phase vocoder's added delay is essentially its analysis window, so the
     // window length is the one knob that trades latency against how cleanly low
     // frequencies are resolved. 32 ms resolves down to roughly 30 Hz and adds
-    // about 40 ms in total at 44.1 kHz — noticeably less than the 56 ms the
-    // previous 50 ms window cost, and short enough to stay out of the way when
-    // riding the tempo fader.
+    // about 48 ms in total at 44.1 kHz with the distributed-computation hop —
+    // still noticeably less than the 56 ms the previous 50 ms window cost,
+    // while keeping callback CPU spikes out of the audio deadline.
     static constexpr double kKeylockWindowSeconds = 0.032;
     // Hops per window. Four is the library's own default ratio; the previous
     // eight doubled the CPU cost for no audible gain at keylock-sized shifts.
@@ -68,6 +77,12 @@ public:
     // pipeline can be seeded with what the listener just heard. Big enough for
     // the longest pre-roll any supported sample rate asks for.
     static constexpr int kOutputHistorySamples = 16384;
+    // A seed is only taken inside the callback when it fits with this much room
+    // to spare, so several decks can transition in the same block without the
+    // device deadline being at risk.
+    static constexpr double kSeedBudgetHeadroom = 4.0;
+    // Upper bound on how long playback may run unlocked while the worker seeds.
+    static constexpr double kMaximumSeedBridgeSeconds = 0.03;
 
     explicit TimeStretchProcessor(juce::AudioSource* inSource);
     ~TimeStretchProcessor() override;
@@ -91,6 +106,11 @@ public:
 
 private:
     enum class SlotState : std::uint8_t { Empty, Preparing, Ready, Active };
+    // Handshake for seeding the stretcher off the audio thread. The audio
+    // thread only ever writes the snapshot while Idle and only ever renders
+    // through the pipeline again once it has consumed a Ready seed, so the
+    // worker owns the stretcher exclusively while it is Seeding.
+    enum class SeedState : std::uint8_t { Idle, Requested, Seeding, Ready };
     struct Pipeline {
         std::unique_ptr<RubberBand::RubberBandStretcher> rubberBand;
         std::unique_ptr<signalsmith::stretch::SignalsmithStretch<float>> signalsmith;
@@ -118,7 +138,19 @@ private:
     void stopWorker() noexcept;
     void activatePreparedPipelineAtBlockBoundary() noexcept;
     void processPipeline(Pipeline& pipeline, const juce::AudioSourceChannelInfo& info) noexcept;
+    void processSignalsmithPipeline(Pipeline& pipeline,
+                                    const juce::AudioSourceChannelInfo& info) noexcept;
     void applySwitchFade(const juce::AudioSourceChannelInfo& info) noexcept;
+    void beginTransitionFade() noexcept;
+    void prepareKeylockTransition(Pipeline& pipeline) noexcept;
+    [[nodiscard]] bool requestKeylockSeed(int slot) noexcept;
+    bool serviceSeedRequest() noexcept;
+    void recordSeedDuration(std::chrono::steady_clock::time_point started) noexcept;
+    void wakeWorker() noexcept
+    {
+        m_workerTicket.fetch_add(1, std::memory_order_release);
+        m_workerTicket.notify_all();
+    }
     void appendOutputHistory(const juce::AudioSourceChannelInfo& info) noexcept;
     void readOutputHistory(juce::AudioBuffer<float>& destination, int count) const noexcept;
     void seedPipelineFromHistory(Pipeline& pipeline) noexcept;
@@ -132,9 +164,23 @@ private:
     std::atomic<bool> m_pitchLockEnabled { false };
     std::atomic<TimeStretchBackend> m_backend { TimeStretchBackend::Signalsmith };
     std::atomic<bool> m_scratchBypass { false };
-    std::atomic<bool> m_scratchExitRequested { false };
-    std::atomic<bool> m_scratchExitFadePending { false };
-    std::atomic<bool> m_scratchRefreshInFlight { false };
+    // Set whenever the stretcher has to re-enter the signal path from a
+    // discontinuity (keylock toggled on, scratch released, new track). The
+    // audio thread consumes it on the first block it renders through keylock.
+    std::atomic<bool> m_keylockSeedPending { false };
+    // Audio-thread only: whether the previous block was rendered through the
+    // stretcher. Comparing it against the current decision is what detects a
+    // transition without any cross-thread handshake.
+    bool m_keylockRenderActive = false;
+    // Seeding runs on the worker: it costs several FFT frames and would blow a
+    // small callback budget. While a seed is in flight the audio thread bridges
+    // through the direct path, which is continuous audio at the wrong pitch for
+    // a fraction of a millisecond instead of a dropout.
+    std::atomic<SeedState> m_seedState { SeedState::Idle };
+    std::atomic<int> m_seedSlot { -1 };
+    juce::AudioBuffer<float> m_seedSnapshot;
+    int m_seedSnapshotLength = 0;
+    int m_seedBridgeSamples = 0;
     std::atomic<double> m_sampleRate { 44100.0 };
     std::atomic<int> m_maximumBlockSize { 512 };
     std::atomic<std::uint64_t> m_trackGeneration { 0 };
@@ -153,11 +199,15 @@ private:
     std::atomic<bool> m_prepared { false };
     std::atomic<bool> m_stopRequested { false };
     std::thread m_worker;
-    std::mutex m_workerMutex;
-    std::condition_variable m_workerWake;
+    // Lock-free worker wakeup. The audio thread has to signal seed requests, and
+    // a condition_variable notify from a callback both risks a lost wakeup and
+    // touches a mutex; an atomic ticket has neither problem.
+    std::atomic<std::uint32_t> m_workerTicket { 0 };
 
     std::atomic<std::uint64_t> m_prepareFromAudio { 0 }, m_resetFromAudio { 0 };
     std::atomic<std::uint64_t> m_prewarmFromAudio { 0 }, m_growthFromAudio { 0 };
     std::atomic<std::uint64_t> m_lockFromAudio { 0 }, m_switches { 0 };
     std::atomic<std::uint64_t> m_stale { 0 }, m_failures { 0 };
+    std::atomic<std::uint64_t> m_keylockSeeds { 0 }, m_worstSeedMicros { 0 };
+    std::atomic<std::uint64_t> m_seedBridgeBlocks { 0 }, m_inlineSeeds { 0 };
 };

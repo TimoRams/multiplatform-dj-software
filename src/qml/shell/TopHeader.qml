@@ -264,6 +264,67 @@ Rectangle {
                 }
             }
 
+            Rectangle {
+                width: latencyPopup.width; height: 24
+                color: "#151515"
+                Row {
+                    anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
+                    Text {
+                        width: 136; anchors.verticalCenter: parent.verticalCenter
+                        text: "RT SCHEDULER"
+                        color: "#777"; font.pixelSize: root.sp(8); font.bold: true
+                    }
+                    Text {
+                        width: 150; anchors.verticalCenter: parent.verticalCenter
+                        text: String(root.audioPerfStats.realtimeScheduling || "waiting-for-callback")
+                        color: {
+                            const state = String(root.audioPerfStats.realtimeScheduling || "")
+                            return state === "sched-fifo-active" || state === "already-realtime"
+                                ? "#61d095" : "#ffb25b"
+                        }
+                        font.pixelSize: root.sp(8); font.family: "monospace"
+                        horizontalAlignment: Text.AlignRight
+                    }
+                }
+            }
+
+            Rectangle {
+                width: latencyPopup.width; height: 24
+                color: "#121212"
+                Row {
+                    anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
+                    Text {
+                        width: 136; anchors.verticalCenter: parent.verticalCenter
+                        text: "UI RENDER"
+                        color: "#777"; font.pixelSize: root.sp(8); font.bold: true
+                    }
+                    Text {
+                        width: 150; anchors.verticalCenter: parent.verticalCenter
+                        text: {
+                            if (typeof renderPressurePolicy === "undefined"
+                                    || !renderPressurePolicy)
+                                return "normal"
+                            return String(renderPressurePolicy.tier)
+                                + " / " + renderPressurePolicy.waveformUpdateIntervalMs
+                                + " ms"
+                        }
+                        color: {
+                            if (typeof renderPressurePolicy === "undefined"
+                                    || !renderPressurePolicy)
+                                return "#efefef"
+                            const tier = String(renderPressurePolicy.tier)
+                            if (tier === "audio-first")
+                                return "#ffb25b"
+                            if (tier === "suspended")
+                                return "#777"
+                            return "#61d095"
+                        }
+                        font.pixelSize: root.sp(8); font.family: "monospace"
+                        horizontalAlignment: Text.AlignRight
+                    }
+                }
+            }
+
             Repeater {
                 model: root.audioPerfStats.fxProfiles ? root.audioPerfStats.fxProfiles : []
                 Rectangle {

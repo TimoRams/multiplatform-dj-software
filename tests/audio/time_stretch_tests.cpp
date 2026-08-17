@@ -38,10 +38,17 @@ int main(){
     bool ok=true;
     { ToneSource tone; TimeStretchProcessor source(&tone); source.prepareToPlay(512, 48000.0);
         source.setPitchLockEnabled(true);
-        ok &= require(waitForGeneration(source, source.activeConfigurationGeneration()),
-                      "Signalsmith is the default keylock backend");
+        juce::AudioBuffer<float> settle(2,256);
+        source.getNextAudioBlock({&settle,0,256});
         ok &= require(source.activeBackend() == TimeStretchBackend::Signalsmith,
                       "Signalsmith is active by default");
+        const auto keylockGeneration = source.activeConfigurationGeneration();
+        source.setPitchLockEnabled(false);
+        source.getNextAudioBlock({&settle,0,256});
+        source.setPitchLockEnabled(true);
+        source.getNextAudioBlock({&settle,0,256});
+        ok &= require(source.activeConfigurationGeneration() == keylockGeneration,
+                      "toggling keylock never rebuilds a pipeline");
         const auto signalsmithGeneration = source.activeConfigurationGeneration();
         source.setBackend(TimeStretchBackend::RubberBand);
         ok &= require(waitForGeneration(source, signalsmithGeneration),
@@ -60,8 +67,9 @@ int main(){
         { juce::AudioBuffer<float> mono(1,512); source.getNextAudioBlock({&mono,0,512}); ok&=require(finite(mono),"mono output finite"); }
         auto generation=source.activeConfigurationGeneration();
         source.setPitchLockEnabled(true); source.setTempoRatio(0.7);
-        ok&=require(waitForGeneration(source,generation),"prepared keylock pipeline activates");
         juce::AudioBuffer<float>b(2,8192);source.getNextAudioBlock({&b,0,8192});ok&=require(finite(b),"stretched finite");
+        ok&=require(source.activeConfigurationGeneration()==generation,
+                    "enabling keylock uses the standby pipeline instead of rebuilding");
         generation=source.activeConfigurationGeneration();
         const auto switchesBeforeNudge=source.realtimeStats().successfulPipelineSwitches;
         for(int i=0;i<300;++i){
@@ -77,18 +85,22 @@ int main(){
         ok&=require(source.realtimeStats().successfulPipelineSwitches==switchesBeforeNudge,
                     "keylock nudge does not switch a pipeline");
         const auto preScratchGeneration=source.activeConfigurationGeneration();
-        source.enterScratchBypass();source.getNextAudioBlock({&b,0,8192});
-        ok&=require(waitForGeneration(source,preScratchGeneration),
-                    "scratch prepares a clean keylock pipeline");
-        const auto cleanScratchGeneration=source.activeConfigurationGeneration();
-        const auto switchesAfterCleanScratch=source.realtimeStats().successfulPipelineSwitches;
+        const auto switchesBeforeScratch=source.realtimeStats().successfulPipelineSwitches;
         source.enterScratchBypass();
         for(int i=0;i<16;++i){source.getNextAudioBlock({&b,0,8192});std::this_thread::sleep_for(std::chrono::milliseconds(1));}
-        ok&=require(source.activeConfigurationGeneration()==cleanScratchGeneration
-                        && source.realtimeStats().successfulPipelineSwitches==switchesAfterCleanScratch,
-                    "regrab during scratch bypass does not rebuild Rubber Band again");
+        source.enterScratchBypass();
+        for(int i=0;i<16;++i){source.getNextAudioBlock({&b,0,8192});std::this_thread::sleep_for(std::chrono::milliseconds(1));}
+        ok&=require(source.activeConfigurationGeneration()==preScratchGeneration
+                        && source.realtimeStats().successfulPipelineSwitches==switchesBeforeScratch,
+                    "scratching keeps the keylock pipeline instead of rebuilding it");
         source.endScratchBypass();source.getNextAudioBlock({&b,0,8192});
         ok&=require(finite(b),"scratch transition finite");
+        ok&=require(source.activeConfigurationGeneration()==preScratchGeneration,
+                    "scratch release resumes keylock without waiting for a rebuild");
+        // A block this long has room for an inline seed, so keylock must be
+        // back in the signal path on the very first callback after release.
+        ok&=require(source.getLatencySamples()>0,
+                    "scratch release renders through keylock again immediately");
         auto stats=source.realtimeStats();
         ok&=require(stats.prepareCallsFromAudioThread==0,"no prepare in callback");
         ok&=require(stats.resetCallsFromAudioThread==0,"no reset in callback");
@@ -106,15 +118,36 @@ int main(){
         for(int i=0;i<8;++i) source.getNextAudioBlock({&warm,0,512});
         const auto generation=source.activeConfigurationGeneration();
         source.setPitchLockEnabled(true); source.setTempoRatio(0.9);
-        ok&=require(waitForGeneration(source,generation),"keylock pipeline activates for the gap check");
-        // Only the stretcher's own latency window matters here: that is exactly
-        // the stretch that used to come out silent, and it is short enough that
-        // later real audio cannot average the hole away.
-        const int latencyWindow=source.getLatencySamples();
+        // Render across the whole transition. Whichever path the processor
+        // picks — bridging on the direct path while the worker seeds, or
+        // seeding inline — the output has to stay continuous.
+        juce::AudioBuffer<float> b(2,256);
+        int blocks=0,latencyWindow=0;
+        double transitionSquares=0.0; int transitionCount=0;
+        while(latencyWindow==0&&blocks<64){
+            source.getNextAudioBlock({&b,0,256}); ++blocks;
+            ok&=require(finite(b),"keylock transition output finite");
+            latencyWindow=source.getLatencySamples();
+            for(int i=0;i<256;++i){
+                const float value=b.getSample(0,i);
+                transitionSquares+=static_cast<double>(value)*value; ++transitionCount;
+            }
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
+        ok&=require(source.activeConfigurationGeneration()==generation,
+                    "keylock engages on the standby pipeline for the gap check");
         ok&=require(latencyWindow>0,"keylock reports a latency to check against");
+        ok&=require(source.realtimeStats().keylockSeeds>0,
+                    "engaging keylock seeds the stretcher from output history");
+        // Everything up to and including the switch-over block, which is where
+        // the dropout used to sit.
+        ok&=require(std::sqrt(transitionSquares/transitionCount)>0.07,
+                    "the keylock transition never goes quiet");
+        // Only the stretcher's own latency window matters after that: it is
+        // exactly the stretch that used to come out silent, and it is short
+        // enough that later real audio cannot average the hole away.
         double sumOfSquares=0.0; int counted=0; float peak=0.0f;
         while(counted<latencyWindow){
-            juce::AudioBuffer<float> b(2,256);
             source.getNextAudioBlock({&b,0,256});
             ok&=require(finite(b),"keylock enable output finite");
             for(int i=0;i<256&&counted<latencyWindow;++i){
@@ -137,6 +170,49 @@ int main(){
         juce::AudioBuffer<float>b(2,512);double total=0.0,worst=0.0;
         for(int i=0;i<1000;++i){const auto start=std::chrono::steady_clock::now();stress.getNextAudioBlock({&b,0,512});const auto us=std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-start).count();total+=us;worst=std::max(worst,us);}
         std::cout<<"time-stretch 512-block mean-us="<<total/1000.0<<" worst-us="<<worst<<'\n';
+        // Isolate the scratch-release transition, which is the block that seeds
+        // the stretcher and therefore the worst realistic callback in a set.
+        // Pace it like a real device: the seed budget is expressed in audio
+        // time, so a free-running loop would burn through it instantly.
+        for (int blockSize : {128, 512}) {
+            ToneSource benchTone; TimeStretchProcessor bench(&benchTone);
+            bench.prepareToPlay(blockSize, 48000.0);
+            bench.setPitchLockEnabled(true); bench.setTempoRatio(0.92);
+            juce::AudioBuffer<float> rb(2, blockSize);
+            const auto blockPeriod = std::chrono::nanoseconds(
+                static_cast<long long>(1.0e9 * blockSize / 48000.0));
+            const int settle = std::max(2, 48000 / blockSize / 20);
+            auto deadline = std::chrono::steady_clock::now();
+            double worstRelease = 0.0;
+            const auto render = [&](bool measure) {
+                deadline += blockPeriod;
+                std::this_thread::sleep_until(deadline);
+                const auto start = std::chrono::steady_clock::now();
+                bench.getNextAudioBlock({&rb, 0, blockSize});
+                if (measure)
+                    worstRelease = std::max(worstRelease, std::chrono::duration<double, std::micro>(
+                        std::chrono::steady_clock::now() - start).count());
+            };
+            for (int i = 0; i < 20; ++i) {
+                for (int w = 0; w < settle; ++w) render(false);
+                bench.enterScratchBypass();
+                for (int w = 0; w < settle; ++w) render(false);
+                bench.endScratchBypass();
+                // Follow the whole transition, not just its first block: the
+                // switch-over can land several callbacks after the release.
+                for (int w = 0; w < settle; ++w) render(true);
+            }
+            const auto benchStats = bench.realtimeStats();
+            std::cout << "keylock scratch-release block=" << blockSize
+                      << " budget-us=" << (1.0e6 * blockSize / 48000.0)
+                      << " worst-us=" << worstRelease
+                      << " seeds=" << benchStats.keylockSeeds
+                      << " inline=" << benchStats.keylockSeedsOnAudioThread
+                      << " bridge-blocks=" << benchStats.keylockSeedBridgeBlocks
+                      << " worst-seed-us=" << benchStats.worstKeylockSeedMicros
+                      << " rebuilds=" << benchStats.successfulPipelineSwitches << '\n';
+            bench.releaseResources();
+        }
     }
     return ok?0:1;
 }

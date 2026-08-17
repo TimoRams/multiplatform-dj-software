@@ -60,24 +60,39 @@
 #include "app/ControlClock.h"
 #include "app/UiScaleController.h"
 #include "app/WaveformZoomController.h"
+#include "app/RenderPressurePolicy.h"
 
 using namespace Qt::StringLiterals;
 
 namespace {
 std::uint64_t audioCacheBudgetBytesFromEnv()
 {
-    constexpr std::uint64_t kDefaultMb = 256;
     constexpr std::uint64_t kMinMb = 64;
     constexpr std::uint64_t kMaxMb = 2048;
+    const auto installedMemoryMb = static_cast<std::uint64_t>(
+        std::max(0, juce::SystemStats::getMemorySizeInMegabytes()));
+    // A larger read-ahead cache prevents disk I/O bursts from competing with
+    // audio on modern systems, but keeps the former 256 MiB default on
+    // memory-constrained machines.
+    const std::uint64_t defaultMb = installedMemoryMb >= 16ull * 1024ull
+        ? 512 : 256;
 
     bool ok = false;
     const int configuredMb = qEnvironmentVariableIntValue("BROCKDJ_AUDIO_CACHE_MB", &ok);
     if (!ok || configuredMb <= 0)
-        return kDefaultMb * 1024ull * 1024ull;
+        return defaultMb * 1024ull * 1024ull;
 
     const auto boundedMb = std::clamp<std::uint64_t>(
         static_cast<std::uint64_t>(configuredMb), kMinMb, kMaxMb);
     return boundedMb * 1024ull * 1024ull;
+}
+
+int audioRealtimePriorityFromEnv()
+{
+    bool ok = false;
+    const int configured = qEnvironmentVariableIntValue("BROCKDJ_AUDIO_RT_PRIORITY", &ok);
+    return platform::AudioThreadScheduling::normalizeRealtimePriority(
+        ok ? configured : platform::AudioThreadScheduling::kDefaultRealtimePriority);
 }
 
 TimeStretchBackend timeStretchBackendForSetting(const QString& backend)
@@ -359,6 +374,44 @@ int runApplication(int argc, char *argv[])
                              runtime.audioDeviceService->currentBufferSize());
                      });
     runtime.audioEngine = std::make_unique<AudioEngine>(*runtime.audioPageCache);
+    runtime.renderPressurePolicy = std::make_unique<RenderPressurePolicy>(
+        *runtime.controlClock, *runtime.audioDeviceService);
+    QObject::connect(runtime.audioDeviceService.get(), &AudioDeviceService::configurationChanged,
+                     &app, [&runtime, &app] {
+                         QTimer::singleShot(50, &app, [&runtime] {
+                             if (!runtime.audioEngine || !runtime.audioDeviceService
+                                 || !runtime.audioDeviceService->manager().getCurrentAudioDevice()) {
+                                 return;
+                             }
+
+                             AudioEngine::requestRealtimeThreadScheduling(
+                                 audioRealtimePriorityFromEnv());
+                             const auto status = AudioEngine::realtimeThreadSchedulingStatus();
+                             switch (status.state) {
+                             case platform::AudioThreadSchedulingState::Active:
+                             case platform::AudioThreadSchedulingState::AlreadyRealtime:
+                                 qInfo() << "[audio] realtime scheduling"
+                                         << platform::audioThreadSchedulingStateName(status.state)
+                                         << "priority=" << status.priority;
+                                 break;
+                             case platform::AudioThreadSchedulingState::PermissionDenied:
+                                 qWarning() << "[audio] realtime scheduling unavailable; configure"
+                                            << "RLIMIT_RTPRIO/CAP_SYS_NICE for BrockDJ. errno="
+                                            << status.nativeError;
+                                 break;
+                             case platform::AudioThreadSchedulingState::WaitingForCallback:
+                                 qWarning() << "[audio] realtime scheduling deferred;"
+                                            << "the device callback has not started";
+                                 break;
+                             case platform::AudioThreadSchedulingState::Failed:
+                                 qWarning() << "[audio] realtime scheduling request failed. errno="
+                                            << status.nativeError;
+                                 break;
+                             case platform::AudioThreadSchedulingState::Unsupported:
+                                 break;
+                             }
+                         });
+                     });
     runtime.syncCoordinator = std::make_unique<engine::sync::SyncCoordinator>();
     ControlClock::Callbacks syncClockCallbacks;
     syncClockCallbacks.syncCoordinate = [&runtime](const ControlTickContext&) {
@@ -402,6 +455,8 @@ int runApplication(int argc, char *argv[])
         const bool backgroundMode = state != Qt::ApplicationActive;
         if (runtime.controlClock)
             runtime.controlClock->setBackgroundMode(backgroundMode);
+        if (runtime.renderPressurePolicy)
+            runtime.renderPressurePolicy->setApplicationActive(!backgroundMode);
         for (DjEngine* deck : {runtime.deckA.get(), runtime.deckB.get(),
                                runtime.deckC.get(), runtime.deckD.get()}) {
             if (deck)
@@ -435,6 +490,8 @@ int runApplication(int argc, char *argv[])
     engine.rootContext()->setContextProperty("cursorControl", runtime.cursorControl.get());
     engine.rootContext()->setContextProperty("uiScaleController", runtime.uiScaleController.get());
     engine.rootContext()->setContextProperty("waveformZoomController", runtime.waveformZoomController.get());
+    engine.rootContext()->setContextProperty("renderPressurePolicy",
+                                             runtime.renderPressurePolicy.get());
     qmlRegisterSingletonInstance("BrockDJ.Mixer", 1, 0, "Control", runtime.mixerControl.get());
     engine.rootContext()->setContextProperty("mixerControl", runtime.mixerControl.get());
     engine.rootContext()->setContextProperty("controlClock", runtime.controlClock.get());
@@ -642,8 +699,23 @@ int runApplication(int argc, char *argv[])
             qDebug() << "[main] Root window found, setting size and visibility";
 
             if (auto* quickWindow = qobject_cast<QQuickWindow*>(rootWindow)) {
+                QObject::connect(quickWindow, &QWindow::windowStateChanged, &app,
+                                 [&runtime](Qt::WindowState state) {
+                                     if (runtime.renderPressurePolicy) {
+                                         runtime.renderPressurePolicy->setWindowMinimized(
+                                             state == Qt::WindowMinimized);
+                                     }
+                                 });
+                runtime.renderPressurePolicy->setWindowMinimized(
+                    quickWindow->windowState() == Qt::WindowMinimized);
+
                 const bool usingVulkan = (QQuickWindow::graphicsApi() == QSGRendererInterface::Vulkan);
                 if (usingVulkan) {
+                    // The application has no Qt Quick 3D content. Avoiding the
+                    // otherwise unused depth attachment saves shared iGPU memory
+                    // bandwidth and a Vulkan render-target transition per frame.
+                    QQuickGraphicsConfiguration cfg = quickWindow->graphicsConfiguration();
+                    cfg.setDepthBufferFor2D(false);
                     const QString cacheMode = qEnvironmentVariable("BROCKDJ_VK_CACHE").trimmed().toLower();
                     const bool resetCache = (cacheMode == "reset");
                     const bool enableCache = resetCache || cacheMode.isEmpty()
@@ -656,11 +728,9 @@ int runApplication(int argc, char *argv[])
                         if (resetCache)
                             QFile::remove(cacheFile);
 
-                        QQuickGraphicsConfiguration cfg = quickWindow->graphicsConfiguration();
                         cfg.setPipelineCacheSaveFile(cacheFile);
                         if (!resetCache)
                             cfg.setPipelineCacheLoadFile(cacheFile);
-                        quickWindow->setGraphicsConfiguration(cfg);
 
                         QFileInfo cacheInfo(cacheFile);
                         if (cacheInfo.exists())
@@ -670,6 +740,7 @@ int runApplication(int argc, char *argv[])
                     } else {
                         qDebug() << "[main] Vulkan pipeline cache disabled (BROCKDJ_VK_CACHE=0)";
                     }
+                    quickWindow->setGraphicsConfiguration(cfg);
                 }
 
                 QObject::connect(
@@ -686,6 +757,7 @@ int runApplication(int argc, char *argv[])
                                                 : QSGRendererInterface::Unknown)
                                 << "thread=" << QThread::currentThread();
                     }
+
                     },
                     static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::SingleShotConnection));
 
