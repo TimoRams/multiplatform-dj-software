@@ -23,14 +23,31 @@ engine::scratch::ScratchLoopCtx DjEngine::scratchLoopCtx() const noexcept
     return ctx;
 }
 
+void DjEngine::syncAnalyzerRealtimeInteractionHint() noexcept
+{
+    if (!m_analyzer)
+        return;
+    const bool realtimeInteractionActive = m_backgroundOptimizationEnabled
+        || m_scratch.scrubbing()
+        || m_scratch.releaseGlide();
+    m_analyzer->setRealtimeInteractionActive(realtimeInteractionActive);
+}
+
+void DjEngine::setBackgroundOptimizationEnabled(bool enabled) noexcept
+{
+    if (m_backgroundOptimizationEnabled == enabled)
+        return;
+    m_backgroundOptimizationEnabled = enabled;
+    syncAnalyzerRealtimeInteractionHint();
+}
+
 
 void DjEngine::terminateScratchSession(double positionSec)
 {
     m_pendingScratchReleaseGeneration = 0;
     m_scratch.clear();
     m_scratchSnapReadPending = false;
-    if (m_analyzer)
-        m_analyzer->setRealtimeInteractionActive(false);
+    syncAnalyzerRealtimeInteractionHint();
 
     if (m_audioPipeline->renderModeRouterPtr())
         m_audioPipeline->renderModeRouter().exitScratchMode(
@@ -163,8 +180,7 @@ void DjEngine::applyScratchNeutralRouting()
 
 void DjEngine::restorePostScrubPlaybackState(double finalCursorSeconds)
 {
-    if (m_analyzer)
-        m_analyzer->setRealtimeInteractionActive(false);
+    syncAnalyzerRealtimeInteractionHint();
     const double audioSec = std::clamp(
         std::isfinite(finalCursorSeconds) ? finalCursorSeconds : 0.0,
         0.0,
@@ -252,10 +268,9 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
     }
     grabSec = clampVirtual(grabSec);
 
-    if (m_analyzer) {
+    if (m_analyzer)
         m_analyzer->setSeekHint(std::max(0.0, grabSec));
-        m_analyzer->setRealtimeInteractionActive(true);
-    }
+    syncAnalyzerRealtimeInteractionHint();
     m_trackLoader.setWaveformSeekHint(std::max(0.0, grabSec));
 
     const auto loopCtx = scratchLoopCtx();

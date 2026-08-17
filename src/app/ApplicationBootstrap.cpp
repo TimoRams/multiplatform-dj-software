@@ -398,6 +398,19 @@ int runApplication(int argc, char *argv[])
                      [](int master, int booth, int headphones) {
                          AudioEngine::setOutputRouting(master, booth, headphones);
                      });
+    const auto applyRuntimeBackgroundProfile = [&runtime](Qt::ApplicationState state) {
+        const bool backgroundMode = state != Qt::ApplicationActive;
+        if (runtime.controlClock)
+            runtime.controlClock->setBackgroundMode(backgroundMode);
+        for (DjEngine* deck : {runtime.deckA.get(), runtime.deckB.get(),
+                               runtime.deckC.get(), runtime.deckD.get()}) {
+            if (deck)
+                deck->setBackgroundOptimizationEnabled(backgroundMode);
+        }
+    };
+    QObject::connect(&app, &QGuiApplication::applicationStateChanged,
+                     &app, applyRuntimeBackgroundProfile);
+    applyRuntimeBackgroundProfile(app.applicationState());
 
     engine.addImageProvider("coverart", runtime.coverProvider.release());
     logStartupStep("Cover art provider installed");
@@ -474,6 +487,7 @@ int runApplication(int argc, char *argv[])
                                                        runtime.audioEngine->deck(3),
                                                        *runtime.controlClock,
                                                        *runtime.syncCoordinator, 3);
+            applyRuntimeBackgroundProfile(app.applicationState());
             logStartupStep("DjEngines constructed");
 
             for (const auto [deck, name] : std::array<std::pair<DjEngine*, const char*>, 4>{{

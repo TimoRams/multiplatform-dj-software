@@ -134,6 +134,7 @@ public:
                       engine::sync::SyncCoordinator& syncCoordinator, int deckIndex,
                       QObject* parent = nullptr);
     ~DjEngine() override;
+    void setBackgroundOptimizationEnabled(bool enabled) noexcept;
 
     [[nodiscard]] float getProgress() const;
     [[nodiscard]] Q_INVOKABLE float getDuration() const;
@@ -680,6 +681,7 @@ private:
     void applyScratchNeutralRouting();
     void completeScratchRelease(bool allowInertia);
     void restorePostScrubPlaybackState(double finalCursorSeconds);
+    void syncAnalyzerRealtimeInteractionHint() noexcept;
     [[nodiscard]] engine::scratch::ScratchLoopCtx scratchLoopCtx() const noexcept;
     void updateScrubPlayheadAnchor();
     void tickScratchPhysics();
@@ -711,6 +713,7 @@ private:
     engine::scratch::ScratchSession m_scratch;
     std::uint64_t m_pendingScratchReleaseGeneration = 0;
     bool m_scratchSnapReadPending = false;
+    bool m_backgroundOptimizationEnabled = false;
 
     // Pre-roll countdown: when play is pressed while visual position is negative,
     // we advance the visual clock ourselves until it reaches 0, then start transport.

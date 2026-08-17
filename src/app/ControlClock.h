@@ -104,7 +104,9 @@ public:
     [[nodiscard]] Registration registerCallbacks(Callbacks callbacks);
     void start();
     void stop() noexcept;
+    void setBackgroundMode(bool enabled) noexcept;
     [[nodiscard]] bool isRunning() const noexcept { return m_timer.isActive(); }
+    [[nodiscard]] bool backgroundMode() const noexcept { return m_backgroundMode; }
     [[nodiscard]] ControlClockStats stats() const noexcept { return m_stats; }
     [[nodiscard]] Configuration configuration() const noexcept { return m_configuration; }
 
@@ -143,6 +145,7 @@ private:
     std::uint64_t m_tickIndex = 0;
     double m_lastTickSeconds = 0.0;
     double m_testNowSeconds = 0.0;
+    bool m_backgroundMode = false;
     RateDeadline m_transportDeadline;
     RateDeadline m_syncDeadline;
     RateDeadline m_waveformDeadline;

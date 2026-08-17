@@ -125,6 +125,11 @@ void ControlClock::stop() noexcept
     m_timer.stop();
 }
 
+void ControlClock::setBackgroundMode(bool enabled) noexcept
+{
+    m_backgroundMode = enabled;
+}
+
 void ControlClock::onBaseTick()
 {
     const double now = static_cast<double>(m_monotonicClock.nsecsElapsed()) * 1.0e-9;
@@ -225,7 +230,9 @@ void ControlClock::dispatch(double monotonicSeconds, double elapsedSeconds)
     }
 
     if (due(m_waveformDeadline, monotonicSeconds)) {
-        if (severelyLate) {
+        if (m_backgroundMode) {
+            ++m_stats.skippedWaveformTicks;
+        } else if (severelyLate) {
             ++m_stats.skippedWaveformTicks;
         } else {
             run(&Callbacks::waveform, m_stats.waveform);
@@ -239,7 +246,9 @@ void ControlClock::dispatch(double monotonicSeconds, double elapsedSeconds)
             emit linkTick();
     }
     if (due(m_feedbackDeadline, monotonicSeconds)) {
-        if (severelyLate) {
+        if (m_backgroundMode) {
+            ++m_stats.skippedFeedbackTicks;
+        } else if (severelyLate) {
             ++m_stats.skippedFeedbackTicks;
         } else {
             run(&Callbacks::feedback, m_stats.feedback);
@@ -247,7 +256,9 @@ void ControlClock::dispatch(double monotonicSeconds, double elapsedSeconds)
         }
     }
     if (due(m_displayDeadline, monotonicSeconds)) {
-        if (severelyLate) {
+        if (m_backgroundMode) {
+            ++m_stats.skippedDisplayTicks;
+        } else if (severelyLate) {
             ++m_stats.skippedDisplayTicks;
         } else {
             run(&Callbacks::display, m_stats.display);
@@ -255,7 +266,7 @@ void ControlClock::dispatch(double monotonicSeconds, double elapsedSeconds)
         }
     }
     if (due(m_meterDeadline, monotonicSeconds)) {
-        if (severelyLate)
+        if (m_backgroundMode || severelyLate)
             ++m_stats.skippedMeterTicks;
         else
             run(&Callbacks::meters, m_stats.meters);
