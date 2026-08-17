@@ -88,6 +88,7 @@ std::string mapKey(const AudioCacheKey& key)
 }
 
 struct AudioPageCache::Impl {
+    struct Entry;
     struct PageSlot {
         std::atomic<AudioPage*> page{nullptr};
         std::atomic<std::uint32_t> readers{0};
@@ -98,6 +99,7 @@ struct AudioPageCache::Impl {
         PageSlot* evictionPrevious = nullptr;
         PageSlot* evictionNext = nullptr;
         bool onEvictionClock = false;
+        Entry* owner = nullptr;
     };
     struct Entry {
         AudioCacheKey key;
@@ -115,6 +117,8 @@ struct AudioPageCache::Impl {
         std::unique_ptr<juce::AudioFormatReader> reader;
         std::unique_ptr<PageSlot[]> pageSlots;
         std::int64_t pageCount = 0;
+        std::atomic<bool> sealed{false};
+        std::uint64_t sealedBytes = 0;
     };
 
     juce::AudioFormatManager formats;
@@ -143,6 +147,7 @@ struct AudioPageCache::Impl {
     std::atomic<std::uint64_t> evictionScans{0}, evictionCandidates{0};
     std::atomic<std::uint64_t> evictionMicros{0}, worstEvictionMicros{0};
     std::atomic<std::uint64_t> readerWaitMicros{0}, worstReaderWaitMicros{0};
+    std::atomic<std::uint64_t> sealedBytes{0};
     std::atomic<bool> accepting{true};
 };
 
@@ -212,6 +217,8 @@ AudioCacheHandle AudioPageCache::openTrack(
     entry->channels = static_cast<int>(entry->reader->numChannels);
     entry->pageCount = (entry->length + AudioPage::kSamplesPerChannel - 1) / AudioPage::kSamplesPerChannel;
     entry->pageSlots = std::make_unique<Impl::PageSlot[]>(static_cast<size_t>(entry->pageCount));
+    for (std::int64_t page = 0; page < entry->pageCount; ++page)
+        entry->pageSlots[static_cast<size_t>(page)].owner = entry.get();
     entry->users.store(1);
     auto* raw = entry.get();
     m_impl->entries.push_back(std::move(entry));
@@ -231,6 +238,8 @@ void AudioPageCache::releaseTrack(const AudioCacheHandle& handle)
     if (entry->id != handle.id() || entry->generation.load() != handle.generation()) return;
     const auto old = entry->users.fetch_sub(1);
     if (old > 1) return;
+    if (entry->sealed.exchange(false, std::memory_order_acq_rel))
+        m_impl->sealedBytes.fetch_sub(entry->sealedBytes, std::memory_order_relaxed);
     entry->active.store(false, std::memory_order_release);
     entry->generation.fetch_add(1, std::memory_order_acq_rel);
     m_impl->activeEntries.erase(mapKey(entry->key));
@@ -300,6 +309,65 @@ bool AudioPageCache::requestRange(const AudioCacheHandle& handle, std::int64_t f
     // immediately so track-load prewarming does not wait for its polling tick.
     notifyWorker();
     return all;
+}
+
+AudioCacheHandleStats AudioPageCache::handleStats(const AudioCacheHandle& handle) const noexcept
+{
+    if (!handle.isValid())
+        return {};
+    const auto* entry = static_cast<const Impl::Entry*>(handle.m_token);
+    if (entry->id != handle.id()
+        || entry->generation.load(std::memory_order_acquire) != handle.generation()
+        || !entry->active.load(std::memory_order_acquire)) {
+        return {};
+    }
+    AudioCacheHandleStats stats;
+    stats.totalPages = entry->pageCount;
+    stats.sealed = entry->sealed.load(std::memory_order_acquire);
+    for (std::int64_t page = 0; page < entry->pageCount; ++page) {
+        const auto* value = entry->pageSlots[static_cast<size_t>(page)].page.load(
+            std::memory_order_acquire);
+        if (value && value->generation == handle.generation())
+            ++stats.residentPages;
+    }
+    return stats;
+}
+
+bool AudioPageCache::sealTrack(const AudioCacheHandle& handle)
+{
+    if (!handle.isValid())
+        return false;
+    auto* entry = const_cast<Impl::Entry*>(static_cast<const Impl::Entry*>(handle.m_token));
+    if (entry->id != handle.id()
+        || entry->generation.load(std::memory_order_acquire) != handle.generation()
+        || !entry->active.load(std::memory_order_acquire)) {
+        return false;
+    }
+    if (entry->sealed.load(std::memory_order_acquire))
+        return true;
+    const auto stats = handleStats(handle);
+    if (stats.totalPages <= 0 || stats.residentPages != stats.totalPages)
+        return false;
+    const auto bytes = static_cast<std::uint64_t>(entry->pageCount)
+        * static_cast<std::uint64_t>(entry->channels)
+        * static_cast<std::uint64_t>(AudioPage::kSamplesPerChannel) * sizeof(float);
+    const auto limit = m_budgetBytes / 2;
+    auto reserved = m_impl->sealedBytes.load(std::memory_order_relaxed);
+    while (reserved + bytes <= limit
+           && !m_impl->sealedBytes.compare_exchange_weak(
+               reserved, reserved + bytes, std::memory_order_acq_rel)) {}
+    if (reserved + bytes > limit)
+        return false;
+    entry->sealedBytes = bytes;
+    entry->sealed.store(true, std::memory_order_release);
+    if (handleStats(handle).residentPages != stats.totalPages) {
+        entry->sealed.store(false, std::memory_order_release);
+        m_impl->sealedBytes.fetch_sub(bytes, std::memory_order_relaxed);
+        return false;
+    }
+    std::lock_guard readerLock(entry->readerMutex);
+    entry->reader.reset();
+    return true;
 }
 
 bool AudioPageCache::waitForPageRange(
@@ -437,6 +505,8 @@ void AudioPageCache::workerRun(const std::atomic<bool>& shutdown)
             m_impl->evictionCandidates.fetch_add(1, std::memory_order_relaxed);
             if (candidate->readers.load(std::memory_order_acquire) != 0)
                 continue;
+            if (candidate->owner->sealed.load(std::memory_order_acquire))
+                continue;
             if (candidate->recentlyUsed.exchange(false, std::memory_order_acq_rel))
                 continue;
             auto* const retired = candidate->page.exchange(nullptr, std::memory_order_acq_rel);
@@ -461,14 +531,14 @@ void AudioPageCache::workerRun(const std::atomic<bool>& shutdown)
         return false;
     };
 
-    unsigned fairness = 0;
     while (!shutdown.load(std::memory_order_acquire)) {
         reapRetiredPages();
         PageRequest request;
         bool found = false;
-        const size_t start = (++fairness % 32 == 0) ? 2 : 0; // periodic lower-priority service
-        for (size_t offset = 0; offset < static_cast<size_t>(AudioCachePriority::Count); ++offset) {
-            const size_t queue = (start + offset) % static_cast<size_t>(AudioCachePriority::Count);
+        // Playback work must always outrank cache warming. A single slow USB
+        // decode is enough to cause audible starvation, so background requests
+        // never receive fairness ahead of realtime/read-ahead requests.
+        for (size_t queue = 0; queue < static_cast<size_t>(AudioCachePriority::Count); ++queue) {
             if (m_impl->queues[queue].tryPop(request)) { found = true; break; }
         }
         if (!found) {

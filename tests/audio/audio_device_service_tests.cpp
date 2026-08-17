@@ -52,6 +52,15 @@ int main(int argc, char** argv)
                   "an unavailable device must not expose fallback channel pairs");
     ok &= require(service.manager().getCurrentAudioDevice() == nullptr,
                   "querying device choices must not open a default device");
+    ok &= require(service.hardwareXRunCount() == 0,
+                  "an unopened device reports no hardware XRUNs");
+
+#if JUCE_LINUX || JUCE_BSD
+    ok &= require(clampToStableBufferSize(QStringLiteral("ALSA"), 64) == 512,
+                  "ALSA uses a 512-sample stability floor");
+    ok &= require(clampToStableBufferSize(QStringLiteral("JACK"), 64) == 64,
+                  "JACK retains its 64-frame low-latency floor");
+#endif
 
     ok &= require(&deckA.service.manager() == &deckB.service.manager(),
                   "all decks must observe one AudioDeviceManager");

@@ -58,6 +58,7 @@ public:
     [[nodiscard]] QString currentOutputDevice() const;
     [[nodiscard]] int currentSampleRate() const;
     [[nodiscard]] int currentBufferSize() const;
+    [[nodiscard]] std::uint64_t hardwareXRunCount() const noexcept;
     [[nodiscard]] bool isJackServerRunning() const;
     [[nodiscard]] QString jackServerStatus() const;
     [[nodiscard]] QString lastError() const { return m_lastError; }

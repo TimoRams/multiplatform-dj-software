@@ -47,6 +47,7 @@
 #include <jack/jack.h>
 #endif
 #include "audio/device/AudioDeviceService.h"
+#include "app/SettingsManager.h"
 #include "sync/SyncCoordinator.h"
 
 
@@ -136,6 +137,10 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
     connect(m_analysisPersistTimer, &QTimer::timeout, this, [this]() {
         persistCurrentAnalysisToLibrary();
     });
+    m_externalCacheTimer = new QTimer(this);
+    m_externalCacheTimer->setInterval(250);
+    m_externalCacheTimer->setTimerType(Qt::CoarseTimer);
+    connect(m_externalCacheTimer, &QTimer::timeout, this, &DjEngine::updateExternalCache);
 
     // Opt-in playback health log. Set BROCKDJ_AUDIO_DIAGNOSTICS=1 to find out
     // whether audible clicks come from the page cache failing to keep up: a
@@ -216,6 +221,9 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
 
     m_audioPipeline->mixer().setTrim(static_cast<float>(m_trim));
     m_audioPipeline->mixer().setFader(static_cast<float>(m_volume));
+    m_keylock = persistedPerformanceToggle("keylock", false);
+    m_quantizeEnabled = persistedPerformanceToggle("quantize", false);
+    updateSpeedAndPitch();
 
     // AudioEngine prepares the registered DeckAudioPipeline endpoint.
 
@@ -253,6 +261,103 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
         onMeterControlTick(context);
     };
     m_controlClockRegistration = m_controlClock.registerCallbacks(std::move(clockCallbacks));
+}
+
+bool DjEngine::persistedPerformanceToggle(const char* name, bool fallback) const
+{
+    const int normalizedDeckIndex = std::clamp(m_deckIndex, 0, 3);
+    const QString key = QStringLiteral("performance/deck%1/%2")
+        .arg(QChar::fromLatin1(static_cast<char>('A' + normalizedDeckIndex)),
+             QString::fromLatin1(name));
+    const QString fallbackValue = fallback ? QStringLiteral("1") : QStringLiteral("0");
+    return SettingsManager::getInstance().getUiState(key, fallbackValue) == QLatin1String("1");
+}
+
+void DjEngine::persistPerformanceToggle(const char* name, bool enabled)
+{
+    const int normalizedDeckIndex = std::clamp(m_deckIndex, 0, 3);
+    const QString key = QStringLiteral("performance/deck%1/%2")
+        .arg(QChar::fromLatin1(static_cast<char>('A' + normalizedDeckIndex)),
+             QString::fromLatin1(name));
+    SettingsManager::getInstance().setUiState(
+        key, enabled ? QStringLiteral("1") : QStringLiteral("0"));
+}
+
+void DjEngine::resetExternalCache()
+{
+    if (m_externalCacheTimer)
+        m_externalCacheTimer->stop();
+    m_externalCacheHandle = {};
+    m_externalCacheNextPage = 0;
+    if (m_externalCacheProgress != 0.0 || m_externalCacheReady) {
+        m_externalCacheProgress = 0.0;
+        m_externalCacheReady = false;
+        emit externalCacheProgressChanged();
+    }
+}
+
+void DjEngine::beginExternalCache(AudioCacheHandle handle)
+{
+    resetExternalCache();
+    if (!handle.isValid())
+        return;
+    const auto requiredBytes = static_cast<std::uint64_t>(handle.pageCount())
+        * static_cast<std::uint64_t>(handle.channelCount())
+        * static_cast<std::uint64_t>(AudioPage::kSamplesPerChannel) * sizeof(float);
+    if (requiredBytes > m_audioPageCache.budgetBytes() / 2) {
+        m_trackLoadError = QStringLiteral(
+            "Track is too large for the configured cache; increase BROCKDJ_AUDIO_CACHE_MB before ejecting USB.");
+        emit trackLoadErrorChanged();
+        return;
+    }
+    m_externalCacheHandle = handle;
+    // Do not run a second decoder against removable media from the shared page
+    // cache. Even background requests can begin a non-preemptible USB decode
+    // immediately before a playback miss, which starves the audio source.
+    // External staging must use a separate low-I/O worker before it can run
+    // concurrently with playback.
+}
+
+void DjEngine::updateExternalCache()
+{
+    if (!m_externalCacheHandle.isValid()) {
+        if (m_externalCacheTimer)
+            m_externalCacheTimer->stop();
+        return;
+    }
+    // A full USB cache is opportunistic. Never decode cache-warming pages once
+    // the user has requested playback; the cache worker must serve audio
+    // read-ahead without competing USB I/O first.
+    if (m_transport->playRequested())
+        return;
+    const auto stats = m_audioPageCache.handleStats(m_externalCacheHandle);
+    if (stats.totalPages <= 0) {
+        resetExternalCache();
+        return;
+    }
+    const double progress = static_cast<double>(stats.residentPages)
+        / static_cast<double>(stats.totalPages);
+    if (std::abs(m_externalCacheProgress - progress) > 0.0001) {
+        m_externalCacheProgress = progress;
+        emit externalCacheProgressChanged();
+    }
+    if (stats.residentPages == stats.totalPages) {
+        if (m_audioPageCache.sealTrack(m_externalCacheHandle)) {
+            m_externalCacheProgress = 1.0;
+            m_externalCacheReady = true;
+            if (m_externalCacheTimer)
+                m_externalCacheTimer->stop();
+            emit externalCacheProgressChanged();
+        }
+        return;
+    }
+    const auto last = std::min(m_externalCacheNextPage, stats.totalPages - 1);
+    if (m_audioPageCache.requestRange(
+            m_externalCacheHandle, m_externalCacheNextPage, last, AudioCachePriority::Background)) {
+        m_externalCacheNextPage = last + 1;
+        if (m_externalCacheNextPage >= stats.totalPages)
+            m_externalCacheNextPage = 0;
+    }
 }
 
 
@@ -880,6 +985,7 @@ void DjEngine::setKeylock(bool on)
     if (m_keylock == on)
         return;
     m_keylock = on;
+    persistPerformanceToggle("keylock", on);
     updateSpeedAndPitch();
     emit keylockChanged();
 }
@@ -1190,6 +1296,8 @@ QVariantMap DjEngine::audioPerformanceStats() const
                  QVariant::fromValue<qulonglong>(AudioEngine::callbackCount()));
     stats.insert(QStringLiteral("callbackOverruns"),
                  QVariant::fromValue<qulonglong>(AudioEngine::callbackOverrunCount()));
+    stats.insert(QStringLiteral("hardwareXruns"),
+                 QVariant::fromValue<qulonglong>(m_audioDeviceService.hardwareXRunCount()));
     stats.insert(QStringLiteral("sampleRate"), snapshot.sampleRate);
     stats.insert(QStringLiteral("bufferSamples"), snapshot.bufferSamples);
 

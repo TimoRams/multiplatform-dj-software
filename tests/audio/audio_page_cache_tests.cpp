@@ -90,6 +90,36 @@ int main(int argc, char** argv)
                             65 * static_cast<int>(AudioPage::kSamplesPerChannel)),
                   "long scratch fixture");
 
+    {
+        AudioPageCache sealedCache(8 * 2 * AudioPage::kSamplesPerChannel * sizeof(float));
+        const auto sealedHandle = sealedCache.openTrack({stereo});
+        ok &= require(sealedHandle.isValid() && sealedHandle.pageCount() == 3,
+                      "seal fixture opens with multiple pages");
+        ok &= require(sealedCache.requestRange(
+                          sealedHandle, 0, sealedHandle.pageCount() - 1,
+                          AudioCachePriority::Background)
+                          && sealedCache.waitForPageRange(
+                              sealedHandle, 0, sealedHandle.pageCount() - 1,
+                              std::chrono::seconds(5)),
+                      "all pages become resident before sealing");
+        const auto beforeSeal = sealedCache.handleStats(sealedHandle);
+        ok &= require(beforeSeal.residentPages == beforeSeal.totalPages && !beforeSeal.sealed,
+                      "handle progress reports a fully resident unsealed track");
+        ok &= require(sealedCache.sealTrack(sealedHandle),
+                      "fully resident track seals for removable-media playback");
+        const auto afterSeal = sealedCache.handleStats(sealedHandle);
+        ok &= require(afterSeal.sealed && afterSeal.residentPages == afterSeal.totalPages,
+                      "sealed track retains every decoded page");
+#ifdef Q_OS_LINUX
+        ok &= require(!processHasOpenFile(stereo),
+                      "sealing closes the removable-media file handle");
+#endif
+        auto sealedLastPage = sealedCache.tryGetPage(sealedHandle, sealedHandle.pageCount() - 1);
+        ok &= require(sealedLastPage && sealedLastPage->validSampleCount == 1,
+                      "sealed track remains readable after its reader is closed");
+        sealedCache.releaseTrack(sealedHandle);
+    }
+
     AudioPageCache cache(2 * 16384 * sizeof(float) + 1024);
     auto monoHandle = cache.openTrack({mono});
     ok &= require(monoHandle.isValid() && monoHandle.channelCount() == 1, "mono handle metadata");

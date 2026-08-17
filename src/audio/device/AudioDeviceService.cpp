@@ -88,11 +88,18 @@ std::expected<void, QString> AudioDeviceService::applySettingsExpected(const QSt
     const QString requestedType = !deviceType.isEmpty() ? deviceType : currentDeviceType();
 #if JUCE_LINUX || JUCE_BSD
     const bool jackBackendRequested = requestedType.toLower().contains(QStringLiteral("jack"));
-    bufferSize = normalizeBufferSize(bufferSize);
 #else
     const bool jackBackendRequested = requestedType.toLower().contains(QStringLiteral("jack"));
-    bufferSize = normalizeBufferSize(bufferSize);
 #endif
+    const int requestedBufferSize = normalizeBufferSize(bufferSize);
+    bufferSize = clampToStableBufferSize(requestedType, requestedBufferSize);
+    if (bufferSize != requestedBufferSize) {
+        setFallbackMessage(QStringLiteral(
+            "%1 requested %2 samples; using %3 samples for stable audio.")
+            .arg(requestedType.isEmpty() ? QStringLiteral("This backend") : requestedType)
+            .arg(requestedBufferSize)
+            .arg(bufferSize));
+    }
 
     if (jackBackendRequested) {
 #if JUCE_JACK && (JUCE_LINUX || JUCE_BSD)
@@ -281,7 +288,7 @@ std::expected<void, QString> AudioDeviceService::applySettingsExpected(const QSt
     auto* currentDevice = manager.getCurrentAudioDevice();
     const bool needsReopen = currentDevice != nullptr
         && ((std::abs(currentDevice->getCurrentSampleRate() - static_cast<double>(sampleRate)) > 0.5)
-            || (currentDevice->getCurrentBufferSizeSamples() != bufferSize)
+            || (currentDevice->getCurrentBufferSizeSamples() != setup.bufferSize)
             || jackBackendRequested);
 
     if (needsReopen)
@@ -571,6 +578,13 @@ int AudioDeviceService::currentBufferSize() const
 {
     if (auto* device = m_manager.getCurrentAudioDevice())
         return device->getCurrentBufferSizeSamples();
+    return 0;
+}
+
+std::uint64_t AudioDeviceService::hardwareXRunCount() const noexcept
+{
+    if (auto* device = m_manager.getCurrentAudioDevice())
+        return static_cast<std::uint64_t>(std::max(0, device->getXRunCount()));
     return 0;
 }
 

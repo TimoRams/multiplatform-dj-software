@@ -44,6 +44,12 @@ struct AudioCacheStats {
     std::uint64_t evictionReaderWaitMicros = 0, worstEvictionReaderWaitMicros = 0;
 };
 
+struct AudioCacheHandleStats {
+    std::int64_t residentPages = 0;
+    std::int64_t totalPages = 0;
+    bool sealed = false;
+};
+
 class AudioPageReadGuard final
 {
 public:
@@ -90,6 +96,11 @@ public:
                      AudioCachePriority priority) noexcept;
     bool requestRange(const AudioCacheHandle& handle, std::int64_t firstPage,
                       std::int64_t lastPage, AudioCachePriority priority) noexcept;
+    [[nodiscard]] AudioCacheHandleStats handleStats(const AudioCacheHandle& handle) const noexcept;
+    // A sealed handle owns every decoded page and no longer depends on its source
+    // reader, making it safe to eject removable media. Sealed tracks are bounded
+    // to half of the shared cache so active decks retain read-ahead headroom.
+    bool sealTrack(const AudioCacheHandle& handle);
     // Blocking consumer-side wait for loader/tests only. The audio callback
     // continues to use tryGetPage() exclusively and never touches a mutex.
     bool waitForPageRange(

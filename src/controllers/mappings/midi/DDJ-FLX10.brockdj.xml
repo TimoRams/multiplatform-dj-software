@@ -231,8 +231,8 @@
     <Entry paramId="crossfader" status="0xB6" control="0x3F" type="fader"/>
 
     <!-- Monitoring and library. -->
-    <Entry paramId="master_level" status="0xB6" control="0x08" type="fader"/>
-    <Entry paramId="master_level" status="0xB6" control="0x28" type="fader"/>
+    <!-- The FLX10 Master Level knob controls its hardware output directly.
+         Keep it out of the software mixer to avoid applying gain twice. -->
     <Entry paramId="master_cue" status="0x96" control="0x63" type="toggle"/>
     <Entry paramId="headphone_mix" status="0xB6" control="0x0C" type="fader"/>
     <Entry paramId="headphone_mix" status="0xB6" control="0x2C" type="fader"/>

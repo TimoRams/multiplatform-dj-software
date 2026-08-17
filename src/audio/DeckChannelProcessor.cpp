@@ -600,9 +600,9 @@ void DeckChannelProcessor::setFilterVal(float f) {
     }
 
 float DeckChannelProcessor::getDecibelsFromKnob(float kb) const {
-        // Mirrors mixerEqGainFromKnob(): +6 dB boost, -26 dB taper, kill at -1.
+        // Mirrors mixerEqGainFromKnob(): +6 dB boost and -26 dB cut.
         const float gain = static_cast<float>(mixerEqGainFromKnob(kb));
-        return gain > 0.0f ? 20.0f * std::log10(gain) : -100.0f;
+        return 20.0f * std::log10(gain);
     }
 
 void DeckChannelProcessor::publishFilterSnapshot() noexcept

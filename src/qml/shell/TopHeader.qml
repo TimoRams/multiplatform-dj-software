@@ -231,13 +231,33 @@ Rectangle {
                     }
                     Text {
                         width: 54; anchors.verticalCenter: parent.verticalCenter
-                        text: "XRUNS"
+                        text: "DSP XRUNS"
                         color: "#777"; font.pixelSize: root.sp(8); font.bold: true
                     }
                     Text {
                         width: 62; anchors.verticalCenter: parent.verticalCenter
                         text: Number(root.audioPerfStats.callbackOverruns) ? Number(root.audioPerfStats.callbackOverruns).toString() : "0"
                         color: Number(root.audioPerfStats.callbackOverruns) > 0 ? "#ff5f52" : "#efefef"
+                        font.pixelSize: root.sp(8); font.family: "monospace"
+                        horizontalAlignment: Text.AlignRight
+                    }
+                }
+            }
+
+            Rectangle {
+                width: latencyPopup.width; height: 24
+                color: "#121212"
+                Row {
+                    anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
+                    Text {
+                        width: 136; anchors.verticalCenter: parent.verticalCenter
+                        text: "DEVICE XRUNS"
+                        color: "#777"; font.pixelSize: root.sp(8); font.bold: true
+                    }
+                    Text {
+                        width: 62; anchors.verticalCenter: parent.verticalCenter
+                        text: Number(root.audioPerfStats.hardwareXruns) ? Number(root.audioPerfStats.hardwareXruns).toString() : "0"
+                        color: Number(root.audioPerfStats.hardwareXruns) > 0 ? "#ff5f52" : "#efefef"
                         font.pixelSize: root.sp(8); font.family: "monospace"
                         horizontalAlignment: Text.AlignRight
                     }

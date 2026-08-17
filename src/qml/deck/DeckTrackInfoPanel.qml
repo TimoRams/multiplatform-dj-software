@@ -498,6 +498,25 @@ Item {
             }
         }
 
+        Rectangle {
+            visible: root.engine && root.engine.readOnlyExternalTrack
+                     && (root.engine.externalCacheProgress > 0 || root.engine.externalCacheReady)
+            Layout.fillWidth: true
+            Layout.preferredHeight: visible ? root.valuePx(5, 3) : 0
+            Layout.minimumHeight: Layout.preferredHeight
+            Layout.maximumHeight: Layout.preferredHeight
+            Layout.leftMargin: root.valuePx(18, 9)
+            Layout.rightMargin: root.valuePx(18, 9)
+            color: "#24262d"
+            Rectangle {
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: parent.width * (root.engine ? root.engine.externalCacheProgress : 0)
+                color: root.engine && root.engine.externalCacheReady ? root.playingColor : root.functionOrange
+            }
+        }
+
         Item {
             Layout.fillWidth: true
             Layout.preferredHeight: root.rulerHeight

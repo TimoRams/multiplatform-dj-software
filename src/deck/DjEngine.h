@@ -80,6 +80,8 @@ class DjEngine : public QObject
     Q_PROPERTY(QVariantList memoryCues READ memoryCues NOTIFY memoryCuesChanged)
     Q_PROPERTY(bool readOnlyExternalTrack READ readOnlyExternalTrack NOTIFY trackMetadataChanged)
     Q_PROPERTY(QString externalSourceId READ externalSourceId NOTIFY trackMetadataChanged)
+    Q_PROPERTY(double externalCacheProgress READ externalCacheProgress NOTIFY externalCacheProgressChanged)
+    Q_PROPERTY(bool externalCacheReady READ externalCacheReady NOTIFY externalCacheProgressChanged)
 
     Q_PROPERTY(double waveformPointsPerSecond READ waveformPointsPerSecond CONSTANT)
     Q_PROPERTY(double preRollSeconds READ getPreRollSeconds CONSTANT)
@@ -284,6 +286,8 @@ public:
     [[nodiscard]] QVariantList memoryCues() const { return m_memoryCues; }
     [[nodiscard]] bool readOnlyExternalTrack() const { return m_readOnlyExternalTrack; }
     [[nodiscard]] QString externalSourceId() const { return m_externalSourceId; }
+    [[nodiscard]] double externalCacheProgress() const { return m_externalCacheProgress; }
+    [[nodiscard]] bool externalCacheReady() const { return m_externalCacheReady; }
     [[nodiscard]] double  getTempoPercent() const { return m_tempoPercent; }
     [[nodiscard]] double  tempoRangePercent() const { return m_tempoRangePercent; }
     // Beat phase: 0.0 = on the beat, 0.5 = halfway between beats, approaches 1.0 just before the next beat.
@@ -447,6 +451,7 @@ signals:
     void trackEjected();
     void trackMetadataChanged();
     void trackLoadErrorChanged();
+    void externalCacheProgressChanged();
     void pixelsPerSecondChanged();
     
     // Mixer Signals
@@ -498,6 +503,11 @@ private:
     LatencySnapshot buildLatencySnapshot() const;
 
     void resetTrackLoadState();
+    void beginExternalCache(AudioCacheHandle handle);
+    void updateExternalCache();
+    void resetExternalCache();
+    [[nodiscard]] bool persistedPerformanceToggle(const char* name, bool fallback) const;
+    void persistPerformanceToggle(const char* name, bool enabled);
     void beginTrackLoad(QString path,
                         std::optional<ExternalTrackLoadSnapshot> external = std::nullopt);
     void applyPreparedTrack(TrackLoadResult result);
@@ -578,6 +588,11 @@ private:
     QVariantList m_memoryCues;
     QString m_externalSourceId;
     bool m_readOnlyExternalTrack = false;
+    AudioCacheHandle m_externalCacheHandle;
+    QTimer* m_externalCacheTimer = nullptr;
+    std::int64_t m_externalCacheNextPage = 0;
+    double m_externalCacheProgress = 0.0;
+    bool m_externalCacheReady = false;
 
     // Tempo control: ±6/8/16/32/100% (WIDE) selectable range
     double m_tempoPercent = 0.0;

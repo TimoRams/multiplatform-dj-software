@@ -46,21 +46,22 @@ double eqResponseDb(MixerFilterTargets t,double hz,double sr=48000.0){
 }
 int main(){bool ok=true;
  for(double sr:{44100.0,48000.0,96000.0,192000.0})for(auto t:{MixerFilterTargets{},MixerFilterTargets{-1,0,0,-1},MixerFilterTargets{0,-1,0,1},MixerFilterTargets{1,1,1,0}}){auto s=buildMixerCoefficientSnapshot(t,sr,1,1);ok&=require(s.valid(),"finite stable coefficients");}
- // 3-band split: bands sum flat at unity, each knob owns its own frequency
- // range, and full cut is a real kill rather than a deep dip.
+ // Musical channel EQ uses overlapping shelves and a broad mid bell; each band
+ // spans -26 dB through +6 dB and never becomes an isolator-style full kill.
  {const MixerFilterTargets cut{-0.5f,-0.5f,-0.5f,0};
-  for(double hz:{50.0,300.0,1000.0,4000.0,12000.0}){const double db=eqResponseDb(cut,hz);ok&=require(std::abs(db+13.0)<1.0,"3-band split reconstructs flat");}
-  ok&=require(std::abs(eqResponseDb({-1,0,0,0},kEqCrossoverLowHz)+6.0)<1.0,"low band is -6 dB at the low crossover");
-  ok&=require(std::abs(eqResponseDb({0,0,-1,0},kEqCrossoverHighHz)+6.0)<1.0,"high band is -6 dB at the high crossover");
-  ok&=require(eqResponseDb({-1,0,0,0},50.0)<-40.0,"low kill removes the bass");
-  ok&=require(eqResponseDb({-1,0,0,0},2000.0)>-1.0,"low kill leaves the midrange");
-  ok&=require(eqResponseDb({0,-1,0,0},1000.0)<-30.0,"mid kill removes the midrange");
-  ok&=require(eqResponseDb({0,-1,0,0},50.0)>-1.0&&eqResponseDb({0,-1,0,0},12000.0)>-1.0,"mid kill leaves bass and treble");
-  ok&=require(eqResponseDb({0,0,-1,0},12000.0)<-40.0,"high kill removes the treble");
-  ok&=require(eqResponseDb({0,0,-1,0},500.0)>-1.0,"high kill leaves the midrange");
-  ok&=require(std::abs(eqResponseDb({1,1,1,0},1000.0)-6.0)<0.5,"full boost is +6 dB");
-  ok&=require(mixerEqGainFromKnob(-1.f)==0.0,"knob at -1 is a full kill");
-  ok&=require(std::abs(20.0*std::log10(mixerEqGainFromKnob(-0.5f))+13.0)<0.5,"half cut follows the -26 dB taper");}
+  for(double hz:{50.0,1000.0,12000.0}){const double db=eqResponseDb(cut,hz);ok&=require(std::abs(db+13.0)<1.0,"half cut is -13 dB at every EQ band");}
+  ok&=require(std::abs(eqResponseDb({-1,0,0,0},50.0)+26.0)<0.8,"low shelf reaches -26 dB");
+  ok&=require(eqResponseDb({-1,0,0,0},2000.0)>-1.0,"low shelf leaves the midrange intact");
+  ok&=require(std::abs(eqResponseDb({0,-1,0,0},1000.0)+26.0)<0.5,"mid bell reaches -26 dB");
+  ok&=require(eqResponseDb({0,-1,0,0},50.0)>-1.0&&eqResponseDb({0,-1,0,0},12000.0)>-1.0,"mid bell leaves bass and treble intact");
+  ok&=require(std::abs(eqResponseDb({0,0,-1,0},12000.0)+26.0)<1.0,"high shelf reaches -26 dB");
+  ok&=require(eqResponseDb({0,0,-1,0},500.0)>-1.0,"high shelf leaves the midrange intact");
+  ok&=require(std::abs(eqResponseDb({1,0,0,0},50.0)-6.0)<0.5,"low shelf reaches +6 dB");
+  ok&=require(std::abs(eqResponseDb({0,1,0,0},1000.0)-6.0)<0.5,"mid bell reaches +6 dB");
+  ok&=require(std::abs(eqResponseDb({0,0,1,0},12000.0)-6.0)<0.8,"high shelf reaches +6 dB");
+  ok&=require(std::abs(20.0*std::log10(mixerEqGainFromKnob(-1.f))+26.0)<0.01,"knob at -1 is -26 dB");
+  ok&=require(std::abs(20.0*std::log10(mixerEqGainFromKnob(1.f))-6.0)<0.01,"knob at +1 is +6 dB");
+  ok&=require(std::abs(20.0*std::log10(mixerEqGainFromKnob(-0.5f))+13.0)<0.01,"half cut is -13 dB");}
  Sine sine(8000);auto mixer=std::make_unique<DeckChannelProcessor>(&sine);mixer->prepareToPlay(8192,48000);
  for(int size:{64,128,256,512,1024,2048,4096,8192}){const float p=render(*mixer,size);ok&=require(std::isfinite(p)&&p>0,"all block sizes audible finite");}
  const float flat=render(*mixer,2048);mixer->setFilterVal(-1);for(int i=0;i<4;++i)render(*mixer,2048);const float lowPass=render(*mixer,2048);ok&=require(lowPass<flat*0.7f,"low pass attenuates high tone");

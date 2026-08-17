@@ -13,24 +13,50 @@ BiquadCoefficients pass(double sr,double hz,double q,bool high) noexcept {
     if(high) return normalized((1+c)/2,-(1+c),(1+c)/2,1+alpha,-2*c,1-alpha);
     return normalized((1-c)/2,1-c,(1-c)/2,1+alpha,-2*c,1-alpha);
 }
-// 2nd-order allpass — the phase equivalent of an LR4 crossover at the same
-// frequency, so the low band stays aligned with mid+high after the second split.
-BiquadCoefficients allpass(double sr,double hz,double q) noexcept {
-    const double w=2*std::numbers::pi*frequency(hz,sr)/sr,c=std::cos(w),alpha=std::sin(w)/(2*q);
-    return normalized(1-alpha,-2*c,1+alpha,1+alpha,-2*c,1-alpha);
+BiquadCoefficients shelf(double sr,double hz,double decibels,bool high) noexcept {
+    const double amplitude=std::pow(10.0,decibels/40.0);
+    const double w=2*std::numbers::pi*frequency(hz,sr)/sr;
+    const double cosine=std::cos(w);
+    const double alpha=std::sin(w)*std::numbers::sqrt2/2.0;
+    const double beta=2.0*std::sqrt(amplitude)*alpha;
+    if(high) {
+        return normalized(
+            amplitude*((amplitude+1.0)+(amplitude-1.0)*cosine+beta),
+            -2.0*amplitude*((amplitude-1.0)+(amplitude+1.0)*cosine),
+            amplitude*((amplitude+1.0)+(amplitude-1.0)*cosine-beta),
+            (amplitude+1.0)-(amplitude-1.0)*cosine+beta,
+            2.0*((amplitude-1.0)-(amplitude+1.0)*cosine),
+            (amplitude+1.0)-(amplitude-1.0)*cosine-beta);
+    }
+    return normalized(
+        amplitude*((amplitude+1.0)-(amplitude-1.0)*cosine+beta),
+        2.0*amplitude*((amplitude-1.0)-(amplitude+1.0)*cosine),
+        amplitude*((amplitude+1.0)-(amplitude-1.0)*cosine-beta),
+        (amplitude+1.0)+(amplitude-1.0)*cosine+beta,
+        -2.0*((amplitude-1.0)+(amplitude+1.0)*cosine),
+        (amplitude+1.0)+(amplitude-1.0)*cosine-beta);
 }
-constexpr double kButterworthQ=0.70710678118654752; // LR4 = two cascaded Butterworth sections
+BiquadCoefficients bell(double sr,double hz,double q,double decibels) noexcept {
+    const double amplitude=std::pow(10.0,decibels/40.0);
+    const double w=2*std::numbers::pi*frequency(hz,sr)/sr;
+    const double cosine=std::cos(w);
+    const double alpha=std::sin(w)/(2.0*q);
+    return normalized(
+        1.0+alpha*amplitude,
+        -2.0*cosine,
+        1.0-alpha*amplitude,
+        1.0+alpha/amplitude,
+        -2.0*cosine,
+        1.0-alpha/amplitude);
+}
+double eqDecibels(float knob) noexcept {
+    const double value=std::clamp(static_cast<double>(knob),-1.0,1.0);
+    return value>=0.0 ? value*6.0 : value*26.0;
+}
 }
 
-// Boost tops out at +6 dB. Cut follows a −26 dB taper (hardware EQ range) and
-// then fades to true silence over the last 8 % of travel so the knob still kills.
 double mixerEqGainFromKnob(float knob) noexcept {
-    const double v=std::clamp(static_cast<double>(knob),-1.0,1.0);
-    if(v>=0.0)return std::pow(10.0,v*6.0/20.0);
-    const double t=-v,gain=std::pow(10.0,t*-26.0/20.0);
-    constexpr double killStart=0.92;
-    if(t<=killStart)return gain;
-    return gain*(1.0-(t-killStart)/(1.0-killStart));
+    return std::pow(10.0,eqDecibels(knob)/20.0);
 }
 
 bool BiquadCoefficients::finiteAndStable() const noexcept {
@@ -41,10 +67,8 @@ bool BiquadCoefficients::finiteAndStable() const noexcept {
 }
 bool MixerCoefficientSnapshot::valid() const noexcept {
     return sampleRate>0&&std::isfinite(sampleRate)
-        &&lowSplitLp.finiteAndStable()&&lowSplitHp.finiteAndStable()
-        &&midSplitLp.finiteAndStable()&&highSplitHp.finiteAndStable()
-        &&lowAllpass.finiteAndStable()&&color.finiteAndStable()
-        &&std::isfinite(lowGain)&&std::isfinite(midGain)&&std::isfinite(highGain);
+        &&lowShelf.finiteAndStable()&&midBell.finiteAndStable()
+        &&highShelf.finiteAndStable()&&color.finiteAndStable();
 }
 
 MixerCoefficientSnapshot buildMixerCoefficientSnapshot(MixerFilterTargets t,double sr,std::uint64_t pg,std::uint64_t dg) noexcept {
@@ -52,18 +76,12 @@ MixerCoefficientSnapshot buildMixerCoefficientSnapshot(MixerFilterTargets t,doub
     MixerCoefficientSnapshot s; s.sampleRate=sr;s.parameterGeneration=pg;s.deviceGeneration=dg;
     if(!(std::isfinite(sr)&&sr>=8000&&sr<=384000))return s;
 
-    s.lowGain =static_cast<float>(mixerEqGainFromKnob(t.low));
-    s.midGain =static_cast<float>(mixerEqGainFromKnob(t.mid));
-    s.highGain=static_cast<float>(mixerEqGainFromKnob(t.high));
-    // At the detent the split is skipped entirely: no crossover phase shift on a
-    // channel whose EQ is untouched.
+    // At the detent the EQ is skipped entirely on a channel whose EQ is untouched.
     s.eqBypass=std::abs(t.low)<0.005f&&std::abs(t.mid)<0.005f&&std::abs(t.high)<0.005f;
     if(!s.eqBypass){
-        s.lowSplitLp =pass(sr,kEqCrossoverLowHz ,kButterworthQ,false);
-        s.lowSplitHp =pass(sr,kEqCrossoverLowHz ,kButterworthQ,true);
-        s.midSplitLp =pass(sr,kEqCrossoverHighHz,kButterworthQ,false);
-        s.highSplitHp=pass(sr,kEqCrossoverHighHz,kButterworthQ,true);
-        s.lowAllpass =allpass(sr,kEqCrossoverHighHz,kButterworthQ);
+        s.lowShelf=shelf(sr,kEqLowShelfHz,eqDecibels(t.low),false);
+        s.midBell=bell(sr,kEqMidBellHz,kEqMidBellQ,eqDecibels(t.mid));
+        s.highShelf=shelf(sr,kEqHighShelfHz,eqDecibels(t.high),true);
     }
 
     if(std::abs(t.color)<0.05f)s.color={};
@@ -75,28 +93,21 @@ MixerCoefficientSnapshot buildMixerCoefficientSnapshot(MixerFilterTargets t,doub
 float StereoBiquad::process(int channel,float input) noexcept { channel=std::clamp(channel,0,1);const float out=coefficients.b0*input+z1[channel];z1[channel]=coefficients.b1*input-coefficients.a1*out+z2[channel];z2[channel]=coefficients.b2*input-coefficients.a2*out;return out; }
 
 void MixerFilterBank::setSnapshot(const MixerCoefficientSnapshot&s) noexcept {
-    lowLp1.setCoefficients(s.lowSplitLp);lowLp2.setCoefficients(s.lowSplitLp);
-    splitHp1.setCoefficients(s.lowSplitHp);splitHp2.setCoefficients(s.lowSplitHp);
-    midLp1.setCoefficients(s.midSplitLp);midLp2.setCoefficients(s.midSplitLp);
-    highHp1.setCoefficients(s.highSplitHp);highHp2.setCoefficients(s.highSplitHp);
-    lowAp.setCoefficients(s.lowAllpass);color.setCoefficients(s.color);
-    lowGain=s.lowGain;midGain=s.midGain;highGain=s.highGain;bypassEq=s.eqBypass;
+    lowShelf.setCoefficients(s.lowShelf);midBell.setCoefficients(s.midBell);
+    highShelf.setCoefficients(s.highShelf);color.setCoefficients(s.color);
+    bypassEq=s.eqBypass;
 }
 
 void MixerFilterBank::clearState() noexcept {
-    lowLp1.clearState();lowLp2.clearState();splitHp1.clearState();splitHp2.clearState();
-    midLp1.clearState();midLp2.clearState();highHp1.clearState();highHp2.clearState();
-    lowAp.clearState();color.clearState();
+    lowShelf.clearState();midBell.clearState();highShelf.clearState();color.clearState();
 }
 
 float MixerFilterBank::process(int ch,float v) noexcept{
     float out=v;
     if(!bypassEq){
-        const float low =lowLp2 .process(ch,lowLp1  .process(ch,v));
-        const float rest=splitHp2.process(ch,splitHp1.process(ch,v));
-        const float mid =midLp2 .process(ch,midLp1  .process(ch,rest));
-        const float high=highHp2.process(ch,highHp1 .process(ch,rest));
-        out=lowGain*lowAp.process(ch,low)+midGain*mid+highGain*high;
+        out=lowShelf.process(ch,out);
+        out=midBell.process(ch,out);
+        out=highShelf.process(ch,out);
     }
     return color.process(ch,out);
 }

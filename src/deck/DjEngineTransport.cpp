@@ -207,6 +207,7 @@ void DjEngine::releaseTransportReaders()
 
 void DjEngine::ejectTrack()
 {
+    resetExternalCache();
     m_trackLoader.requestCancel();
     if (!m_trackLoadError.isEmpty()) {
         m_trackLoadError.clear();
@@ -496,6 +497,7 @@ void DjEngine::setQuantizeEnabled(bool enabled)
     if (m_quantizeEnabled == enabled)
         return;
     m_quantizeEnabled = enabled;
+    persistPerformanceToggle("quantize", enabled);
     emit quantizeEnabledChanged();
 }
 
@@ -640,8 +642,9 @@ void DjEngine::externalSourceUnavailable(const QString& sourceId)
 {
     if (!m_readOnlyExternalTrack || sourceId != m_externalSourceId)
         return;
-    const QString error = QStringLiteral(
-        "USB device removed; buffered playback may continue until more data is needed");
+    const QString error = m_externalCacheReady
+        ? QStringLiteral("USB device removed; this track is fully cached and will continue playing")
+        : QStringLiteral("USB device removed; buffered playback may continue until more data is needed");
     if (m_trackLoadError != error) {
         m_trackLoadError = error;
         emit trackLoadErrorChanged();
@@ -650,13 +653,14 @@ void DjEngine::externalSourceUnavailable(const QString& sourceId)
 
 void DjEngine::ejectExternalSource(const QString& sourceId)
 {
-    if (m_readOnlyExternalTrack && sourceId == m_externalSourceId)
+    if (m_readOnlyExternalTrack && sourceId == m_externalSourceId && !m_externalCacheReady)
         ejectTrack();
 }
 
 void DjEngine::beginTrackLoad(
     QString rawPath, std::optional<ExternalTrackLoadSnapshot> external)
 {
+    resetExternalCache();
     QPointer<DjEngine> safeThis(this);
     AudioPageCache* const cache = &m_audioPageCache;
     auto completion = [safeThis, cache](TrackLoadResult result) mutable {
@@ -760,6 +764,7 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
     if (result.external) {
         m_readOnlyExternalTrack = true;
         m_externalSourceId = result.external->sourceId;
+        beginExternalCache(preparedCacheHandle);
         m_currentTrackId.clear();
         m_playLogged = false;
         if (hasExternalGrid) {
