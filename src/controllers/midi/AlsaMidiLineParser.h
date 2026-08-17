@@ -4,6 +4,8 @@
 #include <QString>
 
 #include <algorithm>
+#include <mutex>
+#include <unordered_map>
 
 namespace midi_internal {
 
@@ -22,6 +24,62 @@ inline bool shouldAcceptAlsaChannelFaderSource(const QString& sourcePort,
     const bool isChannelFaderByte = control == 0x13 || control == 0x33;
     return !isChannelFaderByte || primaryPort.isEmpty() || sourcePort == primaryPort;
 }
+
+// This controller publishes several sequencer ports under one ALSA client, and
+// the monitor subscribes to all of them because the sections are split across
+// them. A button that is mirrored on two of those ports therefore arrives twice,
+// which turns one press into two: an action that latches — BEAT FX ON above all
+// — switches on and straight back off, and the LED shows a single blink.
+//
+// The channel faders were given a primary-port rule for the same reason
+// (shouldAcceptAlsaChannelFaderSource). This is the button-shaped version of it,
+// and it is deliberately narrower: only an identical event from a *different*
+// port inside a very short window is dropped. A repeat from the same port, a
+// different velocity, or anything later than the window is always a real event
+// — no human presses the same button twice inside 30 ms.
+class AlsaCrossPortButtonFilter final
+{
+public:
+    static constexpr double kWindowSeconds = 0.030;
+
+    // Each mirrored port is read by its own thread, so the two copies of a press
+    // race each other by definition. The lock is held across a hash lookup and
+    // nothing else, and none of this runs on the audio thread.
+    [[nodiscard]] bool accept(const QString& sourcePort, int msgId, int rawValue,
+                              double nowSeconds)
+    {
+        const std::lock_guard lock(m_mutex);
+        const auto it = m_lastByMsgId.find(msgId);
+        if (it != m_lastByMsgId.end()
+            && it->second.port != sourcePort
+            && it->second.rawValue == rawValue
+            && nowSeconds - it->second.timeSeconds < kWindowSeconds) {
+            // Anchored to the first arrival on purpose: a third mirrored port
+            // inside the same window is still a duplicate, but a stream of them
+            // can never hold the window open indefinitely.
+            return false;
+        }
+
+        m_lastByMsgId[msgId] = Entry { sourcePort, rawValue, nowSeconds };
+        return true;
+    }
+
+    void clear()
+    {
+        const std::lock_guard lock(m_mutex);
+        m_lastByMsgId.clear();
+    }
+
+private:
+    struct Entry final
+    {
+        QString port;
+        int rawValue = 0;
+        double timeSeconds = 0.0;
+    };
+    mutable std::mutex m_mutex;
+    std::unordered_map<int, Entry> m_lastByMsgId;
+};
 
 template <typename Mapping>
 int resolveMappedAlsaMessageId(int channelAwareMsgId,

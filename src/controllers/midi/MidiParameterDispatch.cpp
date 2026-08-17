@@ -49,6 +49,19 @@ bool isChannelFaderParameter(const QString& paramId)
 void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool isNoteOff,
                                                     double eventTimestampSeconds)
 {
+    // Our own lamp writes must never be mistaken for a press. Checked on the
+    // local clock because the input paths timestamp events on different ones,
+    // and the write was stamped here too.
+    if (!isNoteOff && ((msgId >= 10000 && (msgId - 10000) % 2000 < 1000) || msgId < 1000)) {
+        const int rawValue = midi::clampMidi7bit(static_cast<int>(std::lround(value * 127.0f)));
+        if (m_outputEchoGuard.isEcho(msgId, rawValue,
+                                     juce::Time::getMillisecondCounterHiRes() * 0.001)) {
+            if (m_midiTraceEnabled)
+                qDebug() << "[MIDI IN] dropped own LED echo for" << midiControlLabel(msgId);
+            return;
+        }
+    }
+
     if (!isNoteOff && msgId >= 10000) {
         const int remainder = msgId - 10000;
         const int channel = remainder / 2000;

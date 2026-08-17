@@ -535,6 +535,15 @@ bool MidiControllerManager::sendMidiMessageWithDebug(const juce::MidiMessage& me
     const int data2 = size > 2 ? static_cast<unsigned char>(raw[2]) : 0;
     const int channel = (status & 0x0f) + 1;
 
+    // Remember every lamp write, so the input side can recognise it if it comes
+    // back in on one of the ports this application also listens on. Note-ons
+    // only: a returning note-off is harmless, a returning note-on is a phantom
+    // press.
+    if (size == 3 && (status & 0xf0) == 0x90 && data2 > 0) {
+        m_outputEchoGuard.noteSent(10000 + (status & 0x0f) * 2000 + data1, data2,
+                                   juce::Time::getMillisecondCounterHiRes() * 0.001);
+    }
+
     QString type = messageType;
     if (type.isEmpty()) {
         const int high = status & 0xf0;
@@ -978,11 +987,11 @@ void MidiControllerManager::connectFxManager(FxManager* fxManager)
         const float currentWet = std::clamp(m_fxManager->wetDry1(), 0.0f, 1.0f);
         if (currentWet > 0.001f)
             m_beatFxLevelDepth = currentWet;
-        if (m_applyingBeatFxWet) {
-            refreshFxLeds();
-            return;
-        }
-        const bool active = currentWet > 0.001f;
+        // The unit's own engage flag, never the mix amount. Inferring the
+        // on-state from a non-zero amount meant that any path which legitimately
+        // wrote zero — the knob at rest, a sweep through the bottom of the mix
+        // range — switched the effect off behind the user's back.
+        const bool active = m_fxManager->enabled1();
         if (m_beatFxActive != active) {
             m_beatFxActive = active;
             emit beatFxActiveChanged();
@@ -991,6 +1000,7 @@ void MidiControllerManager::connectFxManager(FxManager* fxManager)
     };
 
     QObject::connect(m_fxManager, &FxManager::wetDry1Changed, this, syncBeatFxState);
+    QObject::connect(m_fxManager, &FxManager::enabled1Changed, this, syncBeatFxState);
     QObject::connect(m_fxManager, &FxManager::effectType1Changed, this, [this]
     {
         if (!m_fxManager)
@@ -1040,8 +1050,24 @@ void MidiControllerManager::connectFxManager(FxManager* fxManager)
     pushBeatFxTiming();
 }
 
-void MidiControllerManager::applyBeatFxState()
+void MidiControllerManager::applyBeatFxState(BeatFxEngage engage)
 {
+    // Picking an effect, a routing channel or a beat division says nothing about
+    // whether FX should be on. The FX selector and the channel selector are
+    // physical switches, so the controller reports their resting position on its
+    // own — and every one of those reports used to push this object's idea of the
+    // engage state onto the unit. Switch FX on anywhere, and the next such report
+    // switched it straight back off, which is why it only ever happened with the
+    // controller plugged in. Adopt the unit's state here instead of asserting it;
+    // only the BEAT FX ON button gets to write it.
+    if (m_fxManager && engage == BeatFxEngage::Follow) {
+        const bool unitActive = m_fxManager->enabled1();
+        if (m_beatFxActive != unitActive) {
+            m_beatFxActive = unitActive;
+            emit beatFxActiveChanged();
+        }
+    }
+
     const EffectType type = beatFxTypeForPosition(m_beatFxPosition);
     const float wet = m_beatFxActive ? m_beatFxLevelDepth : 0.0f;
 
@@ -1055,11 +1081,19 @@ void MidiControllerManager::applyBeatFxState()
                 targetDeck == deck);
         }
         m_applyingBeatFxRouting = false;
-        m_applyingBeatFxWet = true;
-        m_fxManager->setWetDry1(wet);
-        m_applyingBeatFxWet = false;
+        // Engage state and mix amount are pushed separately. Only a knob that
+        // has actually reported a position gets to dictate the amount; before
+        // that the manager's own amount stands, so switching on never lands on
+        // an inaudible zero.
+        if (m_beatFxDepthFromKnob)
+            m_fxManager->setWetDry1(m_beatFxLevelDepth);
+        if (engage == BeatFxEngage::Write)
+            m_fxManager->setUnitEnabled(1, m_beatFxActive);
+        if (m_beatFxActive)
+            m_beatFxLevelDepth = std::clamp(m_fxManager->wetDry1(), 0.0f, 1.0f);
+        const float appliedWet = m_beatFxActive ? m_beatFxLevelDepth : 0.0f;
         AudioEngine::setMasterFx(target == MidiBeatFxTarget::Master ? type : EffectType::None,
-                                 target == MidiBeatFxTarget::Master ? wet : 0.0f);
+                                 target == MidiBeatFxTarget::Master ? appliedWet : 0.0f);
         m_fxManager->setPrimaryParam(1, m_beatFxLevelDepth);
         // The hardware FX unit is beat-locked: BEAT ◄ / ► picks a division and
         // the echo/delay length follows the assigned channel's tempo.
@@ -1123,17 +1157,9 @@ void MidiControllerManager::stepBeatFxDivision(int direction)
 
 void MidiControllerManager::updateBeatFxBlink()
 {
-    if (m_beatFxActive) {
-        if (!m_beatFxBlinkTimer.isActive()) {
-            m_beatFxBlinkOn = true;
-            m_beatFxBlinkTimer.start();
-        }
-        sendMappedNoteLed(QStringLiteral("beat_fx_on"), m_beatFxBlinkOn);
-    } else {
-        m_beatFxBlinkTimer.stop();
-        m_beatFxBlinkOn = false;
-        sendMappedNoteLed(QStringLiteral("beat_fx_on"), false);
-    }
+    // Steady, not pulsed: see the timer setup in MidiControllerManager::start.
+    m_beatFxBlinkOn = m_beatFxActive;
+    sendMappedNoteLed(QStringLiteral("beat_fx_on"), m_beatFxActive);
 }
 
 void MidiControllerManager::refreshFxLeds()
@@ -1803,6 +1829,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
         }
         if (id == QStringLiteral("beat_fx_level_depth")) {
             m_beatFxLevelDepth = std::clamp(value, 0.0f, 1.0f);
+            m_beatFxDepthFromKnob = true;
             if (m_beatFxActive)
                 applyBeatFxState();
             return;
@@ -1814,15 +1841,18 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
             return;
         }
         if (id == QStringLiteral("beat_fx_on")) {
-            // The button is momentary: 127 on press, 0 on release. The effect
-            // has to stay engaged after the finger leaves the button, so the
-            // state latches here and only the press edge flips it. Adopting the
-            // value directly would switch the effect off on release.
-            if (value < 0.5f)
-                return;
-            m_beatFxActive = !m_beatFxActive;
-            emit beatFxActiveChanged();
-            applyBeatFxState();
+            // This button latches in the hardware and reports the resulting
+            // state, not the finger: one press sends velocity 127, the next
+            // press sends velocity 0. There is no release event at all. Treating
+            // it as momentary and flipping our own flag on the press edge
+            // therefore ignored every switch-off and inverted the two sides
+            // against each other. The reported state is simply adopted.
+            const bool active = value >= 0.5f;
+            if (m_beatFxActive != active) {
+                m_beatFxActive = active;
+                emit beatFxActiveChanged();
+            }
+            applyBeatFxState(BeatFxEngage::Write);
             return;
         }
         if (parseDeckButtonParam(id, QStringLiteral("beat_sync"), directDeck)) {

@@ -260,9 +260,15 @@ int main()
     ok &= require(deckQuickPanel.find("root.engine.trackTitle") != std::string::npos
                   && deckQuickPanel.find("root.engine.trackArtist") != std::string::npos,
                   "compact deck side panel shows real song information");
-    ok &= require(beatFxPanel.find("function stepBeatDivision(direction)") != std::string::npos
+    // The neighbouring beat lengths are shown either side of the current one and
+    // are selectable directly, the way a player prints them.
+    ok &= require(beatFxPanel.find("function setDivisionIndex(index)") != std::string::npos
                   && beatFxPanel.find("fx.setBeatDivision(1, divisions[index].value)")
-                      != std::string::npos,
-                  "compact Beat FX panel exposes explicit beat length arrows");
+                      != std::string::npos
+                  && beatFxPanel.find("root.setDivisionIndex(divIndex)") != std::string::npos,
+                  "compact Beat FX panel exposes selectable beat lengths");
+    ok &= require(deckQuickPanel.find("root.engine.ejectTrack()") != std::string::npos
+                  && deckQuickPanel.find("!engine.isPlaying") != std::string::npos,
+                  "deck side panel can eject a stopped deck");
     return ok ? 0 : 1;
 }

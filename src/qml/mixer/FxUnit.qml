@@ -344,8 +344,15 @@ Rectangle {
                     defaultValue: 0.0
 
                     onValueChanged: {
-                        if (fxManager != null)
-                            fxManager.setWetDry(root.unitId, value)
+                        if (fxManager == null)
+                            return
+                        fxManager.setWetDry(root.unitId, value)
+                        // This knob is the only engage control on the strip, so
+                        // it has to say so explicitly: the mix amount alone
+                        // never engages a unit, otherwise a hardware knob
+                        // reporting its resting position switches FX on unasked.
+                        if (value > 0.001 && !fxManager.unitEnabled(root.unitId))
+                            fxManager.setUnitEnabled(root.unitId, true)
                     }
                 }
             }

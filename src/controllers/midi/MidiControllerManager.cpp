@@ -87,15 +87,12 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, ControlClock
 
     autoOpenFlx10MidiOutputIfNeeded();
 
-    // ~2.8 Hz pulse for the FX ON button while the effect is engaged.
-    m_beatFxBlinkTimer.setInterval(180);
-    connect(&m_beatFxBlinkTimer, &QTimer::timeout, this, [this]()
-    {
-        if (m_shutdownComplete.load(std::memory_order_acquire))
-            return;
-        m_beatFxBlinkOn = !m_beatFxBlinkOn;
-        sendMappedNoteLed(QStringLiteral("beat_fx_on"), m_beatFxBlinkOn);
-    });
+    // The FX ON lamp is held steady while the effect is engaged instead of
+    // being pulsed. A pulse meant a lamp write every 180 ms for as long as FX
+    // was on, and every one of those writes is a chance for the controller to
+    // loop it back in as a phantom press. Steady also reads unambiguously: the
+    // button is lit exactly while the unit is engaged.
+    m_beatFxBlinkTimer.stop();
 
     m_startupRefreshTimer.setSingleShot(true);
     connect(&m_startupRefreshTimer, &QTimer::timeout, this, [this]()

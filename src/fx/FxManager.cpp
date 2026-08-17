@@ -139,6 +139,48 @@ void FxManager::setWetDry(int unitId, float amount)
     else             setWetDry2(amount);
 }
 
+bool FxManager::unitEnabled(int unitId) const
+{
+    return (unitId == 1 || unitId == 2) && m_unitEnabled[unitId - 1];
+}
+
+float FxManager::effectiveWetDry(int unitId) const
+{
+    if (unitId != 1 && unitId != 2)
+        return 0.0f;
+    return m_unitEnabled[unitId - 1] ? (unitId == 1 ? m_wetDry1 : m_wetDry2)
+                                     : 0.0f;
+}
+
+void FxManager::setUnitEnabled(int unitId, bool enabled)
+{
+    if (unitId != 1 && unitId != 2)
+        return;
+    const int idx = unitId - 1;
+    if (m_unitEnabled[idx] == enabled)
+        return;
+
+    m_unitEnabled[idx] = enabled;
+
+    // Engaging a unit whose mix is still at zero would be inaudible, and an
+    // effect you cannot hear reads as a switch that did not take. Lift it to a
+    // usable amount; the mix knob (on screen or on the controller) overrides
+    // this the moment it is touched.
+    float& amount = (unitId == 1) ? m_wetDry1 : m_wetDry2;
+    if (enabled && amount <= kAudibleWetDryEpsilon) {
+        amount = kDefaultEngagedWetDry;
+        if (unitId == 1) emit wetDry1Changed();
+        else             emit wetDry2Changed();
+    }
+
+    if (unitId == 1) emit enabled1Changed();
+    else             emit enabled2Changed();
+
+    const QString& type = (unitId == 1) ? m_effectType1 : m_effectType2;
+    routeToEngines(unitId, effectTypeFromString(type), effectiveWetDry(unitId));
+    pushSyncedDelay(unitId);
+}
+
 void FxManager::setDeckAssignment(int unitId, int deck, bool active)
 {
     if (unitId < 1 || unitId > 2 || deck < 1 || deck > 4)
@@ -171,7 +213,7 @@ void FxManager::setDeckAssignment(int unitId, int deck, bool active)
             target->setFxSlotExternalDelayTime(unitId, -1.f);
         } else {
             const QString& et  = (unitId == 1) ? m_effectType1    : m_effectType2;
-            const float    wd  = (unitId == 1) ? m_wetDry1        : m_wetDry2;
+            const float    wd  = effectiveWetDry(unitId);
             const float    pp  = m_primaryParam[unitId - 1];
             target->setFxSlotEffectType(unitId, effectTypeFromString(et));
             target->setFxSlotWetDry(unitId, wd);
@@ -406,7 +448,7 @@ void FxManager::setEffectType1(const QString& type)
     if (m_effectType1 == type) return;
     m_effectType1 = type;
     emit effectType1Changed();
-    routeToEngines(1, effectTypeFromString(type), m_wetDry1);
+    routeToEngines(1, effectTypeFromString(type), effectiveWetDry(1));
 }
 
 void FxManager::setWetDry1(float amount)
@@ -414,7 +456,12 @@ void FxManager::setWetDry1(float amount)
     if (qFuzzyCompare(m_wetDry1, amount)) return;
     m_wetDry1 = amount;
     emit wetDry1Changed();
-    routeToEngines(1, effectTypeFromString(m_effectType1), amount);
+    // The mix amount never engages the unit on its own. A hardware LEVEL knob
+    // streams its resting position whenever the controller reports state, so an
+    // implicit engage here made the unit switch itself on unasked — visible as
+    // the FX button lighting up with nobody touching it. Engaging is always an
+    // explicit setUnitEnabled() from a button or the on-screen panel.
+    routeToEngines(1, effectTypeFromString(m_effectType1), effectiveWetDry(1));
 }
 
 void FxManager::setDeck1A(bool active)
@@ -452,7 +499,7 @@ void FxManager::setEffectType2(const QString& type)
     if (m_effectType2 == type) return;
     m_effectType2 = type;
     emit effectType2Changed();
-    routeToEngines(2, effectTypeFromString(type), m_wetDry2);
+    routeToEngines(2, effectTypeFromString(type), effectiveWetDry(2));
 }
 
 void FxManager::setWetDry2(float amount)
@@ -460,7 +507,8 @@ void FxManager::setWetDry2(float amount)
     if (qFuzzyCompare(m_wetDry2, amount)) return;
     m_wetDry2 = amount;
     emit wetDry2Changed();
-    routeToEngines(2, effectTypeFromString(m_effectType2), amount);
+    // See setWetDry1: the amount is never allowed to engage the unit.
+    routeToEngines(2, effectTypeFromString(m_effectType2), effectiveWetDry(2));
 }
 
 void FxManager::setDeck2A(bool active)

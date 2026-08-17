@@ -22,6 +22,12 @@ class FxManager : public QObject
     // ── Per-unit properties (unit 1) ─────────────────────────────────────────
     Q_PROPERTY(QString effectType1  READ effectType1  WRITE setEffectType1  NOTIFY effectType1Changed)
     Q_PROPERTY(float   wetDry1      READ wetDry1      WRITE setWetDry1      NOTIFY wetDry1Changed)
+    // Whether the unit is engaged. Deliberately separate from wetDry: an
+    // engaged unit sitting at 0 % mix is silent but still on, which is what a
+    // hardware FX ON button plus a LEVEL knob at zero means. Deriving the
+    // on-state from the mix amount instead made the button appear to switch
+    // itself back off the moment the amount happened to be zero.
+    Q_PROPERTY(bool    enabled1     READ enabled1                           NOTIFY enabled1Changed)
     Q_PROPERTY(bool    deck1A       READ deck1A       WRITE setDeck1A       NOTIFY deck1AChanged)
     Q_PROPERTY(bool    deck1B       READ deck1B       WRITE setDeck1B       NOTIFY deck1BChanged)
     Q_PROPERTY(bool    deck1C       READ deck1C       WRITE setDeck1C       NOTIFY deck1CChanged)
@@ -33,6 +39,7 @@ class FxManager : public QObject
     // ── Per-unit properties (unit 2) ─────────────────────────────────────────
     Q_PROPERTY(QString effectType2  READ effectType2  WRITE setEffectType2  NOTIFY effectType2Changed)
     Q_PROPERTY(float   wetDry2      READ wetDry2      WRITE setWetDry2      NOTIFY wetDry2Changed)
+    Q_PROPERTY(bool    enabled2     READ enabled2                           NOTIFY enabled2Changed)
     Q_PROPERTY(bool    deck2A       READ deck2A       WRITE setDeck2A       NOTIFY deck2AChanged)
     Q_PROPERTY(bool    deck2B       READ deck2B       WRITE setDeck2B       NOTIFY deck2BChanged)
     Q_PROPERTY(bool    deck2C       READ deck2C       WRITE setDeck2C       NOTIFY deck2CChanged)
@@ -113,6 +120,13 @@ public:
     float  primaryParam1() const { return m_primaryParam[0]; }
     float  primaryParam2() const { return m_primaryParam[1]; }
 
+    bool enabled1() const { return m_unitEnabled[0]; }
+    bool enabled2() const { return m_unitEnabled[1]; }
+    /// Engage / disengage a unit without touching its mix amount, so switching
+    /// it back on restores the amount the user had dialled in.
+    Q_INVOKABLE void setUnitEnabled(int unitId, bool enabled);
+    Q_INVOKABLE [[nodiscard]] bool unitEnabled(int unitId) const;
+
     // ── QML-callable API ─────────────────────────────────────────────────────
     Q_INVOKABLE void setEffectType(int unitId, const QString& type);
     Q_INVOKABLE void setWetDry(int unitId, float amount);
@@ -147,6 +161,8 @@ signals:
     void displayBpm2Changed();
     void primaryParam1Changed();
     void primaryParam2Changed();
+    void enabled1Changed();
+    void enabled2Changed();
 
     void soundColorModeChanged();
     void soundColorParamChanged();
@@ -182,10 +198,23 @@ private:
     bool    m_deck2C      { false };
     bool    m_deck2D      { false };
 
+    // ── Engage state ─────────────────────────────────────────────────────────
+    // One canonical flag per unit. Everything that asks "is FX on?" — the QML
+    // panel, the controller LED, the audio routing — reads this, so there is no
+    // second derived answer that can disagree with it.
+    bool m_unitEnabled[2] { false, false };
+    // Mix amount used when a unit is engaged with its own amount still at zero.
+    // Engaging into silence is indistinguishable from the switch not working.
+    static constexpr float kDefaultEngagedWetDry = 0.5f;
+    static constexpr float kAudibleWetDryEpsilon = 0.001f;
+
     // Convert QML string name → EffectType enum
     static EffectType effectTypeFromString(const QString& name);
     // Forward effect type + wetDry to all assigned engines for a unit
     void routeToEngines(int unitId, EffectType type, float wetDry);
+    // What the engines should actually hear: the dialled amount when engaged,
+    // silence when not.
+    [[nodiscard]] float effectiveWetDry(int unitId) const;
 
     // ── BPM sync state ────────────────────────────────────────────────────────
     bool   m_syncEnabled[2]   { false, false };

@@ -4,6 +4,7 @@
 
 #if defined(Q_OS_LINUX)
 #include "AlsaMidiInput.h"
+#include "AlsaMidiLineParser.h"
 #include "AlsaMidiOutput.h"
 #endif
 
@@ -11,6 +12,7 @@
 #include "app/ControlClock.h"
 #include "controllers/flx10/Flx10JogRouter.h"
 #include "Midi14BitAccumulator.h"
+#include "MidiEchoGuard.h"
 
 #include <QObject>
 #include <QPointer>
@@ -216,7 +218,11 @@ private:
     int m_beatFxPosition = 1;
     MidiBeatFxTarget m_beatFxTarget = MidiBeatFxTarget::DeckA;
     bool m_applyingBeatFxRouting = false;
-    bool m_applyingBeatFxWet = false;
+    // Whether the physical LEVEL/DEPTH knob has reported a position yet. Until
+    // it has, its resting value is unknown and must not be taken as "the user
+    // asked for zero mix" — engaging with that would switch the effect on
+    // inaudibly, which is indistinguishable from it not switching on at all.
+    bool m_beatFxDepthFromKnob = false;
     float m_beatFxDivision = 0.25f;   // 1/4 beat, the usual power-up default
     QTimer m_beatFxBlinkTimer;
     bool m_beatFxBlinkOn = false;
@@ -232,6 +238,10 @@ private:
     // Reverse Mapping for Output: Parameter ID -> Midi Note/CC Number
     std::map<QString, int> m_paramToMidi;
     std::map<int, int> m_lastMidiShortValues;
+    // Keeps this application's own lamp writes from being read back in as
+    // button presses. Shared by every input path, so it also covers the plain
+    // JUCE inputs, not just the ALSA monitors.
+    midi_internal::MidiOutputEchoGuard m_outputEchoGuard;
 
     // Available device identifiers and names
     std::vector<juce::String> m_availableInputDeviceIdentifiers;
@@ -292,6 +302,9 @@ private:
     std::map<QProcess*, QString> m_alsaMonitorBuffers;
     std::map<QString, int> m_alsaFaderSourceLogCounts;
     QString m_primaryAlsaInputPort;
+    // Drops the second copy of a button event that the controller mirrors onto
+    // more than one of its ALSA ports; without it every press counts twice.
+    midi_internal::AlsaCrossPortButtonFilter m_alsaButtonDuplicates;
 #endif
 
     bool refreshMidiDeviceCache();
@@ -354,7 +367,12 @@ private:
     // Monitoring LEDs (MASTER CUE) mirror the engine, which may already have
     // been switched on from the UI before the controller was plugged in.
     void refreshMixerLeds();
-    void applyBeatFxState();
+    // Whether an FX update may change the unit's engage state. Only the BEAT FX
+    // ON button may (Write); everything else — effect selector, routing channel,
+    // level knob, beat division — has to leave "is FX on?" exactly as the user
+    // set it, wherever they set it (Follow).
+    enum class BeatFxEngage { Follow, Write };
+    void applyBeatFxState(BeatFxEngage engage = BeatFxEngage::Follow);
     void refreshFxLeds();
     // Beat-synced timing for the hardware FX unit: turns the current beat
     // division into an echo/delay length and pushes it to whatever the unit is

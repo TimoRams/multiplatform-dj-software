@@ -256,7 +256,7 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
         || port == m_primaryAlsaInputPort;
     if (directInput->open(
             id,
-            [this, primaryFaderSource](const AlsaMidiInputEvent& event)
+            [this, primaryFaderSource, port](const AlsaMidiInputEvent& event)
             {
                 if (m_shutdownComplete.load(std::memory_order_acquire))
                     return;
@@ -279,6 +279,15 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                     noteOff = type == 0x80 || event.data2 == 0;
                     rawValue = noteOff
                         ? 0.0f : static_cast<float>(event.data2) / 127.0f;
+                    // The controller mirrors buttons across its ports, and each
+                    // port is opened separately here, so one press would
+                    // otherwise be counted once per port — a latching action
+                    // like BEAT FX ON switched on and immediately off again.
+                    if (!m_alsaButtonDuplicates.accept(
+                            port, msgId, noteOff ? 0 : event.data2,
+                            event.timestampSeconds)) {
+                        return;
+                    }
                 } else if (type == 0xE0) {
                     msgId = 10000 + channel * 2000 + 1500;
                     rawValue = static_cast<float>(
@@ -468,9 +477,18 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                                      << "msgId:" << msgId
                                      << "raw:" << line;
                         }
-                        processDecodedMidiEvent(
-                            msgId, zeroVelocity ? 0.0f : vel / 127.0f, zeroVelocity,
-                            juce::Time::getMillisecondCounterHiRes() * 0.001);
+                        const double eventSeconds =
+                            juce::Time::getMillisecondCounterHiRes() * 0.001;
+                        // Buttons only. The same guard is not put on CC because a
+                        // jog encoder legitimately repeats a value and the faders
+                        // already have their own primary-port rule.
+                        if (m_alsaButtonDuplicates.accept(port, msgId,
+                                                          zeroVelocity ? 0 : vel,
+                                                          eventSeconds)) {
+                            processDecodedMidiEvent(
+                                msgId, zeroVelocity ? 0.0f : vel / 127.0f,
+                                zeroVelocity, eventSeconds);
+                        }
                     }
                 } else if ((line.contains("Pitchbend", Qt::CaseInsensitive) ||
                             line.contains("Pitch bend", Qt::CaseInsensitive)) &&
@@ -559,6 +577,7 @@ void MidiControllerManager::stopAlsaInputMonitor()
     m_alsaInputMonitors.clear();
     m_alsaMonitorBuffers.clear();
     m_alsaFaderSourceLogCounts.clear();
+    m_alsaButtonDuplicates.clear();
 #endif
 }
 
