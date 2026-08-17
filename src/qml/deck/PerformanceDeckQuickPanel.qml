@@ -23,6 +23,9 @@ Rectangle {
     readonly property color rowColor: "#1B1F23"
     readonly property color accentColor: "#168FC4"
     readonly property color playingColor: "#E99128"
+    readonly property bool externalSourceTrack: engine && engine.hasTrack
+                                                && engine.readOnlyExternalTrack
+    readonly property color sourceColor: externalSourceTrack ? accentColor : "#4DD98A"
 
     // Ejecting mid-playback would cut the output, so the button only arms once
     // the deck is stopped — paused, or sitting at the end of the track.
@@ -40,6 +43,25 @@ Rectangle {
         var bpm = engine.currentBpm > 0 ? engine.currentBpm : 120
         position = Math.max(0, Math.min(engine.trackDurationSec, position + beats * 60 / bpm))
         engine.setPosition(position / engine.trackDurationSec)
+    }
+
+    function loadedSourceLabel() {
+        if (!engine || !engine.hasTrack)
+            return "NO SOURCE"
+        if (!engine.readOnlyExternalTrack)
+            return "LOCAL"
+
+        var sourceId = engine.externalSourceId || ""
+        if (typeof deviceLibraryManager !== "undefined" && deviceLibraryManager) {
+            var devices = deviceLibraryManager.devices
+            for (var index = 0; index < devices.length; ++index) {
+                var device = devices[index]
+                if (String(device.id) === String(sourceId))
+                    return "USB " + (index + 1)
+                           + (device.name ? " · " + device.name : "")
+            }
+        }
+        return "USB"
     }
 
     ColumnLayout {
@@ -145,15 +167,15 @@ Rectangle {
                 spacing: 3
                 Text {
                     width: parent.width
-                    text: root.engine && root.engine.hasTrack ? root.engine.trackTitle : "NO TRACK"
-                    color: root.engine && root.engine.hasTrack ? root.panelText : root.mutedText
-                    font.pixelSize: 12; font.weight: Font.DemiBold
-                    elide: Text.ElideRight
+                    text: "SOURCE"
+                    color: root.mutedText
+                    font.pixelSize: 9; font.weight: Font.DemiBold; font.letterSpacing: 0.7
                 }
                 Text {
                     width: parent.width
-                    text: root.engine && root.engine.trackArtist !== "" ? root.engine.trackArtist : "—"
-                    color: root.mutedText; font.pixelSize: 10
+                    text: root.loadedSourceLabel()
+                    color: root.engine && root.engine.hasTrack ? root.sourceColor : root.mutedText
+                    font.pixelSize: 12; font.weight: Font.DemiBold
                     elide: Text.ElideRight
                 }
             }

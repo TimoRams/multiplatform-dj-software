@@ -79,6 +79,7 @@ class DjEngine : public QObject
     Q_PROPERTY(QVariantList currentSegments READ currentSegments NOTIFY segmentsChanged)
     Q_PROPERTY(QVariantList memoryCues READ memoryCues NOTIFY memoryCuesChanged)
     Q_PROPERTY(bool readOnlyExternalTrack READ readOnlyExternalTrack NOTIFY trackMetadataChanged)
+    Q_PROPERTY(QString externalSourceId READ externalSourceId NOTIFY trackMetadataChanged)
 
     Q_PROPERTY(double waveformPointsPerSecond READ waveformPointsPerSecond CONSTANT)
     Q_PROPERTY(double preRollSeconds READ getPreRollSeconds CONSTANT)
@@ -282,6 +283,7 @@ public:
     [[nodiscard]] QVariantList currentSegments() const { return m_currentSegments; }
     [[nodiscard]] QVariantList memoryCues() const { return m_memoryCues; }
     [[nodiscard]] bool readOnlyExternalTrack() const { return m_readOnlyExternalTrack; }
+    [[nodiscard]] QString externalSourceId() const { return m_externalSourceId; }
     [[nodiscard]] double  getTempoPercent() const { return m_tempoPercent; }
     [[nodiscard]] double  tempoRangePercent() const { return m_tempoRangePercent; }
     // Beat phase: 0.0 = on the beat, 0.5 = halfway between beats, approaches 1.0 just before the next beat.

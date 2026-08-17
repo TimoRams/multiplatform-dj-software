@@ -273,9 +273,11 @@ int main()
                       != std::string::npos
                   && waveformScreen.find("Behavior on x") == std::string::npos,
                   "collapsed performance panels do not lag into view while resizing");
-    ok &= require(deckQuickPanel.find("root.engine.trackTitle") != std::string::npos
-                  && deckQuickPanel.find("root.engine.trackArtist") != std::string::npos,
-                  "compact deck side panel shows real song information");
+    ok &= require(deckQuickPanel.find("function loadedSourceLabel()") != std::string::npos
+                  && deckQuickPanel.find("engine.externalSourceId") != std::string::npos
+                  && deckQuickPanel.find("deviceLibraryManager.devices") != std::string::npos
+                  && deckQuickPanel.find("text: \"SOURCE\"") != std::string::npos,
+                  "compact deck side panel shows the loaded Local or USB source");
     // The neighbouring beat lengths are shown either side of the current one and
     // are selectable directly, the way a player prints them.
     ok &= require(beatFxPanel.find("function setDivisionIndex(index)") != std::string::npos

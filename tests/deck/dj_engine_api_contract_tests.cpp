@@ -41,7 +41,7 @@ int main(int argc, char** argv)
     for (const char* property : std::array {
              "progress", "isPlaying", "tempoPercent", "trackData", "syncEnabled",
              "loopActive", "volume", "hotCues", "savedLoops", "beatgridLocked",
-             "readOnlyExternalTrack" })
+             "readOnlyExternalTrack", "externalSourceId" })
         ok &= require(header.contains(QString::fromUtf8(property)), property);
     for (const char* method : std::array {
              "loadTrack", "play", "pause", "setPosition", "setTempoPercent",
