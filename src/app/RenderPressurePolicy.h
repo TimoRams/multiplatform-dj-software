@@ -50,11 +50,11 @@ public:
 
     [[nodiscard]] static constexpr Tier targetTier(Sample sample) noexcept
     {
-        if (!sample.applicationActive || sample.windowMinimized)
+        if (sample.windowMinimized)
             return Tier::Suspended;
         if (sample.callbackOverrun || sample.hardwareXrun || sample.callbackLoad >= 0.85)
             return Tier::Critical;
-        if (sample.callbackLoad >= 0.65)
+        if (!sample.applicationActive || sample.callbackLoad >= 0.65)
             return Tier::Elevated;
         return Tier::Normal;
     }

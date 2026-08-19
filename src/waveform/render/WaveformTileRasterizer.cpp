@@ -75,14 +75,25 @@ std::size_t rasterWorkerCount() noexcept
     if (hardwareThreads <= 2)
         return 1;
     return std::min(globalRasterWorkerLimit(),
-                    std::clamp<std::size_t>(hardwareThreads / 2, 2, 8));
+                    std::clamp<std::size_t>(hardwareThreads / 2, 2, 10));
+}
+
+int rasterWorkerNiceLevel() noexcept
+{
+    bool ok = false;
+    const int configured = qEnvironmentVariableIntValue(
+        "BROCKDJ_WAVEFORM_RASTER_NICE", &ok);
+    // Workers still stay below the realtime callback thread; this just keeps
+    // them from being starved under foreground GUI pressure.
+    return std::clamp(ok ? configured : 4, 0, 19);
 }
 
 void lowerCurrentThreadPriority()
 {
 #ifdef __linux__
     const pid_t tid = static_cast<pid_t>(syscall(SYS_gettid));
-    (void)setpriority(PRIO_PROCESS, static_cast<id_t>(tid), 10);
+    (void)setpriority(PRIO_PROCESS, static_cast<id_t>(tid),
+                      rasterWorkerNiceLevel());
 #endif
 }
 

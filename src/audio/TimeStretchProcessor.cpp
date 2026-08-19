@@ -488,7 +488,8 @@ void TimeStretchProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
         const double blockMicros = rate > 0.0 ? 1.0e6 * info.numSamples / rate : 0.0;
         const auto measuredSeedMicros = m_worstSeedMicros.load(std::memory_order_relaxed);
         // Until a seed has ever been measured, assume it does not fit.
-        const bool inlineAffordable = measuredSeedMicros > 0
+        const bool inlineAffordable = info.numSamples >= kMinimumInlineSeedBlockSamples
+            && measuredSeedMicros > 0
             && static_cast<double>(measuredSeedMicros) * kSeedBudgetHeadroom <= blockMicros;
         const int bridgeLimit = static_cast<int>(rate * kMaximumSeedBridgeSeconds);
         const bool bridgeAffordable = !inlineAffordable
@@ -500,13 +501,14 @@ void TimeStretchProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
             // requestKeylockSeed fails when there is nothing to seek (Rubber
             // Band) or the worker is gone; either way the audio thread still
             // owns the pipeline and takes the transition inline.
-            bridge = bridgeAffordable && requestKeylockSeed(active);
+            bridge = requestKeylockSeed(active);
             break;
         case SeedState::Ready:
             // A seed for a slot that has since been swapped out is useless.
             seeded = m_seedSlot.load(std::memory_order_relaxed) == active;
-            bridge = !seeded && bridgeAffordable;
             m_seedState.store(SeedState::Idle, std::memory_order_release);
+            if (!seeded)
+                bridge = requestKeylockSeed(active);
             break;
         case SeedState::Requested: {
             // Not picked up yet, so ownership can still be taken back once
@@ -526,6 +528,17 @@ void TimeStretchProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
         if (bridge) {
             m_seedBridgeSamples += info.numSamples;
             m_seedBridgeBlocks.fetch_add(1, std::memory_order_relaxed);
+            renderDirect();
+            return;
+        }
+
+        if (!seeded && !inlineAffordable) {
+            // Never run a Signalsmith seed in small realtime buffers: occasional
+            // scheduler jitter can still turn an "average-safe" micro-burst into
+            // an audible crackle. Keep bridging and wake the worker again.
+            m_seedBridgeSamples += info.numSamples;
+            m_seedBridgeBlocks.fetch_add(1, std::memory_order_relaxed);
+            wakeWorker();
             renderDirect();
             return;
         }

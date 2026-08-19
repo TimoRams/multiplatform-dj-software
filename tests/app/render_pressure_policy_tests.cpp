@@ -13,7 +13,7 @@ int main()
     assert(Policy::targetTier({.callbackLoad = 0.85}) == Policy::Tier::Critical);
     assert(Policy::targetTier({.callbackOverrun = true}) == Policy::Tier::Critical);
     assert(Policy::targetTier({.hardwareXrun = true}) == Policy::Tier::Critical);
-    assert(Policy::targetTier({.applicationActive = false}) == Policy::Tier::Suspended);
+    assert(Policy::targetTier({.applicationActive = false}) == Policy::Tier::Elevated);
     assert(Policy::targetTier({.windowMinimized = true}) == Policy::Tier::Suspended);
 
     std::cout << "Render-pressure policy tests passed\n";

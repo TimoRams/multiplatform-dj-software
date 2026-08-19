@@ -81,6 +81,11 @@ public:
     // to spare, so several decks can transition in the same block without the
     // device deadline being at risk.
     static constexpr double kSeedBudgetHeadroom = 4.0;
+    // For small realtime buffers (64..1024) even "affordable" seed spikes are
+    // jitter-prone under real scheduler noise. Keep those transitions worker-
+    // seeded and bridge briefly on the direct path instead of risking callback
+    // overrun crackle.
+    static constexpr int kMinimumInlineSeedBlockSamples = 2048;
     // Upper bound on how long playback may run unlocked while the worker seeds.
     static constexpr double kMaximumSeedBridgeSeconds = 0.03;
 

@@ -93,10 +93,7 @@ void RenderPressurePolicy::setApplicationActive(bool active)
         return;
     m_applicationActive = active;
     m_cleanSamples = 0;
-    if (!active)
-        setTier(Tier::Suspended);
-    else
-        setTier(currentTargetTier());
+    setTier(currentTargetTier());
 }
 
 void RenderPressurePolicy::setWindowMinimized(bool minimized)

@@ -119,7 +119,14 @@ The playback cache uses `512` MiB by default on systems with at least 16 GiB RAM
 BROCKDJ_AUDIO_CACHE_MB=512 ./build/bin/BrockDJ
 ```
 
-Detailed waveform rasterization uses a process-wide CPU budget that reserves cores for audio, Qt, and the GPU driver. On a high-core system it scales one active deck to up to eight workers and all decks to twelve concurrent workers. Use `BROCKDJ_WAVEFORM_RASTER_WORKERS=1..12` only to override that global limit for profiling.
+Detailed waveform rasterization uses a process-wide CPU budget that reserves cores for audio, Qt, and the GPU driver. On a high-core system it scales one active deck to up to ten workers and all decks to twelve concurrent workers. Use `BROCKDJ_WAVEFORM_RASTER_WORKERS=1..12` only to override that global limit for profiling.
+
+Waveform rendering now raises its per-frame texture-upload budget dynamically when ready tiles are repeatedly deferred, then relaxes again once demand drops. For profiling or hardware-specific tuning you can override:
+
+- `BROCKDJ_WAVEFORM_UPLOAD_BUDGET_MB` (initial per-frame upload budget, default `2`)
+- `BROCKDJ_WAVEFORM_UPLOAD_BUDGET_MAX_MB` (ceiling for adaptive growth, default `8`)
+- `BROCKDJ_WAVEFORM_PROGRESSIVE_UPDATE_MS` (progressive geometry coalescing interval, default `33`)
+- `BROCKDJ_WAVEFORM_RASTER_NICE` (Linux worker nice level, default `4`, range `0..19`)
 
 For an existing checkout, initialize the exact pinned submodule revisions before building:
 

@@ -104,8 +104,54 @@ void logDesktopWaveformComparison(const WaveformLineStoreSnapshot& snapshot,
 constexpr std::size_t kWaveformNodePoolSize = 24;
 constexpr std::size_t kCueLabelNodePoolSize = 9;
 constexpr std::size_t kDownbeatLabelNodePoolSize = 48;
-constexpr std::uint64_t kMaximumTextureUploadBytesPerFrame = 2ull * 1024ull * 1024ull;
+constexpr std::uint64_t kDefaultTextureUploadBudgetBytesPerFrame =
+    2ull * 1024ull * 1024ull;
+constexpr std::uint64_t kMaximumTextureUploadBudgetBytesPerFrame =
+    8ull * 1024ull * 1024ull;
+constexpr std::uint64_t kTextureUploadBudgetStepBytesPerFrame =
+    1ull * 1024ull * 1024ull;
 constexpr int kVerticesPerFeatheredLine = 18;
+
+std::uint64_t textureUploadBudgetFromEnv(const char* variable,
+                                         std::uint64_t fallbackBytes,
+                                         std::uint64_t minimumBytes,
+                                         std::uint64_t maximumBytes)
+{
+    bool ok = false;
+    const int mib = qEnvironmentVariableIntValue(variable, &ok);
+    if (!ok || mib <= 0)
+        return fallbackBytes;
+    const auto bytes = static_cast<std::uint64_t>(mib) * 1024ull * 1024ull;
+    return std::clamp<std::uint64_t>(bytes, minimumBytes, maximumBytes);
+}
+
+std::uint64_t initialTextureUploadBudgetBytesPerFrame() noexcept
+{
+    static const auto budget = textureUploadBudgetFromEnv(
+        "BROCKDJ_WAVEFORM_UPLOAD_BUDGET_MB",
+        kDefaultTextureUploadBudgetBytesPerFrame,
+        1ull * 1024ull * 1024ull,
+        kMaximumTextureUploadBudgetBytesPerFrame);
+    return budget;
+}
+
+std::uint64_t maximumTextureUploadBudgetBytesPerFrame() noexcept
+{
+    static const auto budget = textureUploadBudgetFromEnv(
+        "BROCKDJ_WAVEFORM_UPLOAD_BUDGET_MAX_MB",
+        kMaximumTextureUploadBudgetBytesPerFrame,
+        initialTextureUploadBudgetBytesPerFrame(),
+        32ull * 1024ull * 1024ull);
+    return budget;
+}
+
+int progressiveDataUpdateIntervalMs() noexcept
+{
+    bool ok = false;
+    const int configured = qEnvironmentVariableIntValue(
+        "BROCKDJ_WAVEFORM_PROGRESSIVE_UPDATE_MS", &ok);
+    return std::clamp(ok ? configured : 33, 16, 250);
+}
 
 QSGGeometryNode* makeLineNode(QSGNode* parent)
 {
@@ -771,6 +817,9 @@ ScrollingWaveformItem::ScrollingWaveformItem(QQuickItem* parent)
     : QQuickItem(parent)
 {
     setFlag(ItemHasContents, true);
+    m_textureUploadBudgetBytesPerFrame = initialTextureUploadBudgetBytesPerFrame();
+    m_textureUploadBudgetBytes.store(
+        m_textureUploadBudgetBytesPerFrame, std::memory_order_relaxed);
     m_tileRasterizer = std::make_unique<waveform_render::WaveformTileRasterizer>(
         [this] {
             m_tilesReady.store(true, std::memory_order_release);
@@ -782,10 +831,10 @@ ScrollingWaveformItem::ScrollingWaveformItem(QQuickItem* parent)
     // The playhead itself is a VSync transform and stays at full frame rate.
     // Progressive analysis only changes the underlying geometry; rebuilding it
     // at 60 Hz competes with that transform and produces visible frame drops.
-    // Progressive textures are informational while analysis is running. 15 Hz
-    // is visually continuous for their fill-in, while playback/scratch motion
-    // remains a full-rate scene-graph transform and never waits for raster work.
-    m_dataUpdateThrottle->setInterval(66);
+    // Progressive textures are informational while analysis is running. They
+    // are coalesced to a lower rate than playback transforms so scene-graph
+    // motion remains fluid even while many chunks are streaming in.
+    m_dataUpdateThrottle->setInterval(progressiveDataUpdateIntervalMs());
     connect(m_dataUpdateThrottle, &QTimer::timeout, this, [this]() {
         // A progressive chunk changes only the audio-line nodes. Rebuilding
         // beat/cue geometry here made the one-pixel beatgrid lines blink while
@@ -1206,13 +1255,14 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         std::size_t usedPoolSlots = 0;
         std::uint64_t textureUploadBytesThisFrame = 0;
         bool textureUploadDeferred = false;
+        const auto uploadBudgetBytes = m_textureUploadBudgetBytesPerFrame;
         const auto canUploadTexture = [&](std::uint64_t bytes) {
             // Always permit the first texture so an unusually large fallback
             // image cannot remain permanently deferred on a high-DPI display.
             return textureUploadBytesThisFrame == 0
-                || bytes <= kMaximumTextureUploadBytesPerFrame
+                || bytes <= uploadBudgetBytes
                     - std::min(textureUploadBytesThisFrame,
-                               kMaximumTextureUploadBytesPerFrame);
+                               uploadBudgetBytes);
         };
 
         const auto overviewSnapshot = trackData->getOverviewRgbSnapshot();
@@ -1514,6 +1564,35 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             QMetaObject::invokeMethod(this, [this] { update(); },
                                       Qt::QueuedConnection);
         }
+        const auto maximumUploadBudget = maximumTextureUploadBudgetBytesPerFrame();
+        if (textureUploadDeferred) {
+            m_underusedTextureBudgetFrames = 0;
+            if (m_textureUploadBudgetBytesPerFrame < maximumUploadBudget
+                && textureUploadBytesThisFrame * 4 >= uploadBudgetBytes * 3) {
+                m_textureUploadBudgetBytesPerFrame = std::min(
+                    maximumUploadBudget,
+                    m_textureUploadBudgetBytesPerFrame
+                        + kTextureUploadBudgetStepBytesPerFrame);
+                m_textureUploadBudgetIncreases.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        } else if (m_textureUploadBudgetBytesPerFrame
+                       > initialTextureUploadBudgetBytesPerFrame()) {
+            if (textureUploadBytesThisFrame * 4 < uploadBudgetBytes) {
+                ++m_underusedTextureBudgetFrames;
+            } else {
+                m_underusedTextureBudgetFrames = 0;
+            }
+            if (m_underusedTextureBudgetFrames >= 45) {
+                m_underusedTextureBudgetFrames = 0;
+                m_textureUploadBudgetBytesPerFrame = std::max(
+                    initialTextureUploadBudgetBytesPerFrame(),
+                    m_textureUploadBudgetBytesPerFrame
+                        - kTextureUploadBudgetStepBytesPerFrame);
+            }
+        }
+        m_textureUploadBudgetBytes.store(
+            m_textureUploadBudgetBytesPerFrame, std::memory_order_relaxed);
 
         // Every timeline layer uses the same persistent origin. Replacing an
         // off-screen waveform chunk therefore cannot change the pixel phase of
@@ -1850,6 +1929,12 @@ QVariantMap ScrollingWaveformItem::renderStats() const
     stats.insert(QStringLiteral("deferredTextureUploads"),
                  QVariant::fromValue<qulonglong>(
                      m_deferredTextureUploadCount.load(std::memory_order_relaxed)));
+    stats.insert(QStringLiteral("textureUploadBudgetBytesPerFrame"),
+                 QVariant::fromValue<qulonglong>(
+                     m_textureUploadBudgetBytes.load(std::memory_order_relaxed)));
+    stats.insert(QStringLiteral("textureUploadBudgetEscalations"),
+                 QVariant::fromValue<qulonglong>(
+                     m_textureUploadBudgetIncreases.load(std::memory_order_relaxed)));
     return stats;
 }
 
@@ -1881,4 +1966,9 @@ void ScrollingWaveformItem::resetRenderStats()
     m_worstSnapshotAcquireUsec.store(0, std::memory_order_relaxed);
     m_deferredResizeFrameCount.store(0, std::memory_order_relaxed);
     m_deferredTextureUploadCount.store(0, std::memory_order_relaxed);
+    m_textureUploadBudgetIncreases.store(0, std::memory_order_relaxed);
+    m_underusedTextureBudgetFrames = 0;
+    m_textureUploadBudgetBytesPerFrame = initialTextureUploadBudgetBytesPerFrame();
+    m_textureUploadBudgetBytes.store(
+        m_textureUploadBudgetBytesPerFrame, std::memory_order_relaxed);
 }

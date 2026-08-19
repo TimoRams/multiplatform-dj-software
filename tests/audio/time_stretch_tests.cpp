@@ -97,10 +97,17 @@ int main(){
         ok&=require(finite(b),"scratch transition finite");
         ok&=require(source.activeConfigurationGeneration()==preScratchGeneration,
                     "scratch release resumes keylock without waiting for a rebuild");
-        // A block this long has room for an inline seed, so keylock must be
-        // back in the signal path on the very first callback after release.
+        // Small buffers bridge while the worker seeds; larger buffers may still
+        // choose an inline seed. Either way keylock has to return quickly
+        // without waiting on a pipeline rebuild.
+        int scratchReleaseBlocks = 0;
+        while (source.getLatencySamples() == 0 && scratchReleaseBlocks < 64) {
+            source.getNextAudioBlock({&b,0,8192});
+            ++scratchReleaseBlocks;
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
         ok&=require(source.getLatencySamples()>0,
-                    "scratch release renders through keylock again immediately");
+                    "scratch release restores keylock after a bounded bridge");
         auto stats=source.realtimeStats();
         ok&=require(stats.prepareCallsFromAudioThread==0,"no prepare in callback");
         ok&=require(stats.resetCallsFromAudioThread==0,"no reset in callback");
@@ -124,7 +131,7 @@ int main(){
         juce::AudioBuffer<float> b(2,256);
         int blocks=0,latencyWindow=0;
         double transitionSquares=0.0; int transitionCount=0;
-        while(latencyWindow==0&&blocks<64){
+        while(latencyWindow==0&&blocks<256){
             source.getNextAudioBlock({&b,0,256}); ++blocks;
             ok&=require(finite(b),"keylock transition output finite");
             latencyWindow=source.getLatencySamples();
@@ -132,7 +139,7 @@ int main(){
                 const float value=b.getSample(0,i);
                 transitionSquares+=static_cast<double>(value)*value; ++transitionCount;
             }
-            std::this_thread::sleep_for(std::chrono::microseconds(200));
+            std::this_thread::sleep_for(std::chrono::microseconds(6000));
         }
         ok&=require(source.activeConfigurationGeneration()==generation,
                     "keylock engages on the standby pipeline for the gap check");

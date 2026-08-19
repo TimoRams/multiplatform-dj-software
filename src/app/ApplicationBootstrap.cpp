@@ -452,7 +452,10 @@ int runApplication(int argc, char *argv[])
                          AudioEngine::setOutputRouting(master, booth, headphones);
                      });
     const auto applyRuntimeBackgroundProfile = [&runtime](Qt::ApplicationState state) {
-        const bool backgroundMode = state != Qt::ApplicationActive;
+        // Keep realtime control/display ticks alive while unfocused. Hard
+        // throttling is only for truly hidden/suspended app states.
+        const bool backgroundMode = state == Qt::ApplicationHidden
+            || state == Qt::ApplicationSuspended;
         if (runtime.controlClock)
             runtime.controlClock->setBackgroundMode(backgroundMode);
         if (runtime.renderPressurePolicy)

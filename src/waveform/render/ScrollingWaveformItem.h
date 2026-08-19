@@ -139,6 +139,10 @@ private:
     std::atomic<std::uint64_t> m_worstSnapshotAcquireUsec{0};
     std::atomic<std::uint64_t> m_deferredResizeFrameCount{0};
     std::atomic<std::uint64_t> m_deferredTextureUploadCount{0};
+    std::atomic<std::uint64_t> m_textureUploadBudgetBytes{0};
+    std::atomic<std::uint64_t> m_textureUploadBudgetIncreases{0};
+    std::uint64_t m_textureUploadBudgetBytesPerFrame = 0;
+    unsigned int m_underusedTextureBudgetFrames = 0;
 
     // Keep the item clamp identical to WaveformZoomController::kMinimum.
     static constexpr float kMinimumZoom = 0.0056f;
