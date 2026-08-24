@@ -4,6 +4,7 @@
 #include "audio/AudioRouting.h"
 #include "audio/internal/ScratchResampler.h"
 #include "deck/scratch/ScratchController.h"
+#include "deck/scratch/RealtimeScratchInput.h"
 #include "deck/scratch/VirtualTurntable.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -109,6 +110,8 @@ public:
     void armScalerCrossfade() noexcept { m_crossfadeRemaining.store(kCrossfadeSamples, std::memory_order_relaxed); }
 
     void setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle) noexcept;
+    void setRealtimeScratchInput(
+        std::shared_ptr<engine::scratch::RealtimeScratchInput> input) noexcept;
     void setPlaybackSource(CachedPlaybackAudioSource* source) noexcept {
         m_playbackSource.store(source, std::memory_order_release);
     }
@@ -151,6 +154,10 @@ private:
                                 double finalCursorSeconds) noexcept;
     [[nodiscard]] bool isScratchPathActive() const noexcept;
     [[nodiscard]] double signedDeckTempoRatio() const noexcept;
+    [[nodiscard]] bool readRealtimeScratchInput(
+        engine::scratch::RealtimeScratchSnapshot& snapshot) noexcept;
+    [[nodiscard]] double decayedRealtimeVelocity(
+        const engine::scratch::RealtimeScratchSnapshot& snapshot) const noexcept;
 
     juce::OptionalScopedPointer<juce::AudioSource> m_transport;
     juce::PositionableAudioSource* m_positionableTransportSource = nullptr;
@@ -160,6 +167,13 @@ private:
     engine::scratch::ScratchController m_controller;
     engine::scratch::VirtualTurntable m_platter;
     ScratchResampler m_scratchResampler;
+    std::shared_ptr<engine::scratch::RealtimeScratchInput> m_realtimeScratchInputOwner;
+    std::atomic<engine::scratch::RealtimeScratchInput*> m_realtimeScratchInput { nullptr };
+    std::atomic<std::uint64_t> m_startScratchInputGeneration { 0 };
+    std::uint64_t m_audioScratchInputGeneration = 0;
+    std::uint64_t m_appliedRealtimeReleaseMotionSequence = 0;
+    double m_audioScratchInputAnchorSamples = 0.0;
+    engine::scratch::RealtimeScratchSnapshot m_lastRealtimeScratchSnapshot;
 
     std::atomic<double> m_deckTempoRatio { 1.0 };
     std::atomic<double> m_jogNudgeRatio { 1.0 };

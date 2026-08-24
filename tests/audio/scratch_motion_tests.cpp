@@ -339,12 +339,39 @@ int main(int argc, char** argv)
 
     const double oneXRms = renderSteadyScratchRms(cache, aliasHandle, 1.0);
     const double fourXRms = renderSteadyScratchRms(cache, aliasHandle, 4.0);
+    const double reverseFourXRms = renderSteadyScratchRms(cache, aliasHandle, -4.0);
     if (g_verbose)
         std::cout << "scratch anti-alias: 1x RMS=" << oneXRms
-                  << " 4x RMS=" << fourXRms << '\n';
+                  << " 4x RMS=" << fourXRms
+                  << " reverse 4x RMS=" << reverseFourXRms << '\n';
     require(oneXRms > 0.2, "scratch resampler preserves in-band detail at 1x");
-    require(fourXRms < oneXRms * 0.15,
+    require(fourXRms < oneXRms * 0.005,
             "scratch resampler rejects fold-back alias before 4x decimation");
+    require(reverseFourXRms < oneXRms * 0.005,
+            "scratch resampler rejects fold-back alias during fast reverse playback");
+
+    // Cover the less extreme but musically common 2x case separately. The
+    // source tone would otherwise fold from 36 kHz down to a very audible
+    // 12 kHz whistle, while at 1x it must remain essentially unfiltered.
+    const QString highBandFixture = dir.filePath("scratch-high-band.wav");
+    if (!require(writeSineFixture(highBandFixture, 18000.0),
+                 "high-band alias fixture written"))
+        return 1;
+    auto highBandHandle = cache.openTrack({highBandFixture});
+    if (!require(highBandHandle.isValid(), "high-band fixture handle valid")
+        || !require(waitResident(cache, highBandHandle),
+                    "high-band fixture resident in cache")) {
+        return 1;
+    }
+    const double highBandOneXRms = renderSteadyScratchRms(cache, highBandHandle, 1.0);
+    const double highBandTwoXRms = renderSteadyScratchRms(cache, highBandHandle, 2.0);
+    if (g_verbose)
+        std::cout << "scratch high-band: 1x RMS=" << highBandOneXRms
+                  << " 2x RMS=" << highBandTwoXRms << '\n';
+    require(highBandOneXRms > 0.2,
+            "scratch resampler retains high-frequency detail at 1x");
+    require(highBandTwoXRms < highBandOneXRms * 0.01,
+            "scratch resampler rejects audible alias at 2x");
 
     if (g_verbose)
         std::cout << "scratch motion scenarios:\n";
@@ -551,6 +578,7 @@ int main(int argc, char** argv)
         }
     }
 
+    cache.releaseTrack(highBandHandle);
     cache.releaseTrack(aliasHandle);
     cache.releaseTrack(handle);
     return g_failures == 0 ? 0 : 1;

@@ -2,6 +2,7 @@
 
 #include "ParameterStore.h"
 #include "app/SettingsManager.h"
+#include "controllers/flx10/Flx10ControllerIdentity.h"
 #include "deck/DjEngine.h"
 #include "fx/FxManager.h"
 
@@ -81,6 +82,7 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, ControlClock
         loadBrockDjXmlMapping(m_selectedMappingFile);
     else
         loadNativeMappingIfExists();
+    setNativeFlx10ScratchEnabled(flx10::isBuiltInMapping(m_selectedMappingFile));
     // Build the dispatch table before starting an input. Some controllers send
     // their current high-resolution fader state immediately on subscription.
     restoreSavedDeviceSelections();
@@ -117,6 +119,8 @@ void MidiControllerManager::shutdown()
 
     if (m_shutdownComplete.exchange(true, std::memory_order_acq_rel))
         return;
+
+    setNativeFlx10ScratchEnabled(false);
 
     // Stop feedback + Qt signal delivery before JUCE/CoreMIDI teardown — device
     // close can pump the Cocoa run loop and re-enter timer/MIDI handlers.
@@ -209,6 +213,54 @@ void MidiControllerManager::resetHighResolutionControlState()
     m_pending14BitMsbFallbacks.clear();
     m_14BitAccumulators.clear();
     m_channelFaderMsbGates.clear();
+}
+
+void MidiControllerManager::setNativeFlx10ScratchEnabled(bool enabled) noexcept
+{
+    // Close the producer gate while replacing/resetting a mapping so an event
+    // cannot land between the two deck resets and bind a half-old session.
+    m_nativeFlx10ScratchEnabled.store(false, std::memory_order_release);
+    const double now = engine::scratch::RealtimeScratchInput::clockSeconds();
+    for (auto& ingress : m_realtimeScratchIngress)
+        ingress.reset(now);
+    m_nativeFlx10ScratchEnabled.store(enabled, std::memory_order_release);
+}
+
+flx10::RealtimeIngressResult MidiControllerManager::ingestNativeFlx10ScratchMessage(
+    std::uint8_t status,
+    std::uint8_t data1,
+    std::uint8_t data2,
+    double timestampSeconds,
+    std::uint64_t sourceId) noexcept
+{
+    if (!m_nativeFlx10ScratchEnabled.load(std::memory_order_acquire))
+        return flx10::RealtimeIngressResult::Ignored;
+
+    const int messageType = status & 0xF0;
+    const int channel = status & 0x0F;
+    if (channel < 0 || channel >= static_cast<int>(m_realtimeScratchIngress.size()))
+        return flx10::RealtimeIngressResult::Ignored;
+
+    auto& ingress = m_realtimeScratchIngress[static_cast<std::size_t>(channel)];
+    const double timestamp = std::isfinite(timestampSeconds) && timestampSeconds > 0.0
+        ? timestampSeconds
+        : engine::scratch::RealtimeScratchInput::clockSeconds();
+
+    if ((messageType == 0x90 || messageType == 0x80) && data1 == 0x36) {
+        const bool pressed = messageType == 0x90 && data2 != 0;
+        return pressed ? ingress.touchDown(timestamp, sourceId)
+                       : ingress.touchUp(timestamp, sourceId);
+    }
+
+    if (messageType != 0xB0)
+        return flx10::RealtimeIngressResult::Ignored;
+
+    const double ticks = static_cast<double>(flx10::relativeTicksFromRaw(data2));
+    if (data1 == 0x22)
+        return ingress.platter(ticks, timestamp, sourceId);
+    if (data1 == 0x21)
+        return ingress.rim(ticks, timestamp, sourceId);
+    return flx10::RealtimeIngressResult::Ignored;
 }
 
 void MidiControllerManager::runControllerHousekeeping(double monotonicSeconds)

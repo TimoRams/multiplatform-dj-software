@@ -50,7 +50,7 @@ void ScratchResampler::prepareSincTable() noexcept
             / static_cast<double>(kSincCutoffBands - 1);
         // A source-domain low-pass must happen before decimation. Filtering the
         // already-resampled output cannot remove frequencies that have folded.
-        const double cutoff = 0.94 / speed;
+        const double cutoff = 0.90 / speed;
         for (int phase = 0; phase <= kSincPhaseCount; ++phase) {
             const double fraction = static_cast<double>(phase)
                 / static_cast<double>(kSincPhaseCount);
@@ -62,9 +62,18 @@ void ScratchResampler::prepareSincTable() noexcept
                 const double sinc = std::abs(sincPosition) < 1.0e-12
                     ? 1.0
                     : std::sin(pi * sincPosition) / (pi * sincPosition);
-                const double window = std::abs(distance) >= kSincRadius
+                // Four-term Blackman-Harris suppresses the metallic fold-back
+                // that a short Hann kernel leaves behind on fast scratches.
+                // Thirty-two taps plus stereo coefficient sharing keeps this
+                // stronger stop-band cheaper than evaluating the former
+                // 16-tap kernel independently for each channel.
+                const double normalizedDistance = distance / kSincRadius;
+                const double window = std::abs(normalizedDistance) >= 1.0
                     ? 0.0
-                    : 0.5 + 0.5 * std::cos(pi * distance / kSincRadius);
+                    : 0.35875
+                        + 0.48829 * std::cos(pi * normalizedDistance)
+                        + 0.14128 * std::cos(2.0 * pi * normalizedDistance)
+                        + 0.01168 * std::cos(3.0 * pi * normalizedDistance);
                 const double coefficient = cutoff * sinc * window;
                 m_sincTable[tableIndex(band, phase, tap)]
                     = static_cast<float>(coefficient);
@@ -292,25 +301,27 @@ bool ScratchResampler::ensureWindow(double rate, int outputBlockSize) noexcept
     return refillWindowFromCache(rate, outputBlockSize);
 }
 
-float ScratchResampler::readBandlimited(int channel, double position,
-                                        double rate) const noexcept
+void ScratchResampler::readBandlimitedStereo(double position, double rate,
+                                             float& left, float& right) const noexcept
 {
+    left = 0.0f;
+    right = 0.0f;
+    if (m_sourceSize <= 0 || m_sourceBuffer.getNumChannels() <= 0)
+        return;
+
     const double relativePos = position - m_bufferOriginSample;
     const int centre = static_cast<int>(std::floor(relativePos));
     const double fraction = relativePos - static_cast<double>(centre);
-    const int ch = std::min(channel, m_sourceBuffer.getNumChannels() - 1);
-
-    const auto at = [&](int idx) -> float {
-        if (m_sourceSize <= 0)
-            return 0.0f;
-
+    const float* sourceLeft = m_sourceBuffer.getReadPointer(0);
+    const float* sourceRight = m_sourceBuffer.getReadPointer(
+        std::min(1, m_sourceBuffer.getNumChannels() - 1));
+    const auto reflectedIndex = [this](int idx) noexcept {
         if (idx < 0)
             idx = -idx;
         else if (idx >= m_sourceSize)
             idx = 2 * (m_sourceSize - 1) - idx;
 
-        idx = std::clamp(idx, 0, m_sourceSize - 1);
-        return m_sourceBuffer.getSample(ch, idx);
+        return std::clamp(idx, 0, m_sourceSize - 1);
     };
 
     const double phasePosition = fraction * kSincPhaseCount;
@@ -326,25 +337,33 @@ float ScratchResampler::readBandlimited(int channel, double position,
                                  0, kSincCutoffBands - 1);
     const int band1 = std::min(band0 + 1, kSincCutoffBands - 1);
     const float bandMix = static_cast<float>(bandPosition - band0);
-    const auto tableIndex = [](int band, int phase, int tap) {
+    const auto tableBase = [](int band, int phase) {
         return (static_cast<std::size_t>(band) * (kSincPhaseCount + 1)
-                + static_cast<std::size_t>(phase)) * kSincTaps
-            + static_cast<std::size_t>(tap);
+                + static_cast<std::size_t>(phase)) * kSincTaps;
     };
+    const auto base00 = tableBase(band0, phase0);
+    const auto base01 = tableBase(band0, phase1);
+    const auto base10 = tableBase(band1, phase0);
+    const auto base11 = tableBase(band1, phase1);
+    const bool interpolateCutoffBand = band0 != band1 && bandMix > 0.0f;
 
-    float result = 0.0f;
     for (int tap = 0; tap < kSincTaps; ++tap) {
+        const auto offset = static_cast<std::size_t>(tap);
         const float band0Coefficient = std::lerp(
-            m_sincTable[tableIndex(band0, phase0, tap)],
-            m_sincTable[tableIndex(band0, phase1, tap)], phaseMix);
-        const float band1Coefficient = std::lerp(
-            m_sincTable[tableIndex(band1, phase0, tap)],
-            m_sincTable[tableIndex(band1, phase1, tap)], phaseMix);
-        const float coefficient = std::lerp(
-            band0Coefficient, band1Coefficient, bandMix);
-        result += at(centre + tap - (kSincRadius - 1)) * coefficient;
+            m_sincTable[base00 + offset],
+            m_sincTable[base01 + offset], phaseMix);
+        const float coefficient = interpolateCutoffBand
+            ? std::lerp(
+                band0Coefficient,
+                std::lerp(m_sincTable[base10 + offset],
+                          m_sincTable[base11 + offset], phaseMix),
+                bandMix)
+            : band0Coefficient;
+        const int sourceIndex = reflectedIndex(
+            centre + tap - (kSincRadius - 1));
+        left += sourceLeft[sourceIndex] * coefficient;
+        right += sourceRight[sourceIndex] * coefficient;
     }
-    return result;
 }
 
 void ScratchResampler::writeScratchOutput(float* out0, float* out1, int index,
@@ -354,8 +373,7 @@ void ScratchResampler::writeScratchOutput(float* out0, float* out1, int index,
     if (ready) {
         if (m_starvationGain <= 0.0f) m_recoveryEvents.fetch_add(1, std::memory_order_relaxed);
         m_starvationGain = std::min(1.0f, m_starvationGain + step);
-        m_lastOutputL = readBandlimited(0, m_readPos, rate);
-        m_lastOutputR = readBandlimited(1, m_readPos, rate);
+        readBandlimitedStereo(m_readPos, rate, m_lastOutputL, m_lastOutputR);
     } else {
         m_starvationGain = std::max(0.0f, m_starvationGain - step);
     }

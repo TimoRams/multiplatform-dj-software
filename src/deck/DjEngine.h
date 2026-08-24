@@ -38,6 +38,9 @@ class LibraryCoverService;
 namespace engine::sync {
 class SyncCoordinator;
 }
+namespace engine::scratch {
+class RealtimeScratchInput;
+}
 
 class DjEngine : public QObject
 {
@@ -135,6 +138,8 @@ public:
                       QObject* parent = nullptr);
     ~DjEngine() override;
     void setBackgroundOptimizationEnabled(bool enabled) noexcept;
+    void setRealtimeScratchInput(
+        std::shared_ptr<engine::scratch::RealtimeScratchInput> input) noexcept;
 
     [[nodiscard]] float getProgress() const;
     [[nodiscard]] Q_INVOKABLE float getDuration() const;

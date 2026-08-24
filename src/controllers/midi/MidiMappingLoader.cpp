@@ -163,10 +163,14 @@ void MidiControllerManager::selectMapping(const QString& mappingFileName)
     m_scratchAbsoluteLastByMsgId.clear();
     resetHighResolutionControlState();
 
+    bool loaded = mappingFileName.isEmpty();
     if (!mappingFileName.isEmpty()) {
-        if (!loadBrockDjXmlMapping(mappingFileName))
+        loaded = loadBrockDjXmlMapping(mappingFileName);
+        if (!loaded)
             qWarning() << "[MIDI] Failed to load mapping:" << mappingFileName;
     }
+    setNativeFlx10ScratchEnabled(
+        loaded && flx10::isBuiltInMapping(mappingFileName));
 
     emit mappingUpdated();
     emit mappingListUpdated();

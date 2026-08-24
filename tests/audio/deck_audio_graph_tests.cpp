@@ -6,6 +6,7 @@
 #include "audio/DeckChannelProcessor.h"
 #include "audio/RenderModeRouter.h"
 #include "audio/TimeStretchProcessor.h"
+#include "controllers/flx10/Flx10RealtimeScratchIngress.h"
 #include "deck/scratch/ScratchController.h"
 
 #include <QCoreApplication>
@@ -282,6 +283,67 @@ int main(int argc, char** argv)
     ok &= require(std::abs(static_cast<double>(graph.playback()->getNextReadPosition()) / 44'100.0
                            - flx10ReleaseCursor) < 2.0 / 44'100.0,
                   "normal reader starts at the final FLX10 scratch sample");
+
+    // Native FLX10 motion must not depend on Qt draining its event queue. Model
+    // a busy UI by publishing physical packets only to the realtime ingress: no
+    // submitHandDeltaSeconds/addTargetDeltaSeconds call is made between blocks.
+    flx10::Flx10RealtimeScratchIngress realtimeIngress;
+    graph.renderModeRouter().setRealtimeScratchInput(realtimeIngress.stream());
+    graph.setReverse(false);
+    graph.setTransportRunning(true);
+    graph.renderModeRouter().configureTrack(44'100.0, 1.0);
+    const double realtimeStart =
+        engine::scratch::RealtimeScratchInput::clockSeconds() - 0.010;
+    (void) realtimeIngress.touchDown(realtimeStart, 1);
+    graph.renderModeRouter().beginScratch(0.30, 44'100.0, 1.0, true, 1.0);
+    graph.getNextAudioBlock({&output, 0, 512});
+    const double realtimeAnchor =
+        graph.renderModeRouter().readPositionSeconds(44'100.0);
+    for (int packet = 1; packet <= 6; ++packet) {
+        (void) realtimeIngress.platter(
+            7.0, realtimeStart + 0.001 * packet, 1);
+    }
+    for (int block = 0; block < 4; ++block)
+        graph.getNextAudioBlock({&output, 0, 128});
+    const double realtimeForward =
+        graph.renderModeRouter().readPositionSeconds(44'100.0);
+    ok &= require(realtimeForward > realtimeAnchor + 0.001,
+                  "native FLX10 trajectory advances while the UI path is stalled");
+
+    const double reverseStart =
+        engine::scratch::RealtimeScratchInput::clockSeconds() - 0.010;
+    for (int packet = 0; packet < 10; ++packet) {
+        (void) realtimeIngress.platter(
+            -7.0, reverseStart + 0.001 * packet, 1);
+    }
+    bool renderedReverse = false;
+    for (int block = 0; block < 12; ++block) {
+        graph.getNextAudioBlock({&output, 0, 128});
+        renderedReverse = renderedReverse
+            || graph.renderModeRouter().scratchRate() < -0.01;
+    }
+    const double realtimeReverse =
+        graph.renderModeRouter().readPositionSeconds(44'100.0);
+    ok &= require(renderedReverse && realtimeReverse < realtimeForward,
+                  "native FLX10 reversal reaches audio without a UI callback");
+
+    (void) realtimeIngress.touchUp(reverseStart + 0.011, 1);
+    const auto nativeRelease = graph.renderModeRouter().requestScratchRelease(
+        0.7, true, true); // deliberately contradict the physical reverse throw
+    juce::AudioBuffer<float> nativeReleaseOutput(2, 64);
+    graph.getNextAudioBlock({&nativeReleaseOutput, 0, 64});
+    ok &= require(graph.renderModeRouter().scratchReleaseSnapshot().disposition
+                      == engine::scratch::ScratchReleaseDisposition::CoastToStop,
+                  "native FLX10 throw velocity owns the release decision");
+    for (int block = 0;
+         block < 4000
+             && !graph.renderModeRouter().scratchReleaseComplete(nativeRelease);
+         ++block) {
+        graph.getNextAudioBlock({&nativeReleaseOutput, 0, 64});
+    }
+    ok &= require(graph.renderModeRouter().scratchReleaseComplete(nativeRelease),
+                  "native FLX10 release completes on the audio thread");
+    graph.renderModeRouter().setRealtimeScratchInput(nullptr);
 
     // The hardware path publishes a release command rather than a legacy
     // immediate handoff. The callback must render the queued touch block,

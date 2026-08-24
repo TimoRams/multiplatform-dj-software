@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
 #include <juce_core/juce_core.h>
 
 
@@ -39,6 +40,13 @@ void DjEngine::setBackgroundOptimizationEnabled(bool enabled) noexcept
         return;
     m_backgroundOptimizationEnabled = enabled;
     syncAnalyzerRealtimeInteractionHint();
+}
+
+void DjEngine::setRealtimeScratchInput(
+    std::shared_ptr<engine::scratch::RealtimeScratchInput> input) noexcept
+{
+    if (m_audioPipeline->renderModeRouterPtr())
+        m_audioPipeline->renderModeRouter().setRealtimeScratchInput(std::move(input));
 }
 
 

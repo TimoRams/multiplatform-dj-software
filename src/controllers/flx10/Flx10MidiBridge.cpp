@@ -1475,6 +1475,10 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
     m_deckB = deckB;
     m_deckC = deckC;
     m_deckD = deckD;
+    if (m_deckA)
+        m_deckA->setRealtimeScratchInput(m_realtimeScratchIngress[0].stream());
+    if (m_deckB)
+        m_deckB->setRealtimeScratchInput(m_realtimeScratchIngress[1].stream());
     m_cueAHeld = false;
     m_cueBHeld = false;
     m_jogATouched = false;

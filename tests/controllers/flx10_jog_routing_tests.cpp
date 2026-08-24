@@ -1,4 +1,5 @@
 #include "controllers/flx10/Flx10JogRouter.h"
+#include "controllers/flx10/Flx10RealtimeScratchIngress.h"
 
 #include <cmath>
 #include <iostream>
@@ -319,6 +320,103 @@ bool testSlowSpeedRateResolution()
     return ok;
 }
 
+bool testBatchedReceiveTimestampsAndReversal()
+{
+    using enum flx10::JogEventType;
+    bool ok = true;
+    flx10::Flx10JogRouter router;
+    route(router, TouchDown, 70.0);
+
+    const double oneMsTicks = ticksForRate(1.0, 0.001);
+    for (int i = 1; i <= 9; ++i)
+        route(router, Platter, 70.0 + i * 0.001, oneMsTicks);
+
+    // Three USB packets drained in one scheduler wake-up. Production ALSA
+    // timestamps these a few microseconds apart; they still represent three
+    // milliseconds of platter travel and may neither collapse to zero nor
+    // explode to the speed clamp.
+    route(router, Platter, 70.012000, oneMsTicks);
+    route(router, Platter, 70.012010, oneMsTicks);
+    const auto burstTail = route(router, Platter, 70.012020, oneMsTicks);
+    ok &= require(near(burstTail.estimatedRate, 1.0, 0.08),
+                  "scheduler-batched FLX10 packets retain their aggregate rate");
+    ok &= require(burstTail.eventIntervalSeconds == 0.0,
+                  "sub-frame packets are marked as one coalesced observation");
+
+    // A reversal must not be averaged with old-direction ticks. Position turns
+    // immediately, so a still-positive velocity estimate makes the audio servo
+    // fight the hand and produces the characteristic rubbery chirp.
+    const auto reverse = route(router, Platter, 70.013, -oneMsTicks);
+    ok &= require(reverse.estimatedRate < -0.8
+                      && reverse.estimatedRate > -1.2,
+                  "the first distinct reverse packet changes velocity sign immediately");
+
+    flx10::Flx10JogRouter sameFrameTurn;
+    route(sameFrameTurn, TouchDown, 71.0);
+    route(sameFrameTurn, Platter, 71.001, oneMsTicks);
+    route(sameFrameTurn, Platter, 71.002, oneMsTicks);
+    const auto turnPacket = route(
+        sameFrameTurn, Platter, 71.002010, -oneMsTicks);
+    const auto turnBurstTail = route(
+        sameFrameTurn, Platter, 71.002020, -oneMsTicks);
+    ok &= require(turnPacket.estimatedRate == 0.0
+                      && turnBurstTail.estimatedRate == 0.0,
+                  "same-frame reversal is a zero-speed turn, not an artificial velocity spike");
+    const auto reverseNextFrame = route(
+        sameFrameTurn, Platter, 71.003, -oneMsTicks);
+    ok &= require(reverseNextFrame.estimatedRate < -0.8
+                      && reverseNextFrame.estimatedRate > -1.2,
+                  "the frame after a coalesced turn resumes a clean reverse estimate");
+    return ok;
+}
+
+bool testRealtimeScratchIngress()
+{
+    bool ok = true;
+    flx10::Flx10RealtimeScratchIngress ingress;
+    const auto stream = ingress.stream();
+    constexpr std::uint64_t kPortA = 1;
+    constexpr std::uint64_t kPortB = 2;
+
+    ok &= require(ingress.touchDown(80.0, kPortA)
+                      == flx10::RealtimeIngressResult::Accepted,
+                  "native touch begins the realtime scratch generation");
+    const double ticks = ticksForRate(0.5, 0.002);
+    ok &= require(ingress.platter(ticks, 80.002, kPortA)
+                      == flx10::RealtimeIngressResult::Accepted,
+                  "native platter motion enters the realtime stream");
+
+    auto first = stream->readForControlThread();
+    ok &= require(first.touching() && first.generation != 0,
+                  "audio snapshot identifies the active touch generation");
+    ok &= require(near(first.cumulativeDeltaSeconds,
+                       flx10::scratchDeltaSeconds(ticks)),
+                  "audio snapshot retains exact one-to-one platter travel");
+    ok &= require(near(first.velocity, 0.5),
+                  "audio snapshot carries the timestamped platter velocity");
+
+    ok &= require(ingress.platter(ticks, 80.003, kPortB)
+                      == flx10::RealtimeIngressResult::MirroredDuplicate,
+                  "a mirrored jog packet from another ALSA port is dropped");
+    const auto afterDuplicate = stream->readForControlThread();
+    ok &= require(near(afterDuplicate.cumulativeDeltaSeconds,
+                       first.cumulativeDeltaSeconds),
+                  "a mirrored packet cannot double the scratch distance");
+
+    ok &= require(ingress.touchUp(80.004, kPortA)
+                      == flx10::RealtimeIngressResult::Accepted,
+                  "native touch-up publishes release without clearing trajectory");
+    ok &= require(ingress.rim(ticks, 80.006, kPortA)
+                      == flx10::RealtimeIngressResult::Accepted,
+                  "post-release rim motion refreshes physical throw velocity");
+    const auto released = stream->readForControlThread();
+    ok &= require(!released.touching()
+                      && released.phase == engine::scratch::RealtimeScratchPhase::Released
+                      && released.motionSequence > first.motionSequence,
+                  "released audio snapshot remains available for callback-owned inertia");
+    return ok;
+}
+
 } // namespace
 
 int main()
@@ -332,5 +430,7 @@ int main()
     ok &= testDuplicateTouchAndRegrab();
     ok &= testReleaseCompletionAfterWheelSilence();
     ok &= testSlowSpeedRateResolution();
+    ok &= testBatchedReceiveTimestampsAndReversal();
+    ok &= testRealtimeScratchIngress();
     return ok ? 0 : 1;
 }

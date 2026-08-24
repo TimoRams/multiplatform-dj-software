@@ -495,19 +495,20 @@ void MidiControllerManager::processRawMidiEvent(int msgId,
                             eventTimestampSeconds);
 }
 
-void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*/, const juce::MidiMessage& message)
+void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& message)
 {
     if (m_shutdownComplete.load(std::memory_order_acquire))
         return;
 
+    const auto* rawData = message.getRawData();
+    const int rawSize = message.getRawDataSize();
+    const int status = rawSize > 0 ? static_cast<unsigned char>(rawData[0]) : 0;
+    const int d1 = rawSize > 1 ? static_cast<unsigned char>(rawData[1]) : 0;
+    const int d2 = rawSize > 2 ? static_cast<unsigned char>(rawData[2]) : 0;
+
     // Diagnostic: log every incoming MIDI message so we can see if JUCE is even
     // receiving Note On events.  The raw status byte tells us the truth.
     if (m_midiTraceEnabled) {
-        const auto* d = message.getRawData();
-        const int   sz = message.getRawDataSize();
-        const int   status = sz > 0 ? static_cast<unsigned char>(d[0]) : 0;
-        const int   d1     = sz > 1 ? static_cast<unsigned char>(d[1]) : -1;
-        const int   d2     = sz > 2 ? static_cast<unsigned char>(d[2]) : -1;
         qDebug() << "[MIDI JUCE]" << "status:" << status
                  << "d1:" << d1 << "d2:" << d2
                  << "isNoteOn:" << message.isNoteOn()
@@ -549,6 +550,15 @@ void MidiControllerManager::handleIncomingMidiMessage(juce::MidiInput* /*source*
     } else {
         return;
     }
+
+    const auto nativeResult = ingestNativeFlx10ScratchMessage(
+        static_cast<std::uint8_t>(status),
+        static_cast<std::uint8_t>(d1),
+        static_cast<std::uint8_t>(d2),
+        engine::scratch::RealtimeScratchInput::clockSeconds(),
+        static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(source)) + 1U);
+    if (nativeResult == flx10::RealtimeIngressResult::MirroredDuplicate)
+        return;
 
     enqueueRawMidiEvent(msgId, rawEnc, noteOff, eventTimestampSeconds);
 }

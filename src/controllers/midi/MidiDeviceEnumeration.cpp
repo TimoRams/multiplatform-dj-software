@@ -250,13 +250,15 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
     }
 
     const QString port = parts.at(1) + ":" + parts.at(2);
+    const std::uint64_t nativeSourceId =
+        static_cast<std::uint64_t>(qHash(port)) + 1U;
     auto directInput = std::make_unique<AlsaMidiInput>();
     QString directError;
     const bool primaryFaderSource = m_primaryAlsaInputPort.isEmpty()
         || port == m_primaryAlsaInputPort;
     if (directInput->open(
             id,
-            [this, primaryFaderSource, port](const AlsaMidiInputEvent& event)
+            [this, primaryFaderSource, port, nativeSourceId](const AlsaMidiInputEvent& event)
             {
                 if (m_shutdownComplete.load(std::memory_order_acquire))
                     return;
@@ -296,6 +298,11 @@ void MidiControllerManager::startAlsaInputMonitor(const juce::String& pseudoIden
                 }
 
                 if (msgId >= 0) {
+                    const auto nativeResult = ingestNativeFlx10ScratchMessage(
+                        event.status, event.data1, event.data2,
+                        event.timestampSeconds, nativeSourceId);
+                    if (nativeResult == flx10::RealtimeIngressResult::MirroredDuplicate)
+                        return;
                     enqueueRawMidiEvent(msgId, rawValue, noteOff,
                                         event.timestampSeconds);
                 }

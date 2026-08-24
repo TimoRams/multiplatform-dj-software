@@ -108,7 +108,8 @@ private:
     void prepareSincTable() noexcept;
     void writeScratchOutput(float* out0, float* out1, int index, bool ready,
                             double rate) noexcept;
-    float readBandlimited(int channel, double position, double rate) const noexcept;
+    void readBandlimitedStereo(double position, double rate,
+                               float& left, float& right) const noexcept;
     double wrapPosition(double pos) const noexcept;
 
     AudioPageCache* m_cache = nullptr;
@@ -144,13 +145,13 @@ private:
     double m_loopInSample = 0.0;
     double m_loopOutSample = 0.0;
 
-    static constexpr int kSincTaps = 16;
+    static constexpr int kSincTaps = 32;
     static constexpr int kSincRadius = kSincTaps / 2;
     static constexpr int kSincPhaseCount = 256;
     static constexpr int kSincCutoffBands = 16;
     std::array<float, kSincCutoffBands * (kSincPhaseCount + 1) * kSincTaps>
         m_sincTable {};
-    static constexpr int kMinWindowSamples = 12;
+    static constexpr int kMinWindowSamples = kSincTaps + 2;
     static constexpr int kStarvationFadeSamples = 128;
     std::atomic<std::uint64_t> m_pageHits{0}, m_pageMisses{0}, m_starvationBlocks{0};
     std::atomic<std::uint64_t> m_recoveryEvents{0}, m_droppedRequests{0}, m_generationMismatches{0};

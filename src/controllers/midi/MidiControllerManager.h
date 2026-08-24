@@ -11,6 +11,7 @@
 #include "feedback/MidiFeedbackController.h"
 #include "app/ControlClock.h"
 #include "controllers/flx10/Flx10JogRouter.h"
+#include "controllers/flx10/Flx10RealtimeScratchIngress.h"
 #include "Midi14BitAccumulator.h"
 #include "MidiEchoGuard.h"
 
@@ -186,6 +187,10 @@ private:
     bool m_jogBTouched = false;
     flx10::Flx10JogRouter m_jogARouter;
     flx10::Flx10JogRouter m_jogBRouter;
+    // Native FLX10 motion is mirrored into these streams on the MIDI/ALSA
+    // producer thread. The audio callback reads them without waiting for Qt.
+    std::array<flx10::Flx10RealtimeScratchIngress, 2> m_realtimeScratchIngress;
+    std::atomic<bool> m_nativeFlx10ScratchEnabled { false };
     QTimer m_startupRefreshTimer;
     QTimer m_14BitFallbackTimer;
     bool m_deckAShiftHeld = false;
@@ -325,6 +330,13 @@ private:
                              double eventTimestampSeconds);
     bool dispatchFlx10JogAction(const QString& paramId, float value,
                                 double eventTimestampSeconds);
+    flx10::RealtimeIngressResult ingestNativeFlx10ScratchMessage(
+        std::uint8_t status,
+        std::uint8_t data1,
+        std::uint8_t data2,
+        double timestampSeconds,
+        std::uint64_t sourceId) noexcept;
+    void setNativeFlx10ScratchEnabled(bool enabled) noexcept;
     void resetHighResolutionControlState();
     void learnMapping(int msgId);
     void restoreSavedDeviceSelections();

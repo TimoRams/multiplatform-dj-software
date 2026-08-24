@@ -4,6 +4,7 @@
 #include "audio/internal/HermiteResamplingAudioSource.h"
 
 #include <thread>
+#include <utility>
 
 namespace engine::audio {
 
@@ -97,6 +98,21 @@ void RenderModeRouter::beginScratch(double anchorSeconds,
     m_trackSampleRate.store(std::max(1.0, trackSampleRate), std::memory_order_relaxed);
     m_trackLengthSeconds.store(std::max(0.0, trackLengthSeconds), std::memory_order_relaxed);
 
+    // Bind this scratch session to the physical touch that caused it. The
+    // controller thread may already have accumulated several platter packets by
+    // the time Qt handles TouchDown; keeping the generation lets the callback
+    // consume that complete trajectory without accepting a later re-grab by
+    // accident. Generic/on-screen scratch inputs simply leave the generation at
+    // zero and continue through the existing UI-published path.
+    std::uint64_t realtimeGeneration = 0;
+    if (auto* input = m_realtimeScratchInput.load(std::memory_order_acquire)) {
+        const auto snapshot = input->readForControlThread();
+        if (snapshot.touching())
+            realtimeGeneration = snapshot.generation;
+    }
+    m_startScratchInputGeneration.store(realtimeGeneration,
+                                        std::memory_order_relaxed);
+
     const double audioAnchorSec = std::max(0.0, anchorSeconds);
     const double audioAnchorSamples = audioAnchorSec * trackSampleRate;
     const double targetSamples = audioAnchorSec * trackSampleRate;
@@ -167,6 +183,21 @@ std::uint64_t RenderModeRouter::requestScratchRelease(double normalizedReleaseSp
 
 void RenderModeRouter::submitScratchReleaseSpeed(double normalizedReleaseSpeed) noexcept
 {
+    const auto boundGeneration =
+        m_startScratchInputGeneration.load(std::memory_order_acquire);
+    if (boundGeneration != 0) {
+        if (auto* input = m_realtimeScratchInput.load(std::memory_order_acquire)) {
+            const auto snapshot = input->readForControlThread();
+            if (snapshot.generation == boundGeneration
+                && snapshot.phase == engine::scratch::RealtimeScratchPhase::Released) {
+                // The callback consumes this native rim packet by motionSequence.
+                // Applying the later Qt copy as well would pull inertia toward
+                // the same measurement twice and make release response uneven.
+                return;
+            }
+        }
+    }
+
     const double speed = std::clamp(normalizedReleaseSpeed, -8.0, 8.0);
     m_latestReleaseSpeed.store(speed, std::memory_order_release);
     m_controller.submitReleaseSpeed(speed);
@@ -339,6 +370,17 @@ void RenderModeRouter::setTrackCacheSource(AudioPageCache* cache, AudioCacheHand
     m_scratchResampler.setTrackCacheSource(cache, handle);
 }
 
+void RenderModeRouter::setRealtimeScratchInput(
+    std::shared_ptr<engine::scratch::RealtimeScratchInput> input) noexcept
+{
+    // The manager owns the ingress for its whole lifetime as well. Publish the
+    // raw pointer only after installing our lifetime-holding reference; audio
+    // reads the pointer but never touches shared_ptr reference counts.
+    m_realtimeScratchInputOwner = std::move(input);
+    m_realtimeScratchInput.store(m_realtimeScratchInputOwner.get(),
+                                 std::memory_order_release);
+}
+
 bool RenderModeRouter::isScratching() const noexcept
 {
     return m_controller.isScratching();
@@ -450,6 +492,9 @@ bool RenderModeRouter::applyReaderHandoff(double positionSeconds,
     }
     if (!releaseOwned)
         m_controller.stopScratch();
+    m_audioScratchInputGeneration = 0;
+    m_appliedRealtimeReleaseMotionSequence = 0;
+    m_lastRealtimeScratchSnapshot = {};
     m_useScratchScaler.store(false, std::memory_order_release);
     m_prevScratchPath = false;
     m_appliedReaderSyncGeneration = m_readerSyncGeneration.load(std::memory_order_acquire);
@@ -604,6 +649,15 @@ void RenderModeRouter::finishReleaseDecisionAfterTrackingBlock() noexcept
     }
 
     double speed = m_latestReleaseSpeed.load(std::memory_order_acquire);
+    engine::scratch::RealtimeScratchSnapshot realtimeSnapshot;
+    if (readRealtimeScratchInput(realtimeSnapshot)
+        && realtimeSnapshot.phase == engine::scratch::RealtimeScratchPhase::Released) {
+        // TouchUp reaches the native ingress before the same MIDI packet can be
+        // queued through Qt. It is therefore the least delayed and least filtered
+        // measurement of a throw; use it for the callback-owned release decision.
+        speed = realtimeSnapshot.velocity;
+        m_appliedRealtimeReleaseMotionSequence = realtimeSnapshot.motionSequence;
+    }
     if (!std::isfinite(speed))
         speed = m_controller.normalizedRate();
     m_audioReleaseDisposition = m_controller.releaseScratchWithSpeed(
@@ -667,6 +721,11 @@ void RenderModeRouter::consumePendingAudioCommands() noexcept
         m_scratchResampler.reset(position * sr);
         m_scratchResampler.snapSmoothedRate(0.0);
         m_audioScratchReadPositionSamples.store(position * sr, std::memory_order_release);
+        m_audioScratchInputGeneration =
+            m_startScratchInputGeneration.load(std::memory_order_relaxed);
+        m_audioScratchInputAnchorSamples = position * sr;
+        m_appliedRealtimeReleaseMotionSequence = 0;
+        m_lastRealtimeScratchSnapshot = {};
         m_useScratchScaler.store(true, std::memory_order_release);
         if (m_audioReleaseCommand.generation
             <= m_cancelledReleaseGeneration.load(std::memory_order_acquire)) {
@@ -779,9 +838,61 @@ void RenderModeRouter::consumePendingAudioCommands() noexcept
     }
 }
 
+bool RenderModeRouter::readRealtimeScratchInput(
+    engine::scratch::RealtimeScratchSnapshot& snapshot) noexcept
+{
+    if (m_audioScratchInputGeneration == 0)
+        return false;
+
+    if (auto* input = m_realtimeScratchInput.load(std::memory_order_acquire)) {
+        engine::scratch::RealtimeScratchSnapshot candidate;
+        if (input->tryRead(candidate)
+            && candidate.generation == m_audioScratchInputGeneration) {
+            m_lastRealtimeScratchSnapshot = candidate;
+        }
+    }
+
+    if (m_lastRealtimeScratchSnapshot.generation != m_audioScratchInputGeneration)
+        return false;
+
+    snapshot = m_lastRealtimeScratchSnapshot;
+    return true;
+}
+
+double RenderModeRouter::decayedRealtimeVelocity(
+    const engine::scratch::RealtimeScratchSnapshot& snapshot) const noexcept
+{
+    const double velocity = std::clamp(
+        std::isfinite(snapshot.velocity) ? snapshot.velocity : 0.0, -8.0, 8.0);
+    const double now = engine::scratch::RealtimeScratchInput::clockSeconds();
+    const double age = std::clamp(now - snapshot.lastEventTimestampSeconds,
+                                  0.0, 0.120);
+    const double interval = std::clamp(
+        std::isfinite(snapshot.eventIntervalSeconds)
+            ? snapshot.eventIntervalSeconds : 0.0,
+        0.0, 0.120);
+    const double hold = std::max(0.008, interval * 1.25);
+    if (age <= hold)
+        return velocity;
+
+    const double tau = std::max(0.007, interval * 0.5);
+    const double decayed = velocity * std::exp(-(age - hold) / tau);
+    return std::abs(decayed) < 0.00005 ? 0.0 : decayed;
+}
+
 double RenderModeRouter::activePlaybackRate(double trackSampleRate, int bufferSize) noexcept
 {
     const double sr = std::max(1.0, trackSampleRate);
+    engine::scratch::RealtimeScratchSnapshot snapshot;
+    if (readRealtimeScratchInput(snapshot)
+        && snapshot.phase == engine::scratch::RealtimeScratchPhase::Released
+        && snapshot.motionSequence != m_appliedRealtimeReleaseMotionSequence) {
+        // Rim packets following TouchUp refine a backspin/throw directly on the
+        // audio side. The controller still owns the coast and handoff state; only
+        // its measured velocity input bypasses the UI queue.
+        m_controller.submitReleaseSpeed(snapshot.velocity);
+        m_appliedRealtimeReleaseMotionSequence = snapshot.motionSequence;
+    }
     return m_controller.processAudioBlock(std::max(1, bufferSize), m_outputSampleRate, sr);
 }
 
@@ -987,13 +1098,23 @@ void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& buf
         // Position-authoritative scratch: a critically-damped tracker glides the
         // read head to the hand target. Exact tracking for slow/precise moves,
         // momentum across sparse UI events, no overshoot/snap-back warble.
-        const double target = m_platter.targetSamplePosition();
-        const double commandedRate = m_controller.commandedHandSpeed() * oneX;
+        double target = m_platter.targetSamplePosition();
+        double commandedRate = m_controller.commandedHandSpeed() * oneX;
+        double inputLead = m_controller.eventAgeSeconds();
+        engine::scratch::RealtimeScratchSnapshot realtimeSnapshot;
+        if (readRealtimeScratchInput(realtimeSnapshot)) {
+            target = m_audioScratchInputAnchorSamples
+                + realtimeSnapshot.cumulativeDeltaSeconds * sr;
+            commandedRate = decayedRealtimeVelocity(realtimeSnapshot) * oneX;
+            inputLead = std::clamp(
+                engine::scratch::RealtimeScratchInput::clockSeconds()
+                    - realtimeSnapshot.lastEventTimestampSeconds,
+                0.0, 0.030);
+        }
         const double maxAbsRate = 8.0 * oneX;
         // Extrapolate by the target's real age. Using the same half-interval on
         // every callback made blocks between MIDI events alternately coast and
         // brake against an unchanged target — the audible scratch judder.
-        const double inputLead = m_controller.eventAgeSeconds();
         const double usedRate = m_scratchResampler.processScratchTracking(
             target, commandedRate, maxAbsRate, bufferToFill, inputLead);
         const double readPositionSamples = m_scratchResampler.readPosition();

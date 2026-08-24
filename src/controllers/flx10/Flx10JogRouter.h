@@ -22,6 +22,11 @@ constexpr double kJogSpeedWindowTicks = 8.0;
 constexpr double kJogSpeedWindowSeconds = 0.060;   // hard bound on that window
 constexpr double kJogSpeedStaleSeconds = 0.060;
 constexpr double kJogTailSuppressionSeconds = 0.120;
+// ALSA/JUCE may drain several USB packets in one scheduler wake-up. Those
+// packets receive timestamps only a few microseconds apart even though the
+// wheel did not physically accelerate by two orders of magnitude. Treat a
+// sub-frame cluster as one observation and retain all of its ticks.
+constexpr double kJogTimestampCoalesceSeconds = 0.00035;
 
 constexpr double scratchDeltaSeconds(double ticks) noexcept
 {
@@ -90,6 +95,7 @@ public:
         m_baseTimestampSeconds = timestampSeconds;
         m_hasBase = std::isfinite(timestampSeconds);
         m_lastEventIntervalSeconds = 0.0;
+        m_lastDirection = 0;
     }
 
     double push(double ticks, double timestampSeconds) noexcept
@@ -103,16 +109,69 @@ public:
         if (m_count > 0 && timestampSeconds < m_samples[m_count - 1].timestampSeconds)
             reset(timestampSeconds);
 
-        m_lastEventIntervalSeconds = m_count > 0
+        const double newestTimestamp = m_count > 0
+            ? m_samples[m_count - 1].timestampSeconds
+            : m_baseTimestampSeconds;
+        const bool restartedAfterStall =
+            timestampSeconds - newestTimestamp > kJogSpeedStaleSeconds;
+        if (restartedAfterStall)
+            reset(timestampSeconds);
+
+        const int direction = ticks > 0.0 ? 1 : -1;
+        if (m_lastDirection != 0 && direction != m_lastDirection) {
+            // Old-direction ticks must not cancel the first samples after a
+            // reversal. Restart the velocity window at the preceding event;
+            // absolute position remains authoritative in the separate stream.
+            const double turnTimestamp = m_count > 0
+                ? m_samples[m_count - 1].timestampSeconds
+                : timestampSeconds;
+            reset(turnTimestamp);
+        }
+
+        const bool coalesced = m_count > 0
+            && timestampSeconds - m_samples[m_count - 1].timestampSeconds
+                <= kJogTimestampCoalesceSeconds;
+
+        m_lastEventIntervalSeconds = m_count > 0 && !coalesced
             ? timestampSeconds - m_samples[m_count - 1].timestampSeconds
             : 0.0;
 
         m_cumulativeTicks += ticks;
         m_cumulativeAbsTicks += std::abs(ticks);
-        if (m_count == kCapacity)
-            popOldest();
+        if (coalesced) {
+            auto& newest = m_samples[m_count - 1];
+            newest.timestampSeconds = std::max(newest.timestampSeconds, timestampSeconds);
+            newest.cumulativeTicks = m_cumulativeTicks;
+            newest.cumulativeAbsTicks = m_cumulativeAbsTicks;
+        } else {
+            if (m_count == kCapacity)
+                popOldest();
+            m_samples[m_count++] = {
+                timestampSeconds, m_cumulativeTicks, m_cumulativeAbsTicks};
+        }
+        m_lastDirection = direction;
+        if (restartedAfterStall) {
+            // The first tick says motion resumed but carries no trustworthy
+            // duration. Make it the new window origin rather than counting it
+            // again over the interval to the second tick.
+            m_baseTimestampSeconds = timestampSeconds;
+            m_baseTicks = m_cumulativeTicks;
+            m_baseAbsTicks = m_cumulativeAbsTicks;
+        }
 
-        m_samples[m_count++] = {timestampSeconds, m_cumulativeTicks, m_cumulativeAbsTicks};
+        // There is no usable timebase inside one drained USB frame. This also
+        // covers the first packet at touch-down and the first packet after a
+        // reversal: position is still applied exactly, but velocity stays at
+        // the physical turn point instead of becoming an artificial +/-8x
+        // command from dividing by a few scheduler microseconds. The next
+        // distinct frame measures the complete movement normally.
+        const double windowDuration = timestampSeconds - m_baseTimestampSeconds;
+        if (windowDuration >= 0.0
+            && windowDuration <= kJogTimestampCoalesceSeconds) {
+            m_baseTimestampSeconds = timestampSeconds;
+            m_baseTicks = m_cumulativeTicks;
+            m_baseAbsTicks = m_cumulativeAbsTicks;
+        }
         trimToWindow(timestampSeconds);
         return rate(timestampSeconds);
     }
@@ -172,7 +231,10 @@ private:
         while (m_count > 1
                && m_samples[m_count - 1].cumulativeAbsTicks
                           - m_samples[0].cumulativeAbsTicks
-                      >= kJogSpeedWindowTicks)
+                      >= kJogSpeedWindowTicks
+               && m_samples[m_count - 1].timestampSeconds
+                          - m_samples[0].timestampSeconds
+                      > kJogTimestampCoalesceSeconds)
             popOldest();
 
         // Hard time bound, so a hand that has nearly stopped cannot keep
@@ -198,6 +260,7 @@ private:
     double m_baseAbsTicks = 0.0;
     double m_lastEventIntervalSeconds = 0.0;
     bool m_hasBase = false;
+    int m_lastDirection = 0;
 };
 
 class Flx10JogRouter {
