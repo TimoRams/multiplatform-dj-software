@@ -93,6 +93,8 @@ struct AudioPageCache::Impl {
         std::atomic<AudioPage*> page{nullptr};
         std::atomic<std::uint32_t> readers{0};
         std::atomic<std::uint8_t> state{0}; // 0 missing, 1 queued, 2 resident, 3 decoding
+        std::atomic<std::uint8_t> requestedPriority{
+            static_cast<std::uint8_t>(AudioCachePriority::Count)};
         std::atomic<bool> recentlyUsed{false};
         // These links are owned exclusively by the decoder worker.  PageSlot
         // addresses are stable for the lifetime of the cache entry.
@@ -147,6 +149,7 @@ struct AudioPageCache::Impl {
     std::atomic<std::uint64_t> evictionScans{0}, evictionCandidates{0};
     std::atomic<std::uint64_t> evictionMicros{0}, worstEvictionMicros{0};
     std::atomic<std::uint64_t> readerWaitMicros{0}, worstReaderWaitMicros{0};
+    std::atomic<std::uint64_t> priorityPromotions{0};
     std::atomic<std::uint64_t> sealedBytes{0};
     std::atomic<bool> accepting{true};
 };
@@ -285,10 +288,42 @@ bool AudioPageCache::requestPage(const AudioCacheHandle& handle, std::int64_t pa
         || !entry->active.load(std::memory_order_acquire) || pageIndex >= entry->pageCount) return false;
     auto& slot = entry->pageSlots[static_cast<size_t>(pageIndex)];
     std::uint8_t expected = 0;
-    if (!slot.state.compare_exchange_strong(expected, 1, std::memory_order_acq_rel))
-        return expected == 1 || expected == 2 || expected == 3;
+    if (!slot.state.compare_exchange_strong(expected, 1, std::memory_order_acq_rel)) {
+        if (expected != 1)
+            return expected == 2 || expected == 3;
+
+        // A page can be queued as speculative read-ahead and become the live
+        // playhead before the decoder reaches it. Promote that existing work
+        // instead of leaving a running deck behind another deck's prewarming.
+        // The duplicate queue entry is harmless: the worker claims state 1
+        // with a CAS, so exactly one request can decode the page.
+        auto queuedPriority = slot.requestedPriority.load(std::memory_order_relaxed);
+        const auto promotedPriority = static_cast<std::uint8_t>(priority);
+        while (promotedPriority < queuedPriority
+               && !slot.requestedPriority.compare_exchange_weak(
+                   queuedPriority, promotedPriority, std::memory_order_acq_rel,
+                   std::memory_order_relaxed)) {}
+        if (promotedPriority >= queuedPriority)
+            return true;
+
+        m_impl->priorityPromotions.fetch_add(1, std::memory_order_relaxed);
+        PageRequest promoted{entry, handle.id(), handle.generation(), pageIndex,
+                             steadyMicros()};
+        if (m_impl->queues[static_cast<size_t>(priority)].tryPush(promoted)) {
+            m_impl->queued.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+        // The original request is still valid and will eventually service the
+        // page even when the promotion queue is temporarily full.
+        m_impl->dropped.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    slot.requestedPriority.store(static_cast<std::uint8_t>(priority),
+                                 std::memory_order_release);
     PageRequest request{entry, handle.id(), handle.generation(), pageIndex, steadyMicros()};
     if (!m_impl->queues[static_cast<size_t>(priority)].tryPush(request)) {
+        slot.requestedPriority.store(static_cast<std::uint8_t>(AudioCachePriority::Count),
+                                     std::memory_order_relaxed);
         slot.state.store(0, std::memory_order_release); m_impl->dropped.fetch_add(1); return false;
     }
     m_impl->queued.fetch_add(1, std::memory_order_relaxed);
@@ -436,7 +471,8 @@ AudioCacheStats AudioPageCache::stats() const noexcept
             m_impl->decodeMicros.load(), m_impl->worstDecodeMicros.load(),
             m_impl->evictionScans.load(), m_impl->evictionCandidates.load(),
             m_impl->evictionMicros.load(), m_impl->worstEvictionMicros.load(),
-            m_impl->readerWaitMicros.load(), m_impl->worstReaderWaitMicros.load()};
+            m_impl->readerWaitMicros.load(), m_impl->worstReaderWaitMicros.load(),
+            m_impl->priorityPromotions.load()};
 }
 
 void AudioPageCache::notifyWorker() noexcept { m_impl->condition.notify_one(); }
@@ -554,7 +590,14 @@ void AudioPageCache::workerRun(const std::atomic<bool>& shutdown)
         auto& slot = entry->pageSlots[static_cast<size_t>(request.pageIndex)];
         if (!entry->active.load() || entry->id != request.trackId
             || entry->generation.load() != request.generation) { slot.state.store(0); continue; }
-        slot.state.store(3, std::memory_order_release);
+        std::uint8_t queuedState = 1;
+        if (!slot.state.compare_exchange_strong(
+                queuedState, 3, std::memory_order_acq_rel)) {
+            continue; // superseded promotion duplicate or already resident
+        }
+        slot.requestedPriority.store(
+            static_cast<std::uint8_t>(AudioCachePriority::Count),
+            std::memory_order_relaxed);
         auto page = std::make_unique<AudioPage>();
         page->trackId = entry->id; page->generation = request.generation;
         page->pageIndex = request.pageIndex;

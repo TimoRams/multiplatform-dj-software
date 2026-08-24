@@ -90,6 +90,37 @@ int main(int argc, char** argv)
                             65 * static_cast<int>(AudioPage::kSamplesPerChannel)),
                   "long scratch fixture");
 
+    // A running deck must be able to promote pages that it previously queued
+    // as speculative read-ahead. Loading/warming another deck must not pin the
+    // live playhead behind the lower-priority copy, and promotion duplicates
+    // must still decode every page at most once.
+    {
+        const auto bytesPerPage = static_cast<std::uint64_t>(
+            AudioPage::kSamplesPerChannel * sizeof(float));
+        AudioPageCache promotionCache(70 * bytesPerPage);
+        const auto promotionHandle = promotionCache.openTrack({longScratch});
+        ok &= require(promotionCache.requestRange(
+                          promotionHandle, 0, promotionHandle.pageCount() - 1,
+                          AudioCachePriority::Background),
+                      "background read-ahead range queued");
+        for (std::int64_t page = promotionHandle.pageCount(); page-- > 0;) {
+            ok &= require(promotionCache.requestPage(
+                              promotionHandle, page,
+                              AudioCachePriority::RealtimeCritical),
+                          "queued read-ahead page promoted to realtime");
+        }
+        ok &= require(promotionCache.waitForPageRange(
+                          promotionHandle, 0, promotionHandle.pageCount() - 1,
+                          std::chrono::seconds(5)),
+                      "promoted range becomes resident");
+        const auto promotionStats = promotionCache.stats();
+        ok &= require(promotionStats.priorityPromotions > 0,
+                      "read-ahead promotion path exercised");
+        ok &= require(promotionStats.decodedPages
+                          == static_cast<std::uint64_t>(promotionHandle.pageCount()),
+                      "promotion duplicates decode each page only once");
+    }
+
     {
         AudioPageCache sealedCache(8 * 2 * AudioPage::kSamplesPerChannel * sizeof(float));
         const auto sealedHandle = sealedCache.openTrack({stereo});

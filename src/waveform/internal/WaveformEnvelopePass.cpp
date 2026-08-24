@@ -514,8 +514,11 @@ int envelopeWorkerCount(int sourceChunkCount)
     const unsigned hw = std::thread::hardware_concurrency();
     if (hw <= 4 || sourceChunkCount <= 2)
         return 1;
-    const int budget = static_cast<int>(std::min<unsigned>(4u, hw / 2u - 1u));
-    return std::clamp(std::min(budget, sourceChunkCount / 2), 1, 4);
+    // WaveformAnalyzer already limits concurrent tracks. Two workers per pass
+    // keep progressive detail responsive without the 4 x 2 worker burst that
+    // previously saturated a many-core machine as soon as deck 2 was loaded.
+    const int budget = static_cast<int>(std::min<unsigned>(2u, hw / 2u - 1u));
+    return std::clamp(std::min(budget, sourceChunkCount / 2), 1, 2);
 }
 
 void lowerCurrentThreadPriority()

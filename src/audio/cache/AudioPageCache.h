@@ -42,6 +42,7 @@ struct AudioCacheStats {
     std::uint64_t evictionScans = 0, evictionCandidatesVisited = 0;
     std::uint64_t evictionScanMicros = 0, worstEvictionScanMicros = 0;
     std::uint64_t evictionReaderWaitMicros = 0, worstEvictionReaderWaitMicros = 0;
+    std::uint64_t priorityPromotions = 0;
 };
 
 struct AudioCacheHandleStats {

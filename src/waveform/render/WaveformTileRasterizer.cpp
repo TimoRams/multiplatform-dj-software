@@ -25,7 +25,11 @@
 namespace waveform_render {
 namespace {
 
-constexpr std::ptrdiff_t kMaximumGlobalRasterWorkers = 12;
+// Raster work is visual fallback work, not a reason to consume every core
+// while two decks are decoding and playing. Keep a small process-wide pool;
+// individual waveform items are capped separately so one deck cannot occupy
+// the complete budget.
+constexpr std::ptrdiff_t kMaximumGlobalRasterWorkers = 4;
 
 void updateWorst(std::atomic<std::uint64_t>& target, std::uint64_t value)
 {
@@ -56,9 +60,9 @@ std::size_t globalRasterWorkerLimit() noexcept
     // Reserve cores for the realtime callback, Qt's GUI/render threads, and
     // the GPU driver. The slots are process-wide so several deck rasterizers
     // cannot overcommit the host while a single active deck can still scale.
-    const auto reservedThreads = hardwareThreads <= 6 ? 2u : 3u;
+    const auto conservativeBudget = std::max(2u, hardwareThreads / 4u);
     return std::clamp<std::size_t>(
-        static_cast<std::size_t>(hardwareThreads - reservedThreads), 2,
+        static_cast<std::size_t>(conservativeBudget), 2,
         static_cast<std::size_t>(kMaximumGlobalRasterWorkers));
 }
 
@@ -74,8 +78,7 @@ std::size_t rasterWorkerCount() noexcept
     const auto hardwareThreads = std::thread::hardware_concurrency();
     if (hardwareThreads <= 2)
         return 1;
-    return std::min(globalRasterWorkerLimit(),
-                    std::clamp<std::size_t>(hardwareThreads / 2, 2, 10));
+    return std::min<std::size_t>(globalRasterWorkerLimit(), 2);
 }
 
 int rasterWorkerNiceLevel() noexcept

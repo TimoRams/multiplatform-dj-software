@@ -29,9 +29,10 @@ int maxConcurrentAnalyses()
     const unsigned hw = std::thread::hardware_concurrency();
     if (hw == 0)
         return 1;
-    // Full-track DSP is background work. Reserve enough CPU for Vulkan/Qt,
-    // audio callbacks and cache decoding even when all four decks are loaded.
-    return hw <= 8 ? 1 : 2;
+    // A single analysis may itself use two envelope workers. Only very large
+    // hosts can safely run two analyses while leaving predictable headroom for
+    // two live decks, cache decoding, Qt and the render thread.
+    return hw < 16 ? 1 : 2;
 }
 
 void lowerAnalysisThreadPriority()

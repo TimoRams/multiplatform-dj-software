@@ -321,7 +321,7 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
         (void)m_audioPageCache.requestPage(result.cacheHandle, 0,
                                            AudioCachePriority::RealtimeCritical);
         (void)m_audioPageCache.requestRange(result.cacheHandle, 0, lastWarmPage,
-                                            AudioCachePriority::ScratchNearPlayhead);
+                                            AudioCachePriority::PlaybackReadAhead);
 
         const auto requiredPages = std::min<std::int64_t>(2, pageCount);
         (void)m_audioPageCache.waitForPageRange(
