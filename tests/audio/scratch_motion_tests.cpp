@@ -48,7 +48,7 @@ constexpr double kBlockSeconds = kBlockSize / kSampleRate;
 constexpr double kEventIntervalSec = 0.002;
 constexpr int kFixtureSamples = 48000 * 12;
 
-bool writeSineFixture(const QString& path)
+bool writeSineFixture(const QString& path, double frequencyHz = 1000.0)
 {
     juce::WavAudioFormat format;
     auto fs = std::make_unique<juce::FileOutputStream>(juce::File(path.toStdString()));
@@ -62,7 +62,8 @@ bool writeSineFixture(const QString& path)
     juce::AudioBuffer<float> data(2, kFixtureSamples);
     for (int i = 0; i < kFixtureSamples; ++i) {
         const double t = static_cast<double>(i) / kSampleRate;
-        const auto value = static_cast<float>(0.5 * std::sin(2.0 * M_PI * 1000.0 * t));
+        const auto value = static_cast<float>(
+            0.5 * std::sin(2.0 * M_PI * frequencyHz * t));
         data.setSample(0, i, value);
         data.setSample(1, i, value);
     }
@@ -83,6 +84,32 @@ bool waitResident(AudioPageCache& cache, const AudioCacheHandle& handle)
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     return false;
+}
+
+double renderSteadyScratchRms(AudioPageCache& cache,
+                              const AudioCacheHandle& handle,
+                              double rate)
+{
+    ScratchResampler scratch;
+    scratch.prepare(2, kBlockSize, kSampleRate);
+    scratch.setTrackLengthSamples(static_cast<double>(handle.lengthInSamples()));
+    scratch.setTrackCacheSource(&cache, handle);
+    scratch.reset(2.0 * kSampleRate);
+    scratch.prefetchAround(scratch.readPosition());
+
+    juce::AudioBuffer<float> out(2, kBlockSize);
+    // Clear the rate ramp and starvation fade before measuring the steady state.
+    for (int block = 0; block < 6; ++block)
+        scratch.processBlock(rate, {&out, 0, kBlockSize});
+
+    double sumSquares = 0.0;
+    for (int ch = 0; ch < out.getNumChannels(); ++ch)
+        for (int i = 0; i < out.getNumSamples(); ++i) {
+            const double sample = out.getSample(ch, i);
+            sumSquares += sample * sample;
+        }
+    return std::sqrt(sumSquares
+        / static_cast<double>(out.getNumChannels() * out.getNumSamples()));
 }
 
 // The first blocks of every run are a genuine standing start: the hand begins
@@ -196,7 +223,7 @@ MotionResult runMotion(AudioPageCache& cache,
                                        commandedAt(lastEventRate, time - lastEventTime),
                                        8.0,
                                        {&out, 0, kBlockSize},
-                                       eventIntervalSec * 0.5);
+                                       std::max(0.0, time - lastEventTime));
         const double after = scratch.readPosition();
 
         // The hand moves continuously whether or not an event happens to be due,
@@ -295,6 +322,29 @@ int main(int argc, char** argv)
         return 1;
     if (!require(waitResident(cache, handle), "whole fixture resident in cache"))
         return 1;
+
+    // A 10 kHz source played at 4x would fold back into the audible band with
+    // polynomial interpolation. The scratch reader must reject it before it is
+    // decimated; an output low-pass is too late once that alias exists.
+    const QString aliasFixture = dir.filePath("scratch-alias.wav");
+    if (!require(writeSineFixture(aliasFixture, 10000.0),
+                 "alias fixture written"))
+        return 1;
+    auto aliasHandle = cache.openTrack({aliasFixture});
+    if (!require(aliasHandle.isValid(), "alias fixture handle valid"))
+        return 1;
+    if (!require(waitResident(cache, aliasHandle),
+                 "alias fixture resident in cache"))
+        return 1;
+
+    const double oneXRms = renderSteadyScratchRms(cache, aliasHandle, 1.0);
+    const double fourXRms = renderSteadyScratchRms(cache, aliasHandle, 4.0);
+    if (g_verbose)
+        std::cout << "scratch anti-alias: 1x RMS=" << oneXRms
+                  << " 4x RMS=" << fourXRms << '\n';
+    require(oneXRms > 0.2, "scratch resampler preserves in-band detail at 1x");
+    require(fourXRms < oneXRms * 0.15,
+            "scratch resampler rejects fold-back alias before 4x decimation");
 
     if (g_verbose)
         std::cout << "scratch motion scenarios:\n";
@@ -501,6 +551,7 @@ int main(int argc, char** argv)
         }
     }
 
+    cache.releaseTrack(aliasHandle);
     cache.releaseTrack(handle);
     return g_failures == 0 ? 0 : 1;
 }

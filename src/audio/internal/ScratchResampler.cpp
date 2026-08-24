@@ -1,7 +1,5 @@
 #include "audio/internal/ScratchResampler.h"
 
-#include "HermiteKernel.h"
-
 #include <algorithm>
 #include <cmath>
 
@@ -33,6 +31,51 @@ void ScratchResampler::prepare(int numChannels, int maxBlockSize, double outputS
     m_bufferOriginSample = 0.0;
     m_lastRate = 0.0;
     m_smoothedRate = 0.0;
+    prepareSincTable();
+}
+
+void ScratchResampler::prepareSincTable() noexcept
+{
+    constexpr double pi = 3.14159265358979323846;
+    constexpr double maximumScratchRate = 8.0;
+    const auto tableIndex = [](int band, int phase, int tap) {
+        return (static_cast<std::size_t>(band) * (kSincPhaseCount + 1)
+                + static_cast<std::size_t>(phase)) * kSincTaps
+            + static_cast<std::size_t>(tap);
+    };
+
+    for (int band = 0; band < kSincCutoffBands; ++band) {
+        const double speed = 1.0 + (maximumScratchRate - 1.0)
+            * static_cast<double>(band)
+            / static_cast<double>(kSincCutoffBands - 1);
+        // A source-domain low-pass must happen before decimation. Filtering the
+        // already-resampled output cannot remove frequencies that have folded.
+        const double cutoff = 0.94 / speed;
+        for (int phase = 0; phase <= kSincPhaseCount; ++phase) {
+            const double fraction = static_cast<double>(phase)
+                / static_cast<double>(kSincPhaseCount);
+            double sum = 0.0;
+            for (int tap = 0; tap < kSincTaps; ++tap) {
+                const double offset = static_cast<double>(tap - (kSincRadius - 1));
+                const double distance = offset - fraction;
+                const double sincPosition = cutoff * distance;
+                const double sinc = std::abs(sincPosition) < 1.0e-12
+                    ? 1.0
+                    : std::sin(pi * sincPosition) / (pi * sincPosition);
+                const double window = std::abs(distance) >= kSincRadius
+                    ? 0.0
+                    : 0.5 + 0.5 * std::cos(pi * distance / kSincRadius);
+                const double coefficient = cutoff * sinc * window;
+                m_sincTable[tableIndex(band, phase, tap)]
+                    = static_cast<float>(coefficient);
+                sum += coefficient;
+            }
+            const float normalization = static_cast<float>(
+                std::abs(sum) > 1.0e-12 ? 1.0 / sum : 1.0);
+            for (int tap = 0; tap < kSincTaps; ++tap)
+                m_sincTable[tableIndex(band, phase, tap)] *= normalization;
+        }
+    }
 }
 
 void ScratchResampler::reset(double readPositionSamples) noexcept
@@ -125,10 +168,10 @@ void ScratchResampler::windowMargins(double rate,
     // window spans enough audio to avoid constant edge reloads on the audio thread.
     const int minMargin = static_cast<int>(std::lround(m_outputSampleRate * 0.10));
     const int baseMargin = std::max(blockSamples * kWindowBuffersPerSide, minMargin)
-        + kHermiteRadius + kWindowPadSamples;
+        + kSincRadius + kWindowPadSamples;
     const int speedMargin = static_cast<int>(
         std::ceil(std::abs(rate) * static_cast<double>(blockSamples)))
-        + kHermiteRadius + kWindowPadSamples;
+        + kSincRadius + kWindowPadSamples;
 
     lookBehind = std::max(baseMargin, speedMargin);
     lookAhead = lookBehind;
@@ -145,7 +188,7 @@ bool ScratchResampler::needsWindowReload(double minAbsPos, double maxAbsPos) con
 
     const double relMin = minAbsPos - m_bufferOriginSample;
     const double relMax = maxAbsPos - m_bufferOriginSample;
-    const int edgeGuard = kHermiteRadius + std::max(32, m_deviceBufferSize / 3);
+    const int edgeGuard = kSincRadius + std::max(32, m_deviceBufferSize / 3);
 
     return relMin < static_cast<double>(edgeGuard)
         || relMax > static_cast<double>(m_sourceSize - edgeGuard - 1);
@@ -154,8 +197,8 @@ bool ScratchResampler::needsWindowReload(double minAbsPos, double maxAbsPos) con
 bool ScratchResampler::positionInWindow(double position) const noexcept
 {
     return m_sourceSize >= kMinWindowSamples
-        && position >= m_bufferOriginSample + kHermiteRadius
-        && position < m_bufferOriginSample + m_sourceSize - kHermiteRadius - 1;
+        && position >= m_bufferOriginSample + kSincRadius
+        && position < m_bufferOriginSample + m_sourceSize - kSincRadius - 1;
 }
 
 void ScratchResampler::prefetchAround(double readPositionSamples) noexcept
@@ -237,7 +280,7 @@ bool ScratchResampler::ensureWindow(double rate, int outputBlockSize) noexcept
     const int blockSamples = std::max(m_deviceBufferSize, outputBlockSize);
     const double blockSpan = std::max(std::abs(rate), std::abs(m_smoothedRate))
                            * static_cast<double>(blockSamples);
-    const double pad = static_cast<double>(kHermiteRadius + kWindowPadSamples);
+    const double pad = static_cast<double>(kSincRadius + kWindowPadSamples);
     const double minPos = m_readPos - blockSpan - pad;
     const double maxPos = m_readPos + blockSpan + pad;
     const double clampedMin = std::max(0.0, minPos);
@@ -249,11 +292,12 @@ bool ScratchResampler::ensureWindow(double rate, int outputBlockSize) noexcept
     return refillWindowFromCache(rate, outputBlockSize);
 }
 
-float ScratchResampler::readHermite(int channel, double position) const noexcept
+float ScratchResampler::readBandlimited(int channel, double position,
+                                        double rate) const noexcept
 {
     const double relativePos = position - m_bufferOriginSample;
-    const int i = static_cast<int>(std::floor(relativePos));
-    const float frac = static_cast<float>(relativePos - static_cast<double>(i));
+    const int centre = static_cast<int>(std::floor(relativePos));
+    const double fraction = relativePos - static_cast<double>(centre);
     const int ch = std::min(channel, m_sourceBuffer.getNumChannels() - 1);
 
     const auto at = [&](int idx) -> float {
@@ -269,17 +313,49 @@ float ScratchResampler::readHermite(int channel, double position) const noexcept
         return m_sourceBuffer.getSample(ch, idx);
     };
 
-    return engine::audio::cubicHermite(at(i - 1), at(i), at(i + 1), at(i + 2), frac);
+    const double phasePosition = fraction * kSincPhaseCount;
+    const int phase0 = std::clamp(static_cast<int>(phasePosition),
+                                  0, kSincPhaseCount - 1);
+    const int phase1 = phase0 + 1;
+    const float phaseMix = static_cast<float>(phasePosition - phase0);
+
+    const double speed = std::clamp(std::max(1.0, std::abs(rate)), 1.0, 8.0);
+    const double bandPosition = (speed - 1.0)
+        * static_cast<double>(kSincCutoffBands - 1) / 7.0;
+    const int band0 = std::clamp(static_cast<int>(bandPosition),
+                                 0, kSincCutoffBands - 1);
+    const int band1 = std::min(band0 + 1, kSincCutoffBands - 1);
+    const float bandMix = static_cast<float>(bandPosition - band0);
+    const auto tableIndex = [](int band, int phase, int tap) {
+        return (static_cast<std::size_t>(band) * (kSincPhaseCount + 1)
+                + static_cast<std::size_t>(phase)) * kSincTaps
+            + static_cast<std::size_t>(tap);
+    };
+
+    float result = 0.0f;
+    for (int tap = 0; tap < kSincTaps; ++tap) {
+        const float band0Coefficient = std::lerp(
+            m_sincTable[tableIndex(band0, phase0, tap)],
+            m_sincTable[tableIndex(band0, phase1, tap)], phaseMix);
+        const float band1Coefficient = std::lerp(
+            m_sincTable[tableIndex(band1, phase0, tap)],
+            m_sincTable[tableIndex(band1, phase1, tap)], phaseMix);
+        const float coefficient = std::lerp(
+            band0Coefficient, band1Coefficient, bandMix);
+        result += at(centre + tap - (kSincRadius - 1)) * coefficient;
+    }
+    return result;
 }
 
-void ScratchResampler::writeScratchOutput(float* out0, float* out1, int index, bool ready) noexcept
+void ScratchResampler::writeScratchOutput(float* out0, float* out1, int index,
+                                          bool ready, double rate) noexcept
 {
     const float step = 1.0f / static_cast<float>(kStarvationFadeSamples);
     if (ready) {
         if (m_starvationGain <= 0.0f) m_recoveryEvents.fetch_add(1, std::memory_order_relaxed);
         m_starvationGain = std::min(1.0f, m_starvationGain + step);
-        m_lastOutputL = readHermite(0, m_readPos);
-        m_lastOutputR = readHermite(1, m_readPos);
+        m_lastOutputL = readBandlimited(0, m_readPos, rate);
+        m_lastOutputR = readBandlimited(1, m_readPos, rate);
     } else {
         m_starvationGain = std::max(0.0f, m_starvationGain - step);
     }
@@ -327,13 +403,15 @@ void ScratchResampler::processBlock(double rate,
         m_smoothedRate += std::clamp(delta, -slew, slew);
 
         if (std::abs(m_smoothedRate) < 1e-7) {
-            writeScratchOutput(out0, out1, i, false);
+            writeScratchOutput(out0, out1, i, false, m_smoothedRate);
             if (std::abs(m_smoothedRate) < 1e-7)
                 continue;
         }
 
         m_readPos = wrapPosition(m_readPos);
-        writeScratchOutput(out0, out1, i, windowReady && positionInWindow(m_readPos));
+        writeScratchOutput(out0, out1, i,
+                           windowReady && positionInWindow(m_readPos),
+                           m_smoothedRate);
 
         m_readPos += m_smoothedRate;
     }
@@ -385,7 +463,10 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
     // error-driven bandwidth cannot tell them apart and simply lets the event
     // quantisation through as rate modulation. Per-sample rate continuity at 1x
     // degraded roughly six-fold for no meaningful gain in reversal tracking.
-    constexpr double kTrackHz = 52.0;
+    // This bandwidth settles within one controller frame while the continuous
+    // reference below integrates quantised jog events instead of reproducing
+    // their edges as audible pitch steps.
+    constexpr double kTrackHz = 56.0;
     constexpr double kTwoPi = 6.28318530717958647692;
     const double omega = kTwoPi * kTrackHz;
     const double maxVel = absMaxRate * outSr;
@@ -426,7 +507,7 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
     // as a position correction — which is heard as a shake on slow drags.
     const double kInputLeadSeconds =
         std::clamp(std::isfinite(inputLeadSeconds) ? inputLeadSeconds : 0.002,
-                   0.002, 0.030);
+                   0.0, 0.030);
     const double blockSeconds = static_cast<double>(numSamples) / outSr;
     const double maxLeadSeconds = kInputLeadSeconds + blockSeconds;
     // Runaway guard only. The bound follows whichever of the commanded and the
@@ -539,7 +620,8 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
         previousRate = rate;
 
         m_readPos = wrapPosition(m_readPos);
-        writeScratchOutput(out0, out1, i, windowReady && positionInWindow(m_readPos));
+        writeScratchOutput(out0, out1, i,
+                           windowReady && positionInWindow(m_readPos), rate);
         m_readPos += rate;
 
         movingTarget += targetStep + referenceCorrection;

@@ -64,9 +64,6 @@ void DeckChannelProcessor::setVinylBrakeActive(bool active) { setStopEffectWante
 void DeckChannelProcessor::setEchoOutActive(bool active) { setStopEffectWanted(m_echoOutWanted, active); }
 void DeckChannelProcessor::setBackspinActive(bool active) { setStopEffectWanted(m_backspinWanted, active); }
 void DeckChannelProcessor::setRollOutActive(bool active) { setStopEffectWanted(m_rollOutWanted, active); }
-void DeckChannelProcessor::setScratchTimbre(float amount) {
-    scratchTimbre.store(std::clamp(amount, 0.0f, 1.0f), std::memory_order_relaxed);
-}
 void DeckChannelProcessor::armClickFreeTransition() { m_pendingClickFreeBridge.store(true, std::memory_order_release); }
 
 const juce::AudioBuffer<float>& DeckChannelProcessor::getPflBuffer() const { return m_preFaderScratch; }
@@ -92,7 +89,6 @@ void DeckChannelProcessor::prepareToPlay(int samplesPerBlockExpected, double sam
         m_sampleRate = sampleRate;
         m_filterSampleRate.store(sampleRate,std::memory_order_release);
         m_deviceGeneration.fetch_add(1,std::memory_order_acq_rel);
-        for (int i = 0; i < 8; ++i) m_scratchWarmLpState[i] = 0.0f;
         m_lastOutputSample[0] = 0.0f;
         m_lastOutputSample[1] = 0.0f;
         m_lastOutputValid = false;
@@ -167,62 +163,6 @@ void DeckChannelProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
             return;
 
         activateFilterSnapshot();
-
-        // Rate-proportional anti-imaging LP during scratch.
-        // scratchTimbre carries absRate (0–1); cutoff at rate × sr × 0.25 places
-        // the first linear-interp alias image at 4× cutoff → ~48 dB rejection.
-        const float scratchRate = scratchTimbre.load(std::memory_order_relaxed);
-        const bool  scratchLpActive = (scratchRate > 0.00015f && scratchRate < 0.99f);
-        if (scratchLpActive) {
-            const int numChannels = std::min(bufferToFill.buffer->getNumChannels(), 2);
-
-            // On activation, seed all pole states from the first input sample so
-            // the filter output starts at the correct level with no convergence noise.
-            if (!m_scratchLpWasActive) {
-                for (int ch = 0; ch < numChannels; ++ch) {
-                    const float seed = bufferToFill.buffer->getSample(ch, bufferToFill.startSample);
-                    m_scratchWarmLpState[ch]     = seed;
-                    m_scratchWarmLpState[ch + 2] = seed;
-                    m_scratchWarmLpState[ch + 4] = seed;
-                    m_scratchWarmLpState[ch + 6] = seed;
-                }
-            }
-
-            // A two-pole response and a 7 kHz floor keep short micro-scratches
-            // articulate. Four poles at 2.6 kHz plus level compensation made
-            // crawl-speed motion sound narrow, boosted and overly synthetic.
-            const float rateHz = scratchRate * static_cast<float>(m_sampleRate) * 0.42f;
-            const float maximumCutoff = std::min(
-                18'000.0f, static_cast<float>(m_sampleRate) * 0.45f);
-            const float cutoffHz = std::min(
-                maximumCutoff, std::max(7000.0f, rateHz));
-            const float pole = std::exp(-2.0f * juce::MathConstants<float>::pi * cutoffHz
-                                        / static_cast<float>(m_sampleRate));
-            const float alpha = 1.0f - std::clamp(pole, 0.0f, 0.9999f);
-
-            const int ns = bufferToFill.numSamples;
-            for (int ch = 0; ch < numChannels; ++ch) {
-                float s1 = m_scratchWarmLpState[ch];
-                float s2 = m_scratchWarmLpState[ch + 2];
-                float s3 = m_scratchWarmLpState[ch + 4];
-                float s4 = m_scratchWarmLpState[ch + 6];
-                float* w = bufferToFill.buffer->getWritePointer(ch, bufferToFill.startSample);
-                for (int i = 0; i < ns; ++i) {
-                    s1 += alpha * (w[i] - s1);
-                    s2 += alpha * (s1   - s2);
-                    w[i] = s2;
-                }
-                // Keep the unused legacy pole state warm so future response
-                // changes cannot reintroduce an activation transient.
-                s3 = s2;
-                s4 = s2;
-                m_scratchWarmLpState[ch]     = s1;
-                m_scratchWarmLpState[ch + 2] = s2;
-                m_scratchWarmLpState[ch + 4] = s3;
-                m_scratchWarmLpState[ch + 6] = s4;
-            }
-        }
-        m_scratchLpWasActive = scratchLpActive;
 
         juce::dsp::AudioBlock<float> block(*bufferToFill.buffer);
         auto fullBlock   = block.getSubBlock(bufferToFill.startSample, bufferToFill.numSamples);

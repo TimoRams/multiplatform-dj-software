@@ -85,16 +85,7 @@ void DjEngine::tickScratchPhysics()
         : 0.016;
     physicsClock.restart();
 
-    const double scratchRate = m_scratch.tick(m_audioPipeline->renderModeRouterPtr(), dtSec);
-    const double absRate = std::abs(scratchRate);
-
-    if (m_audioPipeline->mixerPtr()) {
-        // Preserve the real crawl speed. The previous sqrt/minimum transform
-        // made every micro-scratch look like ~0.28x to the post-filter, causing
-        // a narrow, boosted "digital" tone even for tiny precise movements.
-        const double timbreSignal = std::clamp(absRate, 0.0, 1.0);
-        m_audioPipeline->mixer().setScratchTimbre(static_cast<float>(timbreSignal));
-    }
+    (void)m_scratch.tick(m_audioPipeline->renderModeRouterPtr(), dtSec);
 
     if (m_scratch.scrubbing() || m_scratch.releaseGlide()) {
         m_transport->adoptScratchRenderedPosition(
@@ -133,8 +124,6 @@ void DjEngine::tickScratchPhysics()
                 m_pendingScratchReleaseGeneration = 0;
                 m_scratch.setReleaseGlide(false);
                 restorePostScrubPlaybackState(finalCursor);
-                if (m_audioPipeline->mixerPtr())
-                    m_audioPipeline->mixer().setScratchTimbre(0.0f);
                 emit scrubbingChanged();
                 emit playingChanged();
                 emit progressChanged();

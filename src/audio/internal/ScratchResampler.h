@@ -3,6 +3,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "audio/cache/AudioPageCache.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace engine::audio {
@@ -46,7 +47,7 @@ enum class ScratchTrackerMode : std::uint8_t {
     VelocityLed
 };
 
-// RT-safe Hermite scratch reader with true bidirectional playback.
+// RT-safe band-limited scratch reader with true bidirectional playback.
 // Window sizing follows the device buffer size from audio settings.
 class ScratchResampler {
 public:
@@ -85,9 +86,8 @@ public:
     // read head toward the absolute hand target (track samples). Slow/precise moves
     // track exactly with no overshoot; momentum carries playback smoothly across
     // sparse UI events. Returns the rate used (track samples per output sample).
-    // inputLeadSeconds is how stale the supplied target already is when the
-    // block starts, i.e. roughly half the interval at which the driving input
-    // reports. It defaults to a hardware jog cadence.
+    // inputLeadSeconds is the measured age of the supplied target when the
+    // block starts. It defaults to a typical hardware jog cadence.
     double processScratchTracking(double targetPosSamples,
                                   double commandedRate,
                                   double maxAbsRate,
@@ -105,8 +105,10 @@ private:
     bool ensureWindow(double rate, int outputBlockSize) noexcept;
     bool refillWindowFromCache(double rate, int outputBlockSize) noexcept;
     [[nodiscard]] bool positionInWindow(double position) const noexcept;
-    void writeScratchOutput(float* out0, float* out1, int index, bool ready) noexcept;
-    float readHermite(int channel, double position) const noexcept;
+    void prepareSincTable() noexcept;
+    void writeScratchOutput(float* out0, float* out1, int index, bool ready,
+                            double rate) noexcept;
+    float readBandlimited(int channel, double position, double rate) const noexcept;
     double wrapPosition(double pos) const noexcept;
 
     AudioPageCache* m_cache = nullptr;
@@ -142,7 +144,12 @@ private:
     double m_loopInSample = 0.0;
     double m_loopOutSample = 0.0;
 
-    static constexpr int kHermiteRadius = 2;
+    static constexpr int kSincTaps = 16;
+    static constexpr int kSincRadius = kSincTaps / 2;
+    static constexpr int kSincPhaseCount = 256;
+    static constexpr int kSincCutoffBands = 16;
+    std::array<float, kSincCutoffBands * (kSincPhaseCount + 1) * kSincTaps>
+        m_sincTable {};
     static constexpr int kMinWindowSamples = 12;
     static constexpr int kStarvationFadeSamples = 128;
     std::atomic<std::uint64_t> m_pageHits{0}, m_pageMisses{0}, m_starvationBlocks{0};

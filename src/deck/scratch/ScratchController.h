@@ -184,6 +184,13 @@ public:
     {
         return m_eventIntervalMs.load(std::memory_order_relaxed) * 0.001;
     }
+    // Actual age of the last movement command when the audio block begins.
+    // Using only half the nominal event interval makes every callback between
+    // two MIDI packets extrapolate from the same stale point and then brake.
+    [[nodiscard]] double eventAgeSeconds() const noexcept
+    {
+        return std::clamp(timeSinceLastMoveMs() * 0.001, 0.0, 0.120);
+    }
     [[nodiscard]] double readPositionSamples() const noexcept {
         return m_readPosition.load(std::memory_order_relaxed);
     }

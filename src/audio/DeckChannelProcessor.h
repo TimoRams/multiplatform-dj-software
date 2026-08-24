@@ -36,7 +36,6 @@ public:
     void setEchoOutActive(bool active);
     void setBackspinActive(bool active);
     void setRollOutActive(bool active);
-    void setScratchTimbre(float amount);
     void armClickFreeTransition();
 
     [[nodiscard]] const juce::AudioBuffer<float>& getPflBuffer() const;
@@ -140,9 +139,6 @@ private:
     juce::AudioBuffer<float> m_preFaderScratch;
     juce::AudioBuffer<float> m_postFaderTailReturn;
     juce::AudioBuffer<float> m_tailScratch;
-    std::atomic<float> scratchTimbre { 0.0f };
-    float m_scratchWarmLpState[8] {};
-    bool  m_scratchLpWasActive = false;
     std::atomic<bool> m_pendingClickFreeBridge { false };
     float m_lastOutputSample[2] { 0.0f, 0.0f };
     bool  m_lastOutputValid = false;

@@ -484,9 +484,6 @@ void DjEngine::onTransportControlTick(const ControlTickContext& context)
         && m_audioPipeline->renderModeRouter().normalPlaybackHandoffPending())
         return;
 
-    if (m_audioPipeline->mixerPtr())
-        m_audioPipeline->mixer().setScratchTimbre(0.0f);
-
     if (m_transport->audioRunning())
         serviceQuantizedCueJump();
 

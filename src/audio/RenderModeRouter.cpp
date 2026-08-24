@@ -990,9 +990,10 @@ void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& buf
         const double target = m_platter.targetSamplePosition();
         const double commandedRate = m_controller.commandedHandSpeed() * oneX;
         const double maxAbsRate = 8.0 * oneX;
-        // The target was sampled when the last input event arrived, so on
-        // average it is half that input's reporting interval old already.
-        const double inputLead = m_controller.eventIntervalSeconds() * 0.5;
+        // Extrapolate by the target's real age. Using the same half-interval on
+        // every callback made blocks between MIDI events alternately coast and
+        // brake against an unchanged target — the audible scratch judder.
+        const double inputLead = m_controller.eventAgeSeconds();
         const double usedRate = m_scratchResampler.processScratchTracking(
             target, commandedRate, maxAbsRate, bufferToFill, inputLead);
         const double readPositionSamples = m_scratchResampler.readPosition();
