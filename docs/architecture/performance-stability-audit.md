@@ -5,6 +5,9 @@ Baseline revision: `95775e7`
 Host used for measurements: Linux x86_64, Intel Core Ultra 5 125H, 18 logical
 CPUs, `RelWithDebInfo`
 
+Scrolling-waveform presentation follow-up: 2026-08-25, working baseline
+`6f4232f`.
+
 This document records the measured performance/lifetime review performed after
 the scratch-quality work. It is a map for future changes, not a claim that
 desktop benchmarks replace physical audio/controller testing.
@@ -21,6 +24,7 @@ boundaries:
 | Paused loaded keylocked decks still ran the stretcher | Signalsmith/Rubber Band repeatedly processed silent router output, consuming FFT CPU needed by live decks and scratch. | `DeckAudioPipeline` publishes normal-input activity. Paused normal transport takes one direct pull; scratch remains available and resume uses the existing seed/crossfade handshake. |
 | Mutually exclusive QML surfaces were merely hidden | Startup created settings, mapping editor, C/D controls and both waveform layouts, retaining bindings and signal connections while invisible. | Settings/Source/windows and alternate deck/waveform layouts now have explicit on-demand lifetimes. `Library` stays eager for its startup/controller contract. |
 | Scratch motion was only block-continuous and its high-rate filter assumed source rate equaled device rate | Fast turns exposed callback-rate acceleration chirps; release targets became pitch stairs; an 8x backspin could lose its reverse cache margin; 192/48 kHz content could use the wrong anti-alias cutoff. | Exact FLX10 position is paired with a jitter-bounded velocity, a C2 trajectory and continuous safety bounds. Release interpolates across the block. A prebuilt 64-tap absolute-rate filter and source-rate-sized window cover reverse and high-rate tracks. |
+| Scrolling detail used a moving one-pixel carrier and unstable presentation scheduling | Alternating filled/empty texture columns produced a travelling moire pattern under fractional translation; a free-running 16 ms timer beat against display VSync, and guard-window advances reassigned surviving tiles to different scene nodes. Peaks appeared alternately thick, thin or briefly absent. | Detail now aggregates every physical display column, uses neighbour gutters for seam-safe linear filtering, maps global tile IDs to stable scene-node slots, and samples the playhead from `FrameAnimation`. Critical audio pressure suspends queued raster work by generation while retaining existing GPU textures. |
 
 The review deliberately did not merge real thread or lifetime owners. Fewer
 files are useful only when they also produce simpler ownership; combining the
@@ -164,6 +168,79 @@ First activation of a synchronous waveform/deck mode may still cost object
 construction. It is intentionally synchronous to avoid partially visible deck
 controls; mode-switch latency belongs in the manual regression matrix.
 
+## Scrolling waveform presentation invariants
+
+The enlarged waveform uses a physical-pixel grid, not a logical-pixel stroke
+pattern. These are now review invariants:
+
+1. One core texture column aggregates exactly one physical output column at the
+   selected raster scale. There is no alternating empty-column mask.
+2. Each 1024-column tile carries one hidden real neighbour on both sides.
+   `QSGSimpleTextureNode::sourceRect` exposes only the core, so linear sampling
+   crosses a tile boundary with the same two audio columns instead of clamping
+   to unrelated edge values.
+3. A global tile index owns `tileIndex mod poolSize`, including negative
+   pre-roll indices. Advancing the guarded window by one tile changes only the
+   departing and entering slots; every overlapping texture node stays resident.
+4. The timeline transform remains fractional and is centred on an actual
+   physical-pixel centre for the window DPR. Waveform, beat/cue geometry,
+   hit-testing and the QML playhead use the same centre convention.
+5. Normal motion is requested by Qt Quick's presentation clock. Reduced tiers
+   may discard frames; they never run a catch-up loop.
+6. The audio callback publishes only its existing playhead/diagnostic atomics.
+   Qt samples those values, low-priority raster workers consume immutable
+   waveform snapshots, and the render thread uploads completed images. No
+   render mutex, QObject call, texture upload or worker wait is callback-reachable.
+7. At rest, tiles are cut at the exact display scale: one texel covers one
+   physical pixel and the destination rectangle is a whole number of physical
+   pixels wide. The geometric raster ladder is a *gesture* fallback only.
+
+Invariant 7 replaced an unconditional ladder cut. The ladder exists so a tempo
+sweep repositions cached textures instead of invalidating every tile key at
+frame rate, but applying it at rest left the texture permanently stretched by
+up to ~2%. At that ratio roughly every 45th physical column is resampled from
+two texels while its neighbours are not, which does not move with the audio —
+it stands still in the viewport as a thick/thin ripple. Cutting exactly once
+the scale has held still removes the resampling entirely.
+
+`selectRasterScale` carries the decision in render-thread-only state:
+
+- Below `kRasterScaleStickyTolerance` (0.1%, under one texel across a whole
+  1024-column tile) the current cut is kept. This absorbs the continuous
+  sub-visible tempo drift a running sync coordinator produces; re-cutting for an
+  invisible error would blank the view repeatedly.
+- While the scale genuinely moves frame to frame, tiles land on the ladder and
+  survive the gesture.
+- After `kRasterScaleSettleFrames` still frames, tiles are re-cut exactly.
+  Re-cutting costs one visible transition, which is acceptable at the end of a
+  fader move and unacceptable as a permanent ripple.
+- A paused deck stops requesting frames the moment the fader is released, which
+  would strand the view on the ladder cut. `rasterScaleSettlePending` makes the
+  renderer request the remaining frames itself; it is self-terminating and
+  bounded by `kRasterScaleSettleFrames`.
+
+`rasterScaleStretch` reports the applied ratio and must read `1.0` during
+steady playback; `rasterScalePixelExact` is its boolean form. A value that stays
+away from `1.0` means tiles are stuck on the ladder cut.
+
+Beginning with the `reduced` tier, pending raster requests and new texture
+uploads are dropped. An already-running bounded worker loop may finish on its
+low-priority thread, but its work generation is stale and cannot enter the
+cache or wake the GUI. Existing scene textures may continue moving at a reduced
+disposable frame rate.
+Relevant runtime diagnostics are `rasterWorkEnabled`, `pendingTileRequests`,
+`tileUpdateQueued`, `tileTexturePhysicalWidth`,
+`tileFilterGutterPhysicalPixels`, `rasterScaleStretch`,
+`rasterScalePixelExact`, `textureUploads`, and `worstPaintNodeUsec`.
+
+Known residual, deliberately not "fixed": a pixel-exact texture translated by a
+fractional phase still distributes an isolated one-pixel peak across two pixels
+at phase 0.5. Unlike the ladder ripple this is uniform across the viewport and
+moves with the audio rather than standing still in it, so it reads as motion,
+not as a defect. Removing it entirely would require band-limiting the envelope
+horizontally, which trades transient sharpness — a visual design decision, not a
+correctness fix, and it should not be made without side-by-side hardware review.
+
 ## Boundaries intentionally retained
 
 - `AudioEngine`, `DeckAudioPipeline`, buses, output router, page cache and
@@ -180,19 +257,23 @@ controls; mode-switch latency belongs in the manual regression matrix.
 
 ## Remaining prioritized work
 
-1. Verify two-/four-deck scratch, keylock, load and eject on the FLX10 and real
+1. Verify scrolling waveform presentation at 59.94/60/90/120/144 Hz, DPR
+   1.0/1.25/1.5/2.0/3.0, forward/reverse playback, scratch, tempo sweeps,
+   guard crossings and window moves between mixed-DPR displays. Record the
+   graphics API and confirm there is no thick/thin cadence or tile seam.
+2. Verify two-/four-deck scratch, keylock, load and eject on the FLX10 and real
    ALSA/JACK/CoreAudio/ASIO devices. Scheduler and device jitter are not
    reproducible in a container. Use the capture/listening matrix in
    `scratch-engine-quality.md`; automated continuity is not a subjective parity
    claim.
-2. Measure the Qt-owned `LibraryDatabase` compatibility queries during real
+3. Measure the Qt-owned `LibraryDatabase` compatibility queries during real
    library hydration. Move only confirmed stalls to immutable
    `DatabaseWorker` commands; never move a live QSQLITE connection.
-3. Measure cancellation/join latency at every analysis phase and final artifact
+4. Measure cancellation/join latency at every analysis phase and final artifact
    serialization on slow disks.
-4. Add runtime visual parity tests before consolidating settings content or
+5. Add runtime visual parity tests before consolidating settings content or
    decomposing the library/header/deck monoliths.
-5. Monitor cache starvation, worker latency, callback overruns and
+6. Monitor cache starvation, worker latency, callback overruns and
    `ControlClock` late/worst ticks with production compressed media.
 
 ## Validation commands

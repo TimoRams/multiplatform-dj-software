@@ -51,6 +51,9 @@ alive until the device callback is unregistered and closed.
 | Analysis working state | one `WaveformAnalyzer` run | analysis worker only | `AnalysisWorkingData` dies with the joined run |
 | Analysis result | immutable value/mailbox | worker publishes, Qt owner drains | accept only matching identity/generations/path |
 | Render-visible waveform | `TrackData`/`WaveformLineStore` snapshots | Qt owner publishes, render reads immutable handles | no worker mutation of live render containers |
+| Scrolling waveform scene | one `ScrollingWaveformItem` | Qt owner requests frames/demand; Qt render sync owns QSG nodes and GPU texture replacement | render reads immutable snapshots and atomics; scene nodes never cross back to Qt/audio owners |
+| Waveform tile images | one `WaveformTileRasterizer` per scrolling item | low-priority joined workers rasterize; Qt render sync reads the bounded cache | pending work is disposable and generation-invalidated under audio pressure; workers join before item destruction |
+| Render-pressure tier | `RenderPressurePolicy` | Qt owner samples audio diagnostic atomics | callback never calls policy/QML; tier may reduce or suspend GUI/raster work only |
 | Library analysis queue | `LibraryAnalysisManager` | Qt owner schedules; analyzer worker executes | bounded queue, one active job, joined cancellation |
 | Database commands/results | `DatabaseWorker` | dedicated joined DB thread | its QSQLITE connection never crosses threads |
 | General file/image work | `MediaIoScheduler` | dedicated joined I/O thread | consumers destroyed before scheduler shutdown |
@@ -96,6 +99,23 @@ and canonical path before publication or persistence.
 The immutable result mailbox is latest-only. Progressive waveform publication
 uses generation-checked immutable chunks; rendering consumes snapshot handles
 and owns Qt Quick scene-graph objects on the render boundary.
+
+`ScrollingWaveformItem` has three one-way execution boundaries. Qt's
+`FrameAnimation` requests a scene sync and publishes coarse viewport demand.
+The render sync samples the atomic visual playhead, reads an immutable line-store
+snapshot and owns every QSG node/texture. Joined low-priority raster workers read
+snapshot handles and publish bounded `QImage` tiles through a coalesced queued
+notification. A render-pressure suspension clears queued requests and advances a
+work generation without waiting; stale in-flight results are discarded. None of
+these paths is entered by, or waits on, the audio callback.
+
+The raster-scale decision (`RasterScaleTracker`, see the presentation
+invariants in `performance-stability-audit.md`) is deliberately per-frame
+hysteresis and therefore lives in the `WaveformSceneNode`, not on the item. It
+is read and written only during render sync, so no atomics or locks are needed
+and no other thread can observe a half-updated decision. Anything that must be
+visible to QML — `rasterScaleStretch`, `rasterScalePixelExact` — is mirrored
+into diagnostic atomics on the item.
 
 ## Database and media workers
 

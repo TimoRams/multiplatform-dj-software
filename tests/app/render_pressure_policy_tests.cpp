@@ -15,6 +15,10 @@ int main()
     assert(Policy::targetTier({.hardwareXrun = true}) == Policy::Tier::Critical);
     assert(Policy::targetTier({.applicationActive = false}) == Policy::Tier::Elevated);
     assert(Policy::targetTier({.windowMinimized = true}) == Policy::Tier::Suspended);
+    assert(Policy::rasterWorkAllowed(Policy::Tier::Normal));
+    assert(!Policy::rasterWorkAllowed(Policy::Tier::Elevated));
+    assert(!Policy::rasterWorkAllowed(Policy::Tier::Critical));
+    assert(!Policy::rasterWorkAllowed(Policy::Tier::Suspended));
 
     std::cout << "Render-pressure policy tests passed\n";
     return 0;

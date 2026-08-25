@@ -29,6 +29,8 @@ class ScrollingWaveformItem : public QQuickItem
                NOTIFY effectivePixelsPerSecondChanged)
     Q_PROPERTY(QColor backgroundColor READ backgroundColor WRITE setBackgroundColor
                NOTIFY backgroundColorChanged)
+    Q_PROPERTY(bool rasterWorkEnabled READ rasterWorkEnabled WRITE setRasterWorkEnabled
+               NOTIFY rasterWorkEnabledChanged)
     QML_ELEMENT
 
 public:
@@ -47,6 +49,8 @@ public:
     [[nodiscard]] double effectivePixelsPerSecond() const noexcept;
     [[nodiscard]] QColor backgroundColor() const noexcept { return m_backgroundColor; }
     void setBackgroundColor(const QColor& color);
+    [[nodiscard]] bool rasterWorkEnabled() const noexcept { return m_rasterWorkEnabled; }
+    void setRasterWorkEnabled(bool enabled);
     Q_INVOKABLE double screenDeltaToSeconds(double screenDelta) const noexcept;
     Q_INVOKABLE double timelineSecondsAtX(double screenX,
                                           double playheadSeconds) const noexcept;
@@ -68,6 +72,7 @@ signals:
     void tempoRatioChanged();
     void effectivePixelsPerSecondChanged();
     void backgroundColorChanged();
+    void rasterWorkEnabledChanged();
 
 protected:
     void geometryChange(const QRectF& newGeometry, const QRectF& oldGeometry) override;
@@ -93,7 +98,9 @@ private:
     bool m_resizeDeferred = false;
     std::unique_ptr<waveform_render::WaveformTileRasterizer> m_tileRasterizer;
     std::atomic<bool> m_tilesReady{false};
+    std::atomic<bool> m_tileUpdateQueued{false};
     bool m_forceRebuild = true;
+    bool m_rasterWorkEnabled = true;
     float m_pixelsPerPoint = 0.22f;
     // Scene-graph scale belongs to this waveform instance. Keeping a local
     // snapshot prevents another deck's engine state (or a render-thread read
@@ -103,10 +110,15 @@ private:
     std::optional<waveform::WaveformDemand> m_lastPublishedDemand;
 
     void publishViewportDemand();
+    void scheduleTileUpdate() noexcept;
 
     mutable std::atomic<double> m_lastPlayheadSec{0.0};
     mutable std::atomic<double> m_lastPixelsPerSecond{1.0};
     mutable std::atomic<double> m_lastRenderedWidth{0.0};
+    // Scale the last frame's tiles were cut at, and the scale they were drawn
+    // at. Equal means pixel-exact; see renderStats()/rasterScaleStretch.
+    std::atomic<double> m_lastRasterScale{0.0};
+    std::atomic<double> m_lastRasterDisplayScale{0.0};
 
     std::atomic<std::uint64_t> m_frameCount{0};
     std::atomic<std::uint64_t> m_geometryRebuildCount{0};

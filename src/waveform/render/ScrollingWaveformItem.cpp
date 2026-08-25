@@ -101,7 +101,8 @@ void logDesktopWaveformComparison(const WaveformLineStoreSnapshot& snapshot,
         << " dataGeneration=" << snapshot.dataGeneration;
 }
 
-constexpr std::size_t kWaveformNodePoolSize = 24;
+constexpr std::size_t kWaveformNodePoolSize
+    = waveform_render::kWaveformTilePoolSize;
 constexpr std::size_t kCueLabelNodePoolSize = 9;
 constexpr std::size_t kDownbeatLabelNodePoolSize = 48;
 constexpr std::uint64_t kDefaultTextureUploadBudgetBytesPerFrame =
@@ -194,9 +195,11 @@ QSGSimpleTextureNode* makeWaveformTextureNode()
 {
     auto* node = new QSGSimpleTextureNode();
     node->setOwnsTexture(true);
-    // The image contains intentional one-physical-pixel gaps. Linear sampling
-    // blends neighbouring strokes back into a solid slab while zooming.
-    node->setFiltering(QSGTexture::Nearest);
+    // The texture now contains one aggregate per physical display column.
+    // Linear sampling makes fractional translation interpolate neighbouring
+    // audio columns with constant coverage instead of snapping the texture at
+    // whole pixels. There is no alternating empty-column carrier to blur.
+    node->setFiltering(QSGTexture::Linear);
     return node;
 }
 
@@ -367,6 +370,8 @@ struct WaveformSceneNode final : QSGClipNode {
     double innerEndLine = 0.0;
     double renderOriginLine = 0.0;
     double pixelsPerLine = 0.0;
+    double rasterScale = 0.0;
+    waveform_render::RasterScaleTracker rasterScaleTracker;
     double devicePixelRatio = 1.0;
     QSizeF renderedSize;
     QRectF clipBounds;
@@ -651,13 +656,11 @@ void positionWaveformTile(QSGSimpleTextureNode* node,
     const double left = (std::round(lineBegin * displayScale) - originPhysical) / dpr;
     const double right = (std::round(lineEnd * displayScale) - originPhysical) / dpr;
     node->setRect(QRectF(left, 0.0, std::max(0.0, right - left), height));
-    // Nearest keeps the strokes hard at the natural size; while a tempo sweep
-    // is between ladder steps the texture is stretched a few percent, where
-    // nearest would drop or double individual strokes.
-    node->setFiltering(
-        waveform_render::rasterScaleMatchesDisplay(rasterScale, displayScale)
-            ? QSGTexture::Nearest
-            : QSGTexture::Linear);
+    // Linear filtering is intentional even at the natural scale. Integer
+    // phases still sample texel centres exactly; fractional phases distribute
+    // a feature between its two neighbouring physical pixels without changing
+    // its total coverage or apparent width.
+    node->setFiltering(QSGTexture::Linear);
 }
 
 struct TextureUpload final {
@@ -688,9 +691,14 @@ std::optional<TextureUpload> uploadWaveformTile(
         clearWaveformTexture(node);
         return std::nullopt;
     }
-    texture->setFiltering(QSGTexture::Nearest);
+    texture->setFiltering(QSGTexture::Linear);
     auto* textureNode = assignTextureNode(node, texture, parent, insertBefore);
     textureNode->setOwnsTexture(true);
+    textureNode->setSourceRect(QRectF(
+        waveform_render::kRenderTileFilterGutterPhysicalPixels,
+        0.0,
+        tile.span.physicalWidth(),
+        tile.image.height()));
     positionWaveformTile(textureNode, tile.span, renderOriginLine,
                          pixelsPerLine, rasterPhysicalPixelsPerLine,
                          devicePixelRatio, height);
@@ -705,15 +713,19 @@ void positionFallbackOverview(QSGSimpleTextureNode* node,
                               std::uint32_t sourceEnd,
                               double renderOriginLine,
                               double pixelsPerLine,
+                              double devicePixelRatio,
                               float height)
 {
     if (!node)
         return;
-    node->setRect(QRectF(
-        (static_cast<double>(sourceBegin) - renderOriginLine) * pixelsPerLine,
-        0.0,
-        static_cast<double>(sourceEnd - sourceBegin) * pixelsPerLine,
-        height));
+    const double dpr = std::max(1.0, devicePixelRatio);
+    const double physicalScale = pixelsPerLine * dpr;
+    const double originPhysical = std::round(renderOriginLine * physicalScale);
+    const double left = (std::round(
+        static_cast<double>(sourceBegin) * physicalScale) - originPhysical) / dpr;
+    const double right = (std::round(
+        static_cast<double>(sourceEnd) * physicalScale) - originPhysical) / dpr;
+    node->setRect(QRectF(left, 0.0, std::max(0.0, right - left), height));
 }
 
 std::optional<TextureUpload> uploadFallbackOverview(
@@ -721,6 +733,7 @@ std::optional<TextureUpload> uploadFallbackOverview(
     const waveform_render::RasterizedOverview& overview,
     double renderOriginLine,
     double pixelsPerLine,
+    double devicePixelRatio,
     float height,
     QQuickWindow* window,
     QSGNode* parent,
@@ -742,7 +755,7 @@ std::optional<TextureUpload> uploadFallbackOverview(
     textureNode->setFiltering(QSGTexture::Linear);
     positionFallbackOverview(textureNode, overview.key.sourceBegin,
                              overview.key.sourceEnd, renderOriginLine,
-                             pixelsPerLine, height);
+                             pixelsPerLine, devicePixelRatio, height);
     return TextureUpload{
         0,
         static_cast<std::uint64_t>(overview.image.sizeInBytes()),
@@ -821,11 +834,7 @@ ScrollingWaveformItem::ScrollingWaveformItem(QQuickItem* parent)
     m_textureUploadBudgetBytes.store(
         m_textureUploadBudgetBytesPerFrame, std::memory_order_relaxed);
     m_tileRasterizer = std::make_unique<waveform_render::WaveformTileRasterizer>(
-        [this] {
-            m_tilesReady.store(true, std::memory_order_release);
-            QMetaObject::invokeMethod(this, [this] { update(); },
-                                      Qt::QueuedConnection);
-        });
+        [this] { scheduleTileUpdate(); });
     m_dataUpdateThrottle = new QTimer(this);
     m_dataUpdateThrottle->setSingleShot(true);
     // The playhead itself is a VSync transform and stays at full frame rate.
@@ -936,6 +945,17 @@ void ScrollingWaveformItem::setBackgroundColor(const QColor& color)
     invalidateGeometry();
 }
 
+void ScrollingWaveformItem::setRasterWorkEnabled(bool enabled)
+{
+    if (m_rasterWorkEnabled == enabled)
+        return;
+    m_rasterWorkEnabled = enabled;
+    m_tileRasterizer->setWorkEnabled(enabled);
+    emit rasterWorkEnabledChanged();
+    if (enabled)
+        scheduleTileUpdate();
+}
+
 double ScrollingWaveformItem::effectivePixelsPerSecond() const noexcept
 {
     const auto* currentEngine = m_engine.data();
@@ -955,14 +975,37 @@ double ScrollingWaveformItem::screenDeltaToSeconds(double screenDelta) const noe
 double ScrollingWaveformItem::timelineSecondsAtX(
     double screenX, double playheadSeconds) const noexcept
 {
+    const double dpr = window()
+        ? std::max(1.0, window()->effectiveDevicePixelRatio()) : 1.0;
     return playheadSeconds + waveform_render::screenDeltaToTimelineSeconds(
-        screenX - width() * 0.5, effectivePixelsPerSecond());
+        screenX - waveform_render::viewportPhysicalPixelCenter(width(), dpr),
+        effectivePixelsPerSecond());
 }
 
 void ScrollingWaveformItem::requestUpdate()
 {
     publishViewportDemand();
     update();
+}
+
+void ScrollingWaveformItem::scheduleTileUpdate() noexcept
+{
+    m_tilesReady.store(true, std::memory_order_release);
+    bool expected = false;
+    if (!m_tileUpdateQueued.compare_exchange_strong(
+            expected, true, std::memory_order_acq_rel,
+            std::memory_order_relaxed)) {
+        return;
+    }
+
+    // Do not enqueue one GUI event per worker completion. One latest-state
+    // scene sync consumes every tile that became ready before that frame; a
+    // later completion schedules the next one after this flag is released.
+    QMetaObject::invokeMethod(this, [this] {
+        m_tileUpdateQueued.store(false, std::memory_order_release);
+        if (m_tilesReady.load(std::memory_order_acquire))
+            update();
+    }, Qt::QueuedConnection);
 }
 
 void ScrollingWaveformItem::publishViewportDemand()
@@ -1181,11 +1224,15 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     const double playheadSec = engine->getVisualPosition();
     const double playheadLine = playheadSec * static_cast<double>(snapshot->linesPerSecond);
     const double dpr = window() ? std::max(1.0, window()->effectiveDevicePixelRatio()) : 1.0;
-    // Tiles are cut and cached on the ladder grid; only their placement follows
-    // the exact scale, so a tempo sweep repositions textures instead of
-    // discarding them.
-    const double rasterScale = waveform_render::quantizedRasterScale(
-        pixelsPerLine * dpr);
+    // At rest tiles are cut at the exact display scale, so one texel is one
+    // physical pixel and nothing is resampled. Only while the scale is
+    // actually moving do they fall back to the ladder grid, where a tempo
+    // sweep repositions textures instead of discarding them.
+    const double rasterScale = waveform_render::selectRasterScale(
+        scene->rasterScaleTracker, pixelsPerLine * dpr);
+    m_lastRasterScale.store(rasterScale, std::memory_order_relaxed);
+    m_lastRasterDisplayScale.store(pixelsPerLine * dpr,
+                                   std::memory_order_relaxed);
 
     m_lastPlayheadSec.store(playheadSec, std::memory_order_relaxed);
     m_lastPixelsPerSecond.store(
@@ -1199,6 +1246,10 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     const bool staticConfigurationChanged = !scene->hasWindow
         || scene->trackGeneration != snapshot->trackGeneration
         || !qFuzzyCompare(scene->pixelsPerLine, pixelsPerLine)
+        // Settling from the ladder back onto the exact scale re-cuts every
+        // tile without pixels-per-line having moved, so it needs its own
+        // rebuild trigger.
+        || !qFuzzyCompare(scene->rasterScale, rasterScale)
         || !qFuzzyCompare(scene->devicePixelRatio, dpr)
         || scene->renderedSize != bounds.size();
     const bool configurationChanged = staticConfigurationChanged
@@ -1252,11 +1303,16 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             scene->windowEndLine, 0, snapshot->totalLineCount));
         std::uint64_t renderedLineCount = 0;
         std::uint64_t visibleTileCount = 0;
-        std::size_t usedPoolSlots = 0;
+        std::array<bool, kWaveformNodePoolSize> usedPoolSlots {};
+        std::size_t assignedTileCount = 0;
         std::uint64_t textureUploadBytesThisFrame = 0;
         bool textureUploadDeferred = false;
         const auto uploadBudgetBytes = m_textureUploadBudgetBytesPerFrame;
+        const bool visualBackgroundWorkEnabled
+            = m_tileRasterizer->workEnabled();
         const auto canUploadTexture = [&](std::uint64_t bytes) {
+            if (!visualBackgroundWorkEnabled)
+                return false;
             // Always permit the first texture so an unusually large fallback
             // image cannot remain permanently deferred on a high-DPI display.
             return textureUploadBytesThisFrame == 0
@@ -1324,6 +1380,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                         const auto upload = uploadFallbackOverview(
                             scene->fallbackNode, *ready,
                             scene->renderOriginLine, pixelsPerLine,
+                            dpr,
                             static_cast<float>(bounds.height()), window(),
                             scene->timeline, firstHighResolutionNode());
                         if (upload) {
@@ -1353,6 +1410,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                     positionFallbackOverview(
                         scene->fallbackNode, 0, snapshot->totalLineCount,
                         scene->renderOriginLine, pixelsPerLine,
+                        dpr,
                         static_cast<float>(bounds.height()));
                     scene->fallbackVisible = true;
                 }
@@ -1385,9 +1443,18 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             const auto firstTile = waveform_render::firstRenderTile(physicalBegin);
             const auto lastTile = waveform_render::lastRenderTile(physicalEnd);
             for (auto tileIndex = firstTile;
-                 tileIndex <= lastTile && usedPoolSlots < scene->waveformNodes.size();
+                 tileIndex <= lastTile
+                     && assignedTileCount < scene->waveformNodes.size();
                  ++tileIndex) {
-                const std::size_t poolIndex = usedPoolSlots++;
+                const std::size_t poolIndex = waveform_render::renderTilePoolSlot(
+                    tileIndex, scene->waveformNodes.size());
+                // The guarded window is deliberately narrower than the pool.
+                // Stop safely if a future sizing change violates that invariant
+                // instead of replacing a still-visible tile in the same frame.
+                if (usedPoolSlots[poolIndex])
+                    break;
+                usedPoolSlots[poolIndex] = true;
+                ++assignedTileCount;
                 const auto tileSpan = waveform_render::renderTileSpan(
                     tileIndex, rasterScale, snapshot->totalLineCount);
                 if (!tileSpan.hasSource()) {
@@ -1545,8 +1612,10 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         if (missingVisibleTiles > 0 && scene->fallbackVisible)
             m_overviewFallbackFrameCount.fetch_add(
                 1, std::memory_order_relaxed);
-        for (std::size_t poolIndex = usedPoolSlots;
+        for (std::size_t poolIndex = 0;
             poolIndex < scene->waveformNodes.size(); ++poolIndex) {
+            if (usedPoolSlots[poolIndex])
+                continue;
             clearWaveformTexture(scene->waveformNodes[poolIndex]);
             scene->waveformTileKeys[poolIndex].reset();
             scene->waveformRenderedLineCounts[poolIndex] = 0;
@@ -1558,11 +1627,9 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             scene->fallbackTextureBytes);
         m_estimatedGpuTextureBytes.store(gpuTextureBytes,
                                          std::memory_order_relaxed);
-        if (textureUploadDeferred) {
+        if (textureUploadDeferred && visualBackgroundWorkEnabled) {
             m_deferredTextureUploadCount.fetch_add(1, std::memory_order_relaxed);
-            m_tilesReady.store(true, std::memory_order_release);
-            QMetaObject::invokeMethod(this, [this] { update(); },
-                                      Qt::QueuedConnection);
+            scheduleTileUpdate();
         }
         const auto maximumUploadBudget = maximumTextureUploadBudgetBytesPerFrame();
         if (textureUploadDeferred) {
@@ -1727,6 +1794,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         scene->trackGeneration = snapshot->trackGeneration;
         scene->dataGeneration = snapshot->dataGeneration;
         scene->pixelsPerLine = pixelsPerLine;
+        scene->rasterScale = rasterScale;
         scene->devicePixelRatio = dpr;
         scene->renderedSize = bounds.size();
         scene->hasWindow = true;
@@ -1796,12 +1864,16 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     // beat ticks shimmer during playback. Feathered line edges provide stable
     // coverage while the shared timeline moves between physical pixels.
     const double timelineTranslation = waveform_render::smoothTimelineTranslation(
-        bounds.width(), playheadLine, scene->renderOriginLine, pixelsPerLine);
+        bounds.width(), playheadLine, scene->renderOriginLine, pixelsPerLine, dpr);
     QMatrix4x4 transform;
     transform.translate(static_cast<float>(timelineTranslation), 0.0f);
     scene->timeline->setMatrix(transform);
     scene->timeline->markDirty(QSGNode::DirtyMatrix);
     m_transformUpdateCount.fetch_add(1, std::memory_order_relaxed);
+    if (waveform_render::rasterScaleSettlePending(scene->rasterScaleTracker,
+                                                  pixelsPerLine * dpr)) {
+        scheduleTileUpdate();
+    }
     return scene;
 }
 
@@ -1821,9 +1893,14 @@ QVariantList ScrollingWaveformItem::beatLabels() const
     const auto beats = visibleBeatGrid(*m_engine->getTrackData(),
                                        playheadSec - halfVisibleSec,
                                        playheadSec + halfVisibleSec);
+    const double dpr = window()
+        ? std::max(1.0, window()->effectiveDevicePixelRatio()) : 1.0;
+    const double viewportCenter = waveform_render::viewportPhysicalPixelCenter(
+        width, dpr);
     double previousX = -std::numeric_limits<double>::infinity();
     for (const auto& beat : beats) {
-        const double x = width * 0.5 + (beat.positionSec - playheadSec) * pixelsPerSecond;
+        const double x = viewportCenter
+            + (beat.positionSec - playheadSec) * pixelsPerSecond;
         if (x - previousX < 20.0)
             continue;
         previousX = x;
@@ -1890,6 +1967,28 @@ QVariantMap ScrollingWaveformItem::renderStats() const
                  static_cast<qulonglong>(kWaveformNodePoolSize));
     stats.insert(QStringLiteral("tilePhysicalWidth"),
                  static_cast<qlonglong>(waveform_render::kRenderTilePhysicalWidth));
+    stats.insert(QStringLiteral("tileTexturePhysicalWidth"),
+                 waveform_render::kRenderTileTexturePhysicalWidth);
+    stats.insert(QStringLiteral("tileFilterGutterPhysicalPixels"),
+                 waveform_render::kRenderTileFilterGutterPhysicalPixels);
+    stats.insert(QStringLiteral("waveformColumnsPerPhysicalPixel"), 1.0);
+    // At rest this must read 1.0: one texel on one physical pixel, nothing
+    // resampled. A lasting value away from 1.0 means tiles are stuck on the
+    // ladder cut and the view carries a standing thick/thin ripple.
+    const double displayScale = m_lastRasterDisplayScale.load(
+        std::memory_order_relaxed);
+    const double appliedRasterScale = m_lastRasterScale.load(
+        std::memory_order_relaxed);
+    stats.insert(QStringLiteral("rasterScaleStretch"),
+                 appliedRasterScale > 0.0 ? displayScale / appliedRasterScale
+                                          : 0.0);
+    stats.insert(QStringLiteral("rasterScalePixelExact"),
+                 appliedRasterScale > 0.0
+                     && waveform_render::rasterScaleMatchesDisplay(
+                         appliedRasterScale, displayScale));
+    stats.insert(QStringLiteral("rasterWorkEnabled"), tileStats.workEnabled);
+    stats.insert(QStringLiteral("tileUpdateQueued"),
+                 m_tileUpdateQueued.load(std::memory_order_relaxed));
     stats.insert(QStringLiteral("tileCacheHits"),
                  QVariant::fromValue<qulonglong>(tileStats.cacheHits));
     stats.insert(QStringLiteral("tileCacheMisses"),

@@ -8,6 +8,16 @@ Item {
     property var engine: null
     property color stripeColor: UiTheme.separatorSubtle
     property real playheadNorm: 0
+    readonly property bool motionActive:
+        root.visible && root.engine !== null
+        && (root.engine.isPlaying || root.engine.scratchVisualActive)
+    readonly property int motionIntervalMs: {
+        if (typeof renderPressurePolicy === "undefined" || !renderPressurePolicy)
+            return 16
+        return root.engine && root.engine.scratchVisualActive
+            ? renderPressurePolicy.interactiveWaveformUpdateIntervalMs
+            : renderPressurePolicy.waveformUpdateIntervalMs
+    }
 
     function updatePlayheadNorm() {
         if (!root.engine) {
@@ -27,17 +37,18 @@ Item {
 
     onEngineChanged: updatePlayheadNorm()
 
+    // Keep the overview playhead on the same presentation clock as the detail
+    // waveform. Independent 16 ms timers otherwise drift into visibly different
+    // positions at 59.94 Hz and skip unevenly on high-refresh displays.
+    FrameAnimation {
+        running: root.motionActive && root.motionIntervalMs <= 17
+        onTriggered: root.updatePlayheadNorm()
+    }
+
     Timer {
-        interval: {
-            if (typeof renderPressurePolicy === "undefined" || !renderPressurePolicy)
-                return 16
-            return root.engine && root.engine.scratchVisualActive
-                ? renderPressurePolicy.interactiveWaveformUpdateIntervalMs
-                : renderPressurePolicy.waveformUpdateIntervalMs
-        }
+        interval: root.motionIntervalMs
         repeat: true
-        running: root.engine !== null
-                 && (root.engine.isPlaying || root.engine.scratchVisualActive)
+        running: root.motionActive && root.motionIntervalMs > 17
         onTriggered: root.updatePlayheadNorm()
     }
 

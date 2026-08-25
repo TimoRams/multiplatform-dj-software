@@ -186,10 +186,13 @@ RenderTileKey WaveformTileRasterizer::makeKey(
     std::uint8_t lodLevel,
     std::uint32_t backgroundRgba) noexcept
 {
+    const auto rasterSource = renderTileRasterSourceSpan(
+        span, physicalPixelsPerLine, snapshot.totalLineCount);
     return {
         snapshot.trackGeneration,
         waveform::WaveformLodPyramid::sourceRevision(
-            snapshot, lodLevel, span.sourceBegin, span.sourceEnd),
+            snapshot, lodLevel, rasterSource.sourceBegin,
+            rasterSource.sourceEnd),
         tileIndex,
         static_cast<std::uint64_t>(std::max(0.0,
             std::round(physicalPixelsPerLine * 1'000'000.0))),
@@ -223,7 +226,8 @@ void WaveformTileRasterizer::request(RenderTileRequest request)
 
     {
         std::lock_guard lock(m_mutex);
-        if (request.key.trackGeneration != m_activeTrackGeneration
+        if (!m_workEnabled.load(std::memory_order_relaxed)
+            || request.key.trackGeneration != m_activeTrackGeneration
             || m_cache.contains(request.key)
             || m_pendingKeys.contains(request.key)
             || m_inFlightKeys.contains(request.key)) {
@@ -262,7 +266,8 @@ void WaveformTileRasterizer::requestOverview(OverviewRenderRequest request)
         return;
     {
         std::lock_guard lock(m_mutex);
-        if (request.key.trackGeneration != m_activeTrackGeneration
+        if (!m_workEnabled.load(std::memory_order_relaxed)
+            || request.key.trackGeneration != m_activeTrackGeneration
             || (m_overview && m_overview->key == request.key)
             || (m_pendingOverview && m_pendingOverview->key == request.key)
             || (m_overviewInFlightKey
@@ -273,6 +278,25 @@ void WaveformTileRasterizer::requestOverview(OverviewRenderRequest request)
         m_pendingOverview = std::move(request);
     }
     m_condition.notify_one();
+}
+
+void WaveformTileRasterizer::setWorkEnabled(bool enabled) noexcept
+{
+    const bool previous = m_workEnabled.exchange(enabled, std::memory_order_acq_rel);
+    if (previous == enabled)
+        return;
+
+    if (!enabled) {
+        m_workGeneration.fetch_add(1, std::memory_order_acq_rel);
+        std::lock_guard lock(m_mutex);
+        // These requests describe an old visual moment by the time audio
+        // pressure clears. Dropping them is cheaper and safer than a catch-up
+        // burst; the next scene sync republishes only its current viewport.
+        m_pending.clear();
+        m_pendingOverview.reset();
+        m_pendingKeys.clear();
+    }
+    m_condition.notify_all();
 }
 
 void WaveformTileRasterizer::cancelPendingTiles()
@@ -333,6 +357,7 @@ WaveformTileRasterizer::Stats WaveformTileRasterizer::stats() const
     result.cacheEntries = m_cache.size();
     result.pendingRequests = m_pending.size() + m_inFlightKeys.size()
         + (m_pendingOverview ? 1u : 0u) + (m_overviewInFlightKey ? 1u : 0u);
+    result.workEnabled = m_workEnabled.load(std::memory_order_relaxed);
     return result;
 }
 
@@ -355,14 +380,17 @@ void WaveformTileRasterizer::run(std::stop_token stopToken)
     while (!stopToken.stop_requested()) {
         std::optional<RenderTileRequest> request;
         std::optional<OverviewRenderRequest> overviewRequest;
+        std::uint64_t workGeneration = 0;
         {
             std::unique_lock lock(m_mutex);
             m_condition.wait(lock, stopToken, [this] {
-                return (!m_overviewInFlightKey && m_pendingOverview.has_value())
-                    || !m_pending.empty();
+                return m_workEnabled.load(std::memory_order_relaxed)
+                    && ((!m_overviewInFlightKey && m_pendingOverview.has_value())
+                        || !m_pending.empty());
             });
             if (stopToken.stop_requested())
                 break;
+            workGeneration = m_workGeneration.load(std::memory_order_acquire);
             if (!m_overviewInFlightKey && m_pendingOverview) {
                 overviewRequest.emplace(std::move(*m_pendingOverview));
                 m_overviewInFlightKey = overviewRequest->key;
@@ -391,6 +419,23 @@ void WaveformTileRasterizer::run(std::stop_token stopToken)
             permits.release();
             break;
         }
+        if (!m_workEnabled.load(std::memory_order_acquire)
+            || workGeneration
+                != m_workGeneration.load(std::memory_order_acquire)) {
+            {
+                std::lock_guard lock(m_mutex);
+                if (overviewRequest) {
+                    if (m_overviewInFlightKey
+                        && *m_overviewInFlightKey == overviewRequest->key) {
+                        m_overviewInFlightKey.reset();
+                    }
+                } else if (request) {
+                    m_inFlightKeys.erase(request->key);
+                }
+            }
+            permits.release();
+            continue;
+        }
 
         const auto concurrent = m_activeWorkers.fetch_add(
             1, std::memory_order_relaxed) + 1;
@@ -408,7 +453,10 @@ void WaveformTileRasterizer::run(std::stop_token stopToken)
                     m_overviewInFlightKey.reset();
                 }
                 if (overview
-                    && overview->key.trackGeneration == m_activeTrackGeneration) {
+                    && overview->key.trackGeneration == m_activeTrackGeneration
+                    && m_workEnabled.load(std::memory_order_relaxed)
+                    && workGeneration
+                        == m_workGeneration.load(std::memory_order_relaxed)) {
                     m_overview = std::move(overview);
                     accepted = true;
                 }
@@ -427,7 +475,7 @@ void WaveformTileRasterizer::run(std::stop_token stopToken)
                     rasterUsec);
         m_totalRasterUsec.fetch_add(rasterUsec, std::memory_order_relaxed);
         m_rasterizedTiles.fetch_add(1, std::memory_order_relaxed);
-        insert(std::move(tile));
+        insert(std::move(tile), workGeneration);
         m_activeWorkers.fetch_sub(1, std::memory_order_relaxed);
         permits.release();
     }
@@ -528,7 +576,8 @@ WaveformTileRasterizer::rasterizeOverview(const OverviewRenderRequest& request)
 }
 
 void WaveformTileRasterizer::insert(
-    std::shared_ptr<const RasterizedRenderTile> tile)
+    std::shared_ptr<const RasterizedRenderTile> tile,
+    std::uint64_t workGeneration)
 {
     if (!tile)
         return;
@@ -536,7 +585,10 @@ void WaveformTileRasterizer::insert(
     {
         std::lock_guard lock(m_mutex);
         m_inFlightKeys.erase(tile->key);
-        if (tile->key.trackGeneration == m_activeTrackGeneration) {
+        if (tile->key.trackGeneration == m_activeTrackGeneration
+            && m_workEnabled.load(std::memory_order_relaxed)
+            && workGeneration
+                == m_workGeneration.load(std::memory_order_relaxed)) {
             const auto bytes = static_cast<std::size_t>(tile->image.sizeInBytes());
             m_lru.push_front(tile->key);
             auto [position, inserted] = m_cache.emplace(
@@ -584,21 +636,22 @@ WaveformTileRasterizer::rasterize(const RenderTileRequest& request)
         return result;
     }
 
-    const int imageWidth = request.span.physicalWidth();
+    const int coreWidth = request.span.physicalWidth();
+    const int imageWidth = coreWidth
+        + 2 * kRenderTileFilterGutterPhysicalPixels;
     const int imageHeight = static_cast<int>(request.key.imageHeight);
-    if (imageWidth <= 0 || imageWidth > kRenderTilePhysicalWidth
+    if (coreWidth <= 0 || coreWidth > kRenderTilePhysicalWidth
+        || imageWidth != kRenderTileTexturePhysicalWidth
         || imageHeight <= 0) {
         return result;
     }
 
     result->image = QImage(imageWidth, imageHeight,
                            QImage::Format_ARGB32_Premultiplied);
-    // A complete detail tile is an opaque replacement for the coarse
-    // overview. Keeping its intentional 1 px spacing transparent lets the
-    // linearly scaled overview bleed through and visually turns the picket
-    // fence back into broad, blurred bars. Incomplete tiles are rejected as a
-    // whole by the renderer, so filling the background here cannot conceal a
-    // loading hole.
+    // A complete detail tile is an opaque replacement for the coarse overview.
+    // Every physical column carries a source aggregate, so fractional GPU
+    // translation interpolates adjacent audio columns instead of moving a
+    // synthetic one-pixel picket-fence mask through the display grid.
     result->image.fill(static_cast<QRgb>(request.key.backgroundRgba));
 
     const auto verticalLayout = verticalMarkerLayout(
@@ -609,7 +662,12 @@ WaveformTileRasterizer::rasterize(const RenderTileRequest& request)
             * request.devicePixelRatio * 0.5);
     bool allSourcePresent = true;
 
-    for (int physicalX = 0; physicalX < imageWidth; ++physicalX) {
+    for (int physicalX = -kRenderTileFilterGutterPhysicalPixels;
+         physicalX < coreWidth + kRenderTileFilterGutterPhysicalPixels;
+         ++physicalX) {
+        const bool coreColumn = physicalX >= 0 && physicalX < coreWidth;
+        const int imageX = physicalX
+            + kRenderTileFilterGutterPhysicalPixels;
         const auto globalPhysicalX = request.span.physicalBegin + physicalX;
         if (!isWaveformStrokeColumn(globalPhysicalX))
             continue;
@@ -629,22 +687,23 @@ WaveformTileRasterizer::rasterize(const RenderTileRequest& request)
                 / request.physicalPixelsPerLine);
         const auto globalBegin = std::clamp<std::uint32_t>(
             static_cast<std::uint32_t>(std::floor(sourceBeginExact)),
-            request.span.sourceBegin, request.span.sourceEnd - 1);
+            0, request.snapshot->totalLineCount - 1);
         const auto globalEnd = std::clamp<std::uint32_t>(
             static_cast<std::uint32_t>(std::ceil(sourceEndExact)),
-            globalBegin + 1, request.span.sourceEnd);
+            globalBegin + 1, request.snapshot->totalLineCount);
 
-        // One physical column = one shared WaveformColumn. The same call the
+        // One physical display column = one shared WaveformColumn. The same call the
         // FLX10 encoder makes, so hardware and screen cannot disagree about
         // the track's shape. LOD selection lives inside the aggregator.
         const auto column = waveform::aggregateWaveformColumn(
             *request.snapshot, {globalBegin, globalEnd});
-        if (!column.complete)
+        if (coreColumn && !column.complete)
             allSourcePresent = false;
         if (!column.hasData)
             continue;
 
-        result->hasAnySourceData = true;
+        if (coreColumn)
+            result->hasAnySourceData = true;
         double top = centerY
             - (static_cast<double>(column.maximum) / 32767.0) * halfHeight;
         double bottom = centerY
@@ -656,9 +715,10 @@ WaveformTileRasterizer::rasterize(const RenderTileRequest& request)
         }
 
         writeAntialiasedVerticalStroke(
-            result->image, physicalX, top, bottom,
+            result->image, imageX, top, bottom,
             column.red, column.green, column.blue, 248);
-        ++result->renderedColumns;
+        if (coreColumn)
+            ++result->renderedColumns;
     }
     result->hasCompleteSourceData = allSourcePresent && result->hasAnySourceData;
     return result;

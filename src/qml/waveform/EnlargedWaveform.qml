@@ -22,6 +22,16 @@ Item {
     readonly property real physicalPixel: 1.0 / renderDpr
     readonly property real playheadCenterX:
         (Math.floor(width * 0.5 * renderDpr) + 0.5) / renderDpr
+    readonly property bool waveformMotionActive:
+        root.visible && root.engine !== null
+        && (root.engine.isPlaying || root.engine.scratchVisualActive)
+    readonly property int waveformMotionIntervalMs: {
+        if (typeof renderPressurePolicy === "undefined" || !renderPressurePolicy)
+            return 16
+        return root.engine && root.engine.scratchVisualActive
+            ? renderPressurePolicy.interactiveWaveformUpdateIntervalMs
+            : renderPressurePolicy.waveformUpdateIntervalMs
+    }
 
     function snappedLength(value) {
         return Math.max(physicalPixel, Math.round(value * renderDpr) / renderDpr)
@@ -57,6 +67,10 @@ Item {
             engine: root.engine
             pixelsPerPoint: root.waveformZoom
             backgroundColor: root.backgroundColor
+            rasterWorkEnabled: (typeof renderPressurePolicy === "undefined"
+                                || !renderPressurePolicy)
+                               ? true
+                               : renderPressurePolicy.waveformRasterWorkEnabled
         }
 
         Binding {
@@ -158,18 +172,24 @@ Item {
             }
         }
 
+        // Normal motion is driven by Qt Quick's animation clock, so the
+        // playhead snapshot is sampled exactly once for the frame the scene
+        // graph is about to render. A free-running 16 ms timer slowly beats
+        // against 59.94/90/120/144 Hz presentation and produces duplicate and
+        // skipped waveform positions. Under audio pressure the frame driver is
+        // stopped completely and the lower-rate disposable timer takes over.
+        FrameAnimation {
+            running: root.waveformMotionActive
+                     && root.waveformMotionIntervalMs <= 17
+            onTriggered: waveItem.requestUpdate()
+        }
+
         Timer {
-            id: waveUpdateTimer
-            interval: {
-                if (typeof renderPressurePolicy === "undefined" || !renderPressurePolicy)
-                    return 16
-                return root.engine && root.engine.scratchVisualActive
-                    ? renderPressurePolicy.interactiveWaveformUpdateIntervalMs
-                    : renderPressurePolicy.waveformUpdateIntervalMs
-            }
+            id: reducedWaveUpdateTimer
+            interval: root.waveformMotionIntervalMs
             repeat: true
-            running: root.engine !== null
-                     && (root.engine.isPlaying || root.engine.scratchVisualActive)
+            running: root.waveformMotionActive
+                     && root.waveformMotionIntervalMs > 17
             onTriggered: waveItem.requestUpdate()
         }
 

@@ -10,6 +10,13 @@ Item {
     property real  baseRpm: 33.0 + 1.0/3.0   // 33⅓ RPM = 200 °/s
     property real  scratchDeadzoneDeg: 0.05
     property bool  animationEnabled: true
+    readonly property bool motionActive:
+        root.animationEnabled && root.visible && root.engine !== null
+        && (root.engine.isPlaying || root.engine.scratchVisualActive
+            || root.dragActive)
+    readonly property int motionIntervalMs:
+        (typeof renderPressurePolicy !== "undefined" && renderPressurePolicy)
+        ? renderPressurePolicy.interactiveWaveformUpdateIntervalMs : 16
 
     readonly property real degreesPerSecond: 200.0
 
@@ -145,15 +152,18 @@ Item {
         }
     }
 
+    // Share Qt Quick's VSync animation clock with both waveform views. The
+    // platter is a position indicator, so sampling it from a drifting wall
+    // timer makes an otherwise smooth waveform look as if it briefly slips.
+    FrameAnimation {
+        running: root.motionActive && root.motionIntervalMs <= 17
+        onTriggered: root.updateRotation()
+    }
+
     Timer {
-        interval: (typeof renderPressurePolicy !== "undefined"
-                   && renderPressurePolicy)
-                  ? renderPressurePolicy.interactiveWaveformUpdateIntervalMs
-                  : 16
+        interval: root.motionIntervalMs
         repeat: true
-        running: root.animationEnabled && root.visible && root.engine !== null
-                 && (root.engine.isPlaying || root.engine.scratchVisualActive
-                     || root.dragActive)
+        running: root.motionActive && root.motionIntervalMs > 17
         onTriggered: root.updateRotation()
     }
 

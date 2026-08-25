@@ -159,6 +159,37 @@ ThreadSanitizer where the platform toolchain supports it.
 - Verify immutable chunks become visible without flicker, excessive UI stalls,
   or a final old-generation replacement.
 
+### Scrolling waveform pixel stability
+
+- Test 59.94/60/90/120/144 Hz where available and DPR
+  1.0/1.25/1.5/2.0/3.0. Include odd/fractional logical widths and moving the
+  window between displays with different DPR.
+- At minimum/default/maximum zoom, play forward and reverse, scratch slowly
+  through zero, perform fast throws, sweep tempo across raster-scale steps and
+  cross several guarded tile windows. Peaks and beat/cue lines must move
+  monotonically without alternating thick/thin columns, brightness pulses,
+  seams, fallback flashes or a one-pixel stop/start cadence.
+- Repeat with two and four visible decks while analysis and track loading run.
+  Force `UI RENDER` through `reduced`, `audio-first` and `suspended`: detail
+  raster requests may be discarded and visual frames may be skipped, while
+  existing textures remain coherent and callback/device XRun counters do not
+  increase.
+- Inspect `renderStats()`: `waveformColumnsPerPhysicalPixel == 1`,
+  `tileFilterGutterPhysicalPixels == 1`, the guarded window stays within
+  `tilePoolCapacity`, `pendingTileRequests` drains after pressure clears, and
+  steady scrolling is dominated by `transformUpdates`, not geometry rebuilds
+  or texture replacements.
+- Check `rasterScalePixelExact` is `true` and `rasterScaleStretch` is `1.0`
+  during steady playback at every zoom step and DPR. It may leave `1.0` only
+  while a tempo fader or zoom gesture is actually in motion, and must return
+  within a few frames of release — including on a **paused** deck, which stops
+  requesting frames on its own. A value that stays away from `1.0` reintroduces
+  the standing thick/thin ripple.
+- Sweep the tempo fader slowly across a full range and release it repeatedly.
+  Expect at most one brief re-cut transition per release, and no repeated
+  blanking while the fader is held still. With sync enabled and a coordinator
+  actively correcting tempo, the view must not re-cut continuously.
+
 ### Library/database/media I/O
 
 - Exercise large folder scans, cover extraction, playlist/history/tag updates,

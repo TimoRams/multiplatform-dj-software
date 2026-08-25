@@ -169,6 +169,12 @@ callback-owned non-atomic state from a producer thread.
   reused or destroyed.
 - Rendering reads immutable waveform snapshots. It must not detach or copy a
   full shared container for every paint.
+- The audio callback has no GUI back-edge. `RenderPressurePolicy` samples
+  callback/XRun diagnostic atomics on the Qt owner thread; the callback never
+  invokes QML, a scene update, a raster worker, or a texture upload. Beginning
+  with the first elevated/reduced pressure tier, Qt lowers waveform cadence and
+  generation-cancels pending raster work without waiting. Already-running
+  visual work remains bounded, low-priority and unpublished when stale.
 - `DatabaseWorker`, `MediaIoScheduler`, and `AudioCacheWorker` are independent
   joined workers. Their bounded queues may reject work; no callback may wait
   for them. SQLite connections and `QSqlQuery` stay on their creating thread.

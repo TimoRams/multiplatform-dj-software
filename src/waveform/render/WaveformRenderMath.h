@@ -1,13 +1,21 @@
 #pragma once
 
 #include <algorithm>
+#include <cstddef>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 
 namespace waveform_render {
 
-inline constexpr std::int64_t kWaveformStrokePitchPhysicalPixels = 2;
+// One aggregated envelope column per physical display pixel. The former
+// one-column-on / one-column-off mask formed a 1 px spatial carrier. Moving or
+// scaling that carrier through fractional pixel phases produces a visible
+// moire pattern: the same peak alternates between thin, thick and half-bright.
+// A full-resolution envelope has no artificial carrier to alias and lets the
+// GPU interpolate neighbouring *audio* columns during smooth scrolling.
+inline constexpr std::int64_t kWaveformStrokePitchPhysicalPixels = 1;
+inline constexpr std::size_t kWaveformTilePoolSize = 24;
 
 inline bool isWaveformStrokeColumn(std::int64_t globalPhysicalColumn) noexcept
 {
@@ -72,17 +80,44 @@ inline double pixelAlignedTimelineOrigin(double linePosition,
         / physicalPixelsPerLine;
 }
 
+inline double physicalPixelCenter(double logicalPosition,
+                                  double devicePixelRatio) noexcept
+{
+    const double dpr = std::max(1.0, devicePixelRatio);
+    if (!std::isfinite(logicalPosition))
+        return 0.0;
+    return (std::floor(logicalPosition * dpr) + 0.5) / dpr;
+}
+
+inline double viewportPhysicalPixelCenter(double logicalWidth,
+                                          double devicePixelRatio) noexcept
+{
+    return physicalPixelCenter(std::max(0.0, logicalWidth) * 0.5,
+                               devicePixelRatio);
+}
+
 inline double smoothTimelineTranslation(double width,
                                         double playheadLine,
                                         double originLine,
-                                        double pixelsPerLine) noexcept
+                                        double pixelsPerLine,
+                                        double devicePixelRatio) noexcept
 {
-    return width * 0.5 - (playheadLine - originLine) * pixelsPerLine;
+    return viewportPhysicalPixelCenter(width, devicePixelRatio)
+        - (playheadLine - originLine) * pixelsPerLine;
 }
 
 // Render tiles live on one track-wide physical-pixel grid. Their texture size
 // is deliberately independent of analysis chunk boundaries, zoom and DPR.
 inline constexpr std::int64_t kRenderTilePhysicalWidth = 1024;
+// Linear filtering needs one real neighbour on either side of a tile. Without
+// this gutter, the sampler clamps at each texture edge and the waveform makes
+// a small brightness/shape jump whenever a feature crosses a tile boundary.
+// Only the 1024 core columns are displayed; the two extra columns are filter
+// support and do not change the track-wide physical-pixel grid.
+inline constexpr int kRenderTileFilterGutterPhysicalPixels = 1;
+inline constexpr int kRenderTileTexturePhysicalWidth
+    = static_cast<int>(kRenderTilePhysicalWidth)
+    + 2 * kRenderTileFilterGutterPhysicalPixels;
 
 // Rasterizing at exactly the on-screen scale is correct but brittle: moving the
 // tempo fader retunes pixels-per-line on every frame, and because the scale is
@@ -111,11 +146,95 @@ inline double quantizedRasterScale(double physicalPixelsPerLine) noexcept
     return std::exp2(step / kRasterScaleLadderStepsPerOctave);
 }
 
+inline bool rasterScalesWithin(double rasterScale,
+                               double displayScale,
+                               double relativeTolerance) noexcept
+{
+    return std::abs(rasterScale - displayScale)
+        <= std::max(displayScale, 1.0e-9) * relativeTolerance;
+}
+
 inline bool rasterScaleMatchesDisplay(double rasterScale,
                                       double displayScale) noexcept
 {
-    return std::abs(rasterScale - displayScale)
-        <= std::max(displayScale, 1.0e-9) * 1.0e-6;
+    return rasterScalesWithin(rasterScale, displayScale, 1.0e-6);
+}
+
+// The ladder is the right answer only *while* the scale is moving. At rest it
+// leaves every texture permanently stretched by up to ~2%, so roughly every
+// 45th physical column is resampled from two texels while its neighbours are
+// not. That is a stationary thick/thin ripple standing across the view -- the
+// exact artefact the ladder was never meant to introduce.
+//
+// So treat the ladder as a gesture fallback: once the display scale has held
+// still the tiles are re-cut at the exact scale, where one texel is one
+// physical pixel and the destination rectangle is a whole number of pixels
+// wide. Re-cutting costs one visible transition, which is acceptable at the
+// end of a fader move and unacceptable as a permanent ripple.
+inline constexpr int kRasterScaleSettleFrames = 8;
+// A re-cut invalidates every tile key, so never re-cut for an error that
+// cannot be seen. 0.1% is under one texel across a whole 1024-column tile and
+// absorbs the slow tempo drift a running sync coordinator produces.
+inline constexpr double kRasterScaleStickyTolerance = 1.0e-3;
+// Anything coarser than this counts as the scale genuinely moving this frame.
+inline constexpr double kRasterScaleMotionTolerance = 1.0e-9;
+
+// Carried across frames by the render thread; never touched by audio or GUI.
+struct RasterScaleTracker final {
+    double rasterScale = 0.0;
+    double lastDisplayScale = 0.0;
+    int stableFrames = 0;
+};
+
+inline double selectRasterScale(RasterScaleTracker& tracker,
+                                double displayScale) noexcept
+{
+    if (!(displayScale > 0.0) || !std::isfinite(displayScale)) {
+        tracker.stableFrames = 0;
+        return displayScale;
+    }
+
+    // A first frame has no motion history. Cut it exactly: a track load
+    // rasterizes everything anyway, so there is no transition to pay for.
+    const bool hasHistory = tracker.lastDisplayScale > 0.0;
+    const bool held = hasHistory
+        && rasterScalesWithin(displayScale, tracker.lastDisplayScale,
+                              kRasterScaleMotionTolerance);
+    tracker.lastDisplayScale = displayScale;
+    tracker.stableFrames = held
+        ? std::min(tracker.stableFrames + 1, kRasterScaleSettleFrames)
+        : 0;
+
+    if (tracker.rasterScale > 0.0
+        && rasterScalesWithin(displayScale, tracker.rasterScale,
+                              kRasterScaleStickyTolerance)) {
+        return tracker.rasterScale;
+    }
+
+    tracker.rasterScale
+        = (!hasHistory || tracker.stableFrames >= kRasterScaleSettleFrames)
+        ? displayScale
+        : quantizedRasterScale(displayScale);
+    return tracker.rasterScale;
+}
+
+// A settle only completes if frames keep arriving. A paused deck stops asking
+// for frames the moment the fader is released, which would strand the view on
+// the ladder cut indefinitely, so the renderer has to request the remaining
+// frames itself.
+//
+// This cannot run away. While the scale holds still, stableFrames climbs and
+// the request stops at kRasterScaleSettleFrames. While the scale keeps moving,
+// stableFrames resets to 0 every frame, so this asks for exactly one frame per
+// scale change -- and a scale change already triggers a frame of its own, so
+// the request is redundant rather than additional.
+inline bool rasterScaleSettlePending(const RasterScaleTracker& tracker,
+                                     double displayScale) noexcept
+{
+    return tracker.rasterScale > 0.0
+        && tracker.stableFrames < kRasterScaleSettleFrames
+        && !rasterScalesWithin(displayScale, tracker.rasterScale,
+                               kRasterScaleStickyTolerance);
 }
 
 // The coarse whole-track fallback overview is rasterized once at a fixed texel
@@ -226,6 +345,25 @@ inline std::int64_t lastRenderTile(std::int64_t physicalEnd) noexcept
     return firstRenderTile(physicalEnd - 1);
 }
 
+// A global tile always owns the same scene-graph slot. Sequentially assigning
+// visible tiles to slots makes every surviving tile move to a different node
+// when the guard window advances by one tile, causing a burst of texture
+// replacements and sometimes a fallback flash. Modulo ownership keeps all
+// overlapping tiles resident; a contiguous window no wider than the pool has
+// no collisions, including for negative pre-roll tile indices.
+inline std::size_t renderTilePoolSlot(std::int64_t tileIndex,
+                                     std::size_t poolSize
+                                         = kWaveformTilePoolSize) noexcept
+{
+    if (poolSize == 0)
+        return 0;
+    const auto modulus = static_cast<std::int64_t>(poolSize);
+    auto slot = tileIndex % modulus;
+    if (slot < 0)
+        slot += modulus;
+    return static_cast<std::size_t>(slot);
+}
+
 inline RenderTileSpan renderTileSpan(std::int64_t tileIndex,
                                      double physicalPixelsPerLine,
                                      std::uint32_t totalLineCount) noexcept
@@ -253,6 +391,43 @@ inline RenderTileSpan renderTileSpan(std::int64_t tileIndex,
     span.sourceBegin = clampLine(first);
     span.sourceEnd = clampLine(last);
     return span;
+}
+
+struct RenderTileRasterSourceSpan final {
+    std::uint32_t sourceBegin = 0;
+    std::uint32_t sourceEnd = 0;
+};
+
+// Include the filter gutters in a tile's source revision. Otherwise a newly
+// published source line just across a tile boundary could leave the cached
+// neighbour texel stale even though the visible core key still looked current.
+inline RenderTileRasterSourceSpan renderTileRasterSourceSpan(
+    const RenderTileSpan& span,
+    double physicalPixelsPerLine,
+    std::uint32_t totalLineCount) noexcept
+{
+    if (!(physicalPixelsPerLine > 0.0)
+        || !std::isfinite(physicalPixelsPerLine)
+        || totalLineCount == 0) {
+        return {};
+    }
+
+    const double gutter = static_cast<double>(
+        kRenderTileFilterGutterPhysicalPixels);
+    const double first = std::floor(
+        (static_cast<double>(span.physicalBegin) - gutter)
+        / physicalPixelsPerLine);
+    const double last = std::ceil(
+        (static_cast<double>(span.physicalEnd) + gutter)
+        / physicalPixelsPerLine);
+    const auto clampLine = [totalLineCount](double line) {
+        if (line <= 0.0)
+            return std::uint32_t{0};
+        if (line >= static_cast<double>(totalLineCount))
+            return totalLineCount;
+        return static_cast<std::uint32_t>(line);
+    };
+    return {clampLine(first), clampLine(last)};
 }
 
 inline bool physicalStrokeIntersectsTrack(

@@ -140,6 +140,7 @@ public:
         std::size_t cacheBytes = 0;
         std::size_t cacheEntries = 0;
         std::size_t pendingRequests = 0;
+        bool workEnabled = true;
     };
 
     explicit WaveformTileRasterizer(std::function<void()> tileReadyCallback);
@@ -154,6 +155,15 @@ public:
     [[nodiscard]] std::shared_ptr<const RasterizedOverview>
     findOverview(const OverviewRenderKey& key) const;
     void requestOverview(OverviewRenderRequest request);
+    // Audio pressure may suspend disposable visual work. Disabling is
+    // non-blocking: queued work is discarded and at most the already-running
+    // bounded tile is allowed to finish. Re-enabling accepts fresh viewport
+    // requests; it never performs catch-up work.
+    void setWorkEnabled(bool enabled) noexcept;
+    [[nodiscard]] bool workEnabled() const noexcept
+    {
+        return m_workEnabled.load(std::memory_order_acquire);
+    }
     // A zoom gesture supersedes queued work for older scales. Cached tiles are
     // retained so zooming back remains instant; only not-yet-started requests
     // are discarded.
@@ -182,7 +192,8 @@ private:
 
     void run(std::stop_token stopToken);
     void notifyTileReady();
-    void insert(std::shared_ptr<const RasterizedRenderTile> tile);
+    void insert(std::shared_ptr<const RasterizedRenderTile> tile,
+                std::uint64_t workGeneration);
     void evictToBudgetLocked();
     [[nodiscard]] static std::shared_ptr<const RasterizedRenderTile>
     rasterize(const RenderTileRequest& request);
@@ -204,6 +215,11 @@ private:
     std::shared_ptr<const RasterizedOverview> m_overview;
     std::vector<std::jthread> m_workers;
     std::mutex m_callbackMutex;
+    std::atomic<bool> m_workEnabled{true};
+    // Incremented whenever disposable work is suspended. A job already
+    // dequeued by a worker may finish its bounded CPU loop, but a stale
+    // generation can never enter the cache or wake the GUI after re-enable.
+    std::atomic<std::uint64_t> m_workGeneration{1};
 
     std::atomic<std::uint64_t> m_cacheHits{0};
     std::atomic<std::uint64_t> m_cacheMisses{0};

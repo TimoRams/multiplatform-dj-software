@@ -137,8 +137,16 @@ Item {
 
     readonly property var timeMarks: rulerMarks()
 
+    // The time readout is deliberately slower than the waveform: 30 Hz is
+    // plenty for text and a whole-track playhead that moves a fraction of a
+    // pixel per tick. Under audio pressure it still has to give way, so take
+    // the slower of the two rather than pinning a rate the policy cannot lower.
     Timer {
-        interval: 33
+        interval: {
+            if (typeof renderPressurePolicy === "undefined" || !renderPressurePolicy)
+                return 33
+            return Math.max(33, renderPressurePolicy.waveformUpdateIntervalMs)
+        }
         repeat: true
         running: root.visible && root.engine !== null && root.hasTrack
         triggeredOnStart: true

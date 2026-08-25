@@ -40,6 +40,7 @@ int main()
     const auto shortcuts = read("src/qml/components/UiShortcutManager.qml");
     const auto enlargedWaveform = read("src/qml/waveform/EnlargedWaveform.qml");
     const auto overallWaveform = read("src/qml/waveform/OverallWaveform.qml");
+    const auto turntableIndicator = read("src/qml/deck/TurntableIndicator.qml");
     const auto settingsPanel = read("src/qml/settings/SettingsPanel.qml");
     const auto settingsWindow = read("src/qml/settings/SettingsWindow.qml");
     const auto applicationBootstrap = read("src/app/ApplicationBootstrap.cpp");
@@ -110,6 +111,25 @@ int main()
     ok &= require(enlargedWaveform.find("root.engine.scratchVisualActive") != std::string::npos
                   && overallWaveform.find("root.engine.scratchVisualActive") != std::string::npos,
                   "waveform frame animations react to paused scratch state");
+    ok &= require(enlargedWaveform.find("FrameAnimation {") != std::string::npos
+                      && overallWaveform.find("FrameAnimation {") != std::string::npos
+                      && turntableIndicator.find("FrameAnimation {") != std::string::npos
+                      && enlargedWaveform.find("waveformMotionIntervalMs <= 17")
+                          != std::string::npos
+                      && overallWaveform.find("motionIntervalMs <= 17")
+                          != std::string::npos
+                      && turntableIndicator.find("motionIntervalMs <= 17")
+                          != std::string::npos,
+                  "moving deck visuals use the presentation clock at full quality");
+    ok &= require(enlargedWaveform.find("waveformRasterWorkEnabled")
+                          != std::string::npos
+                      && enlargedWaveform.find("waveformMotionIntervalMs > 17")
+                          != std::string::npos
+                      && overallWaveform.find("motionIntervalMs > 17")
+                          != std::string::npos
+                      && turntableIndicator.find("motionIntervalMs > 17")
+                          != std::string::npos,
+                  "audio pressure can reduce animation and suspend tile raster work");
     ok &= require(performancePads.find("[\"HOT CUE\", \"PAD FX\", \"BEATJUMP\", \"SAMPLER\"]")
                       != std::string::npos
                   && performancePads.find("selectPerformancePadMode(root.deckId, index)")

@@ -12,7 +12,10 @@ echo
 
 echo "[1/2] Build + unit/smoke tests..."
 ./build-fast
-ctest --test-dir build --output-on-failure
+# The app-only build intentionally does not compile every test executable.
+# Use the repository's separate incremental test build instead of asking CTest
+# to run stale registrations from build/ and reporting missing binaries.
+./test-fast
 echo "      OK"
 echo
 

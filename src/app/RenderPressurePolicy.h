@@ -19,6 +19,8 @@ class RenderPressurePolicy final : public QObject
                READ interactiveWaveformUpdateIntervalMs NOTIFY updateIntervalsChanged)
     Q_PROPERTY(int overviewUpdateIntervalMs READ overviewUpdateIntervalMs
                NOTIFY updateIntervalsChanged)
+    Q_PROPERTY(bool waveformRasterWorkEnabled READ waveformRasterWorkEnabled
+               NOTIFY updateIntervalsChanged)
 
 public:
     enum class Tier : std::uint8_t {
@@ -44,6 +46,18 @@ public:
     [[nodiscard]] int waveformUpdateIntervalMs() const noexcept;
     [[nodiscard]] int interactiveWaveformUpdateIntervalMs() const noexcept;
     [[nodiscard]] int overviewUpdateIntervalMs() const noexcept;
+    [[nodiscard]] bool waveformRasterWorkEnabled() const noexcept
+    {
+        return rasterWorkAllowed(m_tier);
+    }
+
+    [[nodiscard]] static constexpr bool rasterWorkAllowed(Tier tier) noexcept
+    {
+        // Tile generation and texture publication are disposable visual work.
+        // Stop them at the first measured pressure tier, before the callback is
+        // close to an overrun; already-present scene-graph tiles keep moving.
+        return tier == Tier::Normal;
+    }
 
     void setApplicationActive(bool active);
     void setWindowMinimized(bool minimized);

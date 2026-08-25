@@ -102,9 +102,9 @@ int main()
     }
 
     // Beat/cue geometry keeps a one-physical-pixel opaque core plus half-pixel
-    // feathering on either side. Waveform chunks use nearest-filtered textures.
-    // The shared transform must retain fractional physical-pixel phases;
-    // quantising it was the source of visible stop/start shimmer.
+    // feathering on either side. Full-resolution waveform textures use linear
+    // filtering. The shared transform must retain fractional physical-pixel
+    // phases; quantising it was the source of visible stop/start shimmer.
     for (const double dpr : {1.0, 1.25, 1.5, 2.0}) {
         const double logicalCoreWidth = 1.0 / dpr;
         const double logicalFeatherWidth = 0.5 / dpr;
@@ -113,10 +113,10 @@ int main()
                       "vertical geometry uses a one-pixel core with soft edges");
         int fractionalPhaseFrames = 0;
         double previous = waveform_render::smoothTimelineTranslation(
-            638.75, 0.0, 0.0, 0.2875);
+            638.75, 0.0, 0.0, 0.2875, dpr);
         for (int frame = 0; frame < 240; ++frame) {
             const double translation = waveform_render::smoothTimelineTranslation(
-                638.75, static_cast<double>(frame), 0.0, 0.2875);
+                638.75, static_cast<double>(frame), 0.0, 0.2875, dpr);
             const double physical = translation * dpr;
             const double fraction = physical - std::floor(physical);
             if (fraction > 1.0e-6 && fraction < 1.0 - 1.0e-6)
@@ -130,9 +130,9 @@ int main()
                       "timeline transform must preserve subpixel phases");
     }
 
-    // The audio primitive is always one physical pixel followed by one physical
-    // pixel of air. Zoom and DPR may change which source frames a stroke folds,
-    // but never its screen density or phase across adjacent render chunks.
+    // Every available physical pixel gets one audio aggregate. Zoom and DPR may
+    // change which source frames a column folds, but never insert an artificial
+    // alternating gap or change density across adjacent render chunks.
     for (const double dpr : {1.0, 1.25, 1.5, 2.0}) {
         for (const double pixelsPerLine : {0.01, 0.055, 0.22, 1.0, 8.0, 40.0}) {
             constexpr double firstChunkBegin = 8192.0;
@@ -161,6 +161,34 @@ int main()
                 previousStroke = column;
             }
         }
+    }
+
+    // Guard-window movement must retain the GPU node for every overlapping
+    // global tile. A sequential slot assignment remapped all 21 survivors when
+    // a 22-tile window advanced by one tile; modulo ownership remaps none.
+    {
+        constexpr std::int64_t firstTile = -7;
+        constexpr std::size_t windowTiles
+            = waveform_render::kWaveformTilePoolSize - 2;
+        std::array<bool, waveform_render::kWaveformTilePoolSize> oldWindow {};
+        std::array<bool, waveform_render::kWaveformTilePoolSize> newWindow {};
+        for (std::size_t offset = 0; offset < windowTiles; ++offset) {
+            const auto slot = waveform_render::renderTilePoolSlot(
+                firstTile + static_cast<std::int64_t>(offset));
+            ok &= require(!oldWindow[slot],
+                          "guard window produced a tile-pool collision");
+            oldWindow[slot] = true;
+            newWindow[waveform_render::renderTilePoolSlot(
+                firstTile + 1 + static_cast<std::int64_t>(offset))] = true;
+        }
+        std::size_t explicitRetainedSlots = 0;
+        for (std::size_t slot = 0; slot < oldWindow.size(); ++slot)
+            explicitRetainedSlots += oldWindow[slot] && newWindow[slot] ? 1u : 0u;
+        ok &= require(explicitRetainedSlots == windowTiles - 1,
+                      "one-tile guard advance remapped surviving GPU slots");
+        ok &= require(waveform_render::renderTilePoolSlot(-1) ==
+                          waveform_render::kWaveformTilePoolSize - 1,
+                      "negative pre-roll tile did not map to a valid stable slot");
     }
 
     // Progressive source publication never rebuilds marker geometry. Guard
@@ -246,7 +274,7 @@ int main()
         for (int frame = 0; frame < 240; ++frame) {
             const double playheadLine = 41'000.0 + frame * 0.71;
             const double translation = waveform_render::smoothTimelineTranslation(
-                1600.0, playheadLine, renderOrigin, pixelsPerTimelineLine);
+                1600.0, playheadLine, renderOrigin, pixelsPerTimelineLine, dpr);
             const double physicalCentre = (waveformX + translation) * dpr;
             const double physicalFraction = physicalCentre - std::floor(physicalCentre);
             if (physicalFraction > 1.0e-6 && physicalFraction < 1.0 - 1.0e-6)
@@ -259,7 +287,8 @@ int main()
             const double rebuiltCentre = (waveform_render::snappedTimelineX(
                 timelineLine, rebasedOrigin, pixelsPerTimelineLine, dpr)
                 + waveform_render::smoothTimelineTranslation(
-                    1600.0, playheadLine, rebasedOrigin, pixelsPerTimelineLine)) * dpr;
+                    1600.0, playheadLine, rebasedOrigin,
+                    pixelsPerTimelineLine, dpr)) * dpr;
             ok &= require(std::abs(rebuiltCentre - physicalCentre) < 1e-9,
                           "pixel-aligned origin rebase must not change timeline phase");
         }
@@ -279,8 +308,10 @@ int main()
                 playheadLine, origin, zoom, dpr);
             const double translated = local
                 + waveform_render::smoothTimelineTranslation(
-                    width, playheadLine, origin, zoom);
-            ok &= require(std::abs(translated - width * 0.5) <= 1.0e-9,
+                    width, playheadLine, origin, zoom, dpr);
+            const double pixelCentre
+                = waveform_render::viewportPhysicalPixelCenter(width, dpr);
+            ok &= require(std::abs(translated - pixelCentre) <= 1.0e-9,
                           "zoom changed the shared waveform/beatgrid centre");
             constexpr double beatSpacingLines = 587.375;
             const double nextBeat = waveform_render::snappedTimelineX(
@@ -445,5 +476,73 @@ int main()
         reverseDemand, 100.5, 101.5);
     ok &= require(waveform::higherPriority(reverseNext, reversePrevious),
                   "reverse expansion did not mirror the directional order");
+
+    // Steady playback must end up pixel-exact. A tile permanently cut at the
+    // ladder scale is drawn stretched by up to ~2%, which resamples roughly
+    // every 45th column and stands in the view as a thick/thin ripple.
+    for (const double dpr : {1.0, 1.25, 2.0}) {
+        for (const double zoom : {0.08, 0.22, 1.0, 7.0}) {
+            const double displayScale = zoom * dpr;
+            waveform_render::RasterScaleTracker tracker;
+            double scale = waveform_render::selectRasterScale(
+                tracker, displayScale);
+            ok &= require(waveform_render::rasterScaleMatchesDisplay(
+                              scale, displayScale),
+                          "first frame must cut tiles at the exact scale");
+            for (int frame = 0; frame < 40; ++frame)
+                scale = waveform_render::selectRasterScale(tracker, displayScale);
+            ok &= require(waveform_render::rasterScaleMatchesDisplay(
+                              scale, displayScale),
+                          "steady playback must stay pixel-exact");
+            ok &= require(!waveform_render::rasterScaleSettlePending(
+                              tracker, displayScale),
+                          "a settled scale must not keep requesting frames");
+
+            // A sweep changes the scale every frame. Tiles must land on the
+            // ladder so the cache survives the gesture instead of blanking.
+            double sweptScale = displayScale;
+            int ladderFrames = 0;
+            for (int frame = 0; frame < 30; ++frame) {
+                sweptScale *= 1.01;
+                const double swept = waveform_render::selectRasterScale(
+                    tracker, sweptScale);
+                if (!waveform_render::rasterScaleMatchesDisplay(swept, sweptScale))
+                    ++ladderFrames;
+            }
+            ok &= require(ladderFrames > 0,
+                          "a moving scale must fall back to the ladder cut");
+
+            // Releasing the fader settles back onto the exact scale, and asks
+            // for the frames it needs to get there even if nothing else does.
+            const double settled = sweptScale;
+            ok &= require(waveform_render::rasterScaleSettlePending(
+                              tracker, settled),
+                          "a pending settle must request its own frames");
+            double finalScale = 0.0;
+            for (int frame = 0;
+                 frame <= waveform_render::kRasterScaleSettleFrames; ++frame) {
+                finalScale = waveform_render::selectRasterScale(tracker, settled);
+            }
+            ok &= require(waveform_render::rasterScaleMatchesDisplay(
+                              finalScale, settled),
+                          "a released fader must settle back to pixel-exact");
+        }
+    }
+
+    // A running sync coordinator nudges tempo by tiny amounts. Re-cutting for
+    // an invisible error would blank the view repeatedly, so drift under the
+    // sticky tolerance must hold the current cut.
+    {
+        waveform_render::RasterScaleTracker tracker;
+        const double base = 0.22;
+        double scale = waveform_render::selectRasterScale(tracker, base);
+        const double cutAtStart = scale;
+        for (int frame = 1; frame <= 20; ++frame) {
+            scale = waveform_render::selectRasterScale(
+                tracker, base * (1.0 + 1.0e-5 * frame));
+        }
+        ok &= require(scale == cutAtStart,
+                      "sub-visible tempo drift must not re-cut every tile");
+    }
     return ok ? 0 : 1;
 }

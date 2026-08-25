@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <iostream>
 #include <mutex>
@@ -54,6 +55,39 @@ int main(int argc, char** argv)
                   "populated render benchmark chunk must publish");
     const auto snapshot = store.snapshot();
 
+    // Elevated audio pressure rejects disposable raster requests synchronously;
+    // re-enabling accepts only a freshly published current-view request.
+    {
+        waveform_render::WaveformTileRasterizer pressureRasterizer([&] {
+            readyCondition.notify_all();
+        });
+        pressureRasterizer.setActiveTrackGeneration(snapshot->trackGeneration);
+        const auto pressureSpan = waveform_render::renderTileSpan(
+            populatedChunkIndex, 1.0, totalLines);
+        const auto pressureKey = waveform_render::WaveformTileRasterizer::makeKey(
+            *snapshot, populatedChunkIndex, pressureSpan, 1.0, 128, 1.0);
+        pressureRasterizer.setWorkEnabled(false);
+        pressureRasterizer.request({pressureKey, pressureSpan, snapshot,
+                                    1.0, 128.0, 1.0, 0.0});
+        const auto suspendedStats = pressureRasterizer.stats();
+        ok &= require(!suspendedStats.workEnabled
+                          && suspendedStats.pendingRequests == 0
+                          && suspendedStats.rasterizedTiles == 0,
+                      "render-pressure tier accepted disposable raster work");
+
+        pressureRasterizer.setWorkEnabled(true);
+        pressureRasterizer.request({pressureKey, pressureSpan, snapshot,
+                                    1.0, 128.0, 1.0, 0.0});
+        std::shared_ptr<const waveform_render::RasterizedRenderTile> resumedTile;
+        std::unique_lock lock(readyMutex);
+        ok &= require(readyCondition.wait_for(
+                          lock, std::chrono::seconds(2), [&] {
+                              resumedTile = pressureRasterizer.find(pressureKey);
+                              return static_cast<bool>(resumedTile);
+                          }),
+                      "raster work did not resume with a fresh viewport request");
+    }
+
     waveform_render::WaveformTileRasterizer rasterizer([&] {
         readyCondition.notify_all();
     });
@@ -95,8 +129,9 @@ int main(int argc, char** argv)
     ok &= require(static_cast<bool>(newestTile),
                   "most recently rasterized tile was not retained");
     ok &= require(newestTile && newestTile->hasAnySourceData
-                      && newestTile->renderedColumns == 512,
-                  "real source tile did not retain the fixed stroke density");
+                      && newestTile->renderedColumns
+                          == waveform_render::kRenderTilePhysicalWidth,
+                  "real source tile did not use every physical display column");
     std::cout << "waveform tile benchmark: worst=" << stats.worstRasterUsec
               << " us, cache=" << stats.cacheBytes << " bytes, entries="
               << stats.cacheEntries << '\n';
@@ -167,35 +202,46 @@ int main(int argc, char** argv)
                       "one-sided render tile was not rasterized promptly");
     }
     constexpr QRgb detailBackground = 0xff101114u;
+    const auto detailImageX = [](int corePhysicalX) {
+        return corePhysicalX
+            + waveform_render::kRenderTileFilterGutterPhysicalPixels;
+    };
     ok &= require(oneSidedTile
-                      && oneSidedTile->image.pixel(0, 115) != detailBackground
-                      && oneSidedTile->image.pixel(0, 126) == detailBackground,
+                      && oneSidedTile->image.pixel(detailImageX(0), 115)
+                          != detailBackground
+                      && oneSidedTile->image.pixel(detailImageX(0), 126)
+                          == detailBackground,
                   "positive-only extrema were incorrectly extended to zero");
     ok &= require(oneSidedTile
-                      && oneSidedTile->image.pixel(600, 140) != detailBackground
-                      && oneSidedTile->image.pixel(600, 129) == detailBackground,
+                      && oneSidedTile->image.pixel(detailImageX(600), 140)
+                          != detailBackground
+                      && oneSidedTile->image.pixel(detailImageX(600), 129)
+                          == detailBackground,
                   "negative-only extrema were incorrectly extended to zero");
     ok &= require(oneSidedTile
-                      && oneSidedTile->image.pixel(1, 115) == detailBackground,
-                  "detail spacing did not mask the coarse overview");
+                      && oneSidedTile->image.pixel(detailImageX(1), 115)
+                          != detailBackground,
+                  "full-resolution detail inserted an artificial horizontal gap");
 
-    // Image-level precision regression. A complete detail tile must always
-    // retain the same one-physical-pixel stroke and one-pixel gap regardless
-    // of zoom or DPR. The background-filled gaps are intentionally counted as
-    // non-waveform pixels; this reproduces the final overview/detail composite
-    // instead of testing timeline math alone.
+    // Image-level precision regression. A complete detail tile must aggregate
+    // every physical column that intersects the track, regardless of zoom or
+    // DPR. The former alternating empty-column mask was a spatial carrier that
+    // aliased into thick/thin bands during subpixel scrolling.
     const std::array<double, 4> zoomLevels{0.08, 0.22, 1.0, 10.0};
     const std::array<double, 4> devicePixelRatios{1.0, 1.25, 2.0, 3.0};
     for (const double zoom : zoomLevels) {
         for (const double dpr : devicePixelRatios) {
             const double physicalPixelsPerLine = zoom * dpr;
+            constexpr double logicalHeight = 256.0;
+            const int physicalHeight = std::max(
+                1, static_cast<int>(std::ceil(logicalHeight * dpr)));
             const auto preciseSpan = waveform_render::renderTileSpan(
                 0, physicalPixelsPerLine, oneSidedLineCount);
             const auto preciseKey = waveform_render::WaveformTileRasterizer::makeKey(
                 *oneSidedSnapshot, 0, preciseSpan, physicalPixelsPerLine,
-                256, dpr);
+                physicalHeight, dpr);
             rasterizer.request({preciseKey, preciseSpan, oneSidedSnapshot,
-                                physicalPixelsPerLine, 256.0, dpr, 0.0});
+                                physicalPixelsPerLine, logicalHeight, dpr, 0.0});
             std::shared_ptr<const waveform_render::RasterizedRenderTile> preciseTile;
             {
                 std::unique_lock lock(readyMutex);
@@ -209,25 +255,34 @@ int main(int argc, char** argv)
             if (!preciseTile)
                 continue;
             ok &= require(preciseTile->image.width()
-                              == waveform_render::kRenderTilePhysicalWidth,
+                              == waveform_render::kRenderTileTexturePhysicalWidth
+                              && preciseTile->span.physicalWidth()
+                                  == waveform_render::kRenderTilePhysicalWidth,
                           "zoom changed the physical detail texture width");
-            int maximumHorizontalInkRun = 0;
-            int inkPixels = 0;
-            for (int y = 0; y < preciseTile->image.height(); ++y) {
-                int currentRun = 0;
-                for (int x = 0; x < preciseTile->image.width(); ++x) {
-                    if (preciseTile->image.pixel(x, y) != detailBackground) {
-                        ++currentRun;
-                        ++inkPixels;
-                        maximumHorizontalInkRun = std::max(
-                            maximumHorizontalInkRun, currentRun);
-                    } else {
-                        currentRun = 0;
+            std::uint64_t expectedColumns = 0;
+            bool everyActiveColumnHasInk = true;
+            for (int x = 0; x < preciseTile->span.physicalWidth(); ++x) {
+                const bool active
+                    = waveform_render::physicalStrokeIntersectsTrack(
+                        preciseSpan.physicalBegin + x, physicalPixelsPerLine,
+                        oneSidedLineCount);
+                expectedColumns += active ? 1u : 0u;
+                if (!active)
+                    continue;
+                bool hasInk = false;
+                for (int y = 0; y < preciseTile->image.height(); ++y) {
+                    if (preciseTile->image.pixel(detailImageX(x), y)
+                        != detailBackground) {
+                        hasInk = true;
+                        break;
                     }
                 }
+                everyActiveColumnHasInk = everyActiveColumnHasInk && hasInk;
             }
-            ok &= require(inkPixels > 0 && maximumHorizontalInkRun == 1,
-                          "zoom/DPR produced a broad or interpolated detail bar");
+            ok &= require(expectedColumns > 0
+                              && preciseTile->renderedColumns == expectedColumns
+                              && everyActiveColumnHasInk,
+                          "zoom/DPR failed to adapt detail to physical pixels");
         }
     }
     ok &= require(waveform_render::bestAvailableCoverage(false, true)
@@ -240,9 +295,6 @@ int main(int argc, char** argv)
                       && !waveform_render::detailTileMayBeDisplayed(false, true)
                       && !waveform_render::detailTileMayBeDisplayed(true, false),
                   "a tile with real audio must display once its key is current");
-
-
-
     // Regression: a tile whose source lines are all present must be publishable
     // as complete detail immediately — detail that is READY is never withheld
     // waiting for some later analysis milestone. Holding ready detail back
@@ -251,7 +303,9 @@ int main(int argc, char** argv)
     // real, already-available waveform.
     {
         WaveformLineStore readyStore;
-        readyStore.reset(201, WaveformLineStore::kChunkSize);
+        constexpr std::uint32_t readyLineCount
+            = 2 * WaveformLineStore::kChunkSize;
+        readyStore.reset(201, readyLineCount);
         auto readyLines = std::make_shared<std::vector<WaveformLine>>(
             WaveformLineStore::kChunkSize);
         for (auto& line : *readyLines) {
@@ -262,13 +316,29 @@ int main(int argc, char** argv)
         }
         ok &= require(readyStore.publish({
                           201, 0, 0, WaveformLineStore::kChunkSize,
-                          WaveformLineStore::kChunkSize, std::move(readyLines)})
+                          readyLineCount, std::move(readyLines)})
                           == WaveformLineStore::PublishResult::Accepted,
                       "ready-detail fixture was rejected");
+        auto adjacentLines = std::make_shared<std::vector<WaveformLine>>(
+            WaveformLineStore::kChunkSize);
+        for (auto& line : *adjacentLines) {
+            line.minimum = -14'000;
+            line.maximum = 14'000;
+            line.red = 70;
+            line.green = 170;
+            line.blue = 235;
+            line.flags = waveform_line_flags::kAvailable;
+        }
+        ok &= require(readyStore.publish({
+                          201, 1, WaveformLineStore::kChunkSize,
+                          WaveformLineStore::kChunkSize, readyLineCount,
+                          std::move(adjacentLines)})
+                          == WaveformLineStore::PublishResult::Accepted,
+                      "adjacent filter-gutter fixture was rejected");
         const auto readySnapshot = readyStore.snapshot();
         rasterizer.setActiveTrackGeneration(readySnapshot->trackGeneration);
         const auto readySpan = waveform_render::renderTileSpan(
-            0, 1.0, WaveformLineStore::kChunkSize);
+            0, 1.0, readyLineCount);
         const auto readyKey = waveform_render::WaveformTileRasterizer::makeKey(
             *readySnapshot, 0, readySpan, 1.0, 256, 1.0);
         rasterizer.request({readyKey, readySpan, readySnapshot,
@@ -286,6 +356,54 @@ int main(int argc, char** argv)
         ok &= require(readyTile && readyTile->hasAnySourceData
                           && readyTile->hasCompleteSourceData,
                       "fully populated source lines must publish as complete detail");
+        if (readyTile) {
+            const int centreY = readyTile->image.height() / 2;
+            bool continuousCoverage = true;
+            for (int x = 0; x < readyTile->span.physicalWidth(); ++x) {
+                continuousCoverage = continuousCoverage
+                    && readyTile->image.pixel(detailImageX(x), centreY)
+                        != detailBackground;
+            }
+            ok &= require(continuousCoverage,
+                          "constant waveform changed coverage across pixel phases");
+
+            // The hidden filter texels must contain the actual adjacent audio,
+            // not a repeated/clamped edge. That gives bilinear sampling the
+            // same two columns on both sides of a texture boundary.
+            const auto adjacentSpan = waveform_render::renderTileSpan(
+                1, 1.0, readyLineCount);
+            const auto adjacentKey
+                = waveform_render::WaveformTileRasterizer::makeKey(
+                    *readySnapshot, 1, adjacentSpan, 1.0, 256, 1.0);
+            rasterizer.request({adjacentKey, adjacentSpan, readySnapshot,
+                                1.0, 256.0, 1.0, 0.0});
+            std::shared_ptr<const waveform_render::RasterizedRenderTile>
+                adjacentTile;
+            {
+                std::unique_lock lock(readyMutex);
+                ok &= require(readyCondition.wait_for(
+                                  lock, std::chrono::seconds(2), [&] {
+                                      adjacentTile = rasterizer.find(adjacentKey);
+                                      return static_cast<bool>(adjacentTile);
+                                  }),
+                              "adjacent filter-gutter tile was not rasterized");
+            }
+            bool seamlessGutters = static_cast<bool>(adjacentTile);
+            if (adjacentTile) {
+                const int coreWidth = readyTile->span.physicalWidth();
+                for (int y = 0; y < readyTile->image.height(); ++y) {
+                    seamlessGutters = seamlessGutters
+                        && readyTile->image.pixel(
+                               detailImageX(coreWidth - 1), y)
+                            == adjacentTile->image.pixel(0, y)
+                        && readyTile->image.pixel(
+                               detailImageX(coreWidth), y)
+                            == adjacentTile->image.pixel(detailImageX(0), y);
+                }
+            }
+            ok &= require(seamlessGutters,
+                          "linear filtering saw a clamped tile-edge seam");
+        }
     }
 
     // Regression: the coarse whole-track fallback overview must never be shown
