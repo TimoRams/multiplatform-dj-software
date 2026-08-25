@@ -49,13 +49,32 @@ int main()
     const auto waveformScreen = read("src/qml/performance/PerformanceWaveformScreen.qml");
     const auto beatFxPanel = read("src/qml/performance/PerformanceBeatFxPanel.qml");
     const auto deckQuickPanel = read("src/qml/deck/PerformanceDeckQuickPanel.qml");
+    const auto developmentControls = read("src/qml/development/DevelopmentControlsWindow.qml");
     const auto flx10Mapping = read("src/controllers/mappings/midi/DDJ-FLX10.brockdj.xml");
     const auto engineHeader = read("src/deck/DjEngine.h");
     const auto midiManagerHeader = read("src/controllers/midi/MidiControllerManager.h");
     ok &= require(std::count(main.begin(), main.end(), '\n') < 600, "main.qml remains a compact shell");
     ok &= require(main.find("PerformanceWorkspace") != std::string::npos, "shell routes to performance workspace");
     ok &= require(workspace.find("DeckControl") != std::string::npos, "workspace uses shared deck component");
-    ok &= require(workspace.find("MixerSection") != std::string::npos, "workspace uses shared mixer component");
+    ok &= require(workspace.find("MixerSection") == std::string::npos
+                      && developmentControls.find("MixerSection") != std::string::npos,
+                  "production workspace omits hidden mixer trees while development retains the mixer UI");
+    ok &= require(workspace.find("id: twoDeckWaveformLoader") != std::string::npos
+                      && workspace.find("id: fourDeckWaveformLoader") != std::string::npos
+                      && workspace.find("active: window.fourDeckMode") != std::string::npos,
+                  "mutually exclusive waveform and C/D deck trees load only in their active mode");
+    ok &= require(workspace.find("id: settingsSectionLoader") != std::string::npos
+                      && workspace.find("id: sourcePageLoader") != std::string::npos
+                      && occurrences(workspace, "asynchronous: true") >= 2,
+                  "infrequent AIO settings and source surfaces load asynchronously on demand");
+    ok &= require(topHeader.find("settingsWindowFactory.createObject(null)") != std::string::npos
+                      && topHeader.find("SettingsWindow { id: settingsWin }") == std::string::npos,
+                  "desktop settings no longer retain a hidden startup window");
+    ok &= require(settingsPanel.find("mappingEditorFactory.createObject(null)") != std::string::npos
+                      && settingsWindow.find("mappingEditorFactory.createObject(null)") != std::string::npos
+                      && settingsPanel.find("id: mappingEditorWindow") == std::string::npos
+                      && settingsWindow.find("id: mappingEditorWindow") == std::string::npos,
+                  "mapping editors are constructed only when opened");
     ok &= require(main.find("waveformZoomLevels") == std::string::npos, "legacy fixed zoom list removed");
     ok &= require(settingsPanel.find("settingsManager.setAudioConfiguration") != std::string::npos
                       && settingsWindow.find("settingsManager.setAudioConfiguration") != std::string::npos,

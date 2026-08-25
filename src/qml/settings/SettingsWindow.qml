@@ -35,6 +35,24 @@ Window {
     property bool audioUiSyncing: false
     property bool audioSyncPending: false
     property var outputChannelPairsCache: ({})
+    property var mappingEditorInstance: null
+
+    Component.onDestruction: {
+        if (settingsWindow.mappingEditorInstance) {
+            settingsWindow.mappingEditorInstance.destroy()
+            settingsWindow.mappingEditorInstance = null
+        }
+    }
+
+    function showMappingEditor() {
+        if (!mappingEditorInstance)
+            mappingEditorInstance = mappingEditorFactory.createObject(null)
+        if (!mappingEditorInstance)
+            return
+        mappingEditorInstance.show()
+        mappingEditorInstance.raise()
+        mappingEditorInstance.requestActivate()
+    }
 
     property string pendingMasterOutputDevice: ""
     property int pendingMasterFirstChannel: 1
@@ -1509,11 +1527,7 @@ Window {
                                 verticalAlignment: Text.AlignVCenter
                             }
 
-                            onClicked: {
-                                mappingEditorWindow.show()
-                                mappingEditorWindow.raise()
-                                mappingEditorWindow.requestActivate()
-                            }
+                            onClicked: settingsWindow.showMappingEditor()
                         }
                     }
 
@@ -1521,8 +1535,9 @@ Window {
                 }
             }
 
-            MappingEditorWindow {
-                id: mappingEditorWindow
+            Component {
+                id: mappingEditorFactory
+                MappingEditorWindow { }
             }
 
             // ── Page 2: Library ────────────────────────────────────────────

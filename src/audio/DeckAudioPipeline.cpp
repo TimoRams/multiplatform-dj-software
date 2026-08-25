@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <thread>
 
 struct DeckAudioPipeline::Impl {
     explicit Impl(AudioPageCache& pageCache) : cache(pageCache)
@@ -32,9 +33,44 @@ struct DeckAudioPipeline::Impl {
     std::atomic<double> commandedPositionSeconds { 0.0 };
     std::atomic<std::uint64_t> seekGeneration { 0 };
     std::atomic<std::uint64_t> appliedSeekGeneration { 0 };
+    // This gate owns the lifetime boundary for the complete deck callback,
+    // including command consumption.  Keeping the gate in RenderModeRouter
+    // left a window where consumeCommands() could still dereference playback
+    // while the control thread retired it during a track handover.
+    std::atomic<bool> trackSwapInProgress { false };
+    std::atomic<unsigned int> audioCallbacksActive { 0 };
     double basePlaybackRate = 1.0;
     double jogNudgeRatio = 1.0;
     AudioCommandQueue<64> commands;
+
+    void beginTrackSwap() noexcept
+    {
+        // Sequential consistency gives the callback and control thread one
+        // total order: either an existing callback is observed and drained, or
+        // a newly entering callback observes the gate and emits silence.
+        trackSwapInProgress.store(true, std::memory_order_seq_cst);
+        while (audioCallbacksActive.load(std::memory_order_seq_cst) != 0)
+            std::this_thread::yield();
+    }
+
+    void endTrackSwap() noexcept
+    {
+        trackSwapInProgress.store(false, std::memory_order_seq_cst);
+    }
+
+    struct ScopedTrackSwap final {
+        explicit ScopedTrackSwap(Impl& pipeline) noexcept : owner(pipeline)
+        {
+            owner.beginTrackSwap();
+        }
+
+        ~ScopedTrackSwap()
+        {
+            owner.endTrackSwap();
+        }
+
+        Impl& owner;
+    };
 
     void consumeCommands() noexcept
     {
@@ -118,6 +154,27 @@ void DeckAudioPipeline::releaseResources()
 
 void DeckAudioPipeline::getNextAudioBlock(const juce::AudioSourceChannelInfo& info) noexcept
 {
+    struct CallbackActivity final {
+        explicit CallbackActivity(std::atomic<unsigned int>& count) noexcept
+            : active(count)
+        {
+            active.fetch_add(1, std::memory_order_seq_cst);
+        }
+
+        ~CallbackActivity()
+        {
+            active.fetch_sub(1, std::memory_order_seq_cst);
+        }
+
+        std::atomic<unsigned int>& active;
+    } callbackActivity { m_impl->audioCallbacksActive };
+
+    if (m_impl->trackSwapInProgress.load(std::memory_order_seq_cst)) {
+        if (info.buffer != nullptr)
+            info.clearActiveBufferRegion();
+        return;
+    }
+
     m_impl->consumeCommands();
     m_impl->mixer->getNextAudioBlock(info);
 }
@@ -140,6 +197,7 @@ void DeckAudioPipeline::setAudioPlayheadSink(std::atomic<double>* sink) noexcept
 void DeckAudioPipeline::setTransportRunning(bool running) noexcept
 {
     m_impl->transportRequestedRunning.store(running, std::memory_order_release);
+    m_impl->timeStretch->setInputPlaybackActive(running && m_impl->playback != nullptr);
     const AudioCommand command {
         running ? AudioCommandType::Play : AudioCommandType::Pause,
         0.0, 0.0, m_impl->trackGeneration
@@ -227,12 +285,16 @@ DeckAudioPipeline::TransportSnapshot DeckAudioPipeline::transportSnapshot() cons
 
 void DeckAudioPipeline::installPreparedTrack(PreparedTrack track)
 {
-    if (track.trackGeneration <= m_impl->trackGeneration || track.sourceSampleRate <= 0.0) {
+    if (track.trackGeneration <= m_impl->trackGeneration
+        || !std::isfinite(track.sourceSampleRate)
+        || track.sourceSampleRate <= 0.0) {
         m_impl->cache.releaseTrack(track.cacheHandle);
         return;
     }
 
-    m_impl->renderModeRouter->beginTransportSwap();
+    Impl::ScopedTrackSwap trackSwap { *m_impl };
+    m_impl->timeStretch->setInputPlaybackActive(false);
+    m_impl->renderModeRouter->setNormalPlaybackEnabled(false);
     m_impl->transport.setSource(nullptr);
     m_impl->renderModeRouter->setPlaybackSource(nullptr);
     if (m_impl->playback) {
@@ -256,23 +318,25 @@ void DeckAudioPipeline::installPreparedTrack(PreparedTrack track)
     m_impl->appliedSeekGeneration.store(installedSeekGeneration, std::memory_order_release);
     const bool shouldRun =
         m_impl->transportRequestedRunning.load(std::memory_order_acquire);
+    m_impl->timeStretch->setInputPlaybackActive(shouldRun);
     m_impl->renderModeRouter->setNormalPlaybackEnabled(shouldRun);
     if (shouldRun)
         m_impl->transport.start();
-    m_impl->renderModeRouter->endTransportSwap();
 }
 
-void DeckAudioPipeline::clearTrack(std::uint64_t invalidThroughGeneration)
+void DeckAudioPipeline::clearTrack(std::uint64_t invalidThroughGeneration,
+                                   AudioCacheReleaseMode releaseMode)
 {
     if (!m_impl)
         return;
 
+    Impl::ScopedTrackSwap trackSwap { *m_impl };
     m_impl->trackGeneration = std::max(m_impl->trackGeneration, invalidThroughGeneration);
     m_impl->transportRequestedRunning.store(false, std::memory_order_release);
     m_impl->commandedPositionSeconds.store(0.0, std::memory_order_release);
     const auto clearedSeekGeneration = m_impl->seekGeneration.load(std::memory_order_acquire);
     m_impl->appliedSeekGeneration.store(clearedSeekGeneration, std::memory_order_release);
-    m_impl->renderModeRouter->beginTransportSwap();
+    m_impl->timeStretch->setInputPlaybackActive(false);
     m_impl->renderModeRouter->setNormalPlaybackEnabled(false);
     m_impl->transport.setSource(nullptr);
     m_impl->renderModeRouter->setPlaybackSource(nullptr);
@@ -283,9 +347,8 @@ void DeckAudioPipeline::clearTrack(std::uint64_t invalidThroughGeneration)
         m_impl->retiredDecoderCallsFromAudioThread += stats.decoderCallsFromAudioThread;
     }
     m_impl->playback.reset();
-    m_impl->cache.releaseTrack(m_impl->handle);
+    m_impl->cache.releaseTrack(m_impl->handle, releaseMode);
     m_impl->handle = {};
-    m_impl->renderModeRouter->endTransportSwap();
 }
 
 DeckAudioPipeline::RealtimeStats DeckAudioPipeline::realtimeStats() const noexcept

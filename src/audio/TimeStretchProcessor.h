@@ -94,6 +94,9 @@ public:
 
     void setTempoRatio(double ratio) noexcept;
     void setPitchLockEnabled(bool enabled) noexcept;
+    // Lets the owning deck bypass the stretcher while normal transport is
+    // paused. Scratch still reaches the router through the direct path.
+    void setInputPlaybackActive(bool active) noexcept;
     void setBackend(TimeStretchBackend backend) noexcept;
     void setScratchBypass(bool enabled) noexcept;
     void setTrackGeneration(std::uint64_t generation) noexcept;
@@ -167,6 +170,9 @@ private:
     std::atomic<int> m_activeSlot { -1 };
     std::atomic<double> m_targetTempoRatio { 1.0 };
     std::atomic<bool> m_pitchLockEnabled { false };
+    // Standalone processors default to active because they cannot infer their
+    // source state. DeckAudioPipeline publishes its transport state explicitly.
+    std::atomic<bool> m_inputPlaybackActive { true };
     std::atomic<TimeStretchBackend> m_backend { TimeStretchBackend::Signalsmith };
     std::atomic<bool> m_scratchBypass { false };
     // Set whenever the stretcher has to re-enter the signal path from a

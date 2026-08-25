@@ -59,9 +59,10 @@ bool DeckTransport::installPreparedTrack(AudioCacheHandle cacheHandle,
     return true;
 }
 
-void DeckTransport::clearTrack(std::uint64_t invalidThroughGeneration) noexcept
+void DeckTransport::clearTrack(std::uint64_t invalidThroughGeneration,
+                               AudioCacheReleaseMode releaseMode) noexcept
 {
-    m_audioPipeline.clearTrack(invalidThroughGeneration);
+    m_audioPipeline.clearTrack(invalidThroughGeneration, releaseMode);
     m_trackGeneration = std::max(m_trackGeneration, invalidThroughGeneration);
     m_hasTrack = false;
     m_playRequested = false;

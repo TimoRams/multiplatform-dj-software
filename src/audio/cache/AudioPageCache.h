@@ -90,7 +90,9 @@ public:
     AudioCacheHandle openTrack(
         const TrackCacheOpenRequest& request,
         std::unique_ptr<juce::AudioFormatReader> preparedReader);
-    void releaseTrack(const AudioCacheHandle& handle);
+    void releaseTrack(
+        const AudioCacheHandle& handle,
+        AudioCacheReleaseMode mode = AudioCacheReleaseMode::Deferred);
     [[nodiscard]] AudioPageReadGuard tryGetPage(const AudioCacheHandle& handle,
                                                 std::int64_t pageIndex) const noexcept;
     bool requestPage(const AudioCacheHandle& handle, std::int64_t pageIndex,

@@ -42,10 +42,10 @@ installer does not provide an equivalent Linux desktop ARM64 archive.
 | Ableton Link 4.0 | submodule commit `e9a2e414d63f55f1aad158370b007a6fbdc1eeb9` | network tempo/phase sync |
 | Signalsmith DSP v1.7.1 | submodule commit `2d20161915e733f117545c6be8cd3275a739a1e3` | header-only delay/filter DSP; MIT |
 | Signalsmith Linear 0.5.0 | submodule commit `0dd6b823783f1fe8768e2700e0937903f4270698` | Stretch's local FFT/linear dependency; MIT |
-| Signalsmith Stretch | submodule commit `57b93f4e9206a089a45387eaa39bdc9f310d3308` | verified only; does not replace Rubber Band yet; MIT |
+| Signalsmith Stretch | submodule commit `57b93f4e9206a089a45387eaa39bdc9f310d3308` | default key-lock time stretching; MIT |
 | TagLib | distro/Homebrew/vcpkg | metadata and cover extraction |
 | libkeyfinder 2.2.8 | distro/Homebrew/vcpkg | musical-key analysis |
-| RubberBand | distro/Homebrew/vcpkg | key-lock time stretching |
+| RubberBand | distro/Homebrew/vcpkg | selectable compatibility key-lock backend |
 | ALSA | Linux only, required | native audio/MIDI backend |
 | JACK | Linux only, optional when discovered | JACK audio backend |
 | libusb | Linux only, optional when discovered | direct FLX10 HID support |

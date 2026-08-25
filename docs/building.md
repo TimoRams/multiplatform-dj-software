@@ -20,11 +20,11 @@ Submodules are pinned to exact commits. A normal `git pull` does not update
 their working trees; after a pull that changes a Gitlink, run the two commands
 above. `git submodule update --remote` is not part of the normal build process.
 
-Signalsmith Stretch is present only as a verified build dependency for now; it
-does not replace the production Rubber Band key-lock/time-stretch path.
-Signalsmith Linear is Stretch's technical dependency. All three Signalsmith
-projects are MIT-licensed; their canonical license files remain in the pinned
-submodules.
+Signalsmith Stretch is the default production key-lock/time-stretch backend;
+Rubber Band remains a selectable compatibility backend and is therefore still
+a required build dependency. Signalsmith Linear is Stretch's technical
+dependency. All three Signalsmith projects are MIT-licensed; their canonical
+license files remain in the pinned submodules.
 
 The supported native configurations are Linux x86_64, Linux ARM64, macOS
 Apple Silicon, macOS Intel and Windows x64. CI builds and tests all five on

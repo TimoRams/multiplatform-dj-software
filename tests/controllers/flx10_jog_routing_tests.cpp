@@ -1,6 +1,7 @@
 #include "controllers/flx10/Flx10JogRouter.h"
 #include "controllers/flx10/Flx10RealtimeScratchIngress.h"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 
@@ -370,6 +371,43 @@ bool testBatchedReceiveTimestampsAndReversal()
     return ok;
 }
 
+bool testFastSpeedRejectsUsbFrameJitter()
+{
+    using enum flx10::JogEventType;
+    bool ok = true;
+    flx10::Flx10JogRouter router;
+    route(router, TouchDown, 90.0);
+
+    constexpr double kRate = 6.0;
+    constexpr double kPhysicalInterval = 0.001;
+    const double ticks = ticksForRate(kRate, kPhysicalInterval);
+    // Each packet represents one millisecond of real platter travel, while the
+    // receive timestamps alternate between short and long scheduler intervals.
+    // A one-frame quotient swings between roughly 4.6x and 8.6x here.
+    constexpr double receiveIntervals[] = {0.0007, 0.0013};
+    double timestamp = 90.0;
+    double lowest = 100.0;
+    double highest = -100.0;
+    for (int i = 0; i < 80; ++i) {
+        timestamp += receiveIntervals[i & 1];
+        const auto result = route(router, Platter, timestamp, ticks);
+        if (i < 12)
+            continue;
+        lowest = std::min(lowest, result.estimatedRate);
+        highest = std::max(highest, result.estimatedRate);
+    }
+
+    ok &= require(lowest > kRate * 0.94 && highest < kRate * 1.06,
+                  "fast platter rate averages USB-frame jitter over a stable minimum window");
+
+    // The averaging window may not delay a real turn. Its history is discarded
+    // on the first opposite-direction packet, whose sign must be visible at once.
+    const auto reverse = route(router, Platter, timestamp + 0.001, -ticks);
+    ok &= require(reverse.estimatedRate < -kRate * 0.9,
+                  "fast reversal bypasses the same-direction jitter window immediately");
+    return ok;
+}
+
 bool testRealtimeScratchIngress()
 {
     bool ok = true;
@@ -431,6 +469,7 @@ int main()
     ok &= testReleaseCompletionAfterWheelSilence();
     ok &= testSlowSpeedRateResolution();
     ok &= testBatchedReceiveTimestampsAndReversal();
+    ok &= testFastSpeedRejectsUsbFrameJitter();
     ok &= testRealtimeScratchIngress();
     return ok ? 0 : 1;
 }

@@ -34,14 +34,15 @@ alive until the device callback is unregistered and closed.
 | Master sum, limiter, meter | `MasterMixer` inside `AudioEngine` | audio callback; prepared from control boundary | no callback allocation or external owner |
 | Cue/master headphone mix | `HeadphoneBus` inside `AudioEngine` | audio callback | consumes prepared deck PFL and master tap only |
 | Physical channel mapping | `AudioOutputRouter` inside `AudioEngine` | audio callback reads prepared routing snapshot | device queries are control-only |
-| Per-deck source chain | one `DeckAudioPipeline` | callback processes; control installs/clears | old source detached before control-side destruction |
+| Per-deck source chain | one `DeckAudioPipeline` | callback processes; control installs/clears | pipeline gate drains the complete callback, including command consumption, before source retirement |
 | Playback policy and position | `DeckTransport` | one Qt/control writer; audio publishes atomic playhead | snapshots contain values only |
 | Cue/loop state | `DeckCueLoopController` | Qt/QML/MIDI/controller | persistence and transport commands remain outside callback |
 | Scratch session policy | `ScratchSession`/`ScratchController` | control-to-audio atomic commands | `RenderModeRouter` owns callback rendering state |
 | Time-stretch pipelines | `TimeStretchProcessor` | preparation worker publishes; callback claims active slot | worker joined and slots destroyed outside callback |
 | Stretcher seeding | `TimeStretchProcessor` seed handshake | callback publishes an output snapshot, worker performs the seek, callback consumes it | exactly one of the two owns the stretcher at a time; the callback bridges on the Direct path meanwhile |
 | Channel EQ/filter/FX state | `DeckChannelProcessor` | controls publish commands/snapshots; callback consumes | filter histories remain audio-thread-only |
-| Cached pages | `AudioPageCache`/`AudioCacheWorker` | worker publishes immutable pages; callback holds guards | unpublish, drain readers, then free |
+| Cached pages | `AudioPageCache`/`AudioCacheWorker` | worker publishes immutable pages; callback holds guards | unpublish pages before deferred worker-side free; cache outlives all guards |
+| Decoder reader | cache entry plus worker lease | cache control atomically detaches; decoder worker holds a temporary `shared_ptr` and retire stack | normal handover/destruction is deferred to the worker; eject/shutdown waits for active reader calls and file closure |
 | Deck facade | `DjEngine` | Qt/QML/control unless explicitly atomic | facade borrows services/pipeline; owns deck controllers/loaders |
 | Sync role and actions | `DeckSyncController` | Qt/control | one controller per deck; no facade/source pointer |
 | Cross-deck sync registry | `SyncCoordinator` | Qt/control | fixed deck slots unregister before coordinator shutdown |
@@ -74,6 +75,13 @@ cue/loop, and sync commands arrive on that boundary. The audio callback writes
 only the injected playhead atomic. Adding arbitrary-thread transport mutators
 would violate the current snapshot protocol and requires an explicit queue.
 
+Track installation and clearing enter `DeckAudioPipeline`'s sequentially
+consistent swap gate before mutating callback-visible source lifetime. A
+callback either owns the old chain until its complete block returns or observes
+the gate and writes bounded silence. The gate belongs at the pipeline entry,
+not inside `RenderModeRouter`, because `consumeCommands()` also accesses the
+playback source and transport.
+
 `SyncCoordinator` stores no `DjEngine*`, and `DeckSyncController` stores no
 QML, database, `TrackData`, or audio-source pointer. Commands are rejected when
 master or target-track generations no longer match.
@@ -100,3 +108,16 @@ generation rejection, cancellation values, and deterministic join.
 startup, and small CRUD calls. Those calls may block the UI and must never be
 called from the audio callback or moved to a worker without replacing the
 connection/API boundary.
+
+## QML object lifetime
+
+The root `PerformanceWorkspace` keeps `Library` eager because startup and FLX10
+hidden-library behavior require its stable identity. Mutually exclusive heavy
+surfaces use explicit lifetime gates: the selected waveform mode and selected
+deck rows use synchronous `Loader`s, while AIO settings and Source load
+asynchronously. The standalone settings and mapping-editor windows are dynamic
+objects destroyed with their owning QML surface. Code must not retain an item
+pointer across one of these loader boundaries. Production deck rows do not
+instantiate the hidden visual `MixerSection`; mixer parameter ownership remains
+in `MixerControl`, while the visible development mixer creates that component
+only inside its own window.

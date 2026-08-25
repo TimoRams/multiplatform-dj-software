@@ -109,7 +109,7 @@ public:
 
     void armScalerCrossfade() noexcept { m_crossfadeRemaining.store(kCrossfadeSamples, std::memory_order_relaxed); }
 
-    void setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle) noexcept;
+    void setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle);
     void setRealtimeScratchInput(
         std::shared_ptr<engine::scratch::RealtimeScratchInput> input) noexcept;
     void setPlaybackSource(CachedPlaybackAudioSource* source) noexcept {
@@ -119,12 +119,6 @@ public:
 
     // Audio thread publishes scratch playhead here (seconds) for lock-free UI reads.
     void setAudioPlayheadSink(std::atomic<double>* sink) noexcept { m_audioPlayheadSink = sink; }
-
-    // Blocks audio output while DjEngine swaps transport reader sources.
-    void beginTransportSwap() noexcept;
-    void endTransportSwap() noexcept {
-        m_transportSwapInProgress.store(false, std::memory_order_seq_cst);
-    }
 
 private:
     void applyDeckTempoToHermite() noexcept;
@@ -278,8 +272,6 @@ private:
     bool m_lastNormalOutputValid = false;
     bool m_normalPlaybackWasEnabled = false;
 
-    std::atomic<bool> m_transportSwapInProgress { false };
-    std::atomic<unsigned int> m_audioCallbacksActive { 0 };
     std::atomic<double>* m_audioPlayheadSink = nullptr;
 };
 

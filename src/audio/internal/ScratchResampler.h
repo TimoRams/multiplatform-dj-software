@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <mutex>
 
 namespace engine::audio {
 
@@ -24,6 +25,10 @@ struct ScratchMotionStats {
     // Largest rate change between two adjacent output samples. A frozen or
     // snapped read head shows up here long before it is audible in a spectrum.
     double maxRateStep = 0.0;
+    // Largest change of that step (discrete rate curvature). Callback-rate
+    // zippering is primarily a discontinuity in acceleration and is visible
+    // here even when the rate itself never jumps.
+    double maxRateStepDelta = 0.0;
     // target - readPosition at block end, in track samples.
     double trackingErrorSamples = 0.0;
     // How far the read head was allowed to lead the last known hand target.
@@ -32,25 +37,15 @@ struct ScratchMotionStats {
     std::uint64_t leadLimitedBlocks = 0;
 };
 
-// How the read head is driven from the hand target. Both modes get the same
-// target, the same commanded velocity and the same extrapolated reference; they
-// differ only in what moves the head, so they can be measured against each other
-// on an identical motion trace.
-enum class ScratchTrackerMode : std::uint8_t {
-    // A critically damped servo pulls the head onto the hand position, with the
-    // hand velocity as the moving reference. Position leads, velocity assists.
-    PositionServo,
-    // Velocity leads: the head runs at the commanded hand speed directly, ramped
-    // continuously across the block, and the position error is only trimmed away
-    // by a slow term underneath. Position stays authoritative in the long run
-    // without the head being pulled at it every sample.
-    VelocityLed
-};
-
 // RT-safe band-limited scratch reader with true bidirectional playback.
 // Window sizing follows the device buffer size from audio settings.
 class ScratchResampler {
 public:
+    // Physical controller commands are clamped to 8x. The position tracker gets
+    // a little private headroom so it can recover finite startup/event lag even
+    // while the hand itself is already moving at that 8x boundary.
+    static constexpr double kMaximumTrackingRate = 10.0;
+
     void prepare(int numChannels, int deviceBufferSize, double outputSampleRate);
     void reset(double readPositionSamples) noexcept;
     void setReadPositionSamples(double readPositionSamples) noexcept;
@@ -58,13 +53,7 @@ public:
     void snapSmoothedRate(double rate) noexcept;
     void primeTrackerVelocity(double ratePerOutputSample) noexcept;
     void invalidatePrefetch() noexcept { m_sourceSize = 0; }
-    void setTrackerMode(ScratchTrackerMode mode) noexcept { m_trackerMode = mode; }
-    // Bandwidth of the position trim in VelocityLed mode, in Hz.
-    void setVelocityLedCorrectionHz(double hz) noexcept {
-        m_velocityLedCorrectionHz = std::clamp(hz, 1.0, 200.0);
-    }
-    [[nodiscard]] ScratchTrackerMode trackerMode() const noexcept { return m_trackerMode; }
-    void setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle) noexcept;
+    void setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle);
     void prefetchAround(double readPositionSamples) noexcept;
 
     void setTrackLengthSamples(double lengthSamples) noexcept {
@@ -82,10 +71,11 @@ public:
     void processBlock(double rate,
                       const juce::AudioSourceChannelInfo& output) noexcept;
 
-    // Position-authoritative scratch step. A critically-damped tracker glides the
-    // read head toward the absolute hand target (track samples). Slow/precise moves
-    // track exactly with no overshoot; momentum carries playback smoothly across
-    // sparse UI events. Returns the rate used (track samples per output sample).
+    // Position-authoritative scratch step. A critically-damped tracker glides
+    // the read head toward the absolute hand target (track samples). Slow moves
+    // retain exact long-term position; the C2 reference carries momentum across
+    // sparse events without a hard snap. Returns the rate used (track samples
+    // per output sample).
     // inputLeadSeconds is the measured age of the supplied target when the
     // block starts. It defaults to a typical hardware jog cadence.
     double processScratchTracking(double targetPosSamples,
@@ -100,12 +90,13 @@ public:
     [[nodiscard]] ScratchMotionStats motionStats() const noexcept;
 
 private:
+    [[nodiscard]] int requiredSourceBufferCapacity(double sourceSampleRate) const noexcept;
     void windowMargins(double rate, int outputBlockSize, int& lookBehind, int& lookAhead) const noexcept;
     [[nodiscard]] bool needsWindowReload(double minAbsPos, double maxAbsPos) const noexcept;
     bool ensureWindow(double rate, int outputBlockSize) noexcept;
     bool refillWindowFromCache(double rate, int outputBlockSize) noexcept;
     [[nodiscard]] bool positionInWindow(double position) const noexcept;
-    void prepareSincTable() noexcept;
+    void prepareSincTable();
     void writeScratchOutput(float* out0, float* out1, int index, bool ready,
                             double rate) noexcept;
     void readBandlimitedStereo(double position, double rate,
@@ -119,6 +110,7 @@ private:
     int m_deviceBufferSize = 512;
     int m_blockSize = 512;
     double m_outputSampleRate = 44100.0;
+    double m_trackSampleRate = 44100.0;
     double m_trackLengthSamples = 0.0;
 
     int m_sourceSize = 0;
@@ -126,13 +118,16 @@ private:
     double m_bufferOriginSample = 0.0;
     double m_lastRate = 0.0;
     double m_smoothedRate = 0.0;
+    double m_previousRateStep = 0.0;
     double m_trackVel = 0.0;   // tracker velocity, track samples / second
     // Continuously advanced estimate of where the hand is now. Kept across
-    // blocks so a newly arrived event corrects it rather than replaces it.
+    // blocks so a newly arrived event corrects it rather than replaces it. The
+    // velocity is retained as well: each block joins the old and new hand state
+    // with a minimum-jerk quintic Hermite trajectory, keeping position, velocity
+    // and acceleration continuous at callback boundaries.
     double m_referencePos = 0.0;
+    double m_referenceVelocity = 0.0; // track samples / second
     bool m_referenceValid = false;
-    ScratchTrackerMode m_trackerMode = ScratchTrackerMode::PositionServo;
-    double m_velocityLedCorrectionHz = 6.0;
     // Decaying envelope of recent hand speed, track samples/second. The runaway
     // guard sizes itself from this rather than the instantaneous speed, which
     // passes through zero at every direction change.
@@ -145,12 +140,18 @@ private:
     double m_loopInSample = 0.0;
     double m_loopOutSample = 0.0;
 
-    static constexpr int kSincTaps = 32;
+    static constexpr int kSincTaps = 64;
     static constexpr int kSincRadius = kSincTaps / 2;
     static constexpr int kSincPhaseCount = 256;
-    static constexpr int kSincCutoffBands = 16;
-    std::array<float, kSincCutoffBands * (kSincPhaseCount + 1) * kSincTaps>
-        m_sincTable {};
+    // Covers 10x tracking for a 192 kHz source on a 44.1 kHz device without a
+    // coefficient rebuild during track installation. Bands are uniform in
+    // cutoff frequency rather than speed, retaining useful resolution at the
+    // common 1x-10x ratios despite this wide safety range.
+    static constexpr double kMaximumFilterRate = 64.0;
+    static constexpr int kSincCutoffBands = 32;
+    static std::array<float, kSincCutoffBands * (kSincPhaseCount + 1) * kSincTaps>
+        s_sincTable;
+    static std::once_flag s_sincTableOnce;
     static constexpr int kMinWindowSamples = kSincTaps + 2;
     static constexpr int kStarvationFadeSamples = 128;
     std::atomic<std::uint64_t> m_pageHits{0}, m_pageMisses{0}, m_starvationBlocks{0};
@@ -158,6 +159,7 @@ private:
     std::atomic<std::uint64_t> m_diskReadsFromAudioThread{0};
 
     std::atomic<double> m_statMinRate{0.0}, m_statMaxRate{0.0}, m_statMaxRateStep{0.0};
+    std::atomic<double> m_statMaxRateStepDelta{0.0};
     std::atomic<double> m_statTrackingError{0.0}, m_statLead{0.0};
     std::atomic<std::uint64_t> m_statLeadLimitedBlocks{0};
 };

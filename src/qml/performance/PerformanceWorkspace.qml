@@ -40,66 +40,75 @@ Item {
                     readonly property real physicalRowHeight:
                         Math.floor(height * renderDpr * 0.25) / renderDpr
 
-                    PerformanceWaveformScreen {
-                        visible: !window.fourDeckMode
+                    Loader {
+                        id: twoDeckWaveformLoader
                         anchors.fill: parent
-                        deckAEngine: deckA
-                        deckBEngine: deckB
-                        fx: fxManager
-                        waveformZoom: window.waveformZoom
+                        active: !window.fourDeckMode
+                        sourceComponent: Component {
+                            PerformanceWaveformScreen {
+                                deckAEngine: deckA
+                                deckBEngine: deckB
+                                fx: fxManager
+                                waveformZoom: window.waveformZoom
+                            }
+                        }
                     }
 
-                    EnlargedWaveform {
-                        visible: window.fourDeckMode
-                        x: 0
-                        y: 0
-                        width: parent.width
-                        height: waveformSection.physicalRowHeight
-                        deckName: "C"
-                        engine: deckC
-                        sameTrackDoubleHint: window.isDuplicatePlayingTrack(deckC)
-                        backgroundColor: UiTheme.bgDisplay
-                        waveformZoom: window.waveformZoom
-                    }
+                    Loader {
+                        id: fourDeckWaveformLoader
+                        anchors.fill: parent
+                        active: window.fourDeckMode
+                        sourceComponent: Component {
+                            Item {
+                                EnlargedWaveform {
+                                    x: 0
+                                    y: 0
+                                    width: parent.width
+                                    height: waveformSection.physicalRowHeight
+                                    deckName: "C"
+                                    engine: deckC
+                                    sameTrackDoubleHint: window.isDuplicatePlayingTrack(deckC)
+                                    backgroundColor: UiTheme.bgDisplay
+                                    waveformZoom: window.waveformZoom
+                                }
 
+                                EnlargedWaveform {
+                                    x: 0
+                                    y: waveformSection.physicalRowHeight
+                                    width: parent.width
+                                    height: waveformSection.physicalRowHeight
+                                    deckName: "A"
+                                    engine: deckA
+                                    sameTrackDoubleHint: window.isDuplicatePlayingTrack(deckA)
+                                    backgroundColor: UiTheme.bgDisplay
+                                    waveformZoom: window.waveformZoom
+                                }
 
-                    EnlargedWaveform {
-                        visible: window.fourDeckMode
-                        x: 0
-                        y: waveformSection.physicalRowHeight
-                        width: parent.width
-                        height: waveformSection.physicalRowHeight
-                        deckName: "A"
-                        engine: deckA
-                        sameTrackDoubleHint: window.isDuplicatePlayingTrack(deckA)
-                        backgroundColor: UiTheme.bgDisplay
-                        waveformZoom: window.waveformZoom
-                    }
+                                EnlargedWaveform {
+                                    x: 0
+                                    y: waveformSection.physicalRowHeight * 2
+                                    width: parent.width
+                                    height: waveformSection.physicalRowHeight
+                                    deckName: "B"
+                                    engine: deckB
+                                    sameTrackDoubleHint: window.isDuplicatePlayingTrack(deckB)
+                                    backgroundColor: UiTheme.bgDisplay
+                                    waveformZoom: window.waveformZoom
+                                }
 
-                    EnlargedWaveform {
-                        visible: window.fourDeckMode
-                        x: 0
-                        y: waveformSection.physicalRowHeight * 2
-                        width: parent.width
-                        height: waveformSection.physicalRowHeight
-                        deckName: "B"
-                        engine: deckB
-                        sameTrackDoubleHint: window.isDuplicatePlayingTrack(deckB)
-                        backgroundColor: UiTheme.bgDisplay
-                        waveformZoom: window.waveformZoom
-                    }
-
-                    EnlargedWaveform {
-                        visible: window.fourDeckMode
-                        x: 0
-                        y: waveformSection.physicalRowHeight * 3
-                        width: parent.width
-                        height: Math.max(0, parent.height - y)
-                        deckName: "D"
-                        engine: deckD
-                        sameTrackDoubleHint: window.isDuplicatePlayingTrack(deckD)
-                        backgroundColor: UiTheme.bgDisplay
-                        waveformZoom: window.waveformZoom
+                                EnlargedWaveform {
+                                    x: 0
+                                    y: waveformSection.physicalRowHeight * 3
+                                    width: parent.width
+                                    height: Math.max(0, parent.height - y)
+                                    deckName: "D"
+                                    engine: deckD
+                                    sameTrackDoubleHint: window.isDuplicatePlayingTrack(deckD)
+                                    backgroundColor: UiTheme.bgDisplay
+                                    waveformZoom: window.waveformZoom
+                                }
+                            }
+                        }
                     }
 
                 }
@@ -158,18 +167,6 @@ Item {
                         channelId: "deckA"
                     }
 
-                    MixerSection {
-                        visible: false
-                        Layout.preferredWidth: 0
-                        Layout.minimumWidth: 0
-                        Layout.maximumWidth: 0
-                        Layout.fillHeight: true
-                        engineA: deckA
-                        engineB: deckB
-                        mc: mixerControl
-                        fx: fxManager
-                    }
-
                     DeckControl {
                         deckName: "B"
                         visible: window.showDeckB
@@ -203,51 +200,39 @@ Item {
             )
             readonly property real uniformScale: window._snapScaleToPhysicalPixels(Math.max(0.1, uniformScaleRaw))
 
-            Item {
+            Loader {
+                active: window.fourDeckMode
                 width: deckMixerViewport2.designWidth
                 height: deckMixerViewport2.designHeight
                 anchors.centerIn: parent
                 scale: deckMixerViewport2.uniformScale
                 transformOrigin: Item.Center
+                sourceComponent: Component {
+                    Item {
+                        RowLayout {
+                            anchors.fill: parent
+                            spacing: 0
 
-                RowLayout {
-                    anchors.fill: parent
-                    spacing: 0
+                            DeckControl {
+                                deckName: "C"
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                engine: deckC
+                                hostWindow: window
+                                mixerControl: mixerControl
+                                channelId: "deckC"
+                            }
 
-                    DeckControl {
-                        deckName: "C"
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        engine: deckC
-                        hostWindow: window
-                        mixerControl: mixerControl
-                        channelId: "deckC"
-                    }
-
-                    MixerSection {
-                        visible: false
-                        Layout.preferredWidth: 0
-                        Layout.minimumWidth: 0
-                        Layout.maximumWidth: 0
-                        Layout.fillHeight: true
-                        engineA: deckC
-                        engineB: deckD
-                        channelAId: "deckC"
-                        channelBId: "deckD"
-                        deckNameA: "C"
-                        deckNameB: "D"
-                        mc: mixerControl
-                        fx: fxManager
-                    }
-
-                    DeckControl {
-                        deckName: "D"
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        engine: deckD
-                        hostWindow: window
-                        mixerControl: mixerControl
-                        channelId: "deckD"
+                            DeckControl {
+                                deckName: "D"
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                engine: deckD
+                                hostWindow: window
+                                mixerControl: mixerControl
+                                channelId: "deckD"
+                            }
+                        }
                     }
                 }
             }
@@ -297,40 +282,49 @@ Item {
             visible: window.fxVisible
         }
 
-        SettingsPanel {
-            id: settingsSection
+        Loader {
+            id: settingsSectionLoader
             Layout.fillWidth: true
             Layout.fillHeight: window.settingsPanelActive
             Layout.minimumHeight: window.settingsPanelActive ? 1 : 0
             Layout.preferredHeight: 0
             Layout.maximumHeight: window.settingsPanelActive ? window.height : 0
             visible: window.settingsPanelActive
+            active: window.settingsPanelActive
+            asynchronous: true
+            sourceComponent: Component { SettingsPanel { } }
         }
 
-        SourcePage {
-            id: sourcePage
+        Loader {
+            id: sourcePageLoader
             Layout.fillWidth: true
             Layout.fillHeight: window.sourcePageActive
             Layout.minimumHeight: window.sourcePageActive ? 1 : 0
             Layout.preferredHeight: 0
             Layout.maximumHeight: window.sourcePageActive ? window.height : 0
             visible: window.sourcePageActive
-            appWindow: window
-            activeSourceType: librarySection.activeTab === "usb" ? "usb" : "local"
-            activeDeviceId: deviceLibraryManager ? deviceLibraryManager.selectedDeviceId : ""
-            onLibraryRequested: {
-                librarySection.activeTab = "library"
-                window.activeMainTab = "library"
-                window.showLibrary = true
-            }
-            onUsbLibraryRequested: {
-                librarySection.resetUsbNavigation()
-                librarySection.activeTab = "usb"
-                window.activeMainTab = "library"
-                window.showLibrary = true
-            }
-            onSourceBackRequested: {
-                window.activeMainTab = "performance"
+            active: window.sourcePageActive
+            asynchronous: true
+            sourceComponent: Component {
+                SourcePage {
+                    appWindow: window
+                    activeSourceType: librarySection.activeTab === "usb" ? "usb" : "local"
+                    activeDeviceId: deviceLibraryManager ? deviceLibraryManager.selectedDeviceId : ""
+                    onLibraryRequested: {
+                        librarySection.activeTab = "library"
+                        window.activeMainTab = "library"
+                        window.showLibrary = true
+                    }
+                    onUsbLibraryRequested: {
+                        librarySection.resetUsbNavigation()
+                        librarySection.activeTab = "usb"
+                        window.activeMainTab = "library"
+                        window.showLibrary = true
+                    }
+                    onSourceBackRequested: {
+                        window.activeMainTab = "performance"
+                    }
+                }
             }
         }
 

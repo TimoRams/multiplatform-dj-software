@@ -22,7 +22,7 @@ The complete CTest suite covers the following relevant focused groups:
 | UI/QML | `ui_scale`, `waveform_zoom`, `ui_layout`, `qml_component`, `waveform_render_stability` |
 | Mixer/audio graph | `smoke`, `mixer_dsp`, `deck_audio_graph`, `master_bus`, `audio_routing_contract` |
 | Transport/sync | `deck_transport`, `sync_coordinator`, `control_clock`, `render_pressure_policy`, `cue_loop_controller` |
-| Cache/stretch | `audio_page_cache`, `scratch_cache`, `cached_playback`, `time_stretch` |
+| Cache/stretch | `audio_page_cache` (deferred/synchronous reader retirement), `scratch_cache` (including 192/48 kHz aliasing), `scratch_motion` (trajectory/spectrum/release), `cached_playback`, `time_stretch` (paused-keylock bypass) |
 | Analysis/waveform | `analysis_lifetime`, `analysis_snapshot`, `library_analysis_manager`, `progressive_waveform_publication`, `waveform_motion`, `waveform_line_*` |
 | Devices/controllers | `audio_device_service`, `alsa_midi_line_parser`, `midi_14bit_accumulator`, `flx10_jog_routing`, `flx10_display_protocol`, `parameter_store` |
 | Workers/lifecycle | `posix_signal_handler`, `audio_thread_scheduling`, `database_worker`, `media_io_scheduler`, `track_loader`, `dj_engine_api_contract` |
@@ -32,6 +32,10 @@ Callback-related changes must also confirm that `AudioEngineRealtimeStats`,
 `TimeStretchRealtimeStats`, and `DeckChannelProcessor::RealtimeStats` retain
 zero violation counters.
 
+`deck_audio_graph` includes a concurrent callback versus 200-generation
+install/clear stress. For lifetime-boundary changes, also run that target under
+ThreadSanitizer where the platform toolchain supports it.
+
 ## Manual core scenarios
 
 ### Multi-deck loading and replacement
@@ -39,6 +43,9 @@ zero violation counters.
 - Load four local tracks with different lengths, sample rates, and analysis
   states, first sequentially and then rapidly across A/B/C/D.
 - Replace A with B/C/D while loading and while analysis is active.
+- Repeat with a long compressed file on slow/removable storage. Replacing the
+  track must remain responsive while an in-flight decoder finishes; explicit
+  eject must wait until the backing file handle is actually closed.
 - Verify that only the newest generation publishes metadata, cover, waveform,
   cues, beatgrid, and audio; UI remains responsive and shutdown joins workers.
 
@@ -70,17 +77,32 @@ zero violation counters.
   size. With `BROCKDJ_AUDIO_DIAGNOSTICS=1`, `keylockSeedsInCallback` should stay
   at zero on small buffers; if it rises, the seed is landing in the callback and
   transitions will crackle.
+- Pause loaded keylocked decks while other decks play/scratch. Paused decks must
+  report zero active keylock latency/processing and resume through a bounded
+  seed transition without a dropout.
 
 ### Scratch and cache recovery
 
-- Scratch forward/backward slowly and rapidly, including direction changes,
-  pre-roll, track start, loop wrap, paused scratch, and release inertia.
-- Repeat while analysis runs and with several decks active.
+- On the FLX10, audition slow forward/reverse drags, baby scratches, scribbles,
+  chirps, rapid zero crossings, full-force 8x forward/reverse throws, fast
+  backspin release, immediate re-grab, pre-roll, track start, loop wrap, paused
+  scratch, and release into both playing and paused transport.
+- Repeat at 128, 256, and 512 samples with 44.1/48/96 kHz devices and
+  44.1/48/96/192 kHz tracks. Use bright transients and sustained high-frequency
+  material so turn clicks, pitch stairs, and fold-back are not masked.
+- Repeat while analysis runs, two/four decks play, keylock is active, and a
+  track loads on another deck.
 - Verify immediate visual response, plausible playhead, faded cache starvation
   rather than a callback stall, and zero callback disk/decoder counters.
+- Record level-matched output for comparison with the chosen Serato/Rekordbox
+  setup. Judge attack, turn point, fast-rate bandwidth, release tail, position
+  feel, and latency separately; a generic "sounds better" result is not enough
+  to tune estimator or DSP constants.
 - With `BROCKDJ_AUDIO_DIAGNOSTICS=1`, confirm whether a click coincides with
   `scratchStarvation`, `scratchDropped`, or callback/device XRun growth before
   changing DSP or handoff behavior.
+- Use `docs/architecture/scratch-engine-quality.md` as the implementation and
+  measurement reference; update it whenever a scratch constant or owner moves.
 
 ### FX and mixer controls
 
@@ -114,7 +136,7 @@ zero violation counters.
 
 ### FLX10, MIDI, and Link
 
-- Verify FLX10 jog/scratch direction and release feel, displays, waveform
+- Run the detailed scratch matrix above, then verify FLX10 displays, waveform
   upload, keepalive, VU/LED feedback, deck assignment, and shutdown.
 - Verify generic MIDI 7-/14-bit controls, duplicate suppression, and mixer
   state round trips.
@@ -156,6 +178,10 @@ zero violation counters.
   do not increase.
 - Open/close settings, mapping editor, library, development controls, startup,
   status, and exit overlays. Check keyboard and touch input.
+- Exercise the first and repeated transitions into four-deck mode, AIO settings,
+  Source, desktop settings, and the mapping editor. These surfaces are loaded
+  on demand; verify correct sizing/focus, no blank persistent state, and clean
+  destruction when the owning surface closes.
 - Close normally, during load/analysis/database work, and via SIGINT/SIGTERM on
   POSIX. Verify one shutdown request, no late callback, no repeated recovery
   warning, and no QML use-after-destruction warning.

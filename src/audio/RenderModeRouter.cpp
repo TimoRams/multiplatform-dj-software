@@ -3,7 +3,6 @@
 #include "audio/cache/CachedPlaybackAudioSource.h"
 #include "audio/internal/HermiteResamplingAudioSource.h"
 
-#include <thread>
 #include <utility>
 
 namespace engine::audio {
@@ -18,17 +17,6 @@ RenderModeRouter::RenderModeRouter(juce::AudioSource* inputSource, bool deleteIn
 }
 
 RenderModeRouter::~RenderModeRouter() = default;
-
-void RenderModeRouter::beginTransportSwap() noexcept
-{
-    // Publish the gate before observing callback activity. Sequential
-    // consistency prevents the swap thread and a newly entering callback from
-    // both missing each other's store. Callbacks never wait; a track swap waits
-    // only for the block that already owns the reader pointer.
-    m_transportSwapInProgress.store(true, std::memory_order_seq_cst);
-    while (m_audioCallbacksActive.load(std::memory_order_seq_cst) != 0)
-        std::this_thread::yield();
-}
 
 void RenderModeRouter::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
 {
@@ -365,7 +353,7 @@ void RenderModeRouter::setLoopRangeSeconds(double loopInSec, double loopOutSec, 
     m_loopCommandGeneration.fetch_add(1, std::memory_order_release);
 }
 
-void RenderModeRouter::setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle) noexcept
+void RenderModeRouter::setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle)
 {
     m_scratchResampler.setTrackCacheSource(cache, handle);
 }
@@ -668,16 +656,15 @@ void RenderModeRouter::finishReleaseDecisionAfterTrackingBlock() noexcept
 
     switch (m_audioReleaseDisposition) {
     case engine::scratch::ScratchReleaseDisposition::CoastToDeckRate:
+        // processScratchTracking already left the resampler at the velocity it
+        // actually rendered. Preserve that state: snapping it to the raw MIDI
+        // quotient here creates a speed edge exactly when the hand lifts.
         m_audioReleasePhase = ScratchReleasePhase::CoastToDeck;
-        m_scratchResampler.snapSmoothedRate(
-            speed * std::max(1.0, m_audioReleaseCommand.sampleRate)
-            / std::max(1.0, m_outputSampleRate));
         break;
     case engine::scratch::ScratchReleaseDisposition::CoastToStop:
+        // The coast controller supplies the new target on the next block; the
+        // resampler interpolates there from the rendered tracking velocity.
         m_audioReleasePhase = ScratchReleasePhase::CoastToStop;
-        m_scratchResampler.snapSmoothedRate(
-            speed * std::max(1.0, m_audioReleaseCommand.sampleRate)
-            / std::max(1.0, m_outputSampleRate));
         break;
     case engine::scratch::ScratchReleaseDisposition::HandoffNow:
         completeActiveReleaseHandoff(m_audioReleaseCommand.sampleRate);
@@ -1023,27 +1010,7 @@ void RenderModeRouter::publishScratchCursor(double readPositionSamples,
 
 void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill)
 {
-    struct CallbackActivity final {
-        explicit CallbackActivity(std::atomic<unsigned int>& count) noexcept
-            : active(count)
-        {
-            active.fetch_add(1, std::memory_order_seq_cst);
-        }
-
-        ~CallbackActivity()
-        {
-            active.fetch_sub(1, std::memory_order_seq_cst);
-        }
-
-        std::atomic<unsigned int>& active;
-    } callbackActivity { m_audioCallbacksActive };
-
     if (!m_transport || !bufferToFill.buffer) {
-        bufferToFill.clearActiveBufferRegion();
-        return;
-    }
-
-    if (m_transportSwapInProgress.load(std::memory_order_seq_cst)) {
         bufferToFill.clearActiveBufferRegion();
         return;
     }
@@ -1076,8 +1043,9 @@ void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& buf
         }
 
         // Hermite always owns tempo and jog-rate movement. With keylock active,
-        // the downstream RubberBand stage keeps timeRatio at 1 and applies the
-        // inverse pitch scale, preserving pitch without losing reader speed.
+        // the selected downstream time-stretch backend keeps its time ratio at
+        // 1 and applies the inverse pitch scale, preserving pitch without
+        // losing reader speed.
         if (m_hermite) {
             m_hermite->getNextAudioBlock(bufferToFill);
         } else {
@@ -1111,7 +1079,7 @@ void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& buf
                     - realtimeSnapshot.lastEventTimestampSeconds,
                 0.0, 0.030);
         }
-        const double maxAbsRate = 8.0 * oneX;
+        const double maxAbsRate = ScratchResampler::kMaximumTrackingRate * oneX;
         // Extrapolate by the target's real age. Using the same half-interval on
         // every callback made blocks between MIDI events alternately coast and
         // brake against an unchanged target — the audible scratch judder.

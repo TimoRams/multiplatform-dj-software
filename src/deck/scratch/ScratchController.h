@@ -10,7 +10,10 @@ namespace engine::scratch {
 
 struct ScratchControllerConfig {
     double throwThreshold = 0.35;
-    double maxScratchSpeed = 6.0;
+    // Must match RealtimeScratchInput and ScratchResampler. A lower release
+    // clamp than the live tracker creates an artificial speed drop precisely at
+    // touch-up on a hard FLX10 backspin.
+    double maxScratchSpeed = 8.0;
     double minScratchSpeed = 0.00005;
     double slowSpeedThreshold = 0.35;
     double slowVelocitySmoothingOld = 0.10;

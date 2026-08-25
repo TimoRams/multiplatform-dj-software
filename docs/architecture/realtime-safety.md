@@ -64,7 +64,12 @@ Each `DeckAudioPipeline` owns its cached playback source, JUCE transport,
 
 - Construction, destruction, track installation, track clearing, source
   retirement, and `prepareToPlay()` are control/device-boundary operations.
-- `getNextAudioBlock()` only delegates through the already prepared chain.
+- `getNextAudioBlock()` first takes a fixed atomic activity lease covering
+  command consumption and the complete prepared chain. A control-side track
+  swap publishes its gate and drains an already active block; newly entering
+  callbacks observe the gate and clear their destination without waiting.
+- The lifetime gate must remain at `DeckAudioPipeline` entry. Moving it below
+  `consumeCommands()` reintroduces a playback-source use-after-free window.
 - Retired cached-playback violation counters are accumulated so replacing a
   track cannot hide a callback-safety violation.
 - `DeckTransport` is the control-thread owner of play intent, position, rate,
@@ -89,6 +94,12 @@ reversed twice.
   page before waiting for readers and freeing it on the worker.
 - `AudioCacheWorker` owns decoder creation, page filling, eviction, and
   deallocation. It is joined after all callback readers have stopped.
+- A decoder call holds a temporary shared reader lease. `releaseTrack()` first
+  invalidates the entry and atomically detaches the owner reference.
+  `AudioCacheReleaseMode::Deferred` is required for normal load/handover paths;
+  it publishes reader destruction to the decoder worker and never waits for an
+  in-flight decode. `WaitForReader` is reserved for explicit eject/shutdown
+  where the file handle must be closed on return.
 - `CachedPlaybackAudioSource` owns no decoder or fallback reader. Its hit,
   miss, starvation, and recovery paths must keep
   `PlaybackCacheStats::{diskReadsFromAudioThread,decoderCallsFromAudioThread}`
@@ -96,6 +107,19 @@ reversed twice.
 - `ScratchResampler` reads only guarded immutable pages and its preallocated
   local window. `ScratchCacheStats::diskReadsFromAudioThread` must remain zero;
   starvation and recovery use the fixed 128-sample fade.
+- Its sinc table and ordinary <=192 kHz source window are built/reserved in
+  `prepareToPlay()`. A larger-track fallback growth is permitted only during
+  track installation behind `DeckAudioPipeline`'s callback gate. Neither the
+  table nor the buffer may be rebuilt from `processBlock()` or
+  `processScratchTracking()`.
+- FLX10 cumulative position and velocity arrive through one coherent
+  `RealtimeScratchInput` snapshot. The audio callback makes one read attempt and
+  never spins on the controller writer. Motion telemetry is accumulated in
+  locals and published with relaxed stores once per block; it never logs from
+  the callback.
+- The scratch source/output rate is not the normalized controller rate. A
+  192 kHz track on a 48 kHz device is already 4 source samples per output sample
+  at normal speed; window and anti-alias calculations must retain that ratio.
 - `ApplicationRuntime::audioPageCache` outlives `AudioEngine`, all decks, and
   their cache handles.
 
@@ -111,6 +135,11 @@ non-atomic slot configuration.
 The following `TimeStretchRealtimeStats` fields must remain zero during
 transition and stress tests: prepare, reset, prewarm, buffer growth, and
 blocking-lock calls from the audio thread.
+
+A loaded but paused deck sets `TimeStretchProcessor::setInputPlaybackActive(false)`.
+Keylock then renders the direct router path once, which preserves scratch and FX
+tail semantics without running a phase vocoder over silence. Resuming marks the
+next keylock entry for the existing bounded seed/crossfade handshake.
 
 `DeckChannelProcessor` receives clamped control targets and prepared
 `MixerCoefficientSnapshot` values. The callback may install a complete

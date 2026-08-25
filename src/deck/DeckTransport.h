@@ -55,7 +55,9 @@ public:
     DeckTransport& operator=(const DeckTransport&) = delete;
 
     bool installPreparedTrack(AudioCacheHandle cacheHandle, const TrackConfiguration& configuration);
-    void clearTrack(std::uint64_t invalidThroughGeneration) noexcept;
+    void clearTrack(
+        std::uint64_t invalidThroughGeneration,
+        AudioCacheReleaseMode releaseMode = AudioCacheReleaseMode::Deferred) noexcept;
 
     bool setPlaying(bool playing) noexcept;
     // Changes transport intent without seeking/freezing the scratch-owned

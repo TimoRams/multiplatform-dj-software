@@ -46,6 +46,7 @@ Rectangle {
     property var    latencyRows: []
     property var    audioPerfStats: ({})
     property int    beatUiTick: 0
+    property var    settingsWindowInstance: null
 
     // ── Timers ───────────────────────────────────────────────────────────────
     Connections {
@@ -68,6 +69,13 @@ Rectangle {
         root.currentTime = d.getHours().toString().padStart(2,"0") + ":"
                          + d.getMinutes().toString().padStart(2,"0")
         root.refreshLatencyInfo()
+    }
+
+    Component.onDestruction: {
+        if (root.settingsWindowInstance) {
+            root.settingsWindowInstance.destroy()
+            root.settingsWindowInstance = null
+        }
     }
 
     // ── Functions ────────────────────────────────────────────────────────────
@@ -109,8 +117,23 @@ Rectangle {
         }
     }
 
-    // ── Settings window ──────────────────────────────────────────────────────
-    SettingsWindow { id: settingsWin }
+    // The desktop settings tree is large and is almost never needed during a
+    // performance session. Construct it on first use instead of keeping a
+    // hidden Window (and its mapping editor) alive from application startup.
+    Component {
+        id: settingsWindowFactory
+        SettingsWindow { }
+    }
+
+    function showStandaloneSettings() {
+        if (!root.settingsWindowInstance)
+            root.settingsWindowInstance = settingsWindowFactory.createObject(null)
+        if (!root.settingsWindowInstance)
+            return
+        root.settingsWindowInstance.show()
+        root.settingsWindowInstance.raise()
+        root.settingsWindowInstance.requestActivate()
+    }
 
     // ── Latency popup ────────────────────────────────────────────────────────
     Popup {
@@ -1489,9 +1512,7 @@ Rectangle {
                             root.Window.window.closeTopBarPullDown()
                             return
                         }
-                        settingsWin.show()
-                        settingsWin.raise()
-                        settingsWin.requestActivate()
+                        root.showStandaloneSettings()
                         root.Window.window.closeTopBarPullDown()
                     }
                 }

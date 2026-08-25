@@ -5,6 +5,14 @@
 
 class AudioPageCache;
 
+enum class AudioCacheReleaseMode : std::uint8_t {
+    // Normal handovers must not block the owner/UI thread behind a slow decode.
+    // The worker's reader lease closes the file after its in-flight call ends.
+    Deferred,
+    // Explicit eject and shutdown need the file handle closed before returning.
+    WaitForReader,
+};
+
 class AudioCacheHandle final
 {
 public:

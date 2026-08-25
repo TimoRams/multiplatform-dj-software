@@ -13,13 +13,17 @@ public:
     void prepareToPlay(int, double rate) override { sampleRate = rate; }
     void releaseResources() override {}
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override {
+        ++renderCalls;
         for (int i=0;i<info.numSamples;++i) {
             const float value=static_cast<float>(0.2*std::sin(phase));
             phase += 2.0*juce::MathConstants<double>::pi*220.0/sampleRate;
             for(int ch=0;ch<info.buffer->getNumChannels();++ch) info.buffer->setSample(ch,info.startSample+i,value);
         }
     }
-private: double sampleRate=48000.0, phase=0.0;
+    [[nodiscard]] std::uint64_t getRenderCalls() const noexcept { return renderCalls; }
+private:
+    double sampleRate=48000.0, phase=0.0;
+    std::uint64_t renderCalls=0;
 };
 bool require(bool value,const char* message){if(!value)std::cerr<<"FAIL: "<<message<<'\n';return value;}
 bool finite(const juce::AudioBuffer<float>& b){for(int ch=0;ch<b.getNumChannels();++ch)for(int i=0;i<b.getNumSamples();++i)if(!std::isfinite(b.getSample(ch,i)))return false;return true;}
@@ -36,6 +40,22 @@ static_assert(noexcept(std::declval<TimeStretchProcessor&>().getNextAudioBlock(
 
 int main(){
     bool ok=true;
+    {   // A loaded but paused deck still passes through this processor. It must
+        // pull the silent router once, not spend FFT work filling a keylock
+        // pipeline with silence on every callback.
+        ToneSource tone; TimeStretchProcessor source(&tone); source.prepareToPlay(512, 48000.0);
+        source.setPitchLockEnabled(true);
+        source.setTempoRatio(0.8);
+        source.setInputPlaybackActive(false);
+        juce::AudioBuffer<float> paused(2, 512);
+        const auto callsBefore = tone.getRenderCalls();
+        source.getNextAudioBlock({&paused, 0, paused.getNumSamples()});
+        ok &= require(tone.getRenderCalls() == callsBefore + 1,
+                      "paused keylock pulls its input only once");
+        ok &= require(source.getLatencySamples() == 0,
+                      "paused keylock bypasses the stretcher");
+        source.setInputPlaybackActive(true);
+    }
     { ToneSource tone; TimeStretchProcessor source(&tone); source.prepareToPlay(512, 48000.0);
         source.setPitchLockEnabled(true);
         juce::AudioBuffer<float> settle(2,256);

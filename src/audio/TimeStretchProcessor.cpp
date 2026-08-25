@@ -70,6 +70,12 @@ void TimeStretchProcessor::setPitchLockEnabled(bool enabled) noexcept
     m_pitchLockEnabled.store(enabled, std::memory_order_release);
 }
 
+void TimeStretchProcessor::setInputPlaybackActive(bool active) noexcept
+{
+    if (m_inputPlaybackActive.exchange(active, std::memory_order_acq_rel) != active)
+        m_keylockSeedPending.store(true, std::memory_order_release);
+}
+
 void TimeStretchProcessor::setBackend(TimeStretchBackend backend) noexcept
 {
     if (m_backend.exchange(backend, std::memory_order_acq_rel) != backend)
@@ -450,6 +456,7 @@ void TimeStretchProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
     const int active = m_activeSlot.load(std::memory_order_acquire);
     const bool keylockRequested = active >= 0
         && m_pitchLockEnabled.load(std::memory_order_acquire)
+        && m_inputPlaybackActive.load(std::memory_order_acquire)
         && !m_scratchBypass.load(std::memory_order_acquire);
 
     const auto renderDirect = [&] {

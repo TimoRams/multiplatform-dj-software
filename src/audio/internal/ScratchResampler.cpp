@@ -5,10 +5,21 @@
 
 namespace engine::audio {
 
+std::array<float,
+           ScratchResampler::kSincCutoffBands
+               * (ScratchResampler::kSincPhaseCount + 1)
+               * ScratchResampler::kSincTaps>
+    ScratchResampler::s_sincTable {};
+std::once_flag ScratchResampler::s_sincTableOnce;
+
 namespace {
 constexpr int kWindowPadSamples = 4;
 constexpr int kWindowBuffersPerSide = 3;
-constexpr int kCapacityBuffers = 8;
+constexpr int kCapacityBuffers = 12;
+constexpr double kPreparedSourceRateCeiling = 192000.0;
+constexpr int kMaximumSourceBufferSamples = 524288;
+constexpr double kMaximumMotionAccelerationRatesPerSecond = 1'500.0;
+constexpr double kMaximumMotionJerkRatesPerSecond2 = 1'000'000.0;
 } // namespace
 
 void ScratchResampler::prepare(int numChannels, int maxBlockSize, double outputSampleRate)
@@ -17,13 +28,14 @@ void ScratchResampler::prepare(int numChannels, int maxBlockSize, double outputS
     m_deviceBufferSize = std::max(64, maxBlockSize);
     m_blockSize = m_deviceBufferSize;
     m_outputSampleRate = std::max(1.0, outputSampleRate);
+    if (!m_cacheHandle.isValid())
+        m_trackSampleRate = m_outputSampleRate;
 
-    // Hold ~0.5s of audio so slow scratching stays inside the RAM window and does
-    // not decode/read on the audio thread on every small move (the main cause of
-    // crackle during slow, precise scratching).
-    const int timeCapacity = static_cast<int>(std::lround(m_outputSampleRate * 0.5));
-    const int capacity = std::clamp(std::max(m_deviceBufferSize * kCapacityBuffers, timeCapacity),
-                                    768, 262144);
+    // Reserve for a 192 kHz source up front. Loading a normal track on deck 2
+    // therefore does not allocate a new scratch window while deck 1 is playing.
+    // Capacity is expressed in source samples: sizing this from the device rate
+    // only held 125 ms of a 192 kHz track on a 48 kHz device.
+    const int capacity = requiredSourceBufferCapacity(m_trackSampleRate);
     m_sourceBuffer.setSize(m_channels, capacity, false, true, true);
     m_sourceBuffer.clear();
     m_sourceSize = 0;
@@ -31,42 +43,49 @@ void ScratchResampler::prepare(int numChannels, int maxBlockSize, double outputS
     m_bufferOriginSample = 0.0;
     m_lastRate = 0.0;
     m_smoothedRate = 0.0;
+    m_previousRateStep = 0.0;
+    m_trackVel = 0.0;
+    m_referencePos = 0.0;
+    m_referenceVelocity = 0.0;
+    m_referenceValid = false;
+    m_leadSpeedEnvelope = 0.0;
+    m_starvationGain = 0.0f;
+    m_lastOutputL = 0.0f;
+    m_lastOutputR = 0.0f;
     prepareSincTable();
 }
 
-void ScratchResampler::prepareSincTable() noexcept
+int ScratchResampler::requiredSourceBufferCapacity(double sourceSampleRate) const noexcept
 {
-    constexpr double pi = 3.14159265358979323846;
-    constexpr double maximumScratchRate = 8.0;
-    const auto tableIndex = [](int band, int phase, int tap) {
-        return (static_cast<std::size_t>(band) * (kSincPhaseCount + 1)
-                + static_cast<std::size_t>(phase)) * kSincTaps
-            + static_cast<std::size_t>(tap);
-    };
+    const double sizingSourceRate = std::max(
+        {m_outputSampleRate, sourceSampleRate, kPreparedSourceRateCeiling});
+    const double sourcePerOutput = sizingSourceRate / std::max(1.0, m_outputSampleRate);
+    const int timeCapacity = static_cast<int>(std::lround(sizingSourceRate * 0.5));
+    const int rateCapacity = static_cast<int>(std::ceil(
+        m_deviceBufferSize * kCapacityBuffers * sourcePerOutput));
+    return std::clamp(std::max(rateCapacity, timeCapacity),
+                      768, kMaximumSourceBufferSamples);
+}
 
-    for (int band = 0; band < kSincCutoffBands; ++band) {
-        const double speed = 1.0 + (maximumScratchRate - 1.0)
-            * static_cast<double>(band)
-            / static_cast<double>(kSincCutoffBands - 1);
-        // A source-domain low-pass must happen before decimation. Filtering the
-        // already-resampled output cannot remove frequencies that have folded.
-        const double cutoff = 0.90 / speed;
+void ScratchResampler::prepareSincTable()
+{
+    std::call_once(s_sincTableOnce, [] {
+        constexpr double pi = 3.14159265358979323846;
+        constexpr std::size_t phaseTapCount =
+            (kSincPhaseCount + 1) * kSincTaps;
+        std::array<double, phaseTapCount> windowTable {};
         for (int phase = 0; phase <= kSincPhaseCount; ++phase) {
             const double fraction = static_cast<double>(phase)
                 / static_cast<double>(kSincPhaseCount);
-            double sum = 0.0;
             for (int tap = 0; tap < kSincTaps; ++tap) {
                 const double offset = static_cast<double>(tap - (kSincRadius - 1));
                 const double distance = offset - fraction;
-                const double sincPosition = cutoff * distance;
-                const double sinc = std::abs(sincPosition) < 1.0e-12
-                    ? 1.0
-                    : std::sin(pi * sincPosition) / (pi * sincPosition);
                 // Four-term Blackman-Harris suppresses the metallic fold-back
                 // that a short Hann kernel leaves behind on fast scratches.
-                // Thirty-two taps plus stereo coefficient sharing keeps this
-                // stronger stop-band cheaper than evaluating the former
-                // 16-tap kernel independently for each channel.
+                // Sixty-four taps plus stereo coefficient sharing retains the
+                // usable high-speed passband while keeping the stronger
+                // stop-band cheaper than evaluating a separate kernel for each
+                // channel.
                 const double normalizedDistance = distance / kSincRadius;
                 const double window = std::abs(normalizedDistance) >= 1.0
                     ? 0.0
@@ -74,17 +93,52 @@ void ScratchResampler::prepareSincTable() noexcept
                         + 0.48829 * std::cos(pi * normalizedDistance)
                         + 0.14128 * std::cos(2.0 * pi * normalizedDistance)
                         + 0.01168 * std::cos(3.0 * pi * normalizedDistance);
-                const double coefficient = cutoff * sinc * window;
-                m_sincTable[tableIndex(band, phase, tap)]
-                    = static_cast<float>(coefficient);
-                sum += coefficient;
+                windowTable[static_cast<std::size_t>(phase) * kSincTaps
+                            + static_cast<std::size_t>(tap)] = window;
             }
-            const float normalization = static_cast<float>(
-                std::abs(sum) > 1.0e-12 ? 1.0 / sum : 1.0);
-            for (int tap = 0; tap < kSincTaps; ++tap)
-                m_sincTable[tableIndex(band, phase, tap)] *= normalization;
         }
-    }
+
+        const auto tableIndex = [](int band, int phase, int tap) {
+            return (static_cast<std::size_t>(band) * (kSincPhaseCount + 1)
+                    + static_cast<std::size_t>(phase)) * kSincTaps
+                + static_cast<std::size_t>(tap);
+        };
+
+        for (int band = 0; band < kSincCutoffBands; ++band) {
+            const double bandFraction = static_cast<double>(band)
+                / static_cast<double>(kSincCutoffBands - 1);
+            const double inverseSpeed = 1.0 - bandFraction
+                * (1.0 - 1.0 / kMaximumFilterRate);
+            const double speed = 1.0 / inverseSpeed;
+            // A source-domain low-pass must happen before decimation. Filtering
+            // the already-resampled output cannot remove folded frequencies.
+            const double cutoff = 0.90 / speed;
+            for (int phase = 0; phase <= kSincPhaseCount; ++phase) {
+                const double fraction = static_cast<double>(phase)
+                    / static_cast<double>(kSincPhaseCount);
+                double sum = 0.0;
+                for (int tap = 0; tap < kSincTaps; ++tap) {
+                    const double offset = static_cast<double>(tap - (kSincRadius - 1));
+                    const double distance = offset - fraction;
+                    const double sincPosition = cutoff * distance;
+                    const double sinc = std::abs(sincPosition) < 1.0e-12
+                        ? 1.0
+                        : std::sin(pi * sincPosition) / (pi * sincPosition);
+                    const double window = windowTable[
+                        static_cast<std::size_t>(phase) * kSincTaps
+                        + static_cast<std::size_t>(tap)];
+                    const double coefficient = cutoff * sinc * window;
+                    s_sincTable[tableIndex(band, phase, tap)]
+                        = static_cast<float>(coefficient);
+                    sum += coefficient;
+                }
+                const float normalization = static_cast<float>(
+                    std::abs(sum) > 1.0e-12 ? 1.0 / sum : 1.0);
+                for (int tap = 0; tap < kSincTaps; ++tap)
+                    s_sincTable[tableIndex(band, phase, tap)] *= normalization;
+            }
+        }
+    });
 }
 
 void ScratchResampler::reset(double readPositionSamples) noexcept
@@ -94,7 +148,9 @@ void ScratchResampler::reset(double readPositionSamples) noexcept
     m_sourceSize = 0;
     m_lastRate = 0.0;
     m_smoothedRate = 0.0;
+    m_previousRateStep = 0.0;
     m_trackVel = 0.0;
+    m_referenceVelocity = 0.0;
     m_referenceValid = false;
     m_leadSpeedEnvelope = 0.0;
 }
@@ -124,10 +180,21 @@ void ScratchResampler::primeTrackerVelocity(double ratePerOutputSample) noexcept
     m_trackVel = ratePerOutputSample * m_outputSampleRate;
 }
 
-void ScratchResampler::setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle) noexcept
+void ScratchResampler::setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle)
 {
     m_cache = cache;
     m_cacheHandle = handle;
+    m_trackSampleRate = handle.isValid() && handle.sampleRate() > 0.0
+        ? handle.sampleRate() : m_outputSampleRate;
+    const int requiredCapacity = requiredSourceBufferCapacity(m_trackSampleRate);
+    if (m_sourceBuffer.getNumChannels() != m_channels
+        || m_sourceBuffer.getNumSamples() < requiredCapacity) {
+        // Track installation runs behind DeckAudioPipeline's callback gate.
+        // Ordinary <=192 kHz files fit the reservation made in prepare(); this
+        // path is only a bounded fallback for a larger source or device block.
+        m_sourceBuffer.setSize(m_channels, requiredCapacity, false, true, true);
+        m_sourceBuffer.clear();
+    }
     m_sourceSize = 0;
     m_bufferOriginSample = m_readPos;
     m_starvationGain = 0.0f;
@@ -138,6 +205,7 @@ ScratchMotionStats ScratchResampler::motionStats() const noexcept
     return {m_statMinRate.load(std::memory_order_relaxed),
             m_statMaxRate.load(std::memory_order_relaxed),
             m_statMaxRateStep.load(std::memory_order_relaxed),
+            m_statMaxRateStepDelta.load(std::memory_order_relaxed),
             m_statTrackingError.load(std::memory_order_relaxed),
             m_statLead.load(std::memory_order_relaxed),
             m_statLeadLimitedBlocks.load(std::memory_order_relaxed)};
@@ -175,7 +243,7 @@ void ScratchResampler::windowMargins(double rate,
     const int blockSamples = std::max(m_deviceBufferSize, outputBlockSize);
     // Time-based floor (~100ms each side) so even at near-zero scratch rate the
     // window spans enough audio to avoid constant edge reloads on the audio thread.
-    const int minMargin = static_cast<int>(std::lround(m_outputSampleRate * 0.10));
+    const int minMargin = static_cast<int>(std::lround(m_trackSampleRate * 0.10));
     const int baseMargin = std::max(blockSamples * kWindowBuffersPerSide, minMargin)
         + kSincRadius + kWindowPadSamples;
     const int speedMargin = static_cast<int>(
@@ -198,16 +266,34 @@ bool ScratchResampler::needsWindowReload(double minAbsPos, double maxAbsPos) con
     const double relMin = minAbsPos - m_bufferOriginSample;
     const double relMax = maxAbsPos - m_bufferOriginSample;
     const int edgeGuard = kSincRadius + std::max(32, m_deviceBufferSize / 3);
+    const bool ownsTrackStart = m_bufferOriginSample <= 0.0;
+    const bool ownsTrackEnd = m_trackLengthSamples > 1.0
+        && m_bufferOriginSample + static_cast<double>(m_sourceSize)
+            >= m_trackLengthSamples;
 
-    return relMin < static_cast<double>(edgeGuard)
-        || relMax > static_cast<double>(m_sourceSize - edgeGuard - 1);
+    return (relMin < static_cast<double>(edgeGuard) && !ownsTrackStart)
+        || (relMax > static_cast<double>(m_sourceSize - edgeGuard - 1)
+            && !ownsTrackEnd);
 }
 
 bool ScratchResampler::positionInWindow(double position) const noexcept
 {
-    return m_sourceSize >= kMinWindowSamples
-        && position >= m_bufferOriginSample + kSincRadius
-        && position < m_bufferOriginSample + m_sourceSize - kSincRadius - 1;
+    if (m_sourceSize < kMinWindowSamples)
+        return false;
+
+    // At a real track boundary the sinc reader can use its reflected extension;
+    // a local cache-window boundary cannot, because audio outside that window
+    // exists and must be loaded instead of mirrored.
+    const bool ownsTrackStart = m_bufferOriginSample <= 0.0;
+    const bool ownsTrackEnd = m_trackLengthSamples > 1.0
+        && m_bufferOriginSample + static_cast<double>(m_sourceSize)
+            >= m_trackLengthSamples;
+    const double firstReadable = m_bufferOriginSample
+        + (ownsTrackStart ? 0.0 : static_cast<double>(kSincRadius));
+    const double endReadable = m_bufferOriginSample
+        + static_cast<double>(m_sourceSize)
+        - (ownsTrackEnd ? 0.0 : static_cast<double>(kSincRadius + 1));
+    return position >= firstReadable && position < endReadable;
 }
 
 void ScratchResampler::prefetchAround(double readPositionSamples) noexcept
@@ -287,18 +373,41 @@ bool ScratchResampler::refillWindowFromCache(double rate, int outputBlockSize) n
 bool ScratchResampler::ensureWindow(double rate, int outputBlockSize) noexcept
 {
     const int blockSamples = std::max(m_deviceBufferSize, outputBlockSize);
-    const double blockSpan = std::max(std::abs(rate), std::abs(m_smoothedRate))
-                           * static_cast<double>(blockSamples);
+    // Predict only the directions in which the head can travel during this
+    // block. The former symmetric +/-abs(rate) range contradicted the
+    // directionally biased refill below: a reverse 8x block could load most of
+    // its local window ahead of the head, then run out of samples behind it.
+    // Keeping both endpoints also covers a real sign change without assuming
+    // that the entire block moves in only the new direction.
+    const double minRate = std::min({0.0, m_smoothedRate, rate});
+    const double maxRate = std::max({0.0, m_smoothedRate, rate});
     const double pad = static_cast<double>(kSincRadius + kWindowPadSamples);
-    const double minPos = m_readPos - blockSpan - pad;
-    const double maxPos = m_readPos + blockSpan + pad;
+    const double minPos = m_readPos
+        + minRate * static_cast<double>(blockSamples) - pad;
+    const double maxPos = m_readPos
+        + maxRate * static_cast<double>(blockSamples) + pad;
     const double clampedMin = std::max(0.0, minPos);
     const double clampedMax = (m_trackLengthSamples > 1.0)
         ? std::min(m_trackLengthSamples - 1.0, maxPos)
         : maxPos;
 
-    if (!needsWindowReload(clampedMin, clampedMax)) return true;
-    return refillWindowFromCache(rate, outputBlockSize);
+    if (!needsWindowReload(clampedMin, clampedMax))
+        return true;
+
+    // Bias a same-direction move toward its destination. A reversal needs both
+    // sides of the playhead, so keep the refill symmetric for that block.
+    double refillRate = 0.0;
+    if (minRate >= 0.0)
+        refillRate = maxRate;
+    else if (maxRate <= 0.0)
+        refillRate = minRate;
+
+    if (!refillWindowFromCache(refillRate, outputBlockSize))
+        return false;
+    // A caller may legally provide a block larger than the prepared device
+    // size. Never claim the whole path is resident when the fixed RT buffer is
+    // too small; the starvation fade is safer than reading a partial window.
+    return positionInWindow(clampedMin) && positionInWindow(clampedMax);
 }
 
 void ScratchResampler::readBandlimitedStereo(double position, double rate,
@@ -330,9 +439,11 @@ void ScratchResampler::readBandlimitedStereo(double position, double rate,
     const int phase1 = phase0 + 1;
     const float phaseMix = static_cast<float>(phasePosition - phase0);
 
-    const double speed = std::clamp(std::max(1.0, std::abs(rate)), 1.0, 8.0);
-    const double bandPosition = (speed - 1.0)
-        * static_cast<double>(kSincCutoffBands - 1) / 7.0;
+    const double speed = std::clamp(
+        std::max(1.0, std::abs(rate)), 1.0, kMaximumFilterRate);
+    const double bandPosition = (1.0 - 1.0 / speed)
+        * static_cast<double>(kSincCutoffBands - 1)
+        / (1.0 - 1.0 / kMaximumFilterRate);
     const int band0 = std::clamp(static_cast<int>(bandPosition),
                                  0, kSincCutoffBands - 1);
     const int band1 = std::min(band0 + 1, kSincCutoffBands - 1);
@@ -350,13 +461,13 @@ void ScratchResampler::readBandlimitedStereo(double position, double rate,
     for (int tap = 0; tap < kSincTaps; ++tap) {
         const auto offset = static_cast<std::size_t>(tap);
         const float band0Coefficient = std::lerp(
-            m_sincTable[base00 + offset],
-            m_sincTable[base01 + offset], phaseMix);
+            s_sincTable[base00 + offset],
+            s_sincTable[base01 + offset], phaseMix);
         const float coefficient = interpolateCutoffBand
             ? std::lerp(
                 band0Coefficient,
-                std::lerp(m_sincTable[base10 + offset],
-                          m_sincTable[base11 + offset], phaseMix),
+                std::lerp(s_sincTable[base10 + offset],
+                          s_sincTable[base11 + offset], phaseMix),
                 bandMix)
             : band0Coefficient;
         const int sourceIndex = reflectedIndex(
@@ -397,28 +508,55 @@ void ScratchResampler::processBlock(double rate,
         return;
     }
 
-    if (std::abs(rate) < 1e-7) {
-        m_smoothedRate = 0.0;
-        m_lastRate = 0.0;
-    } else {
-        m_lastRate = rate;
-    }
+    const double targetRate = std::isfinite(rate) ? rate : 0.0;
+    m_lastRate = targetRate;
 
     const int outChannels = std::min(output.buffer->getNumChannels(), m_channels);
 
     float* out0 = outChannels > 0 ? output.buffer->getWritePointer(0, start) : nullptr;
     float* out1 = outChannels > 1 ? output.buffer->getWritePointer(1, start) : nullptr;
 
-    const bool windowReady = ensureWindow(rate, numSamples);
+    const bool windowReady = ensureWindow(targetRate, numSamples);
     if (!windowReady) m_starvationBlocks.fetch_add(1, std::memory_order_relaxed);
 
+    // The release controller publishes one exponentially decaying target per
+    // callback. Treat those values as endpoints of a full-block trajectory,
+    // then apply the same time-based acceleration and jerk bounds as tracking.
+    // This prevents both callback-frequency pitch stairs and a short-buffer
+    // 2x->8x impulse when the physical release estimate is ahead of the rate the
+    // final tracking block had time to render.
+    const double blockStartRate = m_smoothedRate;
+    const double normalizedRateScale = std::max(1.0, m_trackSampleRate)
+        / std::max(1.0, m_outputSampleRate);
+    const double dt = 1.0 / std::max(1.0, m_outputSampleRate);
+    const double maxRateStep = kMaximumMotionAccelerationRatesPerSecond
+        * normalizedRateScale * dt;
+    const double maxRateStepDelta = kMaximumMotionJerkRatesPerSecond2
+        * normalizedRateScale * dt * dt;
+    double statMinRate = m_smoothedRate;
+    double statMaxRate = m_smoothedRate;
+    double statMaxRateStep = 0.0;
+    double statMaxRateStepDelta = 0.0;
     for (int i = 0; i < numSamples; ++i) {
-        const double delta = rate - m_smoothedRate;
-        const double absRate = std::abs(rate);
-        const double slew = absRate < 0.12
-            ? std::clamp(0.0008 + absRate * 0.004, 0.0008, 0.006)
-            : std::clamp(0.004 + absRate * 0.008, 0.004, 0.030);
-        m_smoothedRate += std::clamp(delta, -slew, slew);
+        const double previousRate = m_smoothedRate;
+        const double blockFraction = static_cast<double>(i + 1)
+            / static_cast<double>(numSamples);
+        const double desiredRate = std::lerp(
+            blockStartRate, targetRate, blockFraction);
+        const double accelerationLimitedStep = std::clamp(
+            desiredRate - previousRate, -maxRateStep, maxRateStep);
+        const double rateStep = std::clamp(
+            accelerationLimitedStep,
+            m_previousRateStep - maxRateStepDelta,
+            m_previousRateStep + maxRateStepDelta);
+        m_smoothedRate += rateStep;
+        const double actualRateStep = m_smoothedRate - previousRate;
+        statMinRate = std::min(statMinRate, m_smoothedRate);
+        statMaxRate = std::max(statMaxRate, m_smoothedRate);
+        statMaxRateStep = std::max(statMaxRateStep, std::abs(actualRateStep));
+        statMaxRateStepDelta = std::max(
+            statMaxRateStepDelta, std::abs(actualRateStep - m_previousRateStep));
+        m_previousRateStep = actualRateStep;
 
         if (std::abs(m_smoothedRate) < 1e-7) {
             writeScratchOutput(out0, out1, i, false, m_smoothedRate);
@@ -433,6 +571,10 @@ void ScratchResampler::processBlock(double rate,
 
         m_readPos += m_smoothedRate;
     }
+    m_statMinRate.store(statMinRate, std::memory_order_relaxed);
+    m_statMaxRate.store(statMaxRate, std::memory_order_relaxed);
+    m_statMaxRateStep.store(statMaxRateStep, std::memory_order_relaxed);
+    m_statMaxRateStepDelta.store(statMaxRateStepDelta, std::memory_order_relaxed);
     m_readPos = wrapPosition(m_readPos);
 }
 
@@ -462,6 +604,10 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
     const double outSr = std::max(1.0, m_outputSampleRate);
     const double dt = 1.0 / outSr;
     const double absMaxRate = std::abs(maxAbsRate);
+    // Motion bounds are specified in normalized platter rates. Convert them to
+    // source samples/output sample independently of the caller's safety limit.
+    const double normalizedRateScale = std::max(1.0, m_trackSampleRate)
+        / outSr;
     const double referenceRate = std::clamp(
         std::isfinite(commandedRate) ? commandedRate : 0.0,
         -absMaxRate,
@@ -481,19 +627,23 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
     // error-driven bandwidth cannot tell them apart and simply lets the event
     // quantisation through as rate modulation. Per-sample rate continuity at 1x
     // degraded roughly six-fold for no meaningful gain in reversal tracking.
-    // This bandwidth settles within one controller frame while the continuous
-    // reference below integrates quantised jog events instead of reproducing
-    // their edges as audible pitch steps.
+    // The loop starts correcting inside each controller frame and settles over
+    // the following few milliseconds, while the continuous reference below
+    // integrates quantised jog events instead of reproducing their edges as
+    // audible pitch steps.
     constexpr double kTrackHz = 56.0;
     constexpr double kTwoPi = 6.28318530717958647692;
     const double omega = kTwoPi * kTrackHz;
-    const double maxVel = absMaxRate * outSr;
 
     // Window must span the path the read head will travel this block.
-    const double estRate = std::clamp(
-        std::max(std::abs((target - m_readPos) / static_cast<double>(std::max(1, numSamples))),
-                 std::max(std::abs(m_trackVel) * dt, std::abs(referenceRate))) * 1.5,
-        0.0, absMaxRate);
+    const double positionCorrectionRate = (target - m_readPos)
+        / static_cast<double>(std::max(1, numSamples));
+    double estRate = m_trackVel * dt;
+    if (std::abs(referenceRate) > std::abs(estRate))
+        estRate = referenceRate;
+    if (std::abs(positionCorrectionRate) > std::abs(estRate))
+        estRate = positionCorrectionRate;
+    estRate = std::clamp(estRate * 1.5, -absMaxRate, absMaxRate);
     const bool windowReady = ensureWindow(estRate, numSamples);
     if (!windowReady) m_starvationBlocks.fetch_add(1, std::memory_order_relaxed);
 
@@ -541,7 +691,7 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
     // collapses onto the slack term at every direction change, snapping the
     // position exactly where the scratch is most sensitive.
     constexpr double kRunawayHorizonFactor = 4.0;
-    constexpr double kRunawaySlackSamples = 256.0;
+    constexpr double kRunawaySlackOutputSamples = 256.0;
 
     // Sizing the bound from the instantaneous speed makes it collapse to the
     // slack term exactly at a direction change, because both the commanded and
@@ -555,78 +705,103 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
     const double instantSpeed = std::max(std::abs(referenceVelocity), std::abs(m_trackVel));
     m_leadSpeedEnvelope = std::max(instantSpeed,
                                    m_leadSpeedEnvelope * std::exp(-blockSeconds / 0.25));
-    const double targetStep = referenceVelocity * dt;
-    const double movingTargetLimit = target + referenceVelocity * maxLeadSeconds;
-
     // Where the hand is estimated to be right now, given the event we have and
     // how old it already is.
     const double handNow = target + referenceVelocity * kInputLeadSeconds;
 
-    // Rebuilding this estimate from the newly arrived event at every block would
-    // step it by however far the hand moved since the last one — negligible at a
-    // two millisecond jog cadence, but a sixth of a frame's travel for a drag
-    // reporting once per UI frame, and a step in the reference is a step in the
-    // output rate. So the estimate persists across blocks and the new event only
-    // corrects it, spread evenly over the block. The reference stays continuous
-    // while position authority is unchanged: every block still ends up at the
-    // hand's real position, it just gets there without a discontinuity.
+    // Join the persistent reference state to the newest predicted hand state
+    // with a minimum-jerk quintic Hermite curve. The former linear correction
+    // changed velocity at every callback edge; a cubic fixed that velocity edge
+    // but still let acceleration change there on extreme reversals. Zero endpoint
+    // acceleration makes adjacent curves C2, while the absolute position and
+    // velocity endpoints still prevent sticker drift and preserve hand speed.
     if (!m_referenceValid) {
         m_referencePos = handNow;
+        m_referenceVelocity = referenceVelocity;
         m_referenceValid = true;
     }
-    const double referenceCorrection = (handNow - m_referencePos)
-        / static_cast<double>(numSamples);
-    double movingTarget = m_referencePos;
-
-    // Velocity-led alternative. The head is moved by the hand speed itself,
-    // ramped linearly from the rate the previous block ended on to the newly
-    // commanded one, so a block boundary — including a sign change — can never
-    // produce a rate step. The position error is trimmed underneath by a term
-    // an order of magnitude slower than the servo above, which keeps position
-    // authoritative over a scratch without the head being dragged at the target
-    // every sample.
-    //
-    // Measured against the servo on identical traces (see scratch_motion tests):
-    // a tie on steady motion, and five to thirty times worse per-sample rate
-    // continuity through every direction change, at every trim bandwidth from 6
-    // to 60 Hz. The cause is structural rather than a tuning miss — the trim
-    // acts on the rate directly, so any jump in the position error is a jump in
-    // the rate, and a reversal is exactly where that error jumps. The servo
-    // routes the same error through acceleration, so the rate comes out as an
-    // integral and cannot step. Kept selectable as the A/B apparatus; it is not
-    // the default and enabling it will sound rougher on reversals.
-    const bool velocityLed = m_trackerMode == ScratchTrackerMode::VelocityLed;
-    const double correctionGain = kTwoPi * m_velocityLedCorrectionHz;
-    // The trim may never dominate the hand, but a fixed cap would leave a fast
-    // throw permanently behind: at 4x the startup deficit needs more than half a
-    // playback speed to close. So it scales with the hand speed, with half a
-    // nominal speed as the floor for slow movement.
-    const double maxCorrectionVel = 0.5 * outSr
-        + 0.25 * std::abs(referenceVelocity);
-    const double velocityRamp = velocityLed
-        ? (referenceVelocity - m_trackVel) / static_cast<double>(numSamples)
-        : 0.0;
+    const double referenceStartPos = m_referencePos;
+    const double referenceStartVelocity = m_referenceVelocity;
+    const double referenceEndPos = target
+        + referenceVelocity * (kInputLeadSeconds + blockSeconds);
+    const double referenceEndVelocity = referenceVelocity;
+    const double positionDelta = referenceEndPos - referenceStartPos;
+    const double velocityStartBlock = referenceStartVelocity * blockSeconds;
+    const double velocityEndBlock = referenceEndVelocity * blockSeconds;
+    const double curve1 = velocityStartBlock;
+    const double curve3 = 10.0 * positionDelta
+        - 6.0 * velocityStartBlock - 4.0 * velocityEndBlock;
+    const double curve4 = -15.0 * positionDelta
+        + 8.0 * velocityStartBlock + 7.0 * velocityEndBlock;
+    const double curve5 = 6.0 * positionDelta
+        - 3.0 * velocityStartBlock - 3.0 * velocityEndBlock;
+    const double invBlockSeconds = 1.0 / std::max(dt, blockSeconds);
 
     double statMinRate = 0.0;
     double statMaxRate = 0.0;
     double statMaxRateStep = 0.0;
+    double statMaxRateStepDelta = 0.0;
     double previousRate = m_smoothedRate;
     bool leadLimited = false;
 
     for (int i = 0; i < numSamples; ++i) {
+        const double curveU = static_cast<double>(i)
+            / static_cast<double>(numSamples);
+        const double curveU2 = curveU * curveU;
+        const double curveU3 = curveU2 * curveU;
+        const double curveU4 = curveU3 * curveU;
+        const double curveU5 = curveU4 * curveU;
+        const double movingTarget = referenceStartPos
+            + curve1 * curveU
+            + curve3 * curveU3
+            + curve4 * curveU4
+            + curve5 * curveU5;
+        const double movingReferenceVelocity = (
+            curve1
+            + 3.0 * curve3 * curveU2
+            + 4.0 * curve4 * curveU3
+            + 5.0 * curve5 * curveU4) * invBlockSeconds;
         const double err = movingTarget - m_readPos;
-        double rate = 0.0;
-        if (velocityLed) {
-            m_trackVel = std::clamp(m_trackVel + velocityRamp, -maxVel, maxVel);
-            const double correction = std::clamp(correctionGain * err,
-                                                 -maxCorrectionVel, maxCorrectionVel);
-            rate = std::clamp((m_trackVel + correction) * dt, -absMaxRate, absMaxRate);
-        } else {
-            const double accel = omega * omega * err
-                + 2.0 * omega * (referenceVelocity - m_trackVel);
-            m_trackVel = std::clamp(m_trackVel + accel * dt, -maxVel, maxVel);
-            rate = std::clamp(m_trackVel * dt, -absMaxRate, absMaxRate);
-        }
+        const double accel = omega * omega * err
+            + 2.0 * omega * (movingReferenceVelocity - m_trackVel);
+        const double currentRate = m_trackVel * dt;
+        // Keep a timestamp spike or a large absolute-position correction from
+        // demanding an acceleration no physical jog can produce. 1500x/s still
+        // reaches the complete 8x range in about 5.3 milliseconds; faster turns
+        // are rounded instead of becoming a metallic pitch impulse.
+        const double accelerationLimitedRateStep = std::clamp(
+            accel * dt * dt,
+            -kMaximumMotionAccelerationRatesPerSecond * normalizedRateScale * dt,
+            kMaximumMotionAccelerationRatesPerSecond * normalizedRateScale * dt);
+        // Acceleration itself must not appear as a new block-edge step. This
+        // jerk bound reaches the full physical acceleration budget in roughly
+        // 1.5 ms at 48 kHz, but removes the single-sample edge that produces a
+        // click-like pitch impulse on an abrupt reversal.
+        const double maxRateStepDelta = kMaximumMotionJerkRatesPerSecond2
+            * normalizedRateScale * dt * dt;
+        const double desiredRateStep = std::clamp(
+            accelerationLimitedRateStep,
+            m_previousRateStep - maxRateStepDelta,
+            m_previousRateStep + maxRateStepDelta);
+        const double desiredRate = currentRate + desiredRateStep;
+
+        // A hard +/-max clamp turns the last acceleration sample into zero in
+        // one step. On a very fast reversal the position servo can briefly ask
+        // for more than the public 8x range while catching up, and that clamp
+        // edge is heard as a sharp digital chirp. Approach either safety bound
+        // exponentially instead. The allowed step meets the unconstrained
+        // servo continuously, then tends to zero at the boundary; inward motion
+        // remains completely unaffected. The time constant is shorter than one
+        // controller frame, so it is a safety knee rather than input smoothing.
+        constexpr double kSpeedLimitApproachSeconds = 0.0015;
+        const double limitAlpha = 1.0
+            - std::exp(-dt / kSpeedLimitApproachSeconds);
+        const double lowerRate = currentRate
+            + (-absMaxRate - currentRate) * limitAlpha;
+        const double upperRate = currentRate
+            + (absMaxRate - currentRate) * limitAlpha;
+        const double rate = std::clamp(desiredRate, lowerRate, upperRate);
+        m_trackVel = rate * outSr;
 
         if (i == 0) {
             statMinRate = statMaxRate = rate;
@@ -634,18 +809,17 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
             statMinRate = std::min(statMinRate, rate);
             statMaxRate = std::max(statMaxRate, rate);
         }
-        statMaxRateStep = std::max(statMaxRateStep, std::abs(rate - previousRate));
+        const double actualRateStep = rate - previousRate;
+        statMaxRateStep = std::max(statMaxRateStep, std::abs(actualRateStep));
+        statMaxRateStepDelta = std::max(
+            statMaxRateStepDelta, std::abs(actualRateStep - m_previousRateStep));
+        m_previousRateStep = actualRateStep;
         previousRate = rate;
 
         m_readPos = wrapPosition(m_readPos);
         writeScratchOutput(out0, out1, i,
                            windowReady && positionInWindow(m_readPos), rate);
         m_readPos += rate;
-
-        movingTarget += targetStep + referenceCorrection;
-        movingTarget = referenceVelocity >= 0.0
-            ? std::min(movingTarget, movingTargetLimit)
-            : std::max(movingTarget, movingTargetLimit);
 
         if (!m_loopActive) {
             // The bound scales with whichever velocity is currently larger, the
@@ -656,7 +830,7 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
                 std::max({std::abs(referenceVelocity), std::abs(m_trackVel),
                           m_leadSpeedEnvelope})
                     * maxLeadSeconds * kRunawayHorizonFactor
-                + kRunawaySlackSamples;
+                + kRunawaySlackOutputSamples * normalizedRateScale;
             const double lead = m_readPos - target;
             if (lead > maxLeadSamples) {
                 m_readPos = target + maxLeadSamples;
@@ -670,20 +844,19 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
         }
     }
 
-    m_referencePos = movingTarget;
+    m_referencePos = referenceEndPos;
+    m_referenceVelocity = referenceEndVelocity;
 
     m_statMinRate.store(statMinRate, std::memory_order_relaxed);
     m_statMaxRate.store(statMaxRate, std::memory_order_relaxed);
     m_statMaxRateStep.store(statMaxRateStep, std::memory_order_relaxed);
+    m_statMaxRateStepDelta.store(statMaxRateStepDelta, std::memory_order_relaxed);
     m_statTrackingError.store(target - m_readPos, std::memory_order_relaxed);
     m_statLead.store(m_readPos - target, std::memory_order_relaxed);
     if (leadLimited)
         m_statLeadLimitedBlocks.fetch_add(1, std::memory_order_relaxed);
 
-    // In the velocity-led mode the rate carries the position trim as well, so
-    // the handoff must inherit the rate that was actually rendered, not the bare
-    // tracker velocity.
-    m_smoothedRate = velocityLed ? previousRate : m_trackVel * dt;
+    m_smoothedRate = m_trackVel * dt;
     m_lastRate = m_smoothedRate;
     m_readPos = wrapPosition(m_readPos);
     return m_smoothedRate;

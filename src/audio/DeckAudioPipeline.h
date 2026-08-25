@@ -79,7 +79,9 @@ public:
     [[nodiscard]] const juce::AudioBuffer<float>& postFaderTailBuffer() const noexcept;
 
     void installPreparedTrack(PreparedTrack track);
-    void clearTrack(std::uint64_t invalidThroughGeneration=0);
+    void clearTrack(
+        std::uint64_t invalidThroughGeneration = 0,
+        AudioCacheReleaseMode releaseMode = AudioCacheReleaseMode::Deferred);
     void setAudioPlayheadSink(std::atomic<double>* sink) noexcept;
     void setTransportRunning(bool running) noexcept;
     void seekToSeconds(double seconds) noexcept;

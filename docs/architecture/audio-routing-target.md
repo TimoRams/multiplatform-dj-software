@@ -150,6 +150,14 @@ Transport, reseeds the stretcher when Keylock is the destination, and
 crossfades to Direct or Keylock over 32 to 128 samples. Cursor transfer, processor reset,
 mode switch, and crossfade arming happen at one audio-block boundary.
 
+Within Scratch, cumulative controller travel owns absolute position and a
+separately filtered velocity predicts inter-event movement. The callback joins
+successive hand states with a C2 trajectory; it must not hold one velocity for a
+whole block or snap the rendered rate to a raw release estimate. Variable-rate
+forward and reverse reads are source-domain band-limited for the complete
+track/device sample-rate ratio. Detailed current limits and regression evidence
+are normative in `scratch-engine-quality.md`.
+
 Reseeding hands the stretcher the audio the listener just heard so it does not start from
 its own latency worth of silence. It costs several FFT frames, so it runs on the
 `TimeStretchProcessor` worker while the deck keeps playing on the Direct path; the

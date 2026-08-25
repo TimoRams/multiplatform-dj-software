@@ -21,12 +21,12 @@ Waveforms are rendered entirely on the GPU via **Qt RHI** (Vulkan on Linux/Windo
 - Dual-deck playback — FLAC / WAV / OGG / MP3
 - 4-band RGB waveforms (GPU-rendered) with beat grid overlay
 - BPM & key detection — autocorrelation + Krumhansl-Schmuckler; manual override and beat-grid correction
-- Scratch & jog with spring-damped physics, up to 12× playback rate
+- Position-authoritative, band-limited scratch & jog up to 8× physical rate
 - Loop controls — set in/out, 4-beat toggle, halve / double length, beat-quantized
 - 8 hot cues per deck with color, label, and database persistence
 - Slip mode — loops and reverses run silently while the playhead continues
 - Master / follower sync with beat-phase nudge correction + quantize-aware cue triggers
-- Key lock — pitch-preserved time-stretching via RubberBand
+- Key lock — pitch-preserved time-stretching via Signalsmith (Rubber Band optional)
 - Reverse playback, scratch-compatible
 - Turntable FX: Vinyl Brake, Backspin, Echo Out, Roll Out
 
@@ -56,14 +56,25 @@ Waveforms are rendered entirely on the GPU via **Qt RHI** (Vulkan on Linux/Windo
 ## Architecture
 
 ```text
-JUCE Audio Thread  →  WaveformAnalyzer Thread  →  Qt Main Thread / QML
-(Real-time audio)     (BPM, Waveform Bins)        (UI, Signals, Rendering)
-                                                         ↓
-                                                   Qt RHI → Vulkan / Metal (GPU)
+Track loader / cache worker ── immutable pages ──┐
+Qt/control thread ── atomics + bounded commands ├─→ JUCE audio callback
+Stretch preparation worker ─ prepared pipelines ┘        │
+                                                         └─→ master / cue / hardware
+
+Analysis workers ── generation-checked snapshots ──→ Qt/QML
+Qt/QML ── immutable waveform state ──→ Qt scene graph / RHI
 ```
 
-All cross-thread communication goes through Qt Queued Connections — zero direct cross-thread access.
-The playhead position is exposed to the render thread via `std::atomic<double>` for wait-free VSync-frame reads.
+Cross-thread state uses bounded queues, scalar atomics, immutable snapshots and
+Qt queued delivery according to ownership; no single mechanism is used for all
+boundaries. The audio callback never decodes, allocates, takes a blocking lock
+or waits for a worker. See the
+[thread ownership](docs/architecture/thread-ownership.md),
+[realtime contract](docs/architecture/realtime-safety.md) and
+[performance/stability audit](docs/architecture/performance-stability-audit.md).
+The FLX10 signal path, motion/filter invariants, measurements and physical
+listening matrix live in the
+[scratch-engine quality reference](docs/architecture/scratch-engine-quality.md).
 
 ---
 
@@ -76,7 +87,7 @@ The playhead position is exposed to the render thread via `std::atomic<double>` 
 | Qt 6 (Core, Gui, Qml, Quick, QuickControls2, Sql, Concurrent) | UI & rendering |
 | TagLib | Metadata extraction |
 | libkeyfinder | Key detection |
-| RubberBand | Key lock / time-stretch |
+| Signalsmith Stretch / RubberBand | Key lock / selectable time-stretch backends |
 | CMake ≥ 3.24 | Build system |
 
 > **JUCE**, **Ableton Link** and the three **Signalsmith** projects are included as pinned Git submodules under `libs/` — no separate installation required.

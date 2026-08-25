@@ -201,7 +201,8 @@ void DjEngine::attachCacheToTransport(AudioCacheHandle cacheHandle, double track
 void DjEngine::releaseTransportReaders()
 {
     terminateScratchSession(0.0);
-    m_transport->clearTrack(m_trackLoader.currentGeneration());
+    m_transport->clearTrack(m_trackLoader.currentGeneration(),
+                            AudioCacheReleaseMode::WaitForReader);
 }
 
 

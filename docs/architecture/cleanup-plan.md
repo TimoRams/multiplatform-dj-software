@@ -7,7 +7,8 @@ recorded in `source-cleanup-report.md`.
 Remaining work requires behavior-specific review rather than more mechanical
 file movement:
 
-1. Extract shared settings QML content only after desktop/AIO parity tests cover
+1. Heavy settings/mapping surfaces are now created on demand. Extract the
+   remaining shared settings content only after desktop/AIO parity tests cover
    focus, popup ownership, device reconciliation and Apply semantics.
 2. Split `Library.qml`, `TopHeader.qml` and `DeckControl.qml` only along proven
    reusable visual boundaries; keep state/Connections in one owner.

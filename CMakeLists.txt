@@ -988,6 +988,7 @@ add_executable(BrockDJ_scratch_motion_tests
     src/audio/cache/AudioPageCache.cpp
     src/audio/cache/AudioCacheWorker.cpp
     src/audio/internal/ScratchResampler.cpp
+    src/deck/scratch/ScratchController.cpp
 )
 target_include_directories(BrockDJ_scratch_motion_tests PRIVATE src src/deck)
 target_link_libraries(BrockDJ_scratch_motion_tests PRIVATE

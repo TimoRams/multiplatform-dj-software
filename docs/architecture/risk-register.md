@@ -7,9 +7,9 @@ active register.
 | Priority | Risk | Current boundary/evidence | Required follow-up | Status |
 | --- | --- | --- | --- | --- |
 | P0 | Realtime callback regression | `AudioEngine`, `DeckAudioPipeline`, cache, scratch, stretch, mixer, and FX expose zero-violation counters and stress tests. A future call path could still reintroduce allocation, I/O, locks, or preparation. | Apply `realtime-safety.md` to every callback-related review and keep all counters at zero. | guarded |
-| P1 | Track handover may stall the Qt/control thread | `DeckAudioPipeline::installPreparedTrack()` and `clearTrack()` detach and retire cached sources outside RT. Prior profiling observed a slow retirement under stress. | Profile release builds with long/compressed files; if confirmed, design deferred non-RT retirement without weakening page-guard lifetime. | open |
 | P1 | Physical audio backends remain incompletely verified | Automated tests cannot prove ALSA/JACK/CoreAudio/ASIO callback jitter, hot-unplug behavior, or audible transition quality. | Run the hardware matrix in `docs/testing/regression-checklist.md`. | open |
-| P1 | Physical FLX10/MIDI/Link timing remains unverified | Protocol/unit tests cover parsing, routing, display values, and scheduled callbacks, not device latency or refresh behavior. | Verify FLX10 state/waveform updates, MIDI feedback, and multi-peer Link on hardware. | open |
+| P1 | Physical FLX10 scratch quality and latency remain unverified | Automated tests now cover exact tick travel, USB receive jitter, C2 trajectory continuity, 8x release, 192 kHz alias rejection, and 128/256/512-sample buffers. They cannot prove firmware timestamps, driver jitter, end-to-end latency, hand feel, or subjective Serato/Rekordbox parity. | Run and capture the level-matched FLX10 matrix in `scratch-engine-quality.md` and `docs/testing/regression-checklist.md`; record backend, buffer, sample rates and XRuns. | open |
+| P1 | Remaining FLX10 display/MIDI/Link hardware behavior is unverified | Protocol/unit tests cover parsing, routing, display values, and scheduled callbacks, not physical refresh behavior or multi-peer networking. | Verify state/waveform updates, MIDI feedback, deck assignment and multi-peer Link on hardware. | open |
 | P1 | `ControlClock::Registration` is non-owning | Registration tokens hold a clock back-pointer; correctness depends on reset-before-clock-destruction ordering. | Preserve stop → unregister → destroy ordering and lifecycle tests. | accepted |
 | P1 | `AudioEngine::AuxRegistration` is non-owning | The preview token holds `AudioEngine` and endpoint pointers. | Reset the token before preview endpoint or engine destruction; retain concurrent retirement tests. | accepted |
 | P1 | UI event-loop stalls delay all control groups | One 250 Hz `ControlClock` intentionally serializes control work. Blocking UI/database work delays transport/sync visibility even though late ticks coalesce. | Keep I/O, decoding, integrity work, and unbounded loops out of clock callbacks; monitor late/worst statistics. | accepted |
@@ -21,13 +21,23 @@ active register.
 | P1 | Cache starvation produces intentional faded silence | Cache misses are callback-safe, but an undersized budget or slow worker can starve playback/scratch. | Tune with production media and expose actionable cache diagnostics before changing the no-fallback contract. | accepted |
 | P2 | Released cache metadata persists until shutdown | `AudioPageCache` retains small slot metadata so stale handles remain safe while PCM is evicted. Many unique tracks can grow metadata. | Add control-thread epoch reclamation only if production measurements justify the complexity. | accepted |
 | P2 | `DjEngine` remains a broad public facade | The API spans transport, cue/loop, mixer, FX, scratch, sync, metadata, and diagnostics across responsibility-named implementation files. | Continue only as a separately reviewed facade/ownership refactor; preserve the public QML/controller contract. | deferred |
-| P2 | Large QML surfaces duplicate concepts | `SettingsPanel.qml` and `SettingsWindow.qml` are near-parallel; `Library.qml`, `TopHeader.qml`, and `DeckControl.qml` are monolithic. | Inventory bindings and visual behavior before extracting shared components. | open |
+| P2 | Large QML surfaces duplicate concepts | Heavy mutually exclusive surfaces are now lifetime-gated, but `SettingsPanel.qml` and `SettingsWindow.qml` remain near-parallel; `Library.qml`, `TopHeader.qml`, and `DeckControl.qml` remain monolithic. Textual splitting alone does not reduce runtime work. | Add desktop/AIO visual parity and popup/focus ownership tests before extracting shared settings content; split other files only at measured reusable boundaries. | open |
 
 ## Invariants retained from resolved incidents
 
 - FX type changes use bounded generation-tagged commands applied at block
   boundaries; producer threads do not reinitialize callback-owned buffers.
 - Scratch and normal playback have no synchronous reader/decoder fallback.
+- Scratch cumulative tick travel owns position; velocity filtering may not alter
+  total platter travel. Physical input/release is bounded at 8x, the tracker has
+  private 10x catch-up headroom, and its prebuilt absolute-rate filter covers
+  track/device sample-rate conversion as documented in
+  `scratch-engine-quality.md`.
+- The complete `DeckAudioPipeline` callback holds the track-lifetime lease;
+  normal handover atomically detaches a decoder reader without waiting, while
+  explicit eject/shutdown waits for file-handle closure.
+- Paused normal transport bypasses the time-stretcher; scratch continues through
+  the direct render path and keylock re-entry uses the bounded seed handshake.
 - Time-stretch slots are atomically claimed before non-atomic configuration is
   read; preparation and destruction remain off the callback.
 - Keylock is a per-block routing decision, never part of the pipeline identity:

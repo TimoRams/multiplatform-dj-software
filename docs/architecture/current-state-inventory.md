@@ -1,18 +1,18 @@
 # BrockDJ Current-State Inventory
 
 This hand-maintained inventory describes the production source tree after the
-2026-08-11 architecture consolidation. Counts exclude vendored `libs/`, build
-trees and packaging output.
+2026-08-24 performance and stability audit. Counts exclude vendored `libs/`,
+build trees and packaging output.
 
 ## Scope and metrics
 
 | Metric | Count |
 | --- | ---: |
-| C++ headers | 100 |
-| C++ sources | 84 |
-| QML components | 34 |
-| C++/QML files | 218 |
-| C++/QML lines | 69,895 |
+| C++ headers | 113 |
+| C++ sources | 93 |
+| QML components | 35 |
+| C++/QML files | 241 |
+| C++/QML lines | 81,640 |
 | Top-level source domains | 12 |
 
 Counts are orientation points, not a target. Ownership and dependency direction
@@ -48,9 +48,19 @@ AudioPageCache -> DeckAudioPipeline x4 -> AudioEngine
 ```
 
 The protected audio owners remain distinct. The page cache publishes immutable
-decoded pages; the callback never decodes or waits. The limiter is internal
-audio output protection shared by master and headphone buses, not a selectable
-FX unit.
+decoded pages; the callback never decodes or waits. A pipeline-owned callback
+gate protects the complete source chain during track replacement. Decoder
+readers use shared worker leases, so a normal replacement does not wait for an
+in-flight codec or device read; explicit eject/shutdown still waits for the
+backing handle to close. The limiter is internal audio output protection shared
+by master and headphone buses, not a selectable FX unit.
+
+Scratch remains one mode inside `RenderModeRouter`, not a parallel deck graph.
+FLX10 cumulative motion reaches the callback through a coherent native
+snapshot; `ScratchResampler` owns its C2 trajectory, bounded position servo,
+preallocated source window and band-limited bidirectional read. Its living
+architecture and measured gates are in
+`docs/architecture/scratch-engine-quality.md`.
 
 ## Deck facade
 
@@ -110,9 +120,17 @@ under `components`, `deck`, `waveform`, `mixer`, `performance`, `library`,
 `settings`, `shell` and `development`. The files remain in one `DJSoftware`
 module, preserving unqualified component use and resource URLs.
 
-Large QML files remain dedicated review candidates. They were not split during
-this behavior-preserving source cleanup because bindings, focus, popup parents
-and component lifetime require visual testing.
+Heavy mutually exclusive QML surfaces are lifetime-gated. Desktop settings and
+the mapping editor are created on first use; AIO settings and Source use
+asynchronous loaders; two-/four-deck waveform surfaces and the C/D control row
+exist only in their selected mode. `Library.qml` remains eager because startup
+hydration and hidden-controller routing currently use its stable object identity.
+
+Large QML files remain dedicated review candidates. They are not split solely
+to reduce line count because bindings, focus, popup parents and component
+lifetime require visual parity tests. `SettingsPanel.qml` and
+`SettingsWindow.qml` are still near-parallel and are tracked in the risk
+register rather than being merged without those tests.
 
 ## Build and test shape
 

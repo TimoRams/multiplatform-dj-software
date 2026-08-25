@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <random>
 #include <thread>
@@ -641,7 +642,10 @@ int main(int argc, char** argv)
     graph.playback()->clearLoopRangeSamples();
     graph.renderModeRouter().configureTrack(44'100.0, 1.0);
     graph.renderModeRouter().beginScratch(0.2, 44'100.0, 1.0, true, 1.0);
-    graph.renderModeRouter().addTargetDeltaSeconds(0.2, 44'100.0);
+    // A fast physical move carries both exact position and measured velocity.
+    // A position-only teleport is deliberately acceleration-bounded by the
+    // tracker and is not a valid throw-speed fixture.
+    graph.renderModeRouter().submitHandDeltaSeconds(0.2, 0.020, 8.0);
     juce::AudioBuffer<float> releaseTransition(2, 64);
     graph.getNextAudioBlock({&releaseTransition, 0, 64});
     const auto releaseDisposition = graph.renderModeRouter().endScratch(true);
@@ -750,6 +754,58 @@ int main(int argc, char** argv)
         std::chrono::steady_clock::now() - handoverStart).count();
     ok &= require(handoverUs < 100'000.0,
                   "track handover cannot enter JUCE's one-second stop wait");
+
+    auto invalidRateHandle = cache.openTrack({mono44});
+    graph.installPreparedTrack({invalidRateHandle,
+                                std::numeric_limits<double>::quiet_NaN(), 8});
+    ok &= require(graph.transportSnapshot().trackGeneration == 7
+                      && graph.playback() != nullptr,
+                  "non-finite track rate cannot replace the active source");
+
+    // Track retirement runs on the control thread while the device callback is
+    // live. The lifetime gate has to cover command consumption as well as the
+    // downstream router; otherwise this loop can dereference a playback source
+    // after installPreparedTrack()/clearTrack() has freed it.
+    {
+        DeckAudioPipeline swappingGraph(cache);
+        swappingGraph.prepareToPlay(512, 48'000.0);
+        auto initial = cache.openTrack({mono44});
+        swappingGraph.installPreparedTrack({initial, 44'100.0, 1});
+        swappingGraph.setTransportRunning(true);
+
+        std::atomic<bool> stopRender { false };
+        std::atomic<bool> finiteOutput { true };
+        std::atomic<std::uint64_t> renderedBlocks { 0 };
+        std::thread renderThread([&] {
+            juce::AudioBuffer<float> concurrentOutput(2, 512);
+            while (!stopRender.load(std::memory_order_acquire)) {
+                swappingGraph.getNextAudioBlock({&concurrentOutput, 0, 512});
+                if (!isFinite(concurrentOutput))
+                    finiteOutput.store(false, std::memory_order_release);
+                renderedBlocks.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+
+        std::uint64_t generation = 1;
+        for (int iteration = 0; iteration < 200; ++iteration) {
+            if (iteration % 11 == 0)
+                swappingGraph.clearTrack(++generation);
+            const bool useMono = (iteration & 1) == 0;
+            auto next = cache.openTrack({useMono ? mono44 : stereo96});
+            swappingGraph.installPreparedTrack(
+                {next, useMono ? 44'100.0 : 96'000.0, ++generation});
+            swappingGraph.setTransportRunning(true);
+        }
+
+        stopRender.store(true, std::memory_order_release);
+        renderThread.join();
+        ok &= require(renderedBlocks.load(std::memory_order_relaxed) > 0,
+                      "concurrent track-swap stress rendered audio callbacks");
+        ok &= require(finiteOutput.load(std::memory_order_acquire),
+                      "concurrent track swaps keep callback output finite");
+        swappingGraph.clearTrack(++generation);
+        swappingGraph.releaseResources();
+    }
 
     ok &= require(realtimeCountersAreZero(graph), "all realtime violation counters are zero");
 

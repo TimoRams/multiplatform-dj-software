@@ -112,11 +112,39 @@ struct AudioPageCache::Impl {
         double sampleRate = 0.0;
         std::int64_t length = 0;
         int channels = 0;
-        // AudioFormatReader owns the backing file handle. Explicit device eject
-        // must be able to close it after the last cache user leaves, while a
-        // decoder request may still be finishing on the worker thread.
-        std::mutex readerMutex;
-        std::unique_ptr<juce::AudioFormatReader> reader;
+        // The worker takes a short shared lease before decoding. Normal track
+        // handover atomically detaches the owner without waiting for a slow
+        // codec/USB read; explicit eject can wait for active leases to drain.
+        std::atomic<std::shared_ptr<juce::AudioFormatReader>> reader;
+        std::atomic<std::uint32_t> activeReaderCalls { 0 };
+        // Each entry is retired once. The intrusive link publishes it to the
+        // decoder worker without allocating or taking another control lock.
+        std::atomic<std::shared_ptr<juce::AudioFormatReader>> retiredReader;
+        Entry* retiredReaderNext = nullptr;
+
+        struct ReaderCall final {
+            explicit ReaderCall(Entry& value) noexcept : owner(value)
+            {
+                owner.activeReaderCalls.fetch_add(1, std::memory_order_acq_rel);
+            }
+
+            ~ReaderCall()
+            {
+                if (owner.activeReaderCalls.fetch_sub(1, std::memory_order_release) == 1)
+                    owner.activeReaderCalls.notify_all();
+            }
+
+            Entry& owner;
+        };
+
+        void waitForReaderCalls() noexcept
+        {
+            auto activeCalls = activeReaderCalls.load(std::memory_order_acquire);
+            while (activeCalls != 0) {
+                activeReaderCalls.wait(activeCalls, std::memory_order_acquire);
+                activeCalls = activeReaderCalls.load(std::memory_order_acquire);
+            }
+        }
         std::unique_ptr<PageSlot[]> pageSlots;
         std::int64_t pageCount = 0;
         std::atomic<bool> sealed{false};
@@ -151,7 +179,21 @@ struct AudioPageCache::Impl {
     std::atomic<std::uint64_t> readerWaitMicros{0}, worstReaderWaitMicros{0};
     std::atomic<std::uint64_t> priorityPromotions{0};
     std::atomic<std::uint64_t> sealedBytes{0};
+    std::atomic<Entry*> retiredReaderHead { nullptr };
     std::atomic<bool> accepting{true};
+
+    void retireReaderOnWorker(
+        Entry& entry, std::shared_ptr<juce::AudioFormatReader> value) noexcept
+    {
+        if (!value)
+            return;
+        entry.retiredReader.store(std::move(value), std::memory_order_release);
+        auto* head = retiredReaderHead.load(std::memory_order_relaxed);
+        do {
+            entry.retiredReaderNext = head;
+        } while (!retiredReaderHead.compare_exchange_weak(
+            head, &entry, std::memory_order_release, std::memory_order_relaxed));
+    }
 };
 
 AudioPageReadGuard::AudioPageReadGuard(AudioPageReadGuard&& other) noexcept
@@ -208,16 +250,17 @@ AudioCacheHandle AudioPageCache::openTrack(
     }
     auto entry = std::make_unique<Impl::Entry>();
     entry->key = key;
-    entry->reader = preparedReader
-        ? std::move(preparedReader)
-        : std::unique_ptr<juce::AudioFormatReader>(
+    std::shared_ptr<juce::AudioFormatReader> reader = preparedReader
+        ? std::shared_ptr<juce::AudioFormatReader>(std::move(preparedReader))
+        : std::shared_ptr<juce::AudioFormatReader>(
             m_impl->formats.createReaderFor(juce::File(key.canonicalPath.toStdString())));
-    if (!entry->reader || entry->reader->sampleRate <= 0.0 || entry->reader->numChannels == 0
-        || entry->reader->numChannels > 8 || entry->reader->lengthInSamples <= 0) return handle;
+    if (!reader || reader->sampleRate <= 0.0 || reader->numChannels == 0
+        || reader->numChannels > 8 || reader->lengthInSamples <= 0) return handle;
     entry->id = m_impl->nextId.fetch_add(1);
-    entry->sampleRate = entry->reader->sampleRate;
-    entry->length = entry->reader->lengthInSamples;
-    entry->channels = static_cast<int>(entry->reader->numChannels);
+    entry->sampleRate = reader->sampleRate;
+    entry->length = reader->lengthInSamples;
+    entry->channels = static_cast<int>(reader->numChannels);
+    entry->reader.store(std::move(reader), std::memory_order_release);
     entry->pageCount = (entry->length + AudioPage::kSamplesPerChannel - 1) / AudioPage::kSamplesPerChannel;
     entry->pageSlots = std::make_unique<Impl::PageSlot[]>(static_cast<size_t>(entry->pageCount));
     for (std::int64_t page = 0; page < entry->pageCount; ++page)
@@ -233,26 +276,37 @@ AudioCacheHandle AudioPageCache::openTrack(
     return handle;
 }
 
-void AudioPageCache::releaseTrack(const AudioCacheHandle& handle)
+void AudioPageCache::releaseTrack(const AudioCacheHandle& handle,
+                                  AudioCacheReleaseMode mode)
 {
     if (!handle.isValid()) return;
     auto* entry = const_cast<Impl::Entry*>(static_cast<const Impl::Entry*>(handle.m_token));
-    std::lock_guard lock(m_impl->controlMutex);
-    if (entry->id != handle.id() || entry->generation.load() != handle.generation()) return;
-    const auto old = entry->users.fetch_sub(1);
-    if (old > 1) return;
-    if (entry->sealed.exchange(false, std::memory_order_acq_rel))
-        m_impl->sealedBytes.fetch_sub(entry->sealedBytes, std::memory_order_relaxed);
-    entry->active.store(false, std::memory_order_release);
-    entry->generation.fetch_add(1, std::memory_order_acq_rel);
-    m_impl->activeEntries.erase(mapKey(entry->key));
-    m_impl->open.fetch_sub(1);
+    std::shared_ptr<juce::AudioFormatReader> retiredReader;
     {
-        // The cache keeps Entry addresses stable, but an inactive entry must
-        // not keep removable media mounted. The decoder takes the same lock
-        // around its only AudioFormatReader access and rechecks generation.
-        std::lock_guard readerLock(entry->readerMutex);
-        entry->reader.reset();
+        std::lock_guard lock(m_impl->controlMutex);
+        if (entry->id != handle.id()
+            || entry->generation.load() != handle.generation()) {
+            return;
+        }
+        const auto old = entry->users.fetch_sub(1);
+        if (old > 1)
+            return;
+        if (entry->sealed.exchange(false, std::memory_order_acq_rel))
+            m_impl->sealedBytes.fetch_sub(entry->sealedBytes, std::memory_order_relaxed);
+        entry->active.store(false, std::memory_order_release);
+        entry->generation.fetch_add(1, std::memory_order_acq_rel);
+        m_impl->activeEntries.erase(mapKey(entry->key));
+        m_impl->open.fetch_sub(1);
+        retiredReader = entry->reader.exchange({}, std::memory_order_acq_rel);
+    }
+    if (mode == AudioCacheReleaseMode::WaitForReader) {
+        entry->waitForReaderCalls();
+        retiredReader.reset();
+    } else {
+        // Even an uncontended file close/destructor belongs off the Qt/control
+        // path. If a decoder call is active, its local lease remains the last
+        // owner and is naturally destroyed after read() returns on this worker.
+        m_impl->retireReaderOnWorker(*entry, std::move(retiredReader));
     }
     notifyWorker();
 }
@@ -400,8 +454,9 @@ bool AudioPageCache::sealTrack(const AudioCacheHandle& handle)
         m_impl->sealedBytes.fetch_sub(bytes, std::memory_order_relaxed);
         return false;
     }
-    std::lock_guard readerLock(entry->readerMutex);
-    entry->reader.reset();
+    auto retiredReader = entry->reader.exchange({}, std::memory_order_acq_rel);
+    entry->waitForReaderCalls();
+    retiredReader.reset();
     return true;
 }
 
@@ -479,6 +534,19 @@ void AudioPageCache::notifyWorker() noexcept { m_impl->condition.notify_one(); }
 
 void AudioPageCache::workerRun(const std::atomic<bool>& shutdown)
 {
+    auto reapRetiredReaders = [this] {
+        auto* entry = m_impl->retiredReaderHead.exchange(
+            nullptr, std::memory_order_acq_rel);
+        while (entry != nullptr) {
+            auto* next = entry->retiredReaderNext;
+            entry->retiredReaderNext = nullptr;
+            auto retired = entry->retiredReader.exchange(
+                {}, std::memory_order_acq_rel);
+            retired.reset();
+            entry = next;
+        }
+    };
+
     auto addToEvictionClock = [this](Impl::PageSlot& slot) {
         if (slot.onEvictionClock) return;
         if (!m_impl->evictionClockHand) {
@@ -568,6 +636,7 @@ void AudioPageCache::workerRun(const std::atomic<bool>& shutdown)
     };
 
     while (!shutdown.load(std::memory_order_acquire)) {
+        reapRetiredReaders();
         reapRetiredPages();
         PageRequest request;
         bool found = false;
@@ -611,11 +680,15 @@ void AudioPageCache::workerRun(const std::atomic<bool>& shutdown)
         const auto decodeStartedAt = steadyMicros();
         bool ok = false;
         {
-            std::lock_guard readerLock(entry->readerMutex);
+            // The activity marker is declared before the shared reader so the
+            // reader reference is destroyed first. A synchronous eject that
+            // observes zero calls therefore also knows the file is closed.
+            Impl::Entry::ReaderCall readerCall(*entry);
+            auto reader = entry->reader.load(std::memory_order_acquire);
             if (entry->active.load(std::memory_order_acquire)
                 && entry->generation.load(std::memory_order_acquire) == request.generation
-                && entry->reader) {
-                ok = entry->reader->read(
+                && reader) {
+                ok = reader->read(
                     &buffer, 0, static_cast<int>(page->validSampleCount),
                     page->firstSample, true, true);
             }
@@ -649,6 +722,8 @@ void AudioPageCache::workerRun(const std::atomic<bool>& shutdown)
         const std::lock_guard readyLock(m_impl->pageReadyMutex);
         m_impl->pageReadyCondition.notify_all();
     }
+
+    reapRetiredReaders();
 
     for (auto& retired : m_impl->retiredPages) {
         while (retired.slot->readers.load(std::memory_order_acquire) != 0)

@@ -39,6 +39,65 @@ bool writeWave(const QString& path, double sampleRate, int channels, int samples
     return writer->writeFromAudioSampleBuffer(buffer, 0, samples);
 }
 
+template <typename Predicate>
+bool waitUntil(Predicate&& predicate, std::chrono::milliseconds timeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (predicate())
+            return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return predicate();
+}
+
+struct BlockingReaderState {
+    std::atomic<bool> entered { false };
+    std::atomic<bool> allowFinish { false };
+    std::atomic<bool> destroyed { false };
+    std::thread::id destroyedOn;
+};
+
+class BlockingReader final : public juce::AudioFormatReader
+{
+public:
+    explicit BlockingReader(std::shared_ptr<BlockingReaderState> sharedState)
+        : juce::AudioFormatReader(nullptr, "blocking"), state(std::move(sharedState))
+    {
+        sampleRate = 48'000.0;
+        lengthInSamples = AudioPage::kSamplesPerChannel;
+        numChannels = 2;
+        bitsPerSample = 32;
+        usesFloatingPointData = true;
+    }
+
+    ~BlockingReader() override
+    {
+        state->destroyedOn = std::this_thread::get_id();
+        state->destroyed.store(true, std::memory_order_release);
+        state->destroyed.notify_all();
+    }
+
+    bool readSamples(int* const* destinations, int destinationCount,
+                     int destinationOffset, juce::int64, int sampleCount) override
+    {
+        state->entered.store(true, std::memory_order_release);
+        state->entered.notify_all();
+        while (!state->allowFinish.load(std::memory_order_acquire))
+            state->allowFinish.wait(false, std::memory_order_acquire);
+        for (int channel = 0; channel < destinationCount; ++channel) {
+            if (destinations[channel] != nullptr) {
+                juce::zeromem(destinations[channel] + destinationOffset,
+                              static_cast<std::size_t>(sampleCount) * sizeof(int));
+            }
+        }
+        return true;
+    }
+
+private:
+    std::shared_ptr<BlockingReaderState> state;
+};
+
 AudioPageReadGuard waitPage(AudioPageCache& cache, const AudioCacheHandle& handle,
                             std::int64_t page, std::chrono::seconds timeout = std::chrono::seconds(5))
 {
@@ -89,6 +148,91 @@ int main(int argc, char** argv)
     ok &= require(writeWave(longScratch, 48000, 1,
                             65 * static_cast<int>(AudioPage::kSamplesPerChannel)),
                   "long scratch fixture");
+
+    // A track handover must not inherit the latency of an in-flight decoder
+    // call. The reader stays alive through a worker lease and closes after the
+    // read, while explicit eject retains the old synchronous-close contract.
+    {
+        auto state = std::make_shared<BlockingReaderState>();
+        AudioPageCache retirementCache(4 * 1024 * 1024);
+        const auto handle = retirementCache.openTrack(
+            {mono}, std::make_unique<BlockingReader>(state));
+        const auto callerThread = std::this_thread::get_id();
+        retirementCache.releaseTrack(handle, AudioCacheReleaseMode::Deferred);
+        ok &= require(waitUntil(
+                          [&] { return state->destroyed.load(std::memory_order_acquire); },
+                          std::chrono::seconds(2)),
+                      "uncontended deferred reader is retired promptly");
+        ok &= require(state->destroyedOn != callerThread,
+                      "normal handover retires reader destruction off the control thread");
+    }
+
+    {
+        auto state = std::make_shared<BlockingReaderState>();
+        AudioPageCache deferredCache(4 * 1024 * 1024);
+        const auto handle = deferredCache.openTrack(
+            {mono}, std::make_unique<BlockingReader>(state));
+        ok &= require(handle.isValid()
+                          && deferredCache.requestPage(
+                              handle, 0, AudioCachePriority::RealtimeCritical),
+                      "blocking reader request starts");
+        ok &= require(waitUntil(
+                          [&] { return state->entered.load(std::memory_order_acquire); },
+                          std::chrono::seconds(2)),
+                      "blocking reader enters its decoder call");
+
+        std::atomic<bool> releaseReturned { false };
+        std::thread releaseThread([&] {
+            deferredCache.releaseTrack(handle, AudioCacheReleaseMode::Deferred);
+            releaseReturned.store(true, std::memory_order_release);
+        });
+        ok &= require(waitUntil(
+                          [&] { return releaseReturned.load(std::memory_order_acquire); },
+                          std::chrono::milliseconds(250)),
+                      "deferred release does not wait for an active decoder");
+        ok &= require(!state->destroyed.load(std::memory_order_acquire),
+                      "deferred release keeps the active reader lease alive");
+        state->allowFinish.store(true, std::memory_order_release);
+        state->allowFinish.notify_all();
+        releaseThread.join();
+        ok &= require(waitUntil(
+                          [&] { return state->destroyed.load(std::memory_order_acquire); },
+                          std::chrono::seconds(2)),
+                      "deferred reader closes after its decoder call");
+    }
+
+    {
+        auto state = std::make_shared<BlockingReaderState>();
+        AudioPageCache ejectCache(4 * 1024 * 1024);
+        const auto handle = ejectCache.openTrack(
+            {mono}, std::make_unique<BlockingReader>(state));
+        ok &= require(ejectCache.requestPage(
+                          handle, 0, AudioCachePriority::RealtimeCritical)
+                          && waitUntil(
+                              [&] { return state->entered.load(std::memory_order_acquire); },
+                              std::chrono::seconds(2)),
+                      "eject reader enters its decoder call");
+        std::atomic<bool> releaseStarted { false };
+        std::atomic<bool> releaseReturned { false };
+        std::thread releaseThread([&] {
+            releaseStarted.store(true, std::memory_order_release);
+            ejectCache.releaseTrack(handle, AudioCacheReleaseMode::WaitForReader);
+            releaseReturned.store(true, std::memory_order_release);
+        });
+        ok &= require(waitUntil(
+                          [&] { return releaseStarted.load(std::memory_order_acquire); },
+                          std::chrono::milliseconds(250)),
+                      "synchronous eject release starts");
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        ok &= require(!releaseReturned.load(std::memory_order_acquire),
+                      "synchronous eject waits for the decoder lease");
+        state->allowFinish.store(true, std::memory_order_release);
+        state->allowFinish.notify_all();
+        releaseThread.join();
+        ok &= require(releaseReturned.load(std::memory_order_acquire)
+                          && state->destroyed.load(std::memory_order_acquire),
+                      "synchronous eject returns after closing the reader");
+    }
 
     // A running deck must be able to promote pages that it previously queued
     // as speculative read-ahead. Loading/warming another deck must not pin the
@@ -221,7 +365,7 @@ int main(int argc, char** argv)
                   << " duplicate-request=" << ns(requestStart, end) << '\n';
     }
     const auto oldGeneration = sharedB.generation();
-    cache.releaseTrack(sharedB);
+    cache.releaseTrack(sharedB, AudioCacheReleaseMode::WaitForReader);
 #ifdef Q_OS_LINUX
     ok &= require(!processHasOpenFile(stereo),
                   "last cache release closes the removable-media file handle");

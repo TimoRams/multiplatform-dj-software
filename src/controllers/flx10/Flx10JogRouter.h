@@ -11,14 +11,20 @@ namespace flx10 {
 // owns it; it is not part of the display/HID wire protocol.
 constexpr double kScratchIntervalsPerRevolution = 12750.0;
 constexpr double kVinylRpm = 33.0 + 1.0 / 3.0;
-// The rate window is sized in ticks, not in time. A window of fixed duration
+// The rate window is primarily sized in ticks. A purely fixed-duration window
 // resolves a fast platter finely and a slow one hardly at all: at a crawl only
 // one or two ticks land in it, so the estimate becomes the quotient of one tick
 // by a USB-frame-quantised gap and swings by tens of percent between events.
-// Holding the tick count constant makes the averaging time scale as 1/speed,
-// which is what the measurement actually needs — a millisecond or two at
-// playback speed, tens of milliseconds at a careful crawl.
+// Holding the tick count constant makes the averaging time scale as 1/speed;
+// the small minimum time below then prevents the high-speed end from shrinking
+// below the controller/USB timing resolution.
 constexpr double kJogSpeedWindowTicks = 8.0;
+// At high platter speeds eight ticks span less than one USB frame. A quotient
+// over that interval mostly measures scheduler/USB jitter rather than the hand.
+// Keep at least a few milliseconds of same-direction history once available.
+// Direction changes reset the estimator before this rule is applied, so the
+// first reverse frame still changes sign immediately.
+constexpr double kJogSpeedMinimumWindowSeconds = 0.0035;
 constexpr double kJogSpeedWindowSeconds = 0.060;   // hard bound on that window
 constexpr double kJogSpeedStaleSeconds = 0.060;
 constexpr double kJogTailSuppressionSeconds = 0.120;
@@ -225,16 +231,16 @@ private:
         if (m_count == 0)
             return;
 
-        // Shrink to the shortest window that still carries enough ticks to
-        // resolve the rate. Reversals are counted by magnitude, so a movement
-        // that turns around inside the window does not look like a stop.
+        // Shrink to the shortest window that still carries enough ticks and a
+        // trustworthy amount of time to resolve the rate. Direction changes
+        // reset the history in push(), so this window never straddles a turn.
         while (m_count > 1
                && m_samples[m_count - 1].cumulativeAbsTicks
                           - m_samples[0].cumulativeAbsTicks
                       >= kJogSpeedWindowTicks
                && m_samples[m_count - 1].timestampSeconds
                           - m_samples[0].timestampSeconds
-                      > kJogTimestampCoalesceSeconds)
+                      > kJogSpeedMinimumWindowSeconds)
             popOldest();
 
         // Hard time bound, so a hand that has nearly stopped cannot keep
