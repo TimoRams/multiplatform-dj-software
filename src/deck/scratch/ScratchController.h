@@ -28,6 +28,17 @@ struct ScratchControllerConfig {
     // before the backspin becomes an audible near-zero hold. Pause releases
     // continue to use inertiaStopThreshold and therefore still coast to zero.
     double crossDirectionHandoffThreshold = 0.10;
+    // Floor applied to dtSec only when estimating speed as deltaTrackSec/dtSec
+    // (i.e. the input supplied no measured rate of its own). An on-screen drag
+    // reports through the UI event queue: two events can land within a
+    // fraction of a millisecond of each other, e.g. right as the render
+    // thread catches up from a stall, or as the final move immediately before
+    // button-up. Dividing by that near-zero interval inflates the quotient to
+    // the speed clamp regardless of its true sign, which then dominates the
+    // reversal blend below and — if it is the last sample before release —
+    // becomes the release direction. Position is unaffected: the full delta
+    // is always integrated, so this floor only tempers the rate estimate.
+    double minHandRateEstimateDtSec = 0.002;
 };
 
 enum class ScratchReleaseDisposition : std::uint8_t {

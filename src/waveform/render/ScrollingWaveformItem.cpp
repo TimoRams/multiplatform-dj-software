@@ -279,13 +279,22 @@ struct WaveformSceneNode final : QSGClipNode {
         setIsRectangular(true);
         timeline = new QSGTransformNode();
         appendChildNode(timeline);
+        // Beat/downbeat ticks get their own transform, snapped to the nearest
+        // physical pixel every frame instead of following the waveform's
+        // continuous translation. A rigid high-contrast tick line visibly
+        // alternates between a crisp pixel and a soft antialiased smear as its
+        // sub-pixel phase sweeps, far more noticeably than the waveform's own
+        // noisy envelope does. See markerLineX()/physicalPixelSnap() in
+        // WaveformRenderMath.h.
+        markerTimeline = new QSGTransformNode();
+        appendChildNode(markerTimeline);
 
         // Translucent overlays sit below the audio lines.
         loopFill = makeTriangleNode(timeline);
         // Created lazily once an immediate overview is ready. It remains below
         // every high-resolution tile and prevents transparent loading holes.
-        regularBeats = makeLineNode(timeline);
-        downbeats = makeLineNode(timeline);
+        regularBeats = makeLineNode(markerTimeline);
+        downbeats = makeLineNode(markerTimeline);
         loopEdges = makeLineNode(timeline);
         cueLines = makeLineNode(timeline);
     }
@@ -329,6 +338,7 @@ struct WaveformSceneNode final : QSGClipNode {
     }
 
     QSGTransformNode* timeline = nullptr;
+    QSGTransformNode* markerTimeline = nullptr;
     QSGGeometryNode* loopFill = nullptr;
     QSGSimpleTextureNode* fallbackNode = nullptr;
     std::array<QSGSimpleTextureNode*, kWaveformNodePoolSize> waveformNodes{};
@@ -445,7 +455,8 @@ void writeMarkerGeometry(QSGGeometryNode* node,
                          std::size_t lineCount,
                          double originLine,
                          double pixelsPerLine,
-                         double devicePixelRatio)
+                         double devicePixelRatio,
+                         bool snapToPhysicalPixelCenter = false)
 {
     auto* geometry = node->geometry();
     geometry->allocate(static_cast<int>(lineCount * kVerticesPerFeatheredLine));
@@ -453,8 +464,11 @@ void writeMarkerGeometry(QSGGeometryNode* node,
     int out = 0;
     for (std::size_t lineIndex = 0; lineIndex < lineCount; ++lineIndex) {
         const auto& marker = lines[lineIndex];
-        const float x = static_cast<float>(waveform_render::snappedTimelineX(
-            marker.linePosition, originLine, pixelsPerLine, devicePixelRatio));
+        const float x = static_cast<float>(snapToPhysicalPixelCenter
+            ? waveform_render::markerLineX(
+                  marker.linePosition, originLine, pixelsPerLine, devicePixelRatio)
+            : waveform_render::snappedTimelineX(
+                  marker.linePosition, originLine, pixelsPerLine, devicePixelRatio));
         const uchar r = static_cast<uchar>(marker.color.red());
         const uchar g = static_cast<uchar>(marker.color.green());
         const uchar b = static_cast<uchar>(marker.color.blue());
@@ -470,10 +484,11 @@ void writeMarkerGeometry(QSGGeometryNode* node,
                          const std::vector<MarkerLine>& lines,
                          double originLine,
                          double pixelsPerLine,
-                         double devicePixelRatio)
+                         double devicePixelRatio,
+                         bool snapToPhysicalPixelCenter = false)
 {
     writeMarkerGeometry(node, lines.data(), lines.size(), originLine,
-                        pixelsPerLine, devicePixelRatio);
+                        pixelsPerLine, devicePixelRatio, snapToPhysicalPixelCenter);
 }
 
 QSGSimpleTextureNode* replaceCueLabelNode(QSGSimpleTextureNode* previous,
@@ -1696,9 +1711,11 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                                    height - edgeInset - tickLength, height - edgeInset});
             }
             writeMarkerGeometry(scene->regularBeats, regularBeats,
-                                scene->renderOriginLine, pixelsPerLine, dpr);
+                                scene->renderOriginLine, pixelsPerLine, dpr,
+                                /*snapToPhysicalPixelCenter=*/true);
             writeMarkerGeometry(scene->downbeats, downbeats,
-                                scene->renderOriginLine, pixelsPerLine, dpr);
+                                scene->renderOriginLine, pixelsPerLine, dpr,
+                                /*snapToPhysicalPixelCenter=*/true);
 
             std::vector<MarkerLine> cueLines;
             std::vector<CueLabel> cueLabels;
@@ -1869,6 +1886,18 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     transform.translate(static_cast<float>(timelineTranslation), 0.0f);
     scene->timeline->setMatrix(transform);
     scene->timeline->markDirty(QSGNode::DirtyMatrix);
+
+    // Beat/downbeat geometry is pre-centred on a physical pixel (markerLineX,
+    // written at rebuild time above); rounding this translation to the
+    // nearest whole physical pixel keeps that centring exact every frame
+    // instead of letting the continuous waveform translation smear it across
+    // two pixels. See the constructor comment on markerTimeline.
+    const double markerTranslation = waveform_render::physicalPixelSnap(
+        timelineTranslation, dpr);
+    QMatrix4x4 markerTransform;
+    markerTransform.translate(static_cast<float>(markerTranslation), 0.0f);
+    scene->markerTimeline->setMatrix(markerTransform);
+    scene->markerTimeline->markDirty(QSGNode::DirtyMatrix);
     m_transformUpdateCount.fetch_add(1, std::memory_order_relaxed);
     if (waveform_render::rasterScaleSettlePending(scene->rasterScaleTracker,
                                                   pixelsPerLine * dpr)) {

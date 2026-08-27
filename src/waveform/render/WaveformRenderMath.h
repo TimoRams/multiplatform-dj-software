@@ -89,6 +89,22 @@ inline double physicalPixelCenter(double logicalPosition,
     return (std::floor(logicalPosition * dpr) + 0.5) / dpr;
 }
 
+// Rounds to the nearest whole physical pixel (a boundary, not a centre).
+// Paired with physicalPixelCenter() on a marker's local x, the two round
+// independently but always land on the same pixel grid, so their sum is
+// exactly pixel-centred every frame regardless of how each one rounded on
+// its own. Used for a transform's translation, where physicalPixelCenter's
+// centring offset would be wrong (it would shift every marker under it by
+// half a physical pixel).
+inline double physicalPixelSnap(double logicalPosition,
+                                double devicePixelRatio) noexcept
+{
+    const double dpr = std::max(1.0, devicePixelRatio);
+    if (!std::isfinite(logicalPosition))
+        return 0.0;
+    return std::round(logicalPosition * dpr) / dpr;
+}
+
 inline double viewportPhysicalPixelCenter(double logicalWidth,
                                           double devicePixelRatio) noexcept
 {
@@ -104,6 +120,22 @@ inline double smoothTimelineTranslation(double width,
 {
     return viewportPhysicalPixelCenter(width, devicePixelRatio)
         - (playheadLine - originLine) * pixelsPerLine;
+}
+
+// A rigid vertical marker line (a beat/downbeat tick) has no waveform-style
+// envelope to hide sub-pixel phase in: centring its feathered core on a
+// physical-pixel centre is what keeps it a constant, fully-opaque width every
+// frame instead of alternating between a crisp single pixel and a soft
+// two-pixel smear as its true (continuous) position sweeps past a boundary.
+// Pair with physicalPixelSnap() on the transform that carries this local x,
+// so both round independently onto the same grid.
+inline double markerLineX(double linePosition,
+                          double originLine,
+                          double pixelsPerLine,
+                          double devicePixelRatio) noexcept
+{
+    return physicalPixelCenter((linePosition - originLine) * pixelsPerLine,
+                               devicePixelRatio);
 }
 
 // Render tiles live on one track-wide physical-pixel grid. Their texture size

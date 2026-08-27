@@ -116,7 +116,23 @@ never decodes, reads a file, allocates, or waits.
 
 Touch-up is decided after one final position-tracking block. The release starts
 from the velocity that block actually rendered; it is never snapped to the raw
-MIDI quotient. `ScratchController` then publishes one exponential coast target
+MIDI quotient. That "actually rendered" velocity is itself seeded from
+`ScratchController::submitHandDelta`'s per-event `deltaTrackSec/dtSec`
+estimate for any input (mouse drag included) that supplies no measured rate of
+its own. `dtSec` there is floored to
+`ScratchControllerConfig::minHandRateEstimateDtSec` (2 ms) before the division:
+an on-screen drag reports through the Qt event queue, and two events can land
+a fraction of a millisecond apart — most commonly the final move immediately
+before button-up, or any move right after the render thread catches up from a
+stall. Dividing a real (if tiny) position delta by a near-zero interval used to
+inflate the quotient straight to the +/-8x clamp regardless of its true sign,
+which then dominated the reversal-damping blend and, when it was the last
+sample before release, became the release direction — heard as the platter
+throwing briefly backward at the moment of release, or as a smaller "hin und
+her" jitter mid-drag whenever such a sample landed inside a scratch. Position
+is unaffected by the floor: the full delta is always integrated into
+`m_handPositionSec` regardless of how implausible its implied rate is.
+`ScratchController` then publishes one exponential coast target
 per callback with a 220 ms return constant. `ScratchResampler::processBlock()`
 uses the prior rate and new target as a complete block trajectory, then applies
 the same time-based acceleration and jerk limits as tracking. This prevents both

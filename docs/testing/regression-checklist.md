@@ -103,6 +103,14 @@ ThreadSanitizer where the platform toolchain supports it.
   changing DSP or handoff behavior.
 - Use `docs/architecture/scratch-engine-quality.md` as the implementation and
   measurement reference; update it whenever a scratch constant or owner moves.
+- On-screen mouse-drag scratch (the waveform's `scrubArea`, no jog hardware
+  required): drag slowly, drag fast, drag and hold still before releasing, and
+  release mid-motion at both slow and fast speed, on a playing and a paused
+  deck. The platter must never audibly reverse for an instant at the moment of
+  release, and must not visibly/audibly jitter back-and-forth mid-drag. This
+  exercises `ScratchController::submitHandDelta`'s delta/dt estimator, which
+  has no measured rate to fall back on for mouse input — see the dt-floor
+  note in `scratch-engine-quality.md`'s "Release and handoff" section.
 
 ### FX and mixer controls
 
@@ -166,9 +174,19 @@ ThreadSanitizer where the platform toolchain supports it.
   window between displays with different DPR.
 - At minimum/default/maximum zoom, play forward and reverse, scratch slowly
   through zero, perform fast throws, sweep tempo across raster-scale steps and
-  cross several guarded tile windows. Peaks and beat/cue lines must move
+  cross several guarded tile windows. Peaks, cue lines and loop edges must move
   monotonically without alternating thick/thin columns, brightness pulses,
   seams, fallback flashes or a one-pixel stop/start cadence.
+- Beat and downbeat ticks specifically must render as a constant, fully-opaque
+  width at every DPR and zoom while scrolling — they ride a separate,
+  pixel-snapped transform (`markerTimeline`/`physicalPixelSnap`/`markerLineX`
+  in `ScrollingWaveformItem.cpp`/`WaveformRenderMath.h`) precisely because a
+  rigid tick line showed the waveform texture's accepted sub-pixel-phase
+  residual (see `performance-stability-audit.md`'s "Scrolling waveform
+  presentation invariants") far more objectionably than a noisy waveform peak
+  does. A regression here looks like ticks alternating between crisp and soft
+  as playback advances, or ticks drifting out of step with the waveform texture
+  by more than one physical pixel.
 - Repeat with two and four visible decks while analysis and track loading run.
   Force `UI RENDER` through `reduced`, `audio-first` and `suspended`: detail
   raster requests may be discarded and visual frames may be skipped, while

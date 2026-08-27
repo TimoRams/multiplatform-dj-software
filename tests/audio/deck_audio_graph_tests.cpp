@@ -634,6 +634,32 @@ int main(int argc, char** argv)
         controller.stopScratch();
     }
 
+    {
+        using engine::scratch::ScratchController;
+        using engine::scratch::ScratchReleaseDisposition;
+        ScratchController controller;
+        controller.startScratch(0.0, true, 1.0);
+        // A steady on-screen forward drag: no measured rate, so every event
+        // estimates speed as deltaTrackSec/dtSec.
+        for (int i = 0; i < 10; ++i)
+            controller.submitHandDelta(0.032, 0.016);
+        ok &= require(controller.smoothedSpeed() > 1.5,
+                      "steady forward drag settles near its true delta/dt speed");
+
+        // A near-zero-time UI sample right before release — e.g. the render
+        // thread catching up from a stall, or the final move immediately
+        // before button-up — must not divide a tiny position jitter by a
+        // tiny interval and manufacture a large wrong-direction speed that
+        // then becomes the release direction.
+        controller.submitHandDelta(-0.00005, 1.0e-6);
+        ok &= require(controller.smoothedSpeed() > 0.0
+                          && controller.smoothedSpeed() < 1.5,
+                      "a near-zero-dt jitter sample damps toward, but cannot flip, direction");
+        ok &= require(controller.releaseScratch() != ScratchReleaseDisposition::CoastToStop,
+                      "release right after that jitter sample still coasts toward the deck, not backward");
+        controller.stopScratch();
+    }
+
     // When inertia finishes, the normal reader is still at its pre-scratch
     // position until the facade publishes the blockwise handoff. The bridge
     // must keep serving the scratch path during that short interval.

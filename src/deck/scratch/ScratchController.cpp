@@ -281,7 +281,11 @@ void ScratchController::submitHandDelta(double deltaTrackSec,
     // The input's own measurement wins when it has one. Position stays with the
     // per-event delta either way, so the two cannot disagree for long.
     const bool inputMeasuredRate = std::isfinite(measuredRate);
-    double raw = inputMeasuredRate ? measuredRate : deltaTrackSec / dtSec;
+    // Floored for the quotient only — a near-zero dtSec between two UI events
+    // is a scheduling artifact, not a faster hand, and must not be allowed to
+    // manufacture an implausible (and possibly wrong-signed) speed spike.
+    const double rateDtSec = std::max(dtSec, m_config.minHandRateEstimateDtSec);
+    double raw = inputMeasuredRate ? measuredRate : deltaTrackSec / rateDtSec;
     raw = std::clamp(raw, -m_config.maxScratchSpeed, m_config.maxScratchSpeed);
 
     const double target = m_handPositionSec.load(std::memory_order_relaxed) + deltaTrackSec;
@@ -349,7 +353,10 @@ void ScratchController::submitReleaseDelta(double deltaTrackSec, double dtSec) n
     if (dtSec < 1e-6)
         return;
 
-    submitReleaseSpeed(deltaTrackSec / dtSec);
+    // Same tiny-dtSec hazard as submitHandDelta: this also carries a raw
+    // per-event quotient from an input with no measured rate of its own.
+    const double rateDtSec = std::max(dtSec, m_config.minHandRateEstimateDtSec);
+    submitReleaseSpeed(deltaTrackSec / rateDtSec);
 }
 
 void ScratchController::submitReleaseSpeed(double measuredNormalizedSpeed) noexcept
