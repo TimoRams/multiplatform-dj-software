@@ -1,274 +1,76 @@
-# 🎧 BrockDJ
+# BrockDJ
 
-> A modern, multiplatform DJ application — GPU-accelerated waveforms, professional mixing, and deep hardware integration.
->
-> **by [Ramsbrock.net](https://ramsbrock.net)**
+> A modern DJ application built with JUCE and Qt 6/QML.
 
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)
 ![C++](https://img.shields.io/badge/C%2B%2B-23-informational?style=flat-square)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey?style=flat-square)
 
-Built on **JUCE** for real-time audio and **Qt 6 / QML** for the UI.
-Waveforms are rendered entirely on the GPU via **Qt RHI** (Vulkan on Linux, Metal on macOS) — no CPU software rendering.
-
-> **Windows support is currently de-prioritized.** I am not actively developing Windows support for now, because I do not use Windows day to day and do not have enough hardware access to keep it a priority. Linux and macOS are the current focus.
-
----
-
 ## Features
 
-### Playback & Transport
+- Dual-deck playback with FLAC, WAV, OGG, and MP3 support
+- GPU-rendered RGB waveforms, beat grids, loops, hot cues, and sync
+- Three-band EQ, filter, crossfader, and built-in effects
+- Library browsing, metadata extraction, cover art, and background analysis
+- MIDI mapping, controller integration, and Ableton Link support
 
-- Dual-deck playback — FLAC / WAV / OGG / MP3
-- 4-band RGB waveforms (GPU-rendered) with beat grid overlay
-- BPM & key detection — autocorrelation + Krumhansl-Schmuckler; manual override and beat-grid correction
-- Position-authoritative, band-limited scratch & jog up to 8× physical rate
-- Loop controls — set in/out, 4-beat toggle, halve / double length, beat-quantized
-- 8 hot cues per deck with color, label, and database persistence
-- Slip mode — loops and reverses run silently while the playhead continues
-- Master / follower sync with beat-phase nudge correction + quantize-aware cue triggers
-- Key lock — pitch-preserved time-stretching via Signalsmith (Rubber Band optional)
-- Reverse playback, scratch-compatible
-- Turntable FX: Vinyl Brake, Backspin, Echo Out, Roll Out
+## Platform status
 
-### Mixer & Effects
+| Platform | Status |
+| --- | --- |
+| Linux | Primary development platform |
+| macOS | Actively supported |
+| Windows | ~~Not actively maintained~~ |
 
-- 3-band EQ + resonant filter per deck, trim / gain staging
-- Crossfader with adjustable curve (smooth to sharp) and per-deck A / B assignment
-- Pre-fader VU metering with peak hold and clip indicator
-- 24 effect types across 2 FX units + Sound Color centre knob
-- Performance pads — 4×2 grid, 4 modes: Hot Cue, Pad FX, Beatjump, Sampler *(coming soon)*
-
-### Library
-
-- Folder tree navigation with drag & drop to decks
-- SQLite-backed BPM / key analysis cache + background analysis worker
-- Metadata extraction: ID3v2 / Vorbis / M4A + filename fallback
-- Cover art: MP3, FLAC, MP4, OGG, WAV
-
-### Integration
-
-- **Ableton Link** — network tempo and beat-phase sync with other Link-enabled apps
-- MIDI — full input/output binding, learn mode, persistent controller mappings
-- Hardware latency compensation + sub-frame visual interpolation
-
----
-
-## Architecture
-
-```text
-Track loader / cache worker ── immutable pages ──┐
-Qt/control thread ── atomics + bounded commands ├─→ JUCE audio callback
-Stretch preparation worker ─ prepared pipelines ┘        │
-                                                         └─→ master / cue / hardware
-
-Analysis workers ── generation-checked snapshots ──→ Qt/QML
-Qt/QML ── immutable waveform state ──→ Qt scene graph / RHI
-```
-
-Cross-thread state uses bounded queues, scalar atomics, immutable snapshots and
-Qt queued delivery according to ownership; no single mechanism is used for all
-boundaries. The audio callback never decodes, allocates, takes a blocking lock
-or waits for a worker. See the
-[thread ownership](docs/architecture/thread-ownership.md),
-[realtime contract](docs/architecture/realtime-safety.md) and
-[performance/stability audit](docs/architecture/performance-stability-audit.md).
-The FLX10 signal path, motion/filter invariants, measurements and physical
-listening matrix live in the
-[scratch-engine quality reference](docs/architecture/scratch-engine-quality.md).
-
----
+> **Windows is currently de-prioritized.** I do not use Windows in daily development and have very limited access to Windows hardware. Development therefore focuses on Linux and macOS for the time being.
 
 ## Build
 
-### Dependencies
+Clone the repository with its submodules:
 
-| Library | Purpose |
-| --- | --- |
-| Qt 6 (Core, Gui, Qml, Quick, QuickControls2, Sql, Concurrent) | UI & rendering |
-| TagLib | Metadata extraction |
-| libkeyfinder | Key detection |
-| Signalsmith Stretch / RubberBand | Key lock / selectable time-stretch backends |
-| CMake ≥ 3.24 | Build system |
+```bash
+git clone --recurse-submodules https://github.com/TimoRams/multiplatform-dj-software.git
+cd multiplatform-dj-software
+```
 
-> **JUCE**, **Ableton Link** and the three **Signalsmith** projects are included as pinned Git submodules under `libs/` — no separate installation required.
+### Linux
 
-See [the complete build guide](docs/building.md), [dependency pins](docs/dependencies.md)
-and [packaging/artifact documentation](docs/packaging.md) for the five supported
-native CI configurations.
-
----
-
-<details>
-<summary>🐧 Linux — Vulkan + ALSA/PipeWire</summary>
-
-Install dependencies (Debian/Ubuntu):
+Install dependencies on Debian/Ubuntu:
 
 ```bash
 sudo apt update
 sudo apt install -y \
-  build-essential cmake pkg-config ninja-build \
+  build-essential cmake ninja-build pkg-config \
   qt6-base-dev qt6-declarative-dev \
-  libtag1-dev libkeyfinder-dev librubberband-dev libasound2-dev
+  libasound2-dev libtag1-dev libkeyfinder-dev librubberband-dev
 ```
-
-On Arch/CachyOS, install the equivalent packages (`ninja` is recommended for fast incremental builds).
 
 Build and run:
 
 ```bash
-git clone --recurse-submodules https://github.com/TimoRams/multiplatform-dj-software.git
-cd multiplatform-dj-software
 ./build-fast
 ./build/bin/BrockDJ
 ```
 
-`./build-fast` configures the app-only `build/` directory (RelWithDebInfo, QML cachegen off) and rebuilds only `BrockDJ` incrementally. `./test-fast` uses the separate `build-tests/` directory for the full CTest suite, so test rebuilds never invalidate the running-app build.
-
-The playback cache uses `512` MiB by default on systems with at least 16 GiB RAM (`256` MiB otherwise). Override it with `BROCKDJ_AUDIO_CACHE_MB` (clamped to `64..2048`) before launch, e.g.:
+### macOS
 
 ```bash
-BROCKDJ_AUDIO_CACHE_MB=512 ./build/bin/BrockDJ
+brew install cmake ninja pkg-config qt@6 taglib rubberband libkeyfinder
+export CMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
+cmake --preset macos-dev-arm64
+cmake --build --preset macos-dev-arm64
 ```
 
-Detailed waveform rasterization uses a process-wide CPU budget that reserves cores for audio, Qt, and the GPU driver. On a high-core system it scales one active deck to up to ten workers and all decks to twelve concurrent workers. Use `BROCKDJ_WAVEFORM_RASTER_WORKERS=1..12` only to override that global limit for profiling.
+For Intel Macs, replace `macos-dev-arm64` with `macos-dev-x86_64`.
 
-Waveform rendering now raises its per-frame texture-upload budget dynamically when ready tiles are repeatedly deferred, then relaxes again once demand drops. For profiling or hardware-specific tuning you can override:
+## Documentation
 
-- `BROCKDJ_WAVEFORM_UPLOAD_BUDGET_MB` (initial per-frame upload budget, default `2`)
-- `BROCKDJ_WAVEFORM_UPLOAD_BUDGET_MAX_MB` (ceiling for adaptive growth, default `8`)
-- `BROCKDJ_WAVEFORM_PROGRESSIVE_UPDATE_MS` (progressive geometry coalescing interval, default `33`)
-- `BROCKDJ_WAVEFORM_RASTER_NICE` (Linux worker nice level, default `4`, range `0..19`)
-
-For an existing checkout, initialize the exact pinned submodule revisions before building:
-
-```bash
-git submodule sync --recursive
-git submodule update --init --recursive
-```
-
-</details>
-
-<details>
-<summary>🍎 macOS — Metal</summary>
-
-Install dependencies (Homebrew):
-
-```bash
-brew install cmake pkg-config qt@6 taglib rubberband libkeyfinder
-```
-
-Build:
-
-```bash
-git clone --recurse-submodules https://github.com/TimoRams/multiplatform-dj-software.git
-cd multiplatform-dj-software
-cmake -S . -B build -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
-cmake --build build -j
-./build/bin/BrockDJ.app/Contents/MacOS/BrockDJ
-```
-
-> On Apple Silicon, build the arm64 target natively to get the platform's SIMD path automatically.
-
-</details>
-
-<details>
-<summary>🪟 Windows — Vulkan</summary>
-
-~~Set `VCPKG_ROOT` to the pinned vcpkg checkout described in
-[`docs/building.md`](docs/building.md). CMake installs the repository manifest.~~
-
-~~Configure and build:~~
-
-~~```powershell
-cmake --preset ci-windows-x64
-cmake --build --preset ci-windows-x64 --parallel 2
-ctest --preset ci-windows-x64
-```~~
-
-Windows support is currently not a focus and is not being actively maintained.
-
-</details>
-
----
-
-### Platform priority
-
-| Priority | Platform |
-|----------|----------|
-| Primary | Linux (festival/live target — use `./build-fast`) |
-| Secondary | macOS Apple Silicon (M1+) |
-| Supported | Intel Mac |
-| ~~Secondary~~ | ~~Windows x64 (MSVC 2022; automatic CI)~~ |
-
-CMake provides local development presets plus CI presets for Linux x86_64,
-Linux ARM64, macOS arm64 and macOS x86_64.
-
-### Linux real-time audio
-
-After an audio device starts, BrockDJ requests `SCHED_FIFO` priority 20 for
-the device callback thread. The request happens on the control thread, never
-inside the callback. The **RT SCHEDULER** field in the audio performance popup
-reports whether it is active, already managed by JACK/PipeWire, or denied.
-
-For a native ALSA callback, grant the live-performance user an RT priority
-limit through the distribution's PAM limits configuration, then log out and
-back in:
-
-```text
-@audio - rtprio 40
-```
-
-The default request is deliberately capped at 40. Set
-`BROCKDJ_AUDIO_RT_PRIORITY` to choose a value from `1..40` when the installed
-audio policy requires a lower value.
-
-### Render-pressure policy
-
-The UI monitors recent audio-callback budget use and device/DSP XRun deltas on
-the control thread. During pressure it drops nonessential waveform updates from
-60 Hz to 30 Hz and then 15 Hz; active scratching remains at least 30 Hz. The
-**UI RENDER** field in the audio performance popup shows the active tier.
-Minimized or inactive windows use a 250 ms update interval, while transport and
-audio processing remain unaffected. Waveform and overview raster work is also
-coalesced until a live window resize has been idle for 120 ms.
-
-### Intel Arc and integrated GPUs
-
-Linux defaults to Qt Quick's Vulkan RHI, so the Vulkan loader selects the
-available Intel Arc/integrated GPU without a second graphics-device lifecycle.
-The 2D-only scene graph disables its unused depth attachment and the overview
-uses Qt's fast FBO-resize path; both reduce shared-memory bandwidth and
-render-target churn. Leave `BROCKDJ_RHI_BACKEND` at its `vulkan` default for
-Intel Arc. `opengl` and `auto` are comparison/fallback modes, not performance
-defaults.
-
----
-
-### SIMD
-
-Release builds are portable by default. To opt into local target-native code generation on Linux or Intel macOS, reconfigure `build/` then run `./build-fast`:
-
-```bash
-rm -rf build
-cmake --preset linux-dev-fast -DBROCKDJ_ENABLE_NATIVE_ARCH=ON
-./build-fast
-```
-
----
+- [Complete build guide](docs/building.md)
+- [Architecture](docs/architecture/)
+- [Packaging](docs/packaging.md)
+- [Dependency pins](docs/dependencies.md)
 
 ## License
 
-Licensed under the **GNU Affero General Public License v3.0 or later** (AGPL-3.0-or-later).
-See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE) for details.
-
----
-
-## 🗺 Roadmap
-
-- [ ] Create roadmap
-
----
-
-Built with love on Linux and macOS · JUCE + Qt 6 + Vulkan RHI
+Licensed under the [GNU Affero General Public License v3.0 or later](LICENSE).
