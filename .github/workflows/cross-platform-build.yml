@@ -318,100 +318,100 @@ jobs:
           compression-level: 0
           retention-days: 2
 
-  build-windows-x64:
-    name: Build Windows x64
-    needs: workflow-lint
-    runs-on: windows-2025
-    timeout-minutes: 90
-    env:
-      VCPKG_ROOT: ${{ github.workspace }}/vcpkg-pinned
-      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/vcpkg-binary-cache,readwrite
-    steps:
-      - name: Check out repository and submodules
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Check out pinned vcpkg
-        uses: actions/checkout@v6
-        with:
-          repository: microsoft/vcpkg
-          ref: ${{ env.VCPKG_COMMIT }}
-          path: vcpkg-pinned
-
-      - name: Enable MSVC developer environment
-        uses: ilammy/msvc-dev-cmd@v1.13.0
-        with:
-          arch: x64
-
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4.3.1
-        with:
-          version: ${{ env.QT_VERSION }}
-          arch: win64_msvc2022_64
-          cache: true
-
-      - name: Restore vcpkg binary cache
-        uses: actions/cache@v5
-        with:
-          path: vcpkg-binary-cache
-          key: vcpkg-windows-x64-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: vcpkg-windows-x64-${{ env.VCPKG_COMMIT }}-
-
-      - name: Bootstrap vcpkg
-        shell: pwsh
-        run: '& "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics'
-
-      - name: Show Windows x64 toolchain
-        shell: pwsh
-        run: |
-          cl.exe
-          cmake --version
-          ninja --version
-          Write-Host "Qt6_DIR=$env:Qt6_DIR"
-          Write-Host "QT_ROOT_DIR=$env:QT_ROOT_DIR"
-          & (Join-Path $env:QT_ROOT_DIR 'bin\qmake.exe') -query
-
-      - name: Configure
-        run: cmake --preset ci-windows-x64
-
-      - name: Build
-        run: cmake --build --preset ci-windows-x64 --parallel 2
-
-      - name: Test
-        run: ctest --preset ci-windows-x64
-
-      - name: Validate binary architecture and headless startup
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $binary = 'build-ci-windows-x64/bin/BrockDJ.exe'
-          $headers = & dumpbin.exe /nologo /headers $binary
-          $headers | Select-String '8664 machine \(x64\)' | Out-Null
-          $env:PATH = "${{ github.workspace }}\build-ci-windows-x64\vcpkg_installed\x64-windows\bin;$env:PATH"
-          & $binary --version
-          $env:QT_QPA_PLATFORM = 'offscreen'
-          & $binary --ci-smoke-test
-          if ($LASTEXITCODE -ne 0) { throw "BrockDJ smoke test failed with exit code $LASTEXITCODE" }
-
-      - name: Stage build product
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force ci-build-product | Out-Null
-          Copy-Item build-ci-windows-x64/bin/BrockDJ.exe ci-build-product/BrockDJ.exe
-          if ((Get-Item ci-build-product/BrockDJ.exe).Length -eq 0) { throw 'empty executable' }
-
-      - name: Upload build product
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-        uses: actions/upload-artifact@v7
-        with:
-          name: BrockDJ-build-windows-x64
-          path: ci-build-product/BrockDJ.exe
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 2
-
+#   build-windows-x64:
+#     name: Build Windows x64
+#     needs: workflow-lint
+#     runs-on: windows-2025
+#     timeout-minutes: 90
+#     env:
+#       VCPKG_ROOT: ${{ github.workspace }}/vcpkg-pinned
+#       VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/vcpkg-binary-cache,readwrite
+#     steps:
+#       - name: Check out repository and submodules
+#         uses: actions/checkout@v6
+#         with:
+#           submodules: recursive
+#
+#       - name: Check out pinned vcpkg
+#         uses: actions/checkout@v6
+#         with:
+#           repository: microsoft/vcpkg
+#           ref: ${{ env.VCPKG_COMMIT }}
+#           path: vcpkg-pinned
+#
+#       - name: Enable MSVC developer environment
+#         uses: ilammy/msvc-dev-cmd@v1.13.0
+#         with:
+#           arch: x64
+#
+#       - name: Install Qt
+#         uses: jurplel/install-qt-action@v4.3.1
+#         with:
+#           version: ${{ env.QT_VERSION }}
+#           arch: win64_msvc2022_64
+#           cache: true
+#
+#       - name: Restore vcpkg binary cache
+#         uses: actions/cache@v5
+#         with:
+#           path: vcpkg-binary-cache
+#           key: vcpkg-windows-x64-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+#           restore-keys: vcpkg-windows-x64-${{ env.VCPKG_COMMIT }}-
+#
+#       - name: Bootstrap vcpkg
+#         shell: pwsh
+#         run: '& "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics'
+#
+#       - name: Show Windows x64 toolchain
+#         shell: pwsh
+#         run: |
+#           cl.exe
+#           cmake --version
+#           ninja --version
+#           Write-Host "Qt6_DIR=$env:Qt6_DIR"
+#           Write-Host "QT_ROOT_DIR=$env:QT_ROOT_DIR"
+#           & (Join-Path $env:QT_ROOT_DIR 'bin\qmake.exe') -query
+#
+#       - name: Configure
+#         run: cmake --preset ci-windows-x64
+#
+#       - name: Build
+#         run: cmake --build --preset ci-windows-x64 --parallel 2
+#
+#       - name: Test
+#         run: ctest --preset ci-windows-x64
+#
+#       - name: Validate binary architecture and headless startup
+#         shell: pwsh
+#         run: |
+#           $ErrorActionPreference = 'Stop'
+#           $binary = 'build-ci-windows-x64/bin/BrockDJ.exe'
+#           $headers = & dumpbin.exe /nologo /headers $binary
+#           $headers | Select-String '8664 machine \(x64\)' | Out-Null
+#           $env:PATH = "${{ github.workspace }}\build-ci-windows-x64\vcpkg_installed\x64-windows\bin;$env:PATH"
+#           & $binary --version
+#           $env:QT_QPA_PLATFORM = 'offscreen'
+#           & $binary --ci-smoke-test
+#           if ($LASTEXITCODE -ne 0) { throw "BrockDJ smoke test failed with exit code $LASTEXITCODE" }
+#
+#       - name: Stage build product
+#         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+#         shell: pwsh
+#         run: |
+#           New-Item -ItemType Directory -Force ci-build-product | Out-Null
+#           Copy-Item build-ci-windows-x64/bin/BrockDJ.exe ci-build-product/BrockDJ.exe
+#           if ((Get-Item ci-build-product/BrockDJ.exe).Length -eq 0) { throw 'empty executable' }
+#
+#       - name: Upload build product
+#         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+#         uses: actions/upload-artifact@v7
+#         with:
+#           name: BrockDJ-build-windows-x64
+#           path: ci-build-product/BrockDJ.exe
+#           if-no-files-found: error
+#           compression-level: 0
+#           retention-days: 2
+#
   package-linux-x64:
     name: Package Linux x86_64 AppImage
     needs: build-linux-x64
@@ -576,75 +576,75 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
-  package-windows-x64:
-    name: Package Windows x64
-    needs: build-windows-x64
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: windows-2025
-    timeout-minutes: 45
-    env:
-      VCPKG_ROOT: ${{ github.workspace }}/vcpkg-pinned
-      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/vcpkg-binary-cache,readwrite
-    steps:
-      - name: Check out packaging files
-        uses: actions/checkout@v6
-
-      - name: Check out pinned vcpkg
-        uses: actions/checkout@v6
-        with:
-          repository: microsoft/vcpkg
-          ref: ${{ env.VCPKG_COMMIT }}
-          path: vcpkg-pinned
-
-      - name: Enable MSVC developer environment
-        uses: ilammy/msvc-dev-cmd@v1.13.0
-        with:
-          arch: x64
-
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4.3.1
-        with:
-          version: ${{ env.QT_VERSION }}
-          arch: win64_msvc2022_64
-          cache: true
-
-      - name: Restore vcpkg binary cache
-        uses: actions/cache@v5
-        with:
-          path: vcpkg-binary-cache
-          key: vcpkg-windows-x64-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: vcpkg-windows-x64-${{ env.VCPKG_COMMIT }}-
-
-      - name: Bootstrap and install vcpkg dependencies
-        shell: pwsh
-        run: |
-          & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
-          if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap failed" }
-          $vcpkgArgs = @(
-            'install',
-            '--triplet=x64-windows',
-            "--x-manifest-root=$PWD",
-            "--x-install-root=$PWD\build-ci-windows-x64\vcpkg_installed"
-          )
-          & "$env:VCPKG_ROOT\vcpkg.exe" @vcpkgArgs
-          if ($LASTEXITCODE -ne 0) { throw "vcpkg dependency install failed" }
-
-      - name: Download build product
-        uses: actions/download-artifact@v8
-        with:
-          name: BrockDJ-build-windows-x64
-          path: ci-build-product
-
-      - name: Deploy and smoke-test Windows package
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force dist | Out-Null
-          ./scripts/ci/package-windows.ps1 -Executable ci-build-product/BrockDJ.exe -VcpkgBin build-ci-windows-x64/vcpkg_installed/x64-windows/bin -QmlDir src/qml -Output dist/BrockDJ-Windows-x64.zip
-
-      - name: Upload Windows x64 artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: BrockDJ-windows-x86_64
-          path: dist/BrockDJ-Windows-x64.zip
-          if-no-files-found: error
-          compression-level: 0
+#   package-windows-x64:
+#     name: Package Windows x64
+#     needs: build-windows-x64
+#     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+#     runs-on: windows-2025
+#     timeout-minutes: 45
+#     env:
+#       VCPKG_ROOT: ${{ github.workspace }}/vcpkg-pinned
+#       VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/vcpkg-binary-cache,readwrite
+#     steps:
+#       - name: Check out packaging files
+#         uses: actions/checkout@v6
+#
+#       - name: Check out pinned vcpkg
+#         uses: actions/checkout@v6
+#         with:
+#           repository: microsoft/vcpkg
+#           ref: ${{ env.VCPKG_COMMIT }}
+#           path: vcpkg-pinned
+#
+#       - name: Enable MSVC developer environment
+#         uses: ilammy/msvc-dev-cmd@v1.13.0
+#         with:
+#           arch: x64
+#
+#       - name: Install Qt
+#         uses: jurplel/install-qt-action@v4.3.1
+#         with:
+#           version: ${{ env.QT_VERSION }}
+#           arch: win64_msvc2022_64
+#           cache: true
+#
+#       - name: Restore vcpkg binary cache
+#         uses: actions/cache@v5
+#         with:
+#           path: vcpkg-binary-cache
+#           key: vcpkg-windows-x64-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+#           restore-keys: vcpkg-windows-x64-${{ env.VCPKG_COMMIT }}-
+#
+#       - name: Bootstrap and install vcpkg dependencies
+#         shell: pwsh
+#         run: |
+#           & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+#           if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap failed" }
+#           $vcpkgArgs = @(
+#             'install',
+#             '--triplet=x64-windows',
+#             "--x-manifest-root=$PWD",
+#             "--x-install-root=$PWD\build-ci-windows-x64\vcpkg_installed"
+#           )
+#           & "$env:VCPKG_ROOT\vcpkg.exe" @vcpkgArgs
+#           if ($LASTEXITCODE -ne 0) { throw "vcpkg dependency install failed" }
+#
+#       - name: Download build product
+#         uses: actions/download-artifact@v8
+#         with:
+#           name: BrockDJ-build-windows-x64
+#           path: ci-build-product
+#
+#       - name: Deploy and smoke-test Windows package
+#         shell: pwsh
+#         run: |
+#           New-Item -ItemType Directory -Force dist | Out-Null
+#           ./scripts/ci/package-windows.ps1 -Executable ci-build-product/BrockDJ.exe -VcpkgBin build-ci-windows-x64/vcpkg_installed/x64-windows/bin -QmlDir src/qml -Output dist/BrockDJ-Windows-x64.zip
+#
+#       - name: Upload Windows x64 artifact
+#         uses: actions/upload-artifact@v7
+#         with:
+#           name: BrockDJ-windows-x86_64
+#           path: dist/BrockDJ-Windows-x64.zip
+#           if-no-files-found: error
+#           compression-level: 0

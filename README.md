@@ -7,10 +7,12 @@
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)
 ![C++](https://img.shields.io/badge/C%2B%2B-23-informational?style=flat-square)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?style=flat-square)
-![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey?style=flat-square)
+![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey?style=flat-square)
 
 Built on **JUCE** for real-time audio and **Qt 6 / QML** for the UI.
-Waveforms are rendered entirely on the GPU via **Qt RHI** (Vulkan on Linux/Windows, Metal on macOS) — no CPU software rendering.
+Waveforms are rendered entirely on the GPU via **Qt RHI** (Vulkan on Linux, Metal on macOS) — no CPU software rendering.
+
+> **Windows support is currently de-prioritized.** I am not actively developing Windows support for now, because I do not use Windows day to day and do not have enough hardware access to keep it a priority. Linux and macOS are the current focus.
 
 ---
 
@@ -174,16 +176,18 @@ cmake --build build -j
 <details>
 <summary>🪟 Windows — Vulkan</summary>
 
-Set `VCPKG_ROOT` to the pinned vcpkg checkout described in
-[`docs/building.md`](docs/building.md). CMake installs the repository manifest.
+~~Set `VCPKG_ROOT` to the pinned vcpkg checkout described in
+[`docs/building.md`](docs/building.md). CMake installs the repository manifest.~~
 
-Configure and build:
+~~Configure and build:~~
 
-```powershell
+~~```powershell
 cmake --preset ci-windows-x64
 cmake --build --preset ci-windows-x64 --parallel 2
 ctest --preset ci-windows-x64
-```
+```~~
+
+Windows support is currently not a focus and is not being actively maintained.
 
 </details>
 
@@ -196,10 +200,10 @@ ctest --preset ci-windows-x64
 | Primary | Linux (festival/live target — use `./build-fast`) |
 | Secondary | macOS Apple Silicon (M1+) |
 | Supported | Intel Mac |
-| Secondary | Windows x64 (MSVC 2022; automatic CI) |
+| ~~Secondary~~ | ~~Windows x64 (MSVC 2022; automatic CI)~~ |
 
 CMake provides local development presets plus CI presets for Linux x86_64,
-Linux ARM64, macOS arm64, macOS x86_64 and Windows x64.
+Linux ARM64, macOS arm64 and macOS x86_64.
 
 ### Linux real-time audio
 
@@ -267,4 +271,4 @@ See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE) for details.
 
 ---
 
-Built with love on Linux · JUCE + Qt 6 + Vulkan RHI
+Built with love on Linux and macOS · JUCE + Qt 6 + Vulkan RHI
