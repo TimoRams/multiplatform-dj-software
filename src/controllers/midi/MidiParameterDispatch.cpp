@@ -44,6 +44,45 @@ bool isChannelFaderParameter(const QString& paramId)
         || paramId == QStringLiteral("deckD_vol");
 }
 
+struct Flx10KeyShiftPadWireEvent final
+{
+    QChar deck;
+    int padIndex = -1;
+    bool shifted = false;
+};
+
+bool decodeFlx10KeyShiftPadWireEvent(int msgId, Flx10KeyShiftPadWireEvent& event)
+{
+    if (msgId < 10000)
+        return false;
+
+    const int remainder = msgId - 10000;
+    const int channel = remainder / 2000; // zero-based MIDI channel
+    const int note = remainder % 2000;
+    if (channel < 7 || channel > 14)
+        return false;
+
+    // FLX10 performance-pad channels alternate normal/SHIFT for decks 1..4:
+    // Ch8/9, Ch10/11, Ch12/13 and Ch14/15.
+    const int padChannel = channel - 7;
+    const int deckIndex = padChannel / 2;
+    event.deck = QChar(QLatin1Char('A').unicode() + deckIndex);
+    event.shifted = (padChannel & 1) != 0;
+
+    // Key Shift PAGE1 is 0x70..0x77 and PAGE2 is 0x78..0x7f. Keep accepting
+    // 0x00..0x07 while Key Shift is explicitly selected as a compatibility
+    // fallback for hosts/firmware that briefly leave the pads in Hot Cue bank.
+    if (note >= 0x70 && note <= 0x7f) {
+        event.padIndex = note & 0x07;
+        return true;
+    }
+    if (note >= 0x00 && note <= 0x07) {
+        event.padIndex = note;
+        return true;
+    }
+    return false;
+}
+
 } // namespace
 
 void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool isNoteOff,
@@ -112,6 +151,30 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
     if (m_isLearning && !isNoteOff) {
         learnMapping(msgId);
         return; // always skip dispatch while in learn mode
+    }
+
+    // FLX10 performance pads live on channels 8..15 instead of the deck's
+    // ordinary channel. Decode the wire event here on the Qt/main-thread side
+    // so a physical Key Shift pad reaches the same engine action as its QML
+    // counterpart even if a generic mapping layer drops or misclassifies that
+    // controller-specific channel. Returning prevents the XML route from
+    // dispatching the same press a second time.
+    Flx10KeyShiftPadWireEvent keyShiftPad;
+    if (shouldUseFlx10Feedback()
+        && decodeFlx10KeyShiftPadWireEvent(msgId, keyShiftPad)
+        && padModeForDeck(keyShiftPad.deck) == MidiPadMode::KeyShift) {
+        const bool pressed = !isNoteOff && value > 0.0f;
+        if (m_midiTraceEnabled) {
+            qDebug() << "[FLX10 KEY SHIFT PAD]"
+                     << "deck:" << keyShiftPad.deck
+                     << "pad:" << keyShiftPad.padIndex + 1
+                     << "shifted:" << keyShiftPad.shifted
+                     << "pressed:" << pressed
+                     << "wire:" << midiControlLabel(msgId);
+        }
+        handleKeyShiftPad(keyShiftPad.deck, engineForDeck(keyShiftPad.deck),
+                          keyShiftPad.padIndex, pressed, keyShiftPad.shifted);
+        return;
     }
 
     if (!m_parameterStore)

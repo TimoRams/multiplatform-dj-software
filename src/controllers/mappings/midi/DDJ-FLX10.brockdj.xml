@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <BrockDJControllerMapping version="1" id="ddj-flx10" name="DDJ-FLX10" vendor="Pioneer DJ">
   <Source
-    reference="https://github.com/Veezuhz/Mixxx_FLX10_Controller_Mapping"
-    note="MIDI status/control values were referenced from the DDJ-FLX10 repository. This file is a BrockDJ-native mapping."/>
+    reference="https://www.pioneerdj.com/-/media/pioneerdj/software-info/controller/ddj-flx10/ddj-flx10_midi_message_list_e1.pdf"
+    note="MIDI status/control values follow AlphaTheta's official DDJ-FLX10 message list. This file is a BrockDJ-native mapping."/>
 
   <Mappings>
     <!-- Transport -->
@@ -16,8 +16,12 @@
     <Entry paramId="deckB_beatsync" status="0x91" control="0x66" type="toggle"/>
     <Entry paramId="deckA_key_sync" status="0x90" control="0x65" type="toggle"/>
     <Entry paramId="deckB_key_sync" status="0x91" control="0x65" type="toggle"/>
-    <Entry paramId="deckA_keylock" status="0x90" control="0x1C" type="toggle"/>
-    <Entry paramId="deckB_keylock" status="0x91" control="0x1C" type="toggle"/>
+    <!-- Serato assigns Key Lock to MIX POINT LINK (0x4A). 0x1C is a shifted
+         KEY SYNC command and must not be confused with Key Lock. -->
+    <Entry paramId="deckA_keylock" status="0x90" control="0x4A" type="toggle"/>
+    <Entry paramId="deckB_keylock" status="0x91" control="0x4A" type="toggle"/>
+    <Entry paramId="deckC_keylock" status="0x92" control="0x4A" type="toggle"/>
+    <Entry paramId="deckD_keylock" status="0x93" control="0x4A" type="toggle"/>
     <Entry paramId="deckA_quantize" status="0x90" control="0x35" type="toggle"/>
     <Entry paramId="deckB_quantize" status="0x91" control="0x35" type="toggle"/>
     <Entry paramId="deckA_slip" status="0x90" control="0x40" type="toggle"/>
@@ -62,10 +66,29 @@
     <Entry paramId="deckA_pad_mode_padfx" status="0x90" control="0x1E" type="toggle"/>
     <Entry paramId="deckA_pad_mode_beatjump" status="0x90" control="0x20" type="toggle"/>
     <Entry paramId="deckA_pad_mode_sampler" status="0x90" control="0x22" type="toggle"/>
+    <!-- Shifted mode buttons are separate hardware commands. In particular,
+         0x6F selects Key Shift directly; it is never inferred from SHIFT+0x22. -->
+    <Entry paramId="deckA_pad_mode_keyshift" status="0x90" control="0x6F" type="toggle"/>
     <Entry paramId="deckB_pad_mode_hotcue" status="0x91" control="0x1B" type="toggle"/>
     <Entry paramId="deckB_pad_mode_padfx" status="0x91" control="0x1E" type="toggle"/>
     <Entry paramId="deckB_pad_mode_beatjump" status="0x91" control="0x20" type="toggle"/>
     <Entry paramId="deckB_pad_mode_sampler" status="0x91" control="0x22" type="toggle"/>
+    <Entry paramId="deckB_pad_mode_keyshift" status="0x91" control="0x6F" type="toggle"/>
+    <Entry paramId="deckC_pad_mode_sampler" status="0x92" control="0x22" type="toggle"/>
+    <Entry paramId="deckC_pad_mode_keyshift" status="0x92" control="0x6F" type="toggle"/>
+    <Entry paramId="deckD_pad_mode_sampler" status="0x93" control="0x22" type="toggle"/>
+    <Entry paramId="deckD_pad_mode_keyshift" status="0x93" control="0x6F" type="toggle"/>
+
+    <!-- PAGE is mode-dependent on the FLX10. These are the Key Shift bank's
+         unshifted PAGE Left/Right commands on each deck channel. -->
+    <Entry paramId="deckA_keyshift_range_down" status="0x90" control="0x2B" type="toggle"/>
+    <Entry paramId="deckA_keyshift_range_up" status="0x90" control="0x33" type="toggle"/>
+    <Entry paramId="deckB_keyshift_range_down" status="0x91" control="0x2B" type="toggle"/>
+    <Entry paramId="deckB_keyshift_range_up" status="0x91" control="0x33" type="toggle"/>
+    <Entry paramId="deckC_keyshift_range_down" status="0x92" control="0x2B" type="toggle"/>
+    <Entry paramId="deckC_keyshift_range_up" status="0x92" control="0x33" type="toggle"/>
+    <Entry paramId="deckD_keyshift_range_down" status="0x93" control="0x2B" type="toggle"/>
+    <Entry paramId="deckD_keyshift_range_up" status="0x93" control="0x33" type="toggle"/>
 
     <Entry paramId="deckA_pad1" status="0x97" control="0x00" type="momentary"/>
     <Entry paramId="deckA_pad2" status="0x97" control="0x01" type="momentary"/>
@@ -151,6 +174,142 @@
     <Entry paramId="deckB_sampler_pad6" status="0x99" control="0x35" type="momentary"/>
     <Entry paramId="deckB_sampler_pad7" status="0x99" control="0x36" type="momentary"/>
     <Entry paramId="deckB_sampler_pad8" status="0x99" control="0x37" type="momentary"/>
+
+    <!-- Key Shift uses its own pad note banks. The pad channel identifies both
+         the deck and whether SHIFT was held, so shifted actions do not depend
+         on arrival order of the separate 0x3F SHIFT event. PAGE1 and PAGE2
+         notes are both accepted and normalize to the same eight logical pads. -->
+    <Entry paramId="deckA_keyshift_pad1" status="0x97" control="0x70" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad2" status="0x97" control="0x71" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad3" status="0x97" control="0x72" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad4" status="0x97" control="0x73" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad5" status="0x97" control="0x74" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad6" status="0x97" control="0x75" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad7" status="0x97" control="0x76" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad8" status="0x97" control="0x77" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad1_page2" status="0x97" control="0x78" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad2_page2" status="0x97" control="0x79" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad3_page2" status="0x97" control="0x7A" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad4_page2" status="0x97" control="0x7B" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad5_page2" status="0x97" control="0x7C" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad6_page2" status="0x97" control="0x7D" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad7_page2" status="0x97" control="0x7E" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad8_page2" status="0x97" control="0x7F" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad1_shift" status="0x98" control="0x70" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad2_shift" status="0x98" control="0x71" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad3_shift" status="0x98" control="0x72" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad4_shift" status="0x98" control="0x73" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad5_shift" status="0x98" control="0x74" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad6_shift" status="0x98" control="0x75" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad7_shift" status="0x98" control="0x76" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad8_shift" status="0x98" control="0x77" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad1_page2_shift" status="0x98" control="0x78" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad2_page2_shift" status="0x98" control="0x79" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad3_page2_shift" status="0x98" control="0x7A" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad4_page2_shift" status="0x98" control="0x7B" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad5_page2_shift" status="0x98" control="0x7C" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad6_page2_shift" status="0x98" control="0x7D" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad7_page2_shift" status="0x98" control="0x7E" type="momentary"/>
+    <Entry paramId="deckA_keyshift_pad8_page2_shift" status="0x98" control="0x7F" type="momentary"/>
+
+    <Entry paramId="deckB_keyshift_pad1" status="0x99" control="0x70" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad2" status="0x99" control="0x71" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad3" status="0x99" control="0x72" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad4" status="0x99" control="0x73" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad5" status="0x99" control="0x74" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad6" status="0x99" control="0x75" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad7" status="0x99" control="0x76" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad8" status="0x99" control="0x77" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad1_page2" status="0x99" control="0x78" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad2_page2" status="0x99" control="0x79" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad3_page2" status="0x99" control="0x7A" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad4_page2" status="0x99" control="0x7B" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad5_page2" status="0x99" control="0x7C" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad6_page2" status="0x99" control="0x7D" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad7_page2" status="0x99" control="0x7E" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad8_page2" status="0x99" control="0x7F" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad1_shift" status="0x9A" control="0x70" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad2_shift" status="0x9A" control="0x71" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad3_shift" status="0x9A" control="0x72" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad4_shift" status="0x9A" control="0x73" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad5_shift" status="0x9A" control="0x74" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad6_shift" status="0x9A" control="0x75" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad7_shift" status="0x9A" control="0x76" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad8_shift" status="0x9A" control="0x77" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad1_page2_shift" status="0x9A" control="0x78" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad2_page2_shift" status="0x9A" control="0x79" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad3_page2_shift" status="0x9A" control="0x7A" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad4_page2_shift" status="0x9A" control="0x7B" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad5_page2_shift" status="0x9A" control="0x7C" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad6_page2_shift" status="0x9A" control="0x7D" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad7_page2_shift" status="0x9A" control="0x7E" type="momentary"/>
+    <Entry paramId="deckB_keyshift_pad8_page2_shift" status="0x9A" control="0x7F" type="momentary"/>
+
+    <Entry paramId="deckC_keyshift_pad1" status="0x9B" control="0x70" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad2" status="0x9B" control="0x71" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad3" status="0x9B" control="0x72" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad4" status="0x9B" control="0x73" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad5" status="0x9B" control="0x74" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad6" status="0x9B" control="0x75" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad7" status="0x9B" control="0x76" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad8" status="0x9B" control="0x77" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad1_page2" status="0x9B" control="0x78" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad2_page2" status="0x9B" control="0x79" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad3_page2" status="0x9B" control="0x7A" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad4_page2" status="0x9B" control="0x7B" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad5_page2" status="0x9B" control="0x7C" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad6_page2" status="0x9B" control="0x7D" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad7_page2" status="0x9B" control="0x7E" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad8_page2" status="0x9B" control="0x7F" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad1_shift" status="0x9C" control="0x70" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad2_shift" status="0x9C" control="0x71" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad3_shift" status="0x9C" control="0x72" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad4_shift" status="0x9C" control="0x73" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad5_shift" status="0x9C" control="0x74" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad6_shift" status="0x9C" control="0x75" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad7_shift" status="0x9C" control="0x76" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad8_shift" status="0x9C" control="0x77" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad1_page2_shift" status="0x9C" control="0x78" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad2_page2_shift" status="0x9C" control="0x79" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad3_page2_shift" status="0x9C" control="0x7A" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad4_page2_shift" status="0x9C" control="0x7B" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad5_page2_shift" status="0x9C" control="0x7C" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad6_page2_shift" status="0x9C" control="0x7D" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad7_page2_shift" status="0x9C" control="0x7E" type="momentary"/>
+    <Entry paramId="deckC_keyshift_pad8_page2_shift" status="0x9C" control="0x7F" type="momentary"/>
+
+    <Entry paramId="deckD_keyshift_pad1" status="0x9D" control="0x70" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad2" status="0x9D" control="0x71" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad3" status="0x9D" control="0x72" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad4" status="0x9D" control="0x73" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad5" status="0x9D" control="0x74" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad6" status="0x9D" control="0x75" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad7" status="0x9D" control="0x76" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad8" status="0x9D" control="0x77" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad1_page2" status="0x9D" control="0x78" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad2_page2" status="0x9D" control="0x79" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad3_page2" status="0x9D" control="0x7A" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad4_page2" status="0x9D" control="0x7B" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad5_page2" status="0x9D" control="0x7C" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad6_page2" status="0x9D" control="0x7D" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad7_page2" status="0x9D" control="0x7E" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad8_page2" status="0x9D" control="0x7F" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad1_shift" status="0x9E" control="0x70" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad2_shift" status="0x9E" control="0x71" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad3_shift" status="0x9E" control="0x72" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad4_shift" status="0x9E" control="0x73" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad5_shift" status="0x9E" control="0x74" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad6_shift" status="0x9E" control="0x75" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad7_shift" status="0x9E" control="0x76" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad8_shift" status="0x9E" control="0x77" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad1_page2_shift" status="0x9E" control="0x78" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad2_page2_shift" status="0x9E" control="0x79" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad3_page2_shift" status="0x9E" control="0x7A" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad4_page2_shift" status="0x9E" control="0x7B" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad5_page2_shift" status="0x9E" control="0x7C" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad6_page2_shift" status="0x9E" control="0x7D" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad7_page2_shift" status="0x9E" control="0x7E" type="momentary"/>
+    <Entry paramId="deckD_keyshift_pad8_page2_shift" status="0x9E" control="0x7F" type="momentary"/>
 
     <!-- Dedicated 4/16 Beat Jump buttons. -->
     <Entry paramId="deckA_beatjump_4_backward" status="0x90" control="0x5E" type="toggle"/>

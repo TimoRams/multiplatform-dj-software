@@ -66,8 +66,9 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, ControlClock
         return sendMidiShort(status, data1, data2, type);
     });
     ControlClock::Callbacks clockCallbacks;
-    clockCallbacks.feedback = [this](const ControlTickContext&) {
+    clockCallbacks.feedback = [this](const ControlTickContext& context) {
         m_midiFeedback.onControlClockFeedbackTick();
+        updateKeyShiftModeBlink(context.monotonicSeconds);
     };
     clockCallbacks.housekeeping = [this](const ControlTickContext& context) {
         runControllerHousekeeping(context.monotonicSeconds);

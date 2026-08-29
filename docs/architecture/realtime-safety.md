@@ -85,6 +85,29 @@ Reverse direction has one owner: `CachedPlaybackAudioSource` reverses PCM
 order. Hermite and time-stretch ratios remain positive so the stream is not
 reversed twice.
 
+`RenderModeRouter`'s normal (non-scratch) path declicks both ends of a
+play/pause/seek transition using only the fixed `m_lastNormalOutput` tail
+sample and a bounded linear ramp — no allocation, lock, or DSP
+prepare/reset call:
+
+- Pausing still fades to silence over `applyNormalStopTail()`'s fixed
+  128 samples.
+- Resuming from pause fades in over the same 128 samples via
+  `applyNormalStartFade()`, keyed off the `m_normalPlaybackWasEnabled`
+  false-to-true edge, so an abrupt full-level attack never reaches the
+  output.
+- A seek applied to a transport that stays in the running state — a hot
+  cue, quantized cue, or loop jump taken while the deck keeps playing —
+  is a genuine mid-stream waveform discontinuity. `DeckAudioPipeline`
+  calls `RenderModeRouter::armNormalSeekDeclick()` from
+  `consumeCommands()` immediately before applying the new transport
+  position; the router then blends `m_lastNormalOutput` into the first
+  `kCrossfadeSamples` of post-jump output via `applyNormalSeekDeclick()`
+  instead of splicing the jump in raw. This flag is armed unconditionally
+  on every seek command, including ones issued while paused, but a paused
+  deck renders through the silence path instead of consuming it, so it
+  never fires spuriously.
+
 ## AudioPageCache and cached playback
 
 - `AudioPageCache::tryGetPage()` and `requestPage()` are the only cache
@@ -136,10 +159,48 @@ The following `TimeStretchRealtimeStats` fields must remain zero during
 transition and stress tests: prepare, reset, prewarm, buffer growth, and
 blocking-lock calls from the audio thread.
 
+Signalsmith's `outputSeek()` bakes its pre-roll phase state using whatever
+transpose factor is live on that stretcher instance *at call time* — it takes
+no pitch argument of its own. Tempo changes never rebuild a pipeline (that
+would risk a callback-thread rebuild), so a pipeline's transpose factor is
+only ever refreshed lazily, inside `processPipeline()`. Every seed path —
+`serviceSeedRequest()` on the worker and `seedPipelineFromHistory()` inline on
+the audio thread — must call `syncPipelinePitchScale()` immediately before its
+`outputSeek()` call. Skipping this seeds phase continuity for a stale pitch,
+and the very next `processPipeline()` call yanks the transpose to the correct
+value out from under it — audible as a digital artifact at the resume point
+whenever a tempo offset is dialed in with keylock active, not a plain
+amplitude click.
+
+Key Shift (`TimeStretchProcessor::setKeySemitoneOffset()`) stores its offset in
+a plain `std::atomic<double>` and never allocates or locks. It composes with
+keylock rather than depending on it: `syncPipelinePitchScale()` multiplies the
+keylock correction (`1/rate`, applied only while the keylock toggle is on) by
+`pow(2, semitones/12)` (applied whenever the offset is non-zero), so a Key
+Shift offset always lands relative to whatever pitch the deck would otherwise
+play. Because a non-zero offset must reach the stretcher even with keylock
+off, `getNextAudioBlock()`'s `keylockRequested` gate is `pitchLockEnabled ||
+keySemitoneActive` — both flags route through the same seed/crossfade
+handshake described above, so the same lazy-refresh-before-`outputSeek()`
+rule applies to Key Shift pitch changes as to keylock ones.
+
 A loaded but paused deck sets `TimeStretchProcessor::setInputPlaybackActive(false)`.
 Keylock then renders the direct router path once, which preserves scratch and FX
 tail semantics without running a phase vocoder over silence. Resuming marks the
 next keylock entry for the existing bounded seed/crossfade handshake.
+
+`TimeStretchProcessor` pulls its input directly from `RenderModeRouter`
+(`TimeStretchProcessor(renderModeRouter.get())`), so `setInputPlaybackActive()`
+and `RenderModeRouter::setNormalPlaybackEnabled()` must change on the same
+audio callback. `DeckAudioPipeline::Impl::consumeCommands()` sets both from the
+Play/Pause command handler for exactly this reason: setting
+`setInputPlaybackActive()` synchronously from the control thread (as
+`setTransportRunning()` used to) lets the stretcher start its keylock
+seed/bridge handshake one or more callbacks before `RenderModeRouter` actually
+leaves its pause-silence state, seeding the phase vocoder from silence and
+producing an audible crackle on resume whenever keylock is engaged. The two
+calls must stay paired at the same command-consumption point; do not move
+either one back onto the control thread.
 
 `DeckChannelProcessor` receives clamped control targets and prepared
 `MixerCoefficientSnapshot` values. The callback may install a complete

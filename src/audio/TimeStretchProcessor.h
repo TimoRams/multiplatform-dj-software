@@ -94,6 +94,11 @@ public:
 
     void setTempoRatio(double ratio) noexcept;
     void setPitchLockEnabled(bool enabled) noexcept;
+    // A manual pitch offset (e.g. Key Shift), independent of the keylock
+    // toggle: a non-zero offset routes through the stretcher pipeline even
+    // when keylock is off, so it stacks on top of whatever pitch the current
+    // tempo would otherwise produce.
+    void setKeySemitoneOffset(double semitones) noexcept;
     // Lets the owning deck bypass the stretcher while normal transport is
     // paused. Scratch still reaches the router through the direct path.
     void setInputPlaybackActive(bool active) noexcept;
@@ -146,6 +151,14 @@ private:
     void stopWorker() noexcept;
     void activatePreparedPipelineAtBlockBoundary() noexcept;
     void processPipeline(Pipeline& pipeline, const juce::AudioSourceChannelInfo& info) noexcept;
+    // outputSeek() bakes its pre-roll phase state using whatever transpose
+    // factor is live on the stretcher *at call time*. Tempo changes never
+    // rebuild the pipeline (that would stall the callback), so a pipeline's
+    // transpose factor is only ever refreshed lazily inside processPipeline().
+    // Any seed path (worker or inline) must call this first, or it seeds
+    // phase continuity for a stale pitch and the very next processPipeline()
+    // call yanks the transpose to the correct value out from under it.
+    void syncPipelinePitchScale(Pipeline& pipeline) noexcept;
     void processSignalsmithPipeline(Pipeline& pipeline,
                                     const juce::AudioSourceChannelInfo& info) noexcept;
     void applySwitchFade(const juce::AudioSourceChannelInfo& info) noexcept;
@@ -170,6 +183,7 @@ private:
     std::atomic<int> m_activeSlot { -1 };
     std::atomic<double> m_targetTempoRatio { 1.0 };
     std::atomic<bool> m_pitchLockEnabled { false };
+    std::atomic<double> m_keySemitoneOffset { 0.0 };
     // Standalone processors default to active because they cannot infer their
     // source state. DeckAudioPipeline publishes its transport state explicitly.
     std::atomic<bool> m_inputPlaybackActive { true };

@@ -51,6 +51,7 @@ class DjEngine : public QObject
     Q_PROPERTY(bool scratchVisualActive READ isScratchVisualActive NOTIFY scrubbingChanged)
     Q_PROPERTY(bool isReverse READ isReverse NOTIFY reverseChanged)
     Q_PROPERTY(bool keylock READ keylock WRITE setKeylock NOTIFY keylockChanged)
+    Q_PROPERTY(double keySemitoneOffset READ keySemitoneOffset WRITE setKeySemitoneOffset NOTIFY keySemitoneOffsetChanged)
     Q_PROPERTY(double tempoPercent READ getTempoPercent WRITE setTempoPercent NOTIFY tempoChanged)
     Q_PROPERTY(double tempoRangePercent READ tempoRangePercent WRITE setTempoRangePercent NOTIFY tempoRangeChanged)
     Q_PROPERTY(double currentBpm READ getCurrentBpm NOTIFY tempoChanged)
@@ -415,6 +416,12 @@ public slots:
     Q_INVOKABLE void reSync();
     void setKeylock(bool value);
 
+    // Key Shift: a manual pitch offset in semitones, applied on top of
+    // whatever pitch the current tempo produces, independent of the keylock
+    // toggle. Absolute, not additive — setting it again replaces the offset.
+    [[nodiscard]] double keySemitoneOffset() const { return m_keySemitoneOffset; }
+    Q_INVOKABLE void setKeySemitoneOffset(double semitones);
+
     // FX chain
     // Color FX (Sound Color) slot
     void setFxEffectType(EffectType type);
@@ -477,6 +484,7 @@ signals:
     void loopChanged();
     void slipChanged();
     void keylockChanged();
+    void keySemitoneOffsetChanged();
     void vuLevelChanged();
     void gainReductionChanged();
     void segmentsChanged();
@@ -639,6 +647,7 @@ private:
     double m_playedAccumSec = 0.0;  // accumulated real playback seconds since last track load
     QElapsedTimer m_playHistoryClock;
     bool m_keylock = false;
+    double m_keySemitoneOffset = 0.0;
     bool m_quantizeEnabled = false;
 
     // Quantized cue trigger: when quantize is on and the deck is playing, a hot

@@ -166,6 +166,10 @@ void DjEngine::resetTrackLoadState()
     // Reset every cue/loop state under the new track generation, including
     // deferred quantized commands and any active loop.
     m_cueLoopController.beginTrack(m_trackLoader.currentGeneration());
+    // A Key Shift offset is a per-track performance action, not a persistent
+    // preference (unlike keylock itself) — a freshly loaded track starts at
+    // its own root key.
+    setKeySemitoneOffset(0.0);
     emit segmentsChanged();
     emit hotCuesChanged();
     emit savedLoopsChanged();

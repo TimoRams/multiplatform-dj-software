@@ -26,6 +26,16 @@ Item {
     readonly property bool usesSharedPadRouter:
         (deckId === "deckA" || deckId === "deckB")
         && typeof midiManager !== "undefined" && midiManager
+    readonly property int midiPadMode: !usesSharedPadRouter ? activeTab
+        : (deckId === "deckB" ? midiManager.deckBPadMode : midiManager.deckAPadMode)
+    readonly property bool keyShiftMode: usesSharedPadRouter && midiPadMode === 4
+    readonly property int keyShiftRange: !usesSharedPadRouter ? 1
+        : (deckId === "deckB" ? midiManager.deckBKeyShiftRange : midiManager.deckAKeyShiftRange)
+    readonly property var keyShiftValues: [
+        [-3, -2, -1,  0, -7, -6, -5, -4],
+        [ 0,  1,  2,  3, -4, -3, -2, -1],
+        [ 4,  5,  6,  7,  0,  1,  2,  3]
+    ]
 
     property int colorTargetIndex: -1
 
@@ -42,8 +52,11 @@ Item {
         var nextMode = root.deckId === "deckB"
             ? midiManager.deckBPadMode
             : midiManager.deckAPadMode
-        if (nextMode >= 0 && nextMode < root.tabs.length && root.activeTab !== nextMode)
-            root.activeTab = nextMode
+        // Key Shift is the shifted SAMPLER hardware bank, represented by the
+        // fourth tab even though it has its own semantic mode value.
+        var nextTab = nextMode === 4 ? 3 : nextMode
+        if (nextTab >= 0 && nextTab < root.tabs.length && root.activeTab !== nextTab)
+            root.activeTab = nextTab
     }
 
     function syncSharedPadState() {
@@ -214,6 +227,24 @@ Item {
         var b = root.beatJumpPads[index]
         return (b > 0 ? "+" : "") + b + "B"
     }
+
+    function keyShiftValue(index) {
+        var range = Math.max(0, Math.min(2, root.keyShiftRange))
+        return root.keyShiftValues[range][index]
+    }
+
+    function keyShiftLabel(index) {
+        var semitones = root.keyShiftValue(index)
+        return semitones > 0 ? "+" + semitones : semitones.toString()
+    }
+
+    function keyShiftPadSelected(index) {
+        return root.isKeyShiftSelectionAvailable
+            && Math.abs(root.engine.keySemitoneOffset - root.keyShiftValue(index)) < 0.01
+    }
+
+    readonly property bool isKeyShiftSelectionAvailable:
+        root.keyShiftMode && root.engine && root.engine.keySemitoneOffset !== undefined
 
     function beatDurationSeconds() {
         if (!root.engine) return 0.5
@@ -386,7 +417,7 @@ Item {
 
                     Text {
                         anchors.centerIn: parent
-                        text: modelData
+                        text: root.keyShiftMode && index === 3 ? "KEY SHIFT" : modelData
                         color: root.activeTab === index ? "#ffffff" : "#dddddd"
                         font.pixelSize: 9
                         font.bold: root.activeTab === index
@@ -445,7 +476,8 @@ Item {
                         readonly property bool isHotCueTab:   root.activeTab === 0
                         readonly property bool isPadFxTab:    root.activeTab === 1
                         readonly property bool isBeatJumpTab: root.activeTab === 2
-                        readonly property bool isSamplerTab:  root.activeTab === 3
+                        readonly property bool isKeyShiftTab: root.activeTab === 3 && root.keyShiftMode
+                        readonly property bool isSamplerTab:  root.activeTab === 3 && !isKeyShiftTab
                         readonly property bool isCuePlaybackTab: isHotCueTab || isSamplerTab
                         readonly property string kind:        root.padKind(index)
                         readonly property bool padSet:        isCuePlaybackTab && kind !== "empty"
@@ -461,6 +493,9 @@ Item {
                         readonly property color activeColor: {
                             if (padSet)        return root.padColor(index)
                             if (isBeatJumpTab) return "#2a2208"
+                            if (isKeyShiftTab) return root.keyShiftPadSelected(index)
+                                ? Qt.lighter(root.accentColor, 1.15)
+                                : "#20242a"
                             if (isSamplerTab)  return padSet ? root.padColor(index) : "#202a24"
                             if (isPadFxTab) {
                                 var def = root.padFxDefs[index]
@@ -475,6 +510,8 @@ Item {
                                : padMouse.containsMouse
                                  ? Qt.lighter(activeColor, 1.06)
                                  : activeColor
+                        border.width: isKeyShiftTab && root.keyShiftPadSelected(index) ? 2 : 0
+                        border.color: "#ffffff"
 
                         Text {
                             anchors.top: parent.top; anchors.left: parent.left
@@ -502,6 +539,7 @@ Item {
                             anchors.centerIn: parent
                             text: {
                                 if (isHotCueTab)   return root.padLabel(index)
+                                if (isKeyShiftTab) return root.keyShiftLabel(index)
                                 if (isSamplerTab)  return padSet ? root.padLabel(index) : "EMPTY"
                                 if (isBeatJumpTab) return root.beatJumpLabel(index)
                                 if (isPadFxTab)    return root.padFxDefs[index].name
@@ -510,6 +548,7 @@ Item {
                             color: {
                                 if (isCuePlaybackTab && padSet) return "#ffffff"
                                 if (isHotCueTab)           return "#f0f0f0"
+                                if (isKeyShiftTab)         return root.keyShiftPadSelected(index) ? "#ffffff" : "#9dc7ff"
                                 if (isSamplerTab)          return "#8fbfa4"
                                 if (isBeatJumpTab)         return "#ffd38a"
                                 if (isPadFxTab)            return padFxLit ? "#ffffff" : (index < 4 ? "#606060" : "#505050")
@@ -517,6 +556,7 @@ Item {
                             }
                             font.pixelSize: (isHotCueTab && !padSet) ? 11 : 8
                             font.bold: (isCuePlaybackTab && padSet) || isPadFxTab
+                                || (isKeyShiftTab && root.keyShiftPadSelected(index))
                             font.letterSpacing: isPadFxTab ? 0.4 : 0.0
                             font.family: "monospace"
                         }

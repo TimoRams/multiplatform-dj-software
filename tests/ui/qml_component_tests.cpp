@@ -52,6 +52,7 @@ int main()
     const auto deckQuickPanel = read("src/qml/deck/PerformanceDeckQuickPanel.qml");
     const auto developmentControls = read("src/qml/development/DevelopmentControlsWindow.qml");
     const auto flx10Mapping = read("src/controllers/mappings/midi/DDJ-FLX10.brockdj.xml");
+    const auto flx10MidiBridge = read("src/controllers/flx10/Flx10MidiBridge.cpp");
     const auto engineHeader = read("src/deck/DjEngine.h");
     const auto midiManagerHeader = read("src/controllers/midi/MidiControllerManager.h");
     ok &= require(std::count(main.begin(), main.end(), '\n') < 600, "main.qml remains a compact shell");
@@ -143,6 +144,17 @@ int main()
                   && midiManagerHeader.find("consumePerformancePadPlayLatch") != std::string::npos
                   && midiManagerHeader.find("performancePadStateChanged") != std::string::npos,
                   "touch and FLX10 pads share one controller state path");
+    ok &= require(performancePads.find("nextMode === 4 ? 3 : nextMode") != std::string::npos
+                  && performancePads.find("root.keyShiftMode && index === 3 ? \"KEY SHIFT\"")
+                      != std::string::npos
+                  && performancePads.find("root.engine.keySemitoneOffset - root.keyShiftValue(index)")
+                      != std::string::npos
+                  && flx10MidiBridge.find("engine->keySemitoneOffset()")
+                      != std::string::npos
+                  && flx10MidiBridge.find("&DjEngine::keySemitoneOffsetChanged")
+                      != std::string::npos
+                  && flx10MidiBridge.find("mode == MidiPadMode::KeyShift") != std::string::npos,
+                  "touch and hardware pads highlight the currently selected Key Shift value");
     ok &= require(main.find("onLibraryViewToggleRequested") != std::string::npos,
                   "FLX10 View action toggles the visible library surface");
     ok &= require(library.find("if (!libraryRoot.visible)") != std::string::npos
@@ -234,6 +246,71 @@ int main()
                   && flx10Mapping.find("<DeckLed name=\"quantize\" control=\"0x35\"/>")
                       != std::string::npos,
                   "FLX10 Quantize input and LED feedback share the documented note");
+    ok &= require(flx10Mapping.find("paramId=\"deckA_pad_mode_sampler\" status=\"0x90\" control=\"0x22\"")
+                      != std::string::npos
+                  && flx10Mapping.find("paramId=\"deckA_pad_mode_keyshift\" status=\"0x90\" control=\"0x6F\"")
+                      != std::string::npos
+                  && flx10Mapping.find("paramId=\"deckB_pad_mode_keyshift\" status=\"0x91\" control=\"0x6F\"")
+                      != std::string::npos
+                  && flx10Mapping.find("paramId=\"deckC_pad_mode_keyshift\" status=\"0x92\" control=\"0x6F\"")
+                      != std::string::npos
+                  && flx10Mapping.find("paramId=\"deckD_pad_mode_keyshift\" status=\"0x93\" control=\"0x6F\"")
+                      != std::string::npos
+                  && flx10MidiBridge.find("sendMappedNoteLed(prefix + QStringLiteral(\"keyshift\")")
+                      != std::string::npos
+                  && flx10MidiBridge.find("mode == MidiPadMode::Sampler || mode == MidiPadMode::KeyShift")
+                      == std::string::npos
+                  && flx10MidiBridge.find("mode == MidiPadMode::Sampler && shiftHeld")
+                      == std::string::npos,
+                  "FLX10 Sampler and shifted Key Shift mode are independent MIDI commands");
+    ok &= require(flx10MidiBridge.find("if (padModeForDeck(deck) == MidiPadMode::KeyShift) {")
+                      != std::string::npos
+                  && flx10MidiBridge.find("handleKeyShiftPad(deck, deckEngine, padIndex,")
+                      != std::string::npos,
+                  "FLX10 stale Hot Cue pad packets cannot cancel an explicit Key Shift mode");
+    const std::string midiParameterDispatch = readFile(sourceRoot / "src/controllers/midi/MidiParameterDispatch.cpp");
+    ok &= require(midiParameterDispatch.find("decodeFlx10KeyShiftPadWireEvent")
+                      != std::string::npos
+                  && midiParameterDispatch.find("channel < 7 || channel > 14")
+                      != std::string::npos
+                  && midiParameterDispatch.find("note >= 0x70 && note <= 0x7f")
+                      != std::string::npos
+                  && midiParameterDispatch.find("handleKeyShiftPad(keyShiftPad.deck")
+                      != std::string::npos,
+                  "physical FLX10 Key Shift pads bypass the generic parameter-store route");
+    ok &= require(flx10Mapping.find("paramId=\"deckA_keyshift_range_down\" status=\"0x90\" control=\"0x2B\"")
+                      != std::string::npos
+                  && flx10Mapping.find("paramId=\"deckA_keyshift_range_up\" status=\"0x90\" control=\"0x33\"")
+                      != std::string::npos
+                  && flx10Mapping.find("paramId=\"deckB_keyshift_range_down\" status=\"0x91\" control=\"0x2B\"")
+                      != std::string::npos
+                  && flx10Mapping.find("paramId=\"deckB_keyshift_range_up\" status=\"0x91\" control=\"0x33\"")
+                      != std::string::npos,
+                  "FLX10 Key Shift PAGE controls use their mode-specific deck notes");
+    ok &= require(flx10Mapping.find("paramId=\"deckA_keyshift_pad1\" status=\"0x97\" control=\"0x70\"")
+                      != std::string::npos
+                  && flx10Mapping.find("paramId=\"deckA_keyshift_pad1_shift\" status=\"0x98\" control=\"0x70\"")
+                      != std::string::npos
+                  && flx10Mapping.find("paramId=\"deckB_keyshift_pad1\" status=\"0x99\" control=\"0x70\"")
+                      != std::string::npos
+                  && flx10Mapping.find("paramId=\"deckB_keyshift_pad1_shift\" status=\"0x9A\" control=\"0x70\"")
+                      != std::string::npos
+                  && flx10Mapping.find("paramId=\"deckC_keyshift_pad1\" status=\"0x9B\" control=\"0x70\"")
+                      != std::string::npos
+                  && flx10Mapping.find("paramId=\"deckC_keyshift_pad1_shift\" status=\"0x9C\" control=\"0x70\"")
+                      != std::string::npos
+                  && flx10Mapping.find("paramId=\"deckD_keyshift_pad1\" status=\"0x9D\" control=\"0x70\"")
+                      != std::string::npos
+                  && flx10Mapping.find("paramId=\"deckD_keyshift_pad1_shift\" status=\"0x9E\" control=\"0x70\"")
+                      != std::string::npos
+                  && flx10MidiBridge.find("handleKeyShiftPad(deck, deckEngine, padIndex, value >= 0.5f,\n                                  shiftedKeyPad)")
+                      != std::string::npos,
+                  "FLX10 Key Shift pads preserve the hardware's normal/shift channel distinction");
+    ok &= require(flx10Mapping.find("paramId=\"deckA_keylock\" status=\"0x90\" control=\"0x4A\"")
+                      != std::string::npos
+                  && flx10Mapping.find("paramId=\"deckB_keylock\" status=\"0x91\" control=\"0x4A\"")
+                      != std::string::npos,
+                  "FLX10 Key Lock uses MIX POINT LINK rather than the Key Shift mode command");
     ok &= require(flx10Mapping.find("paramId=\"deckA_tempo\" status=\"0xB0\" control=\"0x00\" type=\"fader\"/")
                       != std::string::npos
                   && flx10Mapping.find("paramId=\"deckA_tempo\" status=\"0xB0\" control=\"0x20\" type=\"fader\"/")

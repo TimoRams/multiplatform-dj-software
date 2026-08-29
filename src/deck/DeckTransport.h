@@ -82,6 +82,7 @@ public:
     void setPlaybackReadPositionSamples(std::int64_t samplePosition) noexcept;
     void setAudioReverseOverride(bool enabled) noexcept;
     void setKeylockEnabled(bool enabled) noexcept;
+    void setKeySemitoneOffset(double semitones) noexcept;
     void startAudio() noexcept;
     void startAudioPreservingScratchPosition() noexcept;
     void stopAudio() noexcept;

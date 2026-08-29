@@ -70,6 +70,12 @@ void TimeStretchProcessor::setPitchLockEnabled(bool enabled) noexcept
     m_pitchLockEnabled.store(enabled, std::memory_order_release);
 }
 
+void TimeStretchProcessor::setKeySemitoneOffset(double semitones) noexcept
+{
+    m_keySemitoneOffset.store(std::isfinite(semitones) ? semitones : 0.0,
+                               std::memory_order_release);
+}
+
 void TimeStretchProcessor::setInputPlaybackActive(bool active) noexcept
 {
     if (m_inputPlaybackActive.exchange(active, std::memory_order_acq_rel) != active)
@@ -438,6 +444,9 @@ bool TimeStretchProcessor::serviceSeedRequest() noexcept
         if (p.signalsmith) {
             const auto started = std::chrono::steady_clock::now();
             if (p.fifo) p.fifo->reset();
+            // Seed with the pitch the pipeline will actually render at, not
+            // whatever was live when it was last built.
+            syncPipelinePitchScale(p);
             p.signalsmith->outputSeek(m_seedSnapshot.getArrayOfReadPointers(),
                                       m_seedSnapshotLength);
             recordSeedDuration(started);
@@ -454,8 +463,12 @@ void TimeStretchProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
     activatePreparedPipelineAtBlockBoundary();
 
     const int active = m_activeSlot.load(std::memory_order_acquire);
+    // A manual semitone offset (Key Shift) needs the stretcher active even
+    // when the keylock toggle itself is off, since it is the only path that
+    // can move pitch independently of tempo.
+    const bool keySemitoneActive = std::abs(m_keySemitoneOffset.load(std::memory_order_acquire)) > 1.0e-9;
     const bool keylockRequested = active >= 0
-        && m_pitchLockEnabled.load(std::memory_order_acquire)
+        && (m_pitchLockEnabled.load(std::memory_order_acquire) || keySemitoneActive)
         && m_inputPlaybackActive.load(std::memory_order_acquire)
         && !m_scratchBypass.load(std::memory_order_acquire);
 
@@ -567,20 +580,30 @@ void TimeStretchProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
     appendOutputHistory(info);
 }
 
-void TimeStretchProcessor::processPipeline(Pipeline& p, const juce::AudioSourceChannelInfo& info) noexcept
+void TimeStretchProcessor::syncPipelinePitchScale(Pipeline& p) noexcept
 {
     const double effectiveRate = m_targetTempoRatio.load(std::memory_order_acquire);
-    const double pitchScale = p.config.keylockEnabled ? 1.0 / effectiveRate : 1.0;
-    if (std::abs(p.appliedPitchScale - pitchScale) > 1.0e-7) {
-        if (p.rubberBand)
-            p.rubberBand->setPitchScale(pitchScale);
-        else if (p.signalsmith)
-            // The limit has to be repeated on every update: passing a factor on
-            // its own resets the pitch map back to transposing the full band.
-            p.signalsmith->setTransposeFactor(static_cast<float>(pitchScale),
-                                              static_cast<float>(p.tonalityLimit));
-        p.appliedPitchScale = pitchScale;
-    }
+    const double semitones = m_keySemitoneOffset.load(std::memory_order_acquire);
+    const double semitoneRatio = std::pow(2.0, semitones / 12.0);
+    // The keylock correction (1/rate) only applies while the toggle is on; a
+    // Key Shift offset stacks on top of whatever pitch is otherwise playing.
+    const bool pitchLocked = m_pitchLockEnabled.load(std::memory_order_acquire);
+    const double pitchScale = (pitchLocked ? 1.0 / effectiveRate : 1.0) * semitoneRatio;
+    if (std::abs(p.appliedPitchScale - pitchScale) <= 1.0e-7)
+        return;
+    if (p.rubberBand)
+        p.rubberBand->setPitchScale(pitchScale);
+    else if (p.signalsmith)
+        // The limit has to be repeated on every update: passing a factor on
+        // its own resets the pitch map back to transposing the full band.
+        p.signalsmith->setTransposeFactor(static_cast<float>(pitchScale),
+                                          static_cast<float>(p.tonalityLimit));
+    p.appliedPitchScale = pitchScale;
+}
+
+void TimeStretchProcessor::processPipeline(Pipeline& p, const juce::AudioSourceChannelInfo& info) noexcept
+{
+    syncPipelinePitchScale(p);
     if (p.signalsmith) {
         processSignalsmithPipeline(p, info);
         return;
@@ -712,6 +735,12 @@ void TimeStretchProcessor::readOutputHistory(juce::AudioBuffer<float>& destinati
 void TimeStretchProcessor::seedPipelineFromHistory(Pipeline& p) noexcept
 {
     if (!p.signalsmith || !p.config.keylockEnabled) return;
+    // Seed with the pitch this pipeline will actually render at. Without this,
+    // an inline seed taken with a tempo offset dialed in bakes pre-roll phase
+    // state for the wrong pitch, and the transpose update a few lines later in
+    // processPipeline() invalidates it immediately — audible as a digital
+    // artifact right at the resume point, not a plain amplitude click.
+    syncPipelinePitchScale(p);
     // A stretcher that has just been built outputs its own latency worth of
     // silence before the first real sample arrives — at this window that is
     // over 30 ms of dropout every time keylock is switched on, which is exactly

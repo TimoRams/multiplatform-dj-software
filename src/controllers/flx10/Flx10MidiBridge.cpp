@@ -116,22 +116,19 @@ QString hexByte(int value)
     return QStringLiteral("%1").arg(value & 0xff, 2, 16, QLatin1Char('0')).toUpper();
 }
 
-// Splits "deck<A|B><stem><n>" style parameter ids. Returns false unless the
+// Splits "deck<A|B|C|D><stem><n>" style parameter ids. Returns false unless the
 // deck prefix matches and the trailing number is a valid 1-based pad index.
 bool splitDeckIndexParam(const QString& paramId, const QString& stem,
                          QChar& deck, QString& suffix)
 {
-    const QString deckA = QStringLiteral("deckA_") + stem;
-    const QString deckB = QStringLiteral("deckB_") + stem;
-    if (paramId.startsWith(deckA)) {
-        deck = QLatin1Char('A');
-        suffix = paramId.mid(deckA.size());
-        return true;
-    }
-    if (paramId.startsWith(deckB)) {
-        deck = QLatin1Char('B');
-        suffix = paramId.mid(deckB.size());
-        return true;
+    for (const QChar candidate : { QLatin1Char('A'), QLatin1Char('B'),
+                                   QLatin1Char('C'), QLatin1Char('D') }) {
+        const QString prefix = QStringLiteral("deck%1_").arg(candidate) + stem;
+        if (paramId.startsWith(prefix)) {
+            deck = candidate;
+            suffix = paramId.mid(prefix.size());
+            return true;
+        }
     }
     return false;
 }
@@ -169,6 +166,32 @@ bool parseDirectPadParam(const QString& paramId, const QString& stem, QChar& dec
     return parsePadIndexParam(paramId, stem, deck, index, nullptr);
 }
 
+bool parseKeyShiftPadParam(const QString& paramId, QChar& deck, int& index, bool& shifted)
+{
+    QString suffix;
+    if (!splitDeckIndexParam(paramId, QStringLiteral("keyshift_pad"), deck, suffix))
+        return false;
+
+    shifted = suffix.endsWith(QStringLiteral("_shift"));
+    if (shifted)
+        suffix.chop(QStringLiteral("_shift").size());
+    if (suffix.endsWith(QStringLiteral("_page2")))
+        suffix.chop(QStringLiteral("_page2").size());
+
+    bool ok = false;
+    index = suffix.toInt(&ok) - 1;
+    return ok && index >= 0 && index < 8;
+}
+
+// Key Shift's three range pages, one fixed absolute semitone offset per pad.
+// A pad press sets an absolute offset (never adds to the current one); the
+// pad reading 0 is the "root" pad for that range and moves with it.
+static constexpr int kFlx10KeyShiftTable[3][8] = {
+    { -3, -2, -1,  0, -7, -6, -5, -4 }, // Down
+    {  0,  1,  2,  3, -4, -3, -2, -1 }, // Middle
+    {  4,  5,  6,  7,  0,  1,  2,  3 }, // Up
+};
+
 bool parsePadModeParam(const QString& paramId, QChar& deck, MidiPadMode& mode)
 {
     QString suffix;
@@ -179,13 +202,19 @@ bool parsePadModeParam(const QString& paramId, QChar& deck, MidiPadMode& mode)
     if (suffix == QStringLiteral("padfx"))    { mode = MidiPadMode::PadFx;    return true; }
     if (suffix == QStringLiteral("beatjump")) { mode = MidiPadMode::BeatJump; return true; }
     if (suffix == QStringLiteral("sampler"))  { mode = MidiPadMode::Sampler;  return true; }
+    if (suffix == QStringLiteral("keyshift")) { mode = MidiPadMode::KeyShift; return true; }
     return false;
 }
 
 bool parseDeckButtonParam(const QString& paramId, const QString& suffix, QChar& deck)
 {
-    if (paramId == QStringLiteral("deckA_") + suffix) { deck = QLatin1Char('A'); return true; }
-    if (paramId == QStringLiteral("deckB_") + suffix) { deck = QLatin1Char('B'); return true; }
+    for (const QChar candidate : { QLatin1Char('A'), QLatin1Char('B'),
+                                   QLatin1Char('C'), QLatin1Char('D') }) {
+        if (paramId == QStringLiteral("deck%1_").arg(candidate) + suffix) {
+            deck = candidate;
+            return true;
+        }
+    }
     return false;
 }
 
@@ -487,7 +516,7 @@ int MidiControllerManager::hotCueStatusForDeck(int deck) const
 
 int MidiControllerManager::hotCueStatusForDeck(QChar deck) const
 {
-    return hotCueStatusForDeck(deck == QLatin1Char('A') ? 1 : 2);
+    return hotCueStatusForDeck(std::clamp(deck.toUpper().toLatin1() - 'A' + 1, 1, 4));
 }
 
 bool MidiControllerManager::sendMidiShort(int statusNo, int controlNo, int value, const QString& messageType)
@@ -776,14 +805,46 @@ void MidiControllerManager::refreshTransportAndLoopLeds(QChar deck, DjEngine* en
 
 void MidiControllerManager::refreshPadModeLeds(QChar deck)
 {
-    const QString prefix = deck == QLatin1Char('A')
-        ? QStringLiteral("deckA_pad_mode_")
-        : QStringLiteral("deckB_pad_mode_");
+    const QString prefix = QStringLiteral("deck%1_pad_mode_").arg(deck.toUpper());
     const MidiPadMode mode = padModeForDeck(deck);
     sendMappedNoteLed(prefix + QStringLiteral("hotcue"), mode == MidiPadMode::HotCue);
     sendMappedNoteLed(prefix + QStringLiteral("padfx"), mode == MidiPadMode::PadFx);
     sendMappedNoteLed(prefix + QStringLiteral("beatjump"), mode == MidiPadMode::BeatJump);
+    // 0x22 and 0x6f are independent FLX10 mode commands even though they share
+    // one physical button. Sending 0x22 here would put the controller back into
+    // its normal Sampler bank, so only the dedicated 0x6f Key Shift command may
+    // be active in the shifted mode.
     sendMappedNoteLed(prefix + QStringLiteral("sampler"), mode == MidiPadMode::Sampler);
+    sendMappedNoteLed(prefix + QStringLiteral("keyshift"),
+                      mode == MidiPadMode::KeyShift && m_keyShiftModeBlinkOn);
+}
+
+void MidiControllerManager::updateKeyShiftModeBlink(double monotonicSeconds)
+{
+    const bool anyKeyShift = padModeForDeck(QLatin1Char('A')) == MidiPadMode::KeyShift
+        || padModeForDeck(QLatin1Char('B')) == MidiPadMode::KeyShift
+        || padModeForDeck(QLatin1Char('C')) == MidiPadMode::KeyShift
+        || padModeForDeck(QLatin1Char('D')) == MidiPadMode::KeyShift;
+    if (!anyKeyShift) {
+        m_keyShiftModeBlinkOn = true;
+        m_nextKeyShiftModeBlinkSeconds = 0.0;
+        return;
+    }
+
+    if (m_nextKeyShiftModeBlinkSeconds <= 0.0) {
+        m_nextKeyShiftModeBlinkSeconds = monotonicSeconds + 0.4;
+        return;
+    }
+    if (monotonicSeconds < m_nextKeyShiftModeBlinkSeconds)
+        return;
+
+    m_keyShiftModeBlinkOn = !m_keyShiftModeBlinkOn;
+    m_nextKeyShiftModeBlinkSeconds = monotonicSeconds + 0.4;
+    for (const QChar deck : { QLatin1Char('A'), QLatin1Char('B'),
+                              QLatin1Char('C'), QLatin1Char('D') }) {
+        if (padModeForDeck(deck) == MidiPadMode::KeyShift)
+            refreshPadModeLeds(deck);
+    }
 }
 
 void MidiControllerManager::refreshHotCueLeds(QChar deck, DjEngine* engine)
@@ -792,7 +853,8 @@ void MidiControllerManager::refreshHotCueLeds(QChar deck, DjEngine* engine)
         return;
 
     if (shouldUseFlx10Feedback()) {
-        m_midiFeedback.refreshHotcuePads(deck == QLatin1Char('A') ? 1 : 2);
+        m_midiFeedback.refreshHotcuePads(
+            std::clamp(deck.toUpper().toLatin1() - 'A' + 1, 1, 4));
         return;
     }
 
@@ -829,6 +891,20 @@ void MidiControllerManager::refreshPerformancePadLeds(QChar deck, DjEngine* engi
         sendMidiNoteLed(status, 0x10 + i, kPadFxColors[i]);
         sendMidiNoteLed(status, 0x20 + i, kBeatJumpColors[i]);
 
+        // Key Shift has dedicated PAGE1/PAGE2 pad-note banks (0x70..0x7F),
+        // separate from Sampler's 0x30 bank. Keep both hardware pages in sync
+        // and highlight the pad matching the engine's currently selected
+        // absolute offset. The root pad is not special once another pitch has
+        // been selected.
+        const bool keyShift = padModeForDeck(deck) == MidiPadMode::KeyShift;
+        const int range = static_cast<int>(keyShiftRangeForDeck(deck));
+        const bool selected = keyShift && engine
+            && std::abs(engine->keySemitoneOffset()
+                        - static_cast<double>(kFlx10KeyShiftTable[range][i])) < 0.01;
+        const int keyShiftLed = selected ? 0x7F : 0;
+        sendMidiNoteLed(status, 0x70 + i, keyShiftLed);
+        sendMidiNoteLed(status, 0x78 + i, keyShiftLed);
+
         const CuePadInfo sample = cuePadInfo(engine, i);
         sendMidiNoteLed(status, 0x30 + i,
                         sample.set ? hotCueLedValueForColor(sample.color) : 0);
@@ -838,7 +914,8 @@ void MidiControllerManager::refreshPerformancePadLeds(QChar deck, DjEngine* engi
 void MidiControllerManager::refreshDeckLeds(QChar deck, DjEngine* engine)
 {
     if (shouldUseFlx10Feedback()) {
-        m_midiFeedback.refreshDeckLeds(deck == QLatin1Char('A') ? 1 : 2);
+        m_midiFeedback.refreshDeckLeds(
+            std::clamp(deck.toUpper().toLatin1() - 'A' + 1, 1, 4));
         refreshPadModeLeds(deck);
         refreshPerformancePadLeds(deck, engine);
         return;
@@ -861,35 +938,104 @@ void MidiControllerManager::refreshMixerLeds()
 
 void MidiControllerManager::refreshAllDeckLeds()
 {
-    if (shouldUseFlx10Feedback()) {
-        m_midiFeedback.refreshAll();
-        refreshFxLeds();
-        refreshMixerLeds();
-        return;
-    }
+    // Route every deck through the same wrapper so FLX10-specific pad-mode
+    // and Key Shift banks are refreshed alongside the generic deck/hotcue
+    // feedback. Calling MidiFeedbackController::refreshAll() alone would omit
+    // those semantic mode LEDs.
     refreshDeckLeds(QLatin1Char('A'), m_deckA);
     refreshDeckLeds(QLatin1Char('B'), m_deckB);
+    refreshDeckLeds(QLatin1Char('C'), m_deckC);
+    refreshDeckLeds(QLatin1Char('D'), m_deckD);
     refreshFxLeds();
     refreshMixerLeds();
 }
 
 MidiPadMode MidiControllerManager::padModeForDeck(QChar deck) const
 {
-    return deck == QLatin1Char('A') ? m_deckAPadMode : m_deckBPadMode;
+    switch (deck.toUpper().toLatin1()) {
+    case 'A': return m_deckAPadMode;
+    case 'B': return m_deckBPadMode;
+    case 'C': return m_deckCPadMode;
+    case 'D': return m_deckDPadMode;
+    default: return MidiPadMode::HotCue;
+    }
+}
+
+DjEngine* MidiControllerManager::engineForDeck(QChar deck) const noexcept
+{
+    switch (deck.toUpper().toLatin1()) {
+    case 'A': return m_deckA;
+    case 'B': return m_deckB;
+    case 'C': return m_deckC;
+    case 'D': return m_deckD;
+    default: return nullptr;
+    }
 }
 
 void MidiControllerManager::setPadModeForDeck(QChar deck, MidiPadMode mode)
 {
-    MidiPadMode& current = deck == QLatin1Char('A') ? m_deckAPadMode : m_deckBPadMode;
-    const bool changed = current != mode;
-    current = mode;
+    MidiPadMode* current = nullptr;
+    switch (deck.toUpper().toLatin1()) {
+    case 'A': current = &m_deckAPadMode; break;
+    case 'B': current = &m_deckBPadMode; break;
+    case 'C': current = &m_deckCPadMode; break;
+    case 'D': current = &m_deckDPadMode; break;
+    default: return;
+    }
+    const bool changed = *current != mode;
+    *current = mode;
+    if (changed && mode == MidiPadMode::KeyShift) {
+        // Start each selection visibly lit; the control-clock callback takes
+        // over the alternating phase after the first 400 ms.
+        m_keyShiftModeBlinkOn = true;
+        m_nextKeyShiftModeBlinkSeconds = 0.0;
+    }
     if (changed && deck == QLatin1Char('A'))
         emit deckAPadModeChanged();
-    else if (changed)
+    else if (changed && deck == QLatin1Char('B'))
         emit deckBPadModeChanged();
 
     refreshPadModeLeds(deck);
-    refreshPerformancePadLeds(deck, deck == QLatin1Char('A') ? m_deckA : m_deckB);
+    refreshPerformancePadLeds(deck, engineForDeck(deck));
+}
+
+Flx10KeyShiftRange MidiControllerManager::keyShiftRangeForDeck(QChar deck) const
+{
+    switch (deck.toUpper().toLatin1()) {
+    case 'A': return m_deckAKeyShiftRange;
+    case 'B': return m_deckBKeyShiftRange;
+    case 'C': return m_deckCKeyShiftRange;
+    case 'D': return m_deckDKeyShiftRange;
+    default: return Flx10KeyShiftRange::Middle;
+    }
+}
+
+void MidiControllerManager::setKeyShiftRangeForDeck(QChar deck, Flx10KeyShiftRange range)
+{
+    Flx10KeyShiftRange* current = nullptr;
+    switch (deck.toUpper().toLatin1()) {
+    case 'A': current = &m_deckAKeyShiftRange; break;
+    case 'B': current = &m_deckBKeyShiftRange; break;
+    case 'C': current = &m_deckCKeyShiftRange; break;
+    case 'D': current = &m_deckDKeyShiftRange; break;
+    default: return;
+    }
+    if (*current == range)
+        return;
+    *current = range;
+    if (deck == QLatin1Char('A'))
+        emit deckAKeyShiftRangeChanged();
+    else if (deck == QLatin1Char('B'))
+        emit deckBKeyShiftRangeChanged();
+    refreshPerformancePadLeds(deck, engineForDeck(deck));
+}
+
+void MidiControllerManager::stepKeyShiftRange(QChar deck, int direction)
+{
+    const auto current = static_cast<int>(keyShiftRangeForDeck(deck));
+    const auto next = static_cast<Flx10KeyShiftRange>(std::clamp(current + direction, 0, 2));
+    if (next != keyShiftRangeForDeck(deck))
+        setKeyShiftRangeForDeck(deck, next);
 }
 
 void MidiControllerManager::selectPerformancePadMode(const QString& deckId, int mode)
@@ -1197,7 +1343,9 @@ void MidiControllerManager::stopPadFxToggle(DjEngine* engine, int padIndex)
 
 void MidiControllerManager::clearPadFxState(QChar deck, DjEngine* engine)
 {
-    if (!engine)
+    // Pad FX state is currently exposed by the A/B touch surface. C/D Key
+    // Shift routing is independent and must never alias those A/B latches.
+    if (!engine || (deck != QLatin1Char('A') && deck != QLatin1Char('B')))
         return;
 
     int& momentary = deck == QLatin1Char('A') ? m_deckAPadFxMomentary : m_deckBPadFxMomentary;
@@ -1216,6 +1364,9 @@ void MidiControllerManager::clearPadFxState(QChar deck, DjEngine* engine)
 
 void MidiControllerManager::releaseHeldHotCue(QChar deck, DjEngine* engine)
 {
+    if (deck != QLatin1Char('A') && deck != QLatin1Char('B'))
+        return;
+
     HotCueHoldState& hold = deck == QLatin1Char('A')
         ? m_deckAHotCueHold
         : m_deckBHotCueHold;
@@ -1282,6 +1433,14 @@ void MidiControllerManager::handlePerformancePad(QChar deck,
 {
     if (!engine || padIndex < 0 || padIndex >= 8)
         return;
+
+    if (mode == MidiPadMode::KeyShift) {
+        // Touch input shares the same semantic route as an unshifted physical
+        // Key Shift pad; secondary actions remain exclusive to shift-pad MIDI
+        // channels and cannot be synthesized accidentally by the UI.
+        handleKeyShiftPad(deck, engine, padIndex, pressed, false);
+        return;
+    }
 
     if (mode == MidiPadMode::HotCue) {
         if (clearRequest && pressed) {
@@ -1360,6 +1519,49 @@ void MidiControllerManager::handlePerformancePad(QChar deck,
     }
     toggle = padIndex;
     emit performancePadStateChanged(performanceDeckId(deck));
+}
+
+void MidiControllerManager::handleKeyShiftPad(QChar deck, DjEngine* engine, int padIndex,
+                                              bool pressed, bool shifted)
+{
+    if (!engine || padIndex < 0 || padIndex >= 8 || !pressed)
+        return;
+
+    // Shifted performance pads arrive on their own MIDI channel (8/10 for
+    // normal pads, 9/11 for shifted pads). Use that normalized fact instead
+    // of racing the independent deck SHIFT note against the pad event.
+    if (shifted) {
+        switch (padIndex) {
+        case 0: { // Key Sync: match the other deck's absolute offset.
+            DjEngine* other = nullptr;
+            switch (deck.toUpper().toLatin1()) {
+            case 'A': other = m_deckB; break;
+            case 'B': other = m_deckA; break;
+            case 'C': other = m_deckD; break;
+            case 'D': other = m_deckC; break;
+            default: break;
+            }
+            if (other)
+                engine->setKeySemitoneOffset(other->keySemitoneOffset());
+            break;
+        }
+        case 1: // Key Reset
+            engine->setKeySemitoneOffset(0.0);
+            break;
+        case 6: // Range down, clamped at Down.
+            stepKeyShiftRange(deck, -1);
+            break;
+        case 7: // Range up, clamped at Up.
+            stepKeyShiftRange(deck, 1);
+            break;
+        default:
+            break;
+        }
+        return;
+    }
+
+    const int range = static_cast<int>(keyShiftRangeForDeck(deck));
+    engine->setKeySemitoneOffset(static_cast<double>(kFlx10KeyShiftTable[range][padIndex]));
 }
 
 bool MidiControllerManager::dispatchFlx10JogAction(const QString& paramId,
@@ -1497,8 +1699,18 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
     m_deckBSlipBeforeReverse = false;
     const bool deckAPadModeWasChanged = m_deckAPadMode != MidiPadMode::HotCue;
     const bool deckBPadModeWasChanged = m_deckBPadMode != MidiPadMode::HotCue;
+    const bool deckAKeyShiftRangeWasChanged =
+        m_deckAKeyShiftRange != Flx10KeyShiftRange::Middle;
+    const bool deckBKeyShiftRangeWasChanged =
+        m_deckBKeyShiftRange != Flx10KeyShiftRange::Middle;
     m_deckAPadMode = MidiPadMode::HotCue;
     m_deckBPadMode = MidiPadMode::HotCue;
+    m_deckCPadMode = MidiPadMode::HotCue;
+    m_deckDPadMode = MidiPadMode::HotCue;
+    m_deckAKeyShiftRange = Flx10KeyShiftRange::Middle;
+    m_deckBKeyShiftRange = Flx10KeyShiftRange::Middle;
+    m_deckCKeyShiftRange = Flx10KeyShiftRange::Middle;
+    m_deckDKeyShiftRange = Flx10KeyShiftRange::Middle;
     m_deckAPadFxMomentary = -1;
     m_deckBPadFxMomentary = -1;
     m_deckAPadFxToggle = -1;
@@ -1515,6 +1727,10 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
         emit deckAPadModeChanged();
     if (deckBPadModeWasChanged)
         emit deckBPadModeChanged();
+    if (deckAKeyShiftRangeWasChanged)
+        emit deckAKeyShiftRangeChanged();
+    if (deckBKeyShiftRangeWasChanged)
+        emit deckBKeyShiftRangeChanged();
 
     auto wireDeckLeds = [this](QChar deck, DjEngine* engine)
     {
@@ -1522,7 +1738,14 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
             return;
 
         QObject::connect(engine, &DjEngine::trackLoaded,
-                         this, [this] { refreshAllDeckLeds(); });
+                         this, [this, deck] {
+                             // A freshly loaded track starts at its own root
+                             // key: Key Shift's range page resets to Middle,
+                             // even though switching pad modes and back does
+                             // not. The offset itself is reset by DjEngine.
+                             setKeyShiftRangeForDeck(deck, Flx10KeyShiftRange::Middle);
+                             refreshAllDeckLeds();
+                         });
         QObject::connect(engine, &DjEngine::trackMetadataChanged,
                          this, [this] { refreshAllDeckLeds(); });
         QObject::connect(engine, &DjEngine::playingChanged,
@@ -1541,6 +1764,8 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
                          this, [this, deck, engine] { refreshTransportAndLoopLeds(deck, engine); });
         QObject::connect(engine, &DjEngine::keylockChanged,
                          this, [this, deck, engine] { refreshTransportAndLoopLeds(deck, engine); });
+        QObject::connect(engine, &DjEngine::keySemitoneOffsetChanged,
+                         this, [this, deck, engine] { refreshPerformancePadLeds(deck, engine); });
         QObject::connect(engine, &DjEngine::quantizeEnabledChanged,
                          this, [this, deck, engine] { refreshTransportAndLoopLeds(deck, engine); });
         QObject::connect(engine, &DjEngine::slipChanged,
@@ -1554,17 +1779,8 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
     };
     wireDeckLeds(QLatin1Char('A'), m_deckA);
     wireDeckLeds(QLatin1Char('B'), m_deckB);
-    // Channels 3/4 currently expose their mixer strip rather than full deck
-    // performance controls. Their PFL state still owns a real FLX10 CUE LED.
-    auto wireMixerCueLed = [this](int deck, DjEngine* engine)
-    {
-        if (!engine)
-            return;
-        QObject::connect(engine, &DjEngine::cueEnabledChanged,
-                         this, [this, deck] { m_midiFeedback.refreshDeckLeds(deck); });
-    };
-    wireMixerCueLed(3, m_deckC);
-    wireMixerCueLed(4, m_deckD);
+    wireDeckLeds(QLatin1Char('C'), m_deckC);
+    wireDeckLeds(QLatin1Char('D'), m_deckD);
     // MASTER CUE lives on deck A's engine and can be switched from the UI too.
     if (m_deckA)
         QObject::connect(m_deckA, &DjEngine::masterCueEnabledChanged,
@@ -1585,10 +1801,18 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
     {
         DjEngine* const a = m_deckA;
         DjEngine* const b = m_deckB;
+        DjEngine* const c = m_deckC;
+        DjEngine* const d = m_deckD;
 
-        auto engineForDeck = [a, b](QChar deck) -> DjEngine*
+        auto engineForDeck = [a, b, c, d](QChar deck) -> DjEngine*
         {
-            return deck == QLatin1Char('A') ? a : b;
+            switch (deck.toUpper().toLatin1()) {
+            case 'A': return a;
+            case 'B': return b;
+            case 'C': return c;
+            case 'D': return d;
+            default: return nullptr;
+            }
         };
 
         if (id == QStringLiteral("library_view_toggle")) {
@@ -1723,7 +1947,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
             if (!parseHotCueParam(id, deck, hotCueIndex, clear))
                 return;
 
-            DjEngine* const deckEngine = deck == QLatin1Char('A') ? a : b;
+            DjEngine* const deckEngine = engineForDeck(deck);
             if (!deckEngine)
                 return;
 
@@ -1742,7 +1966,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
                 if (value < 0.5f)
                     return;
 
-                DjEngine* const deckEngine = deck == QLatin1Char('A') ? a : b;
+                DjEngine* const deckEngine = engineForDeck(deck);
                 if (padModeForDeck(deck) == MidiPadMode::PadFx && mode != MidiPadMode::PadFx)
                     clearPadFxState(deck, deckEngine);
                 if ((padModeForDeck(deck) == MidiPadMode::HotCue
@@ -1754,8 +1978,40 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
                 return;
             }
 
+            if (parseDeckButtonParam(id, QStringLiteral("keyshift_range_down"), deck)
+                || parseDeckButtonParam(id, QStringLiteral("keyshift_range_up"), deck)) {
+                if (value >= 0.5f && padModeForDeck(deck) == MidiPadMode::KeyShift)
+                    stepKeyShiftRange(deck, id.endsWith(QStringLiteral("_up")) ? 1 : -1);
+                return;
+            }
+
+            bool shiftedKeyPad = false;
+            if (parseKeyShiftPadParam(id, deck, padIndex, shiftedKeyPad)) {
+                DjEngine* const deckEngine = engineForDeck(deck);
+                if (value >= 0.5f && padModeForDeck(deck) != MidiPadMode::KeyShift) {
+                    if (padModeForDeck(deck) == MidiPadMode::PadFx)
+                        clearPadFxState(deck, deckEngine);
+                    releaseHeldHotCue(deck, deckEngine);
+                    setPadModeForDeck(deck, MidiPadMode::KeyShift);
+                }
+                handleKeyShiftPad(deck, deckEngine, padIndex, value >= 0.5f,
+                                  shiftedKeyPad);
+                return;
+            }
+
             if (parsePerformancePadParam(id, deck, padIndex, clearPad)) {
-                DjEngine* const deckEngine = deck == QLatin1Char('A') ? a : b;
+                DjEngine* const deckEngine = engineForDeck(deck);
+                // Some FLX10 firmware/host combinations keep reporting the
+                // physical pad through the Hot Cue bank briefly after 0x6f.
+                // The explicit mode-select command remains authoritative. This
+                // also stops that first stale pad packet from switching the app
+                // straight back to Hot Cue. The shifted pad channel is already
+                // normalized as clearPad by this legacy mapping.
+                if (padModeForDeck(deck) == MidiPadMode::KeyShift) {
+                    handleKeyShiftPad(deck, deckEngine, padIndex,
+                                      value >= 0.5f, clearPad);
+                    return;
+                }
                 if (value >= 0.5f && padModeForDeck(deck) != MidiPadMode::HotCue) {
                     if (padModeForDeck(deck) == MidiPadMode::PadFx)
                         clearPadFxState(deck, deckEngine);
@@ -1768,7 +2024,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
             }
 
             if (parseDirectPadParam(id, QStringLiteral("padfx_pad"), deck, padIndex)) {
-                DjEngine* const deckEngine = deck == QLatin1Char('A') ? a : b;
+                DjEngine* const deckEngine = engineForDeck(deck);
                 if (value >= 0.5f && padModeForDeck(deck) != MidiPadMode::PadFx) {
                     releaseHeldHotCue(deck, deckEngine);
                     setPadModeForDeck(deck, MidiPadMode::PadFx);
@@ -1779,7 +2035,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
             }
 
             if (parseDirectPadParam(id, QStringLiteral("beatjump_pad"), deck, padIndex)) {
-                DjEngine* const deckEngine = deck == QLatin1Char('A') ? a : b;
+                DjEngine* const deckEngine = engineForDeck(deck);
                 if (value >= 0.5f && padModeForDeck(deck) != MidiPadMode::BeatJump) {
                     if (padModeForDeck(deck) == MidiPadMode::PadFx)
                         clearPadFxState(deck, deckEngine);
@@ -1792,7 +2048,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
             }
 
             if (parseDirectPadParam(id, QStringLiteral("sampler_pad"), deck, padIndex)) {
-                DjEngine* const deckEngine = deck == QLatin1Char('A') ? a : b;
+                DjEngine* const deckEngine = engineForDeck(deck);
                 if (value >= 0.5f && padModeForDeck(deck) != MidiPadMode::Sampler) {
                     if (padModeForDeck(deck) == MidiPadMode::PadFx)
                         clearPadFxState(deck, deckEngine);

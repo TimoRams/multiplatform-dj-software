@@ -108,6 +108,11 @@ public:
     [[nodiscard]] const engine::scratch::VirtualTurntable& platter() const noexcept { return m_platter; }
 
     void armScalerCrossfade() noexcept { m_crossfadeRemaining.store(kCrossfadeSamples, std::memory_order_relaxed); }
+    // Called from the same audio callback's command consumption, just before a
+    // mid-playback position jump (hot cue, loop-out, quantized cue) is applied
+    // to the transport, so the very next rendered block blends away the
+    // resulting waveform discontinuity instead of clicking.
+    void armNormalSeekDeclick() noexcept { m_normalSeekTailPending = true; }
 
     void setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle);
     void setRealtimeScratchInput(
@@ -141,6 +146,8 @@ private:
     void applyScratchExitTail(const juce::AudioSourceChannelInfo& info) noexcept;
     void captureNormalTail(const juce::AudioSourceChannelInfo& info) noexcept;
     void applyNormalStopTail(const juce::AudioSourceChannelInfo& info) noexcept;
+    void applyNormalStartFade(const juce::AudioSourceChannelInfo& info) noexcept;
+    void applyNormalSeekDeclick(const juce::AudioSourceChannelInfo& info) noexcept;
     void publishScratchCursor(double readPositionSamples, double trackSampleRate) noexcept;
     void publishReleaseSnapshot(std::uint64_t generation,
                                 ScratchReleasePhase phase,
@@ -271,6 +278,7 @@ private:
     std::array<float, 2> m_lastNormalOutput { 0.0f, 0.0f };
     bool m_lastNormalOutputValid = false;
     bool m_normalPlaybackWasEnabled = false;
+    bool m_normalSeekTailPending = false;
 
     std::atomic<double>* m_audioPlayheadSink = nullptr;
 };

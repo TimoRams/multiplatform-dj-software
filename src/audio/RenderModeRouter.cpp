@@ -960,6 +960,45 @@ void RenderModeRouter::applyScratchExitTail(const juce::AudioSourceChannelInfo& 
     }
 }
 
+void RenderModeRouter::applyNormalStartFade(const juce::AudioSourceChannelInfo& info) noexcept
+{
+    if (!info.buffer || info.numSamples <= 0)
+        return;
+
+    constexpr int startFadeSamples = 128;
+    const int channels = std::min(2, info.buffer->getNumChannels());
+    const int count = std::min(startFadeSamples, info.numSamples);
+    for (int ch = 0; ch < channels; ++ch) {
+        float* output = info.buffer->getWritePointer(ch, info.startSample);
+        for (int i = 0; i < count; ++i) {
+            const float gain = static_cast<float>(i + 1) / static_cast<float>(count);
+            output[i] *= gain;
+        }
+    }
+}
+
+void RenderModeRouter::applyNormalSeekDeclick(const juce::AudioSourceChannelInfo& info) noexcept
+{
+    if (!m_lastNormalOutputValid || !info.buffer || info.numSamples <= 0)
+        return;
+
+    const int start = info.startSample;
+    const int n = info.numSamples;
+    if (start < 0 || start + n > info.buffer->getNumSamples())
+        return;
+
+    const int channels = std::min(2, info.buffer->getNumChannels());
+    const int fadeSamples = std::min(kCrossfadeSamples, n);
+    for (int ch = 0; ch < channels; ++ch) {
+        float* output = info.buffer->getWritePointer(ch, start);
+        const float tail = m_lastNormalOutput[static_cast<std::size_t>(ch)];
+        for (int i = 0; i < fadeSamples; ++i) {
+            const float mix = static_cast<float>(i + 1) / static_cast<float>(fadeSamples);
+            output[i] = tail + (output[i] - tail) * mix;
+        }
+    }
+}
+
 void RenderModeRouter::captureNormalTail(const juce::AudioSourceChannelInfo& info) noexcept
 {
     if (!info.buffer || info.numSamples <= 0)
@@ -1038,6 +1077,7 @@ void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& buf
             else
                 m_lastNormalOutputValid = false;
             m_normalPlaybackWasEnabled = false;
+            m_normalSeekTailPending = false;
             applyScratchExitTail(bufferToFill);
             return;
         }
@@ -1053,6 +1093,20 @@ void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& buf
         }
         applyNormalPathCrossfade(bufferToFill);
         applyScratchExitTail(bufferToFill);
+        if (!m_normalPlaybackWasEnabled) {
+            // Resuming from pause jumped straight to full level with no
+            // envelope, unlike the fade the stop side already gets below —
+            // that abrupt onset is what read as a click/"weird" attack on
+            // play. Mirror the stop-side declick with a matching fade-in.
+            applyNormalStartFade(bufferToFill);
+        } else if (m_normalSeekTailPending) {
+            // A hot cue, quantized cue, or loop jump moved the read head while
+            // this deck kept playing, which is a genuine waveform
+            // discontinuity (not just silence-to-signal). Blend from the last
+            // sample heard before the jump instead of splicing it in raw.
+            applyNormalSeekDeclick(bufferToFill);
+            m_normalSeekTailPending = false;
+        }
         captureNormalTail(bufferToFill);
         m_normalPlaybackWasEnabled = true;
         return;

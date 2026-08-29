@@ -50,7 +50,16 @@ enum class MidiPadMode {
     HotCue,
     PadFx,
     BeatJump,
-    Sampler
+    Sampler,
+    KeyShift
+};
+
+// Key Shift's three fixed, non-overlapping 8-pad ranges. PAGE navigates
+// Down <-> Middle <-> Up by clamping, never wrapping.
+enum class Flx10KeyShiftRange : std::uint8_t {
+    Down,
+    Middle,
+    Up
 };
 
 enum class MidiBeatFxTarget {
@@ -133,10 +142,14 @@ public:
     Q_PROPERTY(QString lastMidiEvent READ lastMidiEvent NOTIFY lastMidiEventChanged)
     Q_PROPERTY(int deckAPadMode READ deckAPadMode NOTIFY deckAPadModeChanged)
     Q_PROPERTY(int deckBPadMode READ deckBPadMode NOTIFY deckBPadModeChanged)
+    Q_PROPERTY(int deckAKeyShiftRange READ deckAKeyShiftRange NOTIFY deckAKeyShiftRangeChanged)
+    Q_PROPERTY(int deckBKeyShiftRange READ deckBKeyShiftRange NOTIFY deckBKeyShiftRangeChanged)
     Q_PROPERTY(bool beatFxActive READ beatFxActive NOTIFY beatFxActiveChanged)
     QString lastMidiEvent() const { return m_lastMidiEvent; }
     int deckAPadMode() const noexcept { return static_cast<int>(m_deckAPadMode); }
     int deckBPadMode() const noexcept { return static_cast<int>(m_deckBPadMode); }
+    int deckAKeyShiftRange() const noexcept { return static_cast<int>(m_deckAKeyShiftRange); }
+    int deckBKeyShiftRange() const noexcept { return static_cast<int>(m_deckBKeyShiftRange); }
     bool beatFxActive() const noexcept { return m_beatFxActive; }
 
 signals:
@@ -149,6 +162,8 @@ signals:
     void lastMidiEventChanged();
     void deckAPadModeChanged();
     void deckBPadModeChanged();
+    void deckAKeyShiftRangeChanged();
+    void deckBKeyShiftRangeChanged();
     void performancePadStateChanged(const QString& deckId);
     void beatFxActiveChanged();
     void libraryViewToggleRequested();
@@ -205,6 +220,18 @@ private:
     bool m_deckBSlipBeforeReverse = false;
     MidiPadMode m_deckAPadMode = MidiPadMode::HotCue;
     MidiPadMode m_deckBPadMode = MidiPadMode::HotCue;
+    MidiPadMode m_deckCPadMode = MidiPadMode::HotCue;
+    MidiPadMode m_deckDPadMode = MidiPadMode::HotCue;
+    // The FLX10 exposes SHIFT + SAMPLER as its own mode/LED command (0x6f).
+    // Blink that command while Key Shift is selected, just like Serato does.
+    bool m_keyShiftModeBlinkOn = true;
+    double m_nextKeyShiftModeBlinkSeconds = 0.0;
+    // Persists across pad-mode switches and PAGE navigation; reset to Middle
+    // only when a new track loads.
+    Flx10KeyShiftRange m_deckAKeyShiftRange = Flx10KeyShiftRange::Middle;
+    Flx10KeyShiftRange m_deckBKeyShiftRange = Flx10KeyShiftRange::Middle;
+    Flx10KeyShiftRange m_deckCKeyShiftRange = Flx10KeyShiftRange::Middle;
+    Flx10KeyShiftRange m_deckDKeyShiftRange = Flx10KeyShiftRange::Middle;
     int m_deckAPadFxMomentary = -1;
     int m_deckBPadFxMomentary = -1;
     int m_deckAPadFxToggle = -1;
@@ -361,6 +388,7 @@ private:
     QString nativeMappingFilePath() const;
     int parseMappingNumber(const QString& rawValue) const;
     int midiMessageIdFromStatusAndControl(int statusNo, int controlNo) const;
+    DjEngine* engineForDeck(QChar deck) const noexcept;
     MidiPadMode padModeForDeck(QChar deck) const;
     void setPadModeForDeck(QChar deck, MidiPadMode mode);
     void clearPadFxState(QChar deck, DjEngine* engine);
@@ -370,11 +398,17 @@ private:
                           bool pressed, bool storeIfEmpty);
     void handlePerformancePad(QChar deck, DjEngine* engine, MidiPadMode mode,
                               int padIndex, bool pressed, bool clearRequest);
+    Flx10KeyShiftRange keyShiftRangeForDeck(QChar deck) const;
+    void setKeyShiftRangeForDeck(QChar deck, Flx10KeyShiftRange range);
+    void stepKeyShiftRange(QChar deck, int direction);
+    void handleKeyShiftPad(QChar deck, DjEngine* engine, int padIndex,
+                           bool pressed, bool shifted);
     void refreshAllDeckLeds();
     void refreshDeckLeds(QChar deck, DjEngine* engine);
     void refreshTransportAndLoopLeds(QChar deck, DjEngine* engine);
     void refreshHotCueLeds(QChar deck, DjEngine* engine);
     void refreshPadModeLeds(QChar deck);
+    void updateKeyShiftModeBlink(double monotonicSeconds);
     void refreshPerformancePadLeds(QChar deck, DjEngine* engine);
     // Monitoring LEDs (MASTER CUE) mirror the engine, which may already have
     // been switched on from the UI before the controller was plugged in.

@@ -374,6 +374,11 @@ void DeckTransport::setKeylockEnabled(bool enabled) noexcept
     m_audioPipeline.setKeylockEnabled(enabled);
 }
 
+void DeckTransport::setKeySemitoneOffset(double semitones) noexcept
+{
+    m_audioPipeline.setKeySemitoneOffset(semitones);
+}
+
 void DeckTransport::startAudio() noexcept
 {
     m_audioPipeline.setTransportRunning(true);

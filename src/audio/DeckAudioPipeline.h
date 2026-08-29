@@ -89,6 +89,9 @@ public:
     void setPlaybackRate(double rate) noexcept;
     void setJogNudgeRatio(double ratio) noexcept;
     void setKeylockEnabled(bool enabled) noexcept;
+    // Manual pitch offset in semitones (Key Shift), independent of keylock:
+    // it forces the stretcher active even when the keylock toggle is off.
+    void setKeySemitoneOffset(double semitones) noexcept;
     void setTimeStretchBackend(TimeStretchBackend backend) noexcept;
     void setLoopRangeSeconds(double startSeconds, double endSeconds, bool active,
                              double sourceSampleRate) noexcept;

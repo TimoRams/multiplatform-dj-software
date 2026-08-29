@@ -80,12 +80,20 @@ struct DeckAudioPipeline::Impl {
                 continue;
             switch (command.type) {
             case AudioCommandType::Play:
+                // Both flags must flip on the same audio callback: TimeStretchProcessor
+                // pulls its input from RenderModeRouter, so if setInputPlaybackActive
+                // won races ahead of setNormalPlaybackEnabled (e.g. called synchronously
+                // from the control thread), the stretcher starts its keylock seed/bridge
+                // handshake on a block that RenderModeRouter is still rendering as
+                // pause-silence, and seeds the phase vocoder from silence.
                 renderModeRouter->setNormalPlaybackEnabled(true);
+                timeStretch->setInputPlaybackActive(playback != nullptr);
                 if (!transport.isPlaying())
                     transport.start();
                 break;
             case AudioCommandType::Pause:
                 renderModeRouter->setNormalPlaybackEnabled(false);
+                timeStretch->setInputPlaybackActive(false);
                 break;
             case AudioCommandType::Seek: {
                 // Seeks are coalesced below so the latest cursor always wins,
@@ -126,6 +134,11 @@ struct DeckAudioPipeline::Impl {
                 playback->setCommandedReadPosition(static_cast<std::int64_t>(
                     std::llround(seconds * handle.sampleRate())));
             }
+            // Harmless to arm while paused: the router clears this pending
+            // flag on its silence path instead of consuming it, so only a
+            // seek applied while actually rendering normal playback (a hot
+            // cue or loop jump mid-track) triggers the declick blend.
+            renderModeRouter->armNormalSeekDeclick();
             transport.setPosition(seconds);
             appliedSeekGeneration.store(pendingSeek, std::memory_order_release);
         }
@@ -197,7 +210,9 @@ void DeckAudioPipeline::setAudioPlayheadSink(std::atomic<double>* sink) noexcept
 void DeckAudioPipeline::setTransportRunning(bool running) noexcept
 {
     m_impl->transportRequestedRunning.store(running, std::memory_order_release);
-    m_impl->timeStretch->setInputPlaybackActive(running && m_impl->playback != nullptr);
+    // setInputPlaybackActive() is applied in consumeCommands(), on the same audio
+    // callback as setNormalPlaybackEnabled(), so TimeStretchProcessor and
+    // RenderModeRouter never disagree about play state for even one block.
     const AudioCommand command {
         running ? AudioCommandType::Play : AudioCommandType::Pause,
         0.0, 0.0, m_impl->trackGeneration
@@ -241,6 +256,11 @@ void DeckAudioPipeline::setKeylockEnabled(bool enabled) noexcept
 {
     m_impl->renderModeRouter->setKeylockEnabled(enabled);
     m_impl->timeStretch->setPitchLockEnabled(enabled);
+}
+
+void DeckAudioPipeline::setKeySemitoneOffset(double semitones) noexcept
+{
+    m_impl->timeStretch->setKeySemitoneOffset(semitones);
 }
 
 void DeckAudioPipeline::setTimeStretchBackend(TimeStretchBackend backend) noexcept

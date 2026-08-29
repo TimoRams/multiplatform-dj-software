@@ -1010,6 +1010,16 @@ void DjEngine::setKeylock(bool on)
     emit keylockChanged();
 }
 
+void DjEngine::setKeySemitoneOffset(double semitones)
+{
+    semitones = std::isfinite(semitones) ? std::clamp(semitones, -12.0, 12.0) : 0.0;
+    if (m_keySemitoneOffset == semitones)
+        return;
+    m_keySemitoneOffset = semitones;
+    m_transport->setKeySemitoneOffset(semitones);
+    emit keySemitoneOffsetChanged();
+}
+
 void DjEngine::applyTempoPercent(double percent)
 {
     percent = std::clamp(percent, -100.0, 100.0);

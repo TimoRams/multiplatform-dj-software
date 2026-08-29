@@ -80,6 +80,13 @@ ThreadSanitizer where the platform toolchain supports it.
 - Pause loaded keylocked decks while other decks play/scratch. Paused decks must
   report zero active keylock latency/processing and resume through a bounded
   seed transition without a dropout.
+- Spam play/pause/play on a keylocked deck as fast as possible. Verify no
+  digital crackle/artifact on resume — `TimeStretchProcessor::setInputPlaybackActive`
+  and `RenderModeRouter::setNormalPlaybackEnabled` must flip on the same audio
+  callback (both are set from `DeckAudioPipeline::Impl::consumeCommands()`); if
+  either is ever called from the control thread ahead of the other, the
+  stretcher seeds itself from a block `RenderModeRouter` is still rendering as
+  silence.
 
 ### Scratch and cache recovery
 
@@ -127,6 +134,17 @@ ThreadSanitizer where the platform toolchain supports it.
   re-sync, scratch, and track replacement.
 - Verify generation-correct state, audible/visual return from slip, stable
   beat/bar alignment, and no old-track cue/loop persistence.
+- Spam play/pause/play rapidly on a deck with keylock on and, separately, with
+  keylock off. Verify no click or "off" attack at the start of playback on
+  either path (`RenderModeRouter::applyNormalStartFade` fades in the first
+  128 samples after resume, mirroring the pre-existing pause fade-out
+  `applyNormalStopTail`).
+- Trigger hot cues and quantized cue/loop jumps repeatedly while a deck keeps
+  playing (not just while paused). Verify no click at the jump instant
+  (`DeckAudioPipeline` arms `RenderModeRouter::armNormalSeekDeclick` on every
+  seek applied to a running transport; the router blends from the last
+  rendered sample into the post-jump content over `kCrossfadeSamples` instead
+  of splicing the position jump in raw).
 
 ## Device and controller scenarios
 
@@ -150,6 +168,40 @@ ThreadSanitizer where the platform toolchain supports it.
   state round trips.
 - Test Link with zero, one, and multiple peers; leader/follower changes must
   not silently alter the internal sync-master policy.
+
+### FLX10 Key Shift
+
+- Hold SHIFT and press SAMPLER to enter Key Shift; the shared SAMPLER
+  pad-mode button blinks through the dedicated shifted `0x6F` feedback
+  command (plain Sampler's `0x22` remains off), and the pad reading 0
+  semitones in the active range is highlighted.
+- In each of the three ranges (Down, Middle, Up), press every pad and verify
+  the reported semitone offset matches the fixed table exactly
+  (`kFlx10KeyShiftTable` in `Flx10MidiBridge.cpp`) and audibly shifts pitch
+  while tempo stays fixed, whether keylock is on or off. After every press,
+  that selected value—not always the 0 pad—must become the single bright pad
+  in both the UI and on the FLX10.
+- Verify a pad press always sets an absolute offset, never adds to the
+  current one: press pad A, then pad B, then pad A again, and confirm the
+  offset lands on each pad's table value rather than accumulating.
+- Press PAGE Left/Right and, separately, hold SHIFT and press PAD7/PAD8 to
+  page ranges Down/Middle/Up. Confirm
+  paging clamps at both ends (repeated SHIFT+PAD7 at Down stays at Down;
+  repeated SHIFT+PAD8 at Up stays at Up) and never wraps. If the current
+  absolute offset exists on the new range, its matching pad stays bright;
+  otherwise no pad on that range is falsely shown as selected.
+- Confirm the current absolute offset persists unchanged across a range
+  change, and across leaving Key Shift for another pad mode and returning
+  (the range page itself must also be preserved across that mode round
+  trip).
+- Hold SHIFT and press PAD1 (Key Sync) with two decks each holding a
+  different offset; verify the target deck's offset snaps to match the
+  other deck's exactly.
+- Hold SHIFT and press PAD2 (Key Reset); verify the offset returns to 0
+  (root key) without changing the active range.
+- Load a new track on a deck sitting in a non-Middle range with a non-zero
+  offset; verify both the offset and the range reset (offset to 0, range to
+  Middle) on the new track, and that the root-pad LED updates accordingly.
 
 ## Analysis, library, and rendering scenarios
 
