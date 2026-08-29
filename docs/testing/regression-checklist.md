@@ -222,8 +222,18 @@ ThreadSanitizer where the platform toolchain supports it.
   must **not** end yet — audio stays muted and the cursor keeps tracking the
   wheel exactly as if the arrow were still held (`BeatJumpHoldState::held`
   goes false but `searchUsed`/`jogTouched` keep the session alive in
-  `dispatchFlx10JogAction`). Only lifting the finger off the platter
-  (`_jog_touch` note-off) may end the search and resume playback.
+  `dispatchFlx10JogAction`). Lifting the finger off the platter
+  (`_jog_touch` note-off) ends the search and resumes playback immediately.
+- Release the arrow, keep turning the platter for a while, then simply stop
+  turning it **without ever sending a `_jog_touch` note-off** (some FLX10
+  units do not reliably emit touch-up in this combo mode): verify the
+  session still ends on its own — within ~200 ms of the last processed
+  search delta, `armBeatJumpGraceTimeout`/`endBeatJumpGraceSearch` must force
+  the grace period closed, un-mute, and resume playback at the last search
+  position even though no touch-up ever arrived. Confirm the deck does
+  **not** stay stuck reporting `fastSearchActive()` forever, and that a
+  fresh platter nudge afterward starts a brand-new normal jog/scratch, not a
+  continuation of the old search.
 - Release the platter (touch-up) after having already released the arrow:
   verify audio un-mutes click-free at the new cursor (not the pre-search
   position) and normal playback/pause state resumes immediately.
@@ -236,8 +246,11 @@ ThreadSanitizer where the platform toolchain supports it.
 - With the arrow released and the platter still down, continue turning the
   platter and re-press the *same* arrow again before letting go: verify the
   in-flight search session is reused (no jump, no re-mute/unmute click)
-  rather than being torn down and restarted. Pressing a *different* arrow
-  mid-search must cleanly end the old session first.
+  rather than being torn down and restarted, and that the pending grace
+  timeout is cancelled (`armBeatJumpGraceTimeout` must not fire and end the
+  session out from under the re-grabbed hold). Pressing a *different* arrow
+  mid-search must cleanly end the old session first (stopping its grace
+  timer too).
 - Disconnect the controller (or switch mappings) while a search is held or
   coasting through its post-release grace period; verify
   `cancelBeatJumpSearch()` releases the mute and hands position back to the

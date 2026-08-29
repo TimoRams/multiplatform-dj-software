@@ -49,6 +49,11 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, ControlClock
             dispatchToStore(paramId, value, ParameterStoreDispatch::Standard);
     });
 
+    m_deckABeatJumpGraceTimer.setSingleShot(true);
+    connect(&m_deckABeatJumpGraceTimer, &QTimer::timeout, this, [this] { endBeatJumpGraceSearch(0U); });
+    m_deckBBeatJumpGraceTimer.setSingleShot(true);
+    connect(&m_deckBBeatJumpGraceTimer, &QTimer::timeout, this, [this] { endBeatJumpGraceSearch(1U); });
+
     m_midiDeviceListConnection = juce::MidiDeviceListConnection::make([this]
     {
         QMetaObject::invokeMethod(this, [this]()
@@ -136,6 +141,10 @@ void MidiControllerManager::shutdown()
     QObject::disconnect(&m_beatFxBlinkTimer, nullptr, this, nullptr);
     m_14BitFallbackTimer.stop();
     QObject::disconnect(&m_14BitFallbackTimer, nullptr, this, nullptr);
+    m_deckABeatJumpGraceTimer.stop();
+    QObject::disconnect(&m_deckABeatJumpGraceTimer, nullptr, this, nullptr);
+    m_deckBBeatJumpGraceTimer.stop();
+    QObject::disconnect(&m_deckBBeatJumpGraceTimer, nullptr, this, nullptr);
     resetHighResolutionControlState();
 
     if (m_deckActionsConnection)

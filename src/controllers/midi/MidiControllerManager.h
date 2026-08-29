@@ -217,6 +217,13 @@ private:
     // a straggler MIDI packet delivered from another port after the session
     // already closed cannot reopen a ghost session. -1 means "never".
     std::array<double, 2> m_beatJumpSearchEndedAtSeconds { -1.0, -1.0 };
+    // The FLX10 does not reliably deliver a platter touch-up while a search
+    // session is coasting past the BEAT JUMP arrow's release, so the grace
+    // period is also bounded by "no new search delta for a while" - the
+    // platter has effectively spun out. Restarted on every delta while
+    // coasting; firing ends the session and resumes playback.
+    QTimer m_deckABeatJumpGraceTimer;
+    QTimer m_deckBBeatJumpGraceTimer;
     // Producer-thread gate for the native lock-free scratch ingress. The owner
     // thread keeps the richer hold state above; this atomic only prevents the
     // same platter frames from reaching the audio scratch path.
@@ -377,6 +384,8 @@ private:
     bool dispatchFlx10JogAction(const QString& paramId, float value,
                                 double eventTimestampSeconds);
     bool handleBeatJumpButton(const QString& paramId, float value);
+    void armBeatJumpGraceTimeout(std::size_t deckIndex);
+    void endBeatJumpGraceSearch(std::size_t deckIndex);
     void cancelBeatJumpSearch();
     flx10::RealtimeIngressResult ingestNativeFlx10ScratchMessage(
         std::uint8_t status,
