@@ -478,6 +478,13 @@ void DjEngine::onFastControlTick(const ControlTickContext& context)
 void DjEngine::onTransportControlTick(const ControlTickContext& context)
 {
     (void)context;
+    // The search cursor is the single position authority until release. Letting
+    // updateControlState() sample the stopped/old audio reader here caused the
+    // waveform to flicker back to the grab position between MIDI frames.
+    if (fastSearchActive()) {
+        m_playHistoryClock.restart();
+        return;
+    }
     if (m_scratch.scrubbing() || m_scratch.releaseGlide())
         return;
     if (m_audioPipeline->renderModeRouterPtr()

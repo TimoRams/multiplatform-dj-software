@@ -1583,6 +1583,8 @@ bool MidiControllerManager::dispatchFlx10JogAction(const QString& paramId,
         eventType = flx10::JogEventType::Rim;
     } else if (paramId.endsWith(QStringLiteral("_jog_move"))) {
         eventType = flx10::JogEventType::Generic;
+    } else if (paramId.endsWith(QStringLiteral("_jog_fast_search"))) {
+        eventType = flx10::JogEventType::Generic;
     } else {
         return false;
     }
@@ -1590,6 +1592,69 @@ bool MidiControllerManager::dispatchFlx10JogAction(const QString& paramId,
     DjEngine* const engine = deckA ? m_deckA : m_deckB;
     auto& router = deckA ? m_jogARouter : m_jogBRouter;
     bool& touched = deckA ? m_jogATouched : m_jogBTouched;
+    auto& beatJumpHold = deckA ? m_deckABeatJumpHold : m_deckBBeatJumpHold;
+    const bool dedicatedFastSearch =
+        paramId.endsWith(QStringLiteral("_jog_fast_search"));
+
+    const std::size_t deckIndex = deckA ? 0U : 1U;
+
+    // CC 0x29 already proves that the hardware has combined the top platter
+    // with a held 4 BEAT JUMP arrow. Recover safely even if another MIDI port's
+    // button packet reaches the owner thread a frame later - but not if this
+    // deck's search session only just ended, since that means the tick is a
+    // straggler from a session we already committed, not a new one starting.
+    if (dedicatedFastSearch && !beatJumpHold.held && !beatJumpHold.searchUsed) {
+        const double now = std::isfinite(eventTimestampSeconds) && eventTimestampSeconds > 0.0
+            ? eventTimestampSeconds
+            : engine::scratch::RealtimeScratchInput::clockSeconds();
+        const double lastEnd = m_beatJumpSearchEndedAtSeconds[deckIndex];
+        constexpr double kStaleSearchTickGuardSeconds = 0.25;
+        if (lastEnd >= 0.0 && (now - lastEnd) < kStaleSearchTickGuardSeconds)
+            return true;
+        beatJumpHold.held = true;
+        beatJumpHold.searchUsed = true;
+        beatJumpHold.direction = 0;
+        beatJumpHold.paramId.clear();
+        m_beatJumpModifierHeld[deckIndex].store(true, std::memory_order_release);
+    }
+
+    if (beatJumpHold.held || beatJumpHold.searchUsed) {
+        // Touch and both platter streams belong exclusively to transport
+        // search while a session is held or coasting in its post-release
+        // grace period. Resetting the normal router prevents the eventual
+        // touch-up/tail frames from starting or releasing scratch.
+        router.reset();
+        touched = false;
+        m_scratchAbsoluteLastByMsgId.clear();
+
+        if (eventType == flx10::JogEventType::TouchDown) {
+            beatJumpHold.jogTouched = true;
+            return true;
+        }
+        if (eventType == flx10::JogEventType::TouchUp) {
+            beatJumpHold.jogTouched = false;
+            if (beatJumpHold.searchUsed && !beatJumpHold.held) {
+                // The BEAT JUMP button already let go; the platter release is
+                // what actually ends the search - "ausspinnen", then resume.
+                if (engine)
+                    engine->endFastSearch();
+                m_beatJumpModifierHeld[deckIndex].store(false, std::memory_order_release);
+                m_beatJumpSearchEndedAtSeconds[deckIndex] =
+                    engine::scratch::RealtimeScratchInput::clockSeconds();
+                beatJumpHold = {};
+            }
+            return true;
+        }
+        if (std::abs(value) > 0.0f) {
+            beatJumpHold.searchUsed = true;
+            if (engine) {
+                engine->beginFastSearch();
+                engine->fastSearchBySeconds(
+                    flx10::fastSearchDeltaSeconds(static_cast<double>(value)));
+            }
+        }
+        return true;
+    }
     const double timestamp = std::isfinite(eventTimestampSeconds)
             && eventTimestampSeconds > 0.0
         ? eventTimestampSeconds
@@ -1661,9 +1726,141 @@ bool MidiControllerManager::dispatchFlx10JogAction(const QString& paramId,
     return true;
 }
 
+bool MidiControllerManager::handleBeatJumpButton(const QString& paramId, float value)
+{
+    const bool deckA = paramId.startsWith(QStringLiteral("deckA_beatjump_"));
+    const bool deckB = paramId.startsWith(QStringLiteral("deckB_beatjump_"));
+    if (!deckA && !deckB)
+        return false;
+
+    DjEngine* const engine = deckA ? m_deckA : m_deckB;
+    auto& state = deckA ? m_deckABeatJumpHold : m_deckBBeatJumpHold;
+    auto& router = deckA ? m_jogARouter : m_jogBRouter;
+    bool& touched = deckA ? m_jogATouched : m_jogBTouched;
+    const std::size_t deckIndex = deckA ? 0U : 1U;
+    const bool pressed = value >= 0.5f;
+    const bool rangeDown = paramId.endsWith(QStringLiteral("_range_down"));
+    const bool rangeUp = paramId.endsWith(QStringLiteral("_range_up"));
+    const bool searchCommand = paramId.contains(QStringLiteral("_search_"));
+    const bool backward = paramId.endsWith(QStringLiteral("_backward"));
+    const bool forward = paramId.endsWith(QStringLiteral("_forward"));
+
+    if (rangeDown || rangeUp) {
+        if (pressed && engine) {
+            const double factor = rangeUp ? 2.0 : 0.5;
+            engine->setBeatJumpBeats(engine->beatJumpBeats() * factor);
+        }
+        return true;
+    }
+    if (!backward && !forward)
+        return false;
+
+    if (searchCommand && pressed && state.held) {
+        // The long-press note supplements the original arrow press. It must
+        // suppress the click but must not replace the original release owner.
+        state.searchUsed = true;
+        m_beatJumpModifierHeld[deckIndex].store(true, std::memory_order_release);
+        return true;
+    }
+
+    if (pressed) {
+        // A different arrow interrupts whatever session is active, whether
+        // the previous one is still physically held or just coasting through
+        // its post-release grace period.
+        if ((state.held || state.searchUsed) && !state.paramId.isEmpty()
+            && state.paramId != paramId) {
+            if (engine)
+                engine->endFastSearch();
+            m_beatJumpModifierHeld[deckIndex].store(false, std::memory_order_release);
+            m_beatJumpSearchEndedAtSeconds[deckIndex] =
+                ::engine::scratch::RealtimeScratchInput::clockSeconds();
+            state = {};
+        }
+        if (!state.held && state.searchUsed && state.paramId == paramId) {
+            // Re-grabbing the same arrow while its search is still coasting
+            // through the grace period: resume ownership without resetting
+            // the session that's already in flight.
+            state.held = true;
+            m_beatJumpModifierHeld[deckIndex].store(true, std::memory_order_release);
+            return true;
+        }
+        if (!state.held) {
+            state.paramId = paramId;
+            state.held = true;
+            state.direction = forward ? 1 : -1;
+            state.searchUsed = searchCommand;
+            m_beatJumpModifierHeld[deckIndex].store(true, std::memory_order_release);
+            m_realtimeScratchIngress[deckIndex].reset(
+                ::engine::scratch::RealtimeScratchInput::clockSeconds());
+            router.reset();
+            touched = false;
+            m_scratchAbsoluteLastByMsgId.clear();
+            if (engine)
+                engine->finishScrubWithoutInertia();
+        }
+        return true;
+    }
+
+    // A forced/duplicate release for another note must not terminate the
+    // currently held modifier.
+    if (!state.held)
+        return true;
+    if (searchCommand && state.paramId != paramId)
+        return true;
+    if (!state.paramId.isEmpty() && state.paramId != paramId)
+        return true;
+
+    state.held = false;
+
+    if (state.searchUsed && state.jogTouched) {
+        // The arrow let go but the platter is still being turned: keep
+        // searching until the platter itself is released - "ausspinnen" -
+        // then playback resumes directly from wherever it stops.
+        return true;
+    }
+
+    m_beatJumpModifierHeld[deckIndex].store(false, std::memory_order_release);
+    m_realtimeScratchIngress[deckIndex].reset(
+        ::engine::scratch::RealtimeScratchInput::clockSeconds());
+    if (engine) {
+        if (state.searchUsed)
+            engine->endFastSearch();
+        else
+            engine->beatJump(static_cast<double>(state.direction) * engine->beatJumpBeats());
+    }
+    m_beatJumpSearchEndedAtSeconds[deckIndex] =
+        ::engine::scratch::RealtimeScratchInput::clockSeconds();
+    state = {};
+    router.reset();
+    touched = false;
+    m_scratchAbsoluteLastByMsgId.clear();
+    return true;
+}
+
+void MidiControllerManager::cancelBeatJumpSearch()
+{
+    if (m_deckA)
+        m_deckA->endFastSearch();
+    if (m_deckB && m_deckB != m_deckA)
+        m_deckB->endFastSearch();
+    m_deckABeatJumpHold = {};
+    m_deckBBeatJumpHold = {};
+    const double now = engine::scratch::RealtimeScratchInput::clockSeconds();
+    for (std::size_t index = 0; index < m_beatJumpModifierHeld.size(); ++index) {
+        m_beatJumpModifierHeld[index].store(false, std::memory_order_release);
+        m_realtimeScratchIngress[index].reset(now);
+    }
+    m_jogARouter.reset();
+    m_jogBRouter.reset();
+    m_jogATouched = false;
+    m_jogBTouched = false;
+    m_scratchAbsoluteLastByMsgId.clear();
+}
+
 void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
                                          DjEngine* deckC, DjEngine* deckD)
 {
+    cancelBeatJumpSearch();
     if (m_deckA)
         QObject::disconnect(m_deckA, nullptr, this, nullptr);
     if (m_deckB && m_deckB != m_deckA)
@@ -1865,29 +2062,6 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
 
         };
 
-        auto handleBeatJumpParam = [&engineForDeck](const QString& paramId) -> bool
-        {
-            QChar deck;
-            double beats = 0.0;
-            if (parseDeckButtonParam(paramId, QStringLiteral("beatjump_backward"), deck)
-                || parseDeckButtonParam(paramId, QStringLiteral("beatjump_4_backward"), deck)) {
-                beats = -4.0;
-            } else if (parseDeckButtonParam(paramId, QStringLiteral("beatjump_forward"), deck)
-                       || parseDeckButtonParam(paramId, QStringLiteral("beatjump_4_forward"), deck)) {
-                beats = 4.0;
-            } else if (parseDeckButtonParam(paramId, QStringLiteral("beatjump_16_backward"), deck)) {
-                beats = -16.0;
-            } else if (parseDeckButtonParam(paramId, QStringLiteral("beatjump_16_forward"), deck)) {
-                beats = 16.0;
-            } else {
-                return false;
-            }
-
-            if (DjEngine* const engine = engineForDeck(deck))
-                engine->beatJump(beats);
-            return true;
-        };
-
         auto handleFourBeatExit = [](DjEngine* engine, bool shiftHeld)
         {
             if (!engine)
@@ -2068,7 +2242,7 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
             }
         }
         QChar directDeck;
-        if (value >= 0.5f && handleBeatJumpParam(id))
+        if (handleBeatJumpButton(id, value))
             return;
         int beatFxPosition = -1;
         if (parseBeatFxSelectParam(id, beatFxPosition)) {

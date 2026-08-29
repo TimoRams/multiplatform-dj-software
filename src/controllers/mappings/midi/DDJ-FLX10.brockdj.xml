@@ -44,6 +44,10 @@
     <Entry paramId="deckB_jog_nudge" status="0xB1" control="0x21" type="encoder-relative"/>
     <Entry paramId="deckA_jog_scratch" status="0xB0" control="0x22" type="encoder-relative"/>
     <Entry paramId="deckB_jog_scratch" status="0xB1" control="0x22" type="encoder-relative"/>
+    <!-- The top platter switches to its own relative stream while either
+         4 BEAT JUMP arrow is held. It does not reuse scratch CC 0x22. -->
+    <Entry paramId="deckA_jog_fast_search" status="0xB0" control="0x29" type="encoder-relative"/>
+    <Entry paramId="deckB_jog_fast_search" status="0xB1" control="0x29" type="encoder-relative"/>
     <Entry paramId="deckA_jog_touch" status="0x90" control="0x36" type="momentary"/>
     <Entry paramId="deckB_jog_touch" status="0x91" control="0x36" type="momentary"/>
 
@@ -311,15 +315,22 @@
     <Entry paramId="deckD_keyshift_pad7_page2_shift" status="0x9E" control="0x7E" type="momentary"/>
     <Entry paramId="deckD_keyshift_pad8_page2_shift" status="0x9E" control="0x7F" type="momentary"/>
 
-    <!-- Dedicated 4/16 Beat Jump buttons. -->
-    <Entry paramId="deckA_beatjump_4_backward" status="0x90" control="0x5E" type="toggle"/>
-    <Entry paramId="deckB_beatjump_4_backward" status="0x91" control="0x5E" type="toggle"/>
-    <Entry paramId="deckA_beatjump_4_forward" status="0x90" control="0x5F" type="toggle"/>
-    <Entry paramId="deckB_beatjump_4_forward" status="0x91" control="0x5F" type="toggle"/>
-    <Entry paramId="deckA_beatjump_16_backward" status="0x90" control="0x61" type="toggle"/>
-    <Entry paramId="deckB_beatjump_16_backward" status="0x91" control="0x61" type="toggle"/>
-    <Entry paramId="deckA_beatjump_16_forward" status="0x90" control="0x62" type="toggle"/>
-    <Entry paramId="deckB_beatjump_16_forward" status="0x91" control="0x62" type="toggle"/>
+    <!-- Dedicated Beat Jump arrows, shifted range controls and long-press search. -->
+    <Entry paramId="deckA_beatjump_4_backward" status="0x90" control="0x5E" type="momentary"/>
+    <Entry paramId="deckB_beatjump_4_backward" status="0x91" control="0x5E" type="momentary"/>
+    <Entry paramId="deckA_beatjump_4_forward" status="0x90" control="0x5F" type="momentary"/>
+    <Entry paramId="deckB_beatjump_4_forward" status="0x91" control="0x5F" type="momentary"/>
+    <!-- User-facing range controls: SHIFT + left halves, SHIFT + right doubles. -->
+    <Entry paramId="deckA_beatjump_range_down" status="0x90" control="0x61" type="momentary"/>
+    <Entry paramId="deckB_beatjump_range_down" status="0x91" control="0x61" type="momentary"/>
+    <Entry paramId="deckA_beatjump_range_up" status="0x90" control="0x62" type="momentary"/>
+    <Entry paramId="deckB_beatjump_range_up" status="0x91" control="0x62" type="momentary"/>
+    <!-- A physical long press is also reported separately by the FLX10. Keep
+         it momentary so search remains owned until the hardware releases it. -->
+    <Entry paramId="deckA_beatjump_search_backward" status="0x90" control="0x70" type="momentary"/>
+    <Entry paramId="deckB_beatjump_search_backward" status="0x91" control="0x70" type="momentary"/>
+    <Entry paramId="deckA_beatjump_search_forward" status="0x90" control="0x71" type="momentary"/>
+    <Entry paramId="deckB_beatjump_search_forward" status="0x91" control="0x71" type="momentary"/>
 
     <!-- Beat FX section, MIDI channel 5 in FLX10 terms. -->
     <Entry paramId="beat_fx_select_1" status="0x94" control="0x20" type="toggle"/>

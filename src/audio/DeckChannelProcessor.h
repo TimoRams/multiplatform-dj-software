@@ -36,6 +36,9 @@ public:
     void setEchoOutActive(bool active);
     void setBackspinActive(bool active);
     void setRollOutActive(bool active);
+    // Transport search gate. The control thread publishes only the desired
+    // state; the audio thread applies a short click-free ramp.
+    void setSearchMuted(bool muted) noexcept;
     void armClickFreeTransition();
 
     [[nodiscard]] const juce::AudioBuffer<float>& getPflBuffer() const;
@@ -86,6 +89,8 @@ private:
     RealtimeSnapshotStore<Parameters> m_parameters;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_trimSmooth;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_faderSmooth;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_searchMuteSmooth;
+    std::atomic<bool> m_searchMuted { false };
     // Audio-thread-published routing gain. Consumers use this instead of
     // reconstructing mixer routing from GUI/controller parameter copies.
     std::atomic<float> m_channelFaderGain { 1.0f };

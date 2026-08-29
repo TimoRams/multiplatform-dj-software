@@ -121,6 +121,7 @@ void MidiControllerManager::shutdown()
     if (m_shutdownComplete.exchange(true, std::memory_order_acq_rel))
         return;
 
+    cancelBeatJumpSearch();
     setNativeFlx10ScratchEnabled(false);
 
     // Stop feedback + Qt signal delivery before JUCE/CoreMIDI teardown — device
@@ -222,8 +223,10 @@ void MidiControllerManager::setNativeFlx10ScratchEnabled(bool enabled) noexcept
     // cannot land between the two deck resets and bind a half-old session.
     m_nativeFlx10ScratchEnabled.store(false, std::memory_order_release);
     const double now = engine::scratch::RealtimeScratchInput::clockSeconds();
-    for (auto& ingress : m_realtimeScratchIngress)
-        ingress.reset(now);
+    for (std::size_t index = 0; index < m_realtimeScratchIngress.size(); ++index) {
+        m_beatJumpModifierHeld[index].store(false, std::memory_order_release);
+        m_realtimeScratchIngress[index].reset(now);
+    }
     m_nativeFlx10ScratchEnabled.store(enabled, std::memory_order_release);
 }
 
@@ -246,6 +249,31 @@ flx10::RealtimeIngressResult MidiControllerManager::ingestNativeFlx10ScratchMess
     const double timestamp = std::isfinite(timestampSeconds) && timestampSeconds > 0.0
         ? timestampSeconds
         : engine::scratch::RealtimeScratchInput::clockSeconds();
+
+    // The four dedicated BEAT JUMP notes are momentary modifiers for platter
+    // search as well as click actions. Publish their state immediately on the
+    // producer thread so a following jog packet can never enter scratch before
+    // the queued owner-thread button event has been dispatched.
+    const bool beatJumpButton = messageType == 0x90 || messageType == 0x80;
+    const bool beatJumpNote = data1 == 0x5e || data1 == 0x5f
+        || data1 == 0x70 || data1 == 0x71;
+    if (beatJumpButton && beatJumpNote) {
+        const bool pressed = messageType == 0x90 && data2 != 0;
+        // Only the press sets the gate here; the owner thread may keep a
+        // search session (and this gate) alive past the release until the
+        // platter itself is let go, so releases must not clear it early.
+        if (pressed) {
+            m_beatJumpModifierHeld[static_cast<std::size_t>(channel)].store(
+                true, std::memory_order_release);
+        }
+        ingress.reset(timestamp);
+        return flx10::RealtimeIngressResult::Ignored;
+    }
+
+    if (m_beatJumpModifierHeld[static_cast<std::size_t>(channel)].load(
+            std::memory_order_acquire)) {
+        return flx10::RealtimeIngressResult::Ignored;
+    }
 
     if ((messageType == 0x90 || messageType == 0x80) && data1 == 0x36) {
         const bool pressed = messageType == 0x90 && data2 != 0;
@@ -277,6 +305,8 @@ void MidiControllerManager::runControllerHousekeeping(double monotonicSeconds)
         m_nextControllerConnectionCheckSeconds = monotonicSeconds + 5.0;
 
         const bool inputOpen = hasActiveMidiInput();
+        if (!inputOpen)
+            cancelBeatJumpSearch();
         const bool outputOpen =
             (m_midiOutput != nullptr)
 #if defined(Q_OS_LINUX)
@@ -290,6 +320,8 @@ void MidiControllerManager::runControllerHousekeeping(double monotonicSeconds)
                 restoreSavedDeviceSelections();
             else if (!outputOpen)
                 autoOpenFlx10MidiOutputIfNeeded();
+            if (!hasActiveMidiInput())
+                cancelBeatJumpSearch();
         }
     }
 

@@ -12,7 +12,6 @@ Rectangle {
     property var engine: null
     property string deckName: "A"
     property bool selected: false
-    property real beatJumpBeats: 4
     signal selectedRequested()
     signal gridRequested()
 
@@ -35,15 +34,6 @@ Rectangle {
     border.color: selected ? accentColor : lineColor
     border.width: 1
     radius: 0
-
-    function jump(beats) {
-        if (!engine || !engine.hasTrack || engine.trackDurationSec <= 0)
-            return
-        var position = engine.getVisualPositionQml()
-        var bpm = engine.currentBpm > 0 ? engine.currentBpm : 120
-        position = Math.max(0, Math.min(engine.trackDurationSec, position + beats * 60 / bpm))
-        engine.setPosition(position / engine.trackDurationSec)
-    }
 
     function loadedSourceLabel() {
         if (!engine || !engine.hasTrack)
@@ -259,17 +249,21 @@ Rectangle {
                 width: 22; height: Math.min(22, parent.height - 8)
                 color: "#14171A"; border.color: root.lineColor; border.width: 1
                 Text { anchors.centerIn: parent; text: "−"; color: root.panelText; font.pixelSize: 13 }
-                MouseArea { anchors.fill: parent; onClicked: root.beatJumpBeats = Math.max(0.5, root.beatJumpBeats / 2) }
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: if (root.engine)
+                        root.engine.beatJumpBeats = Math.max(0.5, root.engine.beatJumpBeats / 2)
+                }
             }
             Text {
                 id: jumpValue
                 anchors.right: jumpPlus.left; anchors.rightMargin: 3
                 anchors.verticalCenter: parent.verticalCenter
                 width: 30
-                text: root.beatJumpBeats.toString(); color: root.panelText
+                text: root.engine ? root.engine.beatJumpBeats.toString() : "4"; color: root.panelText
                 font.pixelSize: 15; font.family: "monospace"
                 horizontalAlignment: Text.AlignHCenter
-                MouseArea { anchors.fill: parent; onClicked: root.jump(root.beatJumpBeats) }
+                MouseArea { anchors.fill: parent; onClicked: if (root.engine) root.engine.beatJump(root.engine.beatJumpBeats) }
             }
             Rectangle {
                 id: jumpPlus
@@ -278,7 +272,11 @@ Rectangle {
                 width: 22; height: Math.min(22, parent.height - 8)
                 color: "#14171A"; border.color: root.lineColor; border.width: 1
                 Text { anchors.centerIn: parent; text: "+"; color: root.panelText; font.pixelSize: 13 }
-                MouseArea { anchors.fill: parent; onClicked: root.beatJumpBeats = Math.min(64, root.beatJumpBeats * 2) }
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: if (root.engine)
+                        root.engine.beatJumpBeats = Math.min(64, root.engine.beatJumpBeats * 2)
+                }
             }
         }
 

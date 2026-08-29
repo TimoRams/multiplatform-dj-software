@@ -427,6 +427,86 @@ void DjEngine::beatJump(double beats)
     setPosition(static_cast<float>(next / trackLen));
 }
 
+void DjEngine::setBeatJumpBeats(double beats)
+{
+    static constexpr std::array<double, 8> kSupported {
+        0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0
+    };
+    if (!std::isfinite(beats))
+        return;
+
+    const auto nearest = std::min_element(kSupported.begin(), kSupported.end(),
+        [beats](double lhs, double rhs) {
+            return std::abs(lhs - beats) < std::abs(rhs - beats);
+        });
+    if (nearest == kSupported.end() || std::abs(m_beatJumpBeats - *nearest) < 1.0e-9)
+        return;
+    m_beatJumpBeats = *nearest;
+    emit beatJumpBeatsChanged();
+}
+
+void DjEngine::beginFastSearch()
+{
+    const double trackLen = m_transport->trackLengthSeconds();
+    if (trackLen <= 0.0 || fastSearchActive())
+        return;
+
+    m_fastSearchPositionSeconds = std::clamp(
+        getVisualPosition(), 0.0, trackLen);
+    m_fastSearchPublishedPositionSeconds.store(
+        m_fastSearchPositionSeconds, std::memory_order_release);
+    m_fastSearchActive.store(true, std::memory_order_release);
+    // Keep play intent, but stop the normal reader. Otherwise the transport,
+    // loop and sync clocks continue advancing an older cursor between seeks.
+    m_transport->stopAudio();
+    if (m_audioPipeline->mixerPtr())
+        m_audioPipeline->mixer().setSearchMuted(true);
+}
+
+void DjEngine::fastSearchBySeconds(double deltaSeconds)
+{
+    if (!std::isfinite(deltaSeconds) || std::abs(deltaSeconds) < 1.0e-12)
+        return;
+    if (!fastSearchActive())
+        beginFastSearch();
+    if (!fastSearchActive())
+        return;
+
+    const double trackLen = m_transport->trackLengthSeconds();
+    if (trackLen <= 0.0)
+        return;
+    // Accumulate against our requested cursor. The audio playhead snapshot may
+    // lag a burst of MIDI frames and must not erase earlier wheel deltas.
+    m_fastSearchPositionSeconds = std::clamp(
+        m_fastSearchPositionSeconds + deltaSeconds, 0.0, trackLen);
+    m_fastSearchPublishedPositionSeconds.store(
+        m_fastSearchPositionSeconds, std::memory_order_release);
+    // This seek variant does not restart the reader. Repeated normal setPosition
+    // calls did, which let its stale cursor race the next wheel delta.
+    m_transport->seekAudioToSeconds(m_fastSearchPositionSeconds);
+    m_trackLoader.setWaveformSeekHint(m_fastSearchPositionSeconds);
+    if (m_analyzer && m_analyzer->isThreadRunning())
+        m_analyzer->setSeekHint(m_fastSearchPositionSeconds);
+    emit progressChanged();
+}
+
+void DjEngine::endFastSearch()
+{
+    if (!fastSearchActive())
+        return;
+
+    // Commit once more before yielding position authority. This final handoff
+    // is durable for paused and playing decks alike.
+    m_transport->seekAudioToSeconds(m_fastSearchPositionSeconds);
+    m_fastSearchPublishedPositionSeconds.store(
+        m_fastSearchPositionSeconds, std::memory_order_release);
+    m_fastSearchActive.store(false, std::memory_order_release);
+    if (m_audioPipeline->mixerPtr())
+        m_audioPipeline->mixer().setSearchMuted(false);
+    ensureTransportRunningForPlayIntent();
+    emit progressChanged();
+}
+
 
 void DjEngine::applyLoopRangeToAudioSource()
 {

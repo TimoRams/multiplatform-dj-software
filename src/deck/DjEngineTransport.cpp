@@ -74,12 +74,16 @@ double DjEngine::trackDurationSec() const
 
 double DjEngine::getPosition() const
 {
+    if (fastSearchActive())
+        return m_fastSearchPublishedPositionSeconds.load(std::memory_order_acquire);
     return m_transport->positionSeconds(m_scratch.scrubbing() || m_scratch.releaseGlide());
 }
 
 
 double DjEngine::getVisualPosition() const
 {
+    if (fastSearchActive())
+        return m_fastSearchPublishedPositionSeconds.load(std::memory_order_acquire);
     if (m_scratch.scrubbing() || m_scratch.releaseGlide())
         return m_transport->playheadPositionAtomic();
     return m_transport->visualPositionSeconds(
@@ -124,6 +128,8 @@ double DjEngine::loopPreviewOutPosition() const
 
 double DjEngine::getPlayheadPositionAtomic() const
 {
+    if (fastSearchActive())
+        return m_fastSearchPublishedPositionSeconds.load(std::memory_order_acquire);
     return m_transport->playheadPositionAtomic();
 }
 
@@ -204,6 +210,7 @@ void DjEngine::attachCacheToTransport(AudioCacheHandle cacheHandle, double track
 
 void DjEngine::releaseTransportReaders()
 {
+    endFastSearch();
     terminateScratchSession(0.0);
     m_transport->clearTrack(m_trackLoader.currentGeneration(),
                             AudioCacheReleaseMode::WaitForReader);
@@ -297,6 +304,9 @@ void DjEngine::pause()
 void DjEngine::ensureTransportRunningForPlayIntent()
 {
     if (!m_transport->playRequested())
+        return;
+
+    if (fastSearchActive())
         return;
 
     // Pre-roll countdown manages its own transport start — don't interfere.
@@ -995,7 +1005,10 @@ engine::sync::DeckSyncInputSnapshot DjEngine::buildSyncInputSnapshot() const
 
     input.hasTrack = transport.hasTrack && m_trackData;
     input.playing = transport.playing;
-    input.scratching = m_scratch.scrubbing();
+    // Fast search owns the transport just like a platter grab. Advertising it
+    // to sync prevents phase correction from seeking back to the pre-search
+    // cursor while the user is navigating.
+    input.scratching = m_scratch.scrubbing() || fastSearchActive();
     input.scratchRelease = m_scratch.releaseGlide();
     input.reverse = transport.reverse;
     input.slipEnabled = transport.slipEnabled;
@@ -1055,7 +1068,7 @@ void DjEngine::applyPendingSyncActions()
         speedUpdateRequired = true;
     if (speedUpdateRequired)
         updateSpeedAndPitch();
-    if (actions.seekRequested)
+    if (actions.seekRequested && !fastSearchActive())
         applySyncSeekOffset(actions.seekOffsetSeconds);
 }
 

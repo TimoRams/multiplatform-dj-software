@@ -203,6 +203,46 @@ ThreadSanitizer where the platform toolchain supports it.
   offset; verify both the offset and the range reset (offset to 0, range to
   Middle) on the new track, and that the root-pad LED updates accordingly.
 
+### FLX10 Beat Jump and jog-assisted search
+
+- Tap 4 BEAT JUMP forward/backward (short press, no jog motion); verify the
+  deck jumps by exactly the current `beatJumpBeats` value and the click never
+  starts a fast search (`endFastSearch()` must not fire on a plain tap).
+- Hold SHIFT and tap 4 BEAT JUMP backward/forward; verify `beatJumpBeats`
+  halves/doubles, clamped to the `0.5..64` table, and the on-screen value in
+  `PerformanceDeckQuickPanel` stays in sync with the controller.
+- Hold either 4 BEAT JUMP arrow and turn the top platter (CC `0x29`, or the
+  hardware's dedicated long-press notes `0x70`/`0x71`): audio must mute
+  click-free, the waveform/position must track only the accumulated search
+  cursor, and it must never snap back toward the position where the hold
+  started while still turning the wheel (this was the reported "flackernd,
+  springt zurück" regression — `DjEngine::onTransportControlTick` must skip
+  `updateControlState()` entirely while `fastSearchActive()`).
+- Release the arrow *while still turning/touching the platter*: the search
+  must **not** end yet — audio stays muted and the cursor keeps tracking the
+  wheel exactly as if the arrow were still held (`BeatJumpHoldState::held`
+  goes false but `searchUsed`/`jogTouched` keep the session alive in
+  `dispatchFlx10JogAction`). Only lifting the finger off the platter
+  (`_jog_touch` note-off) may end the search and resume playback.
+- Release the platter (touch-up) after having already released the arrow:
+  verify audio un-mutes click-free at the new cursor (not the pre-search
+  position) and normal playback/pause state resumes immediately.
+- Release the arrow and the platter at the same time (or arrow after
+  platter): both orderings must end the search exactly once, with no
+  residual mute and no second phantom search starting from a stale/late MIDI
+  packet (guarded by `m_beatJumpSearchEndedAtSeconds` in
+  `MidiControllerManager`, which drops a `_jog_fast_search` tick arriving
+  shortly after a session already ended instead of reopening it).
+- With the arrow released and the platter still down, continue turning the
+  platter and re-press the *same* arrow again before letting go: verify the
+  in-flight search session is reused (no jump, no re-mute/unmute click)
+  rather than being torn down and restarted. Pressing a *different* arrow
+  mid-search must cleanly end the old session first.
+- Disconnect the controller (or switch mappings) while a search is held or
+  coasting through its post-release grace period; verify
+  `cancelBeatJumpSearch()` releases the mute and hands position back to the
+  transport instead of leaving the deck silently stuck.
+
 ## Analysis, library, and rendering scenarios
 
 ### Analysis replacement and shutdown

@@ -202,6 +202,25 @@ private:
     bool m_jogBTouched = false;
     flx10::Flx10JogRouter m_jogARouter;
     flx10::Flx10JogRouter m_jogBRouter;
+    struct BeatJumpHoldState {
+        QString paramId;
+        bool held = false;
+        bool searchUsed = false;
+        // Mirrors the platter's touch sensor while a search session (held or
+        // in its post-release grace period) owns the jog stream for this deck.
+        bool jogTouched = false;
+        int direction = 0;
+    };
+    BeatJumpHoldState m_deckABeatJumpHold;
+    BeatJumpHoldState m_deckBBeatJumpHold;
+    // Wall-clock time a beat-jump search session last fully ended per deck, so
+    // a straggler MIDI packet delivered from another port after the session
+    // already closed cannot reopen a ghost session. -1 means "never".
+    std::array<double, 2> m_beatJumpSearchEndedAtSeconds { -1.0, -1.0 };
+    // Producer-thread gate for the native lock-free scratch ingress. The owner
+    // thread keeps the richer hold state above; this atomic only prevents the
+    // same platter frames from reaching the audio scratch path.
+    std::array<std::atomic<bool>, 2> m_beatJumpModifierHeld {};
     // Native FLX10 motion is mirrored into these streams on the MIDI/ALSA
     // producer thread. The audio callback reads them without waiting for Qt.
     std::array<flx10::Flx10RealtimeScratchIngress, 2> m_realtimeScratchIngress;
@@ -357,6 +376,8 @@ private:
                              double eventTimestampSeconds);
     bool dispatchFlx10JogAction(const QString& paramId, float value,
                                 double eventTimestampSeconds);
+    bool handleBeatJumpButton(const QString& paramId, float value);
+    void cancelBeatJumpSearch();
     flx10::RealtimeIngressResult ingestNativeFlx10ScratchMessage(
         std::uint8_t status,
         std::uint8_t data1,

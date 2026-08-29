@@ -57,6 +57,15 @@ int main()
     const auto flx10MidiBridge = read("src/controllers/flx10/Flx10MidiBridge.cpp");
     const auto engineHeader = read("src/deck/DjEngine.h");
     const auto midiManagerHeader = read("src/controllers/midi/MidiControllerManager.h");
+    ok &= require(deckQuickPanel.find("property real beatJumpBeats") == std::string::npos
+                      && deckQuickPanel.find("root.engine.beatJumpBeats") != std::string::npos
+                      && engineHeader.find("Q_PROPERTY(double beatJumpBeats") != std::string::npos,
+                  "Beat Jump range is per-deck engine state shared by UI and controller");
+    ok &= require(flx10Mapping.find("paramId=\"deckA_beatjump_4_backward\" status=\"0x90\" control=\"0x5E\" type=\"momentary\"") != std::string::npos
+                      && flx10Mapping.find("paramId=\"deckB_beatjump_range_up\" status=\"0x91\" control=\"0x62\" type=\"momentary\"") != std::string::npos
+                      && flx10Mapping.find("paramId=\"deckA_jog_fast_search\" status=\"0xB0\" control=\"0x29\" type=\"encoder-relative\"") != std::string::npos
+                      && flx10Mapping.find("paramId=\"deckB_beatjump_search_forward\" status=\"0x91\" control=\"0x71\" type=\"momentary\"") != std::string::npos,
+                  "FLX10 Beat Jump buttons retain release events for click-versus-hold routing");
     ok &= require(std::count(main.begin(), main.end(), '\n') < 600, "main.qml remains a compact shell");
     ok &= require(main.find("PerformanceWorkspace") != std::string::npos, "shell routes to performance workspace");
     ok &= require(workspace.find("DeckControl") != std::string::npos, "workspace uses shared deck component");

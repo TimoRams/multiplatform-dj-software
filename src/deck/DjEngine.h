@@ -67,6 +67,7 @@ class DjEngine : public QObject
     Q_PROPERTY(double loopOutPosition READ loopOutPosition NOTIFY loopChanged)
     Q_PROPERTY(double loopPreviewOutPosition READ loopPreviewOutPosition NOTIFY progressChanged)
     Q_PROPERTY(bool slipActive READ slipActive NOTIFY slipChanged)
+    Q_PROPERTY(double beatJumpBeats READ beatJumpBeats WRITE setBeatJumpBeats NOTIFY beatJumpBeatsChanged)
 
     Q_PROPERTY(QString trackTitle   READ trackTitle   NOTIFY trackMetadataChanged)
     Q_PROPERTY(QString trackArtist  READ trackArtist  NOTIFY trackMetadataChanged)
@@ -223,6 +224,13 @@ public:
     Q_INVOKABLE void deactivateLoop();
     Q_INVOKABLE void reactivateLoop();
     Q_INVOKABLE void beatJump(double beats);
+    [[nodiscard]] double beatJumpBeats() const noexcept { return m_beatJumpBeats; }
+    Q_INVOKABLE void setBeatJumpBeats(double beats);
+    void beginFastSearch();
+    void fastSearchBySeconds(double deltaSeconds);
+    void endFastSearch();
+    [[nodiscard]] bool fastSearchActive() const noexcept
+    { return m_fastSearchActive.load(std::memory_order_acquire); }
 
     Q_INVOKABLE void ejectTrack();
 
@@ -489,6 +497,7 @@ signals:
     void syncMasterChanged();
     void loopChanged();
     void slipChanged();
+    void beatJumpBeatsChanged();
     void keylockChanged();
     void keySemitoneOffsetChanged();
     void vuLevelChanged();
@@ -625,6 +634,10 @@ private:
     double m_jogNudgePercent = 0.0;
     double m_jogNudgeCommandPercent = 0.0;
     QElapsedTimer m_lastJogNudgeClock;
+    double m_beatJumpBeats = 4.0;
+    std::atomic<bool> m_fastSearchActive { false };
+    std::atomic<double> m_fastSearchPublishedPositionSeconds { 0.0 };
+    double m_fastSearchPositionSeconds = 0.0;
 
     bool m_vinylBrakeActive = false;
     bool m_echoOutActive    = false;

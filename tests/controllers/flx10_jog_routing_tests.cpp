@@ -51,11 +51,20 @@ bool testRelativeTickDecoding()
 bool testPhysicalRevolutionCalibration()
 {
     constexpr double vinylRevolutionSeconds = 60.0 / flx10::kVinylRpm;
-    return require(near(
+    bool ok = require(near(
                        flx10::scratchDeltaSeconds(
                            flx10::kScratchIntervalsPerRevolution),
                        vinylRevolutionSeconds),
                    "one measured FLX10 revolution maps to one virtual revolution");
+    ok &= require(near(
+                      flx10::fastSearchDeltaSeconds(
+                          flx10::kScratchIntervalsPerRevolution),
+                      flx10::kFastSearchSecondsPerRevolution),
+                  "one measured revolution advances the configured fast-search interval");
+    ok &= require(flx10::fastSearchDeltaSeconds(-64.0) < 0.0
+                      && flx10::fastSearchDeltaSeconds(64.0) > 0.0,
+                  "fast search preserves platter direction");
+    return ok;
 }
 
 bool testTimestampedSpeedMeasurement()

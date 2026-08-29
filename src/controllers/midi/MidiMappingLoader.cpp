@@ -154,6 +154,7 @@ QStringList MidiControllerManager::getAvailableMappingsForSelectedController()
 
 void MidiControllerManager::selectMapping(const QString& mappingFileName)
 {
+    cancelBeatJumpSearch();
     m_selectedMappingFile = mappingFileName;
     SettingsManager::getInstance().setSelectedMappingFile(mappingFileName);
 

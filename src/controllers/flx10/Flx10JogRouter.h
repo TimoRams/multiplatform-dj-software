@@ -10,6 +10,10 @@ namespace flx10 {
 // physical revolution. Keep this conversion beside the jog state machine that
 // owns it; it is not part of the display/HID wire protocol.
 constexpr double kScratchIntervalsPerRevolution = 12750.0;
+// Holding BEAT JUMP turns the platter into a silent, coarse transport search.
+// Thirty seconds per revolution is deliberately much faster than vinyl motion,
+// while retaining enough resolution for accurate positioning at slow speeds.
+constexpr double kFastSearchSecondsPerRevolution = 30.0;
 constexpr double kVinylRpm = 33.0 + 1.0 / 3.0;
 // The rate window is primarily sized in ticks. A purely fixed-duration window
 // resolves a fast platter finely and a slow one hardly at all: at a crawl only
@@ -37,6 +41,11 @@ constexpr double kJogTimestampCoalesceSeconds = 0.00035;
 constexpr double scratchDeltaSeconds(double ticks) noexcept
 {
     return ticks * (60.0 / kVinylRpm) / kScratchIntervalsPerRevolution;
+}
+
+constexpr double fastSearchDeltaSeconds(double ticks) noexcept
+{
+    return ticks * kFastSearchSecondsPerRevolution / kScratchIntervalsPerRevolution;
 }
 
 constexpr int relativeTicksFromRaw(int rawValue) noexcept

@@ -35,7 +35,8 @@ inline bool isFlx10JogRelativeParam(const QString& paramId)
 {
     return paramId.endsWith(QStringLiteral("_jog_move"))
         || paramId.endsWith(QStringLiteral("_jog_nudge"))
-        || paramId.endsWith(QStringLiteral("_jog_scratch"));
+        || paramId.endsWith(QStringLiteral("_jog_scratch"))
+        || paramId.endsWith(QStringLiteral("_jog_fast_search"));
 }
 
 inline bool isFlx10JogInputParam(const QString& paramId)
@@ -57,6 +58,8 @@ inline MidiInteractionType defaultInteractionTypeForParam(const QString& paramId
         || paramId == QStringLiteral("beat_fx_on")
         || paramId == QStringLiteral("beat_fx_beat_minus")
         || paramId == QStringLiteral("beat_fx_beat_plus")
+        || paramId.startsWith(QStringLiteral("deckA_beatjump_"))
+        || paramId.startsWith(QStringLiteral("deckB_beatjump_"))
         || paramId.startsWith(QStringLiteral("deckA_sampler_pad"))
         || paramId.startsWith(QStringLiteral("deckB_sampler_pad"))
         || paramId.startsWith(QStringLiteral("deckA_keyshift_pad"))
@@ -83,8 +86,6 @@ inline MidiInteractionType defaultInteractionTypeForParam(const QString& paramId
         || paramId.startsWith(QStringLiteral("deckD_keyshift_range_"))
         || paramId.startsWith(QStringLiteral("deckA_loop_"))
         || paramId.startsWith(QStringLiteral("deckB_loop_"))
-        || paramId.startsWith(QStringLiteral("deckA_beatjump_"))
-        || paramId.startsWith(QStringLiteral("deckB_beatjump_"))
         || paramId.startsWith(QStringLiteral("deckA_padfx_pad"))
         || paramId.startsWith(QStringLiteral("deckB_padfx_pad"))
         || paramId.startsWith(QStringLiteral("deckA_fx_slot"))

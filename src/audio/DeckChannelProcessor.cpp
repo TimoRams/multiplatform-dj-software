@@ -64,6 +64,10 @@ void DeckChannelProcessor::setVinylBrakeActive(bool active) { setStopEffectWante
 void DeckChannelProcessor::setEchoOutActive(bool active) { setStopEffectWanted(m_echoOutWanted, active); }
 void DeckChannelProcessor::setBackspinActive(bool active) { setStopEffectWanted(m_backspinWanted, active); }
 void DeckChannelProcessor::setRollOutActive(bool active) { setStopEffectWanted(m_rollOutWanted, active); }
+void DeckChannelProcessor::setSearchMuted(bool muted) noexcept
+{
+    m_searchMuted.store(muted, std::memory_order_release);
+}
 void DeckChannelProcessor::armClickFreeTransition() { m_pendingClickFreeBridge.store(true, std::memory_order_release); }
 
 const juce::AudioBuffer<float>& DeckChannelProcessor::getPflBuffer() const { return m_preFaderScratch; }
@@ -101,6 +105,9 @@ void DeckChannelProcessor::prepareToPlay(int samplesPerBlockExpected, double sam
         m_trimSmooth .setCurrentAndTargetValue(parameters.trim);
         m_faderSmooth.reset(sr, 0.020f);   // 20 ms keeps channel-fader moves click-free
         m_faderSmooth.setCurrentAndTargetValue(parameters.fader);
+        m_searchMuteSmooth.reset(sr, 0.003f);
+        m_searchMuteSmooth.setCurrentAndTargetValue(
+            m_searchMuted.load(std::memory_order_acquire) ? 0.0f : 1.0f);
         m_channelFaderGain.store(parameters.fader, std::memory_order_release);
 
 
@@ -402,6 +409,24 @@ void DeckChannelProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
             m_padFx.process(*bufferToFill.buffer,
                             bufferToFill.startSample,
                             bufferToFill.numSamples);
+        }
+
+        // BEAT JUMP + jog is a transport search, not scratching. Silence the
+        // complete deck (including PFL and effect tails) with an audio-thread
+        // ramp so repeated seeks cannot click or leak scan audio.
+        m_searchMuteSmooth.setTargetValue(
+            m_searchMuted.load(std::memory_order_acquire) ? 0.0f : 1.0f);
+        if (m_searchMuteSmooth.isSmoothing()
+            || m_searchMuteSmooth.getTargetValue() < 0.999f) {
+            const int ns = bufferToFill.numSamples;
+            const size_t nc = slicedBlock.getNumChannels();
+            for (int i = 0; i < ns; ++i) {
+                const float gain = m_searchMuteSmooth.getNextValue();
+                for (size_t ch = 0; ch < nc; ++ch)
+                    slicedBlock.getChannelPointer(ch)[i] *= gain;
+                for (int ch = 0; ch < m_postFaderTailReturn.getNumChannels(); ++ch)
+                    m_postFaderTailReturn.getWritePointer(ch)[i] *= gain;
+            }
         }
 
         // Channel pre-fader meter: post Trim/EQ/Filter/insert FX, pre channel fader.
