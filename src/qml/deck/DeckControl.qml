@@ -579,9 +579,7 @@ Item {
                 Layout.maximumHeight: deck.controlsOnly ? 0 : 275
                 deckName: deck.deckName
                 engine: deck.engine
-                onAir: deck.engine && deck.engine.isPlaying
-                       && (!deck.mixerControl || deck.channelId === ""
-                           || deck.mixerControl.faderLevel(deck.channelId) > 0.001)
+                onAir: deck.engine ? deck.engine.onAir : false
             }
 
             // ── Track-info header ──────────────────────────────────────────

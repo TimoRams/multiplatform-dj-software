@@ -84,11 +84,11 @@ void MidiFeedbackController::prepareForShutdown() noexcept
         deck = nullptr;
 }
 
-void MidiFeedbackController::onControlClockFeedbackTick()
+void MidiFeedbackController::onControlClockFeedbackTick(double deltaSeconds)
 {
     if (!m_enabled || m_rawTestActive)
         return;
-    updateVuMeters();
+    updateVuMeters(deltaSeconds);
     if (--m_feedbackTicksUntilBlink <= 0) {
         m_feedbackTicksUntilBlink = 15;
         updateBlinkPhase();
@@ -116,6 +116,7 @@ void MidiFeedbackController::clearAll()
             sendHotcuePadLed(deck, pad, kLedOff);
 
         m_lastVuValues[static_cast<size_t>(deck - 1)] = 0xFF;
+        m_vuBallistics[static_cast<size_t>(deck - 1)].reset();
         sendVuMeter(deck, 0.0f);
     }
 }
@@ -403,7 +404,7 @@ bool MidiFeedbackController::deckHasBlinkingHotcue(int deck) const
     return false;
 }
 
-void MidiFeedbackController::updateVuMeters()
+void MidiFeedbackController::updateVuMeters(double deltaSeconds)
 {
     if (!m_enabled)
         return;
@@ -414,14 +415,15 @@ void MidiFeedbackController::updateVuMeters()
             return 0.0f;
         // Channel LEDs are the mixer VUs: they must read the signal after
         // trim/EQ/filter but before either channel or crossfader gain.
-        return std::clamp(std::max(engine->preFaderVuLevelL(),
-                                   engine->preFaderVuLevelR()), 0.0f, 1.0f);
+        return std::max(engine->preFaderVuLevelL(),
+                        engine->preFaderVuLevelR());
     };
 
-    sendVuMeter(1, deckVu(m_decks[0]));
-    sendVuMeter(2, deckVu(m_decks[1]));
-    sendVuMeter(3, deckVu(m_decks[2]));
-    sendVuMeter(4, deckVu(m_decks[3]));
+    for (int deck = 1; deck <= 4; ++deck) {
+        const auto value = m_vuBallistics[static_cast<std::size_t>(deck - 1)].update(
+            deckVu(m_decks[deck - 1]), deltaSeconds);
+        sendVuMeter(deck, static_cast<float>(value) / 127.0f);
+    }
 }
 
 void MidiFeedbackController::updateBlinkPhase()

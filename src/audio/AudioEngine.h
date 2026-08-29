@@ -116,10 +116,17 @@ public:
     static void setMasterFx(EffectType type, float amount);
     static void setMasterFxTiming(float externalDelaySeconds, float primaryParameter);
 
+    // Lock-free snapshots published by the canonical audio graph. ON AIR is a
+    // routing state (actual channel-fader gain × actual crossfader gain), not
+    // an inference from transport state or signal level.
+    [[nodiscard]] static bool deckOnAir(int deckIndex) noexcept;
+    [[nodiscard]] static float masterVuL_s() noexcept;
+    [[nodiscard]] static float masterVuR_s() noexcept;
+
     [[nodiscard]] float masterVuL() const noexcept
-    { return m_masterPeakL.load(std::memory_order_relaxed); }
+    { return masterVuL_s(); }
     [[nodiscard]] float masterVuR() const noexcept
-    { return m_masterPeakR.load(std::memory_order_relaxed); }
+    { return masterVuR_s(); }
     [[nodiscard]] bool masterClipDetected() const noexcept
     { return s_masterClipDetected.load(std::memory_order_relaxed); }
     static bool masterClipDetected_s();
@@ -159,8 +166,6 @@ private:
     AudioOutputRouter m_outputRouter;
     juce::AudioSourcePlayer m_sourcePlayer;
 
-    std::atomic<float> m_masterPeakL { 0.0f };
-    std::atomic<float> m_masterPeakR { 0.0f };
     std::atomic<std::uint64_t> m_allocationsRt { 0 };
     std::atomic<std::uint64_t> m_bufferGrowthsRt { 0 };
     std::atomic<std::uint64_t> m_blockingLocksRt { 0 };
@@ -178,5 +183,8 @@ private:
     static std::atomic<uint64_t> s_callbackWorstUsec;
     static std::atomic<uint64_t> s_callbackOverruns;
     static std::atomic<bool> s_masterClipDetected;
+    static std::array<std::atomic<bool>, kMaximumDecks> s_deckOnAir;
+    static std::atomic<float> s_masterPeakSnapshotL;
+    static std::atomic<float> s_masterPeakSnapshotR;
     static platform::AudioThreadScheduling s_audioThreadScheduling;
 };

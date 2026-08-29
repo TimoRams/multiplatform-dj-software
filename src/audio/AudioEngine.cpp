@@ -1,4 +1,5 @@
 #include "audio/AudioEngine.h"
+#include "audio/DeckChannelProcessor.h"
 
 #include <algorithm>
 #include <cmath>
@@ -13,6 +14,9 @@ std::atomic<uint64_t> AudioEngine::s_callbackTotalUsec { 0 };
 std::atomic<uint64_t> AudioEngine::s_callbackWorstUsec { 0 };
 std::atomic<uint64_t> AudioEngine::s_callbackOverruns { 0 };
 std::atomic<bool> AudioEngine::s_masterClipDetected { false };
+std::array<std::atomic<bool>, AudioEngine::kMaximumDecks> AudioEngine::s_deckOnAir {};
+std::atomic<float> AudioEngine::s_masterPeakSnapshotL { 0.0f };
+std::atomic<float> AudioEngine::s_masterPeakSnapshotR { 0.0f };
 platform::AudioThreadScheduling AudioEngine::s_audioThreadScheduling;
 
 namespace {
@@ -222,6 +226,10 @@ void AudioEngine::releaseResources()
         pipeline->releaseResources();
     if (auto* aux = m_auxEndpoint.load(std::memory_order_seq_cst))
         aux->releaseAuxAudio();
+    s_masterPeakSnapshotL.store(0.0f, std::memory_order_release);
+    s_masterPeakSnapshotR.store(0.0f, std::memory_order_release);
+    for (auto& state : s_deckOnAir)
+        state.store(false, std::memory_order_release);
 }
 
 void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill)
@@ -267,8 +275,21 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
                      callbackPeakL, callbackPeakR, minimumGainReduction);
     }
 
-    m_masterPeakL.store(callbackPeakL, std::memory_order_relaxed);
-    m_masterPeakR.store(callbackPeakR, std::memory_order_relaxed);
+    s_masterPeakSnapshotL.store(callbackPeakL, std::memory_order_release);
+    s_masterPeakSnapshotR.store(callbackPeakR, std::memory_order_release);
+
+    // Use the gains that the audio graph actually reached after its click-free
+    // ramps. THRU is naturally represented by a crossfader gain of one.
+    constexpr float kRoutingEpsilon = 1.0e-4f;
+    for (std::size_t index = 0; index < kMaximumDecks; ++index) {
+        const auto* endpoint = endpoints[index];
+        const float channelGain = endpoint && endpoint->mixerPtr()
+            ? endpoint->mixer().channelFaderGain() : 0.0f;
+        const float crossfaderGain = m_masterMixer.crossfaderGain(index);
+        s_deckOnAir[index].store(channelGain > kRoutingEpsilon
+                                    && crossfaderGain > kRoutingEpsilon,
+                                std::memory_order_release);
+    }
     s_masterClipDetected.store(callbackPeakL > 1.001f || callbackPeakR > 1.001f,
                                std::memory_order_relaxed);
     s_gainReduction.store(parameters.limiterEnabled ? minimumGainReduction : 1.0f,
@@ -295,6 +316,23 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         if (budgetUsec > 0 && elapsedUsec > budgetUsec)
             s_callbackOverruns.fetch_add(1, std::memory_order_relaxed);
     }
+}
+
+bool AudioEngine::deckOnAir(int deckIndex) noexcept
+{
+    if (deckIndex < 0 || deckIndex >= static_cast<int>(kMaximumDecks))
+        return false;
+    return s_deckOnAir[static_cast<std::size_t>(deckIndex)].load(std::memory_order_acquire);
+}
+
+float AudioEngine::masterVuL_s() noexcept
+{
+    return s_masterPeakSnapshotL.load(std::memory_order_acquire);
+}
+
+float AudioEngine::masterVuR_s() noexcept
+{
+    return s_masterPeakSnapshotR.load(std::memory_order_acquire);
 }
 
 void AudioEngine::processChunk(

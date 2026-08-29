@@ -268,7 +268,8 @@ private:
     std::array<std::uint64_t, 5> m_waveformUploadTrackGenerations = {0, 0, 0, 0, 0};
     std::array<std::uint32_t, 5> m_waveformUploadQualityPermille = {0, 0, 0, 0, 0};
     std::array<bool, 5> m_jogRingWarningActive = {false, false, false, false, false};
-    std::array<bool, 5> m_jogRingLit = {true, true, true, true, true};
+    std::array<bool, 5> m_jogRingLit = {false, false, false, false, false};
+    std::array<bool, 5> m_jogRingStateKnown = {false, false, false, false, false};
     qint64 m_clockStartMs = 0;
     QElapsedTimer m_hidTrafficClock;
     std::array<qint64, 5> m_lastXx36SentMs = {-100, -100, -100, -100, -100};

@@ -111,6 +111,16 @@ void mixerHeadphoneAndRouter()
     mixer.finalize(p, master, samples);
     assert(std::abs(tail(master, 0) - 0.25f) < 0.002f);
     assert(std::abs(mixer.meter().finalPeakL - 0.25f) < 0.002f);
+    assert(mixer.crossfaderGain(0) > 0.999f);
+    assert(mixer.crossfaderGain(1) < 0.001f);
+
+    // THRU is represented by a unity gain in the same routing graph. ON AIR
+    // can therefore combine this snapshot with the channel-fader snapshot
+    // without duplicating the crossfader curve in controller/UI code.
+    p.crossfaderAssignments[1] = CrossfaderAssignment::Thru;
+    mixer.mixPrograms(programs, tails, p, master, samples);
+    assert(mixer.crossfaderGain(1) > 0.999f);
+    p.crossfaderAssignments[1] = CrossfaderAssignment::B;
 
     // Scratch is an immediate cut while the other curves still ramp.
     mixer.reset();

@@ -36,6 +36,8 @@ int main()
     bool ok = true;
     const auto main = read("src/qml/main.qml");
     const auto topHeader = read("src/qml/shell/TopHeader.qml");
+    const auto deckControl = read("src/qml/deck/DeckControl.qml");
+    const auto mixerSection = read("src/qml/mixer/MixerSection.qml");
     const auto workspace = read("src/qml/performance/PerformanceWorkspace.qml");
     const auto shortcuts = read("src/qml/components/UiShortcutManager.qml");
     const auto enlargedWaveform = read("src/qml/waveform/EnlargedWaveform.qml");
@@ -72,6 +74,18 @@ int main()
     ok &= require(topHeader.find("settingsWindowFactory.createObject(null)") != std::string::npos
                       && topHeader.find("SettingsWindow { id: settingsWin }") == std::string::npos,
                   "desktop settings no longer retain a hidden startup window");
+    ok &= require(deckControl.find("onAir: deck.engine ? deck.engine.onAir : false")
+                      != std::string::npos
+                  && deckControl.find("onAir: deck.engine && deck.engine.isPlaying")
+                      == std::string::npos,
+                  "ON AIR UI consumes the audio routing snapshot, not transport or level");
+    ok &= require(topHeader.find("deckA.masterVuLevelL") != std::string::npos
+                  && topHeader.find("deckA.masterVuLevelR") != std::string::npos
+                  && topHeader.find("Math.max(deckA ? deckA.vuLevelL") == std::string::npos,
+                  "master VU consumes the final master output snapshot");
+    ok &= require(mixerSection.find("engineA.preFaderVuLevelL") != std::string::npos
+                  && mixerSection.find("normalizedDb(levelLinear)") != std::string::npos,
+                  "channel UI meter consumes pre-fader peaks with dBFS height mapping");
     ok &= require(settingsPanel.find("mappingEditorFactory.createObject(null)") != std::string::npos
                       && settingsWindow.find("mappingEditorFactory.createObject(null)") != std::string::npos
                       && settingsPanel.find("id: mappingEditorWindow") == std::string::npos
@@ -268,7 +282,7 @@ int main()
                   && flx10MidiBridge.find("handleKeyShiftPad(deck, deckEngine, padIndex,")
                       != std::string::npos,
                   "FLX10 stale Hot Cue pad packets cannot cancel an explicit Key Shift mode");
-    const std::string midiParameterDispatch = readFile(sourceRoot / "src/controllers/midi/MidiParameterDispatch.cpp");
+    const std::string midiParameterDispatch = read("src/controllers/midi/MidiParameterDispatch.cpp");
     ok &= require(midiParameterDispatch.find("decodeFlx10KeyShiftPadWireEvent")
                       != std::string::npos
                   && midiParameterDispatch.find("channel < 7 || channel > 14")

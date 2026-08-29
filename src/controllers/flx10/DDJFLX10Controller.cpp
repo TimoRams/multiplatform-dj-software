@@ -97,6 +97,7 @@ bool DDJFLX10Controller::start()
     m_clockStartMs = QDateTime::currentMSecsSinceEpoch();
     m_hidTrafficClock.restart();
     m_lastXx36SentMs.fill(-kXx36TrickleIntervalMs);
+    m_jogRingStateKnown.fill(false);
     for (int deck = flx10::kFirstNativeDeckNumber;
          deck <= flx10::kLastNativeDeckNumber; ++deck) {
         m_uploadActive[deck] = false;
@@ -203,12 +204,14 @@ void DDJFLX10Controller::stop()
             resetDisplayPacketState(deck);
         }
     }
-    for (int deck = flx10::kFirstNativeDeckNumber; deck <= flx10::kLastNativeDeckNumber; ++deck) {
-        if (m_jogRingWarningActive[deck] || !m_jogRingLit[deck])
-            sendJogRingIllumination(deck, true);
+    for (int deck = flx10::kFirstNativeDeckNumber;
+         deck <= flx10::kLastNativeDeckNumber; ++deck) {
+        m_jogRingStateKnown[deck] = false;
+        sendJogRingIllumination(deck, false);
     }
     m_jogRingWarningActive.fill(false);
-    m_jogRingLit.fill(true);
+    m_jogRingLit.fill(false);
+    m_jogRingStateKnown.fill(false);
 
     stopWaveformWorker();
 
@@ -491,7 +494,7 @@ void DDJFLX10Controller::resetDeckWaveformOutput(int deck)
 
     invalidateDeckSnapshot(deck, {}, false);
     m_jogRingWarningActive[deck] = false;
-    sendJogRingIllumination(deck, true);
+    m_jogRingStateKnown[deck] = false;
     qInfo() << "[DDJ-FLX10] Deck" << deck << "has no track waveform; HID deck output stopped";
     if (m_connected)
         clearDeckDisplay(deck);
@@ -952,6 +955,9 @@ bool DDJFLX10Controller::sendJogRingIllumination(int deck, bool on)
     if (deck < 0 || deck >= static_cast<int>(m_jogRingLit.size()))
         return false;
 
+    if (m_jogRingStateKnown[deck] && m_jogRingLit[deck] == on)
+        return true;
+
     if (m_midiPort.isEmpty()
 #if defined(Q_OS_LINUX)
         && !(m_sequencerMidiOut && m_sequencerMidiOut->isOpen())
@@ -965,19 +971,24 @@ bool DDJFLX10Controller::sendJogRingIllumination(int deck, bool on)
                             .arg(on ? kJogRingOnValue : 0, 2, 16, QLatin1Char('0'))
                             .toUpper();
     const bool ok = sendMidiHex(hex);
-    if (ok)
+    if (ok) {
         m_jogRingLit[deck] = on;
+        m_jogRingStateKnown[deck] = true;
+    }
     return ok;
 }
 
 void DDJFLX10Controller::updateJogRingWarning(int deck, double elapsedSeconds, double durationSeconds, bool playing)
 {
+    const DjEngine* engine = deckEngine(deck);
+    const bool onAir = engine && engine->onAir();
     const double remaining = durationSeconds - elapsedSeconds;
-    const bool shouldBlink = playing && durationSeconds > kJogRingWarningSeconds && remaining > 0.0 && remaining <= kJogRingWarningSeconds;
+    const bool shouldBlink = onAir && playing
+        && durationSeconds > kJogRingWarningSeconds
+        && remaining > 0.0 && remaining <= kJogRingWarningSeconds;
 
     if (!shouldBlink) {
-        if (m_jogRingWarningActive[deck] || !m_jogRingLit[deck])
-            sendJogRingIllumination(deck, true);
+        sendJogRingIllumination(deck, onAir);
         m_jogRingWarningActive[deck] = false;
         return;
     }
@@ -986,8 +997,7 @@ void DDJFLX10Controller::updateJogRingWarning(int deck, double elapsedSeconds, d
         qInfo() << "[DDJ-FLX10] Deck" << deck << "jog ring end warning active; remaining seconds" << remaining;
     m_jogRingWarningActive[deck] = true;
     const bool blinkOn = ((QDateTime::currentMSecsSinceEpoch() / kJogRingBlinkIntervalMs) % 2) == 0;
-    if (blinkOn != m_jogRingLit[deck])
-        sendJogRingIllumination(deck, blinkOn);
+    sendJogRingIllumination(deck, blinkOn);
 }
 
 void DDJFLX10Controller::sendSessionSysEx()

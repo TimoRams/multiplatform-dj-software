@@ -101,6 +101,7 @@ void DeckChannelProcessor::prepareToPlay(int samplesPerBlockExpected, double sam
         m_trimSmooth .setCurrentAndTargetValue(parameters.trim);
         m_faderSmooth.reset(sr, 0.020f);   // 20 ms keeps channel-fader moves click-free
         m_faderSmooth.setCurrentAndTargetValue(parameters.fader);
+        m_channelFaderGain.store(parameters.fader, std::memory_order_release);
 
 
         // 1.15 s ramp from full speed to a complete stop
@@ -441,6 +442,7 @@ void DeckChannelProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
                     slicedBlock.getChannelPointer(ch)[i] *= g;
             }
         }
+        m_channelFaderGain.store(m_faderSmooth.getCurrentValue(), std::memory_order_release);
 
         applyClickFreeTransition(bufferToFill);
 

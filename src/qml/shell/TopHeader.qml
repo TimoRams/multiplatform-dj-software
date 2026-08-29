@@ -1639,16 +1639,18 @@ Rectangle {
         border.width: 1
         border.color: clipNow ? "#a82020" : "#1d1d1d"
 
-        property real levelL: Math.max(deckA ? deckA.vuLevelL : 0, deckB ? deckB.vuLevelL : 0)
-        property real levelR: Math.max(deckA ? deckA.vuLevelR : 0, deckB ? deckB.vuLevelR : 0)
+        // Final MASTER 1/2 peak: after summed deck mix, master gain and limiter.
+        // Never reconstruct this from one or more channel meters.
+        property real levelL: deckA ? deckA.masterVuLevelL : 0
+        property real levelR: deckA ? deckA.masterVuLevelR : 0
         property bool clipNow: (deckA && deckA.clipDetected) || (deckB && deckB.clipDetected)
         readonly property int segs: 24
 
-        function toDb(peak) {
-            if (peak <= 0.0001) return -36.0
-            return Math.max(-36.0, Math.min(12.0, 20.0 * Math.log10(peak)))
+        function litSegments(peak) {
+            if (peak <= 0.000000001) return 0
+            const db = Math.max(-54.0, Math.min(12.0, 20.0 * Math.log10(peak)))
+            return Math.ceil((db + 54.0) * (segs / 66.0))
         }
-        function toSeg(db) { return Math.floor((db + 36.0) * (segs / 48.0)) }
         function segColor(i) {
             if (i >= 22) return "#ff3b30"
             if (i >= 19) return "#ff8c2a"
@@ -1669,8 +1671,8 @@ Rectangle {
                         width: 4
                         height: 3
                         radius: 1
-                        readonly property int litTo: centerMeter.toSeg(centerMeter.toDb(centerMeter.levelL))
-                        color: index <= litTo ? centerMeter.segColor(index) : "#1b1b1b"
+                        readonly property int litCount: centerMeter.litSegments(centerMeter.levelL)
+                        color: index < litCount ? centerMeter.segColor(index) : "#1b1b1b"
                     }
                 }
             }
@@ -1684,8 +1686,8 @@ Rectangle {
                         width: 4
                         height: 3
                         radius: 1
-                        readonly property int litTo: centerMeter.toSeg(centerMeter.toDb(centerMeter.levelR))
-                        color: index <= litTo ? centerMeter.segColor(index) : "#1b1b1b"
+                        readonly property int litCount: centerMeter.litSegments(centerMeter.levelR)
+                        color: index < litCount ? centerMeter.segColor(index) : "#1b1b1b"
                     }
                 }
             }

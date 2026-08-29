@@ -9,6 +9,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     midi/AlsaMidiOutput.cpp
     midi/feedback/MidiFeedbackController.h
     midi/feedback/MidiFeedbackController.cpp
+    midi/feedback/LevelMeterBallistics.h
     midi/MidiControllerManager.h
     midi/MidiParameterDispatch.h
     midi/MidiControllerManager.cpp

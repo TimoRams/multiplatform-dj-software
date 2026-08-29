@@ -1,5 +1,7 @@
 #pragma once
 
+#include "controllers/midi/feedback/LevelMeterBallistics.h"
+
 #include <QObject>
 #include <QString>
 #include <array>
@@ -60,7 +62,7 @@ public:
     void start();
     void stop();
     void prepareForShutdown() noexcept;
-    void onControlClockFeedbackTick();
+    void onControlClockFeedbackTick(double deltaSeconds);
 
     void clearAll();
     void refreshAll();
@@ -85,7 +87,7 @@ private:
     bool sendMidiShort(uint8_t status, uint8_t data1, uint8_t data2, const QString& type);
     DjEngine* deckEngine(int deck) const;
     bool deckHasBlinkingHotcue(int deck) const;
-    void updateVuMeters();
+    void updateVuMeters(double deltaSeconds);
     void updateBlinkPhase();
     void scheduleRawTestStep(int delayMs, const std::function<void()>& step);
 
@@ -93,6 +95,7 @@ private:
     DjEngine* m_decks[4] = { nullptr, nullptr, nullptr, nullptr };
     MidiFeedbackMapping m_mapping;
     std::array<uint8_t, 4> m_lastVuValues = { 0xFF, 0xFF, 0xFF, 0xFF };
+    std::array<LevelMeterBallistics, 4> m_vuBallistics;
     bool m_enabled = false;
     bool m_rawTestActive = false;
     bool m_blinkPhase = false;

@@ -51,6 +51,8 @@ public:
     void setFilterVal(float f);
     void setPolarityInverted(bool inverted);
     [[nodiscard]] RealtimeStats realtimeStats() const noexcept;
+    [[nodiscard]] float channelFaderGain() const noexcept
+    { return m_channelFaderGain.load(std::memory_order_acquire); }
 
     std::atomic<float> m_peakL { 0.0f };
     std::atomic<float> m_peakR { 0.0f };
@@ -84,6 +86,9 @@ private:
     RealtimeSnapshotStore<Parameters> m_parameters;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_trimSmooth;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> m_faderSmooth;
+    // Audio-thread-published routing gain. Consumers use this instead of
+    // reconstructing mixer routing from GUI/controller parameter copies.
+    std::atomic<float> m_channelFaderGain { 1.0f };
 
     enum class SnapshotState:std::uint8_t{Empty,Writing,Ready};
     struct SnapshotSlot{MixerCoefficientSnapshot snapshot;std::atomic<SnapshotState> state{SnapshotState::Empty};};

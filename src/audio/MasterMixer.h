@@ -6,6 +6,7 @@
 #include "fx/FxProcessor.h"
 
 #include <array>
+#include <atomic>
 #include <juce_audio_basics/juce_audio_basics.h>
 
 struct MasterMeterSnapshot {
@@ -34,6 +35,11 @@ public:
                   juce::AudioBuffer<float>* preMasterGainTap = nullptr) noexcept;
 
     [[nodiscard]] const MasterMeterSnapshot& meter() const noexcept { return m_meter; }
+    [[nodiscard]] float crossfaderGain(std::size_t deck) const noexcept
+    {
+        return deck < kDeckCount
+            ? m_publishedCrossfaderGain[deck].load(std::memory_order_acquire) : 0.0f;
+    }
     [[nodiscard]] int limiterLatencySamples() const noexcept
     { return m_limiter.getLookaheadSamples(); }
 
@@ -45,6 +51,7 @@ private:
     BrickwallLimiter m_limiter;
     FxProcessor m_masterFx;
     std::array<float, kDeckCount> m_crossfaderGain { 1.0f, 1.0f, 1.0f, 1.0f };
+    std::array<std::atomic<float>, kDeckCount> m_publishedCrossfaderGain {};
     float m_masterGain = 1.0f;
     double m_sampleRate = 48000.0;
     MasterMeterSnapshot m_meter {};

@@ -616,6 +616,12 @@ target_include_directories(BrockDJ_midi_14bit_accumulator_tests PRIVATE src)
 target_compile_features(BrockDJ_midi_14bit_accumulator_tests PRIVATE cxx_std_23)
 add_test(NAME midi_14bit_accumulator COMMAND BrockDJ_midi_14bit_accumulator_tests)
 
+add_executable(BrockDJ_midi_feedback_meter_tests
+    tests/controllers/midi_feedback_meter_tests.cpp)
+target_include_directories(BrockDJ_midi_feedback_meter_tests PRIVATE src)
+target_compile_features(BrockDJ_midi_feedback_meter_tests PRIVATE cxx_std_23)
+add_test(NAME midi_feedback_meter COMMAND BrockDJ_midi_feedback_meter_tests)
+
 add_executable(BrockDJ_parameter_store_tests
     tests/controllers/parameter_store_tests.cpp
     src/controllers/midi/ParameterStore.cpp)
@@ -1068,6 +1074,7 @@ set(_brockdj_executable_targets
     BrockDJ_deck_audio_graph_tests
     BrockDJ_deck_transport_tests
     BrockDJ_flx10_jog_routing_tests
+    BrockDJ_midi_feedback_meter_tests
     BrockDJ_sync_coordinator_tests
     BrockDJ_control_clock_tests
     BrockDJ_master_bus_tests

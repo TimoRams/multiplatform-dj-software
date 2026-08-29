@@ -107,7 +107,10 @@ class DjEngine : public QObject
     Q_PROPERTY(float vuLevelR READ vuLevelR NOTIFY vuLevelChanged)
     Q_PROPERTY(float preFaderVuLevelL READ preFaderVuLevelL NOTIFY vuLevelChanged)
     Q_PROPERTY(float preFaderVuLevelR READ preFaderVuLevelR NOTIFY vuLevelChanged)
+    Q_PROPERTY(float masterVuLevelL READ masterVuLevelL NOTIFY vuLevelChanged)
+    Q_PROPERTY(float masterVuLevelR READ masterVuLevelR NOTIFY vuLevelChanged)
     Q_PROPERTY(bool clipDetected READ clipDetected NOTIFY vuLevelChanged)
+    Q_PROPERTY(bool onAir READ onAir NOTIFY onAirChanged)
     
     Q_PROPERTY(float gainReduction READ gainReduction NOTIFY gainReductionChanged)
     Q_PROPERTY(QVariantList hotCues READ hotCues NOTIFY hotCuesChanged)
@@ -339,7 +342,10 @@ public:
     [[nodiscard]] float vuLevelR() const;
     [[nodiscard]] float preFaderVuLevelL() const;
     [[nodiscard]] float preFaderVuLevelR() const;
+    [[nodiscard]] float masterVuLevelL() const;
+    [[nodiscard]] float masterVuLevelR() const;
     [[nodiscard]] bool clipDetected() const;
+    [[nodiscard]] bool onAir() const;
     [[nodiscard]] float gainReduction() const;
 
     // Explicit bootstrap boundary; AudioEngine stores only this audio endpoint.
@@ -486,6 +492,7 @@ signals:
     void keylockChanged();
     void keySemitoneOffsetChanged();
     void vuLevelChanged();
+    void onAirChanged();
     void gainReductionChanged();
     void segmentsChanged();
     void hotCuesChanged();
@@ -630,7 +637,10 @@ private:
     float m_lastNotifiedVuR     = 0.0f;
     float m_lastNotifiedPreVuL   = 0.0f;
     float m_lastNotifiedPreVuR   = 0.0f;
+    float m_lastNotifiedMasterVuL = 0.0f;
+    float m_lastNotifiedMasterVuR = 0.0f;
     float m_lastNotifiedGr       = 1.0f;
+    bool m_lastNotifiedOnAir     = false;
     QElapsedTimer m_vuNotifyClock;
     double m_lastNotifiedProgressSec = 0.0;
     QElapsedTimer m_progressNotifyClock;

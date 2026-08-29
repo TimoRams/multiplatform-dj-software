@@ -627,31 +627,42 @@ void DjEngine::notifyVuMetersIfNeeded()
     const float vuR    = vuLevelR();
     const float preL   = preFaderVuLevelL();
     const float preR   = preFaderVuLevelR();
+    const float masterL = masterVuLevelL();
+    const float masterR = masterVuLevelR();
     const float gr     = gainReduction();
+    const bool routed  = onAir();
 
     constexpr float kVuEps = 0.015f;
     constexpr float kGrEps = 0.012f;
     const bool vuMoved = std::abs(vuL - m_lastNotifiedVuL) > kVuEps
                       || std::abs(vuR - m_lastNotifiedVuR) > kVuEps
                       || std::abs(preL - m_lastNotifiedPreVuL) > kVuEps
-                      || std::abs(preR - m_lastNotifiedPreVuR) > kVuEps;
+                      || std::abs(preR - m_lastNotifiedPreVuR) > kVuEps
+                      || std::abs(masterL - m_lastNotifiedMasterVuL) > kVuEps
+                      || std::abs(masterR - m_lastNotifiedMasterVuR) > kVuEps;
     const bool grMoved = std::abs(gr - m_lastNotifiedGr) > kGrEps;
+    const bool onAirMoved = routed != m_lastNotifiedOnAir;
     const qint64 msSince = m_vuNotifyClock.isValid() ? m_vuNotifyClock.elapsed() : 1000;
 
-    if (!vuMoved && !grMoved && msSince < 50)
+    if (!vuMoved && !grMoved && !onAirMoved && msSince < 50)
         return;
 
     m_lastNotifiedVuL   = vuL;
     m_lastNotifiedVuR   = vuR;
     m_lastNotifiedPreVuL = preL;
     m_lastNotifiedPreVuR = preR;
+    m_lastNotifiedMasterVuL = masterL;
+    m_lastNotifiedMasterVuR = masterR;
     m_lastNotifiedGr    = gr;
+    m_lastNotifiedOnAir = routed;
     m_vuNotifyClock.restart();
 
     if (vuMoved || msSince >= 50)
         emit vuLevelChanged();
     if (grMoved || msSince >= 50)
         emit gainReductionChanged();
+    if (onAirMoved)
+        emit onAirChanged();
 }
 
 

@@ -14,6 +14,8 @@ void MasterMixer::prepare(double sampleRate, int maximumBlockSize)
 void MasterMixer::reset() noexcept
 {
     m_crossfaderGain.fill(1.0f);
+    for (auto& gain : m_publishedCrossfaderGain)
+        gain.store(1.0f, std::memory_order_release);
     m_masterGain = 1.0f;
     m_meter = {};
     m_limiter.reset();
@@ -74,6 +76,7 @@ void MasterMixer::mixPrograms(
             masterR[sample] += sourceR[sample] * gain;
         }
         m_crossfaderGain[deck] = gain;
+        m_publishedCrossfaderGain[deck].store(gain, std::memory_order_release);
     }
 
     for (const auto* tail : tailReturns) {

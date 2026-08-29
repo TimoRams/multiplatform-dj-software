@@ -229,6 +229,13 @@ Rectangle {
         property real peakHoldLevel: 0.0
         readonly property int segs: 28
         readonly property real segH: Math.max(1, (height - (segs - 1)) / segs)
+        readonly property real displayLevel: normalizedDb(levelLinear)
+
+        function normalizedDb(peak) {
+            if (peak <= 0.000000001) return 0.0
+            const db = Math.max(-54.0, Math.min(12.0, 20.0 * Math.log10(peak)))
+            return (db + 54.0) / 66.0
+        }
 
         function segColor(i) {
             if (i >= Math.floor(segs * 0.88)) return UiTheme.vuClip
@@ -237,8 +244,8 @@ Rectangle {
             return UiTheme.vuLow
         }
 
-        onLevelLinearChanged: {
-            if (levelLinear > peakHoldLevel) { peakHoldLevel = levelLinear; decayTimer.restart() }
+        onDisplayLevelChanged: {
+            if (displayLevel > peakHoldLevel) { peakHoldLevel = displayLevel; decayTimer.restart() }
         }
         Timer { id: decayTimer; interval: 350; onTriggered: decayAnim.start() }
         NumberAnimation {
@@ -258,7 +265,7 @@ Rectangle {
                     height: vu.segH
                     color: {
                         const ri = vu.segs - 1 - index
-                        const lit = Math.floor(vu.levelLinear * vu.segs)
+                        const lit = Math.ceil(vu.displayLevel * vu.segs)
                         const peak = Math.floor(vu.peakHoldLevel * vu.segs) - 1
                         if (ri === peak && peak >= 0) return UiTheme.vuPeak
                         if (ri < lit) return vu.segColor(ri)

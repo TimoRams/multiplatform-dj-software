@@ -431,6 +431,21 @@ float DjEngine::preFaderVuLevelR() const
     return m_audioPipeline->mixerPtr() ? m_audioPipeline->mixer().m_preFaderPeakR.load(std::memory_order_relaxed) : 0.0f;
 }
 
+float DjEngine::masterVuLevelL() const
+{
+    return AudioEngine::masterVuL_s();
+}
+
+float DjEngine::masterVuLevelR() const
+{
+    return AudioEngine::masterVuR_s();
+}
+
+bool DjEngine::onAir() const
+{
+    return AudioEngine::deckOnAir(m_deckIndex);
+}
+
 
 bool DjEngine::clipDetected() const
 {
