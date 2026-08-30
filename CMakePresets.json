@@ -97,6 +97,42 @@
       }
     },
     {
+      "name": "macos-dev-arm64-make",
+      "displayName": "macOS dev (Apple Silicon, Makefiles)",
+      "description": "Local macOS ARM64 dev build using Unix Makefiles when Ninja is unavailable.",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-macos-arm64-make",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "13.0",
+        "RDBJ_ENABLE_QML_CACHEGEN": "OFF"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      }
+    },
+    {
+      "name": "macos-dev-x86_64-make",
+      "displayName": "macOS dev (Intel, Makefiles)",
+      "description": "Local Intel Mac dev build using Unix Makefiles when Ninja is unavailable.",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-macos-x86_64-make",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_OSX_ARCHITECTURES": "x86_64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "13.0",
+        "RDBJ_ENABLE_QML_CACHEGEN": "OFF"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      }
+    },
+    {
       "name": "ci-base",
       "hidden": true,
       "generator": "Ninja",
@@ -181,6 +217,8 @@
     { "name": "linux-release", "configurePreset": "linux-release" },
     { "name": "macos-dev-arm64", "configurePreset": "macos-dev-arm64" },
     { "name": "macos-dev-x86_64", "configurePreset": "macos-dev-x86_64" },
+    { "name": "macos-dev-arm64-make", "configurePreset": "macos-dev-arm64-make" },
+    { "name": "macos-dev-x86_64-make", "configurePreset": "macos-dev-x86_64-make" },
     { "name": "ci-linux-x64", "configurePreset": "ci-linux-x64" },
     { "name": "ci-linux-arm64", "configurePreset": "ci-linux-arm64" },
     { "name": "ci-macos-arm64", "configurePreset": "ci-macos-arm64" },

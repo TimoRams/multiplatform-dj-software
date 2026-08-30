@@ -63,6 +63,8 @@ cmake --build --preset macos-dev-arm64
 ```
 
 For Intel Macs, replace `macos-dev-arm64` with `macos-dev-x86_64`.
+If Ninja is not installed, use `macos-dev-arm64-make` or
+`macos-dev-x86_64-make` instead.
 
 ## Documentation
 

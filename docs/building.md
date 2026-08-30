@@ -116,6 +116,14 @@ Both presets create a real `BrockDJ.app` bundle under the preset's `bin/`
 directory. The architecture is explicit through `CMAKE_OSX_ARCHITECTURES`, and
 the supported deployment baseline is macOS 13.0.
 
+For local macOS builds without Ninja, use the matching Makefiles fallback
+preset:
+
+```bash
+cmake --preset macos-dev-x86_64-make
+cmake --build --preset macos-dev-x86_64-make --parallel 4
+```
+
 ## Windows x64
 
 Use a Visual Studio 2022 x64 developer shell. Install Qt 6.8.x built for

@@ -98,7 +98,15 @@ private:
     struct DeviceState;
     struct SystemVolume;
     struct EjectOperation;
-    struct WorkerTask;
+    struct WorkerTask {
+        enum class Kind { Index, Analysis } kind = Kind::Index;
+        quint64 generation = 0;
+        QString deviceId;
+        QString mountPath;
+        QString deckLetter;
+        QString trackId;
+        std::shared_ptr<const rekordbox::DeviceIndex> index;
+    };
 
     void inspectStorageVolumes(const QList<QStorageInfo>& volumes);
     void inspectMountPaths(const QStringList& paths);

@@ -232,16 +232,6 @@ struct DeviceLibraryManager::EjectOperation {
     bool ejectable = false;
 };
 
-struct DeviceLibraryManager::WorkerTask {
-    enum class Kind { Index, Analysis } kind = Kind::Index;
-    quint64 generation = 0;
-    QString deviceId;
-    QString mountPath;
-    QString deckLetter;
-    QString trackId;
-    std::shared_ptr<const rekordbox::DeviceIndex> index;
-};
-
 DeviceLibraryManager::DeviceLibraryManager(QObject* parent)
     : DeviceLibraryManager(true, parent)
 {

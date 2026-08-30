@@ -6,9 +6,9 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 required_submodule_files=(
     "libs/JUCE/CMakeLists.txt"
     "libs/link/AbletonLinkConfig.cmake"
-    "libs/signalsmith-dsp/CMakeLists.txt"
-    "libs/signalsmith-linear/CMakeLists.txt"
-    "libs/signalsmith-stretch/CMakeLists.txt"
+    "libs/signalsmith-dsp/include/signalsmith-dsp/delay.h"
+    "libs/signalsmith-linear/include/signalsmith-linear/linear.h"
+    "libs/signalsmith-stretch/include/signalsmith-stretch/signalsmith-stretch.h"
 )
 for required_file in "${required_submodule_files[@]}"; do
     if [[ ! -f "${repo_root}/${required_file}" ]]; then

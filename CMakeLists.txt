@@ -238,8 +238,6 @@ if(UNIX AND NOT APPLE)
 endif()
 
 # ---- Signalsmith (header-only, MIT) ---------------------------------------
-# Stretch fetches Linear only when its local CMake target does not exist.  Keep
-# this order so an initialized submodule checkout configures without downloads.
 set(SIGNALSMITH_USE_IPP OFF CACHE BOOL "" FORCE)
 set(SIGNALSMITH_USE_PFFFT OFF CACHE BOOL "" FORCE)
 set(SIGNALSMITH_USE_PFFFT_DOUBLE OFF CACHE BOOL "" FORCE)
@@ -247,19 +245,46 @@ set(SIGNALSMITH_USE_XSIMD OFF CACHE BOOL "" FORCE)
 set(SIGNALSMITH_USE_XSIMD_DISPATCH OFF CACHE BOOL "" FORCE)
 set(SIGNALSMITH_USE_CMSISDSP OFF CACHE BOOL "" FORCE)
 
-add_subdirectory(libs/signalsmith-linear EXCLUDE_FROM_ALL)
-add_subdirectory(libs/signalsmith-dsp EXCLUDE_FROM_ALL)
-add_subdirectory(libs/signalsmith-stretch EXCLUDE_FROM_ALL)
+function(_rdbj_add_signalsmith_header_target target_name source_dir header_path)
+    set(_signalsmith_include_dir "${CMAKE_CURRENT_SOURCE_DIR}/${source_dir}/include")
+    set(_signalsmith_header "${_signalsmith_include_dir}/${header_path}")
+    if(NOT EXISTS "${_signalsmith_header}")
+        message(FATAL_ERROR
+            "Required Signalsmith dependency is missing: ${_signalsmith_header}\n"
+            "Run: git submodule update --init --recursive")
+    endif()
 
-if(NOT TARGET ThirdParty::SignalsmithLinear)
-    add_library(ThirdParty::SignalsmithLinear ALIAS signalsmith-linear)
+    if(NOT TARGET ${target_name})
+        add_library(${target_name} INTERFACE)
+        target_include_directories(${target_name} INTERFACE "${_signalsmith_include_dir}")
+    endif()
+endfunction()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/libs/signalsmith-linear/CMakeLists.txt")
+    add_subdirectory(libs/signalsmith-linear EXCLUDE_FROM_ALL)
+else()
+    _rdbj_add_signalsmith_header_target(signalsmith-linear
+        libs/signalsmith-linear signalsmith-linear/linear.h)
 endif()
-if(NOT TARGET ThirdParty::SignalsmithDSP)
-    add_library(ThirdParty::SignalsmithDSP ALIAS signalsmith-dsp)
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/libs/signalsmith-dsp/CMakeLists.txt")
+    add_subdirectory(libs/signalsmith-dsp EXCLUDE_FROM_ALL)
+else()
+    _rdbj_add_signalsmith_header_target(signalsmith-dsp
+        libs/signalsmith-dsp signalsmith-dsp/delay.h)
 endif()
-if(NOT TARGET ThirdParty::SignalsmithStretch)
-    add_library(ThirdParty::SignalsmithStretch ALIAS signalsmith-stretch)
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/libs/signalsmith-stretch/CMakeLists.txt")
+    add_subdirectory(libs/signalsmith-stretch EXCLUDE_FROM_ALL)
+else()
+    _rdbj_add_signalsmith_header_target(signalsmith-stretch
+        libs/signalsmith-stretch signalsmith-stretch/signalsmith-stretch.h)
+    target_link_libraries(signalsmith-stretch INTERFACE signalsmith-linear)
 endif()
+
+add_library(ThirdParty::SignalsmithLinear ALIAS signalsmith-linear)
+add_library(ThirdParty::SignalsmithDSP ALIAS signalsmith-dsp)
+add_library(ThirdParty::SignalsmithStretch ALIAS signalsmith-stretch)
 
 add_subdirectory(libs/JUCE)
 
