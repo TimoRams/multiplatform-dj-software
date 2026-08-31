@@ -85,6 +85,41 @@ blocks, no dropped requests, 380.28 us average callback time, and 3,815.27 us
 worst callback time. These measurements are host-specific and are comparison
 anchors, not universal performance thresholds.
 
+### Neutral waveform Stage 2-3 comparison
+
+The neutral waveform refactor retained the high-resolution geometry stream,
+stored shared-scale bass/mid/treble data at approximately 150 points/second,
+and added a fixed 1,200-point overview. Colour is now derived by the renderer
+instead of persisted as the canonical analysis result. The same benchmark and
+host produced:
+
+| Metric | Before | After | Change |
+| --- | ---: | ---: | ---: |
+| 30 s track analysis | 1,918.74 ms | 1,861.32 ms | -3.0% |
+| Waveform cache reload | 20.85 ms | 15.83 ms | -24.1% |
+| Payload cache | 1,638,036 bytes | 1,092,044 bytes | -33.3% |
+| Render cache | 281,728 bytes | 354,918 bytes | +26.0% |
+| Combined waveform cache | 1,919,764 bytes | 1,446,962 bytes | -24.6% |
+| Peak RSS | 53,157,888 bytes | 53,063,680 bytes | -0.2% |
+| Deck A callback average / worst | 72.00 / 222.37 us | 66.30 / 234.61 us | host variance |
+| Deck A playback misses / starvation | 0 / 0 | 0 / 0 | unchanged |
+| Stored spectral points | 18,000 | 4,500 | -75.0% |
+| Cached overview points | 0 | 1,200 | now available |
+
+The render cache grew because each line now carries neutral minimum, maximum,
+RMS, and three-band data in 10 bytes rather than an 8-byte styled RGB record.
+The lower spectral resolution more than offsets that increase, reducing the
+combined cache by approximately 473 KB for the fixture.
+
+Focused cache measurements remained stable: page-cache hit/miss/duplicate
+request operations measured 50.74/24.47/35.14 ns, cached playback measured
+37.91 us per 512-sample block, and the scratch reader measured 920.68 us per
+512-sample block. The five-second wide-scratch stress measured 256 starvation
+blocks, zero dropped requests, 367.35 us average callback time, and 16,134.1 us
+worst callback time. The isolated worst callback is scheduler-sensitive; the
+average, starvation count, and zero-drop result are comparable to baseline.
+No `AudioPageCache` scheduling or callback path changed in Stage 2-3.
+
 The focused `deck_audio_graph` benchmark was run repeatedly because laptop
 frequency scaling and hybrid-core placement cause visible variance. Observed
 ranges on the audit host were:
