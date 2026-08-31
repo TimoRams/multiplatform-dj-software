@@ -82,36 +82,26 @@ public:
         bool   lockedByUser = false;
     };
 
-    // Per-block bin (≈ samplesPerBin samples): envelope per frequency band.
-    //
-    // Four bands from a parallel filterbank (DJ-style, overlapping slopes):
-    //   low     (LP @ 110 Hz, 6 dB/oct)         kick / subbass      → dark blue
-    //   lowMid  (BP 150–160 Hz, 12+6 dB/oct)    bass body / warmth  → gold
-    //   mid     (BP 180–800 Hz, 12+6 dB/oct)    snare, vocals       → orange
-    //   high    (BP@2750 + HP@19kHz)             hi-hat, percussion  → white
-    //
-    // All values are globally normalised per-band and shaped with pow() contrast.
-    // The analyzer operates in two passes:
-    //   Pass 1 (raw analysis):  collects raw envelope values, tracks global maxima.
-    //   Pass 2 (final output):  normalises against true global max, applies pow()
-    //                           contrast + UI gain, atomically replaces data.
+    // High-resolution neutral geometry and dynamics.
     struct WaveformBin {
-        float low     = 0.0f;   // sub-bass / kick
-        float lowMid  = 0.0f;   // bass body / warmth
-        float mid     = 0.0f;   // snare / vocals
-        float high    = 0.0f;   // hi-hat / percussion
+        float minimum = 0.0f;
+        float maximum = 0.0f;
+        float peak = 0.0f;
+        float rms = 0.0f;
+        bool operator==(const WaveformBin&) const = default;
     };
 
-    // Per-frame RGB waveform data for modern DJ-style rendering.
-    // rms controls bar height, color encodes frequency balance (low/mid/high).
-    struct RgbWaveformFrame {
-        QColor color = QColor(255, 255, 255);
-        float rms    = 0.0f;
-        float low    = 0.0f;
-        float lowMid = 0.0f;
-        float mid    = 0.0f;
-        float high   = 0.0f;
+    // Lower-resolution neutral spectral data. Bass, mid and treble always use
+    // one shared normalization scale.
+    struct SpectralWaveformPoint {
+        float peak = 0.0f;
+        float rms = 0.0f;
+        float bass = 0.0f;
+        float mid = 0.0f;
+        float treble = 0.0f;
+        bool operator==(const SpectralWaveformPoint&) const = default;
     };
+    using RgbWaveformFrame = SpectralWaveformPoint;
 
     // High-resolution signed min/max peak pair for oscillation rendering.
     // Stored at PEAK_POINTS_PER_SECOND resolution (4× the analysis rate).
@@ -124,14 +114,15 @@ public:
     // 8× the analysis rate (1200 pps). At 48 kHz, 1 bin covers 5 samples.
     // At max zoom (40 px/pt) each bin spans 40/8 = 5 px → sub-pixel with Catmull-Rom.
     static constexpr int PEAK_POINTS_PER_SECOND = 9600;
+    static constexpr int SPECTRAL_POINTS_PER_SECOND = 150;
 
     // Fixed bin count for the progressive downsampled overview (built incrementally
     // during analysis). Renderers stay O(kProgressiveBins) instead of O(track_length).
-    static constexpr int kProgressiveBins = 2048;
+    static constexpr int kProgressiveBins = 1200;
     // Pre-downsampled overview used by deck overview paint() — O(kOverviewBins).
-    static constexpr int kOverviewBins = 4096;
+    static constexpr int kOverviewBins = 1200;
 
-    // Max-fold downsample of full-res RGB frames for the deck overview waveform.
+    // Max-fold downsample of neutral spectral frames for the deck overview.
     static QVector<RgbWaveformFrame> downsampleOverview(
         const QVector<RgbWaveformFrame>& src, int maxBins = kOverviewBins);
 
@@ -323,7 +314,7 @@ public:
         int totalLines, int linesPerSecond, WaveformLineBatch chunks);
     void applyCachedWaveformLodBatch(WaveformLodBatch chunks);
 
-    // Pre-downsampled overview (≤4096 bins) computed off the main thread.
+    // Pre-downsampled fixed-size overview computed off the main thread.
     void setOverviewRgbData(QVector<RgbWaveformFrame>&& data);
 
     QVector<RgbWaveformFrame> getOverviewRgbData() const {
@@ -385,7 +376,9 @@ public:
     void appendData(const QVector<WaveformBin>& newData);
     void applyProgressiveWaveformChunk(int firstBin, int totalBins,
                                        const QVector<WaveformBin>& waveform,
-                                       const QVector<RgbWaveformFrame>& rgb,
+                                       int firstSpectralBin,
+                                       int totalSpectralBins,
+                                       const QVector<SpectralWaveformPoint>& spectral,
                                        bool publishLineStoreImmediately = true,
                                        WaveformNormalizationState normalizationState
                                            = WaveformNormalizationState::Preview);
@@ -472,11 +465,10 @@ private:
     void _updateProgressiveOvr(int from, int to);
     void updateProgressiveOverviewFromChunkLocked(
         int firstBin, int totalBins, const QVector<RgbWaveformFrame>& rgb);
-    void markProgressiveWaveformLinesDirtyLocked(int firstRgbFrame, int rgbFrameCount);
     void flushProgressiveWaveformLinesLocked();
-    void publishProgressiveWaveformLinesLocked(int firstRgbFrame, int rgbFrameCount);
     void stageProgressiveWaveformLinesLocked(
-        int firstBin, const QVector<RgbWaveformFrame>& rgb,
+        int firstBin, const QVector<WaveformBin>& geometry,
+        const QVector<SpectralWaveformPoint>& spectral,
         WaveformNormalizationState normalizationState);
     void alignSegmentsToBeatgridLocked();
     void rebuildWaveformLineStoreLocked(std::uint64_t trackGeneration = 0);

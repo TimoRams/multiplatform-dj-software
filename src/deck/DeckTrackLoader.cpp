@@ -379,12 +379,12 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
             result.canonicalPath, m_waveformPointsPerSecond, &result.waveformCache);
     if (result.waveformCacheLoaded) {
         result.instantOverviewExpected = result.waveformCache.totalExpected;
-        result.instantOverview = TrackData::downsampleOverview(result.waveformCache.rgb);
+        result.instantOverview = TrackData::downsampleOverview(result.waveformCache.spectral);
         // Canonical render lines are CPU-heavy for long tracks. Build them on
         // the loader thread so installing a cached track is pointer publication
         // rather than a full-timeline UI-thread conversion.
         result.waveformCache.preparedLines = waveform::prepareWaveformLines(
-            result.waveformCache.rgb);
+            result.waveformCache.waveform, result.waveformCache.spectral);
     } else {
         WaveformCache::RenderInfo renderInfo;
         if (WaveformCache::inspectRenderCache(

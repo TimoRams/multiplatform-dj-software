@@ -40,7 +40,9 @@ public:
     using ChunkCallback = std::function<void(AnalysisGeneration generation, int firstBin,
                                              int totalBins,
                                              QVector<TrackData::WaveformBin> waveform,
-                                             QVector<TrackData::RgbWaveformFrame> rgb,
+                                             int firstSpectralBin,
+                                             int totalSpectralBins,
+                                             QVector<TrackData::SpectralWaveformPoint> spectral,
                                              WaveformNormalizationState state)>;
     using OverviewCallback = std::function<void(
         AnalysisGeneration generation, int totalBins,
@@ -111,10 +113,12 @@ public:
         int firstBin = 0;
         int totalBins = 0;
         std::shared_ptr<const QVector<TrackData::WaveformBin>> waveform;
-        std::shared_ptr<const QVector<TrackData::RgbWaveformFrame>> rgb;
+        std::shared_ptr<const QVector<TrackData::SpectralWaveformPoint>> spectral;
         WaveformNormalizationState normalizationState =
             WaveformNormalizationState::Preview;
         std::uint64_t publicationSequence = 0;
+        int firstSpectralBin = 0;
+        int totalSpectralBins = 0;
     };
     struct Completion {
         bool completed = false;
@@ -229,13 +233,19 @@ public:
         std::vector<std::pair<ChunkKey, waveform::WaveformPriorityScore>> order;
         order.reserve(m_chunks.size());
         for (const auto& [key, chunk] : m_chunks) {
-            const double begin = pointsPerSecond > 0.0
-                ? static_cast<double>(chunk.firstBin) / pointsPerSecond : 0.0;
-            const int chunkCount = chunk.rgb
-                ? chunk.rgb->size() : (chunk.waveform ? chunk.waveform->size() : 0);
-            const double end = pointsPerSecond > 0.0
-                ? static_cast<double>(chunk.firstBin + std::max(1, chunkCount))
-                    / pointsPerSecond
+            const bool hasGeometry = chunk.waveform && !chunk.waveform->isEmpty();
+            const double rangePointsPerSecond = hasGeometry
+                ? pointsPerSecond
+                : static_cast<double>(TrackData::SPECTRAL_POINTS_PER_SECOND);
+            const int rangeStart = hasGeometry ? chunk.firstBin : chunk.firstSpectralBin;
+            const int rangeCount = hasGeometry
+                ? chunk.waveform->size()
+                : (chunk.spectral ? chunk.spectral->size() : 0);
+            const double begin = rangePointsPerSecond > 0.0
+                ? static_cast<double>(rangeStart) / rangePointsPerSecond : 0.0;
+            const double end = rangePointsPerSecond > 0.0
+                ? static_cast<double>(rangeStart + std::max(1, rangeCount))
+                    / rangePointsPerSecond
                 : begin + 1.0;
             order.emplace_back(key,
                 waveform::priorityForRange(demand, begin, end));

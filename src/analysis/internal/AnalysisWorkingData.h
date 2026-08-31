@@ -24,8 +24,8 @@ public:
         m_totalExpected = value.totalExpected;
         m_globalMaxPeak = value.globalMaxPeak;
         if (value.waveform) m_data = *value.waveform;
-        if (value.rgbWaveform) m_rgbData = *value.rgbWaveform;
-        if (value.overviewWaveform) m_overviewRgb = *value.overviewWaveform;
+        if (value.spectralWaveform) m_spectralData = *value.spectralWaveform;
+        if (value.overviewWaveform) m_overviewData = *value.overviewWaveform;
         if (value.peakMip) m_peakMip = *value.peakMip;
         m_bpm = value.bpm;
         m_firstBeatSample = value.firstBeatSample;
@@ -45,10 +45,13 @@ public:
         out.totalExpected = m_totalExpected;
         out.globalMaxPeak = m_globalMaxPeak;
         out.waveform = std::make_shared<const QVector<TrackData::WaveformBin>>(std::move(m_data));
-        out.rgbWaveform = std::make_shared<const QVector<TrackData::RgbWaveformFrame>>(std::move(m_rgbData));
-        out.overviewWaveform = std::make_shared<const QVector<TrackData::RgbWaveformFrame>>(std::move(m_overviewRgb));
+        out.spectralWaveform = std::make_shared<const QVector<TrackData::SpectralWaveformPoint>>(std::move(m_spectralData));
+        out.overviewWaveform = std::make_shared<const QVector<TrackData::SpectralWaveformPoint>>(std::move(m_overviewData));
         out.peakMip = std::make_shared<const QVector<TrackData::PeakFrame>>(std::move(m_peakMip));
         out.preparedWaveformLines = preparedWaveformLines();
+        if (!out.preparedWaveformLines && out.waveform && out.spectralWaveform)
+            out.preparedWaveformLines = waveform::prepareWaveformLines(
+                *out.waveform, *out.spectralWaveform);
         out.bpm = m_bpm;
         out.firstBeatSample = m_firstBeatSample;
         out.sampleRate = m_sampleRate;
@@ -84,14 +87,14 @@ public:
     double analysisProgress() const { return m_lastProgress; }
 
     QVector<TrackData::WaveformBin> getWaveformData() const { return m_data; }
-    QVector<TrackData::RgbWaveformFrame> getRgbWaveformData() const { return m_rgbData; }
-    QVector<TrackData::RgbWaveformFrame> getOverviewRgbData() const { return m_overviewRgb; }
+    QVector<TrackData::SpectralWaveformPoint> getSpectralWaveformData() const { return m_spectralData; }
+    QVector<TrackData::SpectralWaveformPoint> getOverviewWaveformData() const { return m_overviewData; }
     QVector<TrackData::PeakFrame> getPeakMipData() const { return m_peakMip; }
-    int getRgbWaveformSize() const { return m_rgbData.size(); }
+    int getSpectralWaveformSize() const { return m_spectralData.size(); }
 
     void clearWaveformData()
     {
-        m_data.clear(); m_rgbData.clear(); m_peakMip.clear();
+        m_data.clear(); m_spectralData.clear(); m_peakMip.clear();
         m_preparedLineChunks.clear();
         m_preparedTotalLines = 0;
         m_preparedReadyLines = 0;
@@ -109,20 +112,54 @@ public:
     }
     void replaceAllData(QVector<TrackData::WaveformBin>&& value, float peak)
     { m_data = std::move(value); m_globalMaxPeak = peak; }
-    void preallocateRgbWaveform(int size) { m_rgbData.fill({}, size); }
-    void writeRgbWaveformRange(int from, const QVector<TrackData::RgbWaveformFrame>& value)
+    void preallocateSpectralWaveform(int size) { m_spectralData.fill({}, size); }
+    void writeSpectralWaveformRange(int from, const QVector<TrackData::SpectralWaveformPoint>& value)
     {
-        if (from < 0 || from >= m_rgbData.size()) return;
-        const int count = std::min(value.size(), m_rgbData.size() - from);
-        std::copy_n(value.cbegin(), count, m_rgbData.begin() + from);
+        if (from < 0 || from >= m_spectralData.size()) return;
+        const int count = std::min(value.size(), m_spectralData.size() - from);
+        std::copy_n(value.cbegin(), count, m_spectralData.begin() + from);
     }
-    void setRgbWaveformData(QVector<TrackData::RgbWaveformFrame>&& value)
-    { m_rgbData = std::move(value); m_overviewRgb = TrackData::downsampleOverview(m_rgbData); }
-    void setOverviewRgbData(QVector<TrackData::RgbWaveformFrame>&& value) { m_overviewRgb = std::move(value); }
+    void setSpectralWaveformData(QVector<TrackData::SpectralWaveformPoint>&& value)
+    { m_spectralData = std::move(value); m_overviewData = TrackData::downsampleOverview(m_spectralData); }
+    void setOverviewWaveformData(QVector<TrackData::SpectralWaveformPoint>&& value) { m_overviewData = std::move(value); }
+    void initializeWaveformOverview(int totalSpectralBins)
+    {
+        m_overviewSourceBins = std::max(0, totalSpectralBins);
+        m_overviewData.fill({}, TrackData::kOverviewBins);
+    }
+    void writeWaveformOverviewRange(
+        int firstSpectralBin,
+        const QVector<TrackData::SpectralWaveformPoint>& values)
+    {
+        if (m_overviewSourceBins <= 0 || values.isEmpty())
+            return;
+        for (int local = 0; local < values.size(); ++local) {
+            const int source = firstSpectralBin + local;
+            if (source < 0 || source >= m_overviewSourceBins)
+                continue;
+            const int targetBegin = static_cast<int>(
+                (static_cast<std::int64_t>(source) * TrackData::kOverviewBins)
+                / m_overviewSourceBins);
+            const int targetEnd = std::max(targetBegin + 1, static_cast<int>(
+                (static_cast<std::int64_t>(source + 1) * TrackData::kOverviewBins)
+                / m_overviewSourceBins));
+            const auto& in = values[local];
+            for (int target = std::max(0, targetBegin);
+                 target < std::min(TrackData::kOverviewBins, targetEnd);
+                 ++target) {
+                auto& out = m_overviewData[target];
+                out.peak = std::max(out.peak, in.peak);
+                out.rms = std::max(out.rms, in.rms);
+                out.bass = std::max(out.bass, in.bass);
+                out.mid = std::max(out.mid, in.mid);
+                out.treble = std::max(out.treble, in.treble);
+            }
+        }
+    }
     void setPeakMipData(QVector<TrackData::PeakFrame>&& value) { m_peakMip = std::move(value); }
 
     // Long-track analysis writes the canonical immutable store directly. This
-    // avoids retaining duration-sized legacy waveform + RGB vectors merely to
+    // avoids retaining duration-sized geometry and spectral vectors merely to
     // convert them into WaveformLines after the pass has already completed.
     void initializePreparedWaveformLines(int totalLines)
     {
@@ -136,12 +173,14 @@ public:
     }
 
     void writePreparedWaveformRange(
-        int firstLine, const QVector<TrackData::RgbWaveformFrame>& frames)
+        int firstLine, const QVector<TrackData::WaveformBin>& geometry,
+        const QVector<TrackData::SpectralWaveformPoint>& spectral)
     {
-        if (firstLine < 0 || frames.isEmpty() || m_preparedTotalLines <= 0)
+        if (firstLine < 0 || geometry.isEmpty() || spectral.isEmpty()
+            || m_preparedTotalLines <= 0)
             return;
         const int count = std::min(
-            static_cast<int>(frames.size()), m_preparedTotalLines - firstLine);
+            static_cast<int>(geometry.size()), m_preparedTotalLines - firstLine);
         for (int local = 0; local < count; ++local) {
             const auto lineIndex = static_cast<std::uint32_t>(firstLine + local);
             const auto chunkIndex = lineIndex / WaveformLineStore::kChunkSize;
@@ -156,7 +195,11 @@ public:
             auto& line = (*chunk)[lineIndex - chunkFirst];
             if ((line.flags & waveform_line_flags::kAvailable) != 0)
                 continue;
-            line = waveform::makeCanonicalLine(frames[local]);
+            line = waveform::makeCanonicalLine(
+                geometry[local],
+                waveform::interpolateSpectral(
+                    spectral, static_cast<std::uint32_t>(local),
+                    static_cast<std::uint32_t>(count)));
             ++m_preparedReadyLines;
         }
     }
@@ -210,8 +253,9 @@ private:
     int m_totalExpected = 0;
     float m_globalMaxPeak = 0.001f;
     QVector<TrackData::WaveformBin> m_data;
-    QVector<TrackData::RgbWaveformFrame> m_rgbData;
-    QVector<TrackData::RgbWaveformFrame> m_overviewRgb;
+    QVector<TrackData::SpectralWaveformPoint> m_spectralData;
+    QVector<TrackData::SpectralWaveformPoint> m_overviewData;
+    int m_overviewSourceBins = 0;
     QVector<TrackData::PeakFrame> m_peakMip;
     std::vector<std::shared_ptr<std::vector<WaveformLine>>>
         m_preparedLineChunks;

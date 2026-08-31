@@ -234,7 +234,7 @@ int main(int argc, char** argv)
               << (cacheAfter.decodedPages - cacheBefore.decodedPages)
               << " cache-dropped="
               << (cacheAfter.droppedRequests - cacheBefore.droppedRequests)
-              << " waveform-frames=" << cached.rgb.size()
+              << " spectral-frames=" << cached.spectral.size()
               << " overview-frames=" << cached.overview.size()
               << '\n';
 

@@ -19,14 +19,14 @@ int main(int argc, char** argv)
     QCoreApplication app(argc, argv);
     TrackData data;
     QVector<TrackData::WaveformBin> waveform(4);
-    waveform[0].low = 0.75f;
+    waveform[0] = {-0.75f, 0.75f, 0.75f, 0.65f};
     QVector<TrackData::RgbWaveformFrame> rgb(4);
     rgb[0].rms = 0.75f;
-    rgb[0].low = 0.95f;
+    rgb[0].bass = 0.95f;
     bool ok = true;
     // Mirrors the control-thread drain of AnalyzerResultMailbox: completion is
     // deliberately absent while this first immutable chunk is applied.
-    data.applyProgressiveWaveformChunk(8, 32, waveform, rgb);
+    data.applyProgressiveWaveformChunk(8, 32, waveform, 0, 4, rgb);
     const auto visible = data.getWaveformData();
     ok &= require(visible.isEmpty(),
                   "progressive publication must not allocate a duration-sized GUI vector");
@@ -48,15 +48,15 @@ int main(int argc, char** argv)
         const auto& line = (*lineChunk->lines)[8];
         ok &= require(line.maximum > 0 && line.minimum < 0,
                       "progressive canonical line has no visible extent");
-        ok &= require(line.red > line.green && line.red > line.blue,
-                      "progressive canonical line lost its frequency colour");
+        ok &= require(line.bass > line.mid && line.bass > line.treble,
+                      "progressive canonical line lost its neutral spectrum");
     }
 
     // The production control clock batches worker bursts, then flushes all
     // touched source chunks once.  Batching must defer allocation only until
     // that same control tick, not until analysis completion.
     TrackData batched;
-    batched.applyProgressiveWaveformChunk(8, 32, waveform, rgb, false);
+    batched.applyProgressiveWaveformChunk(8, 32, waveform, 0, 4, rgb, false);
     const auto beforeFlush = batched.getWaveformLineStoreSnapshot();
     ok &= require(beforeFlush && !beforeFlush->chunkAt(0),
                   "batched publication escaped before its control-tick flush");
@@ -75,7 +75,9 @@ int main(int argc, char** argv)
 
     TrackData hourLong;
     constexpr int hourAt600BinsPerSecond = 60 * 60 * 600;
-    hourLong.applyProgressiveWaveformChunk(0, hourAt600BinsPerSecond, waveform, rgb);
+    hourLong.applyProgressiveWaveformChunk(
+        0, hourAt600BinsPerSecond, waveform, 0,
+        hourAt600BinsPerSecond / 4, rgb);
     const auto hourStore = hourLong.getWaveformLineStoreSnapshot();
     ok &= require(hourLong.getWaveformData().isEmpty()
                       && hourLong.getRgbWaveformData().isEmpty(),
@@ -101,7 +103,7 @@ int main(int argc, char** argv)
     }
     (*playheadChunk)[308].minimum = -12000;
     (*playheadChunk)[308].maximum = 14000;
-    (*playheadChunk)[308].red = 220;
+    (*playheadChunk)[308].bass = 220;
     cachedLines.applyCachedWaveformLineChunk(8192, 9000, 100,
                                              std::move(playheadChunk));
     const auto cachedStore = cachedLines.getWaveformLineStoreSnapshot();
@@ -146,18 +148,22 @@ int main(int argc, char** argv)
     TrackData stableNormalization;
     QVector<TrackData::RgbWaveformFrame> finalRgb(4);
     finalRgb[0].rms = 0.82f;
-    finalRgb[0].low = 0.9f;
+    finalRgb[0].bass = 0.9f;
+    QVector<TrackData::WaveformBin> finalGeometry(4);
+    finalGeometry[0] = {-0.82f, 0.82f, 0.82f, 0.82f};
     stableNormalization.applyProgressiveWaveformChunk(
-        0, 32, {}, finalRgb, true, WaveformNormalizationState::Final);
+        0, 32, finalGeometry, 0, 4, finalRgb, true,
+        WaveformNormalizationState::Final);
     const auto finalSnapshot = stableNormalization.getWaveformLineStoreSnapshot();
     const auto finalChunk = finalSnapshot ? finalSnapshot->chunkAt(0) : nullptr;
     const auto finalMaximum = finalChunk && finalChunk->lines
         ? (*finalChunk->lines)[0].maximum : 0;
     QVector<TrackData::RgbWaveformFrame> latePreview(4);
     latePreview[0].rms = 0.08f;
-    latePreview[0].high = 1.0f;
+    latePreview[0].treble = 1.0f;
     stableNormalization.applyProgressiveWaveformChunk(
-        0, 32, {}, latePreview, true, WaveformNormalizationState::Preview);
+        0, 32, finalGeometry, 0, 4, latePreview, true,
+        WaveformNormalizationState::Preview);
     const auto afterPreview = stableNormalization.getWaveformLineStoreSnapshot();
     const auto protectedChunk = afterPreview ? afterPreview->chunkAt(0) : nullptr;
     ok &= require(protectedChunk && protectedChunk->lines

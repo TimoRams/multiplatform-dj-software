@@ -8,19 +8,18 @@
 
 namespace {
 
-QColor visualColor(float low, float lowMid, float mid, float high, float rms)
+QColor visualColor(float bass, float mid, float treble, float rms)
 {
-    const auto color = waveform_visual::color({low, lowMid, mid, high, rms});
+    const auto color = waveform_visual::color({bass, mid, treble, rms});
     return QColor(color[0], color[1], color[2]);
 }
 
 struct OverviewBin {
     float rms    = 0.0f;   // max rms in bin (peak energy)
     float rmsSum = 0.0f;   // sum for mean — used for transient detection
-    float low    = 0.0f;
-    float lowMid = 0.0f;
+    float bass   = 0.0f;
     float mid    = 0.0f;
-    float high   = 0.0f;
+    float treble = 0.0f;
     int   count  = 0;      // number of source frames in this bin
 };
 
@@ -191,17 +190,16 @@ void OverviewWaveformItem::paintCompactOverview(QPainter* painter,
         // gives every column one stable, smoothly-varying colour instead.
         float peakRms = 0.0f;
         float rmsSum = 0.0f;
-        float weightedLow = 0.0f, weightedLowMid = 0.0f;
-        float weightedMid = 0.0f, weightedHigh = 0.0f, colorWeight = 0.0f;
+        float weightedBass = 0.0f;
+        float weightedMid = 0.0f, weightedTreble = 0.0f, colorWeight = 0.0f;
         for (int i = i0; i < i1; ++i) {
             const auto& f = frames[i];
             peakRms = std::max(peakRms, f.rms);
             rmsSum += f.rms;
             const float weight = std::max(0.01f, f.rms);
-            weightedLow += f.low * weight;
-            weightedLowMid += f.lowMid * weight;
+            weightedBass += f.bass * weight;
             weightedMid += f.mid * weight;
-            weightedHigh += f.high * weight;
+            weightedTreble += f.treble * weight;
             colorWeight += weight;
         }
         if (peakRms <= 0.001f)
@@ -212,9 +210,8 @@ void OverviewWaveformItem::paintCompactOverview(QPainter* painter,
         const float barH = std::clamp(
             waveform_visual::logarithmicAmplitude(energy), 0.018f, 1.0f) * maxBarH;
         const float invWeight = 1.0f / std::max(0.01f, colorWeight);
-        const QColor color = visualColor(
-            weightedLow * invWeight, weightedLowMid * invWeight,
-            weightedMid * invWeight, weightedHigh * invWeight, energy);
+        const QColor color = visualColor(weightedBass * invWeight,
+            weightedMid * invWeight, weightedTreble * invWeight, energy);
         painter->fillRect(QRectF(x, baseline - barH, 1.0, barH), color);
     }
 
@@ -265,7 +262,7 @@ void OverviewWaveformItem::paintCompactOverviewLines(QPainter* painter,
             (static_cast<std::uint64_t>(x + 1) * snapshot.totalLineCount) / w));
         float peakAmplitude = 0.0f;
         float amplitudeSum = 0.0f;
-        std::uint64_t red = 0, green = 0, blue = 0, weight = 0;
+        std::uint64_t rms = 0, bass = 0, mid = 0, treble = 0, weight = 0;
         int sampleCount = 0;
         for (auto index = begin; index < std::min(end, snapshot.totalLineCount); ++index) {
             const auto* line = lineAt(index);
@@ -277,9 +274,10 @@ void OverviewWaveformItem::paintCompactOverviewLines(QPainter* painter,
             amplitudeSum += amplitude;
             ++sampleCount;
             const auto lineWeight = std::max(1u, magnitude);
-            red += line->red * lineWeight;
-            green += line->green * lineWeight;
-            blue += line->blue * lineWeight;
+            rms += line->rms * lineWeight;
+            bass += line->bass * lineWeight;
+            mid += line->mid * lineWeight;
+            treble += line->treble * lineWeight;
             weight += lineWeight;
         }
         if (weight == 0) continue;
@@ -287,9 +285,12 @@ void OverviewWaveformItem::paintCompactOverviewLines(QPainter* painter,
         const float energy = waveform_visual::foldedEnergy(
             meanAmplitude, peakAmplitude);
         m_overviewHeights[x] = waveform_visual::logarithmicAmplitude(energy) * maxBarH;
-        m_overviewColors[x] = QColor(static_cast<int>(red / weight),
-                                    static_cast<int>(green / weight),
-                                    static_cast<int>(blue / weight));
+        const auto color = waveform_visual::color({
+            static_cast<float>(bass / weight) / 255.0f,
+            static_cast<float>(mid / weight) / 255.0f,
+            static_cast<float>(treble / weight) / 255.0f,
+            static_cast<float>(rms / weight) / 255.0f});
+        m_overviewColors[x] = QColor(color[0], color[1], color[2]);
     }
 
     const float baseline = static_cast<float>(h - 1);
@@ -415,10 +416,9 @@ void OverviewWaveformItem::paint(QPainter* painter)
             bin.rms    = std::max(bin.rms,    f.rms);
             bin.rmsSum += f.rms;
             ++bin.count;
-            bin.low    = std::max(bin.low,    f.low);
-            bin.lowMid = std::max(bin.lowMid, f.lowMid);
+            bin.bass = std::max(bin.bass, f.bass);
             bin.mid    = std::max(bin.mid,    f.mid);
-            bin.high   = std::max(bin.high,   f.high);
+            bin.treble = std::max(bin.treble, f.treble);
         }
 
         bins[static_cast<size_t>(x)] = bin;
@@ -470,7 +470,7 @@ void OverviewWaveformItem::paint(QPainter* painter)
         const float rms   = std::clamp(bin.rms, 0.0f, 1.0f);
         const float bodyH = smoothH[static_cast<size_t>(x)] * maxBarH;
         cols[static_cast<size_t>(x)] = {
-            visualColor(bin.low, bin.lowMid, bin.mid, bin.high, rms),
+            visualColor(bin.bass, bin.mid, bin.treble, rms),
             bodyH,
             bodyH * 0.18f,
             std::max(0.8f, bodyH * 0.22f),

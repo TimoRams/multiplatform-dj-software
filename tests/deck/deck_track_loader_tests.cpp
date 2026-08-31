@@ -164,9 +164,10 @@ int main(int argc, char** argv)
         payload.totalExpected = 20;
         payload.globalMaxPeak = 0.8f;
         payload.waveform.resize(payload.totalExpected);
-        payload.rgb.resize(payload.totalExpected);
-        payload.waveform[7].low = 0.65f;
-        payload.rgb[7].rms = 0.7f;
+        payload.spectral.resize(payload.totalExpected);
+        payload.waveform[7] = {-0.7f, 0.7f, 0.7f, 0.6f};
+        payload.spectral[7].rms = 0.7f;
+        payload.spectral[7].bass = 0.65f;
         ok &= require(WaveformCache::saveForFile(monoPath, payload),
                       "waveform fixture cache must be saved atomically");
 
@@ -176,8 +177,8 @@ int main(int argc, char** argv)
         ok &= require(waiter.value().succeeded(), "cached waveform load must succeed");
         ok &= require(waiter.value().waveformCacheLoaded,
                       "track loader must restore a saved waveform cache");
-        ok &= require(waiter.value().waveformCache.rgb.size() == payload.totalExpected
-                          && waiter.value().waveformCache.rgb[7].rms > 0.69f,
+        ok &= require(waiter.value().waveformCache.spectral.size() == payload.totalExpected
+                          && waiter.value().waveformCache.spectral[7].rms > 0.69f,
                       "restored waveform cache must preserve its timeline");
         ok &= require(waiter.value().waveformCache.preparedLines
                           && waiter.value().waveformCache.preparedLines->totalLineCount
@@ -197,9 +198,10 @@ int main(int argc, char** argv)
         payload.totalExpected = 100000;
         payload.globalMaxPeak = 0.9f;
         payload.waveform.resize(payload.totalExpected);
-        payload.rgb.resize(payload.totalExpected);
-        payload.rgb[8500].rms = 0.75f;
-        payload.rgb[8500].low = 0.8f;
+        payload.spectral.resize(payload.totalExpected);
+        payload.spectral[8500].rms = 0.75f;
+        payload.waveform[8500] = {-0.75f, 0.75f, 0.75f, 0.7f};
+        payload.spectral[8500].bass = 0.8f;
         ok &= require(WaveformCache::saveForFile(monoPath, payload),
                       "render-cache fixture must be saved atomically");
 
@@ -235,7 +237,7 @@ int main(int argc, char** argv)
                                           + static_cast<int>(chunk.lines->size())) {
                                       const auto& line = (*chunk.lines)[static_cast<size_t>(
                                           8500 - chunk.firstLine)];
-                                      restoredProbe = line.maximum > 0 && line.red > 0;
+                                      restoredProbe = line.maximum > 0 && line.bass > 0;
                                   }
                                   if (publishedBatch == 2
                                       && chunk.firstLine <= 90000
@@ -320,8 +322,8 @@ int main(int argc, char** argv)
         }
         cache.releaseTrack(deferredWaiter.value().cacheHandle);
 
-        // V1 files end immediately after canonical lines. Keep accepting that
-        // exact historical layout while exposing no persisted LOD levels.
+        // Presentation-baked V1 files are incompatible with neutral V3 lines
+        // and must be rejected cleanly rather than decoded with the new layout.
         const QString renderPath = WaveformCache::renderCachePathFor(
             monoPath, payload.pointsPerSecond);
         QFile legacyFile(renderPath);
@@ -341,11 +343,9 @@ int main(int argc, char** argv)
             legacyFile.close();
         }
         WaveformCache::RenderInfo legacyInfo;
-        ok &= require(WaveformCache::inspectRenderCache(
-                          monoPath, payload.pointsPerSecond, &legacyInfo)
-                          && legacyInfo.cacheVersion == 1
-                          && legacyInfo.lodLevelCount == 0,
-                      "render cache V1 compatibility was broken by V2");
+        ok &= require(!WaveformCache::inspectRenderCache(
+                           monoPath, payload.pointsPerSecond, &legacyInfo),
+                      "presentation-baked V1 render cache was not invalidated");
         ok &= require(!WaveformCache::streamRenderLodCache(
                           monoPath, payload.pointsPerSecond, 4,
                           [] { return false; }, [](WaveformCache::LodTile) {}),
@@ -362,7 +362,7 @@ int main(int argc, char** argv)
         payload.totalExpected = 20;
         payload.globalMaxPeak = 0.8f;
         payload.waveform.resize(payload.totalExpected);
-        payload.rgb.resize(payload.totalExpected);
+        payload.spectral.resize(payload.totalExpected);
         ok &= require(WaveformCache::saveForFile(monoPath, payload),
                       "oversized waveform fixture must be created");
         const QString cachePath = WaveformCache::cachePathFor(
@@ -398,7 +398,7 @@ int main(int argc, char** argv)
         payload.overview.resize(512);
         for (auto& frame : payload.overview) {
             frame.rms = 0.4f;
-            frame.low = 0.7f;
+            frame.bass = 0.7f;
             frame.mid = 0.25f;
         }
         auto prepared = std::make_shared<waveform::PreparedWaveformLines>();
@@ -412,9 +412,10 @@ int main(int argc, char** argv)
             for (auto& line : *lines) {
                 line.minimum = -12'000;
                 line.maximum = 14'000;
-                line.red = 220;
-                line.green = 90;
-                line.blue = 45;
+                line.rms = 180;
+                line.bass = 220;
+                line.mid = 90;
+                line.treble = 45;
                 line.flags = waveform_line_flags::kAvailable
                     | waveform_line_flags::kFinal;
             }

@@ -20,8 +20,8 @@ bool sameChunk(const WaveformLineChunk& left, const WaveformLineChunk& right)
     return std::equal(left.lines->cbegin(), left.lines->cend(), right.lines->cbegin(),
         [](const WaveformLine& a, const WaveformLine& b) {
             return a.minimum == b.minimum && a.maximum == b.maximum
-                && a.red == b.red && a.green == b.green && a.blue == b.blue
-                && a.flags == b.flags;
+                && a.rms == b.rms && a.bass == b.bass && a.mid == b.mid
+                && a.treble == b.treble && a.flags == b.flags;
         });
 }
 

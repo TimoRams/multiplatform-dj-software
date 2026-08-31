@@ -917,7 +917,7 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
         m_trackData->installCachedWaveform(
             std::move(result.waveformCache.waveform),
             result.waveformCache.globalMaxPeak,
-            std::move(result.waveformCache.rgb),
+            std::move(result.waveformCache.spectral),
             std::move(result.waveformCache.peakMip),
             std::move(result.waveformCache.preparedLines),
             std::move(result.instantOverview));

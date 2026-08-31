@@ -37,11 +37,11 @@ std::shared_ptr<const WaveformLineStoreSnapshot> makeFixture(
             if (global < totalLines / 2) {
                 line.minimum = -30000;
                 line.maximum = 30000;
-                line.red = 240; line.green = 40; line.blue = 20;
+                line.rms = 220; line.bass = 240; line.mid = 40; line.treble = 20;
             } else {
                 line.minimum = -6000;
                 line.maximum = 6000;
-                line.red = 30; line.green = 60; line.blue = 220;
+                line.rms = 180; line.bass = 30; line.mid = 60; line.treble = 220;
             }
             line.flags = waveform_line_flags::kAvailable
                 | waveform_line_flags::kFinal;

@@ -40,9 +40,10 @@ int main(int argc, char** argv)
         auto& line = (*populatedLines)[index];
         line.minimum = static_cast<std::int16_t>(-9000 - index % 3000);
         line.maximum = static_cast<std::int16_t>(11000 + index % 3000);
-        line.red = 232;
-        line.green = 96;
-        line.blue = 48;
+        line.rms = 220;
+        line.bass = 232;
+        line.mid = 96;
+        line.treble = 48;
         line.flags = waveform_line_flags::kAvailable
             | waveform_line_flags::kFinal;
     }
@@ -140,7 +141,7 @@ int main(int argc, char** argv)
         waveform_render::OverviewSample>>(128);
     for (auto& sample : *overviewSamples) {
         sample.rms = 0.5f;
-        sample.low = 0.8f;
+        sample.bass = 0.8f;
         sample.mid = 0.25f;
     }
     const waveform_render::OverviewRenderKey overviewKey{
@@ -173,9 +174,10 @@ int main(int argc, char** argv)
             line.minimum = -4800;
             line.maximum = -1200;
         }
-        line.red = 240;
-        line.green = 120;
-        line.blue = 60;
+        line.rms = 220;
+        line.bass = 240;
+        line.mid = 120;
+        line.treble = 60;
         line.flags = waveform_line_flags::kAvailable;
     }
     ok &= require(oneSidedStore.publish({
@@ -311,7 +313,7 @@ int main(int argc, char** argv)
         for (auto& line : *readyLines) {
             line.minimum = -8000;
             line.maximum = 8000;
-            line.red = 200; line.green = 80; line.blue = 40;
+            line.rms = 200; line.bass = 200; line.mid = 80; line.treble = 40;
             line.flags = waveform_line_flags::kAvailable;
         }
         ok &= require(readyStore.publish({
@@ -324,9 +326,10 @@ int main(int argc, char** argv)
         for (auto& line : *adjacentLines) {
             line.minimum = -14'000;
             line.maximum = 14'000;
-            line.red = 70;
-            line.green = 170;
-            line.blue = 235;
+            line.rms = 200;
+            line.bass = 70;
+            line.mid = 170;
+            line.treble = 235;
             line.flags = waveform_line_flags::kAvailable;
         }
         ok &= require(readyStore.publish({
@@ -522,9 +525,10 @@ int main(int argc, char** argv)
             auto& line = (*lines)[lineIndex];
             line.minimum = static_cast<std::int16_t>(-12'000 - lineIndex % 4'000);
             line.maximum = static_cast<std::int16_t>(14'000 + lineIndex % 4'000);
-            line.red = 220;
-            line.green = 110;
-            line.blue = 55;
+            line.rms = 220;
+            line.bass = 220;
+            line.mid = 110;
+            line.treble = 55;
             line.flags = waveform_line_flags::kAvailable
                 | waveform_line_flags::kFinal;
         }

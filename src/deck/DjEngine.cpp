@@ -109,14 +109,18 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
         analysisMailbox->publishProgress(progress, active, generation);
     });
     m_analyzer->setChunkCallback([analysisMailbox](auto generation, int firstBin, int totalBins,
-                                                    auto waveform, auto rgb,
+                                                    auto waveform, int firstSpectralBin,
+                                                    int totalSpectralBins, auto spectral,
                                                     auto normalizationState) {
         AnalyzerResultMailbox::Chunk chunk;
         chunk.generation = generation;
         chunk.firstBin = firstBin;
         chunk.totalBins = totalBins;
+        chunk.firstSpectralBin = firstSpectralBin;
+        chunk.totalSpectralBins = totalSpectralBins;
         chunk.waveform = std::make_shared<const QVector<TrackData::WaveformBin>>(std::move(waveform));
-        chunk.rgb = std::make_shared<const QVector<TrackData::RgbWaveformFrame>>(std::move(rgb));
+        chunk.spectral = std::make_shared<const QVector<TrackData::SpectralWaveformPoint>>(
+            std::move(spectral));
         chunk.normalizationState = normalizationState;
         analysisMailbox->publishChunk(std::move(chunk));
     });
@@ -569,9 +573,10 @@ void DjEngine::onWaveformControlTick(const ControlTickContext& context)
             m_waveformDemand, WAVEFORM_POINTS_PER_SECOND);
         for (const auto& chunk : chunks) {
             if (chunk.generation == m_analyzer->generation()
-                && chunk.waveform && chunk.rgb) {
+                && chunk.waveform && chunk.spectral) {
                 m_trackData->applyProgressiveWaveformChunk(
-                    chunk.firstBin, chunk.totalBins, *chunk.waveform, *chunk.rgb,
+                    chunk.firstBin, chunk.totalBins, *chunk.waveform,
+                    chunk.firstSpectralBin, chunk.totalSpectralBins, *chunk.spectral,
                     false, chunk.normalizationState);
             }
         }

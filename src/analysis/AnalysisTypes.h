@@ -112,7 +112,7 @@ struct AnalysisResult {
     int totalExpected = 0;
     float globalMaxPeak = 0.001f;
     std::shared_ptr<const QVector<TrackData::WaveformBin>> waveform;
-    std::shared_ptr<const QVector<TrackData::RgbWaveformFrame>> rgbWaveform;
+    std::shared_ptr<const QVector<TrackData::SpectralWaveformPoint>> spectralWaveform;
     std::shared_ptr<const QVector<TrackData::RgbWaveformFrame>> overviewWaveform;
     std::shared_ptr<const QVector<TrackData::PeakFrame>> peakMip;
     std::shared_ptr<const waveform::PreparedWaveformLines> preparedWaveformLines;
@@ -137,7 +137,7 @@ inline bool validateResult(const AnalysisResult& value) noexcept
     const auto validSize = [](const auto& ptr) {
         return !ptr || ptr->size() <= kMaxWaveformBins;
     };
-    if (!validSize(value.waveform) || !validSize(value.rgbWaveform)
+    if (!validSize(value.waveform) || !validSize(value.spectralWaveform)
         || !validSize(value.peakMip) || !validSize(value.overviewWaveform))
         return false;
     double previous = -std::numeric_limits<double>::infinity();
@@ -154,11 +154,11 @@ inline bool validateResult(const AnalysisResult& value) noexcept
             return false;
         previous = node.positionSec;
     }
-    if (value.rgbWaveform) {
-        for (const auto& frame : *value.rgbWaveform) {
-            if (!std::isfinite(frame.rms) || !std::isfinite(frame.low)
-                || !std::isfinite(frame.lowMid) || !std::isfinite(frame.mid)
-                || !std::isfinite(frame.high))
+    if (value.spectralWaveform) {
+        for (const auto& frame : *value.spectralWaveform) {
+            if (!std::isfinite(frame.peak) || !std::isfinite(frame.rms)
+                || !std::isfinite(frame.bass) || !std::isfinite(frame.mid)
+                || !std::isfinite(frame.treble))
                 return false;
         }
     }

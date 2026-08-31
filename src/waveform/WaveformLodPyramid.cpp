@@ -44,9 +44,10 @@ WaveformLodPyramid::Sample WaveformLodPyramid::sample(
         }
     }
     result.complete = true;
-    std::uint64_t red = 0;
-    std::uint64_t green = 0;
-    std::uint64_t blue = 0;
+    std::uint64_t rms = 0;
+    std::uint64_t bass = 0;
+    std::uint64_t mid = 0;
+    std::uint64_t treble = 0;
     std::uint64_t weight = 0;
     std::uint8_t flags = 0xff;
     // The whole [begin, end) fold almost always lives inside a single chunk
@@ -91,16 +92,18 @@ WaveformLodPyramid::Sample WaveformLodPyramid::sample(
             std::abs(static_cast<int>(line.minimum)),
             std::abs(static_cast<int>(line.maximum))));
         const auto lineWeight = std::max(1u, magnitude);
-        red += static_cast<std::uint64_t>(line.red) * lineWeight;
-        green += static_cast<std::uint64_t>(line.green) * lineWeight;
-        blue += static_cast<std::uint64_t>(line.blue) * lineWeight;
+        rms += static_cast<std::uint64_t>(line.rms) * lineWeight;
+        bass += static_cast<std::uint64_t>(line.bass) * lineWeight;
+        mid += static_cast<std::uint64_t>(line.mid) * lineWeight;
+        treble += static_cast<std::uint64_t>(line.treble) * lineWeight;
         weight += lineWeight;
         flags &= line.flags;
     }
     if (weight > 0) {
-        result.line.red = static_cast<std::uint8_t>(red / weight);
-        result.line.green = static_cast<std::uint8_t>(green / weight);
-        result.line.blue = static_cast<std::uint8_t>(blue / weight);
+        result.line.rms = static_cast<std::uint8_t>(rms / weight);
+        result.line.bass = static_cast<std::uint8_t>(bass / weight);
+        result.line.mid = static_cast<std::uint8_t>(mid / weight);
+        result.line.treble = static_cast<std::uint8_t>(treble / weight);
         result.line.flags = flags;
     }
     return result;

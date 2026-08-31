@@ -90,10 +90,9 @@ struct RenderTileRequest final {
 
 struct OverviewSample final {
     float rms = 0.0f;
-    float low = 0.0f;
-    float lowMid = 0.0f;
+    float bass = 0.0f;
     float mid = 0.0f;
-    float high = 0.0f;
+    float treble = 0.0f;
 };
 
 struct OverviewRenderKey final {

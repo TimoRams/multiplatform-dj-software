@@ -33,17 +33,20 @@ int main(int argc, char** argv)
     result.bpm = 128.0;
     QVector<TrackData::RgbWaveformFrame> rgb(3);
     rgb[0].rms = 0.25f; rgb[1].rms = 0.5f; rgb[2].rms = 0.75f;
-    rgb[0].low = 0.55f; rgb[1].low = 0.80f; rgb[2].low = 1.0f;
-    result.rgbWaveform = std::make_shared<const QVector<TrackData::RgbWaveformFrame>>(rgb);
-    result.overviewWaveform = result.rgbWaveform;
-    result.waveform = std::make_shared<const QVector<TrackData::WaveformBin>>(3);
+    rgb[0].bass = 0.55f; rgb[1].bass = 0.80f; rgb[2].bass = 1.0f;
+    result.spectralWaveform = std::make_shared<const QVector<TrackData::SpectralWaveformPoint>>(rgb);
+    result.overviewWaveform = result.spectralWaveform;
+    QVector<TrackData::WaveformBin> geometry(3);
+    geometry.fill({-0.5f, 0.5f, 0.5f, 0.4f});
+    result.waveform = std::make_shared<const QVector<TrackData::WaveformBin>>(
+        geometry);
     result.peakMip = std::make_shared<const QVector<TrackData::PeakFrame>>(3);
     result.beats = {{0.0, true, true, 0, 1, 1, 1.0f},
                     {0.46875, true, false, 0, 1, 2, 1.0f}};
 
     ok &= require(analysis::validateResult(result), "valid immutable result rejected");
     result.validated = true;
-    const auto oldRgb = result.rgbWaveform;
+    const auto oldRgb = result.spectralWaveform;
     TrackData data;
     int rgbSignals = 0;
     QObject::connect(&data, &TrackData::rgbWaveformUpdated, [&] { ++rgbSignals; });
@@ -57,8 +60,8 @@ int main(int argc, char** argv)
                   "canonical waveform line chunk not published");
     if (firstLineChunk && firstLineChunk->lines && !firstLineChunk->lines->empty()) {
         const auto& line = firstLineChunk->lines->front();
-        ok &= require(line.red > line.green && line.red > line.blue,
-                      "low-band canonical line lost its frequency colour");
+        ok &= require(line.bass > line.mid && line.bass > line.treble,
+                      "canonical line lost its neutral frequency data");
         ok &= require(line.minimum < 0 && line.maximum > 0,
                       "canonical line lost its vertical peak extent");
     }
@@ -115,18 +118,21 @@ int main(int argc, char** argv)
     sparseWorking.setTotalExpected(sparseLineCount);
     sparseWorking.initializePreparedWaveformLines(sparseLineCount);
     QVector<TrackData::RgbWaveformFrame> sparseFrames(1024);
+    QVector<TrackData::WaveformBin> sparseGeometry(1024);
     for (auto& frame : sparseFrames) {
         frame.rms = 0.5f;
-        frame.low = 0.8f;
+        frame.bass = 0.8f;
         frame.mid = 0.3f;
     }
-    sparseWorking.writePreparedWaveformRange(2048, sparseFrames);
-    sparseWorking.writePreparedWaveformRange(0, sparseFrames);
-    sparseWorking.writePreparedWaveformRange(2048, sparseFrames);
-    sparseWorking.writePreparedWaveformRange(1024, sparseFrames);
-    sparseWorking.writePreparedWaveformRange(3072, sparseFrames);
+    sparseGeometry.fill({-0.5f, 0.5f, 0.5f, 0.4f});
+    sparseWorking.writePreparedWaveformRange(2048, sparseGeometry, sparseFrames);
+    sparseWorking.writePreparedWaveformRange(0, sparseGeometry, sparseFrames);
+    sparseWorking.writePreparedWaveformRange(2048, sparseGeometry, sparseFrames);
+    sparseWorking.writePreparedWaveformRange(1024, sparseGeometry, sparseFrames);
+    sparseWorking.writePreparedWaveformRange(3072, sparseGeometry, sparseFrames);
     sparseWorking.writePreparedWaveformRange(
-        4096, QVector<TrackData::RgbWaveformFrame>{sparseFrames.front()});
+        4096, QVector<TrackData::WaveformBin>{sparseGeometry.front()},
+        QVector<TrackData::RgbWaveformFrame>{sparseFrames.front()});
     const auto sparsePrepared = sparseWorking.preparedWaveformLines();
     ok &= require(sparsePrepared
                       && sparsePrepared->totalLineCount == sparseLineCount
@@ -142,7 +148,7 @@ int main(int argc, char** argv)
     auto sparseResult = std::move(sparseWorking).finish(sparseIdentity);
     ok &= require(sparseResult.preparedWaveformLines
                       && sparseResult.waveform->isEmpty()
-                      && sparseResult.rgbWaveform->isEmpty(),
+                      && sparseResult.spectralWaveform->isEmpty(),
                   "long-track result retained duration-sized legacy vectors");
 
     return ok ? 0 : 1;

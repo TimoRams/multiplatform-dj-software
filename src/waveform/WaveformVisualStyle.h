@@ -13,10 +13,9 @@ namespace waveform_visual {
 inline constexpr std::uint32_t kRevision = 1;
 
 struct BandEnergy final {
-    float low = 0.0f;
-    float lowMid = 0.0f;
+    float bass = 0.0f;
     float mid = 0.0f;
-    float high = 0.0f;
+    float treble = 0.0f;
     float rms = 0.0f;
 };
 
@@ -24,21 +23,20 @@ using Rgb8 = std::array<std::uint8_t, 3>;
 
 inline Rgb8 color(const BandEnergy& energy) noexcept
 {
-    const float wLow = std::pow(std::clamp(energy.low, 0.0f, 1.0f), 2.8f);
-    const float wLowMid = std::pow(std::clamp(energy.lowMid, 0.0f, 1.0f), 2.5f);
+    const float wBass = std::pow(std::clamp(energy.bass, 0.0f, 1.0f), 2.5f);
     const float wMid = std::pow(std::clamp(energy.mid, 0.0f, 1.0f), 2.2f);
-    const float wHigh = std::pow(std::clamp(energy.high, 0.0f, 1.0f), 1.6f);
-    const float sum = wLow + wLowMid + wMid + wHigh;
+    const float wTreble = std::pow(std::clamp(energy.treble, 0.0f, 1.0f), 1.6f);
+    const float sum = wBass + wMid + wTreble;
     if (sum <= 1.0e-7f)
         return {150, 170, 190};
 
     const float brightness = 0.58f + 0.42f
         * std::pow(std::clamp(energy.rms, 0.0f, 1.0f), 0.35f);
-    const float red = ((wLow * 255.0f + wLowMid * 255.0f + wMid * 210.0f) / sum)
+    const float red = ((wBass * 255.0f + wMid * 210.0f) / sum)
         * brightness;
-    const float green = ((wLow * 20.0f + wLowMid * 130.0f + wMid * 255.0f
-                          + wHigh * 185.0f) / sum) * brightness;
-    const float blue = ((wLow * 20.0f + wHigh * 255.0f) / sum) * brightness;
+    const float green = ((wBass * 35.0f + wMid * 255.0f
+                          + wTreble * 185.0f) / sum) * brightness;
+    const float blue = ((wBass * 20.0f + wTreble * 255.0f) / sum) * brightness;
     return {
         static_cast<std::uint8_t>(std::lround(std::clamp(red, 0.0f, 255.0f))),
         static_cast<std::uint8_t>(std::lround(std::clamp(green, 0.0f, 255.0f))),

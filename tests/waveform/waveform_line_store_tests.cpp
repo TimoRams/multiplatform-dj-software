@@ -20,8 +20,8 @@ WaveformLineChunk makeChunk(std::uint64_t generation, std::uint32_t index,
     const auto count = std::min(chunkSize, total - first);
     auto lines = std::make_shared<std::vector<WaveformLine>>(count);
     std::fill(lines->begin(), lines->end(), WaveformLine{
-        .minimum = -100, .maximum = 200, .red = 255,
-        .green = 80, .blue = 40, .flags = waveform_line_flags::kAvailable});
+        .minimum = -100, .maximum = 200, .rms = 180, .bass = 255,
+        .mid = 80, .treble = 40, .flags = waveform_line_flags::kAvailable});
     return {generation, index, first, count, total, std::move(lines)};
 }
 }
@@ -83,8 +83,8 @@ int main()
     auto oneSidedLines = std::make_shared<std::vector<WaveformLine>>(16);
     for (std::size_t index = 1; index < oneSidedLines->size(); ++index) {
         auto& line = (*oneSidedLines)[index];
-        line = {.minimum = 1200, .maximum = 4800,
-                .red = 200, .green = 100, .blue = 50,
+        line = {.minimum = 1200, .maximum = 4800, .rms = 180,
+                .bass = 200, .mid = 100, .treble = 50,
                 .flags = waveform_line_flags::kAvailable};
     }
     ok &= require(oneSidedStore.publish({10, 0, 0, 16, 16,
@@ -138,8 +138,8 @@ int main()
                   "duplicate chunk is idempotent");
     const auto revisedFirst = chunkSize;
     auto revisedLines = std::make_shared<std::vector<WaveformLine>>(chunkSize);
-    (*revisedLines)[0] = {.minimum = -100, .maximum = 900,
-                          .red = 255, .green = 80, .blue = 40, .flags = 1};
+    (*revisedLines)[0] = {.minimum = -100, .maximum = 900, .rms = 180,
+                          .bass = 255, .mid = 80, .treble = 40, .flags = 1};
     WaveformLineChunk revised{9, 1, revisedFirst, chunkSize, total, std::move(revisedLines)};
     ok &= require(store.publish(std::move(revised)) == WaveformLineStore::PublishResult::Accepted,
                   "new immutable revision of a progressive chunk was rejected");

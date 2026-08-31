@@ -533,10 +533,9 @@ WaveformTileRasterizer::rasterizeOverview(const OverviewRenderRequest& request)
                 / static_cast<long double>(totalLineCount)))));
         float peak = 0.0f;
         float rmsSum = 0.0f;
-        float low = 0.0f;
-        float lowMid = 0.0f;
+        float bass = 0.0f;
         float mid = 0.0f;
-        float high = 0.0f;
+        float treble = 0.0f;
         float colorWeight = 0.0f;
         for (auto index = begin;
              index < std::min(end, request.samples->size()); ++index) {
@@ -544,10 +543,9 @@ WaveformTileRasterizer::rasterizeOverview(const OverviewRenderRequest& request)
             peak = std::max(peak, sample.rms);
             rmsSum += sample.rms;
             const float weight = std::max(0.01f, sample.rms);
-            low += sample.low * weight;
-            lowMid += sample.lowMid * weight;
+            bass += sample.bass * weight;
             mid += sample.mid * weight;
-            high += sample.high * weight;
+            treble += sample.treble * weight;
             colorWeight += weight;
         }
         if (colorWeight <= 0.0f)
@@ -558,8 +556,8 @@ WaveformTileRasterizer::rasterizeOverview(const OverviewRenderRequest& request)
             continue;
         const float inverseWeight = 1.0f / colorWeight;
         const auto color = waveform_visual::color({
-            low * inverseWeight, lowMid * inverseWeight,
-            mid * inverseWeight, high * inverseWeight, energy});
+            bass * inverseWeight, mid * inverseWeight,
+            treble * inverseWeight, energy});
         const double amplitude = waveform_visual::logarithmicAmplitude(energy);
         double top = centre - amplitude * halfHeight;
         double bottom = centre + amplitude * halfHeight;

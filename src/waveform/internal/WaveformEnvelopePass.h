@@ -15,7 +15,9 @@ struct EnvelopePassInput
 {
     using ChunkCallback = std::function<void(int firstBin, int totalBins,
                                              QVector<TrackData::WaveformBin>,
-                                             QVector<TrackData::RgbWaveformFrame>,
+                                             int firstSpectralBin,
+                                             int totalSpectralBins,
+                                             QVector<TrackData::SpectralWaveformPoint>,
                                              WaveformNormalizationState)>;
     juce::AudioFormatReader& reader;
     // The full-track pass is split into segments that decode in parallel, and a

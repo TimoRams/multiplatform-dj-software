@@ -273,6 +273,8 @@ void WaveformAnalyzer::run()
     const double      sampleRate   = reader->sampleRate;
     const double      duration     = totalSamples / sampleRate;
     const int         numPoints    = static_cast<int>(duration * m_pointsPerSecond);
+    const int spectralPoints = static_cast<int>(
+        std::ceil(duration * TrackData::SPECTRAL_POINTS_PER_SECOND));
     constexpr double kLegacyWaveformMaximumDurationSec = 10.0 * 60.0;
     const bool retainLegacyWaveform = duration
         <= kLegacyWaveformMaximumDurationSec;
@@ -280,26 +282,26 @@ void WaveformAnalyzer::run()
     if (numPoints <= 0) return;
 
     // Cached waveform from disk — skip the expensive Pass 1+2 and only run BPM/key.
-    const int existingRgb      = working.getRgbWaveformSize();
+    const int existingRgb      = working.getSpectralWaveformSize();
     const int existingExpected = working.getTotalExpected();
     const bool haveFullWaveform = existingExpected >= static_cast<int>(numPoints * 0.95)
-                               && existingRgb      >= static_cast<int>(numPoints * 0.95);
+                               && existingRgb >= static_cast<int>(spectralPoints * 0.95);
 
     if (!haveFullWaveform) {
         // Instant full-track preview so the deck overview never starts blank.
-        if (working.getOverviewRgbData().isEmpty()) {
-            auto preview = buildInstantOverview(reader.get(), 512);
+        if (working.getOverviewWaveformData().isEmpty()) {
+            auto preview = buildInstantOverview(reader.get(), TrackData::kOverviewBins);
             if (!preview.isEmpty()) {
                 if (overview)
                     overview(runGeneration, numPoints, preview);
-                working.setOverviewRgbData(std::move(preview));
+                working.setOverviewWaveformData(std::move(preview));
             }
         }
         working.clearWaveformData();
         working.setTotalExpected(numPoints);
-    } else if (working.getOverviewRgbData().isEmpty()) {
-        working.setOverviewRgbData(
-            TrackData::downsampleOverview(working.getRgbWaveformData()));
+    } else if (working.getOverviewWaveformData().isEmpty()) {
+        working.setOverviewWaveformData(
+            TrackData::downsampleOverview(working.getSpectralWaveformData()));
     } else {
         working.reportAnalysisProgress(0.05, true);
     }
@@ -336,11 +338,13 @@ void WaveformAnalyzer::run()
             retainLegacyWaveform,
             [chunks, runGeneration](int firstBin, int totalBins,
                                     QVector<TrackData::WaveformBin> waveform,
-                                    QVector<TrackData::RgbWaveformFrame> rgb,
+                                    int firstSpectralBin, int totalSpectralBins,
+                                    QVector<TrackData::SpectralWaveformPoint> spectral,
                                     WaveformNormalizationState state) {
                 if (chunks)
                     chunks(runGeneration, firstBin, totalBins,
-                           std::move(waveform), std::move(rgb), state);
+                           std::move(waveform), firstSpectralBin,
+                           totalSpectralBins, std::move(spectral), state);
             },
         };
         if (!waveform_internal::runEnvelopePass(envelopeInput))
@@ -352,11 +356,16 @@ void WaveformAnalyzer::run()
         // deck lost an otherwise complete waveform.
         WaveformCache::Payload waveformPayload;
         waveformPayload.pointsPerSecond = m_pointsPerSecond;
+        const int spectralRatio = std::max(1, static_cast<int>(std::lround(
+            static_cast<double>(m_pointsPerSecond)
+            / TrackData::SPECTRAL_POINTS_PER_SECOND)));
+        waveformPayload.spectralPointsPerSecond =
+            m_pointsPerSecond / spectralRatio;
         waveformPayload.totalExpected = working.getTotalExpected();
         waveformPayload.globalMaxPeak = working.getGlobalMaxPeak();
         waveformPayload.waveform = working.getWaveformData();
-        waveformPayload.rgb = working.getRgbWaveformData();
-        waveformPayload.overview = working.getOverviewRgbData();
+        waveformPayload.spectral = working.getSpectralWaveformData();
+        waveformPayload.overview = working.getOverviewWaveformData();
         waveformPayload.peakMip = working.getPeakMipData();
         waveformPayload.preparedLines = working.preparedWaveformLines();
         if (!WaveformCache::saveForFile(m_filePath, waveformPayload)) {
@@ -364,7 +373,7 @@ void WaveformAnalyzer::run()
         } else {
             qDebug() << "[WaveformAnalyzer] Waveform cache written:"
                      << waveformPayload.waveform.size() << "bins,"
-                     << waveformPayload.rgb.size() << "rgb frames";
+                     << waveformPayload.spectral.size() << "spectral frames";
         }
     }
 
@@ -397,10 +406,10 @@ void WaveformAnalyzer::run()
     if (!threadShouldExit()) {
         auto completedResult = std::move(working).finish(m_identity);
         if (!completedResult.preparedWaveformLines
-            && completedResult.rgbWaveform
-            && !completedResult.rgbWaveform->isEmpty()) {
+            && completedResult.spectralWaveform
+            && !completedResult.spectralWaveform->isEmpty()) {
             completedResult.preparedWaveformLines = waveform::prepareWaveformLines(
-                *completedResult.rgbWaveform);
+                *completedResult.waveform, *completedResult.spectralWaveform);
         }
         if (!analysis::validateResult(completedResult))
             return;

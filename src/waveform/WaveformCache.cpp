@@ -20,18 +20,17 @@
 namespace {
 
 constexpr quint32 kMagic = 0x52574631; // RWF1
-constexpr qint32 kVersion = 6;         // v6: analysis pipeline version bumped; binary payload stays v5-compatible.
+constexpr qint32 kVersion = 7;
 constexpr quint32 kRenderMagic = 0x52574c31; // RWL1
 constexpr qint32 kRenderVersion = WaveformCache::kRenderCacheVersion;
-constexpr qint32 kLegacyRenderVersion = 1;
 constexpr quint32 kLodMagic = 0x4c4f4432; // LOD2
 constexpr int kBlockSize = 4096;
 constexpr qint32 kMaxCachedBins = 100'000'000;
-constexpr int kRenderOverviewBins = 4096;
+constexpr int kRenderOverviewBins = TrackData::kOverviewBins;
 constexpr qint64 kFullPayloadMaximumDurationSeconds = 10LL * 60LL;
 constexpr qint64 kRenderHeaderBytes = 6 * sizeof(qint32);
 constexpr qint64 kRenderOverviewRecordBytes = 5;
-constexpr qint64 kRenderLineRecordBytes = 8;
+constexpr qint64 kRenderLineRecordBytes = 10;
 constexpr qint32 kPersistedLodTileSamples = 4096;
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
@@ -124,8 +123,7 @@ bool readRenderHeader(QFile& file, int expectedPointsPerSecond,
        >> chunkSize >> overviewCount;
     if (in.status() != QDataStream::Ok
         || magic != kRenderMagic
-        || (renderVersion != kLegacyRenderVersion
-            && renderVersion != kRenderVersion)
+        || renderVersion != kRenderVersion
         || pointsPerSecond != expectedPointsPerSecond
         || totalLines <= 0 || totalLines > kMaxCachedBins
         || chunkSize != static_cast<qint32>(WaveformLineStore::kChunkSize)
@@ -135,19 +133,19 @@ bool readRenderHeader(QFile& file, int expectedPointsPerSecond,
     const qint64 expectedSize = kRenderHeaderBytes
         + static_cast<qint64>(overviewCount) * kRenderOverviewRecordBytes
         + static_cast<qint64>(totalLines) * kRenderLineRecordBytes;
-    return renderVersion == kLegacyRenderVersion
-        ? file.size() == expectedSize
-        : file.size() > expectedSize;
+    return file.size() > expectedSize;
 }
 
 void writeRenderLine(QDataStream& out, const WaveformLine& line)
 {
     out << static_cast<qint16>(line.minimum)
         << static_cast<qint16>(line.maximum)
-        << static_cast<quint8>(line.red)
-        << static_cast<quint8>(line.green)
-        << static_cast<quint8>(line.blue)
-        << static_cast<quint8>(line.flags);
+        << static_cast<quint8>(line.rms)
+        << static_cast<quint8>(line.bass)
+        << static_cast<quint8>(line.mid)
+        << static_cast<quint8>(line.treble)
+        << static_cast<quint8>(line.flags)
+        << static_cast<quint8>(line.reserved);
 }
 
 bool preparedLinesAreComplete(const WaveformCache::Payload& payload)
@@ -184,14 +182,18 @@ WaveformLine payloadLineAt(const WaveformCache::Payload& payload, int index)
         }
         return {};
     }
-    return waveform::makeCanonicalLine(payload.rgb[index]);
+    return waveform::makeCanonicalLine(
+        payload.waveform[index],
+        waveform::interpolateSpectral(
+            payload.spectral, static_cast<std::uint32_t>(index),
+            static_cast<std::uint32_t>(payload.waveform.size())));
 }
 
 WaveformLine foldPayloadLines(const WaveformCache::Payload& payload,
                               int begin, int end)
 {
     WaveformLine result;
-    std::uint64_t red = 0, green = 0, blue = 0, weight = 0;
+    std::uint64_t rms = 0, bass = 0, mid = 0, treble = 0, weight = 0;
     std::uint8_t flags = 0xff;
     bool hasExtrema = false;
     for (int index = begin; index < end; ++index) {
@@ -208,16 +210,18 @@ WaveformLine foldPayloadLines(const WaveformCache::Payload& payload,
             std::abs(static_cast<int>(line.minimum)),
             std::abs(static_cast<int>(line.maximum))));
         const auto lineWeight = std::max(1u, magnitude);
-        red += static_cast<std::uint64_t>(line.red) * lineWeight;
-        green += static_cast<std::uint64_t>(line.green) * lineWeight;
-        blue += static_cast<std::uint64_t>(line.blue) * lineWeight;
+        rms += static_cast<std::uint64_t>(line.rms) * lineWeight;
+        bass += static_cast<std::uint64_t>(line.bass) * lineWeight;
+        mid += static_cast<std::uint64_t>(line.mid) * lineWeight;
+        treble += static_cast<std::uint64_t>(line.treble) * lineWeight;
         weight += lineWeight;
         flags &= line.flags;
     }
     if (weight > 0) {
-        result.red = static_cast<std::uint8_t>(red / weight);
-        result.green = static_cast<std::uint8_t>(green / weight);
-        result.blue = static_cast<std::uint8_t>(blue / weight);
+        result.rms = static_cast<std::uint8_t>(rms / weight);
+        result.bass = static_cast<std::uint8_t>(bass / weight);
+        result.mid = static_cast<std::uint8_t>(mid / weight);
+        result.treble = static_cast<std::uint8_t>(treble / weight);
         result.flags = flags;
     }
     return result;
@@ -233,10 +237,11 @@ bool saveRenderCache(const QString& path, const WaveformCache::Payload& payload)
 
     const int total = payload.preparedLines
         ? static_cast<int>(payload.preparedLines->totalLineCount)
-        : static_cast<int>(payload.rgb.size());
+        : static_cast<int>(payload.waveform.size());
     const bool hasPreparedOverview = !payload.overview.isEmpty();
     const int overviewSourceCount = hasPreparedOverview
-        ? static_cast<int>(payload.overview.size()) : total;
+        ? static_cast<int>(payload.overview.size())
+        : static_cast<int>(payload.spectral.size());
     const int overviewCount = std::min(kRenderOverviewBins, overviewSourceCount);
     out << static_cast<quint32>(kRenderMagic)
         << static_cast<qint32>(kRenderVersion)
@@ -251,21 +256,21 @@ bool saveRenderCache(const QString& path, const WaveformCache::Payload& payload)
         const int end = std::max(begin + 1, static_cast<int>(
             (static_cast<qint64>(bin + 1) * overviewSourceCount)
                 / overviewCount));
-        float rms = 0.0f, low = 0.0f, lowMid = 0.0f, mid = 0.0f, high = 0.0f;
+        float peak = 0.0f, rms = 0.0f, bass = 0.0f, mid = 0.0f, treble = 0.0f;
         const auto& overviewSource = hasPreparedOverview
-            ? payload.overview : payload.rgb;
+            ? payload.overview : payload.spectral;
         for (int index = begin;
              index < std::min(end, overviewSourceCount); ++index) {
             const auto& frame = overviewSource[index];
+            peak = std::max(peak, frame.peak);
             rms = std::max(rms, frame.rms);
-            low = std::max(low, frame.low);
-            lowMid = std::max(lowMid, frame.lowMid);
+            bass = std::max(bass, frame.bass);
             mid = std::max(mid, frame.mid);
-            high = std::max(high, frame.high);
+            treble = std::max(treble, frame.treble);
         }
-        out << quantizeUnit(rms) << quantizeUnit(low)
-            << quantizeUnit(lowMid) << quantizeUnit(mid)
-            << quantizeUnit(high);
+        out << quantizeUnit(peak) << quantizeUnit(rms)
+            << quantizeUnit(bass) << quantizeUnit(mid)
+            << quantizeUnit(treble);
     }
 
     for (int index = 0; index < total; ++index) {
@@ -354,14 +359,14 @@ bool WaveformCache::inspectRenderCache(const QString& filePath,
     info.cacheVersion = renderVersion;
     info.overview.reserve(overviewCount);
     for (int index = 0; index < overviewCount; ++index) {
-        quint8 rms = 0, low = 0, lowMid = 0, mid = 0, high = 0;
-        in >> rms >> low >> lowMid >> mid >> high;
+        quint8 peak = 0, rms = 0, bass = 0, mid = 0, treble = 0;
+        in >> peak >> rms >> bass >> mid >> treble;
         TrackData::RgbWaveformFrame frame;
+        frame.peak = dequantizeUnit(peak);
         frame.rms = dequantizeUnit(rms);
-        frame.low = dequantizeUnit(low);
-        frame.lowMid = dequantizeUnit(lowMid);
+        frame.bass = dequantizeUnit(bass);
         frame.mid = dequantizeUnit(mid);
-        frame.high = dequantizeUnit(high);
+        frame.treble = dequantizeUnit(treble);
         info.overview.push_back(frame);
     }
     if (in.status() != QDataStream::Ok)
@@ -434,17 +439,19 @@ bool WaveformCache::streamRenderCache(
             static_cast<size_t>(count));
         for (int local = 0; local < count; ++local) {
             qint16 minimum = 0, maximum = 0;
-            quint8 red = 0, green = 0, blue = 0, flags = 0;
-            in >> minimum >> maximum >> red >> green >> blue >> flags;
+            quint8 rms = 0, bass = 0, mid = 0, treble = 0, flags = 0, reserved = 0;
+            in >> minimum >> maximum >> rms >> bass >> mid >> treble >> flags >> reserved;
             auto& line = (*lines)[static_cast<size_t>(local)];
             line.minimum = minimum;
             line.maximum = maximum;
-            line.red = red;
-            line.green = green;
-            line.blue = blue;
+            line.rms = rms;
+            line.bass = bass;
+            line.mid = mid;
+            line.treble = treble;
             // Persisted render-cache lines are authoritative analysis output,
             // including caches written before the explicit Final flag existed.
             line.flags = flags | waveform_line_flags::kFinal;
+            line.reserved = reserved;
         }
         if (in.status() != QDataStream::Ok)
             return std::nullopt;
@@ -596,14 +603,16 @@ bool WaveformCache::streamRenderLodCache(
                 static_cast<std::size_t>(count));
             for (auto& line : *lines) {
                 qint16 minimum = 0, maximum = 0;
-                quint8 red = 0, green = 0, blue = 0, flags = 0;
-                in >> minimum >> maximum >> red >> green >> blue >> flags;
+                quint8 rms = 0, bass = 0, mid = 0, treble = 0, flags = 0, reserved = 0;
+                in >> minimum >> maximum >> rms >> bass >> mid >> treble >> flags >> reserved;
                 line.minimum = minimum;
                 line.maximum = maximum;
-                line.red = red;
-                line.green = green;
-                line.blue = blue;
+                line.rms = rms;
+                line.bass = bass;
+                line.mid = mid;
+                line.treble = treble;
                 line.flags = flags | waveform_line_flags::kFinal;
+                line.reserved = reserved;
             }
             if (in.status() != QDataStream::Ok)
                 return false;
@@ -629,10 +638,12 @@ bool WaveformCache::loadForFile(const QString& filePath, int pointsPerSecond, Pa
     quint32 magic = 0;
     qint32 version = 0;
     qint32 pps = 0;
+    qint32 spectralPps = 0;
     qint32 totalExpected = 0;
     float globalMaxPeak = 0.001f;
     qint32 wfCount = 0;
     qint32 rgbCount = 0;
+    qint32 overviewCount = 0;
     qint32 peakCount = 0;
 
     const auto discard = [&](const char* reason) {
@@ -641,17 +652,22 @@ bool WaveformCache::loadForFile(const QString& filePath, int pointsPerSecond, Pa
         return false;
     };
 
-    in >> magic >> version >> pps >> totalExpected >> globalMaxPeak >> wfCount >> rgbCount >> peakCount;
+    in >> magic >> version >> pps >> spectralPps >> totalExpected
+       >> globalMaxPeak >> wfCount >> rgbCount >> overviewCount >> peakCount;
     if (in.status() != QDataStream::Ok)
         return discard("payload header is truncated");
     if (magic != kMagic)
         return discard("payload magic does not match");
-    if (version != 5 && version != kVersion)
+    if (version != kVersion)
         return discard("payload was written by another cache version");
-    if (pps != pointsPerSecond)
+    if (pps != pointsPerSecond || spectralPps <= 0 || spectralPps > pps)
         return discard("payload resolution does not match the request");
     if (totalExpected <= 0 || totalExpected > kMaxCachedBins
-        || wfCount != totalExpected || rgbCount != totalExpected
+        || wfCount != totalExpected || rgbCount <= 0
+        || rgbCount != static_cast<qint32>(
+            (static_cast<qint64>(totalExpected) * spectralPps + pps - 1)
+            / pps)
+        || overviewCount < 0 || overviewCount > TrackData::kOverviewBins
         || peakCount < 0 || peakCount > kMaxCachedBins
         || !std::isfinite(globalMaxPeak) || globalMaxPeak <= 0.0f) {
         return discard("payload header describes an impossible waveform");
@@ -659,27 +675,29 @@ bool WaveformCache::loadForFile(const QString& filePath, int pointsPerSecond, Pa
 
     Payload payload;
     payload.pointsPerSecond = pps;
+    payload.spectralPointsPerSecond = spectralPps;
     payload.totalExpected = totalExpected;
     payload.globalMaxPeak = globalMaxPeak;
     payload.waveform.reserve(wfCount);
-    payload.rgb.reserve(rgbCount);
+    payload.spectral.reserve(rgbCount);
+    payload.overview.reserve(overviewCount);
     payload.peakMip.reserve(peakCount);
 
     int wfRead = 0;
     while (wfRead < wfCount) {
         const int n = std::min(kBlockSize, wfCount - wfRead);
         for (int i = 0; i < n; ++i) {
-            float low = 0.0f;
-            float lowMid = 0.0f;
-            float mid = 0.0f;
-            float high = 0.0f;
-            in >> low >> lowMid >> mid >> high;
+            float minimum = 0.0f;
+            float maximum = 0.0f;
+            float peak = 0.0f;
+            float rms = 0.0f;
+            in >> minimum >> maximum >> peak >> rms;
 
             TrackData::WaveformBin d;
-            d.low = low;
-            d.lowMid = lowMid;
-            d.mid = mid;
-            d.high = high;
+            d.minimum = minimum;
+            d.maximum = maximum;
+            d.peak = peak;
+            d.rms = rms;
             payload.waveform.push_back(d);
         }
         wfRead += n;
@@ -689,26 +707,34 @@ bool WaveformCache::loadForFile(const QString& filePath, int pointsPerSecond, Pa
     while (rgbRead < rgbCount) {
         const int n = std::min(kBlockSize, rgbCount - rgbRead);
         for (int i = 0; i < n; ++i) {
+            float peak = 0.0f;
             float rms = 0.0f;
-            float low = 0.0f;
-            float lowMid = 0.0f;
+            float bass = 0.0f;
             float mid = 0.0f;
-            float high = 0.0f;
-            quint8 r = 255;
-            quint8 g = 255;
-            quint8 b = 255;
-            in >> rms >> low >> lowMid >> mid >> high >> r >> g >> b;
+            float treble = 0.0f;
+            in >> peak >> rms >> bass >> mid >> treble;
 
             TrackData::RgbWaveformFrame frame;
-            frame.rms    = rms;
-            frame.low    = low;
-            frame.lowMid = lowMid;
-            frame.mid    = mid;
-            frame.high   = high;
-            frame.color  = QColor(r, g, b, 230);
-            payload.rgb.push_back(frame);
+            frame.peak = peak;
+            frame.rms = rms;
+            frame.bass = bass;
+            frame.mid = mid;
+            frame.treble = treble;
+            payload.spectral.push_back(frame);
         }
         rgbRead += n;
+    }
+
+    int overviewRead = 0;
+    while (overviewRead < overviewCount) {
+        const int n = std::min(kBlockSize, overviewCount - overviewRead);
+        for (int i = 0; i < n; ++i) {
+            TrackData::SpectralWaveformPoint frame;
+            in >> frame.peak >> frame.rms >> frame.bass
+               >> frame.mid >> frame.treble;
+            payload.overview.push_back(frame);
+        }
+        overviewRead += n;
     }
 
     int peakRead = 0;
@@ -735,6 +761,7 @@ bool WaveformCache::loadForFile(const QString& filePath, int pointsPerSecond, Pa
 bool WaveformCache::saveForFile(const QString& filePath, const Payload& payload)
 {
     if (payload.pointsPerSecond <= 0
+        || payload.spectralPointsPerSecond <= 0
         || payload.totalExpected <= 0
         || !std::isfinite(payload.globalMaxPeak)
         || payload.globalMaxPeak <= 0.0f) {
@@ -743,15 +770,21 @@ bool WaveformCache::saveForFile(const QString& filePath, const Payload& payload)
 
     const qint64 fullPayloadMaximumBins = kFullPayloadMaximumDurationSeconds
         * static_cast<qint64>(payload.pointsPerSecond);
+    const int effectiveSpectralPps = std::min(
+        payload.spectralPointsPerSecond, payload.pointsPerSecond);
+    const qint64 expectedSpectralBins =
+        (static_cast<qint64>(payload.totalExpected) * effectiveSpectralPps
+            + payload.pointsPerSecond - 1)
+        / payload.pointsPerSecond;
     const bool longTrack = payload.totalExpected > fullPayloadMaximumBins;
     const bool hasLegacyVectors = !payload.waveform.isEmpty()
-        && !payload.rgb.isEmpty()
+        && !payload.spectral.isEmpty()
         && payload.totalExpected == payload.waveform.size()
-        && payload.totalExpected == payload.rgb.size();
+        && expectedSpectralBins == payload.spectral.size();
     const bool hasPreparedLines = preparedLinesAreComplete(payload);
     if ((!longTrack && !hasLegacyVectors)
         || (longTrack && !hasLegacyVectors && !hasPreparedLines)
-        || (payload.rgb.isEmpty() && payload.overview.isEmpty())) {
+        || (payload.spectral.isEmpty() && payload.overview.isEmpty())) {
         return false;
     }
 
@@ -778,10 +811,13 @@ bool WaveformCache::saveForFile(const QString& filePath, const Payload& payload)
     out << static_cast<quint32>(kMagic)
         << static_cast<qint32>(kVersion)
         << static_cast<qint32>(payload.pointsPerSecond)
+        << static_cast<qint32>(std::min(
+            payload.spectralPointsPerSecond, payload.pointsPerSecond))
         << static_cast<qint32>(payload.totalExpected)
         << payload.globalMaxPeak
         << static_cast<qint32>(payload.waveform.size())
-        << static_cast<qint32>(payload.rgb.size())
+        << static_cast<qint32>(payload.spectral.size())
+        << static_cast<qint32>(payload.overview.size())
         << static_cast<qint32>(payload.peakMip.size());
 
     const qsizetype wfTotal = payload.waveform.size();
@@ -790,27 +826,37 @@ bool WaveformCache::saveForFile(const QString& filePath, const Payload& payload)
         const int n = std::min(kBlockSize, static_cast<int>(wfTotal - wfWritten));
         for (int i = 0; i < n; ++i) {
             const auto& d = payload.waveform[wfWritten + i];
-            out << d.low << d.lowMid << d.mid << d.high;
+            out << d.minimum << d.maximum << d.peak << d.rms;
         }
         wfWritten += n;
     }
 
-    const qsizetype rgbTotal = payload.rgb.size();
+    const qsizetype rgbTotal = payload.spectral.size();
     qsizetype rgbWritten = 0;
     while (rgbWritten < rgbTotal) {
         const int n = std::min(kBlockSize, static_cast<int>(rgbTotal - rgbWritten));
         for (int i = 0; i < n; ++i) {
-            const auto& fr = payload.rgb[rgbWritten + i];
-            out << fr.rms
-                << fr.low
-                << fr.lowMid
+            const auto& fr = payload.spectral[rgbWritten + i];
+            out << fr.peak
+                << fr.rms
+                << fr.bass
                 << fr.mid
-                << fr.high
-                << static_cast<quint8>(fr.color.red())
-                << static_cast<quint8>(fr.color.green())
-                << static_cast<quint8>(fr.color.blue());
+                << fr.treble;
         }
         rgbWritten += n;
+    }
+
+    const qsizetype overviewTotal = payload.overview.size();
+    qsizetype overviewWritten = 0;
+    while (overviewWritten < overviewTotal) {
+        const int n = std::min(
+            kBlockSize, static_cast<int>(overviewTotal - overviewWritten));
+        for (int i = 0; i < n; ++i) {
+            const auto& frame = payload.overview[overviewWritten + i];
+            out << frame.peak << frame.rms << frame.bass
+                << frame.mid << frame.treble;
+        }
+        overviewWritten += n;
     }
 
     const qsizetype peakTotal = payload.peakMip.size();

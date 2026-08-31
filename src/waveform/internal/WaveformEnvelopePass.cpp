@@ -1,7 +1,5 @@
 #include "WaveformEnvelopePass.h"
 #include "waveform/WaveformAnalyzer.h"
-#include <QColor>
-#include <juce_dsp/juce_dsp.h>
 #include <QDebug>
 #include <algorithm>
 #include <array>
@@ -18,286 +16,16 @@
 #include <unistd.h>
 #endif
 
-namespace {
-
-QVector<TrackData::RgbWaveformFrame> blendRgbPreferDynamics(
-    const QVector<TrackData::RgbWaveformFrame>& current,
-    const QVector<TrackData::RgbWaveformFrame>& candidate)
-{
-    if (candidate.isEmpty())
-        return current;
-    if (current.isEmpty())
-        return candidate;
-
-    const int n = std::min(current.size(), candidate.size());
-    QVector<TrackData::RgbWaveformFrame> out;
-    out.reserve(candidate.size());
-
-    for (int i = 0; i < n; ++i) {
-        TrackData::RgbWaveformFrame f = candidate[i];
-        const auto& c = current[i];
-
-        // Keep dynamic punch from the progressive pass.
-        f.rms = std::max(c.rms, f.rms);
-        f.low = std::max(c.low, f.low);
-        f.mid = std::max(c.mid, f.mid);
-        f.high = std::max(c.high, f.high);
-
-        // Never darken strongly: candidate can refine hue, but not kill brightness.
-        const int r = std::max(static_cast<int>(c.color.red() * 0.90f), f.color.red());
-        const int g = std::max(static_cast<int>(c.color.green() * 0.90f), f.color.green());
-        const int b = std::max(static_cast<int>(c.color.blue() * 0.90f), f.color.blue());
-        f.color = QColor(std::clamp(r, 0, 255), std::clamp(g, 0, 255), std::clamp(b, 0, 255), 230);
-
-        out.push_back(f);
-    }
-
-    for (int i = n; i < candidate.size(); ++i)
-        out.push_back(candidate[i]);
-
-    return out;
-}
-
-#ifdef ESSENTIA_FOUND
-    #include <essentia/essentia.h>
-    #include <essentia/algorithmfactory.h>
-
-QVector<TrackData::RgbWaveformFrame> analyzeRgbFramesWithEssentia(
-    const std::vector<essentia::Real>& monoSignal,
-    double sampleRate,
-    int targetFrames,
-    int frameSize = 2048,
-    int hopSize = 1024)
-{
-    QVector<TrackData::RgbWaveformFrame> result;
-    if (monoSignal.empty() || sampleRate <= 0.0 || frameSize < 128 || hopSize < 64)
-        return result;
-
-    using essentia::Real;
-    using essentia::standard::Algorithm;
-    using essentia::standard::AlgorithmFactory;
-
-    std::vector<Real> frame;
-    std::vector<Real> windowedFrame;
-    std::vector<Real> spectrum;
-    Real low = 0.0f;
-    Real mid = 0.0f;
-    Real high = 0.0f;
-
-    std::unique_ptr<Algorithm> frameCutter(
-        AlgorithmFactory::create("FrameCutter",
-                                 "frameSize", frameSize,
-                                 "hopSize", hopSize,
-                                 "startFromZero", true,
-                                 "lastFrameToEndOfFile", false));
-    std::unique_ptr<Algorithm> windowing(
-        AlgorithmFactory::create("Windowing",
-                                 "type", std::string("hann"),
-                                 "size", frameSize,
-                                 "zeroPadding", 0));
-    std::unique_ptr<Algorithm> spectrumAlg(
-        AlgorithmFactory::create("Spectrum",
-                                 "size", frameSize));
-
-    // RGB bands: low 20-250 Hz, mid 250-4000 Hz, high 4000-20000 Hz.
-    std::unique_ptr<Algorithm> bandLow(
-        AlgorithmFactory::create("EnergyBand",
-                                 "sampleRate", static_cast<Real>(sampleRate),
-                                 "startCutoffFrequency", 20.0,
-                                 "stopCutoffFrequency", 250.0));
-    std::unique_ptr<Algorithm> bandMid(
-        AlgorithmFactory::create("EnergyBand",
-                                 "sampleRate", static_cast<Real>(sampleRate),
-                                 "startCutoffFrequency", 250.0,
-                                 "stopCutoffFrequency", 4000.0));
-    std::unique_ptr<Algorithm> bandHigh(
-        AlgorithmFactory::create("EnergyBand",
-                                 "sampleRate", static_cast<Real>(sampleRate),
-                                 "startCutoffFrequency", 4000.0,
-                                 "stopCutoffFrequency", 20000.0));
-
-    frameCutter->input("signal").set(monoSignal);
-    frameCutter->output("frame").set(frame);
-
-    windowing->input("frame").set(frame);
-    windowing->output("frame").set(windowedFrame);
-
-    spectrumAlg->input("frame").set(windowedFrame);
-    spectrumAlg->output("spectrum").set(spectrum);
-
-    bandLow->input("spectrum").set(spectrum);
-    bandLow->output("energyBand").set(low);
-    bandMid->input("spectrum").set(spectrum);
-    bandMid->output("energyBand").set(mid);
-    bandHigh->input("spectrum").set(spectrum);
-    bandHigh->output("energyBand").set(high);
-
-    std::vector<float> lows;
-    std::vector<float> mids;
-    std::vector<float> highs;
-    std::vector<float> rmsVals;
-    lows.reserve(monoSignal.size() / static_cast<size_t>(hopSize));
-    mids.reserve(lows.capacity());
-    highs.reserve(lows.capacity());
-    rmsVals.reserve(lows.capacity());
-
-    while (true) {
-        frameCutter->compute();
-        if (frame.empty())
-            break;
-
-        windowing->compute();
-        spectrumAlg->compute();
-        bandLow->compute();
-        bandMid->compute();
-        bandHigh->compute();
-
-        double sumSq = 0.0;
-        for (Real s : frame)
-            sumSq += static_cast<double>(s) * static_cast<double>(s);
-        const float rms = static_cast<float>(std::sqrt(sumSq / std::max<size_t>(1, frame.size())));
-
-        lows.push_back(std::max(0.0f, static_cast<float>(low)));
-        mids.push_back(std::max(0.0f, static_cast<float>(mid)));
-        highs.push_back(std::max(0.0f, static_cast<float>(high)));
-        rmsVals.push_back(rms);
-    }
-
-    if (lows.empty())
-        return result;
-
-    const float maxLow = std::max(1e-9f, *std::max_element(lows.begin(), lows.end()));
-    const float maxMid = std::max(1e-9f, *std::max_element(mids.begin(), mids.end()));
-    const float maxHigh = std::max(1e-9f, *std::max_element(highs.begin(), highs.end()));
-    const float maxRms = std::max(1e-9f, *std::max_element(rmsVals.begin(), rmsVals.end()));
-
-    result.reserve(static_cast<int>(lows.size()));
-    for (size_t i = 0; i < lows.size(); ++i) {
-        const float ln = std::clamp(lows[i] / maxLow, 0.0f, 1.0f);
-        const float mn = std::clamp(mids[i] / maxMid, 0.0f, 1.0f);
-        const float hn = std::clamp(highs[i] / maxHigh, 0.0f, 1.0f);
-        const float rmsN = std::clamp(rmsVals[i] / maxRms, 0.0f, 1.0f);
-
-        // Color mixing: R=low, G=mid, B=high with stronger lift for readability.
-        int r = std::clamp(static_cast<int>(std::pow(ln, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
-        int g = std::clamp(static_cast<int>(std::pow(mn, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
-        int b = std::clamp(static_cast<int>(std::pow(hn, 0.62f) * 255.0f * 1.12f + 10.0f), 0, 255);
-        if (ln + mn + hn > 0.06f) {
-            r = std::max(r, 18);
-            g = std::max(g, 18);
-            b = std::max(b, 18);
-        }
-
-        const float amp = std::clamp(0.55f * std::max({ln, mn, hn}) + 0.45f * rmsN, 0.0f, 1.0f);
-
-        TrackData::RgbWaveformFrame f;
-        f.color = QColor(r, g, b, 230);
-        f.rms = amp;
-        f.low = ln;
-        f.mid = mn;
-        f.high = hn;
-        result.push_back(f);
-    }
-
-    // Keep RGB frame count aligned with waveform timeline resolution so
-    // scrolling waveform length stays correct.
-    if (targetFrames > 0 && result.size() != targetFrames) {
-        QVector<TrackData::RgbWaveformFrame> resampled;
-        resampled.reserve(targetFrames);
-        const int srcN = result.size();
-        for (int i = 0; i < targetFrames; ++i) {
-            const int s0 = static_cast<int>((static_cast<int64_t>(i) * srcN) / targetFrames);
-            int s1 = static_cast<int>((static_cast<int64_t>(i + 1) * srcN) / targetFrames);
-            s1 = std::max(s0 + 1, std::min(s1, srcN));
-
-            float maxRms = 0.0f;
-            float low = 0.0f;
-            float midV = 0.0f;
-            float highV = 0.0f;
-            float wr = 0.0f;
-            float wg = 0.0f;
-            float wb = 0.0f;
-            float wsum = 0.0f;
-
-            for (int j = s0; j < s1; ++j) {
-                const auto& f = result[j];
-                maxRms = std::max(maxRms, f.rms);
-                low = std::max(low, f.low);
-                midV = std::max(midV, f.mid);
-                highV = std::max(highV, f.high);
-                const float w = std::max(0.08f, f.rms);
-                wr += static_cast<float>(f.color.red()) * w;
-                wg += static_cast<float>(f.color.green()) * w;
-                wb += static_cast<float>(f.color.blue()) * w;
-                wsum += w;
-            }
-
-            TrackData::RgbWaveformFrame out;
-            out.rms = maxRms;
-            out.low = low;
-            out.mid = midV;
-            out.high = highV;
-            if (wsum > 0.0f)
-                out.color = QColor(static_cast<int>(wr / wsum), static_cast<int>(wg / wsum), static_cast<int>(wb / wsum), 230);
-            resampled.push_back(out);
-        }
-        return resampled;
-    }
-
-    return result;
-}
-
-#endif
-
-} // namespace
-
-// Envelope follower with separate attack and release time constants.
-// Used for transient detection: a fast follower tracks peaks while a slow
-// follower tracks the sustained RMS body.  Their difference isolates
-// sharp drum hits (positive crest-factor spikes).
-struct EnvelopeFollower {
-    float state = 0.0f;
-    float attackCoef  = 0.0f;
-    float releaseCoef = 0.0f;
-
-    void prepare(double sampleRate, float attackMs, float releaseMs) {
-        // attackMs == 0 → instant attack (coefficient = 0 → state = input immediately)
-        attackCoef  = (attackMs  > 0.0f)
-            ? std::exp(-1.0f / (static_cast<float>(sampleRate) * attackMs  * 0.001f))
-            : 0.0f;
-        releaseCoef = (releaseMs > 0.0f)
-            ? std::exp(-1.0f / (static_cast<float>(sampleRate) * releaseMs * 0.001f))
-            : 0.0f;
-    }
-
-    float process(float rectified) {
-        float coef = rectified > state ? attackCoef : releaseCoef;
-        state = rectified + coef * (state - rectified);
-        return state;
-    }
-
-    void reset() { state = 0.0f; }
-};
-
 struct FiltState {
-    std::vector<float> lp110;
-    std::vector<float> hp150s1, hp150s2, lp160;
-    std::vector<float> hp180s1, hp180s2, lp800;
-    std::vector<float> hp19k;
-    std::vector<float> svfIc1, svfIc2;
-    EnvelopeFollower envLow, envLowMid, envMid, envHigh;
+    std::vector<float> low1, low2;
+    std::vector<float> mid1, mid2;
+    std::vector<float> high1, high2;
 
-    void reset(int numCh, double sampleRate) {
+    void reset(int numCh, double) {
         const size_t n = static_cast<size_t>(numCh);
-        lp110.assign(n, 0.0f);
-        hp150s1.assign(n, 0.0f); hp150s2.assign(n, 0.0f); lp160.assign(n, 0.0f);
-        hp180s1.assign(n, 0.0f); hp180s2.assign(n, 0.0f); lp800.assign(n, 0.0f);
-        hp19k.assign(n, 0.0f);
-        svfIc1.assign(n, 0.0f); svfIc2.assign(n, 0.0f);
-        envLow.reset();    envLow.prepare(sampleRate, 0.0f, 35.0f);
-        envLowMid.reset(); envLowMid.prepare(sampleRate, 0.0f, 25.0f);
-        envMid.reset();    envMid.prepare(sampleRate, 0.0f, 15.0f);
-        envHigh.reset();   envHigh.prepare(sampleRate, 0.0f, 5.0f);
+        low1.assign(n, 0.0f); low2.assign(n, 0.0f);
+        mid1.assign(n, 0.0f); mid2.assign(n, 0.0f);
+        high1.assign(n, 0.0f); high2.assign(n, 0.0f);
     }
 };
 
@@ -305,10 +33,13 @@ namespace {
 
 // Raw (un-normalized) band envelope state at the end of one waveform bin.
 struct RawBin {
-    float low    = 0.0f;
-    float lowMid = 0.0f;
-    float mid    = 0.0f;
-    float high   = 0.0f;
+    float minimum = 0.0f;
+    float maximum = 0.0f;
+    float peak = 0.0f;
+    float rms = 0.0f;
+    float bass = 0.0f;
+    float mid = 0.0f;
+    float treble = 0.0f;
 };
 
 // Peak mipmap entry: signed min/max of the mono downmix over a sub-bin.
@@ -318,14 +49,8 @@ struct RawPeak { float minRaw = 0.0f; float maxRaw = 0.0f; };
 // only on the sample rate, so every segment worker shares one instance while
 // keeping its own FiltState.
 struct BandCoefficients {
-    float lp110 = 0.0f;
-    float hp150 = 0.0f;
-    float lp160 = 0.0f;
-    float hp180 = 0.0f;
-    float lp800 = 0.0f;
-    float hp19k = 0.0f;
-    float svfG  = 0.0f;
-    float svfD  = 0.0f;
+    float low = 0.0f;
+    float high = 0.0f;
 
     static BandCoefficients forSampleRate(double sampleRate)
     {
@@ -336,16 +61,8 @@ struct BandCoefficients {
             return w / (w + 1.0f);
         };
         BandCoefficients c;
-        c.lp110 = lpCoef1(110.0f);
-        c.hp150 = lpCoef1(150.0f);
-        c.lp160 = lpCoef1(160.0f);
-        c.hp180 = lpCoef1(180.0f);
-        c.lp800 = lpCoef1(800.0f);
-        c.hp19k = lpCoef1(19000.0f);
-        // SVF (state-variable, TPT) for the resonant 2750 Hz band, Q = 2.
-        c.svfG = std::tan(juce::MathConstants<float>::pi * 2750.0f / sr);
-        const float svfR = 1.0f / (2.0f * 2.0f);
-        c.svfD = 1.0f / (1.0f + 2.0f * svfR * c.svfG + c.svfG * c.svfG);
+        c.low = lpCoef1(400.0f);
+        c.high = lpCoef1(4000.0f);
         return c;
     }
 };
@@ -432,52 +149,54 @@ bool processBin(const BandCoefficients& c,
     }
     std::array<bool, 8> peakSeen{};
 
+    double overallSquares = 0.0;
+    double bassSquares = 0.0;
+    double midSquares = 0.0;
+    double trebleSquares = 0.0;
+    bool sampleSeen = false;
+    float minimum = 0.0f;
+    float maximum = 0.0f;
+
     for (int s = 0; s < numSamples; ++s) {
-        float bestLow = 0.0f, bestLowMid = 0.0f, bestMid = 0.0f, bestHigh = 0.0f;
-        float monoAcc = 0.0f;
+        float bestBass = 0.0f, bestMid = 0.0f, bestTreble = 0.0f;
+        float signedPeak = 0.0f;
+        float overall = 0.0f;
 
         for (int ch = 0; ch < channelCount; ++ch) {
             const auto ci = static_cast<std::size_t>(ch);
             const float in = channels[ci][s];
-            monoAcc += in;
+            if (std::abs(in) > std::abs(signedPeak))
+                signedPeak = in;
+            overall = std::max(overall, std::abs(in));
 
-            // Band 1: LP @ 110 Hz (1st order).
-            filt.lp110[ci] = c.lp110 * in + (1.0f - c.lp110) * filt.lp110[ci];
-            const float b1 = std::abs(filt.lp110[ci]);
-
-            // Band 2: HP @ 150 Hz (2nd order) -> LP @ 160 Hz.
-            filt.hp150s1[ci] = c.hp150 * in + (1.0f - c.hp150) * filt.hp150s1[ci];
-            const float hp1out = in - filt.hp150s1[ci];
-            filt.hp150s2[ci] = c.hp150 * hp1out + (1.0f - c.hp150) * filt.hp150s2[ci];
-            const float hp2out = hp1out - filt.hp150s2[ci];
-            filt.lp160[ci] = c.lp160 * hp2out + (1.0f - c.lp160) * filt.lp160[ci];
-            const float b2 = std::abs(filt.lp160[ci]);
-
-            // Band 3: HP @ 180 Hz (2nd order) -> LP @ 800 Hz.
-            filt.hp180s1[ci] = c.hp180 * in + (1.0f - c.hp180) * filt.hp180s1[ci];
-            const float hp3out = in - filt.hp180s1[ci];
-            filt.hp180s2[ci] = c.hp180 * hp3out + (1.0f - c.hp180) * filt.hp180s2[ci];
-            const float hp4out = hp3out - filt.hp180s2[ci];
-            filt.lp800[ci] = c.lp800 * hp4out + (1.0f - c.lp800) * filt.lp800[ci];
-            const float b3 = std::abs(filt.lp800[ci]);
-
-            // Band 4: resonant BP @ 2750 Hz + HP @ 19 kHz.
-            const float v3 = in - filt.svfIc2[ci];
-            const float v1 = c.svfD * (filt.svfIc1[ci] + c.svfG * v3);
-            const float v2 = filt.svfIc2[ci] + c.svfG * v1;
-            filt.svfIc1[ci] = 2.0f * v1 - filt.svfIc1[ci];
-            filt.svfIc2[ci] = 2.0f * v2 - filt.svfIc2[ci];
-            filt.hp19k[ci] = c.hp19k * in + (1.0f - c.hp19k) * filt.hp19k[ci];
-            const float b4 = std::abs(v1) + std::abs(in - filt.hp19k[ci]);
-
-            if (b1 > bestLow)    bestLow    = b1;
-            if (b2 > bestLowMid) bestLowMid = b2;
-            if (b3 > bestMid)    bestMid    = b3;
-            if (b4 > bestHigh)   bestHigh   = b4;
+            filt.low1[ci] += c.low * (in - filt.low1[ci]);
+            filt.low2[ci] += c.low * (filt.low1[ci] - filt.low2[ci]);
+            filt.mid1[ci] += c.high * (in - filt.mid1[ci]);
+            filt.mid2[ci] += c.high * (filt.mid1[ci] - filt.mid2[ci]);
+            filt.high1[ci] += c.high * (in - filt.high1[ci]);
+            const float highPass1 = in - filt.high1[ci];
+            filt.high2[ci] += c.high * (highPass1 - filt.high2[ci]);
+            const float highPass2 = highPass1 - filt.high2[ci];
+            bestBass = std::max(bestBass, std::abs(filt.low2[ci]));
+            bestMid = std::max(
+                bestMid, std::abs(filt.mid2[ci] - filt.low2[ci]));
+            bestTreble = std::max(bestTreble, std::abs(highPass2));
         }
 
+        const float mono = signedPeak;
+        if (!sampleSeen) {
+            minimum = maximum = mono;
+            sampleSeen = true;
+        } else {
+            minimum = std::min(minimum, mono);
+            maximum = std::max(maximum, mono);
+        }
+        overallSquares += static_cast<double>(overall) * overall;
+        bassSquares += static_cast<double>(bestBass) * bestBass;
+        midSquares += static_cast<double>(bestMid) * bestMid;
+        trebleSquares += static_cast<double>(bestTreble) * bestTreble;
+
         if (peaks != nullptr && peakRatio > 0) {
-            const float mono = monoAcc / static_cast<float>(std::max(1, channelCount));
             const auto pb = static_cast<std::size_t>(std::min(
                 peakRatio - 1, (s * peakRatio) / std::max(1, numSamples)));
             if (!peakSeen[pb]) {
@@ -490,16 +209,16 @@ bool processBin(const BandCoefficients& c,
             }
         }
 
-        filt.envLow   .process(bestLow);
-        filt.envLowMid.process(bestLowMid);
-        filt.envMid   .process(bestMid);
-        filt.envHigh  .process(bestHigh);
     }
 
-    out.low    = filt.envLow.state;
-    out.lowMid = filt.envLowMid.state;
-    out.mid    = filt.envMid.state;
-    out.high   = filt.envHigh.state;
+    const float inverseCount = 1.0f / static_cast<float>(std::max(1, numSamples));
+    out.minimum = minimum;
+    out.maximum = maximum;
+    out.peak = std::max(-minimum, maximum);
+    out.rms = std::sqrt(static_cast<float>(overallSquares) * inverseCount);
+    out.bass = std::sqrt(static_cast<float>(bassSquares) * inverseCount);
+    out.mid = std::sqrt(static_cast<float>(midSquares) * inverseCount);
+    out.treble = std::sqrt(static_cast<float>(trebleSquares) * inverseCount);
     return true;
 }
 
@@ -601,18 +320,19 @@ QVector<TrackData::RgbWaveformFrame> waveform_internal::buildInstantOverview(
             continue;
 
         const float rms = std::sqrt(rmsAcc / static_cast<float>(sampleCount));
-        const float lowN = std::clamp(lowAcc / static_cast<float>(sampleCount) * 3.5f, 0.0f, 1.0f);
-        const float highN = std::clamp(highAcc / static_cast<float>(sampleCount) * 8.0f, 0.0f, 1.0f);
-        const float midN = std::clamp((lowN + highN) * 0.45f, 0.0f, 1.0f);
-        const float lowMidN = std::clamp(lowN * 0.75f, 0.0f, 1.0f);
-        const float rmsN = std::clamp(std::log1p(rms * 12.0f) / std::log1p(12.0f), 0.0f, 1.0f);
+        const float bass = std::clamp(
+            lowAcc / static_cast<float>(sampleCount), 0.0f, 1.0f);
+        const float treble = std::clamp(
+            highAcc / static_cast<float>(sampleCount), 0.0f, 1.0f);
+        const float mid = std::clamp(rms - 0.5f * bass - 0.25f * treble,
+                                     0.0f, 1.0f);
 
         auto& frame = out[bin];
-        frame.rms = rmsN;
-        frame.low = lowN;
-        frame.lowMid = lowMidN;
-        frame.mid = midN;
-        frame.high = highN;
+        frame.peak = peak;
+        frame.rms = rms;
+        frame.bass = bass;
+        frame.mid = mid;
+        frame.treble = treble;
     }
 
     return out;
@@ -691,14 +411,8 @@ bool runEnvelopePass(const EnvelopePassInput& input)
 
     float globalMaxPeak   = 0.001f;
 
-    struct NormalizationProfile final {
-        float low = 0.1f;
-        float lowMid = 0.1f;
-        float mid = 0.1f;
-        float high = 0.1f;
-    };
-    const auto overview = m_trackData->getOverviewRgbData();
-    const auto robustBand = [&overview](auto member) {
+    const auto overview = m_trackData->getOverviewWaveformData();
+    const auto robustValue = [&overview](auto member, float floor) {
         std::vector<float> values;
         values.reserve(static_cast<std::size_t>(overview.size()));
         for (const auto& frame : overview) {
@@ -707,20 +421,26 @@ bool runEnvelopePass(const EnvelopePassInput& input)
                 values.push_back(value);
         }
         if (values.empty())
-            return 0.1f;
+            return floor;
         const auto percentileIndex = std::min(
             values.size() - 1,
             static_cast<std::size_t>(std::floor(
                 static_cast<double>(values.size() - 1) * 0.98)));
         std::nth_element(values.begin(), values.begin() + percentileIndex,
                          values.end());
-        return std::max(0.08f, values[percentileIndex]);
+        return std::max(floor, values[percentileIndex]);
     };
-    const NormalizationProfile normalization{
-        robustBand(&TrackData::RgbWaveformFrame::low),
-        robustBand(&TrackData::RgbWaveformFrame::lowMid),
-        robustBand(&TrackData::RgbWaveformFrame::mid),
-        robustBand(&TrackData::RgbWaveformFrame::high)};
+    const float amplitudeScale = robustValue(
+        &TrackData::SpectralWaveformPoint::rms, 0.02f);
+    const float peakScale = robustValue(
+        &TrackData::SpectralWaveformPoint::peak, 0.05f);
+    const int spectralRatio = std::max(
+        1, static_cast<int>(std::lround(
+            static_cast<double>(m_pointsPerSecond)
+            / TrackData::SPECTRAL_POINTS_PER_SECOND)));
+    const int totalSpectralBins = (numPoints + spectralRatio - 1)
+        / spectralRatio;
+    m_trackData->initializeWaveformOverview(totalSpectralBins);
 
     // Progressive publication uses exactly the immutable store chunk size.
     // Smaller 128-bin messages used to expose a Loading source chunk eight
@@ -733,37 +453,74 @@ bool runEnvelopePass(const EnvelopePassInput& input)
         return std::clamp(static_cast<int>(std::max(0.0, hint) * m_pointsPerSecond),
                           0, numPoints - 1);
     };
-    const auto publishChunk = [&input](int firstBin,
+    const auto publishChunk = [&input, spectralRatio, totalSpectralBins](
+                                       int firstBin,
                                        const QVector<TrackData::WaveformBin>& waveform,
-                                       const QVector<TrackData::RgbWaveformFrame>& rgb,
+                                       const QVector<TrackData::SpectralWaveformPoint>& spectral,
                                        WaveformNormalizationState state
                                            = WaveformNormalizationState::Final) {
-        if (!input.retainLegacyWaveform && !rgb.isEmpty())
-            input.trackData->writePreparedWaveformRange(firstBin, rgb);
-        if (input.publishChunk && (!waveform.isEmpty() || !rgb.isEmpty()))
-            input.publishChunk(firstBin, input.numPoints, waveform, rgb, state);
+        if (!input.retainLegacyWaveform && !waveform.isEmpty() && !spectral.isEmpty())
+            input.trackData->writePreparedWaveformRange(firstBin, waveform, spectral);
+        input.trackData->writeWaveformOverviewRange(
+            firstBin / spectralRatio, spectral);
+        if (input.publishChunk && (!waveform.isEmpty() || !spectral.isEmpty()))
+            input.publishChunk(firstBin, input.numPoints, waveform,
+                firstBin / spectralRatio, totalSpectralBins, spectral, state);
     };
 
     // Shared shaping helper — used identically in preview AND final pass.
-    auto shapeBin = [](float norm, float expo, float gain) -> float {
-        return std::min(1.0f, std::pow(std::clamp(norm, 0.0f, 1.0f), expo) * gain);
+    auto shapeBin = [](float norm) -> float {
+        return std::pow(std::clamp(norm, 0.0f, 1.0f), 0.72f);
     };
 
     // Single conversion from raw band envelopes to a display frame. The
     // priority prologue and the full pass must agree exactly, otherwise a
     // region changes brightness when the pass overwrites a priority chunk.
-    const auto makeRgbFrame = [&](const RawBin& raw) {
-        TrackData::RgbWaveformFrame rgb;
-        rgb.low = shapeBin(raw.low / normalization.low, 1.8f, 1.0f);
-        rgb.lowMid = shapeBin(raw.lowMid / normalization.lowMid, 1.6f, 0.9f);
-        rgb.mid = shapeBin(raw.mid / normalization.mid, 1.5f, 0.7f);
-        rgb.high = shapeBin(raw.high / normalization.high, 1.3f, 0.5f);
-        rgb.rms = std::clamp(
-            0.5f * std::max({rgb.low, rgb.lowMid, rgb.mid, rgb.high})
-                + 0.5f * ((rgb.low + rgb.lowMid + rgb.mid + rgb.high) / 4.0f),
-            0.0f, 1.0f);
-        rgb.color = QColor(255, 255, 255, 230);
-        return rgb;
+    const auto makeGeometry = [&](const RawBin& raw) {
+        TrackData::WaveformBin geometry;
+        geometry.minimum = std::clamp(raw.minimum / peakScale, -1.0f, 0.0f);
+        geometry.maximum = std::clamp(raw.maximum / peakScale, 0.0f, 1.0f);
+        geometry.peak = shapeBin(raw.peak / peakScale);
+        geometry.rms = shapeBin(raw.rms / amplitudeScale);
+        return geometry;
+    };
+    const auto makeSpectral = [&](const RawBin& raw) {
+        TrackData::SpectralWaveformPoint spectral;
+        spectral.peak = shapeBin(raw.peak / peakScale);
+        spectral.rms = shapeBin(raw.rms / amplitudeScale);
+        spectral.bass = shapeBin(raw.bass / amplitudeScale);
+        spectral.mid = shapeBin(raw.mid / amplitudeScale);
+        spectral.treble = shapeBin(raw.treble / amplitudeScale);
+        return spectral;
+    };
+    const auto downsampleSpectral = [spectralRatio](
+        const QVector<TrackData::SpectralWaveformPoint>& source) {
+        QVector<TrackData::SpectralWaveformPoint> result;
+        result.reserve((source.size() + spectralRatio - 1) / spectralRatio);
+        for (int begin = 0; begin < source.size(); begin += spectralRatio) {
+            const int end = std::min(
+                static_cast<int>(source.size()), begin + spectralRatio);
+            TrackData::SpectralWaveformPoint point;
+            double rmsSquares = 0.0;
+            double bassSquares = 0.0;
+            double midSquares = 0.0;
+            double trebleSquares = 0.0;
+            for (int index = begin; index < end; ++index) {
+                const auto& value = source[index];
+                point.peak = std::max(point.peak, value.peak);
+                rmsSquares += value.rms * value.rms;
+                bassSquares += value.bass * value.bass;
+                midSquares += value.mid * value.mid;
+                trebleSquares += value.treble * value.treble;
+            }
+            const float inverse = 1.0f / static_cast<float>(end - begin);
+            point.rms = std::sqrt(static_cast<float>(rmsSquares) * inverse);
+            point.bass = std::sqrt(static_cast<float>(bassSquares) * inverse);
+            point.mid = std::sqrt(static_cast<float>(midSquares) * inverse);
+            point.treble = std::sqrt(static_cast<float>(trebleSquares) * inverse);
+            result.push_back(point);
+        }
+        return result;
     };
 
     // Sample range covered by one waveform bin. Exact integer-ratio
@@ -818,20 +575,26 @@ bool runEnvelopePass(const EnvelopePassInput& input)
                 return;
         }
 
-        QVector<TrackData::RgbWaveformFrame> frames;
-        frames.reserve(end - begin);
+        QVector<TrackData::WaveformBin> geometry;
+        QVector<TrackData::SpectralWaveformPoint> fullRateSpectral;
+        geometry.reserve(end - begin);
+        fullRateSpectral.reserve(end - begin);
         for (int bin = begin; bin < end && !threadShouldExit(); ++bin) {
             if ((bin & 0x1F) == 0)
                 cooperateWithRealtime();
             if (!processPriorityBin(bin, filter, raw))
                 return;
-            frames.push_back(makeRgbFrame(raw));
+            geometry.push_back(makeGeometry(raw));
+            fullRateSpectral.push_back(makeSpectral(raw));
         }
-        if (frames.size() != end - begin)
+        if (geometry.size() != end - begin)
             return;
-        if (input.retainLegacyWaveform)
-            m_trackData->writeRgbWaveformRange(begin, frames);
-        publishChunk(begin, {}, frames);
+        const auto spectral = downsampleSpectral(fullRateSpectral);
+        if (input.retainLegacyWaveform) {
+            m_trackData->writeWaveformRange(begin, geometry);
+            m_trackData->writeSpectralWaveformRange(begin / spectralRatio, spectral);
+        }
+        publishChunk(begin, geometry, spectral);
         priorityAnalyzed[static_cast<std::size_t>(chunkIndex)] = true;
     };
 
@@ -870,7 +633,7 @@ bool runEnvelopePass(const EnvelopePassInput& input)
     if (numPeakPoints > 0)
         rawPeakBuf.resize(static_cast<size_t>(numPeakPoints));
     if (input.retainLegacyWaveform) {
-        m_trackData->preallocateRgbWaveform(numPoints);
+        m_trackData->preallocateSpectralWaveform(totalSpectralBins);
         m_trackData->preallocateWaveform(numPoints);
     }
 
@@ -957,26 +720,28 @@ bool runEnvelopePass(const EnvelopePassInput& input)
         }
 
         QVector<TrackData::WaveformBin> binBatch;
-        QVector<TrackData::RgbWaveformFrame> rgbBatch;
+        QVector<TrackData::SpectralWaveformPoint> fullRateSpectralBatch;
         binBatch.reserve(kChunk);
-        rgbBatch.reserve(kChunk);
+        fullRateSpectralBatch.reserve(kChunk);
         int batchStart = segment.binBegin;
 
         const auto flush = [&]() {
-            if (rgbBatch.isEmpty())
+            if (binBatch.isEmpty())
                 return;
+            const auto spectralBatch = downsampleSpectral(fullRateSpectralBatch);
             const std::lock_guard<std::mutex> lock(publishMutex);
             if (input.retainLegacyWaveform) {
                 m_trackData->writeWaveformRange(batchStart, binBatch);
-                m_trackData->writeRgbWaveformRange(batchStart, rgbBatch);
+                m_trackData->writeSpectralWaveformRange(
+                    batchStart / spectralRatio, spectralBatch);
             }
-            publishChunk(batchStart, binBatch, rgbBatch);
+            publishChunk(batchStart, binBatch, spectralBatch);
             m_trackData->reportAnalysisProgress(
                 (static_cast<double>(
                      completedBins.load(std::memory_order_relaxed))
                  / static_cast<double>(numPoints)) * 0.50, true);
             binBatch.clear();
-            rgbBatch.clear();
+            fullRateSpectralBatch.clear();
         };
 
         for (int bin = segment.binBegin; bin < segment.binEnd; ++bin) {
@@ -1011,19 +776,15 @@ bool runEnvelopePass(const EnvelopePassInput& input)
             }
             segment.maxPeak = std::max(
                 segment.maxPeak,
-                std::max({raw.low, raw.lowMid, raw.mid, raw.high}));
+                std::max({raw.bass, raw.mid, raw.treble}));
 
-            if (rgbBatch.isEmpty())
+            if (binBatch.isEmpty())
                 batchStart = bin;
-            const auto frame = makeRgbFrame(raw);
-            rgbBatch.append(frame);
-            if (input.retainLegacyWaveform) {
-                binBatch.append(TrackData::WaveformBin{
-                    frame.low, frame.lowMid, frame.mid, frame.high});
-            }
+            binBatch.append(makeGeometry(raw));
+            fullRateSpectralBatch.append(makeSpectral(raw));
             completedBins.fetch_add(1, std::memory_order_relaxed);
 
-            if (rgbBatch.size() >= kChunk)
+            if (binBatch.size() >= kChunk)
                 flush();
         }
         flush();

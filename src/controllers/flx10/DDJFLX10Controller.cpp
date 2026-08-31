@@ -417,7 +417,7 @@ void DDJFLX10Controller::connectDeckSignals()
                     return;
                 if (DjEngine* eng = deckEngine(deck); !eng || !eng->hasTrack())
                     return;
-                // Analysis clears full-res RGB but keeps the instant overview — do not
+                // Analysis clears full-resolution spectral data but keeps the instant overview; do not
                 // wipe the controller display while a preview waveform is still available.
                 if (DjEngine* engine = deckEngine(deck)) {
                     if (TrackData* td = engine->getTrackData()) {

@@ -33,25 +33,29 @@ WaveformCache::Payload makeValidPayload()
     payload.totalExpected = kBins;
     payload.globalMaxPeak = 0.75f;
     payload.waveform.reserve(kBins);
-    payload.rgb.reserve(kBins);
     for (int i = 0; i < kBins; ++i) {
         const float amount = static_cast<float>(i % 64) / 64.0f;
         TrackData::WaveformBin bin;
-        bin.low = amount;
-        bin.lowMid = amount * 0.5f;
-        bin.mid = amount * 0.25f;
-        bin.high = amount * 0.125f;
+        bin.minimum = -amount;
+        bin.maximum = amount;
+        bin.peak = amount;
+        bin.rms = amount * 0.7f;
         payload.waveform.push_back(bin);
-
-        TrackData::RgbWaveformFrame frame;
-        frame.rms = amount;
-        frame.low = bin.low;
-        frame.lowMid = bin.lowMid;
-        frame.mid = bin.mid;
-        frame.high = bin.high;
-        frame.color = QColor(200, 150, 100, 230);
-        payload.rgb.push_back(frame);
     }
+    constexpr int spectralBins = kBins * TrackData::SPECTRAL_POINTS_PER_SECOND
+        / kPointsPerSecond;
+    payload.spectral.reserve(spectralBins);
+    for (int i = 0; i < spectralBins; ++i) {
+        const float amount = static_cast<float>(i % 64) / 64.0f;
+        TrackData::RgbWaveformFrame frame;
+        frame.peak = amount;
+        frame.rms = amount;
+        frame.bass = amount;
+        frame.mid = amount * 0.5f;
+        frame.treble = amount * 0.25f;
+        payload.spectral.push_back(frame);
+    }
+    payload.overview = TrackData::downsampleOverview(payload.spectral);
     return payload;
 }
 
@@ -130,6 +134,33 @@ int main(int argc, char** argv)
                       "a valid cache loads back");
         ok &= require(loaded.totalExpected == kBins,
                       "a valid cache round-trips its bin count");
+        const auto expected = makeValidPayload();
+        ok &= require(loaded.waveform.size() == expected.waveform.size()
+                         && loaded.spectral.size() == expected.spectral.size()
+                         && loaded.overview == expected.overview,
+                      "neutral cache changed section sizes");
+        if (loaded.waveform.size() == expected.waveform.size()
+            && loaded.spectral.size() == expected.spectral.size()) {
+            for (int i = 0; i < loaded.waveform.size(); ++i) {
+                const auto& actual = loaded.waveform[i];
+                const auto& wanted = expected.waveform[i];
+                ok &= require(actual.minimum == wanted.minimum
+                                 && actual.maximum == wanted.maximum
+                                 && actual.peak == wanted.peak
+                                 && actual.rms == wanted.rms,
+                             "geometry cache round-trip changed canonical data");
+            }
+            for (int i = 0; i < loaded.spectral.size(); ++i) {
+                const auto& actual = loaded.spectral[i];
+                const auto& wanted = expected.spectral[i];
+                ok &= require(actual.peak == wanted.peak
+                                 && actual.rms == wanted.rms
+                                 && actual.bass == wanted.bass
+                                 && actual.mid == wanted.mid
+                                 && actual.treble == wanted.treble,
+                             "spectral cache round-trip changed canonical data");
+            }
+        }
         ok &= require(paths.bothExist(),
                       "a valid cache is not removed by a successful load");
     }

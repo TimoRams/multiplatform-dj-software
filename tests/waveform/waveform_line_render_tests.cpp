@@ -10,7 +10,8 @@ int main()
     WaveformLineStore store;
     store.reset(1, 4096, 300, 4096);
     auto lines = std::make_shared<std::vector<WaveformLine>>(4096);
-    (*lines)[10] = {.minimum = -300, .maximum = 700, .red = 40, .green = 160, .blue = 255, .flags = 1};
+    (*lines)[10] = {.minimum = -300, .maximum = 700, .rms = 180,
+                    .bass = 40, .mid = 160, .treble = 255, .flags = 1};
     if (store.publish({1, 0, 0, 4096, 4096, lines}) != WaveformLineStore::PublishResult::Accepted) {
         std::cerr << "FAIL: renderer fixture unavailable\n";
         return 1;
@@ -18,7 +19,7 @@ int main()
     // Overview aggregation reads the exact same immutable chunk as scrolling.
     const auto chunk = store.snapshot()->chunkAt(0);
     const auto& line = (*chunk->lines)[10];
-    const auto sharedColor = waveform_visual::color({0.9f, 0.0f, 0.0f, 0.0f, 0.75f});
+    const auto sharedColor = waveform_visual::color({0.9f, 0.0f, 0.0f, 0.75f});
     if (sharedColor[0] <= sharedColor[1] || sharedColor[0] <= sharedColor[2]) {
         std::cerr << "FAIL: shared visual style lost low-frequency colour identity\n";
         return 1;

@@ -1399,8 +1399,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                     samples->reserve(static_cast<std::size_t>(
                         overviewSnapshot->size()));
                     for (const auto& frame : *overviewSnapshot) {
-                        samples->push_back({frame.rms, frame.low, frame.lowMid,
-                                            frame.mid, frame.high});
+                        samples->push_back(
+                            {frame.rms, frame.bass, frame.mid, frame.treble});
                     }
                 }
                 m_tileRasterizer->requestOverview({key, samples});

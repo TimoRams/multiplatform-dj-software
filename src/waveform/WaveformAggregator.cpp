@@ -1,6 +1,7 @@
 #include "WaveformAggregator.h"
 
 #include "WaveformLodPyramid.h"
+#include "WaveformVisualStyle.h"
 
 #include <algorithm>
 #include <cmath>
@@ -65,9 +66,10 @@ WaveformColumn aggregateWaveformColumn(
     const auto lodBegin = begin / stride;
     const auto lodEnd = (end + stride - 1u) / stride;
 
-    std::uint64_t red = 0;
-    std::uint64_t green = 0;
-    std::uint64_t blue = 0;
+    std::uint64_t rms = 0;
+    std::uint64_t bass = 0;
+    std::uint64_t mid = 0;
+    std::uint64_t treble = 0;
     std::uint64_t weight = 0;
     bool complete = true;
 
@@ -90,9 +92,10 @@ WaveformColumn aggregateWaveformColumn(
             std::abs(static_cast<int>(line.minimum)),
             std::abs(static_cast<int>(line.maximum))));
         const auto lineWeight = std::max(1u, magnitude);
-        red += static_cast<std::uint64_t>(line.red) * lineWeight;
-        green += static_cast<std::uint64_t>(line.green) * lineWeight;
-        blue += static_cast<std::uint64_t>(line.blue) * lineWeight;
+        rms += static_cast<std::uint64_t>(line.rms) * lineWeight;
+        bass += static_cast<std::uint64_t>(line.bass) * lineWeight;
+        mid += static_cast<std::uint64_t>(line.mid) * lineWeight;
+        treble += static_cast<std::uint64_t>(line.treble) * lineWeight;
         weight += lineWeight;
     }
 
@@ -101,9 +104,14 @@ WaveformColumn aggregateWaveformColumn(
         column.complete = false;
         return column;
     }
-    column.red = static_cast<std::uint8_t>(red / weight);
-    column.green = static_cast<std::uint8_t>(green / weight);
-    column.blue = static_cast<std::uint8_t>(blue / weight);
+    const auto color = waveform_visual::color({
+        static_cast<float>(bass / weight) / 255.0f,
+        static_cast<float>(mid / weight) / 255.0f,
+        static_cast<float>(treble / weight) / 255.0f,
+        static_cast<float>(rms / weight) / 255.0f});
+    column.red = color[0];
+    column.green = color[1];
+    column.blue = color[2];
     column.complete = complete;
     return column;
 }

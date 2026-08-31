@@ -118,19 +118,25 @@ int main(int argc, char** argv)
         // A new visible range must jump ahead of older background work, and a
         // later result for the same chunk must coalesce instead of extending a
         // FIFO queue.
-        const auto oneSecondRgb = std::make_shared<const QVector<
-            TrackData::RgbWaveformFrame>>(600);
+        const auto oneSecondGeometry = std::make_shared<const QVector<
+            TrackData::WaveformBin>>(600);
+        const auto oneSecondSpectral = std::make_shared<const QVector<
+            TrackData::SpectralWaveformPoint>>(150);
         for (const int firstBin : {100 * 600, 101 * 600, 1 * 600,
                                    99 * 600, 102 * 600, 0}) {
             mailbox.publishChunk({43, firstBin, 120 * 600,
-                                  emptyWaveform, oneSecondRgb});
+                                  oneSecondGeometry, oneSecondSpectral,
+                                  WaveformNormalizationState::Preview, 0,
+                                  firstBin / 4, 120 * 150});
         }
         mailbox.publishChunk({43, 100 * 600, 120 * 600,
-                              emptyWaveform, oneSecondRgb,
-                              WaveformNormalizationState::Final});
+                              oneSecondGeometry, oneSecondSpectral,
+                              WaveformNormalizationState::Final, 0,
+                              100 * 150, 120 * 150});
         mailbox.publishChunk({43, 100 * 600, 120 * 600,
-                              emptyWaveform, oneSecondRgb,
-                              WaveformNormalizationState::Preview});
+                              oneSecondGeometry, oneSecondSpectral,
+                              WaveformNormalizationState::Preview, 0,
+                              100 * 150, 120 * 150});
         const auto demand = waveform::makeViewportDemand(
             100.5, 1200.0, 600.0, true, false, false, 0, 43);
         const auto prioritized = mailbox.takeChunks(demand, 600.0);
@@ -148,16 +154,22 @@ int main(int argc, char** argv)
 
         AnalyzerResultMailbox firstPaintMailbox;
         firstPaintMailbox.publishChunk({44, 0, 120 * 600,
-                                        emptyWaveform, oneSecondRgb});
+                                        oneSecondGeometry, oneSecondSpectral,
+                                        WaveformNormalizationState::Preview, 0,
+                                        0, 120 * 150});
         firstPaintMailbox.publishChunk({44, 60 * 600, 120 * 600,
-                                        emptyWaveform, oneSecondRgb});
+                                        oneSecondGeometry, oneSecondSpectral,
+                                        WaveformNormalizationState::Preview, 0,
+                                        60 * 150, 120 * 150});
         const auto firstPaintDemand = waveform::makeViewportDemand(
             50.5, 1200.0, 600.0, true, false, false, 0, 44);
         ok &= require(firstPaintMailbox.takeChunks(
                           firstPaintDemand, 600.0).empty(),
                       "background detail escaped before the playhead chunk");
         firstPaintMailbox.publishChunk({44, 50 * 600, 120 * 600,
-                                        emptyWaveform, oneSecondRgb});
+                                        oneSecondGeometry, oneSecondSpectral,
+                                        WaveformNormalizationState::Preview, 0,
+                                        50 * 150, 120 * 150});
         const auto firstPaint = firstPaintMailbox.takeChunks(
             firstPaintDemand, 600.0);
         ok &= require(firstPaint.size() == 1
@@ -237,9 +249,10 @@ int main(int argc, char** argv)
         analyzer.setChunkCallback(
             [&](WaveformAnalyzer::AnalysisGeneration, int firstBin, int,
                 QVector<TrackData::WaveformBin>,
-                QVector<TrackData::RgbWaveformFrame> rgb,
+                int, int,
+                QVector<TrackData::SpectralWaveformPoint> spectral,
                 WaveformNormalizationState) {
-                if (rgb.isEmpty())
+                if (spectral.isEmpty())
                     return;
                 {
                     std::lock_guard lock(chunkMutex);
@@ -265,7 +278,8 @@ int main(int argc, char** argv)
                               / static_cast<int>(WaveformLineStore::kChunkSize))
                               * static_cast<int>(WaveformLineStore::kChunkSize),
                       "first lazy-loaded range must be the aligned playhead chunk");
-        ok &= require(publishedOverviewBins.load(std::memory_order_acquire) == 512
+        ok &= require(publishedOverviewBins.load(std::memory_order_acquire)
+                              == TrackData::kOverviewBins
                           && publishedOverviewTotal.load(std::memory_order_acquire)
                               == 30 * 600,
                       "fresh analysis did not publish one complete bounded overview first");
@@ -286,9 +300,10 @@ int main(int argc, char** argv)
         analyzer.setChunkCallback(
             [&](WaveformAnalyzer::AnalysisGeneration, int firstBin, int,
                 QVector<TrackData::WaveformBin>,
-                QVector<TrackData::RgbWaveformFrame> rgb,
+                int, int,
+                QVector<TrackData::SpectralWaveformPoint> spectral,
                 WaveformNormalizationState) {
-                if (rgb.isEmpty())
+                if (spectral.isEmpty())
                     return;
                 {
                     std::lock_guard lock(chunkMutex);
@@ -307,7 +322,8 @@ int main(int argc, char** argv)
         }
         ok &= require(firstRgbBin == 0,
                       "cold-start waveform must publish from the playhead before full buffers");
-        ok &= require(scratchOverviewBins.load(std::memory_order_acquire) == 512,
+        ok &= require(scratchOverviewBins.load(std::memory_order_acquire)
+                              == TrackData::kOverviewBins,
                       "active scratch suppressed the always-available overview");
         analyzer.shutdownAndJoin();
     }
