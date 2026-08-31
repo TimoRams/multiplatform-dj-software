@@ -55,6 +55,36 @@ worker finishes a read. Neither permits I/O or waiting in the callback.
 
 ## Measurements and profile
 
+### Waveform pipeline baseline (2026-09-01)
+
+`BrockDJ_waveform_pipeline_benchmark` measures a production `WaveformAnalyzer`
+run while another track is playing through `AudioPageCache`. It reports
+analysis and cache-load time, waveform cache sizes, peak RSS, callback latency,
+and playback/cache starvation counters. The deterministic fixture duration is
+configurable without changing the production pipeline:
+
+```bash
+BROCKDJ_WAVEFORM_BENCHMARK_SECONDS=30 \
+  ./build/BrockDJ_waveform_pipeline_benchmark
+```
+
+The pre-neutral-waveform baseline on the macOS x86_64 development host was:
+
+| Metric | Baseline |
+| --- | ---: |
+| 30 s track analysis | 1,918.74 ms |
+| Waveform cache reload | 20.85 ms |
+| Payload cache | 1,638,036 bytes |
+| Render cache | 281,728 bytes |
+| Peak RSS | 53,157,888 bytes |
+| Deck A callback average / worst | 72.00 / 222.37 us |
+| Deck A playback misses / starvation | 0 / 0 |
+
+The separate five-second wide-scratch stress baseline recorded 248 starvation
+blocks, no dropped requests, 380.28 us average callback time, and 3,815.27 us
+worst callback time. These measurements are host-specific and are comparison
+anchors, not universal performance thresholds.
+
 The focused `deck_audio_graph` benchmark was run repeatedly because laptop
 frequency scaling and hybrid-core placement cause visible variance. Observed
 ranges on the audit host were:

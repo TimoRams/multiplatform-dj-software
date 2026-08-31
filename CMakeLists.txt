@@ -765,6 +765,36 @@ target_compile_definitions(BrockDJ_analysis_lifetime_tests PRIVATE
 target_compile_features(BrockDJ_analysis_lifetime_tests PRIVATE cxx_std_23)
 add_test(NAME analysis_lifetime COMMAND BrockDJ_analysis_lifetime_tests)
 
+add_executable(BrockDJ_waveform_pipeline_benchmark
+    tests/waveform/waveform_pipeline_benchmark.cpp
+    src/audio/cache/AudioPageCache.cpp
+    src/audio/cache/AudioCacheWorker.cpp
+    src/audio/cache/CachedPlaybackAudioSource.cpp
+    src/waveform/WaveformAnalyzer.cpp
+    src/waveform/internal/WaveformEnvelopePass.cpp
+    src/waveform/internal/WaveformAnalysisOrchestrator.cpp
+    src/waveform/WaveformCache.cpp
+    src/domain/TrackData.cpp
+    src/waveform/WaveformLineStore.cpp
+    src/analysis/internal/AnalysisFeatureExtractor.cpp
+    src/analysis/internal/BeatAnalysis.cpp
+    src/analysis/AnalysisValidation.cpp
+    src/analysis/internal/PhraseAnalyzer.cpp
+)
+target_include_directories(BrockDJ_waveform_pipeline_benchmark PRIVATE
+    src src/analysis src/domain
+)
+target_link_libraries(BrockDJ_waveform_pipeline_benchmark PRIVATE
+    Qt6::Core Qt6::Gui
+    juce::juce_core juce::juce_data_structures juce::juce_audio_basics
+    juce::juce_audio_formats juce::juce_dsp juce::juce_events
+    ThirdParty::KeyFinder
+)
+target_compile_definitions(BrockDJ_waveform_pipeline_benchmark PRIVATE
+    JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1
+)
+target_compile_features(BrockDJ_waveform_pipeline_benchmark PRIVATE cxx_std_23)
+
 add_executable(BrockDJ_beat_analysis_tests
     tests/analysis/beat_analysis_tests.cpp
     src/analysis/internal/BeatAnalysis.cpp
