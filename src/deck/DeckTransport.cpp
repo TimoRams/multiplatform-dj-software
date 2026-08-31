@@ -517,9 +517,9 @@ int DeckTransport::keylockLatencySamples() const noexcept
     return m_audioPipeline.keylockLatencySamples();
 }
 
-bool DeckTransport::slipDiverted(bool loopActive) const noexcept
+bool DeckTransport::slipDiverted(bool loopActive, bool scratchActive) const noexcept
 {
-    return m_slipEnabled && (loopActive || m_reverse);
+    return m_slipEnabled && (loopActive || m_reverse || scratchActive);
 }
 
 void DeckTransport::publishScratchPosition(double seconds) noexcept
@@ -532,12 +532,18 @@ void DeckTransport::publishScratchPosition(double seconds) noexcept
     publishSnapshot();
 }
 
-void DeckTransport::adoptScratchRenderedPosition(double seconds) noexcept
+void DeckTransport::adoptScratchRenderedPosition(double seconds, double elapsedSeconds) noexcept
 {
     if (!std::isfinite(seconds))
         return;
     m_audiblePositionSeconds = seconds;
     m_heldPositionSeconds = seconds;
+    if (m_slipEnabled && m_playRequested && std::isfinite(elapsedSeconds)
+        && elapsedSeconds > 0.0) {
+        m_backgroundPositionSeconds = std::min(
+            m_backgroundPositionSeconds + elapsedSeconds * m_playbackRate,
+            m_trackLengthSeconds);
+    }
     publishSnapshot();
 }
 

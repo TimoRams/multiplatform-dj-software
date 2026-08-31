@@ -97,7 +97,7 @@ void DjEngine::tickScratchPhysics()
 
     if (m_scratch.scrubbing() || m_scratch.releaseGlide()) {
         m_transport->adoptScratchRenderedPosition(
-            m_transport->playheadPositionAtomic());
+            m_transport->playheadPositionAtomic(), dtSec);
     }
 
     if (m_scratch.releaseGlide() && m_pendingScratchReleaseGeneration != 0) {
@@ -183,9 +183,15 @@ void DjEngine::restorePostScrubPlaybackState(double finalCursorSeconds)
         0.0,
         m_transport->trackLengthSeconds());
 
-    // Reader seek, Hermite reset and scratch exit were already committed in one
-    // callback. This only adopts the callback's acknowledged cursor.
-    m_transport->adoptScratchHandoffPosition(audioSec);
+    if (m_transport->slipEnabled() && m_transport->playRequested()) {
+        // Slip release reunites the normal reader with the uninterrupted
+        // background timeline instead of resuming from the scratched position.
+        m_transport->returnToSlipPosition();
+    } else {
+        // Reader seek, Hermite reset and scratch exit were already committed in
+        // one callback. This adopts the callback's acknowledged cursor.
+        m_transport->adoptScratchHandoffPosition(audioSec);
+    }
 
     m_transport->setAudioReverseOverride(m_transport->reverse());
 

@@ -25,6 +25,8 @@ Item {
     readonly property bool waveformMotionActive:
         root.visible && root.engine !== null
         && (root.engine.isPlaying || root.engine.scratchVisualActive)
+    readonly property bool slipPreviewActive:
+        root.engine !== null && root.engine.slipPreviewActive
     readonly property int waveformMotionIntervalMs: {
         if (typeof renderPressurePolicy === "undefined" || !renderPressurePolicy)
             return 16
@@ -60,17 +62,62 @@ Item {
         anchors.fill: parent
         color: root.backgroundColor
 
-        // Full-width waveform — playhead stays at geometric deck center (w/2).
-        ScrollingWaveformItem {
-            id: waveItem
-            anchors.fill: parent
-            engine: root.engine
-            pixelsPerPoint: root.waveformZoom
-            backgroundColor: root.backgroundColor
-            rasterWorkEnabled: (typeof renderPressurePolicy === "undefined"
-                                || !renderPressurePolicy)
-                               ? true
-                               : renderPressurePolicy.waveformRasterWorkEnabled
+        // Keep one full-height waveform geometry and reveal only its upper half
+        // while diverted. This avoids compressing a complete waveform into each
+        // pane: together, both panes still look like one waveform split at zero.
+        Item {
+            id: audibleWaveClip
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: root.slipPreviewActive ? parent.height * 0.5 : parent.height
+            clip: true
+
+            ScrollingWaveformItem {
+                id: waveItem
+                width: parent.width
+                height: deckRect.height
+                engine: root.engine
+                pixelsPerPoint: root.waveformZoom
+                backgroundColor: root.backgroundColor
+                rasterWorkEnabled: (typeof renderPressurePolicy === "undefined"
+                                    || !renderPressurePolicy)
+                                   ? true
+                                   : renderPressurePolicy.waveformRasterWorkEnabled
+            }
+        }
+
+        Loader {
+            id: slipWaveLoader
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: parent.height * 0.5
+            active: root.slipPreviewActive
+            visible: active
+            clip: true
+
+            sourceComponent: Item {
+                function requestUpdate() {
+                    slipWaveItem.requestUpdate()
+                }
+
+                ScrollingWaveformItem {
+                    id: slipWaveItem
+                    width: slipWaveLoader.width
+                    height: deckRect.height
+                    y: -deckRect.height * 0.5
+                    engine: root.engine
+                    pixelsPerPoint: root.waveformZoom
+                    backgroundColor: root.backgroundColor
+                    slipPreview: true
+                    opacity: 0.52
+                    rasterWorkEnabled: (typeof renderPressurePolicy === "undefined"
+                                        || !renderPressurePolicy)
+                                       ? true
+                                       : renderPressurePolicy.waveformRasterWorkEnabled
+                }
+            }
         }
 
         Binding {
@@ -181,7 +228,11 @@ Item {
         FrameAnimation {
             running: root.waveformMotionActive
                      && root.waveformMotionIntervalMs <= 17
-            onTriggered: waveItem.requestUpdate()
+            onTriggered: {
+                waveItem.requestUpdate()
+                if (slipWaveLoader.item)
+                    slipWaveLoader.item.requestUpdate()
+            }
         }
 
         Timer {
@@ -190,7 +241,11 @@ Item {
             repeat: true
             running: root.waveformMotionActive
                      && root.waveformMotionIntervalMs > 17
-            onTriggered: waveItem.requestUpdate()
+            onTriggered: {
+                waveItem.requestUpdate()
+                if (slipWaveLoader.item)
+                    slipWaveLoader.item.requestUpdate()
+            }
         }
 
         Connections {
@@ -215,6 +270,11 @@ Item {
                     waveItem.requestUpdate()
             }
             function onScrubbingChanged() { waveItem.requestUpdate() }
+            function onSlipPreviewChanged() {
+                waveItem.requestUpdate()
+                if (slipWaveLoader.item)
+                    slipWaveLoader.item.requestUpdate()
+            }
         }
 
         // Playhead — always dead center of the full deck.
@@ -250,6 +310,16 @@ Item {
             height: root.physicalPixel
             color: "#24ffffff"
             z: 9
+        }
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: parent.height * 0.5
+            visible: root.slipPreviewActive
+            color: "#18000000"
+            z: 8
         }
 
         Rectangle {

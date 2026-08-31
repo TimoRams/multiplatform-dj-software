@@ -100,7 +100,7 @@ public:
     [[nodiscard]] bool reverse() const noexcept { return m_reverse; }
     [[nodiscard]] bool slipEnabled() const noexcept { return m_slipEnabled; }
     [[nodiscard]] bool preRollActive() const noexcept { return m_preRollActive; }
-    [[nodiscard]] bool slipDiverted(bool loopActive) const noexcept;
+    [[nodiscard]] bool slipDiverted(bool loopActive, bool scratchActive = false) const noexcept;
     [[nodiscard]] double trackLengthSeconds() const noexcept { return m_trackLengthSeconds; }
     [[nodiscard]] double sourceSampleRate() const noexcept { return m_sourceSampleRate; }
     [[nodiscard]] double playbackRate() const noexcept { return m_playbackRate * m_jogNudgeRatio; }
@@ -110,7 +110,7 @@ public:
     void publishScratchPosition(double seconds) noexcept;
     // Control-thread mirror of the audio-owned scratch cursor. Does not write
     // back to the atomic sink, so it cannot race the callback with a stale value.
-    void adoptScratchRenderedPosition(double seconds) noexcept;
+    void adoptScratchRenderedPosition(double seconds, double elapsedSeconds = 0.0) noexcept;
     void setHeldPosition(double seconds) noexcept;
     [[nodiscard]] double heldPosition() const noexcept { return m_heldPositionSeconds; }
     [[nodiscard]] std::atomic<double>& audioPlayheadSink() noexcept { return m_audioPlayhead; }

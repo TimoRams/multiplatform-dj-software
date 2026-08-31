@@ -79,6 +79,11 @@ double DjEngine::getPosition() const
     return m_transport->positionSeconds(m_scratch.scrubbing() || m_scratch.releaseGlide());
 }
 
+double DjEngine::getSlipPreviewPosition() const noexcept
+{
+    return m_transport->snapshot().backgroundPositionSeconds;
+}
+
 
 double DjEngine::getVisualPosition() const
 {
@@ -479,7 +484,14 @@ bool DjEngine::isReverse() const { return m_transport->reverse(); }
 bool DjEngine::slipActive() const { return m_transport->slipEnabled(); }
 bool DjEngine::isSlipDiverted() const
 {
-    return m_transport->slipDiverted(m_cueLoopController.activeLoop().active);
+    return m_transport->slipDiverted(
+        m_cueLoopController.activeLoop().active,
+        m_scratch.scrubbing() || m_scratch.releaseGlide());
+}
+
+bool DjEngine::slipPreviewActive() const
+{
+    return m_transport->playRequested() && isSlipDiverted();
 }
 
 void DjEngine::setCueEnabled(bool value)

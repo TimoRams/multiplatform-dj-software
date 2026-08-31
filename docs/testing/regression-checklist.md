@@ -134,6 +134,10 @@ ThreadSanitizer where the platform toolchain supports it.
   re-sync, scratch, and track replacement.
 - Verify generation-correct state, audible/visual return from slip, stable
   beat/bar alignment, and no old-track cue/loop persistence.
+- With Slip enabled, grab/scratch the playing deck and activate/deactivate a
+  short loop. The scrolling waveform must split into an audible top half and a
+  dimmed, continuously advancing target bottom half, then reunite at that target
+  without a stale frame when scratch or loop diversion ends.
 - Spam play/pause/play rapidly on a deck with keylock on and, separately, with
   keylock off. Verify no click or "off" attack at the start of playback on
   either path (`RenderModeRouter::applyNormalStartFade` fades in the first

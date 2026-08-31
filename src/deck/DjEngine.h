@@ -67,6 +67,7 @@ class DjEngine : public QObject
     Q_PROPERTY(double loopOutPosition READ loopOutPosition NOTIFY loopChanged)
     Q_PROPERTY(double loopPreviewOutPosition READ loopPreviewOutPosition NOTIFY progressChanged)
     Q_PROPERTY(bool slipActive READ slipActive NOTIFY slipChanged)
+    Q_PROPERTY(bool slipPreviewActive READ slipPreviewActive NOTIFY slipPreviewChanged)
     Q_PROPERTY(double beatJumpBeats READ beatJumpBeats WRITE setBeatJumpBeats NOTIFY beatJumpBeatsChanged)
 
     Q_PROPERTY(QString trackTitle   READ trackTitle   NOTIFY trackMetadataChanged)
@@ -154,6 +155,7 @@ public:
     [[nodiscard]] double getVisualPosition() const;
     // QML-safe access to the interpolated visual playhead.
     [[nodiscard]] Q_INVOKABLE double getVisualPositionQml() const;
+    [[nodiscard]] double getSlipPreviewPosition() const noexcept;
     // Lock-free atomic read of the playhead position (seconds).
     // Called from QML FrameAnimation every VSync frame — must be wait-free.
     [[nodiscard]] Q_INVOKABLE double getPlayheadPositionAtomic() const;
@@ -197,6 +199,7 @@ public:
     void submitScratchReleaseSpeed(double normalizedReleaseSpeed);
     // Outer-rim jog nudge: temporarily speeds up/slows down playback without entering scratch mode.
     Q_INVOKABLE void applyJogNudge(double signedTicks);
+    [[nodiscard]] bool slipPreviewActive() const;
 
     // Manual beat-grid correction: rebuilds the BeatMarker array so that the
     // current playhead position becomes beat 1 / bar 1.  Emits beatgridChanged
@@ -497,6 +500,7 @@ signals:
     void syncMasterChanged();
     void loopChanged();
     void slipChanged();
+    void slipPreviewChanged();
     void beatJumpBeatsChanged();
     void keylockChanged();
     void keySemitoneOffsetChanged();

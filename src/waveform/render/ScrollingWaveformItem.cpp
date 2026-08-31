@@ -971,6 +971,25 @@ void ScrollingWaveformItem::setRasterWorkEnabled(bool enabled)
         scheduleTileUpdate();
 }
 
+void ScrollingWaveformItem::setSlipPreview(bool enabled)
+{
+    if (m_slipPreview == enabled)
+        return;
+    m_slipPreview = enabled;
+    m_lastPublishedDemand.reset();
+    emit slipPreviewChanged();
+    invalidateGeometry();
+}
+
+double ScrollingWaveformItem::currentPlayheadSeconds() const noexcept
+{
+    const auto* currentEngine = m_engine.data();
+    if (!currentEngine)
+        return 0.0;
+    return m_slipPreview ? currentEngine->getSlipPreviewPosition()
+                         : currentEngine->getVisualPosition();
+}
+
 double ScrollingWaveformItem::effectivePixelsPerSecond() const noexcept
 {
     const auto* currentEngine = m_engine.data();
@@ -1025,6 +1044,12 @@ void ScrollingWaveformItem::scheduleTileUpdate() noexcept
 
 void ScrollingWaveformItem::publishViewportDemand()
 {
+    // The audible pane owns the deck's single analyzer-demand slot. A preview
+    // may render another position but must not overwrite that primary demand.
+    if (m_slipPreview) {
+        m_lastPublishedDemand.reset();
+        return;
+    }
     auto* currentEngine = m_engine.data();
     auto* trackData = currentEngine ? currentEngine->getTrackData() : nullptr;
     const auto snapshot = trackData
@@ -1038,7 +1063,7 @@ void ScrollingWaveformItem::publishViewportDemand()
 
     const double chunkDuration = static_cast<double>(snapshot->chunkSize)
         / static_cast<double>(snapshot->linesPerSecond);
-    const double playhead = std::max(0.0, currentEngine->getVisualPosition());
+    const double playhead = std::max(0.0, currentPlayheadSeconds());
     const auto demandChunk = chunkDuration > 0.0
         ? static_cast<std::int64_t>(std::floor(playhead / chunkDuration))
         : std::int64_t{0};
@@ -1236,7 +1261,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         tempoRatio());
     const double pixelsPerLine = pixelsPerSecond
         / static_cast<double>(snapshot->linesPerSecond);
-    const double playheadSec = engine->getVisualPosition();
+    const double playheadSec = currentPlayheadSeconds();
     const double playheadLine = playheadSec * static_cast<double>(snapshot->linesPerSecond);
     const double dpr = window() ? std::max(1.0, window()->effectiveDevicePixelRatio()) : 1.0;
     // At rest tiles are cut at the exact display scale, so one texel is one

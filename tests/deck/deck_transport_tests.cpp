@@ -208,6 +208,12 @@ int main(int argc, char** argv)
     transport.updateControlState({true, 0.05, 0.15}, false, false);
     ok &= require(transport.snapshot().backgroundPositionSeconds >= slipStart,
                   "slip background advances independently");
+    const double loopSlipPosition = transport.snapshot().backgroundPositionSeconds;
+    transport.adoptScratchRenderedPosition(0.05, 0.025);
+    ok &= require(transport.slipDiverted(false, true)
+                     && transport.snapshot().backgroundPositionSeconds > loopSlipPosition
+                     && std::abs(transport.snapshot().audiblePositionSeconds - 0.05) < 1.0e-9,
+                  "scratch slip publishes independent audible and background positions");
     transport.returnToSlipPosition();
     ok &= require(std::abs(transport.audioPositionSeconds()
                            - transport.snapshot().backgroundPositionSeconds) < 0.01,

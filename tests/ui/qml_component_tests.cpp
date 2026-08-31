@@ -135,6 +135,10 @@ int main()
     ok &= require(enlargedWaveform.find("root.engine.scratchVisualActive") != std::string::npos
                   && overallWaveform.find("root.engine.scratchVisualActive") != std::string::npos,
                   "waveform frame animations react to paused scratch state");
+    ok &= require(engineHeader.find("Q_PROPERTY(bool slipPreviewActive") != std::string::npos
+                     && enlargedWaveform.find("id: slipWaveLoader") != std::string::npos
+                     && enlargedWaveform.find("slipPreview: true") != std::string::npos,
+                  "slip mode renders independent audible and background waveform panes");
     ok &= require(enlargedWaveform.find("FrameAnimation {") != std::string::npos
                       && overallWaveform.find("FrameAnimation {") != std::string::npos
                       && turntableIndicator.find("FrameAnimation {") != std::string::npos

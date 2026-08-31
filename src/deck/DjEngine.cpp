@@ -92,6 +92,11 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
           engine::sync::DeckSyncController::Configuration {deckIndex}))
 {
     m_syncCoordinator.registerDeck(m_deckIndex, *m_syncController);
+    connect(this, &DjEngine::loopChanged, this, &DjEngine::slipPreviewChanged);
+    connect(this, &DjEngine::scrubbingChanged, this, &DjEngine::slipPreviewChanged);
+    connect(this, &DjEngine::slipChanged, this, &DjEngine::slipPreviewChanged);
+    connect(this, &DjEngine::reverseChanged, this, &DjEngine::slipPreviewChanged);
+    connect(this, &DjEngine::playingChanged, this, &DjEngine::slipPreviewChanged);
 
     m_trackData = new TrackData(this);
     m_analyzer = std::make_unique<WaveformAnalyzer>(
