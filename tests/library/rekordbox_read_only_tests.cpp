@@ -18,12 +18,12 @@
 #include <cstring>
 #include <iostream>
 
-#ifdef Q_OS_LINUX
-#include <sys/resource.h>
-
 #ifdef BROCKDJ_HAVE_SQLCIPHER
 #include <sqlite3.h>
 #endif
+
+#ifdef Q_OS_LINUX
+#include <sys/resource.h>
 #endif
 
 namespace {
@@ -766,15 +766,15 @@ int main(int argc, char** argv)
                            == device.value(QStringLiteral("volumeLabel")).toString()
                     && device.value(QStringLiteral("name")) == QStringLiteral("GENERIC_USB");
             } else {
-                // The name from the exporting software wins over the volume
-                // label, but both stay available to the UI.
+                // Show the physical volume and exporting-library names together
+                // so a DJ can identify the actual USB device and its profile.
                 profilePublished =
                     device.value(QStringLiteral("volumeLabel")) == QStringLiteral("DLP_USB")
                     && (DeviceIdentityReader::isSupported()
                             ? (device.value(QStringLiteral("libraryName"))
                                    == QStringLiteral("TIMO USB")
                                && device.value(QStringLiteral("name"))
-                                   == QStringLiteral("TIMO USB")
+                                   == QStringLiteral("DLP_USB / TIMO USB")
                                && device.value(QStringLiteral("color"))
                                    == QStringLiteral("#AF52DE"))
                             : (device.value(QStringLiteral("libraryName")).toString().isEmpty()

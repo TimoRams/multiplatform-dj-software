@@ -43,7 +43,7 @@ sudo apt update
 sudo apt install -y \
   build-essential cmake ninja-build pkg-config \
   qt6-base-dev qt6-declarative-dev \
-  libasound2-dev libtag1-dev libkeyfinder-dev librubberband-dev
+  libasound2-dev libtag1-dev libkeyfinder-dev librubberband-dev libsqlcipher-dev
 ```
 
 Build and run:
@@ -56,7 +56,7 @@ Build and run:
 ### macOS
 
 ```bash
-brew install cmake ninja pkg-config qt@6 taglib rubberband libkeyfinder
+brew install cmake ninja pkg-config qt@6 taglib rubberband libkeyfinder sqlcipher
 export CMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
 cmake --preset macos-dev-arm64
 cmake --build --preset macos-dev-arm64

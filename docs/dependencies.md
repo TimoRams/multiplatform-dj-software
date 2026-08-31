@@ -46,6 +46,7 @@ installer does not provide an equivalent Linux desktop ARM64 archive.
 | TagLib | distro/Homebrew/vcpkg | metadata and cover extraction |
 | libkeyfinder 2.2.8 | distro/Homebrew/vcpkg | musical-key analysis |
 | RubberBand | distro/Homebrew/vcpkg | selectable compatibility key-lock backend |
+| SQLCipher | distro/Homebrew | read-only Rekordbox USB nickname and colour access |
 | ALSA | Linux only, required | native audio/MIDI backend |
 | JACK | Linux only, optional when discovered | JACK audio backend |
 | libusb | Linux only, optional when discovered | direct FLX10 HID support |

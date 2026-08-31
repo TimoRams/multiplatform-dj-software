@@ -83,9 +83,9 @@ if(UNIX AND NOT APPLE)
 endif()
 
 # ---- SQLCipher ------------------------------------------------------------
-# Only used to read a connected device's own name and background colour out of
-# its encrypted device database. Optional: without it the device list simply
-# falls back to the filesystem volume label.
+# Reads a connected device's Rekordbox nickname and background colour from its
+# encrypted device database. Linux and macOS builds require it so device
+# identity behaves consistently on both supported desktop platforms.
 add_library(ThirdParty::SQLCipher INTERFACE IMPORTED)
 if(PkgConfig_FOUND)
     pkg_check_modules(SQLCIPHER QUIET IMPORTED_TARGET sqlcipher)
@@ -93,10 +93,12 @@ if(PkgConfig_FOUND)
         message(STATUS "Enabling device identity reader via SQLCipher")
         target_link_libraries(ThirdParty::SQLCipher INTERFACE PkgConfig::SQLCIPHER)
         target_compile_definitions(ThirdParty::SQLCipher INTERFACE BROCKDJ_HAVE_SQLCIPHER=1)
-    else()
-        message(STATUS "SQLCipher not found - device name and colour will fall back "
-                       "to the filesystem volume label")
     endif()
+endif()
+if((UNIX OR APPLE) AND NOT TARGET PkgConfig::SQLCIPHER)
+    message(FATAL_ERROR
+        "SQLCipher is required for Rekordbox device nicknames. "
+        "Install libsqlcipher-dev on Linux or sqlcipher with Homebrew on macOS.")
 endif()
 
 # ---- TagLib ---------------------------------------------------------------

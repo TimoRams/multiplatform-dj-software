@@ -231,7 +231,7 @@ Rectangle {
                     readonly property bool focused: root.sourcePane === "sources"
                                                     && root.sourceCursorIndex === 0
                     readonly property bool active: root.activeSourceType === "local"
-                    color: focused ? "#292a33"
+                    color: focused || active ? "#292a33"
                           : (localMouse.containsMouse ? "#202129" : "#1b1c23")
                     Rectangle {
                         anchors.left: parent.left
@@ -239,7 +239,7 @@ Rectangle {
                         anchors.bottom: parent.bottom
                         width: 3
                         color: "#40d84b"
-                        visible: parent.focused
+                        visible: parent.focused || parent.active
                     }
 
                     Rectangle {
@@ -305,7 +305,7 @@ Rectangle {
                             Rectangle {
                                 width: 80
                                 height: parent.height
-                                color: focused ? "#1d3971" : "#182b52"
+                                color: focused || active ? "#1d3971" : "#182b52"
                                 Rectangle {
                                     anchors.left: parent.left
                                     anchors.top: parent.top
@@ -336,7 +336,7 @@ Rectangle {
                             Rectangle {
                                 width: parent.width - 80
                                 height: parent.height
-                                color: focused ? "#383944"
+                                color: focused || active ? "#383944"
                                                : (deviceMouse.containsMouse ? "#383944" : "#24252d")
                                 Rectangle {
                                     anchors.left: parent.left
@@ -344,7 +344,7 @@ Rectangle {
                                     anchors.bottom: parent.bottom
                                     width: 3
                                     color: deviceAccent
-                                    visible: focused
+                                    visible: focused || active
                                 }
                                 Text {
                                     anchors.left: parent.left
@@ -511,9 +511,13 @@ Rectangle {
                         required property int index
                         readonly property bool focused: root.sourcePane === "services"
                                                      && root.serviceCursorIndex === index
+                        // The Library service is the active destination for the
+                        // source selected in the left pane, even when focus stays
+                        // on that source pane.
+                        readonly property bool active: modelData.key === "library"
                         Layout.fillWidth: true
                         Layout.preferredHeight: 94
-                        color: focused ? "#1987f0" : "#292a33"
+                        color: focused ? "#1987f0" : (active ? "#32333d" : "#292a33")
 
                         Rectangle {
                             anchors.bottom: parent.bottom
@@ -527,8 +531,9 @@ Rectangle {
                             anchors.left: parent.left
                             anchors.leftMargin: 31
                             anchors.verticalCenter: parent.verticalCenter
-                            text: parent.focused ? "◉" : "○"
-                            color: "#f3f4f6"
+                            text: parent.focused || parent.active ? "◉" : "○"
+                            color: parent.focused ? "#f3f4f6"
+                                  : (parent.active ? "#40d84b" : "#f3f4f6")
                             font.pixelSize: 20
                         }
 

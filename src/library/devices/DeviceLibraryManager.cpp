@@ -108,6 +108,13 @@ QString stableDeviceId(const QByteArray& device, const QString& name,
         QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex().left(20));
 }
 
+QString displayDeviceName(const QString& volumeLabel, const QString& libraryName)
+{
+    if (libraryName.isEmpty() || libraryName.compare(volumeLabel, Qt::CaseInsensitive) == 0)
+        return volumeLabel;
+    return volumeLabel + QStringLiteral(" / ") + libraryName;
+}
+
 bool hasFile(const QString& root, const QString& relative)
 {
     const QFileInfo info(QDir(root).filePath(relative));
@@ -469,7 +476,7 @@ void DeviceLibraryManager::applySystemVolumes(QVector<SystemVolume> volumes)
             if (!state.operationPending)
                 state.status = QStringLiteral("Not mounted");
         }
-        state.name = state.libraryName.isEmpty() ? state.volumeLabel : state.libraryName;
+        state.name = displayDeviceName(state.volumeLabel, state.libraryName);
 
         m_devices.insert(id, state);
         if (!m_deviceOrder.contains(id))
@@ -570,8 +577,16 @@ void DeviceLibraryManager::inspectStorageVolumes(const QList<QStorageInfo>& volu
         if (m_devices.contains(id))
             state = m_devices.value(id);
         state.id = id;
-        state.name = storage.displayName().trimmed().isEmpty()
+        state.volumeLabel = storage.displayName().trimmed().isEmpty()
             ? QFileInfo(root).fileName() : storage.displayName().trimmed();
+        if (state.identityMountPath != root) {
+            const rekordbox::DeviceIdentity identity =
+                rekordbox::DeviceIdentityReader{}.readReadOnly(root);
+            state.libraryName = identity.name;
+            state.colorHex = rekordbox::DeviceIdentityReader::colorHex(identity.color);
+            state.identityMountPath = root;
+        }
+        state.name = displayDeviceName(state.volumeLabel, state.libraryName);
         state.mountPath = root;
         state.fileSystemType = QString::fromLatin1(storage.fileSystemType());
         state.ready = true;
@@ -648,7 +663,7 @@ void DeviceLibraryManager::inspectMountPaths(const QStringList& paths)
             state.colorHex = rekordbox::DeviceIdentityReader::colorHex(identity.color);
             state.identityMountPath = root;
         }
-        state.name = state.libraryName.isEmpty() ? name : state.libraryName;
+        state.name = displayDeviceName(state.volumeLabel, state.libraryName);
         state.mountPath = root;
         state.fileSystemType = QStringLiteral("test");
         state.ready = true;

@@ -43,7 +43,7 @@ sudo apt install -y \
   qml6-module-qtquick-controls qml6-module-qtquick-layouts \
   qml6-module-qtquick-window \
   libasound2-dev libjack-jackd2-dev libusb-1.0-0-dev \
-  libtag1-dev libkeyfinder-dev librubberband-dev \
+  libtag1-dev libkeyfinder-dev librubberband-dev libsqlcipher-dev \
   libfontconfig1-dev libfreetype6-dev libgl1-mesa-dev \
   libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
   libxinerama-dev libxrandr-dev libxrender-dev libxkbcommon-x11-dev
@@ -89,7 +89,7 @@ Install Xcode command-line tools, CMake/Ninja, Qt and the native audio-analysis
 dependencies:
 
 ```bash
-brew install cmake ninja ccache pkg-config qt@6 taglib rubberband libkeyfinder
+brew install cmake ninja ccache pkg-config qt@6 taglib rubberband libkeyfinder sqlcipher
 ```
 
 Expose Qt to CMake if Homebrew did not do so already:
