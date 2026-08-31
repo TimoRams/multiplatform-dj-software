@@ -532,6 +532,17 @@ Item {
                 x: Math.round(root.playheadNormalized * parent.width - width / 2)
                 color: root.warningRed
             }
+            Rectangle {
+                visible: root.hasTrack && root.engine && root.engine.seekPreviewActive
+                width: Math.max(3, root.valuePx(3, 3))
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                x: root.engine && root.duration > 0
+                   ? Math.round(root.engine.seekPreviewPosition / root.duration
+                                * parent.width - width / 2)
+                   : 0
+                color: root.functionOrange
+            }
             Canvas {
                 visible: root.hasTrack && root.engine && root.engine.mainCueSec > 0 && root.duration > 0
                 anchors.left: parent.left
@@ -553,6 +564,27 @@ Item {
                     ctx.closePath()
                     ctx.fill()
                 }
+            }
+            MouseArea {
+                id: overviewSeekArea
+                anchors.fill: parent
+                enabled: root.hasTrack && root.duration > 0
+                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                preventStealing: true
+
+                function normalizedPosition(mouseX) {
+                    return Math.max(0.0, Math.min(1.0, mouseX / width))
+                }
+
+                onPressed: (mouse) => {
+                    root.engine.beginSeekPreview(normalizedPosition(mouse.x))
+                }
+                onPositionChanged: (mouse) => {
+                    if (pressed)
+                        root.engine.updateSeekPreview(normalizedPosition(mouse.x))
+                }
+                onReleased: root.engine.commitSeekPreview()
+                onCanceled: root.engine.cancelSeekPreview()
             }
         }
 

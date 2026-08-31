@@ -52,10 +52,12 @@ int main()
     const auto waveformScreen = read("src/qml/performance/PerformanceWaveformScreen.qml");
     const auto beatFxPanel = read("src/qml/performance/PerformanceBeatFxPanel.qml");
     const auto deckQuickPanel = read("src/qml/deck/PerformanceDeckQuickPanel.qml");
+    const auto deckTrackInfoPanel = read("src/qml/deck/DeckTrackInfoPanel.qml");
     const auto developmentControls = read("src/qml/development/DevelopmentControlsWindow.qml");
     const auto flx10Mapping = read("src/controllers/mappings/midi/DDJ-FLX10.brockdj.xml");
     const auto flx10MidiBridge = read("src/controllers/flx10/Flx10MidiBridge.cpp");
     const auto engineHeader = read("src/deck/DjEngine.h");
+    const auto engineTransport = read("src/deck/DjEngineTransport.cpp");
     const auto midiManagerHeader = read("src/controllers/midi/MidiControllerManager.h");
     ok &= require(deckQuickPanel.find("property real beatJumpBeats") == std::string::npos
                       && deckQuickPanel.find("root.engine.beatJumpBeats") != std::string::npos
@@ -139,6 +141,16 @@ int main()
                      && enlargedWaveform.find("id: slipWaveLoader") != std::string::npos
                      && enlargedWaveform.find("slipPreview: true") != std::string::npos,
                   "slip mode renders independent audible and background waveform panes");
+    ok &= require(engineHeader.find("Q_PROPERTY(bool seekPreviewActive") != std::string::npos
+                     && deckTrackInfoPanel.find("beginSeekPreview") != std::string::npos
+                     && deckTrackInfoPanel.find("commitSeekPreview") != std::string::npos
+                     && deckTrackInfoPanel.find("onReleased: root.engine.commitSeekPreview()")
+                         != std::string::npos,
+                  "overview drag previews a quantized target and commits only on release");
+    ok &= require(engineHeader.find("m_quantizedOverviewSeekPending") != std::string::npos
+                     && engineTransport.find("scheduleQuantizedCueJump(target)")
+                         != std::string::npos,
+                  "quantized overview seek waits for the next source beat");
     ok &= require(enlargedWaveform.find("FrameAnimation {") != std::string::npos
                       && overallWaveform.find("FrameAnimation {") != std::string::npos
                       && turntableIndicator.find("FrameAnimation {") != std::string::npos

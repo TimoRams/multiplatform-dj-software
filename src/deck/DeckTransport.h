@@ -68,7 +68,7 @@ public:
     void returnToSlipPosition() noexcept;
     bool setPlaybackRate(double rate) noexcept;
     bool setJogNudgeRatio(double ratio) noexcept;
-    bool seekToSeconds(double seconds) noexcept;
+    bool seekToSeconds(double seconds, bool resetSlipPosition = false) noexcept;
     bool seekNormalized(double progress) noexcept;
     void freezeAt(double seconds) noexcept;
     void ensureAudioRunning(bool blockedByScratch = false) noexcept;

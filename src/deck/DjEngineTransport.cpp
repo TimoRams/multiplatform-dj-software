@@ -81,6 +81,8 @@ double DjEngine::getPosition() const
 
 double DjEngine::getSlipPreviewPosition() const noexcept
 {
+    if (m_seekPreviewActive)
+        return m_seekPreviewPosition;
     return m_transport->snapshot().backgroundPositionSeconds;
 }
 
@@ -168,6 +170,12 @@ TrackData* DjEngine::getTrackData() const
 
 void DjEngine::resetTrackLoadState()
 {
+    const bool seekPreviewWasActive = m_seekPreviewActive;
+    m_seekPreviewActive = false;
+    m_seekPreviewPosition = 0.0;
+    m_quantizedOverviewSeekPending = false;
+    if (seekPreviewWasActive)
+        emit seekPreviewChanged();
     m_trackData->clear();
     m_currentSegments.clear();
     m_memoryCues.clear();
@@ -392,10 +400,15 @@ void DjEngine::syncScratchBridgeToTransport()
 
 void DjEngine::setPosition(float progress)
 {
+    setPositionInternal(progress, false);
+}
+
+void DjEngine::setPositionInternal(double progress, bool resetSlipPosition)
+{
     cancelQuantizedCueJump();
     double len = m_transport->trackLengthSeconds();
     if (len > 0.0) {
-        const double newPos = std::clamp(static_cast<double>(progress) * len,
+        const double newPos = std::clamp(progress * len,
                                          -PRE_ROLL_SECONDS,
                                          len);
         const double previousPos = getVisualPosition();
@@ -404,7 +417,7 @@ void DjEngine::setPosition(float progress)
             m_playedAccumSec = 0.0;
             m_playHistoryClock.restart();
         }
-        m_transport->seekToSeconds(newPos);
+        m_transport->seekToSeconds(newPos, resetSlipPosition);
         ensureTransportRunningForPlayIntent();
         m_trackLoader.setWaveformSeekHint(std::max(0.0, newPos));
         if (m_analyzer && m_analyzer->isThreadRunning())
@@ -491,7 +504,75 @@ bool DjEngine::isSlipDiverted() const
 
 bool DjEngine::slipPreviewActive() const
 {
-    return m_transport->playRequested() && isSlipDiverted();
+    return m_seekPreviewActive || (m_transport->playRequested() && isSlipDiverted());
+}
+
+void DjEngine::beginSeekPreview(float progress)
+{
+    if (!m_hasTrack || m_transport->trackLengthSeconds() <= 0.0)
+        return;
+    if (m_quantizedOverviewSeekPending) {
+        m_quantizedOverviewSeekPending = false;
+        m_cueLoopController.cancelCueJump();
+    }
+    if (m_seekPreviewActive) {
+        updateSeekPreview(progress);
+        return;
+    }
+    m_seekPreviewActive = true;
+    const double previousPosition = m_seekPreviewPosition;
+    updateSeekPreview(progress);
+    if (qFuzzyCompare(previousPosition, m_seekPreviewPosition))
+        emit seekPreviewChanged();
+}
+
+void DjEngine::updateSeekPreview(float progress)
+{
+    if (!m_seekPreviewActive || !std::isfinite(progress))
+        return;
+    const double length = m_transport->trackLengthSeconds();
+    if (length <= 0.0)
+        return;
+    double position = std::clamp(static_cast<double>(progress), 0.0, 1.0) * length;
+    if (m_quantizeEnabled)
+        position = quantizedBeatAt(position);
+    position = std::clamp(position, 0.0, length);
+    if (qFuzzyCompare(m_seekPreviewPosition, position))
+        return;
+    m_seekPreviewPosition = position;
+    emit seekPreviewChanged();
+}
+
+void DjEngine::commitSeekPreview()
+{
+    if (!m_seekPreviewActive)
+        return;
+    const double length = m_transport->trackLengthSeconds();
+    const double target = m_seekPreviewPosition;
+
+    if (m_quantizeEnabled && m_transport->audioRunning()
+        && !m_transport->preRollActive() && target >= 0.0 && length > 0.0) {
+        scheduleQuantizedCueJump(target);
+        m_quantizedOverviewSeekPending = true;
+        return;
+    }
+
+    m_seekPreviewActive = false;
+    if (length > 0.0)
+        setPositionInternal(target / length, true);
+    emit seekPreviewChanged();
+}
+
+void DjEngine::cancelSeekPreview()
+{
+    if (!m_seekPreviewActive)
+        return;
+    if (m_quantizedOverviewSeekPending) {
+        cancelQuantizedCueJump();
+        return;
+    }
+    m_seekPreviewActive = false;
+    emit seekPreviewChanged();
 }
 
 void DjEngine::setCueEnabled(bool value)

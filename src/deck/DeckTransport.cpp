@@ -164,7 +164,7 @@ bool DeckTransport::setJogNudgeRatio(double ratio) noexcept
     return true;
 }
 
-bool DeckTransport::seekToSeconds(double seconds) noexcept
+bool DeckTransport::seekToSeconds(double seconds, bool resetSlipPosition) noexcept
 {
     if (!m_hasTrack || !std::isfinite(seconds))
         return false;
@@ -174,7 +174,7 @@ bool DeckTransport::seekToSeconds(double seconds) noexcept
     m_atTrackEnd = clamped >= m_trackLengthSeconds - kEndEpsilonSeconds;
     m_audiblePositionSeconds = clamped;
     m_heldPositionSeconds = clamped;
-    if (!m_slipEnabled)
+    if (resetSlipPosition || !m_slipEnabled)
         m_backgroundPositionSeconds = clamped;
 
     if (clamped < 0.0) {

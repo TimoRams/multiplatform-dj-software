@@ -68,6 +68,8 @@ class DjEngine : public QObject
     Q_PROPERTY(double loopPreviewOutPosition READ loopPreviewOutPosition NOTIFY progressChanged)
     Q_PROPERTY(bool slipActive READ slipActive NOTIFY slipChanged)
     Q_PROPERTY(bool slipPreviewActive READ slipPreviewActive NOTIFY slipPreviewChanged)
+    Q_PROPERTY(bool seekPreviewActive READ seekPreviewActive NOTIFY seekPreviewChanged)
+    Q_PROPERTY(double seekPreviewPosition READ seekPreviewPosition NOTIFY seekPreviewChanged)
     Q_PROPERTY(double beatJumpBeats READ beatJumpBeats WRITE setBeatJumpBeats NOTIFY beatJumpBeatsChanged)
 
     Q_PROPERTY(QString trackTitle   READ trackTitle   NOTIFY trackMetadataChanged)
@@ -200,6 +202,12 @@ public:
     // Outer-rim jog nudge: temporarily speeds up/slows down playback without entering scratch mode.
     Q_INVOKABLE void applyJogNudge(double signedTicks);
     [[nodiscard]] bool slipPreviewActive() const;
+    [[nodiscard]] bool seekPreviewActive() const noexcept { return m_seekPreviewActive; }
+    [[nodiscard]] double seekPreviewPosition() const noexcept { return m_seekPreviewPosition; }
+    Q_INVOKABLE void beginSeekPreview(float progress);
+    Q_INVOKABLE void updateSeekPreview(float progress);
+    Q_INVOKABLE void commitSeekPreview();
+    Q_INVOKABLE void cancelSeekPreview();
 
     // Manual beat-grid correction: rebuilds the BeatMarker array so that the
     // current playhead position becomes beat 1 / bar 1.  Emits beatgridChanged
@@ -501,6 +509,7 @@ signals:
     void loopChanged();
     void slipChanged();
     void slipPreviewChanged();
+    void seekPreviewChanged();
     void beatJumpBeatsChanged();
     void keylockChanged();
     void keySemitoneOffsetChanged();
@@ -537,6 +546,7 @@ private:
     LatencySnapshot buildLatencySnapshot() const;
 
     void resetTrackLoadState();
+    void setPositionInternal(double progress, bool resetSlipPosition);
     void beginExternalCache(AudioCacheHandle handle);
     void updateExternalCache();
     void resetExternalCache();
@@ -676,6 +686,9 @@ private:
     bool m_keylock = false;
     double m_keySemitoneOffset = 0.0;
     bool m_quantizeEnabled = false;
+    bool m_seekPreviewActive = false;
+    double m_seekPreviewPosition = 0.0;
+    bool m_quantizedOverviewSeekPending = false;
 
     // Quantized cue trigger: when quantize is on and the deck is playing, a hot
     // cue / cue press is deferred to the next beat so the jump lands exactly on

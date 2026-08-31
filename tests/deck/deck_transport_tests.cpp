@@ -218,6 +218,9 @@ int main(int argc, char** argv)
     ok &= require(std::abs(transport.audioPositionSeconds()
                            - transport.snapshot().backgroundPositionSeconds) < 0.01,
                   "slip returns to background position");
+    transport.seekToSeconds(0.75, true);
+    ok &= require(std::abs(transport.snapshot().backgroundPositionSeconds - 0.75) < 1.0e-9,
+                  "confirmed overview seek resets the slip return position");
     transport.setPlaying(false);
 
     auto trackB = cache.openTrack({paths[1]});

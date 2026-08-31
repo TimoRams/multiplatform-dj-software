@@ -97,6 +97,7 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
     connect(this, &DjEngine::slipChanged, this, &DjEngine::slipPreviewChanged);
     connect(this, &DjEngine::reverseChanged, this, &DjEngine::slipPreviewChanged);
     connect(this, &DjEngine::playingChanged, this, &DjEngine::slipPreviewChanged);
+    connect(this, &DjEngine::seekPreviewChanged, this, &DjEngine::slipPreviewChanged);
 
     m_trackData = new TrackData(this);
     m_analyzer = std::make_unique<WaveformAnalyzer>(

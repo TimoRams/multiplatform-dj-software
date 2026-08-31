@@ -770,6 +770,7 @@ void DjEngine::performCueJump(double targetSec)
 
 void DjEngine::scheduleQuantizedCueJump(double targetSec)
 {
+    cancelQuantizedCueJump();
     const double cur = m_transport->audioPositionSeconds();
     m_cueLoopController.scheduleCueJump(targetSec, nextBeatBoundaryAfter(cur), cur);
 }
@@ -778,6 +779,13 @@ void DjEngine::scheduleQuantizedCueJump(double targetSec)
 void DjEngine::cancelQuantizedCueJump()
 {
     m_cueLoopController.cancelCueJump();
+    if (m_quantizedOverviewSeekPending) {
+        m_quantizedOverviewSeekPending = false;
+        if (m_seekPreviewActive) {
+            m_seekPreviewActive = false;
+            emit seekPreviewChanged();
+        }
+    }
 }
 
 
@@ -787,6 +795,17 @@ bool DjEngine::serviceQuantizedCueJump()
     const auto target = m_cueLoopController.serviceCueJump(cur);
     if (!target)
         return false;
+
+    if (m_quantizedOverviewSeekPending) {
+        m_quantizedOverviewSeekPending = false;
+        m_seekPreviewActive = false;
+        emit seekPreviewChanged();
+        const double length = m_transport->trackLengthSeconds();
+        if (length > 0.0)
+            setPositionInternal(*target / length, true);
+        return true;
+    }
+
     performCueJump(*target);
     return true;
 }

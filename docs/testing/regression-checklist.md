@@ -138,6 +138,12 @@ ThreadSanitizer where the platform toolchain supports it.
   short loop. The scrolling waveform must split into an audible top half and a
   dimmed, continuously advancing target bottom half, then reunite at that target
   without a stale frame when scratch or loop diversion ends.
+- Drag across the deck's whole-track overview while playback continues. Audio
+  must not seek until release; the lower half of the scrolling waveform and the
+  orange overview marker must preview the target. With Quantize enabled, both
+  preview and committed jump must land on the same nearest beat, and releasing
+  between beats must keep the source playing until the next beat boundary before
+  switching phase-aligned to the target.
 - Spam play/pause/play rapidly on a deck with keylock on and, separately, with
   keylock off. Verify no click or "off" attack at the start of playback on
   either path (`RenderModeRouter::applyNormalStartFade` fades in the first
