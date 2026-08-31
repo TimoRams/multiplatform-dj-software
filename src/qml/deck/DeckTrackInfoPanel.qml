@@ -49,9 +49,9 @@ Item {
                                                   : displayedPlaybackSeconds) * tempoTimeScale
     readonly property int displayedWholeSeconds: Math.floor(displayedTimeSeconds)
     readonly property int displayedMilliseconds: Math.floor((displayedTimeSeconds - displayedWholeSeconds) * 1000 + 0.00001)
-    readonly property string displayedTimeMain: !hasTrack || duration <= 0 ? "--:--"
-                                               : (showRemainingTime ? "-" : "")
-                                                 + Math.floor(displayedWholeSeconds / 60).toString().padStart(2, "0")
+    readonly property string displayedTimeSign: !hasTrack || duration <= 0 ? "-" : (showRemainingTime ? "-" : " ")
+    readonly property string displayedTimeClock: !hasTrack || duration <= 0 ? "---:--"
+                                                : Math.floor(displayedWholeSeconds / 60).toString().padStart(3, "0")
                                                  + ":" + (displayedWholeSeconds % 60).toString().padStart(2, "0")
     readonly property string displayedTimeMillis: !hasTrack || duration <= 0 ? ".---"
                                                 : "." + Math.min(999, displayedMilliseconds).toString().padStart(3, "0")
@@ -82,7 +82,7 @@ Item {
         if (!hasTrack || duration <= 0)
             return { main: "--:--", millis: ".---", negative: false }
         return {
-            main: displayedTimeMain,
+            main: displayedTimeSign + displayedTimeClock,
             millis: displayedTimeMillis,
             negative: showRemainingTime
         }
@@ -317,28 +317,76 @@ Item {
                     width: parent.width
                     height: root.valuePx(70, 42)
                     Text {
-                        id: timeMain
+                        id: timeSign
                         anchors.left: parent.left
+                        anchors.baseline: timeMillis.baseline
+                        text: root.displayedTimeSign
+                        color: root.primaryText
+                        font.pixelSize: Math.max(root.valuePx(24, 14), Math.min(root.valuePx(72, 40), parent.width / 14))
+                        font.family: UiTheme.numericFontFamily
+                        font.weight: Font.Medium
+                        font.preferTypoLineMetrics: UiTheme.numericPreferTypoMetrics
+                        horizontalAlignment: Text.AlignLeft
+                    }
+                    Item {
+                        id: timeMain
+                        anchors.left: timeSign.right
+                        anchors.leftMargin: root.valuePx(4, 2)
                         anchors.right: timeMillis.left
                         anchors.rightMargin: root.valuePx(2, 1)
-                        anchors.baseline: timeMillis.baseline
-                        text: root.displayedTimeMain
-                        color: root.primaryText
-                        font.pixelSize: Math.max(root.valuePx(24, 14), Math.min(root.valuePx(72, 40), width / 3.7))
-                        font.family: "monospace"
-                        font.weight: Font.Medium
-                        elide: Text.ElideRight
-                        horizontalAlignment: Text.AlignRight
+                        anchors.bottom: parent.bottom
+                        height: parent.height
+
+                        // A clock is a fixed-position display: each character gets
+                        // its own cell so proportional glyph metrics cannot move it.
+                        Repeater {
+                            model: root.displayedTimeClock.length
+
+                            Text {
+                                required property int index
+                                width: timeMain.width / root.displayedTimeClock.length
+                                height: parent.height
+                                x: index * width
+                                text: root.displayedTimeClock.charAt(index)
+                                color: root.primaryText
+                                font.pixelSize: Math.max(root.valuePx(24, 14), Math.min(root.valuePx(72, 40), timeMain.width / 3.7))
+                                font.family: UiTheme.numericFontFamily
+                                font.weight: Font.Medium
+                                font.preferTypoLineMetrics: UiTheme.numericPreferTypoMetrics
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignBottom
+                            }
+                        }
                     }
-                    Text {
+                    Item {
                         id: timeMillis
                         anchors.right: parent.right
                         anchors.bottom: parent.bottom
-                        text: root.displayedTimeMillis
-                        color: root.secondaryText
-                        font.pixelSize: Math.max(root.valuePx(16, 10), Math.min(root.valuePx(31, 18), parent.width / 7))
-                        font.family: "monospace"
-                        font.weight: Font.Medium
+                        readonly property real digitPx: Math.max(root.valuePx(16, 10),
+                                                                 Math.min(root.valuePx(31, 18), parent.width / 7))
+                        // Reserve four fixed character cells for ".mmm"; its width
+                        // must never depend on the currently displayed digits.
+                        width: digitPx * 2.5
+                        height: parent.height
+
+                        Repeater {
+                            model: root.displayedTimeMillis.length
+
+                            Text {
+                                required property int index
+                                width: timeMillis.width / root.displayedTimeMillis.length
+                                height: parent.height
+                                x: index * width
+                                text: root.displayedTimeMillis.charAt(index)
+                                color: root.secondaryText
+                                font.pixelSize: timeMillis.digitPx
+                                font.family: UiTheme.numericFontFamily
+                                font.weight: Font.Medium
+                                font.preferTypoLineMetrics: UiTheme.numericPreferTypoMetrics
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignBottom
+                            }
+                        }
                     }
                 }
                 MouseArea {
@@ -387,8 +435,9 @@ Item {
                     text: root.tempoText()
                     color: root.primaryText
                     font.pixelSize: Math.max(root.valuePx(20, 12), Math.min(root.valuePx(49, 28), parent.width / 3.8))
-                    font.family: "monospace"
+                    font.family: UiTheme.numericFontFamily
                     font.weight: Font.Medium
+                    font.preferTypoLineMetrics: UiTheme.numericPreferTypoMetrics
                     horizontalAlignment: Text.AlignRight
                     elide: Text.ElideLeft
                 }
@@ -442,8 +491,9 @@ Item {
                     text: root.bpmText()
                     color: root.engine && root.engine.syncMaster ? root.functionOrange : root.primaryText
                     font.pixelSize: Math.max(root.valuePx(20, 12), Math.min(root.valuePx(57, 32), width / 3.4))
-                    font.family: "monospace"
+                    font.family: UiTheme.numericFontFamily
                     font.weight: Font.Medium
+                    font.preferTypoLineMetrics: UiTheme.numericPreferTypoMetrics
                     elide: Text.ElideRight
                 }
             }

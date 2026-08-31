@@ -142,7 +142,7 @@ Item {
             color: "#f2f2f2"
             font.pixelSize: window.sp(24)
             font.bold: true
-            font.family: "monospace"
+            font.family: UiTheme.numericFontFamily
             font.letterSpacing: 1.8
             horizontalAlignment: Text.AlignHCenter
             width: parent.width
@@ -250,7 +250,7 @@ Item {
                       : "Initializing low-latency deck environment"
                 color: loadingIndicator.activeStage >= 4 ? "#4dd98a" : "#686868"
                 font.pixelSize: window.sp(9)
-                font.family: "monospace"
+                font.family: UiTheme.numericFontFamily
                 font.letterSpacing: 0.6
             }
         }

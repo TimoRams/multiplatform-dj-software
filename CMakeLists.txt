@@ -332,6 +332,8 @@ qt_add_qml_module(${PROJECT_NAME}
     RESOURCE_PREFIX "/"
     QML_FILES
         ${BROCKDJ_QML_FILES}
+    RESOURCES
+        assets/fonts/InterVariable.ttf
 )
 
 

@@ -2,6 +2,10 @@ pragma Singleton
 import QtQuick
 
 QtObject {
+    readonly property string uiFontFamily: "Inter"
+    readonly property string numericFontFamily: "Inter"
+    readonly property bool numericPreferTypoMetrics: true
+
     // Canonical design-token names. Existing aliases below remain during the
     // component migration; new UI code uses these semantic names.
     readonly property color surface:           "#181818"

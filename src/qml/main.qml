@@ -12,7 +12,12 @@ ApplicationWindow {
     visible: true
     title: "BrockDJ"
     color: UiTheme.bgDeep
+    FontLoader {
+        id: interFont
+        source: "qrc:/assets/fonts/InterVariable.ttf"
+    }
     font.hintingPreference: Font.PreferFullHinting
+    font.family: interFont.status === FontLoader.Ready ? UiTheme.uiFontFamily : font.family
     property bool libraryExpanded: false
     property string linkedDeckName: ""
     property bool exitPromptVisible: false
