@@ -71,9 +71,9 @@ Window {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 138
-                    Layout.minimumHeight: 138
-                    Layout.maximumHeight: 138
+                    Layout.preferredHeight: mixerAB.minimumUsableHeight
+                    Layout.minimumHeight: mixerAB.minimumUsableHeight
+                    Layout.maximumHeight: mixerAB.minimumUsableHeight
                     spacing: 1
 
                     DeckControl {
@@ -87,6 +87,7 @@ Window {
                     }
 
                     MixerSection {
+                        id: mixerAB
                         Layout.fillHeight: true
                         Layout.preferredWidth: UiMetrics.mixerPreferredWidth
                         Layout.minimumWidth: UiMetrics.mixerPreferredWidth
@@ -111,9 +112,9 @@ Window {
                 RowLayout {
                     visible: root.appWindow && root.appWindow.fourDeckMode
                     Layout.fillWidth: true
-                    Layout.preferredHeight: visible ? 138 : 0
-                    Layout.minimumHeight: visible ? 138 : 0
-                    Layout.maximumHeight: visible ? 138 : 0
+                    Layout.preferredHeight: visible ? mixerCD.minimumUsableHeight : 0
+                    Layout.minimumHeight: visible ? mixerCD.minimumUsableHeight : 0
+                    Layout.maximumHeight: visible ? mixerCD.minimumUsableHeight : 0
                     spacing: 1
 
                     DeckControl {
@@ -127,6 +128,7 @@ Window {
                     }
 
                     MixerSection {
+                        id: mixerCD
                         Layout.fillHeight: true
                         Layout.preferredWidth: UiMetrics.mixerPreferredWidth
                         Layout.minimumWidth: UiMetrics.mixerPreferredWidth

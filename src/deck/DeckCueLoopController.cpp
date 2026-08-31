@@ -219,3 +219,50 @@ double DeckCueLoopController::nextBeatBoundaryAfter(double sec, const BeatGridSn
     const double duration = 60.0 / grid.bpm;
     return grid.firstBeatSec + (std::floor((sec - grid.firstBeatSec) / duration + epsilon) + 1.0) * duration;
 }
+
+double DeckCueLoopController::beatJumpTarget(double positionSec, double beats,
+                                             const BeatGridSnapshot& grid) noexcept
+{
+    if (!std::isfinite(positionSec) || !std::isfinite(beats))
+        return positionSec;
+
+    if (grid.beats.size() >= 2) {
+        const auto sourceAfter = std::upper_bound(
+            grid.beats.begin(), grid.beats.end(), positionSec);
+        const auto source = sourceAfter != grid.beats.begin()
+            ? std::prev(sourceAfter) : grid.beats.begin();
+        const auto sourceIndex = std::distance(grid.beats.begin(), source);
+        const double sourceDuration = std::next(source) != grid.beats.end()
+            ? *std::next(source) - *source
+            : *source - *std::prev(source);
+        if (sourceDuration <= 1e-4)
+            return positionSec;
+
+        const double sourceBeat = static_cast<double>(sourceIndex)
+            + (positionSec - *source) / sourceDuration;
+        const double targetBeat = sourceBeat + beats;
+        const auto targetIndex = static_cast<std::ptrdiff_t>(std::floor(targetBeat));
+        const double targetFraction = targetBeat - std::floor(targetBeat);
+
+        if (targetIndex < 0) {
+            const double firstDuration = grid.beats[1] - grid.beats[0];
+            return grid.beats.front() + targetBeat * firstDuration;
+        }
+
+        const auto lastIndex = static_cast<std::ptrdiff_t>(grid.beats.size() - 1);
+        if (targetIndex < lastIndex) {
+            const auto index = static_cast<std::size_t>(targetIndex);
+            const double duration = grid.beats[index + 1] - grid.beats[index];
+            return grid.beats[index] + targetFraction * duration;
+        }
+
+        const double lastDuration = grid.beats.back()
+            - grid.beats[grid.beats.size() - 2];
+        return grid.beats.back()
+            + (targetBeat - static_cast<double>(lastIndex)) * lastDuration;
+    }
+
+    if (!std::isfinite(grid.bpm) || grid.bpm <= 0.0)
+        return positionSec;
+    return positionSec + beats * (60.0 / grid.bpm);
+}

@@ -151,6 +151,16 @@ int main()
                      && engineTransport.find("scheduleQuantizedCueJump(target)")
                          != std::string::npos,
                   "quantized overview seek waits for the next source beat");
+    ok &= require(deckControl.find("label: \"JUMP\"") != std::string::npos
+                     && deckControl.find("beatJump(-deck.engine.beatJumpBeats)")
+                         != std::string::npos
+                     && deckControl.find("beatJump(deck.engine.beatJumpBeats)")
+                         != std::string::npos,
+                  "development deck controls expose backward and forward Beat Jump");
+    ok &= require(mixerSection.find("minimumUsableHeight") != std::string::npos
+                     && developmentControls.find("mixerAB.minimumUsableHeight")
+                         != std::string::npos,
+                  "development mixer reserves enough height above the crossfader");
     ok &= require(enlargedWaveform.find("FrameAnimation {") != std::string::npos
                       && overallWaveform.find("FrameAnimation {") != std::string::npos
                       && turntableIndicator.find("FrameAnimation {") != std::string::npos

@@ -98,6 +98,8 @@ public:
     [[nodiscard]] static double quantizedBeatAt(double sec, const BeatGridSnapshot& grid) noexcept;
     [[nodiscard]] static double nextBeatBoundaryAfter(double sec, const BeatGridSnapshot& grid) noexcept;
     [[nodiscard]] static double beatDurationAround(double sec, const BeatGridSnapshot& grid) noexcept;
+    [[nodiscard]] static double beatJumpTarget(double positionSec, double beats,
+                                               const BeatGridSnapshot& grid) noexcept;
     [[nodiscard]] static QString defaultHotCueColor(int index);
     [[nodiscard]] static QString defaultSavedLoopColor(int index);
 

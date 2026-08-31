@@ -144,6 +144,13 @@ ThreadSanitizer where the platform toolchain supports it.
   preview and committed jump must land on the same nearest beat, and releasing
   between beats must keep the source playing until the next beat boundary before
   switching phase-aligned to the target.
+- With two phase-aligned decks at the same effective BPM (including Sync), apply
+  repeated 4-beat jumps forward and backward from the development controls. The
+  decks must retain their original beat phase without accumulating offset. With
+  Quantize enabled during playback, a mid-beat press must wait for the next beat
+  boundary and then land exactly on the destination grid line.
+- Open Development Controls at its minimum size and verify every mixer knob,
+  including SC/filter and polarity, remains above the separate crossfader.
 - Spam play/pause/play rapidly on a deck with keylock on and, separately, with
   keylock off. Verify no click or "off" attack at the start of playback on
   either path (`RenderModeRouter::applyNormalStartFade` fades in the first

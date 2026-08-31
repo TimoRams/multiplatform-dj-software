@@ -10,6 +10,7 @@ import DJSoftware
 Rectangle {
     id: mixer
     color: UiTheme.panel
+    clip: true
 
     property var  engineA: null
     property var  engineB: null
@@ -37,6 +38,8 @@ Rectangle {
     readonly property int knobSz:   21
     readonly property int spineW:   3
     readonly property int stripW:   faderW + 1 + vuW + 1 + knobColW
+    readonly property int minimumUsableHeight:
+        labelH + 4 + 5 * (knobSz + 10) + 2 + 2 * cueH + 7
 
     function hideDragCursor() {
         if (typeof cursorControl !== "undefined" && cursorControl)

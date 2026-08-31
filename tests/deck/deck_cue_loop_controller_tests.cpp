@@ -107,9 +107,24 @@ int main()
                   "local beat duration follows the dynamic grid");
     ok &= require(near(DeckCueLoopController::nextBeatBoundaryAfter(1.1, dynamicGrid), 1.8),
                   "next boundary skips the current marker");
+    const double dynamicJump = DeckCueLoopController::beatJumpTarget(0.25, 2.0, dynamicGrid);
+    ok &= require(near(dynamicJump, 1.45),
+                  "beat jump preserves phase across non-uniform grid intervals");
+    ok &= require(near(DeckCueLoopController::beatJumpTarget(dynamicJump, -2.0, dynamicGrid),
+                      0.25),
+                  "opposite beat jumps return to the exact source phase");
+    const double quantizedOrigin = DeckCueLoopController::nextBeatBoundaryAfter(0.25, dynamicGrid);
+    ok &= require(near(DeckCueLoopController::beatJumpTarget(quantizedOrigin, 2.0, dynamicGrid),
+                      1.8),
+                  "quantized beat jump counts from the next source boundary");
     DeckCueLoopController::BeatGridSnapshot fallback{{}, 120.0, -0.25};
     ok &= require(near(DeckCueLoopController::quantizedBeatAt(-0.1, fallback), -0.25),
                   "fallback quantize preserves a negative first beat");
+    double repeatedJump = 0.125;
+    for (int i = 0; i < 1000; ++i)
+        repeatedJump = DeckCueLoopController::beatJumpTarget(repeatedJump, 4.0, fallback);
+    ok &= require(near(repeatedJump, 2000.125),
+                  "repeated constant-tempo beat jumps do not accumulate drift");
 
     controller.scheduleCueJump(5.0, 2.0, 1.0);
     ok &= require(!controller.serviceCueJump(1.5), "pending cue waits for its beat boundary");

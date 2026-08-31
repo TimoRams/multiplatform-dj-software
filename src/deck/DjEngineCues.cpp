@@ -415,16 +415,42 @@ void DjEngine::reactivateLoop()
 void DjEngine::beatJump(double beats)
 {
     const double trackLen = m_transport->trackLengthSeconds();
-    if (trackLen <= 0.0)
+    if (trackLen <= 0.0 || !std::isfinite(beats))
         return;
 
-    const double current = getVisualPosition();
-    const double beatDur = beatDurationAround(std::max(0.0, current));
-    if (beatDur <= 1e-4)
+    DeckCueLoopController::BeatGridSnapshot grid;
+    grid.bpm = m_trackData ? m_trackData->getBpm() : 0.0;
+    if (m_trackData) {
+        const double sampleRate = m_trackData->getSampleRate();
+        grid.firstBeatSec = sampleRate > 0.0
+            ? static_cast<double>(m_trackData->getFirstBeatSample()) / sampleRate
+            : 0.0;
+        const auto& markers = m_trackData->getBeatGrid();
+        grid.beats.reserve(markers.size());
+        std::ranges::transform(markers, std::back_inserter(grid.beats),
+                               &TrackData::BeatMarker::positionSec);
+    }
+
+    const double current = getPosition();
+    double jumpOrigin = current;
+    if (m_quantizeEnabled) {
+        jumpOrigin = m_transport->audioRunning() && !m_transport->preRollActive()
+            ? nextBeatBoundaryAfter(current)
+            : DeckCueLoopController::quantizedBeatAt(current, grid);
+    }
+
+    const double target = DeckCueLoopController::beatJumpTarget(jumpOrigin, beats, grid);
+    if (!std::isfinite(target))
         return;
 
-    const double next = std::clamp(current + beats * beatDur, -PRE_ROLL_SECONDS, trackLen);
-    setPosition(static_cast<float>(next / trackLen));
+    const double next = std::clamp(target, -PRE_ROLL_SECONDS, trackLen);
+    if (m_quantizeEnabled && m_transport->audioRunning()
+        && !m_transport->preRollActive() && next >= 0.0) {
+        scheduleQuantizedCueJump(next);
+        return;
+    }
+
+    setPositionInternal(next / trackLen, false);
 }
 
 void DjEngine::setBeatJumpBeats(double beats)

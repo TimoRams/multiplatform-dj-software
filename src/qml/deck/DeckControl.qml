@@ -349,6 +349,13 @@ Item {
         return beats.toFixed(2) + " BEAT"
     }
 
+    function beatJumpLabel() {
+        if (!deck.engine)
+            return "4"
+        const beats = deck.engine.beatJumpBeats
+        return beats < 1.0 ? beats.toFixed(1) : Math.round(beats).toString()
+    }
+
     function _syncMetadata() {
         if (!deck.engine) return
         _hasTrack      = deck.engine.hasTrack
@@ -812,7 +819,7 @@ Item {
             // ── Transport / loop controls ─────────────────────────────────
             Item {
                 Layout.fillWidth: true
-                readonly property int controlsHeight: deck.developmentControls ? deck.btnH * 2 + 1 : 0
+                readonly property int controlsHeight: deck.developmentControls ? deck.btnH * 3 + 2 : 0
                 Layout.minimumHeight: controlsHeight
                 Layout.preferredHeight: controlsHeight
                 Layout.maximumHeight: controlsHeight
@@ -1051,6 +1058,74 @@ Item {
                                     deck.engine.deactivateLoop()
                                 else
                                     deck.engine.reactivateLoop()
+                            }
+                        }
+                    }
+
+                    Item { Layout.fillWidth: true }
+                }
+
+                // Row 3 — beat jump
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: deck.btnH
+                    spacing: 0
+
+                    SectionLabel { label: "JUMP" }
+
+                    BtnGroup {
+                        FlatBtn {
+                            btnText: "◀ " + deck.beatJumpLabel()
+                            Layout.preferredWidth: deck.wReloop
+                            Layout.minimumWidth: deck.wReloop
+                            Layout.maximumWidth: deck.wReloop
+                            onClicked: {
+                                if (deck.engine)
+                                    deck.engine.beatJump(-deck.engine.beatJumpBeats)
+                            }
+                        }
+                        FlatBtn {
+                            btnText: deck.beatJumpLabel() + " ▶"
+                            Layout.preferredWidth: deck.wReloop
+                            Layout.minimumWidth: deck.wReloop
+                            Layout.maximumWidth: deck.wReloop
+                            onClicked: {
+                                if (deck.engine)
+                                    deck.engine.beatJump(deck.engine.beatJumpBeats)
+                            }
+                        }
+                    }
+
+                    GroupSpacer {}
+
+                    BtnGroup {
+                        FlatBtn {
+                            btnText: "−"
+                            Layout.preferredWidth: deck.wBtnSm
+                            Layout.minimumWidth: deck.wBtnSm
+                            Layout.maximumWidth: deck.wBtnSm
+                            onClicked: {
+                                if (deck.engine)
+                                    deck.engine.setBeatJumpBeats(deck.engine.beatJumpBeats / 2.0)
+                            }
+                        }
+                        FlatBtn {
+                            btnText: deck.beatJumpLabel()
+                            Layout.preferredWidth: deck.wBtnLg
+                            Layout.minimumWidth: deck.wBtnLg
+                            Layout.maximumWidth: deck.wBtnLg
+                            fbActive: true
+                            fbAccent: deck.accent
+                            fbActiveText: deck.accent
+                        }
+                        FlatBtn {
+                            btnText: "+"
+                            Layout.preferredWidth: deck.wBtnSm
+                            Layout.minimumWidth: deck.wBtnSm
+                            Layout.maximumWidth: deck.wBtnSm
+                            onClicked: {
+                                if (deck.engine)
+                                    deck.engine.setBeatJumpBeats(deck.engine.beatJumpBeats * 2.0)
                             }
                         }
                     }
