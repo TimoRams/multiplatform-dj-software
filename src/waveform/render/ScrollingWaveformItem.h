@@ -14,6 +14,7 @@
 
 #include "deck/DjEngine.h"
 #include "waveform/WaveformDemand.h"
+#include "waveform/WaveformVisualStyle.h"
 
 namespace waveform_render {
 class WaveformTileRasterizer;
@@ -29,6 +30,8 @@ class ScrollingWaveformItem : public QQuickItem
                NOTIFY effectivePixelsPerSecondChanged)
     Q_PROPERTY(QColor backgroundColor READ backgroundColor WRITE setBackgroundColor
                NOTIFY backgroundColorChanged)
+    Q_PROPERTY(int renderStyle READ renderStyle WRITE setRenderStyle
+               NOTIFY renderStyleChanged)
     Q_PROPERTY(bool rasterWorkEnabled READ rasterWorkEnabled WRITE setRasterWorkEnabled
                NOTIFY rasterWorkEnabledChanged)
     Q_PROPERTY(bool slipPreview READ slipPreview WRITE setSlipPreview NOTIFY slipPreviewChanged)
@@ -50,6 +53,11 @@ public:
     [[nodiscard]] double effectivePixelsPerSecond() const noexcept;
     [[nodiscard]] QColor backgroundColor() const noexcept { return m_backgroundColor; }
     void setBackgroundColor(const QColor& color);
+    [[nodiscard]] int renderStyle() const noexcept
+    {
+        return static_cast<int>(m_renderStyle.load(std::memory_order_relaxed));
+    }
+    void setRenderStyle(int style);
     [[nodiscard]] bool rasterWorkEnabled() const noexcept { return m_rasterWorkEnabled; }
     void setRasterWorkEnabled(bool enabled);
     [[nodiscard]] bool slipPreview() const noexcept { return m_slipPreview; }
@@ -75,6 +83,7 @@ signals:
     void tempoRatioChanged();
     void effectivePixelsPerSecondChanged();
     void backgroundColorChanged();
+    void renderStyleChanged();
     void rasterWorkEnabledChanged();
     void slipPreviewChanged();
 
@@ -112,6 +121,8 @@ private:
     // during its update) from leaking into this item's horizontal scale.
     std::atomic<double> m_tempoRatio{1.0};
     QColor m_backgroundColor{16, 17, 20};
+    std::atomic<std::uint8_t> m_renderStyle{
+        static_cast<std::uint8_t>(waveform_visual::kDefaultRenderStyle)};
     std::optional<waveform::WaveformDemand> m_lastPublishedDemand;
 
     void publishViewportDemand();

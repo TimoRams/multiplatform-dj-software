@@ -960,6 +960,22 @@ void ScrollingWaveformItem::setBackgroundColor(const QColor& color)
     invalidateGeometry();
 }
 
+void ScrollingWaveformItem::setRenderStyle(int style)
+{
+    const auto normalized = static_cast<std::uint8_t>(
+        waveform_visual::normalizeStyle(style));
+    if (m_renderStyle.exchange(normalized, std::memory_order_acq_rel)
+        == normalized) {
+        return;
+    }
+    // Do not clear the rasterizer: keys carry the style/revision, therefore a
+    // switch back can reuse completed tiles.  Only obsolete queued work is
+    // discarded; the visible viewport is requested again with the new key.
+    m_tileRasterizer->cancelPendingTiles();
+    emit renderStyleChanged();
+    invalidateGeometry();
+}
+
 void ScrollingWaveformItem::setRasterWorkEnabled(bool enabled)
 {
     if (m_rasterWorkEnabled == enabled)
@@ -1362,6 +1378,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         };
 
         const auto overviewSnapshot = trackData->getOverviewRgbSnapshot();
+        const auto renderStyle = waveform_visual::normalizeStyle(
+            m_renderStyle.load(std::memory_order_acquire));
         constexpr std::uint32_t fallbackWidth = 2048;
         // The whole-track fallback only ever carries fallbackWidth aggregated
         // samples. At normal deck zoom levels stretching it across the full
@@ -1389,7 +1407,9 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                 fallbackHeight,
                 0,
                 snapshot->totalLineCount,
-                snapshot->totalLineCount
+                snapshot->totalLineCount,
+                static_cast<std::uint8_t>(renderStyle),
+                waveform_visual::revision(renderStyle)
             };
             std::shared_ptr<std::vector<waveform_render::OverviewSample>> samples;
             const auto requestOverview = [&](const auto& key) {
@@ -1509,7 +1529,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                 const auto key = waveform_render::WaveformTileRasterizer::makeKey(
                     *snapshot, tileIndex, tileSpan, rasterScale,
                     imageHeight, dpr, selectedLodLevel,
-                    static_cast<std::uint32_t>(m_backgroundColor.rgba()));
+                    static_cast<std::uint32_t>(m_backgroundColor.rgba()),
+                    renderStyle);
                 const auto requiredViewKey = waveform_render::viewKeyFor(key);
                 if (!scene->viewKey || *scene->viewKey != requiredViewKey) {
                     // A zoom/DPR/background change invalidates every pool

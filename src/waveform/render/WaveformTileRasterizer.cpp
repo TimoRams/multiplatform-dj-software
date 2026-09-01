@@ -136,6 +136,30 @@ void writeAntialiasedVerticalStroke(QImage& image,
     }
 }
 
+void writeVisualStroke(QImage& image, int physicalX, double top, double bottom,
+                       const waveform_visual::WaveformVisual& visual,
+                       float opacityScale = 1.0f)
+{
+    const auto write = [&](const waveform_visual::Rgb8& color,
+                           float opacity, double begin, double end) {
+        if (opacity <= 0.0f || end <= begin)
+            return;
+        const double componentTop = top + (bottom - top) * begin;
+        const double componentBottom = top + (bottom - top) * end;
+        writeAntialiasedVerticalStroke(
+            image, physicalX, componentTop, componentBottom,
+            color[0], color[1], color[2],
+            std::clamp(static_cast<int>(std::lround(
+                std::clamp(opacity * opacityScale, 0.0f, 1.0f) * 255.0f)),
+            0, 255));
+    };
+    write(visual.geometryColor, visual.geometryOpacity, 0.0, 1.0);
+    for (std::uint8_t index = 0; index < visual.componentCount; ++index) {
+        const auto& component = visual.components[index];
+        write(component.color, component.opacity, component.begin, component.end);
+    }
+}
+
 } // namespace
 
 std::size_t RenderTileKeyHash::operator()(const RenderTileKey& key) const noexcept
@@ -150,7 +174,8 @@ std::size_t RenderTileKeyHash::operator()(const RenderTileKey& key) const noexce
     value = hashCombine(value, std::hash<std::uint8_t>{}(key.lodLevel));
     value = hashCombine(value,
                         std::hash<std::uint32_t>{}(key.visualStyleRevision));
-    return hashCombine(value, std::hash<std::uint32_t>{}(key.backgroundRgba));
+    value = hashCombine(value, std::hash<std::uint32_t>{}(key.backgroundRgba));
+    return hashCombine(value, std::hash<std::uint8_t>{}(key.renderStyle));
 }
 
 WaveformTileRasterizer::WaveformTileRasterizer(
@@ -184,7 +209,8 @@ RenderTileKey WaveformTileRasterizer::makeKey(
     int imageHeight,
     double devicePixelRatio,
     std::uint8_t lodLevel,
-    std::uint32_t backgroundRgba) noexcept
+    std::uint32_t backgroundRgba,
+    waveform_visual::WaveformRenderStyle style) noexcept
 {
     const auto rasterSource = renderTileRasterSourceSpan(
         span, physicalPixelsPerLine, snapshot.totalLineCount);
@@ -200,8 +226,9 @@ RenderTileKey WaveformTileRasterizer::makeKey(
         static_cast<std::uint16_t>(std::clamp(
             std::lround(devicePixelRatio * 1000.0), 1L, 65'535L)),
         lodLevel,
-        waveform_visual::kRevision,
-        backgroundRgba
+        waveform_visual::revision(style),
+        backgroundRgba,
+        static_cast<std::uint8_t>(style)
     };
 }
 
@@ -257,7 +284,12 @@ std::shared_ptr<const RasterizedOverview>
 WaveformTileRasterizer::findOverview(const OverviewRenderKey& key) const
 {
     std::lock_guard lock(m_mutex);
-    return m_overview && m_overview->key == key ? m_overview : nullptr;
+    const auto found = std::find_if(m_overviewCache.cbegin(),
+                                    m_overviewCache.cend(),
+                                    [&key](const auto& overview) {
+                                        return overview && overview->key == key;
+                                    });
+    return found == m_overviewCache.cend() ? nullptr : *found;
 }
 
 void WaveformTileRasterizer::requestOverview(OverviewRenderRequest request)
@@ -268,7 +300,10 @@ void WaveformTileRasterizer::requestOverview(OverviewRenderRequest request)
         std::lock_guard lock(m_mutex);
         if (!m_workEnabled.load(std::memory_order_relaxed)
             || request.key.trackGeneration != m_activeTrackGeneration
-            || (m_overview && m_overview->key == request.key)
+            || std::any_of(m_overviewCache.cbegin(), m_overviewCache.cend(),
+                           [&request](const auto& overview) {
+                               return overview && overview->key == request.key;
+                           })
             || (m_pendingOverview && m_pendingOverview->key == request.key)
             || (m_overviewInFlightKey
                 && *m_overviewInFlightKey == request.key)) {
@@ -303,6 +338,7 @@ void WaveformTileRasterizer::cancelPendingTiles()
 {
     std::lock_guard lock(m_mutex);
     m_pending.clear();
+    m_pendingOverview.reset();
     m_pendingKeys.clear();
 }
 
@@ -320,7 +356,7 @@ void WaveformTileRasterizer::setActiveTrackGeneration(std::uint64_t generation)
     m_cache.clear();
     m_lru.clear();
     m_cacheBytes = 0;
-    m_overview.reset();
+    m_overviewCache.clear();
 }
 
 void WaveformTileRasterizer::clear()
@@ -335,7 +371,7 @@ void WaveformTileRasterizer::clear()
     m_lru.clear();
     m_cacheBytes = 0;
     m_activeTrackGeneration = 0;
-    m_overview.reset();
+    m_overviewCache.clear();
 }
 
 WaveformTileRasterizer::Stats WaveformTileRasterizer::stats() const
@@ -457,7 +493,15 @@ void WaveformTileRasterizer::run(std::stop_token stopToken)
                     && m_workEnabled.load(std::memory_order_relaxed)
                     && workGeneration
                         == m_workGeneration.load(std::memory_order_relaxed)) {
-                    m_overview = std::move(overview);
+                    m_overviewCache.erase(std::remove_if(
+                        m_overviewCache.begin(), m_overviewCache.end(),
+                        [&overview](const auto& cached) {
+                            return cached && cached->key == overview->key;
+                        }), m_overviewCache.end());
+                    m_overviewCache.insert(m_overviewCache.begin(),
+                                           std::move(overview));
+                    if (m_overviewCache.size() > kMaximumOverviewCacheEntries)
+                        m_overviewCache.pop_back();
                     accepted = true;
                 }
             }
@@ -555,9 +599,10 @@ WaveformTileRasterizer::rasterizeOverview(const OverviewRenderRequest& request)
         if (energy <= 0.001f)
             continue;
         const float inverseWeight = 1.0f / colorWeight;
-        const auto color = waveform_visual::color({
-            bass * inverseWeight, mid * inverseWeight,
-            treble * inverseWeight, energy});
+        const auto visual = waveform_visual::map(
+            waveform_visual::normalizeStyle(request.key.renderStyle),
+            {bass * inverseWeight, mid * inverseWeight,
+             treble * inverseWeight, energy});
         const double amplitude = waveform_visual::logarithmicAmplitude(energy);
         double top = centre - amplitude * halfHeight;
         double bottom = centre + amplitude * halfHeight;
@@ -566,9 +611,8 @@ WaveformTileRasterizer::rasterizeOverview(const OverviewRenderRequest& request)
             top = middle - 0.5;
             bottom = middle + 0.5;
         }
-        writeAntialiasedVerticalStroke(
-            result->image, x, top, bottom,
-            color[0], color[1], color[2], 155);
+        writeVisualStroke(result->image, x, top, bottom, visual,
+                          155.0f / 248.0f);
     }
     return result;
 }
@@ -712,9 +756,13 @@ WaveformTileRasterizer::rasterize(const RenderTileRequest& request)
             bottom = middle + 0.5;
         }
 
-        writeAntialiasedVerticalStroke(
-            result->image, imageX, top, bottom,
-            column.red, column.green, column.blue, 248);
+        const auto visual = waveform_visual::map(
+            waveform_visual::normalizeStyle(request.key.renderStyle), {
+                static_cast<float>(column.bass) / 255.0f,
+                static_cast<float>(column.mid) / 255.0f,
+                static_cast<float>(column.treble) / 255.0f,
+                static_cast<float>(column.rms) / 255.0f});
+        writeVisualStroke(result->image, imageX, top, bottom, visual);
         if (coreColumn)
             ++result->renderedColumns;
     }

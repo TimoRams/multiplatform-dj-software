@@ -24,6 +24,16 @@ struct SourceLineRange final {
 struct WaveformColumn final {
     std::int16_t minimum = 0;
     std::int16_t maximum = 0;
+    // Neutral, magnitude-weighted values shared by all desktop render styles.
+    // These remain at display precision only; canonical audio analysis lives
+    // in WaveformLineStore/TrackData.
+    std::uint8_t rms = 0;
+    std::uint8_t bass = 0;
+    std::uint8_t mid = 0;
+    std::uint8_t treble = 0;
+    // Compatibility output for the external PWV5 display encoder.  New
+    // desktop rendering must use the neutral fields above and map a selected
+    // WaveformRenderStyle itself.
     std::uint8_t red = 0;
     std::uint8_t green = 0;
     std::uint8_t blue = 0;
@@ -45,9 +55,9 @@ struct WaveformColumn final {
     std::uint32_t totalLineCount, int index, int columnCount) noexcept;
 
 // THE aggregation rule. Peak-preserving on amplitude (min/max extrema over the
-// range, never averaged, so transients survive) and magnitude-weighted on
-// colour (loud lines dominate the hue, so a column's colour reflects what you
-// actually hear rather than being washed out by neighbouring silence).
+// range, never averaged, so transients survive) and magnitude-weighted on the
+// neutral dynamics/band values (loud lines dominate, so a column reflects what
+// you actually hear rather than being washed out by neighbouring silence).
 //
 // Which physical source the values are read from — canonical lines or a
 // persisted LOD level — is chosen internally. Consumers never select a level

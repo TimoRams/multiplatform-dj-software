@@ -554,6 +554,22 @@ QString SettingsManager::timeStretchBackend() const
                                                    : QStringLiteral("signalsmith");
 }
 
+int SettingsManager::waveformRenderStyle() const
+{
+    // 0 is the compatible spectral RGB default.  Keep this UI preference out
+    // of TrackData/cache identity: it changes only render-cache keys.
+    return std::clamp(readIntSetting(*this, "Waveform/RenderStyle", 0), 0, 1);
+}
+
+void SettingsManager::setWaveformRenderStyle(int style)
+{
+    const int normalized = std::clamp(style, 0, 1);
+    if (waveformRenderStyle() == normalized)
+        return;
+    writeSetting(*this, "Waveform/RenderStyle", normalized);
+    emit waveformRenderStyleChanged();
+}
+
 void SettingsManager::setTimeStretchBackend(const QString& backend)
 {
     const QString normalized = backend.trimmed().compare(QLatin1String("rubberband"), Qt::CaseInsensitive) == 0

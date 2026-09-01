@@ -1,6 +1,7 @@
 #pragma once
 
 #include "WaveformRenderMath.h"
+#include "waveform/WaveformVisualStyle.h"
 
 #include <QImage>
 
@@ -34,6 +35,8 @@ struct RenderTileKey final {
     std::uint8_t lodLevel = 0;
     std::uint32_t visualStyleRevision = 0;
     std::uint32_t backgroundRgba = 0xff101114u;
+    std::uint8_t renderStyle = static_cast<std::uint8_t>(
+        waveform_visual::kDefaultRenderStyle);
 
     bool operator==(const RenderTileKey&) const noexcept = default;
 };
@@ -46,6 +49,8 @@ struct WaveformViewKey final {
     std::uint8_t lodLevel = 0;
     std::uint32_t visualStyleRevision = 0;
     std::uint32_t backgroundRgba = 0xff101114u;
+    std::uint8_t renderStyle = static_cast<std::uint8_t>(
+        waveform_visual::kDefaultRenderStyle);
 
     bool operator==(const WaveformViewKey&) const noexcept = default;
 };
@@ -55,7 +60,7 @@ struct WaveformViewKey final {
 {
     return {key.trackGeneration, key.physicalPixelsPerLineMicros,
             key.imageHeight, key.devicePixelRatioMillis, key.lodLevel,
-            key.visualStyleRevision, key.backgroundRgba};
+            key.visualStyleRevision, key.backgroundRgba, key.renderStyle};
 }
 
 struct RenderTileKeyHash final {
@@ -103,6 +108,10 @@ struct OverviewRenderKey final {
     std::uint32_t sourceBegin = 0;
     std::uint32_t sourceEnd = 0;
     std::uint32_t totalLineCount = 0;
+    std::uint8_t renderStyle = static_cast<std::uint8_t>(
+        waveform_visual::kDefaultRenderStyle);
+    std::uint32_t visualStyleRevision = waveform_visual::revision(
+        waveform_visual::kDefaultRenderStyle);
 
     bool operator==(const OverviewRenderKey&) const noexcept = default;
 };
@@ -125,6 +134,9 @@ public:
     static constexpr std::size_t kMaximumCacheBytes = 48u * 1024u * 1024u;
     static constexpr std::size_t kMaximumCacheEntries = 64;
     static constexpr std::size_t kMaximumPendingRequests = 64;
+    // RGB and 3-band variants of the active overview.  Keeping this bounded
+    // prevents a style switch from multiplying large fallback-image memory.
+    static constexpr std::size_t kMaximumOverviewCacheEntries = 2;
 
     struct Stats final {
         std::uint64_t cacheHits = 0;
@@ -180,7 +192,9 @@ public:
         int imageHeight,
         double devicePixelRatio,
         std::uint8_t lodLevel = 0,
-        std::uint32_t backgroundRgba = 0xff101114u) noexcept;
+        std::uint32_t backgroundRgba = 0xff101114u,
+        waveform_visual::WaveformRenderStyle style
+            = waveform_visual::kDefaultRenderStyle) noexcept;
 
 private:
     struct CacheEntry final {
@@ -211,7 +225,7 @@ private:
     std::list<RenderTileKey> m_lru;
     std::size_t m_cacheBytes = 0;
     std::uint64_t m_activeTrackGeneration = 0;
-    std::shared_ptr<const RasterizedOverview> m_overview;
+    std::vector<std::shared_ptr<const RasterizedOverview>> m_overviewCache;
     std::vector<std::jthread> m_workers;
     std::mutex m_callbackMutex;
     std::atomic<bool> m_workEnabled{true};

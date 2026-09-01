@@ -120,6 +120,42 @@ worst callback time. The isolated worst callback is scheduler-sensitive; the
 average, starvation count, and zero-drop result are comparable to baseline.
 No `AudioPageCache` scheduling or callback path changed in Stage 2-3.
 
+### Runtime waveform render styles (Stage 4)
+
+Stage 4 adds a render-only `SpectralRgb` default and a true `ThreeBand` view.
+Both consume the same immutable neutral geometry/RMS/bass/mid/treble snapshots.
+Changing the saved UI setting creates new visible-tile and fallback-overview
+keys; it does not start an analyzer, touch waveform payload caches, or enter
+the audio callback.  The small per-deck overview cache retains the two active
+style/size variants and the existing LRU tile cache retains old-style tiles,
+so switching back is a cache hit whenever the entries remain resident.
+
+The dedicated `waveform_visual_style` fixture measures one 1024x96 visible
+tile and one 256x80 fallback overview from identical neutral data. Three runs
+on the Stage 2-3 audit host gave these end-to-end worker request medians:
+
+| Render operation | Spectral RGB | Three-band |
+| --- | ---: | ---: |
+| Visible tile | 3,455 us | 6,016 us |
+| Fallback overview | 1,189 us | 1,954 us |
+| Two retained tile images | 787,968 bytes | shared total |
+
+Three-band costs more because it paints three independently transparent lanes
+plus the neutral geometry silhouette. That work remains lazy, viewport-
+prioritised and outside realtime execution. The style test verifies a switch
+back returns the same cached RGB tile and overview object; its source revision
+is identical for both styles.
+
+The normal pipeline benchmark could not complete its cache-reload phase in the
+restricted macOS sandbox because Qt resolved `AppConfigLocation` to an
+unwritable user directory. The analyzer completed, but its cache save was
+refused, so no misleading Stage 4 analysis/cache-size number is recorded.
+The directly exercised cache/playback checks remained healthy: 54.99/25.79/
+35.18 ns page-cache hit/miss/duplicate request operations, 39.24 us cached
+playback blocks, and 1,017.36 us scratch-reader blocks. The five-second
+scratch stress preserved zero dropped requests (244 starvation blocks, within
+the existing stress envelope); no `AudioPageCache` source changed in Stage 4.
+
 The focused `deck_audio_graph` benchmark was run repeatedly because laptop
 frequency scaling and hybrid-core placement cause visible variance. Observed
 ranges on the audit host were:

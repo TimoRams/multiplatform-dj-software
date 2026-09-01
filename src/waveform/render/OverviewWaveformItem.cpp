@@ -8,10 +8,34 @@
 
 namespace {
 
-QColor visualColor(float bass, float mid, float treble, float rms)
+QColor visualColor(const waveform_visual::Rgb8& color, float opacity = 1.0f)
 {
-    const auto color = waveform_visual::color({bass, mid, treble, rms});
-    return QColor(color[0], color[1], color[2]);
+    return QColor(color[0], color[1], color[2], std::clamp(
+        static_cast<int>(std::lround(std::clamp(opacity, 0.0f, 1.0f) * 255.0f)),
+        0, 255));
+}
+
+// Shared visual primitive for the compact and expanded overview.  Its
+// component ranges come from WaveformVisualStyle, the same mapping used by
+// scrolling tiles and their fallback overview texture.
+void paintVisualColumn(QPainter* painter, int x, double top, double bottom,
+                       const waveform_visual::WaveformVisual& visual,
+                       float opacityScale = 1.0f)
+{
+    const auto draw = [&](const waveform_visual::Rgb8& color, float opacity,
+                          float begin, float end) {
+        if (opacity <= 0.0f || end <= begin)
+            return;
+        const double y = top + (bottom - top) * begin;
+        const double h = (bottom - top) * (end - begin);
+        painter->fillRect(QRectF(x, y, 1.0, std::max(1.0, h)),
+                          visualColor(color, opacity * opacityScale));
+    };
+    draw(visual.geometryColor, visual.geometryOpacity, 0.0f, 1.0f);
+    for (std::uint8_t index = 0; index < visual.componentCount; ++index) {
+        const auto& component = visual.components[index];
+        draw(component.color, component.opacity, component.begin, component.end);
+    }
 }
 
 struct OverviewBin {
@@ -87,6 +111,19 @@ void OverviewWaveformItem::setRectified(bool v)
 
     m_rectified = v;
     emit rectifiedChanged();
+    update();
+}
+
+void OverviewWaveformItem::setRenderStyle(int style)
+{
+    const int normalized = static_cast<int>(waveform_visual::normalizeStyle(style));
+    if (m_renderStyle == normalized)
+        return;
+    m_renderStyle = normalized;
+    // This item owns only rendered pixels.  The neutral overview snapshot and
+    // all analysis/cache data remain untouched.
+    m_frameCache = {};
+    emit renderStyleChanged();
     update();
 }
 
@@ -210,9 +247,11 @@ void OverviewWaveformItem::paintCompactOverview(QPainter* painter,
         const float barH = std::clamp(
             waveform_visual::logarithmicAmplitude(energy), 0.018f, 1.0f) * maxBarH;
         const float invWeight = 1.0f / std::max(0.01f, colorWeight);
-        const QColor color = visualColor(weightedBass * invWeight,
-            weightedMid * invWeight, weightedTreble * invWeight, energy);
-        painter->fillRect(QRectF(x, baseline - barH, 1.0, barH), color);
+        const auto visual = waveform_visual::map(
+            waveform_visual::normalizeStyle(m_renderStyle),
+            {weightedBass * invWeight, weightedMid * invWeight,
+             weightedTreble * invWeight, energy});
+        paintVisualColumn(painter, x, baseline - barH, baseline, visual, 0.95f);
     }
 
     // Cue markers
@@ -245,7 +284,7 @@ void OverviewWaveformItem::paintCompactOverviewLines(QPainter* painter,
     if (!snapshot.chunks || snapshot.totalLineCount == 0)
         return;
     m_overviewHeights.resize(w);
-    m_overviewColors.resize(w);
+    m_overviewVisuals.resize(w);
     std::fill(m_overviewHeights.begin(), m_overviewHeights.end(), 0.0f);
 
     const auto lineAt = [&snapshot](std::uint32_t index) -> const WaveformLine* {
@@ -285,12 +324,13 @@ void OverviewWaveformItem::paintCompactOverviewLines(QPainter* painter,
         const float energy = waveform_visual::foldedEnergy(
             meanAmplitude, peakAmplitude);
         m_overviewHeights[x] = waveform_visual::logarithmicAmplitude(energy) * maxBarH;
-        const auto color = waveform_visual::color({
-            static_cast<float>(bass / weight) / 255.0f,
-            static_cast<float>(mid / weight) / 255.0f,
-            static_cast<float>(treble / weight) / 255.0f,
-            static_cast<float>(rms / weight) / 255.0f});
-        m_overviewColors[x] = QColor(color[0], color[1], color[2]);
+        const auto visual = waveform_visual::map(
+            waveform_visual::normalizeStyle(m_renderStyle), {
+                static_cast<float>(bass / weight) / 255.0f,
+                static_cast<float>(mid / weight) / 255.0f,
+                static_cast<float>(treble / weight) / 255.0f,
+                static_cast<float>(rms / weight) / 255.0f});
+        m_overviewVisuals[x] = visual;
     }
 
     const float baseline = static_cast<float>(h - 1);
@@ -299,9 +339,8 @@ void OverviewWaveformItem::paintCompactOverviewLines(QPainter* painter,
     for (int x = 0; x < w; ++x) {
         const float barH = m_overviewHeights[x];
         if (barH <= 0.5f) continue;
-        const auto color = m_overviewColors[x];
-        painter->setPen(QPen(QColor(color.red(), color.green(), color.blue(), 235), 1.0));
-        painter->drawLine(QPointF(x, baseline), QPointF(x, baseline - barH));
+        paintVisualColumn(painter, x, baseline - barH, baseline,
+                          m_overviewVisuals[x], 0.92f);
     }
 }
 
@@ -462,6 +501,22 @@ void OverviewWaveformItem::paint(QPainter* painter)
             rawH[static_cast<size_t>(x)] * 0.82f);
     }
 
+    const auto style = waveform_visual::normalizeStyle(m_renderStyle);
+    if (style == waveform_visual::WaveformRenderStyle::ThreeBand) {
+        for (int x = 0; x < drawWidth; ++x) {
+            const auto& bin = bins[static_cast<size_t>(x)];
+            if (bin.rms <= 0.0001f)
+                continue;
+            const float bodyH = smoothH[static_cast<size_t>(x)] * maxBarH;
+            const auto visual = waveform_visual::map(style,
+                {bin.bass, bin.mid, bin.treble, bin.rms});
+            // The same high/mid/bass lanes as scrolling tiles.  Geometry still
+            // spans the full waveform body; only the independently meaningful
+            // band components are partitioned inside that silhouette.
+            paintVisualColumn(painter, x, baseline - bodyH,
+                              baseline + bodyH, visual, 0.95f);
+        }
+    } else {
     // ── Render column computation ────────────────────────────────────────────────
     std::vector<RenderCol> cols(static_cast<size_t>(drawWidth));
     for (int x = 0; x < drawWidth; ++x) {
@@ -469,8 +524,10 @@ void OverviewWaveformItem::paint(QPainter* painter)
         if (bin.rms <= 0.0001f) continue;
         const float rms   = std::clamp(bin.rms, 0.0f, 1.0f);
         const float bodyH = smoothH[static_cast<size_t>(x)] * maxBarH;
+        const auto visual = waveform_visual::map(style,
+            {bin.bass, bin.mid, bin.treble, rms});
         cols[static_cast<size_t>(x)] = {
-            visualColor(bin.bass, bin.mid, bin.treble, rms),
+            visualColor(visual.components[0].color),
             bodyH,
             bodyH * 0.18f,
             std::max(0.8f, bodyH * 0.22f),
@@ -553,6 +610,8 @@ void OverviewWaveformItem::paint(QPainter* painter)
             painter->drawRect(QRectF(x, baseline - col.bodyH, 1.0, col.tipH + 0.5));
             painter->drawRect(QRectF(x, baseline + col.bodyH - col.tipH, 1.0, col.tipH + 0.5));
         }
+    }
+
     }
 
     const float durationSec = std::max(0.001f, m_engine->getDuration());

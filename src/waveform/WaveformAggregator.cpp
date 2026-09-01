@@ -104,11 +104,18 @@ WaveformColumn aggregateWaveformColumn(
         column.complete = false;
         return column;
     }
+    column.rms = static_cast<std::uint8_t>(rms / weight);
+    column.bass = static_cast<std::uint8_t>(bass / weight);
+    column.mid = static_cast<std::uint8_t>(mid / weight);
+    column.treble = static_cast<std::uint8_t>(treble / weight);
+    // The controller protocol still consumes packed RGB.  Keep its compatible
+    // default interpretation here, but desktop tiles deliberately use the
+    // neutral fields above through waveform_visual::map().
     const auto color = waveform_visual::color({
-        static_cast<float>(bass / weight) / 255.0f,
-        static_cast<float>(mid / weight) / 255.0f,
-        static_cast<float>(treble / weight) / 255.0f,
-        static_cast<float>(rms / weight) / 255.0f});
+        static_cast<float>(column.bass) / 255.0f,
+        static_cast<float>(column.mid) / 255.0f,
+        static_cast<float>(column.treble) / 255.0f,
+        static_cast<float>(column.rms) / 255.0f});
     column.red = color[0];
     column.green = color[1];
     column.blue = color[2];

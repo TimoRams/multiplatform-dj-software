@@ -80,6 +80,8 @@ Item {
                 engine: root.engine
                 pixelsPerPoint: root.waveformZoom
                 backgroundColor: root.backgroundColor
+                renderStyle: (typeof settingsManager !== "undefined" && settingsManager)
+                             ? settingsManager.waveformRenderStyle : 0
                 rasterWorkEnabled: (typeof renderPressurePolicy === "undefined"
                                     || !renderPressurePolicy)
                                    ? true
@@ -110,6 +112,8 @@ Item {
                     engine: root.engine
                     pixelsPerPoint: root.waveformZoom
                     backgroundColor: root.backgroundColor
+                    renderStyle: (typeof settingsManager !== "undefined" && settingsManager)
+                                 ? settingsManager.waveformRenderStyle : 0
                     slipPreview: true
                     opacity: 0.52
                     rasterWorkEnabled: (typeof renderPressurePolicy === "undefined"

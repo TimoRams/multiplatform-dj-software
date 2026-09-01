@@ -88,6 +88,8 @@ Item {
                 anchors.fill: parent
                 engine: root.engine
                 rectified: true
+                renderStyle: (typeof settingsManager !== "undefined" && settingsManager)
+                             ? settingsManager.waveformRenderStyle : 0
                 updateIntervalMs: (typeof renderPressurePolicy !== "undefined"
                                    && renderPressurePolicy)
                     ? renderPressurePolicy.overviewUpdateIntervalMs : 100

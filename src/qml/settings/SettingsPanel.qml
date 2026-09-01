@@ -1674,6 +1674,39 @@ Item {
                             font.pixelSize: 11
                             text: "Optional: when SYNC is on and two decks share the same file, the follower trims transport position toward the master (including keylock latency). Off by default — normal beat/bar sync is unchanged."
                         }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            Text {
+                                text: "Waveform rendering"
+                                color: "#ddd"
+                                font.pixelSize: 12
+                                Layout.fillWidth: true
+                            }
+
+                            ComboBox {
+                                id: waveformRenderStyleCombo
+                                Layout.preferredWidth: 180
+                                model: ["Spectral RGB", "3-Band"]
+                                currentIndex: (typeof settingsManager !== "undefined"
+                                               && settingsManager)
+                                              ? settingsManager.waveformRenderStyle : 0
+                                onActivated: (index) => {
+                                    if (typeof settingsManager !== "undefined" && settingsManager)
+                                        settingsManager.waveformRenderStyle = index
+                                }
+                            }
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            color: "#888"
+                            font.pixelSize: 11
+                            text: "Changes visible waveform tiles and overviews only. Audio analysis, beatgrids and playback caches are not rebuilt."
+                        }
                     }
                 }
             }

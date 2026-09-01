@@ -539,6 +539,17 @@ target_link_libraries(BrockDJ_waveform_render_tile_tests PRIVATE Qt6::Core Qt6::
 target_compile_features(BrockDJ_waveform_render_tile_tests PRIVATE cxx_std_23)
 add_test(NAME waveform_render_tiles COMMAND BrockDJ_waveform_render_tile_tests)
 
+add_executable(BrockDJ_waveform_visual_style_tests
+    tests/waveform/waveform_visual_style_tests.cpp
+    src/waveform/render/WaveformTileRasterizer.cpp
+    src/waveform/WaveformAggregator.cpp
+    src/waveform/WaveformLodPyramid.cpp
+    src/waveform/WaveformLineStore.cpp)
+target_include_directories(BrockDJ_waveform_visual_style_tests PRIVATE src)
+target_link_libraries(BrockDJ_waveform_visual_style_tests PRIVATE Qt6::Core Qt6::Gui)
+target_compile_features(BrockDJ_waveform_visual_style_tests PRIVATE cxx_std_23)
+add_test(NAME waveform_visual_style COMMAND BrockDJ_waveform_visual_style_tests)
+
 add_executable(BrockDJ_smoke_tests
     tests/smoke/smoke_tests.cpp
     tests/smoke/mixer_dsp_smoke.cpp
@@ -1148,6 +1159,7 @@ set(_brockdj_executable_targets
     BrockDJ_qml_component_tests
     BrockDJ_waveform_render_stability_tests
     BrockDJ_waveform_render_tile_tests
+    BrockDJ_waveform_visual_style_tests
     BrockDJ_smoke_tests
     BrockDJ_mixer_dsp_tests
     BrockDJ_deck_audio_graph_tests

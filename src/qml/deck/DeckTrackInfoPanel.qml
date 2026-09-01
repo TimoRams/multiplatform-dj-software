@@ -515,6 +515,8 @@ Item {
                 anchors.fill: parent
                 engine: root.engine
                 rectified: true
+                renderStyle: (typeof settingsManager !== "undefined" && settingsManager)
+                             ? settingsManager.waveformRenderStyle : 0
             }
 
             Rectangle {
