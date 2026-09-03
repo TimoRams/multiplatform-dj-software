@@ -391,6 +391,7 @@ bool LibraryDatabase::requestAnalysisPersistence(const QString& trackId,
     command.statements.push_back({
         QStringLiteral("UPDATE Tracks SET bpm=:bpm,key=CASE WHEN length(trim(:key))>0 THEN :key ELSE key END,"
                        "is_analyzed=1,first_beat_sample=:first,analysis_sample_rate=:rate,analysis_version=:version,"
+                       "analysis_section_versions=:sections,"
                        "bpm_confidence=:bc,beat_confidence=:bec,downbeat_confidence=:dc,grid_confidence=:gc,"
                        "beatgrid_type=:type,beatgrid_user_modified=:modified,"
                        "beatgrid_locked_by_user=CASE WHEN beatgrid_locked_by_user!=0 THEN beatgrid_locked_by_user ELSE :locked END,"
@@ -398,6 +399,7 @@ bool LibraryDatabase::requestAnalysisPersistence(const QString& trackId,
         {{QStringLiteral(":bpm"), result.bpm}, {QStringLiteral(":key"), result.detectedKey},
          {QStringLiteral(":first"), result.firstBeatSample}, {QStringLiteral(":rate"), result.sampleRate},
          {QStringLiteral(":version"), static_cast<int>(result.identity.analysisVersion)},
+         {QStringLiteral(":sections"), result.sections.toStorageString()},
          {QStringLiteral(":bc"), result.confidence.bpmConfidence},
          {QStringLiteral(":bec"), result.confidence.beatConfidence},
          {QStringLiteral(":dc"), result.confidence.downbeatConfidence},
@@ -941,6 +943,13 @@ bool LibraryDatabase::createSchema()
                 "  FOREIGN KEY(track_id) REFERENCES Tracks(id) ON DELETE CASCADE"
                 ")")) {
             qWarning() << "[LibraryDatabase] SavedLoops:" << q.lastError().text();
+        }
+    }
+
+    if (currentVersion < 17) {
+        if (!tableHasColumn(m_db, "Tracks", "analysis_section_versions")
+            && !q.exec("ALTER TABLE Tracks ADD COLUMN analysis_section_versions TEXT DEFAULT ''")) {
+            qWarning() << "[LibraryDatabase] analysis_section_versions:" << q.lastError().text();
         }
     }
 

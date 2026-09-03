@@ -28,6 +28,8 @@ public:
         qint64 firstBeatSample = 0;
         double sampleRate = 44100.0;
         int analysisVersion = 0;
+        analysis::AnalysisSectionVersions sectionVersions;
+        bool hasSectionVersions = false;
         TrackData::ConfidenceInfo confidence;
         TrackData::BeatGridInfo beatGridInfo;
         std::vector<TrackData::BeatMarker> beatGrid;
@@ -284,5 +286,5 @@ private:
     bool m_sessionDirty = false;
     bool m_recoveryWarningNeeded = false;
 
-    static constexpr int kSchemaVersion = 16;
+    static constexpr int kSchemaVersion = 17;
 };

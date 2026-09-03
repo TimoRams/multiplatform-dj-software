@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <numeric>
 
@@ -131,6 +132,28 @@ double foldToDjRange(double bpm, double preferredMin, double preferredMax)
     return bpm;
 }
 
+void appendMetricRatioCandidates(std::vector<TempoCandidate>& raw,
+                                 const TempoCandidate& base,
+                                 const TempoEstimator::Options& options)
+{
+    // These ratios model competing musical pulse interpretations.  They are
+    // deliberately candidates, not a post-hoc fold into a preferred DJ range:
+    // the tracker/fitter below must still earn each one from onset and grid
+    // evidence.  A modest prior avoids a copy of one autocorrelation peak
+    // dominating the list before that evidence is available.
+    constexpr std::array<double, 8> ratios {
+        0.5, 2.0, 2.0 / 3.0, 3.0 / 2.0,
+        3.0 / 4.0, 4.0 / 3.0, 1.0 / 3.0, 3.0,
+    };
+    for (const double ratio : ratios) {
+        const double bpm = base.bpm * ratio;
+        if (bpm < options.minBpm || bpm > options.maxBpm)
+            continue;
+        raw.push_back({bpm, base.score * 0.72,
+                       base.source + QStringLiteral("+metric-ratio")});
+    }
+}
+
 } // namespace
 
 TempoEstimator::TempoEstimator()
@@ -216,6 +239,13 @@ TempoEstimate TempoEstimator::estimate(const AnalysisFeatures& features) const
                            QStringLiteral("ioi")});
         }
     }
+
+    // Keep genuine metrical alternatives explicit.  They are later evaluated
+    // against complete grid coverage, rather than silently folded into a
+    // convenience tempo band.
+    const auto rawEvidence = raw;
+    for (const auto& candidate : rawEvidence)
+        appendMetricRatioCandidates(raw, candidate, m_options);
 
     std::vector<TempoCandidate> merged;
     for (const auto& candidate : raw) {
@@ -740,6 +770,53 @@ BeatGridFitResult BeatGridFitter::fit(const AnalysisFeatures& features,
                                                     + 0.25 * bestMeanEvidence
                                                     + 0.20 * bestCoverage,
                                                     0.0, 1.0));
+    return result;
+}
+
+BeatGridQualityMetrics measureBeatGridQuality(const BeatGridFitResult& grid,
+                                              double referenceBpm,
+                                              double referenceFirstBeatSec,
+                                              double durationSec)
+{
+    BeatGridQualityMetrics result;
+    result.confidence = grid.confidence;
+    if (grid.bpm <= 0.0 || referenceBpm <= 0.0 || durationSec <= 0.0)
+        return result;
+
+    result.bpmError = std::abs(grid.bpm - referenceBpm);
+    const double referencePeriod = 60.0 / referenceBpm;
+    const double measuredPeriod = 60.0 / grid.bpm;
+    const double actualFirst = grid.beats.empty()
+        ? std::max(0.0, grid.selectedOffsetSec) : grid.beats.front().positionSec;
+    result.phaseErrorSec = std::abs(actualFirst - referenceFirstBeatSec);
+
+    std::vector<double> errors;
+    for (double expected = referenceFirstBeatSec;
+         expected <= durationSec + 1.0e-9; expected += referencePeriod) {
+        const auto it = std::lower_bound(
+            grid.beats.begin(), grid.beats.end(), expected,
+            [](const BeatMarker& beat, double time) { return beat.positionSec < time; });
+        double error = std::numeric_limits<double>::infinity();
+        if (it != grid.beats.end())
+            error = std::abs(it->positionSec - expected);
+        if (it != grid.beats.begin())
+            error = std::min(error, std::abs(std::prev(it)->positionSec - expected));
+        if (std::isfinite(error))
+            errors.push_back(error);
+    }
+    if (!errors.empty()) {
+        result.meanBeatErrorSec = std::accumulate(errors.begin(), errors.end(), 0.0)
+            / static_cast<double>(errors.size());
+        std::sort(errors.begin(), errors.end());
+        const auto p95 = static_cast<size_t>(std::floor(
+            static_cast<double>(errors.size() - 1) * 0.95));
+        result.percentile95BeatErrorSec = errors[p95];
+    }
+    const double expectedEnd = referenceFirstBeatSec + std::floor(
+        std::max(0.0, durationSec - referenceFirstBeatSec) / referencePeriod) * referencePeriod;
+    const double actualEnd = actualFirst + std::floor(
+        std::max(0.0, durationSec - actualFirst) / measuredPeriod) * measuredPeriod;
+    result.maximumEndOfTrackDriftSec = std::abs(actualEnd - expectedEnd);
     return result;
 }
 

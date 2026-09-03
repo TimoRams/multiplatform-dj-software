@@ -42,6 +42,7 @@ public:
         AnalysisResult out;
         out.identity = std::move(identity);
         out.analysisVersion = out.identity.analysisVersion;
+        out.sections = out.identity.sections;
         out.totalExpected = m_totalExpected;
         out.globalMaxPeak = m_globalMaxPeak;
         out.waveform = std::make_shared<const QVector<TrackData::WaveformBin>>(std::move(m_data));

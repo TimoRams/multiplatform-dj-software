@@ -20,7 +20,7 @@
 namespace {
 
 constexpr quint32 kMagic = 0x52574631; // RWF1
-constexpr qint32 kVersion = 7;
+constexpr qint32 kVersion = 8;
 constexpr quint32 kRenderMagic = 0x52574c31; // RWL1
 constexpr qint32 kRenderVersion = WaveformCache::kRenderCacheVersion;
 constexpr quint32 kLodMagic = 0x4c4f4432; // LOD2
@@ -43,7 +43,12 @@ constexpr auto kDataStreamVersion = QDataStream::Qt_6_0;
 
 QString cacheBaseDir()
 {
-    QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    // Honouring XDG_CONFIG_HOME before Qt's platform-native location keeps
+    // cache fixtures contained and makes headless/sandboxed load paths
+    // deterministic. Normal installs still use AppConfigLocation.
+    QString configDir = qEnvironmentVariable("XDG_CONFIG_HOME");
+    if (configDir.isEmpty())
+        configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
     if (configDir.isEmpty())
         configDir = QDir::homePath() + "/.config";
 
@@ -641,6 +646,9 @@ bool WaveformCache::loadForFile(const QString& filePath, int pointsPerSecond, Pa
     qint32 spectralPps = 0;
     qint32 totalExpected = 0;
     float globalMaxPeak = 0.001f;
+    qint32 geometryVersion = 0;
+    qint32 spectralVersion = 0;
+    qint32 overviewVersion = 0;
     qint32 wfCount = 0;
     qint32 rgbCount = 0;
     qint32 overviewCount = 0;
@@ -653,15 +661,22 @@ bool WaveformCache::loadForFile(const QString& filePath, int pointsPerSecond, Pa
     };
 
     in >> magic >> version >> pps >> spectralPps >> totalExpected
-       >> globalMaxPeak >> wfCount >> rgbCount >> overviewCount >> peakCount;
+       >> globalMaxPeak >> geometryVersion >> spectralVersion >> overviewVersion
+       >> wfCount >> rgbCount >> overviewCount >> peakCount;
     if (in.status() != QDataStream::Ok)
         return discard("payload header is truncated");
     if (magic != kMagic)
         return discard("payload magic does not match");
     if (version != kVersion)
         return discard("payload was written by another cache version");
+    const auto expectedSections = analysis::AnalysisSectionVersions::current();
     if (pps != pointsPerSecond || spectralPps <= 0 || spectralPps > pps)
         return discard("payload resolution does not match the request");
+    if (geometryVersion != static_cast<qint32>(expectedSections.geometry)
+        || spectralVersion != static_cast<qint32>(expectedSections.spectralWaveform)
+        || overviewVersion != static_cast<qint32>(expectedSections.overview)) {
+        return discard("one or more canonical cache sections are stale");
+    }
     if (totalExpected <= 0 || totalExpected > kMaxCachedBins
         || wfCount != totalExpected || rgbCount <= 0
         || rgbCount != static_cast<qint32>(
@@ -678,6 +693,7 @@ bool WaveformCache::loadForFile(const QString& filePath, int pointsPerSecond, Pa
     payload.spectralPointsPerSecond = spectralPps;
     payload.totalExpected = totalExpected;
     payload.globalMaxPeak = globalMaxPeak;
+    payload.sections = expectedSections;
     payload.waveform.reserve(wfCount);
     payload.spectral.reserve(rgbCount);
     payload.overview.reserve(overviewCount);
@@ -767,6 +783,12 @@ bool WaveformCache::saveForFile(const QString& filePath, const Payload& payload)
         || payload.globalMaxPeak <= 0.0f) {
         return false;
     }
+    const auto expectedSections = analysis::AnalysisSectionVersions::current();
+    if (payload.sections.geometry != expectedSections.geometry
+        || payload.sections.spectralWaveform != expectedSections.spectralWaveform
+        || payload.sections.overview != expectedSections.overview) {
+        return false;
+    }
 
     const qint64 fullPayloadMaximumBins = kFullPayloadMaximumDurationSeconds
         * static_cast<qint64>(payload.pointsPerSecond);
@@ -815,6 +837,9 @@ bool WaveformCache::saveForFile(const QString& filePath, const Payload& payload)
             payload.spectralPointsPerSecond, payload.pointsPerSecond))
         << static_cast<qint32>(payload.totalExpected)
         << payload.globalMaxPeak
+        << static_cast<qint32>(payload.sections.geometry)
+        << static_cast<qint32>(payload.sections.spectralWaveform)
+        << static_cast<qint32>(payload.sections.overview)
         << static_cast<qint32>(payload.waveform.size())
         << static_cast<qint32>(payload.spectral.size())
         << static_cast<qint32>(payload.overview.size())

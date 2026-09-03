@@ -52,14 +52,46 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
 
         const auto tempo = tempoEstimator.estimate(features);
 
-        analysis::BeatTrackingResult tracked;
-        analysis::BeatGridFitResult fitted;
-        double bestCombinedGridScore = -1.0;
-        double selectedTempoPrior = tempo.candidates.empty() ? 1.0 : 0.0;
-        // Half/double-time alternatives are often only the third or fourth
-        // raw tempo candidate. Evaluate enough candidates against actual grid
-        // coverage instead of accepting whichever autocorrelation peak won by
-        // a tiny margin.
+        struct CandidateGrid final {
+            double bpm = 0.0;
+            double tempoPrior = 0.0;
+            double combined = -1.0;
+            analysis::BeatTrackingResult tracked;
+            analysis::BeatGridFitResult fitted;
+        };
+        const auto evaluateCandidate = [&](double candidateBpm, double tempoPrior) {
+            CandidateGrid candidate;
+            candidate.bpm = candidateBpm;
+            candidate.tempoPrior = tempoPrior;
+            candidate.tracked = beatTracker.track(features, candidateBpm);
+            double refinedBpm = candidateBpm;
+            if (candidate.tracked.beats.size() >= 8) {
+                const double span = candidate.tracked.beats.back().positionSec
+                    - candidate.tracked.beats.front().positionSec;
+                const double observedBpm = span > 0.0
+                    ? (static_cast<double>(candidate.tracked.beats.size() - 1) * 60.0) / span
+                    : 0.0;
+                // Regression only corrects feature-hop quantisation.  It may
+                // not fold a metrical ratio into another pulse interpretation.
+                if (observedBpm > 0.0
+                    && std::abs(observedBpm - candidateBpm) / candidateBpm < 0.08)
+                    refinedBpm = observedBpm;
+            }
+            candidate.fitted = gridFitter.fit(features, candidate.tracked.beats, refinedBpm);
+            candidate.combined = 0.68 * candidate.fitted.confidence
+                               + 0.12 * candidate.fitted.phaseScore
+                               + 0.12 * candidate.tracked.confidence
+                               + 0.08 * candidate.tempoPrior;
+            return candidate;
+        };
+
+        CandidateGrid selected;
+        // Metric alternatives now enter TempoEstimator explicitly.  Grid
+        // verification remains the deciding signal, which prevents a preferred
+        // BPM range from silently rewriting half, double or triplet pulse.
+        // Keep the bounded six-candidate budget from the previous pipeline:
+        // ratio alternatives compete for those slots, but cannot turn a deck
+        // analysis into an unbounded background DSP job.
         const int candidateCount = std::max(1, std::min<int>(6, tempo.candidates.size()));
         for (int candidateIndex = 0; candidateIndex < candidateCount; ++candidateIndex) {
             m_trackData->reportAnalysisProgress(
@@ -68,38 +100,34 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
             const double candidateBpm = tempo.candidates.empty()
                 ? tempo.bpm
                 : tempo.candidates[static_cast<size_t>(candidateIndex)].bpm;
-            auto candidateTracked = beatTracker.track(features, candidateBpm);
-            double refinedBpm = candidateBpm;
-            if (candidateTracked.beats.size() >= 8) {
-                const double span = candidateTracked.beats.back().positionSec
-                    - candidateTracked.beats.front().positionSec;
-                const double observedBpm = span > 0.0
-                    ? (static_cast<double>(candidateTracked.beats.size() - 1) * 60.0) / span
-                    : 0.0;
-                // The tracker regression removes hop quantisation. Keep the
-                // original candidate if the observed period describes another
-                // metrical level (half/double tempo) instead.
-                if (observedBpm > 0.0
-                    && std::abs(observedBpm - candidateBpm) / candidateBpm < 0.08)
-                    refinedBpm = observedBpm;
-            }
-            auto candidateFit = gridFitter.fit(features, candidateTracked.beats, refinedBpm);
-
             const double tempoPrior = tempo.candidates.empty()
                 ? 1.0
                 : std::clamp(tempo.candidates[static_cast<size_t>(candidateIndex)].score
                              / std::max(0.001, tempo.candidates.front().score), 0.0, 1.0);
-            const double combined = 0.68 * candidateFit.confidence
-                                  + 0.12 * candidateFit.phaseScore
-                                  + 0.12 * candidateTracked.confidence
-                                  + 0.08 * tempoPrior;
-            if (combined > bestCombinedGridScore) {
-                bestCombinedGridScore = combined;
-                selectedTempoPrior = tempoPrior;
-                tracked = std::move(candidateTracked);
-                fitted = std::move(candidateFit);
+            auto candidate = evaluateCandidate(candidateBpm, tempoPrior);
+            if (candidate.combined > selected.combined)
+                selected = std::move(candidate);
+        }
+
+        // A detected 127.94 BPM can create visible multi-minute drift against
+        // an intentional 128.00 master grid.  Verify nearby whole/half BPMs
+        // using exactly the same tracker/fitter evidence; never snap merely
+        // because an attractive integer is close.  The margin is conservative
+        // so noise cannot replace an equally good continuous estimate.
+        if (selected.bpm > 0.0) {
+            const double snapped = std::round(selected.bpm * 2.0) * 0.5;
+            if (std::abs(snapped - selected.bpm) <= 0.18 && snapped > 0.0) {
+                auto verified = evaluateCandidate(snapped, selected.tempoPrior);
+                constexpr double kIntegerVerificationMargin = 0.01;
+                if (verified.combined >= selected.combined + kIntegerVerificationMargin)
+                    selected = std::move(verified);
             }
         }
+
+        auto tracked = std::move(selected.tracked);
+        auto fitted = std::move(selected.fitted);
+        const double bestCombinedGridScore = selected.combined;
+        const double selectedTempoPrior = selected.tempoPrior;
 
         auto downbeat = downbeatDetector.detectAndAnnotate(features, fitted.beats);
         const auto validation = analysis::validateBeatGrid(fitted.beats, fitted.bpm, duration);

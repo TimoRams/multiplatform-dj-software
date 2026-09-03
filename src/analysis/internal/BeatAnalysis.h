@@ -35,6 +35,25 @@ public:
                           double estimatedBpm) const;
 };
 
+// Diagnostics intentionally live next to the fitter rather than in UI code so
+// synthetic and file-backed regression tests measure the same constant-grid
+// contract.  Errors are expressed in seconds and are evaluated over the
+// entire supplied duration, not just around the first beat.
+struct BeatGridQualityMetrics {
+    double bpmError = 0.0;
+    double phaseErrorSec = 0.0;
+    double meanBeatErrorSec = 0.0;
+    double percentile95BeatErrorSec = 0.0;
+    double maximumEndOfTrackDriftSec = 0.0;
+    float confidence = 0.0f;
+};
+
+[[nodiscard]] BeatGridQualityMetrics measureBeatGridQuality(
+    const BeatGridFitResult& grid,
+    double referenceBpm,
+    double referenceFirstBeatSec,
+    double durationSec);
+
 class DownbeatDetector {
 public:
     DownbeatResult detectAndAnnotate(const AnalysisFeatures& features,

@@ -134,9 +134,9 @@ public:
     static constexpr std::size_t kMaximumCacheBytes = 48u * 1024u * 1024u;
     static constexpr std::size_t kMaximumCacheEntries = 64;
     static constexpr std::size_t kMaximumPendingRequests = 64;
-    // RGB and 3-band variants of the active overview.  Keeping this bounded
-    // prevents a style switch from multiplying large fallback-image memory.
-    static constexpr std::size_t kMaximumOverviewCacheEntries = 2;
+    // One variant for each user-selectable style. Keeping this bounded prevents
+    // a style switch from multiplying large fallback-image memory.
+    static constexpr std::size_t kMaximumOverviewCacheEntries = 3;
 
     struct Stats final {
         std::uint64_t cacheHits = 0;

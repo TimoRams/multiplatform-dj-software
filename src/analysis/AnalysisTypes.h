@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <cstdint>
 #include <memory>
@@ -16,7 +17,74 @@ namespace analysis {
 
 // Bumped whenever a change makes previously stored analysis results unusable,
 // which forces every cached track to be analysed again.
-inline constexpr std::uint32_t kCurrentAnalysisVersion = 2;
+// Legacy aggregate version remains for old database rows.  New writes record
+// the independently invalidatable sections below, so a renderer or beat-grid
+// change no longer needs to pretend that waveform/key/phrase are one blob.
+inline constexpr std::uint32_t kCurrentAnalysisVersion = 3;
+
+struct AnalysisSectionVersions final {
+    std::uint32_t geometry = 1;
+    std::uint32_t spectralWaveform = 1;
+    std::uint32_t overview = 1;
+    std::uint32_t beatGrid = 3;
+    std::uint32_t key = 1;
+    std::uint32_t phrase = 1;
+    std::uint32_t renderArtifacts = 1;
+
+    [[nodiscard]] static constexpr AnalysisSectionVersions current() noexcept
+    { return {1, 1, 1, 3, 1, 1, 1}; }
+
+    [[nodiscard]] constexpr bool waveformCurrent() const noexcept
+    {
+        const auto expected = current();
+        return geometry == expected.geometry
+            && spectralWaveform == expected.spectralWaveform
+            && overview == expected.overview;
+    }
+    [[nodiscard]] constexpr bool beatGridCurrent() const noexcept
+    { return beatGrid == current().beatGrid; }
+    [[nodiscard]] constexpr bool keyCurrent() const noexcept
+    { return key == current().key; }
+    [[nodiscard]] constexpr bool phraseCurrent() const noexcept
+    { return phrase == current().phrase; }
+    [[nodiscard]] constexpr bool renderCurrent() const noexcept
+    { return renderArtifacts == current().renderArtifacts; }
+
+    [[nodiscard]] QString toStorageString() const
+    {
+        return QStringLiteral("g=%1;s=%2;o=%3;b=%4;k=%5;p=%6;r=%7")
+            .arg(geometry).arg(spectralWaveform).arg(overview).arg(beatGrid)
+            .arg(key).arg(phrase).arg(renderArtifacts);
+    }
+    [[nodiscard]] static AnalysisSectionVersions fromStorageString(const QString& value)
+    {
+        AnalysisSectionVersions result{};
+        // Section metadata is all-or-nothing.  Accepting a truncated string
+        // while defaulting its missing fields to current would create exactly
+        // the mixed cache state this format is meant to prevent.
+        std::uint8_t mask = 0;
+        for (const auto& field : value.split(';', Qt::SkipEmptyParts)) {
+            const auto pair = field.split('=');
+            if (pair.size() != 2) continue;
+            bool valid = false;
+            const auto number = pair[1].toUInt(&valid);
+            if (!valid || number == 0) continue;
+            if (pair[0] == QLatin1String("g")) { result.geometry = number; mask |= 1U << 0; }
+            else if (pair[0] == QLatin1String("s")) { result.spectralWaveform = number; mask |= 1U << 1; }
+            else if (pair[0] == QLatin1String("o")) { result.overview = number; mask |= 1U << 2; }
+            else if (pair[0] == QLatin1String("b")) { result.beatGrid = number; mask |= 1U << 3; }
+            else if (pair[0] == QLatin1String("k")) { result.key = number; mask |= 1U << 4; }
+            else if (pair[0] == QLatin1String("p")) { result.phrase = number; mask |= 1U << 5; }
+            else if (pair[0] == QLatin1String("r")) { result.renderArtifacts = number; mask |= 1U << 6; }
+            else continue;
+        }
+        if (mask == 0x7f)
+            return result;
+        // Zero is never valid and identifies a legacy row without section
+        // metadata; it must pass the aggregate-version compatibility path.
+        return {0, 0, 0, 0, 0, 0, 0};
+    }
+};
 
 struct AnalysisIdentity {
     QString canonicalFilePath;
@@ -24,6 +92,7 @@ struct AnalysisIdentity {
     std::uint64_t fileSize = 0;
     std::int64_t fileModifiedMs = 0;
     std::uint32_t analysisVersion = kCurrentAnalysisVersion;
+    AnalysisSectionVersions sections = AnalysisSectionVersions::current();
     std::uint64_t requestGeneration = 0;
 
     [[nodiscard]] bool matches(const AnalysisIdentity& other) const noexcept
@@ -33,6 +102,13 @@ struct AnalysisIdentity {
             && fileSize == other.fileSize
             && fileModifiedMs == other.fileModifiedMs
             && analysisVersion == other.analysisVersion
+            && sections.geometry == other.sections.geometry
+            && sections.spectralWaveform == other.sections.spectralWaveform
+            && sections.overview == other.sections.overview
+            && sections.beatGrid == other.sections.beatGrid
+            && sections.key == other.sections.key
+            && sections.phrase == other.sections.phrase
+            && sections.renderArtifacts == other.sections.renderArtifacts
             && requestGeneration == other.requestGeneration;
     }
 };
@@ -106,6 +182,7 @@ struct BeatGridFitResult {
 struct AnalysisResult {
     AnalysisIdentity identity;
     int analysisVersion = 0;
+    AnalysisSectionVersions sections = AnalysisSectionVersions::current();
     bool complete = false;
     bool validated = false;
     QString error;

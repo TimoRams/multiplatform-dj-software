@@ -558,12 +558,12 @@ int SettingsManager::waveformRenderStyle() const
 {
     // 0 is the compatible spectral RGB default.  Keep this UI preference out
     // of TrackData/cache identity: it changes only render-cache keys.
-    return std::clamp(readIntSetting(*this, "Waveform/RenderStyle", 0), 0, 1);
+    return std::clamp(readIntSetting(*this, "Waveform/RenderStyle", 0), 0, 2);
 }
 
 void SettingsManager::setWaveformRenderStyle(int style)
 {
-    const int normalized = std::clamp(style, 0, 1);
+    const int normalized = std::clamp(style, 0, 2);
     if (waveformRenderStyle() == normalized)
         return;
     writeSetting(*this, "Waveform/RenderStyle", normalized);

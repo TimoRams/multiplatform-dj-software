@@ -11,12 +11,13 @@ namespace waveform_visual {
 // cache keep neutral geometry/RMS/bass/mid/treble values and never need to be
 // revisited when the user changes this setting.
 enum class WaveformRenderStyle : std::uint8_t {
-    SpectralRgb = 0,
-    ThreeBand = 1,
+    Rgb = 0,
+    EqColor = 1,
+    ThreeBand = 2,
 };
 
 inline constexpr WaveformRenderStyle kDefaultRenderStyle
-    = WaveformRenderStyle::SpectralRgb;
+    = WaveformRenderStyle::Rgb;
 
 // Bump this when the visual interpretation for an existing style changes.
 // The style value is deliberately part of the revision, so a cached RGB tile
@@ -25,8 +26,14 @@ inline constexpr std::uint32_t kStyleAlgorithmRevision = 2;
 
 [[nodiscard]] constexpr WaveformRenderStyle normalizeStyle(int value) noexcept
 {
-    return value == static_cast<int>(WaveformRenderStyle::ThreeBand)
-        ? WaveformRenderStyle::ThreeBand : kDefaultRenderStyle;
+    switch (value) {
+    case static_cast<int>(WaveformRenderStyle::EqColor):
+        return WaveformRenderStyle::EqColor;
+    case static_cast<int>(WaveformRenderStyle::ThreeBand):
+        return WaveformRenderStyle::ThreeBand;
+    default:
+        return kDefaultRenderStyle;
+    }
 }
 
 [[nodiscard]] constexpr std::uint32_t revision(
@@ -94,10 +101,42 @@ inline Rgb8 color(const BandEnergy& energy) noexcept
     const float treble = std::clamp(energy.treble, 0.0f, 1.0f);
     const float rms = std::clamp(energy.rms, 0.0f, 1.0f);
 
-    if (style == WaveformRenderStyle::SpectralRgb) {
+    if (style == WaveformRenderStyle::Rgb) {
         WaveformVisual visual;
         visual.geometryColor = color({bass, mid, treble, rms});
         visual.geometryOpacity = 0.0f;
+        visual.components[0] = {visual.geometryColor, 0.0f, 1.0f,
+                                248.0f / 255.0f};
+        visual.componentCount = 1;
+        return visual;
+    }
+
+    if (style == WaveformRenderStyle::EqColor) {
+        // A DJ-EQ-like categorical presentation.  It deliberately sharpens
+        // the *relative* contribution of the shared-scale measurements, but
+        // never boosts an individual band against its track-level scale.
+        const float wBass = std::pow(bass, 1.35f);
+        const float wMid = std::pow(mid, 1.25f);
+        const float wTreble = std::pow(treble, 1.15f);
+        const float sum = wBass + wMid + wTreble;
+        WaveformVisual visual;
+        if (sum <= 1.0e-7f) {
+            visual.geometryColor = {150, 170, 190};
+        } else {
+            const float brightness = 0.56f + 0.44f
+                * std::pow(rms, 0.35f);
+            const auto component = [wBass, wMid, wTreble, sum, brightness](
+                float low, float middle, float high) {
+                return static_cast<std::uint8_t>(std::lround(std::clamp(
+                    ((wBass * low + wMid * middle + wTreble * high) / sum)
+                        * brightness, 0.0f, 255.0f)));
+            };
+            // Low is warm red, the mid band intentionally leans yellow-green,
+            // and high stays distinctly cool blue.
+            visual.geometryColor = {component(255.0f, 210.0f, 55.0f),
+                                    component(54.0f, 238.0f, 125.0f),
+                                    component(32.0f, 62.0f, 255.0f)};
+        }
         visual.components[0] = {visual.geometryColor, 0.0f, 1.0f,
                                 248.0f / 255.0f};
         visual.componentCount = 1;

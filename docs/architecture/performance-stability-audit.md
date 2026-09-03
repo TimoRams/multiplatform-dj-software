@@ -122,23 +122,59 @@ No `AudioPageCache` scheduling or callback path changed in Stage 2-3.
 
 ### Runtime waveform render styles (Stage 4)
 
-Stage 4 adds a render-only `SpectralRgb` default and a true `ThreeBand` view.
+Stage 4 adds a render-only `Rgb` default, `EqColor`, and a true `ThreeBand` view.
 Both consume the same immutable neutral geometry/RMS/bass/mid/treble snapshots.
 Changing the saved UI setting creates new visible-tile and fallback-overview
 keys; it does not start an analyzer, touch waveform payload caches, or enter
-the audio callback.  The small per-deck overview cache retains the two active
+the audio callback.  The small per-deck overview cache retains the three active
 style/size variants and the existing LRU tile cache retains old-style tiles,
 so switching back is a cache hit whenever the entries remain resident.
 
 The dedicated `waveform_visual_style` fixture measures one 1024x96 visible
-tile and one 256x80 fallback overview from identical neutral data. Three runs
-on the Stage 2-3 audit host gave these end-to-end worker request medians:
+tile and one 256x80 fallback overview from identical neutral data. One
+representative run on the development host gave these end-to-end worker times:
 
-| Render operation | Spectral RGB | Three-band |
-| --- | ---: | ---: |
-| Visible tile | 3,455 us | 6,016 us |
-| Fallback overview | 1,189 us | 1,954 us |
-| Two retained tile images | 787,968 bytes | shared total |
+| Render operation | RGB | EQ Color | Three-band |
+| --- | ---: | ---: | ---: |
+| Visible tile | 4,308 us | 3,171 us | 6,461 us |
+| Fallback overview | 1,729 us | 947 us | 1,955 us |
+
+### Sectioned analysis cache and beat-grid verification (Stages 5-6)
+
+The cache now has an explicit section-version record. Geometry, spectral
+waveform and overview versions are validated in the waveform payload; the
+render-line cache keeps its own version. Beatgrid, key, phrase and render
+artifact versions are persisted with the database analysis record. A legacy
+row without the complete record remains safely behind the aggregate analysis
+version gate. This permits a future beatgrid-version bump to retain current
+key/phrase data and keeps render-only changes outside audio analysis.
+
+Beat analysis retains the existing estimator/tracker/fitter chain. It now
+generates explicit metric-ratio alternatives and verifies a nearby whole/half
+BPM only when the same long-term grid score improves by a conservative margin.
+The fitter exposes BPM error, phase error, mean/p95 beat error and end-of-track
+drift diagnostics for deterministic fixtures. No zero-phase filter was added:
+there is no measured fixture improvement yet, and it must never enter the
+realtime path.
+
+One post-change 30 s run measured 1,929.90 ms analysis, 16.51 ms cache reload,
+1,092,056 bytes payload (+12-byte section header), 354,918 bytes render cache,
+51,859,456 bytes peak RSS and 0/0 Deck-A misses/starvation. The analysis value
+is within the host-run variance of the previous 1.86–1.92 s samples; it is kept
+as an observation rather than an optimisation claim.
+
+### AudioPageCache scheduling decision (Stage 8 baseline)
+
+The existing bounded single decoder worker was measured, not replaced. Normal
+playback still recorded 0/0 Deck-A misses/starvation. On the intentional
+five-second four-page wide-scratch pressure fixture it recorded 255 starvation
+blocks, zero dropped requests, zero callback overruns, 358.65 us average
+callback time and 769.20 us worst callback time. Page-cache operations measured
+57.15/25.99/36.29 ns for hit/miss/duplicate request. This is not evidence for a
+worker pool: the slow-media, simultaneous multi-deck fixture required to prove
+a net benefit is not yet available, so the lock-free callback and one-active-
+reader guarantees remain unchanged.
+| Three retained tile images | 1,181,952 bytes | shared total | shared total |
 
 Three-band costs more because it paints three independently transparent lanes
 plus the neutral geometry silhouette. That work remains lazy, viewport-

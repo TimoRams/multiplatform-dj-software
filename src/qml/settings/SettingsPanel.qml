@@ -1689,7 +1689,7 @@ Item {
                             ComboBox {
                                 id: waveformRenderStyleCombo
                                 Layout.preferredWidth: 180
-                                model: ["Spectral RGB", "3-Band"]
+                                model: ["RGB", "EQ Color", "3-Band"]
                                 currentIndex: (typeof settingsManager !== "undefined"
                                                && settingsManager)
                                               ? settingsManager.waveformRenderStyle : 0

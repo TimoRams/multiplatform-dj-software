@@ -74,6 +74,13 @@ bool tempoAndMetricalLevelAreStable()
         const auto features = pulseTrain(expected);
         const auto estimate = estimator.estimate(features);
         ok &= require(!estimate.candidates.empty(), "tempo candidates are produced");
+        const bool hasMetricAlternative = std::any_of(
+            estimate.candidates.cbegin(), estimate.candidates.cend(),
+            [](const analysis::TempoCandidate& candidate) {
+                return candidate.source.contains(QStringLiteral("metric-ratio"));
+            });
+        ok &= require(hasMetricAlternative,
+                      "metric ratio candidates remain explicit for grid verification");
 
         double selectedBpm = 0.0;
         double selectedScore = -1.0;
@@ -159,6 +166,15 @@ bool constantGridNeverWobbles()
     ok &= require(analysis::validateBeatGrid(
                       fitted.beats, fitted.bpm, features.durationSec).ok,
                   "fitted constant grid passes semantic validation");
+    const auto metrics = analysis::measureBeatGridQuality(
+        fitted, 120.0, 0.17, features.durationSec);
+    ok &= require(metrics.bpmError < 0.01,
+                  "quality metrics report negligible BPM error for a stable grid");
+    ok &= require(metrics.phaseErrorSec < 0.03
+                      && metrics.meanBeatErrorSec < 0.03
+                      && metrics.percentile95BeatErrorSec < 0.03
+                      && metrics.maximumEndOfTrackDriftSec < 0.03,
+                  "quality metrics bound phase and end-of-track drift");
     return ok;
 }
 

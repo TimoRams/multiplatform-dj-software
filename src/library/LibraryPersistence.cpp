@@ -213,6 +213,7 @@ void LibraryDatabase::updateAnalysisData(const QString& trackId,
         "  first_beat_sample = CASE WHEN :firstBeatSample >= 0 THEN :firstBeatSample ELSE first_beat_sample END,"
         "  analysis_sample_rate = CASE WHEN :sampleRate > 0 THEN :sampleRate ELSE analysis_sample_rate END,"
         "  analysis_version = :analysisVersion,"
+        "  analysis_section_versions = :sectionVersions,"
         "  bpm_confidence = :bpmConfidence,"
         "  beat_confidence = :beatConfidence,"
         "  downbeat_confidence = :downbeatConfidence,"
@@ -226,6 +227,8 @@ void LibraryDatabase::updateAnalysisData(const QString& trackId,
     q.bindValue(":firstBeatSample", firstBeatSample);
     q.bindValue(":sampleRate", sampleRate);
     q.bindValue(":analysisVersion", analysis::kCurrentAnalysisVersion);
+    q.bindValue(":sectionVersions",
+                analysis::AnalysisSectionVersions::current().toStorageString());
     q.bindValue(":bpmConfidence", confidence.bpmConfidence);
     q.bindValue(":beatConfidence", confidence.beatConfidence);
     q.bindValue(":downbeatConfidence", confidence.downbeatConfidence);
@@ -340,7 +343,8 @@ bool LibraryDatabase::tryGetAnalysisData(const QString& trackId, AnalysisSnapsho
         "       COALESCE(grid_confidence, 0.0), "
         "       COALESCE(beatgrid_type, 'unknown'), "
         "       COALESCE(beatgrid_user_modified, 0), "
-        "       COALESCE(beatgrid_locked_by_user, 0) "
+        "       COALESCE(beatgrid_locked_by_user, 0), "
+        "       COALESCE(analysis_section_versions, '') "
         "FROM Tracks WHERE id = :id LIMIT 1");
     q.bindValue(":id", trackId);
 
@@ -366,6 +370,9 @@ bool LibraryDatabase::tryGetAnalysisData(const QString& trackId, AnalysisSnapsho
     snapshot.beatGridInfo.type = gridTypeFromString(q.value(10).toString());
     snapshot.beatGridInfo.userModified = q.value(11).toInt() != 0;
     snapshot.beatGridInfo.lockedByUser = q.value(12).toInt() != 0;
+    const QString sectionStorage = q.value(13).toString();
+    snapshot.hasSectionVersions = !sectionStorage.isEmpty();
+    snapshot.sectionVersions = analysis::AnalysisSectionVersions::fromStorageString(sectionStorage);
 
     QSqlQuery beatsQuery(m_db);
     beatsQuery.prepare(

@@ -134,6 +134,8 @@ int main(int argc, char** argv)
                       "a valid cache loads back");
         ok &= require(loaded.totalExpected == kBins,
                       "a valid cache round-trips its bin count");
+        ok &= require(loaded.sections.waveformCurrent(),
+                      "a valid cache records current geometry/spectral/overview sections");
         const auto expected = makeValidPayload();
         ok &= require(loaded.waveform.size() == expected.waveform.size()
                          && loaded.spectral.size() == expected.spectral.size()
@@ -163,6 +165,29 @@ int main(int argc, char** argv)
         }
         ok &= require(paths.bothExist(),
                       "a valid cache is not removed by a successful load");
+    }
+
+    // Section versions are explicit: a stale canonical section is rejected
+    // before it can be mixed with current geometry or rendered artifacts.
+    {
+        const QString source = sourceDir.filePath(QStringLiteral("sections.audio"));
+        ok &= require(writeSourceStub(source), "source stub is writable");
+        auto stale = makeValidPayload();
+        ++stale.sections.spectralWaveform;
+        ok &= require(!WaveformCache::saveForFile(source, stale),
+                      "a stale spectral section cannot be written as current cache data");
+        const auto current = analysis::AnalysisSectionVersions::current();
+        const auto restored = analysis::AnalysisSectionVersions::fromStorageString(
+            current.toStorageString());
+        ok &= require(restored.geometry == current.geometry
+                          && restored.spectralWaveform == current.spectralWaveform
+                          && restored.overview == current.overview
+                          && restored.beatGrid == current.beatGrid
+                          && restored.key == current.key
+                          && restored.phrase == current.phrase,
+                      "section versions round-trip independently");
+        ok &= require(!analysis::AnalysisSectionVersions::fromStorageString({}).waveformCurrent(),
+                      "missing section metadata is distinguishable from current data");
     }
 
     // A truncated payload cache is discarded together with its render sibling.

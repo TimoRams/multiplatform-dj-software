@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "TrackData.h"
+#include "analysis/AnalysisTypes.h"
 #include "waveform/WaveformLineBuilder.h"
 #include "waveform/WaveformTypes.h"
 #include "waveform/WaveformDemand.h"
@@ -19,13 +20,17 @@ public:
     // Version of the rendered-line cache this build writes and accepts. Owned
     // here because this class is the only thing that reads or writes those
     // files; a bump invalidates them without touching the analysis results.
-    static constexpr int kRenderCacheVersion = 3;
+    static constexpr int kRenderCacheVersion = 4;
 
     struct Payload {
         int pointsPerSecond = 0;
         int spectralPointsPerSecond = TrackData::SPECTRAL_POINTS_PER_SECOND;
         int totalExpected = 0;
         float globalMaxPeak = 0.001f;
+        // Canonical audio-analysis sections only. Render artifacts have their
+        // own cache version and never participate in this payload identity.
+        analysis::AnalysisSectionVersions sections =
+            analysis::AnalysisSectionVersions::current();
         QVector<TrackData::WaveformBin> waveform;
         QVector<TrackData::SpectralWaveformPoint> spectral;
         QVector<TrackData::RgbWaveformFrame> overview;

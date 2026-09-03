@@ -861,13 +861,28 @@ bool DjEngine::hydrateLibraryStateForTrack(const QString& rawPath, double durati
     const bool analysisVersionIsCurrent = foundDatabaseAnalysis
         && cachedAnalysis.analysisVersion
             >= static_cast<int>(analysis::kCurrentAnalysisVersion);
+    // Legacy rows retain their aggregate-version gate.  Rows written by the
+    // sectioned cache can hydrate a still-valid key or phrase map even if a
+    // later beat-grid algorithm asks only that section to be refreshed.
+    const bool hasSectionedAnalysis = foundDatabaseAnalysis
+        && cachedAnalysis.hasSectionVersions;
+    const bool beatGridIsCurrent = analysisVersionIsCurrent
+        || (hasSectionedAnalysis && cachedAnalysis.sectionVersions.beatGridCurrent());
+    const bool keyIsCurrent = analysisVersionIsCurrent
+        || (hasSectionedAnalysis && cachedAnalysis.sectionVersions.keyCurrent());
+    const bool phraseIsCurrent = analysisVersionIsCurrent
+        || (hasSectionedAnalysis && cachedAnalysis.sectionVersions.phraseCurrent());
     if (foundDatabaseAnalysis
-        && (analysisVersionIsCurrent || userGridMustBePreserved)) {
-        hasDatabaseAnalysis = true;
-        m_currentSegments = m_libraryDb->trackSegmentsForTrack(m_currentTrackId);
+        && (beatGridIsCurrent || keyIsCurrent || phraseIsCurrent || userGridMustBePreserved)) {
+        // This return value gates whether the analyzer is launched.  Retained
+        // key/phrase data must not accidentally suppress a requested stale
+        // beat-grid refresh.
+        hasDatabaseAnalysis = beatGridIsCurrent || userGridMustBePreserved;
+        m_currentSegments = phraseIsCurrent
+            ? m_libraryDb->trackSegmentsForTrack(m_currentTrackId) : QVariantList();
         emit segmentsChanged();
 
-        if (cachedAnalysis.bpm > 0.0) {
+        if (cachedAnalysis.bpm > 0.0 && (beatGridIsCurrent || userGridMustBePreserved)) {
             m_trackData->setBpmData(cachedAnalysis.bpm,
                                     cachedAnalysis.firstBeatSample,
                                     cachedAnalysis.sampleRate,
@@ -895,7 +910,7 @@ bool DjEngine::hydrateLibraryStateForTrack(const QString& rawPath, double durati
             if (segment.endTime > segment.startTime + 0.01f)
                 cachedSegments.push_back(segment);
         }
-        if (!cachedSegments.empty())
+        if (phraseIsCurrent && !cachedSegments.empty())
             m_trackData->setSegmentsData(std::move(cachedSegments));
     } else {
         if (foundDatabaseAnalysis) {
