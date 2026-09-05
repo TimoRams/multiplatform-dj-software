@@ -664,11 +664,19 @@ Window {
                     anchors.fill: parent
                     color: "transparent"
 
-                    ColumnLayout {
-                        anchors.top: parent.top
-                        anchors.left: parent.left
-                        anchors.right: parent.right
+                    // Overflow must always resolve vertically, never sideways:
+                    // contentWidth is pinned to the viewport width (never the
+                    // layout's own implicit width) and horizontal scrolling is
+                    // disabled outright.
+                    ScrollView {
+                        anchors.fill: parent
                         anchors.margins: 30
+                        clip: true
+                        contentWidth: availableWidth
+                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                    ColumnLayout {
+                        width: parent.width
                         spacing: 20
 
                         Text {
@@ -993,6 +1001,7 @@ Window {
                             Layout.fillWidth: true
                         }
                     }
+                    }
                 }
             }
 
@@ -1005,13 +1014,16 @@ Window {
                         midiSettingsColumn.refreshAll()
                 }
 
+                ScrollView {
+                    anchors.fill: parent
+                    anchors.margins: 30
+                    clip: true
+                    contentWidth: availableWidth
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
                 ColumnLayout {
                     id: midiSettingsColumn
-                    anchors.top: parent.top
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    anchors.margins: 30
+                    width: parent.width
                     spacing: 20
 
                     property var midiDeviceList: []
@@ -1533,6 +1545,7 @@ Window {
 
                     Item { Layout.fillHeight: true }
                 }
+                }
             }
 
             Component {
@@ -1542,11 +1555,15 @@ Window {
 
             // ── Page 2: Library ────────────────────────────────────────────
             Item {
-                ColumnLayout {
-                    anchors.top: parent.top
-                    anchors.left: parent.left
-                    anchors.right: parent.right
+                ScrollView {
+                    anchors.fill: parent
                     anchors.margins: 30
+                    clip: true
+                    contentWidth: availableWidth
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                ColumnLayout {
+                    width: parent.width
                     spacing: 20
 
                     Text {
@@ -1613,15 +1630,20 @@ Window {
                         }
                     }
                 }
+                }
             }
 
             // ── Page 3: Legal ─────────────────────────────────────────────
             Item {
-                ColumnLayout {
-                    anchors.top: parent.top
-                    anchors.left: parent.left
-                    anchors.right: parent.right
+                ScrollView {
+                    anchors.fill: parent
                     anchors.margins: 30
+                    clip: true
+                    contentWidth: availableWidth
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                ColumnLayout {
+                    width: parent.width
                     spacing: 14
 
                     Text {
@@ -1715,6 +1737,7 @@ Window {
                             onClicked: Qt.openUrlExternally("https://www.gnu.org/licenses/agpl-3.0.html")
                         }
                     }
+                }
                 }
             }
         }

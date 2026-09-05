@@ -659,11 +659,20 @@ Item {
                     anchors.fill: parent
                     color: "transparent"
 
-                    ColumnLayout {
-                        anchors.top: parent.top
-                        anchors.left: parent.left
-                        anchors.right: parent.right
+                    // A touchscreen must never require sideways scrolling to
+                    // reach controls: contentWidth is pinned to the viewport
+                    // width (never to the layout's own implicit width) and the
+                    // horizontal scrollbar/flick is disabled outright, so
+                    // overflow can only ever resolve vertically.
+                    ScrollView {
+                        anchors.fill: parent
                         anchors.margins: 30
+                        clip: true
+                        contentWidth: availableWidth
+                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                    ColumnLayout {
+                        width: parent.width
                         spacing: 20
 
                         Text {
@@ -988,6 +997,7 @@ Item {
                             Layout.fillWidth: true
                         }
                     }
+                    }
                 }
             }
 
@@ -1000,13 +1010,16 @@ Item {
                         midiSettingsColumn.refreshAll()
                 }
 
+                ScrollView {
+                    anchors.fill: parent
+                    anchors.margins: 30
+                    clip: true
+                    contentWidth: availableWidth
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
                 ColumnLayout {
                     id: midiSettingsColumn
-                    anchors.top: parent.top
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    anchors.margins: 30
+                    width: parent.width
                     spacing: 20
 
                     property var midiDeviceList: []
@@ -1528,6 +1541,7 @@ Item {
 
                     Item { Layout.fillHeight: true }
                 }
+                }
             }
 
             Component {
@@ -1537,11 +1551,15 @@ Item {
 
             // ── Page 2: Library ────────────────────────────────────────────
             Item {
-                ColumnLayout {
-                    anchors.top: parent.top
-                    anchors.left: parent.left
-                    anchors.right: parent.right
+                ScrollView {
+                    anchors.fill: parent
                     anchors.margins: 30
+                    clip: true
+                    contentWidth: availableWidth
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                ColumnLayout {
+                    width: parent.width
                     spacing: 20
 
                     Text {
@@ -1608,6 +1626,7 @@ Item {
                         }
                     }
                 }
+                }
             }
 
             // ── Page 3: DJ / Sync ─────────────────────────────────────────
@@ -1616,6 +1635,8 @@ Item {
                     anchors.fill: parent
                     anchors.margins: 30
                     clip: true
+                    contentWidth: availableWidth
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                     ColumnLayout {
                         width: parent.width
@@ -1713,11 +1734,15 @@ Item {
 
             // ── Page 4: Legal ─────────────────────────────────────────────
             Item {
-                ColumnLayout {
-                    anchors.top: parent.top
-                    anchors.left: parent.left
-                    anchors.right: parent.right
+                ScrollView {
+                    anchors.fill: parent
                     anchors.margins: 30
+                    clip: true
+                    contentWidth: availableWidth
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                ColumnLayout {
+                    width: parent.width
                     spacing: 14
 
                     Text {
@@ -1811,6 +1836,7 @@ Item {
                             onClicked: Qt.openUrlExternally("https://www.gnu.org/licenses/agpl-3.0.html")
                         }
                     }
+                }
                 }
             }
         }
