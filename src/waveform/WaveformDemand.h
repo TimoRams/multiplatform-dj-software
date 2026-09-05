@@ -27,6 +27,17 @@ struct WaveformDemand final {
     std::uint8_t lodLevel = 0;
     std::uint64_t generation = 0;
 
+    // Slip/seek previews have a second visible timeline. Keep it in the same
+    // demand so progressive publication can service it without replacing the
+    // audible transport's viewport. A negative playhead means no preview.
+    double previewPlayheadSec = -1.0;
+    double previewVisibleBeforeSec = 0.0;
+    double previewVisibleAfterSec = 0.0;
+    double previewGuardBeforeSec = 0.0;
+    double previewGuardAfterSec = 0.0;
+    bool previewReverse = false;
+    bool previewScratching = false;
+
     [[nodiscard]] bool valid() const noexcept
     {
         return generation != 0 && std::isfinite(playheadSec)
@@ -35,8 +46,39 @@ struct WaveformDemand final {
             && guardAfterSec >= visibleAfterSec;
     }
 
+    [[nodiscard]] bool hasPreviewViewport() const noexcept
+    {
+        return previewPlayheadSec >= 0.0 && std::isfinite(previewPlayheadSec)
+            && previewVisibleBeforeSec >= 0.0 && previewVisibleAfterSec >= 0.0
+            && previewGuardBeforeSec >= previewVisibleBeforeSec
+            && previewGuardAfterSec >= previewVisibleAfterSec;
+    }
+
     bool operator==(const WaveformDemand&) const noexcept = default;
 };
+
+inline void setPreviewViewport(WaveformDemand& destination,
+                               const WaveformDemand& preview) noexcept
+{
+    destination.previewPlayheadSec = preview.playheadSec;
+    destination.previewVisibleBeforeSec = preview.visibleBeforeSec;
+    destination.previewVisibleAfterSec = preview.visibleAfterSec;
+    destination.previewGuardBeforeSec = preview.guardBeforeSec;
+    destination.previewGuardAfterSec = preview.guardAfterSec;
+    destination.previewReverse = preview.reverse;
+    destination.previewScratching = preview.scratching;
+}
+
+inline void clearPreviewViewport(WaveformDemand& demand) noexcept
+{
+    demand.previewPlayheadSec = -1.0;
+    demand.previewVisibleBeforeSec = 0.0;
+    demand.previewVisibleAfterSec = 0.0;
+    demand.previewGuardBeforeSec = 0.0;
+    demand.previewGuardAfterSec = 0.0;
+    demand.previewReverse = false;
+    demand.previewScratching = false;
+}
 
 struct WaveformPriorityScore final {
     WaveformPriority priority = WaveformPriority::BackgroundRest;
@@ -72,48 +114,61 @@ inline WaveformPriorityScore priorityForRange(
         return {};
     }
 
-    const double visibleBegin = demand.playheadSec - demand.visibleBeforeSec;
-    const double visibleEnd = demand.playheadSec + demand.visibleAfterSec;
-    const double guardBegin = demand.playheadSec - demand.guardBeforeSec;
-    const double guardEnd = demand.playheadSec + demand.guardAfterSec;
-    const double centre = (beginSec + endSec) * 0.5;
-    const double distance = std::abs(centre - demand.playheadSec);
-    const bool containsPlayhead = beginSec <= demand.playheadSec
-        && demand.playheadSec < endSec;
-    if (containsPlayhead)
-        return {WaveformPriority::Visible, 0.0, 0};
+    const auto scoreViewport = [beginSec, endSec](double playheadSec,
+                                                   double visibleBeforeSec,
+                                                   double visibleAfterSec,
+                                                   double guardBeforeSec,
+                                                   double guardAfterSec,
+                                                   bool reverse,
+                                                   bool scratching) noexcept {
+        const double visibleBegin = playheadSec - visibleBeforeSec;
+        const double visibleEnd = playheadSec + visibleAfterSec;
+        const double guardBegin = playheadSec - guardBeforeSec;
+        const double guardEnd = playheadSec + guardAfterSec;
+        const double centre = (beginSec + endSec) * 0.5;
+        const double distance = std::abs(centre - playheadSec);
+        if (beginSec <= playheadSec && playheadSec < endSec)
+            return WaveformPriorityScore{WaveformPriority::Visible, 0.0, 0};
 
-    const bool afterPlayhead = beginSec >= demand.playheadSec;
-    const bool beforePlayhead = endSec <= demand.playheadSec;
-    const bool preferredDirection = demand.scratching
-        || (!demand.reverse && afterPlayhead)
-        || (demand.reverse && beforePlayhead);
-    const std::uint8_t guardRank = preferredDirection ? 1 : 2;
+        const bool afterPlayhead = beginSec >= playheadSec;
+        const bool beforePlayhead = endSec <= playheadSec;
+        const bool preferredDirection = scratching
+            || (!reverse && afterPlayhead)
+            || (reverse && beforePlayhead);
+        const std::uint8_t guardRank = preferredDirection ? 1 : 2;
+        if (rangesIntersect(beginSec, endSec, visibleBegin, visibleEnd))
+            return WaveformPriorityScore{WaveformPriority::Visible, distance, guardRank};
+        if (scratching && rangesIntersect(beginSec, endSec, guardBegin, guardEnd))
+            return WaveformPriorityScore{WaveformPriority::ScratchOrReverseGuard, distance, 1};
 
-    if (rangesIntersect(beginSec, endSec, visibleBegin, visibleEnd))
-        return {WaveformPriority::Visible, distance, guardRank};
+        const bool inForwardGuard = rangesIntersect(beginSec, endSec, visibleEnd, guardEnd);
+        const bool inReverseGuard = rangesIntersect(beginSec, endSec, guardBegin, visibleBegin);
+        if ((!reverse && inForwardGuard) || (reverse && inReverseGuard))
+            return WaveformPriorityScore{WaveformPriority::PlaybackDirection, distance, 1};
+        if (inForwardGuard || inReverseGuard)
+            return WaveformPriorityScore{WaveformPriority::RecentlyPassed, distance, 2};
 
-    if (demand.scratching
-        && rangesIntersect(beginSec, endSec, guardBegin, guardEnd)) {
-        return {WaveformPriority::ScratchOrReverseGuard, distance, 1};
-    }
+        const double nearRadius = std::max(guardBeforeSec + guardAfterSec, 1.0);
+        if (distance <= nearRadius * 2.0)
+            return WaveformPriorityScore{WaveformPriority::BackgroundNear, distance, 3};
+        return WaveformPriorityScore{WaveformPriority::BackgroundRest, distance, 4};
+    };
 
-    const bool inForwardGuard = rangesIntersect(
-        beginSec, endSec, visibleEnd, guardEnd);
-    const bool inReverseGuard = rangesIntersect(
-        beginSec, endSec, guardBegin, visibleBegin);
-    if ((!demand.reverse && inForwardGuard)
-        || (demand.reverse && inReverseGuard)) {
-        return {WaveformPriority::PlaybackDirection, distance, 1};
-    }
-    if (inForwardGuard || inReverseGuard)
-        return {WaveformPriority::RecentlyPassed, distance, 2};
+    const auto primary = scoreViewport(
+        demand.playheadSec, demand.visibleBeforeSec, demand.visibleAfterSec,
+        demand.guardBeforeSec, demand.guardAfterSec, demand.reverse, demand.scratching);
+    if (!demand.hasPreviewViewport())
+        return primary;
 
-    const double nearRadius = std::max(
-        demand.guardBeforeSec + demand.guardAfterSec, 1.0);
-    if (distance <= nearRadius * 2.0)
-        return {WaveformPriority::BackgroundNear, distance, 3};
-    return {WaveformPriority::BackgroundRest, distance, 4};
+    auto preview = scoreViewport(
+        demand.previewPlayheadSec, demand.previewVisibleBeforeSec,
+        demand.previewVisibleAfterSec, demand.previewGuardBeforeSec,
+        demand.previewGuardAfterSec, demand.previewReverse, demand.previewScratching);
+    // Audible transport comes first; the grey preview follows immediately,
+    // ahead of normal background publication.
+    preview.expansionRank = std::min<std::uint8_t>(
+        static_cast<std::uint8_t>(preview.expansionRank + 1), 5);
+    return higherPriority(preview, primary) ? preview : primary;
 }
 
 inline WaveformDemand makeViewportDemand(

@@ -29,4 +29,24 @@ struct Id3v1Tag {
 void filenameHeuristic(const QString& baseName, QString& title, QString& artist);
 [[nodiscard]] double parseBpmString(const QString& raw);
 
+struct TagLibTags {
+    QString title;
+    QString artist;
+    QString album;
+    QString genre;
+    QString comment;
+    QString year;
+    QString trackNumber;
+    double bpm = 0.0;
+};
+
+// JUCE's own decoders don't agree on tag parsing across platforms: on macOS,
+// CoreAudioFormat is registered ahead of the MP3/format-specific readers and
+// silently returns no ID3 metadata at all for many files, which previously
+// left title/artist to a naive "filename split" heuristic and produced
+// swapped/garbled results. TagLib parses ID3v1/v2, Vorbis comments and MP4
+// atoms identically on every platform, so it is used as the authoritative
+// source of tag data regardless of which JUCE reader decoded the audio.
+[[nodiscard]] std::optional<TagLibTags> readTagLibTags(const QString& path);
+
 } // namespace metadata

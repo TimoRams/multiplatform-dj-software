@@ -477,6 +477,10 @@ public slots:
     // GUI-owner-thread publication. The renderer sends only on chunk/view/state
     // boundaries, never once per rendered frame.
     void updateWaveformDemand(waveform::WaveformDemand demand);
+    // Slip/seek preview publication is merged with, never substituted for,
+    // the audible viewport demand.
+    void updateWaveformPreviewDemand(waveform::WaveformDemand demand);
+    void clearWaveformPreviewDemand();
 
 signals:
     void progressChanged();
@@ -546,6 +550,7 @@ private:
     LatencySnapshot buildLatencySnapshot() const;
 
     void resetTrackLoadState();
+    void publishCombinedWaveformDemand();
     void setPositionInternal(double progress, bool resetSlipPosition);
     void beginExternalCache(AudioCacheHandle handle);
     void updateExternalCache();
@@ -604,6 +609,8 @@ private:
     std::unique_ptr<WaveformAnalyzer> m_analyzer;
     std::shared_ptr<AnalyzerResultMailbox> m_analysisMailbox;
     waveform::WaveformDemand m_waveformDemand;
+    waveform::WaveformDemand m_primaryWaveformDemand;
+    waveform::WaveformDemand m_previewWaveformDemand;
 
     QString m_trackTitle;
     QString m_trackArtist;

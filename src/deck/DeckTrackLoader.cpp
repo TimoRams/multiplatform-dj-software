@@ -72,6 +72,24 @@ TrackMetadataSnapshot readMetadata(const juce::AudioFormatReader& reader,
     result.tagBpm = metadata::parseBpmString(
         metadata::metaValue(values, {"bpm", "tbpm", "tmpo", "tempo", "beatsperminute"}));
 
+    // JUCE's decoders don't agree on tag parsing across platforms: on macOS,
+    // CoreAudioFormat is registered ahead of the format-specific readers and
+    // silently exposes no ID3 metadata at all for many files (see
+    // metadata::readTagLibTags for details), which previously left
+    // title/artist to fall through to the raw filename-split heuristic below
+    // and produced swapped/garbled results. TagLib parses tags identically on
+    // every platform, so its values take priority whenever present.
+    if (const auto tagLibTags = metadata::readTagLibTags(path)) {
+        if (!tagLibTags->title.isEmpty()) result.title = tagLibTags->title;
+        if (!tagLibTags->artist.isEmpty()) result.artist = tagLibTags->artist;
+        if (!tagLibTags->album.isEmpty()) result.album = tagLibTags->album;
+        if (!tagLibTags->genre.isEmpty()) result.genre = tagLibTags->genre;
+        if (!tagLibTags->comment.isEmpty()) result.comment = tagLibTags->comment;
+        if (!tagLibTags->year.isEmpty()) result.year = tagLibTags->year;
+        if (!tagLibTags->trackNumber.isEmpty()) result.trackNumber = tagLibTags->trackNumber;
+        if (tagLibTags->bpm > 0.0) result.tagBpm = tagLibTags->bpm;
+    }
+
     const QString baseName = metadata::cleanup(
         QString::fromStdString(file.getFileNameWithoutExtension().toStdString()));
     metadata::filenameHeuristic(baseName, result.title, result.artist);

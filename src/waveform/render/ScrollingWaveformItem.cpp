@@ -273,12 +273,25 @@ struct PreparedTileSlot {
     bool alreadyDisplayed = false;
 };
 
+void positionWaveformTile(QSGSimpleTextureNode* node,
+                          const waveform_render::RenderTileSpan& span,
+                          double renderOriginLine,
+                          double pixelsPerLine,
+                          double rasterPhysicalPixelsPerLine,
+                          double devicePixelRatio,
+                          float height);
+
 struct WaveformSceneNode final : QSGClipNode {
     WaveformSceneNode()
     {
         setIsRectangular(true);
         timeline = new QSGTransformNode();
         appendChildNode(timeline);
+        // A zoom transition keeps this complete previous tile set underneath
+        // the newly rasterized set. It prevents per-tile gaps while a rapid
+        // wheel gesture changes the source-to-pixel mapping.
+        zoomTransitionTimeline = new QSGTransformNode();
+        timeline->appendChildNode(zoomTransitionTimeline);
         // Beat/downbeat ticks get their own transform, snapped to the nearest
         // physical pixel every frame instead of following the waveform's
         // continuous translation. A rigid high-contrast tick line visibly
@@ -299,8 +312,65 @@ struct WaveformSceneNode final : QSGClipNode {
         cueLines = makeLineNode(timeline);
     }
 
+    void beginZoomTransition()
+    {
+        if (zoomTransitionActive)
+            return;
+
+        for (std::size_t index = 0; index < waveformNodes.size(); ++index) {
+            auto*& node = waveformNodes[index];
+            if (!node || !waveformTileKeys[index])
+                continue;
+            timeline->removeChildNode(node);
+            zoomTransitionTimeline->appendChildNode(node);
+            zoomTransitionNodes[index] = node;
+            zoomTransitionKeys[index] = waveformTileKeys[index];
+            zoomTransitionTextureBytes[index] = waveformTextureBytes[index];
+            node = nullptr;
+            waveformTileKeys[index].reset();
+            waveformRenderedLineCounts[index] = 0;
+            waveformTextureBytes[index] = 0;
+            zoomTransitionActive = true;
+        }
+    }
+
+    void positionZoomTransition(double renderOriginLine,
+                                double pixelsPerLine,
+                                double devicePixelRatio,
+                                float height,
+                                std::uint32_t totalLineCount)
+    {
+        if (!zoomTransitionActive)
+            return;
+        for (std::size_t index = 0; index < zoomTransitionNodes.size(); ++index) {
+            const auto& key = zoomTransitionKeys[index];
+            if (!zoomTransitionNodes[index] || !key
+                || key->physicalPixelsPerLineMicros == 0) {
+                continue;
+            }
+            const double rasterScale = static_cast<double>(
+                key->physicalPixelsPerLineMicros) / 1'000'000.0;
+            const auto span = waveform_render::renderTileSpan(
+                key->tileIndex, rasterScale, totalLineCount);
+            positionWaveformTile(zoomTransitionNodes[index], span,
+                                 renderOriginLine, pixelsPerLine,
+                                 rasterScale, devicePixelRatio, height);
+        }
+    }
+
+    void clearZoomTransition()
+    {
+        for (std::size_t index = 0; index < zoomTransitionNodes.size(); ++index) {
+            destroyTextureNode(zoomTransitionTimeline, zoomTransitionNodes[index]);
+            zoomTransitionKeys[index].reset();
+            zoomTransitionTextureBytes[index] = 0;
+        }
+        zoomTransitionActive = false;
+    }
+
     void clearAllGeometry()
     {
+        clearZoomTransition();
         clearGeometry(loopFill);
         destroyTextureNode(timeline, fallbackNode);
         fallbackKey.reset();
@@ -338,10 +408,12 @@ struct WaveformSceneNode final : QSGClipNode {
     }
 
     QSGTransformNode* timeline = nullptr;
+    QSGTransformNode* zoomTransitionTimeline = nullptr;
     QSGTransformNode* markerTimeline = nullptr;
     QSGGeometryNode* loopFill = nullptr;
     QSGSimpleTextureNode* fallbackNode = nullptr;
     std::array<QSGSimpleTextureNode*, kWaveformNodePoolSize> waveformNodes{};
+    std::array<QSGSimpleTextureNode*, kWaveformNodePoolSize> zoomTransitionNodes{};
     QSGGeometryNode* regularBeats = nullptr;
     QSGGeometryNode* downbeats = nullptr;
     std::array<QSGSimpleTextureNode*, kDownbeatLabelNodePoolSize> downbeatLabels{};
@@ -360,6 +432,9 @@ struct WaveformSceneNode final : QSGClipNode {
                kWaveformNodePoolSize> waveformTileKeys{};
     std::array<std::uint64_t, kWaveformNodePoolSize> waveformRenderedLineCounts{};
     std::array<std::uint64_t, kWaveformNodePoolSize> waveformTextureBytes{};
+    std::array<std::optional<waveform_render::RenderTileKey>,
+               kWaveformNodePoolSize> zoomTransitionKeys{};
+    std::array<std::uint64_t, kWaveformNodePoolSize> zoomTransitionTextureBytes{};
     std::optional<waveform_render::OverviewRenderKey> fallbackKey;
     std::optional<waveform_render::OverviewRenderKey> fallbackRequestedKey;
     std::optional<waveform_render::WaveformViewKey> viewKey;
@@ -370,6 +445,7 @@ struct WaveformSceneNode final : QSGClipNode {
     bool fallbackVisible = false;
     std::uint64_t fallbackTextureBytes = 0;
     std::uint64_t viewGeneration = 0;
+    bool zoomTransitionActive = false;
 
     bool hasWindow = false;
     std::uint64_t trackGeneration = 0;
@@ -884,6 +960,8 @@ ScrollingWaveformItem::ScrollingWaveformItem(QQuickItem* parent)
 
 ScrollingWaveformItem::~ScrollingWaveformItem()
 {
+    if (m_slipPreview && m_engine)
+        m_engine->clearWaveformPreviewDemand();
     // Join the raster worker while this QObject is still alive, so no worker
     // can enqueue a scene update against a partially destroyed item.
     m_tileRasterizer.reset();
@@ -898,8 +976,11 @@ void ScrollingWaveformItem::setEngine(DjEngine* engine)
 {
     if (m_engine == engine)
         return;
-    if (m_engine)
+    if (m_engine) {
+        if (m_slipPreview)
+            m_engine->clearWaveformPreviewDemand();
         disconnect(m_engine, nullptr, this, nullptr);
+    }
 
     m_engine = engine;
     const double previousTempoRatio = m_tempoRatio.load(std::memory_order_relaxed);
@@ -993,7 +1074,10 @@ void ScrollingWaveformItem::setSlipPreview(bool enabled)
         return;
     m_slipPreview = enabled;
     m_lastPublishedDemand.reset();
+    if (!m_slipPreview && m_engine)
+        m_engine->clearWaveformPreviewDemand();
     emit slipPreviewChanged();
+    publishViewportDemand();
     invalidateGeometry();
 }
 
@@ -1060,12 +1144,6 @@ void ScrollingWaveformItem::scheduleTileUpdate() noexcept
 
 void ScrollingWaveformItem::publishViewportDemand()
 {
-    // The audible pane owns the deck's single analyzer-demand slot. A preview
-    // may render another position but must not overwrite that primary demand.
-    if (m_slipPreview) {
-        m_lastPublishedDemand.reset();
-        return;
-    }
     auto* currentEngine = m_engine.data();
     auto* trackData = currentEngine ? currentEngine->getTrackData() : nullptr;
     const auto snapshot = trackData
@@ -1105,7 +1183,10 @@ void ScrollingWaveformItem::publishViewportDemand()
         }
     }
     m_lastPublishedDemand = demand;
-    currentEngine->updateWaveformDemand(demand);
+    if (m_slipPreview)
+        currentEngine->updateWaveformPreviewDemand(demand);
+    else
+        currentEngine->updateWaveformDemand(demand);
 }
 
 void ScrollingWaveformItem::zoomIn()
@@ -1308,6 +1389,12 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         || !qFuzzyCompare(scene->rasterScale, rasterScale)
         || !qFuzzyCompare(scene->devicePixelRatio, dpr)
         || scene->renderedSize != bounds.size();
+    const bool zoomScaleChanged = scene->hasWindow
+        && scene->trackGeneration == snapshot->trackGeneration
+        && (!qFuzzyCompare(scene->pixelsPerLine, pixelsPerLine)
+            || !qFuzzyCompare(scene->rasterScale, rasterScale));
+    if (zoomScaleChanged)
+        scene->beginZoomTransition();
     const bool configurationChanged = staticConfigurationChanged
         || scene->dataGeneration != snapshot->dataGeneration;
     const bool tilesReady = m_tilesReady.exchange(false, std::memory_order_acq_rel);
@@ -1352,6 +1439,10 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             scene->innerStartLine = playheadLine - rebuildTravel;
             scene->innerEndLine = playheadLine + rebuildTravel;
         }
+
+        scene->positionZoomTransition(
+            scene->renderOriginLine, pixelsPerLine, dpr,
+            static_cast<float>(bounds.height()), snapshot->totalLineCount);
 
         const std::uint32_t sourceBegin = static_cast<std::uint32_t>(std::clamp<std::int64_t>(
             scene->windowStartLine, 0, snapshot->totalLineCount));
@@ -1628,16 +1719,6 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                         prepared.ready->key == prepared.key,
                         prepared.ready->hasAnySourceData);
                 textureUploadDeferred = textureUploadDeferred || uploadReadyButDeferred;
-                // The replacement tile isn't rasterised yet (zoom change,
-                // live analysis still settling, or freshly scrolled-into
-                // territory). Earlier this held the previous tile on screen,
-                // repositioned to the new scale, instead of clearing it —
-                // but independently-stale tiles at independently-stretched
-                // scales produced a patchwork of mismatched blocky
-                // rectangles across the pool, which reads far worse than a
-                // brief, uniform flash to the coarse whole-track fallback.
-                // Clearing here lets that single coherent fallback texture
-                // cover the whole gap instead.
                 if (!uploadReadyButDeferred && scene->waveformTileKeys[poolIndex]) {
                     m_staleZoomTilesRejected.fetch_add(
                         1, std::memory_order_relaxed);
@@ -1664,6 +1745,10 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             visibleTileCount == 0 ? 0
                 : (readyVisibleTiles * 1000) / visibleTileCount,
             std::memory_order_relaxed);
+        if (scene->zoomTransitionActive && visibleTileCount > 0
+            && missingVisibleTiles == 0) {
+            scene->clearZoomTransition();
+        }
         logDesktopWaveformComparison(
             *snapshot, selectedLodLevel, sourceBegin, sourceEnd,
             static_cast<std::uint32_t>(std::max(
@@ -1685,7 +1770,10 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         const auto gpuTextureBytes = std::accumulate(
             scene->waveformTextureBytes.cbegin(),
             scene->waveformTextureBytes.cend(),
-            scene->fallbackTextureBytes);
+            scene->fallbackTextureBytes
+                + std::accumulate(scene->zoomTransitionTextureBytes.cbegin(),
+                                  scene->zoomTransitionTextureBytes.cend(),
+                                  std::uint64_t{0}));
         m_estimatedGpuTextureBytes.store(gpuTextureBytes,
                                          std::memory_order_relaxed);
         if (textureUploadDeferred && visualBackgroundWorkEnabled) {

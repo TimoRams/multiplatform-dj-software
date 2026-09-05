@@ -170,6 +170,9 @@ TrackData* DjEngine::getTrackData() const
 
 void DjEngine::resetTrackLoadState()
 {
+    m_waveformDemand = {};
+    m_primaryWaveformDemand = {};
+    m_previewWaveformDemand = {};
     const bool seekPreviewWasActive = m_seekPreviewActive;
     m_seekPreviewActive = false;
     m_seekPreviewPosition = 0.0;
@@ -419,9 +422,19 @@ void DjEngine::setPositionInternal(double progress, bool resetSlipPosition)
         }
         m_transport->seekToSeconds(newPos, resetSlipPosition);
         ensureTransportRunningForPlayIntent();
-        m_trackLoader.setWaveformSeekHint(std::max(0.0, newPos));
+        const double waveformPosition = std::max(0.0, newPos);
+        m_trackLoader.setWaveformSeekHint(waveformPosition);
         if (m_analyzer && m_analyzer->isThreadRunning())
-            m_analyzer->setSeekHint(std::max(0.0, newPos));
+            m_analyzer->setSeekHint(waveformPosition);
+        // A seek/cue/beat-jump must not wait for the next QML frame before it
+        // becomes the visible publication target. The renderer will refine
+        // the full viewport on that frame; this immediate update gets the
+        // cursor chunk into the cache/analyzer's highest-priority slot now.
+        if (m_primaryWaveformDemand.valid()) {
+            auto demand = m_primaryWaveformDemand;
+            demand.playheadSec = waveformPosition;
+            updateWaveformDemand(demand);
+        }
     }
     emit progressChanged();
 }
@@ -429,10 +442,41 @@ void DjEngine::setPositionInternal(double progress, bool resetSlipPosition)
 void DjEngine::updateWaveformDemand(waveform::WaveformDemand demand)
 {
     demand.generation = m_trackLoader.currentGeneration();
-    m_waveformDemand = demand;
-    m_trackLoader.setWaveformDemand(demand);
+    m_primaryWaveformDemand = demand;
+    publishCombinedWaveformDemand();
+}
+
+void DjEngine::updateWaveformPreviewDemand(waveform::WaveformDemand demand)
+{
+    demand.generation = m_trackLoader.currentGeneration();
+    m_previewWaveformDemand = demand;
+    publishCombinedWaveformDemand();
+}
+
+void DjEngine::clearWaveformPreviewDemand()
+{
+    m_previewWaveformDemand = {};
+    publishCombinedWaveformDemand();
+}
+
+void DjEngine::publishCombinedWaveformDemand()
+{
+    if (!m_primaryWaveformDemand.valid())
+        return;
+
+    auto combined = m_primaryWaveformDemand;
+    combined.generation = m_trackLoader.currentGeneration();
+    if (m_previewWaveformDemand.valid()
+        && m_previewWaveformDemand.generation == combined.generation) {
+        waveform::setPreviewViewport(combined, m_previewWaveformDemand);
+    } else {
+        waveform::clearPreviewViewport(combined);
+    }
+
+    m_waveformDemand = combined;
+    m_trackLoader.setWaveformDemand(combined);
     if (m_analyzer)
-        m_analyzer->setWaveformDemand(demand);
+        m_analyzer->setWaveformDemand(combined);
 }
 
 

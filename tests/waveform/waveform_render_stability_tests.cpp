@@ -524,6 +524,32 @@ int main()
     ok &= require(waveform::higherPriority(reverseNext, reversePrevious),
                   "reverse expansion did not mirror the directional order");
 
+    // Slip and seek show an additional grey timeline. It must get visible
+    // publication priority without displacing the audible cursor, otherwise
+    // the preview stays empty until background analysis happens to reach it.
+    auto slipDemand = waveform::makeViewportDemand(
+        100.0, 1600.0, 400.0, true, false, false, 2, 9);
+    const auto previewDemand = waveform::makeViewportDemand(
+        240.0, 1600.0, 400.0, true, true, true, 2, 9);
+    waveform::setPreviewViewport(slipDemand, previewDemand);
+    const auto audibleCursor = waveform::priorityForRange(
+        slipDemand, 99.5, 100.5);
+    const auto previewCursor = waveform::priorityForRange(
+        slipDemand, 239.5, 240.5);
+    const auto unrelatedBackground = waveform::priorityForRange(
+        slipDemand, 400.0, 401.0);
+    ok &= require(slipDemand.hasPreviewViewport()
+                      && audibleCursor.expansionRank == 0
+                      && previewCursor.priority == waveform::WaveformPriority::Visible
+                      && waveform::higherPriority(audibleCursor, previewCursor)
+                      && waveform::higherPriority(previewCursor, unrelatedBackground),
+                  "slip preview did not get immediate secondary waveform demand");
+    waveform::clearPreviewViewport(slipDemand);
+    ok &= require(!slipDemand.hasPreviewViewport()
+                      && waveform::priorityForRange(slipDemand, 239.5, 240.5).priority
+                          != waveform::WaveformPriority::Visible,
+                  "clearing slip preview left stale high-priority demand behind");
+
     // Steady playback must end up pixel-exact. A tile permanently cut at the
     // ladder scale is drawn stretched by up to ~2%, which resamples roughly
     // every 45th column and stands in the view as a thick/thin ripple.

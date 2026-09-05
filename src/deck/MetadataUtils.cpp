@@ -3,6 +3,10 @@
 #include <QFile>
 #include <QRegularExpression>
 
+#include <taglib/fileref.h>
+#include <taglib/tag.h>
+#include <taglib/tpropertymap.h>
+
 #include <cmath>
 #include <cstring>
 
@@ -120,6 +124,39 @@ double parseBpmString(const QString& raw)
             return v;
     }
     return 0.0;
+}
+
+std::optional<TagLibTags> readTagLibTags(const QString& path)
+{
+    TagLib::FileRef file(path.toUtf8().constData());
+    if (file.isNull() || file.tag() == nullptr)
+        return std::nullopt;
+
+    const TagLib::Tag* tag = file.tag();
+    TagLibTags result;
+    result.title = cleanup(QString::fromStdWString(tag->title().toWString()));
+    result.artist = cleanup(QString::fromStdWString(tag->artist().toWString()));
+    result.album = cleanup(QString::fromStdWString(tag->album().toWString()));
+    result.genre = cleanup(QString::fromStdWString(tag->genre().toWString()));
+    result.comment = cleanup(QString::fromStdWString(tag->comment().toWString()));
+    if (tag->year() > 0)
+        result.year = QString::number(tag->year());
+    if (tag->track() > 0)
+        result.trackNumber = QString::number(tag->track());
+
+    if (file.file() != nullptr) {
+        const TagLib::PropertyMap properties = file.file()->properties();
+        for (const char* key : {"BPM", "TBPM"}) {
+            const auto it = properties.find(TagLib::String(key));
+            if (it != properties.end() && !it->second.isEmpty()) {
+                result.bpm = parseBpmString(
+                    QString::fromStdWString(it->second.front().toWString()));
+                if (result.bpm > 0.0)
+                    break;
+            }
+        }
+    }
+    return result;
 }
 
 } // namespace metadata
