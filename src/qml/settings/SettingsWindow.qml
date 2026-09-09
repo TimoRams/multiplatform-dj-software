@@ -19,11 +19,25 @@ Window {
                 audioSyncPending = true
                 audioSyncTimer.start()
             }
+            audioDeviceListRetryCount = 0
             audioDeviceListTimer.start()
         } else {
             audioSyncTimer.stop()
             audioDeviceListTimer.stop()
             audioSyncPending = false
+        }
+    }
+
+    // Device enumeration can settle after this window already populated its
+    // combo boxes once (external interfaces on macOS/CoreAudio, or backends
+    // that only become ready shortly after launch). Rather than guessing a
+    // fixed timeout, refresh live whenever the backend actually confirms a
+    // device configuration — this also covers the bootstrap retries that run
+    // a few seconds after a failed startup device restore.
+    Connections {
+        target: deckA
+        function onAudioDeviceConfigurationChanged() {
+            settingsWindow.refreshAudioDeviceLists()
         }
     }
 
@@ -79,13 +93,22 @@ Window {
         }
     }
 
-    // Backup refresh in case device enumeration (ALSA/JACK) wasn't complete at first open.
+    // Backup refresh in case device enumeration (CoreAudio/ALSA/JACK) wasn't
+    // complete yet when the window opened — some external interfaces take a
+    // moment to enumerate after launch. Retries a bounded number of times
+    // instead of a single fixed 500ms guess, and stops as soon as real
+    // outputs (not just "None") show up.
+    property int audioDeviceListRetryCount: 0
     Timer {
         id: audioDeviceListTimer
-        interval: 500
-        repeat: false
+        interval: 700
+        repeat: true
         onTriggered: {
             settingsWindow.refreshAudioDeviceLists()
+            settingsWindow.audioDeviceListRetryCount += 1
+            const hasRealOutputs = settingsWindow.audioOutputDeviceOptions.length > 1
+            if (hasRealOutputs || settingsWindow.audioDeviceListRetryCount >= 6)
+                audioDeviceListTimer.stop()
         }
     }
 

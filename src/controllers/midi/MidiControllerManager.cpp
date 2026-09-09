@@ -60,8 +60,15 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, ControlClock
         {
             if (m_shutdownComplete.load(std::memory_order_acquire))
                 return;
+            // On macOS, CoreMIDI can re-fire this "setup changed" notification
+            // repeatedly even when nothing actually changed (enumerating
+            // devices to check for changes can itself trigger another
+            // notification). Only restore/reopen devices when the device
+            // list genuinely changed, otherwise this becomes a self-sustaining
+            // loop that spams the log every few seconds on machines with no
+            // MIDI hardware attached.
             const bool devicesChanged = refreshMidiDevices(false);
-            if (devicesChanged || !hasActiveMidiInput())
+            if (devicesChanged)
                 restoreSavedDeviceSelections();
         }, Qt::QueuedConnection);
     });
@@ -314,7 +321,8 @@ void MidiControllerManager::runControllerHousekeeping(double monotonicSeconds)
         m_nextControllerConnectionCheckSeconds = monotonicSeconds + 5.0;
 
         const bool inputOpen = hasActiveMidiInput();
-        if (!inputOpen)
+        const bool inputJustClosed = m_lastHousekeepingInputOpen && !inputOpen;
+        if (inputJustClosed)
             cancelBeatJumpSearch();
         const bool outputOpen =
             (m_midiOutput != nullptr)
@@ -324,14 +332,21 @@ void MidiControllerManager::runControllerHousekeeping(double monotonicSeconds)
             ;
 
         const bool devicesChanged = refreshMidiDevices(false);
-        if (devicesChanged || !inputOpen || !outputOpen) {
-            if (devicesChanged || !hasActiveMidiInput())
-                restoreSavedDeviceSelections();
-            else if (!outputOpen)
-                autoOpenFlx10MidiOutputIfNeeded();
+        // Only retry opening/restoring the *input* devices when the
+        // underlying device list actually changed, or an input that used to
+        // be open just dropped. If there simply is no MIDI hardware
+        // attached, retrying every 5s produces no new result and only spams
+        // the log with the same "no JUCE inputs could be opened" warning.
+        if (devicesChanged || inputJustClosed) {
+            restoreSavedDeviceSelections();
             if (!hasActiveMidiInput())
                 cancelBeatJumpSearch();
         }
+        // Output (re)open is independent and cheap/idempotent, so it can
+        // still be retried every tick while no output is open.
+        if (!outputOpen)
+            autoOpenFlx10MidiOutputIfNeeded();
+        m_lastHousekeepingInputOpen = hasActiveMidiInput();
     }
 
     if (monotonicSeconds >= m_nextControllerFeedbackResyncSeconds) {

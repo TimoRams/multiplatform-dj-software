@@ -265,6 +265,7 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
         refreshHardwareLatency();
         if (!m_scratch.scrubbing() && !m_scratch.releaseGlide())
             updateSpeedAndPitch();
+        emit audioDeviceConfigurationChanged();
     });
     connect(&m_audioDeviceService, &AudioDeviceService::errorChanged,
             this, &DjEngine::audioDeviceErrorChanged);

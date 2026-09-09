@@ -337,6 +337,10 @@ private:
     double m_nextMidiMonitorUpdateSeconds = 0.0;
     double m_nextControllerConnectionCheckSeconds = 0.0;
     double m_nextControllerFeedbackResyncSeconds = 0.0;
+    // Tracks the last known "no input open" state so housekeeping only logs
+    // and retries a device (re)open once per actual state change instead of
+    // spamming the log every 5s while a machine simply has no MIDI hardware.
+    bool m_lastHousekeepingInputOpen = true;
 
     struct PendingMidiEvent {
         int msgId = -1;

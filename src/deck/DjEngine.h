@@ -528,6 +528,14 @@ signals:
     void mainCueChanged();
     void audioDeviceErrorChanged();
     void audioDeviceFallbackChanged();
+    // Device enumeration (especially external interfaces on macOS/CoreAudio,
+    // or backends that become ready shortly after the GUI on Linux) can
+    // settle after the settings UI already populated its combo boxes once.
+    // This fires whenever the backend actually (re)applies a device
+    // configuration — including delayed startup retries — so the settings
+    // window/panel can refresh its device lists instead of showing whatever
+    // was enumerable at the moment it happened to be opened.
+    void audioDeviceConfigurationChanged();
     void vinylBrakeChanged();
     void echoOutChanged();
     void backspinChanged();

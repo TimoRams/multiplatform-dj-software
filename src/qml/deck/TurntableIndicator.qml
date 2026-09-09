@@ -26,6 +26,7 @@ Item {
     property real _totalScratchedAngle: 0.0
     property real _pressPlayheadSec: 0.0
     property real _lastCursorAngle: 0.0
+    property bool _lastAngleValid: true
 
     function updateRotation() {
         if (!root.engine) { ringRotator.rotation = 0; return }
@@ -43,6 +44,22 @@ Item {
         var a = Math.atan2(dy, dx) * 180.0 / Math.PI
         if (a < 0) a += 360.0
         return a
+    }
+
+    // atan2-based angle tracking is numerically unstable close to the
+    // platter's center: a one-pixel touch/mouse jitter there can swing the
+    // angle by dozens of degrees. That instability is exactly what produces
+    // the "wrong direction at the end" feeling — a scratch naturally slows
+    // down and the finger can drift toward the center right as it lifts off,
+    // and touchscreens commonly report a bit of contact-point jitter during
+    // liftoff. Below this radius we keep reporting the last stable angle
+    // instead of trusting a new, unreliable one.
+    readonly property real minRadiusPx: Math.max(10, Math.min(root.width, root.height) * 0.12)
+
+    function radiusForPoint(xPos, yPos) {
+        var dx = xPos - root.width  * 0.5
+        var dy = yPos - root.height * 0.5
+        return Math.sqrt(dx * dx + dy * dy)
     }
 
     function shortestAngleDelta(from, to) {
@@ -112,6 +129,11 @@ Item {
             root._accumDragAngle      = 0.0
             root._totalScratchedAngle = 0.0
             root._pressPlayheadSec    = root.engine.getVisualPositionQml()
+            // A press right near the center has no reliable angle either; the
+            // first accepted onPositionChanged sample (outside the deadzone)
+            // will resync the reference angle without producing a spurious
+            // delta, see the "_lastAngleValid" handling below.
+            root._lastAngleValid      = root.radiusForPoint(mouse.x, mouse.y) >= root.minRadiusPx
             root._lastCursorAngle     = root.angleForPoint(mouse.x, mouse.y)
             root.engine.pauseForScrub(root._pressPlayheadSec)
         }
@@ -119,7 +141,24 @@ Item {
         onPositionChanged: (mouse) => {
             if (!root.dragActive || !root.engine) return
 
-            var cur   = root.angleForPoint(mouse.x, mouse.y)
+            // Ignore samples too close to the platter center — atan2 there is
+            // noise-amplifying, and using it would risk injecting a spurious,
+            // wrongly-signed angle delta into the scratch velocity (most
+            // noticeable as a release "flick" in the wrong direction).
+            if (root.radiusForPoint(mouse.x, mouse.y) < root.minRadiusPx) {
+                root._lastAngleValid = false
+                return
+            }
+
+            var cur = root.angleForPoint(mouse.x, mouse.y)
+            if (!root._lastAngleValid) {
+                // Re-entering the reliable radius after a center dropout:
+                // resync the reference angle instead of computing a delta
+                // against a stale (possibly noisy) previous angle.
+                root._lastCursorAngle = cur
+                root._lastAngleValid = true
+                return
+            }
             var delta = root.shortestAngleDelta(root._lastCursorAngle, cur)
             root._lastCursorAngle = cur
 
