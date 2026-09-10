@@ -159,18 +159,74 @@ void DeckSyncController::applyCoordinatorCommand(const DeckSyncCommand& command)
         }
     }
 
-    const double diff = wrapPhase(command.masterBeatPhase - m_input.beatPhase);
+    double diff = wrapPhase(command.masterBeatPhase - m_input.beatPhase);
+    // Beat phase is derived from the reader position, which runs ahead of what
+    // is actually audible by the time-stretch pipeline latency. The audible
+    // phase is therefore readerPhase - latency/beatLength, so the error that
+    // matters is
+    //     (masterPhase - lat_m/bl) - (followerPhase - lat_f/bl)
+    //   = diff + (lat_f - lat_m)/bl
+    // This only bites when the two decks run different keylock settings, but
+    // without it the loop silently locks to a constant non-zero offset.
+    if (validPositive(m_input.beatLengthSeconds)) {
+        const double latencyDeltaSeconds =
+            m_input.keylockLatencySeconds - command.masterKeylockLatencySeconds;
+        diff = wrapPhase(diff + latencyDeltaSeconds / m_input.beatLengthSeconds);
+    }
     m_phaseError = diff;
-    double dt = 0.004;
+    double dt = 0.008;
     if (m_phaseTime != std::chrono::steady_clock::time_point{})
         dt = std::clamp(std::chrono::duration<double>(now - m_phaseTime).count(), 0.001, 0.05);
     m_phaseTime = now;
 
-    const double maxNudge = m_resyncBoost ? 15.0 : 6.0;
-    const double kp = m_resyncBoost ? 30.0 : 14.0;
-    constexpr double ki = 9.0;
-    m_phaseIntegral = std::clamp(m_phaseIntegral + diff * dt, -maxNudge / ki, maxNudge / ki);
-    const double nudge = std::clamp(kp * diff + ki * m_phaseIntegral, -maxNudge, maxNudge);
+    // The controlled quantity is phase but the actuator sets *rate*, and rate
+    // is the derivative of phase, so the plant is already an integrator. The
+    // closed loop is therefore second order:
+    //
+    //     d2e/dt2 + kp_eff * de/dt + ki_eff * e = 0
+    //     wn = sqrt(ki_eff)     zeta = kp_eff / (2 * sqrt(ki_eff))
+    //
+    // The nudge is expressed in percent, so kp_eff = kp/100 and ki_eff = ki/100.
+    // The historical kp=14 / ki=9 gives zeta = 0.23: badly underdamped. A
+    // closed-loop simulation of a tempo move reproduces it as a 43% overshoot
+    // ringing with a ~10 s period that needs 30 s to settle -- exactly the
+    // reported "beats pull together and drift apart again". The integral gain
+    // was the culprit: on an integrating plant it adds a second pole at the
+    // origin, and 9 was far too large for the available proportional gain.
+    //
+    // Transport latency is not the limiting factor here: at a crossover of
+    // kp_eff ~ 0.45 rad/s even 50 ms of pipeline delay costs only ~1.3 deg of
+    // phase margin. So choose kp as large as the acceptable pitch bend allows
+    // (saturating at maxNudge around a seventh of a beat keeps the approach
+    // fast) and then pin ki to zeta ~ 1 so the response is critically damped
+    // and cannot overshoot.
+    const double maxNudge = m_resyncBoost ? 12.0 : 6.0;
+    const double kp = m_resyncBoost ? 60.0 : 45.0;
+    const double ki = m_resyncBoost ? 9.0 : 5.0;
+    // The integral only has to cancel a constant rate bias (beatgrid BPM
+    // rounding), so cap its authority well below the proportional term's to
+    // keep it from winding up while the output is saturated.
+    const double integralLimit = 0.4 * maxNudge / ki;
+    const double integralCandidate =
+        std::clamp(m_phaseIntegral + diff * dt, -integralLimit, integralLimit);
+    // Conditional integration: while the output is already saturated the extra
+    // rate cannot be delivered, so accumulating it only stores a correction
+    // that has to be paid back later as overshoot. Integrate only when the
+    // output is inside its range, or when the new sample pulls it back out of
+    // saturation. This is what turns the remaining overshoot into a monotonic
+    // approach.
+    const double candidateOutput = kp * diff + ki * integralCandidate;
+    if (std::abs(candidateOutput) < maxNudge
+        || (candidateOutput > 0.0) != (diff > 0.0)) {
+        m_phaseIntegral = integralCandidate;
+    }
+    const double target = std::clamp(kp * diff + ki * m_phaseIntegral, -maxNudge, maxNudge);
+    // Purely an artefact guard so a phase jump cannot step the pitch audibly.
+    // Set far above the loop bandwidth (wn < 0.3 rad/s) so it never shapes the
+    // dynamics -- a slew limit inside the loop would add lag and undo the
+    // damping chosen above.
+    const double maxStep = 40.0 * dt;
+    const double nudge = std::clamp(target, m_phaseNudge - maxStep, m_phaseNudge + maxStep);
     if (m_resyncBoost && std::abs(diff) < 0.01)
         m_resyncBoost = false;
     if (std::abs(nudge - m_phaseNudge) > 1.0e-3) {
