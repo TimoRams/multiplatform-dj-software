@@ -1617,7 +1617,17 @@ bool MidiControllerManager::dispatchFlx10JogAction(const QString& paramId,
         }
         qDebug().nospace() << "[BEATJUMP] deck=" << deckIndex
             << " CC0x29 recovery ARMED session (no prior press seen)";
-        beatJumpHold.held = true;
+        // No button press was ever observed for this tick, so there is no
+        // owning paramId and nothing will ever report the arrow as "released".
+        // Arming as held=true would mask that: every termination path here
+        // (TouchUp catch-all, grace timeout, a later button press/release)
+        // requires either !held or a paramId match, so a held=true phantom
+        // session can never be closed and permanently wedges the deck in
+        // fast-search. Arm it as already-coasting instead (searchUsed=true,
+        // held=false) so the existing TouchUp/grace-timeout machinery for
+        // "arrow already let go, waiting for the platter to stop" takes over
+        // immediately.
+        beatJumpHold.held = false;
         beatJumpHold.searchUsed = true;
         beatJumpHold.direction = 0;
         beatJumpHold.paramId.clear();
@@ -1805,6 +1815,21 @@ bool MidiControllerManager::handleBeatJumpButton(const QString& paramId, float v
             return true;
         }
         if (!state.held) {
+            if (state.searchUsed) {
+                // A leftover coasting session with no owning paramId (e.g. a
+                // phantom CC0x29 recovery arm) reaches here instead of the
+                // "different arrow interrupts" branch above, since that one
+                // requires a non-empty paramId to compare against. Close it
+                // out defensively so its endFastSearch() always runs instead
+                // of relying solely on the grace timer's timing.
+                qDebug().nospace() << "[BEATJUMP] deck=" << deckIndex
+                    << " fresh press closes out stale searchUsed session first";
+                (deckA ? m_deckABeatJumpGraceTimer : m_deckBBeatJumpGraceTimer).stop();
+                if (engine)
+                    engine->endFastSearch();
+                m_beatJumpSearchEndedAtSeconds[deckIndex] =
+                    ::engine::scratch::RealtimeScratchInput::clockSeconds();
+            }
             qDebug().nospace() << "[BEATJUMP] deck=" << deckIndex
                 << " fresh press, starting new session";
             state.paramId = paramId;

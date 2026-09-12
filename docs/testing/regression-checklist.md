@@ -272,6 +272,23 @@ ThreadSanitizer where the platform toolchain supports it.
   coasting through its post-release grace period; verify
   `cancelBeatJumpSearch()` releases the mute and hands position back to the
   transport instead of leaving the deck silently stuck.
+- Repeat the full hold-arrow/turn-platter/release/let-spin-out gesture several
+  times in a row on the same deck (this was the reported "works once, then
+  from the second attempt it wedges and never resumes" regression). A stray
+  `_jog_fast_search` (CC `0x29`) tick that arrives more than 250 ms after a
+  session already ended used to be misread by the recovery branch in
+  `dispatchFlx10JogAction` as the start of a brand-new session with
+  `held = true` and no owning `paramId` — since every termination path
+  (TouchUp catch-all, grace timeout, button release, even a fresh button
+  press) requires either `!held` or a `paramId` match, that phantom session
+  could never close and permanently stuck the deck in fast-search. Verify:
+  the recovery branch now arms as `held = false` (coasting, no button
+  actually down) so the existing grace-timeout/TouchUp machinery closes it
+  normally; and as a second line of defense, pressing the arrow again while
+  a stale `searchUsed` session with an empty `paramId` still lingers must
+  force-close it (`endFastSearch()`) before starting the new session, rather
+  than leaving the deck stuck reporting `fastSearchActive()` with the jog
+  wheel no longer responding to normal scratch/jog input.
 
 ## Analysis, library, and rendering scenarios
 
