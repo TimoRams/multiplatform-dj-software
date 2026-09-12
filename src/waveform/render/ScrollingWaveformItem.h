@@ -35,6 +35,7 @@ class ScrollingWaveformItem : public QQuickItem
     Q_PROPERTY(bool rasterWorkEnabled READ rasterWorkEnabled WRITE setRasterWorkEnabled
                NOTIFY rasterWorkEnabledChanged)
     Q_PROPERTY(bool slipPreview READ slipPreview WRITE setSlipPreview NOTIFY slipPreviewChanged)
+    Q_PROPERTY(bool contentReady READ contentReady NOTIFY contentReadyChanged)
     QML_ELEMENT
 
 public:
@@ -62,6 +63,10 @@ public:
     void setRasterWorkEnabled(bool enabled);
     [[nodiscard]] bool slipPreview() const noexcept { return m_slipPreview; }
     void setSlipPreview(bool enabled);
+    [[nodiscard]] bool contentReady() const noexcept
+    {
+        return m_contentReady.load(std::memory_order_acquire);
+    }
     Q_INVOKABLE double screenDeltaToSeconds(double screenDelta) const noexcept;
     Q_INVOKABLE double timelineSecondsAtX(double screenX,
                                           double playheadSeconds) const noexcept;
@@ -86,6 +91,7 @@ signals:
     void renderStyleChanged();
     void rasterWorkEnabledChanged();
     void slipPreviewChanged();
+    void contentReadyChanged();
 
 protected:
     void geometryChange(const QRectF& newGeometry, const QRectF& oldGeometry) override;
@@ -112,6 +118,7 @@ private:
     std::unique_ptr<waveform_render::WaveformTileRasterizer> m_tileRasterizer;
     std::atomic<bool> m_tilesReady{false};
     std::atomic<bool> m_tileUpdateQueued{false};
+    std::atomic<bool> m_contentReady{false};
     bool m_forceRebuild = true;
     bool m_rasterWorkEnabled = true;
     bool m_slipPreview = false;
@@ -128,6 +135,7 @@ private:
     void publishViewportDemand();
     [[nodiscard]] double currentPlayheadSeconds() const noexcept;
     void scheduleTileUpdate() noexcept;
+    void markContentReady() noexcept;
 
     mutable std::atomic<double> m_lastPlayheadSec{0.0};
     mutable std::atomic<double> m_lastPixelsPerSecond{1.0};

@@ -261,7 +261,17 @@ int main(int argc, char** argv)
                 }
                 chunkReady.notify_one();
             });
+        analyzer.setBackgroundWorkPaused(true);
         analyzer.startAnalysis(wavePath, 15.0);
+        {
+            std::unique_lock lock(chunkMutex);
+            const bool publishedWhilePaused = chunkReady.wait_for(
+                lock, std::chrono::milliseconds(100),
+                [&] { return firstRgbBin >= 0; });
+            ok &= require(!publishedWhilePaused,
+                          "audio pressure must pause progressive waveform work");
+        }
+        analyzer.setBackgroundWorkPaused(false);
         {
             std::unique_lock lock(chunkMutex);
             ok &= require(chunkReady.wait_for(lock, std::chrono::seconds(5),

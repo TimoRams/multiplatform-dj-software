@@ -30,6 +30,7 @@ struct DeckAudioPipeline::Impl {
     std::uint64_t retiredDiskReadsFromAudioThread = 0;
     std::uint64_t retiredDecoderCallsFromAudioThread = 0;
     std::atomic<bool> transportRequestedRunning { false };
+    std::atomic<bool> hasEverHadTrack { false };
     std::atomic<double> commandedPositionSeconds { 0.0 };
     std::atomic<std::uint64_t> seekGeneration { 0 };
     std::atomic<std::uint64_t> appliedSeekGeneration { 0 };
@@ -328,6 +329,7 @@ void DeckAudioPipeline::installPreparedTrack(PreparedTrack track)
     m_impl->handle = track.cacheHandle;
     m_impl->playback = std::make_unique<CachedPlaybackAudioSource>(m_impl->cache, m_impl->handle);
     m_impl->trackGeneration = track.trackGeneration;
+    m_impl->hasEverHadTrack.store(true, std::memory_order_release);
     m_impl->transport.setSource(m_impl->playback.get(), 0, nullptr, track.sourceSampleRate);
     m_impl->renderModeRouter->setPlaybackSource(m_impl->playback.get());
     m_impl->timeStretch->setTrackGeneration(track.trackGeneration);
@@ -412,6 +414,11 @@ DeckAudioPipeline::RealtimeStats DeckAudioPipeline::realtimeStats() const noexce
     result.droppedCommands = m_impl->commands.droppedCommands();
     result.trackGeneration = m_impl->trackGeneration;
     return result;
+}
+
+bool DeckAudioPipeline::hasEverHadTrack() const noexcept
+{
+    return m_impl->hasEverHadTrack.load(std::memory_order_acquire);
 }
 
 juce::AudioTransportSource& DeckAudioPipeline::transport() noexcept { return m_impl->transport; }

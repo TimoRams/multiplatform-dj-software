@@ -113,10 +113,26 @@ struct TrackLoadResult {
     [[nodiscard]] bool succeeded() const noexcept { return error == TrackLoadError::None; }
 };
 
+struct TrackVisualResult {
+    std::uint64_t generation = 0;
+    QString canonicalPath;
+    WaveformCache::Payload waveformCache;
+    QVector<TrackData::RgbWaveformFrame> instantOverview;
+    int instantOverviewExpected = 0;
+    bool waveformCacheLoaded = false;
+    bool waveformRenderCacheAvailable = false;
+    bool waveformRenderCacheDeferred = false;
+    int waveformRenderLinesPerSecond = 0;
+    int waveformRenderTotalLines = 0;
+    QByteArray coverBytes;
+    QImage coverImage;
+};
+
 class DeckTrackLoader
 {
 public:
     using CompletionCallback = std::function<void(TrackLoadResult)>;
+    using VisualCompletionCallback = std::function<void(TrackVisualResult)>;
     using RenderChunkCallback = std::function<void(
         std::uint64_t generation, int totalLines, int linesPerSecond,
         WaveformLineBatch chunks)>;
@@ -127,10 +143,12 @@ public:
     DeckTrackLoader& operator=(const DeckTrackLoader&) = delete;
 
     std::uint64_t loadTrack(QString path, CompletionCallback completion,
-                            RenderChunkCallback renderChunk = {});
+                            RenderChunkCallback renderChunk = {},
+                            VisualCompletionCallback visualCompletion = {});
     std::uint64_t loadExternalTrack(QString path, ExternalTrackLoadSnapshot external,
                                     CompletionCallback completion,
-                                    RenderChunkCallback renderChunk = {});
+                                    RenderChunkCallback renderChunk = {},
+                                    VisualCompletionCallback visualCompletion = {});
     void setWaveformSeekHint(double positionSec) noexcept;
     void setWaveformDemand(const waveform::WaveformDemand& demand) noexcept;
     void requestCancel() noexcept;
@@ -146,10 +164,14 @@ private:
         std::uint64_t generation = 0;
         CompletionCallback completion;
         RenderChunkCallback renderChunk;
+        VisualCompletionCallback visualCompletion;
     };
 
     void workerLoop();
     TrackLoadResult prepare(const Request& request);
+    TrackVisualResult prepareVisuals(const Request& request,
+                                     const QString& canonicalPath,
+                                     const TrackMetadataSnapshot& metadata);
     [[nodiscard]] bool isCurrent(std::uint64_t generation) const noexcept;
     void publishState(std::uint64_t generation, TrackLoadState state) noexcept;
     [[nodiscard]] waveform::WaveformDemand waveformDemandSnapshot() const noexcept;

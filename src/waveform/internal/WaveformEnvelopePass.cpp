@@ -230,21 +230,17 @@ bool processBin(const BandCoefficients& c,
 // chunks.
 int envelopeWorkerCount(int sourceChunkCount)
 {
-    const unsigned hw = std::thread::hardware_concurrency();
-    if (hw <= 4 || sourceChunkCount <= 2)
-        return 1;
-    // WaveformAnalyzer already limits concurrent tracks. Two workers per pass
-    // keep progressive detail responsive without the 4 x 2 worker burst that
-    // previously saturated a many-core machine as soon as deck 2 was loaded.
-    const int budget = static_cast<int>(std::min<unsigned>(2u, hw / 2u - 1u));
-    return std::clamp(std::min(budget, sourceChunkCount / 2), 1, 2);
+    static_cast<void>(sourceChunkCount);
+    // Full-track analysis is background work. One sequential decoder avoids
+    // competing with live deck decoding and keeps load cost predictable.
+    return 1;
 }
 
 void lowerCurrentThreadPriority()
 {
 #ifdef __linux__
     (void)setpriority(PRIO_PROCESS,
-                      static_cast<id_t>(syscall(SYS_gettid)), 12);
+                      static_cast<id_t>(syscall(SYS_gettid)), 15);
 #endif
 }
 
@@ -355,8 +351,13 @@ bool runEnvelopePass(const EnvelopePassInput& input)
     const auto cooperateWithRealtime = [&]() {
         // Analysis owns a separate decoder, but can still compete for CPU and
         // storage bandwidth exactly when a cold scratch window needs both.
-        // Cooperate with the scheduler without a timer-based sleep: sleeps made
-        // seek latency depend on how many batches happened to precede P0 work.
+        // During scratch or measured audio pressure, analysis is disposable.
+        // A short sleep gives the callback, cache decoder and render thread real
+        // scheduling headroom instead of immediately competing again after yield.
+        while (!threadShouldExit() && input.backgroundWorkPaused
+               && input.backgroundWorkPaused()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(4));
+        }
         if (!threadShouldExit() && input.realtimeInteractionActive
             && input.realtimeInteractionActive())
             juce::Thread::yield();

@@ -98,6 +98,7 @@ public:
     void setPlaybackReadPositionSamples(std::int64_t position) noexcept;
     [[nodiscard]] int keylockLatencySamples() const noexcept;
     [[nodiscard]] TransportSnapshot transportSnapshot() const noexcept;
+    [[nodiscard]] bool hasEverHadTrack() const noexcept;
     [[nodiscard]] RealtimeStats realtimeStats() const noexcept;
 
     [[nodiscard]] juce::AudioTransportSource& transport() noexcept;

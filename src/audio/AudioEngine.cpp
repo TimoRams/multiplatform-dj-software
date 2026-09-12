@@ -347,7 +347,7 @@ void AudioEngine::processChunk(
     std::array<const juce::AudioBuffer<float>*, kMaximumDecks> pfl {};
     for (std::size_t index = 0; index < endpoints.size(); ++index) {
         auto* endpoint = endpoints[index];
-        if (!endpoint)
+        if (!endpoint || !endpoint->hasEverHadTrack())
             continue;
         auto& deckBuffer = m_deckBuffers[index];
         deckBuffer.clear(0, 0, samples);

@@ -25,8 +25,17 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
     const bool haveFullWaveform = input.haveFullWaveform;
 
     auto threadShouldExit = [&]() { return thread.threadShouldExit(); };
+    const auto cooperateWithAudio = [&]() {
+        while (!threadShouldExit() && input.backgroundWorkPaused
+               && input.backgroundWorkPaused()) {
+            juce::Thread::sleep(4);
+        }
+        return !threadShouldExit();
+    };
 
     m_trackData->reportAnalysisProgress(haveFullWaveform ? 0.35 : 0.62, true);
+    if (!cooperateWithAudio())
+        return false;
 
     {
         analysis::AnalysisFeatureExtractor::Options featOpts;
@@ -45,8 +54,9 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
         auto features = featureExtractor.extract(reader, &thread,
             [m_trackData](double frac) {
                 m_trackData->reportAnalysisProgress(0.62 + frac * 0.16, true);
-            });
+            }, input.backgroundWorkPaused);
         if (threadShouldExit()) return false;
+        if (!cooperateWithAudio()) return false;
 
         m_trackData->reportAnalysisProgress(0.79, true);
 
@@ -94,6 +104,7 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
         // analysis into an unbounded background DSP job.
         const int candidateCount = std::max(1, std::min<int>(6, tempo.candidates.size()));
         for (int candidateIndex = 0; candidateIndex < candidateCount; ++candidateIndex) {
+            if (!cooperateWithAudio()) return false;
             m_trackData->reportAnalysisProgress(
                 0.79 + (static_cast<double>(candidateIndex) / static_cast<double>(candidateCount)) * 0.09,
                 true);
@@ -115,6 +126,7 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
         // because an attractive integer is close.  The margin is conservative
         // so noise cannot replace an equally good continuous estimate.
         if (selected.bpm > 0.0) {
+            if (!cooperateWithAudio()) return false;
             const double snapped = std::round(selected.bpm * 2.0) * 0.5;
             if (std::abs(snapped - selected.bpm) <= 0.18 && snapped > 0.0) {
                 auto verified = evaluateCandidate(snapped, selected.tempoPrior);
@@ -212,6 +224,7 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
         std::vector<TrackSegment> segments;
         const auto beatGrid = m_trackData->getBeatGrid();
         if (beatGrid.size() >= 17 && duration > 12.0) {
+            if (!cooperateWithAudio()) return false;
             PhraseAnalyzer phraseAnalyzer;
             segments = phraseAnalyzer.analyze(features, beatGrid, duration);
         }
@@ -247,6 +260,7 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
 
         for (juce::int64 offset = 0; offset < keySamples; offset += kfBlockSize) {
             if (threadShouldExit()) break;
+            if (!cooperateWithAudio()) break;
 
             const int toRead = static_cast<int>(
                 std::min(static_cast<juce::int64>(kfBlockSize), keySamples - offset));
@@ -268,6 +282,7 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
         }
 
         if (!threadShouldExit()) {
+            if (!cooperateWithAudio()) return false;
             // Camelot Wheel mapping for key_t (0=A_MAJOR … 23=A_FLAT_MINOR, 24=SILENCE).
             // Order matches KeyFinder::key_t enum in constants.h.
             static const char* kCamelot[25] = {

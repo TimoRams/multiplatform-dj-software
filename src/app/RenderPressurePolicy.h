@@ -66,9 +66,9 @@ public:
     {
         if (sample.windowMinimized)
             return Tier::Suspended;
-        if (sample.callbackOverrun || sample.hardwareXrun || sample.callbackLoad >= 0.85)
+        if (sample.callbackOverrun || sample.hardwareXrun || sample.callbackLoad >= 0.70)
             return Tier::Critical;
-        if (!sample.applicationActive || sample.callbackLoad >= 0.65)
+        if (!sample.applicationActive || sample.callbackLoad >= 0.50)
             return Tier::Elevated;
         return Tier::Normal;
     }

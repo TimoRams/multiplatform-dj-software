@@ -1142,6 +1142,16 @@ void ScrollingWaveformItem::scheduleTileUpdate() noexcept
     }, Qt::QueuedConnection);
 }
 
+void ScrollingWaveformItem::markContentReady() noexcept
+{
+    if (m_contentReady.exchange(true, std::memory_order_acq_rel))
+        return;
+
+    QMetaObject::invokeMethod(this, [this] {
+        emit contentReadyChanged();
+    }, Qt::QueuedConnection);
+}
+
 void ScrollingWaveformItem::publishViewportDemand()
 {
     auto* currentEngine = m_engine.data();
@@ -2037,6 +2047,13 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                                                   pixelsPerLine * dpr)) {
         scheduleTileUpdate();
     }
+    const bool hasRenderableWaveform = scene->fallbackVisible
+        || std::any_of(scene->waveformNodes.cbegin(), scene->waveformNodes.cend(),
+                       [](const auto* node) {
+                           return node && node->texture();
+                       });
+    if (hasRenderableWaveform)
+        markContentReady();
     return scene;
 }
 

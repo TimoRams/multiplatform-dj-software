@@ -460,15 +460,24 @@ int runApplication(int argc, char *argv[])
             runtime.controlClock->setBackgroundMode(backgroundMode);
         if (runtime.renderPressurePolicy)
             runtime.renderPressurePolicy->setApplicationActive(!backgroundMode);
+        const bool throttleBackgroundWork = backgroundMode
+            || (runtime.renderPressurePolicy
+                && !runtime.renderPressurePolicy->waveformRasterWorkEnabled());
         for (DjEngine* deck : {runtime.deckA.get(), runtime.deckB.get(),
                                runtime.deckC.get(), runtime.deckD.get()}) {
             if (deck)
-                deck->setBackgroundOptimizationEnabled(backgroundMode);
+                deck->setBackgroundOptimizationEnabled(throttleBackgroundWork);
         }
     };
     QObject::connect(&app, &QGuiApplication::applicationStateChanged,
                      &app, applyRuntimeBackgroundProfile);
     applyRuntimeBackgroundProfile(app.applicationState());
+    QObject::connect(runtime.renderPressurePolicy.get(),
+                     &RenderPressurePolicy::tierChanged,
+                     &app,
+                     [&app, applyRuntimeBackgroundProfile]() {
+                         applyRuntimeBackgroundProfile(app.applicationState());
+                     });
 
     engine.addImageProvider("coverart", runtime.coverProvider.release());
     logStartupStep("Cover art provider installed");

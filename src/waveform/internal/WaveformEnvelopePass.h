@@ -37,6 +37,8 @@ struct EnvelopePassInput
     // Interactive audio always wins over background analysis. The analyzer
     // supplies a lock-free flag that becomes true while a platter is held.
     std::function<bool()> realtimeInteractionActive;
+    // Sustained callback/render pressure pauses disposable analysis entirely.
+    std::function<bool()> backgroundWorkPaused;
     // The bounded playhead/guard bootstrap runs before entering the global
     // duration-dependent analysis gate. This callback acquires that gate for
     // the sequential full-track work that follows.

@@ -74,6 +74,11 @@ int main()
     ok &= require(workspace.find("MixerSection") == std::string::npos
                       && developmentControls.find("MixerSection") != std::string::npos,
                   "production workspace omits hidden mixer trees while development retains the mixer UI");
+    ok &= require(developmentControls.find("minimumWidth: 1280") != std::string::npos
+                      && developmentControls.find("maximumWidth: 1280") != std::string::npos
+                      && developmentControls.find("minimumHeight: 430") != std::string::npos
+                      && developmentControls.find("maximumHeight: 430") != std::string::npos,
+                  "development controls use a fixed window size to avoid cross-window live-resize stalls");
     ok &= require(workspace.find("id: twoDeckWaveformLoader") != std::string::npos
                       && workspace.find("id: fourDeckWaveformLoader") != std::string::npos
                       && workspace.find("active: window.fourDeckMode") != std::string::npos,
@@ -137,10 +142,15 @@ int main()
     ok &= require(enlargedWaveform.find("root.engine.scratchVisualActive") != std::string::npos
                   && overallWaveform.find("root.engine.scratchVisualActive") != std::string::npos,
                   "waveform frame animations react to paused scratch state");
+    ok &= require(enlargedWaveform.find("color: UiTheme.playhead") == std::string::npos
+                     && enlargedWaveform.find("color: \"#24ffffff\"") == std::string::npos,
+                  "scrolling waveforms do not draw fixed white center lines");
     ok &= require(engineHeader.find("Q_PROPERTY(bool slipPreviewActive") != std::string::npos
                      && enlargedWaveform.find("id: slipWaveLoader") != std::string::npos
-                     && enlargedWaveform.find("slipPreview: true") != std::string::npos,
-                  "slip mode renders independent audible and background waveform panes");
+                     && enlargedWaveform.find("slipPreview: true") != std::string::npos
+                     && enlargedWaveform.find("contentReady: slipWaveItem.contentReady") != std::string::npos
+                     && enlargedWaveform.find("slipWaveLoader.item.contentReady") != std::string::npos,
+                  "slip mode reveals its split only after the background waveform can render");
     ok &= require(engineHeader.find("Q_PROPERTY(bool seekPreviewActive") != std::string::npos
                      && deckTrackInfoPanel.find("beginSeekPreview") != std::string::npos
                      && deckTrackInfoPanel.find("commitSeekPreview") != std::string::npos

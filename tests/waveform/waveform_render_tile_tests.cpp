@@ -564,15 +564,10 @@ int main(int argc, char** argv)
     const auto rebaseElapsed = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - rebaseStarted).count();
     const auto rebaseStats = rebaseRasterizer.stats();
-    if (std::thread::hardware_concurrency() > 2) {
-        ok &= require(rebaseStats.workerCount >= 2,
-                      "multi-core systems must use more than one tile worker");
-        ok &= require(rebaseStats.maximumConcurrentWorkers >= 2,
-                      "guard-window tiles were not rasterized concurrently");
-    } else {
-        ok &= require(rebaseStats.workerCount == 1,
-                      "small systems must reserve capacity for UI/audio work");
-    }
+    ok &= require(rebaseStats.workerCount == 1,
+                  "waveform rasterization must reserve CPU for realtime audio");
+    ok &= require(rebaseStats.maximumConcurrentWorkers == 1,
+                  "waveform rasterization exceeded its audio-safe worker budget");
     ok &= require(rebaseStats.pendingRequests == 0,
                   "completed tile batch left queued or in-flight requests");
     std::cout << "waveform 24-tile rebase: wall=" << rebaseElapsed

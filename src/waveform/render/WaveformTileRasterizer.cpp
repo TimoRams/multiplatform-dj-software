@@ -29,7 +29,7 @@ namespace {
 // while two decks are decoding and playing. Keep a small process-wide pool;
 // individual waveform items are capped separately so one deck cannot occupy
 // the complete budget.
-constexpr std::ptrdiff_t kMaximumGlobalRasterWorkers = 4;
+constexpr std::ptrdiff_t kMaximumGlobalRasterWorkers = 1;
 
 void updateWorst(std::atomic<std::uint64_t>& target, std::uint64_t value)
 {
@@ -53,17 +53,7 @@ std::size_t globalRasterWorkerLimit() noexcept
             static_cast<std::size_t>(kMaximumGlobalRasterWorkers));
     }
 
-    const auto hardwareThreads = std::thread::hardware_concurrency();
-    if (hardwareThreads <= 2)
-        return 1;
-
-    // Reserve cores for the realtime callback, Qt's GUI/render threads, and
-    // the GPU driver. The slots are process-wide so several deck rasterizers
-    // cannot overcommit the host while a single active deck can still scale.
-    const auto conservativeBudget = std::max(2u, hardwareThreads / 4u);
-    return std::clamp<std::size_t>(
-        static_cast<std::size_t>(conservativeBudget), 2,
-        static_cast<std::size_t>(kMaximumGlobalRasterWorkers));
+    return 1;
 }
 
 std::counting_semaphore<kMaximumGlobalRasterWorkers>& rasterWorkPermits()
@@ -78,7 +68,7 @@ std::size_t rasterWorkerCount() noexcept
     const auto hardwareThreads = std::thread::hardware_concurrency();
     if (hardwareThreads <= 2)
         return 1;
-    return std::min<std::size_t>(globalRasterWorkerLimit(), 2);
+    return 1;
 }
 
 int rasterWorkerNiceLevel() noexcept

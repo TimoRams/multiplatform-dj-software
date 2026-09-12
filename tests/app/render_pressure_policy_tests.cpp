@@ -8,9 +8,9 @@ int main()
     using Policy = RenderPressurePolicy;
 
     assert(Policy::targetTier({}) == Policy::Tier::Normal);
-    assert(Policy::targetTier({.callbackLoad = 0.64}) == Policy::Tier::Normal);
-    assert(Policy::targetTier({.callbackLoad = 0.65}) == Policy::Tier::Elevated);
-    assert(Policy::targetTier({.callbackLoad = 0.85}) == Policy::Tier::Critical);
+    assert(Policy::targetTier({.callbackLoad = 0.49}) == Policy::Tier::Normal);
+    assert(Policy::targetTier({.callbackLoad = 0.50}) == Policy::Tier::Elevated);
+    assert(Policy::targetTier({.callbackLoad = 0.70}) == Policy::Tier::Critical);
     assert(Policy::targetTier({.callbackOverrun = true}) == Policy::Tier::Critical);
     assert(Policy::targetTier({.hardwareXrun = true}) == Policy::Tier::Critical);
     assert(Policy::targetTier({.applicationActive = false}) == Policy::Tier::Elevated);

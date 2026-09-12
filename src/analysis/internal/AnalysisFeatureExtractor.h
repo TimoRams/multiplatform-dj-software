@@ -23,7 +23,8 @@ public:
 
     AnalysisFeatures extract(juce::AudioFormatReader& reader,
                              juce::Thread* cancelThread = nullptr,
-                             const std::function<void(double)>& onProgress = {}) const;
+                             const std::function<void(double)>& onProgress = {},
+                             const std::function<bool()>& shouldPause = {}) const;
 
 private:
     Options m_options;

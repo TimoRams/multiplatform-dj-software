@@ -4,6 +4,8 @@
 #include <juce_core/juce_core.h>
 #include <QString>
 
+#include <functional>
+
 #include "analysis/internal/AnalysisWorkingData.h"
 
 namespace waveform_internal {
@@ -18,6 +20,7 @@ struct AnalysisOrchestratorInput
     double sampleRate = 0.0;
     double duration = 0.0;
     bool haveFullWaveform = false;
+    std::function<bool()> backgroundWorkPaused;
 };
 
 bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input);

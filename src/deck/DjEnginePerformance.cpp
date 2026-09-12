@@ -28,10 +28,10 @@ void DjEngine::syncAnalyzerRealtimeInteractionHint() noexcept
 {
     if (!m_analyzer)
         return;
-    const bool realtimeInteractionActive = m_backgroundOptimizationEnabled
-        || m_scratch.scrubbing()
+    const bool realtimeInteractionActive = m_scratch.scrubbing()
         || m_scratch.releaseGlide();
     m_analyzer->setRealtimeInteractionActive(realtimeInteractionActive);
+    m_analyzer->setBackgroundWorkPaused(m_backgroundOptimizationEnabled);
 }
 
 void DjEngine::setBackgroundOptimizationEnabled(bool enabled) noexcept

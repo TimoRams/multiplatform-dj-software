@@ -26,20 +26,41 @@ void lowerCurrentThreadPriority()
 {
 #ifdef __linux__
     const pid_t tid = static_cast<pid_t>(syscall(SYS_gettid));
-    setpriority(PRIO_PROCESS, static_cast<id_t>(tid), 10);
+    setpriority(PRIO_PROCESS, static_cast<id_t>(tid), 15);
 #endif
-}
-
-int maxConcurrentLoads()
-{
-    const unsigned cores = std::thread::hardware_concurrency();
-    return cores == 0 ? 2 : std::clamp(static_cast<int>(cores) / 2, 1, 6);
 }
 
 QSemaphore& loadGate()
 {
-    static QSemaphore gate(maxConcurrentLoads());
+    // Decoder startup competes for the same storage needed by live playback.
+    // Keep the audio-critical preparation phase predictable across all decks.
+    static QSemaphore gate(1);
     return gate;
+}
+
+QSemaphore& visualLoadGate()
+{
+    static QSemaphore gate(1);
+    return gate;
+}
+
+std::mutex g_audioLoadStateMutex;
+std::condition_variable g_audioLoadStateChanged;
+int g_pendingAudioLoads = 0;
+
+void beginAudioLoad()
+{
+    std::lock_guard lock(g_audioLoadStateMutex);
+    ++g_pendingAudioLoads;
+}
+
+void finishAudioLoad() noexcept
+{
+    {
+        std::lock_guard lock(g_audioLoadStateMutex);
+        --g_pendingAudioLoads;
+    }
+    g_audioLoadStateChanged.notify_all();
 }
 
 // Loading and converting a large immutable waveform before publishing the
@@ -118,14 +139,18 @@ DeckTrackLoader::~DeckTrackLoader()
 
 std::uint64_t DeckTrackLoader::loadTrack(QString path,
                                          CompletionCallback completion,
-                                         RenderChunkCallback renderChunk)
+                                         RenderChunkCallback renderChunk,
+                                         VisualCompletionCallback visualCompletion)
 {
     if (m_shuttingDown.load(std::memory_order_acquire)) return currentGeneration();
     const auto generation = m_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
     {
         std::lock_guard lock(m_mutex);
+        if (!m_pending)
+            beginAudioLoad();
         m_pending = Request{std::move(path), std::nullopt, generation,
-                            std::move(completion), std::move(renderChunk)};
+                            std::move(completion), std::move(renderChunk),
+                            std::move(visualCompletion)};
         m_state.store(TrackLoadState::Queued, std::memory_order_release);
     }
     m_waveformSeekHintSec.store(0.0, std::memory_order_relaxed);
@@ -135,14 +160,18 @@ std::uint64_t DeckTrackLoader::loadTrack(QString path,
 
 std::uint64_t DeckTrackLoader::loadExternalTrack(
     QString path, ExternalTrackLoadSnapshot external,
-    CompletionCallback completion, RenderChunkCallback renderChunk)
+    CompletionCallback completion, RenderChunkCallback renderChunk,
+    VisualCompletionCallback visualCompletion)
 {
     if (m_shuttingDown.load(std::memory_order_acquire)) return currentGeneration();
     const auto generation = m_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
     {
         std::lock_guard lock(m_mutex);
+        if (!m_pending)
+            beginAudioLoad();
         m_pending = Request{std::move(path), std::move(external), generation,
-                            std::move(completion), std::move(renderChunk)};
+                            std::move(completion), std::move(renderChunk),
+                            std::move(visualCompletion)};
         m_state.store(TrackLoadState::Queued, std::memory_order_release);
     }
     m_waveformSeekHintSec.store(0.0, std::memory_order_relaxed);
@@ -178,10 +207,16 @@ waveform::WaveformDemand DeckTrackLoader::waveformDemandSnapshot() const noexcep
 void DeckTrackLoader::requestCancel() noexcept
 {
     m_generation.fetch_add(1, std::memory_order_acq_rel);
+    bool removedPending = false;
     {
         std::lock_guard lock(m_mutex);
+        removedPending = m_pending.has_value();
         m_pending.reset();
     }
+    if (removedPending)
+        finishAudioLoad();
+    else
+        g_audioLoadStateChanged.notify_all();
     m_state.store(TrackLoadState::CancelRequested, std::memory_order_release);
     m_condition.notify_one();
 }
@@ -190,11 +225,17 @@ void DeckTrackLoader::shutdownAndJoin() noexcept
 {
     if (m_shuttingDown.exchange(true, std::memory_order_acq_rel)) return;
     m_generation.fetch_add(1, std::memory_order_acq_rel);
+    bool removedPending = false;
     {
         std::lock_guard lock(m_mutex);
+        removedPending = m_pending.has_value();
         m_pending.reset();
         m_state.store(TrackLoadState::ShuttingDown, std::memory_order_release);
     }
+    if (removedPending)
+        finishAudioLoad();
+    else
+        g_audioLoadStateChanged.notify_all();
     m_condition.notify_all();
     if (m_worker.joinable()) m_worker.join();
 }
@@ -235,6 +276,7 @@ void DeckTrackLoader::workerLoop()
 
         publishState(request.generation, TrackLoadState::Loading);
         auto result = prepare(request);
+        finishAudioLoad();
         if (!isCurrent(request.generation)) {
             m_audioPageCache.releaseTrack(result.cacheHandle);
             auto expected = TrackLoadState::CancelRequested;
@@ -242,19 +284,45 @@ void DeckTrackLoader::workerLoop()
                                             std::memory_order_acq_rel);
             continue;
         }
+        TrackVisualResult visuals;
+        bool restoreRenderCache = false;
+        int renderLinesPerSecond = 0;
+        if (result.succeeded() && !request.visualCompletion) {
+            visuals = prepareVisuals(request, result.canonicalPath, result.metadata);
+            restoreRenderCache = visuals.waveformRenderCacheDeferred;
+            renderLinesPerSecond = visuals.waveformRenderLinesPerSecond;
+            result.waveformCache = std::move(visuals.waveformCache);
+            result.instantOverview = std::move(visuals.instantOverview);
+            result.instantOverviewExpected = visuals.instantOverviewExpected;
+            result.waveformCacheLoaded = visuals.waveformCacheLoaded;
+            result.waveformRenderCacheAvailable = visuals.waveformRenderCacheAvailable;
+            result.waveformRenderCacheDeferred = visuals.waveformRenderCacheDeferred;
+            result.waveformRenderLinesPerSecond = visuals.waveformRenderLinesPerSecond;
+            result.waveformRenderTotalLines = visuals.waveformRenderTotalLines;
+            result.coverBytes = std::move(visuals.coverBytes);
+            result.coverImage = std::move(visuals.coverImage);
+        }
+
         publishState(request.generation,
                      result.succeeded() ? TrackLoadState::Ready : TrackLoadState::Failed);
-        const bool restoreRenderCache = result.succeeded()
-            && result.waveformRenderCacheDeferred
-            && static_cast<bool>(request.renderChunk);
-        const QString renderCachePath = result.canonicalPath;
-        const int renderLinesPerSecond = result.waveformRenderLinesPerSecond;
+        const bool succeeded = result.succeeded();
+        const QString canonicalPath = result.canonicalPath;
+        const TrackMetadataSnapshot metadata = result.metadata;
         if (request.completion) request.completion(std::move(result));
 
-        if (restoreRenderCache && isCurrent(request.generation)) {
+        if (succeeded && request.visualCompletion && isCurrent(request.generation)) {
+            visuals = prepareVisuals(request, canonicalPath, metadata);
+            restoreRenderCache = visuals.waveformRenderCacheDeferred;
+            renderLinesPerSecond = visuals.waveformRenderLinesPerSecond;
+            if (isCurrent(request.generation))
+                request.visualCompletion(std::move(visuals));
+        }
+
+        if (succeeded && restoreRenderCache
+            && request.renderChunk && isCurrent(request.generation)) {
             const auto generation = request.generation;
             WaveformCache::streamRenderCache(
-                renderCachePath, renderLinesPerSecond,
+                canonicalPath, renderLinesPerSecond,
                 [this, generation]() { return !isCurrent(generation); },
                 [this]() {
                     return waveformDemandSnapshot();
@@ -263,7 +331,7 @@ void DeckTrackLoader::workerLoop()
                     int totalLines, WaveformLineBatch chunks) {
                     if (isCurrent(generation) && request.renderChunk) {
                         request.renderChunk(generation, totalLines,
-                                            renderLinesPerSecond, std::move(chunks));
+                                           renderLinesPerSecond, std::move(chunks));
                     }
                 });
         }
@@ -352,21 +420,42 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
     if (!isCurrent(request.generation))
         return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
 
-    // TrackLoadResult has always carried coverBytes/coverImage and the deck
-    // publishes them to the cover provider, but nothing ever filled them in:
-    // the extractor was only wired into the library, never into the deck load.
-    // hasCoverArt() was therefore false for every track, so neither the deck
-    // nor the controller jog screens could show artwork. Decoding here keeps
-    // it off the GUI thread, where this load already runs.
+    return result;
+}
+
+TrackVisualResult DeckTrackLoader::prepareVisuals(
+    const Request& request,
+    const QString& canonicalPath,
+    const TrackMetadataSnapshot& metadata)
+{
+    TrackVisualResult result;
+    result.generation = request.generation;
+    result.canonicalPath = canonicalPath;
+
+    while (!visualLoadGate().tryAcquire(1, 20)) {
+        if (!isCurrent(request.generation))
+            return result;
+    }
+    const QSemaphoreReleaser visualGateRelease(visualLoadGate());
+    {
+        std::unique_lock lock(g_audioLoadStateMutex);
+        g_audioLoadStateChanged.wait(lock, [this, generation = request.generation] {
+            return g_pendingAudioLoads == 0
+                || !isCurrent(generation);
+        });
+    }
+    if (!isCurrent(request.generation))
+        return result;
+
     QByteArray coverBytes;
     if (request.external && !request.external->artworkPath.isEmpty()) {
         QFile artwork(request.external->artworkPath);
         if (artwork.open(QIODevice::ReadOnly))
             coverBytes = artwork.readAll();
     }
-    const bool inlineCoverExtractionAllowed = result.metadata.fileSize <= kInlineCoverExtractionMaxFileBytes;
+    const bool inlineCoverExtractionAllowed = metadata.fileSize <= kInlineCoverExtractionMaxFileBytes;
     if (coverBytes.isEmpty() && inlineCoverExtractionAllowed) {
-        auto extracted = CoverArtExtractor::extractCoverArt(result.canonicalPath);
+        auto extracted = CoverArtExtractor::extractCoverArt(canonicalPath);
         coverBytes = std::move(extracted.first);
     }
     if (!coverBytes.isEmpty()) {
@@ -377,24 +466,20 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
         }
     }
     if (!isCurrent(request.generation))
-        return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
+        return result;
 
-    // Small immutable waveforms can be restored before publishing without a
-    // visible delay. Large caches must never gate audio readiness: the analyzer
-    // will fill those timelines progressively in cursor-priority chunks after
-    // this result has already installed the page-backed transport.
-    if (!isCurrent(request.generation))
-        return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
+    // Small immutable waveforms are restored before visual publication. Large
+    // caches use the progressive path and never gate audio readiness.
     const QFileInfo waveformCacheInfo(
-        WaveformCache::cachePathFor(result.canonicalPath, m_waveformPointsPerSecond));
-    const bool timelineFitsImmediateBudget = result.metadata.durationSec <= 0.0
-        || result.metadata.durationSec <= kImmediateWaveformCacheMaxDurationSeconds;
+        WaveformCache::cachePathFor(canonicalPath, m_waveformPointsPerSecond));
+    const bool timelineFitsImmediateBudget = metadata.durationSec <= 0.0
+        || metadata.durationSec <= kImmediateWaveformCacheMaxDurationSeconds;
     const bool cacheFitsImmediateBudget = timelineFitsImmediateBudget
         && (!waveformCacheInfo.exists()
             || waveformCacheInfo.size() <= kImmediateWaveformCacheBudgetBytes);
     result.waveformCacheLoaded = cacheFitsImmediateBudget
         && WaveformCache::loadForFile(
-            result.canonicalPath, m_waveformPointsPerSecond, &result.waveformCache);
+            canonicalPath, m_waveformPointsPerSecond, &result.waveformCache);
     if (result.waveformCacheLoaded) {
         result.instantOverviewExpected = result.waveformCache.totalExpected;
         result.instantOverview = TrackData::downsampleOverview(result.waveformCache.spectral);
@@ -406,7 +491,7 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
     } else {
         WaveformCache::RenderInfo renderInfo;
         if (WaveformCache::inspectRenderCache(
-                result.canonicalPath, m_waveformPointsPerSecond, &renderInfo)) {
+                canonicalPath, m_waveformPointsPerSecond, &renderInfo)) {
             result.waveformRenderCacheAvailable = true;
             result.waveformRenderCacheDeferred = true;
             result.waveformRenderLinesPerSecond = renderInfo.pointsPerSecond;
@@ -415,7 +500,5 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
             result.instantOverview = std::move(renderInfo.overview);
         }
     }
-    if (!isCurrent(request.generation))
-        return fail(TrackLoadError::Superseded, QStringLiteral("Load was superseded"));
     return result;
 }

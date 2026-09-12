@@ -861,11 +861,23 @@ void DjEngine::beginTrackLoad(
                 },
                 Qt::QueuedConnection);
         };
+    auto visualCompletion = [safeThis](TrackVisualResult result) mutable {
+        if (!safeThis)
+            return;
+        QMetaObject::invokeMethod(
+            safeThis.data(),
+            [safeThis, result = std::move(result)]() mutable {
+                if (safeThis)
+                    safeThis->applyPreparedTrackVisuals(std::move(result));
+            },
+            Qt::QueuedConnection);
+    };
     const auto visualGeneration = external
         ? m_trackLoader.loadExternalTrack(std::move(rawPath), std::move(*external),
-                                          std::move(completion), std::move(renderChunk))
+                                          std::move(completion), std::move(renderChunk),
+                                          std::move(visualCompletion))
         : m_trackLoader.loadTrack(std::move(rawPath), std::move(completion),
-                                  std::move(renderChunk));
+                                  std::move(renderChunk), std::move(visualCompletion));
 
     // Invalidate the previous track's complete visual generation immediately.
     // Worker callbacks are queued back to this owner thread, so this happens
@@ -953,6 +965,25 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
         hasReusableAnalysis = hydrateLibraryStateForTrack(
             result.canonicalPath, result.metadata.durationSec);
     }
+    m_currentLoadHasReusableAnalysis = hasReusableAnalysis;
+
+    if (result.autoCueSec > 0.0
+        && m_cueLoopController.mainCue().positionSec < 0.0
+        && !m_transport->playRequested()
+        && !m_transport->audioRunning()) {
+        m_cueLoopController.mainCue().positionSec = result.autoCueSec;
+        emit mainCueChanged();
+        m_transport->seekAudioToSeconds(result.autoCueSec);
+    }
+
+    emit trackMetadataChanged();
+    emit trackLoaded();
+}
+
+void DjEngine::applyPreparedTrackVisuals(TrackVisualResult result)
+{
+    if (result.generation != m_trackLoader.currentGeneration() || !m_hasTrack)
+        return;
 
     if (result.waveformCacheLoaded) {
         const int expected = result.waveformCache.totalExpected > 0
@@ -977,14 +1008,11 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
 
     const bool hasReusableWaveform = result.waveformCacheLoaded
         || result.waveformRenderCacheAvailable;
-    if (!(hasReusableWaveform && hasReusableAnalysis) && m_analyzer) {
-        // Audio publication and first-page priming have already completed.
-        // Start the background worker now; a fixed post-load delay only made
-        // overview/detail latency depend on a timer and did not protect the
-        // realtime callback (which never executes this analysis code).
+    if (!(hasReusableWaveform && m_currentLoadHasReusableAnalysis) && m_analyzer) {
         m_analyzer->startAnalysis(
             result.canonicalPath, m_transport->audioPositionSeconds(),
             result.generation, m_trackData->createAnalysisSeed());
+        syncAnalyzerRealtimeInteractionHint();
     }
 
     if (!result.coverImage.isNull() && m_coverProvider) {
@@ -995,19 +1023,8 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
         m_hasCoverArt = true;
         if (m_libraryCoverService && !m_currentTrackId.isEmpty() && !result.coverBytes.isEmpty())
             m_libraryCoverService->publishCover(m_currentTrackId, result.coverBytes);
+        emit trackMetadataChanged();
     }
-
-    if (result.autoCueSec > 0.0
-        && m_cueLoopController.mainCue().positionSec < 0.0
-        && !m_transport->playRequested()
-        && !m_transport->audioRunning()) {
-        m_cueLoopController.mainCue().positionSec = result.autoCueSec;
-        emit mainCueChanged();
-        m_transport->seekAudioToSeconds(result.autoCueSec);
-    }
-
-    emit trackMetadataChanged();
-    emit trackLoaded();
     emit progressChanged();
 }
 

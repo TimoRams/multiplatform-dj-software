@@ -568,6 +568,7 @@ private:
     void beginTrackLoad(QString path,
                         std::optional<ExternalTrackLoadSnapshot> external = std::nullopt);
     void applyPreparedTrack(TrackLoadResult result);
+    void applyPreparedTrackVisuals(TrackVisualResult result);
     void updateTrackDuration(double durationSec);
     bool hydrateLibraryStateForTrack(const QString& rawPath, double durationSec);
     void attachCacheToTransport(AudioCacheHandle cacheHandle, double trackSampleRate,
@@ -646,6 +647,7 @@ private:
     QString m_coverArtUrl;
     QString m_trackLoadError;
     bool    m_hasCoverArt = false;
+    bool m_currentLoadHasReusableAnalysis = false;
     QVariantList m_currentSegments;
     QVariantList m_memoryCues;
     QString m_externalSourceId;

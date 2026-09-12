@@ -69,6 +69,9 @@ public:
     void setRealtimeInteractionActive(bool active) noexcept {
         m_realtimeInteractionActive.store(active, std::memory_order_release);
     }
+    void setBackgroundWorkPaused(bool paused) noexcept {
+        m_backgroundWorkPaused.store(paused, std::memory_order_release);
+    }
     void setCompletionCallback(CompletionCallback callback);
     void setProgressCallback(ProgressCallback callback);
     void setChunkCallback(ChunkCallback callback);
@@ -89,6 +92,7 @@ private:
    int m_pointsPerSecond;
    std::atomic<double> m_seekHintSec{0.0};
    std::atomic<bool> m_realtimeInteractionActive{false};
+   std::atomic<bool> m_backgroundWorkPaused{false};
    mutable std::mutex m_demandMutex;
    waveform::WaveformDemand m_waveformDemand;
    std::atomic<AnalysisGeneration> m_generation{0};

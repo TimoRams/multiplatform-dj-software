@@ -451,6 +451,47 @@ int main(int argc, char** argv)
             monoPath, payload.pointsPerSecond));
     }
     {
+        struct StagedLoadState {
+            std::mutex mutex;
+            std::condition_variable condition;
+            bool audioReady = false;
+            bool visualReady = false;
+            bool visualArrivedAfterAudio = false;
+            AudioCacheHandle handle;
+        };
+        auto staged = std::make_shared<StagedLoadState>();
+        loader.loadTrack(
+            stereoPath,
+            [staged](TrackLoadResult result) {
+                {
+                    std::lock_guard lock(staged->mutex);
+                    staged->audioReady = result.succeeded() && result.cacheHandle.isValid();
+                    staged->handle = result.cacheHandle;
+                }
+                staged->condition.notify_all();
+            },
+            {},
+            [staged](TrackVisualResult) {
+                {
+                    std::lock_guard lock(staged->mutex);
+                    staged->visualArrivedAfterAudio = staged->audioReady;
+                    staged->visualReady = true;
+                }
+                staged->condition.notify_all();
+            });
+        {
+            std::unique_lock lock(staged->mutex);
+            ok &= require(staged->condition.wait_for(
+                              lock, std::chrono::seconds(10), [&] {
+                                  return staged->audioReady && staged->visualReady;
+                              }),
+                          "staged deck load must publish audio and visuals");
+            ok &= require(staged->visualArrivedAfterAudio,
+                          "playable audio must publish before visual preparation");
+        }
+        cache.releaseTrack(staged->handle);
+    }
+    {
         ResultWaiter waiter;
         const auto ownerThread = std::this_thread::get_id();
         std::thread::id completionThread;

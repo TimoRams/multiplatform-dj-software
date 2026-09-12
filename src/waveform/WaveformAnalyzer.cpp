@@ -39,7 +39,7 @@ void lowerAnalysisThreadPriority()
 {
 #ifdef __linux__
     const pid_t tid = static_cast<pid_t>(syscall(SYS_gettid));
-    (void)setpriority(PRIO_PROCESS, static_cast<id_t>(tid), 12);
+    (void)setpriority(PRIO_PROCESS, static_cast<id_t>(tid), 15);
 #endif
 }
 
@@ -328,6 +328,9 @@ void WaveformAnalyzer::run()
             [this]() {
                 return m_realtimeInteractionActive.load(std::memory_order_acquire);
             },
+            [this]() {
+                return m_backgroundWorkPaused.load(std::memory_order_acquire);
+            },
             [this, &backgroundSlot]() {
                 backgroundSlot = std::make_unique<AnalysisSlot>(*this);
                 return backgroundSlot->acquired();
@@ -398,6 +401,9 @@ void WaveformAnalyzer::run()
             sampleRate,
             duration,
             haveFullWaveform,
+            [this]() {
+                return m_backgroundWorkPaused.load(std::memory_order_acquire);
+            },
         };
         if (!waveform_internal::runAnalysisOrchestrator(orchestratorInput))
             return;

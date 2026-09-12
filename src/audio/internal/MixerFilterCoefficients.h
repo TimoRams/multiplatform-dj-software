@@ -15,6 +15,7 @@ struct BiquadCoefficients {
 struct MixerCoefficientSnapshot {
     BiquadCoefficients lowShelf, midBell, highShelf, color;
     bool eqBypass=true;              // all three knobs at detent → skip the EQ
+    bool colorBypass=true;
     std::uint64_t parameterGeneration=0,deviceGeneration=0;
     double sampleRate=0.0;
     [[nodiscard]] bool valid() const noexcept;
@@ -47,6 +48,7 @@ private:
 struct MixerFilterBank {
     StereoBiquad lowShelf,midBell,highShelf,color;
     bool bypassEq=true;
+    bool bypassColor=true;
     void setSnapshot(const MixerCoefficientSnapshot& s) noexcept;
     void clearState() noexcept;
     [[nodiscard]] float process(int channel,float input) noexcept;

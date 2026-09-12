@@ -84,7 +84,8 @@ MixerCoefficientSnapshot buildMixerCoefficientSnapshot(MixerFilterTargets t,doub
         s.highShelf=shelf(sr,kEqHighShelfHz,eqDecibels(t.high),true);
     }
 
-    if(std::abs(t.color)<0.05f)s.color={};
+    s.colorBypass=std::abs(t.color)<0.05f;
+    if(s.colorBypass)s.color={};
     else if(t.color<0){const double x=1.0+t.color;s.color=pass(sr,80*std::pow(20000.0/80.0,x),1.2,false);}
     else s.color=pass(sr,20*std::pow(10000.0/20.0,t.color),1.2,true);
     return s;
@@ -96,6 +97,7 @@ void MixerFilterBank::setSnapshot(const MixerCoefficientSnapshot&s) noexcept {
     lowShelf.setCoefficients(s.lowShelf);midBell.setCoefficients(s.midBell);
     highShelf.setCoefficients(s.highShelf);color.setCoefficients(s.color);
     bypassEq=s.eqBypass;
+    bypassColor=s.colorBypass;
 }
 
 void MixerFilterBank::clearState() noexcept {
@@ -109,5 +111,5 @@ float MixerFilterBank::process(int ch,float v) noexcept{
         out=midBell.process(ch,out);
         out=highShelf.process(ch,out);
     }
-    return color.process(ch,out);
+    return bypassColor ? out : color.process(ch,out);
 }

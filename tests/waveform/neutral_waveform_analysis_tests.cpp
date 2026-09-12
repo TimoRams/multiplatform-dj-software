@@ -105,6 +105,7 @@ Analysis analyze(const QString& path)
         {},
         {},
         {},
+        {},
         [] { return true; },
         reader->lengthInSamples,
         reader->sampleRate,

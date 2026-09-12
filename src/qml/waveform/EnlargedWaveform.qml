@@ -20,23 +20,20 @@ Item {
         return isFinite(value) && value > 0 ? value : 1.0
     }
     readonly property real physicalPixel: 1.0 / renderDpr
-    readonly property real playheadCenterX:
-        (Math.floor(width * 0.5 * renderDpr) + 0.5) / renderDpr
     readonly property bool waveformMotionActive:
         root.visible && root.engine !== null
         && (root.engine.isPlaying || root.engine.scratchVisualActive)
     readonly property bool slipPreviewActive:
         root.engine !== null && root.engine.slipPreviewActive
+    readonly property bool slipRendererReady:
+        root.slipPreviewActive && slipWaveLoader.item !== null
+        && slipWaveLoader.item.contentReady
     readonly property int waveformMotionIntervalMs: {
         if (typeof renderPressurePolicy === "undefined" || !renderPressurePolicy)
             return 16
         return root.engine && root.engine.scratchVisualActive
             ? renderPressurePolicy.interactiveWaveformUpdateIntervalMs
             : renderPressurePolicy.waveformUpdateIntervalMs
-    }
-
-    function snappedLength(value) {
-        return Math.max(physicalPixel, Math.round(value * renderDpr) / renderDpr)
     }
 
     Layout.fillWidth: true
@@ -70,8 +67,9 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            height: root.slipPreviewActive ? parent.height * 0.5 : parent.height
+            height: root.slipRendererReady ? parent.height * 0.5 : parent.height
             clip: true
+            z: root.slipRendererReady ? 0 : 1
 
             ScrollingWaveformItem {
                 id: waveItem
@@ -98,8 +96,11 @@ Item {
             active: root.slipPreviewActive
             visible: active
             clip: true
+            z: 0
 
             sourceComponent: Item {
+                readonly property bool contentReady: slipWaveItem.contentReady
+
                 function requestUpdate() {
                     slipWaveItem.requestUpdate()
                 }
@@ -281,47 +282,12 @@ Item {
             }
         }
 
-        // Playhead — always dead center of the full deck.
-        Rectangle {
-            id: playhead
-            width: 3.0 / root.renderDpr
-            height: parent.height
-            color: UiTheme.playhead
-            x: root.playheadCenterX - width * 0.5
-            y: 0
-            z: 10
-
-            Rectangle {
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.top: parent.top
-                width: root.snappedLength(12)
-                height: root.snappedLength(6)
-                color: UiTheme.playhead
-            }
-            Rectangle {
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.bottom: parent.bottom
-                width: root.snappedLength(12)
-                height: root.snappedLength(6)
-                color: UiTheme.playhead
-            }
-        }
-
-        Rectangle {
-            x: 0
-            y: Math.floor(parent.height * 0.5 * root.renderDpr) / root.renderDpr
-            width: parent.width
-            height: root.physicalPixel
-            color: "#24ffffff"
-            z: 9
-        }
-
         Rectangle {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             height: parent.height * 0.5
-            visible: root.slipPreviewActive
+            visible: root.slipRendererReady
             color: "#18000000"
             z: 8
         }

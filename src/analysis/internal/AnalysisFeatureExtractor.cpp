@@ -115,7 +115,8 @@ AnalysisFeatureExtractor::AnalysisFeatureExtractor(Options options)
 
 AnalysisFeatures AnalysisFeatureExtractor::extract(juce::AudioFormatReader& reader,
                                                    juce::Thread* cancelThread,
-                                                   const std::function<void(double)>& onProgress) const
+                                                   const std::function<void(double)>& onProgress,
+                                                   const std::function<bool()>& shouldPause) const
 {
     AnalysisFeatures out;
     out.sampleRate = reader.sampleRate > 0.0 ? reader.sampleRate : 44100.0;
@@ -164,6 +165,12 @@ AnalysisFeatures AnalysisFeatureExtractor::extract(juce::AudioFormatReader& read
     for (juce::int64 pos = 0; pos <= lastStart; pos += out.hopSize) {
         if (cancelThread != nullptr && cancelThread->threadShouldExit())
             break;
+        if ((hopCount & 0x3F) == 0) {
+            while (shouldPause && shouldPause()
+                   && (cancelThread == nullptr || !cancelThread->threadShouldExit())) {
+                juce::Thread::sleep(4);
+            }
+        }
 
         if (onProgress && (hopCount & 0x3F) == 0)
             onProgress(static_cast<double>(hopCount) / static_cast<double>(totalHops));
