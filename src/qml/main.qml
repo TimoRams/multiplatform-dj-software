@@ -14,7 +14,7 @@ ApplicationWindow {
     color: UiTheme.bgDeep
     FontLoader {
         id: interFont
-        source: "qrc:/assets/fonts/InterVariable.ttf"
+        source: "qrc:/DJSoftware/assets/fonts/InterVariable.ttf"
     }
     font.hintingPreference: Font.PreferFullHinting
     font.family: interFont.status === FontLoader.Ready ? UiTheme.uiFontFamily : font.family

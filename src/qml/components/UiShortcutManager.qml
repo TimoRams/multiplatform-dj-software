@@ -8,7 +8,13 @@ Item {
     function textInputFocused() { return appWindow && appWindow._isTextInputFocused() }
 
     Shortcut {
-        sequences: ["Ctrl+=", "Ctrl++"]
+        sequence: "Ctrl+="
+        context: Qt.ApplicationShortcut
+        onActivated: if (!root.textInputFocused() && waveformZoomController)
+                         waveformZoomController.zoomIn()
+    }
+    Shortcut {
+        sequence: "Ctrl++"
         context: Qt.ApplicationShortcut
         onActivated: if (!root.textInputFocused() && waveformZoomController)
                          waveformZoomController.zoomIn()
@@ -27,7 +33,13 @@ Item {
     }
 
     Shortcut {
-        sequences: ["Ctrl+Shift+=", "Ctrl+Shift++"]
+        sequence: "Ctrl+Shift+="
+        context: Qt.ApplicationShortcut
+        onActivated: if (!root.textInputFocused() && uiScaleController)
+                         uiScaleController.increase()
+    }
+    Shortcut {
+        sequence: "Ctrl+Shift++"
         context: Qt.ApplicationShortcut
         onActivated: if (!root.textInputFocused() && uiScaleController)
                          uiScaleController.increase()

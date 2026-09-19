@@ -66,10 +66,10 @@ QStringList MidiControllerManager::getAvailableMidiDevices()
 bool MidiControllerManager::refreshMidiDeviceCache()
 {
     const auto identifiersAsStrings = [](const auto& identifiers) {
-        QStringList result;
-        result.reserve(static_cast<qsizetype>(identifiers.size()));
+        QStringList result(static_cast<qsizetype>(identifiers.size()));
+        qsizetype index = 0;
         for (const auto& identifier : identifiers)
-            result.push_back(toQString(identifier));
+            result[index++] = toQString(identifier);
         return result;
     };
     const QStringList previousInputIdentifiers = identifiersAsStrings(m_availableInputDeviceIdentifiers);

@@ -106,10 +106,7 @@ void LibraryManager::collectResults()
         if (!result.success || result.cancelled || result.stale
             || result.generation != m_generation)
             continue;
-        QStringList names;
-        names.reserve(result.paths.size());
-        for (const auto& path : result.paths)
-            names.push_back(path);
+        QStringList names(std::move(result.paths));
         names.sort(Qt::CaseInsensitive);
         if (result.requestId == m_folderRequestId) {
             m_folders = std::move(names);
