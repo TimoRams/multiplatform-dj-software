@@ -62,12 +62,12 @@ scene work.
 - Owns: analysis results, validation and worker-local algorithms.
 - May depend on: domain values, JUCE readers and analysis libraries.
 - Must not depend on: QML or render-thread types.
-- Public API: `AnalysisTypes.h`, `AnalysisValidation.h` and
-  `AnalysisJobQueue.h`. Algorithm helpers live under `analysis/internal/`.
+- Public API: `AnalysisTypes.h` and `AnalysisJobQueue.h`. Beat validation and
+  the cross-feature analysis orchestrator live under `analysis/internal/`.
 
 ### `waveform/`
 
-- Responsibility: waveform analysis, immutable line storage, cache/LOD data and
+- Responsibility: waveform analysis, immutable line storage, compact cache data and
   Qt Quick waveform rendering.
 - Owns: `WaveformAnalyzer`, `WaveformCache`, `WaveformLineStore`, LOD creation,
   tile rasterization and scrolling/overview items.
@@ -117,8 +117,8 @@ scene work.
 ### `link/` and `platform/`
 
 - `link/` owns Ableton Link session integration.
-- `platform/` owns narrow OS adapters such as signal handling and Windows
-  header compatibility.
+- `platform/` owns narrow OS adapters such as signal handling, system resource
+  monitoring and Windows header compatibility.
 - Neither directory is a dumping ground for generic helpers.
 
 ### `qml/`
@@ -143,7 +143,7 @@ AudioPageCache
 WaveformDemand
   -> WaveformAnalyzer / WaveformCache
   -> WaveformLineStore
-  -> LOD / tile rasterizer
+  -> dynamic LOD / tile rasterizer
   -> scrolling + overview scene nodes
 ```
 

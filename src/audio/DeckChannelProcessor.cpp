@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace {
 thread_local bool g_inMixerCallback=false;
@@ -29,6 +30,195 @@ struct StereoBlock {
 };
 
 } // namespace
+
+double mixerEqGainFromKnob(float knob) noexcept
+{
+    const double value = std::clamp(static_cast<double>(knob), -1.0, 1.0);
+    const double decibels = value >= 0.0 ? value * 6.0 : value * 26.0;
+    return std::pow(10.0, decibels / 20.0);
+}
+
+bool BiquadCoefficients::finiteAndStable() const noexcept
+{
+    if (!(std::isfinite(b0) && std::isfinite(b1) && std::isfinite(b2)
+          && std::isfinite(a1) && std::isfinite(a2))) {
+        return false;
+    }
+
+    const double discriminant = static_cast<double>(a1) * a1 - 4.0 * a2;
+    if (discriminant < 0.0)
+        return std::sqrt(std::abs(static_cast<double>(a2))) < 1.0;
+
+    const double root = std::sqrt(discriminant);
+    return std::abs((-a1 + root) / 2.0) < 1.0
+        && std::abs((-a1 - root) / 2.0) < 1.0;
+}
+
+bool MixerCoefficientSnapshot::valid() const noexcept
+{
+    return sampleRate > 0.0 && std::isfinite(sampleRate)
+        && lowShelf.finiteAndStable() && midBell.finiteAndStable()
+        && highShelf.finiteAndStable() && color.finiteAndStable();
+}
+
+namespace {
+
+BiquadCoefficients normalized(double b0,
+                              double b1,
+                              double b2,
+                              double a0,
+                              double a1,
+                              double a2) noexcept
+{
+    return {
+        static_cast<float>(b0 / a0),
+        static_cast<float>(b1 / a0),
+        static_cast<float>(b2 / a0),
+        static_cast<float>(a1 / a0),
+        static_cast<float>(a2 / a0)
+    };
+}
+
+double filterFrequency(double hz, double sampleRate) noexcept
+{
+    return std::clamp(hz, 20.0, sampleRate * 0.45);
+}
+
+BiquadCoefficients pass(double sampleRate, double hz, double q, bool high) noexcept
+{
+    const double w = 2.0 * std::numbers::pi * filterFrequency(hz, sampleRate) / sampleRate;
+    const double cosine = std::cos(w);
+    const double alpha = std::sin(w) / (2.0 * q);
+    if (high) {
+        return normalized((1.0 + cosine) / 2.0, -(1.0 + cosine),
+                          (1.0 + cosine) / 2.0, 1.0 + alpha,
+                          -2.0 * cosine, 1.0 - alpha);
+    }
+    return normalized((1.0 - cosine) / 2.0, 1.0 - cosine,
+                      (1.0 - cosine) / 2.0, 1.0 + alpha,
+                      -2.0 * cosine, 1.0 - alpha);
+}
+
+BiquadCoefficients shelf(double sampleRate, double hz, double decibels, bool high) noexcept
+{
+    const double amplitude = std::pow(10.0, decibels / 40.0);
+    const double w = 2.0 * std::numbers::pi * filterFrequency(hz, sampleRate) / sampleRate;
+    const double cosine = std::cos(w);
+    const double alpha = std::sin(w) * std::numbers::sqrt2 / 2.0;
+    const double beta = 2.0 * std::sqrt(amplitude) * alpha;
+    if (high) {
+        return normalized(
+            amplitude * ((amplitude + 1.0) + (amplitude - 1.0) * cosine + beta),
+            -2.0 * amplitude * ((amplitude - 1.0) + (amplitude + 1.0) * cosine),
+            amplitude * ((amplitude + 1.0) + (amplitude - 1.0) * cosine - beta),
+            (amplitude + 1.0) - (amplitude - 1.0) * cosine + beta,
+            2.0 * ((amplitude - 1.0) - (amplitude + 1.0) * cosine),
+            (amplitude + 1.0) - (amplitude - 1.0) * cosine - beta);
+    }
+    return normalized(
+        amplitude * ((amplitude + 1.0) - (amplitude - 1.0) * cosine + beta),
+        2.0 * amplitude * ((amplitude - 1.0) - (amplitude + 1.0) * cosine),
+        amplitude * ((amplitude + 1.0) - (amplitude - 1.0) * cosine - beta),
+        (amplitude + 1.0) + (amplitude - 1.0) * cosine + beta,
+        -2.0 * ((amplitude - 1.0) + (amplitude + 1.0) * cosine),
+        (amplitude + 1.0) + (amplitude - 1.0) * cosine - beta);
+}
+
+BiquadCoefficients bell(double sampleRate, double hz, double q, double decibels) noexcept
+{
+    const double amplitude = std::pow(10.0, decibels / 40.0);
+    const double w = 2.0 * std::numbers::pi * filterFrequency(hz, sampleRate) / sampleRate;
+    const double cosine = std::cos(w);
+    const double alpha = std::sin(w) / (2.0 * q);
+    return normalized(1.0 + alpha * amplitude, -2.0 * cosine,
+                      1.0 - alpha * amplitude, 1.0 + alpha / amplitude,
+                      -2.0 * cosine, 1.0 - alpha / amplitude);
+}
+
+double eqDecibels(float knob) noexcept
+{
+    const double value = std::clamp(static_cast<double>(knob), -1.0, 1.0);
+    return value >= 0.0 ? value * 6.0 : value * 26.0;
+}
+
+} // namespace
+
+MixerCoefficientSnapshot buildMixerCoefficientSnapshot(MixerFilterTargets targets,
+                                                        double sampleRate,
+                                                        std::uint64_t parameterGeneration,
+                                                        std::uint64_t deviceGeneration) noexcept
+{
+    targets.low = std::clamp(targets.low, -1.0f, 1.0f);
+    targets.mid = std::clamp(targets.mid, -1.0f, 1.0f);
+    targets.high = std::clamp(targets.high, -1.0f, 1.0f);
+    targets.color = std::clamp(targets.color, -1.0f, 1.0f);
+
+    MixerCoefficientSnapshot snapshot;
+    snapshot.sampleRate = sampleRate;
+    snapshot.parameterGeneration = parameterGeneration;
+    snapshot.deviceGeneration = deviceGeneration;
+    if (!(std::isfinite(sampleRate) && sampleRate >= 8000.0 && sampleRate <= 384000.0))
+        return snapshot;
+
+    snapshot.eqBypass = std::abs(targets.low) < 0.005f
+        && std::abs(targets.mid) < 0.005f
+        && std::abs(targets.high) < 0.005f;
+    if (!snapshot.eqBypass) {
+        snapshot.lowShelf = shelf(sampleRate, kEqLowShelfHz, eqDecibels(targets.low), false);
+        snapshot.midBell = bell(sampleRate, kEqMidBellHz, kEqMidBellQ, eqDecibels(targets.mid));
+        snapshot.highShelf = shelf(sampleRate, kEqHighShelfHz, eqDecibels(targets.high), true);
+    }
+
+    snapshot.colorBypass = std::abs(targets.color) < 0.05f;
+    if (snapshot.colorBypass) {
+        snapshot.color = {};
+    } else if (targets.color < 0.0f) {
+        const double position = 1.0 + targets.color;
+        snapshot.color = pass(sampleRate, 80.0 * std::pow(20000.0 / 80.0, position), 1.2, false);
+    } else {
+        snapshot.color =
+            pass(sampleRate, 20.0 * std::pow(10000.0 / 20.0, targets.color), 1.2, true);
+    }
+    return snapshot;
+}
+
+float StereoBiquad::process(int channel, float input) noexcept
+{
+    channel = std::clamp(channel, 0, 1);
+    const float output = m_coefficients.b0 * input + m_z1[channel];
+    m_z1[channel] = m_coefficients.b1 * input - m_coefficients.a1 * output + m_z2[channel];
+    m_z2[channel] = m_coefficients.b2 * input - m_coefficients.a2 * output;
+    return output;
+}
+
+void MixerFilterBank::setSnapshot(const MixerCoefficientSnapshot& snapshot) noexcept
+{
+    lowShelf.setCoefficients(snapshot.lowShelf);
+    midBell.setCoefficients(snapshot.midBell);
+    highShelf.setCoefficients(snapshot.highShelf);
+    color.setCoefficients(snapshot.color);
+    bypassEq = snapshot.eqBypass;
+    bypassColor = snapshot.colorBypass;
+}
+
+void MixerFilterBank::clearState() noexcept
+{
+    lowShelf.clearState();
+    midBell.clearState();
+    highShelf.clearState();
+    color.clearState();
+}
+
+float MixerFilterBank::process(int channel, float input) noexcept
+{
+    float output = input;
+    if (!bypassEq) {
+        output = lowShelf.process(channel, output);
+        output = midBell.process(channel, output);
+        output = highShelf.process(channel, output);
+    }
+    return bypassColor ? output : color.process(channel, output);
+}
 
 DeckChannelProcessor::DeckChannelProcessor(juce::AudioSource* inSource) : source(inSource) {}
 

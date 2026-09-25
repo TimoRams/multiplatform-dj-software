@@ -65,19 +65,6 @@ int main()
                   "LOD pyramid did not derive a complete cross-chunk level");
     ok &= require(waveform::WaveformLodPyramid::linesPerSecond(1200, 4) == 75,
                   "LOD pyramid rate does not reach 75 lines per second");
-    WaveformLodBatch persistedLod;
-    auto persistedLines = std::make_shared<std::vector<WaveformLine>>(
-        (total + 15) / 16);
-    (*persistedLines)[chunkSize / 16].maximum = 3210;
-    persistedLod.push_back({4, 16, 0,
-        static_cast<int>(persistedLines->size()), std::move(persistedLines)});
-    ok &= require(store.publishLodBatch(std::move(persistedLod)),
-                  "persisted LOD level was rejected");
-    const auto persistedSample = waveform::WaveformLodPyramid::sample(
-        *store.snapshot(), 4, chunkSize / 16);
-    ok &= require(persistedSample.complete
-                      && persistedSample.line.maximum == 3210,
-                  "renderer did not consume the persisted LOD sample");
     WaveformLineStore oneSidedStore;
     oneSidedStore.reset(10, 16, 1200, 16);
     auto oneSidedLines = std::make_shared<std::vector<WaveformLine>>(16);

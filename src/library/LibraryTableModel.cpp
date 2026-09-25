@@ -43,10 +43,8 @@ bool sameRowData(const LibraryRow& a, const LibraryRow& b)
 
 } // namespace
 
-LibraryTableModel::LibraryTableModel(const QString& connectionName,
-                                     QObject* parent)
+LibraryTableModel::LibraryTableModel(QObject* parent)
     : QAbstractTableModel(parent)
-    , m_connectionName(connectionName)
 {
 }
 

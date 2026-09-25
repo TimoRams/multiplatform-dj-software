@@ -6,17 +6,13 @@
 #include "audio/TimeStretchProcessor.h"
 #include "audio/cache/CachedPlaybackAudioSource.h"
 #include "deck/DeckTransport.h"
-#include "deck/MetadataUtils.h"
 #include "fx/FxProcessor.h"
-#include "library/CoverArtExtractor.h"
-#include "library/CoverArtProvider.h"
-#include "library/LibraryCoverService.h"
 #include "library/LibraryDatabase.h"
-#include "library/TrackIdGenerator.h"
 #include "waveform/WaveformAnalyzer.h"
 #include "waveform/WaveformCache.h"
 
 #include <QBuffer>
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
 #include <QFile>
@@ -53,6 +49,25 @@
 
 namespace {
 
+QString generateTrackId(const QString& artist,
+                        const QString& title,
+                        int durationSeconds,
+                        const QString& filePath)
+{
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!artist.isEmpty() && !title.isEmpty() && durationSeconds > 0) {
+        hash.addData(artist.toUtf8());
+        hash.addData(title.toUtf8());
+        hash.addData(QByteArray::number(durationSeconds));
+    } else {
+        const QFileInfo file(filePath);
+        hash.addData(QByteArray::number(file.size()));
+        hash.addData(file.fileName().toUtf8());
+    }
+
+    return QString::fromLatin1(hash.result().toHex());
+}
+
 constexpr double kVolumeMin = 0.0;
 constexpr double kVolumeMax = 1.0;
 constexpr double kTrimMin = 0.0;
@@ -61,6 +76,12 @@ constexpr double kEqMin = -1.0;
 constexpr double kEqMax = 1.0;
 constexpr double kFilterMin = -1.0;
 constexpr double kFilterMax = 1.0;
+constexpr double kParameterEpsilon = 1.0e-6;
+
+bool nearlyEqual(double left, double right) noexcept
+{
+    return std::abs(left - right) <= kParameterEpsilon;
+}
 
 double playHistoryThresholdSeconds(double durationSec)
 {
@@ -704,7 +725,7 @@ void DjEngine::notifyProgressIfNeeded()
 void DjEngine::applyVolume(double value)
 {
     const double clamped = std::clamp(value, kVolumeMin, kVolumeMax);
-    if (metadata::nearlyEqual(m_volume, clamped))
+    if (nearlyEqual(m_volume, clamped))
         return;
 
     m_volume = clamped;
@@ -723,7 +744,7 @@ void DjEngine::setVolume(double value)
 void DjEngine::applyTrim(double value)
 {
     const double clamped = std::clamp(value, kTrimMin, kTrimMax);
-    if (metadata::nearlyEqual(m_trim, clamped))
+    if (nearlyEqual(m_trim, clamped))
         return;
 
     m_trim = clamped;
@@ -742,7 +763,7 @@ void DjEngine::setTrim(double value)
 void DjEngine::applyEqHigh(double value)
 {
     const double clamped = std::clamp(value, kEqMin, kEqMax);
-    if (metadata::nearlyEqual(m_eqHigh, clamped))
+    if (nearlyEqual(m_eqHigh, clamped))
         return;
 
     m_eqHigh = clamped;
@@ -760,7 +781,7 @@ void DjEngine::setEqHigh(double value)
 void DjEngine::applyEqMid(double value)
 {
     const double clamped = std::clamp(value, kEqMin, kEqMax);
-    if (metadata::nearlyEqual(m_eqMid, clamped))
+    if (nearlyEqual(m_eqMid, clamped))
         return;
 
     m_eqMid = clamped;
@@ -778,7 +799,7 @@ void DjEngine::setEqMid(double value)
 void DjEngine::applyEqLow(double value)
 {
     const double clamped = std::clamp(value, kEqMin, kEqMax);
-    if (metadata::nearlyEqual(m_eqLow, clamped))
+    if (nearlyEqual(m_eqLow, clamped))
         return;
 
     m_eqLow = clamped;
@@ -796,7 +817,7 @@ void DjEngine::setEqLow(double value)
 void DjEngine::applyFilter(double value)
 {
     const double clamped = std::clamp(value, kFilterMin, kFilterMax);
-    if (metadata::nearlyEqual(m_filter, clamped))
+    if (nearlyEqual(m_filter, clamped))
         return;
 
     m_filter = clamped;
@@ -841,7 +862,7 @@ bool DjEngine::hydrateLibraryStateForTrack(const QString& rawPath, double durati
 
     const QString existingId = m_libraryDb->trackIdForFilePath(rawPath);
     m_currentTrackId = existingId.isEmpty()
-        ? TrackIdGenerator::generate(m_trackArtist, m_trackTitle, durationSeconds, rawPath)
+        ? generateTrackId(m_trackArtist, m_trackTitle, durationSeconds, rawPath)
         : existingId;
     m_trackFilePath = rawPath;
     m_playLogged = false;

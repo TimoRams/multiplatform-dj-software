@@ -2,8 +2,6 @@
 
 #include <QObject>
 #include <QStringList>
-#include <QStandardPaths>
-#include <QDir>
 #include <QTimer>
 
 #include <cstdint>
@@ -48,9 +46,4 @@ private:
     std::uint64_t m_generation = 0;
     std::uint64_t m_folderRequestId = 0;
     std::uint64_t m_trackRequestId = 0;
-
-    static const inline QStringList kAudioFilters = {
-        "*.mp3", "*.flac", "*.wav", "*.aif", "*.aiff",
-        "*.ogg", "*.m4a", "*.aac", "*.opus"
-    };
 };

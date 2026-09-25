@@ -10,7 +10,6 @@ target_sources(${PROJECT_NAME} PRIVATE
     LibraryCoverService.cpp
     LibraryPreviewPlayer.h
     LibraryPreviewPlayer.cpp
-    TrackIdGenerator.h
     LibraryDatabase.h
     LibraryDatabase.cpp
     LibraryPersistence.cpp
@@ -23,9 +22,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     devices/DeviceLibraryManager.h
     devices/DeviceLibraryManager.cpp
     devices/rekordbox/RekordboxTypes.h
-    devices/rekordbox/RekordboxPdbReader.h
     devices/rekordbox/RekordboxPdbReader.cpp
-    devices/rekordbox/RekordboxAnalysisReader.h
     devices/rekordbox/RekordboxAnalysisReader.cpp
     devices/rekordbox/RekordboxDeviceIdentity.h
     devices/rekordbox/RekordboxDeviceIdentity.cpp

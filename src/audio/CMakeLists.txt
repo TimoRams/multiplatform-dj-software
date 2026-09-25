@@ -17,7 +17,6 @@ target_sources(${PROJECT_NAME} PRIVATE
     AudioOutputRouter.cpp
     TimeStretchProcessor.cpp
     DeckChannelProcessor.cpp
-    internal/MixerFilterCoefficients.cpp
     internal/BrickwallLimiter.h
     internal/BrickwallLimiter.cpp
     internal/HermiteResamplingAudioSource.h

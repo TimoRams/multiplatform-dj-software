@@ -59,9 +59,8 @@ struct WaveformColumn final {
 // neutral dynamics/band values (loud lines dominate, so a column reflects what
 // you actually hear rather than being washed out by neighbouring silence).
 //
-// Which physical source the values are read from — canonical lines or a
-// persisted LOD level — is chosen internally. Consumers never select a level
-// and never see one; LOD is purely an efficiency detail of this function.
+// The aggregator chooses a dynamic LOD stride internally. Consumers never
+// select a level and never see one.
 [[nodiscard]] WaveformColumn aggregateWaveformColumn(
     const WaveformLineStoreSnapshot& snapshot, SourceLineRange range) noexcept;
 

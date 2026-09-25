@@ -8,7 +8,7 @@
 
 #include "analysis/internal/AnalysisWorkingData.h"
 
-namespace waveform_internal {
+namespace analysis_internal {
 
 struct AnalysisOrchestratorInput
 {
@@ -25,4 +25,4 @@ struct AnalysisOrchestratorInput
 
 bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input);
 
-} // namespace waveform_internal
+} // namespace analysis_internal

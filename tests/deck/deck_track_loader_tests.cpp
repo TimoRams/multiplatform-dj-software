@@ -212,9 +212,8 @@ int main(int argc, char** argv)
         ok &= require(info.totalLines == payload.totalExpected
                           && !info.overview.isEmpty(),
                       "render cache must retain timeline and instant overview");
-        ok &= require(info.cacheVersion == WaveformCache::kRenderCacheVersion
-                          && info.lodLevelCount == 4,
-                      "render cache V2 must advertise its complete LOD pyramid");
+        ok &= require(info.cacheVersion == WaveformCache::kRenderCacheVersion,
+                      "render cache must advertise the current compact format");
 
         std::vector<int> streamedFirstLines;
         std::vector<int> batchSizes;
@@ -264,24 +263,6 @@ int main(int argc, char** argv)
                       "new seek demand must outrank queued background cache work");
         ok &= require(restoredProbe,
                       "streamed render lines must preserve amplitude and colour");
-        bool restoredLodProbe = false;
-        int restoredLodTiles = 0;
-        ok &= require(WaveformCache::streamRenderLodCache(
-                          monoPath, payload.pointsPerSecond, 4,
-                          [] { return false; },
-                          [&](WaveformCache::LodTile tile) {
-                              ++restoredLodTiles;
-                              const int probe = 8500 / tile.canonicalLineStride;
-                              if (tile.firstSample <= probe
-                                  && probe < tile.firstSample
-                                      + static_cast<int>(tile.lines->size())) {
-                                  restoredLodProbe = (*tile.lines)[static_cast<std::size_t>(
-                                      probe - tile.firstSample)].maximum > 0;
-                              }
-                          }),
-                      "render cache V2 must stream persisted LOD tiles");
-        ok &= require(restoredLodTiles > 0 && restoredLodProbe,
-                      "persisted 75-lines-per-second LOD lost its probe amplitude");
 
         // Force the loader onto the compact deferred path and verify that its
         // warm-load stream publishes canonical chunks directly. Persisted LOD
@@ -346,10 +327,6 @@ int main(int argc, char** argv)
         ok &= require(!WaveformCache::inspectRenderCache(
                            monoPath, payload.pointsPerSecond, &legacyInfo),
                       "presentation-baked V1 render cache was not invalidated");
-        ok &= require(!WaveformCache::streamRenderLodCache(
-                          monoPath, payload.pointsPerSecond, 4,
-                          [] { return false; }, [](WaveformCache::LodTile) {}),
-                      "legacy cache must not pretend to contain persisted LOD");
         QFile::remove(WaveformCache::renderCachePathFor(
             monoPath, payload.pointsPerSecond));
     }

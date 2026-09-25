@@ -41,17 +41,15 @@ int main()
     const auto workspace = read("src/qml/performance/PerformanceWorkspace.qml");
     const auto shortcuts = read("src/qml/components/UiShortcutManager.qml");
     const auto enlargedWaveform = read("src/qml/waveform/EnlargedWaveform.qml");
-    const auto overallWaveform = read("src/qml/waveform/OverallWaveform.qml");
     const auto turntableIndicator = read("src/qml/deck/TurntableIndicator.qml");
     const auto settingsPanel = read("src/qml/settings/SettingsPanel.qml");
-    const auto settingsWindow = read("src/qml/settings/SettingsWindow.qml");
     const auto applicationBootstrap = read("src/app/ApplicationBootstrap.cpp");
     const auto performancePads = read("src/qml/performance/PerformancePads.qml");
     const auto library = read("src/qml/library/Library.qml");
     const auto sourcePage = read("src/qml/library/SourcePage.qml");
     const auto waveformScreen = read("src/qml/performance/PerformanceWaveformScreen.qml");
     const auto beatFxPanel = read("src/qml/performance/PerformanceBeatFxPanel.qml");
-    const auto deckQuickPanel = read("src/qml/deck/PerformanceDeckQuickPanel.qml");
+    const auto deckQuickPanel = read("src/qml/performance/PerformanceDeckQuickPanel.qml");
     const auto deckTrackInfoPanel = read("src/qml/deck/DeckTrackInfoPanel.qml");
     const auto developmentControls = read("src/qml/development/DevelopmentControlsWindow.qml");
     const auto flx10Mapping = read("src/controllers/mappings/midi/DDJ-FLX10.brockdj.xml");
@@ -72,8 +70,10 @@ int main()
     ok &= require(main.find("PerformanceWorkspace") != std::string::npos, "shell routes to performance workspace");
     ok &= require(workspace.find("DeckControl") != std::string::npos, "workspace uses shared deck component");
     ok &= require(workspace.find("MixerSection") == std::string::npos
+                      && workspace.find("CrossfaderBar") == std::string::npos
+                      && workspace.find("FxBar") == std::string::npos
                       && developmentControls.find("MixerSection") != std::string::npos,
-                  "production workspace omits hidden mixer trees while development retains the mixer UI");
+                  "production workspace omits hidden mixer and FX trees while development retains them");
     ok &= require(developmentControls.find("minimumWidth: 1280") != std::string::npos
                       && developmentControls.find("maximumWidth: 1280") != std::string::npos
                       && developmentControls.find("minimumHeight: 430") != std::string::npos
@@ -88,6 +88,7 @@ int main()
                       && occurrences(workspace, "asynchronous: true") >= 2,
                   "infrequent AIO settings and source surfaces load asynchronously on demand");
     ok &= require(topHeader.find("settingsWindowFactory.createObject(null)") != std::string::npos
+                      && topHeader.find("SettingsPanel {") != std::string::npos
                       && topHeader.find("SettingsWindow { id: settingsWin }") == std::string::npos,
                   "desktop settings no longer retain a hidden startup window");
     ok &= require(deckControl.find("onAir: deck.engine ? deck.engine.onAir : false")
@@ -103,27 +104,18 @@ int main()
                   && mixerSection.find("normalizedDb(levelLinear)") != std::string::npos,
                   "channel UI meter consumes pre-fader peaks with dBFS height mapping");
     ok &= require(settingsPanel.find("mappingEditorFactory.createObject(null)") != std::string::npos
-                      && settingsWindow.find("mappingEditorFactory.createObject(null)") != std::string::npos
-                      && settingsPanel.find("id: mappingEditorWindow") == std::string::npos
-                      && settingsWindow.find("id: mappingEditorWindow") == std::string::npos,
+                      && settingsPanel.find("id: mappingEditorWindow") == std::string::npos,
                   "mapping editors are constructed only when opened");
     ok &= require(main.find("waveformZoomLevels") == std::string::npos, "legacy fixed zoom list removed");
-    ok &= require(settingsPanel.find("settingsManager.setAudioConfiguration") != std::string::npos
-                      && settingsWindow.find("settingsManager.setAudioConfiguration") != std::string::npos,
+    ok &= require(settingsPanel.find("settingsManager.setAudioConfiguration") != std::string::npos,
                   "audio settings use one atomic persistence operation");
-    ok &= require(settingsPanel.find("firstRealOutput(outputOptions)") != std::string::npos
-                      && settingsWindow.find("firstRealOutput(outputOptions)") != std::string::npos,
+    ok &= require(settingsPanel.find("firstRealOutput(outputOptions)") != std::string::npos,
                   "device-list reconciliation never replaces a preference with None");
     ok &= require(settingsPanel.find("pairText === \"None\"") != std::string::npos
-                      && settingsWindow.find("pairText === \"None\"") != std::string::npos
                       && settingsPanel.find("deckB.setOutputFirstChannel(masterFirstChannel)")
-                          == std::string::npos
-                      && settingsWindow.find("deckB.setOutputFirstChannel(masterFirstChannel)")
                           == std::string::npos,
                   "Master routing is normalized explicitly instead of by a hidden deck side effect");
     ok &= require(settingsPanel.find("audioUiSyncing = true\n        audioOutputDeviceOptions =")
-                          != std::string::npos
-                      && settingsWindow.find("audioUiSyncing = true\n        audioOutputDeviceOptions =")
                           != std::string::npos,
                   "ComboBox model changes are guarded before they can select None");
     const auto audioCallbackRegistration = applicationBootstrap.find(
@@ -139,8 +131,7 @@ int main()
     ok &= require(engineHeader.find("Q_PROPERTY(bool scratchVisualActive READ isScratchVisualActive NOTIFY scrubbingChanged)")
                       != std::string::npos,
                   "scratch visual activity is a reactive QML property");
-    ok &= require(enlargedWaveform.find("root.engine.scratchVisualActive") != std::string::npos
-                  && overallWaveform.find("root.engine.scratchVisualActive") != std::string::npos,
+    ok &= require(enlargedWaveform.find("root.engine.scratchVisualActive") != std::string::npos,
                   "waveform frame animations react to paused scratch state");
     ok &= require(enlargedWaveform.find("color: UiTheme.playhead") == std::string::npos
                      && enlargedWaveform.find("color: \"#24ffffff\"") == std::string::npos,
@@ -172,11 +163,8 @@ int main()
                          != std::string::npos,
                   "development mixer reserves enough height above the crossfader");
     ok &= require(enlargedWaveform.find("FrameAnimation {") != std::string::npos
-                      && overallWaveform.find("FrameAnimation {") != std::string::npos
                       && turntableIndicator.find("FrameAnimation {") != std::string::npos
                       && enlargedWaveform.find("waveformMotionIntervalMs <= 17")
-                          != std::string::npos
-                      && overallWaveform.find("motionIntervalMs <= 17")
                           != std::string::npos
                       && turntableIndicator.find("motionIntervalMs <= 17")
                           != std::string::npos,
@@ -184,8 +172,6 @@ int main()
     ok &= require(enlargedWaveform.find("waveformRasterWorkEnabled")
                           != std::string::npos
                       && enlargedWaveform.find("waveformMotionIntervalMs > 17")
-                          != std::string::npos
-                      && overallWaveform.find("motionIntervalMs > 17")
                           != std::string::npos
                       && turntableIndicator.find("motionIntervalMs > 17")
                           != std::string::npos,

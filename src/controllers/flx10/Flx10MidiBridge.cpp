@@ -1303,8 +1303,6 @@ void MidiControllerManager::stepBeatFxDivision(int direction)
 
 void MidiControllerManager::updateBeatFxBlink()
 {
-    // Steady, not pulsed: see the timer setup in MidiControllerManager::start.
-    m_beatFxBlinkOn = m_beatFxActive;
     sendMappedNoteLed(QStringLiteral("beat_fx_on"), m_beatFxActive);
 }
 

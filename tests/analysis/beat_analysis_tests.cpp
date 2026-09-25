@@ -1,4 +1,3 @@
-#include "analysis/AnalysisValidation.h"
 #include "analysis/internal/BeatAnalysis.h"
 
 #include <algorithm>

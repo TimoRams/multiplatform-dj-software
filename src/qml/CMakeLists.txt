@@ -1,7 +1,6 @@
 set(BROCKDJ_QML_FILES
     src/qml/main.qml
     src/qml/components/UiTheme.qml
-    src/qml/components/UiMetrics.qml
     src/qml/components/UiShortcutManager.qml
     src/qml/components/Knob.qml
     src/qml/components/Button.qml
@@ -9,30 +8,27 @@ set(BROCKDJ_QML_FILES
     src/qml/components/ComboBox.qml
     src/qml/deck/DeckControl.qml
     src/qml/deck/DeckTrackInfoPanel.qml
-    src/qml/deck/PerformanceDeckQuickPanel.qml
     src/qml/deck/TurntableIndicator.qml
     src/qml/waveform/EnlargedWaveform.qml
     src/qml/waveform/BeatgridEditorPanel.qml
-    src/qml/waveform/PerformanceBeatgridPanel.qml
-    src/qml/waveform/OverallWaveform.qml
     src/qml/mixer/MixerSection.qml
     src/qml/mixer/FxUnit.qml
     src/qml/mixer/FxBar.qml
     src/qml/mixer/CrossfaderBar.qml
     src/qml/performance/PerformanceWorkspace.qml
     src/qml/performance/PerformanceWaveformScreen.qml
+    src/qml/performance/PerformanceDeckQuickPanel.qml
+    src/qml/performance/PerformanceBeatgridPanel.qml
     src/qml/performance/PerformanceBeatFxPanel.qml
     src/qml/performance/PerformancePads.qml
     src/qml/library/Library.qml
     src/qml/library/SourcePage.qml
     src/qml/settings/SettingsPanel.qml
-    src/qml/settings/SettingsWindow.qml
     src/qml/settings/MappingEditorWindow.qml
     src/qml/shell/StartupOverlay.qml
     src/qml/shell/ExitOverlay.qml
     src/qml/shell/StatusOverlay.qml
     src/qml/shell/TopHeader.qml
-    src/qml/shell/WelcomeScreen.qml
     src/qml/development/DevelopmentControlsWindow.qml
     PARENT_SCOPE
 )

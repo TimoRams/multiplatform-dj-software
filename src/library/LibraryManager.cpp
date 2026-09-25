@@ -1,6 +1,7 @@
 #include "LibraryManager.h"
 #include "library/MediaIoScheduler.h"
 #include <QDir>
+#include <QStandardPaths>
 #include <QTimer>
 
 static const QStringList kAudioFilters = {

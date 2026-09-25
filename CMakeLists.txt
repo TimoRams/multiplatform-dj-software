@@ -323,7 +323,6 @@ endif()
 
 set_source_files_properties(
     src/qml/components/UiTheme.qml
-    src/qml/components/UiMetrics.qml
     PROPERTIES QT_QML_SINGLETON_TYPE TRUE
 )
 
@@ -553,9 +552,7 @@ add_test(NAME waveform_visual_style COMMAND BrockDJ_waveform_visual_style_tests)
 add_executable(BrockDJ_smoke_tests
     tests/smoke/smoke_tests.cpp
     tests/smoke/mixer_dsp_smoke.cpp
-    src/analysis/AnalysisValidation.cpp
     src/audio/DeckChannelProcessor.cpp
-    src/audio/internal/MixerFilterCoefficients.cpp
     src/fx/FxProcessor.cpp
     src/audio/internal/BrickwallLimiter.cpp
 )
@@ -590,7 +587,6 @@ add_test(NAME smoke COMMAND BrockDJ_smoke_tests)
 add_executable(BrockDJ_mixer_dsp_tests
     tests/audio/mixer_dsp_tests.cpp
     src/audio/DeckChannelProcessor.cpp
-    src/audio/internal/MixerFilterCoefficients.cpp
     src/fx/FxProcessor.cpp
     src/audio/internal/BrickwallLimiter.cpp
 )
@@ -611,7 +607,7 @@ add_executable(BrockDJ_deck_audio_graph_tests
     src/audio/cache/AudioPageCache.cpp src/audio/cache/AudioCacheWorker.cpp src/audio/cache/CachedPlaybackAudioSource.cpp
     src/audio/RenderModeRouter.cpp src/audio/internal/ScratchResampler.cpp src/audio/internal/HermiteResamplingAudioSource.cpp
     src/deck/scratch/ScratchController.cpp src/deck/scratch/VirtualTurntable.cpp
-    src/audio/TimeStretchProcessor.cpp src/audio/DeckChannelProcessor.cpp src/audio/internal/MixerFilterCoefficients.cpp
+    src/audio/TimeStretchProcessor.cpp src/audio/DeckChannelProcessor.cpp
     src/fx/FxProcessor.cpp src/audio/internal/BrickwallLimiter.cpp
 )
 target_include_directories(BrockDJ_deck_audio_graph_tests PRIVATE src src/deck src/fx/dsp)
@@ -628,7 +624,7 @@ add_executable(BrockDJ_deck_transport_tests
     src/audio/cache/AudioPageCache.cpp src/audio/cache/AudioCacheWorker.cpp src/audio/cache/CachedPlaybackAudioSource.cpp
     src/audio/RenderModeRouter.cpp src/audio/internal/ScratchResampler.cpp src/audio/internal/HermiteResamplingAudioSource.cpp
     src/deck/scratch/ScratchController.cpp src/deck/scratch/VirtualTurntable.cpp
-    src/audio/TimeStretchProcessor.cpp src/audio/DeckChannelProcessor.cpp src/audio/internal/MixerFilterCoefficients.cpp
+    src/audio/TimeStretchProcessor.cpp src/audio/DeckChannelProcessor.cpp
     src/fx/FxProcessor.cpp src/audio/internal/BrickwallLimiter.cpp
 )
 target_include_directories(BrockDJ_deck_transport_tests PRIVATE src src/deck src/fx/dsp)
@@ -752,13 +748,12 @@ add_executable(BrockDJ_analysis_lifetime_tests
     tests/analysis/analysis_lifetime_tests.cpp
     src/waveform/WaveformAnalyzer.cpp
     src/waveform/internal/WaveformEnvelopePass.cpp
-    src/waveform/internal/WaveformAnalysisOrchestrator.cpp
+    src/analysis/internal/AnalysisOrchestrator.cpp
     src/waveform/WaveformCache.cpp
     src/domain/TrackData.cpp
     src/waveform/WaveformLineStore.cpp
     src/analysis/internal/AnalysisFeatureExtractor.cpp
     src/analysis/internal/BeatAnalysis.cpp
-    src/analysis/AnalysisValidation.cpp
     src/analysis/internal/PhraseAnalyzer.cpp
 )
 target_include_directories(BrockDJ_analysis_lifetime_tests PRIVATE
@@ -783,13 +778,12 @@ add_executable(BrockDJ_waveform_pipeline_benchmark
     src/audio/cache/CachedPlaybackAudioSource.cpp
     src/waveform/WaveformAnalyzer.cpp
     src/waveform/internal/WaveformEnvelopePass.cpp
-    src/waveform/internal/WaveformAnalysisOrchestrator.cpp
+    src/analysis/internal/AnalysisOrchestrator.cpp
     src/waveform/WaveformCache.cpp
     src/domain/TrackData.cpp
     src/waveform/WaveformLineStore.cpp
     src/analysis/internal/AnalysisFeatureExtractor.cpp
     src/analysis/internal/BeatAnalysis.cpp
-    src/analysis/AnalysisValidation.cpp
     src/analysis/internal/PhraseAnalyzer.cpp
 )
 target_include_directories(BrockDJ_waveform_pipeline_benchmark PRIVATE
@@ -829,7 +823,6 @@ add_test(NAME neutral_waveform_analysis COMMAND BrockDJ_neutral_waveform_analysi
 add_executable(BrockDJ_beat_analysis_tests
     tests/analysis/beat_analysis_tests.cpp
     src/analysis/internal/BeatAnalysis.cpp
-    src/analysis/AnalysisValidation.cpp
 )
 target_include_directories(BrockDJ_beat_analysis_tests PRIVATE
     src src/analysis src/domain
@@ -860,9 +853,7 @@ add_executable(BrockDJ_rekordbox_read_only_tests
     src/library/devices/DeviceLibraryManager.h
     src/library/devices/DeviceLibraryManager.cpp
     src/library/devices/rekordbox/RekordboxTypes.h
-    src/library/devices/rekordbox/RekordboxPdbReader.h
     src/library/devices/rekordbox/RekordboxPdbReader.cpp
-    src/library/devices/rekordbox/RekordboxAnalysisReader.h
     src/library/devices/rekordbox/RekordboxAnalysisReader.cpp
     src/library/devices/rekordbox/RekordboxDeviceSource.h
     src/library/devices/rekordbox/RekordboxDeviceSource.cpp
@@ -939,7 +930,6 @@ add_executable(BrockDJ_track_loader_tests
     src/deck/DeckTrackLoader.cpp
     src/audio/cache/AudioPageCache.cpp
     src/audio/cache/AudioCacheWorker.cpp
-    src/deck/MetadataUtils.cpp
     src/library/CoverArtExtractor.cpp
     src/waveform/WaveformCache.cpp
     src/domain/TrackData.cpp

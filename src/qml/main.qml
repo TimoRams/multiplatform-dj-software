@@ -348,7 +348,6 @@ ApplicationWindow {
         anchors.fill: parent
         appWindow: window
         mainLayout: mainLayout
-        welcomeOverlay: welcomeOverlay
         uncleanShutdownWarning: statusOverlay.uncleanShutdownWarning
     }
 
@@ -496,10 +495,10 @@ ApplicationWindow {
     readonly property int scaledDeckMixerHeight: Math.round(window.baseDeckMixerHeight * window.uiScale)
     // The quick-access tray floats above the workspace; it must never resize
     // or push the decks, waveform, or library below it.
-    readonly property int topBarHeight: UiMetrics.toolbarHeight
-    readonly property int fxBarHeight: UiMetrics.px(window.compactLayout ? 74 : 90)
-    readonly property int crossfaderBarHeight: UiMetrics.px(window.compactLayout ? 30 : 36)
-    readonly property int mixerBaseWidth: UiMetrics.mixerPreferredWidth
+    readonly property int topBarHeight: UiTheme.toolbarHeight
+    readonly property int fxBarHeight: UiTheme.px(window.compactLayout ? 74 : 90)
+    readonly property int crossfaderBarHeight: UiTheme.px(window.compactLayout ? 30 : 36)
+    readonly property int mixerBaseWidth: UiTheme.mixerPreferredWidth
 
     // Keep the full 375 px deck surface below the taller waveform viewport.
     // baseDeckMixerHeight is derived from these two values.
@@ -575,11 +574,6 @@ ApplicationWindow {
         id: statusOverlay
         anchors.fill: parent
         appWindow: window
-    }
-
-    WelcomeScreen {
-        id: welcomeOverlay
-        active: false
     }
 
     ExitOverlay {

@@ -2,12 +2,79 @@
 
 #include "audio/AudioParameters.h"
 #include "fx/FxProcessor.h"
-#include "audio/internal/MixerFilterCoefficients.h"
 
 #include <array>
 #include <atomic>
+#include <cmath>
+#include <cstdint>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
+
+struct BiquadCoefficients {
+    float b0 = 1.0f;
+    float b1 = 0.0f;
+    float b2 = 0.0f;
+    float a1 = 0.0f;
+    float a2 = 0.0f;
+    [[nodiscard]] bool finiteAndStable() const noexcept;
+};
+
+struct MixerCoefficientSnapshot {
+    BiquadCoefficients lowShelf;
+    BiquadCoefficients midBell;
+    BiquadCoefficients highShelf;
+    BiquadCoefficients color;
+    bool eqBypass = true;
+    bool colorBypass = true;
+    std::uint64_t parameterGeneration = 0;
+    std::uint64_t deviceGeneration = 0;
+    double sampleRate = 0.0;
+    [[nodiscard]] bool valid() const noexcept;
+};
+
+struct MixerFilterTargets {
+    float low = 0.0f;
+    float mid = 0.0f;
+    float high = 0.0f;
+    float color = 0.0f;
+};
+
+inline constexpr double kEqLowShelfHz = 300.0;
+inline constexpr double kEqMidBellHz = 1000.0;
+inline constexpr double kEqHighShelfHz = 4000.0;
+inline constexpr double kEqMidBellQ = 0.7;
+
+[[nodiscard]] double mixerEqGainFromKnob(float knob) noexcept;
+[[nodiscard]] MixerCoefficientSnapshot buildMixerCoefficientSnapshot(
+    MixerFilterTargets targets,
+    double sampleRate,
+    std::uint64_t parameterGeneration,
+    std::uint64_t deviceGeneration) noexcept;
+
+class StereoBiquad {
+public:
+    void setCoefficients(BiquadCoefficients value) noexcept { m_coefficients = value; }
+    void clearState() noexcept { m_z1[0] = m_z1[1] = m_z2[0] = m_z2[1] = 0.0f; }
+    [[nodiscard]] float process(int channel, float input) noexcept;
+
+private:
+    BiquadCoefficients m_coefficients;
+    float m_z1[2] {};
+    float m_z2[2] {};
+};
+
+struct MixerFilterBank {
+    StereoBiquad lowShelf;
+    StereoBiquad midBell;
+    StereoBiquad highShelf;
+    StereoBiquad color;
+    bool bypassEq = true;
+    bool bypassColor = true;
+
+    void setSnapshot(const MixerCoefficientSnapshot& snapshot) noexcept;
+    void clearState() noexcept;
+    [[nodiscard]] float process(int channel, float input) noexcept;
+};
 
 class DeckChannelProcessor : public juce::AudioSource {
 public:

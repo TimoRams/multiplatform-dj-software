@@ -179,3 +179,30 @@ private:
     juce::PropertiesFile* getUserSettingsOrNull();
     void ensureMappingsDirectoryExists() const;
 };
+
+class AppConfig final : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(bool firstRunCompleted READ firstRunCompleted
+               NOTIFY firstRunCompletedChanged)
+
+public:
+    explicit AppConfig(QObject* parent = nullptr);
+
+    void init(const QString& configDirectoryPath);
+    [[nodiscard]] bool firstRunCompleted() const noexcept
+    {
+        return m_firstRunCompleted;
+    }
+    Q_INVOKABLE void completeFirstRun(bool persist);
+
+signals:
+    void firstRunCompletedChanged();
+
+private:
+    void load();
+    void save();
+
+    QString m_filePath;
+    bool m_firstRunCompleted = false;
+};

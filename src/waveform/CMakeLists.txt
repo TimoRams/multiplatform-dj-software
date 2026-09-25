@@ -13,8 +13,6 @@ target_sources(${PROJECT_NAME} PRIVATE
     WaveformCache.cpp
     internal/WaveformEnvelopePass.h
     internal/WaveformEnvelopePass.cpp
-    internal/WaveformAnalysisOrchestrator.h
-    internal/WaveformAnalysisOrchestrator.cpp
     render/OverviewWaveformItem.h
     render/OverviewWaveformItem.cpp
     render/ScrollingWaveformItem.h

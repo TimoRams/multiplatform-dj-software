@@ -582,7 +582,6 @@ void DDJFLX10Controller::waveformWorkerLoop()
         // The expensive part, now off the owner thread entirely.
         QByteArray out;
         out.reserve(job.targetEntries * 2);
-        std::uint32_t columnsWithData = 0;
         std::uint32_t completeColumns = 0;
         for (int i = 0; i < job.targetEntries; ++i) {
             if (m_shuttingDown.load(std::memory_order_acquire))
@@ -595,7 +594,6 @@ void DDJFLX10Controller::waveformWorkerLoop()
                 out += encodePwv5Entry(1, 0, 0, 0);
                 continue;
             }
-            ++columnsWithData;
             if (column.complete)
                 ++completeColumns;
             out += encodePwv5Column(column);
@@ -711,19 +709,15 @@ void DDJFLX10Controller::onPreviewWaveformReady(
     if (m_shuttingDown.load(std::memory_order_acquire) || incoming.isEmpty())
         return;
     QByteArray waveform = incoming;
-    WaveformPreviewRenderInfo renderInfo;
-    renderInfo.trackGeneration = trackGeneration;
-    renderInfo.generatedColumns = generatedColumns;
-    renderInfo.completeColumns = completeColumns;
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
 
-    const std::uint32_t qualityPermille = renderInfo.generatedColumns == 0
+    const std::uint32_t qualityPermille = generatedColumns == 0
         ? 0
         : static_cast<std::uint32_t>(
-              (static_cast<std::uint64_t>(renderInfo.completeColumns) * 1000ULL)
-              / static_cast<std::uint64_t>(renderInfo.generatedColumns));
+              (static_cast<std::uint64_t>(completeColumns) * 1000ULL)
+              / static_cast<std::uint64_t>(generatedColumns));
     const bool trackChanged = m_waveformUploadTrackGenerations[deck]
-        != renderInfo.trackGeneration;
+        != trackGeneration;
     const bool firstUploadForTrack = m_waveforms[deck].isEmpty() || trackChanged;
     const std::uint32_t previousQuality = m_waveformUploadQualityPermille[deck];
     const bool qualityImprovedEnough = qualityPermille
@@ -754,7 +748,7 @@ void DDJFLX10Controller::onPreviewWaveformReady(
     m_waveforms[deck] = m_baseWaveforms[deck];
     decorateWaveformMarkers(deck, m_waveforms[deck]);
     m_waveformDurations[deck] = deckDisplayDuration(deck);
-    m_waveformUploadTrackGenerations[deck] = renderInfo.trackGeneration;
+    m_waveformUploadTrackGenerations[deck] = trackGeneration;
     m_waveformUploadQualityPermille[deck] = std::max(
         previousQuality, qualityPermille);
     m_lastWaveformUploadMs[deck] = now;
@@ -799,9 +793,7 @@ void DDJFLX10Controller::onPreviewWaveformReady(
 
     qInfo() << "[DDJ-FLX10] Deck" << deck
             << "uploading waveform entries" << (m_waveforms[deck].size() / 2)
-            << "quality" << qualityPermille << "permille"
-            << "source chunk" << renderInfo.playheadChunkIndex
-            << "state" << renderInfo.playheadChunkState;
+            << "quality" << qualityPermille << "permille";
     uploadDeck(deck);
 }
 

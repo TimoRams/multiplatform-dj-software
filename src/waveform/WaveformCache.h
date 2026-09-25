@@ -20,7 +20,7 @@ public:
     // Version of the rendered-line cache this build writes and accepts. Owned
     // here because this class is the only thing that reads or writes those
     // files; a bump invalidates them without touching the analysis results.
-    static constexpr int kRenderCacheVersion = 4;
+    static constexpr int kRenderCacheVersion = 5;
 
     struct Payload {
         int pointsPerSecond = 0;
@@ -42,11 +42,8 @@ public:
         int pointsPerSecond = 0;
         int totalLines = 0;
         int cacheVersion = 0;
-        int lodLevelCount = 0;
         QVector<TrackData::RgbWaveformFrame> overview;
     };
-
-    using LodTile = WaveformLodBlock;
 
     using RenderChunkCallback = std::function<void(
         int totalLines, WaveformLineBatch chunks)>;
@@ -61,9 +58,5 @@ public:
         const std::function<bool()>& shouldCancel,
         const std::function<waveform::WaveformDemand()>& demandSnapshot,
         const RenderChunkCallback& publishChunk);
-    static bool streamRenderLodCache(
-        const QString& filePath, int pointsPerSecond, int level,
-        const std::function<bool()>& shouldCancel,
-        const std::function<void(LodTile)>& publishTile);
     static bool saveForFile(const QString& filePath, const Payload& payload);
 };

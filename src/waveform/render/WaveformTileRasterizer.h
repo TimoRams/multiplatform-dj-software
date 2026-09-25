@@ -129,9 +129,11 @@ struct RasterizedOverview final {
 class WaveformTileRasterizer final
 {
 public:
-    // Per deck. Four active decks therefore cap CPU raster images at 192 MiB;
-    // GPU textures and the compact source store are reported separately.
-    static constexpr std::size_t kMaximumCacheBytes = 48u * 1024u * 1024u;
+    static constexpr std::size_t kDesktopCacheBytes = 48u * 1024u * 1024u;
+    static constexpr std::size_t kArm64CacheBytes = 16u * 1024u * 1024u;
+    static constexpr std::size_t kMinimumCacheBytes = 4u * 1024u * 1024u;
+    static constexpr std::size_t kMaximumConfigurableCacheBytes =
+        256u * 1024u * 1024u;
     static constexpr std::size_t kMaximumCacheEntries = 64;
     static constexpr std::size_t kMaximumPendingRequests = 64;
     // One variant for each user-selectable style. Keeping this bounded prevents
@@ -149,6 +151,7 @@ public:
         std::size_t activeWorkers = 0;
         std::size_t maximumConcurrentWorkers = 0;
         std::size_t cacheBytes = 0;
+        std::size_t cacheBudgetBytes = 0;
         std::size_t cacheEntries = 0;
         std::size_t pendingRequests = 0;
         bool workEnabled = true;
@@ -183,6 +186,14 @@ public:
     void clear();
     [[nodiscard]] Stats stats() const;
     void resetStats();
+    [[nodiscard]] static constexpr std::size_t defaultCacheByteBudget() noexcept
+    {
+#if defined(__aarch64__) || defined(_M_ARM64)
+        return kArm64CacheBytes;
+#else
+        return kDesktopCacheBytes;
+#endif
+    }
 
     [[nodiscard]] static RenderTileKey makeKey(
         const WaveformLineStoreSnapshot& snapshot,
@@ -224,6 +235,7 @@ private:
     std::unordered_map<RenderTileKey, CacheEntry, RenderTileKeyHash> m_cache;
     std::list<RenderTileKey> m_lru;
     std::size_t m_cacheBytes = 0;
+    std::size_t m_cacheByteBudget = defaultCacheByteBudget();
     std::uint64_t m_activeTrackGeneration = 0;
     std::vector<std::shared_ptr<const RasterizedOverview>> m_overviewCache;
     std::vector<std::jthread> m_workers;

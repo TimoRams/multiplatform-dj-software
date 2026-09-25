@@ -29,6 +29,15 @@ int main(int argc, char** argv)
     std::mutex readyMutex;
     std::condition_variable readyCondition;
 
+    qputenv("BROCKDJ_WAVEFORM_CACHE_MB", "1");
+    {
+        waveform_render::WaveformTileRasterizer configuredRasterizer([] {});
+        ok &= require(configuredRasterizer.stats().cacheBudgetBytes
+                          == waveform_render::WaveformTileRasterizer::kMinimumCacheBytes,
+                      "tile-cache environment override was not clamped safely");
+    }
+    qunsetenv("BROCKDJ_WAVEFORM_CACHE_MB");
+
     WaveformLineStore store;
     constexpr std::uint32_t totalLines = 256'000;
     store.reset(77, totalLines);
@@ -113,8 +122,10 @@ int main(int argc, char** argv)
     }
 
     const auto stats = rasterizer.stats();
-    ok &= require(stats.cacheBytes
-                      <= waveform_render::WaveformTileRasterizer::kMaximumCacheBytes,
+    ok &= require(stats.cacheBudgetBytes
+                      == waveform_render::WaveformTileRasterizer::defaultCacheByteBudget(),
+                  "tile cache did not report the platform budget");
+    ok &= require(stats.cacheBytes <= stats.cacheBudgetBytes,
                   "long scrolling exceeded the tile-cache byte budget");
     ok &= require(stats.cacheEntries
                       <= waveform_render::WaveformTileRasterizer::kMaximumCacheEntries,

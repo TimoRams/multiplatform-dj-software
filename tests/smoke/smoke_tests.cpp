@@ -1,7 +1,5 @@
 #include "controllers/flx10/Flx10ControllerIdentity.h"
 #include "domain/DeckId.h"
-#include "analysis/AnalysisValidation.h"
-#include "analysis/AnalysisTypes.h"
 #include "audio/internal/HermiteKernel.h"
 #include "deck/sync/SyncTypes.h"
 
@@ -57,20 +55,6 @@ void testHermiteSampleAt()
     expect(std::isfinite(hermite), "hermite clamp finite");
 }
 
-void testAnalysisValidation()
-{
-    std::vector<analysis::BeatMarker> beats;
-    for (int i = 0; i < 16; ++i) {
-        analysis::BeatMarker beat;
-        beat.positionSec = static_cast<double>(i) * 0.5;
-        beat.beatInBar = (i % 4) + 1;
-        beat.isDownbeat = (beat.beatInBar == 1);
-        beats.push_back(beat);
-    }
-    const auto result = analysis::validateBeatGrid(beats, 120.0, 60.0);
-    expect(result.ok, "beatgrid validation ok for synthetic grid");
-}
-
 void testSyncMaintenancePolicy()
 {
     using engine::shouldRunFollowerSyncMaintenance;
@@ -93,7 +77,6 @@ int main()
 {
     testDeckIndex();
     testHermiteSampleAt();
-    testAnalysisValidation();
     testSyncMaintenancePolicy();
     g_failures += runMixerDspSmokeTests();
 

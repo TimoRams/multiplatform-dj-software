@@ -312,8 +312,6 @@ public:
         std::shared_ptr<const std::vector<WaveformLine>> lines);
     void applyCachedWaveformLineBatch(
         int totalLines, int linesPerSecond, WaveformLineBatch chunks);
-    void applyCachedWaveformLodBatch(WaveformLodBatch chunks);
-
     // Pre-downsampled fixed-size overview computed off the main thread.
     void setOverviewRgbData(QVector<RgbWaveformFrame>&& data);
 
@@ -423,6 +421,7 @@ private:
     std::shared_ptr<const QVector<RgbWaveformFrame>> m_rgbSnapshot;
     std::shared_ptr<const QVector<RgbWaveformFrame>> m_overviewSnapshot;
     std::shared_ptr<const QVector<PeakFrame>> m_peakMipSnapshot;
+    std::shared_ptr<const waveform::PreparedWaveformLines> m_preparedWaveformLines;
     WaveformLineStore m_waveformLineStore;
     std::uint64_t m_waveformLineGeneration = 0;
     int m_totalExpected;
@@ -472,7 +471,7 @@ private:
         WaveformNormalizationState normalizationState);
     void alignSegmentsToBeatgridLocked();
     void rebuildWaveformLineStoreLocked(std::uint64_t trackGeneration = 0);
-    void installPreparedWaveformLinesLocked(
+    bool installPreparedWaveformLinesLocked(
         const std::shared_ptr<const waveform::PreparedWaveformLines>& prepared,
         std::uint64_t trackGeneration = 0);
     void assertOwnerThread() const;

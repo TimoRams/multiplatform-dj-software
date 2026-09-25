@@ -128,9 +128,9 @@ hydration and hidden-controller routing currently use its stable object identity
 
 Large QML files remain dedicated review candidates. They are not split solely
 to reduce line count because bindings, focus, popup parents and component
-lifetime require visual parity tests. `SettingsPanel.qml` and
-`SettingsWindow.qml` are still near-parallel and are tracked in the risk
-register rather than being merged without those tests.
+lifetime require visual parity tests. Desktop and AIO settings now share
+`SettingsPanel.qml`; `Library.qml`, `TopHeader.qml`, and `DeckControl.qml`
+remain the principal monolithic surfaces.
 
 ## Build and test shape
 

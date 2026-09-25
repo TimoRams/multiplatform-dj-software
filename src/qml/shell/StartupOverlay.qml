@@ -1,62 +1,206 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 import DJSoftware
 
 Item {
     id: root
     required property var appWindow
     required property var mainLayout
-    required property var welcomeOverlay
     required property var uncleanShutdownWarning
     readonly property var window: appWindow
+    property bool welcomeActive: false
 
-Timer {
-    id: loadingTimer
-    interval: 80
-    running: true
-    repeat: true
+    Timer {
+        id: loadingTimer
+        interval: 80
+        running: true
+        repeat: true
 
-    property real startedAtMs: Date.now()
-    readonly property int minStageMs: 1000
-    readonly property int minTotalMs: 5200
+        property real startedAtMs: Date.now()
+        readonly property int minStageMs: 1000
+        readonly property int minTotalMs: 5200
 
-    function elapsedMs() {
-        return Date.now() - startedAtMs
-    }
+        function elapsedMs() {
+            return Date.now() - startedAtMs
+        }
 
-    function coreReady() {
-        return typeof libraryDb !== "undefined" && libraryDb
-            && typeof deckA !== "undefined" && deckA
-            && typeof deckB !== "undefined" && deckB
-            && typeof deckC !== "undefined" && deckC
-            && typeof deckD !== "undefined" && deckD
-            && typeof midiManager !== "undefined" && midiManager
-    }
+        function coreReady() {
+            return typeof libraryDb !== "undefined" && libraryDb
+                && typeof deckA !== "undefined" && deckA
+                && typeof deckB !== "undefined" && deckB
+                && typeof deckC !== "undefined" && deckC
+                && typeof deckD !== "undefined" && deckD
+                && typeof midiManager !== "undefined" && midiManager
+        }
 
-    function finishLoading() {
-        loadingIndicator.running = false
-        loadingIndicator.activeStage = loadingIndicator.startupStages.length - 1
-        loadingIndicator.stageProgress = 1.0
-        loadingIndicator.visible = false
-        mainLayout.visible = true
-        if (typeof appConfig !== "undefined" && appConfig && !appConfig.firstRunCompleted)
-            welcomeOverlay.active = true
-        if (typeof libraryDb !== "undefined" && libraryDb && libraryDb.recoveryWarningNeeded) {
-            uncleanShutdownWarning.visibleMessage = libraryDb.recoveryWarningMessage
-            window.uncleanShutdownWarningVisible = true
+        function finishLoading() {
+            loadingIndicator.running = false
+            loadingIndicator.activeStage = loadingIndicator.startupStages.length - 1
+            loadingIndicator.stageProgress = 1.0
+            loadingIndicator.visible = false
+            mainLayout.visible = true
+            if (typeof appConfig !== "undefined" && appConfig && !appConfig.firstRunCompleted)
+                root.welcomeActive = true
+            if (typeof libraryDb !== "undefined" && libraryDb && libraryDb.recoveryWarningNeeded) {
+                uncleanShutdownWarning.visibleMessage = libraryDb.recoveryWarningMessage
+                window.uncleanShutdownWarningVisible = true
+            }
+        }
+
+        onTriggered: {
+            loadingIndicator.refreshStatus()
+            if ((coreReady() && elapsedMs() >= minTotalMs) || elapsedMs() >= 9000) {
+                stop()
+                finishLoading()
+            }
         }
     }
 
-    onTriggered: {
-        loadingIndicator.refreshStatus()
-        if ((coreReady() && elapsedMs() >= minTotalMs) || elapsedMs() >= 9000) {
-            stop()
-            finishLoading()
+    Item {
+        id: welcomeScreen
+        anchors.fill: parent
+        z: 999
+        visible: root.welcomeActive
+        opacity: root.welcomeActive ? 1.0 : 0.0
+
+        Behavior on opacity {
+            NumberAnimation { duration: 280; easing.type: Easing.InOutQuad }
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            color: "#000000"
+            opacity: 0.78
+            MouseArea { anchors.fill: parent }
+        }
+
+        Rectangle {
+            anchors.centerIn: parent
+            width: Math.min(parent.width * 0.92, 620)
+            height: welcomeContent.implicitHeight + 56
+            color: "#18181a"
+            border.color: UiTheme.separator
+            radius: 8
+
+            Rectangle {
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.right: parent.right
+                height: 3
+                radius: 3
+                color: UiTheme.orange
+            }
+
+            ColumnLayout {
+                id: welcomeContent
+                anchors.fill: parent
+                anchors.margins: 40
+                spacing: 16
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "BrockDJ"
+                    color: UiTheme.orange
+                    font.pixelSize: window.sp(28)
+                    font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
+                }
+
+                RowLayout {
+                    Layout.alignment: Qt.AlignHCenter
+                    spacing: 8
+
+                    Repeater {
+                        model: ["PRE-ALPHA", "DEVELOPER BUILD"]
+                        Rectangle {
+                            required property string modelData
+                            implicitWidth: badgeText.implicitWidth + 16
+                            implicitHeight: 22
+                            color: UiTheme.surfaceInset
+                            border.color: UiTheme.borderStrong
+                            radius: 3
+
+                            Text {
+                                id: badgeText
+                                anchors.centerIn: parent
+                                text: modelData
+                                color: UiTheme.textSecondary
+                                font.pixelSize: window.sp(10)
+                                font.bold: true
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "BrockDJ is being built as a fast, performance-grade DJ platform for live venues, club sets and professional hardware."
+                    color: UiTheme.textSecondary
+                    font.pixelSize: window.sp(13)
+                    wrapMode: Text.WordWrap
+                    horizontalAlignment: Text.AlignHCenter
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: warningText.implicitHeight + 28
+                    color: "#120c00"
+                    border.color: "#3d2500"
+                    radius: 5
+
+                    Text {
+                        id: warningText
+                        anchors.fill: parent
+                        anchors.margins: 14
+                        text: "Ultra-early state: APIs are unstable and crashes or audio glitches are possible. Do not use this build where reliability matters."
+                        color: "#b87828"
+                        font.pixelSize: window.sp(12)
+                        font.bold: true
+                        wrapMode: Text.WordWrap
+                    }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "Source and updates: github.com/TimoRams/multiplatform-dj-software"
+                    color: UiTheme.textLabel
+                    font.pixelSize: window.sp(11)
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+
+                    TapHandler {
+                        onTapped: Qt.openUrlExternally(
+                            "https://github.com/TimoRams/multiplatform-dj-software")
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 12
+
+                    CheckBox {
+                        id: dontShowAgainCheckBox
+                        checked: true
+                        text: "Don't show again on startup"
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    Button {
+                        text: "Let's Go"
+                        onClicked: {
+                            if (typeof appConfig !== "undefined" && appConfig)
+                                appConfig.completeFirstRun(dontShowAgainCheckBox.checked)
+                            root.welcomeActive = false
+                        }
+                    }
+                }
+            }
         }
     }
-}
 
-Item {
+    Item {
     id: loadingIndicator
     property bool running: true
     property int activeStage: 0

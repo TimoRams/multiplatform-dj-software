@@ -68,8 +68,7 @@ public:
         DateAddedRole,
     };
 
-    explicit LibraryTableModel(const QString& connectionName,
-                               QObject* parent = nullptr);
+    explicit LibraryTableModel(QObject* parent = nullptr);
 
     int rowCount(const QModelIndex& parent = {}) const override;
     int columnCount(const QModelIndex& parent = {}) const override;
@@ -130,7 +129,6 @@ private:
     void applyLibraryPage(std::uint64_t generation, const QVariantList& rows,
                           const QString& error);
 
-    QString m_connectionName;
     LibraryDatabase* m_database = nullptr;
     std::uint64_t m_refreshGeneration = 0;
     QVector<LibraryRow> m_rows;

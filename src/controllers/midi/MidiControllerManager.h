@@ -282,8 +282,6 @@ private:
     // inaudibly, which is indistinguishable from it not switching on at all.
     bool m_beatFxDepthFromKnob = false;
     float m_beatFxDivision = 0.25f;   // 1/4 beat, the usual power-up default
-    QTimer m_beatFxBlinkTimer;
-    bool m_beatFxBlinkOn = false;
 
     std::vector<std::unique_ptr<juce::MidiInput>> m_midiInputs;
     std::unique_ptr<juce::MidiOutput> m_midiOutput;
@@ -459,8 +457,6 @@ private:
     // routed to (an individual channel or the master bus).
     void pushBeatFxTiming();
     void stepBeatFxDivision(int direction);
-    // Professional DJ hardware pulses the FX ON button while the effect is
-    // engaged; the LED itself has no blink mode, so we drive it from a timer.
     void updateBeatFxBlink();
     bool sendMidiShort(int statusNo, int controlNo, int value, const QString& messageType = QStringLiteral("raw"));
     bool sendMidiMessageWithDebug(const juce::MidiMessage& message, const QString& messageType);

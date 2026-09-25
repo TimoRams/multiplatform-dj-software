@@ -591,6 +591,27 @@ int main(int argc, char** argv)
 
     const double start = 4.0 * kSampleRate;
 
+    {
+        engine::scratch::ScratchController controller;
+        controller.setTrackSampleRate(kSampleRate);
+        controller.startScratch(start, false, 1.0);
+        for (int i = 0; i < 3; ++i)
+            controller.submitHandDelta(0.016, 0.016);
+
+        const double forwardRelease = controller.releaseSpeedEstimate();
+        controller.submitHandDelta(-0.080, 0.016);
+        const double jitterRelease = controller.releaseSpeedEstimate();
+        controller.submitHandDelta(-0.080, 0.016);
+        const double confirmedReverseRelease = controller.releaseSpeedEstimate();
+
+        require(forwardRelease > 0.0,
+                "UI release estimate follows forward platter movement");
+        require(jitterRelease > 0.0,
+                "one opposite lift-off sample cannot reverse UI release");
+        require(confirmedReverseRelease < 0.0,
+                "two opposite samples confirm an intentional direction change");
+    }
+
     // Touch release uses a separate coast path from position tracking. Its
     // controller publishes one exponential speed sample per callback; the
     // resampler must turn those samples into a continuous backspin rather than

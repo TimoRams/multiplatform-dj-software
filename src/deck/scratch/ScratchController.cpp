@@ -47,6 +47,9 @@ void ScratchController::startScratch(double audioSamplePos,
     m_rawSpeed.store(0.0, std::memory_order_relaxed);
     m_smoothedSpeed.store(0.0, std::memory_order_relaxed);
     m_commandedHandSpeed.store(0.0, std::memory_order_relaxed);
+    m_releaseSpeedEstimate.store(0.0, std::memory_order_relaxed);
+    m_pendingOppositeReleaseSpeed.store(0.0, std::memory_order_relaxed);
+    m_oppositeReleaseSampleCount.store(0, std::memory_order_relaxed);
     m_inertiaSpeed.store(0.0, std::memory_order_relaxed);
     m_releaseTargetSpeed.store(0.0, std::memory_order_relaxed);
     m_releaseHandoffThreshold.store(m_config.inertiaStopThreshold,
@@ -71,6 +74,9 @@ void ScratchController::stopScratch() noexcept
     m_rawSpeed.store(0.0, std::memory_order_relaxed);
     m_smoothedSpeed.store(0.0, std::memory_order_relaxed);
     m_commandedHandSpeed.store(0.0, std::memory_order_relaxed);
+    m_releaseSpeedEstimate.store(0.0, std::memory_order_relaxed);
+    m_pendingOppositeReleaseSpeed.store(0.0, std::memory_order_relaxed);
+    m_oppositeReleaseSampleCount.store(0, std::memory_order_relaxed);
     m_inertiaSpeed.store(0.0, std::memory_order_relaxed);
     m_releaseTargetSpeed.store(0.0, std::memory_order_relaxed);
     m_releaseHandoffThreshold.store(m_config.inertiaStopThreshold,
@@ -311,6 +317,42 @@ void ScratchController::submitHandDelta(double deltaTrackSec,
     m_rawSpeed.store(raw, std::memory_order_relaxed);
     m_smoothedSpeed.store(velocity, std::memory_order_relaxed);
     m_commandedHandSpeed.store(velocity, std::memory_order_relaxed);
+
+    const double previousRelease =
+        m_releaseSpeedEstimate.load(std::memory_order_relaxed);
+    const bool establishedDirection =
+        std::abs(previousRelease) >= m_config.minScratchSpeed;
+    const bool oppositeDirection =
+        establishedDirection && previousRelease * raw < 0.0;
+    if (oppositeDirection) {
+        const int oppositeSamples =
+            m_oppositeReleaseSampleCount.load(std::memory_order_relaxed) + 1;
+        if (oppositeSamples >= m_config.releaseDirectionConfirmationSamples) {
+            const double pending =
+                m_pendingOppositeReleaseSpeed.load(std::memory_order_relaxed);
+            m_releaseSpeedEstimate.store(
+                std::clamp((pending + raw) * 0.5,
+                           -m_config.maxScratchSpeed,
+                           m_config.maxScratchSpeed),
+                std::memory_order_relaxed);
+            m_pendingOppositeReleaseSpeed.store(0.0, std::memory_order_relaxed);
+            m_oppositeReleaseSampleCount.store(0, std::memory_order_relaxed);
+        } else {
+            m_pendingOppositeReleaseSpeed.store(raw, std::memory_order_relaxed);
+            m_oppositeReleaseSampleCount.store(oppositeSamples,
+                                               std::memory_order_relaxed);
+        }
+    } else {
+        const double tau = std::max(1e-6, m_config.releaseVelocitySmoothingTauSec);
+        const double alpha = establishedDirection
+            ? std::clamp(1.0 - std::exp(-dtSec / tau), 0.0, 1.0)
+            : 1.0;
+        m_releaseSpeedEstimate.store(
+            previousRelease + (raw - previousRelease) * alpha,
+            std::memory_order_relaxed);
+        m_pendingOppositeReleaseSpeed.store(0.0, std::memory_order_relaxed);
+        m_oppositeReleaseSampleCount.store(0, std::memory_order_relaxed);
+    }
     m_lastMoveNs.store(nowNs(), std::memory_order_relaxed);
 
     // Track how often this input actually reports. Smoothed so one late frame
@@ -345,6 +387,21 @@ double ScratchController::commandedHandSpeed() const noexcept
                                    intervalMs * 0.5});
     const double gain = std::exp(-(idleMs - holdMs) / tauMs);
     const double decayed = commanded * gain;
+    return std::abs(decayed) < m_config.minScratchSpeed ? 0.0 : decayed;
+}
+
+double ScratchController::releaseSpeedEstimate() const noexcept
+{
+    const double estimate = m_releaseSpeedEstimate.load(std::memory_order_relaxed);
+    const double intervalMs = m_eventIntervalMs.load(std::memory_order_relaxed);
+    const double holdMs = std::max(m_config.commandVelocityHoldMs, intervalMs * 1.25);
+    const double idleMs = timeSinceLastMoveMs();
+    if (idleMs <= holdMs)
+        return estimate;
+
+    const double tauMs = std::max({1.0, m_config.commandVelocityDecayTauMs,
+                                   intervalMs * 0.5});
+    const double decayed = estimate * std::exp(-(idleMs - holdMs) / tauMs);
     return std::abs(decayed) < m_config.minScratchSpeed ? 0.0 : decayed;
 }
 

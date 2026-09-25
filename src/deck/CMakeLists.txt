@@ -11,8 +11,6 @@ target_sources(${PROJECT_NAME} PRIVATE
     DeckTransport.cpp
     DeckTransport.h
     JogNudgePolicy.h
-    MetadataUtils.cpp
-    MetadataUtils.h
     sync/DeckSyncController.cpp
     sync/DeckSyncController.h
     sync/SyncCoordinator.cpp

@@ -174,158 +174,6 @@ bool LibraryDatabase::addTrack(const QString& trackId,
     return true;
 }
 
-void LibraryDatabase::updateAnalysisData(const QString& trackId,
-                                         float newBpm,
-                                         const QString& newKey,
-                                         qint64 firstBeatSample,
-                                         double sampleRate,
-                                         const std::vector<TrackData::BeatMarker>& beatGrid,
-                                         TrackData::ConfidenceInfo confidence,
-                                         TrackData::BeatGridInfo beatGridInfo)
-{
-    if (trackId.isEmpty())
-        return;
-
-    qDebug() << "[LibraryDatabase] updateAnalysisData:" << trackId.left(12)
-             << "bpm=" << newBpm << "key=" << newKey
-             << "firstBeat=" << firstBeatSample
-             << "gridBeats=" << beatGrid.size();
-
-    if (!m_db.transaction()) {
-        qWarning() << "[LibraryDatabase] updateAnalysisData begin transaction:" << m_db.lastError().text();
-    }
-
-    bool lockedGridInDbBeforeUpdate = false;
-    {
-        QSqlQuery lockQuery(m_db);
-        lockQuery.prepare("SELECT COALESCE(beatgrid_locked_by_user, 0) FROM Tracks WHERE id = :id LIMIT 1");
-        lockQuery.bindValue(":id", trackId);
-        if (lockQuery.exec() && lockQuery.next())
-            lockedGridInDbBeforeUpdate = lockQuery.value(0).toInt() != 0;
-    }
-
-    QSqlQuery q(m_db);
-    q.prepare(
-        "UPDATE Tracks SET "
-        "  bpm = CASE WHEN :bpm > 0 THEN :bpm ELSE bpm END,"
-        "  key = CASE WHEN length(trim(:key)) > 0 THEN :key ELSE key END,"
-        "  is_analyzed = CASE WHEN (:bpm > 0 OR length(trim(:key)) > 0) THEN 1 ELSE is_analyzed END,"
-        "  first_beat_sample = CASE WHEN :firstBeatSample >= 0 THEN :firstBeatSample ELSE first_beat_sample END,"
-        "  analysis_sample_rate = CASE WHEN :sampleRate > 0 THEN :sampleRate ELSE analysis_sample_rate END,"
-        "  analysis_version = :analysisVersion,"
-        "  analysis_section_versions = :sectionVersions,"
-        "  bpm_confidence = :bpmConfidence,"
-        "  beat_confidence = :beatConfidence,"
-        "  downbeat_confidence = :downbeatConfidence,"
-        "  grid_confidence = :gridConfidence,"
-        "  beatgrid_type = CASE WHEN length(trim(:gridType)) > 0 THEN :gridType ELSE beatgrid_type END,"
-        "  beatgrid_user_modified = :gridUserModified,"
-        "  beatgrid_locked_by_user = CASE WHEN beatgrid_locked_by_user != 0 THEN beatgrid_locked_by_user ELSE :gridLocked END"
-        " WHERE id = :id");
-    q.bindValue(":bpm", static_cast<double>(newBpm));
-    q.bindValue(":key", newKey);
-    q.bindValue(":firstBeatSample", firstBeatSample);
-    q.bindValue(":sampleRate", sampleRate);
-    q.bindValue(":analysisVersion", analysis::kCurrentAnalysisVersion);
-    q.bindValue(":sectionVersions",
-                analysis::AnalysisSectionVersions::current().toStorageString());
-    q.bindValue(":bpmConfidence", confidence.bpmConfidence);
-    q.bindValue(":beatConfidence", confidence.beatConfidence);
-    q.bindValue(":downbeatConfidence", confidence.downbeatConfidence);
-    q.bindValue(":gridConfidence", confidence.gridConfidence);
-    q.bindValue(":gridType", gridTypeToString(beatGridInfo.type));
-    q.bindValue(":gridUserModified", beatGridInfo.userModified ? 1 : 0);
-    q.bindValue(":gridLocked", beatGridInfo.lockedByUser ? 1 : 0);
-    q.bindValue(":id",  trackId);
-
-    if (!q.exec()) {
-        qWarning() << "[LibraryDatabase] updateAnalysisData:" << q.lastError().text();
-        m_db.rollback();
-        return;
-    }
-
-    const bool incomingManualGrid = beatGridInfo.userModified || beatGridInfo.lockedByUser;
-    const bool preserveExistingLockedGrid = lockedGridInDbBeforeUpdate && !incomingManualGrid;
-
-    if (!beatGrid.empty() && !preserveExistingLockedGrid) {
-        q.prepare("DELETE FROM BeatGridMarkers WHERE track_id = :id");
-        q.bindValue(":id", trackId);
-        if (!q.exec()) {
-            qWarning() << "[LibraryDatabase] clear BeatGridMarkers:" << q.lastError().text();
-            m_db.rollback();
-            return;
-        }
-
-        q.prepare(
-            "INSERT INTO BeatGridMarkers (track_id, beat_index, position_sec, is_downbeat, bar_number, "
-            "beat_in_bar, confidence, user_modified, locked_by_user) "
-            "VALUES (:trackId, :beatIndex, :positionSec, :isDownbeat, :barNumber, "
-            ":beatInBar, :confidence, :userModified, :lockedByUser)");
-
-        for (int beatIndex = 0; beatIndex < static_cast<int>(beatGrid.size()); ++beatIndex) {
-            const auto& marker = beatGrid[static_cast<size_t>(beatIndex)];
-            q.bindValue(":trackId", trackId);
-            q.bindValue(":beatIndex", beatIndex);
-            q.bindValue(":positionSec", marker.positionSec);
-            q.bindValue(":isDownbeat", marker.isDownbeat ? 1 : 0);
-            q.bindValue(":barNumber", marker.barNumber);
-            q.bindValue(":beatInBar", marker.beatInBar);
-            q.bindValue(":confidence", marker.confidence);
-            q.bindValue(":userModified", marker.userModified ? 1 : 0);
-            q.bindValue(":lockedByUser", marker.lockedByUser ? 1 : 0);
-
-            if (!q.exec()) {
-                qWarning() << "[LibraryDatabase] insert BeatGridMarkers:" << q.lastError().text();
-                m_db.rollback();
-                return;
-            }
-        }
-
-        q.prepare("DELETE FROM TempoNodes WHERE track_id = :id");
-        q.bindValue(":id", trackId);
-        if (!q.exec()) {
-            qWarning() << "[LibraryDatabase] clear TempoNodes:" << q.lastError().text();
-            m_db.rollback();
-            return;
-        }
-
-        q.prepare(
-            "INSERT INTO TempoNodes (track_id, node_index, position_sec, bpm, confidence) "
-            "VALUES (:trackId, :nodeIndex, :positionSec, :bpm, :confidence)");
-        for (int nodeIndex = 0; nodeIndex < static_cast<int>(beatGridInfo.tempoNodes.size()); ++nodeIndex) {
-            const auto& node = beatGridInfo.tempoNodes[static_cast<size_t>(nodeIndex)];
-            q.bindValue(":trackId", trackId);
-            q.bindValue(":nodeIndex", nodeIndex);
-            q.bindValue(":positionSec", node.positionSec);
-            q.bindValue(":bpm", node.bpm);
-            q.bindValue(":confidence", node.confidence);
-            if (!q.exec()) {
-                qWarning() << "[LibraryDatabase] insert TempoNodes:" << q.lastError().text();
-                m_db.rollback();
-                return;
-            }
-        }
-    } else if (!beatGrid.empty() && preserveExistingLockedGrid) {
-        qDebug() << "[LibraryDatabase] Beatgrid locked by user; preserving existing markers for"
-                 << trackId.left(12);
-    }
-
-    if (!m_db.commit()) {
-        qWarning() << "[LibraryDatabase] updateAnalysisData commit:" << m_db.lastError().text();
-        m_db.rollback();
-        return;
-    }
-
-    if (m_tableModel != nullptr)
-        m_tableModel->updateAnalysisForTrack(trackId,
-                                             static_cast<double>(newBpm),
-                                             newKey,
-                                             newBpm > 0.0f || !newKey.trimmed().isEmpty());
-
-    emit analysisUpdated(trackId);
-    scheduleBackupSync();
-}
-
 bool LibraryDatabase::tryGetAnalysisData(const QString& trackId, AnalysisSnapshot* out) const
 {
     if (!out || trackId.isEmpty())
@@ -419,14 +267,6 @@ bool LibraryDatabase::tryGetAnalysisData(const QString& trackId, AnalysisSnapsho
     return true;
 }
 
-bool LibraryDatabase::trackExists(const QString& trackId) const
-{
-    QSqlQuery q(m_db);
-    q.prepare("SELECT 1 FROM Tracks WHERE id = :id LIMIT 1");
-    q.bindValue(":id", trackId);
-    q.exec();
-    return q.next();
-}
 bool LibraryDatabase::updateTrackSegments(const QString& trackId,
                                           const std::vector<TrackSegment>& segments)
 {
@@ -477,15 +317,6 @@ QVariantList LibraryDatabase::trackSegmentsForTrack(const QString& trackId) cons
 
     return trackSegmentsJsonToVariantList(q.value(0).toString());
 }
-QString LibraryDatabase::filePath(const QString& trackId) const
-{
-    QSqlQuery q(m_db);
-    q.prepare("SELECT file_path FROM Locations WHERE track_id = :id LIMIT 1");
-    q.bindValue(":id", trackId);
-    q.exec();
-    return q.next() ? q.value(0).toString() : QString();
-}
-
 QString LibraryDatabase::trackIdForFilePath(const QString& filePath) const
 {
     QSqlQuery q(m_db);

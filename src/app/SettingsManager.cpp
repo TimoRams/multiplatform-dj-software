@@ -1,12 +1,18 @@
 #include "SettingsManager.h"
+#include "UiScaleController.h"
+#include "WaveformZoomController.h"
 #include "audio/device/AudioDeviceService.h"
 #include "audio/device/AudioDeviceUtils.h"
 #include <algorithm>
 #include <cmath>
 #include <QDebug>
 #include <QDir>
+#include <QFile>
+#include <QSaveFile>
 #include <QString>
 #include <QStringList>
+#include <QXmlStreamReader>
+#include <QXmlStreamWriter>
 #include <juce_audio_devices/juce_audio_devices.h>
 
 namespace {
@@ -81,6 +87,9 @@ bool writeSetting(SettingsManager& manager, const char* key, const Value& value)
     settings->saveIfNeeded();
     return true;
 }
+
+constexpr auto kUiScaleSettingKey = "uiScale";
+constexpr auto kWaveformZoomSettingKey = "waveformZoom";
 }
 
 SettingsManager& SettingsManager::getInstance()
@@ -720,4 +729,180 @@ void SettingsManager::setCrossfaderAssignD(const QString& assign)
 
     writeSetting(*this, "Crossfader/AssignD", normalized.toUtf8().constData());
     emit crossfaderSettingsChanged();
+}
+
+AppConfig::AppConfig(QObject* parent)
+    : QObject(parent)
+{
+}
+
+void AppConfig::init(const QString& configDirectoryPath)
+{
+    m_filePath = QDir(configDirectoryPath).filePath("app_config.xml");
+    load();
+    qDebug() << "[AppConfig] initialized, path=" << m_filePath
+             << "firstRunCompleted=" << m_firstRunCompleted;
+}
+
+void AppConfig::completeFirstRun(bool persist)
+{
+    if (m_firstRunCompleted)
+        return;
+
+    m_firstRunCompleted = true;
+    if (persist)
+        save();
+    emit firstRunCompletedChanged();
+}
+
+void AppConfig::load()
+{
+    m_firstRunCompleted = false;
+
+    QFile file(m_filePath);
+    if (!file.exists() || !file.open(QIODevice::ReadOnly | QIODevice::Text))
+        return;
+
+    QXmlStreamReader xml(&file);
+    while (!xml.atEnd()) {
+        xml.readNext();
+        if (xml.isStartElement()
+            && xml.name().toString() == QStringLiteral("FirstRun")) {
+            m_firstRunCompleted =
+                xml.attributes().value("completed").toString()
+                == QStringLiteral("1");
+        }
+    }
+}
+
+void AppConfig::save()
+{
+    QSaveFile file(m_filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        qWarning() << "[AppConfig] Could not write to" << m_filePath;
+        return;
+    }
+
+    QXmlStreamWriter xml(&file);
+    xml.setAutoFormatting(true);
+    xml.writeStartDocument();
+    xml.writeStartElement("BrockDJ_AppConfig");
+    xml.writeAttribute("version", "1");
+    xml.writeStartElement("FirstRun");
+    xml.writeAttribute("completed", m_firstRunCompleted ? "1" : "0");
+    xml.writeEndElement();
+    xml.writeEndElement();
+    xml.writeEndDocument();
+
+    if (!file.commit()) {
+        qWarning() << "[AppConfig] Could not commit" << m_filePath;
+        return;
+    }
+
+    qDebug() << "[AppConfig] Saved to" << m_filePath;
+}
+
+UiScaleController::UiScaleController(
+    SettingsManager* settings,
+    QObject* parent)
+    : QObject(parent), m_settings(settings)
+{
+    if (!m_settings)
+        return;
+
+    bool ok = false;
+    const double stored = m_settings
+        ->getUiState(QString::fromLatin1(kUiScaleSettingKey),
+                     QStringLiteral("1.0"))
+        .toDouble(&ok);
+    m_scale = ok ? validatedScale(stored) : 1.0;
+}
+
+int UiScaleController::percent() const noexcept
+{
+    return static_cast<int>(std::lround(m_scale * 100.0));
+}
+
+void UiScaleController::setScale(double value)
+{
+    const double next = validatedScale(value);
+    if (qFuzzyCompare(m_scale, next))
+        return;
+    m_scale = next;
+    persist();
+    emit scaleChanged();
+}
+
+void UiScaleController::increase()
+{
+    setScale(increasedScale(m_scale));
+}
+
+void UiScaleController::decrease()
+{
+    setScale(decreasedScale(m_scale));
+}
+
+void UiScaleController::reset()
+{
+    setScale(1.0);
+}
+
+void UiScaleController::persist()
+{
+    if (m_settings) {
+        m_settings->setUiState(
+            QString::fromLatin1(kUiScaleSettingKey),
+            QString::number(m_scale, 'f', 2));
+    }
+}
+
+WaveformZoomController::WaveformZoomController(
+    SettingsManager* settings,
+    QObject* parent)
+    : QObject(parent), m_settings(settings)
+{
+    if (!m_settings)
+        return;
+
+    bool ok = false;
+    const double stored = m_settings
+        ->getUiState(QString::fromLatin1(kWaveformZoomSettingKey),
+                     QString::number(kDefault))
+        .toDouble(&ok);
+    m_zoom = ok ? validatedZoom(stored) : kDefault;
+}
+
+void WaveformZoomController::setZoom(double value)
+{
+    const double next = validatedZoom(value);
+    if (qFuzzyCompare(m_zoom, next))
+        return;
+    m_zoom = next;
+    persist();
+    emit zoomChanged();
+}
+
+void WaveformZoomController::zoomIn()
+{
+    setZoom(increasedZoom(m_zoom));
+}
+
+void WaveformZoomController::zoomOut()
+{
+    setZoom(decreasedZoom(m_zoom));
+}
+
+void WaveformZoomController::reset()
+{
+    setZoom(kDefault);
+}
+
+void WaveformZoomController::persist()
+{
+    if (m_settings) {
+        m_settings->setUiState(
+            QString::fromLatin1(kWaveformZoomSettingKey),
+            QString::number(m_zoom, 'g', 12));
+    }
 }

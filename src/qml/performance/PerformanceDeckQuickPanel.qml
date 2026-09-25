@@ -1,3 +1,4 @@
+// Performance-workspace quick controls for a single deck.
 import QtQuick
 import QtQuick.Layouts
 

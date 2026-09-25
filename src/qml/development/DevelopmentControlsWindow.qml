@@ -19,7 +19,7 @@ Window {
     color: UiTheme.bgDeep
 
     // FxBar historically derives its height from the containing window.
-    readonly property int fxBarHeight: UiMetrics.px(90)
+    readonly property int fxBarHeight: UiTheme.px(90)
 
     onVisibleChanged: {
         if (!visible && appWindow)
@@ -99,9 +99,9 @@ Window {
                             MixerSection {
                                 id: mixerAB
                                 Layout.fillHeight: true
-                                Layout.preferredWidth: UiMetrics.mixerPreferredWidth
-                                Layout.minimumWidth: UiMetrics.mixerPreferredWidth
-                                Layout.maximumWidth: UiMetrics.mixerPreferredWidth
+                                Layout.preferredWidth: UiTheme.mixerPreferredWidth
+                                Layout.minimumWidth: UiTheme.mixerPreferredWidth
+                                Layout.maximumWidth: UiTheme.mixerPreferredWidth
                                 engineA: deckA
                                 engineB: deckB
                                 mc: mixerControl
@@ -140,9 +140,9 @@ Window {
                             MixerSection {
                                 id: mixerCD
                                 Layout.fillHeight: true
-                                Layout.preferredWidth: UiMetrics.mixerPreferredWidth
-                                Layout.minimumWidth: UiMetrics.mixerPreferredWidth
-                                Layout.maximumWidth: UiMetrics.mixerPreferredWidth
+                                Layout.preferredWidth: UiTheme.mixerPreferredWidth
+                                Layout.minimumWidth: UiTheme.mixerPreferredWidth
+                                Layout.maximumWidth: UiTheme.mixerPreferredWidth
                                 engineA: deckC
                                 engineB: deckD
                                 channelAId: "deckC"
@@ -166,9 +166,9 @@ Window {
 
                         CrossfaderBar {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: UiMetrics.px(36)
-                            Layout.minimumHeight: UiMetrics.px(36)
-                            Layout.maximumHeight: UiMetrics.px(36)
+                            Layout.preferredHeight: UiTheme.px(36)
+                            Layout.minimumHeight: UiTheme.px(36)
+                            Layout.maximumHeight: UiTheme.px(36)
                             mc: mixerControl
                             engineA: deckA
                             engineB: deckB

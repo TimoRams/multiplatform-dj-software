@@ -2,12 +2,17 @@
 
 #include "audio/cache/AudioPageCache.h"
 #include "library/CoverArtExtractor.h"
-#include "MetadataUtils.h"
 
-#include <QFileInfo>
 #include <QFile>
+#include <QFileInfo>
+#include <QHash>
 #include <QImage>
+#include <QRegularExpression>
 #include <QSemaphore>
+
+#include <taglib/fileref.h>
+#include <taglib/tag.h>
+#include <taglib/tpropertymap.h>
 
 #include <algorithm>
 #include <chrono>
@@ -22,6 +27,161 @@
 #endif
 
 namespace {
+QString fromJuce(const juce::String& value)
+{
+    return QString::fromUtf8(value.toRawUTF8());
+}
+
+QString cleanupMetadata(QString text)
+{
+    if (text.isEmpty())
+        return text;
+    text.replace(QRegularExpression(QStringLiteral("[\\x00\\r\\n\\t]+")),
+                 QStringLiteral(" "));
+    return text.simplified().trimmed();
+}
+
+QString normaliseMetadataKey(const QString& key)
+{
+    QString result;
+    result.reserve(key.size());
+    for (const QChar ch : key.trimmed().toLower()) {
+        if (ch.isLetterOrNumber())
+            result.append(ch);
+    }
+    return result;
+}
+
+QHash<QString, QString> buildMetadataLookup(
+    const juce::StringPairArray& metadata)
+{
+    QHash<QString, QString> map;
+    const auto keys = metadata.getAllKeys();
+    const auto values = metadata.getAllValues();
+    for (int index = 0; index < metadata.size(); ++index) {
+        const QString value = cleanupMetadata(fromJuce(values[index]));
+        if (value.isEmpty())
+            continue;
+        const QString normalizedKey =
+            normaliseMetadataKey(fromJuce(keys[index]));
+        if (!normalizedKey.isEmpty() && !map.contains(normalizedKey))
+            map.insert(normalizedKey, value);
+
+        const QString rawKey = cleanupMetadata(fromJuce(keys[index]));
+        if (!rawKey.contains(QLatin1Char(':')))
+            continue;
+        for (const auto& part :
+             rawKey.split(QLatin1Char(':'), Qt::SkipEmptyParts)) {
+            const QString alternate = normaliseMetadataKey(part);
+            if (!alternate.isEmpty() && !map.contains(alternate))
+                map.insert(alternate, value);
+        }
+    }
+    return map;
+}
+
+QString metadataValue(const QHash<QString, QString>& map,
+                      std::initializer_list<const char*> candidates)
+{
+    for (const char* candidate : candidates) {
+        const auto found = map.constFind(
+            normaliseMetadataKey(QString::fromUtf8(candidate)));
+        if (found != map.cend())
+            return found.value();
+    }
+    return {};
+}
+
+void applyFilenameHeuristic(
+    const QString& baseName,
+    QString& title,
+    QString& artist)
+{
+    if (title.isEmpty())
+        title = baseName;
+    if (!artist.isEmpty())
+        return;
+
+    static const QRegularExpression pattern(
+        QStringLiteral("^\\s*(.+?)\\s*[-–]\\s*(.+)\\s*$"));
+    const auto match = pattern.match(baseName);
+    if (!match.hasMatch())
+        return;
+
+    const QString candidateArtist = cleanupMetadata(match.captured(1));
+    const QString candidateTitle = cleanupMetadata(match.captured(2));
+    if (!candidateArtist.isEmpty())
+        artist = candidateArtist;
+    if (!candidateTitle.isEmpty())
+        title = candidateTitle;
+}
+
+double parseBpmString(const QString& raw)
+{
+    if (raw.isEmpty())
+        return 0.0;
+    const QString cleaned =
+        QString(raw).trimmed().replace(QLatin1Char(','), QLatin1Char('.'));
+    static const QRegularExpression numberPattern(
+        QStringLiteral("([0-9]+(?:\\.[0-9]+)?)"));
+    const auto match = numberPattern.match(cleaned);
+    if (!match.hasMatch())
+        return 0.0;
+
+    bool ok = false;
+    const double value = match.captured(1).toDouble(&ok);
+    return ok ? value : 0.0;
+}
+
+struct TagLibTags {
+    QString title;
+    QString artist;
+    QString album;
+    QString genre;
+    QString comment;
+    QString year;
+    QString trackNumber;
+    double bpm = 0.0;
+};
+
+std::optional<TagLibTags> readTagLibTags(const QString& path)
+{
+    TagLib::FileRef file(path.toUtf8().constData());
+    if (file.isNull() || file.tag() == nullptr)
+        return std::nullopt;
+
+    const TagLib::Tag* tag = file.tag();
+    TagLibTags result;
+    result.title =
+        cleanupMetadata(QString::fromStdWString(tag->title().toWString()));
+    result.artist =
+        cleanupMetadata(QString::fromStdWString(tag->artist().toWString()));
+    result.album =
+        cleanupMetadata(QString::fromStdWString(tag->album().toWString()));
+    result.genre =
+        cleanupMetadata(QString::fromStdWString(tag->genre().toWString()));
+    result.comment =
+        cleanupMetadata(QString::fromStdWString(tag->comment().toWString()));
+    if (tag->year() > 0)
+        result.year = QString::number(tag->year());
+    if (tag->track() > 0)
+        result.trackNumber = QString::number(tag->track());
+
+    if (file.file() != nullptr) {
+        const TagLib::PropertyMap properties = file.file()->properties();
+        for (const char* key : {"BPM", "TBPM"}) {
+            const auto found = properties.find(TagLib::String(key));
+            if (found == properties.end() || found->second.isEmpty())
+                continue;
+            result.bpm = parseBpmString(
+                QString::fromStdWString(found->second.front().toWString()));
+            if (result.bpm > 0.0)
+                break;
+        }
+    }
+    return result;
+}
+
 void lowerCurrentThreadPriority()
 {
 #ifdef __linux__
@@ -81,26 +241,35 @@ TrackMetadataSnapshot readMetadata(const juce::AudioFormatReader& reader,
                                    const juce::File& file)
 {
     TrackMetadataSnapshot result;
-    const auto values = metadata::buildMetadataLookup(reader.metadataValues);
-    result.title = metadata::metaValue(values, {"title", "id3title", "tit2", "tt2", "name", "tracktitle", "song"});
-    result.artist = metadata::metaValue(values, {"artist", "id3artist", "tpe1", "albumartist", "tpe2", "band", "performer", "leadartist"});
-    result.album = metadata::metaValue(values, {"album", "id3album", "talb", "record", "albumtitle"});
-    result.genre = metadata::metaValue(values, {"genre", "tcon", "contenttype"});
-    result.comment = metadata::metaValue(values, {"comment", "comm", "description"});
-    result.key = metadata::metaValue(values, {"key", "tkey", "initialkey", "musickey", "keysig"});
-    result.year = metadata::metaValue(values, {"year", "date", "tyer", "tdrc"});
-    result.trackNumber = metadata::metaValue(values, {"track", "tracknumber", "trck"});
-    result.tagBpm = metadata::parseBpmString(
-        metadata::metaValue(values, {"bpm", "tbpm", "tmpo", "tempo", "beatsperminute"}));
+    const auto values = buildMetadataLookup(reader.metadataValues);
+    result.title = metadataValue(
+        values, {"title", "id3title", "tit2", "tt2", "name", "tracktitle", "song"});
+    result.artist = metadataValue(
+        values, {"artist", "id3artist", "tpe1", "albumartist", "tpe2",
+                 "band", "performer", "leadartist"});
+    result.album = metadataValue(
+        values, {"album", "id3album", "talb", "record", "albumtitle"});
+    result.genre = metadataValue(
+        values, {"genre", "tcon", "contenttype"});
+    result.comment = metadataValue(
+        values, {"comment", "comm", "description"});
+    result.key = metadataValue(
+        values, {"key", "tkey", "initialkey", "musickey", "keysig"});
+    result.year = metadataValue(
+        values, {"year", "date", "tyer", "tdrc"});
+    result.trackNumber = metadataValue(
+        values, {"track", "tracknumber", "trck"});
+    result.tagBpm = parseBpmString(metadataValue(
+        values, {"bpm", "tbpm", "tmpo", "tempo", "beatsperminute"}));
 
     // JUCE's decoders don't agree on tag parsing across platforms: on macOS,
     // CoreAudioFormat is registered ahead of the format-specific readers and
     // silently exposes no ID3 metadata at all for many files (see
-    // metadata::readTagLibTags for details), which previously left
+    // readTagLibTags for details), which previously left
     // title/artist to fall through to the raw filename-split heuristic below
     // and produced swapped/garbled results. TagLib parses tags identically on
     // every platform, so its values take priority whenever present.
-    if (const auto tagLibTags = metadata::readTagLibTags(path)) {
+    if (const auto tagLibTags = readTagLibTags(path)) {
         if (!tagLibTags->title.isEmpty()) result.title = tagLibTags->title;
         if (!tagLibTags->artist.isEmpty()) result.artist = tagLibTags->artist;
         if (!tagLibTags->album.isEmpty()) result.album = tagLibTags->album;
@@ -111,9 +280,9 @@ TrackMetadataSnapshot readMetadata(const juce::AudioFormatReader& reader,
         if (tagLibTags->bpm > 0.0) result.tagBpm = tagLibTags->bpm;
     }
 
-    const QString baseName = metadata::cleanup(
+    const QString baseName = cleanupMetadata(
         QString::fromStdString(file.getFileNameWithoutExtension().toStdString()));
-    metadata::filenameHeuristic(baseName, result.title, result.artist);
+    applyFilenameHeuristic(baseName, result.title, result.artist);
     result.sampleRate = reader.sampleRate;
     result.lengthInSamples = reader.lengthInSamples;
     result.channelCount = reader.numChannels;

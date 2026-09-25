@@ -66,7 +66,6 @@ private:
     void startPositionTimer();
     void stopPositionTimer();
     void pollPosition();
-    double previewStartSeconds(double trackLengthSec) const;
 
     AudioPageCache& m_cache;
     AudioCacheHandle m_cacheHandle;

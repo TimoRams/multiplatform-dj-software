@@ -1,6 +1,6 @@
 # BrockDJ Source Cleanup Report
 
-Date: 2026-08-11
+Date: 2026-09-20
 Baseline: `9e18081d69cf0c8037ed053239726ee147808c74`
 Scope: source organization and dependency cleanup only; no intended playback,
 waveform, controller, persistence or QML behavior change.
@@ -15,6 +15,8 @@ waveform, controller, persistence or QML behavior change.
 ## Merged
 
 - Four beat-analysis algorithms -> `analysis/internal/BeatAnalysis.*`.
+- Beat-grid validation -> `analysis/internal/BeatAnalysis.*`; its duplicate
+  smoke fixture was removed in favor of the dedicated beat-analysis tests.
 - Analysis value types -> `analysis/AnalysisTypes.h`.
 - Waveform line/chunk/batch/normalization values -> `waveform/WaveformTypes.h`.
 - Waveform tile, marker and timeline math ->
@@ -47,6 +49,15 @@ waveform, controller, persistence or QML behavior change.
 
 - Analysis implementation helpers and waveform orchestration/envelope code are
   explicitly internal rather than public top-level APIs.
+- The trivial `CursorControl` QML adapter is header-only instead of carrying a
+  separate implementation translation unit.
+- First-run configuration, UI scaling and waveform zoom now compile with their
+  shared `SettingsManager` persistence owner instead of four tiny translation
+  units.
+- The one-consumer file-manager launch adapter retains its platform boundary as
+  a header-only helper.
+- Track metadata parsing now lives privately with `DeckTrackLoader`; the former
+  public helper pair and its unused ID3v1 fallback were removed.
 - FLX10 jog constants now live beside the jog router that owns their semantics.
 - The broad `FacadeIncludes.h` dependency umbrella was removed; every remaining
   `DjEngine` implementation declares direct dependencies.
@@ -59,14 +70,33 @@ waveform, controller, persistence or QML behavior change.
 - `AudioCacheWorker`, `DatabaseWorker`, `MediaIoScheduler` and
   `Flx10HidTransport` remain separate because each represents a real thread,
   lifecycle or hardware boundary.
-- `WaveformAnalysisOrchestrator` remains an internal large implementation unit;
-  merging it into `WaveformAnalyzer.cpp` would create a God translation unit.
+- `analysis/internal/AnalysisOrchestrator` remains an internal large
+  implementation unit; merging it into `WaveformAnalyzer.cpp` would create a
+  God translation unit.
 - `VirtualTurntable` remains independently testable simulation logic;
   `ScratchSession` remains the deck-owned state boundary.
 - Large MIDI implementation units remain separate around enumeration, mapping,
   dispatch and FLX10 behavior; merging them would exceed useful file size.
 - Large QML surfaces were moved but not split because binding/lifetime behavior
   requires a dedicated visual refactor.
+
+## Follow-up consolidation
+
+- Removed the unused controller profile and `OverallWaveform.qml`.
+- Merged `UiMetrics` into `UiTheme`, desktop settings into the shared
+  `SettingsPanel`, and first-run content into `StartupOverlay`.
+- Merged mixer coefficient code into `DeckChannelProcessor`, the one-consumer
+  track-ID helper into `DjEngine`, and Rekordbox reader declarations into
+  `RekordboxDeviceSource.h`.
+- Moved `SystemMonitor` to `platform/`, analysis orchestration to `analysis/`,
+  and performance-only QML panels to `qml/performance/`.
+- Removed the persisted waveform LOD trailer. Render-cache version 5 stores
+  canonical lines only; renderers derive bounded LOD samples on demand.
+- Released duplicate full geometry and spectral snapshots after immutable
+  waveform lines are installed. The line snapshot itself remains the reusable
+  analysis seed, avoiding both per-deck RAM duplication and repeat decoding.
+- Removed duplicated synchronous analysis persistence and stale FLX10 display
+  generation paths.
 
 ## Behavioral invariants
 

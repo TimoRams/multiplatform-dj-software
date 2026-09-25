@@ -102,13 +102,6 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, ControlClock
 
     autoOpenFlx10MidiOutputIfNeeded();
 
-    // The FX ON lamp is held steady while the effect is engaged instead of
-    // being pulsed. A pulse meant a lamp write every 180 ms for as long as FX
-    // was on, and every one of those writes is a chance for the controller to
-    // loop it back in as a phantom press. Steady also reads unambiguously: the
-    // button is lit exactly while the unit is engaged.
-    m_beatFxBlinkTimer.stop();
-
     m_startupRefreshTimer.setSingleShot(true);
     connect(&m_startupRefreshTimer, &QTimer::timeout, this, [this]()
     {
@@ -144,8 +137,6 @@ void MidiControllerManager::shutdown()
     QCoreApplication::removePostedEvents(&m_midiFeedback);
 
     QObject::disconnect(&m_startupRefreshTimer, nullptr, this, nullptr);
-    m_beatFxBlinkTimer.stop();
-    QObject::disconnect(&m_beatFxBlinkTimer, nullptr, this, nullptr);
     m_14BitFallbackTimer.stop();
     QObject::disconnect(&m_14BitFallbackTimer, nullptr, this, nullptr);
     m_deckABeatJumpGraceTimer.stop();

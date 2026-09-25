@@ -2176,8 +2176,7 @@ QVariantMap ScrollingWaveformItem::renderStats() const
     stats.insert(QStringLiteral("tileCacheBytes"),
                  QVariant::fromValue<qulonglong>(tileStats.cacheBytes));
     stats.insert(QStringLiteral("tileCacheBudgetBytes"),
-                 QVariant::fromValue<qulonglong>(
-                     waveform_render::WaveformTileRasterizer::kMaximumCacheBytes));
+                 QVariant::fromValue<qulonglong>(tileStats.cacheBudgetBytes));
     stats.insert(QStringLiteral("estimatedGpuTextureBytes"),
                  QVariant::fromValue<qulonglong>(
                      m_estimatedGpuTextureBytes.load(std::memory_order_relaxed)));

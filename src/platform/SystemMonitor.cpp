@@ -1,4 +1,4 @@
-#include "SystemMonitor.h"
+#include "platform/SystemMonitor.h"
 #include <QFile>
 #include <QDebug>
 #include <QtGlobal>

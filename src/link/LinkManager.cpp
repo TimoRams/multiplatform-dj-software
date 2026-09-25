@@ -11,17 +11,19 @@ LinkManager::LinkManager(ControlClock& controlClock, QObject* parent)
         if (m_shuttingDown.load(std::memory_order_acquire))
             return;
 
-        int p = static_cast<int>(peers);
-        if (m_numPeers != p) {
-            m_numPeers = p;
-            // Signal must be emitted on the main thread
-            QMetaObject::invokeMethod(this, "numPeersChanged", Qt::QueuedConnection);
-        }
+        const int peerCount = static_cast<int>(peers);
+        QMetaObject::invokeMethod(this, [this, peerCount] {
+            if (m_shuttingDown.load(std::memory_order_acquire)
+                || m_numPeers == peerCount) {
+                return;
+            }
+            m_numPeers = peerCount;
+            emit numPeersChanged();
+        }, Qt::QueuedConnection);
     });
 
-    ControlClock::Callbacks callbacks;
-    callbacks.waveform = [this](const ControlTickContext&) { pollLinkState(); };
-    m_clockRegistration = controlClock.registerCallbacks(std::move(callbacks));
+    m_clockConnection = connect(&controlClock, &ControlClock::linkTick,
+                                this, &LinkManager::pollLinkState);
 
     qDebug() << "[LinkManager] initialised (120 BPM, disabled)";
 }
@@ -37,7 +39,7 @@ void LinkManager::shutdown()
     if (alreadyShuttingDown)
         return;
 
-    m_clockRegistration.reset();
+    disconnect(m_clockConnection);
     m_link.setNumPeersCallback([](std::size_t) {});
     m_link.enable(false);
 }

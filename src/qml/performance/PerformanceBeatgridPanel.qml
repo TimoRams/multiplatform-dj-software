@@ -1,3 +1,4 @@
+// Full beatgrid controls owned by the performance workspace.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts

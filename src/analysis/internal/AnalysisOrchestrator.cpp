@@ -1,9 +1,8 @@
-#include "WaveformAnalysisOrchestrator.h"
+#include "analysis/internal/AnalysisOrchestrator.h"
 #include "analysis/internal/PhraseAnalyzer.h"
 #include "analysis/AnalysisTypes.h"
 #include "analysis/internal/AnalysisFeatureExtractor.h"
 #include "analysis/internal/BeatAnalysis.h"
-#include "analysis/AnalysisValidation.h"
 #include <keyfinder/keyfinder.h>
 #include <keyfinder/audiodata.h>
 #include <QDebug>
@@ -11,7 +10,7 @@
 #include <cmath>
 #include <vector>
 
-namespace waveform_internal {
+namespace analysis_internal {
 
 bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
 {
@@ -330,4 +329,4 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
     return !thread.threadShouldExit();
 }
 
-} // namespace waveform_internal
+} // namespace analysis_internal

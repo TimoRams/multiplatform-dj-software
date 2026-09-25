@@ -65,16 +65,6 @@ struct WaveformLineBlock final {
 
 using WaveformLineBatch = std::vector<WaveformLineBlock>;
 
-struct WaveformLodBlock final {
-    int level = 0;
-    int canonicalLineStride = 1;
-    int firstSample = 0;
-    int totalSamples = 0;
-    std::shared_ptr<const std::vector<WaveformLine>> lines;
-};
-
-using WaveformLodBatch = std::vector<WaveformLodBlock>;
-
 enum class WaveformNormalizationState : std::uint8_t {
     Preview,
     Final

@@ -6,9 +6,10 @@ Item {
     id: settingsWindow
     implicitWidth: 800
     implicitHeight: 600
+    property bool active: visible
 
-    onVisibleChanged: {
-        if (visible) {
+    onActiveChanged: {
+        if (active) {
             if (!audioSyncPending) {
                 audioSyncPending = true
                 audioSyncTimer.start()

@@ -22,7 +22,7 @@ active register.
 | P1 | Cache starvation produces intentional faded silence | Cache misses are callback-safe, but an undersized budget or slow worker can starve playback/scratch. | Tune with production media and expose actionable cache diagnostics before changing the no-fallback contract. | accepted |
 | P2 | Released cache metadata persists until shutdown | `AudioPageCache` retains small slot metadata so stale handles remain safe while PCM is evicted. Many unique tracks can grow metadata. | Add control-thread epoch reclamation only if production measurements justify the complexity. | accepted |
 | P2 | `DjEngine` remains a broad public facade | The API spans transport, cue/loop, mixer, FX, scratch, sync, metadata, and diagnostics across responsibility-named implementation files. | Continue only as a separately reviewed facade/ownership refactor; preserve the public QML/controller contract. | deferred |
-| P2 | Large QML surfaces duplicate concepts | Heavy mutually exclusive surfaces are now lifetime-gated, but `SettingsPanel.qml` and `SettingsWindow.qml` remain near-parallel; `Library.qml`, `TopHeader.qml`, and `DeckControl.qml` remain monolithic. Textual splitting alone does not reduce runtime work. | Add desktop/AIO visual parity and popup/focus ownership tests before extracting shared settings content; split other files only at measured reusable boundaries. | open |
+| P2 | Large QML surfaces remain monolithic | Desktop and AIO settings now share `SettingsPanel.qml`, but `Library.qml`, `TopHeader.qml`, and `DeckControl.qml` remain large. Textual splitting alone does not reduce runtime work. | Extract components only with explicit dependencies and visual/focus/lifetime parity tests. | open |
 
 ## Invariants retained from resolved incidents
 

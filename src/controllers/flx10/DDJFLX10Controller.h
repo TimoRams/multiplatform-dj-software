@@ -98,23 +98,6 @@ private:
 
     QByteArray generateCoverJpeg(int deck) const;
     bool uploadCoverArt(int deck);
-    struct WaveformPreviewRenderInfo final {
-        std::uint64_t trackGeneration = 0;
-        std::uint64_t dataGeneration = 0;
-        std::uint32_t sourceLineBegin = 0;
-        std::uint32_t sourceLineEnd = 0;
-        std::uint32_t outputWidth = 0;
-        std::uint32_t generatedColumns = 0;
-        std::uint32_t columnsWithData = 0;
-        std::uint32_t completeColumns = 0;
-        std::uint32_t playheadChunkIndex = 0;
-        std::uint8_t playheadChunkState = 0;
-        // No LOD fields: the FLX10 path asks waveform::aggregateWaveformColumn
-        // for a source-line range and never learns which level answered it.
-    };
-
-    QByteArray generatePreviewWaveform(int deck,
-                                       WaveformPreviewRenderInfo* outInfo = nullptr) const;
     // Full-track PWV5 generation is O(duration x 150) aggregate calls. Running
     // it on the owner thread every 250 ms while analysis streamed in was what
     // froze the jog handle: it stalled the ControlClock display callback, so
@@ -199,7 +182,6 @@ private:
 
     double deckDisplayDuration(int deck) const;
     double deckDisplayPosition(int deck) const;
-    double deckTempoRangePercent(int deck) const;
     QString deckKey(int deck) const;
     uint8_t deckKeyByte(int deck) const;
     DjEngine* deckEngine(int deck) const;

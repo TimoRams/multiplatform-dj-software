@@ -3,7 +3,6 @@
 #include "deck/DjEngine.h"
 #include "audio/AudioEngine.h"
 #include "SettingsManager.h"
-#include "app/AppConfig.h"
 #include "controllers/ControllerIntegrationManager.h"
 #include "fx/FxManager.h"
 #include "library/LibraryAnalysisManager.h"
@@ -75,6 +74,8 @@ void clearQmlContextProperties(QQmlApplicationEngine& engine)
     engine.rootContext()->setContextProperty("renderPressurePolicy", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("mixerControl", static_cast<QObject*>(nullptr));
     engine.rootContext()->setContextProperty("controlClock", static_cast<QObject*>(nullptr));
+    engine.rootContext()->setContextProperty("libraryCover", static_cast<QObject*>(nullptr));
+    engine.rootContext()->setContextProperty("libraryPreview", static_cast<QObject*>(nullptr));
 }
 
 void performExitTeardown(ApplicationRuntime& runtime, bool manualBackup)

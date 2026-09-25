@@ -347,10 +347,5 @@ private:
     // or fills wet buffer with silence for "no-op" bypass.
     void copyToWet(const juce::AudioBuffer<float>& src,
                    juce::AudioBuffer<float>& wet, int start, int n);
-    void mixWetDry(juce::AudioBuffer<float>& buffer,
-                   const juce::AudioBuffer<float>& wetBuf,
-                   int start, int n,
-                   float wetGain, float dryGain);
-
     juce::AudioBuffer<float> m_wetScratch;
 };

@@ -1,8 +1,7 @@
 #pragma once
 
 #include <QObject>
-#include "ControlClock.h"
-#include <QElapsedTimer>
+#include "app/ControlClock.h"
 
 // Lightweight system resource monitor for CPU and RAM usage.
 // Reads /proc/stat and /proc/meminfo on Linux at ~2 Hz.

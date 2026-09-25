@@ -247,41 +247,6 @@ Item {
             color: UiTheme.divider
         }
 
-        CrossfaderBar {
-            id: crossfaderBar
-            property bool _vis: window.crossfaderVisible
-            Layout.fillWidth: true
-            Layout.minimumHeight:  _vis ? window.crossfaderBarHeight : 0
-            Layout.preferredHeight: _vis ? window.crossfaderBarHeight : 0
-            Layout.maximumHeight:  _vis ? window.crossfaderBarHeight : 0
-            visible: _vis
-            mc: mixerControl
-            engineA: deckA
-            engineB: deckB
-            engineC: deckC
-            engineD: deckD
-            fourDeckMode: window.fourDeckMode
-        }
-
-        Rectangle {
-            property bool _vis: window.crossfaderVisible
-            visible: _vis
-            Layout.fillWidth: true
-            Layout.minimumHeight:  _vis ? 1 : 0
-            Layout.preferredHeight: _vis ? 1 : 0
-            Layout.maximumHeight:  _vis ? 1 : 0
-            color: UiTheme.divider
-        }
-
-        FxBar {
-            id: fxBarSection
-            Layout.fillWidth: true
-            Layout.minimumHeight: window.fxVisible ? window.fxBarHeight : 0
-            Layout.preferredHeight: window.fxVisible ? window.fxBarHeight : 0
-            Layout.maximumHeight: window.fxVisible ? window.fxBarHeight : 0
-            visible: window.fxVisible
-        }
-
         Loader {
             id: settingsSectionLoader
             Layout.fillWidth: true
@@ -292,7 +257,9 @@ Item {
             visible: window.settingsPanelActive
             active: window.settingsPanelActive
             asynchronous: true
-            sourceComponent: Component { SettingsPanel { } }
+            sourceComponent: Component {
+                SettingsPanel { active: settingsSectionLoader.active }
+            }
         }
 
         Loader {

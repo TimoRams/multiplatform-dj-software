@@ -7,6 +7,6 @@ target_sources(${PROJECT_NAME} PRIVATE
     internal/AnalysisFeatureExtractor.cpp
     internal/BeatAnalysis.h
     internal/BeatAnalysis.cpp
-    AnalysisValidation.h
-    AnalysisValidation.cpp
+    internal/AnalysisOrchestrator.h
+    internal/AnalysisOrchestrator.cpp
 )

@@ -24,25 +24,6 @@ WaveformLodPyramid::Sample WaveformLodPyramid::sample(
     const auto begin = static_cast<std::uint32_t>(wideBegin);
     const auto end = std::min(snapshot.totalLineCount, begin + stride);
 
-    if (levelIndex > 0) {
-        const auto persisted = snapshot.lodLevel(levelIndex);
-        if (persisted && persisted->canonicalLineStride == stride
-            && persisted->chunkSize > 0
-            && lodSampleIndex < persisted->totalSampleCount) {
-            const auto chunk = persisted->chunkAt(
-                lodSampleIndex / persisted->chunkSize);
-            if (chunk && chunk->lines
-                && lodSampleIndex >= chunk->firstSampleIndex) {
-                const auto local = lodSampleIndex - chunk->firstSampleIndex;
-                if (local < chunk->lines->size()) {
-                    result.line = (*chunk->lines)[local];
-                    result.hasData = true;
-                    result.complete = true;
-                    return result;
-                }
-            }
-        }
-    }
     result.complete = true;
     std::uint64_t rms = 0;
     std::uint64_t bass = 0;
@@ -122,35 +103,6 @@ std::uint64_t WaveformLodPyramid::sourceRevision(
     canonicalEnd = std::min(canonicalEnd, snapshot.totalLineCount);
     if (canonicalBegin >= canonicalEnd)
         return 0;
-
-    const auto stride = static_cast<std::uint32_t>(
-        level(levelIndex).canonicalLineStride);
-    if (levelIndex > 0) {
-        const auto persisted = snapshot.lodLevel(levelIndex);
-        if (persisted && persisted->canonicalLineStride == stride
-            && persisted->chunkSize > 0) {
-            const auto lodBegin = canonicalBegin / stride;
-            const auto lodEnd = (canonicalEnd + stride - 1) / stride;
-            const auto firstLodChunk = lodBegin / persisted->chunkSize;
-            const auto lastLodChunk = (lodEnd - 1) / persisted->chunkSize;
-            bool complete = true;
-            std::uint64_t revision = 1469598103934665603ULL
-                ^ static_cast<std::uint64_t>(levelIndex);
-            for (auto chunkIndex = firstLodChunk;
-                 chunkIndex <= lastLodChunk; ++chunkIndex) {
-                const auto chunk = persisted->chunkAt(chunkIndex);
-                if (!chunk) {
-                    complete = false;
-                    break;
-                }
-                revision ^= (static_cast<std::uint64_t>(chunkIndex) << 32U)
-                    ^ chunk->revision;
-                revision *= 1099511628211ULL;
-            }
-            if (complete)
-                return revision;
-        }
-    }
 
     // FNV-1a over only the immutable canonical chunks intersecting this tile.
     // Missing chunks contribute a stable zero revision; publishing one later

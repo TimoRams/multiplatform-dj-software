@@ -13,7 +13,7 @@ Rectangle {
 
     // Height is fully controlled by parent layout — no implicitHeight here.
     // The first row remains fixed while the pull-down quick-access tray opens.
-    readonly property int collapsedHeight: UiMetrics.toolbarHeight
+    readonly property int collapsedHeight: UiTheme.toolbarHeight
 
     // ── Sizing helpers ───────────────────────────────────────────────────────
     readonly property int btnH:    Math.max(1, root.collapsedHeight)
@@ -122,7 +122,22 @@ Rectangle {
     // hidden Window (and its mapping editor) alive from application startup.
     Component {
         id: settingsWindowFactory
-        SettingsWindow { }
+        Window {
+            id: standaloneSettingsWindow
+            title: "Settings"
+            width: 800
+            height: 600
+            minimumWidth: 600
+            minimumHeight: 400
+            visible: false
+            color: "#1e1e19"
+            flags: Qt.Dialog
+
+            SettingsPanel {
+                anchors.fill: parent
+                active: standaloneSettingsWindow.visible
+            }
+        }
     }
 
     function showStandaloneSettings() {
@@ -1392,7 +1407,7 @@ Rectangle {
         // notification shade without changing the workspace geometry.
         y: root.collapsedHeight - height
            + height * (root.Window.window ? root.Window.window.topBarPullProgress : 0.0)
-        height: UiMetrics.toolbarPullExtra
+        height: UiTheme.toolbarPullExtra
         color: "#101214"
         opacity: Math.min(1.0, (root.Window.window ? root.Window.window.topBarPullProgress : 0.0) * 3.0)
         visible: opacity > 0.01
@@ -1409,9 +1424,9 @@ Rectangle {
 
         RowLayout {
             anchors.centerIn: parent
-            width: Math.min(parent.width - UiMetrics.space6 * 2, 680)
-            height: Math.max(0, Math.min(parent.height - UiMetrics.space3 * 2, UiMetrics.px(56)))
-            spacing: UiMetrics.space3
+            width: Math.min(parent.width - UiTheme.space6 * 2, 680)
+            height: Math.max(0, Math.min(parent.height - UiTheme.space3 * 2, UiTheme.px(56)))
+            spacing: UiTheme.space3
 
             Rectangle {
                 Layout.fillWidth: true
@@ -1603,7 +1618,7 @@ Rectangle {
             onPositionChanged: function(mouse) {
                 if (!pressed || !root.Window.window)
                     return
-                var next = pressProgress + (mouse.y - pressY) / UiMetrics.toolbarPullExtra
+                var next = pressProgress + (mouse.y - pressY) / UiTheme.toolbarPullExtra
                 root.Window.window.topBarPullProgress = Math.max(0.0, Math.min(1.0, next))
             }
             onReleased: function(mouse) {

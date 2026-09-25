@@ -146,7 +146,6 @@ bool LibraryDatabase::open()
         m_backupMirrorDegraded = true;
     }
 
-    m_cachedMirrorStatus = mirroredDatabaseStatus();
     emit mirroredDatabaseStatusChanged();
     qDebug() << "[LibraryDatabase] open(): finished in" << timer.elapsed() << "ms";
 
@@ -346,24 +345,6 @@ void LibraryDatabase::requestQuickCheck()
         m_quickCheckRequestId = m_nextDatabaseRequestId - 1;
 }
 
-void LibraryDatabase::requestFullIntegrityCheck()
-{
-    if (!m_databaseWorker || !m_databaseWorker->isRunning())
-        return;
-    DatabaseCommand command;
-    command.type = DatabaseCommandType::RunFullIntegrityCheck;
-    command.priority = DatabasePriority::Maintenance;
-    command.requestId = m_nextDatabaseRequestId++;
-    command.coalescingKey = QStringLiteral("full-integrity-check");
-    if (m_databaseWorker->enqueue(std::move(command)))
-        m_fullCheckRequestId = m_nextDatabaseRequestId - 1;
-}
-
-DatabaseWorkerStats LibraryDatabase::databaseWorkerStats() const noexcept
-{
-    return m_databaseWorker ? m_databaseWorker->stats() : DatabaseWorkerStats{};
-}
-
 bool LibraryDatabase::requestAnalysisPersistence(const QString& trackId,
                                                  const analysis::AnalysisResult& result)
 {
@@ -492,8 +473,7 @@ void LibraryDatabase::collectDatabaseWorkerResults()
             if (!result.success)
                 qWarning() << "[LibraryDatabase] Database worker backup failed:" << result.error;
             emit mirroredDatabaseStatusChanged();
-        } else if (result.requestId == m_quickCheckRequestId
-                   || result.requestId == m_fullCheckRequestId) {
+        } else if (result.requestId == m_quickCheckRequestId) {
             if (!result.success) {
                 m_lastRecoveryEvent = QStringLiteral("database check failed: %1").arg(result.error);
                 m_primaryMirrorDegraded = (m_activeDbPath == m_dbPath);
@@ -591,8 +571,7 @@ void LibraryDatabase::clearDatabaseConnection()
 
 void LibraryDatabase::performMirrorSelfCheck()
 {
-    // Error paths request a cheap worker-side diagnostic. Full integrity checks
-    // are deliberately exposed only through requestFullIntegrityCheck().
+    // Error paths request a cheap worker-side diagnostic.
     requestQuickCheck();
 }
 

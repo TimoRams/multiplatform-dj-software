@@ -1,6 +1,6 @@
 #include "WaveformAnalyzer.h"
 #include "internal/WaveformEnvelopePass.h"
-#include "internal/WaveformAnalysisOrchestrator.h"
+#include "analysis/internal/AnalysisOrchestrator.h"
 #include "WaveformCache.h"
 #include "analysis/internal/AnalysisWorkingData.h"
 #include <QFileInfo>
@@ -284,8 +284,12 @@ void WaveformAnalyzer::run()
     // Cached waveform from disk — skip the expensive Pass 1+2 and only run BPM/key.
     const int existingRgb      = working.getSpectralWaveformSize();
     const int existingExpected = working.getTotalExpected();
-    const bool haveFullWaveform = existingExpected >= static_cast<int>(numPoints * 0.95)
-                               && existingRgb >= static_cast<int>(spectralPoints * 0.95);
+    const auto preparedSeed = working.preparedWaveformLines();
+    const bool havePreparedWaveform = preparedSeed
+        && preparedSeed->totalLineCount >= static_cast<std::uint32_t>(numPoints * 0.95);
+    const bool haveFullWaveform = havePreparedWaveform
+        || (existingExpected >= static_cast<int>(numPoints * 0.95)
+            && existingRgb >= static_cast<int>(spectralPoints * 0.95));
 
     if (!haveFullWaveform) {
         // Instant full-track preview so the deck overview never starts blank.
@@ -392,7 +396,7 @@ void WaveformAnalyzer::run()
     }
 
     {
-        const waveform_internal::AnalysisOrchestratorInput orchestratorInput{
+        const analysis_internal::AnalysisOrchestratorInput orchestratorInput{
             *reader,
             &working,
             *this,
@@ -405,7 +409,7 @@ void WaveformAnalyzer::run()
                 return m_backgroundWorkPaused.load(std::memory_order_acquire);
             },
         };
-        if (!waveform_internal::runAnalysisOrchestrator(orchestratorInput))
+        if (!analysis_internal::runAnalysisOrchestrator(orchestratorInput))
             return;
     }
 

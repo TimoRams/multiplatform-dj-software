@@ -43,13 +43,12 @@
 #include "library/LibraryPreviewPlayer.h"
 #include "fx/FxManager.h"
 #include "link/LinkManager.h"
-#include "SystemMonitor.h"
+#include "platform/SystemMonitor.h"
 #include "controllers/midi/ParameterStore.h"
 #include "MixerControl.h"
 #include "controllers/midi/MidiControllerManager.h"
 #include "controllers/ControllerIntegrationManager.h"
 #include "SettingsManager.h"
-#include "app/AppConfig.h"
 #include "library/LibraryDatabase.h"
 #include "library/LibraryTableModel.h"
 #include "library/LibraryAnalysisManager.h"
@@ -342,7 +341,7 @@ int runApplication(int argc, char *argv[])
     runtime.mediaIoScheduler->start();
     runtime.libraryManager = std::make_unique<LibraryManager>(*runtime.mediaIoScheduler);
     runtime.libraryDb = std::make_unique<LibraryDatabase>();
-    runtime.libraryTableModel = std::make_unique<LibraryTableModel>("library_conn");
+    runtime.libraryTableModel = std::make_unique<LibraryTableModel>();
     runtime.libraryAnalysisManager = std::make_unique<LibraryAnalysisManager>();
     runtime.deviceLibraryManager = std::make_unique<DeviceLibraryManager>();
     runtime.fxManager = std::make_unique<FxManager>();

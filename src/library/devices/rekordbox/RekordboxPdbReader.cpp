@@ -1,4 +1,4 @@
-#include "library/devices/rekordbox/RekordboxPdbReader.h"
+#include "library/devices/rekordbox/RekordboxDeviceSource.h"
 
 #include <QFile>
 #include <QSet>

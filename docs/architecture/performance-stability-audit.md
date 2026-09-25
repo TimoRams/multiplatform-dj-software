@@ -401,9 +401,8 @@ imperceptible, unlike a waveform peak's shape.
   responsibility-sized translation units.
 - `Library.qml` is not mechanically split. Extracting pieces without relocating
   state and focus ownership would change files, not reduce work.
-- `SettingsPanel.qml` and `SettingsWindow.qml` remain near-duplicates. Shared
-  content extraction is desirable only after desktop/AIO focus, popup,
-  reconciliation and Apply behavior have parity tests.
+- Desktop and AIO settings share `SettingsPanel.qml`; the standalone window is
+  now a lazy wrapper created by `TopHeader.qml`.
 
 ## Remaining prioritized work
 
@@ -421,8 +420,8 @@ imperceptible, unlike a waveform peak's shape.
    `DatabaseWorker` commands; never move a live QSQLITE connection.
 4. Measure cancellation/join latency at every analysis phase and final artifact
    serialization on slow disks.
-5. Add runtime visual parity tests before consolidating settings content or
-   decomposing the library/header/deck monoliths.
+5. Add runtime visual parity tests before decomposing the
+   library/header/deck monoliths.
 6. Monitor cache starvation, worker latency, callback overruns and
    `ControlClock` late/worst ticks with production compressed media.
 
@@ -453,8 +452,7 @@ cmake --build build -j2 --target BrockDJ
 qmllint -I build -I src/qml \
   src/qml/performance/PerformanceWorkspace.qml \
   src/qml/shell/TopHeader.qml \
-  src/qml/settings/SettingsPanel.qml \
-  src/qml/settings/SettingsWindow.qml
+  src/qml/settings/SettingsPanel.qml
 BROCKDJ_CACHE_STRESS_SECONDS=2 \
   BROCKDJ_CACHE_STRESS_TRACK_SECONDS=60 \
   ./build-tests/BrockDJ_audio_cache_stress

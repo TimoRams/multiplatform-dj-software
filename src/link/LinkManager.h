@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QMetaObject>
 #include "app/ControlClock.h"
 #include <atomic>
 #include <cstdint>
@@ -44,7 +45,7 @@ private slots:
 
 private:
     ableton::Link m_link;
-    ControlClock::Registration m_clockRegistration;
+    QMetaObject::Connection m_clockConnection;
     std::atomic<bool> m_shuttingDown { false };
 
     double m_bpm      = 120.0;

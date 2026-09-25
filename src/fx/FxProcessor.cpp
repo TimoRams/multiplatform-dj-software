@@ -163,7 +163,6 @@ void FxProcessor::prepare(double sampleRate, int maxBlockSize, int numChannels)
     m_wetScratch.setSize(m_numChannels, m_maxBlockSize, false, true, true);
 
     // Smoothed wet/dry: ~20 ms ramp time to eliminate clicks
-    const float rampSamples = static_cast<float>(sampleRate * 0.020);
     m_wetSmooth.reset(sampleRate, 0.020);
     m_drySmooth.reset(sampleRate, 0.020);
     m_wetSmooth.setCurrentAndTargetValue(0.0f);
@@ -201,7 +200,6 @@ void FxProcessor::prepare(double sampleRate, int maxBlockSize, int numChannels)
     m_mobiusState = MobiusState{};
     m_stretchState = StretchState{};
 
-    (void)rampSamples;
 }
 
 void FxProcessor::process(juce::AudioBuffer<float>& buffer, int startSample, int numSamples)
@@ -767,21 +765,6 @@ void FxProcessor::copyToWet(const juce::AudioBuffer<float>& src,
         wet.copyFrom(ch, 0, src, ch, start, n);
 }
 
-void FxProcessor::mixWetDry(juce::AudioBuffer<float>& buffer,
-                            const juce::AudioBuffer<float>& wetBuf,
-                            int start, int n,
-                            float wetGain, float dryGain)
-{
-    for (int ch = 0; ch < buffer.getNumChannels() && ch < wetBuf.getNumChannels(); ++ch)
-    {
-        float* dst       = buffer.getWritePointer(ch) + start;
-        const float* wet = wetBuf.getReadPointer(ch);
-
-        for (int i = 0; i < n; ++i)
-            dst[i] = dst[i] * dryGain + wet[i] * wetGain;
-    }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Echo / Low-Cut Echo
 // ─────────────────────────────────────────────────────────────────────────────
@@ -819,34 +802,30 @@ void FxProcessor::processEcho(juce::AudioBuffer<float>& wet,
     m_delayState.lpBiquadL.lowpassQ(scaledLp, 0.85);
     m_delayState.lpBiquadR.lowpassQ(scaledLp, 0.85);
 
-    for (int ch = 0; ch < wet.getNumChannels() && ch < 2; ++ch)
-    {
-        float* data      = wet.getWritePointer(ch) + start;
-        DelayLine& line  = (ch == 0) ? m_delayState.lineL    : m_delayState.lineR;
-        float& hpPrev    = (ch == 0) ? m_delayState.hpStateL : m_delayState.hpStateR;
-        auto& lpBiquad   = (ch == 0) ? m_delayState.lpBiquadL : m_delayState.lpBiquadR;
-
-        // Reset smoother for second channel to replay the same ramp.
-        if (ch == 1) m_echoDelaySmooth.setCurrentAndTargetValue(
-                         m_echoDelaySmooth.getTargetValue());
-
-        for (int i = 0; i < n; ++i)
-        {
-            const float delayF = m_echoDelaySmooth.getNextValue();
+    const int channelCount = std::min(wet.getNumChannels(), 2);
+    std::array<float*, 2> channels {
+        channelCount > 0 ? wet.getWritePointer(0) + start : nullptr,
+        channelCount > 1 ? wet.getWritePointer(1) + start : nullptr
+    };
+    for (int i = 0; i < n; ++i) {
+        const float delayF = m_echoDelaySmooth.getNextValue();
+        for (int ch = 0; ch < channelCount; ++ch) {
+            float* data = channels[static_cast<std::size_t>(ch)];
+            DelayLine& line = ch == 0 ? m_delayState.lineL : m_delayState.lineR;
+            float& hpPrev = ch == 0 ? m_delayState.hpStateL : m_delayState.hpStateR;
+            auto& lpBiquad = ch == 0 ? m_delayState.lpBiquadL : m_delayState.lpBiquadR;
             float delayed = line.readFrac(delayF);
 
-            if (lowCut)
-            {
-                float hp = delayed - hpPrev;
-                hpPrev   = delayed;
-                delayed  = hp;
+            if (lowCut) {
+                const float highPassed = delayed - hpPrev;
+                hpPrev = delayed;
+                delayed = highPassed;
             }
 
-            float warm = lpBiquad(delayed);
-            float fb   = std::tanh(warm * feedback * 1.3f) / 1.3f;
-
-            line.write(data[i] * 0.95f + fb);
-            data[i] = data[i] + warm * 0.80f;
+            const float warm = lpBiquad(delayed);
+            const float feedbackSample = std::tanh(warm * feedback * 1.3f) / 1.3f;
+            line.write(data[i] * 0.95f + feedbackSample);
+            data[i] += warm * 0.80f;
         }
     }
 }
@@ -873,27 +852,25 @@ void FxProcessor::processMtDelay(juce::AudioBuffer<float>& wet,
     m_delayState.lpBiquadL.lowpassQ(scaledLp, 0.85);
     m_delayState.lpBiquadR.lowpassQ(scaledLp, 0.85);
 
-    for (int ch = 0; ch < wet.getNumChannels() && ch < 2; ++ch)
-    {
-        float* data    = wet.getWritePointer(ch) + start;
-        DelayLine& line = (ch == 0) ? m_delayState.lineL    : m_delayState.lineR;
-        auto& lpBiquad  = (ch == 0) ? m_delayState.lpBiquadL : m_delayState.lpBiquadR;
-
-        if (ch == 1) m_mtDelayTimeSmooth.setCurrentAndTargetValue(
-                         m_mtDelayTimeSmooth.getTargetValue());
-
-        for (int i = 0; i < n; ++i)
-        {
-            const float maxD = m_mtDelayTimeSmooth.getNextValue();
+    const int channelCount = std::min(wet.getNumChannels(), 2);
+    std::array<float*, 2> channels {
+        channelCount > 0 ? wet.getWritePointer(0) + start : nullptr,
+        channelCount > 1 ? wet.getWritePointer(1) + start : nullptr
+    };
+    for (int i = 0; i < n; ++i) {
+        const float maxD = m_mtDelayTimeSmooth.getNextValue();
+        for (int ch = 0; ch < channelCount; ++ch) {
+            float* data = channels[static_cast<std::size_t>(ch)];
+            DelayLine& line = ch == 0 ? m_delayState.lineL : m_delayState.lineR;
+            auto& lpBiquad = ch == 0 ? m_delayState.lpBiquadL : m_delayState.lpBiquadR;
             const float t1 = line.readFrac(std::max(1.0f, maxD * 0.25f));
             const float t2 = line.readFrac(std::max(1.0f, maxD * 0.50f));
             const float t3 = line.readFrac(std::max(1.0f, maxD * 0.75f));
             const float tapMix = t1 * 0.43f + t2 * 0.34f + t3 * 0.23f;
-            const float warm   = lpBiquad(tapMix);
-            const float fb     = std::tanh(warm * feedback);
-            const float out    = data[i] + fb * 0.90f;
-            line.write(data[i] * 0.95f + fb * 0.80f);
-            data[i] = out;
+            const float warm = lpBiquad(tapMix);
+            const float feedbackSample = std::tanh(warm * feedback);
+            line.write(data[i] * 0.95f + feedbackSample * 0.80f);
+            data[i] += feedbackSample * 0.90f;
         }
     }
 }
@@ -1630,31 +1607,24 @@ void FxProcessor::processSC_DubEcho(juce::AudioBuffer<float>& buffer,
     auto& wetBuf = m_wetScratch;
     copyToWet(buffer, wetBuf, start, n);
 
-    const int numCh = std::min(wetBuf.getNumChannels(), 2);
-    for (int ch = 0; ch < numCh; ++ch)
-    {
-        float* data     = wetBuf.getWritePointer(ch);
-        DelayLine& line = (ch == 0) ? m_scDubEchoState.lineL : m_scDubEchoState.lineR;
-
-        // Ch 1 resets both delay and feedback smoothers to their target so both
-        // channels track the same final value throughout the block.
-        if (ch == 1) {
-            m_scDubDelaySmooth.setCurrentAndTargetValue(m_scDubDelaySmooth.getTargetValue());
-            m_scDubFbSmooth   .setCurrentAndTargetValue(m_scDubFbSmooth   .getTargetValue());
-        }
-
-        for (int i = 0; i < n; ++i)
-        {
-            const float delayF   = m_scDubDelaySmooth.getNextValue();
-            const float feedback = m_scDubFbSmooth   .getNextValue();
+    const int channelCount = std::min(wetBuf.getNumChannels(), 2);
+    std::array<float*, 2> channels {
+        channelCount > 0 ? wetBuf.getWritePointer(0) : nullptr,
+        channelCount > 1 ? wetBuf.getWritePointer(1) : nullptr
+    };
+    for (int i = 0; i < n; ++i) {
+        const float delayF = m_scDubDelaySmooth.getNextValue();
+        const float feedback = m_scDubFbSmooth.getNextValue();
+        for (int ch = 0; ch < channelCount; ++ch) {
+            float* data = channels[static_cast<std::size_t>(ch)];
+            DelayLine& line = ch == 0 ? m_scDubEchoState.lineL : m_scDubEchoState.lineR;
             float delayed = line.readFrac(delayF);
 
-            float& lpState = (ch == 0) ? m_scDubEchoState.lpL : m_scDubEchoState.lpR;
+            float& lpState = ch == 0 ? m_scDubEchoState.lpL : m_scDubEchoState.lpR;
             lpState += tapeAlpha * (delayed - lpState);
 
-            float fb  = std::tanh(lpState * feedback);
-            float out = data[i] + fb;
-            line.write(out);
+            const float feedbackSample = std::tanh(lpState * feedback);
+            line.write(data[i] + feedbackSample);
             data[i] = lpState;
         }
     }

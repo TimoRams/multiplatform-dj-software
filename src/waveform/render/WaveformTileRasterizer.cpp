@@ -25,10 +25,9 @@
 namespace waveform_render {
 namespace {
 
-// Raster work is visual fallback work, not a reason to consume every core
-// while two decks are decoding and playing. Keep a small process-wide pool;
-// individual waveform items are capped separately so one deck cannot occupy
-// the complete budget.
+// Raster work is visual fallback work, not a reason to compete with audio,
+// decoding and Qt. One process-wide permit also makes per-item worker pools
+// unnecessary.
 constexpr std::ptrdiff_t kMaximumGlobalRasterWorkers = 1;
 
 void updateWorst(std::atomic<std::uint64_t>& target, std::uint64_t value)
@@ -40,35 +39,24 @@ void updateWorst(std::atomic<std::uint64_t>& target, std::uint64_t value)
     }
 }
 
-std::size_t globalRasterWorkerLimit() noexcept
-{
-    const bool environmentLimitValid = qEnvironmentVariableIsSet(
-        "BROCKDJ_WAVEFORM_RASTER_WORKERS");
-    bool parsedLimit = false;
-    const int environmentLimit = qEnvironmentVariableIntValue(
-        "BROCKDJ_WAVEFORM_RASTER_WORKERS", &parsedLimit);
-    if (environmentLimitValid && parsedLimit && environmentLimit > 0) {
-        return std::clamp<std::size_t>(
-            static_cast<std::size_t>(environmentLimit), 1,
-            static_cast<std::size_t>(kMaximumGlobalRasterWorkers));
-    }
-
-    return 1;
-}
-
 std::counting_semaphore<kMaximumGlobalRasterWorkers>& rasterWorkPermits()
 {
-    static std::counting_semaphore<kMaximumGlobalRasterWorkers> permits(
-        static_cast<std::ptrdiff_t>(globalRasterWorkerLimit()));
+    static std::counting_semaphore<kMaximumGlobalRasterWorkers> permits(1);
     return permits;
 }
 
-std::size_t rasterWorkerCount() noexcept
+std::size_t configuredCacheByteBudget() noexcept
 {
-    const auto hardwareThreads = std::thread::hardware_concurrency();
-    if (hardwareThreads <= 2)
-        return 1;
-    return 1;
+    bool parsed = false;
+    const int configuredMiB = qEnvironmentVariableIntValue(
+        "BROCKDJ_WAVEFORM_CACHE_MB", &parsed);
+    if (!parsed || configuredMiB <= 0)
+        return WaveformTileRasterizer::defaultCacheByteBudget();
+
+    constexpr std::size_t bytesPerMiB = 1024u * 1024u;
+    return std::clamp(static_cast<std::size_t>(configuredMiB) * bytesPerMiB,
+                      WaveformTileRasterizer::kMinimumCacheBytes,
+                      WaveformTileRasterizer::kMaximumConfigurableCacheBytes);
 }
 
 int rasterWorkerNiceLevel() noexcept
@@ -170,14 +158,11 @@ std::size_t RenderTileKeyHash::operator()(const RenderTileKey& key) const noexce
 
 WaveformTileRasterizer::WaveformTileRasterizer(
     std::function<void()> tileReadyCallback)
-    : m_tileReadyCallback(std::move(tileReadyCallback))
+    : m_tileReadyCallback(std::move(tileReadyCallback)),
+      m_cacheByteBudget(configuredCacheByteBudget())
 {
-    const auto count = rasterWorkerCount();
-    m_workers.reserve(count);
-    for (std::size_t index = 0; index < count; ++index) {
-        m_workers.emplace_back(
-            [this](std::stop_token stopToken) { run(stopToken); });
-    }
+    m_workers.emplace_back(
+        [this](std::stop_token stopToken) { run(stopToken); });
 }
 
 WaveformTileRasterizer::~WaveformTileRasterizer()
@@ -380,6 +365,7 @@ WaveformTileRasterizer::Stats WaveformTileRasterizer::stats() const
         m_maximumConcurrentWorkers.load(std::memory_order_relaxed));
     std::lock_guard lock(m_mutex);
     result.cacheBytes = m_cacheBytes;
+    result.cacheBudgetBytes = m_cacheByteBudget;
     result.cacheEntries = m_cache.size();
     result.pendingRequests = m_pending.size() + m_inFlightKeys.size()
         + (m_pendingOverview ? 1u : 0u) + (m_overviewInFlightKey ? 1u : 0u);
@@ -645,7 +631,7 @@ void WaveformTileRasterizer::insert(
 void WaveformTileRasterizer::evictToBudgetLocked()
 {
     while ((!m_lru.empty())
-           && (m_cacheBytes > kMaximumCacheBytes
+           && (m_cacheBytes > m_cacheByteBudget
                || m_cache.size() > kMaximumCacheEntries)) {
         const auto key = m_lru.back();
         const auto found = m_cache.find(key);

@@ -35,6 +35,18 @@ private:
 };
 bool finite(const juce::AudioBuffer<float>&b){for(int c=0;c<b.getNumChannels();++c)for(int i=0;i<b.getNumSamples();++i)if(!std::isfinite(b.getSample(c,i)))return false;return true;}
 float render(DeckChannelProcessor&m,int size){juce::AudioBuffer<float>b(2,size);m.getNextAudioBlock({&b,0,size});return b.getMagnitude(0,0,size);}
+float renderStereoDifference(DeckChannelProcessor& mixer, int size)
+{
+    juce::AudioBuffer<float> buffer(2, size);
+    mixer.getNextAudioBlock({&buffer, 0, size});
+    float maximumDifference = 0.0f;
+    for (int sample = 0; sample < size; ++sample) {
+        maximumDifference = std::max(
+            maximumDifference,
+            std::abs(buffer.getSample(0, sample) - buffer.getSample(1, sample)));
+    }
+    return maximumDifference;
+}
 // Steady-state gain of the EQ at one frequency, in dB relative to the input.
 double eqResponseDb(MixerFilterTargets t,double hz,double sr=48000.0){
  auto s=buildMixerCoefficientSnapshot(t,sr,1,1);MixerFilterBank bank;bank.setSnapshot(s);bank.clearState();
@@ -84,6 +96,19 @@ int main(){bool ok=true;
      render(*tailMixer, 512);
      ok &= require(tailMixer->getPostFaderTailBuffer().getMagnitude(0, 0, 512) > 0.0001f,
                    "post-fader echo tail survives silent/reset deck input");
+ }
+ {
+     Sine stereoTone(700);
+     auto stereoMixer = std::make_unique<DeckChannelProcessor>(&stereoTone);
+     stereoMixer->prepareToPlay(512, 48000);
+     stereoMixer->setFxSlotEffectType(0, EffectType::Echo);
+     stereoMixer->setFxSlotAmount(0, 0.8f);
+     stereoMixer->setFxSlotExternalDelayTime(0, 0.005f);
+     for (int i = 0; i < 8; ++i)
+         renderStereoDifference(*stereoMixer, 512);
+     stereoMixer->setFxSlotExternalDelayTime(0, 0.080f);
+     ok &= require(renderStereoDifference(*stereoMixer, 512) < 1.0e-6f,
+                   "delay smoothing remains sample-identical across stereo channels");
  }
  {Sine concurrentTone(1000);auto concurrentMixer=std::make_unique<DeckChannelProcessor>(&concurrentTone);concurrentMixer->prepareToPlay(8192,48000);std::atomic<bool>go{false};std::thread control([&]{while(!go.load(std::memory_order_acquire)){}for(int i=0;i<2000;++i){const float v=(i%201-100)/100.f;concurrentMixer->setEq(v,-v,v*0.5f);concurrentMixer->setFilterVal(-v);}});go.store(true,std::memory_order_release);for(int i=0;i<1000;++i)ok&=require(std::isfinite(render(*concurrentMixer,64<<(i%8))),"concurrent finite");control.join();const auto s=concurrentMixer->realtimeStats();ok&=require(s.coefficientBuildsFromAudioThread+s.prepareCallsFromAudioThread+s.bufferGrowthsFromAudioThread+s.blockingLockAttempts+s.objectConstructionsFromAudioThread==0,"concurrent realtime counters zero");}
  if(std::getenv("BROCKDJ_MIXER_BENCHMARK")){double total=0,worst=0;for(int i=0;i<1000;++i){const auto s=std::chrono::steady_clock::now();render(*mixer,512);const double us=std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-s).count();total+=us;worst=std::max(worst,us);}std::cout<<"mixer 512 mean-us="<<total/1000<<" worst-us="<<worst<<'\n';}

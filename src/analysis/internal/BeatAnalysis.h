@@ -48,10 +48,20 @@ struct BeatGridQualityMetrics {
     float confidence = 0.0f;
 };
 
+struct BeatGridValidationResult {
+    bool ok = true;
+    QString message;
+};
+
 [[nodiscard]] BeatGridQualityMetrics measureBeatGridQuality(
     const BeatGridFitResult& grid,
     double referenceBpm,
     double referenceFirstBeatSec,
+    double durationSec);
+
+[[nodiscard]] BeatGridValidationResult validateBeatGrid(
+    const std::vector<BeatMarker>& beats,
+    double bpm,
     double durationSec);
 
 class DownbeatDetector {

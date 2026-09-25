@@ -83,6 +83,23 @@ ctest --preset ci-linux-arm64
 The ARM64 preset is a native preset. It is not a cross-compilation toolchain;
 run it on an ARM64 host, as CI does with `ubuntu-24.04-arm`.
 
+Raspberry Pi 4 and 5 require a 64-bit Linux installation. The normal ARM64
+build uses portable code generation and runs on both generations. For a build
+that stays on the machine where it was compiled, native CPU tuning can be
+enabled explicitly:
+
+```bash
+cmake --preset linux-release -DBROCKDJ_ENABLE_NATIVE_ARCH=ON
+cmake --build --preset linux-release --parallel 2
+```
+
+ARM64 builds use a 16 MiB scrolling-waveform CPU cache per active deck instead
+of the 48 MiB desktop default, limiting the four-deck worst case to 64 MiB.
+`BROCKDJ_WAVEFORM_CACHE_MB` can override the per-deck budget from 4 to 256 MiB
+when testing a specific display resolution and memory size. This affects only
+reusable rendered tiles; source analysis data and audio cache correctness are
+unchanged.
+
 ## macOS
 
 Install Xcode command-line tools, CMake/Ninja, Qt and the native audio-analysis

@@ -1,4 +1,4 @@
-#include "library/devices/rekordbox/RekordboxAnalysisReader.h"
+#include "library/devices/rekordbox/RekordboxDeviceSource.h"
 
 #include <QDir>
 #include <QFile>

@@ -1,11 +1,32 @@
 #pragma once
 
-#include "library/devices/rekordbox/RekordboxAnalysisReader.h"
-#include "library/devices/rekordbox/RekordboxPdbReader.h"
+#include "library/devices/rekordbox/RekordboxTypes.h"
 
 #include <QString>
 
 namespace rekordbox {
+
+class PdbReader final
+{
+public:
+    struct Result : ReadResult {
+        QVector<Track> tracks;
+        QVector<Playlist> playlists;
+    };
+
+    [[nodiscard]] Result readReadOnly(const QString& path) const;
+};
+
+class AnalysisReader final
+{
+public:
+    struct Result : ReadResult {
+        Analysis analysis;
+    };
+
+    [[nodiscard]] Result readReadOnly(const QString& path) const;
+    [[nodiscard]] Result readRelatedReadOnly(const QString& datPath) const;
+};
 
 class DeviceSource final
 {

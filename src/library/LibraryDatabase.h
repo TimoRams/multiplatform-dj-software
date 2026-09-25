@@ -52,16 +52,6 @@ public:
                               const QString& comment = {},
                               qint64 dateAdded = 0);
 
-    // Called by the analyzer when BPM / key detection finishes.
-    Q_INVOKABLE void updateAnalysisData(const QString& trackId,
-                                        float newBpm,
-                                        const QString& newKey,
-                                        qint64 firstBeatSample = 0,
-                                        double sampleRate = 44100.0,
-                                        const std::vector<TrackData::BeatMarker>& beatGrid = {},
-                                        TrackData::ConfidenceInfo confidence = {},
-                                        TrackData::BeatGridInfo beatGridInfo = {});
-
     bool tryGetAnalysisData(const QString& trackId, AnalysisSnapshot* out) const;
     bool requestAnalysisPersistence(const QString& trackId,
                                     const analysis::AnalysisResult& result);
@@ -96,12 +86,6 @@ public:
     // Main CUE persistence (single point per track, seconds, <0 means unset).
     Q_INVOKABLE bool upsertMainCuePoint(const QString& trackId, double positionSec);
     Q_INVOKABLE double mainCuePointForTrack(const QString& trackId) const;
-
-    // Check whether a track is already in the database.
-    Q_INVOKABLE bool trackExists(const QString& trackId) const;
-
-    // Retrieve the file_path for a given trackId (first location).
-    Q_INVOKABLE QString filePath(const QString& trackId) const;
 
     // Retrieve the track_id for a given file path (returns empty string if not found).
     Q_INVOKABLE QString trackIdForFilePath(const QString& filePath) const;
@@ -221,8 +205,6 @@ public:
     // Flush pending DB work and close the connection for clean shutdown.
     Q_INVOKABLE void shutdown(bool syncBackup = false);
     Q_INVOKABLE void requestQuickCheck();
-    Q_INVOKABLE void requestFullIntegrityCheck();
-    [[nodiscard]] DatabaseWorkerStats databaseWorkerStats() const noexcept;
     bool requestLibraryPage(QString sql, QVariantMap bindings, std::uint64_t generation);
 
     // Wire up the table model so it auto-refreshes after mutations.
@@ -269,14 +251,12 @@ private:
     QString m_activeDbPath;
     QString m_manualBackupDbPath;
     QString m_lastRecoveryEvent;
-    QString m_cachedMirrorStatus;
     QTimer m_backupSyncTimer;
     QTimer m_databaseWorkerResultTimer;
     std::unique_ptr<DatabaseWorker> m_databaseWorker;
     std::uint64_t m_nextDatabaseRequestId = 1;
     std::uint64_t m_backupRequestId = 0;
     std::uint64_t m_quickCheckRequestId = 0;
-    std::uint64_t m_fullCheckRequestId = 0;
     QHash<std::uint64_t, QString> m_pendingAnalysisWrites;
     bool m_primaryMirrorDegraded = false;
     bool m_backupMirrorDegraded = false;

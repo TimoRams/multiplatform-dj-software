@@ -27,6 +27,7 @@ public:
         if (value.spectralWaveform) m_spectralData = *value.spectralWaveform;
         if (value.overviewWaveform) m_overviewData = *value.overviewWaveform;
         if (value.peakMip) m_peakMip = *value.peakMip;
+        m_seedPreparedLines = value.preparedWaveformLines;
         m_bpm = value.bpm;
         m_firstBeatSample = value.firstBeatSample;
         m_sampleRate = value.sampleRate;
@@ -96,6 +97,7 @@ public:
     void clearWaveformData()
     {
         m_data.clear(); m_spectralData.clear(); m_peakMip.clear();
+        m_seedPreparedLines.reset();
         m_preparedLineChunks.clear();
         m_preparedTotalLines = 0;
         m_preparedReadyLines = 0;
@@ -165,6 +167,7 @@ public:
     void initializePreparedWaveformLines(int totalLines)
     {
         if (totalLines <= 0) return;
+        m_seedPreparedLines.reset();
         m_preparedTotalLines = totalLines;
         m_preparedReadyLines = 0;
         const auto chunkCount = (static_cast<std::uint32_t>(totalLines)
@@ -211,7 +214,7 @@ public:
         if (m_preparedTotalLines <= 0
             || m_preparedReadyLines != m_preparedTotalLines
             || m_preparedLineChunks.empty()) {
-            return {};
+            return m_seedPreparedLines;
         }
         auto prepared = std::make_shared<waveform::PreparedWaveformLines>();
         prepared->totalLineCount = static_cast<std::uint32_t>(
@@ -260,6 +263,7 @@ private:
     QVector<TrackData::PeakFrame> m_peakMip;
     std::vector<std::shared_ptr<std::vector<WaveformLine>>>
         m_preparedLineChunks;
+    std::shared_ptr<const waveform::PreparedWaveformLines> m_seedPreparedLines;
     int m_preparedTotalLines = 0;
     int m_preparedReadyLines = 0;
     double m_bpm = 0.0;

@@ -646,8 +646,16 @@ void RenderModeRouter::finishReleaseDecisionAfterTrackingBlock() noexcept
         speed = realtimeSnapshot.velocity;
         m_appliedRealtimeReleaseMotionSequence = realtimeSnapshot.motionSequence;
     }
-    if (!std::isfinite(speed))
-        speed = m_controller.normalizedRate();
+    if (!std::isfinite(speed)) {
+        const double renderedSpeed = m_controller.normalizedRate();
+        const double releaseEstimate = m_controller.releaseSpeedEstimate();
+        speed = std::abs(releaseEstimate) > 0.0
+            ? std::copysign(std::abs(renderedSpeed) > 1e-6
+                                ? std::abs(renderedSpeed)
+                                : std::abs(releaseEstimate),
+                            releaseEstimate)
+            : 0.0;
+    }
     m_audioReleaseDisposition = m_controller.releaseScratchWithSpeed(
         speed,
         m_audioReleaseCommand.allowInertia,

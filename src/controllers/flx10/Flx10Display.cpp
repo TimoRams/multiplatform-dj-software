@@ -2,8 +2,6 @@
 
 #include "deck/DjEngine.h"
 #include "domain/TrackData.h"
-#include "waveform/WaveformAggregator.h"
-#include "waveform/WaveformTypes.h"
 
 #include <QDateTime>
 #include <QDebug>
@@ -13,7 +11,6 @@
 #include <QPainter>
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <cmath>
 #include <mutex>
@@ -25,6 +22,30 @@
 using namespace flx10_protocol;
 
 namespace {
+
+QByteArray encodeCoverJpeg(const QImage& source, int side, int quality)
+{
+    if (source.isNull())
+        return {};
+
+    QImage canvas(side, side, QImage::Format_RGB888);
+    canvas.fill(Qt::black);
+    const QImage scaled = source.convertToFormat(QImage::Format_RGB888)
+                              .scaled(side, side, Qt::KeepAspectRatio,
+                                      Qt::SmoothTransformation);
+    QPainter painter(&canvas);
+    painter.drawImage((side - scaled.width()) / 2,
+                      (side - scaled.height()) / 2,
+                      scaled);
+
+    QByteArray encoded;
+    QBuffer buffer(&encoded);
+    if (!buffer.open(QIODevice::WriteOnly)
+        || !canvas.save(&buffer, "JPEG", quality)) {
+        return {};
+    }
+    return encoded;
+}
 
 double validTrackDuration(const DjEngine* engine)
 {
@@ -48,68 +69,6 @@ double validTrackPosition(const DjEngine* engine, double duration)
     if (!std::isfinite(pos))
         return 0.0;
     return std::clamp(pos, 0.0, duration);
-}
-
-bool waveformCompareLoggingEnabled()
-{
-    static const bool enabled = [] {
-        bool ok = false;
-        const int value = qEnvironmentVariableIntValue(
-            "BROCKDJ_WAVEFORM_COMPARE_LOG", &ok);
-        return ok && value != 0;
-    }();
-    return enabled;
-}
-
-const char* chunkStateName(std::uint8_t state)
-{
-    switch (static_cast<WaveformChunkState>(state)) {
-    case WaveformChunkState::Missing:
-        return "Missing";
-    case WaveformChunkState::Loading:
-        return "Loading";
-    case WaveformChunkState::PreviewReady:
-        return "PreviewReady";
-    case WaveformChunkState::FinalReady:
-        return "FinalReady";
-    }
-    return "Unknown";
-}
-
-void logFlx10WaveformComparison(int deck,
-                                std::uint32_t playheadChunkIndex,
-                                std::uint8_t playheadChunkState,
-                                std::uint32_t sourceLineBegin,
-                                std::uint32_t sourceLineEnd,
-                                std::uint32_t outputWidth,
-                                std::uint32_t generatedColumns,
-                                std::uint32_t columnsWithData,
-                                std::uint32_t completeColumns,
-                                std::uint64_t trackGeneration,
-                                std::uint64_t dataGeneration)
-{
-    if (!waveformCompareLoggingEnabled())
-        return;
-    static std::array<qint64, 5> lastLogMs {0, 0, 0, 0, 0};
-    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-    if (deck < 0 || deck >= static_cast<int>(lastLogMs.size()))
-        return;
-    if (nowMs - lastLogMs[deck] < 700)
-        return;
-    lastLogMs[deck] = nowMs;
-
-    qInfo().nospace()
-        << "[WaveformCompare][FLX10] deck=" << deck
-        << " source=shared-aggregator"
-        << " chunk=" << playheadChunkIndex
-        << " state=" << chunkStateName(playheadChunkState)
-        << " sourceLineRange=[" << sourceLineBegin << "," << sourceLineEnd << ")"
-        << " displayWaveformWidth=" << outputWidth
-        << " generatedColumns=" << generatedColumns
-        << " columnsWithData=" << columnsWithData
-        << " completeColumns=" << completeColumns
-        << " trackGeneration=" << trackGeneration
-        << " dataGeneration=" << dataGeneration;
 }
 
 } // namespace
@@ -503,96 +462,6 @@ bool DDJFLX10Controller::uploadCoverArt(int deck)
         m_lastCoverUrls[deck] = engine->coverArtUrl();
     return true;
 }
-QByteArray DDJFLX10Controller::generatePreviewWaveform(
-    int deck, WaveformPreviewRenderInfo* outInfo) const
-{
-    const DjEngine* engine = deck == 1 ? m_deckA : m_deckB;
-    if (!engine || engine->getDuration() <= 0.0f)
-        return {};
-
-    TrackData* trackData = engine->getTrackData();
-    if (!trackData)
-        return {};
-
-    const auto snapshot = trackData->getWaveformLineStoreSnapshot();
-    if (!snapshot || snapshot->trackGeneration == 0
-        || snapshot->linesPerSecond == 0
-        || snapshot->totalLineCount == 0
-        || snapshot->chunkSize == 0
-        || !snapshot->chunks) {
-        return {};
-    }
-
-    const int targetEntries = std::clamp(
-        static_cast<int>(std::ceil(deckDisplayDuration(deck) * kJogWaveformEntriesPerSecond)),
-        150,
-        kMaxWaveformEntries);
-    if (targetEntries <= 0)
-        return {};
-
-    QByteArray out;
-    out.reserve(targetEntries * 2);
-    std::uint32_t columnsWithData = 0;
-    std::uint32_t completeColumns = 0;
-
-    // The FLX10 is just another consumer of the shared column semantics: it
-    // differs from the desktop waveform only in target resolution (a fixed
-    // 150 entries per second) and in quantising the result to PWV5's 5-bit
-    // height / 3-bit RGB. It no longer selects an LOD level or aggregates
-    // source lines itself — that belongs to aggregateWaveformColumn() so the
-    // hardware can never disagree with the screen about what the track looks
-    // like.
-    for (int i = 0; i < targetEntries; ++i) {
-        const auto range = waveform::sourceLineRangeForColumn(
-            snapshot->totalLineCount, i, targetEntries);
-        const auto column = waveform::aggregateWaveformColumn(*snapshot, range);
-
-        if (!column.hasData) {
-            out += encodePwv5Entry(1, 0, 0, 0);
-            continue;
-        }
-        ++columnsWithData;
-        if (column.complete)
-            ++completeColumns;
-        out += encodePwv5Column(column);
-    }
-
-    if (outInfo) {
-        const double duration = validTrackDuration(engine);
-        const double playheadSec = validTrackPosition(engine, duration);
-        const auto playheadLine = static_cast<std::uint32_t>(std::clamp<std::int64_t>(
-            static_cast<std::int64_t>(std::llround(
-                playheadSec * static_cast<double>(snapshot->linesPerSecond))),
-            0, static_cast<std::int64_t>(snapshot->totalLineCount - 1)));
-        const auto playheadChunkIndex = snapshot->chunkSize > 0
-            ? playheadLine / snapshot->chunkSize : 0u;
-        const auto playheadChunk = snapshot->chunkAt(playheadChunkIndex);
-        outInfo->trackGeneration = snapshot->trackGeneration;
-        outInfo->dataGeneration = snapshot->dataGeneration;
-        outInfo->sourceLineBegin = 0;
-        outInfo->sourceLineEnd = snapshot->totalLineCount;
-        outInfo->outputWidth = static_cast<std::uint32_t>(targetEntries);
-        outInfo->generatedColumns = static_cast<std::uint32_t>(targetEntries);
-        outInfo->columnsWithData = columnsWithData;
-        outInfo->completeColumns = completeColumns;
-        outInfo->playheadChunkIndex = playheadChunkIndex;
-        outInfo->playheadChunkState = static_cast<std::uint8_t>(
-            playheadChunk ? playheadChunk->state : WaveformChunkState::Missing);
-        logFlx10WaveformComparison(deck,
-                                   outInfo->playheadChunkIndex,
-                                   outInfo->playheadChunkState,
-                                   outInfo->sourceLineBegin,
-                                   outInfo->sourceLineEnd,
-                                   outInfo->outputWidth,
-                                   outInfo->generatedColumns,
-                                   outInfo->columnsWithData,
-                                   outInfo->completeColumns,
-                                   outInfo->trackGeneration,
-                                   outInfo->dataGeneration);
-    }
-
-    return out;
-}
 double DDJFLX10Controller::deckDisplayDuration(int deck) const
 {
     return validTrackDuration(deckEngine(deck));
@@ -740,11 +609,6 @@ void DDJFLX10Controller::displayThreadLoop()
     }
 }
 
-double DDJFLX10Controller::deckTempoRangePercent(int deck) const
-{
-    const DjEngine* engine = deckEngine(deck);
-    return engine ? engine->tempoRangePercent() : 8.0;
-}
 QString DDJFLX10Controller::deckKey(int deck) const
 {
     const DjEngine* engine = deckEngine(deck);

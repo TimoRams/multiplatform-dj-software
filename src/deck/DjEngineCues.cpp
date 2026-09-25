@@ -6,12 +6,10 @@
 #include "audio/TimeStretchProcessor.h"
 #include "audio/cache/CachedPlaybackAudioSource.h"
 #include "deck/DeckTransport.h"
-#include "deck/MetadataUtils.h"
 #include "library/CoverArtExtractor.h"
 #include "library/CoverArtProvider.h"
 #include "library/LibraryCoverService.h"
 #include "library/LibraryDatabase.h"
-#include "library/TrackIdGenerator.h"
 #include "waveform/WaveformAnalyzer.h"
 #include "waveform/WaveformCache.h"
 

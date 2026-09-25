@@ -67,6 +67,7 @@ analysis::AnalysisResult TrackData::createAnalysisSeed() const
         : std::make_shared<const QVector<RgbWaveformFrame>>(m_overviewRgb);
     seed.peakMip = m_peakMipSnapshot ? m_peakMipSnapshot
         : std::make_shared<const QVector<PeakFrame>>(m_peakMip);
+    seed.preparedWaveformLines = m_preparedWaveformLines;
     seed.bpm = m_bpm;
     seed.firstBeatSample = m_firstBeatSample;
     seed.sampleRate = m_sampleRate;
@@ -91,11 +92,15 @@ bool TrackData::applyAnalysisResult(const analysis::AnalysisResult& result)
         m_rgbSnapshot = result.spectralWaveform;
         m_overviewSnapshot = result.overviewWaveform;
         m_peakMipSnapshot = result.peakMip;
-        if (result.preparedWaveformLines)
-            installPreparedWaveformLinesLocked(result.preparedWaveformLines,
-                                               result.identity.trackGeneration);
-        else
+        if (result.preparedWaveformLines
+            && installPreparedWaveformLinesLocked(
+                result.preparedWaveformLines,
+                result.identity.trackGeneration)) {
+            m_waveformSnapshot.reset();
+            m_rgbSnapshot.reset();
+        } else {
             rebuildWaveformLineStoreLocked(result.identity.trackGeneration);
+        }
         m_data.clear(); m_rgbData.clear(); m_overviewRgb.clear(); m_peakMip.clear();
         m_progressiveRgbReady.clear();
         m_progressiveNormalizationStates.clear();
@@ -128,6 +133,7 @@ bool TrackData::applyAnalysisResult(const analysis::AnalysisResult& result)
 
 void TrackData::rebuildWaveformLineStoreLocked(std::uint64_t trackGeneration)
 {
+    m_preparedWaveformLines.reset();
     const auto geometry = m_waveformSnapshot ? m_waveformSnapshot
         : std::make_shared<const QVector<WaveformBin>>(m_data);
     const auto spectral = m_rgbSnapshot ? m_rgbSnapshot
@@ -169,14 +175,12 @@ void TrackData::rebuildWaveformLineStoreLocked(std::uint64_t trackGeneration)
     Q_ASSERT(published == WaveformLineStore::PublishResult::Accepted);
 }
 
-void TrackData::installPreparedWaveformLinesLocked(
+bool TrackData::installPreparedWaveformLinesLocked(
     const std::shared_ptr<const waveform::PreparedWaveformLines>& prepared,
     std::uint64_t trackGeneration)
 {
-    if (!prepared || prepared->totalLineCount == 0 || prepared->chunks.empty()) {
-        rebuildWaveformLineStoreLocked(trackGeneration);
-        return;
-    }
+    if (!prepared || prepared->totalLineCount == 0 || prepared->chunks.empty())
+        return false;
 
     trackGeneration = std::max(trackGeneration, m_waveformLineGeneration + 1);
     m_waveformLineGeneration = trackGeneration;
@@ -186,10 +190,8 @@ void TrackData::installPreparedWaveformLinesLocked(
     publication.reserve(prepared->chunks.size());
     for (std::uint32_t chunkIndex = 0; chunkIndex < prepared->chunks.size(); ++chunkIndex) {
         const auto& lines = prepared->chunks[chunkIndex];
-        if (!lines || lines->empty() || first >= prepared->totalLineCount) {
-            rebuildWaveformLineStoreLocked(trackGeneration + 1);
-            return;
-        }
+        if (!lines || lines->empty() || first >= prepared->totalLineCount)
+            return false;
         const auto count = static_cast<std::uint32_t>(lines->size());
         publication.push_back({
             trackGeneration, chunkIndex, first, count,
@@ -199,8 +201,10 @@ void TrackData::installPreparedWaveformLinesLocked(
     if (first != prepared->totalLineCount
         || m_waveformLineStore.publishBatch(std::move(publication))
             != WaveformLineStore::PublishResult::Accepted) {
-        rebuildWaveformLineStoreLocked(trackGeneration + 1);
+        return false;
     }
+    m_preparedWaveformLines = prepared;
+    return true;
 }
 
 QVector<TrackData::RgbWaveformFrame> TrackData::downsampleOverview(
@@ -528,6 +532,7 @@ void TrackData::clearWaveformData()
         m_waveformSnapshot.reset();
         m_rgbSnapshot.reset();
         m_peakMipSnapshot.reset();
+        m_preparedWaveformLines.reset();
         m_waveformLineStore.reset(++m_waveformLineGeneration, 0);
         m_progressiveOvr.clear();
         m_progressiveLastFrame = 0;
@@ -558,6 +563,7 @@ void TrackData::beginVisualTrackLoad(std::uint64_t trackGeneration)
         m_rgbSnapshot.reset();
         m_overviewSnapshot.reset();
         m_peakMipSnapshot.reset();
+        m_preparedWaveformLines.reset();
         m_progressiveOvr.clear();
         m_progressiveLastFrame = 0;
         m_progressiveRgbReady.clear();
@@ -591,6 +597,7 @@ void TrackData::clear()
         m_rgbSnapshot.reset();
         m_overviewSnapshot.reset();
         m_peakMipSnapshot.reset();
+        m_preparedWaveformLines.reset();
         m_waveformLineStore.reset(++m_waveformLineGeneration, 0);
         m_progressiveOvr.clear();
         m_progressiveLastFrame = 0;
@@ -704,7 +711,12 @@ void TrackData::installCachedWaveform(
         m_progressiveRgbReady.clear();
         m_progressiveNormalizationStates.clear();
         m_progressiveDirtyLineChunks.clear();
-        installPreparedWaveformLinesLocked(preparedLines);
+        if (installPreparedWaveformLinesLocked(preparedLines)) {
+            m_waveformSnapshot.reset();
+            m_rgbSnapshot.reset();
+        } else {
+            rebuildWaveformLineStoreLocked();
+        }
     }
     emit dataUpdated();
     emit rgbWaveformUpdated();
@@ -729,6 +741,7 @@ void TrackData::initializeCachedWaveformLines(
         m_waveformSnapshot.reset();
         m_rgbSnapshot.reset();
         m_peakMipSnapshot.reset();
+        m_preparedWaveformLines.reset();
         m_progressiveOvr.clear();
         m_progressiveLastFrame = 0;
         m_progressivePendingLineChunks.clear();
@@ -846,20 +859,6 @@ void TrackData::applyCachedWaveformLineBatch(
         emit dataUpdated();
         scheduleRgbWaveformEmit();
     }
-}
-
-void TrackData::applyCachedWaveformLodBatch(WaveformLodBatch chunks)
-{
-    assertOwnerThread();
-    if (chunks.empty())
-        return;
-    bool accepted = false;
-    {
-        QMutexLocker locker(&m_mutex);
-        accepted = m_waveformLineStore.publishLodBatch(std::move(chunks));
-    }
-    if (accepted)
-        emit dataUpdated();
 }
 
 void TrackData::setOverviewRgbData(QVector<RgbWaveformFrame>&& data)
@@ -1030,6 +1029,7 @@ void TrackData::applyProgressiveWaveformChunk(int firstBin, int totalBins,
             m_progressivePendingLineChunks.clear();
             m_waveformSnapshot.reset();
             m_rgbSnapshot.reset();
+            m_preparedWaveformLines.reset();
             m_waveformLineStore.reset(++m_waveformLineGeneration,
                                       static_cast<std::uint32_t>(totalLines));
         }

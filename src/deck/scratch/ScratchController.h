@@ -22,6 +22,11 @@ struct ScratchControllerConfig {
     double noMoveDecayTauSec = 0.030;
     double commandVelocityHoldMs = 8.0;
     double commandVelocityDecayTauMs = 7.0;
+    // UI pointer-up can append one opposite-signed motion sample while the
+    // contact centroid settles. Require a second consecutive reversal before
+    // changing the direction used for an inferred release throw.
+    int releaseDirectionConfirmationSamples = 2;
+    double releaseVelocitySmoothingTauSec = 0.035;
     double releaseReturnTauSec = 0.220;
     double inertiaStopThreshold = 0.02;
     // When normal playback is waiting in the opposite direction, hand off
@@ -191,6 +196,9 @@ public:
     // producing ticks. Unlike smoothedSpeed(), audio feedback never overwrites
     // this value, so the position tracker can interpolate sparse MIDI events.
     [[nodiscard]] double commandedHandSpeed() const noexcept;
+    // Stable control-side throw estimate. Unlike the audio feedback velocity,
+    // one isolated opposite-signed pointer sample cannot reverse its direction.
+    [[nodiscard]] double releaseSpeedEstimate() const noexcept;
 
     // Observed interval between input events, in seconds. The audio thread uses
     // it to know how stale the hand target it was handed already is.
@@ -230,6 +238,9 @@ private:
     std::atomic<double> m_rawSpeed { 0.0 };
     std::atomic<double> m_smoothedSpeed { 0.0 };
     std::atomic<double> m_commandedHandSpeed { 0.0 };
+    std::atomic<double> m_releaseSpeedEstimate { 0.0 };
+    std::atomic<double> m_pendingOppositeReleaseSpeed { 0.0 };
+    std::atomic<int> m_oppositeReleaseSampleCount { 0 };
     std::atomic<double> m_inertiaSpeed { 0.0 };
     std::atomic<double> m_releaseTargetSpeed { 0.0 };
     std::atomic<double> m_releaseHandoffThreshold { 0.02 };

@@ -116,16 +116,6 @@ void LibraryPreviewPlayer::mixAuxAudio(juce::AudioBuffer<float>& masterBuffer,
     mixIntoOutputs(masterBuffer, scratchBuffer, 0, numberOfSamples);
 }
 
-double LibraryPreviewPlayer::previewStartSeconds(double trackLengthSec) const
-{
-    if (trackLengthSec <= 0.0)
-        return 0.0;
-    double start = trackLengthSec * 0.25;
-    if (trackLengthSec > 30.0)
-        start = std::max(start, 30.0);
-    return std::clamp(start, 0.0, std::max(0.0, trackLengthSec - 0.5));
-}
-
 void LibraryPreviewPlayer::startPositionTimer()
 {
     m_positionPollingEnabled = true;

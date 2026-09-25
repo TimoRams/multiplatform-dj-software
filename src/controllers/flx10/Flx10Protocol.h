@@ -3,12 +3,8 @@
 #include "waveform/WaveformAggregator.h"
 
 #include <QByteArray>
-#include <QBuffer>
 #include <QChar>
-#include <QImage>
-#include <QIODevice>
 #include <QList>
-#include <QPainter>
 #include <QRegularExpression>
 #include <QString>
 #include <QtGlobal>
@@ -18,8 +14,6 @@
 #include <cmath>
 #include <cstdint>
 #include <optional>
-
-class DjEngine;
 
 namespace flx10_protocol {
 
@@ -541,28 +535,6 @@ inline QByteArray encodePwv5Column(const waveform::WaveformColumn& column)
     };
     return encodePwv5Entry(height, to3Bit(column.red), to3Bit(column.green),
                            to3Bit(column.blue));
-}
-
-inline QByteArray encodeCoverJpeg(const QImage& source, int side, int quality)
-{
-    if (source.isNull())
-        return {};
-
-    QImage canvas(side, side, QImage::Format_RGB888);
-    canvas.fill(Qt::black);
-
-    const QImage scaled = source.convertToFormat(QImage::Format_RGB888)
-                             .scaled(side, side, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-
-    QPainter painter(&canvas);
-    painter.drawImage((side - scaled.width()) / 2, (side - scaled.height()) / 2, scaled);
-    painter.end();
-
-    QByteArray out;
-    QBuffer buffer(&out);
-    buffer.open(QIODevice::WriteOnly);
-    canvas.save(&buffer, "JPEG", quality);
-    return out;
 }
 
 } // namespace flx10_protocol

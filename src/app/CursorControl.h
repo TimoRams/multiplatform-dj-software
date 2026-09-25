@@ -1,21 +1,43 @@
 #pragma once
+
+#include <QCursor>
+#include <QGuiApplication>
 #include <QObject>
+
+#include <cmath>
 
 // Exposes cursor hide/restore/teleport to QML.
 // Register as "cursorControl" context property before loading QML.
-class CursorControl : public QObject {
+class CursorControl final : public QObject {
     Q_OBJECT
+
 public:
-    explicit CursorControl(QObject* parent = nullptr);
+    explicit CursorControl(QObject* parent = nullptr)
+        : QObject(parent)
+    {
+    }
 
-    // Hide OS cursor (call once per drag start).
-    Q_INVOKABLE void hideCursor();
+    Q_INVOKABLE void hideCursor()
+    {
+        if (m_hidden)
+            return;
+        QGuiApplication::setOverrideCursor(Qt::BlankCursor);
+        m_hidden = true;
+    }
 
-    // Restore OS cursor (call once per drag end).
-    Q_INVOKABLE void restoreCursor();
+    Q_INVOKABLE void restoreCursor()
+    {
+        if (!m_hidden)
+            return;
+        QGuiApplication::restoreOverrideCursor();
+        m_hidden = false;
+    }
 
-    // Teleport the cursor to global screen coordinates.
-    Q_INVOKABLE void moveCursor(double x, double y);
+    Q_INVOKABLE void moveCursor(double x, double y)
+    {
+        QCursor::setPos(static_cast<int>(std::round(x)),
+                        static_cast<int>(std::round(y)));
+    }
 
 private:
     bool m_hidden = false;

@@ -151,5 +151,28 @@ int main(int argc, char** argv)
                       && sparseResult.spectralWaveform->isEmpty(),
                   "long-track result retained duration-sized legacy vectors");
 
+    sparseResult.complete = true;
+    sparseResult.validated = true;
+    sparseResult.sampleRate = 48'000.0;
+    TrackData compactData;
+    ok &= require(compactData.applyAnalysisResult(sparseResult),
+                  "prepared analysis result was not accepted");
+    const auto compactSeed = compactData.createAnalysisSeed();
+    ok &= require(compactData.getWaveformData().isEmpty()
+                      && compactData.getRgbWaveformData().isEmpty(),
+                  "prepared result retained duplicate canonical vectors");
+    ok &= require(compactSeed.preparedWaveformLines
+                      == sparseResult.preparedWaveformLines,
+                  "prepared analysis seed lost its immutable line snapshot");
+    analysis::AnalysisWorkingData reseededWorking;
+    reseededWorking.seed(compactSeed);
+    auto reseededResult = std::move(reseededWorking).finish(
+        compactSeed.identity);
+    ok &= require(reseededResult.preparedWaveformLines
+                      == sparseResult.preparedWaveformLines
+                      && reseededResult.waveform->isEmpty()
+                      && reseededResult.spectralWaveform->isEmpty(),
+                  "prepared seed reuse recreated duplicate canonical vectors");
+
     return ok ? 0 : 1;
 }
