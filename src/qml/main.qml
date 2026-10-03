@@ -39,6 +39,7 @@ ApplicationWindow {
     property bool showCrossfader: true
     // Desktop-only bridge while we develop the standalone/AIO surface.
     property bool showDevelopmentControls: true
+    property bool showAioDeckControls: true
     property bool fourDeckMode: false
     property bool allInOneMode: false
     property string activeMainTab: "performance"
@@ -160,6 +161,7 @@ ApplicationWindow {
         s("showLibrary", window.showLibrary)
         s("showCrossfader", window.showCrossfader)
         s("showDevelopmentControls", window.showDevelopmentControls)
+        s("showAioDeckControls", window.showAioDeckControls)
         settingsManager.setUiState("activeMainTab", window.activeMainTab)
     }
 
@@ -174,6 +176,7 @@ ApplicationWindow {
         window.showLibrary    = b("showLibrary", true)
         window.showCrossfader = b("showCrossfader", true)
         window.showDevelopmentControls = b("showDevelopmentControls", true)
+        window.showAioDeckControls = b("showAioDeckControls", true)
         window.fourDeckMode   = b("fourDeckMode", false)
         window.showMixer      = b("showMixer", true)
         window.showFxBar      = b("showFxBar", true)
@@ -213,6 +216,7 @@ ApplicationWindow {
     onShowLibraryChanged:   _scheduleUiPersist()
     onShowCrossfaderChanged:_scheduleUiPersist()
     onShowDevelopmentControlsChanged: _scheduleUiPersist()
+    onShowAioDeckControlsChanged: _scheduleUiPersist()
     onActiveMainTabChanged: {
         closeTopBarPullDown()
         _scheduleUiPersist()
@@ -503,8 +507,7 @@ ApplicationWindow {
     // Keep the full 375 px deck surface below the taller waveform viewport.
     // baseDeckMixerHeight is derived from these two values.
     readonly property real baseUiHeight: baseWaveformHeight + 375 + 4
-    // The primary display is the standalone/AIO surface.  Mixer, FX and
-    // transport controls are intentionally kept out of it during development.
+    // The primary display keeps mixer/FX separate; AIO has an optional compact transport bar.
     readonly property bool primaryDeckRowVisible: !window.libraryExpanded
                                                    && !window.allInOnePanelActive
                                                    && !window.sourcePageActive
@@ -512,6 +515,8 @@ ApplicationWindow {
     readonly property bool secondaryDeckRowVisible: window.fourDeckMode && !window.libraryExpanded && !window.allInOnePanelActive && !window.sourcePageActive
     readonly property bool crossfaderVisible: false
     readonly property bool fxVisible: false
+    readonly property int aioDeckControlsHeight:
+        window.allInOneMode && window.showAioDeckControls ? 42 : 0
     readonly property real waveformMinimumHeight: window.scaledWaveformHeight
     readonly property int libraryReserveHeight: !window.effectiveLibraryVisible ? 0 : Math.round(180 * window.uiScale)
     readonly property int fixedPerformanceHeight:
@@ -526,7 +531,8 @@ ApplicationWindow {
         + (!window.libraryExpanded && !window.allInOnePanelActive && !window.fxVisible ? window.fxBarHeight : 0)
     readonly property real waveformAvailableHeight: _snapLengthToPhysicalPixels(Math.max(
         0,
-        height - window.topBarHeight - window.fixedPerformanceHeight - window.libraryReserveHeight - 6
+        height - window.topBarHeight - window.fixedPerformanceHeight
+        - window.aioDeckControlsHeight - window.libraryReserveHeight - 6
     ))
     readonly property real adaptiveWaveformHeight: !window.showWaveforms ? 0
         : _snapLengthToPhysicalPixels(Math.max(

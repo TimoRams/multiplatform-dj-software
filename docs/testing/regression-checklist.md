@@ -45,6 +45,12 @@ and real selector mouse/keyboard/Escape behavior. Animation checks wait for
 observed state rather than assuming one event-loop pass completes a transition.
 It does not replace the real scene-graph or hardware rendering tests.
 
+The compact AIO bottom bar uses the shared buttons and native deck transport.
+`qml_component` covers per-deck play/pause, current beat-jump ranges, held CUE
+release when hidden, unloaded-deck disabling and persisted menu visibility.
+On a touchscreen, also check CUE hold/release and cancellation, both deck halves
+at the smallest supported window size, and hamburger toggle restoration.
+
 After domain-module merges, rebuild the affected tests before running them.
 `parameter_store` must still distinguish duplicate UI values from repeated MIDI
 events. Master and cue buses retain separate limiter/gain state despite sharing

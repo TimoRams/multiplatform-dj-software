@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Layouts
-import QtQuick.Controls
 import DJSoftware
 
 Item {
@@ -8,6 +7,94 @@ Item {
     required property var appWindow
     readonly property var window: appWindow
     property alias librarySection: librarySection
+
+    component AioDeckControls: RowLayout {
+        id: controls
+        required property var engine
+        required property string deckLabel
+        required property color accent
+        property var heldCueEngine: null
+        spacing: 4
+
+        function releaseCue() {
+            if (!heldCueEngine)
+                return
+            var target = heldCueEngine
+            heldCueEngine = null
+            target.cueButtonRelease()
+        }
+
+        onVisibleChanged: if (!visible) releaseCue()
+        onEngineChanged: releaseCue()
+        Component.onDestruction: releaseCue()
+
+        Text {
+            text: controls.deckLabel
+            color: controls.accent
+            font.pixelSize: 11
+            font.bold: true
+            Layout.leftMargin: 4
+            Layout.rightMargin: 4
+        }
+        Button {
+            objectName: "aioPlay"
+            text: controls.engine && controls.engine.isPlaying ? "PAUSE" : "PLAY"
+            accentColor: controls.accent
+            enabled: controls.engine && controls.engine.hasTrack
+            Layout.fillWidth: true
+            Layout.minimumWidth: 40
+            Layout.preferredWidth: 1
+            Layout.minimumHeight: 32
+            Layout.preferredHeight: 32
+            Layout.maximumHeight: 32
+            onClicked: controls.engine.togglePlay()
+        }
+        Button {
+            objectName: "aioCue"
+            text: "CUE"
+            accentColor: controls.accent
+            enabled: controls.engine && controls.engine.hasTrack
+            Layout.fillWidth: true
+            Layout.minimumWidth: 40
+            Layout.preferredWidth: 1
+            Layout.minimumHeight: 32
+            Layout.preferredHeight: 32
+            Layout.maximumHeight: 32
+            onPressed: {
+                controls.heldCueEngine = controls.engine
+                controls.heldCueEngine.cueButtonPress()
+            }
+            onReleased: controls.releaseCue()
+            onCanceled: controls.releaseCue()
+            onEnabledChanged: if (!enabled) controls.releaseCue()
+        }
+        Button {
+            objectName: "aioJumpBack"
+            text: "-" + (controls.engine ? controls.engine.beatJumpBeats : 4)
+            accentColor: controls.accent
+            enabled: controls.engine && controls.engine.hasTrack
+            Layout.fillWidth: true
+            Layout.minimumWidth: 40
+            Layout.preferredWidth: 1
+            Layout.minimumHeight: 32
+            Layout.preferredHeight: 32
+            Layout.maximumHeight: 32
+            onClicked: controls.engine.beatJump(-controls.engine.beatJumpBeats)
+        }
+        Button {
+            objectName: "aioJumpForward"
+            text: "+" + (controls.engine ? controls.engine.beatJumpBeats : 4)
+            accentColor: controls.accent
+            enabled: controls.engine && controls.engine.hasTrack
+            Layout.fillWidth: true
+            Layout.minimumWidth: 40
+            Layout.preferredWidth: 1
+            Layout.minimumHeight: 32
+            Layout.preferredHeight: 32
+            Layout.maximumHeight: 32
+            onClicked: controls.engine.beatJump(controls.engine.beatJumpBeats)
+        }
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -303,6 +390,49 @@ Item {
             Layout.preferredHeight: 0
             Layout.maximumHeight: window.effectiveLibraryVisible && !window.sourcePageActive ? window.height : 0
             visible: window.effectiveLibraryVisible && !window.sourcePageActive
+        }
+
+        Rectangle {
+            objectName: "aioDeckControlBar"
+            readonly property bool shown: window.aioDeckControlsHeight > 0
+            visible: shown
+            Layout.fillWidth: true
+            Layout.minimumHeight: window.aioDeckControlsHeight
+            Layout.preferredHeight: window.aioDeckControlsHeight
+            Layout.maximumHeight: window.aioDeckControlsHeight
+            color: UiTheme.panel
+            Rectangle {
+                anchors.top: parent.top
+                width: parent.width
+                height: 1
+                color: UiTheme.divider
+            }
+            RowLayout {
+                anchors.fill: parent
+                anchors.margins: 5
+                spacing: 8
+                AioDeckControls {
+                    objectName: "aioDeck1Controls"
+                    Layout.fillWidth: true
+                    Layout.preferredWidth: 1
+                    engine: deckA
+                    deckLabel: "1"
+                    accent: UiTheme.deckA
+                }
+                Rectangle {
+                    Layout.fillHeight: true
+                    Layout.preferredWidth: 1
+                    color: UiTheme.divider
+                }
+                AioDeckControls {
+                    objectName: "aioDeck2Controls"
+                    Layout.fillWidth: true
+                    Layout.preferredWidth: 1
+                    engine: deckB
+                    deckLabel: "2"
+                    accent: UiTheme.deckB
+                }
+            }
         }
     }
 }

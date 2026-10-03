@@ -633,6 +633,208 @@ bool clickItem(QQuickWindow& window, QObject* object, const char* description)
     return true;
 }
 
+bool hamburgerToggleTests(const std::string& header)
+{
+    const auto popupBegin = header.find("    Popup {\n        id: viewMenuPopup");
+    const auto popupContent = header.find("        contentItem: Column {", popupBegin);
+    const auto buttonId = header.find("            id: viewMenuBtn");
+    const auto buttonBegin = header.rfind("        Rectangle {", buttonId);
+    const auto buttonEnd = header.find("\n        }", buttonId);
+    if (!require(popupBegin != std::string::npos && popupContent != std::string::npos
+                     && buttonBegin != std::string::npos && buttonEnd != std::string::npos,
+                 "production hamburger popup and button exist"))
+        return false;
+    QQmlEngine engine;
+    const QString source = QStringLiteral(R"(
+        import QtQuick
+        import QtQuick.Layouts
+        import QtQuick.Controls
+        Item {
+            id: root
+            width: 400; height: 300
+            property int btnH: 40
+    )") + QString::fromStdString(header.substr(popupBegin, popupContent - popupBegin))
+        + QStringLiteral("height: 100\n    }\n")
+        + QString::fromStdString(header.substr(buttonBegin, buttonEnd + 10 - buttonBegin))
+        + QStringLiteral("\n}");
+    auto host = createQmlObject(engine, source, "production hamburger controls instantiate");
+    if (!host)
+        return false;
+    QQuickWindow window;
+    window.resize(400, 300);
+    auto* item = qobject_cast<QQuickItem*>(host.get());
+    item->setParentItem(window.contentItem());
+    QQmlExpression setup(QQmlEngine::contextForObject(host.get()), host.get(),
+        QStringLiteral("viewMenuBtn.x = 350; viewMenuBtn.width = 40;"
+                       "viewMenuBtn.height = 40; true"));
+    setup.evaluate();
+    window.show();
+    QCoreApplication::processEvents();
+    const auto visible = [&] {
+        QQmlExpression expression(QQmlEngine::contextForObject(host.get()), host.get(),
+                                  QStringLiteral("viewMenuPopup.visible"));
+        return expression.evaluate().toBool();
+    };
+    bool ok = true;
+    for (int repeat = 0; repeat < 2; ++repeat) {
+        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, {370, 20});
+        ok &= require(QTest::qWaitFor(visible), "hamburger click opens the menu");
+        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, {370, 20});
+        ok &= require(QTest::qWaitFor([&] { return !visible(); }),
+                      "second hamburger click closes instead of reopening the menu");
+    }
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, {370, 20});
+    ok &= require(QTest::qWaitFor(visible), "hamburger reopens after toggling");
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, {20, 200});
+    ok &= require(QTest::qWaitFor([&] { return !visible(); }), "outside click still closes menu");
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, {370, 20});
+    ok &= require(QTest::qWaitFor(visible), "hamburger reopens after outside click");
+    QTest::keyClick(&window, Qt::Key_Escape);
+    ok &= require(QTest::qWaitFor([&] { return !visible(); }), "Escape still closes menu");
+    return ok;
+}
+
+bool aioDeckControlTests(const std::string& workspace)
+{
+    const auto controls = componentSection(workspace, "AioDeckControls");
+    if (!require(!controls.empty(), "AIO transport component exists"))
+        return false;
+    qmlRegisterType(QUrl::fromLocalFile(QString::fromUtf8(BROCKDJ_SOURCE_DIR)
+                        + QStringLiteral("/src/qml/components/Button.qml")),
+                    "DJSoftware", 1, 0, "Button");
+    QQmlEngine engine;
+    const QString sinkSource = QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property bool hasTrack: true
+            property bool isPlaying: false
+            property real beatJumpBeats: 4
+            property real lastJump: 0
+            property int cuePresses: 0
+            property int cueReleases: 0
+            function togglePlay() { isPlaying = !isPlaying }
+            function cueButtonPress() { ++cuePresses }
+            function cueButtonRelease() { ++cueReleases }
+            function beatJump(beats) { lastJump = beats }
+        }
+    )");
+    auto deck1 = createQmlObject(engine, sinkSource, "AIO deck 1 sink instantiates");
+    auto deck2 = createQmlObject(engine, sinkSource, "AIO deck 2 sink instantiates");
+    if (!deck1 || !deck2)
+        return false;
+    engine.rootContext()->setContextProperty("testDeck1", deck1.get());
+    engine.rootContext()->setContextProperty("testDeck2", deck2.get());
+    QQmlComponent component(&engine);
+    component.setData((QStringLiteral(R"(
+        import QtQuick
+        import QtQuick.Layouts
+        import DJSoftware
+        Item {
+            width: 800; height: 42
+    )") + QString::fromStdString(controls) + QStringLiteral(R"(
+            RowLayout {
+                anchors.fill: parent
+                AioDeckControls {
+                    objectName: "first"; Layout.fillWidth: true
+                    engine: testDeck1; deckLabel: "1"; accent: "#168FC4"
+                }
+                AioDeckControls {
+                    objectName: "second"; Layout.fillWidth: true
+                    engine: testDeck2; deckLabel: "2"; accent: "#E99128"
+                }
+            }
+        }
+    )")).toUtf8(), QUrl());
+    std::unique_ptr<QObject> bar(component.create());
+    if (!require(bar != nullptr, "production AIO controls instantiate")) {
+        std::cerr << component.errorString().toStdString();
+        return false;
+    }
+    QQuickWindow window;
+    window.resize(800, 42);
+    auto* item = qobject_cast<QQuickItem*>(bar.get());
+    item->setParentItem(window.contentItem());
+    window.show();
+    QCoreApplication::processEvents();
+    auto* first = bar->findChild<QObject*>("first");
+    auto* second = bar->findChild<QObject*>("second");
+    bool ok = require(first && second, "AIO controls have independent deck halves");
+    if (!first || !second)
+        return false;
+    const double buttonWidth = first->findChild<QObject*>("aioPlay")->property("width").toDouble();
+    const auto equalButtonSizes = [&] {
+        for (auto* half : {first, second}) {
+            for (const char* name : {"aioPlay", "aioCue", "aioJumpBack", "aioJumpForward"}) {
+                auto* button = half->findChild<QObject*>(name);
+                if (!button || std::abs(button->property("width").toDouble() - buttonWidth) > 1.0
+                    || button->property("height").toDouble() != 32.0)
+                    return false;
+            }
+        }
+        return buttonWidth > 40.0;
+    };
+    ok &= require(equalButtonSizes(), "AIO buttons divide available width equally");
+    ok &= clickItem(window, first->findChild<QObject*>("aioPlay"), "AIO play is visible");
+    ok &= require(deck1->property("isPlaying").toBool()
+                      && !deck2->property("isPlaying").toBool(), "AIO play targets deck 1 only");
+    QTest::qWait(30);
+    ok &= require(equalButtonSizes(), "PLAY to PAUSE does not resize AIO buttons");
+    ok &= clickItem(window, first->findChild<QObject*>("aioPlay"), "AIO pause is visible");
+    ok &= require(!deck1->property("isPlaying").toBool(), "AIO play toggles back to pause");
+    deck1->setProperty("beatJumpBeats", 8);
+    deck2->setProperty("beatJumpBeats", 0.5);
+    QTest::qWait(30);
+    ok &= require(equalButtonSizes(), "different beatjump labels do not resize AIO buttons");
+    ok &= clickItem(window, first->findChild<QObject*>("aioJumpBack"), "AIO backward jump is visible");
+    ok &= clickItem(window, second->findChild<QObject*>("aioJumpForward"), "AIO forward jump is visible");
+    ok &= require(deck1->property("lastJump").toDouble() == -8
+                      && deck2->property("lastJump").toDouble() == 0.5,
+                  "AIO beatjump reads each deck's current side-panel range");
+    auto* cue = qobject_cast<QQuickItem*>(first->findChild<QObject*>("aioCue"));
+    const QPoint cuePoint = cue->mapToScene(cue->boundingRect().center()).toPoint();
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, cuePoint);
+    QTest::qWait(30);
+    ok &= require(equalButtonSizes(), "held CUE styling does not resize AIO buttons");
+    ok &= require(deck1->property("cuePresses").toInt() == 1
+                      && deck1->property("cueReleases").toInt() == 0,
+                  "AIO cue starts on press and remains held");
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, cuePoint);
+    ok &= require(deck1->property("cueReleases").toInt() == 1,
+                  "AIO cue releases once on mouse release");
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, cuePoint);
+    item->setVisible(false);
+    QCoreApplication::processEvents();
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, cuePoint);
+    ok &= require(deck1->property("cueReleases").toInt() == 2,
+                  "hiding AIO controls ends held cue without a duplicate release");
+    item->setVisible(true);
+    auto* touchDevice = QTest::createTouchDevice(QInputDevice::DeviceType::TouchScreen);
+    QTest::touchEvent(&window, touchDevice).press(0, cuePoint, &window);
+    ok &= require(QTest::qWaitFor([&] { return deck1->property("cuePresses").toInt() == 3; }),
+                  "touchscreen cue starts on press");
+    QTest::touchEvent(&window, touchDevice).release(0, cuePoint, &window);
+    ok &= require(QTest::qWaitFor([&] { return deck1->property("cueReleases").toInt() == 3; }),
+                  "touchscreen cue releases the held deck");
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, cuePoint);
+    first->setProperty("engine", QVariant::fromValue(deck2.get()));
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, cuePoint);
+    ok &= require(deck1->property("cueReleases").toInt() == 4
+                      && deck2->property("cueReleases").toInt() == 0,
+                  "rebinding a held CUE releases the original deck only");
+    first->setProperty("engine", QVariant::fromValue(deck1.get()));
+    deck1->setProperty("hasTrack", false);
+    ok &= require(!first->findChild<QObject*>("aioPlay")->property("enabled").toBool()
+                      && !first->findChild<QObject*>("aioCue")->property("enabled").toBool(),
+                  "unloaded AIO deck controls are disabled");
+    deck1->setProperty("hasTrack", true);
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, cuePoint);
+    bar.reset();
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, cuePoint);
+    ok &= require(deck1->property("cueReleases").toInt() == 5,
+                  "destroying AIO controls releases held CUE");
+    return ok;
+}
+
 bool qmlMergeRuntimeTests()
 {
     const QString qmlDirectory = QString::fromUtf8(BROCKDJ_SOURCE_DIR)
@@ -945,10 +1147,19 @@ int main(int argc, char** argv)
     bool ok = sliderCleanupTests();
     const auto main = read("src/qml/main.qml");
     const auto topHeader = read("src/qml/shell/TopHeader.qml");
+    ok &= hamburgerToggleTests(topHeader);
     const auto deckControl = read("src/qml/deck/DeckControl.qml");
     const auto slider = read("src/qml/components/Slider.qml");
     const auto mixerSection = read("src/qml/mixer/MixerSection.qml");
     const auto workspace = read("src/qml/performance/PerformanceWorkspace.qml");
+    ok &= aioDeckControlTests(workspace);
+    ok &= require(main.find("s(\"showAioDeckControls\", window.showAioDeckControls)") != std::string::npos
+                      && main.find("b(\"showAioDeckControls\", true)") != std::string::npos
+                      && main.find("onShowAioDeckControlsChanged: _scheduleUiPersist()") != std::string::npos
+                      && topHeader.find("propertyName: \"showAioDeckControls\"") != std::string::npos
+                      && workspace.find("readonly property bool shown: window.aioDeckControlsHeight > 0") != std::string::npos
+                      && main.find("window.allInOneMode && window.showAioDeckControls ? 42 : 0") != std::string::npos,
+                  "AIO bar visibility is menu-controlled, persisted and reserved only in AIO");
     const auto shortcuts = read("src/qml/components/UiShortcutManager.qml");
     const auto enlargedWaveform = read("src/qml/waveform/EnlargedWaveform.qml");
     const auto turntableIndicator = read("src/qml/deck/TurntableIndicator.qml");

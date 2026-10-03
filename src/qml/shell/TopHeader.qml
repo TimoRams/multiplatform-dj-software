@@ -48,7 +48,8 @@ Rectangle {
         { label: "Mixer", propertyName: "showMixer", defaultOn: true, hidden: true },
         { label: "FX Bar", propertyName: "showFxBar", defaultOn: true, hidden: true },
         { label: "Crossfader", propertyName: "showCrossfader", defaultOn: true, hidden: true },
-        { label: "Library", propertyName: "showLibrary", defaultOn: true }
+        { label: "Library", propertyName: "showLibrary", defaultOn: true },
+        { label: "AIO Deck Controls", propertyName: "showAioDeckControls", defaultOn: true }
     ]
 
     function viewToggleValue(propertyName, fallback) {
@@ -482,9 +483,9 @@ Rectangle {
     // ── View menu popup ──────────────────────────────────────────────────────
     Popup {
         id: viewMenuPopup
-        parent: Overlay.overlay
+        parent: viewMenuBtn
         modal: false; focus: true
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
         padding: 0
         width: 210
         background: Rectangle { color: "#0e0e0e"; border.color: "#222"; border.width: 1 }
@@ -1216,7 +1217,7 @@ Rectangle {
                 id: viewBtnMouse
                 anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                 onClicked: {
-                    if (viewMenuPopup.opened) {
+                    if (viewMenuPopup.visible) {
                         viewMenuPopup.close()
                     } else {
                         var p = viewMenuBtn.mapToItem(viewMenuPopup.parent, 0, viewMenuBtn.height + 2)
